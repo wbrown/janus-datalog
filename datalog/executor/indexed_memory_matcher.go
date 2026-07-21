@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -173,6 +174,12 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	if err != nil {
 		return nil, err
 	}
+	if err := query.ValidateEntityBinding(extractPatternValue(pattern.GetE())); err != nil {
+		return nil, err
+	}
+	if err := query.ValidateAttributeBinding(extractPatternValue(pattern.GetA())); err != nil {
+		return nil, err
+	}
 	// Build indices on first use (lazy initialization)
 	m.buildIndices()
 
@@ -194,8 +201,19 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 
 	// Find best binding relation
 	bindingRel := bindings.FindBestForPattern(pattern)
-	if bindingRel == nil || bindingRel.Size() == 0 {
+	if bindingRel == nil {
 		// No relevant bindings - use index
+		datoms := m.matchWithIndex(pattern, constraints)
+		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
+	}
+	if bindingRel.Size() == 0 {
+		// An errored relation that materialized empty is not an empty
+		// binding: its zero rows mean the upstream scan failed. Falling
+		// back to an unbound scan here laundered that failure into a
+		// silent empty result.
+		if err := EmptyRelationError(bindingRel); err != nil {
+			return nil, err
+		}
 		datoms := m.matchWithIndex(pattern, constraints)
 		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
 	}
@@ -358,8 +376,12 @@ func extractPatternValue(elem query.PatternElement) interface{} {
 		return nil
 	case query.Constant:
 		return e.Value
+	case query.VectorConstant:
+		return e.Values
 	default:
-		return nil
+		// PatternElement is a closed taxonomy; an unknown element is a bug,
+		// not an unbound position.
+		panic(fmt.Sprintf("BUG: unknown pattern element %T reached extractPatternValue", elem))
 	}
 }
 

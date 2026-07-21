@@ -1,8 +1,6 @@
 # Bug: Enumerate Multi-Tuple Expansion Not Handled by Expression Evaluator
 
-**Status:** Fixed
-**Fix:** `datalog/executor/helpers.go` — added `[][]interface{}` handler before existing `[]interface{}` path
-**Tests:** `TestVectorEnumerateQuery`, `TestVectorEnumerateMultipleEntities`, `TestVectorEnumerateRefWithFilter` in `datalog/storage/crdt_vector_test.go`
+**Status:** Fixed **Fix:** `datalog/executor/helpers.go` — added `[][]interface{}` handler before existing `[]interface{}` path **Tests:** `TestVectorEnumerateQuery`, `TestVectorEnumerateMultipleEntities`, `TestVectorEnumerateRefWithFilter` in `datalog/storage/crdt_vector_test.go`
 
 ## Summary
 
@@ -38,8 +36,7 @@ In Go, `[][]interface{}` does not satisfy a `[]interface{}` type assertion. The 
 
 For a vector `["a", "b", "c"]` with binding `[(enumerate ?vec) [?idx ?item]]`:
 
-**Expected:** 3 output tuples: `[0, "a"]`, `[1, "b"]`, `[2, "c"]`
-**Actual:** 1 output tuple with nil values in ?idx and ?item symbols
+**Expected:** 3 output tuples: `[0, "a"]`, `[1, "b"]`, `[2, "c"]` **Actual:** 1 output tuple with nil values in ?idx and ?item symbols
 
 The query would either return wrong results (nil values passing through) or return zero tuples (if subsequent patterns tried to join on the nil values).
 

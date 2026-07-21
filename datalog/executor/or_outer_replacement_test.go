@@ -40,7 +40,8 @@ func TestOrDefaultJoinReplacesConsumedOuterWithoutRedundantJoin(t *testing.T) {
 		options,
 	)
 	q := &query.Query{Where: []query.Clause{&query.OrDefaultJoinClause{
-		JoinVars: []query.Symbol{entity},
+		RequiredVars: []query.Symbol{entity},
+		OutputVars:   []query.Symbol{value},
 		Branches: [][]query.Clause{
 			{&query.Expression{
 				Function: &query.GroundFunction{Value: "selected"},
@@ -59,7 +60,7 @@ func TestOrDefaultJoinReplacesConsumedOuterWithoutRedundantJoin(t *testing.T) {
 
 	var expanded Relation
 	for _, group := range groups {
-		if symbolInSlice(group.Symbols(), value) {
+		if query.ContainsSymbol(group.Symbols(), value) {
 			expanded = group
 		}
 	}
@@ -101,7 +102,7 @@ func TestOrDefaultReplacesEveryConsumedOuterGroup(t *testing.T) {
 		Branches: [][]query.Clause{
 			{&query.Expression{
 				Function: query.ArithmeticFunction{
-					Op: query.OpAdd,
+					Op: datalog.SymAdd,
 					Args: []query.Term{
 						query.VariableTerm{Symbol: x},
 						query.VariableTerm{Symbol: y},
@@ -138,12 +139,23 @@ func TestOrOuterReplacementPreservesDeferredOuterError(t *testing.T) {
 		&failingIterator{inner: base.Iterator(), failAfter: 1},
 	)
 	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
+	// Two branches to satisfy the declared-interface contract (the parser
+	// never accepted fewer); branch 1 always matches, so branch 2 is inert
+	// and the test still exercises deferred-error propagation through the
+	// outer replacement.
 	q := &query.Query{Where: []query.Clause{&query.OrDefaultJoinClause{
-		JoinVars: []query.Symbol{entity},
-		Branches: [][]query.Clause{{&query.Expression{
-			Function: &query.GroundFunction{Value: "selected"},
-			Binding:  value,
-		}}},
+		RequiredVars: []query.Symbol{entity},
+		OutputVars:   []query.Symbol{value},
+		Branches: [][]query.Clause{
+			{&query.Expression{
+				Function: &query.GroundFunction{Value: "selected"},
+				Binding:  value,
+			}},
+			{&query.Expression{
+				Function: &query.GroundFunction{Value: "default"},
+				Binding:  value,
+			}},
+		},
 	}}}
 
 	groups, err := exec.Execute(NewContext(nil), q, []Relation{outer})

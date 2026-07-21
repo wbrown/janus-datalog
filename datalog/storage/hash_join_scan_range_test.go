@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -111,41 +109,45 @@ func TestHashJoinScanRangeBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	// Force HashJoinScan (our default now) and use same options as datalog-cli
-	// NOTE: db.NewExecutorWithOptions creates matcher with IndexNestedLoopThreshold: 0 by default
-	exec := db.NewExecutorWithOptions(DefaultPlannerOptions())
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Force HashJoinScan (our default now) and use same options as datalog-cli
+			// NOTE: db.NewExecutorWithOptions creates matcher with IndexNestedLoopThreshold: 0 by default
+			exec := db.NewExecutorWithOptions(mode.plannerOptions())
 
-	// Time the query - should be <100ms but currently can be 10+ seconds
-	start := time.Now()
-	result, err := exec.Execute(q)
-	elapsed := time.Since(start)
+			// Time the query - should be <100ms but currently can be 10+ seconds
+			start := time.Now()
+			result, err := exec.Execute(q)
+			elapsed := time.Since(start)
 
-	assert.NoError(t, err)
-	assert.False(t, result.IsEmpty(), "Should have aggregation results")
+			assert.NoError(t, err)
+			assert.NotZero(t, result.Materialize().Size(), "Should have aggregation results")
 
-	t.Logf("Query took %v for aggregation over %d AAPL bars (but scanned all %d bars)",
-		elapsed, 1000, 10000)
+			t.Logf("Query took %v for aggregation over %d AAPL bars (but scanned all %d bars)",
+				elapsed, 1000, 10000)
 
-	// This test will FAIL with current implementation (takes multiple seconds)
-	// After fix (using bound values in scan range), should be <500ms
-	if elapsed > 2*time.Second {
-		t.Errorf("Query took %v - HashJoinScan is scanning ALL :price/symbol datoms (%d) instead of just AAPL's (%d)",
-			elapsed, 10000, 1000)
-		t.Logf("Bug: calculatePatternScanRange() only looks at constants, ignores bound variables")
-		t.Logf("Fix: Check if pattern variables have bound values in binding relation and use them for scan range")
-		t.Logf("With 80,000 total datoms and 10× unnecessary scanning, this causes production hang")
+			// This test will FAIL with current implementation (takes multiple seconds)
+			// After fix (using bound values in scan range), should be <500ms
+			if elapsed > 2*time.Second {
+				t.Errorf("Query took %v - HashJoinScan is scanning ALL :price/symbol datoms (%d) instead of just AAPL's (%d)",
+					elapsed, 10000, 1000)
+				t.Logf("Bug: calculatePatternScanRange() only looks at constants, ignores bound variables")
+				t.Logf("Fix: Check if pattern variables have bound values in binding relation and use them for scan range")
+				t.Logf("With 80,000 total datoms and 10× unnecessary scanning, this causes production hang")
+			}
+
+			// Verify we got aggregated results (should be grouped by year/month/day)
+			it := result.Iterator()
+			defer it.Close()
+			count := 0
+			for it.Next() {
+				tuple := it.Tuple()
+				t.Logf("Aggregation result: year=%v month=%v day=%v", tuple[0], tuple[1], tuple[2])
+				count++
+			}
+			assert.Greater(t, count, 0, "Should have at least one aggregated day")
+		})
 	}
-
-	// Verify we got aggregated results (should be grouped by year/month/day)
-	it := result.Iterator()
-	defer it.Close()
-	count := 0
-	for it.Next() {
-		tuple := it.Tuple()
-		t.Logf("Aggregation result: year=%v month=%v day=%v", tuple[0], tuple[1], tuple[2])
-		count++
-	}
-	assert.Greater(t, count, 0, "Should have at least one aggregated day")
 }
 
 // BenchmarkHashJoinScanRangeComparison benchmarks the performance difference

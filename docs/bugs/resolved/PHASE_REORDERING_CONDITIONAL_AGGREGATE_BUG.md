@@ -1,14 +1,10 @@
 # Phase Reordering Breaks Subqueries
 
-**Date**: 2025-10-13
-**Status**: 🔴 ACTIVE BUG
-**Severity**: CRITICAL - Phase reordering alone breaks all subquery execution
-**Supersedes**: Original hypothesis about conditional aggregate interaction
+**Date**: 2025-10-13 **Status**: 🔴 ACTIVE BUG **Severity**: CRITICAL - Phase reordering alone breaks all subquery execution **Supersedes**: Original hypothesis about conditional aggregate interaction
 
 ## Problem Statement (UPDATED AFTER TESTING)
 
-**Initial Hypothesis**: Phase reordering + conditional aggregates interact badly
-**Actual Bug**: Phase reordering **alone** breaks subquery execution
+**Initial Hypothesis**: Phase reordering + conditional aggregates interact badly **Actual Bug**: Phase reordering **alone** breaks subquery execution
 
 Test results from `TestOptimizationComposition`:
 - ✅ **Baseline (no optimizations)**: Returns 2 tuples correctly
@@ -89,8 +85,7 @@ cannot project: symbol ?__cond_?pd not found in relation
   (has symbols: [?p ?name ?ev ?t ?v ?pd])
 ```
 
-This error only appears with BOTH reordering + conditional aggregates enabled.
-**But** reordering alone also breaks queries (returns 0 tuples without error).
+This error only appears with BOTH reordering + conditional aggregates enabled. **But** reordering alone also breaks queries (returns 0 tuples without error).
 
 **Two separate bugs**:
 1. Phase reordering breaks subquery execution (silent failure, 0 tuples)
@@ -297,8 +292,7 @@ phase.SymbolTable[v2] = query.Symbol("?__cond_?pd")
 phase.SymbolTable[v2] = query.Symbol("?__cond_?p")  // ID stable, name changed
 ```
 
-**Pros**: Renaming doesn't affect metadata
-**Cons**: Major refactoring required
+**Pros**: Renaming doesn't affect metadata **Cons**: Major refactoring required
 
 ### Option 3: Recompute Metadata After Reordering
 
@@ -315,8 +309,7 @@ if opts.EnableConditionalAggregateRewriting {
 }
 ```
 
-**Pros**: Clean separation, no stale metadata
-**Cons**: May miss reordering opportunities created by rewriting
+**Pros**: Clean separation, no stale metadata **Cons**: May miss reordering opportunities created by rewriting
 
 ## Recommended Solution
 
@@ -521,8 +514,7 @@ func (p *Planner) reorderPhasesByRelations(phases []Phase, initialSymbols map[qu
 
 ## RESOLUTION ✅
 
-**Date**: 2025-10-13
-**Status**: 🟢 FIXED
+**Date**: 2025-10-13 **Status**: 🟢 FIXED
 
 ### Summary of Fixes
 

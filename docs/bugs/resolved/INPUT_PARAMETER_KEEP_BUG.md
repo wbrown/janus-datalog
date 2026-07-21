@@ -38,9 +38,7 @@ cannot project: symbol ?symbol not found in relation (has symbols: [?s ?p ?time 
 
 ### The Bug Location
 
-**File:** `datalog/planner/phase_reordering.go`
-**Function:** `updatePhaseSymbols`
-**Section:** "3. For non-first phases, ensure we keep at least one join symbol"
+**File:** `datalog/planner/phase_reordering.go` **Function:** `updatePhaseSymbols` **Section:** "3. For non-first phases, ensure we keep at least one join symbol"
 
 ### What Went Wrong
 

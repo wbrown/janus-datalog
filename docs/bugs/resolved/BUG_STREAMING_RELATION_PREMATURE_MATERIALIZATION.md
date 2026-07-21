@@ -1,9 +1,6 @@
 # BUG: StreamingRelation Premature Materialization Without Tuple Copying
 
-**Date Discovered**: 2025-10-24
-**Status**: Resolved (2026-05-25) — see Resolution below
-**Severity**: CRITICAL - Causes incorrect query results
-**Affects**: All queries with `EnableTrueStreaming=true` (default since October 2025)
+**Date Discovered**: 2025-10-24 **Status**: Resolved (2026-05-25) — see Resolution below **Severity**: CRITICAL - Causes incorrect query results **Affects**: All queries with `EnableTrueStreaming=true` (default since October 2025)
 
 ## Summary
 
@@ -214,8 +211,7 @@ go build -o /tmp/datalog-cli ./cmd/datalog-cli
   -query '[:find ?ticker :where [?s :symbol/ticker ?ticker] [?b :price/symbol ?s]]'
 ```
 
-**Expected**: 2 results (NVDA, CRWV)
-**Actual**: 0-2 results with duplicates or missing data
+**Expected**: 2 results (NVDA, CRWV) **Actual**: 0-2 results with duplicates or missing data
 
 ## Proposed Fixes
 

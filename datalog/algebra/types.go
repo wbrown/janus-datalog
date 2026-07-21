@@ -194,9 +194,10 @@ type Union struct {
 // correlated predicates (NOT, missing?) or fallback defaults (or-default).
 // Decompiles to OrDefaultClause/OrDefaultJoinClause.
 type LateralUnion struct {
-	Output   []query.Symbol // Output symbols across branches
-	JoinVars []query.Symbol // Explicit join variables (nil for plain or-default)
-	Required []query.Symbol // Correlation keys supplied by the outer relation
+	Output       []query.Symbol // Output symbols across branches
+	RequiredVars []query.Symbol // Declared per-group correlation keys (nil for plain or-default)
+	OutputVars   []query.Symbol // Declared output variables (nil for plain or-default)
+	Required     []query.Symbol // Correlation keys supplied by the outer relation
 }
 
 func (u *Union) OutputSymbols() []query.Symbol { return u.Output }
@@ -213,9 +214,9 @@ func (u *Union) String() string {
 
 func (lu *LateralUnion) OutputSymbols() []query.Symbol { return lu.Output }
 func (lu *LateralUnion) String() string {
-	if len(lu.JoinVars) > 0 {
-		syms := make([]string, len(lu.JoinVars))
-		for i, s := range lu.JoinVars {
+	if len(lu.RequiredVars) > 0 {
+		syms := make([]string, len(lu.RequiredVars))
+		for i, s := range lu.RequiredVars {
 			syms[i] = s.String()
 		}
 		return fmt.Sprintf("⋈_L∪_join(%s)", strings.Join(syms, ", "))
@@ -227,10 +228,16 @@ func (lu *LateralUnion) String() string {
 // THE target for decorrelation: LateralJoin → Join + Aggregate.
 type LateralJoin struct {
 	CorrelationVars []query.Symbol // Variables passed from outer to inner
-	InnerQuery      *query.Query   // The nested query to execute per outer tuple
-	Binding         interface{}    // query.Symbol, query.TupleBinding, etc.
-	Output          []query.Symbol // Combined output (outer + binding symbols)
-	DefaultValues   []interface{}  // Fallback values when inner produces no results (from OR-fallback ground)
+	// Inputs is the call site's complete argument list — source markers,
+	// correlation variables, AND constants — preserved verbatim so the
+	// compile→decompile round trip is lossless. CorrelationVars is the
+	// derived variable subset; rebuilding the call site from it alone drops
+	// constant arguments and re-points named sources at $.
+	Inputs        []query.PatternElement
+	InnerQuery    *query.Query   // The nested query to execute per outer tuple
+	Binding       interface{}    // query.Symbol, query.TupleBinding, etc.
+	Output        []query.Symbol // Combined output (outer + binding symbols)
+	DefaultValues []interface{}  // Fallback values when inner produces no results (from OR-fallback ground)
 }
 
 func (l *LateralJoin) OutputSymbols() []query.Symbol { return l.Output }

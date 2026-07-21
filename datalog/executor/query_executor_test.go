@@ -41,7 +41,7 @@ func TestProductRelation(t *testing.T) {
 		if rel == nil {
 			t.Fatal("Product() should not return nil for empty input")
 		}
-		if !rel.IsEmpty() {
+		if rel.Materialize().Size() != 0 {
 			t.Error("Product() of empty relations should be empty")
 		}
 	})
@@ -179,7 +179,7 @@ func TestExecuteExpression(t *testing.T) {
 		// Expression: [(+ ?x 100) ?y]
 		expr := &query.Expression{
 			Function: &query.ArithmeticFunction{
-				Op: query.OpAdd,
+				Op: datalog.SymAdd,
 				Args: []query.Term{
 					query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					query.ConstantTerm{Value: int64(100)},
@@ -220,7 +220,7 @@ func TestExecuteExpression(t *testing.T) {
 		// Expression: [(+ ?x ?y) ?z] - requires both ?x and ?y
 		expr := &query.Expression{
 			Function: &query.ArithmeticFunction{
-				Op: query.OpAdd,
+				Op: datalog.SymAdd,
 				Args: []query.Term{
 					query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
@@ -266,7 +266,7 @@ func TestExecutePredicate(t *testing.T) {
 
 		// Predicate: [(< ?x 20)]
 		pred := &query.Comparison{
-			Op:    query.OpLT,
+			Op:    datalog.SymLT,
 			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			Right: query.ConstantTerm{Value: int64(20)},
 		}
@@ -313,7 +313,7 @@ func TestExecuteAggregates(t *testing.T) {
 			Find: []query.FindElement{
 				query.FindVariable{Symbol: datalog.NewSymbol("?person")},
 				query.FindAggregate{
-					Function: "sum",
+					Function: datalog.SymSum,
 					Arg:      datalog.NewSymbol("?value"),
 				},
 			},
@@ -349,7 +349,7 @@ func TestExecuteAggregates(t *testing.T) {
 		q := &query.Query{
 			Find: []query.FindElement{
 				query.FindAggregate{
-					Function: "sum",
+					Function: datalog.SymSum,
 					Arg:      datalog.NewSymbol("?value"),
 				},
 			},
@@ -414,7 +414,7 @@ func TestEndToEndQueries(t *testing.T) {
 					},
 				},
 				&query.Comparison{
-					Op:    query.OpGT,
+					Op:    datalog.SymGT,
 					Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 					Right: query.ConstantTerm{Value: int64(26)},
 				},

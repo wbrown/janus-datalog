@@ -3,6 +3,7 @@ package parser
 import (
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -96,7 +97,7 @@ func TestPredicateSyntaxCoverage(t *testing.T) {
 		{
 			name:         "str/starts-with?",
 			queryStr:     `[:find ?x :where [?e :attr ?x] [(str/starts-with? ?x "foo")]]`,
-			expectedType: "*query.FunctionPredicate",
+			expectedType: "*query.StrStartsWithPredicate",
 		},
 	}
 
@@ -153,6 +154,26 @@ func TestPredicateSyntaxCoverage(t *testing.T) {
 	}
 }
 
+// TestPredicatePositionUnknownFunctionRejectedAtParse pins the loud-failure
+// boundary for predicate position, mirroring expression position: an unknown
+// function name is a parse error, not a per-tuple eval guard. The eval guard
+// never fires when upstream clauses match nothing, so a typo'd predicate
+// after a fully-pruned pattern returned err=nil with zero rows — a silent
+// wrong answer. Registered user-defined names parse; built-in predicate
+// forms take their explicit arms and are unaffected.
+func TestPredicatePositionUnknownFunctionRejectedAtParse(t *testing.T) {
+	if _, err := ParseQuery(`[:find ?x :where [?e :attr ?x] [(bogus/never-registered? ?x)]]`); err == nil {
+		t.Error("unknown predicate function parsed without error")
+	}
+
+	query.DefaultRegistry.RegisterImplementation("test/parse-pred?", func(args []interface{}) (interface{}, error) {
+		return true, nil
+	})
+	if _, err := ParseQuery(`[:find ?x :where [?e :attr ?x] [(test/parse-pred? ?x)]]`); err != nil {
+		t.Errorf("registered predicate function failed to parse: %v", err)
+	}
+}
+
 // TestNotEqualKeywordIntegration - End-to-end test with real Keywords
 func TestNotEqualKeywordIntegration(t *testing.T) {
 	queryStr := `[:find ?attr ?val :where [?s :symbol/ticker "TEST"] [?s ?attr ?val] [(not= ?attr :symbol/ticker)]]`
@@ -170,7 +191,7 @@ func TestNotEqualKeywordIntegration(t *testing.T) {
 			t.Logf("Found NotEqualPredicate: %v", pred)
 
 			// Verify it has the right structure
-			if pred.Op != query.OpEQ {
+			if pred.Op != datalog.SymEQ {
 				t.Errorf("NotEqualPredicate.Op should be OpEQ (for inversion), got %v", pred.Op)
 			}
 		}
@@ -197,6 +218,8 @@ func typeStr(v interface{}) string {
 		return "*query.GroundPredicate"
 	case *query.MissingPredicate:
 		return "*query.MissingPredicate"
+	case *query.StrStartsWithPredicate:
+		return "*query.StrStartsWithPredicate"
 	case *query.FunctionPredicate:
 		return "*query.FunctionPredicate"
 	default:

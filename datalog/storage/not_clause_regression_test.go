@@ -1,9 +1,6 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -144,92 +141,115 @@ func buildComplexNotQuery() *query.Query {
 // with "NOT clause variables not found in input relation" in a complex query
 // with multiple get-else, OR-with-subquery, comparison, and order-by clauses.
 func TestNotClauseComplexQuery_E2E(t *testing.T) {
-	dbPath := "/tmp/test-not-complex-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dbPath,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			tx := db.NewTransaction()
 
-	tx := db.NewTransaction()
+			proj1 := datalog.NewIdentity("proj:1")
+			proj2 := datalog.NewIdentity("proj:2")
+			proj3 := datalog.NewIdentity("proj:3") // deleted
+			item1 := datalog.NewIdentity("item:1")
+			item2 := datalog.NewIdentity("item:2")
+			item3 := datalog.NewIdentity("item:3")
+			now := time.Now().Truncate(time.Second)
 
-	proj1 := datalog.NewIdentity("proj:1")
-	proj2 := datalog.NewIdentity("proj:2")
-	proj3 := datalog.NewIdentity("proj:3") // deleted
-	item1 := datalog.NewIdentity("item:1")
-	item2 := datalog.NewIdentity("item:2")
-	item3 := datalog.NewIdentity("item:3")
-	now := time.Now().Truncate(time.Second)
+			// Project 1: active, has completed items
+			require.NoError(t, tx.Add(proj1, datalog.NewKeyword(":project/type"), datalog.NewKeyword(":type/active")))
+			require.NoError(t, tx.Add(proj1, datalog.NewKeyword(":project/name"), "Alpha"))
+			require.NoError(t, tx.Add(proj1, datalog.NewKeyword(":project/created-at"), now.Add(-24*time.Hour)))
 
-	// Project 1: active, has completed items
-	require.NoError(t, tx.Add(proj1, datalog.NewKeyword(":project/type"), datalog.NewKeyword(":type/active")))
-	require.NoError(t, tx.Add(proj1, datalog.NewKeyword(":project/name"), "Alpha"))
-	require.NoError(t, tx.Add(proj1, datalog.NewKeyword(":project/created-at"), now.Add(-24*time.Hour)))
+			// Project 2: active, no items
+			require.NoError(t, tx.Add(proj2, datalog.NewKeyword(":project/type"), datalog.NewKeyword(":type/active")))
+			require.NoError(t, tx.Add(proj2, datalog.NewKeyword(":project/name"), "Beta"))
+			require.NoError(t, tx.Add(proj2, datalog.NewKeyword(":project/created-at"), now.Add(-48*time.Hour)))
 
-	// Project 2: active, no items
-	require.NoError(t, tx.Add(proj2, datalog.NewKeyword(":project/type"), datalog.NewKeyword(":type/active")))
-	require.NoError(t, tx.Add(proj2, datalog.NewKeyword(":project/name"), "Beta"))
-	require.NoError(t, tx.Add(proj2, datalog.NewKeyword(":project/created-at"), now.Add(-48*time.Hour)))
+			// Project 3: deleted
+			require.NoError(t, tx.Add(proj3, datalog.NewKeyword(":project/type"), datalog.NewKeyword(":type/active")))
+			require.NoError(t, tx.Add(proj3, datalog.NewKeyword(":project/name"), "Gamma"))
+			require.NoError(t, tx.Add(proj3, datalog.NewKeyword(":project/created-at"), now.Add(-72*time.Hour)))
+			require.NoError(t, tx.Add(proj3, datalog.NewKeyword(":project/deleted"), true))
 
-	// Project 3: deleted
-	require.NoError(t, tx.Add(proj3, datalog.NewKeyword(":project/type"), datalog.NewKeyword(":type/active")))
-	require.NoError(t, tx.Add(proj3, datalog.NewKeyword(":project/name"), "Gamma"))
-	require.NoError(t, tx.Add(proj3, datalog.NewKeyword(":project/created-at"), now.Add(-72*time.Hour)))
-	require.NoError(t, tx.Add(proj3, datalog.NewKeyword(":project/deleted"), true))
+			// Items for proj1
+			require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/project"), proj1))
+			require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/status"), datalog.NewKeyword(":status/done")))
+			require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/tag"), datalog.NewKeyword(":tag/primary")))
+			require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/cost"), int64(100)))
+			require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/weight"), int64(5000)))
+			require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/updated-at"), now.Add(-1*time.Hour)))
 
-	// Items for proj1
-	require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/project"), proj1))
-	require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/status"), datalog.NewKeyword(":status/done")))
-	require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/tag"), datalog.NewKeyword(":tag/primary")))
-	require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/cost"), int64(100)))
-	require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/weight"), int64(5000)))
-	require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/updated-at"), now.Add(-1*time.Hour)))
+			require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/project"), proj1))
+			require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/status"), datalog.NewKeyword(":status/done")))
+			require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/tag"), datalog.NewKeyword(":tag/secondary")))
+			require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/cost"), int64(200)))
+			require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/weight"), int64(3000)))
+			require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/updated-at"), now))
 
-	require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/project"), proj1))
-	require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/status"), datalog.NewKeyword(":status/done")))
-	require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/tag"), datalog.NewKeyword(":tag/secondary")))
-	require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/cost"), int64(200)))
-	require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/weight"), int64(3000)))
-	require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/updated-at"), now))
+			// Deleted item for proj1 — should be excluded by NOT in subqueries
+			require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/project"), proj1))
+			require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/status"), datalog.NewKeyword(":status/done")))
+			require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/tag"), datalog.NewKeyword(":tag/tertiary")))
+			require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/cost"), int64(999)))
+			require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/weight"), int64(9999)))
+			require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/updated-at"), now.Add(1*time.Hour)))
+			require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/deleted"), true))
 
-	// Deleted item for proj1 — should be excluded by NOT in subqueries
-	require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/project"), proj1))
-	require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/status"), datalog.NewKeyword(":status/done")))
-	require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/tag"), datalog.NewKeyword(":tag/tertiary")))
-	require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/cost"), int64(999)))
-	require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/weight"), int64(9999)))
-	require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/updated-at"), now.Add(1*time.Hour)))
-	require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/deleted"), true))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			q := buildComplexNotQuery()
+			t.Logf("Query: %s", q.String())
 
-	q := buildComplexNotQuery()
-	t.Logf("Query: %s", q.String())
+			db.SetAnnotationHandler(func(event annotations.Event) {
+				t.Logf("ANNOTATION: %s %v", event.Name, event.Data)
+			})
+			defer db.SetAnnotationHandler(nil)
 
-	db.SetAnnotationHandler(func(event annotations.Event) {
-		t.Logf("ANNOTATION: %s %v", event.Name, event.Data)
-	})
-	defer db.SetAnnotationHandler(nil)
+			tuples, err := executor.CollectTuples(db.Query(q))
+			require.NoError(t, err, "Complex query with NOT clauses should not fail")
 
-	tuples, err := executor.CollectTuples(db.Query(q))
-	require.NoError(t, err, "Complex query with NOT clauses should not fail")
+			t.Logf("Got %d results", len(tuples))
+			for _, tuple := range tuples {
+				t.Logf("Result: %v", tuple)
+			}
 
-	t.Logf("Got %d results", len(tuples))
-	for _, tuple := range tuples {
-		t.Logf("Result: %v", tuple)
-	}
+			// Should have 2 projects (proj3 is deleted)
+			require.Len(t, tuples, 2, "Deleted project should be excluded")
 
-	// Should have 2 projects (proj3 is deleted)
-	require.Len(t, tuples, 2, "Deleted project should be excluded")
+			// Verify proj3 (deleted) is not in results
+			for _, tuple := range tuples {
+				projID := tuple[0].(datalog.Identity)
+				assert.NotEqual(t, "proj:3", projID.String(),
+					"Deleted project should not appear in results")
+			}
 
-	// Verify proj3 (deleted) is not in results
-	for _, tuple := range tuples {
-		projID := tuple[0].(datalog.Identity)
-		assert.NotEqual(t, "proj:3", projID.String(),
-			"Deleted project should not appear in results")
+			// Pin the aggregate columns exactly, as int64 — nil here means an
+			// aggregate silently skipped its inputs, and a bare Go int means a
+			// builder constant bypassed boundary normalization
+			// (docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md).
+			// Find positions: 9 itemCount, 10 totalCost, 11 totalWeight,
+			// 12 totalVolume, 13 totalUnits, 14 ready.
+			byName := make(map[string]executor.Tuple, len(tuples))
+			for _, tuple := range tuples {
+				byName[tuple[1].(string)] = tuple
+			}
+			alpha := byName["Alpha"]
+			require.NotNil(t, alpha)
+			require.Equal(t, int64(2), alpha[9], "Alpha item count")
+			require.Equal(t, int64(300), alpha[10], "Alpha total cost")
+			require.Equal(t, int64(8000), alpha[11], "Alpha total weight")
+			require.Equal(t, int64(0), alpha[12], "Alpha total volume (get-else default, no :item/volume datoms)")
+			require.Equal(t, int64(0), alpha[13], "Alpha total units (get-else default, no :item/units datoms)")
+			require.Equal(t, true, alpha[14], "Alpha ready")
+
+			beta := byName["Beta"]
+			require.NotNil(t, beta)
+			for pos := 9; pos <= 13; pos++ {
+				require.Equal(t, int64(0), beta[pos], "Beta fallback tuple position %d", pos)
+			}
+			require.Equal(t, false, beta[14], "Beta ready")
+		})
 	}
 }
 
@@ -238,48 +258,45 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 // This is the pattern most affected by extractNotClauseSymbols treating
 // inner Provides as Requires.
 func TestNotClauseWithUnboundInnerVar_E2E(t *testing.T) {
-	dbPath := "/tmp/test-not-unbound-inner-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dbPath,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			tx := db.NewTransaction()
 
-	tx := db.NewTransaction()
+			item1 := datalog.NewIdentity("item:1")
+			item2 := datalog.NewIdentity("item:2")
+			item3 := datalog.NewIdentity("item:3")
 
-	item1 := datalog.NewIdentity("item:1")
-	item2 := datalog.NewIdentity("item:2")
-	item3 := datalog.NewIdentity("item:3")
+			require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/name"), "Item 1"))
+			require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/name"), "Item 2"))
+			require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/name"), "Item 3"))
 
-	require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/name"), "Item 1"))
-	require.NoError(t, tx.Add(item2, datalog.NewKeyword(":item/name"), "Item 2"))
-	require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/name"), "Item 3"))
+			// item1 and item3 have errors (with various error messages)
+			require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/error"), "timeout"))
+			require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/error"), "connection refused"))
 
-	// item1 and item3 have errors (with various error messages)
-	require.NoError(t, tx.Add(item1, datalog.NewKeyword(":item/error"), "timeout"))
-	require.NoError(t, tx.Add(item3, datalog.NewKeyword(":item/error"), "connection refused"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Query: find items that have NO errors
-	// The NOT inner pattern introduces ?err which doesn't exist in outer scope
-	queryStr := `[:find ?name
+			// Query: find items that have NO errors
+			// The NOT inner pattern introduces ?err which doesn't exist in outer scope
+			queryStr := `[:find ?name
 	              :where [?e :item/name ?name]
 	                     (not [?e :item/error ?err])]`
 
-	tuples, err := executor.CollectTuples(db.Query(queryStr))
-	require.NoError(t, err, "NOT with inner-only variable should not fail")
+			tuples, err := executor.CollectTuples(db.Query(queryStr))
+			require.NoError(t, err, "NOT with inner-only variable should not fail")
 
-	names := make(map[string]bool)
-	for _, tuple := range tuples {
-		names[tuple[0].(string)] = true
+			names := make(map[string]bool)
+			for _, tuple := range tuples {
+				names[tuple[0].(string)] = true
+			}
+
+			assert.True(t, names["Item 2"], "Item 2 has no errors, should be included")
+			assert.False(t, names["Item 1"], "Item 1 has an error, should be excluded")
+			assert.False(t, names["Item 3"], "Item 3 has an error, should be excluded")
+			assert.Len(t, names, 1)
+		})
 	}
-
-	assert.True(t, names["Item 2"], "Item 2 has no errors, should be included")
-	assert.False(t, names["Item 1"], "Item 1 has an error, should be excluded")
-	assert.False(t, names["Item 3"], "Item 3 has an error, should be excluded")
-	assert.Len(t, names, 1)
 }

@@ -20,7 +20,7 @@ func TestFilterWithPredicate(t *testing.T) {
 
 	// Test with a comparison predicate
 	pred := &query.Comparison{
-		Op:    query.OpGT,
+		Op:    datalog.SymGT,
 		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 		Right: query.ConstantTerm{Value: int64(5)},
 	}
@@ -56,7 +56,7 @@ func TestEvaluateFunction(t *testing.T) {
 
 	// Test with an arithmetic function
 	fn := &query.ArithmeticFunction{
-		Op: query.OpAdd,
+		Op: datalog.SymAdd,
 		Args: []query.Term{
 			query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
@@ -100,7 +100,7 @@ func TestChainedComparison(t *testing.T) {
 
 	// Test: [(< ?x ?y ?z 5)]
 	pred := &query.ChainedComparison{
-		Op: query.OpLT,
+		Op: datalog.SymLT,
 		Terms: []query.Term{
 			query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			query.VariableTerm{Symbol: datalog.NewSymbol("?y")},

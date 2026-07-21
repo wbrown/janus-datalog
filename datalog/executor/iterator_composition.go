@@ -1,74 +1,12 @@
 package executor
 
 import (
+	"fmt"
+	"math"
+
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
-
-// SimpleFilter is a simple filter function that implements the Filter interface
-type SimpleFilter struct {
-	filterFunc func(Tuple) bool
-	symbols    []query.Symbol
-}
-
-// NewSimpleFilter creates a filter from a function
-func NewSimpleFilter(filterFunc func(Tuple) bool) *SimpleFilter {
-	return &SimpleFilter{filterFunc: filterFunc}
-}
-
-// RequiredSymbols returns empty since this is a simple filter
-func (f *SimpleFilter) RequiredSymbols() []query.Symbol {
-	return []query.Symbol{}
-}
-
-// Evaluate applies the filter function
-func (f *SimpleFilter) Evaluate(tuple Tuple, symbols []query.Symbol) bool {
-	return f.filterFunc(tuple)
-}
-
-// String returns a string representation
-func (f *SimpleFilter) String() string {
-	return "SimpleFilter"
-}
-
-// FilterIterator wraps another iterator and only returns tuples that match a filter predicate
-type FilterIterator struct {
-	source  Iterator
-	filter  Filter
-	current Tuple
-	symbols []query.Symbol
-}
-
-// NewFilterIterator creates a new filtering iterator
-func NewFilterIterator(source Iterator, symbols []query.Symbol, filter Filter) *FilterIterator {
-	return &FilterIterator{
-		source:  source,
-		filter:  filter,
-		symbols: symbols,
-	}
-}
-
-// Next advances to the next tuple that matches the filter
-func (it *FilterIterator) Next() bool {
-	for it.source.Next() {
-		it.current = it.source.Tuple()
-		if it.filter.Evaluate(it.current, it.symbols) {
-			return true
-		}
-	}
-	return false
-}
-
-// Tuple returns the current tuple
-func (it *FilterIterator) Tuple() Tuple {
-	return it.current
-}
-
-// Close releases any resources
-func (it *FilterIterator) Close() error {
-	return it.source.Close()
-}
-
-func (it *FilterIterator) Error() error { return it.source.Error() }
 
 // ProjectIterator projects specific symbols from the source relation
 type ProjectIterator struct {
@@ -81,14 +19,12 @@ type ProjectIterator struct {
 
 // NewProjectIterator creates a new projection iterator
 func NewProjectIterator(relation Relation, sourceSymbols []query.Symbol, targetSymbols []query.Symbol) *ProjectIterator {
-	// Compute indices for projection
+	// Compute indices for projection. An absent target reads position 0 —
+	// long-standing behavior; callers validate presence before constructing.
 	indices := make([]int, len(targetSymbols))
 	for i, targetSym := range targetSymbols {
-		for j, sourceSym := range sourceSymbols {
-			if sourceSym == targetSym {
-				indices[i] = j
-				break
-			}
+		if j := query.SymbolIndex(sourceSymbols, targetSym); j >= 0 {
+			indices[i] = j
 		}
 	}
 
@@ -141,95 +77,6 @@ func (it *ProjectIterator) Error() error {
 	return nil
 }
 
-// TransformIterator applies a transformation function to each tuple
-type TransformIterator struct {
-	source    Iterator
-	transform func(Tuple) Tuple
-	current   Tuple
-}
-
-// NewTransformIterator creates a new transform iterator
-func NewTransformIterator(source Iterator, transform func(Tuple) Tuple) *TransformIterator {
-	return &TransformIterator{
-		source:    source,
-		transform: transform,
-	}
-}
-
-// Next advances to the next tuple and transforms it
-func (it *TransformIterator) Next() bool {
-	if !it.source.Next() {
-		return false
-	}
-	it.current = it.transform(it.source.Tuple())
-	return true
-}
-
-// Tuple returns the current transformed tuple
-func (it *TransformIterator) Tuple() Tuple {
-	return it.current
-}
-
-// Close releases any resources
-func (it *TransformIterator) Close() error {
-	return it.source.Close()
-}
-
-func (it *TransformIterator) Error() error { return it.source.Error() }
-
-// ConcatIterator concatenates multiple iterators sequentially
-type ConcatIterator struct {
-	iterators []Iterator
-	current   int
-	tuple     Tuple
-}
-
-// NewConcatIterator creates a new concatenating iterator
-func NewConcatIterator(iterators ...Iterator) *ConcatIterator {
-	return &ConcatIterator{
-		iterators: iterators,
-		current:   0,
-	}
-}
-
-// Next advances to the next tuple across all iterators
-func (it *ConcatIterator) Next() bool {
-	for it.current < len(it.iterators) {
-		if it.iterators[it.current].Next() {
-			it.tuple = it.iterators[it.current].Tuple()
-			return true
-		}
-		// Current iterator exhausted, move to next
-		it.iterators[it.current].Close()
-		it.current++
-	}
-	return false
-}
-
-// Tuple returns the current tuple
-func (it *ConcatIterator) Tuple() Tuple {
-	return it.tuple
-}
-
-// Close releases all resources
-func (it *ConcatIterator) Close() error {
-	var lastErr error
-	// Close any remaining iterators
-	for i := it.current; i < len(it.iterators); i++ {
-		if err := it.iterators[i].Close(); err != nil {
-			lastErr = err
-		}
-	}
-	return lastErr
-}
-
-func (it *ConcatIterator) Error() error {
-	if it.current < len(it.iterators) {
-		return it.iterators[it.current].Error()
-	}
-	return nil
-}
-
 // PredicateFilterIterator wraps another iterator and filters based on a query.Predicate
 type PredicateFilterIterator struct {
 	source    Iterator
@@ -255,11 +102,7 @@ func (it *PredicateFilterIterator) Next() bool {
 
 		// Create bindings for predicate evaluation
 		bindings := make(map[query.Symbol]interface{})
-		for i, sym := range it.symbols {
-			if i < len(it.current) {
-				bindings[sym] = it.current[i]
-			}
-		}
+		bindTuple(bindings, it.symbols, it.current)
 
 		// Evaluate predicate
 		result, err := it.predicate.Eval(bindings)
@@ -291,6 +134,19 @@ func (it *PredicateFilterIterator) Error() error {
 	return it.source.Error()
 }
 
+// admitExpressionResult checks a function result entering relational flow.
+// Expression evaluation is the one producer of NaN inside the engine —
+// arithmetic over Inf operands (Inf - Inf, 0 * Inf, Inf / Inf), where Inf is
+// itself a value and reachable from finite data by overflow — so NaN fails
+// loudly here rather than entering joins and sorts. The write and input
+// boundaries exclude it everywhere else.
+func admitExpressionResult(fn query.Function, result interface{}) error {
+	if f, ok := result.(float64); ok && math.IsNaN(f) {
+		return fmt.Errorf("expression %v produced NaN, which is not a datalog value", fn)
+	}
+	return nil
+}
+
 // FunctionEvaluatorIterator adds a new symbol by evaluating a function
 type FunctionEvaluatorIterator struct {
 	source       Iterator
@@ -309,13 +165,7 @@ type FunctionEvaluatorIterator struct {
 // instead of appending a duplicate.
 func NewFunctionEvaluatorIterator(source Iterator, symbols []query.Symbol, function query.Function, outputSymbol query.Symbol) *FunctionEvaluatorIterator {
 	// Check if the output symbol already exists (unification case)
-	existingIdx := -1
-	for i, sym := range symbols {
-		if sym == outputSymbol {
-			existingIdx = i
-			break
-		}
-	}
+	existingIdx := query.SymbolIndex(symbols, outputSymbol)
 
 	var newSymbols []query.Symbol
 	if existingIdx >= 0 {
@@ -345,11 +195,7 @@ func (it *FunctionEvaluatorIterator) Next() bool {
 
 		// Create bindings for function evaluation
 		bindings := make(map[query.Symbol]interface{})
-		for i, sym := range it.symbols {
-			if i < len(sourceTuple) {
-				bindings[sym] = sourceTuple[i]
-			}
-		}
+		bindTuple(bindings, it.symbols, sourceTuple)
 
 		// Evaluate function. Fail-fast on eval errors — store the deferred
 		// error so Error() returns it after Next() reports exhaustion.
@@ -371,9 +217,14 @@ func (it *FunctionEvaluatorIterator) Next() bool {
 			result = gsr.Value
 		}
 
+		if err := admitExpressionResult(it.function, result); err != nil {
+			it.err = err
+			return false
+		}
+
 		if it.existingIdx >= 0 {
 			// Unification: check that function result matches existing binding
-			if it.existingIdx < len(sourceTuple) && !valuesEqual(sourceTuple[it.existingIdx], result) {
+			if it.existingIdx < len(sourceTuple) && !datalog.ValuesEqual(sourceTuple[it.existingIdx], result) {
 				continue // Mismatch — filter this tuple
 			}
 			// Match — pass through unchanged (no new symbol added)

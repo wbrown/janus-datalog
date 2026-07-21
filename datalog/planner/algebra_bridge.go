@@ -8,9 +8,12 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// optimizeAlgebra compiles clauses to relational algebra and applies the
-// configured equivalence passes without flattening the optimized tree.
-func optimizeAlgebra(clauses []query.Clause, handler annotations.Handler) (*algebra.Node, error) {
+// optimizeAlgebra compiles a query's clauses to relational algebra and applies
+// the configured equivalence passes without flattening the optimized tree. The
+// full query goes to Compile — its :in symbols seed the bridge's clause
+// ordering (an input-bound correlate is bindable), so stripping them here
+// would reject valid queries.
+func optimizeAlgebra(q *query.Query, handler annotations.Handler) (*algebra.Node, error) {
 	emit := func(name string, data map[string]interface{}) {
 		if handler != nil {
 			handler(annotations.Event{Name: name, Data: data})
@@ -18,10 +21,9 @@ func optimizeAlgebra(clauses []query.Clause, handler annotations.Handler) (*alge
 	}
 
 	emit("algebra/bridge-begin", map[string]interface{}{
-		"clause_count": len(clauses),
+		"clause_count": len(q.Where),
 	})
 
-	q := &query.Query{Where: clauses}
 	root, err := algebra.Compile(q)
 	if err != nil {
 		emit("algebra/compile-error", map[string]interface{}{
@@ -60,7 +62,7 @@ func optimizeViaAlgebra(
 	if q == nil {
 		return nil, fmt.Errorf("algebra optimize: nil query")
 	}
-	optimized, err := optimizeAlgebra(q.Where, handler)
+	optimized, err := optimizeAlgebra(q, handler)
 	if err != nil {
 		return nil, err
 	}

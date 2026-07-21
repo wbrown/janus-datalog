@@ -9,21 +9,25 @@ import (
 )
 
 func TestMemoryDatabaseRoundTrip(t *testing.T) {
-	database, err := db.OpenMemory(db.WithReplicaID(7))
-	require.NoError(t, err)
-	defer database.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			database, err := db.OpenMemory(db.WithReplicaID(7), db.WithPlannerOptions(mode.plannerOptions()))
+			require.NoError(t, err)
+			defer database.Close()
 
-	entity := datalog.NewIdentity("wasm:item")
-	attr := datalog.NewKeyword(":item/name")
-	tx := database.NewTransaction()
-	require.NoError(t, tx.Set(entity, attr, "portable"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			entity := datalog.NewIdentity("wasm:item")
+			attr := datalog.NewKeyword(":item/name")
+			tx := database.NewTransaction()
+			require.NoError(t, tx.Set(entity, attr, "portable"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	var names []string
-	require.NoError(t, database.QueryInto(
-		&names,
-		`[:find ?name :where [?entity :item/name ?name]]`,
-	))
-	require.Equal(t, []string{"portable"}, names)
+			var names []string
+			require.NoError(t, database.QueryInto(
+				&names,
+				`[:find ?name :where [?entity :item/name ?name]]`,
+			))
+			require.Equal(t, []string{"portable"}, names)
+		})
+	}
 }

@@ -200,8 +200,7 @@ func analyzeSubqueryForRewriting(subqIdx int, subqPlan *SubqueryPlan) (Correlate
 }
 ```
 
-**Pros:** Safe, won't break queries
-**Cons:** Disables optimization for many valid cases
+**Pros:** Safe, won't break queries **Cons:** Disables optimization for many valid cases
 
 ### Option 3: Two-Phase Variable Mapping
 
@@ -230,8 +229,7 @@ for _, sqPattern := range subqueryPatterns {
 }
 ```
 
-**Pros:** More thorough variable mapping
-**Cons:** Complex, might introduce new bugs
+**Pros:** More thorough variable mapping **Cons:** Complex, might introduce new bugs
 
 ## Recommended Fix: Option 1
 
@@ -312,9 +310,7 @@ Result: Aggregation receives [?name ?day] instead of [?name ?day ?v ?__cond_?pd]
 
 ### The Fix: Phase Symbol Metadata Propagation
 
-**File:** `datalog/planner/phase_reordering.go`
-**Function:** `updatePhaseSymbols`
-**Lines:** 342-358
+**File:** `datalog/planner/phase_reordering.go` **Function:** `updatePhaseSymbols` **Lines:** 342-358
 
 The `updatePhaseSymbols` function recalculates `Keep` symbols after phase reordering. It was only checking the current phase for aggregate metadata:
 

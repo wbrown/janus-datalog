@@ -210,7 +210,6 @@ func TestNotJoinClause_PipeInValue_E2E(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
 	// [:find ?name ?tag
 	//  :where [?e :item/name ?name]
@@ -261,19 +260,25 @@ func TestNotJoinClause_PipeInValue_E2E(t *testing.T) {
 		},
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	if result.Size() != 1 {
-		t.Fatalf("expected 1 result (name=x, tag=y|z) for entity b, got %d", result.Size())
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	tuple := result.Get(0)
-	name, _ := tuple[0].(string)
-	tag, _ := tuple[1].(string)
-	if name != "x" || tag != "y|z" {
-		t.Errorf("expected (x, y|z), got (%q, %q)", name, tag)
+			if result.Size() != 1 {
+				t.Fatalf("expected 1 result (name=x, tag=y|z) for entity b, got %d", result.Size())
+			}
+
+			tuple := result.Get(0)
+			name, _ := tuple[0].(string)
+			tag, _ := tuple[1].(string)
+			if name != "x" || tag != "y|z" {
+				t.Errorf("expected (x, y|z), got (%q, %q)", name, tag)
+			}
+		})
 	}
 }

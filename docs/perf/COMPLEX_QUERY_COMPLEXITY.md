@@ -84,17 +84,17 @@ normalized below, but this is the equivalent decompiled shape:
  [?scenario :scenario/title ?title]
  [?scenario :scenario/created-at ?createdAt]
 
- (or-default-join [?scenario]
+ (or-default-join [[?scenario] ?taskCount ?totalTokens ?totalDuration]
    [(q [:find ?scenarioInput
               (count ?task) (sum ?tokens) (sum ?duration)
         :in $
         :where
         [?task :task/root ?scenarioInput]
         [?task :task/status :status/complete]
-        (or-default-join [?task]
+        (or-default-join [[?task] ?tokens]
           [?task :task/token-count ?tokens]
           [(get-else $ ?task :task/token-count 0) ?tokens])
-        (or-default-join [?task]
+        (or-default-join [[?task] ?duration]
           [?task :task/duration ?duration]
           [(get-else $ ?task :task/duration 0) ?duration])]
        $)
@@ -102,7 +102,7 @@ normalized below, but this is the equivalent decompiled shape:
    [(ground [0 0 0])
     [[?taskCount ?totalTokens ?totalDuration]]])
 
- (or-default-join [?scenario]
+ (or-default-join [[?scenario] ?openingCount]
    [(q [:find ?scenarioInput (count ?task)
         :in $
         :where
@@ -115,7 +115,7 @@ normalized below, but this is the equivalent decompiled shape:
 
  [[(> ?openingCount 0)] ?complete]
 
- (or-default-join [?scenario]
+ (or-default-join [[?scenario] ?lastKey ?lastUpdatedAt]
    [(q [:find ?scenarioInput ?key ?completedAt
         :in $
         :where
@@ -147,7 +147,7 @@ The important structural changes are:
 2. Aggregate subqueries group by that input and return a relation containing all
    scenarios in one execution.
 3. The outer query joins those relations back on `?scenario`.
-4. Defaults become `or-default-join` branches over the explicit join key.
+4. Defaults become `or-default-join` branches with the correlation input declared required and the aggregate outputs declared in the header.
 5. The two `get-else` expressions become indexed attribute scans with typed
    fallback branches.
 6. The nested maximum becomes a grouped relation joined into the argmax query.

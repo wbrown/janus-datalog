@@ -7,20 +7,20 @@ type Clause interface {
 }
 
 // Ensure our types implement Clause
-func (*DataPattern) clause()         {}
-func (*Comparison) clause()          {}
-func (*ChainedComparison) clause()   {}
-func (*NotEqualPredicate) clause()   {}
-func (*GroundPredicate) clause()     {}
-func (*MissingPredicate) clause()    {}
-func (*Expression) clause()          {}
-func (*Subquery) clause()            {}
-func (*NotClause) clause()           {}
-func (*NotJoinClause) clause()       {}
-func (*OrClause) clause()            {}
-func (*OrJoinClause) clause()        {}
-func (*OrDefaultClause) clause()     {}
-func (*OrDefaultJoinClause) clause() {}
+func (*DataPattern) clause()            {}
+func (*Comparison) clause()             {}
+func (*ChainedComparison) clause()      {}
+func (*NotEqualPredicate) clause()      {}
+func (*GroundPredicate) clause()        {}
+func (*MissingPredicate) clause()       {}
+func (*StrStartsWithPredicate) clause() {}
+func (*Expression) clause()             {}
+func (*NotClause) clause()              {}
+func (*NotJoinClause) clause()          {}
+func (*OrClause) clause()               {}
+func (*OrJoinClause) clause()           {}
+func (*OrDefaultClause) clause()        {}
+func (*OrDefaultJoinClause) clause()    {}
 
 // Expression wraps a Function with an optional binding
 type Expression struct {
@@ -40,18 +40,6 @@ func (e *Expression) String() string {
 		bindingStr = ""
 	}
 	return "[" + e.Function.String() + " " + bindingStr + "]"
-}
-
-// Subquery represents a nested query with bindings
-type Subquery struct {
-	Query   *Query      // The nested query
-	Inputs  []Symbol    // Input variables from outer query
-	Binding interface{} // Can be Symbol (scalar), TupleBinding, or RelationBinding
-}
-
-func (s *Subquery) String() string {
-	// Simplified string representation
-	return "[(q ...) binding]"
 }
 
 // NotClause represents a negation clause: (not [clauses...])
@@ -171,16 +159,41 @@ func (o *OrDefaultClause) String() string {
 	return result
 }
 
-// OrDefaultJoinClause represents an or-default-join with explicit variable binding:
-// (or-default-join [vars] branch1 branch2 ...)
+// OrDefaultJoinClause represents an or-default-join with a declared interface:
+//
+//	(or-default-join [[?required ...] ?output ...] branch1 branch2 ...)
+//	(or-default-join [?output ...] branch1 branch2 ...)   ; global fallback
+//
+// RequiredVars are the per-group correlation keys, bound by the enclosing
+// query before the clause runs; empty means the fallback decision is global.
+// OutputVars are bound by every branch and are the clause's provides. The
+// header is the complete interface: branch locals never escape. or-default
+// is non-monotone — the correlation keys change results, not just plans —
+// so the quantification is declared syntax (Datomic's required-vars form),
+// never inferred from branch structure or binding context. Validate
+// enforces the declaration; the boundaries (parser, qb, executor) call it.
 type OrDefaultJoinClause struct {
-	JoinVars []Symbol
-	Branches [][]Clause
+	RequiredVars []Symbol
+	OutputVars   []Symbol
+	Branches     [][]Clause
 }
 
 func (o *OrDefaultJoinClause) String() string {
 	result := "(or-default-join ["
-	for i, v := range o.JoinVars {
+	if len(o.RequiredVars) > 0 {
+		result += "["
+		for i, v := range o.RequiredVars {
+			if i > 0 {
+				result += " "
+			}
+			result += v.String()
+		}
+		result += "]"
+		if len(o.OutputVars) > 0 {
+			result += " "
+		}
+	}
+	for i, v := range o.OutputVars {
 		if i > 0 {
 			result += " "
 		}

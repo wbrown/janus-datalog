@@ -19,10 +19,11 @@ type Executor struct {
 	maxSubqueryWorkers       int
 }
 
-// NewExecutor creates a new query executor with default options
-func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
-	defaultOpts := planner.PlannerOptions{
-		EnableIteratorComposition:  true,
+// defaultPlannerOptions is the planner profile NewExecutor constructs with —
+// the single definition, consumed by NewExecutor and by the test suite's
+// optimizer mode axis so the two can never drift.
+func defaultPlannerOptions() planner.PlannerOptions {
+	return planner.PlannerOptions{
 		EnableTrueStreaming:        true,
 		EnableSymmetricHashJoin:    false,
 		EnableParallelSubqueries:   true,
@@ -31,7 +32,11 @@ func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 		EnableStreamingAggregation: true,
 		EnableAttributeFetchFusion: true,
 	}
-	return NewExecutorWithOptions(matcher, resolver, defaultOpts)
+}
+
+// NewExecutor creates a new query executor with default options
+func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
+	return NewExecutorWithOptions(matcher, resolver, defaultPlannerOptions())
 }
 
 // NewExecutorWithOptions creates a new query executor with custom planner options
@@ -67,7 +72,6 @@ func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opt
 // their zero value.
 func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
-		EnableIteratorComposition:  opts.EnableIteratorComposition,
 		EnableTrueStreaming:        opts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:    opts.EnableSymmetricHashJoin,
 		EnableParallelSubqueries:   opts.EnableParallelSubqueries,
@@ -109,6 +113,14 @@ func (e *Executor) ExecuteWithContext(ctx Context, q *query.Query) (Relation, er
 // For regular queries, pass an empty slice for inputRelations.
 // For subqueries, pass the relations corresponding to the :in clause variables.
 func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelations []Relation) (Relation, error) {
+	// Static clause-shape rules are user-boundary contracts: a hand-built
+	// AST entering here gets the same rejection, with the same message, as
+	// parsed text — and before planning, so both planner modes agree on
+	// where and how a static defect surfaces.
+	if err := query.ValidateStaticClauseShapes(q.Where); err != nil {
+		return nil, err
+	}
+
 	// Apply decorator pattern: wrap matcher with annotations if context has a handler
 	matcher := e.matcher
 
@@ -524,8 +536,16 @@ func (e *Executor) executeRealizedWithRelationInputIteration(ctx Context, plan *
 		}
 	}
 
-	if iterationRelation == nil || iterationRelation.Size() == 0 {
-		// No iteration needed or empty input
+	if iterationRelation == nil {
+		// No iteration needed
+		return emptyRelationForQuery(plan.Query), nil
+	}
+	if iterationRelation.Size() == 0 {
+		// An errored relation that materialized empty is not an empty
+		// input; surface the taint instead of answering from it.
+		if err := EmptyRelationError(iterationRelation); err != nil {
+			return nil, err
+		}
 		return emptyRelationForQuery(plan.Query), nil
 	}
 

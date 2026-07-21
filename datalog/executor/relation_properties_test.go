@@ -15,8 +15,8 @@ func TestRelationPropertiesAreStableAtInterfaceBoundary(t *testing.T) {
 	b := datalog.NewSymbol("?b")
 	properties := RelationProperties{
 		Ordering: []query.OrderByClause{
-			{Variable: a, Direction: query.OrderAsc},
-			{Variable: b, Direction: query.OrderDesc},
+			{Variable: a, Descending: false},
+			{Variable: b, Descending: true},
 		},
 		Keys: [][]query.Symbol{{a}, {a, b}},
 	}
@@ -38,8 +38,8 @@ func TestRelationPropertiesRenameSymbols(t *testing.T) {
 	outerB := datalog.NewSymbol("?outer-b")
 	properties := RelationProperties{
 		Ordering: []query.OrderByClause{
-			{Variable: innerA, Direction: query.OrderAsc},
-			{Variable: innerB, Direction: query.OrderDesc},
+			{Variable: innerA, Descending: false},
+			{Variable: innerB, Descending: true},
 		},
 		Keys: [][]query.Symbol{{innerA}, {innerA, innerB}},
 	}
@@ -51,8 +51,8 @@ func TestRelationPropertiesRenameSymbols(t *testing.T) {
 	require.Equal(t,
 		RelationProperties{
 			Ordering: []query.OrderByClause{
-				{Variable: outerA, Direction: query.OrderAsc},
-				{Variable: outerB, Direction: query.OrderDesc},
+				{Variable: outerA, Descending: false},
+				{Variable: outerB, Descending: true},
 			},
 			Keys: [][]query.Symbol{{outerA}, {outerA, outerB}},
 		},
@@ -89,8 +89,8 @@ func TestRelationPropertyPropagation(t *testing.T) {
 	c := datalog.NewSymbol("?c")
 	properties := RelationProperties{
 		Ordering: []query.OrderByClause{
-			{Variable: a, Direction: query.OrderAsc},
-			{Variable: b, Direction: query.OrderDesc},
+			{Variable: a, Descending: false},
+			{Variable: b, Descending: true},
 		},
 		Keys: [][]query.Symbol{{a}, {a, b}},
 	}
@@ -101,13 +101,17 @@ func TestRelationPropertyPropagation(t *testing.T) {
 		properties,
 	)
 
-	filtered := rel.Filter(NewSimpleFilter(func(Tuple) bool { return true }))
+	filtered := rel.FilterWithPredicate(&query.Comparison{
+		Op:    datalog.SymGTE,
+		Left:  query.VariableTerm{Symbol: a},
+		Right: query.ConstantTerm{Value: int64(0)},
+	})
 	require.Equal(t, properties, filtered.Properties(), "filter must preserve properties")
 
 	projectedA, err := rel.Project([]query.Symbol{a})
 	require.NoError(t, err)
 	require.Equal(t, RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: a, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: a, Descending: false}},
 		Keys:     [][]query.Symbol{{a}},
 	}, projectedA.Properties())
 
@@ -116,9 +120,9 @@ func TestRelationPropertyPropagation(t *testing.T) {
 	require.Equal(t, RelationProperties{}, projectedB.Properties(),
 		"dropping the leading order symbol and every key must clear properties")
 
-	sorted := rel.Sort([]query.OrderByClause{{Variable: b, Direction: query.OrderDesc}})
+	sorted := rel.Sort([]query.OrderByClause{{Variable: b, Descending: true}})
 	require.Equal(t, RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: b, Direction: query.OrderDesc}},
+		Ordering: []query.OrderByClause{{Variable: b, Descending: true}},
 		Keys:     [][]query.Symbol{{a}, {a, b}},
 	}, sorted.Properties())
 
@@ -136,7 +140,7 @@ func TestRelationPropertiesWhenAddingSymbols(t *testing.T) {
 	b := datalog.NewSymbol("?b")
 	fresh := datalog.NewSymbol("?fresh")
 	properties := RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: a, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: a, Descending: false}},
 		Keys:     [][]query.Symbol{{a}, {a, b}},
 	}
 
@@ -153,21 +157,25 @@ func TestStreamingRelationPropertyPropagation(t *testing.T) {
 	symbols := []query.Symbol{a, b}
 	tuples := []Tuple{{int64(1), int64(2)}, {int64(2), int64(1)}}
 	properties := RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: a, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: a, Descending: false}},
 		Keys:     [][]query.Symbol{{a}},
 	}
 	open := func() *StreamingRelation {
-		base := NewMaterializedRelationNoDedupe(symbols, tuples)
+		base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{})
 		return NewStreamingRelationWithProperties(
 			symbols,
 			base.Iterator(),
-			ExecutorOptions{EnableIteratorComposition: true},
+			ExecutorOptions{},
 			properties,
 		)
 	}
 
 	require.Equal(t, properties,
-		open().Filter(NewSimpleFilter(func(Tuple) bool { return true })).Properties())
+		open().FilterWithPredicate(&query.Comparison{
+			Op:    datalog.SymGTE,
+			Left:  query.VariableTerm{Symbol: a},
+			Right: query.ConstantTerm{Value: int64(0)},
+		}).Properties())
 
 	projected, err := open().Project([]query.Symbol{a})
 	require.NoError(t, err)
@@ -175,7 +183,7 @@ func TestStreamingRelationPropertyPropagation(t *testing.T) {
 
 	evaluated := open().EvaluateFunction(
 		&query.ArithmeticFunction{
-			Op: query.OpAdd,
+			Op: datalog.SymAdd,
 			Args: []query.Term{
 				query.VariableTerm{Symbol: a},
 				query.VariableTerm{Symbol: b},
@@ -193,19 +201,19 @@ func TestRelationPropertiesSatisfyOrderingPrefixes(t *testing.T) {
 	a := datalog.NewSymbol("?a")
 	b := datalog.NewSymbol("?b")
 	properties := RelationProperties{Ordering: []query.OrderByClause{
-		{Variable: a, Direction: query.OrderAsc},
-		{Variable: b, Direction: query.OrderDesc},
+		{Variable: a, Descending: false},
+		{Variable: b, Descending: true},
 	}}
 
 	require.True(t, properties.satisfiesOrdering([]query.OrderByClause{
-		{Variable: a, Direction: query.OrderAsc},
+		{Variable: a, Descending: false},
 	}))
 	require.True(t, properties.satisfiesOrdering(properties.Ordering))
 	require.False(t, properties.satisfiesOrdering([]query.OrderByClause{
-		{Variable: a, Direction: query.OrderDesc},
+		{Variable: a, Descending: true},
 	}))
 	require.False(t, properties.satisfiesOrdering([]query.OrderByClause{
-		{Variable: b, Direction: query.OrderDesc},
+		{Variable: b, Descending: true},
 	}))
 }
 
@@ -215,11 +223,11 @@ func TestStreamingProjectionSkipsDedupWhenKeyIsRetained(t *testing.T) {
 	symbols := []query.Symbol{a, b}
 	tuples := []Tuple{{int64(1), "same"}, {int64(2), "same"}}
 	open := func(properties RelationProperties) *StreamingRelation {
-		base := NewMaterializedRelationNoDedupe(symbols, tuples)
+		base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{})
 		return NewStreamingRelationWithProperties(
 			symbols,
 			base.Iterator(),
-			ExecutorOptions{EnableIteratorComposition: true},
+			ExecutorOptions{},
 			properties,
 		)
 	}
@@ -240,13 +248,13 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 	leftValue := datalog.NewSymbol("?left")
 	rightValue := datalog.NewSymbol("?right")
 	opts := ExecutorOptions{
-		EnableStreamingJoins:      true,
-		EnableIteratorComposition: true,
+		EnableStreamingJoins: true,
 	}
 
-	leftBase := NewMaterializedRelationNoDedupe(
+	leftBase := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, leftValue},
 		[]Tuple{{int64(1), "left-1"}, {int64(2), "left-2"}},
+		ExecutorOptions{},
 	)
 	left := NewStreamingRelationWithProperties(
 		leftBase.Symbols(),
@@ -284,13 +292,13 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 	leftValue := datalog.NewSymbol("?left")
 	rightValue := datalog.NewSymbol("?right")
 	opts := ExecutorOptions{
-		EnableStreamingJoins:      true,
-		EnableIteratorComposition: true,
+		EnableStreamingJoins: true,
 	}
 
-	leftBase := NewMaterializedRelationNoDedupe(
+	leftBase := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, leftValue},
 		[]Tuple{{int64(1), "left-1"}},
+		ExecutorOptions{},
 	)
 	left := NewStreamingRelationWithProperties(
 		leftBase.Symbols(),
@@ -298,7 +306,7 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 		opts,
 		RelationProperties{Keys: [][]query.Symbol{{id}}},
 	)
-	right := NewMaterializedRelationNoDedupeWithOptions(
+	right := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, rightValue},
 		[]Tuple{{int64(1), "right-1"}, {int64(1), "right-2"}},
 		opts,
@@ -331,8 +339,7 @@ func TestHashJoinPreservesRightKeyWhenLeftJoinSymbolsAreKey(t *testing.T) {
 	leftValue := datalog.NewSymbol("?left")
 	rightValue := datalog.NewSymbol("?right")
 	opts := ExecutorOptions{
-		EnableStreamingJoins:      true,
-		EnableIteratorComposition: true,
+		EnableStreamingJoins: true,
 	}
 
 	left := NewMaterializedRelationWithProperties(
@@ -341,9 +348,10 @@ func TestHashJoinPreservesRightKeyWhenLeftJoinSymbolsAreKey(t *testing.T) {
 		opts,
 		RelationProperties{Keys: [][]query.Symbol{{id}}},
 	)
-	rightBase := NewMaterializedRelationNoDedupe(
+	rightBase := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, rightValue},
 		[]Tuple{{int64(1), "right-1"}, {int64(2), "right-2"}},
+		ExecutorOptions{},
 	)
 	right := NewStreamingRelationWithProperties(
 		rightBase.Symbols(),
@@ -384,14 +392,13 @@ func TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys(t *testing.T) {
 	require.Equal(t, properties, materializedJoin.Properties())
 
 	opts := ExecutorOptions{
-		EnableStreamingJoins:      true,
-		EnableSymmetricHashJoin:   true,
-		DefaultHashTableSize:      16,
-		EnableTrueStreaming:       true,
-		EnableIteratorComposition: true,
+		EnableStreamingJoins:    true,
+		EnableSymmetricHashJoin: true,
+		DefaultHashTableSize:    16,
+		EnableTrueStreaming:     true,
 	}
-	streamingLeftBase := NewMaterializedRelationNoDedupe(leftSymbols, leftTuples)
-	streamingRightBase := NewMaterializedRelationNoDedupe(rightSymbols, rightTuples)
+	streamingLeftBase := NewMaterializedRelationFromSet(leftSymbols, leftTuples, ExecutorOptions{})
+	streamingRightBase := NewMaterializedRelationFromSet(rightSymbols, rightTuples, ExecutorOptions{})
 	streamingLeft := NewStreamingRelationWithProperties(
 		leftSymbols, streamingLeftBase.Iterator(), opts, properties)
 	streamingRight := NewStreamingRelationWithProperties(
@@ -407,7 +414,7 @@ func TestSemiAndAntiJoinsPreserveLeftProperties(t *testing.T) {
 	id := datalog.NewSymbol("?id")
 	value := datalog.NewSymbol("?value")
 	properties := RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: id, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: id, Descending: false}},
 		Keys:     [][]query.Symbol{{id}},
 	}
 	left := NewMaterializedRelationWithProperties(
@@ -440,10 +447,13 @@ func TestSemiAndAntiJoinsPreserveLeftProperties(t *testing.T) {
 
 func TestSemiAndAntiJoinsDeduplicateUnkeyedLeftInput(t *testing.T) {
 	id := datalog.NewSymbol("?id")
-	left := NewMaterializedRelationNoDedupe(
-		[]query.Symbol{id},
-		[]Tuple{{int64(1)}, {int64(1)}, {int64(2)}, {int64(2)}},
-	)
+	// Deliberately constructs a duplicate-carrying relation — an invariant
+	// violation no constructor admits — to pin that semi/anti-joins
+	// deduplicate unkeyed input rather than trusting it.
+	left := &MaterializedRelation{
+		symbols: []query.Symbol{id},
+		tuples:  []Tuple{{int64(1)}, {int64(1)}, {int64(2)}, {int64(2)}},
+	}
 	right := NewMaterializedRelation(
 		[]query.Symbol{id},
 		[]Tuple{{int64(1)}},
@@ -464,12 +474,13 @@ func TestExpandingExpressionDoesNotPreserveOuterKey(t *testing.T) {
 		ExecutorOptions{},
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
-	expanded := evaluateExpressionWithLookup(source, &query.Expression{
+	expanded, err := evaluateExpressionWithLookup(source, &query.Expression{
 		Function: query.EnumerateFunction{
 			VecTerm: query.VariableTerm{Symbol: vector},
 		},
 		Binding: query.TupleBinding{Variables: []query.Symbol{index, value}},
 	}, nil, nil)
+	require.NoError(t, err)
 
 	require.False(t, containsSymbolSet(expanded.Properties().Keys, []query.Symbol{entity}),
 		"one entity expands to multiple rows, so the outer key is no longer unique")
@@ -543,9 +554,10 @@ func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
 		events = append(events, event)
 	})
 	symbol := datalog.NewSymbol("?value")
-	base := NewMaterializedRelationNoDedupe(
+	base := NewMaterializedRelationFromSet(
 		[]query.Symbol{symbol},
 		[]Tuple{{int64(1)}, {int64(2)}},
+		ExecutorOptions{},
 	)
 	stream := NewStreamingRelationWithOptions(
 		base.Symbols(),

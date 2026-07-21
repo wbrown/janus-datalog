@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -55,24 +53,31 @@ func TestSchema_LongAttributeDefinitionRejected(t *testing.T) {
 // accepted and round-trips (guards against an off-by-one that would reject
 // valid names).
 func TestStorage_MaxLengthAttributeNameAccepted(t *testing.T) {
-	dir := t.TempDir()
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			defer db.Close()
 
-	// ":boundary/" is 10 bytes; pad to exactly MaxAttributeBytes.
-	name := ":boundary/" + strings.Repeat("a", datalog.MaxAttributeBytes-len(":boundary/"))
-	require.Len(t, name, datalog.MaxAttributeBytes)
+			// ":boundary/" is 10 bytes; pad to exactly MaxAttributeBytes.
+			name := ":boundary/" + strings.Repeat("a", datalog.MaxAttributeBytes-len(":boundary/"))
+			require.Len(t, name, datalog.MaxAttributeBytes)
 
-	e := datalog.NewIdentity("entity-boundary")
-	a := datalog.NewKeyword(name)
+			e := datalog.NewIdentity("entity-boundary")
+			a := datalog.NewKeyword(name)
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, "value-at-limit"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, "value-at-limit"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	full, err := db.Pull(e, `[*]`)
-	require.NoError(t, err)
-	require.Equal(t, "value-at-limit", full[strings.TrimPrefix(name, ":")])
+			full, err := db.Pull(e, `[*]`)
+			require.NoError(t, err)
+			require.Equal(t, "value-at-limit", full[strings.TrimPrefix(name, ":")])
+		})
+	}
 }

@@ -86,8 +86,10 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			copy.Output = cloneSymbols(children[0].Symbols())
 			refreshed.Data = &copy
 		case *Union:
-			if len(children) < 2 {
-				return nil, fmt.Errorf("refresh Union: expected at least two children, got %d", len(children))
+			// Single-branch unions are legal IR (single-branch or/or-join);
+			// see analyzeUnionBranches.
+			if len(children) < 1 {
+				return nil, fmt.Errorf("refresh Union: expected at least one child, got %d", len(children))
 			}
 			copy := *data
 			copy.Output = cloneSymbols(data.Output)
@@ -95,12 +97,16 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			copy.Required = cloneSymbols(data.Required)
 			refreshed.Data = &copy
 		case *LateralUnion:
-			if len(children) < 2 {
-				return nil, fmt.Errorf("refresh LateralUnion: expected at least two children, got %d", len(children))
+			// Arity parity with Union: clause-level branch minimums (e.g.
+			// or-default's two branches) are language rules enforced by the
+			// clause's Validate at the boundaries, not IR invariants.
+			if len(children) < 1 {
+				return nil, fmt.Errorf("refresh LateralUnion: expected at least one child, got %d", len(children))
 			}
 			copy := *data
 			copy.Output = cloneSymbols(data.Output)
-			copy.JoinVars = cloneSymbols(data.JoinVars)
+			copy.RequiredVars = cloneSymbols(data.RequiredVars)
+			copy.OutputVars = cloneSymbols(data.OutputVars)
 			copy.Required = cloneSymbols(data.Required)
 			refreshed.Data = &copy
 		case *LateralJoin:
@@ -120,7 +126,7 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			if !ok {
 				return nil, fmt.Errorf("refresh LateralJoin: binding has type %T", data.Binding)
 			}
-			copy.Output = mergeSymbols(output, bindingFormSymbols(binding))
+			copy.Output = mergeSymbols(output, binding.BoundVariables())
 			refreshed.Data = &copy
 		case *Aggregate:
 			copy := *data
@@ -252,7 +258,7 @@ func analyzeSelect(node *Node, children []Analysis) (Analysis, error) {
 		output = data.Output
 	}
 	for _, symbol := range data.Required {
-		if !containsSymbol(output, symbol) {
+		if !query.ContainsSymbol(output, symbol) {
 			required = append(required, symbol)
 		}
 	}
@@ -274,7 +280,7 @@ func analyzeProject(node *Node, children []Analysis) (Analysis, error) {
 		return Analysis{Output: data.Symbols, Required: data.Symbols}, nil
 	}
 	for _, symbol := range data.Symbols {
-		if !containsSymbol(children[0].Output, symbol) {
+		if !query.ContainsSymbol(children[0].Output, symbol) {
 			return Analysis{}, fmt.Errorf("project symbol %s is not produced by its child", symbol)
 		}
 	}
@@ -296,7 +302,7 @@ func analyzeMap(node *Node, children []Analysis) (Analysis, error) {
 		required = append(required, children[0].Required...)
 	}
 	for _, symbol := range data.Required {
-		if !containsSymbol(childOutput, symbol) {
+		if !query.ContainsSymbol(childOutput, symbol) {
 			required = append(required, symbol)
 		}
 	}
@@ -321,7 +327,7 @@ func analyzeJoin(node *Node, children []Analysis) (Analysis, error) {
 		return Analysis{}, dataTypeError(node, "*algebra.Join")
 	}
 	for _, symbol := range data.JoinSymbols {
-		if !containsSymbol(children[0].Output, symbol) || !containsSymbol(children[1].Output, symbol) {
+		if !query.ContainsSymbol(children[0].Output, symbol) || !query.ContainsSymbol(children[1].Output, symbol) {
 			return Analysis{}, fmt.Errorf("join symbol %s must be produced by both children", symbol)
 		}
 	}
@@ -344,24 +350,24 @@ func analyzeAntiJoin(node *Node, children []Analysis) (Analysis, error) {
 		return Analysis{}, dataTypeError(node, "*algebra.AntiJoin")
 	}
 	for _, symbol := range data.Required {
-		if !containsSymbol(data.JoinSymbols, symbol) {
+		if !query.ContainsSymbol(data.JoinSymbols, symbol) {
 			return Analysis{}, fmt.Errorf("correlation requirement %s is not declared as an anti-join symbol", symbol)
 		}
-		if !containsSymbol(children[0].Output, symbol) {
+		if !query.ContainsSymbol(children[0].Output, symbol) {
 			return Analysis{}, fmt.Errorf("correlation requirement %s is not produced by the left child", symbol)
 		}
-		if containsSymbol(children[1].Output, symbol) {
+		if query.ContainsSymbol(children[1].Output, symbol) {
 			return Analysis{}, fmt.Errorf("correlation requirement %s is already produced by the right child", symbol)
 		}
-		if !containsSymbol(children[1].Required, symbol) {
+		if !query.ContainsSymbol(children[1].Required, symbol) {
 			return Analysis{}, fmt.Errorf("correlation requirement %s is not a free requirement of the right child", symbol)
 		}
 	}
 	for _, symbol := range data.JoinSymbols {
-		if !containsSymbol(children[0].Output, symbol) {
+		if !query.ContainsSymbol(children[0].Output, symbol) {
 			return Analysis{}, fmt.Errorf("anti-join symbol %s must be produced by the left child", symbol)
 		}
-		if !containsSymbol(children[1].Output, symbol) && !containsSymbol(data.Required, symbol) {
+		if !query.ContainsSymbol(children[1].Output, symbol) && !query.ContainsSymbol(data.Required, symbol) {
 			return Analysis{}, fmt.Errorf(
 				"anti-join symbol %s must be produced by the right child or declared as a correlation requirement",
 				symbol,
@@ -369,10 +375,10 @@ func analyzeAntiJoin(node *Node, children []Analysis) (Analysis, error) {
 		}
 	}
 	for _, symbol := range children[1].Required {
-		if symbol.IsSource() || containsSymbol(children[1].Output, symbol) {
+		if symbol.IsSource() || query.ContainsSymbol(children[1].Output, symbol) {
 			continue
 		}
-		if containsSymbol(children[0].Output, symbol) && !containsSymbol(data.Required, symbol) {
+		if query.ContainsSymbol(children[0].Output, symbol) && !query.ContainsSymbol(data.Required, symbol) {
 			return Analysis{}, fmt.Errorf(
 				"right child requires outer symbol %s but the anti-join does not declare it as a correlation requirement",
 				symbol,
@@ -401,21 +407,26 @@ func analyzeLateralUnion(node *Node, children []Analysis) (Analysis, error) {
 	if !ok {
 		return Analysis{}, dataTypeError(node, "*algebra.LateralUnion")
 	}
-	return analyzeUnionBranches(data.Output, data.JoinVars, data.Required, children)
+	return analyzeUnionBranches(data.Output, data.RequiredVars, data.Required, children)
 }
 
 func analyzeUnionBranches(output, joinVars, outerRequired []query.Symbol, children []Analysis) (Analysis, error) {
-	if len(children) < 2 {
-		return Analysis{}, fmt.Errorf("union requires at least two branches")
+	// A single-branch union is the honest IR image of a legal single-branch
+	// or/or-join: the branch restricted to the declared header interface.
+	// The IR must accept every shape the language accepts; clause-level
+	// arity rules (e.g. or-default's two-branch minimum) are enforced at
+	// the language boundaries by the clause's own Validate, not here.
+	if len(children) == 0 {
+		return Analysis{}, fmt.Errorf("union requires at least one branch")
 	}
 	var required []query.Symbol
 	for i, child := range children {
 		for _, symbol := range output {
-			if containsSymbol(outerRequired, symbol) {
+			if query.ContainsSymbol(outerRequired, symbol) {
 				continue
 			}
-			if !containsSymbol(child.Output, symbol) {
-				if len(joinVars) > 0 && containsSymbol(joinVars, symbol) {
+			if !query.ContainsSymbol(child.Output, symbol) {
+				if len(joinVars) > 0 && query.ContainsSymbol(joinVars, symbol) {
 					return Analysis{}, fmt.Errorf(
 						"or-join header declares %s, but branch %d schema %v does not bind it; every branch must bind every header variable; if %s is an input filter rather than an output, remove it from the header",
 						symbol,
@@ -430,7 +441,7 @@ func analyzeUnionBranches(output, joinVars, outerRequired []query.Symbol, childr
 		required = append(required, child.Required...)
 	}
 	for _, symbol := range joinVars {
-		if !containsSymbol(output, symbol) {
+		if !query.ContainsSymbol(output, symbol) {
 			return Analysis{}, fmt.Errorf("union join variable %s is not in union output", symbol)
 		}
 	}
@@ -456,7 +467,7 @@ func analyzeLateralJoin(node *Node, children []Analysis) (Analysis, error) {
 		required = append(required, children[0].Required...)
 	}
 	for _, symbol := range data.CorrelationVars {
-		if !containsSymbol(outer, symbol) {
+		if !query.ContainsSymbol(outer, symbol) {
 			required = append(required, symbol)
 		}
 	}
@@ -464,7 +475,7 @@ func analyzeLateralJoin(node *Node, children []Analysis) (Analysis, error) {
 	if !ok {
 		return Analysis{}, fmt.Errorf("lateral binding has type %T", data.Binding)
 	}
-	bound := bindingFormSymbols(binding)
+	bound := binding.BoundVariables()
 	if len(bound) != len(data.InnerQuery.Find) {
 		return Analysis{}, fmt.Errorf("lateral binding arity %d does not match inner find arity %d", len(bound), len(data.InnerQuery.Find))
 	}
@@ -489,15 +500,15 @@ func analyzeAggregate(node *Node, children []Analysis) (Analysis, error) {
 	}
 	required := append([]query.Symbol(nil), children[0].Required...)
 	for _, symbol := range data.GroupBy {
-		if !containsSymbol(children[0].Output, symbol) {
+		if !query.ContainsSymbol(children[0].Output, symbol) {
 			required = append(required, symbol)
 		}
 	}
 	for _, function := range data.Functions {
-		if !containsSymbol(children[0].Output, function.Arg) {
+		if !query.ContainsSymbol(children[0].Output, function.Arg) {
 			required = append(required, function.Arg)
 		}
-		if function.Predicate != nil && !containsSymbol(children[0].Output, function.Predicate) {
+		if function.Predicate != nil && !query.ContainsSymbol(children[0].Output, function.Predicate) {
 			required = append(required, function.Predicate)
 		}
 	}
@@ -540,12 +551,12 @@ func dataTypeError(node *Node, expected string) error {
 func combineFreeRequirements(left, right Analysis) []query.Symbol {
 	required := cloneSymbols(left.Required)
 	for _, symbol := range right.Required {
-		if !containsSymbol(left.Output, symbol) {
+		if !query.ContainsSymbol(left.Output, symbol) {
 			required = append(required, symbol)
 		}
 	}
 	for _, symbol := range left.Required {
-		if containsSymbol(right.Output, symbol) {
+		if query.ContainsSymbol(right.Output, symbol) {
 			required = removeSymbol(required, symbol)
 		}
 	}
@@ -555,7 +566,7 @@ func combineFreeRequirements(left, right Analysis) []query.Symbol {
 func antiJoinFreeRequirements(left, right Analysis) []query.Symbol {
 	required := cloneSymbols(left.Required)
 	for _, symbol := range right.Required {
-		if !containsSymbol(left.Output, symbol) {
+		if !query.ContainsSymbol(left.Output, symbol) {
 			required = append(required, symbol)
 		}
 	}
@@ -600,7 +611,7 @@ func sameSymbolsInOrder(left, right []query.Symbol) bool {
 
 func containsAllSymbols(have, required []query.Symbol) bool {
 	for _, symbol := range required {
-		if !containsSymbol(have, symbol) {
+		if !query.ContainsSymbol(have, symbol) {
 			return false
 		}
 	}
@@ -610,7 +621,7 @@ func containsAllSymbols(have, required []query.Symbol) bool {
 func uniqueSymbols(symbols []query.Symbol) []query.Symbol {
 	result := make([]query.Symbol, 0, len(symbols))
 	for _, symbol := range symbols {
-		if !containsSymbol(result, symbol) {
+		if !query.ContainsSymbol(result, symbol) {
 			result = append(result, symbol)
 		}
 	}

@@ -209,9 +209,9 @@ func BenchmarkHashJoinIdentityHighFanout(b *testing.B) {
 // on each side with SHARED payload within each key. After join, only K
 // unique result tuples exist; seen rejects (K * R * R - K) duplicates.
 //
-// Inputs use NewMaterializedRelationNoDedupeWithOptions to preserve the
-// repeated input tuples (default constructor would deduplicate them on
-// input).
+// Inputs are constructed as raw struct literals to preserve the repeated
+// input tuples — a deliberate relational-invariant violation no constructor
+// admits (every constructor either deduplicates or warrants set-ness).
 //
 // Stresses:
 //   - it.seen.PutIfAbsent() with a non-empty bucket on the rejection path:
@@ -238,7 +238,7 @@ func BenchmarkHashJoinIdentityDuplicates(b *testing.B) {
 
 			// SHARED payload per key — every repetition of a given key
 			// carries the same value, so result rows collapse to K unique
-			// tuples after dedup. NoDedupe constructor keeps input
+			// tuples after dedup. Raw struct construction keeps input
 			// duplicates intact for the join.
 			leftTuples := make([]Tuple, 0, sh.keys*sh.reps)
 			rightTuples := make([]Tuple, 0, sh.keys*sh.reps)
@@ -251,8 +251,8 @@ func BenchmarkHashJoinIdentityDuplicates(b *testing.B) {
 				}
 			}
 
-			left := NewMaterializedRelationNoDedupeWithOptions(leftSymbols, leftTuples, ExecutorOptions{})
-			right := NewMaterializedRelationNoDedupeWithOptions(rightSymbols, rightTuples, ExecutorOptions{})
+			left := &MaterializedRelation{symbols: leftSymbols, tuples: leftTuples}
+			right := &MaterializedRelation{symbols: rightSymbols, tuples: rightTuples}
 
 			b.ResetTimer()
 			b.ReportAllocs()

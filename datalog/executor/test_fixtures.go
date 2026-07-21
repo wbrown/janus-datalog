@@ -35,7 +35,16 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 
 	// Find best binding relation for this pattern
 	bindingRel := bindings.FindBestForPattern(pattern)
-	if bindingRel == nil || bindingRel.IsEmpty() {
+	if bindingRel == nil {
+		return PatternToRelation(allDatoms, pattern), nil
+	}
+	if bindingRel.Size() == 0 {
+		// An errored relation that materialized empty is not an empty
+		// binding — the fixture honors the same contract as the production
+		// matchers.
+		if err := EmptyRelationError(bindingRel); err != nil {
+			return nil, err
+		}
 		return PatternToRelation(allDatoms, pattern), nil
 	}
 
@@ -49,12 +58,7 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 
 		// Create a map of bound values
 		boundValues := make(map[query.Symbol]interface{})
-		syms := bindingRel.Symbols()
-		for i, sym := range syms {
-			if i < len(tuple) {
-				boundValues[sym] = tuple[i]
-			}
-		}
+		bindTuple(boundValues, bindingRel.Symbols(), tuple)
 
 		// Check each datom against the bound values
 		for _, d := range allDatoms {
@@ -63,7 +67,13 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 			}
 		}
 	}
-	it.Close()
+	scanErr := it.Error()
+	if closeErr := it.Close(); scanErr == nil {
+		scanErr = closeErr
+	}
+	if scanErr != nil {
+		return nil, scanErr
+	}
 
 	return PatternToRelation(filteredDatoms, pattern), nil
 }

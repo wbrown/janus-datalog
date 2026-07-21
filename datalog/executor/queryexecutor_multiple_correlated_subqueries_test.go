@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // TestQueryExecutorMultipleCorrelatedSubqueries tests the pattern from gopher-street
@@ -135,39 +134,44 @@ func TestQueryExecutorMultipleCorrelatedSubqueries(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Test with QueryExecutor (Stage B)
-	t.Run("QueryExecutor", func(t *testing.T) {
-		matcher := NewIndexedMemoryMatcher(datoms)
-		opts := planner.PlannerOptions{}
-		exec := NewExecutorWithOptions(matcher, nil, opts)
-		result, err := exec.Execute(q)
+	matcher := NewIndexedMemoryMatcher(datoms) // Shared read-only matcher across modes
 
-		if err != nil {
-			t.Logf("Error: %v", err)
-			t.Logf("Result symbols (if any): %v", result.Symbols())
-		}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Run("QueryExecutor", func(t *testing.T) {
+				opts := mode.zeroPlannerOptions()
+				exec := NewExecutorWithOptions(matcher, nil, opts)
+				result, err := exec.Execute(q)
 
-		assert.NoError(t, err, "QueryExecutor should handle multiple correlated subqueries")
+				if err != nil {
+					t.Logf("Error: %v", err)
+					t.Logf("Result symbols (if any): %v", result.Symbols())
+				}
 
-		// Collect results
-		it := result.Iterator()
-		defer it.Close()
+				assert.NoError(t, err, "QueryExecutor should handle multiple correlated subqueries")
 
-		results := make(map[string][]float64)
-		for it.Next() {
-			tuple := it.Tuple()
-			assert.Len(t, tuple, 5)
-			date := tuple[0].(string)
-			open := tuple[1].(float64)
-			high := tuple[2].(float64)
-			low := tuple[3].(float64)
-			close := tuple[4].(float64)
-			results[date] = []float64{open, high, low, close}
-		}
+				// Collect results
+				it := result.Iterator()
+				defer it.Close()
 
-		// Day 1: open=100, high=112, low=99, close=108
-		assert.Equal(t, []float64{100.0, 112.0, 99.0, 108.0}, results["2025-01-01"])
+				results := make(map[string][]float64)
+				for it.Next() {
+					tuple := it.Tuple()
+					assert.Len(t, tuple, 5)
+					date := tuple[0].(string)
+					open := tuple[1].(float64)
+					high := tuple[2].(float64)
+					low := tuple[3].(float64)
+					close := tuple[4].(float64)
+					results[date] = []float64{open, high, low, close}
+				}
 
-		// Day 2: open=200, high=212, low=199, close=208
-		assert.Equal(t, []float64{200.0, 212.0, 199.0, 208.0}, results["2025-01-02"])
-	})
+				// Day 1: open=100, high=112, low=99, close=108
+				assert.Equal(t, []float64{100.0, 112.0, 99.0, 108.0}, results["2025-01-01"])
+
+				// Day 2: open=200, high=212, low=199, close=208
+				assert.Equal(t, []float64{200.0, 212.0, 199.0, 208.0}, results["2025-01-02"])
+			})
+		})
+	}
 }

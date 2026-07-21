@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -1006,7 +1004,8 @@ func TestCardinalityManyHistory(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	// Use MatchWithHistory to get all operations
+	// Use a history-mode match to get all operations. Bind ?tx so the add
+	// and the remove of the same value stay distinct tuples in the relation.
 	matcher := NewBadgerMatcher(db.Store())
 
 	pattern := &query.DataPattern{
@@ -1014,18 +1013,27 @@ func TestCardinalityManyHistory(t *testing.T) {
 			query.Constant{Value: entityID},
 			query.Constant{Value: attr},
 			query.Variable{Name: datalog.NewSymbol("?tag")},
-			query.Blank{},
+			query.Variable{Name: datalog.NewSymbol("?tx")},
 		},
 	}
 
-	results, err := matcher.MatchWithHistory(pattern)
+	rel, err := matcher.History().Match(query.PatternQuery(pattern), nil)
 	if err != nil {
-		t.Fatalf("MatchWithHistory failed: %v", err)
+		t.Fatalf("history match failed: %v", err)
 	}
+	entries := 0
+	iter := rel.Iterator()
+	for iter.Next() {
+		entries++
+	}
+	if err := iter.Error(); err != nil {
+		t.Fatalf("history scan failed: %v", err)
+	}
+	iter.Close()
 
 	// Should have 3 entries (2 adds + 1 remove)
-	if len(results) != 3 {
-		t.Errorf("Expected 3 historical entries, got %d", len(results))
+	if entries != 3 {
+		t.Errorf("Expected 3 historical entries, got %d", entries)
 	}
 }
 

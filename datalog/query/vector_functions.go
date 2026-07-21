@@ -38,7 +38,10 @@ func (f NthFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error) 
 		return nil, fmt.Errorf("nth: first argument must be a vector, got %T", vecVal)
 	}
 
-	idx := toInt64Coerce(idxVal)
+	idx, err := toVectorIndex(idxVal)
+	if err != nil {
+		return nil, fmt.Errorf("nth: %w", err)
+	}
 	if idx < 0 || idx >= int64(len(vec)) {
 		return nil, nil // Out of bounds returns nil (not an error)
 	}
@@ -287,8 +290,14 @@ func (f SubvecFunction) Eval(bindings map[Symbol]interface{}) (interface{}, erro
 		return nil, fmt.Errorf("subvec: first argument must be a vector, got %T", vecVal)
 	}
 
-	start := toInt64Coerce(startVal)
-	end := toInt64Coerce(endVal)
+	start, err := toVectorIndex(startVal)
+	if err != nil {
+		return nil, fmt.Errorf("subvec: %w", err)
+	}
+	end, err := toVectorIndex(endVal)
+	if err != nil {
+		return nil, fmt.Errorf("subvec: %w", err)
+	}
 
 	// Clamp bounds
 	if start < 0 {
@@ -397,20 +406,18 @@ func toSlice(val interface{}) ([]interface{}, bool) {
 	}
 }
 
-// toInt64Coerce converts various numeric types to int64.
-func toInt64Coerce(val interface{}) int64 {
+// toVectorIndex converts an index operand to int64. Indices are integers
+// (Go integer widths normalize); floats and strings do not coerce. Callers
+// wrap the error with their own context.
+func toVectorIndex(val interface{}) (int64, error) {
 	switch v := val.(type) {
 	case int64:
-		return v
+		return v, nil
 	case int:
-		return int64(v)
+		return int64(v), nil
 	case int32:
-		return int64(v)
-	case float64:
-		return int64(v)
-	case float32:
-		return int64(v)
+		return int64(v), nil
 	default:
-		return 0
+		return 0, fmt.Errorf("index must be an integer, got %v (%T)", val, val)
 	}
 }

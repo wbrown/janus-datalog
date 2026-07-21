@@ -75,19 +75,23 @@ func (sr *SourceRouter) MatchWithConstraints(q *query.Query, bindings Relations,
 // LookupAttribute implements EntityLookupMatcher. Delegates to the default
 // source ($) for entity attribute lookups used by database functions
 // (get-else, missing?, get-some).
+//
+// A data-answer method: when no default source exists or it cannot look up,
+// "capability absent" is an error — never (nil, false, nil), which reads as
+// "attribute absent" and silently flips missing?/get-else semantics.
 func (sr *SourceRouter) LookupAttribute(
 	entity datalog.Identity,
 	attr datalog.Keyword,
 ) (interface{}, bool, error) {
 	source, ok := sr.sources[datalog.SymDollar]
 	if !ok {
-		return nil, false, nil
+		return nil, false, fmt.Errorf("entity lookup unavailable: no default source ($) registered")
 	}
 
 	if elm, ok := source.(EntityLookupMatcher); ok {
 		return elm.LookupAttribute(entity, attr)
 	}
-	return nil, false, nil
+	return nil, false, fmt.Errorf("entity lookup unavailable: default source %T does not support attribute lookup", source)
 }
 
 // CanFuseAttributeFetch implements AttributeFetchFusable by delegating to the

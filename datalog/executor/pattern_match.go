@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -110,8 +112,14 @@ func matchesElement(value interface{}, element query.PatternElement) bool {
 		// Constants must match exactly
 		return matchesConstant(value, elem.Value)
 
+	case query.VectorConstant:
+		// Vector literals match resolved vector values by value equality.
+		return datalog.ValuesEqual(value, elem.Values)
+
 	default:
-		return false
+		// PatternElement is a closed taxonomy (Variable, Blank, Constant,
+		// VectorConstant); an unknown element is a bug, not a non-match.
+		panic(fmt.Sprintf("BUG: unknown pattern element %T reached matchesElement", element))
 	}
 }
 
@@ -120,22 +128,19 @@ func matchesConstant(value, constant interface{}) bool {
 	// Handle different type combinations
 	switch v := value.(type) {
 	case datalog.Identity:
-		switch c := constant.(type) {
-		case datalog.Identity:
+		// Identities match only identities. Strings become entities by boundary
+		// construction (NewIdentity, #identity literals), never by
+		// comparison-time coercion; a string constant here is a typed non-match.
+		if c, ok := constant.(datalog.Identity); ok {
 			return v.Equal(c)
-		case string:
-			// Allow matching by string for convenience
-			return v.String() == c
 		}
 
 	case datalog.Keyword:
-		switch c := constant.(type) {
-		case datalog.Keyword:
-			// Pointer equality - interned keywords are unique
+		// Keywords match only keywords (interned pointer equality). Strings
+		// become keywords by boundary construction (NewKeyword, :literal in
+		// query text), never by comparison-time coercion.
+		if c, ok := constant.(datalog.Keyword); ok {
 			return v == c
-		case string:
-			// Allow matching by string for convenience
-			return v.String() == c
 		}
 
 	case string:

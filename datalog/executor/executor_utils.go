@@ -35,36 +35,6 @@ func extractFindSymbols(findElements []query.FindElement) []query.Symbol {
 	return symbols
 }
 
-// MaterializeResult converts a streaming relation to a materialized result with the specified symbols.
-// This is a pure function that collects all tuples from the iterator into memory.
-func MaterializeResult(rel Relation, symbols []query.Symbol) Relation {
-	var tuples []Tuple
-	err := collectTuplesInto(&tuples, rel)
-
-	// Note: an earlier debug assertion here panicked with
-	// "BUG DETECTED" when the first and last tuples were
-	// interface-equal on every element. It was intended to catch a
-	// historical iterator-workspace-reuse bug. Under the current
-	// interning and BufferedIterator invariants, the original bug is
-	// fixed; the assertion became a false-positive trap for
-	// legitimate queries whose results happened to contain repeated
-	// interned values (two entities with the same name, for example).
-	// Removed in the EXTERNAL_REVIEW_2026_04 item-5 fix pass.
-
-	// Extract options from source relation to preserve configuration
-	opts := rel.Options()
-	mat := NewMaterializedRelationWithOptions(symbols, tuples, opts)
-	if err != nil {
-		// Carry a deferred source error so it isn't laundered by materialization.
-		mat.err = err
-	}
-	return mat
-}
-
-// Result is deprecated - use Relation instead.
-// This type alias exists for backward compatibility.
-type Result = MaterializedRelation
-
 // SortRelation sorts a relation according to the order-by clauses.
 // This is a pure function that performs multi-symbol sorting with configurable direction.
 // It materializes the relation if not already materialized.
@@ -110,13 +80,7 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 func orderBySymbolIndices(symbols []query.Symbol, orderBy []query.OrderByClause) ([]int, error) {
 	indices := make([]int, len(orderBy))
 	for i, clause := range orderBy {
-		indices[i] = -1
-		for j, sym := range symbols {
-			if sym == clause.Variable {
-				indices[i] = j
-				break
-			}
-		}
+		indices[i] = query.SymbolIndex(symbols, clause.Variable)
 		if indices[i] < 0 {
 			return indices, fmt.Errorf("order-by variable %s is not a symbol of the relation (symbols: %v)",
 				clause.Variable, symbols)
@@ -130,7 +94,7 @@ func orderBySymbolIndices(symbols []query.Symbol, orderBy []query.OrderByClause)
 func compareTuplesByOrder(left, right Tuple, orderBy []query.OrderByClause, indices []int) int {
 	for i, clause := range orderBy {
 		cmp := datalog.CompareValues(left[indices[i]], right[indices[i]])
-		if clause.Direction == query.OrderDesc {
+		if clause.Descending {
 			cmp = -cmp
 		}
 		if cmp != 0 {
@@ -138,111 +102,6 @@ func compareTuplesByOrder(left, right Tuple, orderBy []query.OrderByClause, indi
 		}
 	}
 	return 0
-}
-
-// computeAggregate computes an aggregate over all values in a symbol
-func computeAggregate(rel Relation, colIdx int, function string) interface{} {
-	var values []interface{}
-
-	it := rel.Iterator()
-	defer it.Close()
-
-	for it.Next() {
-		tuple := it.Tuple()
-		if colIdx < len(tuple) {
-			values = append(values, tuple[colIdx])
-		}
-	}
-
-	return computeAggregateValues(values, function)
-}
-
-// computeAggregateValues computes an aggregate over a slice of values
-func computeAggregateValues(values []interface{}, function string) interface{} {
-	switch function {
-	case "count":
-		return int64(len(values))
-
-	case "sum":
-		if len(values) == 0 {
-			return nil
-		}
-		var sum float64
-		for _, v := range values {
-			if num, ok := toFloat64(v); ok {
-				sum += num
-			}
-		}
-		return sum
-
-	case "avg":
-		if len(values) == 0 {
-			return nil
-		}
-		var sum float64
-		count := 0
-		for _, v := range values {
-			if num, ok := toFloat64(v); ok {
-				sum += num
-				count++
-			}
-		}
-		if count == 0 {
-			return nil
-		}
-		return sum / float64(count)
-
-	case "min":
-		if len(values) == 0 {
-			return nil
-		}
-		var min interface{}
-		for _, v := range values {
-			if v == nil {
-				continue
-			}
-			if min == nil || datalog.CompareValues(v, min) < 0 {
-				min = v
-			}
-		}
-		return min
-
-	case "max":
-		if len(values) == 0 {
-			return nil
-		}
-		var max interface{}
-		for _, v := range values {
-			if v == nil {
-				continue
-			}
-			if max == nil || datalog.CompareValues(v, max) > 0 {
-				max = v
-			}
-		}
-		return max
-
-	default:
-		return nil
-	}
-}
-
-// toFloat64 converts a value to float64 if possible
-func toFloat64(v interface{}) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case float32:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case int32:
-		return float64(n), true
-	case int:
-		return float64(n), true
-	default:
-		return 0, false
-	}
 }
 
 // BindQueryInputs binds input relations to a query's :in clause specifications.

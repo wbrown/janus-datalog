@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // TestQueryExecutorSubqueryProjection tests that QueryExecutor properly handles
@@ -48,25 +47,30 @@ func TestQueryExecutorSubqueryProjection(t *testing.T) {
 	assert.NoError(t, err)
 
 	matcher := NewIndexedMemoryMatcher(datoms)
-	opts := planner.PlannerOptions{}
-	exec := NewExecutorWithOptions(matcher, nil, opts)
-	result, err := exec.Execute(q)
-	assert.NoError(t, err, "QueryExecutor should preserve subquery result symbol names")
 
-	// Collect results (don't check Size() or IsEmpty() - may be streaming and would consume first tuple)
-	it := result.Iterator()
-	defer it.Close()
-	count := 0
-	for it.Next() {
-		tuple := it.Tuple()
-		assert.Len(t, tuple, 2)
-		assert.IsType(t, "", tuple[0])       // name
-		assert.Equal(t, int64(35), tuple[1]) // max-age
-		count++
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.zeroPlannerOptions()
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			result, err := exec.Execute(q)
+			assert.NoError(t, err, "QueryExecutor should preserve subquery result symbol names")
+
+			// Collect results
+			it := result.Iterator()
+			defer it.Close()
+			count := 0
+			for it.Next() {
+				tuple := it.Tuple()
+				assert.Len(t, tuple, 2)
+				assert.IsType(t, "", tuple[0])       // name
+				assert.Equal(t, int64(35), tuple[1]) // max-age
+				count++
+			}
+
+			// Should have 3 results (one per person), all with max-age=35
+			assert.Equal(t, 3, count)
+		})
 	}
-
-	// Should have 3 results (one per person), all with max-age=35
-	assert.Equal(t, 3, count)
 }
 
 // TestQueryExecutorMultipleSubqueryProjections tests multiple subqueries
@@ -151,27 +155,32 @@ func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Test with QueryExecutor (Stage B) - this is the bug
-	t.Run("QueryExecutor", func(t *testing.T) {
-		matcher := NewIndexedMemoryMatcher(datoms) // Fresh matcher per subtest
-		opts := planner.PlannerOptions{}
-		exec := NewExecutorWithOptions(matcher, nil, opts)
-		result, err := exec.Execute(q)
+	matcher := NewIndexedMemoryMatcher(datoms) // Shared read-only matcher across modes
 
-		// BUG: This should succeed but fails with:
-		// "cannot project: symbol ?first-open (or other subquery symbols) not found in relation"
-		assert.NoError(t, err, "QueryExecutor should preserve all subquery result symbol names")
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Run("QueryExecutor", func(t *testing.T) {
+				opts := mode.zeroPlannerOptions()
+				exec := NewExecutorWithOptions(matcher, nil, opts)
+				result, err := exec.Execute(q)
 
-		// Collect results (don't check Size() - may be streaming)
-		it := result.Iterator()
-		defer it.Close()
-		assert.True(t, it.Next())
-		tuple := it.Tuple()
-		assert.Len(t, tuple, 5)
-		assert.Equal(t, "AAPL", tuple[0])
-		assert.Equal(t, 100.0, tuple[1]) // first-open
-		assert.Equal(t, 103.0, tuple[2]) // last-close (max of all closes)
-		assert.Equal(t, 105.0, tuple[3]) // max-high
-		assert.Equal(t, 99.0, tuple[4])  // min-low
-		assert.False(t, it.Next())       // Should be only 1 result for AAPL
-	})
+				// BUG: This should succeed but fails with:
+				// "cannot project: symbol ?first-open (or other subquery symbols) not found in relation"
+				assert.NoError(t, err, "QueryExecutor should preserve all subquery result symbol names")
+
+				// Collect results (don't check Size() - may be streaming)
+				it := result.Iterator()
+				defer it.Close()
+				assert.True(t, it.Next())
+				tuple := it.Tuple()
+				assert.Len(t, tuple, 5)
+				assert.Equal(t, "AAPL", tuple[0])
+				assert.Equal(t, 100.0, tuple[1]) // first-open
+				assert.Equal(t, 103.0, tuple[2]) // last-close (max of all closes)
+				assert.Equal(t, 105.0, tuple[3]) // max-high
+				assert.Equal(t, 99.0, tuple[4])  // min-low
+				assert.False(t, it.Next())       // Should be only 1 result for AAPL
+			})
+		})
+	}
 }

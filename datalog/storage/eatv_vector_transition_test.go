@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -22,58 +20,69 @@ import (
 // Each entity's EATV scan crosses from :doc/content (Vector) to :person/name (One),
 // triggering the vector group transition.
 func TestEATV_VectorTransitionDropsDatom(t *testing.T) {
-	db, cleanup := createEACacheTestDB(t, true) // cache disabled
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				DisableCache:   true, // cache disabled
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			defer db.Close()
+			db.SetSchema(eaCacheBypassSchema())
 
-	nameAttr := datalog.NewKeyword(":person/name")
-	contentAttr := datalog.NewKeyword(":doc/content")
+			nameAttr := datalog.NewKeyword(":person/name")
+			contentAttr := datalog.NewKeyword(":doc/content")
 
-	entities := make([]datalog.Identity, 3)
-	for i := range entities {
-		entities[i] = datalog.NewIdentity(fmt.Sprintf("person-%d", i))
+			entities := make([]datalog.Identity, 3)
+			for i := range entities {
+				entities[i] = datalog.NewIdentity(fmt.Sprintf("person-%d", i))
 
-		tx := db.NewTransaction()
-		tx.Set(entities[i], nameAttr, fmt.Sprintf("Name-%d", i))
-		_, err := tx.Commit()
-		require.NoError(t, err)
+				tx := db.NewTransaction()
+				tx.Set(entities[i], nameAttr, fmt.Sprintf("Name-%d", i))
+				_, err := tx.Commit()
+				require.NoError(t, err)
 
-		tx2 := db.NewTransaction()
-		tx2.Set(entities[i], contentAttr, []any{"x", "y"})
-		_, err = tx2.Commit()
-		require.NoError(t, err)
-	}
-
-	var events []annotations.Event
-	db.SetAnnotationHandler(func(e annotations.Event) {
-		events = append(events, e)
-	})
-
-	// Collection input [?e ...] — only E is bound, A is free → forces EATV
-	entitySlice := []any{entities[0], entities[1], entities[2]}
-	results, err := executor.CollectTuples(db.Query(
-		`[:find ?e ?a ?v :in $ [?e ...] :where [?e ?a ?v]]`,
-		entitySlice))
-	require.NoError(t, err)
-
-	db.SetAnnotationHandler(nil)
-
-	// Verify EATV was selected
-	usedEATV := false
-	for _, e := range events {
-		if e.Name == "storage/reuse-strategy" {
-			t.Logf("EVENT: %s %v", e.Name, e.Data)
-			if idx, ok := e.Data["index"]; ok && fmt.Sprint(idx) == "EATV" {
-				usedEATV = true
+				tx2 := db.NewTransaction()
+				tx2.Set(entities[i], contentAttr, []any{"x", "y"})
+				_, err = tx2.Commit()
+				require.NoError(t, err)
 			}
-		}
-	}
-	require.True(t, usedEATV, "Strategy should select EATV for E-only binding with free A")
 
-	t.Logf("Got %d results:", len(results))
-	for _, r := range results {
-		t.Logf("  %v", r)
-	}
+			var events []annotations.Event
+			db.SetAnnotationHandler(func(e annotations.Event) {
+				events = append(events, e)
+			})
 
-	// Each entity has :person/name + :doc/content = 2 results each
-	require.Len(t, results, 6, "3 entities × 2 attributes = 6 results")
+			// Collection input [?e ...] — only E is bound, A is free → forces EATV
+			entitySlice := []any{entities[0], entities[1], entities[2]}
+			results, err := executor.CollectTuples(db.Query(
+				`[:find ?e ?a ?v :in $ [?e ...] :where [?e ?a ?v]]`,
+				entitySlice))
+			require.NoError(t, err)
+
+			db.SetAnnotationHandler(nil)
+
+			// Verify EATV was selected
+			usedEATV := false
+			for _, e := range events {
+				if e.Name == "storage/reuse-strategy" {
+					t.Logf("EVENT: %s %v", e.Name, e.Data)
+					if idx, ok := e.Data["index"]; ok && fmt.Sprint(idx) == "EATV" {
+						usedEATV = true
+					}
+				}
+			}
+			require.True(t, usedEATV, "Strategy should select EATV for E-only binding with free A")
+
+			t.Logf("Got %d results:", len(results))
+			for _, r := range results {
+				t.Logf("  %v", r)
+			}
+
+			// Each entity has :person/name + :doc/content = 2 results each
+			require.Len(t, results, 6, "3 entities × 2 attributes = 6 results")
+		})
+	}
 }

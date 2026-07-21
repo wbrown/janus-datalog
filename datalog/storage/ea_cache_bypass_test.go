@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -36,16 +34,8 @@ func hasReuseStrategyEvent(events []annotations.Event) bool {
 	return false
 }
 
-// createEACacheTestDB creates a database with schema for cache bypass testing.
-func createEACacheTestDB(t *testing.T, disableCache bool) (*Database, func()) {
-	t.Helper()
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:         dir,
-		DisableCache: disableCache,
-	})
-	require.NoError(t, err)
-
+// eaCacheBypassSchema returns the schema shared by the EA cache bypass tests.
+func eaCacheBypassSchema() *schema.Schema {
 	s := schema.NewSchema()
 	s.Add(&schema.AttributeDefinition{
 		Ident:       datalog.NewKeyword(":person/name"),
@@ -67,8 +57,19 @@ func createEACacheTestDB(t *testing.T, disableCache bool) (*Database, func()) {
 		ValueType:   schema.TypeString,
 		Cardinality: schema.CardinalityVector,
 	})
-	db.SetSchema(s)
+	return s
+}
 
+// createEACacheTestDB creates a database with schema for cache bypass testing.
+func createEACacheTestDB(t *testing.T, disableCache bool) (*Database, func()) {
+	t.Helper()
+	dir := t.TempDir()
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:         dir,
+		DisableCache: disableCache,
+	})
+	require.NoError(t, err)
+	db.SetSchema(eaCacheBypassSchema())
 	return db, func() { db.Close() }
 }
 
@@ -77,65 +78,17 @@ func createEACacheTestDB(t *testing.T, disableCache bool) (*Database, func()) {
 // =============================================================================
 
 func TestEACacheBypass_Reproduction(t *testing.T) {
-	db, cleanup := createEACacheTestDB(t, false)
-	defer cleanup()
-
-	personID := datalog.NewIdentity("person-1")
-	nameAttr := datalog.NewKeyword(":person/name")
-
-	for _, name := range []string{"Alice", "Bob", "Charlie"} {
-		tx := db.NewTransaction()
-		tx.Set(personID, nameAttr, name)
-		_, err := tx.Commit()
-		require.NoError(t, err)
-	}
-
-	t.Run("A_constant_uses_cache", func(t *testing.T) {
-		var events []annotations.Event
-		db.SetAnnotationHandler(func(e annotations.Event) {
-			events = append(events, e)
-		})
-		defer db.SetAnnotationHandler(nil)
-
-		results, err := executor.CollectTuples(db.Query(
-			`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
-			personID))
-		require.NoError(t, err)
-		require.Len(t, results, 1)
-		assert.Equal(t, "Charlie", results[0][0])
-
-		assert.False(t, hasReuseStrategyEvent(events),
-			"A as constant should use cache path, but storage/reuse-strategy was emitted")
-	})
-
-	t.Run("A_scalar_input_uses_cache", func(t *testing.T) {
-		var events []annotations.Event
-		db.SetAnnotationHandler(func(e annotations.Event) {
-			events = append(events, e)
-		})
-		defer db.SetAnnotationHandler(nil)
-
-		results, err := executor.CollectTuples(db.Query(
-			`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-			personID, nameAttr))
-		require.NoError(t, err)
-		require.Len(t, results, 1, "Should return 1 result (LWW winner)")
-		assert.Equal(t, "Charlie", results[0][0])
-
-		assert.False(t, hasReuseStrategyEvent(events),
-			"A from scalar input should use cache path, not storage scans")
-	})
-}
-
-// =============================================================================
-// Tests 2-4: Correctness per cardinality (cache enabled AND disabled)
-// =============================================================================
-
-func TestEACacheBypass_CardinalityOne(t *testing.T) {
-	for _, mode := range cacheTestModes {
-		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createEACacheTestDB(t, mode.disableCache)
-			defer cleanup()
+	for _, omode := range optimizerModes {
+		t.Run(omode.name, func(t *testing.T) {
+			popts := omode.plannerOptions()
+			db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				DisableCache:   false,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, dbErr)
+			defer db.Close()
+			db.SetSchema(eaCacheBypassSchema())
 
 			personID := datalog.NewIdentity("person-1")
 			nameAttr := datalog.NewKeyword(":person/name")
@@ -147,23 +100,93 @@ func TestEACacheBypass_CardinalityOne(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			// A as constant
-			constantResults, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
-				personID))
-			require.NoError(t, err)
+			t.Run("A_constant_uses_cache", func(t *testing.T) {
+				var events []annotations.Event
+				db.SetAnnotationHandler(func(e annotations.Event) {
+					events = append(events, e)
+				})
+				defer db.SetAnnotationHandler(nil)
 
-			// A as scalar input
-			inputResults, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, nameAttr))
-			require.NoError(t, err)
+				results, err := executor.CollectTuples(db.Query(
+					`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
+					personID))
+				require.NoError(t, err)
+				require.Len(t, results, 1)
+				assert.Equal(t, "Charlie", results[0][0])
 
-			require.Len(t, constantResults, 1, "[%s] A-as-constant: should return 1 result", mode.name)
-			require.Len(t, inputResults, 1, "[%s] A-as-input: should return 1 result", mode.name)
-			assert.Equal(t, constantResults[0][0], inputResults[0][0],
-				"[%s] Results should be identical", mode.name)
-			assert.Equal(t, "Charlie", inputResults[0][0])
+				assert.False(t, hasReuseStrategyEvent(events),
+					"A as constant should use cache path, but storage/reuse-strategy was emitted")
+			})
+
+			t.Run("A_scalar_input_uses_cache", func(t *testing.T) {
+				var events []annotations.Event
+				db.SetAnnotationHandler(func(e annotations.Event) {
+					events = append(events, e)
+				})
+				defer db.SetAnnotationHandler(nil)
+
+				results, err := executor.CollectTuples(db.Query(
+					`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
+					personID, nameAttr))
+				require.NoError(t, err)
+				require.Len(t, results, 1, "Should return 1 result (LWW winner)")
+				assert.Equal(t, "Charlie", results[0][0])
+
+				assert.False(t, hasReuseStrategyEvent(events),
+					"A from scalar input should use cache path, not storage scans")
+			})
+		})
+	}
+}
+
+// =============================================================================
+// Tests 2-4: Correctness per cardinality (cache enabled AND disabled)
+// =============================================================================
+
+func TestEACacheBypass_CardinalityOne(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, dbErr)
+					defer db.Close()
+					db.SetSchema(eaCacheBypassSchema())
+
+					personID := datalog.NewIdentity("person-1")
+					nameAttr := datalog.NewKeyword(":person/name")
+
+					for _, name := range []string{"Alice", "Bob", "Charlie"} {
+						tx := db.NewTransaction()
+						tx.Set(personID, nameAttr, name)
+						_, err := tx.Commit()
+						require.NoError(t, err)
+					}
+
+					// A as constant
+					constantResults, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
+						personID))
+					require.NoError(t, err)
+
+					// A as scalar input
+					inputResults, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
+						personID, nameAttr))
+					require.NoError(t, err)
+
+					require.Len(t, constantResults, 1, "[%s] A-as-constant: should return 1 result", mode.name)
+					require.Len(t, inputResults, 1, "[%s] A-as-input: should return 1 result", mode.name)
+					assert.Equal(t, constantResults[0][0], inputResults[0][0],
+						"[%s] Results should be identical", mode.name)
+					assert.Equal(t, "Charlie", inputResults[0][0])
+				})
+			}
 		})
 	}
 }
@@ -171,39 +194,50 @@ func TestEACacheBypass_CardinalityOne(t *testing.T) {
 func TestEACacheBypass_CardinalityMany(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createEACacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, dbErr)
+					defer db.Close()
+					db.SetSchema(eaCacheBypassSchema())
 
-			personID := datalog.NewIdentity("person-1")
-			tagsAttr := datalog.NewKeyword(":person/tags")
+					personID := datalog.NewIdentity("person-1")
+					tagsAttr := datalog.NewKeyword(":person/tags")
 
-			tx := db.NewTransaction()
-			tx.Add(personID, tagsAttr, "warrior")
-			tx.Add(personID, tagsAttr, "veteran")
-			_, err := tx.Commit()
-			require.NoError(t, err)
+					tx := db.NewTransaction()
+					tx.Add(personID, tagsAttr, "warrior")
+					tx.Add(personID, tagsAttr, "veteran")
+					_, err := tx.Commit()
+					require.NoError(t, err)
 
-			tx2 := db.NewTransaction()
-			tx2.Remove(personID, tagsAttr, "warrior")
-			_, err = tx2.Commit()
-			require.NoError(t, err)
+					tx2 := db.NewTransaction()
+					tx2.Remove(personID, tagsAttr, "warrior")
+					_, err = tx2.Commit()
+					require.NoError(t, err)
 
-			// A as constant
-			constantResults, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e :where [?e :person/tags ?v]]`,
-				personID))
-			require.NoError(t, err)
+					// A as constant
+					constantResults, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e :where [?e :person/tags ?v]]`,
+						personID))
+					require.NoError(t, err)
 
-			// A as scalar input
-			inputResults, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, tagsAttr))
-			require.NoError(t, err)
+					// A as scalar input
+					inputResults, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
+						personID, tagsAttr))
+					require.NoError(t, err)
 
-			require.Len(t, constantResults, 1, "[%s] A-as-constant: should return 1 result (add-wins)", mode.name)
-			require.Len(t, inputResults, 1, "[%s] A-as-input: should return 1 result (add-wins)", mode.name)
-			assert.Equal(t, "veteran", constantResults[0][0])
-			assert.Equal(t, "veteran", inputResults[0][0])
+					require.Len(t, constantResults, 1, "[%s] A-as-constant: should return 1 result (add-wins)", mode.name)
+					require.Len(t, inputResults, 1, "[%s] A-as-input: should return 1 result (add-wins)", mode.name)
+					assert.Equal(t, "veteran", constantResults[0][0])
+					assert.Equal(t, "veteran", inputResults[0][0])
+				})
+			}
 		})
 	}
 }
@@ -211,33 +245,44 @@ func TestEACacheBypass_CardinalityMany(t *testing.T) {
 func TestEACacheBypass_CardinalityVector(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createEACacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, dbErr)
+					defer db.Close()
+					db.SetSchema(eaCacheBypassSchema())
 
-			docID := datalog.NewIdentity("doc-1")
-			contentAttr := datalog.NewKeyword(":doc/content")
+					docID := datalog.NewIdentity("doc-1")
+					contentAttr := datalog.NewKeyword(":doc/content")
 
-			tx := db.NewTransaction()
-			tx.Set(docID, contentAttr, []interface{}{"a", "b", "c"})
-			_, err := tx.Commit()
-			require.NoError(t, err)
+					tx := db.NewTransaction()
+					tx.Set(docID, contentAttr, []interface{}{"a", "b", "c"})
+					_, err := tx.Commit()
+					require.NoError(t, err)
 
-			// A as constant
-			constantResults, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e :where [?e :doc/content ?v]]`,
-				docID))
-			require.NoError(t, err)
+					// A as constant
+					constantResults, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e :where [?e :doc/content ?v]]`,
+						docID))
+					require.NoError(t, err)
 
-			// A as scalar input
-			inputResults, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				docID, contentAttr))
-			require.NoError(t, err)
+					// A as scalar input
+					inputResults, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
+						docID, contentAttr))
+					require.NoError(t, err)
 
-			require.Len(t, constantResults, 1, "[%s] A-as-constant: should return 1 result (resolved vector)", mode.name)
-			require.Len(t, inputResults, 1, "[%s] A-as-input: should return 1 result (resolved vector)", mode.name)
-			assert.Equal(t, constantResults[0][0], inputResults[0][0],
-				"[%s] Vector results should be identical", mode.name)
+					require.Len(t, constantResults, 1, "[%s] A-as-constant: should return 1 result (resolved vector)", mode.name)
+					require.Len(t, inputResults, 1, "[%s] A-as-input: should return 1 result (resolved vector)", mode.name)
+					assert.Equal(t, constantResults[0][0], inputResults[0][0],
+						"[%s] Vector results should be identical", mode.name)
+				})
+			}
 		})
 	}
 }
@@ -249,25 +294,36 @@ func TestEACacheBypass_CardinalityVector(t *testing.T) {
 func TestEACacheBypass_TupleInput(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createEACacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, dbErr)
+					defer db.Close()
+					db.SetSchema(eaCacheBypassSchema())
 
-			personID := datalog.NewIdentity("person-1")
-			nameAttr := datalog.NewKeyword(":person/name")
+					personID := datalog.NewIdentity("person-1")
+					nameAttr := datalog.NewKeyword(":person/name")
 
-			for _, name := range []string{"Alice", "Bob", "Charlie"} {
-				tx := db.NewTransaction()
-				tx.Set(personID, nameAttr, name)
-				_, err := tx.Commit()
-				require.NoError(t, err)
+					for _, name := range []string{"Alice", "Bob", "Charlie"} {
+						tx := db.NewTransaction()
+						tx.Set(personID, nameAttr, name)
+						_, err := tx.Commit()
+						require.NoError(t, err)
+					}
+
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ [[?e ?a]] :where [?e ?a ?v]]`,
+						[]any{personID, nameAttr}))
+					require.NoError(t, err)
+					require.Len(t, results, 1, "[%s] Tuple input should return 1 result", mode.name)
+					assert.Equal(t, "Charlie", results[0][0])
+				})
 			}
-
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ [[?e ?a]] :where [?e ?a ?v]]`,
-				[]any{personID, nameAttr}))
-			require.NoError(t, err)
-			require.Len(t, results, 1, "[%s] Tuple input should return 1 result", mode.name)
-			assert.Equal(t, "Charlie", results[0][0])
 		})
 	}
 }
@@ -275,28 +331,39 @@ func TestEACacheBypass_TupleInput(t *testing.T) {
 func TestEACacheBypass_RelationInput(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createEACacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, dbErr)
+					defer db.Close()
+					db.SetSchema(eaCacheBypassSchema())
 
-			person1 := datalog.NewIdentity("person-1")
-			person2 := datalog.NewIdentity("person-2")
-			nameAttr := datalog.NewKeyword(":person/name")
-			ageAttr := datalog.NewKeyword(":person/age")
+					person1 := datalog.NewIdentity("person-1")
+					person2 := datalog.NewIdentity("person-2")
+					nameAttr := datalog.NewKeyword(":person/name")
+					ageAttr := datalog.NewKeyword(":person/age")
 
-			tx := db.NewTransaction()
-			tx.Set(person1, nameAttr, "Alice")
-			tx.Set(person2, ageAttr, int64(30))
-			_, err := tx.Commit()
-			require.NoError(t, err)
+					tx := db.NewTransaction()
+					tx.Set(person1, nameAttr, "Alice")
+					tx.Set(person2, ageAttr, int64(30))
+					_, err := tx.Commit()
+					require.NoError(t, err)
 
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
-				[][]any{
-					{person1, nameAttr},
-					{person2, ageAttr},
-				}))
-			require.NoError(t, err)
-			require.Len(t, results, 2, "[%s] Relation input should return 2 results", mode.name)
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
+						[][]any{
+							{person1, nameAttr},
+							{person2, ageAttr},
+						}))
+					require.NoError(t, err)
+					require.Len(t, results, 2, "[%s] Relation input should return 2 results", mode.name)
+				})
+			}
 		})
 	}
 }
@@ -304,28 +371,39 @@ func TestEACacheBypass_RelationInput(t *testing.T) {
 func TestEACacheBypass_CollectionEWithScalarA(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createEACacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, dbErr)
+					defer db.Close()
+					db.SetSchema(eaCacheBypassSchema())
 
-			nameAttr := datalog.NewKeyword(":person/name")
+					nameAttr := datalog.NewKeyword(":person/name")
 
-			entities := make([]datalog.Identity, 3)
-			for i := 0; i < 3; i++ {
-				entities[i] = datalog.NewIdentity(fmt.Sprintf("person-%d", i))
-				for _, name := range []string{"First", "Second", fmt.Sprintf("Final-%d", i)} {
-					tx := db.NewTransaction()
-					tx.Set(entities[i], nameAttr, name)
-					_, err := tx.Commit()
+					entities := make([]datalog.Identity, 3)
+					for i := 0; i < 3; i++ {
+						entities[i] = datalog.NewIdentity(fmt.Sprintf("person-%d", i))
+						for _, name := range []string{"First", "Second", fmt.Sprintf("Final-%d", i)} {
+							tx := db.NewTransaction()
+							tx.Set(entities[i], nameAttr, name)
+							_, err := tx.Commit()
+							require.NoError(t, err)
+						}
+					}
+
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?e ?v :in $ [?e ...] ?a :where [?e ?a ?v]]`,
+						[]datalog.Identity{entities[0], entities[1], entities[2]},
+						nameAttr))
 					require.NoError(t, err)
-				}
+					require.Len(t, results, 3, "[%s] Should return 3 results (one LWW winner per entity)", mode.name)
+				})
 			}
-
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?e ?v :in $ [?e ...] ?a :where [?e ?a ?v]]`,
-				[]datalog.Identity{entities[0], entities[1], entities[2]},
-				nameAttr))
-			require.NoError(t, err)
-			require.Len(t, results, 3, "[%s] Should return 3 results (one LWW winner per entity)", mode.name)
 		})
 	}
 }
@@ -337,23 +415,34 @@ func TestEACacheBypass_CollectionEWithScalarA(t *testing.T) {
 func TestEACacheBypass_NonexistentAttribute(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createEACacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, dbErr)
+					defer db.Close()
+					db.SetSchema(eaCacheBypassSchema())
 
-			personID := datalog.NewIdentity("person-1")
-			nameAttr := datalog.NewKeyword(":person/name")
-			ageAttr := datalog.NewKeyword(":person/age")
+					personID := datalog.NewIdentity("person-1")
+					nameAttr := datalog.NewKeyword(":person/name")
+					ageAttr := datalog.NewKeyword(":person/age")
 
-			tx := db.NewTransaction()
-			tx.Set(personID, nameAttr, "Alice")
-			_, err := tx.Commit()
-			require.NoError(t, err)
+					tx := db.NewTransaction()
+					tx.Set(personID, nameAttr, "Alice")
+					_, err := tx.Commit()
+					require.NoError(t, err)
 
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, ageAttr))
-			require.NoError(t, err)
-			assert.Len(t, results, 0, "[%s] Nonexistent attribute should return 0 results", mode.name)
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
+						personID, ageAttr))
+					require.NoError(t, err)
+					assert.Len(t, results, 0, "[%s] Nonexistent attribute should return 0 results", mode.name)
+				})
+			}
 		})
 	}
 }
@@ -361,35 +450,46 @@ func TestEACacheBypass_NonexistentAttribute(t *testing.T) {
 func TestEACacheBypass_CacheInvalidation(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createEACacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, dbErr)
+					defer db.Close()
+					db.SetSchema(eaCacheBypassSchema())
 
-			personID := datalog.NewIdentity("person-1")
-			nameAttr := datalog.NewKeyword(":person/name")
+					personID := datalog.NewIdentity("person-1")
+					nameAttr := datalog.NewKeyword(":person/name")
 
-			tx := db.NewTransaction()
-			tx.Set(personID, nameAttr, "Alice")
-			_, err := tx.Commit()
-			require.NoError(t, err)
+					tx := db.NewTransaction()
+					tx.Set(personID, nameAttr, "Alice")
+					_, err := tx.Commit()
+					require.NoError(t, err)
 
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, nameAttr))
-			require.NoError(t, err)
-			require.Len(t, results, 1)
-			assert.Equal(t, "Alice", results[0][0])
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
+						personID, nameAttr))
+					require.NoError(t, err)
+					require.Len(t, results, 1)
+					assert.Equal(t, "Alice", results[0][0])
 
-			tx2 := db.NewTransaction()
-			tx2.Set(personID, nameAttr, "Bob")
-			_, err = tx2.Commit()
-			require.NoError(t, err)
+					tx2 := db.NewTransaction()
+					tx2.Set(personID, nameAttr, "Bob")
+					_, err = tx2.Commit()
+					require.NoError(t, err)
 
-			results, err = executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, nameAttr))
-			require.NoError(t, err)
-			require.Len(t, results, 1)
-			assert.Equal(t, "Bob", results[0][0], "[%s] Should see new value after write", mode.name)
+					results, err = executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
+						personID, nameAttr))
+					require.NoError(t, err)
+					require.Len(t, results, 1)
+					assert.Equal(t, "Bob", results[0][0], "[%s] Should see new value after write", mode.name)
+				})
+			}
 		})
 	}
 }
@@ -397,33 +497,44 @@ func TestEACacheBypass_CacheInvalidation(t *testing.T) {
 func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createEACacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, dbErr)
+					defer db.Close()
+					db.SetSchema(eaCacheBypassSchema())
 
-			person1 := datalog.NewIdentity("person-1")
-			nameAttr := datalog.NewKeyword(":person/name")
-			tagsAttr := datalog.NewKeyword(":person/tags")
+					person1 := datalog.NewIdentity("person-1")
+					nameAttr := datalog.NewKeyword(":person/name")
+					tagsAttr := datalog.NewKeyword(":person/tags")
 
-			tx := db.NewTransaction()
-			tx.Set(person1, nameAttr, "Alice")
-			_, err := tx.Commit()
-			require.NoError(t, err)
+					tx := db.NewTransaction()
+					tx.Set(person1, nameAttr, "Alice")
+					_, err := tx.Commit()
+					require.NoError(t, err)
 
-			tx2 := db.NewTransaction()
-			tx2.Add(person1, tagsAttr, "warrior")
-			tx2.Add(person1, tagsAttr, "veteran")
-			_, err = tx2.Commit()
-			require.NoError(t, err)
+					tx2 := db.NewTransaction()
+					tx2.Add(person1, tagsAttr, "warrior")
+					tx2.Add(person1, tagsAttr, "veteran")
+					_, err = tx2.Commit()
+					require.NoError(t, err)
 
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
-				[][]any{
-					{person1, nameAttr},
-					{person1, tagsAttr},
-				}))
-			require.NoError(t, err)
-			assert.Len(t, results, 3,
-				"[%s] Mixed cardinalities: 1 name + 2 tags = 3 results, got %d", mode.name, len(results))
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
+						[][]any{
+							{person1, nameAttr},
+							{person1, tagsAttr},
+						}))
+					require.NoError(t, err)
+					assert.Len(t, results, 3,
+						"[%s] Mixed cardinalities: 1 name + 2 tags = 3 results, got %d", mode.name, len(results))
+				})
+			}
 		})
 	}
 }
@@ -440,158 +551,20 @@ func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 // Pattern 1 resolves the attribute name. Pattern 2 looks up the value.
 // After pattern 1, the binding for pattern 2 has multiple tuples with varying (E, A).
 func TestEACacheBypass_PerRowA_UsesCache(t *testing.T) {
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
-	require.NoError(t, err)
-	defer db.Close()
-
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":config/attr"),
-		ValueType:   schema.TypeKeyword,
-		Cardinality: schema.CardinalityOne,
-	})
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/name"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/age"),
-		ValueType:   schema.TypeLong,
-		Cardinality: schema.CardinalityOne,
-	})
-	db.SetSchema(s)
-
-	configAttr := datalog.NewKeyword(":config/attr")
-	nameAttr := datalog.NewKeyword(":person/name")
-	ageAttr := datalog.NewKeyword(":person/age")
-
-	entity1 := datalog.NewIdentity("entity-1")
-	entity2 := datalog.NewIdentity("entity-2")
-
-	tx := db.NewTransaction()
-	// entity-1: config/attr = :person/name, person/name = "Alice"
-	tx.Set(entity1, configAttr, nameAttr)
-	tx.Set(entity1, nameAttr, "Alice")
-	// entity-2: config/attr = :person/age, person/age = 30
-	tx.Set(entity2, configAttr, ageAttr)
-	tx.Set(entity2, ageAttr, int64(30))
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	var events []annotations.Event
-	db.SetAnnotationHandler(func(e annotations.Event) {
-		events = append(events, e)
-	})
-	defer db.SetAnnotationHandler(nil)
-
-	// Query: for each entity in the collection, look up its config/attr to get ?a,
-	// then look up [?e ?a ?v]. After pattern 1, binding has 2 tuples with varying A.
-	results, err := executor.CollectTuples(db.Query(
-		`[:find ?e ?a ?v :in $ [?e ...] :where
-		  [?e :config/attr ?a]
-		  [?e ?a ?v]]`,
-		[]interface{}{entity1, entity2}))
-	require.NoError(t, err)
-	require.Len(t, results, 2, "Should get 2 results (one per entity)")
-
-	// Check that storage/reuse-strategy is NOT used for pattern 2
-	// Before Phase 2 fix: FAILS — reuse-strategy IS present (cache bypassed)
-	// After Phase 2 fix: passes — per-tuple A uses cache
-	assert.False(t, hasReuseStrategyEvent(events),
-		"Per-tuple A from join should use cache path, not storage/reuse-strategy scans")
-}
-
-func TestEACacheBypass_PerRowVector_RelationInput(t *testing.T) {
-	for _, mode := range cacheTestModes {
-		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createEACacheTestDB(t, mode.disableCache)
-			defer cleanup()
-
-			person1 := datalog.NewIdentity("person-1")
-			nameAttr := datalog.NewKeyword(":person/name")
-			contentAttr := datalog.NewKeyword(":doc/content")
-
-			tx := db.NewTransaction()
-			tx.Set(person1, nameAttr, "Alice")
-			_, err := tx.Commit()
-			require.NoError(t, err)
-
-			tx2 := db.NewTransaction()
-			tx2.Set(person1, contentAttr, []interface{}{"a", "b", "c"})
-			_, err = tx2.Commit()
-			require.NoError(t, err)
-
-			var events []annotations.Event
-			db.SetAnnotationHandler(func(e annotations.Event) {
-				events = append(events, e)
-			})
-
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
-				[][]any{
-					{person1, nameAttr},
-					{person1, contentAttr},
-				}))
-			require.NoError(t, err)
-
-			db.SetAnnotationHandler(nil)
-
-			if len(results) != 2 {
-				t.Logf("[%s] Got %d results: %v", mode.name, len(results), results)
-				for _, e := range events {
-					t.Logf("[%s] EVENT: %s %v", mode.name, e.Name, e.Data)
-				}
-			}
-			assert.Len(t, results, 2,
-				"[%s] Per-tuple vector: 1 name + 1 resolved vector = 2 results, got %d", mode.name, len(results))
-		})
-	}
-}
-
-func TestEACacheBypass_CacheMissFallback(t *testing.T) {
-	for _, mode := range cacheTestModes {
-		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createEACacheTestDB(t, mode.disableCache)
-			defer cleanup()
-
-			person1 := datalog.NewIdentity("person-1")
-			person2 := datalog.NewIdentity("person-nonexistent")
-			nameAttr := datalog.NewKeyword(":person/name")
-
-			tx := db.NewTransaction()
-			tx.Set(person1, nameAttr, "Alice")
-			_, err := tx.Commit()
-			require.NoError(t, err)
-
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
-				[][]any{
-					{person1, nameAttr},
-					{person2, nameAttr},
-				}))
-			require.NoError(t, err)
-			assert.Len(t, results, 1,
-				"[%s] Should return 1 result (Alice only, nonexistent entity skipped)", mode.name)
-		})
-	}
-}
-
-func TestEACacheBypass_JoinBoundA(t *testing.T) {
-	for _, mode := range cacheTestModes {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, omode := range optimizerModes {
+		t.Run(omode.name, func(t *testing.T) {
 			dir := t.TempDir()
+			popts := omode.plannerOptions()
 			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:         dir,
-				DisableCache: mode.disableCache,
+				Path:           dir,
+				PlannerOptions: &popts,
 			})
 			require.NoError(t, err)
 			defer db.Close()
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
-				Ident:       datalog.NewKeyword(":meta/target-attr"),
+				Ident:       datalog.NewKeyword(":config/attr"),
 				ValueType:   schema.TypeKeyword,
 				Cardinality: schema.CardinalityOne,
 			})
@@ -600,29 +573,203 @@ func TestEACacheBypass_JoinBoundA(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/age"),
+				ValueType:   schema.TypeLong,
+				Cardinality: schema.CardinalityOne,
+			})
 			db.SetSchema(s)
 
-			metaID := datalog.NewIdentity("meta-1")
-			personID := datalog.NewIdentity("person-1")
-			targetAttr := datalog.NewKeyword(":meta/target-attr")
+			configAttr := datalog.NewKeyword(":config/attr")
 			nameAttr := datalog.NewKeyword(":person/name")
+			ageAttr := datalog.NewKeyword(":person/age")
+
+			entity1 := datalog.NewIdentity("entity-1")
+			entity2 := datalog.NewIdentity("entity-2")
 
 			tx := db.NewTransaction()
-			tx.Set(metaID, targetAttr, nameAttr)
-			tx.Set(personID, nameAttr, "Alice")
+			// entity-1: config/attr = :person/name, person/name = "Alice"
+			tx.Set(entity1, configAttr, nameAttr)
+			tx.Set(entity1, nameAttr, "Alice")
+			// entity-2: config/attr = :person/age, person/age = 30
+			tx.Set(entity2, configAttr, ageAttr)
+			tx.Set(entity2, ageAttr, int64(30))
 			_, err = tx.Commit()
 			require.NoError(t, err)
 
+			var events []annotations.Event
+			db.SetAnnotationHandler(func(e annotations.Event) {
+				events = append(events, e)
+			})
+			defer db.SetAnnotationHandler(nil)
+
+			// Query: for each entity in the collection, look up its config/attr to get ?a,
+			// then look up [?e ?a ?v]. After pattern 1, binding has 2 tuples with varying A.
 			results, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?meta :where
+				`[:find ?e ?a ?v :in $ [?e ...] :where
+		  [?e :config/attr ?a]
+		  [?e ?a ?v]]`,
+				[]interface{}{entity1, entity2}))
+			require.NoError(t, err)
+			require.Len(t, results, 2, "Should get 2 results (one per entity)")
+
+			// Check that storage/reuse-strategy is NOT used for pattern 2
+			// Before Phase 2 fix: FAILS — reuse-strategy IS present (cache bypassed)
+			// After Phase 2 fix: passes — per-tuple A uses cache
+			assert.False(t, hasReuseStrategyEvent(events),
+				"Per-tuple A from join should use cache path, not storage/reuse-strategy scans")
+		})
+	}
+}
+
+func TestEACacheBypass_PerRowVector_RelationInput(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, dbErr)
+					defer db.Close()
+					db.SetSchema(eaCacheBypassSchema())
+
+					person1 := datalog.NewIdentity("person-1")
+					nameAttr := datalog.NewKeyword(":person/name")
+					contentAttr := datalog.NewKeyword(":doc/content")
+
+					tx := db.NewTransaction()
+					tx.Set(person1, nameAttr, "Alice")
+					_, err := tx.Commit()
+					require.NoError(t, err)
+
+					tx2 := db.NewTransaction()
+					tx2.Set(person1, contentAttr, []interface{}{"a", "b", "c"})
+					_, err = tx2.Commit()
+					require.NoError(t, err)
+
+					var events []annotations.Event
+					db.SetAnnotationHandler(func(e annotations.Event) {
+						events = append(events, e)
+					})
+
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
+						[][]any{
+							{person1, nameAttr},
+							{person1, contentAttr},
+						}))
+					require.NoError(t, err)
+
+					db.SetAnnotationHandler(nil)
+
+					if len(results) != 2 {
+						t.Logf("[%s] Got %d results: %v", mode.name, len(results), results)
+						for _, e := range events {
+							t.Logf("[%s] EVENT: %s %v", mode.name, e.Name, e.Data)
+						}
+					}
+					assert.Len(t, results, 2,
+						"[%s] Per-tuple vector: 1 name + 1 resolved vector = 2 results, got %d", mode.name, len(results))
+				})
+			}
+		})
+	}
+}
+
+func TestEACacheBypass_CacheMissFallback(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, dbErr)
+					defer db.Close()
+					db.SetSchema(eaCacheBypassSchema())
+
+					person1 := datalog.NewIdentity("person-1")
+					person2 := datalog.NewIdentity("person-nonexistent")
+					nameAttr := datalog.NewKeyword(":person/name")
+
+					tx := db.NewTransaction()
+					tx.Set(person1, nameAttr, "Alice")
+					_, err := tx.Commit()
+					require.NoError(t, err)
+
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
+						[][]any{
+							{person1, nameAttr},
+							{person2, nameAttr},
+						}))
+					require.NoError(t, err)
+					assert.Len(t, results, 1,
+						"[%s] Should return 1 result (Alice only, nonexistent entity skipped)", mode.name)
+				})
+			}
+		})
+	}
+}
+
+func TestEACacheBypass_JoinBoundA(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					dir := t.TempDir()
+					popts := omode.plannerOptions()
+					db, err := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           dir,
+						DisableCache:   mode.disableCache,
+						PlannerOptions: &popts,
+					})
+					require.NoError(t, err)
+					defer db.Close()
+
+					s := schema.NewSchema()
+					s.Add(&schema.AttributeDefinition{
+						Ident:       datalog.NewKeyword(":meta/target-attr"),
+						ValueType:   schema.TypeKeyword,
+						Cardinality: schema.CardinalityOne,
+					})
+					s.Add(&schema.AttributeDefinition{
+						Ident:       datalog.NewKeyword(":person/name"),
+						ValueType:   schema.TypeString,
+						Cardinality: schema.CardinalityOne,
+					})
+					db.SetSchema(s)
+
+					metaID := datalog.NewIdentity("meta-1")
+					personID := datalog.NewIdentity("person-1")
+					targetAttr := datalog.NewKeyword(":meta/target-attr")
+					nameAttr := datalog.NewKeyword(":person/name")
+
+					tx := db.NewTransaction()
+					tx.Set(metaID, targetAttr, nameAttr)
+					tx.Set(personID, nameAttr, "Alice")
+					_, err = tx.Commit()
+					require.NoError(t, err)
+
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?meta :where
 				  [?meta :meta/target-attr ?a]
 				  [?person ?a ?v]]`,
-				metaID))
-			require.NoError(t, err)
-			require.Len(t, results, 1,
-				"[%s] Join-bound A should return 1 result", mode.name)
-			assert.Equal(t, "Alice", results[0][0],
-				"[%s] Join-bound A should find person's name", mode.name)
+						metaID))
+					require.NoError(t, err)
+					require.Len(t, results, 1,
+						"[%s] Join-bound A should return 1 result", mode.name)
+					assert.Equal(t, "Alice", results[0][0],
+						"[%s] Join-bound A should find person's name", mode.name)
+				})
+			}
 		})
 	}
 }

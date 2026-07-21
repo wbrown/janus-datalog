@@ -28,99 +28,102 @@ func TestSubqueryDatomicCompatible(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher, nil)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	t.Run("ExplicitDatabasePassing", func(t *testing.T) {
-		// Datomic-style query with explicit $ passing
-		queryStr := `[:find ?symbol ?max-price
-		             :where 
-		             [?s :symbol/ticker ?symbol]
-		             [(q [:find (max ?price)
-		                  :in $ ?sym
-		                  :where [?p :price/symbol ?sym]
-		                         [?p :price/value ?price]]
-		                 $ ?s) [[?max-price]]]]`
+			t.Run("ExplicitDatabasePassing", func(t *testing.T) {
+				// Datomic-style query with explicit $ passing
+				queryStr := `[:find ?symbol ?max-price
+				             :where
+				             [?s :symbol/ticker ?symbol]
+				             [(q [:find (max ?price)
+				                  :in $ ?sym
+				                  :where [?p :price/symbol ?sym]
+				                         [?p :price/value ?price]]
+				                 $ ?s) [[?max-price]]]]`
 
-		q, err := parser.ParseQuery(queryStr)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				q, err := parser.ParseQuery(queryStr)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		result, err := exec.Execute(q)
-		if err != nil {
-			t.Fatalf("Failed to execute query: %v", err)
-		}
+				result, err := exec.Execute(q)
+				if err != nil {
+					t.Fatalf("Failed to execute query: %v", err)
+				}
 
-		// Check results
-		tuples := collectResult(result)
-		if len(tuples) != 2 {
-			t.Errorf("Expected 2 results, got %d", len(tuples))
-		}
+				// Check results
+				tuples := collectResult(result)
+				if len(tuples) != 2 {
+					t.Errorf("Expected 2 results, got %d", len(tuples))
+				}
 
-		// Create a map for easier checking
-		resultMap := make(map[string]float64)
-		for _, tuple := range tuples {
-			symbol := tuple[0].(string)
-			maxPrice := tuple[1].(float64)
-			resultMap[symbol] = maxPrice
-		}
+				// Create a map for easier checking
+				resultMap := make(map[string]float64)
+				for _, tuple := range tuples {
+					symbol := tuple[0].(string)
+					maxPrice := tuple[1].(float64)
+					resultMap[symbol] = maxPrice
+				}
 
-		// Check AAPL max price
-		if maxPrice, ok := resultMap["AAPL"]; !ok || maxPrice != 155.0 {
-			t.Errorf("Expected AAPL max price to be 155.0, got %v (found: %v)", maxPrice, ok)
-		}
+				// Check AAPL max price
+				if maxPrice, ok := resultMap["AAPL"]; !ok || maxPrice != 155.0 {
+					t.Errorf("Expected AAPL max price to be 155.0, got %v (found: %v)", maxPrice, ok)
+				}
 
-		// Check GOOG max price
-		if maxPrice, ok := resultMap["GOOG"]; !ok || maxPrice != 2800.0 {
-			t.Errorf("Expected GOOG max price to be 2800.0, got %v (found: %v)", maxPrice, ok)
-		}
-	})
+				// Check GOOG max price
+				if maxPrice, ok := resultMap["GOOG"]; !ok || maxPrice != 2800.0 {
+					t.Errorf("Expected GOOG max price to be 2800.0, got %v (found: %v)", maxPrice, ok)
+				}
+			})
 
-	t.Run("MultipleInputsWithDatabase", func(t *testing.T) {
-		// Test with multiple inputs including explicit database
-		queryStr := `[:find ?symbol ?filtered-max
-		             :where 
-		             [?s :symbol/ticker ?symbol]
-		             [(q [:find (max ?price)
-		                  :in $ ?sym ?threshold
-		                  :where [?p :price/symbol ?sym]
-		                         [?p :price/value ?price]
-		                         [(> ?price ?threshold)]]
-		                 $ ?s 100.0) [[?filtered-max]]]]`
+			t.Run("MultipleInputsWithDatabase", func(t *testing.T) {
+				// Test with multiple inputs including explicit database
+				queryStr := `[:find ?symbol ?filtered-max
+				             :where
+				             [?s :symbol/ticker ?symbol]
+				             [(q [:find (max ?price)
+				                  :in $ ?sym ?threshold
+				                  :where [?p :price/symbol ?sym]
+				                         [?p :price/value ?price]
+				                         [(> ?price ?threshold)]]
+				                 $ ?s 100.0) [[?filtered-max]]]]`
 
-		q, err := parser.ParseQuery(queryStr)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				q, err := parser.ParseQuery(queryStr)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		result, err := exec.Execute(q)
-		if err != nil {
-			t.Fatalf("Failed to execute query: %v", err)
-		}
+				result, err := exec.Execute(q)
+				if err != nil {
+					t.Fatalf("Failed to execute query: %v", err)
+				}
 
-		// Both symbols should have prices > 100
-		tuples := collectResult(result)
-		if len(tuples) != 2 {
-			t.Errorf("Expected 2 results, got %d", len(tuples))
-		}
+				// Both symbols should have prices > 100
+				tuples := collectResult(result)
+				if len(tuples) != 2 {
+					t.Errorf("Expected 2 results, got %d", len(tuples))
+				}
 
-		// Create a map for easier checking
-		resultMap := make(map[string]float64)
-		for _, tuple := range tuples {
-			symbol := tuple[0].(string)
-			maxPrice := tuple[1].(float64)
-			resultMap[symbol] = maxPrice
-		}
+				// Create a map for easier checking
+				resultMap := make(map[string]float64)
+				for _, tuple := range tuples {
+					symbol := tuple[0].(string)
+					maxPrice := tuple[1].(float64)
+					resultMap[symbol] = maxPrice
+				}
 
-		// Check that both results are > 100
-		if maxPrice := resultMap["AAPL"]; maxPrice <= 100.0 {
-			t.Errorf("Expected AAPL max price > 100, got %v", maxPrice)
-		}
-		if maxPrice := resultMap["GOOG"]; maxPrice <= 100.0 {
-			t.Errorf("Expected GOOG max price > 100, got %v", maxPrice)
-		}
-	})
-
+				// Check that both results are > 100
+				if maxPrice := resultMap["AAPL"]; maxPrice <= 100.0 {
+					t.Errorf("Expected AAPL max price > 100, got %v", maxPrice)
+				}
+				if maxPrice := resultMap["GOOG"]; maxPrice <= 100.0 {
+					t.Errorf("Expected GOOG max price > 100, got %v", maxPrice)
+				}
+			})
+		})
+	}
 }
 
 func TestSubqueryDatabaseAsConstant(t *testing.T) {

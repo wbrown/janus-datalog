@@ -1,9 +1,6 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,42 +16,36 @@ import (
 // This goes through the full Database.ExecuteQuery path which uses
 // the planner - the same path the user's code takes.
 func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
-	// Create temporary database with same options as user's code
-	dbPath := "/tmp/test-or-subquery-regression-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dbPath,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			// Insert test data
+			tx := db.NewTransaction()
 
-	// Insert test data
-	tx := db.NewTransaction()
+			scenario1 := datalog.NewIdentity("scenario:1")
+			scenario2 := datalog.NewIdentity("scenario:2")
+			task1 := datalog.NewIdentity("task:1")
+			task2 := datalog.NewIdentity("task:2")
 
-	scenario1 := datalog.NewIdentity("scenario:1")
-	scenario2 := datalog.NewIdentity("scenario:2")
-	task1 := datalog.NewIdentity("task:1")
-	task2 := datalog.NewIdentity("task:2")
+			// Two scenarios
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/name"), "Scenario 1"))
+			require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/name"), "Scenario 2"))
 
-	// Two scenarios
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/name"), "Scenario 1"))
-	require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/name"), "Scenario 2"))
+			// Tasks for scenario1 (has completed tasks)
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+			require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/scenario"), scenario1))
+			require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
 
-	// Tasks for scenario1 (has completed tasks)
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
-	require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/scenario"), scenario1))
-	require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+			// No tasks for scenario2 (should fall back to 0)
 
-	// No tasks for scenario2 (should fall back to 0)
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Query with OR clause containing correlated subquery
-	// This is the exact pattern that fails in user's code
-	queryStr := `[:find ?scenario ?count
+			// Query with OR clause containing correlated subquery
+			// This is the exact pattern that fails in user's code
+			queryStr := `[:find ?scenario ?count
 	              :where [?scenario :scenario/name ?name]
 	                     (or-default [(q [:find (count ?t)
 	                              :in $ ?s
@@ -63,61 +54,59 @@ func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
 	                             $ ?scenario) [[?count]]]
 	                         [(ground 0) ?count])]`
 
-	tuples, err := executor.CollectTuples(db.Query(queryStr))
-	if err != nil {
-		t.Fatalf("Query execution failed: %v", err)
+			tuples, err := executor.CollectTuples(db.Query(queryStr))
+			if err != nil {
+				t.Fatalf("Query execution failed: %v", err)
+			}
+
+			// Collect results
+			results := make(map[string]int64)
+			for _, tuple := range tuples {
+				t.Logf("Result tuple: %v", tuple)
+				// scenario is an Identity, count is int64
+				scenarioID := tuple[0].(datalog.Identity)
+				count := tuple[1].(int64)
+				results[scenarioID.String()] = count
+			}
+
+			t.Logf("Results map: %v", results)
+
+			// Verify results; identities render as L85, so key lookups go through the
+			// same identities the fixture created
+			assert.Len(t, results, 2, "Should have 2 scenarios")
+			assert.Equal(t, int64(2), results[scenario1.String()], "Scenario 1 should have 2 completed tasks")
+			assert.Equal(t, int64(0), results[scenario2.String()], "Scenario 2 should fall back to 0")
+		})
 	}
-
-	// Collect results
-	results := make(map[string]int64)
-	for _, tuple := range tuples {
-		t.Logf("Result tuple: %v", tuple)
-		// scenario is an Identity, count is int64
-		scenarioID := tuple[0].(datalog.Identity)
-		count := tuple[1].(int64)
-		results[scenarioID.String()] = count
-	}
-
-	t.Logf("Results map: %v", results)
-
-	// Verify results
-	assert.Len(t, results, 2, "Should have 2 scenarios")
-	assert.Equal(t, int64(2), results["scenario:1"], "Scenario 1 should have 2 completed tasks")
-	assert.Equal(t, int64(0), results["scenario:2"], "Scenario 2 should fall back to 0")
 }
 
 // TestScenarioSummaryQuery_E2E tests the exact query from the user's production code.
 // This query uses OR with correlated subqueries, get-else, and aggregations.
 func TestScenarioSummaryQuery_E2E(t *testing.T) {
-	dbPath := "/tmp/test-scenario-summary-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dbPath,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			// Insert minimal test data
+			tx := db.NewTransaction()
 
-	// Insert minimal test data
-	tx := db.NewTransaction()
+			scenario1 := datalog.NewIdentity("scenario:1")
+			task1 := datalog.NewIdentity("task:1")
 
-	scenario1 := datalog.NewIdentity("scenario:1")
-	task1 := datalog.NewIdentity("task:1")
+			// Scenario with required attributes
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/created-at"), int64(1000)))
 
-	// Scenario with required attributes
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/created-at"), int64(1000)))
+			// A completed task
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/token-count"), int64(100)))
 
-	// A completed task
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/token-count"), int64(100)))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Simplified version of the production query - just the failing OR pattern
-	queryStr := `[:find ?scenario ?taskCount
+			// Simplified version of the production query - just the failing OR pattern
+			queryStr := `[:find ?scenario ?taskCount
 	              :where
 	              [?scenario :scenario/id ?id]
 	              (or-default [(q [:find (count ?t)
@@ -127,17 +116,19 @@ func TestScenarioSummaryQuery_E2E(t *testing.T) {
 	                      $ ?scenario) [[?taskCount]]]
 	                  [(ground 0) ?taskCount])]`
 
-	tuples, err := executor.CollectTuples(db.Query(queryStr))
-	if err != nil {
-		t.Fatalf("Query execution failed: %v", err)
-	}
+			tuples, err := executor.CollectTuples(db.Query(queryStr))
+			if err != nil {
+				t.Fatalf("Query execution failed: %v", err)
+			}
 
-	t.Logf("Got %d results", len(tuples))
-	for _, tuple := range tuples {
-		t.Logf("Tuple: %v", tuple)
-	}
+			t.Logf("Got %d results", len(tuples))
+			for _, tuple := range tuples {
+				t.Logf("Tuple: %v", tuple)
+			}
 
-	require.Len(t, tuples, 1, "Should have 1 scenario")
+			require.Len(t, tuples, 1, "Should have 1 scenario")
+		})
+	}
 }
 
 // scenarioSummaryQueryFull is the EXACT production query from user's code
@@ -203,35 +194,30 @@ const scenarioSummaryQueryFull = `
 // TestNestedSubqueryInOr_E2E tests OR with NESTED SUBQUERY (subquery inside subquery)
 // This is the unique pattern in the production query's third OR clause
 func TestNestedSubqueryInOr_E2E(t *testing.T) {
-	dbPath := "/tmp/test-nested-subq-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dbPath,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			tx := db.NewTransaction()
+			scenario1 := datalog.NewIdentity("scenario:1")
+			task1 := datalog.NewIdentity("task:1")
+			task2 := datalog.NewIdentity("task:2")
 
-	tx := db.NewTransaction()
-	scenario1 := datalog.NewIdentity("scenario:1")
-	task1 := datalog.NewIdentity("task:1")
-	task2 := datalog.NewIdentity("task:2")
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/key"), datalog.NewKeyword(":task/first")))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/completed-at"), int64(100)))
+			require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/scenario"), scenario1))
+			require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+			require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/key"), datalog.NewKeyword(":task/second")))
+			require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/completed-at"), int64(200))) // Later = max
 
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/key"), datalog.NewKeyword(":task/first")))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/completed-at"), int64(100)))
-	require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/scenario"), scenario1))
-	require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
-	require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/key"), datalog.NewKeyword(":task/second")))
-	require.NoError(t, tx.Add(task2, datalog.NewKeyword(":task/completed-at"), int64(200))) // Later = max
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// NESTED SUBQUERY pattern from production query
-	queryStr := `[:find ?scenario ?lastKey
+			// NESTED SUBQUERY pattern from production query
+			queryStr := `[:find ?scenario ?lastKey
 	              :where
 	              [?scenario :scenario/id ?id]
 
@@ -251,50 +237,47 @@ func TestNestedSubqueryInOr_E2E(t *testing.T) {
 	                      $ ?scenario) [[?lastKey]]]
 	                  [(ground :none) ?lastKey])]`
 
-	tuples, err := executor.CollectTuples(db.Query(queryStr))
-	if err != nil {
-		t.Fatalf("Query execution failed: %v", err)
-	}
+			tuples, err := executor.CollectTuples(db.Query(queryStr))
+			if err != nil {
+				t.Fatalf("Query execution failed: %v", err)
+			}
 
-	t.Logf("Got %d results", len(tuples))
-	for _, tuple := range tuples {
-		t.Logf("Tuple: %v", tuple)
+			t.Logf("Got %d results", len(tuples))
+			for _, tuple := range tuples {
+				t.Logf("Tuple: %v", tuple)
+			}
+			require.Len(t, tuples, 1)
+		})
 	}
-	require.Len(t, tuples, 1)
 }
 
 // TestProductionQueryStructure_E2E incrementally builds toward the production query
 func TestProductionQueryStructure_E2E(t *testing.T) {
-	dbPath := "/tmp/test-prod-structure-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dbPath,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			tx := db.NewTransaction()
+			scenario1 := datalog.NewIdentity("scenario:1")
+			scenario2 := datalog.NewIdentity("scenario:2")
+			task1 := datalog.NewIdentity("task:1")
 
-	tx := db.NewTransaction()
-	scenario1 := datalog.NewIdentity("scenario:1")
-	scenario2 := datalog.NewIdentity("scenario:2")
-	task1 := datalog.NewIdentity("task:1")
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/created-at"), int64(1000)))
+			require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
+			require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/created-at"), int64(2000)))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
 
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/created-at"), int64(1000)))
-	require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
-	require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/created-at"), int64(2000)))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Structure matching production query:
-	// - Multiple get-else calls
-	// - First OR with correlated subquery
-	// - Second OR with correlated subquery
-	// - Comparison binding
-	queryStr := `[:find ?scenario ?id ?title ?createdAt ?taskCount ?openingCount ?complete
+			// Structure matching production query:
+			// - Multiple get-else calls
+			// - First OR with correlated subquery
+			// - Second OR with correlated subquery
+			// - Comparison binding
+			queryStr := `[:find ?scenario ?id ?title ?createdAt ?taskCount ?openingCount ?complete
 	              :where
 	              [?scenario :scenario/id ?id]
 	              [(get-else $ ?scenario :scenario/title "") ?title]
@@ -322,46 +305,43 @@ func TestProductionQueryStructure_E2E(t *testing.T) {
 	              ;; Comparison binding
 	              [(> ?openingCount 0) ?complete]]`
 
-	tuples, err := executor.CollectTuples(db.Query(queryStr))
-	if err != nil {
-		t.Fatalf("Query execution failed: %v", err)
-	}
+			tuples, err := executor.CollectTuples(db.Query(queryStr))
+			if err != nil {
+				t.Fatalf("Query execution failed: %v", err)
+			}
 
-	t.Logf("Got %d results", len(tuples))
-	for _, tuple := range tuples {
-		t.Logf("Tuple: %v", tuple)
+			t.Logf("Got %d results", len(tuples))
+			for _, tuple := range tuples {
+				t.Logf("Tuple: %v", tuple)
+			}
+			require.Len(t, tuples, 2)
+		})
 	}
-	require.Len(t, tuples, 2)
 }
 
 // TestGetElseBeforeOrClause_E2E tests get-else BEFORE the OR clause
 func TestGetElseBeforeOrClause_E2E(t *testing.T) {
-	dbPath := "/tmp/test-getelse-before-or-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dbPath,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			tx := db.NewTransaction()
+			scenario1 := datalog.NewIdentity("scenario:1")
+			scenario2 := datalog.NewIdentity("scenario:2")
+			task1 := datalog.NewIdentity("task:1")
 
-	tx := db.NewTransaction()
-	scenario1 := datalog.NewIdentity("scenario:1")
-	scenario2 := datalog.NewIdentity("scenario:2")
-	task1 := datalog.NewIdentity("task:1")
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/title"), "Test 1"))
+			require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
+			// scenario2 has no title - will use get-else default
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
 
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/title"), "Test 1"))
-	require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
-	// scenario2 has no title - will use get-else default
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// get-else BEFORE the OR clause (like production query)
-	queryStr := `[:find ?scenario ?title ?taskCount
+			// get-else BEFORE the OR clause (like production query)
+			queryStr := `[:find ?scenario ?title ?taskCount
 	              :where
 	              [?scenario :scenario/id ?id]
 	              [(get-else $ ?scenario :scenario/title "") ?title]
@@ -373,44 +353,41 @@ func TestGetElseBeforeOrClause_E2E(t *testing.T) {
 	                      $ ?scenario) [[?taskCount]]]
 	                  [(ground 0) ?taskCount])]`
 
-	tuples, err := executor.CollectTuples(db.Query(queryStr))
-	if err != nil {
-		t.Fatalf("Query execution failed: %v", err)
-	}
+			tuples, err := executor.CollectTuples(db.Query(queryStr))
+			if err != nil {
+				t.Fatalf("Query execution failed: %v", err)
+			}
 
-	t.Logf("Got %d results", len(tuples))
-	for _, tuple := range tuples {
-		t.Logf("Tuple: %v", tuple)
+			t.Logf("Got %d results", len(tuples))
+			for _, tuple := range tuples {
+				t.Logf("Tuple: %v", tuple)
+			}
+			require.Len(t, tuples, 2)
+		})
 	}
-	require.Len(t, tuples, 2)
 }
 
 // TestMultipleSequentialOrClauses_E2E tests MULTIPLE sequential OR clauses
 func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
-	dbPath := "/tmp/test-multi-or-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dbPath,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			tx := db.NewTransaction()
+			scenario1 := datalog.NewIdentity("scenario:1")
+			scenario2 := datalog.NewIdentity("scenario:2")
+			task1 := datalog.NewIdentity("task:1")
 
-	tx := db.NewTransaction()
-	scenario1 := datalog.NewIdentity("scenario:1")
-	scenario2 := datalog.NewIdentity("scenario:2")
-	task1 := datalog.NewIdentity("task:1")
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
+			require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
 
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
-	require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// MULTIPLE sequential OR clauses like the production query
-	queryStr := `[:find ?scenario ?count1 ?count2
+			// MULTIPLE sequential OR clauses like the production query
+			queryStr := `[:find ?scenario ?count1 ?count2
 	              :where
 	              [?scenario :scenario/id ?id]
 
@@ -430,44 +407,41 @@ func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
 	                      $ ?scenario) [[?count2]]]
 	                  [(ground 0) ?count2])]`
 
-	tuples, err := executor.CollectTuples(db.Query(queryStr))
-	if err != nil {
-		t.Fatalf("Query execution failed: %v", err)
-	}
+			tuples, err := executor.CollectTuples(db.Query(queryStr))
+			if err != nil {
+				t.Fatalf("Query execution failed: %v", err)
+			}
 
-	t.Logf("Got %d results", len(tuples))
-	for _, tuple := range tuples {
-		t.Logf("Tuple: %v", tuple)
+			t.Logf("Got %d results", len(tuples))
+			for _, tuple := range tuples {
+				t.Logf("Tuple: %v", tuple)
+			}
+			require.Len(t, tuples, 2)
+		})
 	}
-	require.Len(t, tuples, 2)
 }
 
 // TestOrWithGetElseInsideSubquery_E2E tests OR with get-else inside the subquery
 func TestOrWithGetElseInsideSubquery_E2E(t *testing.T) {
-	dbPath := "/tmp/test-or-getelse-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dbPath,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			tx := db.NewTransaction()
+			scenario1 := datalog.NewIdentity("scenario:1")
+			scenario2 := datalog.NewIdentity("scenario:2")
+			task1 := datalog.NewIdentity("task:1")
 
-	tx := db.NewTransaction()
-	scenario1 := datalog.NewIdentity("scenario:1")
-	scenario2 := datalog.NewIdentity("scenario:2")
-	task1 := datalog.NewIdentity("task:1")
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
+			require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
 
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
-	require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// OR with get-else INSIDE the subquery (like production query)
-	queryStr := `[:find ?scenario ?taskCount ?totalTokens
+			// OR with get-else INSIDE the subquery (like production query)
+			queryStr := `[:find ?scenario ?taskCount ?totalTokens
 	              :where
 	              [?scenario :scenario/id ?id]
 	              (or-default [(q [:find (count ?t) (sum ?tok)
@@ -479,45 +453,42 @@ func TestOrWithGetElseInsideSubquery_E2E(t *testing.T) {
 	                  (and [(ground 0) ?taskCount]
 	                       [(ground 0) ?totalTokens]))]`
 
-	tuples, err := executor.CollectTuples(db.Query(queryStr))
-	if err != nil {
-		t.Fatalf("Query execution failed: %v", err)
-	}
+			tuples, err := executor.CollectTuples(db.Query(queryStr))
+			if err != nil {
+				t.Fatalf("Query execution failed: %v", err)
+			}
 
-	t.Logf("Got %d results", len(tuples))
-	for _, tuple := range tuples {
-		t.Logf("Tuple: %v", tuple)
+			t.Logf("Got %d results", len(tuples))
+			for _, tuple := range tuples {
+				t.Logf("Tuple: %v", tuple)
+			}
+			require.Len(t, tuples, 2)
+		})
 	}
-	require.Len(t, tuples, 2)
 }
 
 // TestOrWithMultipleAggregations_E2E tests OR with multiple aggregations in subquery
 func TestOrWithMultipleAggregations_E2E(t *testing.T) {
-	dbPath := "/tmp/test-or-multi-agg-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dbPath,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			tx := db.NewTransaction()
+			scenario1 := datalog.NewIdentity("scenario:1")
+			scenario2 := datalog.NewIdentity("scenario:2")
+			task1 := datalog.NewIdentity("task:1")
 
-	tx := db.NewTransaction()
-	scenario1 := datalog.NewIdentity("scenario:1")
-	scenario2 := datalog.NewIdentity("scenario:2")
-	task1 := datalog.NewIdentity("task:1")
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
+			require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/token-count"), int64(100)))
 
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
-	require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/token-count"), int64(100)))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// OR with MULTIPLE aggregations in subquery (like the production query)
-	queryStr := `[:find ?scenario ?taskCount ?totalTokens
+			// OR with MULTIPLE aggregations in subquery (like the production query)
+			queryStr := `[:find ?scenario ?taskCount ?totalTokens
 	              :where
 	              [?scenario :scenario/id ?id]
 	              (or-default [(q [:find (count ?t) (sum ?tok)
@@ -529,64 +500,63 @@ func TestOrWithMultipleAggregations_E2E(t *testing.T) {
 	                  (and [(ground 0) ?taskCount]
 	                       [(ground 0) ?totalTokens]))]`
 
-	tuples, err := executor.CollectTuples(db.Query(queryStr))
-	if err != nil {
-		t.Fatalf("Query execution failed: %v", err)
-	}
+			tuples, err := executor.CollectTuples(db.Query(queryStr))
+			if err != nil {
+				t.Fatalf("Query execution failed: %v", err)
+			}
 
-	t.Logf("Got %d results", len(tuples))
-	for _, tuple := range tuples {
-		t.Logf("Tuple: %v", tuple)
+			t.Logf("Got %d results", len(tuples))
+			for _, tuple := range tuples {
+				t.Logf("Tuple: %v", tuple)
+			}
+			require.Len(t, tuples, 2)
+		})
 	}
-	require.Len(t, tuples, 2)
 }
 
 // TestFullScenarioSummaryQuery_E2E tests the EXACT production query
 func TestFullScenarioSummaryQuery_E2E(t *testing.T) {
-	dbPath := "/tmp/test-full-scenario-summary-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dbPath,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			// Insert test data
+			tx := db.NewTransaction()
 
-	// Insert test data
-	tx := db.NewTransaction()
+			scenario1 := datalog.NewIdentity("scenario:1")
+			scenario2 := datalog.NewIdentity("scenario:2")
+			task1 := datalog.NewIdentity("task:1")
 
-	scenario1 := datalog.NewIdentity("scenario:1")
-	scenario2 := datalog.NewIdentity("scenario:2")
-	task1 := datalog.NewIdentity("task:1")
+			// Scenario 1 with required attributes
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/created-at"), int64(1000)))
+			require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/title"), "Test Scenario"))
 
-	// Scenario 1 with required attributes
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1"))
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/created-at"), int64(1000)))
-	require.NoError(t, tx.Add(scenario1, datalog.NewKeyword(":scenario/title"), "Test Scenario"))
+			// Scenario 2 - no tasks (tests fallback)
+			require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
+			require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/created-at"), int64(2000)))
 
-	// Scenario 2 - no tasks (tests fallback)
-	require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2"))
-	require.NoError(t, tx.Add(scenario2, datalog.NewKeyword(":scenario/created-at"), int64(2000)))
+			// A completed task for scenario 1
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/token-count"), int64(100)))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/key"), datalog.NewKeyword(":scenario/idea")))
+			require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/completed-at"), int64(1500)))
 
-	// A completed task for scenario 1
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete")))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/token-count"), int64(100)))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/key"), datalog.NewKeyword(":scenario/idea")))
-	require.NoError(t, tx.Add(task1, datalog.NewKeyword(":task/completed-at"), int64(1500)))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tuples, err := executor.CollectTuples(db.Query(scenarioSummaryQueryFull))
+			if err != nil {
+				t.Fatalf("Query execution failed: %v", err)
+			}
 
-	tuples, err := executor.CollectTuples(db.Query(scenarioSummaryQueryFull))
-	if err != nil {
-		t.Fatalf("Query execution failed: %v", err)
+			t.Logf("Got %d results", len(tuples))
+			for _, tuple := range tuples {
+				t.Logf("Tuple: %v", tuple)
+			}
+
+			require.Len(t, tuples, 2, "Should have 2 scenarios")
+		})
 	}
-
-	t.Logf("Got %d results", len(tuples))
-	for _, tuple := range tuples {
-		t.Logf("Tuple: %v", tuple)
-	}
-
-	require.Len(t, tuples, 2, "Should have 2 scenarios")
 }

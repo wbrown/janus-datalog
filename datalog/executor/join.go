@@ -562,8 +562,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// We already deduplicated with 'seen', no need to do it again.
 	// Carry any deferred build/probe error onto the result so a failed scan
 	// isn't laundered into an empty/partial join.
-	result := NewMaterializedRelationNoDedupeWithOptions(outputSyms, results, opts)
-	result.properties = resultProperties.clone()
+	result := newMaterializedRelationFromSet(outputSyms, results, opts, resultProperties)
 	if buildErr != nil {
 		result.err = buildErr
 	} else if probeErr != nil {
@@ -704,9 +703,7 @@ func materializeFilteredLeft(
 ) *MaterializedRelation {
 	properties := left.Properties()
 	if len(properties.Keys) > 0 {
-		result := NewMaterializedRelationNoDedupeWithOptions(left.Symbols(), tuples, opts)
-		result.properties = properties.clone()
-		return result
+		return newMaterializedRelationFromSet(left.Symbols(), tuples, opts, properties)
 	}
 	return NewMaterializedRelationWithProperties(left.Symbols(), tuples, opts, properties)
 }
@@ -749,9 +746,9 @@ func crossProduct(left, right Relation) Relation {
 
 	outputSyms := append(left.Symbols(), right.Symbols()...)
 	var results []Tuple
+	var scanErr error
 
 	leftIt := left.Iterator()
-	defer leftIt.Close()
 
 	// For each left tuple
 	for leftIt.Next() {
@@ -764,8 +761,23 @@ func crossProduct(left, right Relation) Relation {
 			combined := append(append(Tuple{}, leftTuple...), rightTuple...)
 			results = append(results, combined)
 		}
-		rightIt.Close()
+		if err := rightIt.Error(); err != nil && scanErr == nil {
+			scanErr = err
+		}
+		if closeErr := rightIt.Close(); closeErr != nil && scanErr == nil {
+			scanErr = closeErr
+		}
+	}
+	if err := leftIt.Error(); err != nil && scanErr == nil {
+		scanErr = err
+	}
+	if closeErr := leftIt.Close(); closeErr != nil && scanErr == nil {
+		scanErr = closeErr
 	}
 
-	return NewMaterializedRelationWithOptions(outputSyms, results, opts)
+	// A failed scan is not an empty side — carry it as the result's
+	// deferred error.
+	result := NewMaterializedRelationWithOptions(outputSyms, results, opts)
+	result.err = scanErr
+	return result
 }

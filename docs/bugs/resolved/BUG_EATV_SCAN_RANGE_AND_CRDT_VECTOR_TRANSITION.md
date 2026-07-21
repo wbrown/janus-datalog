@@ -1,9 +1,6 @@
 # BUG: EATV Scan Range Missing + CRDT Vector Group Transition Drops Datom
 
-**Status**: Fixed
-**Severity**: Data loss (missing query results)
-**Discovered**: 2026-02-19, during EA cache bypass Phase 2 testing
-**Reproduction**: `TestCountRepro_WithVector` with `-count=2` (or any run where EATV is selected)
+**Status**: Fixed **Severity**: Data loss (missing query results) **Discovered**: 2026-02-19, during EA cache bypass Phase 2 testing **Reproduction**: `TestCountRepro_WithVector` with `-count=2` (or any run where EATV is selected)
 
 ## Symptom
 

@@ -64,10 +64,6 @@ func (r *LazySeqRelation) Get(i int) Tuple {
 	return nil
 }
 
-func (r *LazySeqRelation) IsEmpty() bool {
-	return r.seq.Empty()
-}
-
 // Iterator returns a new cursor over the shared LazySeq.
 // Each call creates an independent cursor starting from the head.
 func (r *LazySeqRelation) Iterator() Iterator {
@@ -97,14 +93,6 @@ func (r *LazySeqRelation) String() string {
 func (r *LazySeqRelation) Table() string                         { return r.realizeAll().Table() }
 func (r *LazySeqRelation) Sorted() ([]Tuple, error)              { return r.realizeAll().Sorted() }
 func (r *LazySeqRelation) Sort(o []query.OrderByClause) Relation { return r.realizeAll().Sort(o) }
-func (r *LazySeqRelation) Filter(f Filter) Relation {
-	return r.fromIterator(
-		NewFilterIterator(r.Iterator(), r.symbols, f),
-		r.symbols,
-		r.properties,
-	)
-}
-
 func (r *LazySeqRelation) Select(pred func(Tuple) bool) Relation {
 	return r.fromIterator(
 		&selectionIterator{source: r.Iterator(), predicate: pred},
@@ -224,7 +212,15 @@ func (it *lazySeqIterator) Next() bool {
 	}
 	it.current = tuple
 
-	rest, _ := it.cur.Rest()
+	rest, err := it.cur.Rest()
+	if err != nil {
+		// The current tuple is valid — emit it; the realization failure
+		// surfaces on the next advance via Error().
+		it.err = err
+		it.done = true
+		it.cur = nil
+		return true
+	}
 	if rest == nil {
 		it.cur = nil
 	} else {

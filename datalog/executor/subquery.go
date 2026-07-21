@@ -73,18 +73,19 @@ func getUniqueInputCombinations(
 }
 
 func createInputRelationsFromPatternWithOptions(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}, opts ExecutorOptions) ([]Relation, error) {
-	// Process the subquery's actual inputs in order
+	// Process the subquery's actual inputs in order. An input is a Variable
+	// resolved from the outer relation or a Constant (including source
+	// markers); anything unresolvable or of another kind is a loud error —
+	// silently binding nil feeds a non-value into the nested query.
 	var orderedValues []interface{}
 	for _, input := range subq.Inputs {
 		switch inp := input.(type) {
 		case query.Variable:
-			// Get value from outer query
-			if val, ok := outerValues[inp.Name]; ok {
-				orderedValues = append(orderedValues, val)
-			} else {
-				// Variable not found - shouldn't happen
-				orderedValues = append(orderedValues, nil)
+			val, ok := outerValues[inp.Name]
+			if !ok {
+				return nil, fmt.Errorf("subquery input %s is not bound in the outer relation", inp.Name)
 			}
+			orderedValues = append(orderedValues, val)
 		case query.Constant:
 			// Check if it's a source marker
 			if sym, ok := inp.Value.(query.Symbol); ok && sym.IsSource() {
@@ -95,8 +96,7 @@ func createInputRelationsFromPatternWithOptions(subq *query.SubqueryPattern, out
 				orderedValues = append(orderedValues, inp.Value)
 			}
 		default:
-			// Unknown input type
-			orderedValues = append(orderedValues, nil)
+			return nil, fmt.Errorf("unsupported subquery input element %T", input)
 		}
 	}
 

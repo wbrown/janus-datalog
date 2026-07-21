@@ -55,8 +55,12 @@ func newSimpleBatchScanner(
 
 // Scan performs the batch scan and collects all results
 func (s *simpleBatchScanner) Scan() error {
-	// Step 1: Build a set of binding values for fast lookup
+	// Step 1: Build a set of binding values for fast lookup. A failed
+	// bindings scan must not read as "no bindings".
 	bindingSet := s.buildBindingSet()
+	if s.err != nil {
+		return s.err
+	}
 	if len(bindingSet) == 0 {
 		return nil
 	}
@@ -80,12 +84,14 @@ func (s *simpleBatchScanner) Scan() error {
 	} else {
 		iter = NewCRDTResolvingIterator(rawIter, s.matcher.schema, s.matcher.crdtTxID(), s.matcher)
 	}
-	defer iter.Close()
 
-	// Step 4: Scan and filter
+	// Step 4: Scan and filter. Surface any captured error — a failed scan
+	// must not present as a completed (possibly empty) result.
 	s.results = s.scanAndFilter(iter, bindingSet)
-
-	return nil
+	if closeErr := iter.Close(); closeErr != nil && s.err == nil {
+		s.err = closeErr
+	}
+	return s.err
 }
 
 // buildBindingSet creates a map of binding values for O(1) lookup
@@ -104,6 +110,9 @@ func (s *simpleBatchScanner) buildBindingSet() map[string]executor.Tuple {
 				bindingSet[key] = tuple
 			}
 		}
+	}
+	if err := it.Error(); err != nil && s.err == nil {
+		s.err = err
 	}
 
 	return bindingSet
@@ -410,6 +419,9 @@ func (s *simpleBatchScanner) scanAndFilter(iter Iterator, bindingSet map[string]
 			resultTuple := s.tupleBuilder.BuildTupleInterned(datom)
 			results = append(results, resultTuple)
 		}
+	}
+	if err := iter.Error(); err != nil && s.err == nil {
+		s.err = err
 	}
 
 	return results

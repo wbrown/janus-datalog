@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 // AETV Index Tests
@@ -404,164 +402,182 @@ func TestAETVStorageScanTxDescendingOrder(t *testing.T) {
 
 // TestAETVCRDTResolutionSingleEntity verifies LWW resolution for single entity.
 func TestAETVCRDTResolutionSingleEntity(t *testing.T) {
-	dir, err := os.MkdirTemp("", "aetv-crdt-single-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			dir, err := os.MkdirTemp("", "aetv-crdt-single-*")
+			require.NoError(t, err)
+			defer os.RemoveAll(dir)
 
-	// Create database with cache disabled to test AETV path
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:         dir,
-		DisableCache: true,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			// Create database with cache disabled to test AETV path
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           dir,
+				DisableCache:   true,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			defer db.Close()
 
-	// Set up schema with cardinality-one attribute
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/name"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
-	db.SetSchema(s)
+			// Set up schema with cardinality-one attribute
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
 
-	// Write multiple values (LWW - last write wins)
-	entity := datalog.NewIdentity("test-person")
-	names := []string{"Alice", "Bob", "Charlie"}
+			// Write multiple values (LWW - last write wins)
+			entity := datalog.NewIdentity("test-person")
+			names := []string{"Alice", "Bob", "Charlie"}
 
-	for _, name := range names {
-		tx := db.NewTransaction()
-		tx.Add(entity, datalog.NewKeyword(":person/name"), name)
-		_, err = tx.Commit()
-		require.NoError(t, err)
+			for _, name := range names {
+				tx := db.NewTransaction()
+				tx.Add(entity, datalog.NewKeyword(":person/name"), name)
+				_, err = tx.Commit()
+				require.NoError(t, err)
+			}
+
+			// Query should return only "Charlie" (last write)
+			result, err := executor.CollectTuples(db.Query(
+				`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
+				entity,
+			))
+			require.NoError(t, err)
+
+			require.Len(t, result, 1, "CardinalityOne should return single result")
+			assert.Equal(t, "Charlie", result[0][0], "should return LWW winner")
+		})
 	}
-
-	// Query should return only "Charlie" (last write)
-	result, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
-		entity,
-	))
-	require.NoError(t, err)
-
-	require.Len(t, result, 1, "CardinalityOne should return single result")
-	assert.Equal(t, "Charlie", result[0][0], "should return LWW winner")
 }
 
 // TestAETVCRDTResolutionMultipleEntities verifies LWW resolution for batch lookup.
 // This is THE critical test case that was broken before AETV.
 func TestAETVCRDTResolutionMultipleEntities(t *testing.T) {
-	dir, err := os.MkdirTemp("", "aetv-crdt-multi-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
-
-	// Create database with cache disabled
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:         dir,
-		DisableCache: true,
-	})
-	require.NoError(t, err)
-	defer db.Close()
-
-	// Set up schema with cardinality-one attribute
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/name"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
-	db.SetSchema(s)
-
-	// Create 3 entities, each with 3 name updates
-	entities := []datalog.Identity{
-		datalog.NewIdentity("person-1"),
-		datalog.NewIdentity("person-2"),
-		datalog.NewIdentity("person-3"),
-	}
-
-	expectedNames := make(map[string]string) // entity hash -> expected name
-
-	for _, entity := range entities {
-		names := []string{"First", "Second", "Final"}
-		for _, name := range names {
-			tx := db.NewTransaction()
-			tx.Add(entity, datalog.NewKeyword(":person/name"), name+" "+entity.String())
-			_, err = tx.Commit()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			dir, err := os.MkdirTemp("", "aetv-crdt-multi-*")
 			require.NoError(t, err)
-		}
-		hash := entity.Hash()
-		expectedNames[string(hash[:])] = "Final " + entity.String()
-	}
+			defer os.RemoveAll(dir)
 
-	// Query with all entities as input - should use AETV with CRDT resolution
-	result, err := executor.CollectTuples(db.Query(
-		`[:find ?e ?v :in $ [?e ...] :where [?e :person/name ?v]]`,
-		entities,
-	))
-	require.NoError(t, err)
+			// Create database with cache disabled
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           dir,
+				DisableCache:   true,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			defer db.Close()
 
-	// Should have exactly 3 results (one per entity)
-	require.Len(t, result, 3, "should return one result per entity")
+			// Set up schema with cardinality-one attribute
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
 
-	// Verify each entity got its LWW winner
-	for _, tuple := range result {
-		entity := tuple[0].(datalog.Identity)
-		name := tuple[1].(string)
+			// Create 3 entities, each with 3 name updates
+			entities := []datalog.Identity{
+				datalog.NewIdentity("person-1"),
+				datalog.NewIdentity("person-2"),
+				datalog.NewIdentity("person-3"),
+			}
 
-		hash := entity.Hash()
-		expected := expectedNames[string(hash[:])]
-		assert.Equal(t, expected, name,
-			"entity %s should have LWW winner", entity.String())
+			expectedNames := make(map[string]string) // entity hash -> expected name
+
+			for _, entity := range entities {
+				names := []string{"First", "Second", "Final"}
+				for _, name := range names {
+					tx := db.NewTransaction()
+					tx.Add(entity, datalog.NewKeyword(":person/name"), name+" "+entity.String())
+					_, err = tx.Commit()
+					require.NoError(t, err)
+				}
+				hash := entity.Hash()
+				expectedNames[string(hash[:])] = "Final " + entity.String()
+			}
+
+			// Query with all entities as input - should use AETV with CRDT resolution
+			result, err := executor.CollectTuples(db.Query(
+				`[:find ?e ?v :in $ [?e ...] :where [?e :person/name ?v]]`,
+				entities,
+			))
+			require.NoError(t, err)
+
+			// Should have exactly 3 results (one per entity)
+			require.Len(t, result, 3, "should return one result per entity")
+
+			// Verify each entity got its LWW winner
+			for _, tuple := range result {
+				entity := tuple[0].(datalog.Identity)
+				name := tuple[1].(string)
+
+				hash := entity.Hash()
+				expected := expectedNames[string(hash[:])]
+				assert.Equal(t, expected, name,
+					"entity %s should have LWW winner", entity.String())
+			}
+		})
 	}
 }
 
 // TestAETVCRDTResolutionUnboundEntity verifies resolution for attribute enumeration.
 func TestAETVCRDTResolutionUnboundEntity(t *testing.T) {
-	dir, err := os.MkdirTemp("", "aetv-crdt-unbound-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
-
-	// Create database with cache disabled
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:         dir,
-		DisableCache: true,
-	})
-	require.NoError(t, err)
-	defer db.Close()
-
-	// Set up schema
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/status"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
-	db.SetSchema(s)
-
-	// Create entities with status updates
-	for i := 0; i < 5; i++ {
-		entity := datalog.NewIdentity("person-" + string(rune('A'+i)))
-
-		// Multiple status updates
-		statuses := []string{"pending", "active", "completed"}
-		for _, status := range statuses {
-			tx := db.NewTransaction()
-			tx.Add(entity, datalog.NewKeyword(":person/status"), status)
-			_, err = tx.Commit()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			dir, err := os.MkdirTemp("", "aetv-crdt-unbound-*")
 			require.NoError(t, err)
-		}
-	}
+			defer os.RemoveAll(dir)
 
-	// Query all statuses (E unbound) - should use AETV
-	result, err := executor.CollectTuples(db.Query(`[:find ?e ?v :where [?e :person/status ?v]]`))
-	require.NoError(t, err)
+			// Create database with cache disabled
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           dir,
+				DisableCache:   true,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			defer db.Close()
 
-	// Should have 5 results (one per entity, LWW resolved)
-	require.Len(t, result, 5, "should return one result per entity")
+			// Set up schema
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/status"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
 
-	// All should have "completed" (last write)
-	for _, tuple := range result {
-		status := tuple[1].(string)
-		assert.Equal(t, "completed", status, "all entities should have LWW winner")
+			// Create entities with status updates
+			for i := 0; i < 5; i++ {
+				entity := datalog.NewIdentity("person-" + string(rune('A'+i)))
+
+				// Multiple status updates
+				statuses := []string{"pending", "active", "completed"}
+				for _, status := range statuses {
+					tx := db.NewTransaction()
+					tx.Add(entity, datalog.NewKeyword(":person/status"), status)
+					_, err = tx.Commit()
+					require.NoError(t, err)
+				}
+			}
+
+			// Query all statuses (E unbound) - should use AETV
+			result, err := executor.CollectTuples(db.Query(`[:find ?e ?v :where [?e :person/status ?v]]`))
+			require.NoError(t, err)
+
+			// Should have 5 results (one per entity, LWW resolved)
+			require.Len(t, result, 5, "should return one result per entity")
+
+			// All should have "completed" (last write)
+			for _, tuple := range result {
+				status := tuple[1].(string)
+				assert.Equal(t, "completed", status, "all entities should have LWW winner")
+			}
+		})
 	}
 }
 
@@ -630,61 +646,67 @@ func TestIndexSelectionAETVForInputBoundE(t *testing.T) {
 // Query: [:find ?e ?a ?v :in $ [?e ...] [?a ...] :where [?e ?a ?v]]
 // This requires the executor to handle the cross-product of inputs correctly.
 func TestAETVCrossProductInputs(t *testing.T) {
-	dir, err := os.MkdirTemp("", "aetv-cross-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			dir, err := os.MkdirTemp("", "aetv-cross-*")
+			require.NoError(t, err)
+			defer os.RemoveAll(dir)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:         dir,
-		DisableCache: true,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           dir,
+				DisableCache:   true,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			defer db.Close()
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/name"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/age"),
-		ValueType:   schema.TypeLong,
-		Cardinality: schema.CardinalityOne,
-	})
-	db.SetSchema(s)
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/age"),
+				ValueType:   schema.TypeLong,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
 
-	entities := []datalog.Identity{
-		datalog.NewIdentity("person-1"),
-		datalog.NewIdentity("person-2"),
+			entities := []datalog.Identity{
+				datalog.NewIdentity("person-1"),
+				datalog.NewIdentity("person-2"),
+			}
+			attrs := []datalog.Keyword{
+				datalog.NewKeyword(":person/name"),
+				datalog.NewKeyword(":person/age"),
+			}
+
+			// Write one value for each (entity, attribute) combination
+			tx := db.NewTransaction()
+			for i, entity := range entities {
+				tx.Set(entity, attrs[0], "Name"+string(rune('A'+i)))
+				tx.Set(entity, attrs[1], int64(20+i*10))
+			}
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			// Query with both E and A from separate collections
+			results, err := executor.CollectTuples(db.Query(
+				`[:find ?e ?a ?v :in $ [?e ...] [?a ...] :where [?e ?a ?v]]`,
+				entities, attrs))
+			require.NoError(t, err)
+
+			// Expected: 4 results (2 entities × 2 attributes)
+			t.Logf("Results (%d):", len(results))
+			for _, r := range results {
+				t.Logf("  %v", r)
+			}
+
+			assert.Len(t, results, 4, "should return cross-product: 2 entities × 2 attributes")
+		})
 	}
-	attrs := []datalog.Keyword{
-		datalog.NewKeyword(":person/name"),
-		datalog.NewKeyword(":person/age"),
-	}
-
-	// Write one value for each (entity, attribute) combination
-	tx := db.NewTransaction()
-	for i, entity := range entities {
-		tx.Set(entity, attrs[0], "Name"+string(rune('A'+i)))
-		tx.Set(entity, attrs[1], int64(20+i*10))
-	}
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Query with both E and A from separate collections
-	results, err := executor.CollectTuples(db.Query(
-		`[:find ?e ?a ?v :in $ [?e ...] [?a ...] :where [?e ?a ?v]]`,
-		entities, attrs))
-	require.NoError(t, err)
-
-	// Expected: 4 results (2 entities × 2 attributes)
-	t.Logf("Results (%d):", len(results))
-	for _, r := range results {
-		t.Logf("  %v", r)
-	}
-
-	assert.Len(t, results, 4, "should return cross-product: 2 entities × 2 attributes")
 }
 
 // =============================================================================

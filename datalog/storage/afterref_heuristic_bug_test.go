@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 // Tests for the AfterRef heuristic decode bug (BUG_SHARED_DB_DATOM_LOSS).

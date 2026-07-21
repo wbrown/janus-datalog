@@ -1,10 +1,6 @@
 # Bug: Parameterized Queries Cause "Cartesian Product" Errors on Queries That Work with fmt.Sprintf
 
-**Status**: ✅ **FIXED**
-**Date Reported**: October 13, 2025
-**Date Fixed**: October 13, 2025
-**Severity**: High - Blocked adoption of parameterized query API
-**Affected**: ExecuteQueryWithInputs API
+**Status**: ✅ **FIXED** **Date Reported**: October 13, 2025 **Date Fixed**: October 13, 2025 **Severity**: High - Blocked adoption of parameterized query API **Affected**: ExecuteQueryWithInputs API
 
 ## Summary
 

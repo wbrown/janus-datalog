@@ -1,9 +1,6 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,24 +12,27 @@ import (
 // TestEmptyDataSubqueryBug reproduces the bug where queries with subqueries
 // fail with projection errors when there's no matching data
 func TestEmptyDataSubqueryBug(t *testing.T) {
-	// Create temporary database
-	dbPath := "/tmp/test-empty-subquery-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create temporary database
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				PlannerOptions: &popts,
+			})
+			assert.NoError(t, err)
+			defer db.Close()
 
-	db, err := NewDatabase(dbPath)
-	assert.NoError(t, err)
-	defer db.Close()
+			// Insert ONLY symbol entity, NO price bars
+			tx := db.NewTransaction()
+			aapl := datalog.NewIdentity("AAPL")
+			assert.NoError(t, tx.Add(aapl, datalog.NewKeyword(":symbol/ticker"), "AAPL"))
+			_, err = tx.Commit()
+			assert.NoError(t, err)
 
-	// Insert ONLY symbol entity, NO price bars
-	tx := db.NewTransaction()
-	aapl := datalog.NewIdentity("AAPL")
-	assert.NoError(t, tx.Add(aapl, datalog.NewKeyword(":symbol/ticker"), "AAPL"))
-	_, err = tx.Commit()
-	assert.NoError(t, err)
-
-	// Query with subquery - simplified version of gopher-street OHLC query
-	// This should return empty results gracefully, not fail with projection error
-	query := `[:find ?date ?open-price
+			// Query with subquery - simplified version of gopher-street OHLC query
+			// This should return empty results gracefully, not fail with projection error
+			query := `[:find ?date ?open-price
 	 :in $ ?symbol
 	 :where
 	        [?s :symbol/ticker ?symbol]
@@ -49,38 +49,43 @@ func TestEmptyDataSubqueryBug(t *testing.T) {
 	                    [?b :price/open ?o]]
 	            $ ?s ?year ?month ?day) [[?open-price]]]]`
 
-	// Execute with default options
-	results, err := executor.CollectTuples(db.Query(query, "AAPL"))
+			// Execute with default options
+			results, err := executor.CollectTuples(db.Query(query, "AAPL"))
 
-	// Should succeed with empty results, NOT fail with projection error
-	if err != nil {
-		t.Logf("BUG REPRODUCED! Error: %v", err)
-		t.Fatalf("Query with empty data should return empty results, not fail: %v", err)
+			// Should succeed with empty results, NOT fail with projection error
+			if err != nil {
+				t.Logf("BUG REPRODUCED! Error: %v", err)
+				t.Fatalf("Query with empty data should return empty results, not fail: %v", err)
+			}
+
+			assert.Len(t, results, 0, "Should return empty results when no data matches")
+			t.Logf("SUCCESS: Query returned %d results (empty as expected)", len(results))
+		})
 	}
-
-	assert.Len(t, results, 0, "Should return empty results when no data matches")
-	t.Logf("SUCCESS: Query returned %d results (empty as expected)", len(results))
 }
 
 // TestEmptyDataSubqueryBug_FullGopherStreetQuery tests with the EXACT gopher-street query
 func TestEmptyDataSubqueryBug_FullGopherStreetQuery(t *testing.T) {
-	// Create temporary database
-	dbPath := "/tmp/test-empty-full-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create temporary database
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				PlannerOptions: &popts,
+			})
+			assert.NoError(t, err)
+			defer db.Close()
 
-	db, err := NewDatabase(dbPath)
-	assert.NoError(t, err)
-	defer db.Close()
+			// Insert ONLY symbol entity, NO price bars
+			tx := db.NewTransaction()
+			aapl := datalog.NewIdentity("AAPL")
+			assert.NoError(t, tx.Add(aapl, datalog.NewKeyword(":symbol/ticker"), "AAPL"))
+			_, err = tx.Commit()
+			assert.NoError(t, err)
 
-	// Insert ONLY symbol entity, NO price bars
-	tx := db.NewTransaction()
-	aapl := datalog.NewIdentity("AAPL")
-	assert.NoError(t, tx.Add(aapl, datalog.NewKeyword(":symbol/ticker"), "AAPL"))
-	_, err = tx.Commit()
-	assert.NoError(t, err)
-
-	// EXACT gopher-street query with 4 subqueries
-	query := `[:find ?date ?open-price ?daily-high ?daily-low ?close-price ?total-volume
+			// EXACT gopher-street query with 4 subqueries
+			query := `[:find ?date ?open-price ?daily-high ?daily-low ?close-price ?total-volume
 	 :in $ ?symbol
 	 :where
 	        [?s :symbol/ticker ?symbol]
@@ -157,37 +162,38 @@ func TestEmptyDataSubqueryBug_FullGopherStreetQuery(t *testing.T) {
 	                    [?b :price/volume ?v]]
 	            $ ?s ?year ?month ?day) [[?total-volume]]]]`
 
-	// Execute with default options
-	results, err := executor.CollectTuples(db.Query(query, "AAPL"))
+			// Execute with default options
+			results, err := executor.CollectTuples(db.Query(query, "AAPL"))
 
-	if err != nil {
-		t.Logf("BUG REPRODUCED! Error: %v", err)
-		t.Fatalf("Query with empty data should return empty results, not fail: %v", err)
+			if err != nil {
+				t.Logf("BUG REPRODUCED! Error: %v", err)
+				t.Fatalf("Query with empty data should return empty results, not fail: %v", err)
+			}
+
+			assert.Len(t, results, 0, "Should return empty results when no data matches")
+			t.Logf("SUCCESS: Full gopher-street query returned %d results (empty as expected)", len(results))
+		})
 	}
-
-	assert.Len(t, results, 0, "Should return empty results when no data matches")
-	t.Logf("SUCCESS: Full gopher-street query returned %d results (empty as expected)", len(results))
 }
 
 // TestEmptyDataSubqueryBug_WithOptions tests with explicit planner options
 func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
-	// Create temporary database
-	dbPath := "/tmp/test-empty-subquery-opts-" + t.Name()
-	defer os.RemoveAll(dbPath)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create temporary database
+			db, err := NewDatabase(t.TempDir())
+			assert.NoError(t, err)
+			defer db.Close()
 
-	db, err := NewDatabase(dbPath)
-	assert.NoError(t, err)
-	defer db.Close()
+			// Insert ONLY symbol entity, NO price bars
+			tx := db.NewTransaction()
+			aapl := datalog.NewIdentity("AAPL")
+			assert.NoError(t, tx.Add(aapl, datalog.NewKeyword(":symbol/ticker"), "AAPL"))
+			_, err = tx.Commit()
+			assert.NoError(t, err)
 
-	// Insert ONLY symbol entity, NO price bars
-	tx := db.NewTransaction()
-	aapl := datalog.NewIdentity("AAPL")
-	assert.NoError(t, tx.Add(aapl, datalog.NewKeyword(":symbol/ticker"), "AAPL"))
-	_, err = tx.Commit()
-	assert.NoError(t, err)
-
-	// Same query as above
-	queryStr := `[:find ?date ?open-price
+			// Same query as above
+			queryStr := `[:find ?date ?open-price
 	 :in $ ?symbol
 	 :where
 	        [?s :symbol/ticker ?symbol]
@@ -204,56 +210,58 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 	                    [?b :price/open ?o]]
 	            $ ?s ?year ?month ?day) [[?open-price]]]]`
 
-	// Test with default options
-	t.Run("default options", func(t *testing.T) {
-		opts := DefaultPlannerOptions()
+			// Test with default options
+			t.Run("default options", func(t *testing.T) {
+				opts := mode.plannerOptions()
 
-		q, err := parser.ParseQuery(queryStr)
-		assert.NoError(t, err)
+				q, err := parser.ParseQuery(queryStr)
+				assert.NoError(t, err)
 
-		inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
-		assert.NoError(t, err)
+				inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
+				assert.NoError(t, err)
 
-		exec := db.NewExecutorWithOptions(opts)
-		result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRels)
+				exec := db.NewExecutorWithOptions(opts)
+				result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRels)
 
-		if err != nil {
-			t.Logf("BUG: %v", err)
-			t.Fatalf("Should succeed with empty results: %v", err)
-		}
+				if err != nil {
+					t.Logf("BUG: %v", err)
+					t.Fatalf("Should succeed with empty results: %v", err)
+				}
 
-		// Convert to tuples
-		it := result.Iterator()
-		defer it.Close()
-		count := 0
-		for it.Next() {
-			count++
-		}
-		assert.Equal(t, 0, count, "Should have 0 results")
-	})
+				// Convert to tuples
+				it := result.Iterator()
+				defer it.Close()
+				count := 0
+				for it.Next() {
+					count++
+				}
+				assert.Equal(t, 0, count, "Should have 0 results")
+			})
 
-	// Test with default options (second run)
-	t.Run("default options (second run)", func(t *testing.T) {
-		opts := DefaultPlannerOptions()
+			// Test with default options (second run)
+			t.Run("default options (second run)", func(t *testing.T) {
+				opts := mode.plannerOptions()
 
-		q, err := parser.ParseQuery(queryStr)
-		assert.NoError(t, err)
+				q, err := parser.ParseQuery(queryStr)
+				assert.NoError(t, err)
 
-		inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
-		assert.NoError(t, err)
+				inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
+				assert.NoError(t, err)
 
-		exec := db.NewExecutorWithOptions(opts)
-		result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRels)
+				exec := db.NewExecutorWithOptions(opts)
+				result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRels)
 
-		assert.NoError(t, err, "Should succeed with empty results")
+				assert.NoError(t, err, "Should succeed with empty results")
 
-		// Convert to tuples
-		it := result.Iterator()
-		defer it.Close()
-		count := 0
-		for it.Next() {
-			count++
-		}
-		assert.Equal(t, 0, count, "Should have 0 results")
-	})
+				// Convert to tuples
+				it := result.Iterator()
+				defer it.Close()
+				count := 0
+				for it.Next() {
+					count++
+				}
+				assert.Equal(t, 0, count, "Should have 0 results")
+			})
+		})
+	}
 }

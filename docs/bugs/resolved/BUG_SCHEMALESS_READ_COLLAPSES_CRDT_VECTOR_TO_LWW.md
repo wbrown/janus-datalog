@@ -1,81 +1,41 @@
 # BUG: Schemaless Reads Collapse CRDT Vector/Set Attributes to a Single LWW Value
 
-**Date**: 2026-05-31
-**Severity**: Correctness / silent data loss on read (High)
-**Status**: ✅ RESOLVED (2026-05-31)
-**Affected**: Any reader that opens a database without a schema (`storage.NewDatabase(path)`) and queries a `CardinalityVector` (RGA) or `CardinalityMany` (add-wins set) attribute. Includes the `datalog` CLI and `ednstats`.
+**Date**: 2026-05-31 **Severity**: Correctness / silent data loss on read (High) **Status**: ✅ RESOLVED (2026-05-31) **Affected**: Any reader that opens a database without a schema (`storage.NewDatabase(path)`) and queries a `CardinalityVector` (RGA) or `CardinalityMany` (add-wins set) attribute. Includes the `datalog` CLI and `ednstats`.
 
 ## Resolution
 
-Cardinality is **reconstructed from the stored CRDT ops at open** and installed
-as the database's schema. Because every read (and write) path already consults
-`d.schema`, populating it once at open makes them all resolve correctly with **no
-query-path special-casing** — the fix lives entirely at construction time.
+Cardinality is **reconstructed from the stored CRDT ops at open** and installed as the database's schema. Because every read (and write) path already consults `d.schema`, populating it once at open makes them all resolve correctly with **no query-path special-casing** — the fix lives entirely at construction time.
 
 ### Two corrections to the original report (confirmed during investigation)
 
-1. **The original reproduction was invalid.** `[:find (count ?v) …]` returns 1
-   whether the read is correct or collapsed: a vector binds `?v` to a single
-   *list* value, so `count` is 1 either way. The regression tests instead assert
-   read-equality — schemaless read == schema-aware read of the same bytes —
-   inspecting the bound value's shape.
+1. **The original reproduction was invalid.** `[:find (count ?v) …]` returns 1 whether the read is correct or collapsed: a vector binds `?v` to a single *list* value, so `count` is 1 either way. The regression tests instead assert read-equality — schemaless read == schema-aware read of the same bytes — inspecting the bound value's shape.
 
-2. **The collapse had four+ schema-only decision sites, not two.** A schemaless
-   `LookupAttribute` (its own inline schema default), the streaming
-   `CRDTResolvingIterator` (unbound `?e`), the cache `rebuild`/`ResolveEntry`
-   paths, and `PrefetchEntities` each independently defaulted a silent attribute
-   to cardinality-one. Constructing the schema at open fixes all of them at once
-   rather than patching each.
+2. **The collapse had four+ schema-only decision sites, not two.** A schemaless `LookupAttribute` (its own inline schema default), the streaming `CRDTResolvingIterator` (unbound `?e`), the cache `rebuild`/`ResolveEntry` paths, and `PrefetchEntities` each independently defaulted a silent attribute to cardinality-one. Constructing the schema at open fixes all of them at once rather than patching each.
 
 ### Why a per-site op-peek does NOT work (a first attempt that was abandoned)
 
-A first attempt added op-inference at each read site by peeking the **first**
-stored datom's op. It broke `TestSchemalessRemove_ThenReAdd` because
-**`OpCRDTRemove` is not unique to cardinality-many**: it is written for both a
-cardinality-one tombstone and a cardinality-many member removal
-(`database.go` `Remove`). Peeking a leading Remove misclassified a removed
-cardinality-one attribute as many, and its re-Add (`OpNone`) then read as absent.
+A first attempt added op-inference at each read site by peeking the **first** stored datom's op. It broke `TestSchemalessRemove_ThenReAdd` because **`OpCRDTRemove` is not unique to cardinality-many**: it is written for both a cardinality-one tombstone and a cardinality-many member removal (`database.go` `Remove`). Peeking a leading Remove misclassified a removed cardinality-one attribute as many, and its re-Add (`OpNone`) then read as absent.
 
 ### The shipped fix
 
 `datalog/storage/cardinality_inference.go`:
 
-- `cardFromOp(op)` returns `(cardinality, decisive)`. `OpCRDTAdd`→many,
-  `OpRGAInsert/OpRGATombstone`→vector, `OpNone`→one are **decisive**;
-  `OpCRDTRemove` is **not** (ambiguous one-vs-many).
-- `inferSchemaFromStore` does one keys-only pass over the **ATEV** index
-  (`[A][Tx↓][E][V]`, which groups every datom by attribute) and classifies each
-  attribute by its first **decisive** op — skipping leading `OpCRDTRemove`
-  entries. An attribute whose entries are all removes resolves empty under either
-  cardinality, so it defaults to one. `ValueType` is taken from a representative
-  value (affects typed-vector formatting only).
+- `cardFromOp(op)` returns `(cardinality, decisive)`. `OpCRDTAdd`→many, `OpRGAInsert/OpRGATombstone`→vector, `OpNone`→one are **decisive**; `OpCRDTRemove` is **not** (ambiguous one-vs-many).
+- `inferSchemaFromStore` does one keys-only pass over the **ATEV** index (`[A][Tx↓][E][V]`, which groups every datom by attribute) and classifies each attribute by its first **decisive** op — skipping leading `OpCRDTRemove` entries. An attribute whose entries are all removes resolves empty under either cardinality, so it defaults to one. `ValueType` is taken from a representative value (affects typed-vector formatting only).
 
-`database.go` `NewDatabaseWithOptions`: when `opts.Schema == nil`, the effective
-schema is `inferSchemaFromStore(store)`. A supplied schema is authoritative and
-wins entirely (no inference). On an empty store this yields an empty schema,
-equivalent to the prior nil behavior.
+`database.go` `NewDatabaseWithOptions`: when `opts.Schema == nil`, the effective schema is `inferSchemaFromStore(store)`. A supplied schema is authoritative and wins entirely (no inference). On an empty store this yields an empty schema, equivalent to the prior nil behavior.
 
-This is installed into `d.schema`, so it governs **reads and writes**: a
-schemaless reopen that appends to an existing vector/many attribute now emits the
-correct op (`OpRGAInsert`/`OpCRDTAdd`) instead of corrupting the group with
-`OpNone`. (Cardinality is immutable per attribute in this engine — changing it on
-existing data is unsupported — so a reconstructed cardinality cannot disagree
-with future consistent writes.)
+This is installed into `d.schema`, so it governs **reads and writes**: a schemaless reopen that appends to an existing vector/many attribute now emits the correct op (`OpRGAInsert`/`OpCRDTAdd`) instead of corrupting the group with `OpNone`. (Cardinality is immutable per attribute in this engine — changing it on existing data is unsupported — so a reconstructed cardinality cannot disagree with future consistent writes.)
 
 ### Regression coverage
 
-`datalog/storage/schemaless_crdt_read_test.go` — all assert schemaless ==
-schema-aware on the same bytes; the read tests were verified to fail before the
-fix:
+`datalog/storage/schemaless_crdt_read_test.go` — all assert schemaless == schema-aware on the same bytes; the read tests were verified to fail before the fix:
 
-- `TestSchemalessRead_VectorMatchesSchemaAware` — streaming (unbound `?e`) and
-  cache (bound `?e`) query paths, cache on and off.
-- `TestSchemalessLookupAttribute_VectorMatchesSchemaAware` — the `LookupAttribute`
-  (Pull) path via the production `db.Matcher()`.
+- `TestSchemalessRead_VectorMatchesSchemaAware` — streaming (unbound `?e`) and cache (bound `?e`) query paths, cache on and off.
+- `TestSchemalessLookupAttribute_VectorMatchesSchemaAware` — the `LookupAttribute` (Pull) path via the production `db.Matcher()`.
 - `TestSchemalessRead_ManyMatchesSchemaAware` — cardinality-many set.
 - `TestSchemalessPrefetch_VectorNotCollapsed` — the `EnableEntityPrefetch` path.
-- `TestSchemalessReopen_WriteUsesInferredCardinality` — schemaless reopen + append
-  extends the vector (RGA) rather than LWW-overwriting it.
+- `TestSchemalessReopen_WriteUsesInferredCardinality` — schemaless reopen + append extends the vector (RGA) rather than LWW-overwriting it.
 
 ## Summary
 
@@ -121,8 +81,7 @@ dbr, _ := storage.NewDatabase(path)
 // query: [:find (count ?v) :where [?e :doc/lines ?v]]
 ```
 
-**Expected**: 5
-**Actual**: 1 (the last element, `"line 4"`)
+**Expected**: 5 **Actual**: 1 (the last element, `"line 4"`)
 
 The same holds for a `CardinalityMany` attribute: the schemaless reader returns one member instead of the full set.
 

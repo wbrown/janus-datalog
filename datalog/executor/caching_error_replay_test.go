@@ -33,21 +33,9 @@ func TestMaterialize_ReplaysSourceError_ImmediateFailure(t *testing.T) {
 
 // TestSort_ReplaysSourceError: order-by materializes; the error must survive.
 func TestSort_ReplaysSourceError(t *testing.T) {
-	orderBy := []query.OrderByClause{{Variable: datalog.NewSymbol("?x"), Direction: query.OrderAsc}}
+	orderBy := []query.OrderByClause{{Variable: datalog.NewSymbol("?x"), Descending: false}}
 	sorted := newFailingStream(1, Tuple{int64(2)}, Tuple{int64(1)}, Tuple{int64(3)}).Sort(orderBy)
 	require.ErrorIs(t, driveErr(sorted), errInjectedIterator)
-}
-
-// TestUnionRelation_MaterializeReplaysSourceError: union bug verification #4 —
-// materializing a union whose inner relation fails must surface the error, not a
-// silent prefix.
-func TestUnionRelation_MaterializeReplaysSourceError(t *testing.T) {
-	ch := make(chan relationItem, 1)
-	ch <- relationItem{relation: newFailingRelation(1, Tuple{int64(1)}, Tuple{int64(2)})}
-	close(ch)
-
-	ur := NewUnionRelation(ch, testSymbols(), ExecutorOptions{})
-	require.ErrorIs(t, driveErr(ur.Materialize()), errInjectedIterator)
 }
 
 // TestCollectTuples_OverMaterializedFailingRelation: the end-to-end property —

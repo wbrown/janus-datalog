@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/wbrown/janus-datalog/datalog"
 )
@@ -22,18 +23,6 @@ type Predicate interface {
 	Selectivity() float64   // 0.0 to 1.0, estimated fraction that pass
 	CanPushToStorage() bool // Can this be evaluated at storage level?
 }
-
-// CompareOp represents comparison operators
-type CompareOp string
-
-const (
-	OpEQ  CompareOp = "="
-	OpNE  CompareOp = "!="
-	OpLT  CompareOp = "<"
-	OpLTE CompareOp = "<="
-	OpGT  CompareOp = ">"
-	OpGTE CompareOp = ">="
-)
 
 // Term represents either a variable or a constant value in a predicate
 type Term interface {
@@ -84,8 +73,10 @@ func (c ConstantTerm) String() string {
 }
 
 // Comparison implements comparison predicates: [(< ?x 10)], [(>= ?y ?z)], etc.
+// Op is one of the pre-interned operator symbols (datalog.SymEQ, SymNE,
+// SymLT, SymLTE, SymGT, SymGTE); dispatch is pointer equality.
 type Comparison struct {
-	Op    CompareOp
+	Op    Symbol
 	Left  Term
 	Right Term
 }
@@ -107,80 +98,28 @@ func (c Comparison) Eval(bindings map[Symbol]interface{}) (bool, error) {
 		return false, fmt.Errorf("cannot resolve right term %s", c.Right)
 	}
 
-	// Compare the values
-	cmp := datalog.CompareValues(leftVal, rightVal)
-
+	// = and != are value equality (ValuesEqual): type-strict, the same
+	// relation join keys use, so the planner's equi-join rewrite of
+	// [(= ?x ?y)] into a join condition preserves semantics. The ordering
+	// operators use the total order (CompareValues), where int and float
+	// compare by magnitude — (>= 3 3.0) is true while (= 3 3.0) is false,
+	// as in Clojure.
 	switch c.Op {
-	case OpEQ:
-		return cmp == 0, nil
-	case OpNE:
-		return cmp != 0, nil
-	case OpLT:
-		return cmp < 0, nil
-	case OpLTE:
-		return cmp <= 0, nil
-	case OpGT:
-		return cmp > 0, nil
-	case OpGTE:
-		return cmp >= 0, nil
+	case datalog.SymEQ:
+		return datalog.ValuesEqual(leftVal, rightVal), nil
+	case datalog.SymNE:
+		return !datalog.ValuesEqual(leftVal, rightVal), nil
+	case datalog.SymLT:
+		return datalog.CompareValues(leftVal, rightVal) < 0, nil
+	case datalog.SymLTE:
+		return datalog.CompareValues(leftVal, rightVal) <= 0, nil
+	case datalog.SymGT:
+		return datalog.CompareValues(leftVal, rightVal) > 0, nil
+	case datalog.SymGTE:
+		return datalog.CompareValues(leftVal, rightVal) >= 0, nil
 	default:
-		return false, fmt.Errorf("unknown comparison operator: %s", c.Op)
+		return false, fmt.Errorf("unknown comparison operator: %v", c.Op)
 	}
-}
-
-// Methods for planner analysis
-func (c *Comparison) classifyType() string {
-	if c.Op == OpEQ {
-		return "equality"
-	}
-	return "comparison"
-}
-
-func (c *Comparison) operatorString() string {
-	switch c.Op {
-	case OpEQ:
-		return "="
-	case OpNE:
-		return "!="
-	case OpLT:
-		return "<"
-	case OpLTE:
-		return "<="
-	case OpGT:
-		return ">"
-	case OpGTE:
-		return ">="
-	default:
-		return "unknown"
-	}
-}
-
-func (c *Comparison) extractLeftVar() Symbol {
-	if v, ok := c.Left.(VariableTerm); ok {
-		return v.Symbol
-	}
-	return nil
-}
-
-func (c *Comparison) extractRightVar() Symbol {
-	if v, ok := c.Right.(VariableTerm); ok {
-		return v.Symbol
-	}
-	return nil
-}
-
-func (c *Comparison) extractLeftValue() interface{} {
-	if ct, ok := c.Left.(ConstantTerm); ok {
-		return ct.Value
-	}
-	return nil
-}
-
-func (c *Comparison) extractRightValue() interface{} {
-	if ct, ok := c.Right.(ConstantTerm); ok {
-		return ct.Value
-	}
-	return nil
 }
 
 func (c Comparison) String() string {
@@ -190,11 +129,11 @@ func (c Comparison) String() string {
 func (c Comparison) Selectivity() float64 {
 	// Basic heuristics
 	switch c.Op {
-	case OpEQ:
+	case datalog.SymEQ:
 		return 0.1 // Equality is typically selective
-	case OpLT, OpGT:
+	case datalog.SymLT, datalog.SymGT:
 		return 0.3 // Less/greater typically filter ~70%
-	case OpLTE, OpGTE:
+	case datalog.SymLTE, datalog.SymGTE:
 		return 0.33 // Slightly less selective
 	default:
 		return 0.5
@@ -209,8 +148,9 @@ func (c Comparison) CanPushToStorage() bool {
 }
 
 // ChainedComparison implements Clojure-style chained comparisons: [(< 0 ?x 100)]
+// Op is one of the pre-interned operator symbols, as in Comparison.
 type ChainedComparison struct {
-	Op    CompareOp
+	Op    Symbol
 	Terms []Term
 }
 
@@ -239,21 +179,23 @@ func (c ChainedComparison) Eval(bindings map[Symbol]interface{}) (bool, error) {
 			return false, fmt.Errorf("cannot resolve term %s", c.Terms[i+1])
 		}
 
-		cmp := datalog.CompareValues(leftVal, rightVal)
-
-		// Check if this pair satisfies the operator
+		// Check if this pair satisfies the operator. Equality is
+		// ValuesEqual (type-strict); ordering is CompareValues, as in
+		// Comparison.Eval.
 		ok := false
 		switch c.Op {
-		case OpLT:
-			ok = cmp < 0
-		case OpLTE:
-			ok = cmp <= 0
-		case OpGT:
-			ok = cmp > 0
-		case OpGTE:
-			ok = cmp >= 0
-		case OpEQ:
-			ok = cmp == 0
+		case datalog.SymLT:
+			ok = datalog.CompareValues(leftVal, rightVal) < 0
+		case datalog.SymLTE:
+			ok = datalog.CompareValues(leftVal, rightVal) <= 0
+		case datalog.SymGT:
+			ok = datalog.CompareValues(leftVal, rightVal) > 0
+		case datalog.SymGTE:
+			ok = datalog.CompareValues(leftVal, rightVal) >= 0
+		case datalog.SymEQ:
+			ok = datalog.ValuesEqual(leftVal, rightVal)
+		default:
+			return false, fmt.Errorf("unknown comparison operator: %v", c.Op)
 		}
 
 		if !ok {
@@ -385,10 +327,79 @@ func (n NotEqualPredicate) String() string {
 	return fmt.Sprintf("[(!= %s %s)]", n.Left, n.Right)
 }
 
-// FunctionPredicate handles arbitrary function predicates like str/starts-with?
+// StrStartsWithPredicate checks that a string value starts with a string
+// prefix: [(str/starts-with? ?name "Dr.")]. It is a concrete predicate type
+// constructed at parse — no name dispatch at evaluation. A non-string value
+// or prefix is the equality join's typed non-match; an unbound variable is
+// an error.
+type StrStartsWithPredicate struct {
+	Value  Term
+	Prefix Term
+}
+
+func (s StrStartsWithPredicate) RequiredSymbols() []Symbol {
+	symbols := s.Value.RequiredSymbols()
+	symbols = append(symbols, s.Prefix.RequiredSymbols()...)
+	return symbols
+}
+
+func (s StrStartsWithPredicate) Eval(bindings map[Symbol]interface{}) (bool, error) {
+	value, ok := s.Value.Resolve(bindings)
+	if !ok {
+		return false, fmt.Errorf("cannot resolve term %s", s.Value)
+	}
+	prefix, ok := s.Prefix.Resolve(bindings)
+	if !ok {
+		return false, fmt.Errorf("cannot resolve term %s", s.Prefix)
+	}
+
+	str, ok := value.(string)
+	if !ok {
+		return false, nil // Typed non-match: only strings have prefixes
+	}
+	pre, ok := prefix.(string)
+	if !ok {
+		return false, nil
+	}
+	return strings.HasPrefix(str, pre), nil
+}
+
+func (s StrStartsWithPredicate) String() string {
+	return fmt.Sprintf("[(str/starts-with? %s %s)]", s.Value, s.Prefix)
+}
+
+func (s StrStartsWithPredicate) Selectivity() float64 {
+	return 0.5
+}
+
+func (s StrStartsWithPredicate) CanPushToStorage() bool {
+	return false
+}
+
+// FunctionPredicate carries a predicate function name the engine does not
+// implement as a concrete type: the invocation form for user-defined
+// predicate functions. Eval consults DefaultRegistry for the registered
+// implementation (RegisterImplementation); an unregistered name errors
+// loudly. The result must be bool — a predicate filters, and any other
+// return type is a contract error, not a truthiness question.
 type FunctionPredicate struct {
 	Fn   string
 	Args []PatternElement
+}
+
+// Validate rejects a FunctionPredicate whose name has no registered
+// implementation. Enforced through ValidateStaticClauseShapes at the user
+// boundaries (parser, qb builder, executor entry): the per-tuple Eval guard
+// alone never fires when upstream clauses match nothing, which turned typo'd
+// predicate names into silent empty results. Registration is runtime state,
+// not query text — so the boundary contract is "registered by the time the
+// query enters the engine", and Eval remains the backstop for names
+// unregistered between validation and evaluation.
+func (f FunctionPredicate) Validate() error {
+	if _, ok := DefaultRegistry.Implementation(f.Fn); !ok {
+		return fmt.Errorf("unknown predicate function: %s", f.Fn)
+	}
+	return nil
 }
 
 func (f FunctionPredicate) RequiredSymbols() []Symbol {
@@ -402,55 +413,34 @@ func (f FunctionPredicate) RequiredSymbols() []Symbol {
 }
 
 func (f FunctionPredicate) Eval(bindings map[Symbol]interface{}) (bool, error) {
-	// For now, we'll handle a few common functions
-	switch f.Fn {
-	case "str/starts-with?":
-		if len(f.Args) != 2 {
-			return false, fmt.Errorf("str/starts-with? requires 2 arguments, got %d", len(f.Args))
-		}
-		// Get the string value
-		var str string
-		if v, ok := f.Args[0].(Variable); ok {
-			val, exists := bindings[Symbol(v.Name)]
-			if !exists {
-				return false, fmt.Errorf("variable %s not bound", v.Name)
-			}
-			str, ok = val.(string)
-			if !ok {
-				return false, nil // Not a string, can't start with prefix
-			}
-		} else if c, ok := f.Args[0].(Constant); ok {
-			str, ok = c.Value.(string)
-			if !ok {
-				return false, nil
-			}
-		}
-
-		// Get the prefix
-		var prefix string
-		if v, ok := f.Args[1].(Variable); ok {
-			val, exists := bindings[Symbol(v.Name)]
-			if !exists {
-				return false, fmt.Errorf("variable %s not bound", v.Name)
-			}
-			prefix, ok = val.(string)
-			if !ok {
-				return false, nil
-			}
-		} else if c, ok := f.Args[1].(Constant); ok {
-			prefix, ok = c.Value.(string)
-			if !ok {
-				return false, nil
-			}
-		}
-
-		return len(str) >= len(prefix) && str[:len(prefix)] == prefix, nil
-
-	default:
-		// Unknown function - for now just return false
-		// In a real implementation, we'd have a registry of functions
+	impl, ok := DefaultRegistry.Implementation(f.Fn)
+	if !ok {
 		return false, fmt.Errorf("unknown predicate function: %s", f.Fn)
 	}
+	args := make([]interface{}, len(f.Args))
+	for i, arg := range f.Args {
+		switch a := arg.(type) {
+		case Variable:
+			val, bound := bindings[a.Name]
+			if !bound {
+				return false, fmt.Errorf("predicate function %s: unbound variable %s", f.Fn, a.Name)
+			}
+			args[i] = val
+		case Constant:
+			args[i] = a.Value
+		default:
+			return false, fmt.Errorf("predicate function %s: unsupported argument %T", f.Fn, arg)
+		}
+	}
+	result, err := impl(args)
+	if err != nil {
+		return false, fmt.Errorf("predicate function %s: %w", f.Fn, err)
+	}
+	passes, isBool := result.(bool)
+	if !isBool {
+		return false, fmt.Errorf("predicate function %s returned %T, want bool", f.Fn, result)
+	}
+	return passes, nil
 }
 
 func (f FunctionPredicate) String() string {

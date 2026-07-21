@@ -108,3 +108,47 @@ func TestCollectTuples_ReturnsIteratorErrorAfterPartialResults(t *testing.T) {
 	_, err := CollectTuples(rel, nil)
 	require.ErrorIs(t, err, errInjectedIterator)
 }
+
+// The pins below guard the 2026-07 error-swallow sweep fixes
+// (docs/bugs/BUG_ERROR_SWALLOW_SWEEP_2026_07.md): each transform must carry a
+// failed scan as its result's deferred error (or return it), never present it
+// as a clean result.
+
+func TestCrossProductCarriesScanErrors(t *testing.T) {
+	good := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?y")}, []Tuple{{int64(9)}})
+	t.Run("left fails", func(t *testing.T) {
+		rel := crossProduct(newFailingRelation(1, Tuple{int64(1)}, Tuple{int64(2)}), good)
+		require.ErrorIs(t, driveErr(rel), errInjectedIterator)
+	})
+	t.Run("right fails", func(t *testing.T) {
+		rel := crossProduct(good, newFailingRelation(1, Tuple{int64(1)}, Tuple{int64(2)}))
+		require.ErrorIs(t, driveErr(rel), errInjectedIterator)
+	})
+}
+
+func TestSelectCarriesScanError(t *testing.T) {
+	rel := Select(newFailingRelation(1, Tuple{int64(1)}, Tuple{int64(2)}), func(Tuple) bool { return true })
+	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
+}
+
+func TestBufferedIteratorCloneCarriesSourceError(t *testing.T) {
+	inner := NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}}).Iterator()
+	src := &failingIterator{inner: inner, failAfter: 1}
+	buf := NewBufferedIterator(src)
+
+	clone := buf.Clone()
+	for clone.Next() {
+	}
+	require.ErrorIs(t, clone.Error(), errInjectedIterator)
+	require.ErrorIs(t, buf.Error(), errInjectedIterator)
+}
+
+func TestExtractEntityIDsSurfacesScanError(t *testing.T) {
+	alice := datalog.NewIdentity("user:alice")
+	rel := failingRelation{
+		Relation:  NewMaterializedRelation(testSymbols(), []Tuple{{alice}, {alice}}),
+		failAfter: 1,
+	}
+	_, err := extractEntityIDs(rel, testSymbols())
+	require.ErrorIs(t, err, errInjectedIterator)
+}

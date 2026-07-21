@@ -29,7 +29,7 @@ func TestConditionalAggregateInternalInfrastructure(t *testing.T) {
 	findElements := []query.FindElement{
 		query.FindVariable{Symbol: datalog.NewSymbol("?hour")},
 		query.FindAggregate{
-			Function:  "min",
+			Function:  datalog.SymMin,
 			Arg:       datalog.NewSymbol("?value"),
 			Predicate: datalog.NewSymbol("?filter"), // Internal: filter on this symbol
 		},
@@ -68,7 +68,7 @@ func TestConditionalAggregateEmptyResult(t *testing.T) {
 	// Conditional aggregate with filter that matches nothing
 	findElements := []query.FindElement{
 		query.FindAggregate{
-			Function:  "min",
+			Function:  datalog.SymMin,
 			Arg:       datalog.NewSymbol("?value"),
 			Predicate: datalog.NewSymbol("?filter"), // All false - no matches
 		},
@@ -96,12 +96,12 @@ func TestConditionalAggregateMixedTypes(t *testing.T) {
 	// Two conditional aggregates with different predicates
 	findElements := []query.FindElement{
 		query.FindAggregate{
-			Function:  "min",
+			Function:  datalog.SymMin,
 			Arg:       datalog.NewSymbol("?price"),
 			Predicate: datalog.NewSymbol("?early"), // Min of early prices
 		},
 		query.FindAggregate{
-			Function:  "max",
+			Function:  datalog.SymMax,
 			Arg:       datalog.NewSymbol("?price"),
 			Predicate: datalog.NewSymbol("?late"), // Max of late prices
 		},
@@ -139,7 +139,7 @@ func TestConditionalAggregateRewriteAnnotationUsesDatalogFindClause(t *testing.T
 		query.Variable{Name: symFilter},
 	}}
 	find := []query.FindElement{query.FindAggregate{
-		Function:  "min",
+		Function:  datalog.SymMin,
 		Arg:       symValue,
 		Predicate: symFilter,
 	}}
@@ -175,4 +175,77 @@ func TestConditionalAggregateRewriteAnnotationUsesDatalogFindClause(t *testing.T
 	require.NotNil(t, rewriteEvent)
 	assert.Equal(t, 1, rewriteEvent.Data["rewritten.subquery.count"])
 	assert.Equal(t, "conditional-aggregate-rewriting", rewriteEvent.Data["optimization"])
+}
+
+// TestConditionalAggregateEmptyBesideNonEmptyIsError pins the emission
+// invariant: an aggregate that folded no values while a sibling folded some
+// has no representable result — nil is not a datalog value — so the
+// aggregation errors instead of placing nil in the tuple. (All-empty groups
+// are dropped per TestConditionalAggregateEmptyResult; a fully-absent
+// combination is an or-default fallback's job. The nil-in-tuple middle
+// ground silently corrupted results downstream —
+// docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md.)
+func TestConditionalAggregateEmptyBesideNonEmptyIsError(t *testing.T) {
+	filter := datalog.NewSymbol("?filter")
+	value := datalog.NewSymbol("?value")
+	group := datalog.NewSymbol("?group")
+
+	findElements := func() []query.FindElement {
+		return []query.FindElement{
+			query.FindAggregate{Function: datalog.SymCount, Arg: value},
+			query.FindAggregate{Function: datalog.SymMin, Arg: value, Predicate: filter},
+		}
+	}
+
+	t.Run("pure aggregation", func(t *testing.T) {
+		rel := NewMaterializedRelation(
+			[]query.Symbol{filter, value},
+			[]Tuple{{false, 10.0}, {false, 20.0}},
+		)
+		_, err := CollectTuples(ExecuteAggregations(rel, findElements()), nil)
+		require.Error(t, err, "count folded 2 values, conditional min folded none: emission must error, not emit nil")
+	})
+
+	t.Run("grouped aggregation", func(t *testing.T) {
+		rel := NewMaterializedRelation(
+			[]query.Symbol{group, filter, value},
+			[]Tuple{{int64(1), false, 10.0}, {int64(1), false, 20.0}},
+		)
+		find := append([]query.FindElement{query.FindVariable{Symbol: group}}, findElements()...)
+		_, err := CollectTuples(ExecuteAggregations(rel, find), nil)
+		require.Error(t, err, "grouped: count folded values, conditional min folded none: emission must error")
+	})
+
+	t.Run("streaming aggregation", func(t *testing.T) {
+		rel := NewMaterializedRelation(
+			[]query.Symbol{filter, value},
+			[]Tuple{{false, 10.0}, {false, 20.0}},
+		)
+		var aggregates []query.FindAggregate
+		for _, fe := range findElements() {
+			aggregates = append(aggregates, fe.(query.FindAggregate))
+		}
+		_, err := CollectTuples(NewStreamingAggregateRelation(rel, nil, aggregates), nil)
+		require.Error(t, err, "streaming: count folded values, conditional min folded none: emission must error")
+	})
+}
+
+// TestStreamingAggregationDropsAllEmptyGroups pins streaming/batch agreement
+// on the all-empty case: a group whose every aggregate folded nothing is
+// excluded from the result (relational empty-input → empty-output, the batch
+// behavior pinned by TestConditionalAggregateEmptyResult), never emitted as
+// a tuple of nils.
+func TestStreamingAggregationDropsAllEmptyGroups(t *testing.T) {
+	filter := datalog.NewSymbol("?filter")
+	value := datalog.NewSymbol("?value")
+	rel := NewMaterializedRelation(
+		[]query.Symbol{filter, value},
+		[]Tuple{{false, 10.0}, {false, 20.0}, {false, 30.0}},
+	)
+	aggregates := []query.FindAggregate{
+		{Function: datalog.SymMin, Arg: value, Predicate: filter},
+	}
+	tuples, err := CollectTuples(NewStreamingAggregateRelation(rel, nil, aggregates), nil)
+	require.NoError(t, err)
+	assert.Empty(t, tuples, "all-empty group must be dropped, not emitted as nils")
 }

@@ -6,7 +6,6 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // TestOHLCSymbolOrderBug reproduces the gopher-street symbol ordering bug
@@ -152,129 +151,133 @@ func TestOHLCSymbolOrderBug(t *testing.T) {
 	// ?close-price = 102.50 (max close in 15:55-16:00 range = bar3.close)
 	// ?total-volume = 3050000 (sum of all volumes)
 
-	t.Run("ParallelDecorrelation", func(t *testing.T) {
-		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Run("ParallelDecorrelation", func(t *testing.T) {
+				matcher := NewMemoryPatternMatcher(datoms)
+				exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
 
-		result, err := exec.Execute(parsedQuery)
-		if err != nil {
-			t.Fatalf("Parallel execution failed: %v", err)
-		}
+				result, err := exec.Execute(parsedQuery)
+				if err != nil {
+					t.Fatalf("Parallel execution failed: %v", err)
+				}
 
-		if result.Size() == 0 {
-			t.Fatal("Expected 1 result, got 0")
-		}
+				if result.Size() == 0 {
+					t.Fatal("Expected 1 result, got 0")
+				}
 
-		it := result.Iterator()
-		if !it.Next() {
-			t.Fatal("No result tuple")
-		}
-		tuple := it.Tuple()
-		it.Close()
+				it := result.Iterator()
+				if !it.Next() {
+					t.Fatal("No result tuple")
+				}
+				tuple := it.Tuple()
+				it.Close()
 
-		t.Logf("Parallel OHLC result: %v", tuple)
-		for i, val := range tuple {
-			t.Logf("  [%d] = %v (%T)", i, val, val)
-		}
+				t.Logf("Parallel OHLC result: %v", tuple)
+				for i, val := range tuple {
+					t.Logf("  [%d] = %v (%T)", i, val, val)
+				}
 
-		if len(tuple) != 6 {
-			t.Fatalf("Expected 6 symbols, got %d", len(tuple))
-		}
+				if len(tuple) != 6 {
+					t.Fatalf("Expected 6 symbols, got %d", len(tuple))
+				}
 
-		// Verify :find clause order: ?date ?open-price ?daily-high ?daily-low ?close-price ?total-volume
+				// Verify :find clause order: ?date ?open-price ?daily-high ?daily-low ?close-price ?total-volume
 
-		// [0] ?date
-		if dateStr, ok := tuple[0].(string); !ok {
-			t.Errorf("[0] ?date should be string, got %T: %v", tuple[0], tuple[0])
-		} else if dateStr != "2025-1-10" {
-			t.Errorf("[0] ?date should be '2025-1-10', got '%s'", dateStr)
-		}
+				// [0] ?date
+				if dateStr, ok := tuple[0].(string); !ok {
+					t.Errorf("[0] ?date should be string, got %T: %v", tuple[0], tuple[0])
+				} else if dateStr != "2025-1-10" {
+					t.Errorf("[0] ?date should be '2025-1-10', got '%s'", dateStr)
+				}
 
-		// [1] ?open-price = 100.00
-		if val, ok := tuple[1].(float64); !ok {
-			t.Errorf("[1] ?open-price should be float64, got %T: %v", tuple[1], tuple[1])
-		} else if val != 100.00 {
-			t.Errorf("[1] ?open-price should be 100.00, got %v", val)
-		}
+				// [1] ?open-price = 100.00
+				if val, ok := tuple[1].(float64); !ok {
+					t.Errorf("[1] ?open-price should be float64, got %T: %v", tuple[1], tuple[1])
+				} else if val != 100.00 {
+					t.Errorf("[1] ?open-price should be 100.00, got %v", val)
+				}
 
-		// [2] ?daily-high = 103.00
-		if val, ok := tuple[2].(float64); !ok {
-			t.Errorf("[2] ?daily-high should be float64, got %T: %v", tuple[2], tuple[2])
-		} else if val != 103.00 {
-			t.Errorf("[2] ?daily-high should be 103.00, got %v", val)
-		}
+				// [2] ?daily-high = 103.00
+				if val, ok := tuple[2].(float64); !ok {
+					t.Errorf("[2] ?daily-high should be float64, got %T: %v", tuple[2], tuple[2])
+				} else if val != 103.00 {
+					t.Errorf("[2] ?daily-high should be 103.00, got %v", val)
+				}
 
-		// [3] ?daily-low = 99.50
-		if val, ok := tuple[3].(float64); !ok {
-			t.Errorf("[3] ?daily-low should be float64, got %T: %v", tuple[3], tuple[3])
-		} else if val != 99.50 {
-			t.Errorf("[3] ?daily-low should be 99.50, got %v", val)
-		}
+				// [3] ?daily-low = 99.50
+				if val, ok := tuple[3].(float64); !ok {
+					t.Errorf("[3] ?daily-low should be float64, got %T: %v", tuple[3], tuple[3])
+				} else if val != 99.50 {
+					t.Errorf("[3] ?daily-low should be 99.50, got %v", val)
+				}
 
-		// [4] ?close-price = 102.50
-		if val, ok := tuple[4].(float64); !ok {
-			t.Errorf("[4] ?close-price should be float64, got %T: %v", tuple[4], tuple[4])
-		} else if val != 102.50 {
-			t.Errorf("[4] ?close-price should be 102.50, got %v", val)
-		}
+				// [4] ?close-price = 102.50
+				if val, ok := tuple[4].(float64); !ok {
+					t.Errorf("[4] ?close-price should be float64, got %T: %v", tuple[4], tuple[4])
+				} else if val != 102.50 {
+					t.Errorf("[4] ?close-price should be 102.50, got %v", val)
+				}
 
-		// [5] ?total-volume = 3050000
-		switch val := tuple[5].(type) {
-		case int64:
-			if val != 3050000 {
-				t.Errorf("[5] ?total-volume should be 3050000, got %v", val)
-			}
-		case float64:
-			if val != 3050000.0 {
-				t.Errorf("[5] ?total-volume should be 3050000, got %v", val)
-			}
-		default:
-			t.Errorf("[5] ?total-volume should be numeric, got %T: %v", tuple[5], tuple[5])
-		}
-	})
+				// [5] ?total-volume = 3050000
+				switch val := tuple[5].(type) {
+				case int64:
+					if val != 3050000 {
+						t.Errorf("[5] ?total-volume should be 3050000, got %v", val)
+					}
+				case float64:
+					if val != 3050000.0 {
+						t.Errorf("[5] ?total-volume should be 3050000, got %v", val)
+					}
+				default:
+					t.Errorf("[5] ?total-volume should be numeric, got %T: %v", tuple[5], tuple[5])
+				}
+			})
 
-	t.Run("SequentialDecorrelation", func(t *testing.T) {
-		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
+			t.Run("SequentialDecorrelation", func(t *testing.T) {
+				matcher := NewMemoryPatternMatcher(datoms)
+				exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
 
-		result, err := exec.Execute(parsedQuery)
-		if err != nil {
-			t.Fatalf("Sequential execution failed: %v", err)
-		}
+				result, err := exec.Execute(parsedQuery)
+				if err != nil {
+					t.Fatalf("Sequential execution failed: %v", err)
+				}
 
-		if result.Size() == 0 {
-			t.Fatal("Expected 1 result, got 0")
-		}
+				if result.Size() == 0 {
+					t.Fatal("Expected 1 result, got 0")
+				}
 
-		it := result.Iterator()
-		if !it.Next() {
-			t.Fatal("No result tuple")
-		}
-		tuple := it.Tuple()
-		it.Close()
+				it := result.Iterator()
+				if !it.Next() {
+					t.Fatal("No result tuple")
+				}
+				tuple := it.Tuple()
+				it.Close()
 
-		t.Logf("Sequential OHLC result: %v", tuple)
-		for i, val := range tuple {
-			t.Logf("  [%d] = %v (%T)", i, val, val)
-		}
+				t.Logf("Sequential OHLC result: %v", tuple)
+				for i, val := range tuple {
+					t.Logf("  [%d] = %v (%T)", i, val, val)
+				}
 
-		// Just verify it returns the same values as parallel (in correct order)
-		if len(tuple) != 6 {
-			t.Fatalf("Expected 6 symbols, got %d", len(tuple))
-		}
+				// Just verify it returns the same values as parallel (in correct order)
+				if len(tuple) != 6 {
+					t.Fatalf("Expected 6 symbols, got %d", len(tuple))
+				}
 
-		// Should match parallel results exactly
-		if tuple[1].(float64) != 100.00 {
-			t.Errorf("Sequential [1] ?open-price should be 100.00, got %v", tuple[1])
-		}
-		if tuple[2].(float64) != 103.00 {
-			t.Errorf("Sequential [2] ?daily-high should be 103.00, got %v", tuple[2])
-		}
-		if tuple[3].(float64) != 99.50 {
-			t.Errorf("Sequential [3] ?daily-low should be 99.50, got %v", tuple[3])
-		}
-		if tuple[4].(float64) != 102.50 {
-			t.Errorf("Sequential [4] ?close-price should be 102.50, got %v", tuple[4])
-		}
-	})
+				// Should match parallel results exactly
+				if tuple[1].(float64) != 100.00 {
+					t.Errorf("Sequential [1] ?open-price should be 100.00, got %v", tuple[1])
+				}
+				if tuple[2].(float64) != 103.00 {
+					t.Errorf("Sequential [2] ?daily-high should be 103.00, got %v", tuple[2])
+				}
+				if tuple[3].(float64) != 99.50 {
+					t.Errorf("Sequential [3] ?daily-low should be 99.50, got %v", tuple[3])
+				}
+				if tuple[4].(float64) != 102.50 {
+					t.Errorf("Sequential [4] ?close-price should be 102.50, got %v", tuple[4])
+				}
+			})
+		})
+	}
 }

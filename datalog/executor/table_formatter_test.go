@@ -71,8 +71,8 @@ func TestTableFormatter(t *testing.T) {
 		rel := NewMaterializedRelation(symbols, tuples)
 		result := formatter.FormatRelation(rel)
 
-		// Check formatting
-		if !strings.Contains(result, "user:123") {
+		// Check formatting; identities render as their canonical L85
+		if !strings.Contains(result, datalog.NewIdentity("user:123").L85()) {
 			t.Error("Missing identity value")
 		}
 		if !strings.Contains(result, ":user/name") {

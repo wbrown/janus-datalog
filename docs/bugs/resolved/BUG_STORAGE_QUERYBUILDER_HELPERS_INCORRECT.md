@@ -1,26 +1,18 @@
 # BUG: `storage.QueryBuilder` Helper Methods Do Not Implement Their Advertised Semantics
 
-**Date**: 2026-04-16
-**Severity**: Medium - auxiliary API returns wrong results and accidental full scans
-**Status**: Resolved 2026-04-17 (deleted; dead code with zero callers)
-**Affected**: `datalog/storage/queries.go`
+**Date**: 2026-04-16 **Severity**: Medium - auxiliary API returns wrong results and accidental full scans **Status**: Resolved 2026-04-17 (deleted; dead code with zero callers) **Affected**: `datalog/storage/queries.go`
 
 ## Summary
 
-The exported helper API in `datalog/storage/queries.go` contains methods whose
-signatures promise targeted lookups but whose implementations ignore key inputs
-or build invalid scan ranges.
+The exported helper API in `datalog/storage/queries.go` contains methods whose signatures promise targeted lookups but whose implementations ignore key inputs or build invalid scan ranges.
 
 The clearest cases:
 
 1. `GetAttributeValue(attr, value)` ignores `value`
 2. `GetReferences(entity)` ignores `entity`
-3. `GetTimeRange(startTx, endTx)` does not use the storage layer's Tx encoding
-   and only encodes 8-byte Lamports, even though TAEV keys use 16-byte
-   `ElementID` / Tx ordering
+3. `GetTimeRange(startTx, endTx)` does not use the storage layer's Tx encoding and only encodes 8-byte Lamports, even though TAEV keys use 16-byte `ElementID` / Tx ordering
 
-These methods appear to be exported API surface, but there are no obvious tests
-covering them and the implementations do not match their names.
+These methods appear to be exported API surface, but there are no obvious tests covering them and the implementations do not match their names.
 
 ## Discovery
 
@@ -50,8 +42,7 @@ func (q *QueryBuilder) GetAttributeValue(attr datalog.Keyword, value interface{}
 }
 ```
 
-The method name says "attribute=value". The implementation scans only by
-attribute prefix and ignores `value` entirely.
+The method name says "attribute=value". The implementation scans only by attribute prefix and ignores `value` entirely.
 
 ### 2. `GetReferences(entity)` ignores `entity`
 
@@ -67,8 +58,7 @@ func (q *QueryBuilder) GetReferences(entity datalog.Identity) ([]*datalog.Datom,
 }
 ```
 
-This method performs a full VAET scan and returns every reference datom, not
-just datoms referencing the supplied entity.
+This method performs a full VAET scan and returns every reference datom, not just datoms referencing the supplied entity.
 
 ### 3. `GetTimeRange(startTx, endTx)` hand-builds the wrong key shape
 
@@ -89,15 +79,11 @@ func (q *QueryBuilder) GetTimeRange(startTx, endTx datalog.ElementID) ([]*datalo
 
 Problems:
 
-1. TAEV keys are ordered by the storage `Tx` representation, not raw 8-byte
-   Lamport bytes.
-2. The storage layer uses 16-byte transaction identifiers (`ElementID` / `Tx`),
-   not just the Lamport half.
-3. Tx ordering is descending in key space via specialized encoding (`EncodeTxForPrefix`,
-   `txToDescending`), but this helper does not use it.
+1. TAEV keys are ordered by the storage `Tx` representation, not raw 8-byte Lamport bytes.
+2. The storage layer uses 16-byte transaction identifiers (`ElementID` / `Tx`), not just the Lamport half.
+3. Tx ordering is descending in key space via specialized encoding (`EncodeTxForPrefix`, `txToDescending`), but this helper does not use it.
 
-Even if the method returns something, it is not obviously scanning the intended
-time range.
+Even if the method returns something, it is not obviously scanning the intended time range.
 
 ## Why This Matters
 
@@ -113,8 +99,7 @@ A downstream caller has no reason to suspect that:
 - `GetReferences` returns all references in the entire database
 - `GetTimeRange` is building a likely-invalid or inverted key range
 
-This is exactly the kind of helper API that can produce "it seems to work on my
-small dataset" bugs and hidden full scans in production.
+This is exactly the kind of helper API that can produce "it seems to work on my small dataset" bugs and hidden full scans in production.
 
 ## Reproduction Sketches
 
@@ -161,16 +146,14 @@ small dataset" bugs and hidden full scans in production.
 
 ## Secondary Concern: API Surface Drift
 
-These helpers appear to be a parallel "storage query builder" API distinct from
-the main query system in `datalog/qb`.
+These helpers appear to be a parallel "storage query builder" API distinct from the main query system in `datalog/qb`.
 
 That by itself is not a bug, but it increases the risk of drift:
 
 - `qb` is heavily tested and clearly in active use
 - `storage.QueryBuilder` appears lightly used and under-tested
 
-If this API is intended only for experiments/debugging, it should say so
-explicitly.
+If this API is intended only for experiments/debugging, it should say so explicitly.
 
 ## Impact
 
@@ -184,8 +167,7 @@ The helpers can return broader result sets than their names imply.
 
 ### 3. Hidden correctness bugs in downstream tools
 
-Because these are convenience helpers, downstream callers may trust them more
-than they should and build application logic on top of incorrect assumptions.
+Because these are convenience helpers, downstream callers may trust them more than they should and build application logic on top of incorrect assumptions.
 
 ## Possible Fix Directions
 
@@ -193,13 +175,11 @@ than they should and build application logic on top of incorrect assumptions.
 
 - `GetAttributeValue`: encode the value correctly for AVET and include it in the prefix
 - `GetReferences`: encode the entity reference as a value and restrict VAET range
-- `GetTimeRange`: use the storage layer's Tx encoding helpers rather than raw
-  Lamport bytes
+- `GetTimeRange`: use the storage layer's Tx encoding helpers rather than raw Lamport bytes
 
 ### Option 2: Deprecate/remove the helper API
 
-If these methods are no longer part of the supported direction, deprecate them
-in favor of:
+If these methods are no longer part of the supported direction, deprecate them in favor of:
 
 - `d.Query(...)`
 - `d.Pull(...)`
@@ -208,8 +188,7 @@ in favor of:
 
 ### Option 3: Mark as debug-only / experimental
 
-If the helpers are intentionally incomplete, document that directly in code and
-docs so downstream callers do not assume production semantics.
+If the helpers are intentionally incomplete, document that directly in code and docs so downstream callers do not assume production semantics.
 
 ## Test Plan
 
@@ -222,10 +201,6 @@ docs so downstream callers do not assume production semantics.
 
 **Resolved**: 2026-04-17 — deleted `datalog/storage/queries.go`.
 
-The API had zero callers anywhere in the codebase (production, tests,
-examples, CLI). It shipped in the initial release as scaffolding and was
-never wired up. The real query infrastructure (matcher with CRDT-aware index
-selection, `d.Query()`, `d.Pull()`, `datalog/qb`) covers every use case
-this file attempted, correctly.
+The API had zero callers anywhere in the codebase (production, tests, examples, CLI). It shipped in the initial release as scaffolding and was never wired up. The real query infrastructure (matcher with CRDT-aware index selection, `d.Query()`, `d.Pull()`, `datalog/qb`) covers every use case this file attempted, correctly.
 
 The `CompareTx` function in the same file was also unused and deleted.

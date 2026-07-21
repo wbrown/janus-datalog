@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -15,6 +13,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/qb"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -63,13 +62,14 @@ func setupGetElseTestDB(t testing.TB) (*Database, func()) {
 }
 
 // setupGetElseWithItemsDB creates a database with projects and items for
-// testing get-else + OR-with-subquery combinations.
-func setupGetElseWithItemsDB(t testing.TB) (*Database, func()) {
+// testing get-else + OR-with-subquery combinations. popts sets the database's
+// default planner options (nil = default).
+func setupGetElseWithItemsDB(t testing.TB, popts *planner.PlannerOptions) (*Database, func()) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "getelse-items-*")
 	require.NoError(t, err)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, PlannerOptions: popts})
 	require.NoError(t, err)
 
 	tx := db.NewTransaction()
@@ -478,7 +478,7 @@ func runComplexQueryTest(t *testing.T, db *Database, q interface{}, label string
 // without the algebra bridge to verify they agree. Whatever the base executor
 // produces is the correct semantics; the algebra bridge must match.
 func TestGetElseComplex_OrSemantics(t *testing.T) {
-	db, cleanup := setupGetElseWithItemsDB(t)
+	db, cleanup := setupGetElseWithItemsDB(t, nil)
 	defer cleanup()
 
 	q := buildComplexQuery_OrClause(t)
@@ -543,37 +543,57 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 // (TestGetElseComplex_OrSemantics). This is correct union behavior, not a bug.
 // Use (or-default ...) for fallback semantics (2 rows).
 func TestGetElseComplex_ParsedOr(t *testing.T) {
-	db, cleanup := setupGetElseWithItemsDB(t)
-	defer cleanup()
-	runComplexQueryTest(t, db, parsedComplexQuery_Or, "parsed (or)", 9)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := setupGetElseWithItemsDB(t, &popts)
+			defer cleanup()
+			runComplexQueryTest(t, db, parsedComplexQuery_Or, "parsed (or)", 9)
+		})
+	}
 }
 
 // TestGetElseComplex_ParsedOrDefault tests with parsed (or-default ...).
 // Fallback semantics: one row per project.
 func TestGetElseComplex_ParsedOrDefault(t *testing.T) {
-	db, cleanup := setupGetElseWithItemsDB(t)
-	defer cleanup()
-	runComplexQueryTest(t, db, parsedComplexQuery_OrDefault, "parsed (or-default)", 2)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := setupGetElseWithItemsDB(t, &popts)
+			defer cleanup()
+			runComplexQueryTest(t, db, parsedComplexQuery_OrDefault, "parsed (or-default)", 2)
+		})
+	}
 }
 
 // TestGetElseComplex_QBOr tests with qb.Or() → *query.OrClause.
 // Same union semantics as parsed (or ...): 9 rows.
 func TestGetElseComplex_QBOr(t *testing.T) {
-	db, cleanup := setupGetElseWithItemsDB(t)
-	defer cleanup()
-	q := buildComplexQuery_OrClause(t)
-	t.Logf("Query: %s", q.String())
-	runComplexQueryTest(t, db, q, "qb.Or()", 9)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := setupGetElseWithItemsDB(t, &popts)
+			defer cleanup()
+			q := buildComplexQuery_OrClause(t)
+			t.Logf("Query: %s", q.String())
+			runComplexQueryTest(t, db, q, "qb.Or()", 9)
+		})
+	}
 }
 
 // TestGetElseComplex_QBOrDefault tests with qb.OrDefault() → *query.OrDefaultClause.
 // Fallback semantics: 2 rows.
 func TestGetElseComplex_QBOrDefault(t *testing.T) {
-	db, cleanup := setupGetElseWithItemsDB(t)
-	defer cleanup()
-	q := buildComplexQuery_OrDefaultClause(t)
-	t.Logf("Query: %s", q.String())
-	runComplexQueryTest(t, db, q, "qb.OrDefault()", 2)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := setupGetElseWithItemsDB(t, &popts)
+			defer cleanup()
+			q := buildComplexQuery_OrDefaultClause(t)
+			t.Logf("Query: %s", q.String())
+			runComplexQueryTest(t, db, q, "qb.OrDefault()", 2)
+		})
+	}
 }
 
 // TestGetElseComplex_StructuralComparison compares the clause types produced

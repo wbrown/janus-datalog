@@ -1,9 +1,6 @@
 # BUG: Entity Join Loses First Tuple
 
-**Status:** RESOLVED
-**Date Discovered:** 2025-10-16
-**Date Fixed:** 2025-10-16
-**Severity:** CRITICAL - Data loss during query execution
+**Status:** RESOLVED **Date Discovered:** 2025-10-16 **Date Fixed:** 2025-10-16 **Severity:** CRITICAL - Data loss during query execution
 
 ## Symptom
 
@@ -16,8 +13,7 @@ Joining two patterns on the same entity variable loses one result tuple.
   [?bar :price/low ?l]]
 ```
 
-**Expected:** 5 results
-**Actual:** 4 results (first tuple missing)
+**Expected:** 5 results **Actual:** 4 results (first tuple missing)
 
 **Consistently Missing:** The first tuple in iteration order (`bar:0` / `4GCe+%zbX2@b5`BBECl`;!.Zk`)
 

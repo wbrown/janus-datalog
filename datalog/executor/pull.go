@@ -170,7 +170,10 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 	case *query.PullLimitExpr:
 		// Get all values and apply limit
 		// Using limit implies cardinality-many expectation
-		values := pe.lookupAllValues(entity, s.Attr)
+		values, err := pe.lookupAllValues(entity, s.Attr)
+		if err != nil {
+			return err
+		}
 		if len(values) > s.Limit && s.Limit > 0 {
 			values = values[:s.Limit]
 		}
@@ -228,11 +231,12 @@ func (pe *PullExecutor) lookupAttributeViaPattern(
 	entity datalog.Identity,
 	attr datalog.Keyword,
 ) (value interface{}, found bool, resultErr error) {
+	symV := datalog.NewSymbol("?v")
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
 			query.Constant{Value: attr},
-			query.Variable{Name: datalog.NewSymbol("?v")},
+			query.Variable{Name: symV},
 		},
 	}
 
@@ -254,13 +258,9 @@ func (pe *PullExecutor) lookupAttributeViaPattern(
 
 	if it.Next() {
 		tuple := it.Tuple()
-		syms := rel.Symbols()
-		symV := datalog.NewSymbol("?v")
-		for i, sym := range syms {
-			if sym == symV && i < len(tuple) {
-				resultErr = it.Error()
-				return tuple[i], true, resultErr
-			}
+		if i := query.SymbolIndex(rel.Symbols(), symV); i >= 0 && i < len(tuple) {
+			resultErr = it.Error()
+			return tuple[i], true, resultErr
 		}
 	}
 
@@ -302,17 +302,8 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 
 	// Find symbol indices
 	syms := rel.Symbols()
-	symA := datalog.NewSymbol("?a")
-	symV := datalog.NewSymbol("?v")
-	aIdx := -1
-	vIdx := -1
-	for i, sym := range syms {
-		if sym == symA {
-			aIdx = i
-		} else if sym == symV {
-			vIdx = i
-		}
-	}
+	aIdx := query.SymbolIndex(syms, datalog.NewSymbol("?a"))
+	vIdx := query.SymbolIndex(syms, datalog.NewSymbol("?v"))
 
 	if aIdx < 0 || vIdx < 0 {
 		return nil, fmt.Errorf("missing expected symbols in result")
@@ -343,6 +334,10 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 				V: tuple[vIdx],
 			})
 		}
+	}
+	// A failed scan is not a complete attribute set — surface it.
+	if err := it.Error(); err != nil {
+		return nil, err
 	}
 
 	return datoms, nil
@@ -473,7 +468,10 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 	case *query.ResolvedPullAttribute:
 		if s.IsMany {
 			// Cardinality-many: get all values as array
-			values := pe.lookupAllValues(entity, s.Attr)
+			values, err := pe.lookupAllValues(entity, s.Attr)
+			if err != nil {
+				return err
+			}
 			if len(values) > 0 {
 				result[query.KeyName(s.Attr)] = values
 			}
@@ -501,7 +499,10 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 	case *query.ResolvedPullMapSpec:
 		if s.IsMany {
 			// Cardinality-many reference: follow all refs and pull nested
-			refs := pe.lookupAllValues(entity, s.Attr)
+			refs, err := pe.lookupAllValues(entity, s.Attr)
+			if err != nil {
+				return err
+			}
 			if len(refs) > 0 {
 				nestedResults := make([]interface{}, 0, len(refs))
 				for _, refVal := range refs {
@@ -559,7 +560,10 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 	case *query.ResolvedPullLimitExpr:
 		if s.IsMany {
 			// Get all values and apply limit
-			values := pe.lookupAllValues(entity, s.Attr)
+			values, err := pe.lookupAllValues(entity, s.Attr)
+			if err != nil {
+				return err
+			}
 			if len(values) > s.Limit {
 				values = values[:s.Limit]
 			}
@@ -580,7 +584,10 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 	case *query.ResolvedPullDefaultExpr:
 		if s.IsMany {
 			// Cardinality-many with default
-			values := pe.lookupAllValues(entity, s.Attr)
+			values, err := pe.lookupAllValues(entity, s.Attr)
+			if err != nil {
+				return err
+			}
 			if len(values) > 0 {
 				result[query.KeyName(s.Attr)] = values
 			} else {
@@ -607,19 +614,20 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 }
 
 // lookupAllValues retrieves all values for a cardinality-many attribute
-func (pe *PullExecutor) lookupAllValues(entity datalog.Identity, attr datalog.Keyword) []interface{} {
+func (pe *PullExecutor) lookupAllValues(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error) {
 	var values []interface{}
+	var err error
 
 	pe.ctx.ManyValues(entity, attr, func() int {
-		values = pe.lookupAllValuesInternal(entity, attr)
+		values, err = pe.lookupAllValuesInternal(entity, attr)
 		return len(values)
 	})
 
-	return values
+	return values, err
 }
 
 // lookupAllValuesInternal is the actual implementation
-func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr datalog.Keyword) []interface{} {
+func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error) {
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -629,23 +637,17 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 	}
 
 	rel, err := pe.matcher.Match(&query.Query{Where: []query.Clause{pattern}}, nil)
-	if err != nil || rel == nil {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if rel == nil {
+		return nil, nil
 	}
 
 	// Find value symbol index
-	syms := rel.Symbols()
-	symV := datalog.NewSymbol("?v")
-	vIdx := -1
-	for i, sym := range syms {
-		if sym == symV {
-			vIdx = i
-			break
-		}
-	}
-
+	vIdx := query.SymbolIndex(rel.Symbols(), datalog.NewSymbol("?v"))
 	if vIdx < 0 {
-		return nil
+		return nil, fmt.Errorf("missing expected symbols in result")
 	}
 
 	// Collect all values
@@ -659,8 +661,12 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 			values = append(values, tuple[vIdx])
 		}
 	}
+	// A failed scan is not a complete value set — surface it.
+	if err := it.Error(); err != nil {
+		return nil, err
+	}
 
-	return values
+	return values, nil
 }
 
 // PullResolvedMany executes a resolved pull pattern for multiple entities

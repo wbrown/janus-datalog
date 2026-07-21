@@ -27,12 +27,44 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 		available[sym] = true
 	}
 
+	// How many clauses can bind each symbol — see query.CountProviders and
+	// query.ClauseReady for the self-provider subtraction this feeds.
+	providerCount := query.CountProviders(clauses)
+
+	// A NOT body must unify with the enclosing query through at least one
+	// variable the query can bind — by input or by some clause. With zero
+	// unifiable variables the anti-join has no keys and the clause's
+	// quantification would silently turn global; reject here, before any
+	// execution, naming the clause (Datomic's insufficient-binding rule).
+	for _, clause := range clauses {
+		nc, ok := clause.(*query.NotClause)
+		if !ok {
+			continue
+		}
+		unifiable := false
+		for _, sym := range query.FreeVariables(nc.Clauses) {
+			if sym.IsSource() {
+				continue
+			}
+			if available[sym] || providerCount[sym] > 0 {
+				unifiable = true
+				break
+			}
+		}
+		if !unifiable {
+			return nil, fmt.Errorf(
+				"NOT clause %s shares no variable the enclosing query can bind; a NOT body must unify with the enclosing query through at least one variable",
+				nc,
+			)
+		}
+	}
+
 	var phases []ClausePhase
 	remaining := clauses
 
 	// Keep creating phases until all clauses are assigned
 	for len(remaining) > 0 {
-		phase, newRemaining, err := selectPhaseClauses(remaining, available, findSymbols)
+		phase, newRemaining, err := selectPhaseClauses(remaining, available, findSymbols, inputSymbols, providerCount)
 		if err != nil {
 			return nil, err
 		}
@@ -56,7 +88,7 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 }
 
 // selectPhaseClauses greedily selects clauses for the next phase
-func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]bool, findSymbols []query.Symbol) (ClausePhase, []query.Clause, error) {
+func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]bool, findSymbols []query.Symbol, inputs map[query.Symbol]bool, providerCount map[query.Symbol]int) (ClausePhase, []query.Clause, error) {
 	var selectedClauses []query.Clause
 	var providedSymbols []query.Symbol
 	providedSet := make(map[query.Symbol]bool)
@@ -79,19 +111,13 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 				continue
 			}
 
-			// Defer data patterns that use variables from pending expressions.
-			// Without this, the greedy scorer picks high-scoring patterns before
-			// low-scoring expressions, causing patterns to execute without the
-			// expression-provided variables and producing cross-product joins.
-			if p, ok := clause.(*query.DataPattern); ok {
-				if patternDependsOnPendingExpression(p, available, remaining, selected) {
-					continue
-				}
-			}
-
-			// Compute what OTHER clauses could provide (excluding this one)
-			otherProvidable := computeOtherProvidable(remaining, selected, i)
-			if !canExecuteClauseWithContext(clause, available, otherProvidable) {
+			// Selectability is defined once, in clauseSelectable: the
+			// pattern gate (patterns wait for pending expressions they
+			// depend on), the subquery gate (subqueries wait for selectable
+			// providers of their binding variables), and readiness. The
+			// subquery gate consumes the same predicate, so it can never
+			// wait on a clause this loop would skip.
+			if !clauseSelectable(clause, available, inputs, providerCount, remaining, selected) {
 				continue
 			}
 
@@ -113,8 +139,7 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 		selectedClauses = append(selectedClauses, clause)
 
 		// Add symbols this clause provides to our local available set and tracking
-		symbols := extractClauseSymbols(clause)
-		for _, sym := range symbols.Provides {
+		for _, sym := range query.ScopeOf(clause).Provides {
 			if !providedSet[sym] {
 				providedSymbols = append(providedSymbols, sym)
 				providedSet[sym] = true
@@ -166,8 +191,7 @@ func computeKeepSymbols(currentPhase ClausePhase, remainingClauses []query.Claus
 
 	// Symbols needed by remaining clauses
 	for _, clause := range remainingClauses {
-		symbols := extractClauseSymbols(clause)
-		for _, sym := range symbols.Requires {
+		for _, sym := range query.ScopeOf(clause).Correlates {
 			needed[sym] = true
 		}
 	}

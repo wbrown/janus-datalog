@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -1170,62 +1168,75 @@ func TestDatabaseRoundTrip_CRDTOps(t *testing.T) {
 func TestDatabaseRoundTrip_CRDTSemantics(t *testing.T) {
 	// Semantic verification: after export/import, CRDT resolution still works correctly.
 	// Tombstoned values must stay dead; live values must remain visible.
-	s, err := schema.NewBuilder().
-		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
-		Build()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+				Build()
+			require.NoError(t, err)
 
-	db1, err := NewDatabaseWithSchema(t.TempDir(), s)
-	require.NoError(t, err)
-	defer db1.Close()
+			popts := mode.plannerOptions()
+			db1, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         s,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			defer db1.Close()
 
-	id := datalog.NewIdentity("entity1")
-	tags := kw(":person/tags")
+			id := datalog.NewIdentity("entity1")
+			tags := kw(":person/tags")
 
-	// Add three tags
-	tx := db1.NewTransaction()
-	require.NoError(t, tx.Add(id, tags, "warrior"))
-	require.NoError(t, tx.Add(id, tags, "veteran"))
-	require.NoError(t, tx.Add(id, tags, "leader"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add three tags
+			tx := db1.NewTransaction()
+			require.NoError(t, tx.Add(id, tags, "warrior"))
+			require.NoError(t, tx.Add(id, tags, "veteran"))
+			require.NoError(t, tx.Add(id, tags, "leader"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Remove "warrior"
-	tx2 := db1.NewTransaction()
-	require.NoError(t, tx2.Remove(id, tags, "warrior"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove "warrior"
+			tx2 := db1.NewTransaction()
+			require.NoError(t, tx2.Remove(id, tags, "warrior"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Query original: should see "veteran" and "leader" but not "warrior"
-	results1, err := executor.CollectTuples(db1.Query(
-		`[:find ?tag :in $ ?e :where [?e :person/tags ?tag]]`, id))
-	require.NoError(t, err)
-	tags1 := extractStringValues(results1)
-	assert.Contains(t, tags1, "veteran")
-	assert.Contains(t, tags1, "leader")
-	assert.NotContains(t, tags1, "warrior")
+			// Query original: should see "veteran" and "leader" but not "warrior"
+			results1, err := executor.CollectTuples(db1.Query(
+				`[:find ?tag :in $ ?e :where [?e :person/tags ?tag]]`, id))
+			require.NoError(t, err)
+			tags1 := extractStringValues(results1)
+			assert.Contains(t, tags1, "veteran")
+			assert.Contains(t, tags1, "leader")
+			assert.NotContains(t, tags1, "warrior")
 
-	// Export → Import
-	var buf bytes.Buffer
-	err = db1.Export(&buf)
-	require.NoError(t, err)
+			// Export → Import
+			var buf bytes.Buffer
+			err = db1.Export(&buf)
+			require.NoError(t, err)
 
-	db2, err := NewDatabaseWithSchema(t.TempDir(), s)
-	require.NoError(t, err)
-	defer db2.Close()
+			db2, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         s,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			defer db2.Close()
 
-	err = db2.Import(strings.NewReader(buf.String()))
-	require.NoError(t, err)
+			err = db2.Import(strings.NewReader(buf.String()))
+			require.NoError(t, err)
 
-	// Query imported DB: same semantic result — "warrior" must still be dead
-	results2, err := executor.CollectTuples(db2.Query(
-		`[:find ?tag :in $ ?e :where [?e :person/tags ?tag]]`, id))
-	require.NoError(t, err)
-	tags2 := extractStringValues(results2)
-	assert.Contains(t, tags2, "veteran")
-	assert.Contains(t, tags2, "leader")
-	assert.NotContains(t, tags2, "warrior")
-	assert.ElementsMatch(t, tags1, tags2)
+			// Query imported DB: same semantic result — "warrior" must still be dead
+			results2, err := executor.CollectTuples(db2.Query(
+				`[:find ?tag :in $ ?e :where [?e :person/tags ?tag]]`, id))
+			require.NoError(t, err)
+			tags2 := extractStringValues(results2)
+			assert.Contains(t, tags2, "veteran")
+			assert.Contains(t, tags2, "leader")
+			assert.NotContains(t, tags2, "warrior")
+			assert.ElementsMatch(t, tags1, tags2)
+		})
+	}
 }
 
 func TestDatabaseRoundTrip_RGA(t *testing.T) {

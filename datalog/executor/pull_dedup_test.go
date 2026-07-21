@@ -17,7 +17,6 @@ import (
 // the boundary pull renders only the N surviving rows.
 func TestPullWithLimitTwoRows(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
-	executor := NewExecutor(matcher, nil)
 
 	q, err := parser.ParseQuery(`[:find (pull ?e [:user/name])
 	                              :where [?e :user/age ?age]
@@ -26,12 +25,18 @@ func TestPullWithLimitTwoRows(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
-	if result.Size() != 3 {
-		t.Fatalf("expected 3 pulled rows, got %d", result.Size())
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
+			if result.Size() != 3 {
+				t.Fatalf("expected 3 pulled rows, got %d", result.Size())
+			}
+		})
 	}
 }
 
@@ -56,7 +61,6 @@ func TestPullWithRelationInputUnion(t *testing.T) {
 	add("b1", "B", 3)
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
 	q, err := parser.ParseQuery(`[:find (pull ?e [:item/val])
 	                              :in $ [[?k] ...]
@@ -65,14 +69,20 @@ func TestPullWithRelationInputUnion(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
-	inputRel := NewMaterializedRelation(
-		[]query.Symbol{datalog.NewSymbol("?k")}, []Tuple{{"A"}, {"B"}})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
-	if result.Size() != 3 {
-		t.Fatalf("expected 3 pulled rows across the union, got %d", result.Size())
+			inputRel := NewMaterializedRelation(
+				[]query.Symbol{datalog.NewSymbol("?k")}, []Tuple{{"A"}, {"B"}})
+
+			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
+			if result.Size() != 3 {
+				t.Fatalf("expected 3 pulled rows across the union, got %d", result.Size())
+			}
+		})
 	}
 }

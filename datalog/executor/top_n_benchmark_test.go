@@ -11,10 +11,10 @@ import (
 func BenchmarkOrderedLimit(b *testing.B) {
 	for _, rowCount := range []int{10_000, 100_000} {
 		symbols, tuples := orderedLimitBenchmarkData(rowCount)
-		base := NewMaterializedRelationNoDedupe(symbols, tuples)
+		base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{})
 		orderBy := []query.OrderByClause{{
-			Variable:  symbols[0],
-			Direction: query.OrderDesc,
+			Variable:   symbols[0],
+			Descending: true,
 		}}
 
 		for _, limit := range []int{1, 10, 100} {

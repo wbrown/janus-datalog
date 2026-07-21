@@ -131,7 +131,7 @@ func TestNotEqualPredicate(t *testing.T) {
 			name: "Variables are not equal",
 			pred: &NotEqualPredicate{
 				Comparison: Comparison{
-					Op:    OpEQ,
+					Op:    datalog.SymEQ,
 					Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
 				},
@@ -146,7 +146,7 @@ func TestNotEqualPredicate(t *testing.T) {
 			name: "Variables are equal",
 			pred: &NotEqualPredicate{
 				Comparison: Comparison{
-					Op:    OpEQ,
+					Op:    datalog.SymEQ,
 					Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
 				},
@@ -161,7 +161,7 @@ func TestNotEqualPredicate(t *testing.T) {
 			name: "Variable not equal to constant",
 			pred: &NotEqualPredicate{
 				Comparison: Comparison{
-					Op:    OpEQ,
+					Op:    datalog.SymEQ,
 					Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					Right: ConstantTerm{Value: int64(10)},
 				},
@@ -175,7 +175,7 @@ func TestNotEqualPredicate(t *testing.T) {
 			name: "Keyword not equal to different keyword",
 			pred: &NotEqualPredicate{
 				Comparison: Comparison{
-					Op:    OpEQ,
+					Op:    datalog.SymEQ,
 					Left:  VariableTerm{Symbol: datalog.NewSymbol("?attr")},
 					Right: ConstantTerm{Value: datalog.NewKeyword(":symbol/ticker")},
 				},
@@ -189,7 +189,7 @@ func TestNotEqualPredicate(t *testing.T) {
 			name: "Keyword not equal to same keyword",
 			pred: &NotEqualPredicate{
 				Comparison: Comparison{
-					Op:    OpEQ,
+					Op:    datalog.SymEQ,
 					Left:  VariableTerm{Symbol: datalog.NewSymbol("?attr")},
 					Right: ConstantTerm{Value: datalog.NewKeyword(":symbol/ticker")},
 				},

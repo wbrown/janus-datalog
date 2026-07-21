@@ -286,48 +286,7 @@ func TestSetSemantics_Joins(t *testing.T) {
 }
 
 // =============================================================================
-// Test 4: Union Operations Must Deduplicate
-// =============================================================================
-
-func TestSetSemantics_Union(t *testing.T) {
-	t.Run("UnionRelation deduplicates across relations", func(t *testing.T) {
-		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
-
-		// Create channel with relations that have overlapping tuples
-		ch := make(chan relationItem, 3)
-
-		rel1 := NewMaterializedRelation(symbols, []Tuple{
-			{1, "a"},
-			{2, "b"},
-		})
-		rel2 := NewMaterializedRelation(symbols, []Tuple{
-			{2, "b"}, // Duplicate from rel1
-			{3, "c"},
-		})
-		rel3 := NewMaterializedRelation(symbols, []Tuple{
-			{1, "a"}, // Duplicate from rel1
-			{3, "c"}, // Duplicate from rel2
-			{4, "d"},
-		})
-
-		ch <- relationItem{relation: rel1}
-		ch <- relationItem{relation: rel2}
-		ch <- relationItem{relation: rel3}
-		close(ch)
-
-		union := NewUnionRelation(ch, symbols, ExecutorOptions{})
-		materialized := union.Materialize()
-
-		// Should have 4 unique tuples
-		if materialized.Size() != 4 {
-			t.Errorf("expected 4 unique tuples, got %d", materialized.Size())
-		}
-		assertNoDuplicates(t, "UnionRelation", materialized)
-	})
-}
-
-// =============================================================================
-// Test 5: Filter Operations Preserve Set Semantics
+// Test 4: Filter Operations Preserve Set Semantics
 // =============================================================================
 
 func TestSetSemantics_Filter(t *testing.T) {

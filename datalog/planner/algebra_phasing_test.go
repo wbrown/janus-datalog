@@ -31,8 +31,8 @@ func TestPhaserSymbolExtraction(t *testing.T) {
 
 	t.Logf("Decompiled %d clauses:", len(clauses))
 	for i, c := range clauses {
-		syms := extractClauseSymbols(c)
-		t.Logf("  [%d] %T provides=%v requires=%v", i, c, syms.Provides, syms.Requires)
+		scope := query.ScopeOf(c)
+		t.Logf("  [%d] %T provides=%v correlates=%v", i, c, scope.Provides, scope.Correlates)
 	}
 }
 
@@ -100,8 +100,8 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	}
 	t.Logf("Decompiled %d clauses:", len(clauses))
 	for i, c := range clauses {
-		syms := extractClauseSymbols(c)
-		t.Logf("  [%d] %T provides=%v requires=%v", i, c, syms.Provides, syms.Requires)
+		scope := query.ScopeOf(c)
+		t.Logf("  [%d] %T provides=%v correlates=%v", i, c, scope.Provides, scope.Correlates)
 	}
 
 	// Try phasing

@@ -260,19 +260,20 @@ type with branches and join vars.
 **Compile:** `(or-default [?e :a ?x] [(ground 0) ?x])` (general fallback) →
 `LateralUnion(output=[?e, ?x])(branch1, branch2)`
 
-For `or-default-join`: `(or-default-join [?x] ...)` →
-`LateralUnion(output=[?e, ?x], joinVars=[?x])(branch1, branch2)`
+For `or-default-join`: `(or-default-join [[?e] ?x] ...)` →
+`LateralUnion(output=[?e, ?x], requiredVars=[?e], outputVars=[?x])(branch1, branch2)`
 
 Also produced when `(or ...)` / `(or-join ...)` branches contain correlated
 predicates (NOT, missing?) that require per-tuple evaluation against the outer
 relation. Independent Union compilation cannot express anti-joins without context.
 
 **Decompile:**
-- `LateralUnion(joinVars=nil)(children...)` → `(or-default <decompile(child1)> <decompile(child2)> ...)`
-- `LateralUnion(joinVars=[?x])(children...)` → `(or-default-join [?x] <decompile(child1)> <decompile(child2)> ...)`
+- `LateralUnion(requiredVars=nil, outputVars=nil)(children...)` → `(or-default <decompile(child1)> <decompile(child2)> ...)`
+- `LateralUnion(requiredVars=[?e], outputVars=[?x])(children...)` → `(or-default-join [[?e] ?x] <decompile(child1)> <decompile(child2)> ...)`
 
 **Round-trip invariant:** Each branch's clauses preserved. `or-default` ↔
-OrDefaultClause, `or-default-join` ↔ OrDefaultJoinClause with join vars preserved.
+OrDefaultClause, `or-default-join` ↔ OrDefaultJoinClause with the
+required/output declaration preserved.
 
 **Test:** Compile OR-default with ground fallback, decompile, assert
 OrDefaultClause/OrDefaultJoinClause with correct branches.
@@ -294,23 +295,26 @@ LateralJoin(
 
 ```
 decompile(outer) ++
-(or-default-join [?x] [(q <innerQuery> $ ?x) <binding>]
-                       [(ground 0) ?count])
+(or-default-join [[?x] ?count] [(q <innerQuery> $ ?x) <binding>]
+                               [(ground 0) ?count])
 ```
 
-Join vars come from correlation vars (correlated) or shared symbols between
-binding and outer relation (uncorrelated). Default branch binds only non-join
-symbols — join keys come from the outer relation via or-default-join.
+Required vars come from correlation vars (correlated) or shared symbols
+between binding and outer relation (uncorrelated); outputs are the binding
+symbols minus the required vars. The default branch binds only the outputs —
+the required keys come from the outer relation.
 
 Without defaults: `decompile(outer) ++ [(q <innerQuery> $ ?x) <binding>]`
 
 **Round-trip invariant:** Inner query, binding form, correlation variables, and
 default values all preserved. Correlation variables appear as SubqueryPattern
-inputs. Defaults produce or-default-join with ground branch. Join vars ensure
-the phaser doesn't reorder the OR before the patterns that provide the join keys.
+inputs. Defaults produce or-default-join with a ground branch. The declared
+required vars ensure the phaser doesn't reorder the OR before the patterns
+that provide the correlation keys.
 
 **Test:** Compile an OR-fallback with correlated subquery + ground, decompile,
-assert OrDefaultJoinClause (not OrJoinClause) with correct join vars.
+assert OrDefaultJoinClause (not OrJoinClause) with the correct required/output
+declaration.
 
 ---
 

@@ -192,8 +192,6 @@ Pattern match → StreamingRelation (lazy)
 ### The Failure Modes Are Brutal
 
 ```go
-// CRITICAL: Don't call IsEmpty() - it consumes streaming iterators!
-
 // CRITICAL: Check if build relation was already consumed
 if alreadyConsumed {
     panic("BUG: HashJoin received a StreamingRelation that was already consumed...")
@@ -207,8 +205,7 @@ if r.iteratorCalled && !r.shouldCache {
 
 | Mistake | Consequence |
 |---------|-------------|
-| Call `Size()` on streaming relation | Forces materialization, may lose data |
-| Call `IsEmpty()` to check | Consumes first tuple, silently wrong results |
+| Probe emptiness by stepping an iterator you don't capture | Spends the first tuple, silently wrong results (the reason `IsEmpty()` no longer exists — `Size()` returns -1 when unknown instead) |
 | Iterate twice without cache | Panic (if caught) or silent data loss |
 | Forget to copy tuple from reused workspace | Data corruption on next iteration |
 
@@ -467,13 +464,12 @@ entityID := "user-123"
 entityHash := sha1(entityID)
 entityDisplay := base64(entityHash)
 
-// Janus: one type, three faces
+// Janus: one type, one canonical form
 type Identity struct {
-    original string  // "user-123"
-    hash     [20]byte // SHA1
-    l85      string   // display
+    hash [20]byte // SHA1 of the seed string — the content address IS the identity
 }
-// Ask for what you need: id.String(), id.Bytes(), id.L85()
+// The seed is hashed and discarded; String() and L85() both render the hash.
+// A human-readable name is application data: store it as an attribute.
 ```
 
 **Schema:**

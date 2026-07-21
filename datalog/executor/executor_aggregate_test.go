@@ -18,22 +18,27 @@ func TestAggregateSum(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
-	queryStr := `[:find (sum ?total)
-	              :where [?o :order/total ?total]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	q, err := parser.ParseQuery(queryStr)
-	assert.NoError(t, err)
+			queryStr := `[:find (sum ?total)
+			              :where [?o :order/total ?total]]`
 
-	result, err := exec.Execute(q)
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, 1, result.Size())
+			q, err := parser.ParseQuery(queryStr)
+			assert.NoError(t, err)
 
-	// Check the sum
-	tuple := result.Get(0)
-	assert.Equal(t, 600.0, tuple[0])
+			result, err := exec.Execute(q)
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+			assert.Equal(t, 1, result.Size())
+
+			// Check the sum
+			tuple := result.Get(0)
+			assert.Equal(t, 600.0, tuple[0])
+		})
+	}
 }
 
 func TestAggregateCount(t *testing.T) {
@@ -45,22 +50,27 @@ func TestAggregateCount(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
-	queryStr := `[:find (count ?user)
-	              :where [?user :user/name ?name]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	q, err := parser.ParseQuery(queryStr)
-	assert.NoError(t, err)
+			queryStr := `[:find (count ?user)
+			              :where [?user :user/name ?name]]`
 
-	result, err := exec.Execute(q)
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, 1, result.Size())
+			q, err := parser.ParseQuery(queryStr)
+			assert.NoError(t, err)
 
-	// Check the count
-	tuple := result.Get(0)
-	assert.Equal(t, int64(3), tuple[0])
+			result, err := exec.Execute(q)
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+			assert.Equal(t, 1, result.Size())
+
+			// Check the count
+			tuple := result.Get(0)
+			assert.Equal(t, int64(3), tuple[0])
+		})
+	}
 }
 
 func TestAggregateAvg(t *testing.T) {
@@ -72,22 +82,27 @@ func TestAggregateAvg(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
-	queryStr := `[:find (avg ?value)
-	              :where [?s :score/value ?value]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	q, err := parser.ParseQuery(queryStr)
-	assert.NoError(t, err)
+			queryStr := `[:find (avg ?value)
+			              :where [?s :score/value ?value]]`
 
-	result, err := exec.Execute(q)
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, 1, result.Size())
+			q, err := parser.ParseQuery(queryStr)
+			assert.NoError(t, err)
 
-	// Check the average
-	tuple := result.Get(0)
-	assert.Equal(t, 90.0, tuple[0])
+			result, err := exec.Execute(q)
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+			assert.Equal(t, 1, result.Size())
+
+			// Check the average
+			tuple := result.Get(0)
+			assert.Equal(t, 90.0, tuple[0])
+		})
+	}
 }
 
 func TestAggregateMinMax(t *testing.T) {
@@ -103,23 +118,28 @@ func TestAggregateMinMax(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
-	queryStr := `[:find (min ?time) (max ?time)
-	              :where [?e :event/time ?time]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	q, err := parser.ParseQuery(queryStr)
-	assert.NoError(t, err)
+			queryStr := `[:find (min ?time) (max ?time)
+			              :where [?e :event/time ?time]]`
 
-	result, err := exec.Execute(q)
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, 1, result.Size())
+			q, err := parser.ParseQuery(queryStr)
+			assert.NoError(t, err)
 
-	// Check min and max
-	tuple := result.Get(0)
-	assert.Equal(t, t1, tuple[0]) // min
-	assert.Equal(t, t3, tuple[1]) // max
+			result, err := exec.Execute(q)
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+			assert.Equal(t, 1, result.Size())
+
+			// Check min and max
+			tuple := result.Get(0)
+			assert.Equal(t, t1, tuple[0]) // min
+			assert.Equal(t, t3, tuple[1]) // max
+		})
+	}
 }
 
 func TestAggregateGroupBy(t *testing.T) {
@@ -138,33 +158,38 @@ func TestAggregateGroupBy(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
-	queryStr := `[:find ?dept (sum ?amount)
-	              :where [?s :sale/dept ?dept]
-	                     [?s :sale/amount ?amount]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	q, err := parser.ParseQuery(queryStr)
-	assert.NoError(t, err)
+			queryStr := `[:find ?dept (sum ?amount)
+			              :where [?s :sale/dept ?dept]
+			                     [?s :sale/amount ?amount]]`
 
-	result, err := exec.Execute(q)
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, 2, result.Size())
+			q, err := parser.ParseQuery(queryStr)
+			assert.NoError(t, err)
 
-	// Check results (order might vary)
-	results := make(map[string]float64)
-	it := result.Iterator()
-	for it.Next() {
-		tuple := it.Tuple()
-		dept := tuple[0].(string)
-		sum := tuple[1].(float64)
-		results[dept] = sum
+			result, err := exec.Execute(q)
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+			assert.Equal(t, 2, result.Size())
+
+			// Check results (order might vary)
+			results := make(map[string]float64)
+			it := result.Iterator()
+			for it.Next() {
+				tuple := it.Tuple()
+				dept := tuple[0].(string)
+				sum := tuple[1].(float64)
+				results[dept] = sum
+			}
+			it.Close()
+
+			assert.Equal(t, 2500.0, results["Engineering"])
+			assert.Equal(t, 4500.0, results["Sales"])
+		})
 	}
-	it.Close()
-
-	assert.Equal(t, 2500.0, results["Engineering"])
-	assert.Equal(t, 4500.0, results["Sales"])
 }
 
 func TestAggregateMixedWithNonAggregated(t *testing.T) {
@@ -179,47 +204,52 @@ func TestAggregateMixedWithNonAggregated(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
-	// Find category and average price
-	queryStr := `[:find ?category (avg ?price) (count ?p)
-	              :where [?p :product/category ?category]
-	                     [?p :product/price ?price]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	q, err := parser.ParseQuery(queryStr)
-	assert.NoError(t, err)
+			// Find category and average price
+			queryStr := `[:find ?category (avg ?price) (count ?p)
+			              :where [?p :product/category ?category]
+			                     [?p :product/price ?price]]`
 
-	result, err := exec.Execute(q)
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
+			q, err := parser.ParseQuery(queryStr)
+			assert.NoError(t, err)
 
-	// Should have 2 tuples (Electronics and Books)
-	assert.Equal(t, 2, result.Size())
+			result, err := exec.Execute(q)
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
 
-	// Check results
-	results := make(map[string]struct {
-		avg   float64
-		count int64
-	})
+			// Should have 2 tuples (Electronics and Books)
+			assert.Equal(t, 2, result.Size())
 
-	it := result.Iterator()
-	for it.Next() {
-		tuple := it.Tuple()
-		category := tuple[0].(string)
-		avgPrice := tuple[1].(float64)
-		count := tuple[2].(int64)
-		results[category] = struct {
-			avg   float64
-			count int64
-		}{avgPrice, count}
+			// Check results
+			results := make(map[string]struct {
+				avg   float64
+				count int64
+			})
+
+			it := result.Iterator()
+			for it.Next() {
+				tuple := it.Tuple()
+				category := tuple[0].(string)
+				avgPrice := tuple[1].(float64)
+				count := tuple[2].(int64)
+				results[category] = struct {
+					avg   float64
+					count int64
+				}{avgPrice, count}
+			}
+			it.Close()
+
+			// Electronics: (100 + 200) / 2 = 150
+			assert.Equal(t, 150.0, results["Electronics"].avg)
+			assert.Equal(t, int64(2), results["Electronics"].count)
+
+			// Books: 30 / 1 = 30
+			assert.Equal(t, 30.0, results["Books"].avg)
+			assert.Equal(t, int64(1), results["Books"].count)
+		})
 	}
-	it.Close()
-
-	// Electronics: (100 + 200) / 2 = 150
-	assert.Equal(t, 150.0, results["Electronics"].avg)
-	assert.Equal(t, int64(2), results["Electronics"].count)
-
-	// Books: 30 / 1 = 30
-	assert.Equal(t, 30.0, results["Books"].avg)
-	assert.Equal(t, int64(1), results["Books"].count)
 }

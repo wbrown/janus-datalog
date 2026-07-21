@@ -116,7 +116,7 @@ func BenchmarkPatternMatch_LinearVsIndexed(b *testing.B) {
 					if err != nil {
 						b.Fatalf("Match failed: %v", err)
 					}
-					if result.IsEmpty() && pattern.name != "V_bound" {
+					if result.Materialize().Size() == 0 && pattern.name != "V_bound" {
 						b.Fatalf("Expected non-empty result for %s", pattern.name)
 					}
 				}
@@ -133,7 +133,7 @@ func BenchmarkPatternMatch_LinearVsIndexed(b *testing.B) {
 					if err != nil {
 						b.Fatalf("Match failed: %v", err)
 					}
-					if result.IsEmpty() && pattern.name != "V_bound" {
+					if result.Materialize().Size() == 0 && pattern.name != "V_bound" {
 						b.Fatalf("Expected non-empty result for %s", pattern.name)
 					}
 				}

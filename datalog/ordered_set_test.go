@@ -13,9 +13,6 @@ func TestOrderedSet_NewEmpty(t *testing.T) {
 	if s.Len() != 0 {
 		t.Errorf("expected empty set, got len=%d", s.Len())
 	}
-	if !s.IsEmpty() {
-		t.Error("expected IsEmpty() to return true")
-	}
 }
 
 func TestOrderedSet_Append(t *testing.T) {
@@ -127,9 +124,6 @@ func TestOrderedSet_Clear(t *testing.T) {
 	if s.Len() != 0 {
 		t.Errorf("expected len=0 after clear, got %d", s.Len())
 	}
-	if !s.IsEmpty() {
-		t.Error("expected IsEmpty() to be true after clear")
-	}
 }
 
 func TestOrderedSet_Slice(t *testing.T) {
@@ -195,8 +189,8 @@ func TestOrderedSet_EmptyOperations(t *testing.T) {
 		t.Error("zero-value Slice should return nil")
 	}
 
-	if !s.IsEmpty() {
-		t.Error("zero-value IsEmpty should return true")
+	if s.Len() != 0 {
+		t.Error("zero-value Len should return 0")
 	}
 
 	// Append should work on zero-value

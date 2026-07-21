@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -56,7 +58,15 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 
 // filterWithPredicateAndLookup filters a relation using a predicate with optional database lookup.
 // constantBindings are pre-resolved scalar values that are not present as relation symbols.
-func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation) {
+//
+// Eager: the scan completes before returning, so every error — predicate
+// evaluation, source iteration, close — is knowable synchronously and
+// returns in-band. The deferred-error convention is exclusively for
+// lazily-discovered errors on streaming relations; deferring a known error
+// here left it to consumers that inspect relations structurally (emptiness
+// branches) and laundered it into a silent empty
+// (docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md).
+func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation, resultErr error) {
 	symbols := rel.Symbols()
 	needsCopy := rel.RequiresCopy()
 
@@ -74,22 +84,13 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 	// Check if this is a DatabaseFunctionPredicate that needs lookup
 	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
 
-	// Failed iteration or evaluation surfaces via result.err — replayed at the
-	// next public boundary by Iterator().Error(). Named return + closure so the
-	// deferred Close() also runs on panic (predicate Eval is user-supplied code
-	// and can panic), without losing the Close error.
-	var iterErr error
+	// Named return + closure so the deferred Close() also runs on panic
+	// (predicate Eval is user-supplied code and can panic), without losing
+	// the Close error.
 	iter := rel.Iterator()
 	defer func() {
-		if closeErr := iter.Close(); closeErr != nil && iterErr == nil {
-			iterErr = closeErr
-		}
-		// Panic path: result is nil; iter.Close above still ran.
-		if iterErr == nil || result == nil {
-			return
-		}
-		if m, ok := result.(*MaterializedRelation); ok && m.err == nil {
-			m.err = iterErr
+		if closeErr := iter.Close(); closeErr != nil && resultErr == nil {
+			resultErr = closeErr
 		}
 	}()
 
@@ -104,9 +105,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		for sym, val := range constantBindings {
 			bindings[sym] = val
 		}
-		for i, sym := range symbols {
-			bindings[sym] = tuple[i]
-		}
+		bindTuple(bindings, symbols, tuple)
 
 		// Evaluate the predicate
 		var passes bool
@@ -118,10 +117,8 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		}
 		if err != nil {
 			// Fail fast — predicate eval errors are real errors, not
-			// "treat as false." Surface to the consumer; do not silently
-			// drop the tuple as if the predicate had said no.
-			iterErr = err
-			break
+			// "treat as false."
+			return nil, err
 		}
 
 		if passes {
@@ -131,21 +128,20 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 			filtered = append(filtered, tuple)
 		}
 	}
-	if iterErr == nil {
-		iterErr = iter.Error()
+	if err := iter.Error(); err != nil {
+		return nil, err
 	}
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
-	result = NewMaterializedRelationWithProperties(symbols, filtered, opts, rel.Properties())
-	return
+	return NewMaterializedRelationWithProperties(symbols, filtered, opts, rel.Properties()), nil
 }
 
 // evaluateExpressionWithLookup evaluates an expression with optional database lookup support.
 // If lookup is non-nil and the expression is a DatabaseFunction, it uses EvalWithLookup.
 // Otherwise, it falls back to the standard Eval method.
 // constantBindings are pre-resolved scalar values that are not present as relation symbols.
-func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation) {
+func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation, resultErr error) {
 	symbols := rel.Symbols()
 
 	// Determine binding symbols and whether they already exist
@@ -159,32 +155,14 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		bindingSymbols = b.Variables
 	}
 
-	// Check which binding symbols already exist
-	hasAllBindings := len(bindingSymbols) > 0
-	existingBindingIndices := make(map[query.Symbol]int)
-	for _, bindSym := range bindingSymbols {
-		found := false
-		for i, sym := range symbols {
-			if sym == bindSym {
-				existingBindingIndices[bindSym] = i
-				found = true
-				break
-			}
-		}
-		if !found {
-			hasAllBindings = false
-		}
-	}
+	// Bound binding symbols unify (filter); new ones extend the tuple.
+	align := alignBinding(symbols, bindingSymbols)
+	newSymbols := align.symbols
 
-	newSymbols := symbols
-	if !hasAllBindings && len(bindingSymbols) > 0 {
-		newSymbols = append([]query.Symbol{}, symbols...)
-		for _, bindSym := range bindingSymbols {
-			if _, exists := existingBindingIndices[bindSym]; !exists {
-				newSymbols = append(newSymbols, bindSym)
-			}
-		}
-	}
+	// Retained pass-through tuples (unify and no-binding cases) must be
+	// copied out of a workspace-reusing source; extension always allocates
+	// a fresh tuple in align.apply.
+	needsCopy := rel.RequiresCopy()
 
 	// Reuse single bindings map to avoid repeated allocations
 	bindings := make(map[query.Symbol]interface{}, len(symbols)+len(constantBindings))
@@ -197,22 +175,18 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		}
 	}
 
-	// Failed iteration or evaluation surfaces via result.err — replayed at the
-	// next public boundary by Iterator().Error(). Named return + closure so the
-	// deferred Close() also runs on panic (expression Function.Eval is
-	// user-supplied code and can panic), without losing the Close error.
+	// Eager: the scan completes before returning, so evaluation and
+	// iteration errors are knowable synchronously and return in-band (the
+	// deferred-error convention is exclusively for lazily-discovered errors
+	// on streaming relations). Named return + closure so the deferred
+	// Close() also runs on panic (expression Function.Eval is user-supplied
+	// code and can panic), without losing the Close error.
 	var iterErr error
 	expanded := false
 	iter := rel.Iterator()
 	defer func() {
-		if closeErr := iter.Close(); closeErr != nil && iterErr == nil {
-			iterErr = closeErr
-		}
-		if iterErr == nil || result == nil {
-			return
-		}
-		if m, ok := result.(*MaterializedRelation); ok && m.err == nil {
-			m.err = iterErr
+		if closeErr := iter.Close(); closeErr != nil && resultErr == nil {
+			resultErr = closeErr
 		}
 	}()
 
@@ -227,9 +201,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		for sym, val := range constantBindings {
 			bindings[sym] = val
 		}
-		for i, sym := range symbols {
-			bindings[sym] = tuple[i]
-		}
+		bindTuple(bindings, symbols, tuple)
 
 		// Evaluate the expression
 		// Check if this is a database function that needs lookup access
@@ -258,110 +230,90 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			evalResult = gsr.Value
 		}
 
+		if err := admitExpressionResult(expr.Function, evalResult); err != nil {
+			iterErr = err
+			break
+		}
+
 		// Handle multi-tuple expansion (e.g., enumerate returns [][]interface{})
 		if multiRows, ok := evalResult.([][]interface{}); ok {
 			if tb, ok := expr.Binding.(query.TupleBinding); ok {
 				expanded = true
 				for _, subTuple := range multiRows {
 					if len(subTuple) != len(tb.Variables) {
-						continue
+						iterErr = fmt.Errorf("tuple mismatch: %d values, %d variables",
+							len(subTuple), len(tb.Variables))
+						break
 					}
-					if hasAllBindings {
-						newTuple := make(Tuple, len(tuple))
-						copy(newTuple, tuple)
-						for i, bindSym := range tb.Variables {
-							if idx, exists := existingBindingIndices[bindSym]; exists {
-								newTuple[idx] = subTuple[i]
-							}
+					if out, ok := align.apply(tuple, subTuple); ok {
+						if needsCopy && !align.extendsTuple() {
+							out = copyTuple(out)
 						}
-						newTuples = append(newTuples, newTuple)
-					} else {
-						newTuple := make(Tuple, len(newSymbols))
-						copy(newTuple, tuple)
-						for i, bindSym := range tb.Variables {
-							for j := len(symbols); j < len(newSymbols); j++ {
-								if newSymbols[j] == bindSym {
-									newTuple[j] = subTuple[i]
-									break
-								}
-							}
-						}
-						newTuples = append(newTuples, newTuple)
+						newTuples = append(newTuples, out)
 					}
+				}
+				if iterErr != nil {
+					break
 				}
 				continue
 			}
 		}
 
-		// Create new tuple with result
+		// Apply the result: bound binding positions unify (filter), new
+		// binding symbols extend the tuple.
 		if len(bindingSymbols) == 0 {
 			// No binding, just keep original tuple
-			newTuples = append(newTuples, tuple)
-		} else if hasAllBindings {
-			// Update existing symbols
-			newTuple := make(Tuple, len(tuple))
-			copy(newTuple, tuple)
-			// Handle tuple binding - evalResult should be []interface{}
-			if tb, ok := expr.Binding.(query.TupleBinding); ok {
-				values, ok := evalResult.([]interface{})
-				if ok && len(values) == len(tb.Variables) {
-					for i, bindSym := range tb.Variables {
-						if idx, exists := existingBindingIndices[bindSym]; exists {
-							newTuple[idx] = values[i]
-						}
-					}
-				}
-			} else {
-				// Scalar binding
-				for i, sym := range symbols {
-					if bindSym, ok := expr.Binding.(query.Symbol); ok && sym == bindSym {
-						newTuple[i] = evalResult
-						break
-					}
-				}
+			out := tuple
+			if needsCopy {
+				out = copyTuple(out)
 			}
-			newTuples = append(newTuples, newTuple)
+			newTuples = append(newTuples, out)
+			continue
+		}
+		var values []interface{}
+		if _, ok := expr.Binding.(query.TupleBinding); ok {
+			vs, ok := evalResult.([]interface{})
+			if !ok {
+				iterErr = fmt.Errorf("tuple binding requires tuple result, got %T", evalResult)
+				break
+			}
+			if len(vs) != len(bindingSymbols) {
+				iterErr = fmt.Errorf("tuple mismatch: %d values, %d variables",
+					len(vs), len(bindingSymbols))
+				break
+			}
+			values = vs
 		} else {
-			// Add new symbols
-			newTuple := make(Tuple, len(newSymbols))
-			copy(newTuple, tuple)
-			// Handle tuple binding - evalResult should be []interface{}
-			if tb, ok := expr.Binding.(query.TupleBinding); ok {
-				values, ok := evalResult.([]interface{})
-				if ok && len(values) == len(tb.Variables) {
-					for i, bindSym := range tb.Variables {
-						// Find the position of this symbol in newSymbols.
-						for j := len(symbols); j < len(newSymbols); j++ {
-							if newSymbols[j] == bindSym {
-								newTuple[j] = values[i]
-								break
-							}
-						}
-					}
-				}
-			} else {
-				// Scalar binding - add to end
-				newTuple[len(tuple)] = evalResult
+			values = []interface{}{evalResult}
+		}
+		if out, ok := align.apply(tuple, values); ok {
+			if needsCopy && !align.extendsTuple() {
+				out = copyTuple(out)
 			}
-			newTuples = append(newTuples, newTuple)
+			newTuples = append(newTuples, out)
 		}
 	}
 	if iterErr == nil {
 		iterErr = iter.Error()
 	}
+	if iterErr != nil {
+		return nil, iterErr
+	}
 
-	// Extract options from source relation to preserve configuration
+	// Extract options from source relation to preserve configuration.
+	// Only extension symbols touch the properties: bound positions are
+	// filtered, never rewritten, so orderings and keys naming them stay
+	// valid.
 	opts := rel.Options()
 	properties := rel.Properties()
 	if expanded {
 		properties = expansionProperties(properties, bindingSymbols, newSymbols)
 	} else {
-		for _, symbol := range bindingSymbols {
+		for _, symbol := range align.extensionSymbols() {
 			properties = properties.addSymbol(symbol)
 		}
 	}
-	result = NewMaterializedRelationWithProperties(newSymbols, newTuples, opts, properties)
-	return
+	return NewMaterializedRelationWithProperties(newSymbols, newTuples, opts, properties), nil
 }
 
 // projectToSymbols projects a relation to the specified symbols
@@ -369,17 +321,9 @@ func projectToSymbols(rel Relation, syms []query.Symbol, opts ExecutorOptions) (
 	relSyms := rel.Symbols()
 
 	// Build symbol index mapping
-	symIndices := make([]int, len(syms))
-	for i, sym := range syms {
-		found := false
-		for j, relSym := range relSyms {
-			if relSym == sym {
-				symIndices[i] = j
-				found = true
-				break
-			}
-		}
-		if !found {
+	symIndices := query.SymbolIndexTable(relSyms, syms)
+	for _, idx := range symIndices {
+		if idx < 0 {
 			// Symbol not found - return empty relation
 			return NewMaterializedRelationWithOptions(syms, nil, opts)
 		}
@@ -411,64 +355,12 @@ func projectToSymbols(rel Relation, syms []query.Symbol, opts ExecutorOptions) (
 		}
 		projected = append(projected, newTuple)
 	}
-	iterErr = iter.Error()
+	if e := iter.Error(); iterErr == nil {
+		iterErr = e
+	}
 
 	result = NewMaterializedRelationWithOptions(syms, projected, opts)
 	return
-}
-
-// collectInnerVars collects all variables from inner clauses
-func collectInnerVars(clauses []query.Clause) []query.Symbol {
-	seen := make(map[query.Symbol]bool)
-	var vars []query.Symbol
-
-	for _, clause := range clauses {
-		switch c := clause.(type) {
-		case *query.DataPattern:
-			for _, sym := range c.Symbols() {
-				if !seen[sym] {
-					seen[sym] = true
-					vars = append(vars, sym)
-				}
-			}
-		case *query.NotClause:
-			for _, sym := range collectInnerVars(c.Clauses) {
-				if !seen[sym] {
-					seen[sym] = true
-					vars = append(vars, sym)
-				}
-			}
-		case *query.OrClause:
-			for _, branch := range c.Branches {
-				for _, sym := range collectInnerVars(branch) {
-					if !seen[sym] {
-						seen[sym] = true
-						vars = append(vars, sym)
-					}
-				}
-			}
-		case *query.OrDefaultClause:
-			for _, branch := range c.Branches {
-				for _, sym := range collectInnerVars(branch) {
-					if !seen[sym] {
-						seen[sym] = true
-						vars = append(vars, sym)
-					}
-				}
-			}
-		case *query.OrDefaultJoinClause:
-			for _, branch := range c.Branches {
-				for _, sym := range collectInnerVars(branch) {
-					if !seen[sym] {
-						seen[sym] = true
-						vars = append(vars, sym)
-					}
-				}
-			}
-		}
-	}
-
-	return vars
 }
 
 // getUniqueCombinations extracts unique value combinations for the given symbols.
@@ -478,17 +370,9 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, r
 	}
 
 	relSyms := rel.Symbols()
-	symIndices := make([]int, len(syms))
-	for i, sym := range syms {
-		found := false
-		for j, relSym := range relSyms {
-			if relSym == sym {
-				symIndices[i] = j
-				found = true
-				break
-			}
-		}
-		if !found {
+	symIndices := query.SymbolIndexTable(relSyms, syms)
+	for _, idx := range symIndices {
+		if idx < 0 {
 			return nil, nil
 		}
 	}
@@ -511,7 +395,9 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, r
 			combos = append(combos, combo)
 		}
 	}
-	resultErr = iter.Error()
+	if e := iter.Error(); resultErr == nil {
+		resultErr = e
+	}
 	return combos, resultErr
 }
 
@@ -542,19 +428,10 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 
 	for _, rel := range relations {
 		// Build symbol index mapping
-		relSyms := rel.Symbols()
-		symIndices := make([]int, len(syms))
+		symIndices := query.SymbolIndexTable(rel.Symbols(), syms)
 		valid := true
-		for i, sym := range syms {
-			found := false
-			for j, relSym := range relSyms {
-				if relSym == sym {
-					symIndices[i] = j
-					found = true
-					break
-				}
-			}
-			if !found {
+		for _, idx := range symIndices {
+			if idx < 0 {
 				valid = false
 				break
 			}

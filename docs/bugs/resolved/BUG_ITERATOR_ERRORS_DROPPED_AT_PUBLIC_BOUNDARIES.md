@@ -1,15 +1,10 @@
 # BUG: Iterator Errors Dropped at Public Result Boundaries
 
-**Date**: 2026-05-24
-**Severity**: High - storage/decode/subquery failures can become successful partial results
-**Status**: Resolved (2026-05-25) — see Resolution below
-**Affected**: `executor.CollectTuples`, `storage.Database.QueryInto`, `storage.Database.QueryOneInto`, tuple collection paths that cannot return errors
+**Date**: 2026-05-24 **Severity**: High - storage/decode/subquery failures can become successful partial results **Status**: Resolved (2026-05-25) — see Resolution below **Affected**: `executor.CollectTuples`, `storage.Database.QueryInto`, `storage.Database.QueryOneInto`, tuple collection paths that cannot return errors
 
 ## Summary
 
-The executor `Iterator` contract says callers must check `Error()` after `Next()`
-returns false. Several public result-consumption APIs iterate relations and return
-success without checking `Iterator.Error()`.
+The executor `Iterator` contract says callers must check `Error()` after `Next()` returns false. Several public result-consumption APIs iterate relations and return success without checking `Iterator.Error()`.
 
 That means an iterator-level failure can be misreported as:
 
@@ -17,10 +12,7 @@ That means an iterator-level failure can be misreported as:
 2. a truncated successful result, or
 3. `found=false, nil` from `QueryOneInto`.
 
-This is especially risky because the storage layer intentionally moved some
-failures into deferred iterator errors. `KeyOnlyIterator.Next()` returns false on
-decode failure and preserves the error for `Error()`. `CRDTResolvingIterator`
-does the same for source decode errors and unique-walk failures.
+This is especially risky because the storage layer intentionally moved some failures into deferred iterator errors. `KeyOnlyIterator.Next()` returns false on decode failure and preserves the error for `Error()`. `CRDTResolvingIterator` does the same for source decode errors and unique-walk failures.
 
 ## Root Cause
 
@@ -67,8 +59,7 @@ func CollectTuples(rel Relation, err error) ([][]interface{}, error) {
 }
 ```
 
-There is no `if err := it.Error(); err != nil { return nil, err }` after the
-loop. A failing iterator is indistinguishable from a normally exhausted iterator.
+There is no `if err := it.Error(); err != nil { return nil, err }` after the loop. A failing iterator is indistinguishable from a normally exhausted iterator.
 
 ### `storage.Database.QueryInto`
 
@@ -88,8 +79,7 @@ sliceVal.Set(newSlice)
 return nil
 ```
 
-Both the struct-mapping path and scalar path return nil after the loop without
-checking `iter.Error()`.
+Both the struct-mapping path and scalar path return nil after the loop without checking `iter.Error()`.
 
 ### `storage.Database.QueryOneInto`
 
@@ -108,50 +98,38 @@ if iter.Next() {
 }
 ```
 
-If the first `Next()` returns false due to an iterator failure, the API reports
-"not found" with no error. If the second `Next()` fails, the method proceeds as if
-there was exactly one result.
+If the first `Next()` returns false due to an iterator failure, the API reports "not found" with no error. If the second `Next()` fails, the method proceeds as if there was exactly one result.
 
 ## Why This Matters
 
-The storage and executor layers now have several iterators where failures are
-only visible through `Error()`:
+The storage and executor layers now have several iterators where failures are only visible through `Error()`:
 
-- `KeyOnlyIterator` decodes datoms in `Next()` and stores decode/blob lookup
-  errors in `currentError`
-- `CRDTResolvingIterator` records source `Datom()` errors and unique-walk errors
-  in `err`
+- `KeyOnlyIterator` decodes datoms in `Next()` and stores decode/blob lookup errors in `currentError`
+- `CRDTResolvingIterator` records source `Datom()` errors and unique-walk errors in `err`
 - `UnionIterator` can hold errors from parallel subquery workers
 - wrapper iterators generally propagate inner errors through their own `Error()`
 
-The repository already has tests for the storage iterator error contract, but the
-public consumption APIs do not consistently participate in that contract.
+The repository already has tests for the storage iterator error contract, but the public consumption APIs do not consistently participate in that contract.
 
 ## Expected Behavior
 
-Any public API that consumes a `Relation` should return iterator errors to the
-caller.
+Any public API that consumes a `Relation` should return iterator errors to the caller.
 
 Examples:
 
 - `executor.CollectTuples(...)` should return the iterator error
-- `QueryInto(...)` should return the iterator error and not silently install a
-  partial destination slice
-- `QueryOneInto(...)` should return the iterator error instead of `found=false`
-  or a partial success
+- `QueryInto(...)` should return the iterator error and not silently install a partial destination slice
+- `QueryOneInto(...)` should return the iterator error instead of `found=false` or a partial success
 
 ## Actual Behavior
 
-Several public APIs return success after `Next()` stops, regardless of whether
-iteration stopped normally or due to failure.
+Several public APIs return success after `Next()` stops, regardless of whether iteration stopped normally or due to failure.
 
 ## Failure Modes
 
 ### Failure Mode 1: Blob Decode Failure Becomes Empty Result
 
-If a Tier 3 hashed value points at a missing/corrupt blob, `DatomFromKey` returns
-an error. Through `KeyOnlyIterator`, that can surface as `Next() == false` plus a
-non-nil `Error()`.
+If a Tier 3 hashed value points at a missing/corrupt blob, `DatomFromKey` returns an error. Through `KeyOnlyIterator`, that can surface as `Next() == false` plus a non-nil `Error()`.
 
 `CollectTuples` currently reports `[][]interface{}{}` and `nil`.
 
@@ -167,8 +145,7 @@ That is indistinguishable from a legitimate empty query result.
 
 ### Failure Mode 3: Truncated Results
 
-If an iterator yields some tuples and then fails, `QueryInto` can populate the
-destination with the prefix and return nil.
+If an iterator yields some tuples and then fails, `QueryInto` can populate the destination with the prefix and return nil.
 
 That is worse than an empty result because the caller sees plausible data.
 
@@ -176,24 +153,19 @@ That is worse than an empty result because the caller sees plausible data.
 
 ### Correctness
 
-Errors in storage decoding, blob lookup, CRDT resolution, or streaming union
-execution can be silently converted into valid-looking query results.
+Errors in storage decoding, blob lookup, CRDT resolution, or streaming union execution can be silently converted into valid-looking query results.
 
 ### Debuggability
 
-The lower layers may preserve the right error, but the public API drops it at the
-last boundary. Users will debug "missing data" instead of seeing the real decode
-or iterator failure.
+The lower layers may preserve the right error, but the public API drops it at the last boundary. Users will debug "missing data" instead of seeing the real decode or iterator failure.
 
 ### Trust
 
-This bug class undermines the iterator error propagation work already present in
-the storage layer. The contract is only useful if every consumer checks it.
+This bug class undermines the iterator error propagation work already present in the storage layer. The contract is only useful if every consumer checks it.
 
 ## Fix Direction
 
-Add explicit iterator error checks in all public and internal collection paths
-that can return errors.
+Add explicit iterator error checks in all public and internal collection paths that can return errors.
 
 Immediate targets:
 
@@ -204,13 +176,9 @@ Immediate targets:
 For internal helpers that currently cannot return errors, either:
 
 1. introduce error-returning variants, or
-2. ensure callers consume through a boundary that checks `Error()` before
-   returning to the user.
+2. ensure callers consume through a boundary that checks `Error()` before returning to the user.
 
-Be careful with `defer iter.Close()`: `Close()` and `Error()` are separate
-signals. The iterator error should be checked before returning, and close errors
-should not mask a more specific iteration error unless that is a deliberate
-policy.
+Be careful with `defer iter.Close()`: `Close()` and `Error()` are separate signals. The iterator error should be checked before returning, and close errors should not mask a more specific iteration error unless that is a deliberate policy.
 
 ## Verification Plan
 
@@ -234,16 +202,12 @@ Add regression tests with a relation whose iterator yields controlled failures:
 
 Also add one storage-backed test if practical:
 
-- create a datom with a Tier 3 hashed value, delete/corrupt the blob key, query
-  it, and verify the public API returns a blob/decode error.
+- create a datom with a Tier 3 hashed value, delete/corrupt the blob key, query it, and verify the public API returns a blob/decode error.
 
 ## Related
 
-- `datalog/storage/iterator_error_propagation_test.go` documents the storage
-  iterator error contract.
-- `docs/bugs/BUG_ITERATOR_LEAK_BUILTIN_EVALUATION.md` is another example where
-  iterator lifecycle obligations were correct in the interface but not
-  consistently observed by consumers.
+- `datalog/storage/iterator_error_propagation_test.go` documents the storage iterator error contract.
+- `docs/bugs/BUG_ITERATOR_LEAK_BUILTIN_EVALUATION.md` is another example where iterator lifecycle obligations were correct in the interface but not consistently observed by consumers.
 
 ---
 

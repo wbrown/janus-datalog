@@ -106,6 +106,21 @@ reach, and the leak is proof the upstream thinking already lapsed. If you find
 yourself routing a rule through a checkpoint instead of letting it shape the
 action, stop: you have already lost it. These are the recurring instances:
 
+- **The user's presence is never a variable.** Whether the user is watching,
+  likely to answer quickly, or away entirely must not appear anywhere in the
+  derivation of what to do next. Every ask-first and report-first rule in
+  this file was priced by the owner when the rule was written; the owner's
+  availability is not yours to re-weigh per decision. Reasoning from "will
+  this be seen" is surveillance-conditioned compliance — it produces the
+  right action only while observed, and these rules exist precisely for the
+  unobserved hours. It is also insidious: the observed case tends to yield
+  the correct action for the wrong reason, so the pattern survives until an
+  unobserved case, where the same derivation licenses proceeding
+  unilaterally. If the user's presence (or any observation proxy — a gate
+  that will be checked, a diff that will be reviewed) surfaces in your
+  reasoning at all, the discipline has already lapsed upstream. An action's
+  correctness does not depend on its visibility.
+
 - **"No helpers" is not "don't type `helper` in a function name."** It is: name
   every piece of code for what it does. If the word *helper* occurs to you at all
   — in a name, a comment, or describing your own work out loud — you have not done
@@ -263,7 +278,7 @@ The codebase maintains a clean separation between user-facing types and storage 
   - `Tx: ElementID` - 16-byte transaction ID (Lamport + ReplicaID) for CRDT causal ordering
   - `Op: CRDTOp` - CRDT operation (none/add/remove/rga-insert/rga-tombstone)
   - `AfterRef: ElementID` - RGA position reference (only used when `Op.HasAfterRef()` is true)
-- **Identity**: Like C++ Reference and Clojure Identity - contains hash, L85, and original string
+- **Identity**: Like C++ Reference and Clojure Identity - the SHA1 content-address hash, rendered as L85; the seed string is hashed and discarded
 - **Value**: Just `interface{}` - no wrapper types, direct Go types:
   - Scalars: `string`, `int64`, `float64`, `bool`, `time.Time`, `[]byte`
   - References: `Identity` (aliased as `Reference` when used as a value)

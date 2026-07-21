@@ -16,8 +16,8 @@ func TestRelationBindingRenamesPropertiesPositionally(t *testing.T) {
 	outerCount := datalog.NewSymbol("?count")
 	innerProperties := RelationProperties{
 		Ordering: []query.OrderByClause{{
-			Variable:  innerGroup,
-			Direction: query.OrderAsc,
+			Variable:   innerGroup,
+			Descending: false,
 		}},
 		Keys: [][]query.Symbol{{innerGroup}},
 	}
@@ -38,8 +38,8 @@ func TestRelationBindingRenamesPropertiesPositionally(t *testing.T) {
 	require.Equal(t,
 		RelationProperties{
 			Ordering: []query.OrderByClause{{
-				Variable:  outerGroup,
-				Direction: query.OrderAsc,
+				Variable:   outerGroup,
+				Descending: false,
 			}},
 			Keys: [][]query.Symbol{{outerGroup}},
 		},

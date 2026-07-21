@@ -11,7 +11,20 @@ type BufferedIterator struct {
 	buffer   []Tuple
 	position int
 	mu       sync.Mutex
-	consumed bool // true after source has been fully consumed
+	consumed bool  // true after source has been fully consumed
+	err      error // source's deferred error, captured at drain (first error wins)
+}
+
+// captureSourceError records the consumed source's deferred error and Close
+// failure (first error wins) so a failed scan never presents as a clean
+// buffer — to this iterator's consumers or to any Clone.
+func (it *BufferedIterator) captureSourceError() {
+	if e := it.source.Error(); e != nil && it.err == nil {
+		it.err = e
+	}
+	if closeErr := it.source.Close(); closeErr != nil && it.err == nil {
+		it.err = closeErr
+	}
 }
 
 // NewBufferedIterator creates a new buffered iterator
@@ -52,7 +65,7 @@ func (it *BufferedIterator) Next() bool {
 
 	// Source is exhausted
 	it.consumed = true
-	it.source.Close()
+	it.captureSourceError()
 	return false
 }
 
@@ -86,6 +99,9 @@ func (it *BufferedIterator) Close() error {
 }
 
 func (it *BufferedIterator) Error() error {
+	if it.err != nil {
+		return it.err
+	}
 	if it.source != nil {
 		return it.source.Error()
 	}
@@ -109,42 +125,11 @@ func (it *BufferedIterator) Size() int {
 			it.buffer = append(it.buffer, tupleCopy)
 		}
 		it.consumed = true
-		it.source.Close()
+		it.captureSourceError()
 		it.position = oldPos // Restore position
 	}
 
 	return len(it.buffer)
-}
-
-// IsEmpty checks if the iterator has any tuples without full consumption
-// This only consumes the first tuple if needed
-func (it *BufferedIterator) IsEmpty() bool {
-	it.mu.Lock()
-	defer it.mu.Unlock()
-
-	// If we have buffered data, we're not empty
-	if len(it.buffer) > 0 {
-		return false
-	}
-
-	// If source is consumed and buffer is empty, we're empty
-	if it.consumed {
-		return true
-	}
-
-	// Try to get one tuple from source
-	if it.source.Next() {
-		tuple := it.source.Tuple()
-		tupleCopy := make(Tuple, len(tuple))
-		copy(tupleCopy, tuple)
-		it.buffer = append(it.buffer, tupleCopy)
-		return false
-	}
-
-	// Source is empty
-	it.consumed = true
-	it.source.Close()
-	return true
 }
 
 // Clone creates a new independent iterator over the same buffered data
@@ -162,13 +147,16 @@ func (it *BufferedIterator) Clone() Iterator {
 			it.buffer = append(it.buffer, tupleCopy)
 		}
 		it.consumed = true
-		it.source.Close()
+		it.captureSourceError()
 	}
 
-	// Create a simple iterator over the buffered data
+	// Create a simple iterator over the buffered data. The clone carries the
+	// consumed source's deferred error — a failed scan must not present as a
+	// clean buffer to the clone's consumers.
 	return &bufferedSliceIterator{
 		tuples:   it.buffer,
 		position: -1,
+		err:      it.err,
 	}
 }
 
@@ -176,6 +164,7 @@ func (it *BufferedIterator) Clone() Iterator {
 type bufferedSliceIterator struct {
 	tuples   []Tuple
 	position int
+	err      error // deferred error inherited from the consumed source
 }
 
 func (it *bufferedSliceIterator) Next() bool {
@@ -194,4 +183,4 @@ func (it *bufferedSliceIterator) Close() error {
 	return nil
 }
 
-func (it *bufferedSliceIterator) Error() error { return nil }
+func (it *bufferedSliceIterator) Error() error { return it.err }

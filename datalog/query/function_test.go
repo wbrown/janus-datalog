@@ -17,7 +17,7 @@ func TestArithmeticFunction(t *testing.T) {
 		{
 			name: "Addition int",
 			fn: ArithmeticFunction{
-				Op: OpAdd,
+				Op: datalog.SymAdd,
 				Args: []Term{
 					VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					ConstantTerm{Value: int64(10)},
@@ -29,7 +29,7 @@ func TestArithmeticFunction(t *testing.T) {
 		{
 			name: "Subtraction float",
 			fn: ArithmeticFunction{
-				Op: OpSubtract,
+				Op: datalog.SymSubtract,
 				Args: []Term{
 					VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					VariableTerm{Symbol: datalog.NewSymbol("?y")},
@@ -41,7 +41,7 @@ func TestArithmeticFunction(t *testing.T) {
 		{
 			name: "Multiplication mixed",
 			fn: ArithmeticFunction{
-				Op: OpMultiply,
+				Op: datalog.SymMultiply,
 				Args: []Term{
 					VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					ConstantTerm{Value: 2.5},
@@ -53,7 +53,7 @@ func TestArithmeticFunction(t *testing.T) {
 		{
 			name: "Division",
 			fn: ArithmeticFunction{
-				Op: OpDivide,
+				Op: datalog.SymDivide,
 				Args: []Term{
 					ConstantTerm{Value: int64(10)},
 					VariableTerm{Symbol: datalog.NewSymbol("?x")},
@@ -86,7 +86,7 @@ func TestArithmeticFunctionsClojureArities(t *testing.T) {
 	}{
 		{
 			name: "variadic addition",
-			fn: ArithmeticFunction{Op: OpAdd, Args: []Term{
+			fn: ArithmeticFunction{Op: datalog.SymAdd, Args: []Term{
 				ConstantTerm{Value: int64(1)},
 				ConstantTerm{Value: int64(2)},
 				ConstantTerm{Value: int64(3)},
@@ -95,14 +95,14 @@ func TestArithmeticFunctionsClojureArities(t *testing.T) {
 		},
 		{
 			name: "unary subtraction",
-			fn: ArithmeticFunction{Op: OpSubtract, Args: []Term{
+			fn: ArithmeticFunction{Op: datalog.SymSubtract, Args: []Term{
 				ConstantTerm{Value: int64(5)},
 			}},
 			want: int64(-5),
 		},
 		{
 			name: "variadic subtraction",
-			fn: ArithmeticFunction{Op: OpSubtract, Args: []Term{
+			fn: ArithmeticFunction{Op: datalog.SymSubtract, Args: []Term{
 				ConstantTerm{Value: int64(10)},
 				ConstantTerm{Value: int64(3)},
 				ConstantTerm{Value: int64(2)},
@@ -111,14 +111,14 @@ func TestArithmeticFunctionsClojureArities(t *testing.T) {
 		},
 		{
 			name: "unary division",
-			fn: ArithmeticFunction{Op: OpDivide, Args: []Term{
+			fn: ArithmeticFunction{Op: datalog.SymDivide, Args: []Term{
 				ConstantTerm{Value: int64(4)},
 			}},
 			want: float64(0.25),
 		},
 		{
 			name: "variadic division",
-			fn: ArithmeticFunction{Op: OpDivide, Args: []Term{
+			fn: ArithmeticFunction{Op: datalog.SymDivide, Args: []Term{
 				ConstantTerm{Value: int64(24)},
 				ConstantTerm{Value: int64(3)},
 				ConstantTerm{Value: int64(2)},
@@ -141,7 +141,7 @@ func TestArithmeticFunctionsClojureArities(t *testing.T) {
 }
 
 func TestArithmeticFunctionsRejectInvalidZeroArity(t *testing.T) {
-	for _, operator := range []ArithmeticOp{OpAdd, OpSubtract, OpMultiply, OpDivide} {
+	for _, operator := range []Symbol{datalog.SymAdd, datalog.SymSubtract, datalog.SymMultiply, datalog.SymDivide} {
 		_, err := (ArithmeticFunction{Op: operator}).Eval(nil)
 		if err == nil {
 			t.Fatalf("%s must reject zero arguments", operator)
@@ -177,19 +177,19 @@ func TestTimeExtractionFunction(t *testing.T) {
 	testTime := time.Date(2024, 6, 15, 14, 30, 45, 0, time.UTC)
 
 	tests := []struct {
-		field    string
+		field    Symbol
 		expected int64
 	}{
-		{"year", 2024},
-		{"month", 6},
-		{"day", 15},
-		{"hour", 14},
-		{"minute", 30},
-		{"second", 45},
+		{datalog.SymYear, 2024},
+		{datalog.SymMonth, 6},
+		{datalog.SymDay, 15},
+		{datalog.SymHour, 14},
+		{datalog.SymMinute, 30},
+		{datalog.SymSecond, 45},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.field, func(t *testing.T) {
+		t.Run(tt.field.String(), func(t *testing.T) {
 			fn := TimeExtractionFunction{
 				Field:    tt.field,
 				TimeTerm: VariableTerm{Symbol: datalog.NewSymbol("?t")},
@@ -230,53 +230,4 @@ func TestGroundFunctionString(t *testing.T) {
 			t.Errorf("got %q", g.String())
 		}
 	})
-}
-
-func TestAggregates(t *testing.T) {
-	values := []interface{}{int64(10), int64(20), int64(30), int64(40)}
-
-	tests := []struct {
-		name     string
-		agg      AggregateFunction
-		expected interface{}
-	}{
-		{
-			name:     "Count",
-			agg:      CountAggregate{Var: datalog.NewSymbol("?x")},
-			expected: int64(4),
-		},
-		{
-			name:     "Sum",
-			agg:      SumAggregate{Var: datalog.NewSymbol("?x")},
-			expected: int64(100),
-		},
-		{
-			name:     "Avg",
-			agg:      AvgAggregate{Var: datalog.NewSymbol("?x")},
-			expected: 25.0,
-		},
-		{
-			name:     "Min",
-			agg:      MinAggregate{Var: datalog.NewSymbol("?x")},
-			expected: int64(10),
-		},
-		{
-			name:     "Max",
-			agg:      MaxAggregate{Var: datalog.NewSymbol("?x")},
-			expected: int64(40),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := tt.agg.Aggregate(values)
-			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
-			}
-			if result != tt.expected {
-				t.Errorf("Expected %v (%T), got %v (%T)",
-					tt.expected, tt.expected, result, result)
-			}
-		})
-	}
 }

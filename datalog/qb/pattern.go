@@ -92,8 +92,26 @@ func toPatternElement(v interface{}) query.PatternElement {
 		return query.Constant{Value: x}
 	default:
 		// Raw values become constants
-		return query.Constant{Value: v}
+		return query.Constant{Value: normalizeConstant(v)}
 	}
+}
+
+// normalizeConstant coerces integer widths in a raw query-builder constant to
+// the engine's canonical int64 — the same contract the EDN parser and the
+// write/input boundaries enforce — recursing into []interface{} vectors
+// elementwise. Every raw value the builder embeds in a query AST (pattern
+// constants, predicate and expression operands, ground values, get-else and
+// pull defaults) passes through here; a Go int that survives to execution
+// diverges from stored int64 data in joins, comparisons, and aggregation.
+func normalizeConstant(v interface{}) interface{} {
+	if elems, ok := v.([]interface{}); ok {
+		out := make([]interface{}, len(elems))
+		for i, e := range elems {
+			out[i] = normalizeConstant(e)
+		}
+		return out
+	}
+	return datalog.NormalizeValue(v)
 }
 
 // termer is implemented by types that can convert to Term
@@ -116,6 +134,6 @@ func toTerm(v interface{}) query.Term {
 		return x.toTerm()
 	default:
 		// Raw values become constants
-		return query.ConstantTerm{Value: v}
+		return query.ConstantTerm{Value: normalizeConstant(v)}
 	}
 }

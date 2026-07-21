@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -13,18 +11,22 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/algebra"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // setupAlgebraTestDB creates a database with representative data for
-// testing all clause types through the full pipeline.
-func setupAlgebraTestDB(t testing.TB) (*Database, func()) {
+// testing all clause types through the full pipeline. popts sets the
+// database-level planner options (nil = default); tests that pass options
+// per-query via queryWithPlannerOptions are unaffected by it.
+func setupAlgebraTestDB(t testing.TB, popts *planner.PlannerOptions) (*Database, func()) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "algebra-integration-*")
 	require.NoError(t, err)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dir,
+		Path:           dir,
+		PlannerOptions: popts,
 		AnnotationHandler: func(e annotations.Event) {
 			if e.Name == "subquery/uncorrelated-cached" || e.Name == "subquery/uncorrelated-cache-hit" || e.Name == "subquery/correlation-check" || e.Name == "or/begin" || e.Name == "or/fallback" || e.Name == "or/union" {
 				t.Logf("[%s] %v", e.Name, e.Data)
@@ -90,7 +92,7 @@ func queryWithoutAlgebra(db *Database, queryStr string) (executor.Relation, erro
 // TestAlgebraIntegration_SimplePatterns tests that simple data patterns
 // produce identical results with and without the algebra optimizer.
 func TestAlgebraIntegration_SimplePatterns(t *testing.T) {
-	db, cleanup := setupAlgebraTestDB(t)
+	db, cleanup := setupAlgebraTestDB(t, nil)
 	defer cleanup()
 
 	q := `[:find ?e ?title :where [?e :entity/type :entity.type/scenario] [?e :scenario/title ?title]]`
@@ -115,7 +117,7 @@ func TestAlgebraIntegration_SimplePatterns(t *testing.T) {
 // TestAlgebraIntegration_NotClause tests NOT clauses through the full pipeline.
 // This reproduces the production crash on the tags query.
 func TestAlgebraIntegration_NotClause(t *testing.T) {
-	db, cleanup := setupAlgebraTestDB(t)
+	db, cleanup := setupAlgebraTestDB(t, nil)
 	defer cleanup()
 
 	q := `[:find ?e ?tag
@@ -142,7 +144,7 @@ func TestAlgebraIntegration_NotClause(t *testing.T) {
 
 // TestAlgebraIntegration_GetElse tests get-else through the full pipeline.
 func TestAlgebraIntegration_GetElse(t *testing.T) {
-	db, cleanup := setupAlgebraTestDB(t)
+	db, cleanup := setupAlgebraTestDB(t, nil)
 	defer cleanup()
 
 	q := `[:find ?e ?title
@@ -170,7 +172,7 @@ func TestAlgebraIntegration_GetElse(t *testing.T) {
 // TestAlgebraIntegration_OrFallbackWithSubquery tests OR-fallback with
 // correlated subquery through the full pipeline.
 func TestAlgebraIntegration_OrFallbackWithSubquery(t *testing.T) {
-	db, cleanup := setupAlgebraTestDB(t)
+	db, cleanup := setupAlgebraTestDB(t, nil)
 	defer cleanup()
 
 	q := `[:find ?e ?count
@@ -215,7 +217,7 @@ func TestAlgebraIntegration_OrFallbackWithSubquery(t *testing.T) {
 // TestAlgebraIntegration_SubqueryWithNot tests subqueries that internally
 // contain NOT clauses (like the production pattern with entity/deleted).
 func TestAlgebraIntegration_SubqueryWithNot(t *testing.T) {
-	db, cleanup := setupAlgebraTestDB(t)
+	db, cleanup := setupAlgebraTestDB(t, nil)
 	defer cleanup()
 
 	q := `[:find ?e ?count
@@ -249,9 +251,6 @@ func TestAlgebraIntegration_SubqueryWithNot(t *testing.T) {
 // TestAlgebraIntegration_SequentialQueries tests running multiple queries
 // in sequence on the same database (like the production profiler).
 func TestAlgebraIntegration_SequentialQueries(t *testing.T) {
-	db, cleanup := setupAlgebraTestDB(t)
-	defer cleanup()
-
 	queries := []struct {
 		name string
 		q    string
@@ -268,13 +267,21 @@ func TestAlgebraIntegration_SequentialQueries(t *testing.T) {
 			           [(ground 0) ?count])]`},
 	}
 
-	for _, tc := range queries {
-		t.Run(tc.name, func(t *testing.T) {
-			rel, err := db.Query(tc.q)
-			require.NoError(t, err, "query %s should not crash", tc.name)
-			results, err := executor.CollectTuples(rel, nil)
-			require.NoError(t, err)
-			t.Logf("%s: %d results", tc.name, len(results))
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := setupAlgebraTestDB(t, &popts)
+			defer cleanup()
+
+			for _, tc := range queries {
+				t.Run(tc.name, func(t *testing.T) {
+					rel, err := db.Query(tc.q)
+					require.NoError(t, err, "query %s should not crash", tc.name)
+					results, err := executor.CollectTuples(rel, nil)
+					require.NoError(t, err)
+					t.Logf("%s: %d results", tc.name, len(results))
+				})
+			}
 		})
 	}
 }
@@ -364,7 +371,7 @@ func TestAlgebraIntegration_PrefetchInDecorrelatedSubquery(t *testing.T) {
 // TestAlgebraIntegration_MultipleOrFallbacks tests multiple OR-fallback
 // clauses in one query (the production pattern).
 func TestAlgebraIntegration_MultipleOrFallbacks(t *testing.T) {
-	db, cleanup := setupAlgebraTestDB(t)
+	db, cleanup := setupAlgebraTestDB(t, nil)
 	defer cleanup()
 
 	q := `[:find ?e ?count ?total

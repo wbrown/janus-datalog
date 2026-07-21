@@ -95,32 +95,17 @@ Avoid `fmt.Sprintf` and delimiter joins for semantic keys.
 
 ## Resolution (2026-05-25)
 
-**Resolved.** `getUniqueInputCombinations` now dedups with `TupleKeyMap`
-(`NewTupleKeyFull` + `Exists`/`Put`) instead of `fmt.Sprintf("%v")` joined with
-`"|"`. `TupleKeyMap` resolves hash collisions by comparing values with
-`datalog.ValuesEqual`, so two combinations are equal only under typed value
-identity — string rendering no longer participates in query semantics.
+**Resolved.** `getUniqueInputCombinations` now dedups with `TupleKeyMap` (`NewTupleKeyFull` + `Exists`/`Put`) instead of `fmt.Sprintf("%v")` joined with `"|"`. `TupleKeyMap` resolves hash collisions by comparing values with `datalog.ValuesEqual`, so two combinations are equal only under typed value identity — string rendering no longer participates in query semantics.
 
-Source markers are constant execution context (identical on every tuple) and are
-excluded from the dedup key, while still being carried through in the returned
-combination payload. Excluding them also sidesteps `hashValue`'s address-based
-default for `query.Symbol`, which would otherwise defeat dedup whenever a source
-marker appears in the input list.
+Source markers are constant execution context (identical on every tuple) and are excluded from the dedup key, while still being carried through in the returned combination payload. Excluding them also sidesteps `hashValue`'s address-based default for `query.Symbol`, which would otherwise defeat dedup whenever a source marker appears in the input list.
 
 ### Code
 
-- `datalog/executor/subquery.go` — `getUniqueInputCombinations` rewritten; the
-  now-unused `strings` import removed.
+- `datalog/executor/subquery.go` — `getUniqueInputCombinations` rewritten; the now-unused `strings` import removed.
 
 ### Tests
 
-- `datalog/executor/subquery_input_dedup_test.go` —
-  `TestGetUniqueInputCombinations_NoStringKeyCollisions` covers the adversarial
-  pairs (delimiter `a|b`+`c` vs `a`+`b|c`; `int64(5)` vs `"5"`; bool vs string;
-  float vs string; distinct `[]byte`), and
-  `TestGetUniqueInputCombinations_SourceMarkerDoesNotCollide` covers a `$` source
-  marker in the input list. Each collapses to one combination on the old
-  string-key code and stays distinct after the fix.
+- `datalog/executor/subquery_input_dedup_test.go` — `TestGetUniqueInputCombinations_NoStringKeyCollisions` covers the adversarial pairs (delimiter `a|b`+`c` vs `a`+`b|c`; `int64(5)` vs `"5"`; bool vs string; float vs string; distinct `[]byte`), and `TestGetUniqueInputCombinations_SourceMarkerDoesNotCollide` covers a `$` source marker in the input list. Each collapses to one combination on the old string-key code and stays distinct after the fix.
 
 ### Verification
 

@@ -1,26 +1,17 @@
 # BUG: UnionRelation Concurrent Iteration and Inner Error Drop
 
-**Date**: 2026-05-24
-**Severity**: Medium-High - streaming union can race, duplicate consumption, or hide worker/inner iterator failures
-**Status**: Resolved (2026-05-25) — see Resolution below
-**Affected**: `executor.UnionRelation`, `executor.UnionIterator`, streaming subquery union paths
+**Date**: 2026-05-24 **Severity**: Medium-High - streaming union can race, duplicate consumption, or hide worker/inner iterator failures **Status**: Resolved (2026-05-25) — see Resolution below **Affected**: `executor.UnionRelation`, `executor.UnionIterator`, streaming subquery union paths
 
 ## Summary
 
-`UnionRelation` is intended to make a channel-backed streaming union reusable:
-the first `Iterator()` consumes the channel and builds a tuple cache, and later
-`Iterator()` calls replay that cache.
+`UnionRelation` is intended to make a channel-backed streaming union reusable: the first `Iterator()` consumes the channel and builds a tuple cache, and later `Iterator()` calls replay that cache.
 
 The implementation has two related problems:
 
-1. **Concurrent `Iterator()` calls before the cache is built can create multiple
-   consumers over the same one-shot channel and shared cache slice.**
-2. **Errors from the current inner relation iterator are dropped when that inner
-   iterator exhausts and is closed.**
+1. **Concurrent `Iterator()` calls before the cache is built can create multiple consumers over the same one-shot channel and shared cache slice.**
+2. **Errors from the current inner relation iterator are dropped when that inner iterator exhausts and is closed.**
 
-Both issues sit on a high-risk boundary: parallel subquery execution produces
-relations through a channel, while the `Relation` interface promises reusable
-iteration.
+Both issues sit on a high-risk boundary: parallel subquery execution produces relations through a channel, while the `Relation` interface promises reusable iteration.
 
 ## Root Cause
 
@@ -44,12 +35,9 @@ func (ur *UnionRelation) Iterator() Iterator {
 }
 ```
 
-The mutex only protects the short critical section that creates the iterator. It
-does not record "cache build in progress."
+The mutex only protects the short critical section that creates the iterator. It does not record "cache build in progress."
 
-If goroutine A calls `Iterator()` and starts consuming the channel, goroutine B
-can call `Iterator()` before A finishes. Since `cacheBuilt` is still false, B also
-gets a `UnionIterator` over the same channel and the same cache pointer.
+If goroutine A calls `Iterator()` and starts consuming the channel, goroutine B can call `Iterator()` before A finishes. Since `cacheBuilt` is still false, B also gets a `UnionIterator` over the same channel and the same cache pointer.
 
 That violates the comment at the top of the file:
 
@@ -60,8 +48,7 @@ That violates the comment at the top of the file:
 // subsequent calls replay from cache.
 ```
 
-The current code implements "subsequent calls after cache completion replay from
-cache," not "subsequent calls while cache is building wait for cache completion."
+The current code implements "subsequent calls after cache completion replay from cache," not "subsequent calls while cache is building wait for cache completion."
 
 ### 2. Inner iterator errors are not checked before discard
 
@@ -74,11 +61,9 @@ if it.currentIter != nil {
 }
 ```
 
-When an inner iterator's `Next()` returns false, `UnionIterator` closes and drops
-it without checking `it.currentIter.Error()`.
+When an inner iterator's `Next()` returns false, `UnionIterator` closes and drops it without checking `it.currentIter.Error()`.
 
-`UnionIterator.Error()` can only return `currentIter.Error()` while
-`currentIter` is still assigned:
+`UnionIterator.Error()` can only return `currentIter.Error()` while `currentIter` is still assigned:
 
 ```go
 func (it *UnionIterator) Error() error {
@@ -103,8 +88,7 @@ After the iterator is closed and set to nil, that error is lost.
 3. Iterators created while the cache is being built should either:
    - block until the cache is complete and then replay it, or
    - participate in a documented single-use protocol.
-4. Any error from worker items or inner relation iterators should surface via
-   `Iterator.Error()`.
+4. Any error from worker items or inner relation iterators should surface via `Iterator.Error()`.
 
 ## Actual Behavior
 
@@ -151,15 +135,13 @@ Possible outcomes:
 2. Inner iterator then stops with `Error() == sentinel`.
 3. `UnionIterator.Next()` sees `currentIter.Next() == false`.
 4. It calls `currentIter.Close()` and sets `currentIter = nil`.
-5. `UnionIterator.Error()` returns nil because `firstError` is nil and
-   `currentIter` is gone.
+5. `UnionIterator.Error()` returns nil because `firstError` is nil and `currentIter` is gone.
 
 The caller gets a successful prefix of the union.
 
 ## Failure Mode 3: Worker Error Can Be Delayed or Masked
 
-`relationItem.err` is captured in `firstError`, but the iterator continues
-processing other items:
+`relationItem.err` is captured in `firstError`, but the iterator continues processing other items:
 
 ```go
 if item.err != nil {
@@ -170,29 +152,21 @@ if item.err != nil {
 }
 ```
 
-Continuing after an error is defensible if the final `Error()` is always checked,
-but it compounds the public-boundary bug documented in
-`BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md`: callers that collect
-tuples without checking `Error()` will see a plausible partial result.
+Continuing after an error is defensible if the final `Error()` is always checked, but it compounds the public-boundary bug documented in `BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md`: callers that collect tuples without checking `Error()` will see a plausible partial result.
 
 ## Impact
 
 ### Correctness
 
-Parallel subquery results can be silently truncated or split between iterators if
-the relation is iterated concurrently before cache completion.
+Parallel subquery results can be silently truncated or split between iterators if the relation is iterated concurrently before cache completion.
 
 ### Resource Safety
 
-If a second iterator drains the channel unexpectedly, the first iterator's close
-and drain behavior can interact badly with producer goroutines. The current code
-tries to drain remaining items in `Close()` to unblock producers, which is
-reasonable for a single consumer but fragile when there are multiple consumers.
+If a second iterator drains the channel unexpectedly, the first iterator's close and drain behavior can interact badly with producer goroutines. The current code tries to drain remaining items in `Close()` to unblock producers, which is reasonable for a single consumer but fragile when there are multiple consumers.
 
 ### Error Reporting
 
-Inner relation failures can vanish even if callers correctly check
-`UnionIterator.Error()`.
+Inner relation failures can vanish even if callers correctly check `UnionIterator.Error()`.
 
 ## Fix Direction
 
@@ -207,13 +181,9 @@ notStarted -> building -> built
               failed
 ```
 
-Only one iterator should own channel consumption. Other `Iterator()` calls while
-state is `building` should wait on a completion channel/condition and then replay
-the built cache.
+Only one iterator should own channel consumption. Other `Iterator()` calls while state is `building` should wait on a completion channel/condition and then replay the built cache.
 
-The cache append path must be protected if any design allows more than one
-goroutine to touch the cache. The simpler design is single builder, many replay
-readers.
+The cache append path must be protected if any design allows more than one goroutine to touch the cache. The simpler design is single builder, many replay readers.
 
 ### Error Preservation
 
@@ -226,14 +196,11 @@ if err := it.currentIter.Error(); err != nil && it.firstError == nil {
 _ = it.currentIter.Close()
 ```
 
-Also consider preserving close errors if no iteration error has already been
-recorded.
+Also consider preserving close errors if no iteration error has already been recorded.
 
 ### Public Boundary
 
-This bug should be fixed together with public iterator error propagation. A
-perfect `UnionIterator.Error()` still does not help if `CollectTuples`,
-`QueryInto`, or `QueryOneInto` drop the error after iteration.
+This bug should be fixed together with public iterator error propagation. A perfect `UnionIterator.Error()` still does not help if `CollectTuples`, `QueryInto`, or `QueryOneInto` drop the error after iteration.
 
 ## Verification Plan
 

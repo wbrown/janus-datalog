@@ -7,7 +7,7 @@ This document describes the OR clause variants and their semantics.
 | Clause | Semantics | Behavior |
 |--------|-----------|----------|
 | `(or ...)` / `(or-join ...)` | **Union** (Datomic-compatible) | All branches execute, results merged |
-| `(or-default ...)` / `(or-default-join ...)` | **Fallback** (janus extension) | Branches tried in order, first non-empty wins |
+| `(or-default ...)` / `(or-default-join ...)` | **Fallback** (janus extension) | Branches tried in order, first non-empty wins (per correlation group when `or-default-join` declares required vars) |
 
 ## Union Semantics: `(or ...)`
 
@@ -90,14 +90,26 @@ Evaluation order:
 
 ### or-default-join
 
-Explicit join variables for fallback:
+The header declares the clause's complete interface. Its first element may be a nested vector of **required vars** — the per-group correlation keys, which the enclosing query must bind before the clause runs; the remaining symbols are **output vars**, which every branch must bind. Branch variables outside the header are locals: renaming them — even onto a name the outer query binds — does not change results.
 
 ```clojure
-(or-default-join [?x]
+;; Per-entity fallback: for each ?e, take :source1/value, else :source2/value, else 0
+(or-default-join [[?e] ?x]
   [?e :source1/value ?x]
   [?e :source2/value ?x]
   [(ground 0) ?x])
 ```
+
+A flat header declares outputs only — the fallback decision is then **global**: branch 1 evaluates once, and only when it returns nothing does evaluation fall back.
+
+```clojure
+;; Global fallback: all configured limits, or the single default when none exist
+(or-default-join [?limit]
+  [?c :config/limit ?limit]
+  [(ground 100) ?limit])
+```
+
+or-default is non-monotone — which variables the fallback decision is grouped by changes the *results*, not just the plan — so the correlation keys are declared syntax, never inferred from branch structure or from what happens to be bound at execution. Validation enforces the declaration loudly: at least one output, required and output sets disjoint, every branch binds every output, and any variable a branch consumes without binding must be a declared required var. A per-group filter with no outputs is `or-join`'s job — with nothing to output, fallback-filter and union-filter are the same relation.
 
 ## Algebra IR Representation
 

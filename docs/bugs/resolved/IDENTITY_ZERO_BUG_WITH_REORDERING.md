@@ -43,8 +43,7 @@ Because `?person` is empty, the subquery `[?ev :event/person ?person]` doesn't m
 
 ## This Affects Both Optimization Modes
 
-**Without conditional aggregate rewriting:** Same empty Identity problem
-**With conditional aggregate rewriting:** Empty Identities PLUS additional rewriting bugs
+**Without conditional aggregate rewriting:** Same empty Identity problem **With conditional aggregate rewriting:** Empty Identities PLUS additional rewriting bugs
 
 This proves the Identity zero bug is NOT caused by conditional aggregate rewriting - it's a core issue with phase reordering.
 

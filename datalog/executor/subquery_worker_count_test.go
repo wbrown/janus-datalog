@@ -106,10 +106,14 @@ func TestSubqueryTupleBinding_ScalesWithInputSize(t *testing.T) {
 				)
 			}
 
-			got := runExecuteWithWorkers(t, datoms, buildQuery(), runtime.NumCPU())
-			assert.Len(t, got, numPeople,
-				"each per-?e subquery returns exactly 1 tuple; outer produces %d rows, expected %d results",
-				numPeople, numPeople)
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					got := runExecuteWithWorkers(t, datoms, buildQuery(), runtime.NumCPU(), mode.algebra)
+					assert.Len(t, got, numPeople,
+						"each per-?e subquery returns exactly 1 tuple; outer produces %d rows, expected %d results",
+						numPeople, numPeople)
+				})
+			}
 		})
 	}
 }
@@ -185,27 +189,33 @@ func TestMaxSubqueryWorkers_ProducesConsistentResults(t *testing.T) {
 		},
 	}
 
-	baseline := runExecuteWithWorkers(t, datoms, q, runtime.NumCPU())
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			baseline := runExecuteWithWorkers(t, datoms, q, runtime.NumCPU(), mode.algebra)
 
-	for _, workers := range []int{0, 1, 2, 4} {
-		t.Run("workers="+itoaWorkers(workers), func(t *testing.T) {
-			got := runExecuteWithWorkers(t, datoms, q, workers)
-			assert.ElementsMatch(t, baseline, got,
-				"MaxSubqueryWorkers=%d produced a different result set than the NumCPU baseline", workers)
-			assert.Len(t, got, numPeople, "expected one result per person")
+			for _, workers := range []int{0, 1, 2, 4} {
+				t.Run("workers="+itoaWorkers(workers), func(t *testing.T) {
+					got := runExecuteWithWorkers(t, datoms, q, workers, mode.algebra)
+					assert.ElementsMatch(t, baseline, got,
+						"MaxSubqueryWorkers=%d produced a different result set than the NumCPU baseline", workers)
+					assert.Len(t, got, numPeople, "expected one result per person")
+				})
+			}
 		})
 	}
 }
 
 // runExecuteWithWorkers executes q with the given MaxSubqueryWorkers
-// setting and returns [name, age] pairs for comparison.
-func runExecuteWithWorkers(t *testing.T, datoms []datalog.Datom, q *query.Query, workers int) [][2]interface{} {
+// setting and returns [name, age] pairs for comparison. algebra selects the
+// optimizerModes mode under test — see docs/wip/OPTIMIZER_MODE_MATRIX.md.
+func runExecuteWithWorkers(t *testing.T, datoms []datalog.Datom, q *query.Query, workers int, algebra bool) [][2]interface{} {
 	t.Helper()
 
 	matcher := NewMemoryPatternMatcher(datoms)
 	opts := planner.PlannerOptions{
 		EnableParallelSubqueries: true,
 		MaxSubqueryWorkers:       workers,
+		EnableAlgebraOptimizer:   algebra,
 	}
 	exec := NewExecutorWithOptions(matcher, nil, opts)
 

@@ -43,6 +43,12 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	if err != nil {
 		return nil, err
 	}
+	if err := query.ValidateEntityBinding(m.extractValue(pattern.GetE())); err != nil {
+		return nil, err
+	}
+	if err := query.ValidateAttributeBinding(m.extractValue(pattern.GetA())); err != nil {
+		return nil, err
+	}
 	// Determine pattern symbols
 	symbols := pattern.Symbols()
 
@@ -58,13 +64,19 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		return m.matchUnboundAsRelation(q, pattern, symbols, constraints)
 	}
 
-	// CRITICAL FIX: Don't call IsEmpty() on StreamingRelations - it consumes first tuple!
-	// See docs/bugs/BUG_ENTITY_JOIN_LOSES_FIRST_TUPLE.md
-	// If relation is empty, subsequent iteration will discover that naturally.
-	if _, isStreaming := bindingRel.(*executor.StreamingRelation); !isStreaming {
-		if bindingRel.IsEmpty() {
-			return m.matchUnboundAsRelation(q, pattern, symbols, constraints)
+	// Size() declines with -1 on streaming relations rather than consuming
+	// a tuple to answer, so the empty-binding shortcut applies exactly when
+	// the count is already free; an empty stream is discovered naturally by
+	// iteration.
+	if bindingRel.Size() == 0 {
+		// An errored relation that materialized empty is not an empty
+		// binding: its zero rows mean the upstream scan failed. Falling
+		// back to an unbound scan here would launder that failure into
+		// a silent result.
+		if err := executor.EmptyRelationError(bindingRel); err != nil {
+			return nil, err
 		}
+		return m.matchUnboundAsRelation(q, pattern, symbols, constraints)
 	}
 
 	// Project the binding relation to only include symbols used in the pattern
@@ -112,7 +124,10 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		if aResolved != nil {
 			// Phase 1: A has a single known value (from constant or single-tuple binding)
 			if aKw, ok := aResolved.(datalog.Keyword); ok {
-				cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, symbols, aKw, -1)
+				cacheResult, handled, err := m.matchWithBindingsFromCache(pattern, bindingRel, symbols, aKw, -1)
+				if err != nil {
+					return nil, err
+				}
 				if handled {
 					if m.handler != nil {
 						m.handler(annotations.Event{
@@ -128,13 +143,16 @@ func (m *BadgerMatcher) MatchWithConstraints(
 			}
 		} else if aVar, ok := pattern.GetA().(query.Variable); ok {
 			// Phase 2: A varies per tuple in bindingRel (e.g., from join results)
-			aIdx := findVariableSymbol(aVar.Name, bindingRel)
+			aIdx := query.SymbolIndex(bindingRel.Symbols(), aVar.Name)
 			eVar, eIsVar := pattern.GetE().(query.Variable)
 			if aIdx >= 0 && eIsVar {
-				eIdx := findVariableSymbol(eVar.Name, bindingRel)
+				eIdx := query.SymbolIndex(bindingRel.Symbols(), eVar.Name)
 				if eIdx >= 0 {
-					cacheResult, handled := m.matchWithBindingsFromCache(
+					cacheResult, handled, err := m.matchWithBindingsFromCache(
 						pattern, bindingRel, symbols, nil, aIdx)
+					if err != nil {
+						return nil, err
+					}
 					if handled {
 						return cacheResult, nil
 					}
@@ -511,6 +529,7 @@ func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bi
 	}); err != nil {
 		return nil, err
 	}
+	bindingTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), bindingTuples)
 
 	// Create iterator that will scan for each binding tuple
 	iter := &nonReusingIterator{
@@ -545,6 +564,7 @@ func (m *BadgerMatcher) matchWithIteratorReuse(
 	if err != nil {
 		return nil, err
 	}
+	sortedTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), sortedTuples)
 
 	// Create streaming iterator that will reuse storage iterator
 	iter := &reusingIterator{
@@ -704,14 +724,19 @@ func (it *validatingVBoundIterator) Next() bool {
 				// an empty bound value matches every value of the type, and a
 				// non-empty value prefix-matches. Validation enforces exact equality.
 				if card == schema.CardinalityOne || card == schema.CardinalityUnknown {
-					if !it.validateCandidate(datom.E, datom.A) {
+					ok, err := it.validateCandidate(datom.E, datom.A)
+					if err != nil {
+						it.err = err
+						return false
+					}
+					if !ok {
 						// Stale candidate - LWW winner has different V
 						continue
 					}
 				}
 
 				// Build result tuple
-				it.currentTuple = it.buildTuple(datom)
+				it.currentTuple = it.tupleBuilder.BuildTupleInterned(datom)
 				return true
 			}
 			// Inner iterator exhausted — propagate any deferred error
@@ -721,7 +746,9 @@ func (it *validatingVBoundIterator) Next() bool {
 			if srcErr := it.crdtIter.Error(); srcErr != nil && it.err == nil {
 				it.err = srcErr
 			}
-			it.crdtIter.Close()
+			if closeErr := it.crdtIter.Close(); closeErr != nil && it.err == nil {
+				it.err = closeErr
+			}
 			it.crdtIter = nil
 			it.rawIter = nil
 		}
@@ -817,12 +844,14 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 		V:  it.currentBoundV,
 		Tx: ownerTx,
 	}
-	it.currentTuple = it.buildTuple(winner)
+	it.currentTuple = it.tupleBuilder.BuildTupleInterned(winner)
 	return true, nil
 }
 
-// validateCandidate checks if the current value of (E, A) matches boundV
-func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword) bool {
+// validateCandidate checks if the current value of (E, A) matches boundV.
+// A storage or decode failure surfaces as an error — it must never collapse
+// to "candidate doesn't match", which would silently drop valid results.
+func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword) (bool, error) {
 	encoder := it.matcher.encoder
 
 	// Convert E to storage bytes
@@ -872,7 +901,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 					},
 				})
 			}
-			return matches
+			return matches, nil
 		}
 	}
 
@@ -880,7 +909,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	start, end := encoder.EncodePrefixRange(it.validationIndex, eBytes[:], aStorage[:])
 	rawIter, err := it.matcher.store.ScanKeysOnly(it.validationIndex, start, end)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer rawIter.Close()
 
@@ -896,7 +925,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	for rawIter.Next() {
 		winner, err := rawIter.Datom()
 		if err != nil {
-			return false
+			return false, err
 		}
 		if it.matcher.shouldFilterTx(winner.Tx) {
 			continue
@@ -905,7 +934,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 		// Check Op: if the latest visible operation is a tombstone, the
 		// attribute doesn't exist. No V can match a tombstoned attribute.
 		if winner.Op == datalog.OpCRDTRemove {
-			return false
+			return false, nil
 		}
 
 		// Check if winner's V matches our bound V. Use ValuesEqual (not raw ==)
@@ -931,7 +960,11 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 			})
 		}
 
-		return matches
+		return matches, nil
+	}
+	// A failed scan is not "no winner" — surface it.
+	if err := rawIter.Error(); err != nil {
+		return false, err
 	}
 
 	// No entry visible under this snapshot — the attribute has no value as-of T.
@@ -946,7 +979,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 			},
 		})
 	}
-	return false
+	return false, nil
 }
 
 // getCardinality looks up the cardinality for an attribute (for annotations)
@@ -1084,32 +1117,6 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 // encodeValue converts a value to bytes for index prefix
 func (it *validatingVBoundIterator) encodeValue(v any) []byte {
 	return encodeValueForSearch(v, it.matcher.encoder)
-}
-
-// buildTuple creates a result tuple from a validated datom
-func (it *validatingVBoundIterator) buildTuple(datom *datalog.Datom) executor.Tuple {
-	tuple := make(executor.Tuple, len(it.symbols))
-	for i, sym := range it.symbols {
-		// Check each pattern element - might be Variable or Constant
-		if v, ok := it.pattern.GetE().(query.Variable); ok && sym == v.Name {
-			tuple[i] = datom.E
-			continue
-		}
-		if v, ok := it.pattern.GetA().(query.Variable); ok && sym == v.Name {
-			tuple[i] = datom.A
-			continue
-		}
-		if v, ok := it.pattern.GetV().(query.Variable); ok && sym == v.Name {
-			tuple[i] = datom.V
-			continue
-		}
-		if len(it.pattern.Elements) > 3 {
-			if v, ok := it.pattern.GetT().(query.Variable); ok && sym == v.Name {
-				tuple[i] = datom.Tx
-			}
-		}
-	}
-	return tuple
 }
 
 func (it *validatingVBoundIterator) Tuple() executor.Tuple {
@@ -1299,22 +1306,12 @@ func (m *BadgerMatcher) matchFromCache(
 	return nil, false // Unknown cardinality, fallback to storage
 }
 
-// findVariableSymbol returns the symbol index for a variable in a relation, or -1.
-func findVariableSymbol(sym query.Symbol, rel executor.Relation) int {
-	for i, s := range rel.Symbols() {
-		if s == sym {
-			return i
-		}
-	}
-	return -1
-}
-
 // resolveKeywordFromBindings searches all binding relations for a single-tuple relation
 // containing the given variable and returns its value as a Keyword. This covers scalar
 // inputs and single-tuple tuple inputs where A has exactly one known value.
 func resolveKeywordFromBindings(aVar query.Variable, bindings executor.Relations) (datalog.Keyword, bool) {
 	for _, rel := range bindings {
-		idx := findVariableSymbol(aVar.Name, rel)
+		idx := query.SymbolIndex(rel.Symbols(), aVar.Name)
 		if idx < 0 {
 			continue
 		}
@@ -1346,23 +1343,16 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 	symbols []query.Symbol,
 	a datalog.Keyword,
 	aSymIdx int,
-) (executor.Relation, bool) {
+) (executor.Relation, bool, error) {
 	// Find which symbol in the binding relation has E
 	eVar, isVar := pattern.GetE().(query.Variable)
 	if !isVar {
-		return nil, false // E is not a variable, can't get it from bindings
+		return nil, false, nil // E is not a variable, can't get it from bindings
 	}
 
-	bindingSymbols := bindingRel.Symbols()
-	eSymIdx := -1
-	for i, sym := range bindingSymbols {
-		if sym == eVar.Name {
-			eSymIdx = i
-			break
-		}
-	}
+	eSymIdx := query.SymbolIndex(bindingRel.Symbols(), eVar.Name)
 	if eSymIdx < 0 {
-		return nil, false // E variable not in bindings
+		return nil, false, nil // E variable not in bindings
 	}
 
 	// Pre-compute fixed-A values when A is constant across all tuples
@@ -1459,14 +1449,14 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 		eBytes := Entity(eIdent.Hash())
 		key, ok := m.cacheKey(eBytes, rowAAttr)
 		if !ok {
-			return nil, false
+			return nil, false, nil
 		}
 
 		// Get from cache
 		entry := m.cache.GetOrResolve(key, m)
 		if entry == nil {
 			// Cache miss - fallback to storage for entire query
-			return nil, false
+			return nil, false, nil
 		}
 
 		// Process based on cardinality
@@ -1509,13 +1499,18 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 			}
 			if v != nil {
 				// Can't efficiently check vector membership
-				return nil, false
+				return nil, false, nil
 			}
 			resultTuples = append(resultTuples, buildTuple(eIdent, typedVector(list, rowValueType), entry.Version()))
 		}
 	}
+	// A failed bindings scan is not an exhausted one — surface it rather
+	// than answering from a truncated binding set.
+	if err := iter.Error(); err != nil {
+		return nil, false, err
+	}
 
-	return executor.NewMaterializedRelationWithOptions(symbols, resultTuples, m.options), true
+	return executor.NewMaterializedRelationWithOptions(symbols, resultTuples, m.options), true, nil
 }
 
 // matchCardinalityManyAsRelation handles cardinality-many patterns using add-wins resolution
@@ -1660,13 +1655,7 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 
 	// Find the entity variable in the pattern and match it to binding symbols
 	if pattern.GetE() != nil && pattern.GetE().IsVariable() {
-		eVar := pattern.GetE().(query.Variable).Name
-		for i, sym := range bindingSyms {
-			if sym == eVar {
-				eSymIdx = i
-				break
-			}
-		}
+		eSymIdx = query.SymbolIndex(bindingSyms, pattern.GetE().(query.Variable).Name)
 	}
 
 	if eSymIdx == -1 {
@@ -1749,6 +1738,10 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 		}
 
 		tuples = append(tuples, tuple)
+	}
+	// A failed bindings scan is not an exhausted one — surface it.
+	if err := it.Error(); err != nil {
+		return nil, err
 	}
 
 	return executor.NewMaterializedRelation(symbols, tuples), nil
@@ -2104,6 +2097,7 @@ type cardinalityManyAVETValueIterator struct {
 	matcher     *BadgerMatcher
 	pattern     *query.DataPattern
 	symbols     []query.Symbol
+	indexer     *query.TupleIndexer
 	a, v        interface{}
 	aBytes      [32]byte
 	storageIter Iterator
@@ -2217,22 +2211,21 @@ func (it *cardinalityManyAVETValueIterator) isCurrentEntityMember() bool {
 }
 
 func (it *cardinalityManyAVETValueIterator) buildTuple() {
+	// Positions precomputed once at construction (query.TupleIndexer); this
+	// iterator fills from add-wins state rather than a datom, so the indexer
+	// applies directly instead of an InternedTupleBuilder.
 	tuple := make(executor.Tuple, len(it.symbols))
-	for i, sym := range it.symbols {
-		switch {
-		case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
-			it.pattern.GetE().(query.Variable).Name == sym:
-			tuple[i] = it.currentEntity
-		case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
-			it.pattern.GetA().(query.Variable).Name == sym:
-			tuple[i] = it.a
-		case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
-			it.pattern.GetV().(query.Variable).Name == sym:
-			tuple[i] = it.v
-		case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
-			it.pattern.GetT().(query.Variable).Name == sym:
-			tuple[i] = datalog.ElementID{}
-		}
+	if it.indexer.EIndex >= 0 {
+		tuple[it.indexer.EIndex] = it.currentEntity
+	}
+	if it.indexer.AIndex >= 0 {
+		tuple[it.indexer.AIndex] = it.a
+	}
+	if it.indexer.VIndex >= 0 {
+		tuple[it.indexer.VIndex] = it.v
+	}
+	if it.indexer.TIndex >= 0 {
+		tuple[it.indexer.TIndex] = datalog.ElementID{}
 	}
 	it.currentTuple = tuple
 }
@@ -2379,6 +2372,7 @@ func (m *BadgerMatcher) matchCardinalityManyFindEntitiesWithValue(
 		matcher:     m,
 		pattern:     pattern,
 		symbols:     symbols,
+		indexer:     query.NewTupleIndexer(pattern, symbols),
 		a:           a,
 		v:           v,
 		aBytes:      aBytes,

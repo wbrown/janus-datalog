@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -492,6 +493,166 @@ func TestDecorrelation_PureDataPatternSkipped(t *testing.T) {
 	// Pure DataPattern subquery should NOT be decorrelated
 	assert.Equal(t, ljBefore, ljAfter,
 		"pure DataPattern subquery should stay correlated — indexed lookup is faster")
+}
+
+// TestDecorrelation_EqualityBoundTranslation pins the equality-bound
+// correlation translation on the OHLC flagship shape: correlation parameters
+// consumed only by [(= ?inner ?param)] predicates are translated — the inner
+// side becomes the group-by column, the predicate is consumed as the join
+// condition, and the binding positionally renames it to the outer name.
+// Subqueries with extra non-correlation consumption (?smod/?emod
+// inequalities) decline and stay correlated. See
+// docs/bugs/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
+func TestDecorrelation_EqualityBoundTranslation(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?datetime ?open-price ?hour-high ?hour-low
+	 :where
+	    [?s :symbol/ticker "CRWV"]
+	    [?first-bar :price/symbol ?s]
+	    [?first-bar :price/time ?t]
+	    [(year ?t) ?year]
+	    [(month ?t) ?month]
+	    [(day ?t) ?day]
+	    [(hour ?t) ?hour]
+	    [?first-bar :price/minute-of-day ?mod]
+	    [(* ?hour 60) ?hour-start]
+	    [(+ ?hour-start 4) ?open-end]
+	    [(>= ?mod ?hour-start)]
+	    [(<= ?mod ?open-end)]
+	    [(str ?year "-" ?month "-" ?day " " ?hour ":00") ?datetime]
+
+	    [(q [:find (max ?h) (min ?l)
+	         :in $ ?sym ?y ?m ?d ?hr
+	         :where [?b :price/symbol ?sym]
+	                [?b :price/time ?time]
+	                [(year ?time) ?py]
+	                [(month ?time) ?pm]
+	                [(day ?time) ?pd]
+	                [(hour ?time) ?ph]
+	                [(= ?py ?y)]
+	                [(= ?pm ?m)]
+	                [(= ?pd ?d)]
+	                [(= ?ph ?hr)]
+	                [?b :price/high ?h]
+	                [?b :price/low ?l]]
+	        $ ?s ?year ?month ?day ?hour) [[?hour-high ?hour-low]]]
+
+	    [(q [:find (min ?o)
+	         :in $ ?sym ?y ?m ?d ?hr ?smod ?emod
+	         :where [?b :price/symbol ?sym]
+	                [?b :price/time ?time]
+	                [(year ?time) ?py]
+	                [(month ?time) ?pm]
+	                [(day ?time) ?pd]
+	                [(hour ?time) ?ph]
+	                [(= ?py ?y)]
+	                [(= ?pm ?m)]
+	                [(= ?pd ?d)]
+	                [(= ?ph ?hr)]
+	                [?b :price/minute-of-day ?bmod]
+	                [(>= ?bmod ?smod)]
+	                [(<= ?bmod ?emod)]
+	                [?b :price/open ?o]]
+	        $ ?s ?year ?month ?day ?hour ?hour-start ?open-end) [[?open-price]]]]`)
+	require.NoError(t, err)
+
+	// Mirror the bridge: compile the WHERE clauses only, optimize with the
+	// default passes, decompile back to clauses.
+	root, err := Compile(&query.Query{Where: q.Where})
+	require.NoError(t, err)
+	t.Logf("Before:\n%s", root.String())
+
+	optimizer := NewOptimizer(DefaultPasses()...)
+	optimized, err := optimizer.Optimize(root)
+	require.NoError(t, err)
+	t.Logf("After:\n%s", optimized.String())
+
+	clauses, err := Decompile(optimized)
+	require.NoError(t, err)
+	for i, c := range clauses {
+		t.Logf("clause [%d] %T: %s", i, c, c.String())
+	}
+
+	var uncorrelated, correlated []*query.SubqueryPattern
+	for _, c := range clauses {
+		sp, ok := c.(*query.SubqueryPattern)
+		if !ok {
+			continue
+		}
+		hasVarInput := false
+		for _, in := range sp.Inputs {
+			if v, ok := in.(query.Variable); ok && !v.Name.IsSource() {
+				hasVarInput = true
+			}
+		}
+		if hasVarInput {
+			correlated = append(correlated, sp)
+		} else {
+			uncorrelated = append(uncorrelated, sp)
+		}
+	}
+
+	// The equality-bound subquery is translated into one uncorrelated
+	// grouped subquery; the ?smod/?emod subquery declines and stays
+	// correlated per-combination.
+	require.Len(t, uncorrelated, 1, "the equality-bound subquery translates to one uncorrelated grouped subquery")
+	require.Len(t, correlated, 1, "the extras subquery declines decorrelation and stays correlated")
+
+	grouped := uncorrelated[0]
+
+	// Group-by keys are the inner columns, in parameter order, followed by
+	// the original aggregates.
+	wantFind := []query.Symbol{
+		datalog.NewSymbol("?sym"),
+		datalog.NewSymbol("?py"),
+		datalog.NewSymbol("?pm"),
+		datalog.NewSymbol("?pd"),
+		datalog.NewSymbol("?ph"),
+	}
+	var gotFindVars []query.Symbol
+	aggCount := 0
+	for _, fe := range grouped.Query.Find {
+		switch e := fe.(type) {
+		case query.FindVariable:
+			gotFindVars = append(gotFindVars, e.Symbol)
+		case query.FindAggregate:
+			aggCount++
+		}
+	}
+	assert.Equal(t, wantFind, gotFindVars, "group-by columns are the inner equality sides in parameter order")
+	assert.Equal(t, 2, aggCount, "both aggregates preserved")
+
+	// The correlation parameters are gone from :in, and the consumed
+	// correlation equalities are gone from :where.
+	for _, in := range grouped.Query.In {
+		if si, ok := in.(query.ScalarInput); ok {
+			t.Errorf("translated query should have no scalar inputs, found %s", si.Symbol.String())
+		}
+	}
+	for _, c := range grouped.Query.Where {
+		if cmp, ok := c.(*query.Comparison); ok {
+			t.Errorf("translated query should have no remaining comparisons, found %s", cmp.String())
+		}
+	}
+
+	// The binding positionally renames group columns to the outer
+	// correlation names, then the aggregate outputs.
+	rb, ok := grouped.Binding.(query.RelationBinding)
+	require.True(t, ok, "grouped subquery binds as a relation")
+	assert.Equal(t,
+		[]query.Symbol{
+			datalog.NewSymbol("?s"),
+			datalog.NewSymbol("?year"),
+			datalog.NewSymbol("?month"),
+			datalog.NewSymbol("?day"),
+			datalog.NewSymbol("?hour"),
+			datalog.NewSymbol("?hour-high"),
+			datalog.NewSymbol("?hour-low"),
+		},
+		rb.Variables,
+		"binding renames group columns to outer names positionally")
+
+	// The declined subquery keeps its full input list — all seven variables.
+	assert.Len(t, correlated[0].Inputs, 8, "declined subquery keeps $ plus its seven variable inputs")
 }
 
 // countCorrelatedLateralJoins counts LateralJoin nodes with non-empty CorrelationVars.

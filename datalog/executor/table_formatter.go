@@ -31,14 +31,18 @@ func NewTableFormatter() *TableFormatter {
 
 // FormatRelation formats a Relation as a markdown table
 func (tf *TableFormatter) FormatRelation(rel Relation) string {
-	if rel == nil || rel.IsEmpty() {
+	if rel == nil {
 		return "_Empty relation_"
 	}
 
-	// Collect all tuples
+	// Consume, then decide: emptiness is a byproduct of the collection the
+	// table needs anyway, never a peek.
 	var tuples []Tuple
 	if err := collectTuplesInto(&tuples, rel); err != nil {
 		return fmt.Sprintf("_error reading relation: %v_", err)
+	}
+	if len(tuples) == 0 {
+		return "_Empty relation_"
 	}
 
 	symbols := rel.Symbols()

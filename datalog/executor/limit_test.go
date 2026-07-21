@@ -101,7 +101,6 @@ func telemetryDatoms() []datalog.Datom {
 
 func TestQueryLimitNoOrderBy(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(telemetryDatoms())
-	exec := NewExecutor(matcher, nil)
 
 	cases := []struct {
 		name  string
@@ -114,21 +113,27 @@ func TestQueryLimitNoOrderBy(t *testing.T) {
 		{"limit zero", "0", 0},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			q, err := parser.ParseQuery(`[:find ?e ?ord
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					q, err := parser.ParseQuery(`[:find ?e ?ord
 			                              :where [?e :n/kind "telemetry"]
 			                                     [?e :n/ord ?ord]
 			                              :limit ` + tc.limit + `]`)
-			if err != nil {
-				t.Fatalf("parse: %v", err)
-			}
-			result, err := exec.Execute(q)
-			if err != nil {
-				t.Fatalf("execute: %v", err)
-			}
-			if result.Size() != tc.want {
-				t.Errorf("expected %d rows, got %d", tc.want, result.Size())
+					if err != nil {
+						t.Fatalf("parse: %v", err)
+					}
+					result, err := exec.Execute(q)
+					if err != nil {
+						t.Fatalf("execute: %v", err)
+					}
+					if result.Size() != tc.want {
+						t.Errorf("expected %d rows, got %d", tc.want, result.Size())
+					}
+				})
 			}
 		})
 	}
@@ -136,30 +141,35 @@ func TestQueryLimitNoOrderBy(t *testing.T) {
 
 func TestQueryLimitWithOrderByTopN(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(telemetryDatoms())
-	exec := NewExecutor(matcher, nil)
 
-	// Latest-2 by ord descending: should be 50, 40 in that order.
-	q, err := parser.ParseQuery(`[:find ?ord
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			// Latest-2 by ord descending: should be 50, 40 in that order.
+			q, err := parser.ParseQuery(`[:find ?ord
 	                              :where [?e :n/kind "telemetry"]
 	                                     [?e :n/ord ?ord]
 	                              :order-by [[?ord :desc]]
 	                              :limit 2]`)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if result.Size() != 2 {
-		t.Fatalf("expected 2 rows, got %d", result.Size())
-	}
-	want := []int64{50, 40}
-	for i := 0; i < result.Size(); i++ {
-		got := result.Get(i)[0].(int64)
-		if got != want[i] {
-			t.Errorf("row %d: expected %d, got %d", i, want[i], got)
-		}
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if result.Size() != 2 {
+				t.Fatalf("expected 2 rows, got %d", result.Size())
+			}
+			want := []int64{50, 40}
+			for i := 0; i < result.Size(); i++ {
+				got := result.Get(i)[0].(int64)
+				if got != want[i] {
+					t.Errorf("row %d: expected %d, got %d", i, want[i], got)
+				}
+			}
+		})
 	}
 }
 
@@ -172,20 +182,25 @@ func TestQueryLimitAfterAggregationCapsGroups(t *testing.T) {
 		{E: datalog.NewIdentity("p4"), A: datalog.NewKeyword(":person/city"), V: "BOS", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find ?city (count ?p)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?city (count ?p)
 	                              :where [?p :person/city ?city]
 	                              :limit 2]`)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if result.Size() != 2 {
-		t.Errorf("expected 2 grouped rows, got %d", result.Size())
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if result.Size() != 2 {
+				t.Errorf("expected 2 grouped rows, got %d", result.Size())
+			}
+		})
 	}
 }
 
@@ -209,27 +224,32 @@ func TestQueryLimitWithRelationInputIsGlobal(t *testing.T) {
 	add("b3", "k2", 6)
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find ?v
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?v
 	                              :in $ [[?k] ...]
 	                              :where [?e :item/key ?k]
 	                                     [?e :item/val ?v]
 	                              :limit 2]`)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
 
-	keySym := datalog.NewSymbol("?k")
-	inputRel := NewMaterializedRelation([]query.Symbol{keySym}, []Tuple{{"k1"}, {"k2"}})
+			keySym := datalog.NewSymbol("?k")
+			inputRel := NewMaterializedRelation([]query.Symbol{keySym}, []Tuple{{"k1"}, {"k2"}})
 
-	result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	// Global cap of 2; a per-tuple cap would yield up to 4 (2 per key).
-	if result.Size() != 2 {
-		t.Errorf("expected global limit of 2 rows, got %d", result.Size())
+			result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			// Global cap of 2; a per-tuple cap would yield up to 4 (2 per key).
+			if result.Size() != 2 {
+				t.Errorf("expected global limit of 2 rows, got %d", result.Size())
+			}
+		})
 	}
 }
 
@@ -256,33 +276,38 @@ func TestOrderByAndLimitWithRelationInputIsGlobal(t *testing.T) {
 	add("b4", "B", 7)
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find ?v
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?v
 	                              :in $ [[?k] ...]
 	                              :where [?e :item/key ?k]
 	                                     [?e :item/val ?v]
 	                              :order-by [[?v :desc]]
 	                              :limit 3]`)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
 
-	keySym := datalog.NewSymbol("?k")
-	inputRel := NewMaterializedRelation([]query.Symbol{keySym}, []Tuple{{"A"}, {"B"}})
+			keySym := datalog.NewSymbol("?k")
+			inputRel := NewMaterializedRelation([]query.Symbol{keySym}, []Tuple{{"A"}, {"B"}})
 
-	result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if result.Size() != 3 {
-		t.Fatalf("expected 3 rows, got %d", result.Size())
-	}
-	want := []int64{7, 6, 5}
-	for i := 0; i < 3; i++ {
-		got := result.Get(i)[0].(int64)
-		if got != want[i] {
-			t.Errorf("row %d: expected %d, got %d (global top-3 desc)", i, want[i], got)
-		}
+			result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if result.Size() != 3 {
+				t.Fatalf("expected 3 rows, got %d", result.Size())
+			}
+			want := []int64{7, 6, 5}
+			for i := 0; i < 3; i++ {
+				got := result.Get(i)[0].(int64)
+				if got != want[i] {
+					t.Errorf("row %d: expected %d, got %d (global top-3 desc)", i, want[i], got)
+				}
+			}
+		})
 	}
 }

@@ -23,7 +23,7 @@ func TestMaterializedRelation(t *testing.T) {
 		t.Errorf("expected size 3, got %d", rel.Size())
 	}
 
-	if rel.IsEmpty() {
+	if rel.Size() == 0 {
 		t.Error("expected non-empty relation")
 	}
 
@@ -55,7 +55,7 @@ func TestEmptyRelation(t *testing.T) {
 	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	rel := NewMaterializedRelation(symbols, nil)
 
-	if !rel.IsEmpty() {
+	if rel.Size() != 0 {
 		t.Error("expected empty relation")
 	}
 

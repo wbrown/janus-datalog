@@ -32,11 +32,11 @@ func TestStreamingAggregation(t *testing.T) {
 
 		findElements := []query.FindElement{
 			query.FindVariable{Symbol: datalog.NewSymbol("?category")},
-			query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?price")},
-			query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?price")},
-			query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?price")},
-			query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?price")},
-			query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: datalog.SymAvg, Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: datalog.SymMin, Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: datalog.SymMax, Arg: datalog.NewSymbol("?price")},
 		}
 
 		result := ExecuteAggregations(rel, findElements)
@@ -81,8 +81,8 @@ func TestStreamingAggregation(t *testing.T) {
 		rel := NewStreamingRelationWithOptions(symbols, baseRel.Iterator(), opts)
 
 		findElements := []query.FindElement{
-			query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?price")},
-			query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?price")},
 		}
 
 		result := ExecuteAggregations(rel, findElements)
@@ -120,11 +120,11 @@ func TestStreamingAggregationCorrectness(t *testing.T) {
 
 	findElements := []query.FindElement{
 		query.FindVariable{Symbol: datalog.NewSymbol("?x")},
-		query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?y")},
-		query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?y")},
-		query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?y")},
-		query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?y")},
-		query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?y")},
+		query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?y")},
+		query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?y")},
+		query.FindAggregate{Function: datalog.SymAvg, Arg: datalog.NewSymbol("?y")},
+		query.FindAggregate{Function: datalog.SymMin, Arg: datalog.NewSymbol("?y")},
+		query.FindAggregate{Function: datalog.SymMax, Arg: datalog.NewSymbol("?y")},
 	}
 
 	// Run with streaming
@@ -199,7 +199,7 @@ func TestStreamingAggregationThreshold(t *testing.T) {
 
 	findElements := []query.FindElement{
 		query.FindVariable{Symbol: datalog.NewSymbol("?x")},
-		query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?y")},
+		query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?y")},
 	}
 
 	opts := ExecutorOptions{EnableStreamingAggregation: true}

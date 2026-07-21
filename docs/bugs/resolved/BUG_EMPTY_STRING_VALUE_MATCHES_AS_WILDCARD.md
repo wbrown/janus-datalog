@@ -1,9 +1,6 @@
 # BUG: Empty-string (zero-length) value in a query pattern matches as a wildcard
 
-**Date**: 2026-05-25
-**Severity**: High — silent wrong results; an equality query returns unrelated rows
-**Status**: Resolved (2026-05-25) — see Resolution below
-**Affected**: Value-bound pattern matching where the value encodes to zero content bytes — the empty string `""` and the empty byte slice `[]byte{}`. Reproduced on the A-bound / E-unbound path (AVET); the same mechanism applies to other value-prefix scans (e.g. VAET for V-only-bound patterns).
+**Date**: 2026-05-25 **Severity**: High — silent wrong results; an equality query returns unrelated rows **Status**: Resolved (2026-05-25) — see Resolution below **Affected**: Value-bound pattern matching where the value encodes to zero content bytes — the empty string `""` and the empty byte slice `[]byte{}`. Reproduced on the A-bound / E-unbound path (AVET); the same mechanism applies to other value-prefix scans (e.g. VAET for V-only-bound patterns).
 
 ## Summary
 

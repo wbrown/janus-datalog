@@ -167,6 +167,12 @@ func (b *QueryBuilder) Build() (*query.Query, error) {
 	if len(b.where) == 0 {
 		return nil, fmt.Errorf("query must have at least one where clause")
 	}
+	// Static clause-shape rules (subquery binding arity, not-join header
+	// completeness, or-default-join interface) are enforced at every user
+	// boundary with one message; this is the builder boundary's call.
+	if err := query.ValidateStaticClauseShapes(b.where); err != nil {
+		return nil, err
+	}
 
 	return &query.Query{
 		Find:    b.find,
@@ -196,18 +202,18 @@ func (b *QueryBuilder) MustBuild() *query.Query {
 
 // OrderSpec represents an ordering specification.
 type OrderSpec struct {
-	v         *Var
-	direction query.OrderDirection
+	v          *Var
+	descending bool
 }
 
 // Asc creates an ascending order specification.
 func Asc(v *Var) OrderSpec {
-	return OrderSpec{v: v, direction: query.OrderAsc}
+	return OrderSpec{v: v}
 }
 
 // Desc creates a descending order specification.
 func Desc(v *Var) OrderSpec {
-	return OrderSpec{v: v, direction: query.OrderDesc}
+	return OrderSpec{v: v, descending: true}
 }
 
 // findElementer is implemented by types that can convert to FindElement
@@ -272,15 +278,12 @@ func toOrderByClause(spec interface{}) (query.OrderByClause, error) {
 	switch x := spec.(type) {
 	case OrderSpec:
 		return query.OrderByClause{
-			Variable:  x.v.Symbol(),
-			Direction: x.direction,
+			Variable:   x.v.Symbol(),
+			Descending: x.descending,
 		}, nil
 	case *Var:
 		// Default to ascending
-		return query.OrderByClause{
-			Variable:  x.Symbol(),
-			Direction: query.OrderAsc,
-		}, nil
+		return query.OrderByClause{Variable: x.Symbol()}, nil
 	default:
 		return query.OrderByClause{}, fmt.Errorf("cannot convert %T to OrderByClause", spec)
 	}

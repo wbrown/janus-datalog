@@ -54,14 +54,16 @@ func (it *reusingIterator) Next() bool {
 		// Start with the first tuple's seek key
 		firstTuple := it.tuples[0]
 		it.updateBoundPattern(firstTuple)
-		startKey, _ := it.calculateSeekKey(firstTuple)
+		index, startKey, _ := it.calculateSeekKey(firstTuple)
+		// The scan decodes with the same index the keys were encoded for.
+		it.index = index
 
 		// For the end key, we need to go past the last tuple
 		// The safest approach is to use a key that's definitely past all our data
 		// For EAVT index with E bound, we can use the last entity + max suffix
 		lastTuple := it.tuples[len(it.tuples)-1]
 		it.updateBoundPattern(lastTuple)
-		_, endKey := it.calculateSeekKey(lastTuple)
+		_, _, endKey := it.calculateSeekKey(lastTuple)
 		// Extend the end key to ensure we capture all datoms for the last entity
 		endKey = append(endKey, 0xFF, 0xFF, 0xFF, 0xFF)
 
@@ -226,7 +228,7 @@ func (it *reusingIterator) Next() bool {
 		it.updateBoundPattern(bindingTuple)
 
 		// Calculate seek key based on the binding
-		seekKey, _ := it.calculateSeekKey(bindingTuple)
+		_, seekKey, _ := it.calculateSeekKey(bindingTuple)
 
 		// Seek to the new position
 		it.storageIter.Seek(seekKey)
@@ -261,17 +263,6 @@ func (it *reusingIterator) Close() error {
 
 func (it *reusingIterator) Error() error { return it.err }
 
-// getSymbolIndex returns the index of a symbol in the binding relation symbols
-func (it *reusingIterator) getSymbolIndex(variable query.Variable) int {
-	symbols := it.bindingRel.Symbols()
-	for i, sym := range symbols {
-		if sym == variable.Name {
-			return i
-		}
-	}
-	return -1
-}
-
 // updateBoundPattern updates the cached bound values based on current binding tuple
 func (it *reusingIterator) updateBoundPattern(bindingTuple executor.Tuple) {
 	// Use the pattern extractor to get all bound values at once
@@ -282,8 +273,13 @@ func (it *reusingIterator) updateBoundPattern(bindingTuple executor.Tuple) {
 	it.currentTx = values.T
 }
 
-// calculateSeekKey calculates the key to seek to based on binding tuple and position
-func (it *reusingIterator) calculateSeekKey(bindingTuple executor.Tuple) ([]byte, []byte) {
+// calculateSeekKey calculates the index and key range to seek to based on the
+// binding tuple and position. The returned index is authoritative for the
+// scan: the keys are encoded for it, and the storage iterator must decode
+// with it. (The strategy's index is a planning hint; chooseIndex is the one
+// authority for key encoding, so the two must not be mixed — a range encoded
+// for one index layout decodes as garbage under another.)
+func (it *reusingIterator) calculateSeekKey(bindingTuple executor.Tuple) (IndexType, []byte, []byte) {
 	// Get symbol mapping
 	symbols := it.bindingRel.Symbols()
 	symIndex := make(map[query.Symbol]int)
@@ -330,15 +326,14 @@ func (it *reusingIterator) calculateSeekKey(bindingTuple executor.Tuple) ([]byte
 		}
 	}
 
-	// Use the existing chooseIndex logic but just for the key calculation.
 	// When the strategy chose TAEV (position 3), only pass tx to avoid
 	// chooseIndex selecting AETV due to a constant A in the pattern.
 	if it.position == 3 && it.index == TAEV {
-		_, start, end := it.matcher.chooseIndex(nil, nil, nil, tx)
-		return start, end
+		index, start, end := it.matcher.chooseIndex(nil, nil, nil, tx)
+		return index, start, end
 	}
-	_, start, end := it.matcher.chooseIndex(e, a, v, tx)
-	return start, end
+	index, start, end := it.matcher.chooseIndex(e, a, v, tx)
+	return index, start, end
 }
 
 // matchesCurrentPattern checks if datom matches with current binding

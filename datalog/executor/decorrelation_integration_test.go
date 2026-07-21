@@ -6,7 +6,6 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // TestHourlyOHLCDecorrelation tests the actual hourly OHLC query with decorrelation
@@ -164,80 +163,84 @@ func TestHourlyOHLCDecorrelation(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	// Execute with decorrelation DISABLED first to verify test data
-	execNoDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Execute with decorrelation DISABLED first to verify test data
+			execNoDecor := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
 
-	startNoDecor := time.Now()
-	resultNoDecor, err := execNoDecor.Execute(q)
-	durationNoDecor := time.Since(startNoDecor)
+			startNoDecor := time.Now()
+			resultNoDecor, err := execNoDecor.Execute(q)
+			durationNoDecor := time.Since(startNoDecor)
 
-	if err != nil {
-		t.Fatalf("Query without decorrelation failed: %v", err)
-	}
-
-	t.Logf("Sequential execution: %d results", resultNoDecor.Size())
-	for i := 0; i < resultNoDecor.Size(); i++ {
-		t.Logf("  Tuple %d: %v", i, resultNoDecor.Get(i))
-	}
-
-	// Execute with decorrelation ENABLED
-	execWithDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
-
-	startWithDecor := time.Now()
-	resultWithDecor, err := execWithDecor.Execute(q)
-	durationWithDecor := time.Since(startWithDecor)
-
-	if err != nil {
-		t.Fatalf("Query with decorrelation failed: %v", err)
-	}
-
-	// Verify results are identical
-	if resultWithDecor.Size() != resultNoDecor.Size() {
-		t.Errorf("Result size mismatch: decorrelated=%d, sequential=%d",
-			resultWithDecor.Size(), resultNoDecor.Size())
-	}
-
-	// Should get 3 hours
-	if resultWithDecor.Size() != 3 {
-		t.Errorf("Expected 3 hours, got %d", resultWithDecor.Size())
-	}
-
-	// Verify each tuple matches
-	for i := 0; i < resultWithDecor.Size(); i++ {
-		rowDecor := resultWithDecor.Get(i)
-		rowNoDecor := resultNoDecor.Get(i)
-
-		if len(rowDecor) != len(rowNoDecor) {
-			t.Errorf("Tuple %d symbol count mismatch: decorrelated=%d, sequential=%d",
-				i, len(rowDecor), len(rowNoDecor))
-			continue
-		}
-
-		for j := range rowDecor {
-			if rowDecor[j] != rowNoDecor[j] {
-				t.Errorf("Tuple %d, position %d mismatch: decorrelated=%v, sequential=%v",
-					i, j, rowDecor[j], rowNoDecor[j])
+			if err != nil {
+				t.Fatalf("Query without decorrelation failed: %v", err)
 			}
-		}
-	}
 
-	// Log performance
-	t.Logf("Decorrelated: %v", durationWithDecor)
-	t.Logf("Sequential: %v", durationNoDecor)
-	if durationNoDecor > 0 {
-		speedup := float64(durationNoDecor) / float64(durationWithDecor)
-		t.Logf("Speedup: %.2fx", speedup)
-	}
+			t.Logf("Sequential execution: %d results", resultNoDecor.Size())
+			for i := 0; i < resultNoDecor.Size(); i++ {
+				t.Logf("  Tuple %d: %v", i, resultNoDecor.Get(i))
+			}
 
-	// Verify decorrelation improved performance
-	// Note: SubQ 0 and 3 have identical inputs and should be decorrelated together
-	// SubQ 1 and 2 have different additional inputs, so they remain separate
-	// We expect at least some speedup from decorrelating SubQ 0 and 3
-	t.Log("Decorrelation test successful: results match and performance improved")
-	if resultWithDecor.Size() == 3 && resultNoDecor.Size() == 3 {
-		t.Log("✓ Both executions returned 3 hourly OHLC results")
-	}
-	if durationWithDecor < durationNoDecor {
-		t.Log("✓ Decorrelated execution was faster")
+			// Execute with decorrelation ENABLED
+			execWithDecor := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+
+			startWithDecor := time.Now()
+			resultWithDecor, err := execWithDecor.Execute(q)
+			durationWithDecor := time.Since(startWithDecor)
+
+			if err != nil {
+				t.Fatalf("Query with decorrelation failed: %v", err)
+			}
+
+			// Verify results are identical
+			if resultWithDecor.Size() != resultNoDecor.Size() {
+				t.Errorf("Result size mismatch: decorrelated=%d, sequential=%d",
+					resultWithDecor.Size(), resultNoDecor.Size())
+			}
+
+			// Should get 3 hours
+			if resultWithDecor.Size() != 3 {
+				t.Errorf("Expected 3 hours, got %d", resultWithDecor.Size())
+			}
+
+			// Verify each tuple matches
+			for i := 0; i < resultWithDecor.Size(); i++ {
+				rowDecor := resultWithDecor.Get(i)
+				rowNoDecor := resultNoDecor.Get(i)
+
+				if len(rowDecor) != len(rowNoDecor) {
+					t.Errorf("Tuple %d symbol count mismatch: decorrelated=%d, sequential=%d",
+						i, len(rowDecor), len(rowNoDecor))
+					continue
+				}
+
+				for j := range rowDecor {
+					if rowDecor[j] != rowNoDecor[j] {
+						t.Errorf("Tuple %d, position %d mismatch: decorrelated=%v, sequential=%v",
+							i, j, rowDecor[j], rowNoDecor[j])
+					}
+				}
+			}
+
+			// Log performance
+			t.Logf("Decorrelated: %v", durationWithDecor)
+			t.Logf("Sequential: %v", durationNoDecor)
+			if durationNoDecor > 0 {
+				speedup := float64(durationNoDecor) / float64(durationWithDecor)
+				t.Logf("Speedup: %.2fx", speedup)
+			}
+
+			// Verify decorrelation improved performance
+			// Note: SubQ 0 and 3 have identical inputs and should be decorrelated together
+			// SubQ 1 and 2 have different additional inputs, so they remain separate
+			// We expect at least some speedup from decorrelating SubQ 0 and 3
+			t.Log("Decorrelation test successful: results match and performance improved")
+			if resultWithDecor.Size() == 3 && resultNoDecor.Size() == 3 {
+				t.Log("✓ Both executions returned 3 hourly OHLC results")
+			}
+			if durationWithDecor < durationNoDecor {
+				t.Log("✓ Decorrelated execution was faster")
+			}
+		})
 	}
 }

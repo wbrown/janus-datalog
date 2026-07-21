@@ -146,6 +146,10 @@ func (*SubqueryPattern) clause() {} // Implements Clause interface
 type BindingForm interface {
 	isBindingForm()
 	String() string
+	// BoundVariables returns the symbols this form binds, in binding order.
+	// The single-variable forms allocate a one-element slice per call; the
+	// multi-variable forms return their existing slice.
+	BoundVariables() []Symbol
 }
 
 // TupleBinding binds a single tuple: [[?a ?b]]
@@ -154,6 +158,9 @@ type TupleBinding struct {
 }
 
 func (t TupleBinding) isBindingForm() {}
+func (t TupleBinding) BoundVariables() []Symbol {
+	return t.Variables
+}
 func (t TupleBinding) String() string {
 	result := "[["
 	for i, v := range t.Variables {
@@ -173,6 +180,9 @@ type CollectionBinding struct {
 }
 
 func (c CollectionBinding) isBindingForm() {}
+func (c CollectionBinding) BoundVariables() []Symbol {
+	return []Symbol{c.Variable}
+}
 func (c CollectionBinding) String() string {
 	return "[" + c.Variable.String() + " ...]"
 }
@@ -184,6 +194,9 @@ type ScalarBinding struct {
 }
 
 func (s ScalarBinding) isBindingForm() {}
+func (s ScalarBinding) BoundVariables() []Symbol {
+	return []Symbol{s.Variable}
+}
 func (s ScalarBinding) String() string {
 	return s.Variable.String()
 }
@@ -194,6 +207,9 @@ type RelationBinding struct {
 }
 
 func (r RelationBinding) isBindingForm() {}
+func (r RelationBinding) BoundVariables() []Symbol {
+	return r.Variables
+}
 func (r RelationBinding) String() string {
 	result := "[["
 	for i, v := range r.Variables {
@@ -294,48 +310,20 @@ func (p *DataPattern) Symbols() []Symbol {
 		symbols = append(symbols, v.Name)
 	}
 
-	// Check A position
-	if v, ok := p.GetA().(Variable); ok {
-		// Avoid duplicates
-		found := false
-		for _, sym := range symbols {
-			if sym == v.Name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			symbols = append(symbols, v.Name)
-		}
+	// Check A position (avoid duplicates)
+	if v, ok := p.GetA().(Variable); ok && !ContainsSymbol(symbols, v.Name) {
+		symbols = append(symbols, v.Name)
 	}
 
 	// Check V position
-	if v, ok := p.GetV().(Variable); ok {
-		found := false
-		for _, sym := range symbols {
-			if sym == v.Name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			symbols = append(symbols, v.Name)
-		}
+	if v, ok := p.GetV().(Variable); ok && !ContainsSymbol(symbols, v.Name) {
+		symbols = append(symbols, v.Name)
 	}
 
 	// Check T position if present
 	if len(p.Elements) > 3 {
-		if v, ok := p.GetT().(Variable); ok {
-			found := false
-			for _, sym := range symbols {
-				if sym == v.Name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				symbols = append(symbols, v.Name)
-			}
+		if v, ok := p.GetT().(Variable); ok && !ContainsSymbol(symbols, v.Name) {
+			symbols = append(symbols, v.Name)
 		}
 	}
 
@@ -465,7 +453,7 @@ func (f FindVariable) IsAggregate() bool {
 
 // FindAggregate represents an aggregate function in the find clause
 type FindAggregate struct {
-	Function  string // "sum", "avg", "count", "min", "max"
+	Function  Symbol // Interned: datalog.SymSum, SymAvg, SymCount, SymMin, SymMax
 	Arg       Symbol // Variable to aggregate
 	Predicate Symbol // Optional: predicate variable for conditional aggregates (e.g., min-if, max-if)
 }
@@ -576,11 +564,6 @@ type Relation struct {
 	Tuples  [][]interface{}
 }
 
-// IsEmpty returns true if the relation has no tuples
-func (r Relation) IsEmpty() bool {
-	return len(r.Tuples) == 0
-}
-
 // Size returns the number of tuples
 func (r Relation) Size() int {
 	return len(r.Tuples)
@@ -588,12 +571,7 @@ func (r Relation) Size() int {
 
 // SymbolIndex returns the index of a symbol, or -1 if not found
 func (r Relation) SymbolIndex(sym Symbol) int {
-	for i, s := range r.Symbols {
-		if s == sym {
-			return i
-		}
-	}
-	return -1
+	return SymbolIndex(r.Symbols, sym)
 }
 
 // CommonSymbols returns the symbols that appear in both relations
@@ -619,26 +597,19 @@ type TxInstant uint64
 // TxLatest represents a query for only the latest values
 type TxLatest struct{}
 
-// OrderByClause represents a single ordering specification
+// OrderByClause represents a single ordering specification. The zero value
+// of Descending is ascending order, the default.
 type OrderByClause struct {
-	Variable  Symbol
-	Direction OrderDirection
+	Variable   Symbol
+	Descending bool
 }
-
-// OrderDirection specifies ascending or descending order
-type OrderDirection string
-
-const (
-	OrderAsc  OrderDirection = "asc"
-	OrderDesc OrderDirection = "desc"
-)
 
 // String returns the string representation of an OrderByClause
 func (o OrderByClause) String() string {
-	if o.Direction == "" || o.Direction == OrderAsc {
+	if !o.Descending {
 		return o.Variable.String()
 	}
-	return fmt.Sprintf("[%s :%s]", o.Variable, o.Direction)
+	return fmt.Sprintf("[%s :desc]", o.Variable)
 }
 
 // DatomToTuple converts a datom to a tuple based on the pattern and requested symbols.

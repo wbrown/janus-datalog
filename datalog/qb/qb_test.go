@@ -164,14 +164,14 @@ func TestPredicates(t *testing.T) {
 	tests := []struct {
 		name string
 		pred *Comparison
-		op   query.CompareOp
+		op   query.Symbol
 	}{
-		{"Lt", Lt(age, V(30)), query.OpLT},
-		{"Lte", Lte(age, V(30)), query.OpLTE},
-		{"Gt", Gt(age, V(30)), query.OpGT},
-		{"Gte", Gte(age, V(30)), query.OpGTE},
-		{"Eq", Eq(age, V(30)), query.OpEQ},
-		{"Ne", Ne(age, V(30)), query.OpNE},
+		{"Lt", Lt(age, V(30)), datalog.SymLT},
+		{"Lte", Lte(age, V(30)), datalog.SymLTE},
+		{"Gt", Gt(age, V(30)), datalog.SymGT},
+		{"Gte", Gte(age, V(30)), datalog.SymGTE},
+		{"Eq", Eq(age, V(30)), datalog.SymEQ},
+		{"Ne", Ne(age, V(30)), datalog.SymNE},
 	}
 
 	for _, tt := range tests {
@@ -193,7 +193,7 @@ func TestChainedComparison(t *testing.T) {
 	x := NewVar("x")
 
 	// Range: 0 < x < 100
-	chain := Chained(query.OpLT, V(0), x, V(100))
+	chain := Chained(datalog.SymLT, V(0), x, V(100))
 
 	clause := chain.toClause()
 	cpc, ok := clause.(*query.ChainedComparison)
@@ -203,8 +203,8 @@ func TestChainedComparison(t *testing.T) {
 	if len(cpc.Terms) != 3 {
 		t.Errorf("Expected 3 terms, got %d", len(cpc.Terms))
 	}
-	if cpc.Op != query.OpLT {
-		t.Errorf("Expected OpLT, got %v", cpc.Op)
+	if cpc.Op != datalog.SymLT {
+		t.Errorf("Expected the interned < symbol, got %v", cpc.Op)
 	}
 }
 
@@ -229,13 +229,13 @@ func TestAggregations(t *testing.T) {
 	tests := []struct {
 		name string
 		agg  Agg
-		fn   string
+		fn   query.Symbol
 	}{
-		{"Sum", Sum(salary), "sum"},
-		{"Count", Count(salary), "count"},
-		{"Avg", Avg(salary), "avg"},
-		{"Min", Min(salary), "min"},
-		{"Max", Max(salary), "max"},
+		{"Sum", Sum(salary), datalog.SymSum},
+		{"Count", Count(salary), datalog.SymCount},
+		{"Avg", Avg(salary), datalog.SymAvg},
+		{"Min", Min(salary), datalog.SymMin},
+		{"Max", Max(salary), datalog.SymMax},
 	}
 
 	for _, tt := range tests {
@@ -262,13 +262,13 @@ func TestArithmeticExpressions(t *testing.T) {
 	tests := []struct {
 		name  string
 		expr  *Expression
-		op    query.ArithmeticOp
+		op    query.Symbol
 		arity int
 	}{
-		{"Add", Add(a, b, c).As(result), query.OpAdd, 3},
-		{"Sub", Sub(a).As(result), query.OpSubtract, 1},
-		{"Mul", Mul(a, b, c).As(result), query.OpMultiply, 3},
-		{"Div", Div(a, b, c).As(result), query.OpDivide, 3},
+		{"Add", Add(a, b, c).As(result), datalog.SymAdd, 3},
+		{"Sub", Sub(a).As(result), datalog.SymSubtract, 1},
+		{"Mul", Mul(a, b, c).As(result), datalog.SymMultiply, 3},
+		{"Div", Div(a, b, c).As(result), datalog.SymDivide, 3},
 	}
 
 	for _, tt := range tests {
@@ -372,8 +372,9 @@ func TestTupleGroundMixedTypes(t *testing.T) {
 	if values[0] != "hello" {
 		t.Errorf("Expected 'hello', got %v", values[0])
 	}
-	if values[1] != 42 {
-		t.Errorf("Expected 42, got %v", values[1])
+	// Integer widths normalize to int64 at the builder boundary.
+	if values[1] != int64(42) {
+		t.Errorf("Expected int64 42, got %T %v", values[1], values[1])
 	}
 }
 
@@ -447,14 +448,14 @@ func TestTimeExtraction(t *testing.T) {
 	tests := []struct {
 		name  string
 		expr  *Expression
-		field string
+		field query.Symbol
 	}{
-		{"Year", Year(createdAt).As(y), "year"},
-		{"Month", Month(createdAt).As(y), "month"},
-		{"Day", Day(createdAt).As(y), "day"},
-		{"Hour", Hour(createdAt).As(y), "hour"},
-		{"Minute", Minute(createdAt).As(y), "minute"},
-		{"Second", Second(createdAt).As(y), "second"},
+		{"Year", Year(createdAt).As(y), datalog.SymYear},
+		{"Month", Month(createdAt).As(y), datalog.SymMonth},
+		{"Day", Day(createdAt).As(y), datalog.SymDay},
+		{"Hour", Hour(createdAt).As(y), datalog.SymHour},
+		{"Minute", Minute(createdAt).As(y), datalog.SymMinute},
+		{"Second", Second(createdAt).As(y), datalog.SymSecond},
 	}
 
 	for _, tt := range tests {
@@ -616,21 +617,44 @@ func TestOrDefaultJoinClauseQB(t *testing.T) {
 	x := NewVar("x")
 	attr := Kw(":user/score")
 
-	odj := OrDefaultJoin(x).
-		Branch(Pat(e, attr, x)).
-		Branch(Ground(int64(0)).As(x))
+	t.Run("outputs only (global fallback)", func(t *testing.T) {
+		odj := OrDefaultJoin(x).
+			Branch(Pat(e, attr, x)).
+			Branch(Ground(int64(0)).As(x))
 
-	clause := odj.toClause()
-	odjc, ok := clause.(*query.OrDefaultJoinClause)
-	if !ok {
-		t.Fatalf("Expected *query.OrDefaultJoinClause, got %T", clause)
-	}
-	if len(odjc.JoinVars) != 1 {
-		t.Errorf("Expected 1 join var, got %d", len(odjc.JoinVars))
-	}
-	if len(odjc.Branches) != 2 {
-		t.Errorf("Expected 2 branches, got %d", len(odjc.Branches))
-	}
+		clause := odj.toClause()
+		odjc, ok := clause.(*query.OrDefaultJoinClause)
+		if !ok {
+			t.Fatalf("Expected *query.OrDefaultJoinClause, got %T", clause)
+		}
+		if len(odjc.RequiredVars) != 0 {
+			t.Errorf("Expected no required vars, got %v", odjc.RequiredVars)
+		}
+		if len(odjc.OutputVars) != 1 || odjc.OutputVars[0] != x.Symbol() {
+			t.Errorf("Expected output var %s, got %v", x.Symbol(), odjc.OutputVars)
+		}
+		if len(odjc.Branches) != 2 {
+			t.Errorf("Expected 2 branches, got %d", len(odjc.Branches))
+		}
+	})
+
+	t.Run("Required declares the correlation keys", func(t *testing.T) {
+		odj := OrDefaultJoin(x).Required(e).
+			Branch(Pat(e, attr, x)).
+			Branch(Ground(int64(0)).As(x))
+
+		clause := odj.toClause()
+		odjc, ok := clause.(*query.OrDefaultJoinClause)
+		if !ok {
+			t.Fatalf("Expected *query.OrDefaultJoinClause, got %T", clause)
+		}
+		if len(odjc.RequiredVars) != 1 || odjc.RequiredVars[0] != e.Symbol() {
+			t.Errorf("Expected required var %s, got %v", e.Symbol(), odjc.RequiredVars)
+		}
+		if len(odjc.OutputVars) != 1 || odjc.OutputVars[0] != x.Symbol() {
+			t.Errorf("Expected output var %s, got %v", x.Symbol(), odjc.OutputVars)
+		}
+	})
 }
 
 // TestOrderSpecs tests ordering specifications
@@ -639,14 +663,14 @@ func TestOrderSpecs(t *testing.T) {
 
 	// Test Asc
 	ascSpec := Asc(name)
-	if ascSpec.direction != query.OrderAsc {
-		t.Errorf("Expected OrderAsc, got %v", ascSpec.direction)
+	if ascSpec.descending {
+		t.Errorf("Asc must produce ascending order, got descending")
 	}
 
 	// Test Desc
 	descSpec := Desc(name)
-	if descSpec.direction != query.OrderDesc {
-		t.Errorf("Expected OrderDesc, got %v", descSpec.direction)
+	if !descSpec.descending {
+		t.Errorf("Desc must produce descending order, got ascending")
 	}
 }
 
@@ -1005,14 +1029,14 @@ func TestComparisonBindingAs(t *testing.T) {
 	tests := []struct {
 		name string
 		expr *Expression
-		op   query.CompareOp
+		op   query.Symbol
 	}{
-		{"Gt.As", Gt(a, V(0)).As(result), query.OpGT},
-		{"Lt.As", Lt(a, V(100)).As(result), query.OpLT},
-		{"Gte.As", Gte(a, V(21)).As(result), query.OpGTE},
-		{"Lte.As", Lte(a, V(65)).As(result), query.OpLTE},
-		{"Eq.As", Eq(a, V("active")).As(result), query.OpEQ},
-		{"Ne.As", Ne(a, V("deleted")).As(result), query.OpNE},
+		{"Gt.As", Gt(a, V(0)).As(result), datalog.SymGT},
+		{"Lt.As", Lt(a, V(100)).As(result), datalog.SymLT},
+		{"Gte.As", Gte(a, V(21)).As(result), datalog.SymGTE},
+		{"Lte.As", Lte(a, V(65)).As(result), datalog.SymLTE},
+		{"Eq.As", Eq(a, V("active")).As(result), datalog.SymEQ},
+		{"Ne.As", Ne(a, V("deleted")).As(result), datalog.SymNE},
 	}
 
 	for _, tt := range tests {
@@ -1086,7 +1110,7 @@ func TestChainedComparisonBindingAs(t *testing.T) {
 	result := NewVar("result")
 
 	// Chained with OpLT
-	chain := Chained(query.OpLT, V(0), x, V(100)).As(result)
+	chain := Chained(datalog.SymLT, V(0), x, V(100)).As(result)
 	clause := chain.toClause()
 	expr, ok := clause.(*query.Expression)
 	if !ok {
@@ -1098,7 +1122,7 @@ func TestChainedComparisonBindingAs(t *testing.T) {
 		t.Fatalf("Expected *query.ChainedComparisonFunction, got %T", expr.Function)
 	}
 
-	if chainFn.ChainedComparison.Op != query.OpLT {
+	if chainFn.ChainedComparison.Op != datalog.SymLT {
 		t.Errorf("Expected OpLT, got %v", chainFn.ChainedComparison.Op)
 	}
 	if len(chainFn.ChainedComparison.Terms) != 3 {
@@ -1120,7 +1144,7 @@ func TestRangeBindingAs(t *testing.T) {
 	expr := clause.(*query.Expression)
 	chainFn := expr.Function.(*query.ChainedComparisonFunction)
 
-	if chainFn.ChainedComparison.Op != query.OpLT {
+	if chainFn.ChainedComparison.Op != datalog.SymLT {
 		t.Errorf("Range should use OpLT, got %v", chainFn.ChainedComparison.Op)
 	}
 }
@@ -1136,7 +1160,7 @@ func TestRangeInclusiveBindingAs(t *testing.T) {
 	expr := clause.(*query.Expression)
 	chainFn := expr.Function.(*query.ChainedComparisonFunction)
 
-	if chainFn.ChainedComparison.Op != query.OpLTE {
+	if chainFn.ChainedComparison.Op != datalog.SymLTE {
 		t.Errorf("RangeInclusive should use OpLTE, got %v", chainFn.ChainedComparison.Op)
 	}
 }

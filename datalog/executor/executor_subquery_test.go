@@ -34,11 +34,9 @@ func TestSimpleSubquery(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher, nil)
-
 	// Query with subquery to find max price for each symbol
 	queryStr := `[:find ?symbol ?max-price
-	             :where 
+	             :where
 	             [?s :symbol/ticker ?symbol]
 	             [(q [:find (max ?price)
 	                  :in $ ?sym
@@ -51,60 +49,66 @@ func TestSimpleSubquery(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	var executionPath string
-	ctx := NewContext(func(event annotations.Event) {
-		if event.Name == "subquery/executor-path" {
-			executionPath, _ = event.Data["path"].(string)
-		}
-	})
-	result, err := exec.ExecuteWithContext(ctx, q)
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
-	if executionPath != "Per-combination QueryExecutor" {
-		t.Fatalf("unexpected subquery execution path annotation: %q", executionPath)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	// Check results
-	if result.Size() != 2 {
-		t.Errorf("Expected 2 results, got %d", result.Size())
-		for i := 0; i < result.Size(); i++ {
-			t.Logf("Tuple %d: %v", i, result.Get(i))
-		}
-	}
+			var executionPath string
+			ctx := NewContext(func(event annotations.Event) {
+				if event.Name == "subquery/executor-path" {
+					executionPath, _ = event.Data["path"].(string)
+				}
+			})
+			result, err := exec.ExecuteWithContext(ctx, q)
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
+			if executionPath != "Per-combination QueryExecutor" {
+				t.Fatalf("unexpected subquery execution path annotation: %q", executionPath)
+			}
 
-	// Create a map for easier checking
-	resultMap := make(map[string]float64)
-	for i := 0; i < result.Size(); i++ {
-		tuple := result.Get(i)
-		if len(tuple) < 2 {
-			t.Errorf("Tuple %d has insufficient values: %v", i, tuple)
-			continue
-		}
+			// Check results
+			if result.Size() != 2 {
+				t.Errorf("Expected 2 results, got %d", result.Size())
+				for i := 0; i < result.Size(); i++ {
+					t.Logf("Tuple %d: %v", i, result.Get(i))
+				}
+			}
 
-		symbol, ok := tuple[0].(string)
-		if !ok {
-			t.Errorf("Tuple %d: expected string for symbol, got %T: %v", i, tuple[0], tuple[0])
-			continue
-		}
+			// Create a map for easier checking
+			resultMap := make(map[string]float64)
+			for i := 0; i < result.Size(); i++ {
+				tuple := result.Get(i)
+				if len(tuple) < 2 {
+					t.Errorf("Tuple %d has insufficient values: %v", i, tuple)
+					continue
+				}
 
-		maxPrice, ok := tuple[1].(float64)
-		if !ok {
-			t.Errorf("Tuple %d: expected float64 for max price, got %T: %v", i, tuple[1], tuple[1])
-			continue
-		}
+				symbol, ok := tuple[0].(string)
+				if !ok {
+					t.Errorf("Tuple %d: expected string for symbol, got %T: %v", i, tuple[0], tuple[0])
+					continue
+				}
 
-		resultMap[symbol] = maxPrice
-	}
+				maxPrice, ok := tuple[1].(float64)
+				if !ok {
+					t.Errorf("Tuple %d: expected float64 for max price, got %T: %v", i, tuple[1], tuple[1])
+					continue
+				}
 
-	// Check AAPL max price
-	if maxPrice, ok := resultMap["AAPL"]; !ok || maxPrice != 155.0 {
-		t.Errorf("Expected AAPL max price to be 155.0, got %v (found: %v)", maxPrice, ok)
-	}
+				resultMap[symbol] = maxPrice
+			}
 
-	// Check GOOG max price
-	if maxPrice, ok := resultMap["GOOG"]; !ok || maxPrice != 2800.0 {
-		t.Errorf("Expected GOOG max price to be 2800.0, got %v (found: %v)", maxPrice, ok)
+			// Check AAPL max price
+			if maxPrice, ok := resultMap["AAPL"]; !ok || maxPrice != 155.0 {
+				t.Errorf("Expected AAPL max price to be 155.0, got %v (found: %v)", maxPrice, ok)
+			}
+
+			// Check GOOG max price
+			if maxPrice, ok := resultMap["GOOG"]; !ok || maxPrice != 2800.0 {
+				t.Errorf("Expected GOOG max price to be 2800.0, got %v (found: %v)", maxPrice, ok)
+			}
+		})
 	}
 }
 
@@ -179,13 +183,11 @@ func TestSubqueryWithMultipleInputs(t *testing.T) {
 		return result, nil
 	})
 
-	exec := NewExecutor(matcher, nil)
-
 	// Query with subquery that takes multiple inputs
 	// Note: Simplified to test basic functionality first
 
 	queryStr := `[:find ?symbol ?high
-	             :where 
+	             :where
 	             [?s :symbol/ticker ?symbol]
 	             [(q [:find (max ?h)
 	                  :in $ ?sym
@@ -199,27 +201,33 @@ func TestSubqueryWithMultipleInputs(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	// Check results
-	if result.Size() != 1 {
-		t.Errorf("Expected 1 result, got %d", result.Size())
-		for i := 0; i < result.Size(); i++ {
-			t.Logf("Result %d: %v", i, result.Get(i))
-		}
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
 
-	if result.Size() > 0 {
-		tuple := result.Get(0)
-		if symbol := tuple[0].(string); symbol != "AAPL" {
-			t.Errorf("Expected symbol AAPL, got %s", symbol)
-		}
-		// Should get max of all highs (160.0)
-		if high := tuple[1].(float64); high != 160.0 {
-			t.Errorf("Expected high 160.0, got %f", high)
-		}
+			// Check results
+			if result.Size() != 1 {
+				t.Errorf("Expected 1 result, got %d", result.Size())
+				for i := 0; i < result.Size(); i++ {
+					t.Logf("Result %d: %v", i, result.Get(i))
+				}
+			}
+
+			if result.Size() > 0 {
+				tuple := result.Get(0)
+				if symbol := tuple[0].(string); symbol != "AAPL" {
+					t.Errorf("Expected symbol AAPL, got %s", symbol)
+				}
+				// Should get max of all highs (160.0)
+				if high := tuple[1].(float64); high != 160.0 {
+					t.Errorf("Expected high 160.0, got %f", high)
+				}
+			}
+		})
 	}
 }

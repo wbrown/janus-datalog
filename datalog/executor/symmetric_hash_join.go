@@ -73,6 +73,13 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinSyms []query.Symbol,
 		tableSize = 256 // Default matches regular hash join for consistency
 	}
 
+	// Precompute which right positions carry join symbols; combineTuples runs
+	// per joined pair and must not rescan joinSyms per symbol.
+	rightJoinPos := make([]bool, len(right.Symbols()))
+	for i, sym := range right.Symbols() {
+		rightJoinPos[i] = query.ContainsSymbol(joinSyms, sym)
+	}
+
 	// Create the symmetric hash join iterator
 	iter := &symmetricHashJoinIterator{
 		leftIt:       left.Iterator(),
@@ -84,6 +91,7 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinSyms []query.Symbol,
 		joinSyms:     joinSyms,
 		leftSyms:     left.Symbols(),
 		rightSyms:    right.Symbols(),
+		rightJoinPos: rightJoinPos,
 		outputSyms:   outputSyms,
 		resultQueue:  make([]Tuple, 0),
 		batchSize:    100, // Process tuples in batches for efficiency
@@ -108,6 +116,7 @@ type symmetricHashJoinIterator struct {
 	leftIndices, rightIndices []int
 	joinSyms                  []query.Symbol
 	leftSyms, rightSyms       []query.Symbol
+	rightJoinPos              []bool // Per right position: is it a join symbol?
 	outputSyms                []query.Symbol
 	resultQueue               []Tuple
 	seen                      *TupleKeyMap // For deduplication
@@ -244,21 +253,13 @@ func (it *symmetricHashJoinIterator) combineTuples(leftTuple, rightTuple Tuple, 
 	// Add non-join symbols from right
 	rightOffset := len(leftTuple)
 	rightSymIndex := 0
-	for i, sym := range it.rightSyms {
-		// Skip join symbols
-		isJoinSym := false
-		for _, joinSym := range it.joinSyms {
-			if sym == joinSym {
-				isJoinSym = true
-				break
-			}
+	for i := range it.rightSyms {
+		if it.rightJoinPos[i] {
+			continue // Skip join symbols
 		}
-
-		if !isJoinSym {
-			if rightOffset+rightSymIndex < len(result) {
-				result[rightOffset+rightSymIndex] = rightTuple[i]
-				rightSymIndex++
-			}
+		if rightOffset+rightSymIndex < len(result) {
+			result[rightOffset+rightSymIndex] = rightTuple[i]
+			rightSymIndex++
 		}
 	}
 

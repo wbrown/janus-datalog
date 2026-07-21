@@ -1,10 +1,9 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -60,9 +60,12 @@ func fusionSchema() *schema.Schema {
 	return s
 }
 
-func openFusionDB(t *testing.T, fusion bool, handler annotations.Handler) *Database {
+func openFusionDB(t *testing.T, fusion bool, handler annotations.Handler, popts *planner.PlannerOptions) *Database {
 	t.Helper()
 	opts := DefaultPlannerOptions()
+	if popts != nil {
+		opts = *popts
+	}
 	opts.EnableAttributeFetchFusion = fusion
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:              t.TempDir(),
@@ -93,12 +96,13 @@ func fusionRows(t *testing.T, db *Database, query string, args ...interface{}) [
 
 // assertFusionEquivalent applies the same ops to a fusion-off and a fusion-on
 // database (identical data, pinned ReplicaID) and asserts the query returns
-// identical rows.
-func assertFusionEquivalent(t *testing.T, apply func(*Database), query string, args ...interface{}) {
+// identical rows. popts sets the databases' remaining planner options
+// (nil = defaults); the fusion flag is applied on top.
+func assertFusionEquivalent(t *testing.T, popts *planner.PlannerOptions, apply func(*Database), query string, args ...interface{}) {
 	t.Helper()
-	off := openFusionDB(t, false, nil)
+	off := openFusionDB(t, false, nil, popts)
 	apply(off)
-	on := openFusionDB(t, true, nil)
+	on := openFusionDB(t, true, nil, popts)
 	apply(on)
 	want := fusionRows(t, off, query, args...)
 	got := fusionRows(t, on, query, args...)
@@ -116,116 +120,122 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 	e1 := datalog.NewIdentity("e1")
 	e2 := datalog.NewIdentity("e2")
 
-	commit := func(db *Database, fn func(tx *Transaction)) {
+	commit := func(t *testing.T, db *Database, fn func(tx *Transaction)) {
 		tx := db.NewTransaction()
 		fn(tx)
 		_, err := tx.Commit()
 		require.NoError(t, err)
 	}
 
-	t.Run("present", func(t *testing.T) {
-		assertFusionEquivalent(t, func(db *Database) {
-			commit(db, func(tx *Transaction) {
-				require.NoError(t, tx.Set(e1, typ, "room"))
-				require.NoError(t, tx.Set(e1, code, "R1"))
-				require.NoError(t, tx.Set(e2, typ, "room"))
-				require.NoError(t, tx.Set(e2, code, "R2"))
-			})
-		}, fusionCodeQuery)
-	})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
 
-	t.Run("missing attribute drops the entity", func(t *testing.T) {
-		assertFusionEquivalent(t, func(db *Database) {
-			commit(db, func(tx *Transaction) {
-				require.NoError(t, tx.Set(e1, typ, "room")) // no code
-				require.NoError(t, tx.Set(e2, typ, "room"))
-				require.NoError(t, tx.Set(e2, code, "R2"))
+			t.Run("present", func(t *testing.T) {
+				assertFusionEquivalent(t, &popts, func(db *Database) {
+					commit(t, db, func(tx *Transaction) {
+						require.NoError(t, tx.Set(e1, typ, "room"))
+						require.NoError(t, tx.Set(e1, code, "R1"))
+						require.NoError(t, tx.Set(e2, typ, "room"))
+						require.NoError(t, tx.Set(e2, code, "R2"))
+					})
+				}, fusionCodeQuery)
 			})
-		}, fusionCodeQuery)
-	})
 
-	t.Run("tombstoned attribute drops the entity", func(t *testing.T) {
-		assertFusionEquivalent(t, func(db *Database) {
-			commit(db, func(tx *Transaction) {
-				require.NoError(t, tx.Set(e1, typ, "room"))
-				require.NoError(t, tx.Set(e1, code, "R1"))
-				require.NoError(t, tx.Set(e2, typ, "room"))
-				require.NoError(t, tx.Set(e2, code, "R2"))
+			t.Run("missing attribute drops the entity", func(t *testing.T) {
+				assertFusionEquivalent(t, &popts, func(db *Database) {
+					commit(t, db, func(tx *Transaction) {
+						require.NoError(t, tx.Set(e1, typ, "room")) // no code
+						require.NoError(t, tx.Set(e2, typ, "room"))
+						require.NoError(t, tx.Set(e2, code, "R2"))
+					})
+				}, fusionCodeQuery)
 			})
-			commit(db, func(tx *Transaction) {
-				require.NoError(t, tx.Remove(e1, code, "R1"))
-			})
-		}, fusionCodeQuery)
-	})
 
-	t.Run("overwritten attribute uses latest value", func(t *testing.T) {
-		assertFusionEquivalent(t, func(db *Database) {
-			commit(db, func(tx *Transaction) {
-				require.NoError(t, tx.Set(e1, typ, "room"))
-				require.NoError(t, tx.Set(e1, code, "R1"))
+			t.Run("tombstoned attribute drops the entity", func(t *testing.T) {
+				assertFusionEquivalent(t, &popts, func(db *Database) {
+					commit(t, db, func(tx *Transaction) {
+						require.NoError(t, tx.Set(e1, typ, "room"))
+						require.NoError(t, tx.Set(e1, code, "R1"))
+						require.NoError(t, tx.Set(e2, typ, "room"))
+						require.NoError(t, tx.Set(e2, code, "R2"))
+					})
+					commit(t, db, func(tx *Transaction) {
+						require.NoError(t, tx.Remove(e1, code, "R1"))
+					})
+				}, fusionCodeQuery)
 			})
-			commit(db, func(tx *Transaction) {
-				require.NoError(t, tx.Set(e1, code, "R2"))
-			})
-		}, fusionCodeQuery)
-	})
 
-	t.Run("multiple fused attributes", func(t *testing.T) {
-		assertFusionEquivalent(t, func(db *Database) {
-			commit(db, func(tx *Transaction) {
-				require.NoError(t, tx.Set(e1, typ, "room"))
-				require.NoError(t, tx.Set(e1, code, "R1"))
-				require.NoError(t, tx.Set(e1, name, "N1"))
-				require.NoError(t, tx.Set(e2, typ, "room"))
-				require.NoError(t, tx.Set(e2, code, "R2"))
-				require.NoError(t, tx.Set(e2, name, "N2"))
+			t.Run("overwritten attribute uses latest value", func(t *testing.T) {
+				assertFusionEquivalent(t, &popts, func(db *Database) {
+					commit(t, db, func(tx *Transaction) {
+						require.NoError(t, tx.Set(e1, typ, "room"))
+						require.NoError(t, tx.Set(e1, code, "R1"))
+					})
+					commit(t, db, func(tx *Transaction) {
+						require.NoError(t, tx.Set(e1, code, "R2"))
+					})
+				}, fusionCodeQuery)
 			})
-		}, `[:find ?e ?c ?n :where [?e :place/type "room"] [?e :place/code ?c] [?e :place/name ?n]]`)
-	})
 
-	t.Run("missing middle attribute drops entity from bundle", func(t *testing.T) {
-		assertFusionEquivalent(t, func(db *Database) {
-			commit(db, func(tx *Transaction) {
-				require.NoError(t, tx.Set(e1, typ, "room"))
-				require.NoError(t, tx.Set(e1, code, "R1"))
-				require.NoError(t, tx.Set(e1, brief, "B1")) // no name
-				require.NoError(t, tx.Set(e2, typ, "room"))
-				require.NoError(t, tx.Set(e2, code, "R2"))
-				require.NoError(t, tx.Set(e2, name, "N2"))
-				require.NoError(t, tx.Set(e2, brief, "B2"))
+			t.Run("multiple fused attributes", func(t *testing.T) {
+				assertFusionEquivalent(t, &popts, func(db *Database) {
+					commit(t, db, func(tx *Transaction) {
+						require.NoError(t, tx.Set(e1, typ, "room"))
+						require.NoError(t, tx.Set(e1, code, "R1"))
+						require.NoError(t, tx.Set(e1, name, "N1"))
+						require.NoError(t, tx.Set(e2, typ, "room"))
+						require.NoError(t, tx.Set(e2, code, "R2"))
+						require.NoError(t, tx.Set(e2, name, "N2"))
+					})
+				}, `[:find ?e ?c ?n :where [?e :place/type "room"] [?e :place/code ?c] [?e :place/name ?n]]`)
 			})
-		}, `[:find ?e ?c ?n ?b
-		     :where [?e :place/type "room"]
-		            [?e :place/code ?c]
-		            [?e :place/name ?n]
-		            [?e :place/brief ?b]]`)
-	})
 
-	t.Run("cardinality-many pattern ends bundle", func(t *testing.T) {
-		assertFusionEquivalent(t, func(db *Database) {
-			commit(db, func(tx *Transaction) {
-				require.NoError(t, tx.Set(e1, typ, "room"))
-				require.NoError(t, tx.Set(e1, code, "R1"))
-				require.NoError(t, tx.Add(e1, tags, "a"))
-				require.NoError(t, tx.Add(e1, tags, "b"))
-				require.NoError(t, tx.Set(e1, name, "N1"))
+			t.Run("missing middle attribute drops entity from bundle", func(t *testing.T) {
+				assertFusionEquivalent(t, &popts, func(db *Database) {
+					commit(t, db, func(tx *Transaction) {
+						require.NoError(t, tx.Set(e1, typ, "room"))
+						require.NoError(t, tx.Set(e1, code, "R1"))
+						require.NoError(t, tx.Set(e1, brief, "B1")) // no name
+						require.NoError(t, tx.Set(e2, typ, "room"))
+						require.NoError(t, tx.Set(e2, code, "R2"))
+						require.NoError(t, tx.Set(e2, name, "N2"))
+						require.NoError(t, tx.Set(e2, brief, "B2"))
+					})
+				}, `[:find ?e ?c ?n ?b
+				     :where [?e :place/type "room"]
+				            [?e :place/code ?c]
+				            [?e :place/name ?n]
+				            [?e :place/brief ?b]]`)
 			})
-		}, `[:find ?e ?c ?tag ?n
-		     :where [?e :place/type "room"]
-		            [?e :place/code ?c]
-		            [?e :place/tags ?tag]
-		            [?e :place/name ?n]]`)
-	})
 
-	t.Run("cardinality-many fetch is not fused, still correct", func(t *testing.T) {
-		assertFusionEquivalent(t, func(db *Database) {
-			commit(db, func(tx *Transaction) {
-				require.NoError(t, tx.Set(e1, typ, "room"))
-				require.NoError(t, tx.Add(e1, tags, "a"))
-				require.NoError(t, tx.Add(e1, tags, "b"))
+			t.Run("cardinality-many pattern ends bundle", func(t *testing.T) {
+				assertFusionEquivalent(t, &popts, func(db *Database) {
+					commit(t, db, func(tx *Transaction) {
+						require.NoError(t, tx.Set(e1, typ, "room"))
+						require.NoError(t, tx.Set(e1, code, "R1"))
+						require.NoError(t, tx.Add(e1, tags, "a"))
+						require.NoError(t, tx.Add(e1, tags, "b"))
+						require.NoError(t, tx.Set(e1, name, "N1"))
+					})
+				}, `[:find ?e ?c ?tag ?n
+				     :where [?e :place/type "room"]
+				            [?e :place/code ?c]
+				            [?e :place/tags ?tag]
+				            [?e :place/name ?n]]`)
 			})
-		}, `[:find ?e ?tag :where [?e :place/type "room"] [?e :place/tags ?tag]]`)
-	})
+
+			t.Run("cardinality-many fetch is not fused, still correct", func(t *testing.T) {
+				assertFusionEquivalent(t, &popts, func(db *Database) {
+					commit(t, db, func(tx *Transaction) {
+						require.NoError(t, tx.Set(e1, typ, "room"))
+						require.NoError(t, tx.Add(e1, tags, "a"))
+						require.NoError(t, tx.Add(e1, tags, "b"))
+					})
+				}, `[:find ?e ?tag :where [?e :place/type "room"] [?e :place/tags ?tag]]`)
+			})
+		})
+	}
 }
 
 func TestFusionConstantConstraintDifferential(t *testing.T) {
@@ -237,40 +247,46 @@ func TestFusionConstantConstraintDifferential(t *testing.T) {
 		:where [?e :place/code "R1"]
 		       [?e :place/type "room"]]`
 
-	t.Run("matching value keeps tuple", func(t *testing.T) {
-		assertFusionEquivalent(t, func(db *Database) {
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Set(e1, code, "R1"))
-			require.NoError(t, tx.Set(e1, typ, "room"))
-			require.NoError(t, tx.Set(e2, code, "H1"))
-			require.NoError(t, tx.Set(e2, typ, "hall"))
-			_, err := tx.Commit()
-			require.NoError(t, err)
-		}, queryText)
-	})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
 
-	t.Run("missing value drops tuple", func(t *testing.T) {
-		assertFusionEquivalent(t, func(db *Database) {
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Set(e1, code, "R1"))
-			_, err := tx.Commit()
-			require.NoError(t, err)
-		}, queryText)
-	})
+			t.Run("matching value keeps tuple", func(t *testing.T) {
+				assertFusionEquivalent(t, &popts, func(db *Database) {
+					tx := db.NewTransaction()
+					require.NoError(t, tx.Set(e1, code, "R1"))
+					require.NoError(t, tx.Set(e1, typ, "room"))
+					require.NoError(t, tx.Set(e2, code, "H1"))
+					require.NoError(t, tx.Set(e2, typ, "hall"))
+					_, err := tx.Commit()
+					require.NoError(t, err)
+				}, queryText)
+			})
 
-	t.Run("latest value controls constraint", func(t *testing.T) {
-		assertFusionEquivalent(t, func(db *Database) {
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Set(e1, code, "R1"))
-			require.NoError(t, tx.Set(e1, typ, "hall"))
-			_, err := tx.Commit()
-			require.NoError(t, err)
-			tx = db.NewTransaction()
-			require.NoError(t, tx.Set(e1, typ, "room"))
-			_, err = tx.Commit()
-			require.NoError(t, err)
-		}, queryText)
-	})
+			t.Run("missing value drops tuple", func(t *testing.T) {
+				assertFusionEquivalent(t, &popts, func(db *Database) {
+					tx := db.NewTransaction()
+					require.NoError(t, tx.Set(e1, code, "R1"))
+					_, err := tx.Commit()
+					require.NoError(t, err)
+				}, queryText)
+			})
+
+			t.Run("latest value controls constraint", func(t *testing.T) {
+				assertFusionEquivalent(t, &popts, func(db *Database) {
+					tx := db.NewTransaction()
+					require.NoError(t, tx.Set(e1, code, "R1"))
+					require.NoError(t, tx.Set(e1, typ, "hall"))
+					_, err := tx.Commit()
+					require.NoError(t, err)
+					tx = db.NewTransaction()
+					require.NoError(t, tx.Set(e1, typ, "room"))
+					_, err = tx.Commit()
+					require.NoError(t, err)
+				}, queryText)
+			})
+		})
+	}
 }
 
 func TestFusionConstantConstraintCoverage(t *testing.T) {
@@ -279,37 +295,43 @@ func TestFusionConstantConstraintCoverage(t *testing.T) {
 	tags := datalog.NewKeyword(":place/tags")
 	e1 := datalog.NewIdentity("constraint-coverage")
 
-	t.Run("cardinality one constraint fires", func(t *testing.T) {
-		cap := &fusionCapture{n: map[string]int{}}
-		db := openFusionDB(t, true, cap.handler())
-		tx := db.NewTransaction()
-		require.NoError(t, tx.Set(e1, code, "R1"))
-		require.NoError(t, tx.Set(e1, typ, "room"))
-		_, err := tx.Commit()
-		require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
 
-		rows := fusionRows(t, db, `[:find ?e
-			:where [?e :place/code "R1"]
-			       [?e :place/type "room"]]`)
-		require.Len(t, rows, 1)
-		require.Equal(t, 1, cap.get("pattern/fused-constraint"))
-	})
+			t.Run("cardinality one constraint fires", func(t *testing.T) {
+				cap := &fusionCapture{n: map[string]int{}}
+				db := openFusionDB(t, true, cap.handler(), &popts)
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(e1, code, "R1"))
+				require.NoError(t, tx.Set(e1, typ, "room"))
+				_, err := tx.Commit()
+				require.NoError(t, err)
 
-	t.Run("cardinality many constraint does not fire", func(t *testing.T) {
-		cap := &fusionCapture{n: map[string]int{}}
-		db := openFusionDB(t, true, cap.handler())
-		tx := db.NewTransaction()
-		require.NoError(t, tx.Set(e1, code, "R1"))
-		require.NoError(t, tx.Add(e1, tags, "selected"))
-		_, err := tx.Commit()
-		require.NoError(t, err)
+				rows := fusionRows(t, db, `[:find ?e
+					:where [?e :place/code "R1"]
+					       [?e :place/type "room"]]`)
+				require.Len(t, rows, 1)
+				require.Equal(t, 1, cap.get("pattern/fused-constraint"))
+			})
 
-		rows := fusionRows(t, db, `[:find ?e
-			:where [?e :place/code ?c]
-			       [?e :place/tags "selected"]]`)
-		require.Len(t, rows, 1)
-		require.Zero(t, cap.get("pattern/fused-constraint"))
-	})
+			t.Run("cardinality many constraint does not fire", func(t *testing.T) {
+				cap := &fusionCapture{n: map[string]int{}}
+				db := openFusionDB(t, true, cap.handler(), &popts)
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(e1, code, "R1"))
+				require.NoError(t, tx.Add(e1, tags, "selected"))
+				_, err := tx.Commit()
+				require.NoError(t, err)
+
+				rows := fusionRows(t, db, `[:find ?e
+					:where [?e :place/code ?c]
+					       [?e :place/tags "selected"]]`)
+				require.Len(t, rows, 1)
+				require.Zero(t, cap.get("pattern/fused-constraint"))
+			})
+		})
+	}
 }
 
 type fusionCapture struct {
@@ -340,40 +362,46 @@ func TestFusion_CoverageFires(t *testing.T) {
 	tags := datalog.NewKeyword(":place/tags")
 	e1 := datalog.NewIdentity("e1")
 
-	t.Run("card-one fetch fires fusion", func(t *testing.T) {
-		cap := &fusionCapture{n: map[string]int{}}
-		db := openFusionDB(t, true, cap.handler())
-		tx := db.NewTransaction()
-		require.NoError(t, tx.Set(e1, typ, "room"))
-		require.NoError(t, tx.Set(e1, code, "R1"))
-		_, err := tx.Commit()
-		require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
 
-		_ = fusionRows(t, db, fusionCodeQuery)
-		assert.Positive(t, cap.get("pattern/fused-fetch"),
-			"CardinalityOne fetch must take the fused path")
-	})
+			t.Run("card-one fetch fires fusion", func(t *testing.T) {
+				cap := &fusionCapture{n: map[string]int{}}
+				db := openFusionDB(t, true, cap.handler(), &popts)
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(e1, typ, "room"))
+				require.NoError(t, tx.Set(e1, code, "R1"))
+				_, err := tx.Commit()
+				require.NoError(t, err)
 
-	t.Run("card-many fetch does not fire fusion", func(t *testing.T) {
-		cap := &fusionCapture{n: map[string]int{}}
-		db := openFusionDB(t, true, cap.handler())
-		tx := db.NewTransaction()
-		require.NoError(t, tx.Set(e1, typ, "room"))
-		require.NoError(t, tx.Add(e1, tags, "a"))
-		require.NoError(t, tx.Add(e1, tags, "b"))
-		_, err := tx.Commit()
-		require.NoError(t, err)
+				_ = fusionRows(t, db, fusionCodeQuery)
+				assert.Positive(t, cap.get("pattern/fused-fetch"),
+					"CardinalityOne fetch must take the fused path")
+			})
 
-		_ = fusionRows(t, db, `[:find ?e ?tag :where [?e :place/type "room"] [?e :place/tags ?tag]]`)
-		assert.Zero(t, cap.get("pattern/fused-fetch"),
-			"CardinalityMany fetch must NOT be fused")
-	})
+			t.Run("card-many fetch does not fire fusion", func(t *testing.T) {
+				cap := &fusionCapture{n: map[string]int{}}
+				db := openFusionDB(t, true, cap.handler(), &popts)
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(e1, typ, "room"))
+				require.NoError(t, tx.Add(e1, tags, "a"))
+				require.NoError(t, tx.Add(e1, tags, "b"))
+				_, err := tx.Commit()
+				require.NoError(t, err)
+
+				_ = fusionRows(t, db, `[:find ?e ?tag :where [?e :place/type "room"] [?e :place/tags ?tag]]`)
+				assert.Zero(t, cap.get("pattern/fused-fetch"),
+					"CardinalityMany fetch must NOT be fused")
+			})
+		})
+	}
 }
 
 // TestFusionGate_ModeAndCardinality proves the matcher gate the executor
 // consults: fusion is permitted only for latest-mode CardinalityOne attributes.
 func TestFusionGate_ModeAndCardinality(t *testing.T) {
-	db := openFusionDB(t, true, nil)
+	db := openFusionDB(t, true, nil, nil)
 
 	latest, ok := db.Matcher().(*BadgerMatcher)
 	require.True(t, ok)
@@ -408,41 +436,47 @@ func TestFusionDifferentialAsOfUpdatesAndTombstones(t *testing.T) {
 		secondTx datalog.ElementID
 		removeTx datalog.ElementID
 	}
-	open := func(fusion bool) fixture {
-		db := openFusionDB(t, fusion, nil)
-		tx := db.NewTransaction()
-		require.NoError(t, tx.Set(entity, typ, "room"))
-		require.NoError(t, tx.Set(entity, code, "R1"))
-		first, err := tx.Commit()
-		require.NoError(t, err)
 
-		tx = db.NewTransaction()
-		require.NoError(t, tx.Set(entity, code, "R2"))
-		second, err := tx.Commit()
-		require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			open := func(fusion bool) fixture {
+				db := openFusionDB(t, fusion, nil, &popts)
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(entity, typ, "room"))
+				require.NoError(t, tx.Set(entity, code, "R1"))
+				first, err := tx.Commit()
+				require.NoError(t, err)
 
-		tx = db.NewTransaction()
-		require.NoError(t, tx.Remove(entity, code, "R2"))
-		removed, err := tx.Commit()
-		require.NoError(t, err)
-		return fixture{db: db, firstTx: first, secondTx: second, removeTx: removed}
-	}
+				tx = db.NewTransaction()
+				require.NoError(t, tx.Set(entity, code, "R2"))
+				second, err := tx.Commit()
+				require.NoError(t, err)
 
-	off := open(false)
-	on := open(true)
-	for _, snapshot := range []struct {
-		name string
-		off  datalog.ElementID
-		on   datalog.ElementID
-	}{
-		{name: "before update", off: off.firstTx, on: on.firstTx},
-		{name: "at update", off: off.secondTx, on: on.secondTx},
-		{name: "after tombstone", off: off.removeTx, on: on.removeTx},
-	} {
-		t.Run(snapshot.name, func(t *testing.T) {
-			want := fusionRows(t, off.db.AsOf(snapshot.off), fusionCodeQuery)
-			got := fusionRows(t, on.db.AsOf(snapshot.on), fusionCodeQuery)
-			require.Equal(t, want, got)
+				tx = db.NewTransaction()
+				require.NoError(t, tx.Remove(entity, code, "R2"))
+				removed, err := tx.Commit()
+				require.NoError(t, err)
+				return fixture{db: db, firstTx: first, secondTx: second, removeTx: removed}
+			}
+
+			off := open(false)
+			on := open(true)
+			for _, snapshot := range []struct {
+				name string
+				off  datalog.ElementID
+				on   datalog.ElementID
+			}{
+				{name: "before update", off: off.firstTx, on: on.firstTx},
+				{name: "at update", off: off.secondTx, on: on.secondTx},
+				{name: "after tombstone", off: off.removeTx, on: on.removeTx},
+			} {
+				t.Run(snapshot.name, func(t *testing.T) {
+					want := fusionRows(t, off.db.AsOf(snapshot.off), fusionCodeQuery)
+					got := fusionRows(t, on.db.AsOf(snapshot.on), fusionCodeQuery)
+					require.Equal(t, want, got)
+				})
+			}
 		})
 	}
 }
@@ -452,24 +486,32 @@ func TestFusionLookupFailureIsNotAttributeAbsence(t *testing.T) {
 	code := datalog.NewKeyword(":place/code")
 	queryText := `[:find ?code :in $ ?entity :where [?entity :place/code ?code]]`
 
-	for _, fusion := range []bool{false, true} {
-		t.Run(fmt.Sprintf("fusion_%t", fusion), func(t *testing.T) {
-			db := openFusionDB(t, fusion, nil)
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Set(entity, code, "R1"))
-			_, err := tx.Commit()
-			require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			for _, fusion := range []bool{false, true} {
+				t.Run(fmt.Sprintf("fusion_%t", fusion), func(t *testing.T) {
+					db := openFusionDB(t, fusion, nil, &popts)
+					tx := db.NewTransaction()
+					require.NoError(t, tx.Set(entity, code, "R1"))
+					_, err := tx.Commit()
+					require.NoError(t, err)
 
-			// Force the bound lookup to reach storage rather than the write-
-			// warmed cache, then close through Janus. Both paths must
-			// return ErrDBClosed rather than panic or report attribute absence.
-			db.cache = NewCache()
-			require.NoError(t, db.Close())
-			require.NoError(t, db.Close(), "Database.Close must be idempotent")
+					// Force the bound lookup to reach storage rather than the write-
+					// warmed cache, then close through Janus. Both paths must
+					// return ErrDBClosed rather than panic or report attribute absence.
+					db.cache = NewCache()
+					require.NoError(t, db.Close())
+					require.NoError(t, db.Close(), "Database.Close must be idempotent")
 
-			_, err = db.Query(queryText, entity)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "DB Closed")
+					_, err = db.Query(queryText, entity)
+					require.Error(t, err)
+					// Backends phrase it differently (Badger: "DB Closed"; memory
+					// store: "memory store closed") — the contract is a closed-store
+					// error, not absence or a panic.
+					require.Contains(t, strings.ToLower(err.Error()), "closed")
+				})
+			}
 		})
 	}
 }

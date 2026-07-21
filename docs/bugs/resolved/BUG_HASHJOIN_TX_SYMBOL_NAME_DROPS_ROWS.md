@@ -96,51 +96,21 @@ If a caller truly needs latest-by-transaction behavior:
 
 ## Resolution (2026-05-25)
 
-**Resolved.** The name-based transaction-dedup path was removed from `HashJoin`
-outright, with no replacement. `HashJoinWithOptions` now runs a single pure
-relational build loop that preserves every row.
+**Resolved.** The name-based transaction-dedup path was removed from `HashJoin` outright, with no replacement. `HashJoinWithOptions` now runs a single pure relational build loop that preserves every row.
 
-- `datalog/executor/join.go` — deleted the `?tx`/`?t`/`?txid`/`?transaction`
-  symbol-name detection, the first-tuple type sniff, and the ~150-line
-  "latest-transaction-wins" branch (≈190 lines out, ≈28 in). Dropped the
-  now-unused `datalog` import.
-- `datalog/executor/join_tx_name_dedup_test.go` —
-  `TestHashJoin_TxNameVariablesDoNotDropRows` exercises all four names as
-  ordinary build-side integer attributes. It dropped a row before the fix and
-  preserves both rows after.
+- `datalog/executor/join.go` — deleted the `?tx`/`?t`/`?txid`/`?transaction` symbol-name detection, the first-tuple type sniff, and the ~150-line "latest-transaction-wins" branch (≈190 lines out, ≈28 in). Dropped the now-unused `datalog` import.
+- `datalog/executor/join_tx_name_dedup_test.go` — `TestHashJoin_TxNameVariablesDoNotDropRows` exercises all four names as ordinary build-side integer attributes. It dropped a row before the fix and preserves both rows after.
 
 ### Corrections to this report's assumptions
 
-This report's Suggested Fix and Tests Needed assumed latest-by-transaction
-behavior is "required somewhere" and should be preserved via explicit metadata,
-a dedicated operator, or a proven four-element tx position. That assumption is
-wrong on three counts:
+This report's Suggested Fix and Tests Needed assumed latest-by-transaction behavior is "required somewhere" and should be preserved via explicit metadata, a dedicated operator, or a proven four-element tx position. That assumption is wrong on three counts:
 
-1. **No caller needs join-level transaction dedup.** With the path simply
-   deleted, the entire suite (`go test -count=1 ./...`) is green — including
-   every history/as-of/CRDT test in `storage`, `db`, `query`, and `parser`.
-   There are zero consumers whose behavior must be preserved. The proposed
-   metadata/operator alternatives would build machinery for nobody; they are a
-   tidier restatement of the same category error, so none were implemented. The
-   report's last "Tests Needed" item is satisfied by the existing temporal
-   tests, which already stay green without the path.
+1. **No caller needs join-level transaction dedup.** With the path simply deleted, the entire suite (`go test -count=1 ./...`) is green — including every history/as-of/CRDT test in `storage`, `db`, `query`, and `parser`. There are zero consumers whose behavior must be preserved. The proposed metadata/operator alternatives would build machinery for nobody; they are a tidier restatement of the same category error, so none were implemented. The report's last "Tests Needed" item is satisfied by the existing temporal tests, which already stay green without the path.
 
-2. **CRDT/temporal resolution already happens in the storage layer, not the
-   join.** The EATV index stores Tx in descending order, so the matcher /
-   `CRDTResolvingIterator` resolve "latest wins" (and add-wins / RGA) before any
-   datom reaches the executor. By the time relations are joined, resolution is
-   already complete. This path was therefore not a misplaced-but-needed feature
-   — it was pure redundancy for storage data and actively wrong for non-storage
-   relations (ground values, computed `?t`, in-memory sources).
+2. **CRDT/temporal resolution already happens in the storage layer, not the join.** The EATV index stores Tx in descending order, so the matcher / `CRDTResolvingIterator` resolve "latest wins" (and add-wins / RGA) before any datom reaches the executor. By the time relations are joined, resolution is already complete. This path was therefore not a misplaced-but-needed feature — it was pure redundancy for storage data and actively wrong for non-storage relations (ground values, computed `?t`, in-memory sources).
 
-3. **Even a "principled" version of the heuristic is wrong.** Suggested Fix #3
-   (prove the relation attribute is a tx position from a four-element pattern, then dedup)
-   still embeds resolution semantics inside a generic relational operator. A
-   join must not resolve CRDTs under any circumstances — proven position or not.
-   The correct contract is simply: the join preserves rows; storage owns
-   resolution.
+3. **Even a "principled" version of the heuristic is wrong.** Suggested Fix #3 (prove the relation attribute is a tx position from a four-element pattern, then dedup) still embeds resolution semantics inside a generic relational operator. A join must not resolve CRDTs under any circumstances — proven position or not. The correct contract is simply: the join preserves rows; storage owns resolution.
 
 ### Verification
 
-`go build ./...`, `go vet ./...`, and `go test -count=1 ./...` all green; the new
-regression test fails on the pre-fix code and passes after.
+`go build ./...`, `go vet ./...`, and `go test -count=1 ./...` all green; the new regression test fails on the pre-fix code and passes after.

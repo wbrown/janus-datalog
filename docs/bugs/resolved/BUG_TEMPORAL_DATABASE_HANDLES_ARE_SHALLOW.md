@@ -1,27 +1,18 @@
 # BUG: `AsOf()` / `History()` Return Shallow `Database` Handles With Full-API Footguns
 
-**Date**: 2026-04-16
-**Severity**: High - panic, accidental close of shared store, likely semantic drift on custom executor paths
-**Status**: Resolved (2026-05-25) — see Resolution below
-**Affected**: `storage.Database.AsOf()`, `storage.Database.History()`, `storage.Database.NewExecutorWithOptions()`
+**Date**: 2026-04-16 **Severity**: High - panic, accidental close of shared store, likely semantic drift on custom executor paths **Status**: Resolved (2026-05-25) — see Resolution below **Affected**: `storage.Database.AsOf()`, `storage.Database.History()`, `storage.Database.NewExecutorWithOptions()`
 
 ## Summary
 
-`AsOf()` and `History()` return `*Database` values that look like normal
-database handles, but they are only shallow clones of the original `Database`.
+`AsOf()` and `History()` return `*Database` values that look like normal database handles, but they are only shallow clones of the original `Database`.
 
 This creates three distinct problems:
 
-1. **Write footgun**: `NewTransaction()` on a temporal handle uses an uninitialized
-   `activeTx` map and will panic.
-2. **Close footgun**: `Close()` on a temporal handle closes the shared underlying
-   store, invalidating the parent database handle.
-3. **Custom executor footgun**: `NewExecutorWithOptions()` constructs a fresh
-   matcher directly instead of using `d.Matcher()`, so temporal/schema/cache/
-   annotation state is likely bypassed on derived handles.
+1. **Write footgun**: `NewTransaction()` on a temporal handle uses an uninitialized `activeTx` map and will panic.
+2. **Close footgun**: `Close()` on a temporal handle closes the shared underlying store, invalidating the parent database handle.
+3. **Custom executor footgun**: `NewExecutorWithOptions()` constructs a fresh matcher directly instead of using `d.Matcher()`, so temporal/schema/cache/ annotation state is likely bypassed on derived handles.
 
-The returned type suggests "full database handle with a different read view."
-The implementation behaves more like "partial read-only view sharing some fields."
+The returned type suggests "full database handle with a different read view." The implementation behaves more like "partial read-only view sharing some fields."
 
 ## Discovery
 
@@ -32,8 +23,7 @@ The review started from the public API claim that:
 - `d.AsOf(...)` returns a new `*DB` handle
 - `d.History()` returns a new `*DB` handle
 
-and then checked whether those derived handles were actually safe to use as
-normal `Database` values.
+and then checked whether those derived handles were actually safe to use as normal `Database` values.
 
 ## Code Evidence
 
@@ -113,13 +103,11 @@ func (d *Database) Close() error {
 }
 ```
 
-The derived temporal handle shares `d.store` with its parent. Closing the child
-handle closes the real database.
+The derived temporal handle shares `d.store` with its parent. Closing the child handle closes the real database.
 
 ### 4. `NewExecutor()` and `NewExecutorWithOptions()` diverge
 
-`NewExecutor()` uses `d.Matcher()`, which applies temporal mode and current
-database state:
+`NewExecutor()` uses `d.Matcher()`, which applies temporal mode and current database state:
 
 ```go
 func (d *Database) NewExecutor() *executor.Executor {
@@ -145,8 +133,7 @@ That fresh matcher does **not** go through `d.Matcher()`, so it does not inherit
 - cache via `SetCache`
 - annotation handler via `SetHandler`
 
-On a derived temporal handle, that likely means the custom executor path ignores
-the temporal view and executes against current state instead.
+On a derived temporal handle, that likely means the custom executor path ignores the temporal view and executes against current state instead.
 
 ## Failure Mode 1: Panic on Write Through Temporal Handle
 
@@ -211,13 +198,11 @@ This needs a dedicated reproducer, but the code path strongly suggests it.
 
 ### 1. API contract ambiguity
 
-The public API returns a normal `*Database` handle, but the derived handle is
-not actually safe to use like one.
+The public API returns a normal `*Database` handle, but the derived handle is not actually safe to use like one.
 
 ### 2. Easy-to-trigger panic
 
-Any caller who treats `AsOf()` / `History()` as ordinary handles and calls
-`NewTransaction()` will hit a runtime panic.
+Any caller who treats `AsOf()` / `History()` as ordinary handles and calls `NewTransaction()` will hit a runtime panic.
 
 ### 3. Resource lifecycle surprises
 
@@ -225,20 +210,15 @@ Closing a child/derived handle can invalidate the original parent handle.
 
 ### 4. Potential correctness drift on custom execution paths
 
-If `NewExecutorWithOptions()` bypasses temporal mode, a derived handle can return
-current-state results on the custom-executor path while `Query()` / `NewExecutor()`
-still return as-of/history results.
+If `NewExecutorWithOptions()` bypasses temporal mode, a derived handle can return current-state results on the custom-executor path while `Query()` / `NewExecutor()` still return as-of/history results.
 
-That is a very subtle class of bug because different read APIs on the same
-handle can disagree.
+That is a very subtle class of bug because different read APIs on the same handle can disagree.
 
 ## Why This Is Subtle
 
-The design is understandable: a derived temporal handle wants to share storage,
-cache, and plan cache with its parent.
+The design is understandable: a derived temporal handle wants to share storage, cache, and plan cache with its parent.
 
-The problem is not sharing. The problem is that the returned type still exposes
-the full `Database` API while only part of the struct is initialized for safe use.
+The problem is not sharing. The problem is that the returned type still exposes the full `Database` API while only part of the struct is initialized for safe use.
 
 This turns a "derived read view" into a footgun.
 
@@ -246,8 +226,7 @@ This turns a "derived read view" into a footgun.
 
 ### Option 1: Make temporal handles explicitly read-only wrappers
 
-Return a dedicated read-only type for `AsOf()` / `History()` instead of another
-full `*Database`.
+Return a dedicated read-only type for `AsOf()` / `History()` instead of another full `*Database`.
 
 This is the clearest semantic model.
 
@@ -264,8 +243,7 @@ and ensure `Close()` on a derived handle is either safe or clearly prohibited.
 
 ### Option 3: Route all executor creation through `d.Matcher()`
 
-`NewExecutorWithOptions()` should likely mirror `NewExecutor()` and start from
-`d.Matcher()` rather than constructing a raw `BadgerMatcher`.
+`NewExecutorWithOptions()` should likely mirror `NewExecutor()` and start from `d.Matcher()` rather than constructing a raw `BadgerMatcher`.
 
 That would at least unify:
 
@@ -280,8 +258,7 @@ That would at least unify:
 2. Add `TestHistoryHandle_CloseDoesNotCloseParent` (or document that it does).
 3. Add `TestAsOf_NewExecutorWithOptionsUsesTemporalState`.
 4. Add `TestHistory_NewExecutorWithOptionsUsesHistoryState`.
-5. Verify `Query()`, `NewExecutor()`, and `NewExecutorWithOptions()` agree on the
-   same derived handle.
+5. Verify `Query()`, `NewExecutor()`, and `NewExecutorWithOptions()` agree on the same derived handle.
 
 ---
 

@@ -30,8 +30,7 @@ func unboundScanProperties(
 	// CardinalityOne resolution emits at most one tuple per E in E order.
 	return executor.RelationProperties{
 		Ordering: []query.OrderByClause{{
-			Variable:  entity.Name,
-			Direction: query.OrderAsc,
+			Variable: entity.Name,
 		}},
 		Keys: [][]query.Symbol{{entity.Name}},
 	}
@@ -59,8 +58,7 @@ func validatedVBoundProperties(
 	// preserves E order and emits at most one current winner per E.
 	return executor.RelationProperties{
 		Ordering: []query.OrderByClause{{
-			Variable:  entity.Name,
-			Direction: query.OrderAsc,
+			Variable: entity.Name,
 		}},
 		Keys: [][]query.Symbol{{entity.Name}},
 	}
@@ -82,11 +80,11 @@ func historyATEVProperties(
 	if !entityOK || !txOK {
 		return executor.RelationProperties{}, false
 	}
-	if q.OrderBy[0] != (query.OrderByClause{Variable: tx.Name, Direction: query.OrderDesc}) {
+	if q.OrderBy[0] != (query.OrderByClause{Variable: tx.Name, Descending: true}) {
 		return executor.RelationProperties{}, false
 	}
 	if len(q.OrderBy) == 2 &&
-		q.OrderBy[1] != (query.OrderByClause{Variable: entity.Name, Direction: query.OrderAsc}) {
+		q.OrderBy[1] != (query.OrderByClause{Variable: entity.Name}) {
 		return executor.RelationProperties{}, false
 	}
 
@@ -112,9 +110,9 @@ func historyTAEVProperties(
 	}
 
 	physicalOrder := []query.OrderByClause{
-		{Variable: tx.Name, Direction: query.OrderDesc},
-		{Variable: attribute.Name, Direction: query.OrderAsc},
-		{Variable: entity.Name, Direction: query.OrderAsc},
+		{Variable: tx.Name, Descending: true},
+		{Variable: attribute.Name},
+		{Variable: entity.Name},
 	}
 	for i, order := range q.OrderBy {
 		if order != physicalOrder[i] {
@@ -148,8 +146,8 @@ func historyAETVProperties(
 		return executor.RelationProperties{}, false
 	}
 
-	if q.OrderBy[0] != (query.OrderByClause{Variable: entity.Name, Direction: query.OrderAsc}) ||
-		q.OrderBy[1] != (query.OrderByClause{Variable: tx.Name, Direction: query.OrderDesc}) {
+	if q.OrderBy[0] != (query.OrderByClause{Variable: entity.Name}) ||
+		q.OrderBy[1] != (query.OrderByClause{Variable: tx.Name, Descending: true}) {
 		return executor.RelationProperties{}, false
 	}
 
@@ -178,8 +176,8 @@ func historyEATVProperties(
 		return executor.RelationProperties{}, false
 	}
 
-	if q.OrderBy[0] != (query.OrderByClause{Variable: attribute.Name, Direction: query.OrderAsc}) ||
-		q.OrderBy[1] != (query.OrderByClause{Variable: tx.Name, Direction: query.OrderDesc}) {
+	if q.OrderBy[0] != (query.OrderByClause{Variable: attribute.Name}) ||
+		q.OrderBy[1] != (query.OrderByClause{Variable: tx.Name, Descending: true}) {
 		return executor.RelationProperties{}, false
 	}
 

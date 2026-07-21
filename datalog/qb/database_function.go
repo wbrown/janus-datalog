@@ -22,7 +22,7 @@ type GetElseBuilder struct {
 //	qb.GetElse(entity, PersonNickname, "Anonymous").As(nickname)
 //	// [(get-else $ ?entity :person/nickname "Anonymous") ?nickname]
 func GetElse(entity *Var, attr Attr, defaultVal interface{}) *GetElseBuilder {
-	return &GetElseBuilder{entity: entity, attr: attr, defaultVal: defaultVal}
+	return &GetElseBuilder{entity: entity, attr: attr, defaultVal: normalizeConstant(defaultVal)}
 }
 
 // As binds the result of get-else to a variable.

@@ -23,7 +23,7 @@ func InsertJoinProjects(root *Node, terminal []query.Symbol) (*Node, error) {
 			}
 			childLive := append([]query.Symbol(nil), live...)
 			for _, symbol := range data.Required {
-				if !containsSymbol(childLive, symbol) {
+				if !query.ContainsSymbol(childLive, symbol) {
 					childLive = append(childLive, symbol)
 				}
 			}
@@ -42,12 +42,12 @@ func InsertJoinProjects(root *Node, terminal []query.Symbol) (*Node, error) {
 			}
 			childLive := make([]query.Symbol, 0, len(live)+len(data.Required))
 			for _, symbol := range node.Children[0].Symbols() {
-				if containsSymbol(live, symbol) {
+				if query.ContainsSymbol(live, symbol) {
 					childLive = append(childLive, symbol)
 				}
 			}
 			for _, symbol := range data.Required {
-				if !containsSymbol(childLive, symbol) {
+				if !query.ContainsSymbol(childLive, symbol) {
 					childLive = append(childLive, symbol)
 				}
 			}
@@ -77,7 +77,7 @@ func InsertJoinProjects(root *Node, terminal []query.Symbol) (*Node, error) {
 			needed := func(child *Node) []query.Symbol {
 				symbols := make([]query.Symbol, 0, len(child.Symbols()))
 				for _, symbol := range child.Symbols() {
-					if containsSymbol(live, symbol) || containsSymbol(data.JoinSymbols, symbol) {
+					if query.ContainsSymbol(live, symbol) || query.ContainsSymbol(data.JoinSymbols, symbol) {
 						symbols = append(symbols, symbol)
 					}
 				}

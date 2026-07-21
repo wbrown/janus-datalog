@@ -5,7 +5,6 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // catItemDatoms: two categories; A has 5 items, B has 2. Used to distinguish
@@ -44,9 +43,12 @@ func catItemDatoms() []datalog.Datom {
 // correctness assertion below the active gate — no test edit required.
 func TestSubqueryLimitIsPerInvocation(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(catItemDatoms())
-	exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
-	q, err := parser.ParseQuery(`[:find ?c ?v
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?c ?v
 	                              :where [?cat :cat/name ?c]
 	                                     [(q [:find ?val
 	                                          :in $ ?c
@@ -54,19 +56,21 @@ func TestSubqueryLimitIsPerInvocation(t *testing.T) {
 	                                                 [?i :item/val ?val]
 	                                          :limit 2]
 	                                         $ ?c) [[?v] ...]]]`)
-	if err != nil {
-		// Interim behavior: :limit inside a subquery is rejected at parse time.
-		t.Logf("subquery :limit rejected at parse (interim): %v", err)
-		return
-	}
-	// Rejection removed => execution must honor the per-invocation cap.
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if result.Size() != 4 {
-		t.Errorf("expected 4 rows (per-invocation limit 2: A->2, B->2), got %d", result.Size())
-		dumpRelationTest(t, result)
+			if err != nil {
+				// Interim behavior: :limit inside a subquery is rejected at parse time.
+				t.Logf("subquery :limit rejected at parse (interim): %v", err)
+				return
+			}
+			// Rejection removed => execution must honor the per-invocation cap.
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if result.Size() != 4 {
+				t.Errorf("expected 4 rows (per-invocation limit 2: A->2, B->2), got %d", result.Size())
+				dumpRelationTest(t, result)
+			}
+		})
 	}
 }
 
@@ -80,9 +84,12 @@ func TestSubqueryLimitIsPerInvocation(t *testing.T) {
 // correctness assertion below the active gate — no test edit required.
 func TestSubqueryLimitTopPerGroup(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(catItemDatoms())
-	exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
-	q, err := parser.ParseQuery(`[:find ?c ?v
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?c ?v
 	                              :where [?cat :cat/name ?c]
 	                                     [(q [:find ?val
 	                                          :in $ ?c
@@ -91,28 +98,30 @@ func TestSubqueryLimitTopPerGroup(t *testing.T) {
 	                                          :order-by [[?val :desc]]
 	                                          :limit 1]
 	                                         $ ?c) [[?v]]]]`)
-	if err != nil {
-		// Interim behavior: :limit inside a subquery is rejected at parse time.
-		t.Logf("subquery :limit rejected at parse (interim): %v", err)
-		return
-	}
-	// Rejection removed => execution must honor order-by + limit per invocation.
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if result.Size() != 2 {
-		t.Fatalf("expected 2 rows (top-1 per group), got %d", result.Size())
-	}
-	got := map[string]int64{}
-	it := result.Iterator()
-	defer it.Close()
-	for it.Next() {
-		tup := it.Tuple()
-		got[tup[0].(string)] = tup[1].(int64)
-	}
-	if got["A"] != 5 || got["B"] != 7 {
-		t.Errorf("expected A->5, B->7, got %v", got)
+			if err != nil {
+				// Interim behavior: :limit inside a subquery is rejected at parse time.
+				t.Logf("subquery :limit rejected at parse (interim): %v", err)
+				return
+			}
+			// Rejection removed => execution must honor order-by + limit per invocation.
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if result.Size() != 2 {
+				t.Fatalf("expected 2 rows (top-1 per group), got %d", result.Size())
+			}
+			got := map[string]int64{}
+			it := result.Iterator()
+			defer it.Close()
+			for it.Next() {
+				tup := it.Tuple()
+				got[tup[0].(string)] = tup[1].(int64)
+			}
+			if got["A"] != 5 || got["B"] != 7 {
+				t.Errorf("expected A->5, B->7, got %v", got)
+			}
+		})
 	}
 }
 
@@ -120,60 +129,70 @@ func TestSubqueryLimitTopPerGroup(t *testing.T) {
 // limit 1 keeps it, limit 0 yields none.
 func TestPureAggregateWithLimit(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(catItemDatoms())
-	exec := NewExecutor(matcher, nil)
 
-	t.Run("limit 1 keeps the single aggregate row", func(t *testing.T) {
-		q, err := parser.ParseQuery(`[:find (count ?e) .
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			t.Run("limit 1 keeps the single aggregate row", func(t *testing.T) {
+				q, err := parser.ParseQuery(`[:find (count ?e) .
 		                              :where [?e :item/val ?v]
 		                              :limit 1]`)
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
-		result, err := exec.Execute(q)
-		if err != nil {
-			t.Fatalf("execute: %v", err)
-		}
-		if result.Size() != 1 {
-			t.Fatalf("expected 1 row, got %d", result.Size())
-		}
-		if result.Get(0)[0].(int64) != 7 {
-			t.Errorf("expected count 7, got %v", result.Get(0)[0])
-		}
-	})
+				if err != nil {
+					t.Fatalf("parse: %v", err)
+				}
+				result, err := exec.Execute(q)
+				if err != nil {
+					t.Fatalf("execute: %v", err)
+				}
+				if result.Size() != 1 {
+					t.Fatalf("expected 1 row, got %d", result.Size())
+				}
+				if result.Get(0)[0].(int64) != 7 {
+					t.Errorf("expected count 7, got %v", result.Get(0)[0])
+				}
+			})
 
-	t.Run("limit 0 drops the aggregate row", func(t *testing.T) {
-		q, err := parser.ParseQuery(`[:find (count ?e)
+			t.Run("limit 0 drops the aggregate row", func(t *testing.T) {
+				q, err := parser.ParseQuery(`[:find (count ?e)
 		                              :where [?e :item/val ?v]
 		                              :limit 0]`)
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
-		result, err := exec.Execute(q)
-		if err != nil {
-			t.Fatalf("execute: %v", err)
-		}
-		if result.Size() != 0 {
-			t.Errorf("expected 0 rows, got %d", result.Size())
-		}
-	})
+				if err != nil {
+					t.Fatalf("parse: %v", err)
+				}
+				result, err := exec.Execute(q)
+				if err != nil {
+					t.Fatalf("execute: %v", err)
+				}
+				if result.Size() != 0 {
+					t.Errorf("expected 0 rows, got %d", result.Size())
+				}
+			})
+		})
+	}
 }
 
 // TestPullWithLimit: :limit caps the number of pulled entities (rows).
 func TestPullWithLimit(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(catItemDatoms())
-	exec := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find (pull ?e [:item/val])
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find (pull ?e [:item/val])
 	                              :where [?e :item/val ?v]
 	                              :limit 1]`)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if result.Size() != 1 {
-		t.Errorf("expected 1 pulled row, got %d", result.Size())
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if result.Size() != 1 {
+				t.Errorf("expected 1 pulled row, got %d", result.Size())
+			}
+		})
 	}
 }

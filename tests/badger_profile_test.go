@@ -84,31 +84,35 @@ func TestBadgerParallelProfile(t *testing.T) {
 	}
 	inputRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
-	// Profile parallel execution
-	f, err := os.Create("badger_parallel.prof")
-	if err != nil {
-		t.Fatal(err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Profile parallel execution
+			f, err := os.Create("badger_parallel.prof")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+
+			if err := pprof.StartCPUProfile(f); err != nil {
+				t.Fatal(err)
+			}
+			defer pprof.StopCPUProfile()
+
+			// Run parallel execution
+			parExec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			parExec.EnableParallelSubqueries(8)
+
+			start := time.Now()
+			result, err := parExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
+			duration := time.Since(start)
+
+			if err != nil {
+				t.Fatalf("Parallel execution failed: %v", err)
+			}
+
+			t.Logf("Parallel execution: %v (%d results)", duration, result.Size())
+			t.Logf("CPU profile written to badger_parallel.prof")
+			t.Logf("Analyze with: go tool pprof badger_parallel.prof")
+		})
 	}
-	defer f.Close()
-
-	if err := pprof.StartCPUProfile(f); err != nil {
-		t.Fatal(err)
-	}
-	defer pprof.StopCPUProfile()
-
-	// Run parallel execution
-	parExec := executor.NewExecutor(matcher, nil)
-	parExec.EnableParallelSubqueries(8)
-
-	start := time.Now()
-	result, err := parExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
-	duration := time.Since(start)
-
-	if err != nil {
-		t.Fatalf("Parallel execution failed: %v", err)
-	}
-
-	t.Logf("Parallel execution: %v (%d results)", duration, result.Size())
-	t.Logf("CPU profile written to badger_parallel.prof")
-	t.Logf("Analyze with: go tool pprof badger_parallel.prof")
 }

@@ -440,7 +440,7 @@ func main() {
     aliceID, _ := tx.SaveStruct(alice)
     tx.Commit()
 
-    fmt.Printf("Created: %s\n", alice.ID.String()[:20])
+    fmt.Printf("Created: %s\n", alice.ID)
 
     // Read
     var loaded Person

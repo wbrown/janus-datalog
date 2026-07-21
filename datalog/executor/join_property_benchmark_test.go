@@ -16,8 +16,7 @@ func BenchmarkKeyPreservingJoinProjection(b *testing.B) {
 	rightSymbols := []query.Symbol{id, rightValue}
 	projectedSymbols := []query.Symbol{id, leftValue}
 	opts := ExecutorOptions{
-		EnableStreamingJoins:      true,
-		EnableIteratorComposition: true,
+		EnableStreamingJoins: true,
 	}
 
 	for _, rowCount := range []int{10_000, 100_000} {
@@ -37,7 +36,7 @@ func BenchmarkKeyPreservingJoinProjection(b *testing.B) {
 		b.Run(fmt.Sprintf("rows_%d", rowCount), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				leftBase := NewMaterializedRelationNoDedupe(leftSymbols, leftTuples)
+				leftBase := NewMaterializedRelationFromSet(leftSymbols, leftTuples, ExecutorOptions{})
 				left := NewStreamingRelationWithProperties(
 					leftSymbols,
 					leftBase.Iterator(),
@@ -75,7 +74,7 @@ func BenchmarkSemiAntiJoinPropertyPropagation(b *testing.B) {
 	leftSymbols := []query.Symbol{id, value}
 	rightSymbols := []query.Symbol{id}
 	properties := RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: id, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: id, Descending: false}},
 		Keys:     [][]query.Symbol{{id}},
 	}
 

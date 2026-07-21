@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -19,7 +17,6 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 
 	// Default-active: documented as on by default.
 	require.True(t, opts.EnableAlgebraOptimizer, "EnableAlgebraOptimizer is documented default-active")
-	require.True(t, opts.EnableIteratorComposition, "EnableIteratorComposition is documented default-active")
 	require.True(t, opts.EnableTrueStreaming, "EnableTrueStreaming is documented default-active")
 	require.True(t, opts.EnableParallelSubqueries, "EnableParallelSubqueries is documented default-active")
 	require.True(t, opts.EnableStreamingAggregation, "EnableStreamingAggregation is documented default-active")

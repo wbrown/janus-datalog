@@ -1,12 +1,13 @@
 package qb
 
 import (
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // Comparison represents a binary comparison predicate.
 type Comparison struct {
-	op    query.CompareOp
+	op    query.Symbol
 	left  interface{}
 	right interface{}
 }
@@ -18,12 +19,12 @@ type Comparison struct {
 //	qb.Lt(age, 30)       // ?age < 30
 //	qb.Lt(price, limit)  // ?price < ?limit
 func Lt(left, right interface{}) *Comparison {
-	return &Comparison{op: query.OpLT, left: left, right: right}
+	return &Comparison{op: datalog.SymLT, left: left, right: right}
 }
 
 // Lte creates a less-than-or-equal comparison: left <= right
 func Lte(left, right interface{}) *Comparison {
-	return &Comparison{op: query.OpLTE, left: left, right: right}
+	return &Comparison{op: datalog.SymLTE, left: left, right: right}
 }
 
 // Gt creates a greater-than comparison: left > right
@@ -32,12 +33,12 @@ func Lte(left, right interface{}) *Comparison {
 //
 //	qb.Gt(age, 21)  // ?age > 21
 func Gt(left, right interface{}) *Comparison {
-	return &Comparison{op: query.OpGT, left: left, right: right}
+	return &Comparison{op: datalog.SymGT, left: left, right: right}
 }
 
 // Gte creates a greater-than-or-equal comparison: left >= right
 func Gte(left, right interface{}) *Comparison {
-	return &Comparison{op: query.OpGTE, left: left, right: right}
+	return &Comparison{op: datalog.SymGTE, left: left, right: right}
 }
 
 // Eq creates an equality comparison: left = right
@@ -46,12 +47,12 @@ func Gte(left, right interface{}) *Comparison {
 //
 //	qb.Eq(status, qb.V("active"))  // ?status = "active"
 func Eq(left, right interface{}) *Comparison {
-	return &Comparison{op: query.OpEQ, left: left, right: right}
+	return &Comparison{op: datalog.SymEQ, left: left, right: right}
 }
 
 // Ne creates a not-equal comparison: left != right
 func Ne(left, right interface{}) *Comparison {
-	return &Comparison{op: query.OpNE, left: left, right: right}
+	return &Comparison{op: datalog.SymNE, left: left, right: right}
 }
 
 // toClause converts Comparison to a query.Clause (used as a filter predicate)
@@ -88,7 +89,7 @@ func (c *Comparison) As(result *Var) *Expression {
 // ChainedComparison represents a chained comparison like (< 0 ?x 100).
 // This is evaluated as (0 < ?x) AND (?x < 100).
 type ChainedComparison struct {
-	op    query.CompareOp
+	op    query.Symbol
 	terms []interface{}
 }
 
@@ -97,20 +98,20 @@ type ChainedComparison struct {
 //
 // Example:
 //
-//	qb.Chained(query.OpLT, 0, x, 100)  // 0 < ?x < 100
-//	qb.Chained(query.OpLTE, a, b, c)   // ?a <= ?b <= ?c
-func Chained(op query.CompareOp, terms ...interface{}) *ChainedComparison {
+//	qb.Chained(datalog.SymLT, 0, x, 100)  // 0 < ?x < 100
+//	qb.Chained(datalog.SymLTE, a, b, c)   // ?a <= ?b <= ?c
+func Chained(op query.Symbol, terms ...interface{}) *ChainedComparison {
 	return &ChainedComparison{op: op, terms: terms}
 }
 
 // Range creates a range check: min < v < max
-// This is a convenience wrapper for Chained with OpLT.
+// This is a convenience wrapper for Chained with the < operator.
 //
 // Example:
 //
 //	qb.Range(0, price, 100)  // 0 < ?price < 100
 func Range(min interface{}, v *Var, max interface{}) *ChainedComparison {
-	return Chained(query.OpLT, min, v, max)
+	return Chained(datalog.SymLT, min, v, max)
 }
 
 // RangeInclusive creates an inclusive range check: min <= v <= max
@@ -119,7 +120,7 @@ func Range(min interface{}, v *Var, max interface{}) *ChainedComparison {
 //
 //	qb.RangeInclusive(1, rating, 5)  // 1 <= ?rating <= 5
 func RangeInclusive(min interface{}, v *Var, max interface{}) *ChainedComparison {
-	return Chained(query.OpLTE, min, v, max)
+	return Chained(datalog.SymLTE, min, v, max)
 }
 
 // toClause converts ChainedComparison to a query.Clause (used as a filter predicate)

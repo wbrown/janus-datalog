@@ -40,27 +40,11 @@ func analyzeClausesForExplain(phase *RealizedPhase, clauses []query.Clause, avai
 			plan := analyzeSubqueryForExplain(c, available)
 			phase.Subqueries = append(phase.Subqueries, plan)
 			// Add subquery outputs to available
-			syms := getBindingSymbols(c.Binding)
-			for _, sym := range syms {
+			for _, sym := range c.Binding.BoundVariables() {
 				available[sym] = true
 			}
 		}
 	}
-}
-
-// getBindingSymbols extracts symbols from a BindingForm
-func getBindingSymbols(bf query.BindingForm) []query.Symbol {
-	switch b := bf.(type) {
-	case query.TupleBinding:
-		return b.Variables
-	case query.CollectionBinding:
-		return []query.Symbol{b.Variable}
-	case query.ScalarBinding:
-		return []query.Symbol{b.Variable}
-	case query.RelationBinding:
-		return b.Variables
-	}
-	return nil
 }
 
 // analyzePatternForExplain creates a PatternPlan with index selection and selectivity
@@ -289,9 +273,9 @@ func classifyPredicate(pred query.Predicate) PredicatePlanType {
 	switch p := pred.(type) {
 	case *query.Comparison:
 		switch p.Op {
-		case query.OpEQ:
+		case datalog.SymEQ:
 			return PredicateEquality
-		case query.OpNE:
+		case datalog.SymNE:
 			return PredicateNotEqual
 		default:
 			return PredicateComparison

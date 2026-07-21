@@ -79,7 +79,7 @@ func Limit(attr interface{}, limit int) PullLimit {
 //	Pull(e, PersonName, Default(PersonStatus, "active"))
 //	// → (pull ?e [:person/name (default :person/status "active")])
 func Default(attr interface{}, defaultValue interface{}) PullDefault {
-	return PullDefault{keyword: attrToKeyword(attr), defaultValue: defaultValue}
+	return PullDefault{keyword: attrToKeyword(attr), defaultValue: normalizeConstant(defaultValue)}
 }
 
 // Ref creates a nested reference pull that follows a ref attribute

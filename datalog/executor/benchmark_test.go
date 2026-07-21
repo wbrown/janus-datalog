@@ -21,7 +21,7 @@ func BenchmarkExpressionEvaluation(b *testing.B) {
 
 	expr := &query.Expression{
 		Function: &query.ArithmeticFunction{
-			Op: query.OpAdd,
+			Op: datalog.SymAdd,
 			Args: []query.Term{
 				query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
@@ -49,7 +49,7 @@ func BenchmarkAggregation(b *testing.B) {
 
 	b.Run("single_aggregation", func(b *testing.B) {
 		findElements := []query.FindElement{
-			query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?value")},
+			query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?value")},
 		}
 
 		b.ResetTimer()
@@ -62,8 +62,8 @@ func BenchmarkAggregation(b *testing.B) {
 	b.Run("grouped_aggregation", func(b *testing.B) {
 		findElements := []query.FindElement{
 			query.FindVariable{Symbol: datalog.NewSymbol("?group")},
-			query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?value")},
-			query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?value")},
+			query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?value")},
+			query.FindAggregate{Function: datalog.SymAvg, Arg: datalog.NewSymbol("?value")},
 		}
 
 		b.ResetTimer()
@@ -143,9 +143,9 @@ func BenchmarkTimeAggregation(b *testing.B) {
 	rel := NewMaterializedRelation(symbols, tuples)
 
 	findElements := []query.FindElement{
-		query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?date")},
-		query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?date")},
-		query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?value")},
+		query.FindAggregate{Function: datalog.SymMin, Arg: datalog.NewSymbol("?date")},
+		query.FindAggregate{Function: datalog.SymMax, Arg: datalog.NewSymbol("?date")},
+		query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?value")},
 	}
 
 	b.ResetTimer()

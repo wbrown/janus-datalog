@@ -1,15 +1,10 @@
 # BUG: legacy subquery decorrelation reorders `:where` clauses
 
-**Date**: 2026-04-17
-**Severity**: High - semantic change in query execution; results depend on executor entrypoint
-**Status**: Resolved (2026-05-22)
-**Affected**: `datalog/executor/query_executor.go`, `datalog/executor/decorrelation_executor.go`, `executor.NewExecutor()`
+**Date**: 2026-04-17 **Severity**: High - semantic change in query execution; results depend on executor entrypoint **Status**: Resolved (2026-05-22) **Affected**: `datalog/executor/query_executor.go`, `datalog/executor/decorrelation_executor.go`, `executor.NewExecutor()`
 
 ## Summary
 
-When `EnableSubqueryDecorrelation` is enabled and a query contains two or more
-top-level subqueries, the legacy decorrelation executor stops evaluating
-`:where` clauses in their original order.
+When `EnableSubqueryDecorrelation` is enabled and a query contains two or more top-level subqueries, the legacy decorrelation executor stops evaluating `:where` clauses in their original order.
 
 Instead, it does this:
 
@@ -27,8 +22,7 @@ Any query where:
 
 can execute incorrectly under the decorrelation path.
 
-This is **not** the algebra-bridge decorrelation bug. It is a separate issue in
-the executor-level `executeWithDecorrelation()` path.
+This is **not** the algebra-bridge decorrelation bug. It is a separate issue in the executor-level `executeWithDecorrelation()` path.
 
 ## Trigger
 
@@ -46,8 +40,7 @@ func shouldDecorrelate(clauses []query.Clause) bool {
 }
 ```
 
-So any query with 2+ top-level subqueries enters the alternate execution path,
-even if the clause ordering is semantically load-bearing.
+So any query with 2+ top-level subqueries enters the alternate execution path, even if the clause ordering is semantically load-bearing.
 
 ## Minimal Query Shape
 
@@ -178,11 +171,9 @@ From `datalog/executor/executor_subquery_comprehensive_test.go`:
 // NOTE: Changed order - subquery must come before its result is used
 ```
 
-That comment is correct for the normal executor: subquery output symbols have to
-exist before later clauses use them.
+That comment is correct for the normal executor: subquery output symbols have to exist before later clauses use them.
 
-The legacy decorrelation executor violates that same rule whenever there are
-2+ subqueries.
+The legacy decorrelation executor violates that same rule whenever there are 2+ subqueries.
 
 ## Why Current Tests Miss This
 
@@ -191,8 +182,7 @@ The existing decorrelation tests are mostly OHLC-style queries where:
 - all patterns/expressions/predicates come first
 - all subqueries already sit at the end of `:where`
 
-For those shapes, moving "all non-subqueries first" happens to preserve the same
-effective order.
+For those shapes, moving "all non-subqueries first" happens to preserve the same effective order.
 
 What is missing is a test with:
 
@@ -226,32 +216,27 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 }
 ```
 
-So the same parsed query can have different semantics depending on whether the
-caller uses:
+So the same parsed query can have different semantics depending on whether the caller uses:
 
 - `executor.NewExecutor(...)`
 - `db.NewExecutor()`
 - `db.Query(...)`
 
-This is especially dangerous because it looks like a planner/performance option,
-but it actually changes correctness.
+This is especially dangerous because it looks like a planner/performance option, but it actually changes correctness.
 
 ## Impact
 
 ### 1. Interleaved subquery queries can execute incorrectly
 
-A later pattern or predicate that depends on the first subquery's output can run
-before the output exists.
+A later pattern or predicate that depends on the first subquery's output can run before the output exists.
 
 ### 2. Results can depend on executor construction
 
-The same query can behave differently between the storage API and direct executor
-API because the default decorrelation flag differs.
+The same query can behave differently between the storage API and direct executor API because the default decorrelation flag differs.
 
 ### 3. Failures can look like ordinary planner bugs
 
-Because the alternate executor still "sort of works" on OHLC-style queries, the
-bug is easy to misclassify as:
+Because the alternate executor still "sort of works" on OHLC-style queries, the bug is easy to misclassify as:
 
 - bad join ordering
 - missing symbol propagation
@@ -261,8 +246,7 @@ The real issue is simpler: the executor changed the clause order.
 
 ## Why This Is Not A Safe Optimization
 
-Decorrelating or batching subqueries is only semantics-preserving if the
-transformation preserves all data dependencies.
+Decorrelating or batching subqueries is only semantics-preserving if the transformation preserves all data dependencies.
 
 This implementation does not.
 
@@ -270,15 +254,13 @@ It assumes:
 
 - all non-subquery clauses can safely run before any subquery
 
-That is false as soon as a non-subquery clause consumes symbols produced by a
-subquery.
+That is false as soon as a non-subquery clause consumes symbols produced by a subquery.
 
 ## Possible Fix Directions
 
 ### Option 1: Preserve clause order and batch opportunistically
 
-Keep walking `q.Where` sequentially. When a run of subqueries is reached, batch
-only the subqueries that are safe to batch at that position.
+Keep walking `q.Where` sequentially. When a run of subqueries is reached, batch only the subqueries that are safe to batch at that position.
 
 This keeps performance work within the existing semantic model.
 
@@ -293,9 +275,7 @@ This is more restrictive but safe.
 
 ### Option 3: Disable the legacy decorrelation path entirely
 
-`storage.DefaultPlannerOptions()` already treats it as redundant to the algebra
-optimizer. Disabling the executor-level decorrelation path everywhere would avoid
-semantic drift between entrypoints.
+`storage.DefaultPlannerOptions()` already treats it as redundant to the algebra optimizer. Disabling the executor-level decorrelation path everywhere would avoid semantic drift between entrypoints.
 
 ## Test Plan
 
@@ -315,36 +295,21 @@ semantic drift between entrypoints.
 
 ## Short-Term Safety Recommendation
 
-Until this is fixed, the legacy executor-level decorrelation path should not be
-treated as a correctness-preserving optimization.
+Until this is fixed, the legacy executor-level decorrelation path should not be treated as a correctness-preserving optimization.
 
 At minimum, direct users of `executor.NewExecutor()` should assume:
 
-- queries with 2+ top-level subqueries may change semantics when
-  `EnableSubqueryDecorrelation` is on
-- especially if a non-subquery clause appears between subqueries or depends on a
-  subquery-produced symbol
+- queries with 2+ top-level subqueries may change semantics when `EnableSubqueryDecorrelation` is on
+- especially if a non-subquery clause appears between subqueries or depends on a subquery-produced symbol
 
 ## Resolution (2026-05-22)
 
-Fixed via the report's **Option 3: disable the legacy decorrelation path
-entirely.** The executor-level decorrelation was redundant — relational-algebra
-decorrelation (`EnableAlgebraOptimizer`, on by default) already handles the
-correct, structure-aware transformation — so the buggy clause-reordering path
-was removed rather than repaired.
+Fixed via the report's **Option 3: disable the legacy decorrelation path entirely.** The executor-level decorrelation was redundant — relational-algebra decorrelation (`EnableAlgebraOptimizer`, on by default) already handles the correct, structure-aware transformation — so the buggy clause-reordering path was removed rather than repaired.
 
 ### Changes
 
-- `DefaultQueryExecutor.Execute()` (`query_executor.go`) — removed the
-  `if e.options.EnableSubqueryDecorrelation && shouldDecorrelate(q.Where)` branch
-  that dispatched to `executeWithDecorrelation()`. All queries now take the
-  in-order, clause-by-clause path that walks `q.Where` sequentially.
-- `decorrelation_executor.go` and `decorrelation_executor_test.go` — deleted.
-  With the dispatch gone, `shouldDecorrelate()`, `analyzeSubqueries()`,
-  `executeWithDecorrelation()`, and the batching machinery were unreachable dead
-  code. (Note: `datalog/algebra/rewrite_decorrelate.go` has its own,
-  unrelated `shouldDecorrelate(*LateralJoin)` — that is the live algebra path and
-  was not touched.)
+- `DefaultQueryExecutor.Execute()` (`query_executor.go`) — removed the `if e.options.EnableSubqueryDecorrelation && shouldDecorrelate(q.Where)` branch that dispatched to `executeWithDecorrelation()`. All queries now take the in-order, clause-by-clause path that walks `q.Where` sequentially.
+- `decorrelation_executor.go` and `decorrelation_executor_test.go` — deleted. With the dispatch gone, `shouldDecorrelate()`, `analyzeSubqueries()`, `executeWithDecorrelation()`, and the batching machinery were unreachable dead code. (Note: `datalog/algebra/rewrite_decorrelate.go` has its own, unrelated `shouldDecorrelate(*LateralJoin)` — that is the live algebra path and was not touched.)
 - The flags are now deprecated no-ops everywhere:
   - `executor.NewExecutor()` (`executor.go`) defaults flipped to
     `EnableSubqueryDecorrelation: false`, `EnableParallelDecorrelation: false`.
@@ -357,24 +322,14 @@ was removed rather than repaired.
 
 ### Why this resolves the entry-point mismatch
 
-The report's most dangerous symptom was that the same query could have different
-semantics through `executor.NewExecutor()` (default on) vs. `db.Query()`
-(default off). Because the flag now has no runtime effect on any path, all
-entrypoints execute clauses in source order and agree.
+The report's most dangerous symptom was that the same query could have different semantics through `executor.NewExecutor()` (default on) vs. `db.Query()` (default off). Because the flag now has no runtime effect on any path, all entrypoints execute clauses in source order and agree.
 
 ### Test
 
-`datalog/executor/decorrelation_clause_order_test.go`:
-`TestLegacyDecorrelationPreservesInterleavedClauseDependencies` uses the report's
-danger shape — subquery binds `?dept` → dependent clause `(identity ?dept)` →
-second subquery — and asserts the result with the flag on equals the result with
-the flag off. Since the flag is inert, this verifies the paths can no longer
-diverge.
+`datalog/executor/decorrelation_clause_order_test.go`: `TestLegacyDecorrelationPreservesInterleavedClauseDependencies` uses the report's danger shape — subquery binds `?dept` → dependent clause `(identity ?dept)` → second subquery — and asserts the result with the flag on equals the result with the flag off. Since the flag is inert, this verifies the paths can no longer diverge.
 
 Full suite green (15 packages, 0 failures).
 
 ### Files changed
 
-`query_executor.go`, `executor.go`, `options.go`, `planner/types.go`,
-`database.go`, `cmd/datalog/main.go`; `decorrelation_executor.go` and
-`decorrelation_executor_test.go` deleted; new test file added.
+`query_executor.go`, `executor.go`, `options.go`, `planner/types.go`, `database.go`, `cmd/datalog/main.go`; `decorrelation_executor.go` and `decorrelation_executor_test.go` deleted; new test file added.

@@ -1,10 +1,10 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
 	"fmt"
 	"os"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -222,9 +222,10 @@ func TestMergeJoinCorrectness(t *testing.T) {
 			for i, e := range tt.bindingValues {
 				tuples[i] = executor.Tuple{e}
 			}
-			bindingRel := executor.NewMaterializedRelationNoDedupe(
+			bindingRel := executor.NewMaterializedRelationFromSet(
 				[]query.Symbol{datalog.NewSymbol("?e")},
 				tuples,
+				executor.ExecutorOptions{},
 			)
 
 			// Create pattern: [?e :test/value ?v]
@@ -331,9 +332,10 @@ func TestMergeJoinVsHashJoin(t *testing.T) {
 			for i := 0; i < size; i++ {
 				tuples[i] = executor.Tuple{entities[i]}
 			}
-			bindingRel := executor.NewMaterializedRelationNoDedupe(
+			bindingRel := executor.NewMaterializedRelationFromSet(
 				[]query.Symbol{datalog.NewSymbol("?e")},
 				tuples,
+				executor.ExecutorOptions{},
 			)
 
 			pattern := &query.DataPattern{
@@ -444,9 +446,10 @@ func TestMergeJoinPerformance(t *testing.T) {
 	for i := 0; i < bindingSize; i++ {
 		tuples[i] = executor.Tuple{entities[i]}
 	}
-	bindingRel := executor.NewMaterializedRelationNoDedupe(
+	bindingRel := executor.NewMaterializedRelationFromSet(
 		[]query.Symbol{datalog.NewSymbol("?e")},
 		tuples,
+		executor.ExecutorOptions{},
 	)
 
 	pattern := &query.DataPattern{
@@ -494,8 +497,11 @@ func TestMergeJoinPerformance(t *testing.T) {
 	}
 }
 
-// TestCompareJoinKeys verifies the key comparison function
-func TestCompareJoinKeys(t *testing.T) {
+// TestMergeJoinKeyComparison pins the merge join's advance comparator, which
+// is the canonical datalog.CompareValues — the same total order that sorts
+// the binding relation, so the advance logic and the binding sort agree by
+// construction.
+func TestMergeJoinKeyComparison(t *testing.T) {
 	tests := []struct {
 		name     string
 		a        interface{}
@@ -564,12 +570,177 @@ func TestCompareJoinKeys(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := compareJoinKeys(tt.a, tt.b)
+			result := datalog.CompareValues(tt.a, tt.b)
 			if result != tt.expected {
-				t.Errorf("compareJoinKeys(%v, %v) = %d, expected %d",
+				t.Errorf("CompareValues(%v, %v) = %d, expected %d",
 					tt.a, tt.b, result, tt.expected)
 			}
 		})
+	}
+}
+
+// TestMergeJoinDuplicateKeyBindings pins the merge join's key-group semantics
+// for multi-column bindings: a binding relation may hold several tuples with
+// the same join key, and every (datom × passing tuple) pair produces a row —
+// the same output the hash join computes on identical inputs. One tuple per
+// datom is not enough: the first tuple of a key group can fail full-pattern
+// verification while a later one passes, and distinct datoms sharing a key
+// can each match a different tuple of the group.
+func TestMergeJoinDuplicateKeyBindings(t *testing.T) {
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	alice := datalog.NewIdentity("user:alice")
+	bob := datalog.NewIdentity("user:bob")
+	nameAttr := datalog.NewKeyword(":test/name")
+	ageAttr := datalog.NewKeyword(":test/age")
+	tx := db.NewTransaction()
+	tx.Add(alice, nameAttr, "Alice")
+	tx.Add(alice, ageAttr, int64(30))
+	tx.Add(bob, nameAttr, "Bob")
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	matcher := NewBadgerMatcher(db.Store())
+
+	collectRows := func(t *testing.T, rel executor.Relation, err error) []string {
+		t.Helper()
+		tuples, err := executor.CollectTuples(rel, err)
+		if err != nil {
+			t.Fatalf("join must not error: %v", err)
+		}
+		rows := make([]string, len(tuples))
+		for i, tuple := range tuples {
+			rows[i] = fmt.Sprintf("%v", tuple)
+		}
+		sort.Strings(rows)
+		return rows
+	}
+
+	t.Run("later same-key tuple matches", func(t *testing.T) {
+		entity := datalog.NewSymbol("?e")
+		name := datalog.NewSymbol("?n")
+		pattern := &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: entity},
+			query.Constant{Value: nameAttr},
+			query.Variable{Name: name},
+		}}
+		symbols := []query.Symbol{entity, name}
+		// {alice "Aaa"} sorts first within the alice key group and matches no
+		// datom; {alice "Alice"} matches. Checking only the group's first
+		// tuple loses alice's row.
+		bindings := func() executor.Relation {
+			return executor.NewMaterializedRelation(
+				[]query.Symbol{entity, name},
+				[]executor.Tuple{
+					{alice, "Aaa"},
+					{alice, "Alice"},
+					{bob, "Bob"},
+				},
+			)
+		}
+
+		hashRel, hashErr := matcher.matchWithHashJoin(pattern, bindings(), symbols, 0, EAVT, nil)
+		mergeRel, mergeErr := matcher.matchWithMergeJoin(pattern, bindings(), symbols, 0, EAVT, nil)
+		hashRows := collectRows(t, hashRel, hashErr)
+		mergeRows := collectRows(t, mergeRel, mergeErr)
+
+		if len(hashRows) != 2 {
+			t.Fatalf("hash join reference should produce 2 rows, got %d: %v", len(hashRows), hashRows)
+		}
+		if !reflect.DeepEqual(hashRows, mergeRows) {
+			t.Errorf("merge join must agree with hash join:\n  hash:  %v\n  merge: %v", hashRows, mergeRows)
+		}
+	})
+
+	t.Run("distinct datoms per key group", func(t *testing.T) {
+		entity := datalog.NewSymbol("?e")
+		attribute := datalog.NewSymbol("?a")
+		value := datalog.NewSymbol("?v")
+		pattern := &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: entity},
+			query.Variable{Name: attribute},
+			query.Variable{Name: value},
+		}}
+		symbols := []query.Symbol{entity, attribute, value}
+		// Both tuples share the alice key; each matches a different datom.
+		bindings := func() executor.Relation {
+			return executor.NewMaterializedRelation(
+				[]query.Symbol{entity, attribute},
+				[]executor.Tuple{
+					{alice, ageAttr},
+					{alice, nameAttr},
+				},
+			)
+		}
+
+		hashRel, hashErr := matcher.matchWithHashJoin(pattern, bindings(), symbols, 0, EATV, nil)
+		mergeRel, mergeErr := matcher.matchWithMergeJoin(pattern, bindings(), symbols, 0, EATV, nil)
+		hashRows := collectRows(t, hashRel, hashErr)
+		mergeRows := collectRows(t, mergeRel, mergeErr)
+
+		if len(hashRows) != 2 {
+			t.Fatalf("hash join reference should produce 2 rows, got %d: %v", len(hashRows), hashRows)
+		}
+		if !reflect.DeepEqual(hashRows, mergeRows) {
+			t.Errorf("merge join must agree with hash join:\n  hash:  %v\n  merge: %v", hashRows, mergeRows)
+		}
+	})
+}
+
+// deferredErrorIterator (used below) lives in scan_error_propagation_test.go,
+// which is wasm-portable; this file is not.
+
+// TestMergeJoinPropagatesDeferredScanError pins the exhaustion tail: a storage
+// iterator whose Next() returns false with a sticky Error() is a failed scan,
+// not an empty one, and the merge join must surface it exactly as the hash
+// join does.
+func TestMergeJoinPropagatesDeferredScanError(t *testing.T) {
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	matcher := NewBadgerMatcher(db.Store())
+
+	entity := datalog.NewSymbol("?e")
+	value := datalog.NewSymbol("?v")
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: entity},
+		query.Constant{Value: datalog.NewKeyword(":test/name")},
+		query.Variable{Name: value},
+	}}
+	symbols := []query.Symbol{entity, value}
+	alice := datalog.NewIdentity("user:alice")
+	bindingRel := executor.NewMaterializedRelation(
+		[]query.Symbol{entity},
+		[]executor.Tuple{{alice}},
+	)
+
+	scanErr := fmt.Errorf("simulated deferred scan failure")
+	iter := &mergeJoinIterator{
+		matcher:      matcher,
+		pattern:      pattern,
+		bindingRel:   bindingRel,
+		symbols:      symbols,
+		position:     0,
+		index:        EAVT,
+		sortedTuples: []executor.Tuple{{alice}},
+		iter:         &deferredErrorIterator{err: scanErr},
+		workspace:    make(executor.Tuple, len(symbols)),
+		tupleBuilder: matcher.getTupleBuilder(pattern, symbols),
+	}
+
+	if iter.Next() {
+		t.Fatal("iterator over a failed scan must not produce tuples")
+	}
+	if got := iter.Error(); got != scanErr {
+		t.Errorf("deferred scan error must surface through Error(); got %v", got)
 	}
 }
 
@@ -580,7 +751,7 @@ func createMockRelation(size int, symbols []query.Symbol) executor.Relation {
 	for i := 0; i < size; i++ {
 		tuples[i] = executor.Tuple{datalog.NewIdentity(fmt.Sprintf("entity:%d", i))}
 	}
-	return executor.NewMaterializedRelationNoDedupe(symbols, tuples)
+	return executor.NewMaterializedRelationFromSet(symbols, tuples, executor.ExecutorOptions{})
 }
 
 func resultToMap(rel executor.Relation) map[string]int64 {

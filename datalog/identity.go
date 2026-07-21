@@ -9,28 +9,25 @@ import (
 
 // identity is the unexported base type for entity identifiers.
 //
-// Design: entities are CONTENT-ADDRESSED. An identity IS the SHA1 of its string
-// name; there is no separate auto-assigned entity id (unlike Datomic). The
-// original string is kept in `str` only as a convenience for identities
-// constructed in-process via NewIdentity; it is NOT persisted. Identities
-// reconstructed from storage (NewIdentityFromHash, the decode path) have an
-// empty `str`, so String() falls back to the L85 of the hash. Two consequences
-// callers must know:
+// Design: entities are CONTENT-ADDRESSED. An identity IS the SHA1 of its seed
+// string; there is no separate auto-assigned entity id (unlike Datomic). The
+// seed string is consumed by NewIdentity and discarded — an identity carries
+// only the 20-byte hash, so every identity renders identically (as L85)
+// regardless of whether it was constructed from a seed or decoded from
+// storage. Two consequences callers must know:
 //
-//   - After a fresh open, query results render entities as L85 hashes, not their
-//     original names. To recover a human name, store it as an attribute (e.g.
-//     :person/name) and read that back — the hash alone does not round-trip to
-//     the string.
-//   - Because interning is keyed by the 20-byte hash, two DISTINCT name strings
+//   - Query results render entities as L85 hashes, never seed strings. To
+//     recover a human name, store it as an attribute (e.g. :person/name) and
+//     read that back — the hash alone does not round-trip to the string.
+//   - Because interning is keyed by the 20-byte hash, two DISTINCT seed strings
 //     that collide in SHA1 would intern to the SAME identity and silently alias
 //     to one entity. This is astronomically unlikely and SHA1 is used here for
 //     content addressing, not security. Note the Equal/Compare panic guards the
 //     INTERNING invariant (no two live pointers share a hash); it does not — and
-//     cannot — detect a genuine hash collision, since the colliding names become
+//     cannot — detect a genuine hash collision, since the colliding seeds become
 //     one pointer before any comparison happens.
 type identity struct {
 	value [20]byte // SHA1 hash (the content address; this IS the entity's identity)
-	str   string   // Original string, in-process only; empty when decoded from storage
 }
 
 // Identity is the exported pointer type, always interned. See the identity
@@ -51,10 +48,7 @@ func NewIdentity(s string) Identity {
 	// Slow path: allocate and intern. The identity is immutable; L85 is a pure
 	// function of value computed on demand, so there is no cached field to race
 	// on (nor one kept resident for identities that never need it).
-	id := &identity{
-		value: hash,
-		str:   s,
-	}
+	id := &identity{value: hash}
 	actual, _ := identityIntern.cache.LoadOrStore(hash, id)
 	return actual.(Identity)
 }
@@ -85,15 +79,10 @@ func (i Identity) L85() string {
 	return codec.EncodeL85(i.value[:])
 }
 
-// String returns a string representation
+// String returns the canonical L85 encoding of the hash. It is a pure
+// function of the content address: the same entity renders identically
+// regardless of how or where the Identity was constructed.
 func (i Identity) String() string {
-	if i == nil {
-		return ""
-	}
-	if i.str != "" {
-		return i.str
-	}
-	// If we don't know the original string, show the L85
 	return i.L85()
 }
 

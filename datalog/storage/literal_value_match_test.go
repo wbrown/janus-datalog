@@ -1,10 +1,7 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -90,77 +87,77 @@ func TestLiteralValueMatchesPredicateForm(t *testing.T) {
 	for _, tc := range cases {
 		for _, schemaMode := range []string{"schemaless", "schema_aware"} {
 			t.Run(tc.name+"/"+schemaMode, func(t *testing.T) {
-				dir, err := os.MkdirTemp("", "literal-value-*")
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer os.RemoveAll(dir)
+				for _, mode := range optimizerModes {
+					t.Run(mode.name, func(t *testing.T) {
+						popts := mode.plannerOptions()
+						dbOpts := DatabaseOptions{
+							Path:           t.TempDir(),
+							PlannerOptions: &popts,
+						}
+						if schemaMode == "schema_aware" {
+							dbOpts.Schema = schema.NewSchema().Add(&schema.AttributeDefinition{
+								Ident:       attr,
+								ValueType:   tc.schemaType,
+								Cardinality: schema.CardinalityOne,
+							})
+						}
+						db, err := NewDatabaseWithOptions(dbOpts)
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer db.Close()
 
-				var db *Database
-				if schemaMode == "schema_aware" {
-					sch := schema.NewSchema().Add(&schema.AttributeDefinition{
-						Ident:       attr,
-						ValueType:   tc.schemaType,
-						Cardinality: schema.CardinalityOne,
+						// Insert two entities with the matching value and one with
+						// the other value. Both query forms must find exactly the
+						// two matching entities.
+						match1 := datalog.NewIdentity("entity:match-1")
+						match2 := datalog.NewIdentity("entity:match-2")
+						nonMatch := datalog.NewIdentity("entity:nonmatch")
+
+						tx := db.NewTransaction()
+						tx.Add(match1, attr, tc.match)
+						tx.Add(match2, attr, tc.match)
+						tx.Add(nonMatch, attr, tc.other)
+						if _, err := tx.Commit(); err != nil {
+							t.Fatalf("commit failed: %v", err)
+						}
+
+						literalQuery := fmt.Sprintf(
+							`[:find ?e :where [?e :entity/attr %s]]`,
+							tc.literal,
+						)
+						predicateQuery := fmt.Sprintf(
+							`[:find ?e :where [?e :entity/attr ?v] [(= ?v %s)]]`,
+							tc.literal,
+						)
+
+						literalResult, err := executor.CollectTuples(db.Query(literalQuery))
+						if err != nil {
+							t.Fatalf("literal-pattern query failed: %v\nquery: %s",
+								err, literalQuery)
+						}
+						predicateResult, err := executor.CollectTuples(db.Query(predicateQuery))
+						if err != nil {
+							t.Fatalf("predicate-form query failed: %v\nquery: %s",
+								err, predicateQuery)
+						}
+
+						literalIDs := identitiesFromTuples(t, literalResult)
+						predicateIDs := identitiesFromTuples(t, predicateResult)
+
+						if !sameIdentitySet(literalIDs, predicateIDs) {
+							t.Errorf("literal vs predicate form returned different "+
+								"results.\n  literal-query: %s\n  predicate-query: %s"+
+								"\n  literal results:   %v\n  predicate results: %v",
+								literalQuery, predicateQuery, literalIDs, predicateIDs)
+						}
+						// Sanity: the predicate form must find both matches and
+						// not the non-matching entity.
+						if len(predicateIDs) != 2 {
+							t.Errorf("predicate form should find 2 entities, got %d: %v",
+								len(predicateIDs), predicateIDs)
+						}
 					})
-					db, err = NewDatabaseWithSchema(dir, sch)
-				} else {
-					db, err = NewDatabase(dir)
-				}
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer db.Close()
-
-				// Insert two entities with the matching value and one with
-				// the other value. Both query forms must find exactly the
-				// two matching entities.
-				match1 := datalog.NewIdentity("entity:match-1")
-				match2 := datalog.NewIdentity("entity:match-2")
-				nonMatch := datalog.NewIdentity("entity:nonmatch")
-
-				tx := db.NewTransaction()
-				tx.Add(match1, attr, tc.match)
-				tx.Add(match2, attr, tc.match)
-				tx.Add(nonMatch, attr, tc.other)
-				if _, err := tx.Commit(); err != nil {
-					t.Fatalf("commit failed: %v", err)
-				}
-
-				literalQuery := fmt.Sprintf(
-					`[:find ?e :where [?e :entity/attr %s]]`,
-					tc.literal,
-				)
-				predicateQuery := fmt.Sprintf(
-					`[:find ?e :where [?e :entity/attr ?v] [(= ?v %s)]]`,
-					tc.literal,
-				)
-
-				literalResult, err := executor.CollectTuples(db.Query(literalQuery))
-				if err != nil {
-					t.Fatalf("literal-pattern query failed: %v\nquery: %s",
-						err, literalQuery)
-				}
-				predicateResult, err := executor.CollectTuples(db.Query(predicateQuery))
-				if err != nil {
-					t.Fatalf("predicate-form query failed: %v\nquery: %s",
-						err, predicateQuery)
-				}
-
-				literalIDs := identitiesFromTuples(t, literalResult)
-				predicateIDs := identitiesFromTuples(t, predicateResult)
-
-				if !sameIdentitySet(literalIDs, predicateIDs) {
-					t.Errorf("literal vs predicate form returned different "+
-						"results.\n  literal-query: %s\n  predicate-query: %s"+
-						"\n  literal results:   %v\n  predicate results: %v",
-						literalQuery, predicateQuery, literalIDs, predicateIDs)
-				}
-				// Sanity: the predicate form must find both matches and
-				// not the non-matching entity.
-				if len(predicateIDs) != 2 {
-					t.Errorf("predicate form should find 2 entities, got %d: %v",
-						len(predicateIDs), predicateIDs)
 				}
 			})
 		}

@@ -49,6 +49,17 @@ func parseFunction(fn string, args []query.PatternElement) (query.Function, erro
 	case "enumerate":
 		return parseEnumerate(args)
 	default:
+		// User-defined functions: a name with a registered implementation
+		// (query.DefaultRegistry.RegisterImplementation) parses to a
+		// CustomFunction; anything else is unknown, rejected here at the
+		// boundary. Registration must precede parsing.
+		if _, ok := query.DefaultRegistry.Implementation(fn); ok {
+			terms := make([]query.Term, len(args))
+			for i, arg := range args {
+				terms[i] = elementToTerm(arg)
+			}
+			return query.CustomFunction{Fn: fn, Args: terms}, nil
+		}
 		return nil, fmt.Errorf("unsupported function: %s", fn)
 	}
 }
@@ -59,16 +70,18 @@ func parseArithmetic(fn string, args []query.PatternElement) (query.Function, er
 		return nil, fmt.Errorf("%s requires at least 1 argument, got 0", fn)
 	}
 
-	var op query.ArithmeticOp
+	// The operator name resolves here, once, to its pre-interned symbol;
+	// downstream dispatch is pointer equality.
+	var op query.Symbol
 	switch fn {
 	case "+":
-		op = query.OpAdd
+		op = datalog.SymAdd
 	case "-":
-		op = query.OpSubtract
+		op = datalog.SymSubtract
 	case "*":
-		op = query.OpMultiply
+		op = datalog.SymMultiply
 	case "/":
-		op = query.OpDivide
+		op = datalog.SymDivide
 	}
 
 	terms := make([]query.Term, len(args))
@@ -85,20 +98,20 @@ func parseComparisonFunction(fn string, args []query.PatternElement) (query.Func
 		return nil, fmt.Errorf("%s requires exactly 2 arguments, got %d", fn, len(args))
 	}
 
-	var op query.CompareOp
+	var op query.Symbol
 	switch fn {
 	case "=":
-		op = query.OpEQ
+		op = datalog.SymEQ
 	case "<":
-		op = query.OpLT
+		op = datalog.SymLT
 	case "<=":
-		op = query.OpLTE
+		op = datalog.SymLTE
 	case ">":
-		op = query.OpGT
+		op = datalog.SymGT
 	case ">=":
-		op = query.OpGTE
+		op = datalog.SymGTE
 	case "!=":
-		op = query.OpNE
+		op = datalog.SymNE
 	}
 
 	comparison := &query.Comparison{
@@ -128,14 +141,33 @@ func parseStringConcat(args []query.PatternElement) (query.Function, error) {
 	}, nil
 }
 
-// parseTimeExtraction handles time extraction functions
+// parseTimeExtraction handles time extraction functions. The field name
+// resolves here, once, to its pre-interned symbol.
 func parseTimeExtraction(field string, args []query.PatternElement) (query.Function, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s requires exactly 1 argument, got %d", field, len(args))
 	}
 
+	var fieldSym query.Symbol
+	switch field {
+	case "year":
+		fieldSym = datalog.SymYear
+	case "month":
+		fieldSym = datalog.SymMonth
+	case "day":
+		fieldSym = datalog.SymDay
+	case "hour":
+		fieldSym = datalog.SymHour
+	case "minute":
+		fieldSym = datalog.SymMinute
+	case "second":
+		fieldSym = datalog.SymSecond
+	default:
+		return nil, fmt.Errorf("unknown time extraction function: %s", field)
+	}
+
 	return &query.TimeExtractionFunction{
-		Field:    field,
+		Field:    fieldSym,
 		TimeTerm: elementToTerm(args[0]),
 	}, nil
 }
@@ -173,24 +205,6 @@ func parseIdentity(args []query.PatternElement) (query.Function, error) {
 	return &query.IdentityFunction{
 		Arg: elementToTerm(args[0]),
 	}, nil
-}
-
-// parseAggregate creates an AggregateFunction from a function name and variable
-func parseAggregate(fn string, varName query.Symbol) (query.AggregateFunction, error) {
-	switch fn {
-	case "count":
-		return &query.CountAggregate{Var: varName}, nil
-	case "sum":
-		return &query.SumAggregate{Var: varName}, nil
-	case "avg":
-		return &query.AvgAggregate{Var: varName}, nil
-	case "min":
-		return &query.MinAggregate{Var: varName}, nil
-	case "max":
-		return &query.MaxAggregate{Var: varName}, nil
-	default:
-		return nil, fmt.Errorf("unsupported aggregate function: %s", fn)
-	}
 }
 
 // =============================================================================

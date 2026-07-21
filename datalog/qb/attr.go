@@ -65,7 +65,7 @@ type Val struct {
 func V(value interface{}) Val {
 	// Normalize integer width to canonical int64 so a Go int constant matches
 	// stored int64 data the same as the EDN parser's int64 literals do.
-	return Val{value: datalog.NormalizeValue(value)}
+	return Val{value: normalizeConstant(value)}
 }
 
 // Value returns the underlying value.

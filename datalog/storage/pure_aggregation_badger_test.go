@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -52,10 +50,17 @@ func TestPureAggregationWithBadgerDB(t *testing.T) {
 		t.Fatalf("Failed to commit transaction: %v", err)
 	}
 
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testPureAggregationWithBadgerDB(t, db, mode)
+		})
+	}
+}
+
+func testPureAggregationWithBadgerDB(t *testing.T, db *Database, mode optimizerMode) {
 	// Create executor with BadgerDB matcher
 	// Note: Matcher options must match executor options for proper propagation
 	execOpts := executor.ExecutorOptions{
-		EnableIteratorComposition:  true,
 		EnableTrueStreaming:        true,
 		EnableSymmetricHashJoin:    false,
 		EnableParallelSubqueries:   true,
@@ -65,7 +70,7 @@ func TestPureAggregationWithBadgerDB(t *testing.T) {
 	}
 	matcher := NewBadgerMatcherWithOptions(db.Store(), execOpts)
 	opts := planner.PlannerOptions{
-		EnableIteratorComposition:  execOpts.EnableIteratorComposition,
+		EnableAlgebraOptimizer:     mode.algebra,
 		EnableTrueStreaming:        execOpts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:    execOpts.EnableSymmetricHashJoin,
 		EnableParallelSubqueries:   execOpts.EnableParallelSubqueries,

@@ -1,9 +1,6 @@
 # BUG: Legacy Executor Incorrectly Rejects Expression Symbols
 
-**Status**: ACTIVE
-**Severity**: MEDIUM - Validation failures, legacy executor needs fixing
-**Affects**: Legacy executor (executePhaseSequential in executor_sequential.go)
-**Date Discovered**: 2025-10-16
+**Status**: ACTIVE **Severity**: MEDIUM - Validation failures, legacy executor needs fixing **Affects**: Legacy executor (executePhaseSequential in executor_sequential.go) **Date Discovered**: 2025-10-16
 
 ## Summary
 

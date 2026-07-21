@@ -119,8 +119,6 @@ type Relation interface {
 	// Size returns the number of tuples (may be expensive for iterators)
 	Size() int
 
-	// IsEmpty returns true if the relation has no tuples
-	IsEmpty() bool
 
 	// Get returns a specific tuple by index (may be expensive for streaming relations)
 	Get(i int) Tuple
@@ -152,9 +150,6 @@ type Relation interface {
 
 	// Sort returns a new relation sorted by the specified order-by clauses
 	Sort(orderBy []query.OrderByClause) Relation
-
-	// Filter returns a new relation with only tuples that satisfy the filter
-	Filter(filter Filter) Relation
 
 	// FilterWithPredicate returns a new relation filtered by a query.Predicate
 	FilterWithPredicate(pred query.Predicate) Relation
@@ -320,11 +315,14 @@ func (ci *CachingIterator) Next() bool {
 	}
 
 	// Iteration complete - capture any deferred source error for cache replay,
-	// then signal waiting goroutines.
+	// then signal waiting goroutines. First error wins: never overwrite an
+	// already-recorded error (possibly with nil).
 	ci.done = true
 	if ci.errPtr != nil {
 		ci.mu.Lock()
-		*ci.errPtr = ci.inner.Error()
+		if *ci.errPtr == nil {
+			*ci.errPtr = ci.inner.Error()
+		}
 		ci.mu.Unlock()
 	}
 	ci.signalComplete()
@@ -451,19 +449,16 @@ func newMaterializedRelationFromSet(
 	}
 }
 
-// NewMaterializedRelationNoDedupe creates a materialized relation without deduplication
-// Use this when you know the tuples are already unique (e.g., from storage scans)
-func NewMaterializedRelationNoDedupe(symbols []query.Symbol, tuples []Tuple) *MaterializedRelation {
-	validateTupleValueDomain(tuples)
-	return &MaterializedRelation{
-		symbols: symbols,
-		tuples:  tuples,
-		options: ExecutorOptions{}, // Default options
-	}
-}
-
-// NewMaterializedRelationNoDedupeWithOptions creates a new relation without deduplication, with options
-func NewMaterializedRelationNoDedupeWithOptions(symbols []query.Symbol, tuples []Tuple, opts ExecutorOptions) *MaterializedRelation {
+// NewMaterializedRelationFromSet constructs a Relation at the package
+// boundary from a tuple stream the caller warrants is already a set — each
+// complete tuple appears at most once, as produced by a distinct scan or a
+// set-preserving operator. The warranty replaces the deduplication pass;
+// the value-domain admission check still runs because boundary callers
+// inject raw Go values into relational flow. Interior operators, whose
+// tuples never left relational flow and which carry derived
+// RelationProperties, construct through newMaterializedRelationFromSet
+// instead.
+func NewMaterializedRelationFromSet(symbols []query.Symbol, tuples []Tuple, opts ExecutorOptions) *MaterializedRelation {
 	validateTupleValueDomain(tuples)
 	return &MaterializedRelation{
 		symbols: symbols,
@@ -540,12 +535,29 @@ func (r *MaterializedRelation) carryErr(derived Relation) Relation {
 	return derived
 }
 
-func (r *MaterializedRelation) Size() int {
-	return len(r.tuples)
+// EmptyRelationError returns the deferred (taint) error of a relation that
+// reports zero tuples. An errored relation that materialized empty is not an
+// empty relation — its zero rows mean "the scan failed", not "no data" — so
+// every consumer that branches on emptiness must consult this before
+// treating absence of tuples as absence of data. Laundering the distinction
+// turned a mandated loud failure into a silent empty
+// (docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md).
+//
+// Call only on relations reporting Size() == 0: probing iterates one step,
+// which is destructive on a single-use stream (streaming relations report
+// Size() -1 and never take emptiness branches).
+func EmptyRelationError(rel Relation) error {
+	it := rel.Iterator()
+	_ = it.Next()
+	err := it.Error()
+	if closeErr := it.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
-func (r *MaterializedRelation) IsEmpty() bool {
-	return len(r.tuples) == 0
+func (r *MaterializedRelation) Size() int {
+	return len(r.tuples)
 }
 
 // Options returns the executor options for this materialized relation
@@ -569,12 +581,7 @@ func (r *MaterializedRelation) Get(i int) Tuple {
 
 // SymbolIndex returns the index of a symbol in this relation
 func (r *MaterializedRelation) SymbolIndex(sym query.Symbol) int {
-	for i, s := range r.symbols {
-		if s == sym {
-			return i
-		}
-	}
-	return -1
+	return query.SymbolIndex(r.symbols, sym)
 }
 
 // GetValue returns a specific value by tuple index and symbol
@@ -654,18 +661,18 @@ func (r *MaterializedRelation) ProjectFromPattern(pattern *query.DataPattern) Re
 		}
 	}
 	if sym, ok := pattern.GetA().(query.Variable); ok {
-		if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+		if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 			neededSymbols = append(neededSymbols, sym.Name)
 		}
 	}
 	if sym, ok := pattern.GetV().(query.Variable); ok {
-		if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+		if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 			neededSymbols = append(neededSymbols, sym.Name)
 		}
 	}
 	if len(pattern.Elements) > 3 {
 		if sym, ok := pattern.GetT().(query.Variable); ok {
-			if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+			if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 				neededSymbols = append(neededSymbols, sym.Name)
 			}
 		}
@@ -722,20 +729,12 @@ func (r *MaterializedRelation) Project(symbols []query.Symbol) (Relation, error)
 	}
 
 	// Find symbol indices
-	indices := make([]int, len(symbols))
-	for i, sym := range symbols {
-		idx := -1
-		for j, existing := range r.symbols {
-			if existing == sym {
-				idx = j
-				break
-			}
-		}
+	indices := query.SymbolIndexTable(r.symbols, symbols)
+	for i, idx := range indices {
 		if idx < 0 {
 			// Symbol not found - this is a query error in Datalog
-			return nil, fmt.Errorf("cannot project: symbol %s not found in relation (has symbols: %v)", sym, r.symbols)
+			return nil, fmt.Errorf("cannot project: symbol %s not found in relation (has symbols: %v)", symbols[i], r.symbols)
 		}
-		indices[i] = idx
 	}
 
 	// Project tuples - directly access our tuples field
@@ -780,61 +779,39 @@ func (r *MaterializedRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return r.carryErr(SortRelation(r, orderBy))
 }
 
-// Filter returns a new relation with only tuples that satisfy the filter
-func (r *MaterializedRelation) Filter(filter Filter) Relation {
-	// Check if all required symbols are present
-	for _, sym := range filter.RequiredSymbols() {
-		found := false
-		for _, s := range r.symbols {
-			if s == sym {
-				found = true
-				break
-			}
-		}
-		if !found {
-			// Missing required symbol - return empty relation
-			return NewMaterializedRelationWithOptions(r.symbols, nil, r.options)
-		}
-	}
-
-	// Apply filter directly to our tuples
-	var filtered []Tuple
-	for _, tuple := range r.tuples {
-		if filter.Evaluate(tuple, r.symbols) {
-			filtered = append(filtered, tuple)
-		}
-	}
-
-	return newMaterializedRelationFromSet(
-		r.symbols,
-		filtered,
-		r.options,
-		r.properties,
-	)
-}
-
-// FilterWithPredicate filters the relation using a query.Predicate
+// FilterWithPredicate filters the relation using a query.Predicate. The
+// first evaluation error stops the loop and surfaces as the result's
+// deferred error — an eval failure must not silently drop the tuple. The
+// source relation's own deferred error carries through first.
 func (r *MaterializedRelation) FilterWithPredicate(pred query.Predicate) Relation {
-	// Build bindings map for each tuple
 	var filtered []Tuple
+	var evalErr error
 	for _, tuple := range r.tuples {
 		bindings := make(map[query.Symbol]interface{})
-		for i, sym := range r.symbols {
-			bindings[sym] = tuple[i]
-		}
+		bindTuple(bindings, r.symbols, tuple)
 
-		// Apply the predicate
-		if passes, err := pred.Eval(bindings); err == nil && passes {
+		passes, err := pred.Eval(bindings)
+		if err != nil {
+			evalErr = err
+			break
+		}
+		if passes {
 			filtered = append(filtered, tuple)
 		}
 	}
 
-	return newMaterializedRelationFromSet(
+	mat := newMaterializedRelationFromSet(
 		r.symbols,
 		filtered,
 		r.options,
 		r.properties,
 	)
+	if r.err != nil {
+		mat.err = r.err
+	} else if evalErr != nil {
+		mat.err = evalErr
+	}
+	return mat
 }
 
 // Select returns a new relation with only tuples that satisfy the predicate
@@ -886,9 +863,7 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 	for _, tuple := range r.tuples {
 		// Create bindings from tuple
 		bindings := make(map[query.Symbol]interface{})
-		for i, sym := range r.symbols {
-			bindings[sym] = tuple[i]
-		}
+		bindTuple(bindings, r.symbols, tuple)
 
 		// Evaluate the function
 		result, err := fn.Eval(bindings)
@@ -904,6 +879,11 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 				continue
 			}
 			result = gsr.Value
+		}
+
+		if err := admitExpressionResult(fn, result); err != nil {
+			evalErr = err
+			break
 		}
 
 		// Create new tuple with function result
@@ -924,16 +904,6 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 		mat.err = r.err
 	}
 	return mat
-}
-
-// contains checks if a symbol is in a slice
-func contains(symbols []query.Symbol, sym query.Symbol) bool {
-	for _, s := range symbols {
-		if s == sym {
-			return true
-		}
-	}
-	return false
 }
 
 // sliceIterator iterates over a slice of tuples
@@ -1184,44 +1154,6 @@ func (r *StreamingRelation) RequiresCopy() bool {
 	return true
 }
 
-func (r *StreamingRelation) IsEmpty() bool {
-	// If materialized, check materialized relation
-	if r.materialized != nil {
-		return r.materialized.IsEmpty()
-	}
-
-	// If iterator has been consumed, check count
-	if r.counter != nil && r.counter.IsDone() {
-		return r.counter.Count() == 0
-	}
-
-	// With EnableTrueStreaming or Materialize()'d relations, don't peek —
-	// consuming the first tuple via CountingIterator would cause the
-	// CachingIterator (created later by Iterator()) to miss it.
-	if r.options.EnableTrueStreaming || r.shouldCache {
-		return false
-	}
-
-	// If cache is ready (already iterated), check cache
-	if r.cacheReady {
-		return len(r.cache) == 0
-	}
-
-	// Non-streaming mode: safe to peek
-	if r.counter == nil {
-		r.counter = NewCountingIterator(r.iterator)
-	}
-
-	// Check if there's at least one tuple
-	hasOne := r.counter.Next()
-	if !hasOne {
-		return true // Empty
-	}
-
-	// Not empty - but we've consumed the first tuple
-	return false
-}
-
 // Get returns a specific tuple by index
 func (r *StreamingRelation) Get(i int) Tuple {
 	if i < 0 {
@@ -1312,18 +1244,18 @@ func (r *StreamingRelation) ProjectFromPattern(pattern *query.DataPattern) Relat
 		}
 	}
 	if sym, ok := pattern.GetA().(query.Variable); ok {
-		if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+		if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 			neededSymbols = append(neededSymbols, sym.Name)
 		}
 	}
 	if sym, ok := pattern.GetV().(query.Variable); ok {
-		if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+		if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 			neededSymbols = append(neededSymbols, sym.Name)
 		}
 	}
 	if len(pattern.Elements) > 3 {
 		if sym, ok := pattern.GetT().(query.Variable); ok {
-			if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+			if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 				neededSymbols = append(neededSymbols, sym.Name)
 			}
 		}
@@ -1385,14 +1317,7 @@ func (r *StreamingRelation) Project(symbols []query.Symbol) (Relation, error) {
 	// Streaming is now the default behavior
 	// Validate symbols exist
 	for _, sym := range symbols {
-		found := false
-		for _, existing := range r.symbols {
-			if existing == sym {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !query.ContainsSymbol(r.symbols, sym) {
 			return nil, fmt.Errorf("cannot project: symbol %s not found in relation", sym)
 		}
 	}
@@ -1461,45 +1386,27 @@ func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return mat.Sort(orderBy)
 }
 
-// Filter returns a new relation with only tuples that satisfy the filter
-func (r *StreamingRelation) Filter(filter Filter) Relation {
-	if r.options.EnableIteratorComposition {
-		// Use iterator composition for true streaming
-		filterIter := NewFilterIterator(r.Iterator(), r.symbols, filter)
-		return NewStreamingRelationWithProperties(r.symbols, filterIter, r.options, r.properties)
-	}
-	// Fall back to current behavior
-	return FilterRelation(r, filter)
-}
-
-// FilterWithPredicate filters the relation using a query.Predicate
+// FilterWithPredicate filters the relation using a query.Predicate.
+// Filtering is a pure streaming transform — one pass, nothing retained —
+// so the result is always a composed stream. Consumers that need replay
+// call Materialize at their point of need.
 func (r *StreamingRelation) FilterWithPredicate(pred query.Predicate) Relation {
-	if r.options.EnableIteratorComposition {
-		// Use iterator composition for true streaming
-		predIter := NewPredicateFilterIterator(r.Iterator(), r.symbols, pred)
-		return NewStreamingRelationWithProperties(r.symbols, predIter, r.options, r.properties)
-	}
-	// Fall back to current behavior - materialize then filter
-	materialized := r.Materialize()
-	return materialized.FilterWithPredicate(pred)
+	predIter := NewPredicateFilterIterator(r.Iterator(), r.symbols, pred)
+	return NewStreamingRelationWithProperties(r.symbols, predIter, r.options, r.properties)
 }
 
-// EvaluateFunction evaluates a function and adds its result as a new symbol
+// EvaluateFunction evaluates a function and adds its result as a new symbol.
+// Like filtering, this is a pure streaming transform: always a composed
+// stream, never a buffer.
 func (r *StreamingRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
-	if r.options.EnableIteratorComposition {
-		// Use iterator composition for true streaming
-		evalIter := NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, fn, outputSymbol)
-		newSymbols := append(r.symbols, outputSymbol)
-		return NewStreamingRelationWithProperties(
-			newSymbols,
-			evalIter,
-			r.options,
-			r.properties.addSymbol(outputSymbol),
-		)
-	}
-	// Fall back to current behavior - materialize then evaluate
-	materialized := r.Materialize()
-	return materialized.EvaluateFunction(fn, outputSymbol)
+	evalIter := NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, fn, outputSymbol)
+	newSymbols := append(r.symbols, outputSymbol)
+	return NewStreamingRelationWithProperties(
+		newSymbols,
+		evalIter,
+		r.options,
+		r.properties.addSymbol(outputSymbol),
+	)
 }
 
 // Select returns a new relation with only tuples that satisfy the predicate
@@ -1551,13 +1458,7 @@ type PatternBinding struct {
 
 // SymbolIndex returns the index of a symbol in a relation, or -1 if not found
 func SymbolIndex(rel Relation, sym query.Symbol) int {
-	syms := rel.Symbols()
-	for i, s := range syms {
-		if s == sym {
-			return i
-		}
-	}
-	return -1
+	return query.SymbolIndex(rel.Symbols(), sym)
 }
 
 // CommonSymbols returns symbols that appear in both relations
@@ -1582,7 +1483,6 @@ func Select(rel Relation, pred func(Tuple) bool) Relation {
 	var selected []Tuple
 	needsCopy := rel.RequiresCopy()
 	it := rel.Iterator()
-	defer it.Close()
 
 	for it.Next() {
 		tuple := it.Tuple()
@@ -1593,13 +1493,21 @@ func Select(rel Relation, pred func(Tuple) bool) Relation {
 			selected = append(selected, tuple)
 		}
 	}
+	scanErr := it.Error()
+	if closeErr := it.Close(); scanErr == nil {
+		scanErr = closeErr
+	}
 
-	return newMaterializedRelationFromSet(
+	// A failed scan is not an empty selection — carry it as the result's
+	// deferred error.
+	result := newMaterializedRelationFromSet(
 		rel.Symbols(),
 		selected,
 		rel.Options(),
 		rel.Properties(),
 	)
+	result.err = scanErr
+	return result
 }
 
 // ProductRelation represents a streaming Cartesian product of multiple relations
@@ -1684,15 +1592,6 @@ func (p *ProductRelation) Size() int {
 	return size
 }
 
-func (p *ProductRelation) IsEmpty() bool {
-	for _, rel := range p.relations {
-		if rel.IsEmpty() {
-			return true
-		}
-	}
-	return len(p.relations) == 0
-}
-
 func (p *ProductRelation) Get(i int) Tuple {
 	// Materialize for random access
 	return p.Materialize().Get(i)
@@ -1722,15 +1621,9 @@ func (p *ProductRelation) Project(symbols []query.Symbol) (Relation, error) {
 	}
 
 	// Validate symbols exist
+	relSymbols := p.Symbols()
 	for _, sym := range symbols {
-		found := false
-		for _, existing := range p.Symbols() {
-			if existing == sym {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !query.ContainsSymbol(relSymbols, sym) {
 			return nil, fmt.Errorf("cannot project: symbol %s not found in relation", sym)
 		}
 	}
@@ -1751,11 +1644,6 @@ func (p *ProductRelation) Materialize() Relation {
 
 func (p *ProductRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return p.Materialize().Sort(orderBy)
-}
-
-func (p *ProductRelation) Filter(filter Filter) Relation {
-	// Materialize then filter
-	return p.Materialize().Filter(filter)
 }
 
 func (p *ProductRelation) FilterWithPredicate(pred query.Predicate) Relation {

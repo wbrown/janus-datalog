@@ -30,6 +30,15 @@ type OrFallbackRelation struct {
 	prefetched     bool           // True when PrefetchEntities has warmed the EA cache
 	shortCircuit   bool           // true = fallback (first match wins), false = correlated union (all branches)
 	consumedGroups []int          // Input relation groups already incorporated into outerRel
+
+	// headerSyms is the declared header of an explicit-join form (or-join
+	// JoinVars; or-default-join RequiredVars ∪ OutputVars). Branch
+	// evaluation may see only the outer tuple's header bindings: a branch
+	// variable outside the header is a local, and a name collision with an
+	// outer symbol must not bind (alpha-equivalence). nil means an
+	// inference form (plain or / or-default), which unifies on every
+	// shared free variable by language rule and sees the full outer tuple.
+	headerSyms []query.Symbol
 }
 
 // NewOrFallbackRelation creates a streaming OR relation.
@@ -202,21 +211,6 @@ func collectAllBranchOverwrittenSymbols(
 					}
 				}
 			}
-		case *query.Subquery:
-			switch binding := typed.Binding.(type) {
-			case query.Symbol:
-				add(binding)
-			case query.TupleBinding:
-				for _, symbol := range binding.Variables {
-					add(symbol)
-				}
-			case query.RelationBinding:
-				for i, symbol := range binding.Variables {
-					if !subqueryFindVariablePassesOuter(typed.Query, i, symbol, outerSet) {
-						add(symbol)
-					}
-				}
-			}
 		case *query.OrClause:
 			for _, nested := range typed.Branches {
 				for _, nestedClause := range nested {
@@ -263,16 +257,6 @@ func orBranchesEmitAtMostOne(
 			case *query.SubqueryPattern:
 				switch binding := typed.Binding.(type) {
 				case query.ScalarBinding, query.TupleBinding:
-				case query.RelationBinding:
-					if !relationBindingGroupsAreOuterBound(typed.Query, binding.Variables, outerSet) {
-						return false
-					}
-				default:
-					return false
-				}
-			case *query.Subquery:
-				switch binding := typed.Binding.(type) {
-				case query.Symbol, query.TupleBinding:
 				case query.RelationBinding:
 					if !relationBindingGroupsAreOuterBound(typed.Query, binding.Variables, outerSet) {
 						return false
@@ -354,30 +338,10 @@ func collectBranchOutputSymbols(branch []query.Clause) []query.Symbol {
 			}
 		case *query.SubqueryPattern:
 			// Subquery provides its binding variables
-			switch b := clause.Binding.(type) {
-			case query.ScalarBinding:
-				if !seen[b.Variable] {
-					seen[b.Variable] = true
-					outputs = append(outputs, b.Variable)
-				}
-			case query.TupleBinding:
-				for _, v := range b.Variables {
-					if !seen[v] {
-						seen[v] = true
-						outputs = append(outputs, v)
-					}
-				}
-			case query.RelationBinding:
-				for _, v := range b.Variables {
-					if !seen[v] {
-						seen[v] = true
-						outputs = append(outputs, v)
-					}
-				}
-			case query.CollectionBinding:
-				if !seen[b.Variable] {
-					seen[b.Variable] = true
-					outputs = append(outputs, b.Variable)
+			for _, v := range clause.Binding.BoundVariables() {
+				if !seen[v] {
+					seen[v] = true
+					outputs = append(outputs, v)
 				}
 			}
 		case *query.OrJoinClause:
@@ -452,6 +416,22 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		seen = NewTupleKeyMap()
 	}
 
+	// Branch-visible outer bindings. Inference forms (headerSyms nil) see
+	// the full outer tuple; explicit-header forms see only the header's
+	// projection — branch variables outside the header are locals.
+	branchVisibleSyms := outer.Symbols()
+	var branchVisibleIdx []int
+	if r.headerSyms != nil {
+		branchVisibleSyms = nil
+		branchVisibleIdx = make([]int, 0, len(r.headerSyms))
+		for i, sym := range outer.Symbols() {
+			if query.ContainsSymbol(r.headerSyms, sym) {
+				branchVisibleSyms = append(branchVisibleSyms, sym)
+				branchVisibleIdx = append(branchVisibleIdx, i)
+			}
+		}
+	}
+
 	// Emit annotation for iterator creation
 	// Note: Don't call outer.Size() - it may block for streaming relations
 	if collector := r.ctx.Collector(); collector != nil {
@@ -467,20 +447,22 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 	}
 
 	return &OrFallbackIterator{
-		executor:     r.executor,
-		ctx:          r.ctx,
-		branches:     r.branches,
-		shortCircuit: r.shortCircuit,
-		outerIter:    outerIter,
-		outerRel:     outer, // re-iterable: drives join-key narrowing & EA cache branch building
-		outerSyms:    outer.Symbols(),
-		outputSyms:   r.symbols, // Use pre-computed symbols
-		options:      r.options,
-		joinSyms:     r.joinSyms,
-		prefetched:   r.prefetched,
-		seen:         seen,
-		err:          setupErr,
-		done:         setupErr != nil,
+		executor:          r.executor,
+		ctx:               r.ctx,
+		branches:          r.branches,
+		shortCircuit:      r.shortCircuit,
+		outerIter:         outerIter,
+		outerRel:          outer, // re-iterable: drives join-key narrowing & EA cache branch building
+		outerSyms:         outer.Symbols(),
+		outputSyms:        r.symbols, // Use pre-computed symbols
+		options:           r.options,
+		joinSyms:          r.joinSyms,
+		branchVisibleSyms: branchVisibleSyms,
+		branchVisibleIdx:  branchVisibleIdx,
+		prefetched:        r.prefetched,
+		seen:              seen,
+		err:               setupErr,
+		done:              setupErr != nil,
 	}
 }
 
@@ -495,12 +477,6 @@ func (r *OrFallbackRelation) Properties() RelationProperties {
 
 func (r *OrFallbackRelation) Size() int {
 	return -1 // Streaming - unknown size
-}
-
-func (r *OrFallbackRelation) IsEmpty() bool {
-	it := r.Iterator()
-	defer it.Close()
-	return !it.Next()
 }
 
 func (r *OrFallbackRelation) Get(i int) Tuple {
@@ -548,10 +524,6 @@ func (r *OrFallbackRelation) Materialize() Relation {
 
 func (r *OrFallbackRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return r.Materialize().Sort(orderBy)
-}
-
-func (r *OrFallbackRelation) Filter(filter Filter) Relation {
-	return FilterRelation(r, filter)
 }
 
 func (r *OrFallbackRelation) FilterWithPredicate(pred query.Predicate) Relation {
@@ -612,6 +584,14 @@ type OrFallbackIterator struct {
 	options      ExecutorOptions
 	joinSyms     []query.Symbol // From or-join: used as cache key (not all shared symbols)
 
+	// Branch-visible outer bindings: the outer symbols a branch may see,
+	// with their positions in the outer tuple. Equal to outerSyms (idx nil)
+	// for inference forms; restricted to the declared header for
+	// explicit-join forms — branch variables outside the header are locals
+	// and must not capture outer bindings of the same name.
+	branchVisibleSyms []query.Symbol
+	branchVisibleIdx  []int
+
 	// Current state
 	currentBranchIter     Iterator
 	currentBranchRelation Relation // Track relation for RequiresCopy check
@@ -639,6 +619,30 @@ type OrFallbackIterator struct {
 	unionBranchIdx  int      // next branch to try for current outer tuple
 	unionOuterTuple Tuple    // current outer tuple being processed
 	unionInputRel   Relation // inputRel for current outer tuple
+}
+
+// branchInput returns the single-tuple relation of outer bindings the
+// branches may see for one outer tuple, and the visible tuple itself (for
+// shared-symbol filtering). Explicit-header forms project the outer tuple to
+// the header; inference forms pass it whole. A nil relation means no visible
+// bindings (unit outer, or an empty header projection) — branches evaluate
+// with no input.
+func (it *OrFallbackIterator) branchInput(outerTuple Tuple) (Relation, Tuple) {
+	visible := outerTuple
+	if it.branchVisibleIdx != nil {
+		visible = make(Tuple, len(it.branchVisibleIdx))
+		for i, idx := range it.branchVisibleIdx {
+			visible[i] = outerTuple[idx]
+		}
+	}
+	if len(it.branchVisibleSyms) == 0 {
+		return nil, visible
+	}
+	return NewMaterializedRelationWithOptions(
+		it.branchVisibleSyms,
+		[]Tuple{visible},
+		it.options,
+	), visible
 }
 
 // cachedBranch holds a hash index over an uncorrelated branch result.
@@ -669,9 +673,14 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 		return nil
 	}
 
-	// Need E as variable (join key) and A as constant keyword
+	// Need E as variable (join key) and A as constant keyword. The E
+	// variable must be branch-visible: outside an explicit header it is a
+	// branch local and must not bind to an outer symbol of the same name.
 	eVar, eIsVar := dp.GetE().(query.Variable)
 	if !eIsVar {
+		return nil
+	}
+	if !query.ContainsSymbol(it.branchVisibleSyms, eVar.Name) {
 		return nil
 	}
 	var aKw datalog.Keyword
@@ -695,13 +704,7 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 	}
 
 	// Find E position in outer relation symbols
-	eIdx := -1
-	for i, sym := range it.outerSyms {
-		if sym == eVar.Name {
-			eIdx = i
-			break
-		}
-	}
+	eIdx := query.SymbolIndex(it.outerSyms, eVar.Name)
 	if eIdx < 0 {
 		return nil
 	}
@@ -856,27 +859,21 @@ func buildCachedBranch(
 		// Fallback: use all shared symbols (non-or-join path)
 		keySyms = nil
 		for _, osym := range outerSyms {
-			for _, bsym := range branchSyms {
-				if osym == bsym {
-					keySyms = append(keySyms, osym)
-				}
+			if query.ContainsSymbol(branchSyms, osym) {
+				keySyms = append(keySyms, osym)
 			}
 		}
 	}
 
 	var bIdx, oIdx []int
 	for _, ksym := range keySyms {
-		for oi, osym := range outerSyms {
-			if osym == ksym {
-				for bi, bsym := range branchSyms {
-					if bsym == ksym {
-						oIdx = append(oIdx, oi)
-						bIdx = append(bIdx, bi)
-						break
-					}
-				}
-				break
-			}
+		oi := query.SymbolIndex(outerSyms, ksym)
+		if oi < 0 {
+			continue
+		}
+		if bi := query.SymbolIndex(branchSyms, ksym); bi >= 0 {
+			oIdx = append(oIdx, oi)
+			bIdx = append(bIdx, bi)
 		}
 	}
 	if len(bIdx) == 0 {
@@ -944,18 +941,14 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 	// Initialize: advance to first outer tuple before trying any branches
 	if it.unionInputRel == nil && it.unionBranchIdx == 0 {
 		if !it.outerIter.Next() {
-			it.err = it.outerIter.Error()
+			if e := it.outerIter.Error(); it.err == nil {
+				it.err = e
+			}
 			it.done = true
 			return false
 		}
 		it.unionOuterTuple = it.outerIter.Tuple()
-		if len(it.outerSyms) > 0 {
-			it.unionInputRel = NewMaterializedRelationWithOptions(
-				it.outerSyms,
-				[]Tuple{it.unionOuterTuple},
-				it.options,
-			)
-		}
+		it.unionInputRel, _ = it.branchInput(it.unionOuterTuple)
 	}
 
 	for {
@@ -1035,24 +1028,16 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 
 		// All branches exhausted for current outer tuple — advance to next
 		if !it.outerIter.Next() {
-			it.err = it.outerIter.Error()
+			if e := it.outerIter.Error(); it.err == nil {
+				it.err = e
+			}
 			it.done = true
 			return false
 		}
 
 		it.unionOuterTuple = it.outerIter.Tuple()
 		it.unionBranchIdx = 0
-
-		// Build single-tuple relation for this input
-		if len(it.outerSyms) > 0 {
-			it.unionInputRel = NewMaterializedRelationWithOptions(
-				it.outerSyms,
-				[]Tuple{it.unionOuterTuple},
-				it.options,
-			)
-		} else {
-			it.unionInputRel = nil
-		}
+		it.unionInputRel, _ = it.branchInput(it.unionOuterTuple)
 	}
 }
 
@@ -1089,16 +1074,9 @@ func (it *OrFallbackIterator) outerJoinKeys() Relation {
 	}
 
 	// Map each join symbol to its tuple position in the outer relation.
-	pos := make([]int, len(it.joinSyms))
-	for i, js := range it.joinSyms {
-		pos[i] = -1
-		for oi, osym := range it.outerSyms {
-			if osym == js {
-				pos[i] = oi
-				break
-			}
-		}
-		if pos[i] < 0 {
+	pos := query.SymbolIndexTable(it.outerSyms, it.joinSyms)
+	for _, p := range pos {
+		if p < 0 {
 			return nil // join symbol not in the outer relation — can't narrow
 		}
 	}
@@ -1183,7 +1161,9 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 
 		// Need to advance to next outer tuple
 		if !it.outerIter.Next() {
-			it.err = it.outerIter.Error()
+			if e := it.outerIter.Error(); it.err == nil {
+				it.err = e
+			}
 			// Emit annotation when outer iterator exhausted
 			if collector := it.ctx.Collector(); collector != nil {
 				collector.Add(annotations.Event{
@@ -1209,17 +1189,7 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 			})
 		}
 
-		// Build single-tuple relation for this input.
-		// Special case: if outer has no symbols (unit relation), pass nil to avoid
-		// creating a ProductRelation that would try to re-iterate streaming results.
-		var inputRel Relation
-		if len(it.outerSyms) > 0 {
-			inputRel = NewMaterializedRelationWithOptions(
-				it.outerSyms,
-				[]Tuple{outerTuple},
-				it.options,
-			)
-		}
+		inputRel, visibleTuple := it.branchInput(outerTuple)
 
 		// Try each branch until one returns results
 		for branchIdx, branch := range it.branches {
@@ -1356,8 +1326,10 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 								// No shared symbols — pass through unfiltered
 							}
 						} else {
-							// Correlated branch — filter per tuple
-							branchResult = filterBranchToOuterTuple(branchResult, outerTuple, it.outerSyms)
+							// Correlated branch — filter per tuple, matching only
+							// branch-visible symbols: a branch local sharing an
+							// outer name must not be filtered against it.
+							branchResult = filterBranchToOuterTuple(branchResult, visibleTuple, it.branchVisibleSyms)
 						}
 					}
 				} // end if !eaCacheUsed
@@ -1523,10 +1495,8 @@ func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms
 	type symPair struct{ outerIdx, branchIdx int }
 	var shared []symPair
 	for oi, osym := range outerSyms {
-		for bi, bsym := range branchSyms {
-			if osym == bsym {
-				shared = append(shared, symPair{oi, bi})
-			}
+		if bi := query.SymbolIndex(branchSyms, osym); bi >= 0 {
+			shared = append(shared, symPair{oi, bi})
 		}
 	}
 	if len(shared) == 0 {
@@ -1544,7 +1514,7 @@ func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms
 				match = false
 				break
 			}
-			if !valuesEqual(outerTuple[sp.outerIdx], t[sp.branchIdx]) {
+			if !datalog.ValuesEqual(outerTuple[sp.outerIdx], t[sp.branchIdx]) {
 				match = false
 				break
 			}

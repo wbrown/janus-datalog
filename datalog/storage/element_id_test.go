@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -380,63 +378,8 @@ func TestMaxElementID(t *testing.T) {
 	assert.True(t, maxID1.Less(maxID2), "MaxElementID should increase after more writes")
 }
 
-func TestDatabaseClockRestoration(t *testing.T) {
-	// Test that clock is correctly restored when reopening database
-	tempDir := t.TempDir()
-
-	var maxAfterFirstClose ElementID
-
-	// Phase 1: Create database and write some data
-	{
-		db, err := NewDatabase(tempDir)
-		require.NoError(t, err)
-
-		// Write multiple transactions to advance the clock
-		for i := 0; i < 10; i++ {
-			tx := db.NewTransaction()
-			entity := datalog.NewIdentity(fmt.Sprintf("test:entity%d", i))
-			attr := datalog.NewKeyword(":test/value")
-			tx.Add(entity, attr, fmt.Sprintf("value%d", i))
-			_, err = tx.Commit()
-			require.NoError(t, err)
-		}
-
-		// Record max ElementID
-		maxAfterFirstClose, err = db.store.MaxElementID()
-		require.NoError(t, err)
-		t.Logf("Max ElementID after first session: %v", maxAfterFirstClose)
-
-		db.Close()
-	}
-
-	// Phase 2: Reopen database and verify clock restoration
-	{
-		db, err := NewDatabase(tempDir)
-		require.NoError(t, err)
-		defer db.Close()
-
-		// The clock should be restored to at least maxAfterFirstClose
-		currentClock := db.clock.Current()
-		t.Logf("Clock after reopen: %d", currentClock)
-		assert.GreaterOrEqual(t, currentClock, maxAfterFirstClose.Lamport,
-			"Clock should be restored to at least the max from previous session")
-
-		// New writes should have higher ElementIDs
-		tx := db.NewTransaction()
-		entity := datalog.NewIdentity("test:new-entity")
-		attr := datalog.NewKeyword(":test/value")
-		tx.Add(entity, attr, "new-value")
-		_, err = tx.Commit()
-		require.NoError(t, err)
-
-		newMax, err := db.store.MaxElementID()
-		require.NoError(t, err)
-		t.Logf("Max ElementID after new write: %v", newMax)
-
-		assert.True(t, maxAfterFirstClose.Less(newMax),
-			"New writes after reopen should have higher ElementIDs than previous session")
-	}
-}
+// TestDatabaseClockRestoration lives in persistence_reopen_test.go — its
+// write/close/reopen premise needs a durable backend.
 
 func TestElementIDKeyEncodingWithBadgerDB(t *testing.T) {
 	// Integration test: verify that encoded keys sort correctly in actual BadgerDB

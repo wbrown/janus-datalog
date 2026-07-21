@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -183,11 +181,22 @@ func TestOptimizationMatrix(t *testing.T) {
 	}
 }
 
+// TestComplexQueryRetainsScenarioKeyThroughFallbacks pins the algebra
+// path's plan structure: the relation keys asserted below come from the
+// optimizer's or-fallback property derivation (or/properties.derived).
+// The baseline path derives no such keys and compensates with conservative
+// deduplication — correct rows, no key metadata — so the assertions cannot
+// hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its
+// mode explicitly. Cross-mode result equivalence for the same query body
+// is covered by TestOptimizationMatrix.
 func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
+	popts := DefaultPlannerOptions()
+	popts.EnableAlgebraOptimizer = true
 	var propertyEvents []annotations.Event
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
-		Schema: optimizationMatrixSchema(),
+		Path:           t.TempDir(),
+		Schema:         optimizationMatrixSchema(),
+		PlannerOptions: &popts,
 		AnnotationHandler: func(event annotations.Event) {
 			if event.Name == annotations.OrPropertiesDerived {
 				propertyEvents = append(propertyEvents, event)
@@ -308,7 +317,18 @@ func BenchmarkComplexQueryCheckpoint(b *testing.B) {
 	benchmarkComplexQueryCheckpoint(b, nil)
 }
 
+// TestComplexQuerySubqueryExecutionCounts pins the algebra path's plan
+// structure. Every counter asserted below is an optimizer artifact: one
+// global execution per subquery body (4 total), or-fallback cache builds,
+// fused constraints, replaced outer groups, narrowed materializations. The
+// baseline path executes correlated subqueries once per outer combination
+// by definition (10 scenarios × 4 subquery bodies = 40 executions), so the
+// counts cannot hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test
+// declares its mode explicitly. Cross-mode result equivalence for the same
+// query body is covered by TestOptimizationMatrix.
 func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
+	popts := DefaultPlannerOptions()
+	popts.EnableAlgebraOptimizer = true
 	var subqueryExecutions atomic.Int64
 	var fallbackCacheBuilds atomic.Int64
 	var fusedConstraints atomic.Int64
@@ -316,8 +336,9 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 	var replacedOuterGroups atomic.Int64
 	var narrowedOuterMaterializations atomic.Int64
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
-		Schema: optimizationMatrixSchema(),
+		Path:           t.TempDir(),
+		Schema:         optimizationMatrixSchema(),
+		PlannerOptions: &popts,
 		AnnotationHandler: func(event annotations.Event) {
 			switch event.Name {
 			case "subquery/executor-path":

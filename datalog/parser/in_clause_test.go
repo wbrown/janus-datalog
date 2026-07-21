@@ -277,7 +277,18 @@ func TestFormatQueryWithInputClause(t *testing.T) {
 	}
 }
 
+// sameDateStub is a registration-only implementation for parse-structure
+// tests: the parse boundary requires predicate-position names to have a
+// registered implementation, and these tests never evaluate the predicate.
+func sameDateStub(args []interface{}) (interface{}, error) {
+	return false, nil
+}
+
 func TestSubqueryWithInputClause(t *testing.T) {
+	// same-date? is a user-defined predicate; registration must precede
+	// parsing since the parse boundary rejects unregistered names.
+	query.DefaultRegistry.RegisterImplementation("same-date?", sameDateStub)
+
 	input := `[:find ?date ?high
 	           :where 
 	             [?s :symbol/ticker "AAPL"]
@@ -323,6 +334,10 @@ func TestSubqueryWithInputClause(t *testing.T) {
 }
 
 func TestNestedQueryInputParsing(t *testing.T) {
+	// same-date? is a user-defined predicate; registration must precede
+	// parsing since the parse boundary rejects unregistered names.
+	query.DefaultRegistry.RegisterImplementation("same-date?", sameDateStub)
+
 	// Test that a nested query's :in clause is parsed correctly
 	nestedQuery := `[:find (max ?h)
 	                 :in $ ?sym ?d

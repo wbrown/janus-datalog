@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -124,33 +122,48 @@ func TestCardinalityOneHistory(t *testing.T) {
 	// Query with history should return all versions
 	matcher := NewBadgerMatcher(db.Store())
 
+	// Bind ?tx so each version is a distinct tuple in the history relation.
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entityID},
 			query.Constant{Value: datalog.NewKeyword(":person/name")},
 			query.Variable{Name: datalog.NewSymbol("?name")},
-			query.Blank{},
+			query.Variable{Name: datalog.NewSymbol("?tx")},
 		},
 	}
 
-	results, err := matcher.MatchWithHistory(pattern)
+	rel, err := matcher.History().Match(query.PatternQuery(pattern), nil)
 	if err != nil {
-		t.Fatalf("MatchWithHistory failed: %v", err)
+		t.Fatalf("history match failed: %v", err)
 	}
 
+	var txs []datalog.ElementID
+	iter := rel.Iterator()
+	for iter.Next() {
+		tx, ok := datalog.DerefElementID(iter.Tuple()[1])
+		if !ok {
+			t.Fatalf("?tx binding is not an ElementID: %T", iter.Tuple()[1])
+		}
+		txs = append(txs, tx)
+	}
+	if err := iter.Error(); err != nil {
+		t.Fatalf("history scan failed: %v", err)
+	}
+	iter.Close()
+
 	// Should have all 5 versions
-	if len(results) != 5 {
-		t.Errorf("Expected 5 historical results, got %d", len(results))
+	if len(txs) != 5 {
+		t.Errorf("Expected 5 historical results, got %d", len(txs))
 	}
 
 	// Results should be in descending Tx order (newest first)
 	var prevLamport uint64 = ^uint64(0) // Max uint64
-	for i, d := range results {
-		if d.Tx.Lamport > prevLamport {
+	for i, tx := range txs {
+		if tx.Lamport > prevLamport {
 			t.Errorf("Results not in descending order: result %d has Lamport %d > previous %d",
-				i, d.Tx.Lamport, prevLamport)
+				i, tx.Lamport, prevLamport)
 		}
-		prevLamport = d.Tx.Lamport
+		prevLamport = tx.Lamport
 	}
 }
 
@@ -194,32 +207,43 @@ func TestCardinalityOneAsOf(t *testing.T) {
 		},
 	}
 
+	collectNames := func(t *testing.T, m *BadgerMatcher) []string {
+		t.Helper()
+		rel, err := m.Match(query.PatternQuery(pattern), nil)
+		if err != nil {
+			t.Fatalf("as-of match failed: %v", err)
+		}
+		var names []string
+		iter := rel.Iterator()
+		for iter.Next() {
+			names = append(names, iter.Tuple()[0].(string))
+		}
+		if err := iter.Error(); err != nil {
+			t.Fatalf("as-of scan failed: %v", err)
+		}
+		iter.Close()
+		return names
+	}
+
 	// Query as-of each transaction should return the value from that transaction
 	for i, targetTx := range txIDs {
-		results, err := matcher.MatchAsOf(pattern, targetTx)
-		if err != nil {
-			t.Fatalf("MatchAsOf failed: %v", err)
-		}
-
-		if len(results) != 1 {
-			t.Errorf("MatchAsOf(Tx=%v): expected 1 result, got %d", targetTx, len(results))
+		names := collectNames(t, matcher.AsOf(targetTx))
+		if len(names) != 1 {
+			t.Errorf("AsOf(Tx=%v): expected 1 result, got %d", targetTx, len(names))
 			continue
 		}
-
 		expectedName := fmt.Sprintf("Name%d", i)
-		if results[0].V.(string) != expectedName {
-			t.Errorf("MatchAsOf(Tx=%v): expected '%s', got '%s'",
-				targetTx, expectedName, results[0].V)
+		if names[0] != expectedName {
+			t.Errorf("AsOf(Tx=%v): expected '%s', got '%s'", targetTx, expectedName, names[0])
 		}
 	}
 
-	// Query as-of zero ElementID should return no results (before any writes)
-	results, err := matcher.MatchAsOf(pattern, datalog.ElementID{})
-	if err != nil {
-		t.Fatalf("MatchAsOf(0) failed: %v", err)
-	}
-	if len(results) != 0 {
-		t.Errorf("MatchAsOf(0): expected 0 results, got %d", len(results))
+	// Query as-of a point before any writes should return no results. The
+	// zero ElementID means history mode in the three-mode convention, so the
+	// pre-first-write point is a nonzero ElementID below every write's Tx.
+	beforeAll := datalog.ElementID{Lamport: 0, ReplicaID: 1}
+	if names := collectNames(t, matcher.AsOf(beforeAll)); len(names) != 0 {
+		t.Errorf("AsOf(before all writes): expected 0 results, got %d", len(names))
 	}
 }
 
@@ -267,23 +291,34 @@ func TestCardinalityOneNoRead(t *testing.T) {
 	// All 3 values should be stored (CRDT keeps history)
 	matcher := NewBadgerMatcher(db.Store())
 
+	// Bind ?tx so each appended version is a distinct tuple in the history
+	// relation.
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entityID},
 			query.Constant{Value: datalog.NewKeyword(":person/name")},
 			query.Variable{Name: datalog.NewSymbol("?name")},
-			query.Blank{},
+			query.Variable{Name: datalog.NewSymbol("?tx")},
 		},
 	}
 
-	// MatchWithHistory should return all 3 versions
-	results, err := matcher.MatchWithHistory(pattern)
+	// A history-mode match should return all 3 versions.
+	rel, err := matcher.History().Match(query.PatternQuery(pattern), nil)
 	if err != nil {
-		t.Fatalf("MatchWithHistory failed: %v", err)
+		t.Fatalf("history match failed: %v", err)
 	}
+	versions := 0
+	iter := rel.Iterator()
+	for iter.Next() {
+		versions++
+	}
+	if err := iter.Error(); err != nil {
+		t.Fatalf("history scan failed: %v", err)
+	}
+	iter.Close()
 
-	if len(results) != 3 {
-		t.Errorf("Expected 3 historical values (append-only), got %d", len(results))
+	if versions != 3 {
+		t.Errorf("Expected 3 historical values (append-only), got %d", versions)
 	}
 }
 
@@ -422,10 +457,19 @@ func TestCardinalityOneConcurrentWrites(t *testing.T) {
 	}
 
 	// Verify history contains both values
-	history, err := matcher.MatchWithHistory(pattern)
+	histRel, err := matcher.History().Match(query.PatternQuery(pattern), nil)
 	if err != nil {
-		t.Fatalf("MatchWithHistory failed: %v", err)
+		t.Fatalf("history match failed: %v", err)
 	}
+	var history []string
+	histIter := histRel.Iterator()
+	for histIter.Next() {
+		history = append(history, histIter.Tuple()[0].(string))
+	}
+	if err := histIter.Error(); err != nil {
+		t.Fatalf("history scan failed: %v", err)
+	}
+	histIter.Close()
 
 	if len(history) != 2 {
 		t.Errorf("Expected 2 historical values, got %d", len(history))
@@ -434,12 +478,12 @@ func TestCardinalityOneConcurrentWrites(t *testing.T) {
 	// Verify the order: highest (Lamport, ReplicaID) first
 	if len(history) >= 2 {
 		// First should be higher ReplicaID (current value)
-		if history[0].V.(string) != "ValueFromHigherReplica" {
-			t.Errorf("First historical value should be 'ValueFromHigherReplica', got '%s'", history[0].V)
+		if history[0] != "ValueFromHigherReplica" {
+			t.Errorf("First historical value should be 'ValueFromHigherReplica', got '%s'", history[0])
 		}
 		// Second should be lower ReplicaID (superseded value)
-		if history[1].V.(string) != "ValueFromLowerReplica" {
-			t.Errorf("Second historical value should be 'ValueFromLowerReplica', got '%s'", history[1].V)
+		if history[1] != "ValueFromLowerReplica" {
+			t.Errorf("Second historical value should be 'ValueFromLowerReplica', got '%s'", history[1])
 		}
 	}
 }

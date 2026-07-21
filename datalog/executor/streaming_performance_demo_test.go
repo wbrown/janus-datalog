@@ -59,11 +59,8 @@ func TestStreamingPerformanceDemo(t *testing.T) {
 }
 
 func runScenarioMaterialized(t *testing.T, size int, filterRatio float64, ops []string) int64 {
-	// Create options with streaming disabled
-	opts := ExecutorOptions{
-		EnableIteratorComposition: false,
-		EnableTrueStreaming:       false,
-	}
+	// Zero options: the pipeline runs over a MaterializedRelation
+	opts := ExecutorOptions{}
 
 	return measureScenarioWithOpts(t, size, filterRatio, ops, opts)
 }
@@ -71,8 +68,7 @@ func runScenarioMaterialized(t *testing.T, size int, filterRatio float64, ops []
 func runScenarioStreaming(t *testing.T, size int, filterRatio float64, ops []string) int64 {
 	// Create options with streaming enabled
 	opts := ExecutorOptions{
-		EnableIteratorComposition: true,
-		EnableTrueStreaming:       true,
+		EnableTrueStreaming: true,
 	}
 
 	return measureScenarioWithOpts(t, size, filterRatio, ops, opts)
@@ -100,28 +96,32 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 	}
 	symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?value")}
 
-	// Create initial relation with options
-	source := newMockIterator(tuples)
-	rel := NewStreamingRelationWithOptions(symbols, source, opts)
-
-	// Apply operations
-	var current Relation = rel
+	// The materialized mode operates on a MaterializedRelation, the streaming
+	// mode on a composed StreamingRelation — the two real relation kinds.
+	var current Relation
+	if opts.EnableTrueStreaming {
+		current = NewStreamingRelationWithOptions(symbols, newMockIterator(tuples), opts)
+	} else {
+		current = NewMaterializedRelationWithOptions(symbols, tuples, opts)
+	}
 	for _, op := range ops {
 		switch op {
 		case "filter", "filter1":
 			// Filter based on ratio
-			threshold := int(float64(size) * filterRatio)
-			filter := NewSimpleFilter(func(t Tuple) bool {
-				return t[0].(int) < threshold
+			threshold := int64(float64(size) * filterRatio)
+			current = current.FilterWithPredicate(&query.Comparison{
+				Op:    datalog.SymLT,
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?id")},
+				Right: query.ConstantTerm{Value: threshold},
 			})
-			current = current.Filter(filter)
 
 		case "filter2":
 			// Second filter (score > 100)
-			filter := NewSimpleFilter(func(t Tuple) bool {
-				return t[2].(int) > 100
+			current = current.FilterWithPredicate(&query.Comparison{
+				Op:    datalog.SymGT,
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?score")},
+				Right: query.ConstantTerm{Value: int64(100)},
 			})
-			current = current.Filter(filter)
 
 		case "project":
 			// Project to subset of symbols
@@ -174,10 +174,7 @@ func BenchmarkStreamingScenarios(b *testing.B) {
 
 	for _, sc := range scenarios {
 		b.Run(sc.name+"_Materialized", func(b *testing.B) {
-			opts := ExecutorOptions{
-				EnableIteratorComposition: false,
-				EnableTrueStreaming:       false,
-			}
+			opts := ExecutorOptions{}
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -187,8 +184,7 @@ func BenchmarkStreamingScenarios(b *testing.B) {
 
 		b.Run(sc.name+"_Streaming", func(b *testing.B) {
 			opts := ExecutorOptions{
-				EnableIteratorComposition: true,
-				EnableTrueStreaming:       true,
+				EnableTrueStreaming: true,
 			}
 
 			b.ResetTimer()
@@ -206,14 +202,22 @@ func benchmarkScenarioWithOpts(b *testing.B, size int, filterRatio float64, opts
 	}
 	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
-	source := newMockIterator(tuples)
-	rel := NewStreamingRelationWithOptions(symbols, source, opts)
+	// The materialized mode operates on a MaterializedRelation, the streaming
+	// mode on a composed StreamingRelation — the two real relation kinds.
+	var rel Relation
+	if opts.EnableTrueStreaming {
+		rel = NewStreamingRelationWithOptions(symbols, newMockIterator(tuples), opts)
+	} else {
+		rel = NewMaterializedRelationWithOptions(symbols, tuples, opts)
+	}
 
 	// Apply aggressive filter
-	threshold := int(float64(size) * filterRatio)
-	filtered := rel.Filter(NewSimpleFilter(func(t Tuple) bool {
-		return t[0].(int) < threshold
-	}))
+	threshold := int64(float64(size) * filterRatio)
+	filtered := rel.FilterWithPredicate(&query.Comparison{
+		Op:    datalog.SymLT,
+		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+		Right: query.ConstantTerm{Value: threshold},
+	})
 
 	// Project
 	projected, _ := filtered.Project([]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")})

@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -53,19 +51,6 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	// Create annotation handler to track datom scans
-	var events []annotations.Event
-	handler := func(event annotations.Event) {
-		events = append(events, event)
-	}
-
-	// Create context with annotations
-	ctx := executor.NewContext(handler)
-
-	// Create matcher with annotations using decorator pattern
-	baseMatcher := NewBadgerMatcher(db.Store())
-	matcher := executor.WrapMatcher(baseMatcher, handler).(executor.PatternMatcher)
-
 	// Query: Find :person/age for bound entities
 	// Use RelationInput to reproduce the exact gopher-street pattern
 	// [[?e] ...] means "collection of tuples, each with one variable ?e"
@@ -97,59 +82,76 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 		}
 	}
 
-	// Bind 3 entities as a RelationInput (this is what triggers the bug)
-	inputRel := executor.NewMaterializedRelation(
-		[]query.Symbol{datalog.NewSymbol("?e")},
-		[]executor.Tuple{{entities[0]}, {entities[5]}, {entities[9]}},
-	)
-
-	// Execute query without parallel execution (to capture all annotations)
-	exec := executor.NewExecutor(matcher, db)
-	exec.DisableParallelSubqueries() // Disable parallel to get all events in our handler
-	result, err := exec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
-
-	// Verify results
-	if result.Size() != 3 {
-		t.Errorf("Expected 3 results, got %d", result.Size())
-	}
-
-	// Check index selection and datom scan count
-
-	t.Logf("Total events captured: %d", len(events))
-
-	var indexUsed string
-	var datomsScanned int
-
-	for i, event := range events {
-		t.Logf("Event %d: %s - Data: %+v", i, event.Name, event.Data)
-
-		// Check multiple event types for index and scan info
-		if event.Name == "pattern/iterator-reuse" ||
-			event.Name == "pattern/multi-match" ||
-			event.Name == "pattern/index-selection" ||
-			event.Name == "pattern/match-with-bindings" {
-			if idx, ok := event.Data["index"].(string); ok {
-				indexUsed = idx
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create annotation handler to track datom scans
+			var events []annotations.Event
+			handler := func(event annotations.Event) {
+				events = append(events, event)
 			}
-			if scanned, ok := event.Data["datoms.scanned"].(int); ok {
-				datomsScanned += scanned // Accumulate across multiple events
+
+			// Create context with annotations
+			ctx := executor.NewContext(handler)
+
+			// Create matcher with annotations using decorator pattern
+			baseMatcher := NewBadgerMatcher(db.Store())
+			matcher := executor.WrapMatcher(baseMatcher, handler).(executor.PatternMatcher)
+
+			// Bind 3 entities as a RelationInput (this is what triggers the bug)
+			inputRel := executor.NewMaterializedRelation(
+				[]query.Symbol{datalog.NewSymbol("?e")},
+				[]executor.Tuple{{entities[0]}, {entities[5]}, {entities[9]}},
+			)
+
+			// Execute query without parallel execution (to capture all annotations)
+			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+			exec.DisableParallelSubqueries() // Disable parallel to get all events in our handler
+			result, err := exec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
 			}
-		}
-	}
 
-	t.Logf("Index used: %s", indexUsed)
-	t.Logf("Datoms scanned: %d", datomsScanned)
-	t.Logf("Entities bound: 3")
-	t.Logf("Total datoms in DB: 50")
+			// Verify results
+			if result.Size() != 3 {
+				t.Errorf("Expected 3 results, got %d", result.Size())
+			}
 
-	// The key test is that we got all 3 results
-	// With RelationInput iteration, each entity is processed independently, so index choice may vary
-	// The original bug was that only 1 result was returned instead of 3
-	if result.Size() == 3 {
-		t.Logf("SUCCESS: All 3 entities processed correctly")
+			// Check index selection and datom scan count
+
+			t.Logf("Total events captured: %d", len(events))
+
+			var indexUsed string
+			var datomsScanned int
+
+			for i, event := range events {
+				t.Logf("Event %d: %s - Data: %+v", i, event.Name, event.Data)
+
+				// Check multiple event types for index and scan info
+				if event.Name == "pattern/iterator-reuse" ||
+					event.Name == "pattern/multi-match" ||
+					event.Name == "pattern/index-selection" ||
+					event.Name == "pattern/match-with-bindings" {
+					if idx, ok := event.Data["index"].(string); ok {
+						indexUsed = idx
+					}
+					if scanned, ok := event.Data["datoms.scanned"].(int); ok {
+						datomsScanned += scanned // Accumulate across multiple events
+					}
+				}
+			}
+
+			t.Logf("Index used: %s", indexUsed)
+			t.Logf("Datoms scanned: %d", datomsScanned)
+			t.Logf("Entities bound: 3")
+			t.Logf("Total datoms in DB: 50")
+
+			// The key test is that we got all 3 results
+			// With RelationInput iteration, each entity is processed independently, so index choice may vary
+			// The original bug was that only 1 result was returned instead of 3
+			if result.Size() == 3 {
+				t.Logf("SUCCESS: All 3 entities processed correctly")
+			}
+		})
 	}
 }
 

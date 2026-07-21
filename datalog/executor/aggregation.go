@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -50,12 +51,28 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 
 	for _, groupBy := range groupByVars {
 		if SymbolIndex(rel, groupBy) < 0 {
-			resultSymbols := append([]query.Symbol(nil), groupByVars...)
-			for _, aggregate := range aggregates {
-				resultSymbols = append(resultSymbols, datalog.NewSymbol(aggregate.String()))
-			}
-			result := NewMaterializedRelationWithOptions(resultSymbols, nil, rel.Options())
+			result := NewMaterializedRelationWithOptions(
+				aggregateResultSymbols(groupByVars, aggregates), nil, rel.Options())
 			result.err = fmt.Errorf("group-by symbol %s is not present in source relation", groupBy)
+			return result
+		}
+	}
+
+	// Aggregate argument and predicate symbols must be present, exactly like
+	// group-by symbols. Before this validation the three aggregation paths
+	// diverged silently on an absent argument (collect nothing / read tuple
+	// position 0 / skip).
+	for _, agg := range aggregates {
+		if SymbolIndex(rel, agg.Arg) < 0 {
+			result := NewMaterializedRelationWithOptions(
+				aggregateResultSymbols(groupByVars, aggregates), nil, rel.Options())
+			result.err = fmt.Errorf("aggregate argument symbol %s is not present in source relation", agg.Arg)
+			return result
+		}
+		if agg.IsConditional() && SymbolIndex(rel, agg.Predicate) < 0 {
+			result := NewMaterializedRelationWithOptions(
+				aggregateResultSymbols(groupByVars, aggregates), nil, rel.Options())
+			result.err = fmt.Errorf("aggregate predicate symbol %s is not present in source relation", agg.Predicate)
 			return result
 		}
 	}
@@ -132,15 +149,24 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 	return executeGroupedAggregation(rel, groupByVars, aggregates)
 }
 
-// isStreamingEligible checks if all aggregates can be computed in streaming fashion
+// aggregateResultSymbols is the output schema of an aggregation: the group-by
+// symbols followed by one symbol per aggregate, named by its display form.
+func aggregateResultSymbols(groupByVars []query.Symbol, aggregates []query.FindAggregate) []query.Symbol {
+	symbols := make([]query.Symbol, 0, len(groupByVars)+len(aggregates))
+	symbols = append(symbols, groupByVars...)
+	for _, agg := range aggregates {
+		// Use String() method which handles conditional vs unconditional formatting
+		symbols = append(symbols, datalog.NewSymbol(agg.String()))
+	}
+	return symbols
+}
+
+// isStreamingEligible checks if all aggregates can be computed in streaming
+// fashion. Every resolvable aggregate streams; an unresolvable function symbol
+// falls to the batch path, which surfaces the resolution error loudly.
 func isStreamingEligible(aggregates []query.FindAggregate) bool {
 	for _, agg := range aggregates {
-		switch agg.Function {
-		case "count", "sum", "avg", "min", "max":
-			// These are streamable
-			continue
-		default:
-			// Unsupported aggregate function (e.g., median, percentile)
+		if _, err := resolveAggregate(agg.Function); err != nil {
 			return false
 		}
 	}
@@ -166,6 +192,16 @@ func shouldUseStreaming(rel Relation) bool {
 
 // executeSingleAggregation computes aggregates over the entire relation
 func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (result Relation) {
+	resultSymbols := aggregateResultSymbols(nil, aggregates)
+
+	// Resolve each aggregate's behavior once, before any iteration.
+	ops, opsErr := resolveAggregates(aggregates)
+	if opsErr != nil {
+		errRel := NewMaterializedRelationWithOptions(resultSymbols, nil, rel.Options())
+		errRel.err = opsErr
+		return errRel
+	}
+
 	// Collect all values for each aggregate
 	aggValues := make([][]interface{}, len(aggregates))
 	for i := range aggValues {
@@ -192,18 +228,20 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 	for i, agg := range aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, sym := range symbols {
-				if sym == agg.Predicate {
-					predicateIndices[i] = j
-					break
-				}
-			}
+			predicateIndices[i] = query.SymbolIndex(symbols, agg.Predicate)
 		}
+	}
+
+	// Hoist each aggregate's argument position out of the per-tuple loop.
+	// Argument symbols are validated present at entry.
+	argIndices := make([]int, len(aggregates))
+	for i, agg := range aggregates {
+		argIndices[i] = query.SymbolIndex(symbols, agg.Arg)
 	}
 
 	for it.Next() {
 		tuple := it.Tuple()
-		for i, agg := range aggregates {
+		for i := range aggregates {
 			// Check predicate for conditional aggregates
 			predicateIdx := predicateIndices[i]
 			if predicateIdx >= 0 {
@@ -218,14 +256,9 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 				}
 			}
 
-			// Predicate passed (or no predicate), find symbol index for this aggregate
-			for j, sym := range symbols {
-				if sym == agg.Arg {
-					if j < len(tuple) {
-						aggValues[i] = append(aggValues[i], tuple[j])
-					}
-					break
-				}
+			// Predicate passed (or no predicate); collect the argument value.
+			if j := argIndices[i]; j >= 0 && j < len(tuple) {
+				aggValues[i] = append(aggValues[i], tuple[j])
 			}
 		}
 	}
@@ -237,18 +270,15 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 	// Compute aggregates
 	results := make(Tuple, len(aggregates))
 	hasAnyValues := false
-	for i, agg := range aggregates {
+	for i := range aggregates {
 		if len(aggValues[i]) > 0 {
 			hasAnyValues = true
 		}
-		results[i] = computeAggregateValues(aggValues[i], agg.Function)
-	}
-
-	// Build result symbols (aggregate functions as symbol names)
-	resultSymbols := make([]query.Symbol, len(aggregates))
-	for i, agg := range aggregates {
-		// Use String() method which handles conditional vs unconditional formatting
-		resultSymbols[i] = datalog.NewSymbol(agg.String())
+		v, aggValErr := foldAggregateValues(ops[i], aggValues[i])
+		if aggValErr != nil && aggErr == nil {
+			aggErr = aggValErr
+		}
+		results[i] = v
 	}
 
 	// Relational theory: empty input → empty output
@@ -266,6 +296,16 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 		return empty
 	}
 
+	// Emission invariant: an aggregate that folded no values beside siblings
+	// that did has no representable result — nil is not a datalog value. The
+	// all-empty case returns empty above; the mixed case is an error, never a
+	// nil in the tuple.
+	for i, v := range results {
+		if v == nil && aggErr == nil {
+			aggErr = fmt.Errorf("aggregate %s folded no values while sibling aggregates did; nil is not a datalog value", aggregates[i].String())
+		}
+	}
+
 	result = newMaterializedRelationFromSet(
 		resultSymbols,
 		[]Tuple{results},
@@ -281,26 +321,24 @@ func executeGroupedAggregation(
 	groupByVars []query.Symbol,
 	aggregates []query.FindAggregate,
 ) (result Relation) {
-	// Create symbol mapping
-	symbols := rel.Symbols()
-	groupIndices := make([]int, len(groupByVars))
-	for i, groupVar := range groupByVars {
-		for j, sym := range symbols {
-			if sym == groupVar {
-				groupIndices[i] = j
-				break
-			}
-		}
+	resultSymbols := aggregateResultSymbols(groupByVars, aggregates)
+
+	// Resolve each aggregate's behavior once, before any iteration.
+	ops, opsErr := resolveAggregates(aggregates)
+	if opsErr != nil {
+		errRel := NewMaterializedRelationWithOptions(resultSymbols, nil, rel.Options())
+		errRel.err = opsErr
+		return errRel
 	}
+
+	// Create symbol mapping. Group-by and aggregate symbols are validated
+	// present by ExecuteAggregationsWithContext, so no table entry is -1.
+	symbols := rel.Symbols()
+	groupIndices := query.SymbolIndexTable(symbols, groupByVars)
 
 	aggIndices := make([]int, len(aggregates))
 	for i, agg := range aggregates {
-		for j, sym := range symbols {
-			if sym == agg.Arg {
-				aggIndices[i] = j
-				break
-			}
-		}
+		aggIndices[i] = query.SymbolIndex(symbols, agg.Arg)
 	}
 
 	// Find predicate indices for conditional aggregates
@@ -308,13 +346,7 @@ func executeGroupedAggregation(
 	for i, agg := range aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, sym := range symbols {
-				if sym == agg.Predicate {
-					predicateIndices[i] = j
-					break
-				}
-			}
-			// If predicate symbol not found, we'll handle it during execution
+			predicateIndices[i] = query.SymbolIndex(symbols, agg.Predicate)
 		}
 	}
 
@@ -399,19 +431,22 @@ func executeGroupedAggregation(
 		copy(resultTuple, group.key)
 
 		// Add aggregate results
-		for i, agg := range aggregates {
-			resultTuple[len(groupByVars)+i] = computeAggregateValues(group.values[i], agg.Function)
+		for i := range aggregates {
+			v, aggValErr := foldAggregateValues(ops[i], group.values[i])
+			if aggValErr != nil && aggregateErr == nil {
+				aggregateErr = aggValErr
+			}
+			// Emission invariant: mixed groups (this aggregate empty,
+			// a sibling non-empty) have no representable result — nil
+			// is not a datalog value. All-empty groups are skipped
+			// above.
+			if v == nil && aggregateErr == nil {
+				aggregateErr = fmt.Errorf("aggregate %s folded no values for a group while sibling aggregates did; nil is not a datalog value", aggregates[i].String())
+			}
+			resultTuple[len(groupByVars)+i] = v
 		}
 
 		resultTuples = append(resultTuples, resultTuple)
-	}
-
-	// Build result symbols
-	resultSymbols := make([]query.Symbol, len(groupByVars)+len(aggregates))
-	copy(resultSymbols, groupByVars)
-	for i, agg := range aggregates {
-		// Use String() method which handles conditional vs unconditional formatting
-		resultSymbols[len(groupByVars)+i] = datalog.NewSymbol(agg.String())
 	}
 
 	opts := rel.Options()
@@ -424,8 +459,11 @@ func executeGroupedAggregation(
 		}},
 	)
 	// Carry any deferred error from the grouped input scan so a failed scan
-	// isn't laundered into a partial/empty grouped result.
-	aggregateErr = it.Error()
+	// isn't laundered into a partial/empty grouped result. First error wins:
+	// an aggregate finalization error must not be clobbered by a clean scan.
+	if scanErr := it.Error(); aggregateErr == nil {
+		aggregateErr = scanErr
+	}
 	return result
 }
 
@@ -438,89 +476,184 @@ type batchAggregateGroup struct {
 // Streaming Aggregation Implementation
 // ============================================================================
 
-// AggregateState maintains running aggregates for a single group
-// Supports incremental updates for: sum, count, min, max, avg
-type AggregateState struct {
-	count int64
-	sum   float64
-	min   interface{}
-	max   interface{}
+// aggregateAccumulator is one aggregate's running state for one group: flat
+// value state, no behavior. The streaming path updates one per (group,
+// aggregate) pair per tuple; batch aggregation folds collected values through
+// one via foldAggregateValues.
+//
+// Sums preserve integer typing: an all-int64 group accumulates in int64
+// (exact at any magnitude — no float64 round-trip that collapses adjacent
+// values above 2^53); the first float input promotes the accumulator to
+// float64.
+type aggregateAccumulator struct {
+	count    int64
+	sumInt   int64
+	sumFloat float64
+	isFloat  bool
+	min      interface{}
+	max      interface{}
 }
 
-// newAggregateState creates a new aggregate state
-func newAggregateState() *AggregateState {
-	return &AggregateState{
-		count: 0,
-		sum:   0,
-		min:   nil,
-		max:   nil,
-	}
+// aggregateOps is one aggregate's behavior, resolved once per query from the
+// interned function symbol: update folds one value into an accumulator,
+// result finalizes it. Aggregation is a producer boundary for NaN — Inf and
+// -Inf inputs cancel in a sum — so result errors rather than emitting a
+// non-value. update enforces the value domain: a non-domain input (a Go int
+// that bypassed boundary normalization, a nil) errors loudly instead of
+// being skipped — a silent skip manufactures a nil aggregate beside healthy
+// siblings (docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md).
+type aggregateOps struct {
+	update func(*aggregateAccumulator, interface{}) error
+	result func(*aggregateAccumulator) (interface{}, error)
 }
 
-// Update incrementally updates aggregate state with a new value
-func (s *AggregateState) Update(function string, value interface{}) {
-	// Skip nil values (SQL semantics)
-	if value == nil {
-		return
-	}
-
-	switch function {
-	case "count":
-		s.count++
-
-	case "sum", "avg":
-		if num, ok := toFloat64(value); ok {
-			s.sum += num
-			s.count++
-		}
-
-	case "min":
-		if s.min == nil || datalog.CompareValues(value, s.min) < 0 {
-			s.min = value
-		}
-		s.count++
-
-	case "max":
-		if s.max == nil || datalog.CompareValues(value, s.max) > 0 {
-			s.max = value
-		}
-		s.count++
-	}
-}
-
-// GetResult returns the final aggregate result
-func (s *AggregateState) GetResult(function string) interface{} {
-	switch function {
-	case "count":
-		return s.count
-
-	case "sum":
-		if s.count == 0 {
-			return nil
-		}
-		return s.sum
-
-	case "avg":
-		if s.count == 0 {
-			return nil
-		}
-		return s.sum / float64(s.count)
-
-	case "min":
-		if s.count == 0 {
-			return nil
-		}
-		return s.min
-
-	case "max":
-		if s.count == 0 {
-			return nil
-		}
-		return s.max
-
+// resolveAggregate maps an interned aggregate function symbol to its
+// behavior by pointer equality. An unknown symbol is a loud error, never a
+// silent nil aggregate.
+func resolveAggregate(fn query.Symbol) (aggregateOps, error) {
+	switch fn {
+	case datalog.SymCount:
+		return aggregateOps{update: updateCount, result: resultCount}, nil
+	case datalog.SymSum:
+		return aggregateOps{update: updateSum, result: resultSum}, nil
+	case datalog.SymAvg:
+		return aggregateOps{update: updateSum, result: resultAvg}, nil
+	case datalog.SymMin:
+		return aggregateOps{update: updateMin, result: resultMin}, nil
+	case datalog.SymMax:
+		return aggregateOps{update: updateMax, result: resultMax}, nil
 	default:
+		return aggregateOps{}, fmt.Errorf("unknown aggregate function: %v", fn)
+	}
+}
+
+// resolveAggregates resolves behavior for a query's aggregate list, once per
+// query — never inside a tuple loop.
+func resolveAggregates(aggregates []query.FindAggregate) ([]aggregateOps, error) {
+	ops := make([]aggregateOps, len(aggregates))
+	for i, agg := range aggregates {
+		op, err := resolveAggregate(agg.Function)
+		if err != nil {
+			return nil, err
+		}
+		ops[i] = op
+	}
+	return ops, nil
+}
+
+// updateCount counts non-nil values (SQL semantics).
+func updateCount(acc *aggregateAccumulator, value interface{}) error {
+	if value == nil {
 		return nil
 	}
+	acc.count++
+	return nil
+}
+
+// updateSum accumulates for sum and avg. Values are boundary-normalized, so
+// int64 and float64 are the only numeric shapes in relational flow; anything
+// else is a domain violation upstream and errors loudly — a silent skip
+// folds to a nil aggregate with no signal.
+func updateSum(acc *aggregateAccumulator, value interface{}) error {
+	switch n := value.(type) {
+	case int64:
+		if acc.isFloat {
+			acc.sumFloat += float64(n)
+		} else {
+			acc.sumInt += n
+		}
+		acc.count++
+	case float64:
+		if !acc.isFloat {
+			acc.sumFloat = float64(acc.sumInt)
+			acc.isFloat = true
+		}
+		acc.sumFloat += n
+		acc.count++
+	default:
+		return fmt.Errorf("sum/avg input %T (%v) is not int64/float64; integer widths normalize to int64 at the engine boundary", value, value)
+	}
+	return nil
+}
+
+func updateMin(acc *aggregateAccumulator, value interface{}) error {
+	if value == nil {
+		return fmt.Errorf("min input is nil; nil is not a datalog value")
+	}
+	if acc.min == nil || datalog.CompareValues(value, acc.min) < 0 {
+		acc.min = value
+	}
+	acc.count++
+	return nil
+}
+
+func updateMax(acc *aggregateAccumulator, value interface{}) error {
+	if value == nil {
+		return fmt.Errorf("max input is nil; nil is not a datalog value")
+	}
+	if acc.max == nil || datalog.CompareValues(value, acc.max) > 0 {
+		acc.max = value
+	}
+	acc.count++
+	return nil
+}
+
+func resultCount(acc *aggregateAccumulator) (interface{}, error) {
+	return acc.count, nil
+}
+
+func resultSum(acc *aggregateAccumulator) (interface{}, error) {
+	if acc.count == 0 {
+		return nil, nil
+	}
+	if acc.isFloat {
+		if math.IsNaN(acc.sumFloat) {
+			return nil, fmt.Errorf("sum produced NaN (Inf and -Inf inputs cancel), which is not a datalog value")
+		}
+		return acc.sumFloat, nil
+	}
+	return acc.sumInt, nil
+}
+
+func resultAvg(acc *aggregateAccumulator) (interface{}, error) {
+	if acc.count == 0 {
+		return nil, nil
+	}
+	total := acc.sumFloat
+	if !acc.isFloat {
+		total = float64(acc.sumInt)
+	}
+	avg := total / float64(acc.count)
+	if math.IsNaN(avg) {
+		return nil, fmt.Errorf("avg produced NaN (Inf and -Inf inputs cancel), which is not a datalog value")
+	}
+	return avg, nil
+}
+
+func resultMin(acc *aggregateAccumulator) (interface{}, error) {
+	if acc.count == 0 {
+		return nil, nil
+	}
+	return acc.min, nil
+}
+
+func resultMax(acc *aggregateAccumulator) (interface{}, error) {
+	if acc.count == 0 {
+		return nil, nil
+	}
+	return acc.max, nil
+}
+
+// foldAggregateValues folds a batch of collected values through one
+// accumulator — the batch form of the one aggregation algorithm.
+func foldAggregateValues(op aggregateOps, values []interface{}) (interface{}, error) {
+	var acc aggregateAccumulator
+	for _, v := range values {
+		if err := op.update(&acc, v); err != nil {
+			return nil, err
+		}
+	}
+	return op.result(&acc)
 }
 
 // StreamingAggregateRelation computes aggregates incrementally in a single pass
@@ -552,13 +685,7 @@ func NewStreamingAggregateRelation(source Relation, groupByVars []query.Symbol, 
 
 // Symbols returns the output symbols
 func (r *StreamingAggregateRelation) Symbols() []query.Symbol {
-	resultSymbols := make([]query.Symbol, len(r.groupByVars)+len(r.aggregates))
-	copy(resultSymbols, r.groupByVars)
-	for i, agg := range r.aggregates {
-		// Use String() method which handles conditional vs unconditional formatting
-		resultSymbols[len(r.groupByVars)+i] = datalog.NewSymbol(agg.String())
-	}
-	return resultSymbols
+	return aggregateResultSymbols(r.groupByVars, r.aggregates)
 }
 
 func (r *StreamingAggregateRelation) Properties() RelationProperties {
@@ -594,11 +721,6 @@ func (r *StreamingAggregateRelation) Size() int {
 	// Trigger materialization to know size
 	r.Iterator()
 	return r.materialized.Size()
-}
-
-// IsEmpty returns true if there are no groups
-func (r *StreamingAggregateRelation) IsEmpty() bool {
-	return r.Size() == 0
 }
 
 // Get returns a specific tuple by index (requires materialization)
@@ -647,12 +769,6 @@ func (r *StreamingAggregateRelation) Materialize() Relation {
 func (r *StreamingAggregateRelation) Sort(orderBy []query.OrderByClause) Relation {
 	r.Iterator()
 	return r.materialized.Sort(orderBy)
-}
-
-// Filter applies a filter function (delegates to materialized result)
-func (r *StreamingAggregateRelation) Filter(filter Filter) Relation {
-	r.Iterator()
-	return r.materialized.Filter(filter)
 }
 
 // FilterWithPredicate applies a predicate filter (delegates to materialized result)
@@ -705,33 +821,22 @@ func (r *StreamingAggregateRelation) Aggregate(findElements []query.FindElement)
 
 // materialize performs the actual streaming aggregation
 func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation) {
-	// Build symbol index mappings
+	// Resolve each aggregate's behavior once, before any iteration.
+	ops, opsErr := resolveAggregates(r.aggregates)
+	if opsErr != nil {
+		errRel := newMaterializedRelationFromSet(r.Symbols(), nil, r.options, r.Properties())
+		errRel.err = opsErr
+		return errRel
+	}
+
+	// Build symbol index mappings; -1 means not found.
 	symbols := r.source.Symbols()
 
-	groupIndices := make([]int, len(r.groupByVars))
-	for i := range groupIndices {
-		groupIndices[i] = -1 // Initialize to -1 (not found)
-	}
-	for i, groupVar := range r.groupByVars {
-		for j, sym := range symbols {
-			if sym == groupVar {
-				groupIndices[i] = j
-				break
-			}
-		}
-	}
+	groupIndices := query.SymbolIndexTable(symbols, r.groupByVars)
 
 	aggIndices := make([]int, len(r.aggregates))
-	for i := range aggIndices {
-		aggIndices[i] = -1 // Initialize to -1 (not found)
-	}
 	for i, agg := range r.aggregates {
-		for j, sym := range symbols {
-			if sym == agg.Arg {
-				aggIndices[i] = j
-				break
-			}
-		}
+		aggIndices[i] = query.SymbolIndex(symbols, agg.Arg)
 	}
 
 	// Find predicate indices for conditional aggregates
@@ -739,12 +844,7 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 	for i, agg := range r.aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, sym := range symbols {
-				if sym == agg.Predicate {
-					predicateIndices[i] = j
-					break
-				}
-			}
+			predicateIndices[i] = query.SymbolIndex(symbols, agg.Predicate)
 		}
 	}
 
@@ -777,17 +877,14 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 		} else {
 			group = &streamingAggregateGroup{
 				key:    Tuple(key.values),
-				states: make([]*AggregateState, len(r.aggregates)),
-			}
-			for i := range group.states {
-				group.states[i] = newAggregateState()
+				states: make([]aggregateAccumulator, len(r.aggregates)),
 			}
 			groups.Put(key, group)
 			groupOrder = append(groupOrder, group)
 		}
 
 		// Update aggregates incrementally (with predicate filtering for conditional aggregates)
-		for i, agg := range r.aggregates {
+		for i := range r.aggregates {
 			idx := aggIndices[i]
 			if idx >= 0 && idx < len(tuple) {
 				// Check predicate for conditional aggregates
@@ -805,24 +902,46 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 				}
 
 				// Predicate passed (or no predicate), update aggregate
-				value := tuple[idx]
-				group.states[i].Update(agg.Function, value)
+				group.sawValue = true
+				if err := ops[i].update(&group.states[i], tuple[idx]); err != nil {
+					aggregateErr = err
+					break
+				}
 			}
+		}
+		if aggregateErr != nil {
+			break
 		}
 	}
 
 	// Convert groups to result tuples
 	resultTuples := make([]Tuple, 0, len(groupOrder))
 	for _, group := range groupOrder {
+		// Batch parity: a group whose every aggregate folded nothing is
+		// excluded (relational empty input → empty output), never emitted
+		// as a tuple of nils.
+		if !group.sawValue {
+			continue
+		}
+
 		resultTuple := make(Tuple, len(r.groupByVars)+len(r.aggregates))
 
 		// Add group-by values
 		copy(resultTuple, group.key)
 
-		// Add aggregate results (one per aggregate state)
-		for i, agg := range r.aggregates {
-			result := group.states[i].GetResult(agg.Function)
-			resultTuple[len(r.groupByVars)+i] = result
+		// Add aggregate results (one per aggregate accumulator)
+		for i := range r.aggregates {
+			v, resultErr := ops[i].result(&group.states[i])
+			if resultErr != nil && aggregateErr == nil {
+				aggregateErr = resultErr
+			}
+			// Emission invariant: mixed groups (this aggregate empty, a
+			// sibling non-empty) have no representable result — nil is
+			// not a datalog value.
+			if v == nil && aggregateErr == nil {
+				aggregateErr = fmt.Errorf("aggregate %s folded no values while sibling aggregates did; nil is not a datalog value", r.aggregates[i].String())
+			}
+			resultTuple[len(r.groupByVars)+i] = v
 		}
 
 		resultTuples = append(resultTuples, resultTuple)
@@ -838,7 +957,11 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 			},
 		})
 	}
-	aggregateErr = it.Error()
+	// First error wins: an aggregate finalization error must not be clobbered
+	// by a clean scan.
+	if scanErr := it.Error(); aggregateErr == nil {
+		aggregateErr = scanErr
+	}
 	result = newMaterializedRelationFromSet(
 		r.Symbols(),
 		resultTuples,
@@ -850,5 +973,9 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 
 type streamingAggregateGroup struct {
 	key    Tuple
-	states []*AggregateState
+	states []aggregateAccumulator
+	// sawValue records whether any aggregate accepted any input for this
+	// group — the streaming twin of the batch paths' hasAnyValues: a group
+	// whose every aggregate folded nothing is dropped, not emitted as nils.
+	sawValue bool
 }

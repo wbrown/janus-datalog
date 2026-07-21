@@ -86,7 +86,7 @@ func TestExtractOrClauseSymbols(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			syms := extractOrClauseSymbols(tt.orClause)
+			syms := query.ScopeOf(tt.orClause)
 
 			// Check that all expected symbols are provided
 			providedSet := make(map[query.Symbol]bool)
@@ -123,7 +123,7 @@ func TestExtractSubqueryPatternSymbols(t *testing.T) {
 			pattern: &query.SubqueryPattern{
 				Query: &query.Query{
 					Find: []query.FindElement{
-						query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+						query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 					},
 				},
 				Inputs: []query.PatternElement{
@@ -168,7 +168,7 @@ func TestExtractSubqueryPatternSymbols(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			syms := extractSubqueryPatternSymbols(tt.pattern)
+			syms := query.ScopeOf(tt.pattern)
 
 			// Check provides
 			providedSet := make(map[query.Symbol]bool)
@@ -183,12 +183,12 @@ func TestExtractSubqueryPatternSymbols(t *testing.T) {
 
 			// Check requires
 			requiresSet := make(map[query.Symbol]bool)
-			for _, sym := range syms.Requires {
+			for _, sym := range syms.Correlates {
 				requiresSet[sym] = true
 			}
 			for _, expected := range tt.expectedRequires {
 				if !requiresSet[expected] {
-					t.Errorf("Expected symbol %s to be required, but it wasn't. Got: %v", expected, syms.Requires)
+					t.Errorf("Expected symbol %s to be required, but it wasn't. Got: %v", expected, syms.Correlates)
 				}
 			}
 		})
@@ -226,7 +226,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 			},
 		}
 
-		syms := extractOrClauseSymbols(orClause)
+		syms := query.ScopeOf(orClause)
 
 		// Should only have ?x (intersection)
 		if len(syms.Provides) != 1 {
@@ -261,7 +261,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 			},
 		}
 
-		syms := extractOrClauseSymbols(orClause)
+		syms := query.ScopeOf(orClause)
 
 		// Intersection: only ?x is common to both branches
 		providedSet := make(map[query.Symbol]bool)
@@ -277,8 +277,10 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 		}
 	})
 
-	t.Run("OR-DEFAULT with expression uses union", func(t *testing.T) {
-		// Same branches but OrDefaultClause — uses union provides (fallback: one branch executes)
+	t.Run("OR-DEFAULT with expression uses intersection", func(t *testing.T) {
+		// Same branches as OrDefaultClause — exactly one branch's results
+		// are used, so only symbols every branch binds are provided; the
+		// executor's output schema is outer ∪ branch intersection.
 		orDefaultClause := &query.OrDefaultClause{
 			Branches: [][]query.Clause{
 				{
@@ -299,7 +301,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 			},
 		}
 
-		syms := extractOrDefaultClauseSymbols(orDefaultClause)
+		syms := query.ScopeOf(orDefaultClause)
 
 		providedSet := make(map[query.Symbol]bool)
 		for _, sym := range syms.Provides {
@@ -309,15 +311,15 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 		if !providedSet[datalog.NewSymbol("?x")] {
 			t.Errorf("Expected ?x to be provided, got: %v", syms.Provides)
 		}
-		if !providedSet[datalog.NewSymbol("?e")] {
-			t.Errorf("Expected ?e to be provided (union semantics), got: %v", syms.Provides)
+		if providedSet[datalog.NewSymbol("?e")] {
+			t.Errorf("?e should NOT be provided (intersection: not in branch 2; absent from the relation when the fallback fires), got: %v", syms.Provides)
 		}
 	})
 
-	t.Run("OrDefault SubqueryPattern with ground fallback uses union", func(t *testing.T) {
+	t.Run("OrDefault SubqueryPattern with ground fallback provides the common binding", func(t *testing.T) {
 		// Branch 1 (SubqueryPattern) provides: ?openingCount
 		// Branch 2 (Expression) provides: ?openingCount
-		// Union should be: ?openingCount
+		// Intersection: ?openingCount
 		// This is the real-world use case — uses OrDefaultClause for fallback
 		orClause := &query.OrDefaultClause{
 			Branches: [][]query.Clause{
@@ -325,7 +327,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 					&query.SubqueryPattern{
 						Query: &query.Query{
 							Find: []query.FindElement{
-								query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+								query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 							},
 						},
 						Inputs: []query.PatternElement{
@@ -344,7 +346,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 			},
 		}
 
-		syms := extractOrDefaultClauseSymbols(orClause)
+		syms := query.ScopeOf(orClause)
 
 		foundOpeningCount := false
 		for _, sym := range syms.Provides {
@@ -372,7 +374,7 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 					&query.SubqueryPattern{
 						Query: &query.Query{
 							Find: []query.FindElement{
-								query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+								query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 							},
 						},
 						Inputs: []query.PatternElement{
@@ -391,16 +393,16 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 			},
 		}
 
-		syms := extractOrClauseSymbols(orClause)
+		syms := query.ScopeOf(orClause)
 
 		// The OR clause MUST require ?scenario because the subquery needs it
 		requiresSet := make(map[query.Symbol]bool)
-		for _, sym := range syms.Requires {
+		for _, sym := range syms.Correlates {
 			requiresSet[sym] = true
 		}
 
 		if !requiresSet[datalog.NewSymbol("?scenario")] {
-			t.Errorf("OR clause with correlated subquery must require ?scenario, got Requires: %v", syms.Requires)
+			t.Errorf("OR clause with correlated subquery must require ?scenario, got Requires: %v", syms.Correlates)
 		}
 
 		// Should still provide ?count
@@ -432,10 +434,10 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 			},
 		}
 
-		syms := extractOrClauseSymbols(orClause)
+		syms := query.ScopeOf(orClause)
 
-		if len(syms.Requires) != 0 {
-			t.Errorf("OR with only ground expressions should require nothing, got: %v", syms.Requires)
+		if len(syms.Correlates) != 0 {
+			t.Errorf("OR with only ground expressions should require nothing, got: %v", syms.Correlates)
 		}
 	})
 
@@ -446,7 +448,7 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 				{
 					&query.Expression{
 						Function: &query.ArithmeticFunction{
-							Op: query.OpAdd,
+							Op: datalog.SymAdd,
 							Args: []query.Term{
 								query.VariableTerm{Symbol: datalog.NewSymbol("?input")},
 								query.ConstantTerm{Value: int64(1)},
@@ -464,15 +466,15 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 			},
 		}
 
-		syms := extractOrClauseSymbols(orClause)
+		syms := query.ScopeOf(orClause)
 
 		requiresSet := make(map[query.Symbol]bool)
-		for _, sym := range syms.Requires {
+		for _, sym := range syms.Correlates {
 			requiresSet[sym] = true
 		}
 
 		if !requiresSet[datalog.NewSymbol("?input")] {
-			t.Errorf("OR clause should require ?input from arithmetic expression, got: %v", syms.Requires)
+			t.Errorf("OR clause should require ?input from arithmetic expression, got: %v", syms.Correlates)
 		}
 	})
 }
@@ -486,7 +488,7 @@ func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
 				&query.SubqueryPattern{
 					Query: &query.Query{
 						Find: []query.FindElement{
-							query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+							query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 						},
 					},
 					Inputs: []query.PatternElement{
@@ -505,7 +507,7 @@ func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
 		},
 	}
 
-	syms := extractOrClauseSymbols(orClause)
+	syms := query.ScopeOf(orClause)
 
 	// Both branches provide ?openingCount, so the OR should provide it
 	foundOpeningCount := false
@@ -530,7 +532,7 @@ func TestOrJoinClauseRequiresCorrelatedInputs(t *testing.T) {
 					&query.SubqueryPattern{
 						Query: &query.Query{
 							Find: []query.FindElement{
-								query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+								query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 							},
 						},
 						Inputs: []query.PatternElement{
@@ -549,15 +551,15 @@ func TestOrJoinClauseRequiresCorrelatedInputs(t *testing.T) {
 			},
 		}
 
-		syms := extractOrJoinClauseSymbols(orJoin)
+		syms := query.ScopeOf(orJoin)
 
 		requiresSet := make(map[query.Symbol]bool)
-		for _, sym := range syms.Requires {
+		for _, sym := range syms.Correlates {
 			requiresSet[sym] = true
 		}
 
 		if !requiresSet[datalog.NewSymbol("?entity")] {
-			t.Errorf("OR-JOIN with correlated subquery must require ?entity, got Requires: %v", syms.Requires)
+			t.Errorf("OR-JOIN with correlated subquery must require ?entity, got Requires: %v", syms.Correlates)
 		}
 
 		// Should provide the JoinVars
@@ -572,10 +574,12 @@ func TestOrJoinClauseRequiresCorrelatedInputs(t *testing.T) {
 	})
 }
 
-// TestOrJoinClauseJoinVarRequiredNotProvided verifies that join vars
-// not produced by all branches are in requires (not provides).
+// TestOrJoinClauseJoinVarRequiredNotProvided verifies that join vars not
+// produced by all branches correlate with the enclosing scope (not provides),
+// and that branch locals outside the header never escape.
 // This is the Rule 5 get-else pattern: (or-join [?rxn] [?rxn :attr ?v] [(ground "") ?v])
-// Branch 1 produces ?rxn, branch 2 does not. ?rxn must be required from outside.
+// Branch 1 produces ?rxn, branch 2 does not. ?rxn must be bound from outside;
+// ?v is branch-local — the header is the complete interface.
 func TestOrJoinClauseJoinVarRequiredNotProvided(t *testing.T) {
 	orJoin := &query.OrJoinClause{
 		JoinVars: []query.Symbol{datalog.NewSymbol("?rxn")},
@@ -598,10 +602,10 @@ func TestOrJoinClauseJoinVarRequiredNotProvided(t *testing.T) {
 		},
 	}
 
-	syms := extractOrJoinClauseSymbols(orJoin)
+	syms := query.ScopeOf(orJoin)
 
 	requiresSet := make(map[query.Symbol]bool)
-	for _, sym := range syms.Requires {
+	for _, sym := range syms.Correlates {
 		requiresSet[sym] = true
 	}
 	providesSet := make(map[query.Symbol]bool)
@@ -610,13 +614,13 @@ func TestOrJoinClauseJoinVarRequiredNotProvided(t *testing.T) {
 	}
 
 	if !requiresSet[datalog.NewSymbol("?rxn")] {
-		t.Errorf("join var ?rxn should be REQUIRED (not produced by all branches), got Requires: %v", syms.Requires)
+		t.Errorf("join var ?rxn should be REQUIRED (not produced by all branches), got Requires: %v", syms.Correlates)
 	}
 	if providesSet[datalog.NewSymbol("?rxn")] {
 		t.Errorf("join var ?rxn should NOT be in provides (branch 2 doesn't produce it), got Provides: %v", syms.Provides)
 	}
-	if !providesSet[datalog.NewSymbol("?reason")] {
-		t.Errorf("?reason should be provided (produced by all branches), got Provides: %v", syms.Provides)
+	if providesSet[datalog.NewSymbol("?reason")] {
+		t.Errorf("?reason is branch-local outside the header and must not escape, got Provides: %v", syms.Provides)
 	}
 }
 
@@ -635,15 +639,15 @@ func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 			},
 		}
 
-		syms := extractNotClauseSymbols(notClause)
+		syms := query.ScopeOf(notClause)
 
 		requiresSet := make(map[query.Symbol]bool)
-		for _, sym := range syms.Requires {
+		for _, sym := range syms.Correlates {
 			requiresSet[sym] = true
 		}
 
 		if !requiresSet[datalog.NewSymbol("?e")] {
-			t.Errorf("NOT clause must require ?e from inner pattern, got Requires: %v", syms.Requires)
+			t.Errorf("NOT clause must require ?e from inner pattern, got Requires: %v", syms.Correlates)
 		}
 
 		if len(syms.Provides) != 0 {
@@ -656,7 +660,7 @@ func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 			Clauses: []query.Clause{
 				&query.Expression{
 					Function: &query.ArithmeticFunction{
-						Op: query.OpAdd,
+						Op: datalog.SymAdd,
 						Args: []query.Term{
 							query.VariableTerm{Symbol: datalog.NewSymbol("?count")},
 							query.ConstantTerm{Value: int64(10)},
@@ -667,24 +671,24 @@ func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 			},
 		}
 
-		syms := extractNotClauseSymbols(notClause)
+		syms := query.ScopeOf(notClause)
 
 		requiresSet := make(map[query.Symbol]bool)
-		for _, sym := range syms.Requires {
+		for _, sym := range syms.Correlates {
 			requiresSet[sym] = true
 		}
 
 		// Should require ?count (input to expression) and ?result (output of expression)
 		if !requiresSet[datalog.NewSymbol("?count")] {
-			t.Errorf("NOT clause must require ?count, got Requires: %v", syms.Requires)
+			t.Errorf("NOT clause must require ?count, got Requires: %v", syms.Correlates)
 		}
 		if !requiresSet[datalog.NewSymbol("?result")] {
-			t.Errorf("NOT clause must require ?result, got Requires: %v", syms.Requires)
+			t.Errorf("NOT clause must require ?result, got Requires: %v", syms.Correlates)
 		}
 	})
 }
 
-func TestExtractExpressionSymbols(t *testing.T) {
+func TestExpressionScope(t *testing.T) {
 	tests := []struct {
 		name             string
 		expression       *query.Expression
@@ -704,7 +708,7 @@ func TestExtractExpressionSymbols(t *testing.T) {
 			name: "Arithmetic requires inputs, provides binding",
 			expression: &query.Expression{
 				Function: &query.ArithmeticFunction{
-					Op: query.OpAdd,
+					Op: datalog.SymAdd,
 					Args: []query.Term{
 						query.VariableTerm{Symbol: datalog.NewSymbol("?a")},
 						query.VariableTerm{Symbol: datalog.NewSymbol("?b")},
@@ -719,7 +723,7 @@ func TestExtractExpressionSymbols(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			syms := extractExpressionSymbols(tt.expression)
+			syms := query.ScopeOf(tt.expression)
 
 			// Check provides
 			if len(syms.Provides) != len(tt.expectedProvides) {
@@ -733,12 +737,12 @@ func TestExtractExpressionSymbols(t *testing.T) {
 
 			// Check requires
 			requiresSet := make(map[query.Symbol]bool)
-			for _, sym := range syms.Requires {
+			for _, sym := range syms.Correlates {
 				requiresSet[sym] = true
 			}
 			for _, expected := range tt.expectedRequires {
 				if !requiresSet[expected] {
-					t.Errorf("Expected symbol %s to be required, but it wasn't. Got: %v", expected, syms.Requires)
+					t.Errorf("Expected symbol %s to be required, but it wasn't. Got: %v", expected, syms.Correlates)
 				}
 			}
 		})

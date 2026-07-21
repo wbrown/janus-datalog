@@ -2,6 +2,7 @@ package algebra
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -9,27 +10,63 @@ import (
 
 // Compile converts a query's WHERE clauses into a relational algebra tree.
 // The resulting tree can be optimized via transform passes before execution.
+// Clauses fold in dependency-honoring order, not source order — clause order
+// in query text carries no meaning, and the fold requires binders before
+// their consumers (see orderClausesForCompile). The query's :in symbols seed
+// the binding environment: an input-bound correlate is bindable.
 func Compile(q *query.Query) (*Node, error) {
 	if len(q.Where) == 0 {
 		return nil, fmt.Errorf("empty WHERE clause")
 	}
-	return compileClauses(q.Where)
-}
-
-// compileClauses builds an algebra tree from an ordered list of clauses.
-// Each clause either produces a new leaf or wraps/joins with the existing tree.
-func compileClauses(clauses []query.Clause) (*Node, error) {
-	return compileClausesFrom(clauses, nil)
+	inputs := query.ConstantInputSymbols(q.In)
+	for sym := range query.IteratedInputSymbols(q.In) {
+		inputs[sym] = true
+	}
+	return compileClausesFrom(q.Where, nil, nil, inputs)
 }
 
 // compileClausesFrom builds an algebra tree starting with an initial relation.
 // Used by OR branch compilation to thread the outer relation into branches
 // so that NOT clauses have a relation to anti-join against.
-func compileClausesFrom(clauses []query.Clause, initial *Node) (*Node, error) {
-	current := initial
+//
+// The clauses fold in the order orderClausesForCompile returns. context lists
+// symbols the enclosing scope supplies without an initial node (a NOT body's
+// outer relation); inputs is the query's :in symbol set. Both feed ordering,
+// and — when the clause list contains no generator at all — the environment
+// they name becomes the prior relation the fold starts from: a clause list
+// that is consumer-only with environment-bound correlates filters the bound
+// environment (the baseline executes exactly that against the input groups),
+// so the fold seeds a childless Project carrying the environment's symbols —
+// the schema-placeholder idiom, which decompiles to nothing. Ordering prefers
+// generators for the first pick, so the placeholder appears only for
+// genuinely generator-free lists; the folded tree never embeds environment
+// scans.
+func compileClausesFrom(clauses []query.Clause, initial *Node, context []query.Symbol, inputs map[query.Symbol]bool) (*Node, error) {
+	available := make(map[query.Symbol]bool, len(inputs)+len(context))
+	for sym := range inputs {
+		available[sym] = true
+	}
+	for _, sym := range context {
+		available[sym] = true
+	}
+	if initial != nil {
+		for _, sym := range initial.Symbols() {
+			available[sym] = true
+		}
+	}
+	ordered, err := orderClausesForCompile(clauses, available, inputs)
+	if err != nil {
+		return nil, err
+	}
 
-	for _, clause := range clauses {
-		node, err := compileClause(clause, current)
+	current := initial
+	if current == nil && len(ordered) > 0 && len(query.ScopeOf(ordered[0]).Provides) == 0 {
+		if env := environmentSymbols(context, inputs); len(env) > 0 {
+			current = &Node{Op: RuleProject, Data: &Project{Symbols: env}}
+		}
+	}
+	for _, clause := range ordered {
+		node, err := compileClause(clause, current, inputs)
 		if err != nil {
 			return nil, err
 		}
@@ -42,9 +79,33 @@ func compileClausesFrom(clauses []query.Clause, initial *Node) (*Node, error) {
 	return current, nil
 }
 
+// environmentSymbols collects the environment a clause list folds within —
+// the enclosing context symbols plus the :in-bound symbols — deduplicated
+// and in deterministic order (map iteration must not leak into the tree).
+func environmentSymbols(context []query.Symbol, inputs map[query.Symbol]bool) []query.Symbol {
+	seen := make(map[query.Symbol]bool, len(context)+len(inputs))
+	env := make([]query.Symbol, 0, len(context)+len(inputs))
+	for _, sym := range context {
+		if !seen[sym] {
+			seen[sym] = true
+			env = append(env, sym)
+		}
+	}
+	inputSyms := make([]query.Symbol, 0, len(inputs))
+	for sym := range inputs {
+		if !seen[sym] {
+			seen[sym] = true
+			inputSyms = append(inputSyms, sym)
+		}
+	}
+	sort.Slice(inputSyms, func(i, j int) bool { return inputSyms[i].Compare(inputSyms[j]) < 0 })
+	return append(env, inputSyms...)
+}
+
 // compileClause compiles a single clause, potentially joining it with
-// the current accumulated relation.
-func compileClause(clause query.Clause, current *Node) (*Node, error) {
+// the current accumulated relation. inputs (the query's :in symbols) threads
+// to the compound forms, whose bodies order their own clause lists.
+func compileClause(clause query.Clause, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
 	switch c := clause.(type) {
 	case *query.DataPattern:
 		return compileDataPattern(c, current), nil
@@ -56,22 +117,22 @@ func compileClause(clause query.Clause, current *Node) (*Node, error) {
 		return compileSubquery(c, current), nil
 
 	case *query.NotClause:
-		return compileNot(c, current)
+		return compileNot(c, current, inputs)
 
 	case *query.NotJoinClause:
-		return compileNotJoin(c, current)
+		return compileNotJoin(c, current, inputs)
 
 	case *query.OrClause:
-		return compileOr(c, current)
+		return compileOr(c, current, inputs)
 
 	case *query.OrJoinClause:
-		return compileOrJoin(c, current)
+		return compileOrJoin(c, current, inputs)
 
 	case *query.OrDefaultClause:
-		return compileOrDefault(c, current)
+		return compileOrDefault(c, current, inputs)
 
 	case *query.OrDefaultJoinClause:
-		return compileOrDefaultJoin(c, current)
+		return compileOrDefaultJoin(c, current, inputs)
 
 	case *query.Comparison:
 		return compilePredicate(c, current), nil
@@ -118,7 +179,7 @@ func compileExpression(expr *query.Expression, current *Node) *Node {
 		output = append(output, current.Symbols()...)
 	}
 	for _, bs := range bindingSyms {
-		if !containsSymbol(output, bs) {
+		if !query.ContainsSymbol(output, bs) {
 			output = append(output, bs)
 		}
 	}
@@ -139,7 +200,7 @@ func compileExpression(expr *query.Expression, current *Node) *Node {
 
 // compileSubquery produces a LateralJoin (correlated) or Join (uncorrelated).
 func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
-	bindingSyms := bindingFormSymbols(sp.Binding)
+	bindingSyms := sp.Binding.BoundVariables()
 
 	// Determine correlation variables: inputs that are variable symbols
 	// (excluding source symbols like $ which are always available)
@@ -162,12 +223,12 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
 		output = append(output, current.Symbols()...)
 	}
 	for _, cv := range correlationVars {
-		if !containsSymbol(output, cv) {
+		if !query.ContainsSymbol(output, cv) {
 			output = append(output, cv)
 		}
 	}
 	for _, bs := range bindingSyms {
-		if !containsSymbol(output, bs) {
+		if !query.ContainsSymbol(output, bs) {
 			output = append(output, bs)
 		}
 	}
@@ -178,6 +239,7 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
 			Op: RuleLateralJoin,
 			Data: &LateralJoin{
 				CorrelationVars: correlationVars,
+				Inputs:          sp.Inputs,
 				InnerQuery:      sp.Query,
 				Binding:         sp.Binding,
 				Output:          output,
@@ -194,6 +256,7 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
 	lj := &Node{
 		Op: RuleLateralJoin,
 		Data: &LateralJoin{
+			Inputs:     sp.Inputs,
 			InnerQuery: sp.Query,
 			Binding:    sp.Binding,
 			Output:     bindingSyms,
@@ -206,12 +269,12 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
 }
 
 // compileNot produces an AntiJoin.
-func compileNot(nc *query.NotClause, current *Node) (*Node, error) {
+func compileNot(nc *query.NotClause, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
 	if current == nil {
 		return nil, fmt.Errorf("NOT clause requires prior relation")
 	}
 
-	inner, err := compileClauses(nc.Clauses)
+	inner, err := compileClausesFrom(nc.Clauses, nil, current.Symbols(), inputs)
 	if err != nil {
 		return nil, fmt.Errorf("NOT inner clauses: %w", err)
 	}
@@ -230,15 +293,25 @@ func compileNot(nc *query.NotClause, current *Node) (*Node, error) {
 		if symbol.IsSource() {
 			continue
 		}
-		if !containsSymbol(current.Symbols(), symbol) {
+		if !query.ContainsSymbol(current.Symbols(), symbol) {
 			return nil, fmt.Errorf("NOT body requires unbound outer symbol %s", symbol)
 		}
-		if !containsSymbol(joinSyms, symbol) {
+		if !query.ContainsSymbol(joinSyms, symbol) {
 			joinSyms = append(joinSyms, symbol)
 		}
-		if !containsSymbol(inner.Symbols(), symbol) {
+		if !query.ContainsSymbol(inner.Symbols(), symbol) {
 			required = append(required, symbol)
 		}
+	}
+	// Zero join symbols means the anti-join has no keys: the NOT does not
+	// unify with the outer relation, and the not-join this node decompiles
+	// to would have an empty header — a form the language rejects. Error
+	// here rather than emit an inexpressible clause.
+	if len(joinSyms) == 0 {
+		return nil, fmt.Errorf(
+			"NOT clause %s shares no variable with the outer relation; a NOT body must unify with the enclosing query through at least one variable",
+			nc,
+		)
 	}
 
 	return &Node{
@@ -254,12 +327,12 @@ func compileNot(nc *query.NotClause, current *Node) (*Node, error) {
 }
 
 // compileNotJoin produces an AntiJoin with explicit join variables.
-func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
+func compileNotJoin(nj *query.NotJoinClause, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
 	if current == nil {
 		return nil, fmt.Errorf("NOT-JOIN clause requires prior relation")
 	}
 
-	inner, err := compileClauses(nj.Clauses)
+	inner, err := compileClausesFrom(nj.Clauses, nil, current.Symbols(), inputs)
 	if err != nil {
 		return nil, fmt.Errorf("NOT-JOIN inner clauses: %w", err)
 	}
@@ -269,7 +342,7 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
 	}
 	right := analysis[inner]
 	for _, symbol := range nj.JoinVars {
-		if !containsSymbol(current.Symbols(), symbol) {
+		if !query.ContainsSymbol(current.Symbols(), symbol) {
 			return nil, fmt.Errorf("not-join header symbol %s is not bound by the outer relation", symbol)
 		}
 	}
@@ -277,10 +350,10 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
 		if symbol.IsSource() {
 			continue
 		}
-		if !containsSymbol(current.Symbols(), symbol) {
+		if !query.ContainsSymbol(current.Symbols(), symbol) {
 			return nil, fmt.Errorf("NOT-JOIN body requires unbound outer symbol %s", symbol)
 		}
-		if !containsSymbol(nj.JoinVars, symbol) {
+		if !query.ContainsSymbol(nj.JoinVars, symbol) {
 			return nil, fmt.Errorf(
 				"not-join header must declare outer requirement %s used by the body",
 				symbol,
@@ -289,10 +362,10 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
 	}
 	var required []query.Symbol
 	for _, symbol := range nj.JoinVars {
-		if containsSymbol(inner.Symbols(), symbol) {
+		if query.ContainsSymbol(inner.Symbols(), symbol) {
 			continue
 		}
-		if !containsSymbol(right.Required, symbol) {
+		if !query.ContainsSymbol(right.Required, symbol) {
 			return nil, fmt.Errorf(
 				"not-join header symbol %s is neither produced nor consumed by the body",
 				symbol,
@@ -315,22 +388,24 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
 
 // compileOr handles OR clauses — union semantics.
 // When branches contain correlated predicates (NOT, missing?) that require
-// outer context, routes to the fallback/lateral-join path since independent
-// union branches can't express anti-joins against the outer relation.
-func compileOr(oc *query.OrClause, current *Node) (*Node, error) {
+// outer context, independent union branch compilation can't give them a
+// relation to anti-join against; the correlated route compiles branches
+// against the outer schema and the clause round-trips unchanged.
+func compileOr(oc *query.OrClause, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
 	if branchesRequireOuterContext(oc.Branches) {
-		return compileOrFallback(oc.Branches, current)
+		return compileOrUnionCorrelated(oc.Branches, nil, query.ScopeOf(oc), current, inputs)
 	}
-	return compileOrUnion(oc.Branches, current)
+	return compileOrUnion(oc.Branches, current, inputs)
 }
 
 // compileOrJoin handles OR-JOIN clauses — union semantics with join vars.
-// Same correlated-predicate detection as compileOr.
-func compileOrJoin(oj *query.OrJoinClause, current *Node) (*Node, error) {
+// Same correlated-predicate detection as compileOr; the correlated route
+// preserves the declared header verbatim.
+func compileOrJoin(oj *query.OrJoinClause, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
 	if branchesRequireOuterContext(oj.Branches) {
-		return compileOrFallbackWithJoinVars(oj.Branches, oj.JoinVars, current)
+		return compileOrUnionCorrelated(oj.Branches, oj.JoinVars, query.ScopeOf(oj), current, inputs)
 	}
-	return compileOrUnionWithJoinVars(oj.Branches, oj.JoinVars, current)
+	return compileOrUnionWithJoinVars(oj.Branches, oj.JoinVars, current, inputs)
 }
 
 // branchesRequireOuterContext returns true if any branch contains (at any
@@ -374,29 +449,30 @@ func clausesRequireOuterContext(clauses []query.Clause) bool {
 }
 
 // compileOrDefault handles OR-DEFAULT clauses — fallback semantics.
-func compileOrDefault(oc *query.OrDefaultClause, current *Node) (*Node, error) {
-	return compileOrFallback(oc.Branches, current)
+func compileOrDefault(oc *query.OrDefaultClause, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
+	return compileOrFallback(oc.Branches, current, inputs)
 }
 
-// compileOrDefaultJoin handles OR-DEFAULT-JOIN clauses — fallback with join vars.
-func compileOrDefaultJoin(oj *query.OrDefaultJoinClause, current *Node) (*Node, error) {
-	return compileOrFallbackWithJoinVars(oj.Branches, oj.JoinVars, current)
+// compileOrDefaultJoin handles OR-DEFAULT-JOIN clauses — fallback with a
+// declared required/output interface.
+func compileOrDefaultJoin(oj *query.OrDefaultJoinClause, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
+	return compileOrFallbackWithVars(oj.Branches, oj.RequiredVars, oj.OutputVars, current, inputs)
 }
 
 // compileOrUnion compiles each branch and unions the results.
 // Infers join variables from shared symbols between current and branches,
 // so the decompiler emits OrJoinClause with explicit join vars (same
 // pattern as not → not-join).
-func compileOrUnion(branches [][]query.Clause, current *Node) (*Node, error) {
-	return compileOrUnionWithJoinVars(branches, nil, current)
+func compileOrUnion(branches [][]query.Clause, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
+	return compileOrUnionWithJoinVars(branches, nil, current, inputs)
 }
 
 // compileOrUnionWithJoinVars compiles OR branches into a Union node,
 // optionally preserving explicit join variables from or-join.
-func compileOrUnionWithJoinVars(branches [][]query.Clause, joinVars []query.Symbol, current *Node) (*Node, error) {
+func compileOrUnionWithJoinVars(branches [][]query.Clause, joinVars []query.Symbol, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
 	children := make([]*Node, 0, len(branches))
 	for i, branch := range branches {
-		compiled, err := compileClauses(branch)
+		compiled, err := compileClausesFrom(branch, nil, symbolsOf(current), inputs)
 		if err != nil {
 			return nil, fmt.Errorf("OR branch %d: %w", i, err)
 		}
@@ -408,8 +484,8 @@ func compileOrUnionWithJoinVars(branches [][]query.Clause, joinVars []query.Symb
 	if current != nil {
 		for _, child := range children {
 			for _, symbol := range sharedSymbols(current.Symbols(), child.Symbols()) {
-				if (!explicitJoin || containsSymbol(joinVars, symbol)) &&
-					!containsSymbol(required, symbol) {
+				if (!explicitJoin || query.ContainsSymbol(joinVars, symbol)) &&
+					!query.ContainsSymbol(required, symbol) {
 					required = append(required, symbol)
 				}
 			}
@@ -438,15 +514,69 @@ func compileOrUnionWithJoinVars(branches [][]query.Clause, joinVars []query.Symb
 	return joinWith(current, union), nil
 }
 
-// compileOrFallback handles OR-fallback: subquery branch + ground default branch.
-// This is the pattern that produces LateralJoin with defaults.
-func compileOrFallback(branches [][]query.Clause, current *Node) (*Node, error) {
-	return compileOrFallbackWithJoinVars(branches, nil, current)
+// compileOrUnionCorrelated compiles or/or-join whose branches contain
+// correlated predicates (NOT, missing?). Branches compile against a schema
+// placeholder so anti-joins see the outer symbols without embedding outer
+// scans, and the node's interface comes from the clause's canonical scope —
+// never inferred from the placeholder-inflated children, which would leak
+// outer symbols into the header. The fallback machinery is not a valid
+// target here: fallback short-circuits per group, union does not, and
+// encoding union through it drops rows (see
+// docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_ROWS.md).
+// Correlated union has no semantics-preserving rewrite, so the node
+// decompiles back to the original clause and execution uses the executor's
+// or/or-join path.
+func compileOrUnionCorrelated(branches [][]query.Clause, joinVars []query.Symbol, scope query.ClauseScope, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
+	if len(branches) < 2 {
+		return nil, fmt.Errorf("OR requires at least 2 branches")
+	}
+
+	var initial *Node
+	if current != nil {
+		initial = &Node{
+			Op:   RuleProject,
+			Data: &Project{Symbols: current.Symbols()},
+		}
+	}
+	compiled := make([]*Node, len(branches))
+	for i, branch := range branches {
+		node, err := compileClausesFrom(branch, initial, nil, inputs)
+		if err != nil {
+			return nil, fmt.Errorf("OR branch %d: %w", i, err)
+		}
+		compiled[i] = node
+	}
+
+	// Header vars the branches cannot produce ride Required (they unify
+	// with the outer relation); everything the clause provides is output.
+	output := append([]query.Symbol(nil), joinVars...)
+	for _, sym := range scope.Provides {
+		if !query.ContainsSymbol(output, sym) {
+			output = append(output, sym)
+		}
+	}
+
+	union := &Node{
+		Op: RuleUnion,
+		Data: &Union{
+			Output:   output,
+			JoinVars: joinVars,
+			Required: append([]query.Symbol(nil), scope.Correlates...),
+		},
+		Children: compiled,
+	}
+	return joinWith(current, union), nil
 }
 
-// compileOrFallbackWithJoinVars handles OR-fallback, preserving explicit join
-// variables from or-join on Union nodes.
-func compileOrFallbackWithJoinVars(branches [][]query.Clause, joinVars []query.Symbol, current *Node) (*Node, error) {
+// compileOrFallback handles OR-fallback: subquery branch + ground default branch.
+// This is the pattern that produces LateralJoin with defaults.
+func compileOrFallback(branches [][]query.Clause, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
+	return compileOrFallbackWithVars(branches, nil, nil, current, inputs)
+}
+
+// compileOrFallbackWithVars handles OR-fallback, preserving or-default-join's
+// declared required/output interface through the IR.
+func compileOrFallbackWithVars(branches [][]query.Clause, requiredVars, outputVars []query.Symbol, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
 	if len(branches) < 2 {
 		return nil, fmt.Errorf("OR fallback requires at least 2 branches")
 	}
@@ -473,7 +603,7 @@ func compileOrFallbackWithJoinVars(branches [][]query.Clause, joinVars []query.S
 		// compileOrFallbackExclusive returns a Union node (not joined with
 		// current). We join it here so the decompiler emits outer clauses
 		// separately from the OR.
-		union, err := compileOrFallbackExclusive(branches, joinVars, current)
+		union, err := compileOrFallbackExclusive(branches, requiredVars, outputVars, current, inputs)
 		if err != nil {
 			return nil, err
 		}
@@ -481,7 +611,7 @@ func compileOrFallbackWithJoinVars(branches [][]query.Clause, joinVars []query.S
 	}
 
 	// Compile the subquery branch
-	subNode, err := compileClauses(subqueryBranch)
+	subNode, err := compileClausesFrom(subqueryBranch, nil, symbolsOf(current), inputs)
 	if err != nil {
 		return nil, fmt.Errorf("OR fallback subquery branch: %w", err)
 	}
@@ -492,7 +622,7 @@ func compileOrFallbackWithJoinVars(branches [][]query.Clause, joinVars []query.S
 		ljData := lj.Data.(*LateralJoin)
 		ljData.DefaultValues = defaultValues
 		for _, ds := range defaultSymbols {
-			if !containsSymbol(ljData.Output, ds) {
+			if !query.ContainsSymbol(ljData.Output, ds) {
 				ljData.Output = append(ljData.Output, ds)
 			}
 		}
@@ -535,9 +665,17 @@ func compileOrFallbackWithJoinVars(branches [][]query.Clause, joinVars []query.S
 //
 // This correctly implements "try branch 1, else branch 2 per tuple" because
 // branch 2 only runs on tuples where branch 1 produced no results.
-func compileOrFallbackExclusive(branches [][]query.Clause, joinVars []query.Symbol, current *Node) (*Node, error) {
+func compileOrFallbackExclusive(branches [][]query.Clause, requiredVars, outputVars []query.Symbol, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
 	if current == nil {
-		return nil, fmt.Errorf("OR fallback requires prior relation")
+		// Uncorrelated global-fallback shape: an or-default opening :where
+		// has no prior relation, which means the outer group is the unit
+		// relation — the join identity — so branch evaluation is one global
+		// pass with first-non-empty-branch-wins semantics and an empty
+		// correlation interface. The unit is expressed as the same
+		// childless Project the schema placeholder below uses (zero
+		// symbols; decompiles to nothing), and the caller's
+		// joinWith(nil, union) returns the union directly.
+		current = &Node{Op: RuleProject, Data: &Project{}}
 	}
 	if len(branches) < 2 {
 		return nil, fmt.Errorf("OR fallback requires at least 2 branches")
@@ -556,7 +694,7 @@ func compileOrFallbackExclusive(branches [][]query.Clause, joinVars []query.Symb
 	// the decompiler won't emit the outer scan patterns.
 	compiled := make([]*Node, len(branches))
 	for i, branch := range branches {
-		node, err := compileClausesFrom(branch, outerSchema)
+		node, err := compileClausesFrom(branch, outerSchema, nil, inputs)
 		if err != nil {
 			return nil, fmt.Errorf("OR fallback branch %d: %w", i, err)
 		}
@@ -568,9 +706,10 @@ func compileOrFallbackExclusive(branches [][]query.Clause, joinVars []query.Symb
 	lateralUnion := &Node{
 		Op: RuleLateralUnion,
 		Data: &LateralUnion{
-			Output:   output,
-			JoinVars: joinVars,
-			Required: append([]query.Symbol(nil), current.Symbols()...),
+			Output:       output,
+			RequiredVars: requiredVars,
+			OutputVars:   outputVars,
+			Required:     append([]query.Symbol(nil), current.Symbols()...),
 		},
 		Children: compiled,
 	}
@@ -583,17 +722,17 @@ func normalizedBranchSymbols(branches []*Node, joinVars []query.Symbol) []query.
 		return output
 	}
 	for _, symbol := range branches[0].Symbols() {
-		if containsSymbol(joinVars, symbol) {
+		if query.ContainsSymbol(joinVars, symbol) {
 			continue
 		}
 		common := true
 		for _, branch := range branches[1:] {
-			if !containsSymbol(branch.Symbols(), symbol) {
+			if !query.ContainsSymbol(branch.Symbols(), symbol) {
 				common = false
 				break
 			}
 		}
-		if common && !containsSymbol(output, symbol) {
+		if common && !query.ContainsSymbol(output, symbol) {
 			output = append(output, symbol)
 		}
 	}
@@ -674,21 +813,6 @@ func bindingSymbols(binding interface{}) []query.Symbol {
 	return nil
 }
 
-// bindingFormSymbols extracts symbols from a SubqueryPattern's BindingForm.
-func bindingFormSymbols(binding query.BindingForm) []query.Symbol {
-	switch b := binding.(type) {
-	case query.TupleBinding:
-		return b.Variables
-	case query.ScalarBinding:
-		return []query.Symbol{b.Variable}
-	case query.CollectionBinding:
-		return []query.Symbol{b.Variable}
-	case query.RelationBinding:
-		return b.Variables
-	}
-	return nil
-}
-
 // collectBranchSymbols collects all variable symbols from OR branch clauses.
 func collectBranchSymbols(branches [][]query.Clause) []query.Symbol {
 	seen := make(map[query.Symbol]bool)
@@ -726,7 +850,7 @@ func clauseSymbols(clause query.Clause) []query.Symbol {
 				}
 			}
 		}
-		syms = append(syms, bindingFormSymbols(c.Binding)...)
+		syms = append(syms, c.Binding.BoundVariables()...)
 		return syms
 	default:
 		return nil
@@ -763,16 +887,6 @@ func mergeSymbols(a, b []query.Symbol) []query.Symbol {
 		}
 	}
 	return result
-}
-
-// containsSymbol checks if a symbol is in a slice.
-func containsSymbol(syms []query.Symbol, s query.Symbol) bool {
-	for _, sym := range syms {
-		if sym == s {
-			return true
-		}
-	}
-	return false
 }
 
 // symbolsOf returns the output symbols of a node, or nil if node is nil.

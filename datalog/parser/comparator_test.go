@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -29,7 +30,7 @@ func TestParseComparatorPatterns(t *testing.T) {
 					return fmt.Errorf("expected Comparison, got %T", q.Where[1])
 				}
 
-				if comp.Op != query.OpLT {
+				if comp.Op != datalog.SymLT {
 					return fmt.Errorf("expected '<' operator, got %s", comp.Op)
 				}
 
@@ -51,7 +52,7 @@ func TestParseComparatorPatterns(t *testing.T) {
                             [(> ?price 100.50)]]`,
 			validate: func(q *query.Query) error {
 				comp := q.Where[1].(*query.Comparison)
-				if comp.Op != query.OpGT {
+				if comp.Op != datalog.SymGT {
 					return fmt.Errorf("expected '>' operator, got %s", comp.Op)
 				}
 				return nil
@@ -64,7 +65,7 @@ func TestParseComparatorPatterns(t *testing.T) {
                             [(= ?name "Alice")]]`,
 			validate: func(q *query.Query) error {
 				comp := q.Where[1].(*query.Comparison)
-				if comp.Op != query.OpEQ {
+				if comp.Op != datalog.SymEQ {
 					return fmt.Errorf("expected '=' operator, got %s", comp.Op)
 				}
 				return nil
@@ -98,10 +99,10 @@ func TestParseComparatorPatterns(t *testing.T) {
 				comp1 := q.Where[1].(*query.Comparison)
 				comp2 := q.Where[2].(*query.Comparison)
 
-				if comp1.Op != query.OpGTE {
+				if comp1.Op != datalog.SymGTE {
 					return fmt.Errorf("expected '>=' operator, got %s", comp1.Op)
 				}
-				if comp2.Op != query.OpLTE {
+				if comp2.Op != datalog.SymLTE {
 					return fmt.Errorf("expected '<=' operator, got %s", comp2.Op)
 				}
 
@@ -134,33 +135,12 @@ func TestParseComparatorPatterns(t *testing.T) {
                      :where [?e :person/name ?name]
                             [(str/starts-with? ?name "Dr.")]]`,
 			validate: func(q *query.Query) error {
-				fnPred, ok := q.Where[1].(*query.FunctionPredicate)
+				pred, ok := q.Where[1].(*query.StrStartsWithPredicate)
 				if !ok {
-					return fmt.Errorf("expected FunctionPredicate, got %T", q.Where[1])
+					return fmt.Errorf("expected StrStartsWithPredicate, got %T", q.Where[1])
 				}
-				if fnPred.Fn != "str/starts-with?" {
-					return fmt.Errorf("expected 'str/starts-with?' function, got %s", fnPred.Fn)
-				}
-				return nil
-			},
-		},
-		{
-			name: "mathematical operations",
-			input: `[:find ?qty ?price
-                     :where [?order :order/quantity ?qty]
-                            [?order :order/price ?price]
-                            [(* ?qty ?price)]]`,
-			validate: func(q *query.Query) error {
-				// Mathematical operations without binding are predicates
-				fnPred, ok := q.Where[2].(*query.FunctionPredicate)
-				if !ok {
-					return fmt.Errorf("expected FunctionPredicate, got %T", q.Where[2])
-				}
-				if fnPred.Fn != "*" {
-					return fmt.Errorf("expected '*' function, got %s", fnPred.Fn)
-				}
-				if len(fnPred.Args) != 2 {
-					return fmt.Errorf("expected 2 args, got %d", len(fnPred.Args))
+				if _, ok := pred.Prefix.(query.ConstantTerm); !ok {
+					return fmt.Errorf("expected constant prefix term, got %T", pred.Prefix)
 				}
 				return nil
 			},
@@ -211,6 +191,19 @@ func TestComparatorErrors(t *testing.T) {
                      :where [?x :foo ?y]
                             [(42 ?x)]]`,
 			error: "function name must be a symbol",
+		},
+		{
+			// Previously parsed to a FunctionPredicate and errored per tuple
+			// at Eval ("unknown predicate function: *") — never reached when
+			// upstream matched nothing, yielding silent empty results. A
+			// non-boolean/unregistered function in predicate position is now
+			// rejected at the parse boundary.
+			name: "bare arithmetic in predicate position",
+			input: `[:find ?qty ?price
+                     :where [?order :order/quantity ?qty]
+                            [?order :order/price ?price]
+                            [(* ?qty ?price)]]`,
+			error: "unknown predicate function: *",
 		},
 	}
 

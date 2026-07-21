@@ -32,7 +32,6 @@ func newMockUnsafeRelation(symbols []query.Symbol, data [][]interface{}) *mockUn
 func (r *mockUnsafeRelation) Symbols() []query.Symbol                                { return r.symbols }
 func (r *mockUnsafeRelation) Properties() RelationProperties                         { return r.properties }
 func (r *mockUnsafeRelation) Size() int                                              { return len(r.data) }
-func (r *mockUnsafeRelation) IsEmpty() bool                                          { return len(r.data) == 0 }
 func (r *mockUnsafeRelation) Get(i int) Tuple                                        { return nil }
 func (r *mockUnsafeRelation) String() string                                         { return "mockUnsafeRelation" }
 func (r *mockUnsafeRelation) Table() string                                          { return "" }
@@ -41,7 +40,6 @@ func (r *mockUnsafeRelation) Sorted() ([]Tuple, error)                          
 func (r *mockUnsafeRelation) Project([]query.Symbol) (Relation, error)               { return nil, nil }
 func (r *mockUnsafeRelation) Materialize() Relation                                  { return r }
 func (r *mockUnsafeRelation) Sort([]query.OrderByClause) Relation                    { return nil }
-func (r *mockUnsafeRelation) Filter(Filter) Relation                                 { return nil }
 func (r *mockUnsafeRelation) FilterWithPredicate(query.Predicate) Relation           { return nil }
 func (r *mockUnsafeRelation) EvaluateFunction(query.Function, query.Symbol) Relation { return nil }
 func (r *mockUnsafeRelation) Select(func(Tuple) bool) Relation                       { return nil }
@@ -92,268 +90,7 @@ func (it *mockUnsafeIterator) Close() error {
 func (it *mockUnsafeIterator) Error() error { return it.err }
 
 // =============================================================================
-// Test 1: UnionIterator with RequiresCopy source
-// =============================================================================
-
-func TestUnionIteratorCopiesFromUnsafeSource(t *testing.T) {
-	// Create an unsafe relation that reuses workspace
-	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
-	unsafeRel := newMockUnsafeRelation(symbols, [][]interface{}{
-		{1, "a"},
-		{2, "b"},
-		{3, "c"},
-	})
-
-	// Create channel and send the relation
-	ch := make(chan relationItem, 1)
-	ch <- relationItem{relation: unsafeRel}
-	close(ch)
-
-	// Create UnionRelation
-	union := NewUnionRelation(ch, symbols, ExecutorOptions{})
-
-	// Iterate and store tuple references
-	var storedTuples []Tuple
-	it := union.Iterator()
-	for it.Next() {
-		// Store the tuple WITHOUT copying - this is what downstream code does
-		storedTuples = append(storedTuples, it.Tuple())
-	}
-	it.Close()
-
-	// Verify we got 3 tuples
-	if len(storedTuples) != 3 {
-		t.Fatalf("expected 3 tuples, got %d", len(storedTuples))
-	}
-
-	// CRITICAL: Verify stored tuples have correct values
-	// If UnionIterator doesn't copy when source.RequiresCopy() = true,
-	// all stored tuples will have the SAME values (the last one)
-	expected := [][]interface{}{
-		{1, "a"},
-		{2, "b"},
-		{3, "c"},
-	}
-
-	for i, tuple := range storedTuples {
-		if tuple[0] != expected[i][0] || tuple[1] != expected[i][1] {
-			t.Errorf("tuple %d corrupted: got %v, want %v", i, tuple, expected[i])
-		}
-	}
-
-	// Additional check: verify tuples are independent (not sharing memory)
-	if len(storedTuples) >= 2 {
-		// Modify first stored tuple
-		storedTuples[0][0] = 999
-		// Second tuple should be unaffected
-		if storedTuples[1][0] == 999 {
-			t.Error("tuples share memory - modification to tuple 0 affected tuple 1")
-		}
-	}
-}
-
-// =============================================================================
-// Test 2: UnionIterator with safe source (no unnecessary copies)
-// =============================================================================
-
-func TestUnionIteratorPassthroughFromSafeSource(t *testing.T) {
-	// Create a safe MaterializedRelation (RequiresCopy() = false)
-	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
-	tuples := []Tuple{
-		{1, "a"},
-		{2, "b"},
-	}
-	safeRel := NewMaterializedRelation(symbols, tuples)
-
-	// Create channel and send the relation
-	ch := make(chan relationItem, 1)
-	ch <- relationItem{relation: safeRel}
-	close(ch)
-
-	// Create UnionRelation
-	union := NewUnionRelation(ch, symbols, ExecutorOptions{})
-
-	// Iterate and check that tuples pass through correctly
-	var results []Tuple
-	it := union.Iterator()
-	for it.Next() {
-		results = append(results, it.Tuple())
-	}
-	it.Close()
-
-	if len(results) != 2 {
-		t.Fatalf("expected 2 tuples, got %d", len(results))
-	}
-
-	// Verify values are correct
-	if results[0][0] != 1 || results[0][1] != "a" {
-		t.Errorf("tuple 0 incorrect: got %v", results[0])
-	}
-	if results[1][0] != 2 || results[1][1] != "b" {
-		t.Errorf("tuple 1 incorrect: got %v", results[1])
-	}
-
-	// For safe sources, tuples COULD share memory with original (optimization)
-	// but correctness just requires the values are right
-}
-
-// =============================================================================
-// Test 3: UnionIterator with mixed sources
-// =============================================================================
-
-func TestUnionIteratorMixedSources(t *testing.T) {
-	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
-
-	// Safe source
-	safeRel := NewMaterializedRelation(symbols, []Tuple{
-		{1, "safe1"},
-		{2, "safe2"},
-	})
-
-	// Unsafe source
-	unsafeRel := newMockUnsafeRelation(symbols, [][]interface{}{
-		{3, "unsafe1"},
-		{4, "unsafe2"},
-	})
-
-	// Create channel with both relations
-	ch := make(chan relationItem, 2)
-	ch <- relationItem{relation: safeRel}
-	ch <- relationItem{relation: unsafeRel}
-	close(ch)
-
-	// Create UnionRelation
-	union := NewUnionRelation(ch, symbols, ExecutorOptions{})
-
-	// Iterate and store all tuples
-	var storedTuples []Tuple
-	it := union.Iterator()
-	for it.Next() {
-		storedTuples = append(storedTuples, it.Tuple())
-	}
-	it.Close()
-
-	if len(storedTuples) != 4 {
-		t.Fatalf("expected 4 tuples, got %d", len(storedTuples))
-	}
-
-	// Build a map of x values to y values for verification
-	results := make(map[interface{}]interface{})
-	for _, tuple := range storedTuples {
-		results[tuple[0]] = tuple[1]
-	}
-
-	// Verify all values are correct
-	expected := map[interface{}]interface{}{
-		1: "safe1",
-		2: "safe2",
-		3: "unsafe1",
-		4: "unsafe2",
-	}
-
-	for k, v := range expected {
-		if results[k] != v {
-			t.Errorf("for key %v: got %v, want %v", k, results[k], v)
-		}
-	}
-}
-
-// =============================================================================
-// Test 4: PrependedIterator with unsafe rest relation
-// =============================================================================
-
-func TestPrependedIteratorCopiesFromUnsafeRest(t *testing.T) {
-	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
-
-	// Create unsafe relation for the "rest"
-	unsafeRel := newMockUnsafeRelation(symbols, [][]interface{}{
-		{2, "rest1"},
-		{3, "rest2"},
-		{4, "rest3"},
-	})
-
-	// Create PrependedRelation with a safe first tuple and unsafe rest
-	firstTuple := Tuple{1, "first"}
-	prepended := NewPrependedRelation(symbols, firstTuple, unsafeRel, ExecutorOptions{})
-
-	// Iterate and store all tuples
-	var storedTuples []Tuple
-	it := prepended.Iterator()
-	for it.Next() {
-		storedTuples = append(storedTuples, it.Tuple())
-	}
-	it.Close()
-
-	if len(storedTuples) != 4 {
-		t.Fatalf("expected 4 tuples, got %d", len(storedTuples))
-	}
-
-	// Verify first tuple (always safe - it's a separate value)
-	if storedTuples[0][0] != 1 || storedTuples[0][1] != "first" {
-		t.Errorf("first tuple incorrect: got %v", storedTuples[0])
-	}
-
-	// CRITICAL: Verify rest tuples have correct values
-	// If PrependedIterator doesn't copy from unsafe rest, they'll be corrupted
-	expected := [][]interface{}{
-		{1, "first"},
-		{2, "rest1"},
-		{3, "rest2"},
-		{4, "rest3"},
-	}
-
-	for i, tuple := range storedTuples {
-		if tuple[0] != expected[i][0] || tuple[1] != expected[i][1] {
-			t.Errorf("tuple %d corrupted: got %v, want %v", i, tuple, expected[i])
-		}
-	}
-}
-
-// =============================================================================
-// Test 5: PrependedIterator with safe rest relation
-// =============================================================================
-
-func TestPrependedIteratorPassthroughFromSafeRest(t *testing.T) {
-	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
-
-	// Create safe relation for the "rest"
-	safeRel := NewMaterializedRelation(symbols, []Tuple{
-		{2, "rest1"},
-		{3, "rest2"},
-	})
-
-	// Create PrependedRelation
-	firstTuple := Tuple{1, "first"}
-	prepended := NewPrependedRelation(symbols, firstTuple, safeRel, ExecutorOptions{})
-
-	// Iterate and store all tuples
-	var storedTuples []Tuple
-	it := prepended.Iterator()
-	for it.Next() {
-		storedTuples = append(storedTuples, it.Tuple())
-	}
-	it.Close()
-
-	if len(storedTuples) != 3 {
-		t.Fatalf("expected 3 tuples, got %d", len(storedTuples))
-	}
-
-	// Verify all values are correct
-	expected := [][]interface{}{
-		{1, "first"},
-		{2, "rest1"},
-		{3, "rest2"},
-	}
-
-	for i, tuple := range storedTuples {
-		if tuple[0] != expected[i][0] || tuple[1] != expected[i][1] {
-			t.Errorf("tuple %d incorrect: got %v, want %v", i, tuple, expected[i])
-		}
-	}
-}
-
-// =============================================================================
-// Test 6: Verify mockUnsafeRelation actually corrupts without copying
+// Test 1: Verify mockUnsafeRelation actually corrupts without copying
 // This is a sanity check that our mock is working correctly
 // =============================================================================
 
@@ -388,7 +125,7 @@ func TestMockUnsafeRelationActuallyCorrupts(t *testing.T) {
 }
 
 // =============================================================================
-// Test 7: Verify MaterializedRelation doesn't corrupt (control test)
+// Test 2: Verify MaterializedRelation doesn't corrupt (control test)
 // =============================================================================
 
 func TestMaterializedRelationDoesNotCorrupt(t *testing.T) {
@@ -417,7 +154,7 @@ func TestMaterializedRelationDoesNotCorrupt(t *testing.T) {
 }
 
 // =============================================================================
-// Test 8: OrFallbackRelation with unsafe outer relation
+// Test 3: OrFallbackRelation with unsafe outer relation
 // =============================================================================
 
 func TestOrFallbackIteratorCopiesFromUnsafeOuter(t *testing.T) {
@@ -516,7 +253,7 @@ func TestOrFallbackIteratorCopiesFromUnsafeOuter(t *testing.T) {
 }
 
 // =============================================================================
-// Test 9: OrFallbackIterator with unsafe branch result (direct test)
+// Test 4: OrFallbackIterator with unsafe branch result (direct test)
 //
 // This tests the OrFallbackIterator directly by wrapping an unsafe relation
 // as the branch result. This bypasses the execution pipeline that masks the bug.
@@ -582,7 +319,7 @@ func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
 }
 
 // =============================================================================
-// Test 10: OrFallbackRelation with multiple branch results per outer tuple
+// Test 5: OrFallbackRelation with multiple branch results per outer tuple
 // (Integration test - may pass due to join materialization)
 // =============================================================================
 
@@ -679,7 +416,7 @@ func TestOrFallbackIteratorMultipleBranchResultsIntegration(t *testing.T) {
 }
 
 // =============================================================================
-// Test 10: OrFallbackRelation with fallback branch
+// Test 6: OrFallbackRelation with fallback branch
 // =============================================================================
 
 func TestOrFallbackIteratorWithFallbackBranch(t *testing.T) {

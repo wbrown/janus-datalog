@@ -33,20 +33,20 @@ func TestTopNRelationMatchesSortThenLimit(t *testing.T) {
 		{
 			name: "ascending",
 			orderBy: []query.OrderByClause{{
-				Variable: score, Direction: query.OrderAsc,
+				Variable: score, Descending: false,
 			}},
 		},
 		{
 			name: "descending",
 			orderBy: []query.OrderByClause{{
-				Variable: score, Direction: query.OrderDesc,
+				Variable: score, Descending: true,
 			}},
 		},
 		{
 			name: "multiple keys",
 			orderBy: []query.OrderByClause{
-				{Variable: score, Direction: query.OrderDesc},
-				{Variable: name, Direction: query.OrderAsc},
+				{Variable: score, Descending: true},
+				{Variable: name, Descending: false},
 			},
 		},
 	}
@@ -55,14 +55,14 @@ func TestTopNRelationMatchesSortThenLimit(t *testing.T) {
 		for _, limit := range []int{0, 1, 3, len(tuples), len(tuples) + 5} {
 			t.Run(order.name+"/limit_"+strconv.Itoa(limit), func(t *testing.T) {
 				wantRel := NewLimitRelation(
-					NewMaterializedRelationNoDedupe(symbols, tuples).Sort(order.orderBy),
+					NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}).Sort(order.orderBy),
 					limit,
 				)
 				want, err := CollectTuples(wantRel, nil)
 				require.NoError(t, err)
 
 				gotRel := TopNRelation(
-					NewMaterializedRelationNoDedupe(symbols, tuples),
+					NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}),
 					order.orderBy,
 					limit,
 				)
@@ -85,7 +85,7 @@ func TestTopNRelationCopiesStreamingWorkspace(t *testing.T) {
 		{int64(8)},
 	}
 	orderBy := []query.OrderByClause{{
-		Variable: score, Direction: query.OrderDesc,
+		Variable: score, Descending: true,
 	}}
 
 	result := TopNRelation(newReusingWorkspaceStream(symbols, tuples), orderBy, 3)
@@ -99,8 +99,8 @@ func TestTopNRelationUsesSecondarySortKeys(t *testing.T) {
 	name := datalog.NewSymbol("?name")
 	symbols := []query.Symbol{score, name}
 	orderBy := []query.OrderByClause{
-		{Variable: score, Direction: query.OrderDesc},
-		{Variable: name, Direction: query.OrderAsc},
+		{Variable: score, Descending: true},
+		{Variable: name, Descending: false},
 	}
 	tuples := []Tuple{
 		{int64(10), "b"},
@@ -108,7 +108,7 @@ func TestTopNRelationUsesSecondarySortKeys(t *testing.T) {
 		{int64(10), "a"},
 	}
 
-	result := TopNRelation(NewMaterializedRelationNoDedupe(symbols, tuples), orderBy, 2)
+	result := TopNRelation(NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}), orderBy, 2)
 	got, err := CollectTuples(result, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(10), "a"}, {int64(10), "b"}}, got)
@@ -117,7 +117,7 @@ func TestTopNRelationUsesSecondarySortKeys(t *testing.T) {
 func TestTopNRelationPropagatesDeferredIteratorError(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	orderBy := []query.OrderByClause{{
-		Variable: x, Direction: query.OrderDesc,
+		Variable: x, Descending: true,
 	}}
 
 	result := TopNRelation(
@@ -151,19 +151,19 @@ func runTopNDifferential(t *testing.T, seed int64) {
 			}
 		}
 		orderBy := []query.OrderByClause{
-			{Variable: score, Direction: query.OrderAsc},
-			{Variable: name, Direction: query.OrderAsc},
+			{Variable: score, Descending: false},
+			{Variable: name, Descending: false},
 		}
 		if random.Intn(2) == 0 {
-			orderBy[0].Direction = query.OrderDesc
+			orderBy[0].Descending = true
 		}
 		if random.Intn(2) == 0 {
-			orderBy[1].Direction = query.OrderDesc
+			orderBy[1].Descending = true
 		}
 		limit := random.Intn(count + 3)
 		expected := nativeTopNReference(tuples, orderBy, limit)
 		actual, err := collectTypedTuples(TopNRelation(
-			NewMaterializedRelationNoDedupe(symbols, tuples),
+			NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}),
 			orderBy,
 			limit,
 		))
@@ -186,14 +186,14 @@ func nativeTopNReference(
 		leftScore := result[i][0].(int64)
 		rightScore := result[j][0].(int64)
 		if leftScore != rightScore {
-			if orderBy[0].Direction == query.OrderDesc {
+			if orderBy[0].Descending {
 				return leftScore > rightScore
 			}
 			return leftScore < rightScore
 		}
 		leftName := result[i][1].(string)
 		rightName := result[j][1].(string)
-		if orderBy[1].Direction == query.OrderDesc {
+		if orderBy[1].Descending {
 			return leftName > rightName
 		}
 		return leftName < rightName
@@ -212,8 +212,8 @@ func TestTopNRelationCompleteTiesRemainValid(t *testing.T) {
 		tuples = append(tuples, Tuple{int64(1), fmt.Sprintf("payload-%d", i)})
 	}
 	result := TopNRelation(
-		NewMaterializedRelationNoDedupe([]query.Symbol{score, payload}, tuples),
-		[]query.OrderByClause{{Variable: score, Direction: query.OrderAsc}},
+		NewMaterializedRelationFromSet([]query.Symbol{score, payload}, tuples, ExecutorOptions{}),
+		[]query.OrderByClause{{Variable: score, Descending: false}},
 		5,
 	)
 	rows, err := collectTypedTuples(result)
@@ -231,7 +231,7 @@ func TestTopNRelationZeroAndMalformedOrderDoNotOpenSource(t *testing.T) {
 	}
 	zero := TopNRelation(
 		source,
-		[]query.OrderByClause{{Variable: x, Direction: query.OrderAsc}},
+		[]query.OrderByClause{{Variable: x, Descending: false}},
 		0,
 	)
 	rows, err := collectTypedTuples(zero)
@@ -241,7 +241,7 @@ func TestTopNRelationZeroAndMalformedOrderDoNotOpenSource(t *testing.T) {
 
 	malformed := TopNRelation(
 		source,
-		[]query.OrderByClause{{Variable: datalog.NewSymbol("?missing"), Direction: query.OrderAsc}},
+		[]query.OrderByClause{{Variable: datalog.NewSymbol("?missing"), Descending: false}},
 		1,
 	)
 	require.Error(t, driveErr(malformed))
@@ -261,7 +261,7 @@ func TestTopNRelationPropagatesCloseError(t *testing.T) {
 	}
 	result := TopNRelation(
 		source,
-		[]query.OrderByClause{{Variable: x, Direction: query.OrderAsc}},
+		[]query.OrderByClause{{Variable: x, Descending: false}},
 		1,
 	)
 	require.ErrorIs(t, driveErr(result), closeErr)
@@ -287,12 +287,17 @@ func TestOrderedLimitWithNonProjectedKeyRetainsFullSortSemantics(t *testing.T) {
 	                              :limit 2]`)
 	require.NoError(t, err)
 
-	exec := NewExecutor(NewMemoryPatternMatcher(datoms), nil)
-	result, err := exec.Execute(q)
-	require.NoError(t, err)
-	got, err := CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{"A"}, {"B"}}, got)
+	matcher := NewMemoryPatternMatcher(datoms)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			result, err := exec.Execute(q)
+			require.NoError(t, err)
+			got, err := CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"A"}, {"B"}}, got)
+		})
+	}
 }
 
 func TestOrderedLimitAfterAggregationUsesGlobalTopN(t *testing.T) {
@@ -311,10 +316,15 @@ func TestOrderedLimitAfterAggregationUsesGlobalTopN(t *testing.T) {
 	                              :limit 2]`)
 	require.NoError(t, err)
 
-	exec := NewExecutor(NewMemoryPatternMatcher(datoms), nil)
-	result, err := exec.Execute(q)
-	require.NoError(t, err)
-	got, err := CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{"BOS", int64(1)}, {"LA", int64(1)}}, got)
+	matcher := NewMemoryPatternMatcher(datoms)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			result, err := exec.Execute(q)
+			require.NoError(t, err)
+			got, err := CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"BOS", int64(1)}, {"LA", int64(1)}}, got)
+		})
+	}
 }

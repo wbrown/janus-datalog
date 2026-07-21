@@ -107,13 +107,8 @@ func InternIdentityFromHash(hash [20]byte) Identity {
 		return val.(Identity)
 	}
 
-	// Slow path: create and store. Identities from storage have an empty str
-	// field, so String() falls back to L85() (a pure function of the hash,
-	// computed on demand).
-	id := &identity{
-		value: hash,
-		str:   "", // Unknown - String() uses L85() (computed on demand)
-	}
+	// Slow path: create and store.
+	id := &identity{value: hash}
 	actual, _ := identityIntern.cache.LoadOrStore(hash, id)
 	return actual.(Identity)
 }
@@ -145,6 +140,48 @@ func internSymbol(s string) Symbol {
 // Pre-interned common symbols for hot paths
 var SymDollar = internSymbol("$")
 
+// Pre-interned aggregate function symbols. FindAggregate.Function carries one
+// of these; resolution is pointer equality against them.
+var (
+	SymCount = internSymbol("count")
+	SymSum   = internSymbol("sum")
+	SymAvg   = internSymbol("avg")
+	SymMin   = internSymbol("min")
+	SymMax   = internSymbol("max")
+)
+
+// Pre-interned comparison operator symbols. Comparison.Op and
+// ChainedComparison.Op carry one of these; dispatch is pointer equality
+// against them.
+var (
+	SymEQ  = internSymbol("=")
+	SymNE  = internSymbol("!=")
+	SymLT  = internSymbol("<")
+	SymLTE = internSymbol("<=")
+	SymGT  = internSymbol(">")
+	SymGTE = internSymbol(">=")
+)
+
+// Pre-interned arithmetic operator symbols. ArithmeticFunction.Op carries
+// one of these; dispatch is pointer equality against them.
+var (
+	SymAdd      = internSymbol("+")
+	SymSubtract = internSymbol("-")
+	SymMultiply = internSymbol("*")
+	SymDivide   = internSymbol("/")
+)
+
+// Pre-interned time-extraction field symbols. TimeExtractionFunction.Field
+// carries one of these; dispatch is pointer equality against them.
+var (
+	SymYear   = internSymbol("year")
+	SymMonth  = internSymbol("month")
+	SymDay    = internSymbol("day")
+	SymHour   = internSymbol("hour")
+	SymMinute = internSymbol("minute")
+	SymSecond = internSymbol("second")
+)
+
 // ClearInterns clears keyword, identity, and symbol intern caches
 // Useful for testing or when memory needs to be reclaimed
 func ClearInterns() {
@@ -153,4 +190,25 @@ func ClearInterns() {
 	symbolIntern = &symbolInternCache{}
 	// Re-intern pre-interned symbols so they remain valid
 	SymDollar = internSymbol("$")
+	SymCount = internSymbol("count")
+	SymSum = internSymbol("sum")
+	SymAvg = internSymbol("avg")
+	SymMin = internSymbol("min")
+	SymMax = internSymbol("max")
+	SymEQ = internSymbol("=")
+	SymNE = internSymbol("!=")
+	SymLT = internSymbol("<")
+	SymLTE = internSymbol("<=")
+	SymGT = internSymbol(">")
+	SymGTE = internSymbol(">=")
+	SymAdd = internSymbol("+")
+	SymSubtract = internSymbol("-")
+	SymMultiply = internSymbol("*")
+	SymDivide = internSymbol("/")
+	SymYear = internSymbol("year")
+	SymMonth = internSymbol("month")
+	SymDay = internSymbol("day")
+	SymHour = internSymbol("hour")
+	SymMinute = internSymbol("minute")
+	SymSecond = internSymbol("second")
 }

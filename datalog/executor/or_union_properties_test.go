@@ -20,7 +20,7 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	name := datalog.NewSymbol("?name")
 	value := datalog.NewSymbol("?value")
-	ordering := []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}}
+	ordering := []query.OrderByClause{{Variable: entity, Descending: false}}
 	outer := NewMaterializedRelationWithProperties(
 		[]query.Symbol{entity, name},
 		[]Tuple{{int64(1), "one"}, {int64(2), "two"}},
@@ -75,7 +75,7 @@ func TestOrDefaultDecorrelatedAggregatePreservesOuterGroupKey(t *testing.T) {
 	decorrelated := &query.SubqueryPattern{
 		Query: &query.Query{Find: []query.FindElement{
 			query.FindVariable{Symbol: entity},
-			query.FindAggregate{Function: "count", Arg: task},
+			query.FindAggregate{Function: datalog.SymCount, Arg: task},
 		}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{entity, count}},
 	}
@@ -201,7 +201,7 @@ func TestCorrelatedUnionDeduplicatesAcrossBranches(t *testing.T) {
 func TestOrBranchOverwriteInvalidatesOuterProperty(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	name := datalog.NewSymbol("?name")
-	ordering := []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}}
+	ordering := []query.OrderByClause{{Variable: entity, Descending: false}}
 	outer := NewMaterializedRelationWithProperties(
 		[]query.Symbol{entity, name},
 		[]Tuple{{int64(1), "one"}},
@@ -240,8 +240,8 @@ func TestOrBranchOverwriteRetainsUnaffectedOrderingPrefix(t *testing.T) {
 		ExecutorOptions{},
 		RelationProperties{
 			Ordering: []query.OrderByClause{
-				{Variable: entity, Direction: query.OrderAsc},
-				{Variable: name, Direction: query.OrderAsc},
+				{Variable: entity, Descending: false},
+				{Variable: name, Descending: false},
 			},
 			Keys: [][]query.Symbol{{entity}},
 		},
@@ -261,7 +261,7 @@ func TestOrBranchOverwriteRetainsUnaffectedOrderingPrefix(t *testing.T) {
 	)
 
 	require.Equal(t,
-		[]query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}},
+		[]query.OrderByClause{{Variable: entity, Descending: false}},
 		rel.Properties().Ordering,
 	)
 	require.True(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
@@ -293,23 +293,6 @@ func TestDeduplicatingUnionAdvertisesOnlyFullOutputKey(t *testing.T) {
 	require.False(t, containsSymbolSet(result.Properties().Keys, []query.Symbol{id}))
 	require.True(t, containsSymbolSet(result.Properties().Keys, []query.Symbol{id, payload}))
 	require.Equal(t, 2, result.Size())
-}
-
-func TestUnionRelationAndMaterializationPreserveFullOutputKey(t *testing.T) {
-	id := datalog.NewSymbol("?id")
-	payload := datalog.NewSymbol("?payload")
-	symbols := []query.Symbol{id, payload}
-	source := make(chan relationItem, 2)
-	source <- relationItem{relation: NewMaterializedRelation(symbols, []Tuple{{int64(1), "same"}})}
-	source <- relationItem{relation: NewMaterializedRelation(symbols, []Tuple{{int64(1), "same"}})}
-	close(source)
-
-	union := NewUnionRelation(source, symbols, ExecutorOptions{})
-	require.True(t, containsSymbolSet(union.Properties().Keys, symbols))
-
-	materialized := union.Materialize()
-	require.Equal(t, union.Properties(), materialized.Properties())
-	require.Equal(t, 1, materialized.Size())
 }
 
 func TestOrFallbackMaterializationPreservesProperties(t *testing.T) {
@@ -452,7 +435,7 @@ func runOrPropertyDifferential(t *testing.T, seed int64) {
 				})
 			}
 		}
-		ordering := []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}}
+		ordering := []query.OrderByClause{{Variable: entity, Descending: false}}
 		sort.Slice(outerTuples, func(i, j int) bool {
 			return compareTuplesByOrder(outerTuples[i], outerTuples[j], ordering, []int{0}) < 0
 		})

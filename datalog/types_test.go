@@ -27,9 +27,10 @@ func TestDatomCreation(t *testing.T) {
 		t.Error("datom string representation should not be empty")
 	}
 
-	// Should contain entity, attribute, value and tx
-	if !strings.Contains(str, "user:alice") {
-		t.Error("datom string should contain entity")
+	// Should contain entity, attribute, value and tx. Entities render as the
+	// canonical L85 of their hash, never the seed string.
+	if !strings.Contains(str, entity.L85()) {
+		t.Error("datom string should contain entity as canonical L85")
 	}
 }
 
@@ -86,9 +87,9 @@ func TestKeyword(t *testing.T) {
 func TestIdentity(t *testing.T) {
 	id := NewIdentity("user:alice")
 
-	// Test string representation
-	if id.String() != "user:alice" {
-		t.Errorf("expected user:alice, got %s", id.String())
+	// String() renders the canonical L85 of the hash, never the seed string
+	if id.String() != id.L85() {
+		t.Errorf("expected canonical L85 %s, got %s", id.L85(), id.String())
 	}
 
 	// Test L85 encoding

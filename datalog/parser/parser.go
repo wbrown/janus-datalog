@@ -25,7 +25,17 @@ func ParseQuery(input string) (*query.Query, error) {
 		return nil, fmt.Errorf("query must be a vector, got %v", node.Type)
 	}
 
-	return parseQueryVector(node)
+	q, err := parseQueryVector(node)
+	if err != nil {
+		return nil, err
+	}
+	// Static clause-shape rules (subquery binding arity, not-join header
+	// completeness, or-default-join interface) are enforced at every user
+	// boundary with one message; this is the parse boundary's call.
+	if err := query.ValidateStaticClauseShapes(q.Where); err != nil {
+		return nil, err
+	}
+	return q, nil
 }
 
 // parseQueryVector parses a query from an EDN vector node
@@ -238,10 +248,7 @@ func parseOrderByClause(node *edn.Node) (query.OrderByClause, error) {
 		if !sym.IsVariable() {
 			return query.OrderByClause{}, fmt.Errorf("order-by must use variables, got %s", sym)
 		}
-		return query.OrderByClause{
-			Variable:  sym,
-			Direction: query.OrderAsc,
-		}, nil
+		return query.OrderByClause{Variable: sym}, nil
 
 	case edn.NodeVector:
 		// [?var :direction] format
@@ -262,19 +269,19 @@ func parseOrderByClause(node *edn.Node) (query.OrderByClause, error) {
 			return query.OrderByClause{}, fmt.Errorf("order-by direction must be a keyword (:asc or :desc)")
 		}
 
-		var direction query.OrderDirection
+		var descending bool
 		switch node.Nodes[1].Value {
 		case ":asc":
-			direction = query.OrderAsc
+			descending = false
 		case ":desc":
-			direction = query.OrderDesc
+			descending = true
 		default:
 			return query.OrderByClause{}, fmt.Errorf("order-by direction must be :asc or :desc, got %s", node.Nodes[1].Value)
 		}
 
 		return query.OrderByClause{
-			Variable:  sym,
-			Direction: direction,
+			Variable:   sym,
+			Descending: descending,
 		}, nil
 
 	default:
@@ -325,16 +332,26 @@ func parseFindElement(node *edn.Node) (query.FindElement, error) {
 			return nil, fmt.Errorf("aggregate argument must be a variable, got %s", argSym)
 		}
 
-		// Validate function name
+		// Resolve the function name to its interned symbol here, once; all
+		// downstream dispatch is pointer equality against the pre-interned set.
+		var fnSym query.Symbol
 		switch fn {
-		case "sum", "avg", "count", "min", "max":
-			// Valid aggregate functions
+		case "sum":
+			fnSym = datalog.SymSum
+		case "avg":
+			fnSym = datalog.SymAvg
+		case "count":
+			fnSym = datalog.SymCount
+		case "min":
+			fnSym = datalog.SymMin
+		case "max":
+			fnSym = datalog.SymMax
 		default:
 			return nil, fmt.Errorf("unknown aggregate function: %s", fn)
 		}
 
 		return query.FindAggregate{
-			Function: fn,
+			Function: fnSym,
 			Arg:      argSym,
 		}, nil
 
@@ -901,6 +918,15 @@ func parseTaggedLiteral(node *edn.Node) (query.PatternElement, error) {
 		}
 		return query.Constant{Value: datalog.NewIdentityFromHash(hash)}, nil
 
+	case "id":
+		// #id "seed" constructs the identity by hashing the seed — NewIdentity
+		// in literal form. Input-only sugar: the formatter always emits the
+		// canonical #identity "L85" (seed→hash is one-way).
+		if val.Type != edn.NodeString {
+			return nil, fmt.Errorf("#id requires string value")
+		}
+		return query.Constant{Value: datalog.NewIdentity(val.Value)}, nil
+
 	case "inst":
 		if val.Type != edn.NodeString {
 			return nil, fmt.Errorf("#inst requires string value")
@@ -1025,7 +1051,8 @@ func parseNotJoinClause(node *edn.Node) (*query.NotJoinClause, error) {
 		return nil, fmt.Errorf("not-join second element must be a vector of join variables, got %v", node.Nodes[1].Type)
 	}
 
-	// Parse join variables
+	// Parse join variables. parseJoinVars rejects an empty header — a
+	// not-join must declare at least one unification variable.
 	joinVars, err := parseJoinVars(&node.Nodes[1])
 	if err != nil {
 		return nil, fmt.Errorf("error parsing not-join vars: %w", err)
@@ -1119,19 +1146,54 @@ func parseOrDefaultClause(node *edn.Node) (*query.OrDefaultClause, error) {
 	return &query.OrDefaultClause{Branches: branches}, nil
 }
 
-// parseOrDefaultJoinClause parses (or-default-join [?x] branch1 branch2 ...)
+// parseOrDefaultJoinClause parses an or-default-join with a declared interface:
+//
+//	(or-default-join [[?required ...] ?output ...] branch1 branch2 ...)
+//	(or-default-join [?output ...] branch1 branch2 ...)   ; global fallback
+//
+// A nested vector as the header's first element declares the per-group
+// correlation keys; the remaining symbols are the outputs every branch must
+// bind. A flat header declares outputs only — the fallback decision is
+// global. or-default is non-monotone, so the correlation keys are syntax,
+// never inferred.
 func parseOrDefaultJoinClause(node *edn.Node) (*query.OrDefaultJoinClause, error) {
 	if len(node.Nodes) < 4 {
-		return nil, fmt.Errorf("or-default-join clause must have join vars and at least two branches")
+		return nil, fmt.Errorf("or-default-join clause must have a header vector and at least two branches")
 	}
 
-	if node.Nodes[1].Type != edn.NodeVector {
-		return nil, fmt.Errorf("or-default-join second element must be a vector of join variables, got %v", node.Nodes[1].Type)
+	header := &node.Nodes[1]
+	if header.Type != edn.NodeVector {
+		return nil, fmt.Errorf("or-default-join second element must be a header vector, got %v", header.Type)
+	}
+	if len(header.Nodes) == 0 {
+		return nil, fmt.Errorf("or-default-join header cannot be empty")
 	}
 
-	joinVars, err := parseJoinVars(&node.Nodes[1])
-	if err != nil {
-		return nil, fmt.Errorf("error parsing or-default-join vars: %w", err)
+	var requiredVars []query.Symbol
+	outputStart := 0
+	if header.Nodes[0].Type == edn.NodeVector {
+		var err error
+		requiredVars, err = parseJoinVars(&header.Nodes[0])
+		if err != nil {
+			return nil, fmt.Errorf("error parsing or-default-join required vars: %w", err)
+		}
+		outputStart = 1
+	}
+
+	var outputVars []query.Symbol
+	for i := outputStart; i < len(header.Nodes); i++ {
+		elem := &header.Nodes[i]
+		if elem.Type == edn.NodeVector {
+			return nil, fmt.Errorf("or-default-join header may declare required vars only as its first element")
+		}
+		if elem.Type != edn.NodeSymbol {
+			return nil, fmt.Errorf("or-default-join output variable %d must be a symbol, got %v", i, elem.Type)
+		}
+		sym := datalog.NewSymbol(elem.Value)
+		if !sym.IsVariable() {
+			return nil, fmt.Errorf("or-default-join output variable %d must start with ?, got %s", i, sym)
+		}
+		outputVars = append(outputVars, sym)
 	}
 
 	var branches [][]query.Clause
@@ -1143,11 +1205,15 @@ func parseOrDefaultJoinClause(node *edn.Node) (*query.OrDefaultJoinClause, error
 		branches = append(branches, branch)
 	}
 
-	if len(branches) < 2 {
-		return nil, fmt.Errorf("or-default-join clause must have at least two branches")
+	clause := &query.OrDefaultJoinClause{
+		RequiredVars: requiredVars,
+		OutputVars:   outputVars,
+		Branches:     branches,
 	}
-
-	return &query.OrDefaultJoinClause{JoinVars: joinVars, Branches: branches}, nil
+	if err := clause.Validate(); err != nil {
+		return nil, err
+	}
+	return clause, nil
 }
 
 // parseJoinVars parses a vector of join variables [?x ?y ...]
@@ -1250,25 +1316,10 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 			}
 		case *query.SubqueryPattern:
 			// Add variables from binding form - these are PROVIDED by the subquery
-			switch b := p.Binding.(type) {
-			case query.TupleBinding:
-				for _, v := range b.Variables {
-					if !seen[v] {
-						seen[v] = true
-						vars = append(vars, v)
-					}
-				}
-			case query.CollectionBinding:
-				if !seen[b.Variable] {
-					seen[b.Variable] = true
-					vars = append(vars, b.Variable)
-				}
-			case query.RelationBinding:
-				for _, v := range b.Variables {
-					if !seen[v] {
-						seen[v] = true
-						vars = append(vars, v)
-					}
+			for _, v := range p.Binding.BoundVariables() {
+				if !seen[v] {
+					seen[v] = true
+					vars = append(vars, v)
 				}
 			}
 			// Note: Input variables are consumed, not provided
@@ -1370,8 +1421,9 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 			}
 
 		case *query.OrDefaultJoinClause:
-			// OR-DEFAULT-JOIN only exposes join vars, like OR-JOIN
-			for _, v := range p.JoinVars {
+			// OR-DEFAULT-JOIN binds its declared outputs; required vars are
+			// bound by other clauses, not by this one.
+			for _, v := range p.OutputVars {
 				if !seen[v] {
 					seen[v] = true
 					vars = append(vars, v)
@@ -1386,6 +1438,17 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 					vars = append(vars, v)
 				}
 			}
+
+		case *query.Comparison, *query.ChainedComparison, *query.NotEqualPredicate,
+			*query.GroundPredicate, *query.MissingPredicate, *query.StrStartsWithPredicate,
+			*query.FunctionPredicate, *query.DatabaseFunctionPredicate, *query.TxRangePredicate:
+			// Predicates consume variables; they provide none.
+
+		default:
+			// The clause taxonomy is closed; a clause type without a case
+			// here would silently provide nothing — the exact hazard that
+			// hid the missing ScalarBinding and Subquery cases.
+			panic(fmt.Sprintf("BUG: unknown clause type %T in ExtractVariables", clause))
 		}
 	}
 
@@ -1471,7 +1534,7 @@ func formatQueryWithIndent(q *query.Query, indent string) string {
 			if i > 0 {
 				sb.WriteString(" ")
 			}
-			if clause.Direction == query.OrderDesc {
+			if clause.Descending {
 				sb.WriteString("[")
 				sb.WriteString(clause.Variable.String())
 				sb.WriteString(" :desc]")
@@ -1580,10 +1643,10 @@ func formatValue(sb *strings.Builder, v interface{}) {
 		sb.WriteString(val.String())
 
 	case datalog.Identity:
-		// For entity references in queries, use the original string representation
-		// wrapped in a custom reader tag for clarity
-		sb.WriteString("#db/id \"")
-		sb.WriteString(val.String())
+		// Entity references render as the canonical #identity literal, which
+		// the parser reads back to the same hash.
+		sb.WriteString("#identity \"")
+		sb.WriteString(val.L85())
 		sb.WriteString("\"")
 
 	case string:

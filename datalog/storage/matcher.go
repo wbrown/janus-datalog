@@ -228,211 +228,6 @@ func (m *BadgerMatcher) bindPattern(pattern *query.DataPattern, tuple executor.T
 	return &query.DataPattern{Elements: elements}
 }
 
-// matchWithoutRelation matches a pattern without any binding constraints
-func (m *BadgerMatcher) matchWithoutRelation(pattern *query.DataPattern) ([]datalog.Datom, error) {
-	return m.matchBoundPattern(pattern)
-}
-
-// matchBoundPattern matches a pattern that may have some constants bound
-func (m *BadgerMatcher) matchBoundPattern(pattern *query.DataPattern) ([]datalog.Datom, error) {
-	// Extract values from pattern
-	var e, a, v, tx interface{}
-
-	if elem := pattern.GetE(); elem != nil {
-		e = m.extractValue(elem)
-	}
-	if elem := pattern.GetA(); elem != nil {
-		a = m.extractValue(elem)
-	}
-	if elem := pattern.GetV(); elem != nil {
-		v = m.extractValue(elem)
-	}
-	if elem := pattern.GetT(); elem != nil {
-		tx = m.extractValue(elem)
-	}
-
-	// Determine cardinality for CRDT resolution
-	// For cardinality-one with E+A bound, V unbound: return only current value (first result)
-	returnOnlyFirst := false
-	if e != nil && a != nil && v == nil {
-		// E and A are bound, V is unbound - check cardinality
-		card := schema.CardinalityOne // Default for schemaless
-		if m.schema != nil {
-			if aKw, ok := a.(datalog.Keyword); ok {
-				if def := m.schema.GetAttribute(aKw); def != nil {
-					card = def.Cardinality
-				}
-			}
-		}
-		// For cardinality-one (and vector), return only the first (= current) value
-		// For cardinality-many, we need all values for add-wins resolution
-		if card == schema.CardinalityOne || card == schema.CardinalityVector {
-			returnOnlyFirst = true
-		}
-	}
-
-	// Choose index and create scan range
-	index, start, end := m.chooseIndex(e, a, v, tx)
-
-	// Use key-only scanning since all datom information is encoded in the key
-	// This avoids fetching redundant values from storage
-	iter, err := m.store.ScanKeysOnly(index, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("scan failed: %w", err)
-	}
-	defer iter.Close()
-
-	var results []datalog.Datom
-
-	// Scan and collect matching datoms
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			return nil, err
-		}
-
-		// Check if datom is valid for our transaction view
-		if m.shouldFilterTx(datom.Tx) {
-			continue
-		}
-
-		// Check if datom matches all pattern constraints
-		if m.matchesDatom(datom, e, a, v, tx) {
-			results = append(results, *datom)
-
-			// For cardinality-one/vector: first result is current value
-			// EATV index with descending Tx means first = highest ElementID = current
-			if returnOnlyFirst {
-				break
-			}
-		}
-	}
-
-	return results, nil
-}
-
-// MatchWithHistory matches a pattern and returns ALL historical values, not just current.
-// This is used for history queries where the user wants to see all versions of an attribute.
-// Returns all datoms including their ElementIDs for temporal ordering.
-//
-// For cardinality-one: returns all historical versions ordered by descending Tx
-// For cardinality-many: returns all add/remove operations for add-wins analysis
-// For cardinality-vector: returns all RGA elements for reconstruction
-func (m *BadgerMatcher) MatchWithHistory(pattern *query.DataPattern) ([]datalog.Datom, error) {
-	// Extract values from pattern
-	var e, a, v, tx interface{}
-
-	if elem := pattern.GetE(); elem != nil {
-		e = m.extractValue(elem)
-	}
-	if elem := pattern.GetA(); elem != nil {
-		a = m.extractValue(elem)
-	}
-	if elem := pattern.GetV(); elem != nil {
-		v = m.extractValue(elem)
-	}
-	if elem := pattern.GetT(); elem != nil {
-		tx = m.extractValue(elem)
-	}
-
-	// Choose index and create scan range
-	index, start, end := m.chooseIndex(e, a, v, tx)
-
-	// Use key-only scanning since all datom information is encoded in the key
-	iter, err := m.store.ScanKeysOnly(index, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("scan failed: %w", err)
-	}
-	defer iter.Close()
-
-	var results []datalog.Datom
-
-	// Scan and collect ALL matching datoms (no early termination for history)
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			return nil, err
-		}
-
-		// Check if datom is valid for our transaction view (as-of still applies)
-		if m.shouldFilterTx(datom.Tx) {
-			continue
-		}
-
-		// Check if datom matches all pattern constraints
-		if m.matchesDatom(datom, e, a, v, tx) {
-			results = append(results, *datom)
-		}
-	}
-
-	return results, nil
-}
-
-// MatchAsOf matches a pattern and returns the value as of a specific Lamport time.
-// This finds the first entry with Lamport <= targetLamport (the value that was current then).
-// If no value existed at that time, returns nil.
-func (m *BadgerMatcher) MatchAsOf(pattern *query.DataPattern, targetTx datalog.ElementID) ([]datalog.Datom, error) {
-	// Extract values from pattern
-	var e, a, v, tx interface{}
-
-	if elem := pattern.GetE(); elem != nil {
-		e = m.extractValue(elem)
-	}
-	if elem := pattern.GetA(); elem != nil {
-		a = m.extractValue(elem)
-	}
-	if elem := pattern.GetV(); elem != nil {
-		v = m.extractValue(elem)
-	}
-	if elem := pattern.GetT(); elem != nil {
-		tx = m.extractValue(elem)
-	}
-
-	// Choose index and create scan range
-	index, start, end := m.chooseIndex(e, a, v, tx)
-
-	// Use key-only scanning
-	iter, err := m.store.ScanKeysOnly(index, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("scan failed: %w", err)
-	}
-	defer iter.Close()
-
-	var results []datalog.Datom
-
-	// Find first entry with Lamport <= target (entries are in descending Tx order)
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			return nil, err
-		}
-
-		// Skip entries newer than target time
-		if targetTx.Less(datom.Tx) {
-			continue
-		}
-
-		// Also apply as-of filter if set
-		if m.shouldFilterTx(datom.Tx) {
-			continue
-		}
-
-		// Check if datom matches all pattern constraints
-		if m.matchesDatom(datom, e, a, v, tx) {
-			results = append(results, *datom)
-
-			// For as-of queries, return only the first matching entry
-			// (which is the value that was current at that Lamport time)
-			if e != nil && a != nil && v == nil {
-				// E and A bound, V unbound - return current value at that time
-				break
-			}
-		}
-	}
-
-	return results, nil
-}
-
 // extractValue extracts the value from a pattern element
 func (m *BadgerMatcher) extractValue(elem query.PatternElement) interface{} {
 	switch e := elem.(type) {
@@ -450,7 +245,9 @@ func (m *BadgerMatcher) extractValue(elem query.PatternElement) interface{} {
 		// after RGA resolution. Empty slice means "match empty vector".
 		return e.Values
 	default:
-		return nil
+		// PatternElement is a closed taxonomy; an unknown element is a bug,
+		// not an unbound position.
+		panic(fmt.Sprintf("BUG: unknown pattern element %T reached extractValue", elem))
 	}
 }
 
@@ -593,6 +390,71 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 	return EATV, start, end
 }
 
+// typedPositionBindingCheck returns the per-tuple check behind
+// filterTypedPositionBindings: whether the tuple's value for the pattern's
+// entity-position variable is an Identity and its value for the
+// attribute-position variable is a Keyword. Returns nil when neither typed
+// position is bound by these symbols — no check is needed.
+func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbol) func(executor.Tuple) bool {
+	eIdx, aIdx := -1, -1
+	if v, ok := pattern.GetE().(query.Variable); ok {
+		eIdx = query.SymbolIndex(symbols, v.Name)
+	}
+	if v, ok := pattern.GetA().(query.Variable); ok {
+		aIdx = query.SymbolIndex(symbols, v.Name)
+	}
+	if eIdx < 0 && aIdx < 0 {
+		return nil
+	}
+	return func(tuple executor.Tuple) bool {
+		if eIdx >= 0 && eIdx < len(tuple) {
+			if _, ok := tuple[eIdx].(datalog.Identity); !ok {
+				return false
+			}
+		}
+		if aIdx >= 0 && aIdx < len(tuple) {
+			if _, ok := tuple[aIdx].(datalog.Keyword); !ok {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// filterTypedPositionBindings drops binding tuples whose value for the
+// pattern's entity-position variable is not an Identity, or whose value for
+// the attribute-position variable is not a Keyword. Such values name no
+// entity or attribute — the typed non-match of the equality join — so they
+// contribute zero rows and no seek is constructed for them. Every join
+// strategy applies this check at construction (the seek paths and the merge
+// join filter their tuple slices; the hash join drops tuples while building
+// its hash set), so matchesDatom only ever sees correctly typed position
+// bindings. Tuples are returned unchanged (and unallocated) when neither
+// typed position is bound by these symbols or every binding already has its
+// position's type.
+func filterTypedPositionBindings(pattern *query.DataPattern, symbols []query.Symbol, tuples []executor.Tuple) []executor.Tuple {
+	typed := typedPositionBindingCheck(pattern, symbols)
+	if typed == nil {
+		return tuples
+	}
+
+	for i, tuple := range tuples {
+		if typed(tuple) {
+			continue
+		}
+		// First untyped binding found: copy-filter the remainder.
+		filtered := make([]executor.Tuple, 0, len(tuples)-1)
+		filtered = append(filtered, tuples[:i]...)
+		for _, rest := range tuples[i+1:] {
+			if typed(rest) {
+				filtered = append(filtered, rest)
+			}
+		}
+		return filtered
+	}
+	return tuples
+}
+
 // matchesDatom checks if a datom matches the pattern constraints
 func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface{}) bool {
 	// Note: Identity is always a pointer type now, no dereferencing needed
@@ -612,10 +474,10 @@ func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface
 				return false
 			}
 		default:
-			// For other types, try equality
-			if datom.E.String() != fmt.Sprintf("%v", e) {
-				return false
-			}
+			// Unreachable when entity bindings are validated at extraction
+			// (validateEntityBinding). Fail loudly rather than fuzzy-match: the
+			// entity position is inhabited only by Identity.
+			panic(fmt.Sprintf("BUG: non-Identity entity binding reached matchesDatom: %T", e))
 		}
 	}
 
@@ -627,12 +489,11 @@ func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface
 			if datom.A != av {
 				return false
 			}
-		case string:
-			if datom.A.String() != av {
-				return false
-			}
 		default:
-			return false
+			// Unreachable when attribute bindings are validated at extraction
+			// (validateAttributeBinding) and filtered at construction. Fail
+			// loudly: the attribute position is inhabited only by Keyword.
+			panic(fmt.Sprintf("BUG: non-Keyword attribute binding reached matchesDatom: %T", a))
 		}
 	}
 
@@ -1089,7 +950,7 @@ func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]in
 		for iter2.Next() {
 			datom, err := iter2.Datom()
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
 			}
 			if m.shouldFilterTx(datom.Tx) {
 				continue
@@ -1099,6 +960,10 @@ func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]in
 				latestTx = datom.Tx
 				found = true
 			}
+		}
+		// A failed scan is not "no value" — surface it.
+		if err := iter2.Error(); err != nil {
+			return nil, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
 		}
 
 		if !found {

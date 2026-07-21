@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"reflect"
 	"strings"
@@ -88,7 +89,7 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 
 // DatabaseOptions configures database creation
 type DatabaseOptions struct {
-	Path  string // Path to the database directory
+	Path string // Path to the database directory
 	// Store injects an ordered backend. The caller retains ownership: construction
 	// error paths do not Close it, and CompressionThreshold options do not mutate
 	// the injected store's encoder (configure the encoder before injection).
@@ -332,7 +333,9 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 			iter.Close()
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
-		iter.Close()
+		if err := iter.Close(); err != nil {
+			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
+		}
 
 		// Update attribute-level version
 		d.cache.UpdateAttributeVersion(aBytes, maxAttrVersion)
@@ -520,12 +523,17 @@ var _ executor.PatternMatcher = (*Database)(nil)
 // but not writes: NewTransaction will panic. Close is a no-op — the parent
 // owns the store lifetime.
 func (d *Database) AsOf(txID datalog.ElementID) *Database {
+	// Field dispositions (inherit / zero / per-handle) are the ruled contract
+	// pinned by TestTemporalHandleFieldClassification — a new Database field
+	// must be classified there before it can ship.
 	return &Database{
 		store:             d.store,
 		encoder:           d.encoder,
 		schema:            d.schema,
 		annotationHandler: d.annotationHandler,
 		planCache:         d.planCache,
+		parseCache:        d.parseCache,
+		plannerOptions:    d.plannerOptions,
 		cache:             NewCache(),
 		clock:             d.clock,
 		replicaID:         d.replicaID,
@@ -541,6 +549,8 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 // but not writes: NewTransaction will panic. Close is a no-op — the parent
 // owns the store lifetime.
 func (d *Database) History() *Database {
+	// Field dispositions are the ruled contract pinned by
+	// TestTemporalHandleFieldClassification (see AsOf above).
 	empty := datalog.ElementID{}
 	return &Database{
 		store:             d.store,
@@ -548,6 +558,8 @@ func (d *Database) History() *Database {
 		schema:            d.schema,
 		annotationHandler: d.annotationHandler,
 		planCache:         d.planCache,
+		parseCache:        d.parseCache,
+		plannerOptions:    d.plannerOptions,
 		cache:             d.cache,
 		clock:             d.clock,
 		replicaID:         d.replicaID,
@@ -564,10 +576,9 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableScanSharing:          false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
 		EnableEntityPrefetch:       false, // Warm EA cache after first DataPattern via PrefetchEntities (benchmarked: performance-neutral)
 
-		// Executor streaming options (NEW: enabled by default for performance)
-		EnableIteratorComposition: true,  // Lazy evaluation throughout pipeline
-		EnableTrueStreaming:       true,  // No auto-materialization
-		EnableSymmetricHashJoin:   false, // Conservative for now
+		// Executor streaming options
+		EnableTrueStreaming:     true,  // No auto-materialization
+		EnableSymmetricHashJoin: false, // Conservative for now
 
 		// Executor parallel options
 		EnableParallelSubqueries: true, // Parallel subquery execution
@@ -1402,6 +1413,9 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 	// stores and matches the same as int64 (and never reaches the encoder as a
 	// non-int64 width).
 	v = datalog.NormalizeValue(v)
+	if err := validateValueStorable(a, v); err != nil {
+		return err
+	}
 
 	// Schema validation (if schema present)
 	if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
@@ -1535,6 +1549,9 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 
 	// Normalize integer width to canonical int64 at the API boundary.
 	v = datalog.NormalizeValue(v)
+	if err := validateValueStorable(a, v); err != nil {
+		return err
+	}
 
 	// Determine cardinality for Remove semantics
 	s := t.db.Schema()
@@ -1737,6 +1754,9 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 	// Normalize integer width to canonical int64 at the API boundary.
 	v = datalog.NormalizeValue(v)
+	if err := validateValueStorable(a, v); err != nil {
+		return err
+	}
 
 	// Check cardinality first - determines validation strategy
 	card := schema.CardinalityOne
@@ -2053,6 +2073,12 @@ func (t *Transaction) Retract(e datalog.Identity, a datalog.Keyword, v interface
 		return fmt.Errorf("nil value not allowed for retraction of %s: must specify exact value to retract", a.String())
 	}
 
+	// Normalize integer width to canonical int64 at the API boundary.
+	v = datalog.NormalizeValue(v)
+	if err := validateValueStorable(a, v); err != nil {
+		return err
+	}
+
 	t.retracts = append(t.retracts, datalog.Datom{
 		E:  e,
 		A:  a,
@@ -2348,112 +2374,172 @@ func (d *Database) Stats() (map[string]interface{}, error) {
 	return stats, nil
 }
 
+// convertInputValue admits one user input value for one symbol: it applies
+// the entity- and attribute-position typing rules, then normalizes the value
+// into the domain (integer widths → int64). Every input form converts its
+// values through here.
+func convertInputValue(entityBound, attrBound map[query.Symbol]bool, sym query.Symbol, value interface{}) (interface{}, error) {
+	if containsNaN(value) {
+		return nil, fmt.Errorf("input %s is NaN, which is not a datalog value", sym)
+	}
+	if entityBound[sym] {
+		if err := query.ValidateEntityBinding(value); err != nil {
+			return nil, fmt.Errorf("input %s: %w", sym, err)
+		}
+	}
+	if attrBound[sym] {
+		if err := query.ValidateAttributeBinding(value); err != nil {
+			return nil, fmt.Errorf("input %s: %w", sym, err)
+		}
+	}
+	return datalog.NormalizeValue(value), nil
+}
+
+// inputSpecSymbols names the symbols an input spec binds, for error messages.
+func inputSpecSymbols(spec query.InputSpec) interface{} {
+	switch s := spec.(type) {
+	case query.ScalarInput:
+		return s.Symbol
+	case query.CollectionInput:
+		return s.Symbol
+	case query.TupleInput:
+		return s.Symbols
+	case query.RelationInput:
+		return s.Symbols
+	}
+	return spec
+}
+
+// reflectRow copies a reflected slice's elements into one value row.
+func reflectRow(slice reflect.Value) []interface{} {
+	row := make([]interface{}, slice.Len())
+	for i := 0; i < slice.Len(); i++ {
+		row[i] = slice.Index(i).Interface()
+	}
+	return row
+}
+
+// containsNaN reports whether v is NaN or a slice containing one. NaN is not
+// a datalog value — it is not self-equal under IEEE comparison, so no
+// container law (set membership, LWW resolution, join equality) can hold for
+// it — and every boundary where a float enters relational flow rejects it.
+// ±Inf is a value: self-equal and totally ordered.
+func containsNaN(v interface{}) bool {
+	switch val := v.(type) {
+	case float64:
+		return math.IsNaN(val)
+	case []interface{}:
+		for _, elem := range val {
+			if containsNaN(elem) {
+				return true
+			}
+		}
+	case []float64:
+		for _, elem := range val {
+			if math.IsNaN(elem) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// validateValueStorable rejects values outside the storable domain at the
+// transaction write boundary.
+func validateValueStorable(a datalog.Keyword, v interface{}) error {
+	if containsNaN(v) {
+		return fmt.Errorf("NaN is not a datalog value and cannot be stored for attribute %s", a.String())
+	}
+	return nil
+}
+
 // convertInputsToRelations converts Go values to executor.Relation based on the :in clause
 func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}) ([]executor.Relation, error) {
 	inputRelations := make([]executor.Relation, 0, len(inputs))
 	inputIdx := 0
+	entityBound, attrBound := query.PositionSymbols(q)
 
 	for _, inputSpec := range q.In {
-		switch spec := inputSpec.(type) {
-		case query.DatabaseInput:
-			// Skip source markers ($, $users, etc.) - don't consume a regular input
+		if _, ok := inputSpec.(query.DatabaseInput); ok {
+			// Source markers ($, $users, ...) don't consume a regular input
 			continue
+		}
 
+		if inputIdx >= len(inputs) {
+			return nil, fmt.Errorf("not enough inputs: expected input for %v (have %d inputs, need %d)", inputSpecSymbols(inputSpec), len(inputs), inputIdx+1)
+		}
+		input := inputs[inputIdx]
+
+		// Every input form binds a set of rows over a symbol list; the switch
+		// below only reads each form's shape. A scalar is one row of one
+		// column, a collection is n rows of one column, a tuple is one row of
+		// n columns, and a relation is n rows of n columns.
+		var symbols []query.Symbol
+		var rows [][]interface{}
+
+		switch spec := inputSpec.(type) {
 		case query.ScalarInput:
-			if inputIdx >= len(inputs) {
-				return nil, fmt.Errorf("not enough inputs: expected input for %s (have %d inputs, need %d)", spec.Symbol, len(inputs), inputIdx+1)
-			}
-
-			// Create single-value relation (normalize integer width to int64 so
-			// an int parameter matches stored int64 data).
-			rel := executor.NewMaterializedRelation(
-				[]query.Symbol{spec.Symbol},
-				[]executor.Tuple{{datalog.NormalizeValue(inputs[inputIdx])}},
-			)
-			inputRelations = append(inputRelations, rel)
-			inputIdx++
+			symbols = []query.Symbol{spec.Symbol}
+			rows = [][]interface{}{{input}}
 
 		case query.CollectionInput:
-			if inputIdx >= len(inputs) {
-				return nil, fmt.Errorf("not enough inputs: expected collection for %s", spec.Symbol)
-			}
-
-			// Convert slice to relation
-			slice := reflect.ValueOf(inputs[inputIdx])
+			slice := reflect.ValueOf(input)
 			if slice.Kind() != reflect.Slice && slice.Kind() != reflect.Array {
-				return nil, fmt.Errorf("expected slice or array for collection input %s, got %T", spec.Symbol, inputs[inputIdx])
+				return nil, fmt.Errorf("expected slice or array for collection input %s, got %T", spec.Symbol, input)
 			}
-
-			tuples := make([]executor.Tuple, slice.Len())
+			symbols = []query.Symbol{spec.Symbol}
+			rows = make([][]interface{}, slice.Len())
 			for i := 0; i < slice.Len(); i++ {
-				tuples[i] = executor.Tuple{datalog.NormalizeValue(slice.Index(i).Interface())}
+				rows[i] = []interface{}{slice.Index(i).Interface()}
 			}
-
-			rel := executor.NewMaterializedRelation(
-				[]query.Symbol{spec.Symbol},
-				tuples,
-			)
-			inputRelations = append(inputRelations, rel)
-			inputIdx++
 
 		case query.TupleInput:
-			if inputIdx >= len(inputs) {
-				return nil, fmt.Errorf("not enough inputs: expected tuple for %v", spec.Symbols)
-			}
-
-			// Expect a slice for tuple input
-			slice := reflect.ValueOf(inputs[inputIdx])
+			slice := reflect.ValueOf(input)
 			if slice.Kind() != reflect.Slice && slice.Kind() != reflect.Array {
-				return nil, fmt.Errorf("expected slice or array for tuple input, got %T", inputs[inputIdx])
+				return nil, fmt.Errorf("expected slice or array for tuple input, got %T", input)
 			}
-
-			if slice.Len() != len(spec.Symbols) {
-				return nil, fmt.Errorf("tuple input length mismatch: expected %d values, got %d", len(spec.Symbols), slice.Len())
-			}
-
-			// Create single tuple
-			tuple := make(executor.Tuple, slice.Len())
-			for i := 0; i < slice.Len(); i++ {
-				tuple[i] = datalog.NormalizeValue(slice.Index(i).Interface())
-			}
-
-			rel := executor.NewMaterializedRelation(spec.Symbols, []executor.Tuple{tuple})
-			inputRelations = append(inputRelations, rel)
-			inputIdx++
+			symbols = spec.Symbols
+			rows = [][]interface{}{reflectRow(slice)}
 
 		case query.RelationInput:
-			if inputIdx >= len(inputs) {
-				return nil, fmt.Errorf("not enough inputs: expected relation for %v", spec.Symbols)
-			}
-
-			// Expect a slice of slices for relation input
-			outerSlice := reflect.ValueOf(inputs[inputIdx])
+			outerSlice := reflect.ValueOf(input)
 			if outerSlice.Kind() != reflect.Slice && outerSlice.Kind() != reflect.Array {
-				return nil, fmt.Errorf("expected slice of slices for relation input, got %T", inputs[inputIdx])
+				return nil, fmt.Errorf("expected slice of slices for relation input, got %T", input)
 			}
-
-			tuples := make([]executor.Tuple, outerSlice.Len())
+			symbols = spec.Symbols
+			rows = make([][]interface{}, outerSlice.Len())
 			for i := 0; i < outerSlice.Len(); i++ {
 				innerSlice := outerSlice.Index(i)
 				if innerSlice.Kind() != reflect.Slice && innerSlice.Kind() != reflect.Array {
 					return nil, fmt.Errorf("expected slice for relation tuple %d, got %T", i, innerSlice.Interface())
 				}
-
-				if innerSlice.Len() != len(spec.Symbols) {
-					return nil, fmt.Errorf("relation tuple %d length mismatch: expected %d values, got %d", i, len(spec.Symbols), innerSlice.Len())
-				}
-
-				tuple := make(executor.Tuple, innerSlice.Len())
-				for j := 0; j < innerSlice.Len(); j++ {
-					tuple[j] = datalog.NormalizeValue(innerSlice.Index(j).Interface())
-				}
-				tuples[i] = tuple
+				rows[i] = reflectRow(innerSlice)
 			}
 
-			rel := executor.NewMaterializedRelation(spec.Symbols, tuples)
-			inputRelations = append(inputRelations, rel)
-			inputIdx++
+		default:
+			return nil, fmt.Errorf("unsupported input spec %T", inputSpec)
 		}
+
+		// One conversion path for every form: row width against the symbol
+		// list, then per-value position typing and normalization through
+		// convertInputValue.
+		tuples := make([]executor.Tuple, len(rows))
+		for i, row := range rows {
+			if len(row) != len(symbols) {
+				return nil, fmt.Errorf("input row %d for %v: expected %d values, got %d", i, symbols, len(symbols), len(row))
+			}
+			tuple := make(executor.Tuple, len(row))
+			for j, val := range row {
+				v, err := convertInputValue(entityBound, attrBound, symbols[j], val)
+				if err != nil {
+					return nil, err
+				}
+				tuple[j] = v
+			}
+			tuples[i] = tuple
+		}
+		inputRelations = append(inputRelations, executor.NewMaterializedRelation(symbols, tuples))
+		inputIdx++
 	}
 
 	// Check we used all inputs
@@ -2717,6 +2803,10 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 				values = append(values, tuple[0])
 			}
 		}
+		// A failed scan is not an empty member set — surface it.
+		if err := iter.Error(); err != nil {
+			return nil, err
+		}
 		if len(values) == 0 {
 			return nil, nil
 		}
@@ -2737,6 +2827,10 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 				return tuple[0], nil
 			}
 		}
+		// A failed scan is not an absent vector — surface it.
+		if err := iter.Error(); err != nil {
+			return nil, err
+		}
 		return nil, nil
 
 	default:
@@ -2747,6 +2841,10 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 			if len(tuple) > 0 {
 				return tuple[0], nil
 			}
+		}
+		// A failed scan is not an absent attribute — surface it.
+		if err := iter.Error(); err != nil {
+			return nil, err
 		}
 		return nil, nil
 	}

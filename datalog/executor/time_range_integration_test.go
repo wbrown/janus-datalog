@@ -6,7 +6,6 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // TestTimeRangeMetadataFlow verifies that time ranges are extracted and passed to merged queries
@@ -53,11 +52,8 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 		)
 	}
 
-	// Setup matcher and executor
+	// Setup matcher
 	matcher := NewMemoryPatternMatcher(datoms)
-
-	plannerOpts := planner.PlannerOptions{}
-	exec := NewExecutorWithOptions(matcher, nil, plannerOpts)
 
 	// Query: Hourly OHLC for hours 9 and 10 only (not 11)
 	queryStr := `[:find ?hour (max ?h) (min ?l)
@@ -81,58 +77,64 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	// Execute without decorrelation (baseline)
-	execNoDecorr := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
 
-	baselineResult, err := execNoDecorr.Execute(q)
-	if err != nil {
-		t.Fatalf("Baseline execution failed: %v", err)
-	}
+			// Execute without decorrelation (baseline)
+			execNoDecorr := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
 
-	// Execute with decorrelation (should use time range optimization)
-	optimizedResult, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Optimized execution failed: %v", err)
-	}
-
-	// Results should be identical
-	if baselineResult.Size() != optimizedResult.Size() {
-		t.Errorf("Result size mismatch: baseline=%d, optimized=%d",
-			baselineResult.Size(), optimizedResult.Size())
-	}
-
-	// Should have results for hours 9 and 10 only
-	if baselineResult.Size() != 2 {
-		t.Errorf("Expected 2 hours (9, 10), got %d", baselineResult.Size())
-	}
-
-	// Sort both results by first symbol (hour) for deterministic comparison
-	baselineSorted, err := baselineResult.Sorted()
-	if err != nil {
-		t.Fatalf("baseline Sorted() failed: %v", err)
-	}
-	optimizedSorted, err := optimizedResult.Sorted()
-	if err != nil {
-		t.Fatalf("optimized Sorted() failed: %v", err)
-	}
-
-	// Verify actual values match
-	for i := 0; i < len(baselineSorted) && i < len(optimizedSorted); i++ {
-		baselineTuple := baselineSorted[i]
-		optimizedTuple := optimizedSorted[i]
-
-		if len(baselineTuple) != len(optimizedTuple) {
-			t.Errorf("Tuple %d length mismatch: baseline=%d, optimized=%d",
-				i, len(baselineTuple), len(optimizedTuple))
-			continue
-		}
-
-		for j := 0; j < len(baselineTuple); j++ {
-			if baselineTuple[j] != optimizedTuple[j] {
-				t.Errorf("Tuple %d symbol %d mismatch: baseline=%v, optimized=%v",
-					i, j, baselineTuple[j], optimizedTuple[j])
+			baselineResult, err := execNoDecorr.Execute(q)
+			if err != nil {
+				t.Fatalf("Baseline execution failed: %v", err)
 			}
-		}
+
+			// Execute with decorrelation (should use time range optimization)
+			optimizedResult, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Optimized execution failed: %v", err)
+			}
+
+			// Results should be identical
+			if baselineResult.Size() != optimizedResult.Size() {
+				t.Errorf("Result size mismatch: baseline=%d, optimized=%d",
+					baselineResult.Size(), optimizedResult.Size())
+			}
+
+			// Should have results for hours 9 and 10 only
+			if baselineResult.Size() != 2 {
+				t.Errorf("Expected 2 hours (9, 10), got %d", baselineResult.Size())
+			}
+
+			// Sort both results by first symbol (hour) for deterministic comparison
+			baselineSorted, err := baselineResult.Sorted()
+			if err != nil {
+				t.Fatalf("baseline Sorted() failed: %v", err)
+			}
+			optimizedSorted, err := optimizedResult.Sorted()
+			if err != nil {
+				t.Fatalf("optimized Sorted() failed: %v", err)
+			}
+
+			// Verify actual values match
+			for i := 0; i < len(baselineSorted) && i < len(optimizedSorted); i++ {
+				baselineTuple := baselineSorted[i]
+				optimizedTuple := optimizedSorted[i]
+
+				if len(baselineTuple) != len(optimizedTuple) {
+					t.Errorf("Tuple %d length mismatch: baseline=%d, optimized=%d",
+						i, len(baselineTuple), len(optimizedTuple))
+					continue
+				}
+
+				for j := 0; j < len(baselineTuple); j++ {
+					if baselineTuple[j] != optimizedTuple[j] {
+						t.Errorf("Tuple %d symbol %d mismatch: baseline=%v, optimized=%v",
+							i, j, baselineTuple[j], optimizedTuple[j])
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -164,9 +166,6 @@ func TestTimeRangeOptimizationCorrectness(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-
-	plannerOpts := planner.PlannerOptions{}
-	exec := NewExecutorWithOptions(matcher, nil, plannerOpts)
 
 	// Query with decorrelated subquery (like OHLC pattern)
 	queryStr := `[:find ?hour ?high ?low
@@ -201,53 +200,59 @@ func TestTimeRangeOptimizationCorrectness(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Execution failed: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
 
-	// Should have 5 hours of results (9-13)
-	if result.Size() != 5 {
-		t.Errorf("Expected 5 hours of data, got %d", result.Size())
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Execution failed: %v", err)
+			}
 
-	// Verify each hour has correct high/low aggregation
-	for i := 0; i < result.Size(); i++ {
-		tuple := result.Get(i)
-		if len(tuple) < 3 {
-			t.Errorf("Tuple too short: %v", tuple)
-			continue
-		}
+			// Should have 5 hours of results (9-13)
+			if result.Size() != 5 {
+				t.Errorf("Expected 5 hours of data, got %d", result.Size())
+			}
 
-		hour, ok := tuple[0].(int64)
-		if !ok {
-			t.Errorf("Hour is not int64: %v", tuple[0])
-			continue
-		}
+			// Verify each hour has correct high/low aggregation
+			for i := 0; i < result.Size(); i++ {
+				tuple := result.Get(i)
+				if len(tuple) < 3 {
+					t.Errorf("Tuple too short: %v", tuple)
+					continue
+				}
 
-		// For each hour, high should be at the last minute (45)
-		// Low should be at the first minute (0)
-		expectedMaxHigh := 100.0 + float64(hour*10) + 45.0/10.0
-		expectedMinLow := 99.0 + float64(hour*10) + 0.0/10.0
+				hour, ok := tuple[0].(int64)
+				if !ok {
+					t.Errorf("Hour is not int64: %v", tuple[0])
+					continue
+				}
 
-		high, ok := tuple[1].(float64)
-		if !ok {
-			t.Errorf("High is not float64: %v", tuple[1])
-			continue
-		}
+				// For each hour, high should be at the last minute (45)
+				// Low should be at the first minute (0)
+				expectedMaxHigh := 100.0 + float64(hour*10) + 45.0/10.0
+				expectedMinLow := 99.0 + float64(hour*10) + 0.0/10.0
 
-		low, ok := tuple[2].(float64)
-		if !ok {
-			t.Errorf("Low is not float64: %v", tuple[2])
-			continue
-		}
+				high, ok := tuple[1].(float64)
+				if !ok {
+					t.Errorf("High is not float64: %v", tuple[1])
+					continue
+				}
 
-		if high != expectedMaxHigh {
-			t.Errorf("Hour %d: expected max high %.1f, got %.1f", hour, expectedMaxHigh, high)
-		}
+				low, ok := tuple[2].(float64)
+				if !ok {
+					t.Errorf("Low is not float64: %v", tuple[2])
+					continue
+				}
 
-		if low != expectedMinLow {
-			t.Errorf("Hour %d: expected min low %.1f, got %.1f", hour, expectedMinLow, low)
-		}
+				if high != expectedMaxHigh {
+					t.Errorf("Hour %d: expected max high %.1f, got %.1f", hour, expectedMaxHigh, high)
+				}
+
+				if low != expectedMinLow {
+					t.Errorf("Hour %d: expected min low %.1f, got %.1f", hour, expectedMinLow, low)
+				}
+			}
+		})
 	}
 }

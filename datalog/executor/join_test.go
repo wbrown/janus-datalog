@@ -109,7 +109,7 @@ func TestEmptyJoin(t *testing.T) {
 
 	joined := left.HashJoin(right, []query.Symbol{datalog.NewSymbol("?y")})
 
-	if !joined.IsEmpty() {
+	if joined.Materialize().Size() != 0 {
 		t.Error("expected empty join result")
 	}
 }
@@ -365,9 +365,10 @@ func TestJoinStrategyAnnotationDoesNotConsumeStreamingRelation(t *testing.T) {
 		events = append(events, event)
 	})
 	joinSymbol := datalog.NewSymbol("?id")
-	base := NewMaterializedRelationNoDedupe(
+	base := NewMaterializedRelationFromSet(
 		[]query.Symbol{joinSymbol},
 		[]Tuple{{int64(1)}},
+		ExecutorOptions{},
 	)
 	stream := NewStreamingRelationWithOptions(
 		base.Symbols(),

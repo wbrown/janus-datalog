@@ -1,8 +1,6 @@
 # BUG: Schemaless Attributes Invisible to Bound Queries When Schema Present
 
-**Status**: Resolved (2026-05-25) — see Resolution below
-**Severity**: High — data written successfully but queries silently return no results
-**Date**: 2026-02-06
+**Status**: Resolved (2026-05-25) — see Resolution below **Severity**: High — data written successfully but queries silently return no results **Date**: 2026-02-06
 
 ## Summary
 
@@ -49,14 +47,9 @@ Bound queries should find schemaless data, same as unbound queries.
 
 Two problems:
 
-1. **CRDTResolvingIterator gated on `m.schema != nil`**: When schema was nil on
-   the matcher, CRDTResolvingIterator was not applied at all. Raw storage scans
-   returned unresolved datoms.
+1. **CRDTResolvingIterator gated on `m.schema != nil`**: When schema was nil on the matcher, CRDTResolvingIterator was not applied at all. Raw storage scans returned unresolved datoms.
 
-2. **CardinalityUnknown used add-wins (wrong default)**: When CRDTResolvingIterator
-   encountered an attribute not in schema, it defaulted to `CardinalityUnknown`
-   which routed to `processAddWins()`. Since schemaless `tx.Add()` writes `OpNone`
-   (not `OpCRDTAdd`), `processAddWins` silently dropped the datoms.
+2. **CardinalityUnknown used add-wins (wrong default)**: When CRDTResolvingIterator encountered an attribute not in schema, it defaulted to `CardinalityUnknown` which routed to `processAddWins()`. Since schemaless `tx.Add()` writes `OpNone` (not `OpCRDTAdd`), `processAddWins` silently dropped the datoms.
 
 ## Discovery Context
 
@@ -72,34 +65,25 @@ Adding the attribute to the schema immediately fixed the issue.
 
 #### Schemaless default is CardinalityOne (LWW)
 
-Datomic defaults to CardinalityOne. Every database, key-value store, and user
-mental model defaults to "write an attribute twice, get the latest value."
-Add-wins as a default is surprising — writing `:name` twice returns both values.
+Datomic defaults to CardinalityOne. Every database, key-value store, and user mental model defaults to "write an attribute twice, get the latest value." Add-wins as a default is surprising — writing `:name` twice returns both values.
 
-Schemaless `tx.Add()` writes `OpNone`. If you want CardinalityMany or
-CardinalityVector, declare it in schema. That's what schema is for.
+Schemaless `tx.Add()` writes `OpNone`. If you want CardinalityMany or CardinalityVector, declare it in schema. That's what schema is for.
 
 #### CardinalityUnknown = CardinalityOne
 
-When CRDTResolvingIterator encounters an attribute not in schema (or nil schema),
-it defaults to CardinalityOne. No Op-sniffing. Cardinality is an attribute-level
-property that belongs in schema, not something inferred from individual datoms.
+When CRDTResolvingIterator encounters an attribute not in schema (or nil schema), it defaults to CardinalityOne. No Op-sniffing. Cardinality is an attribute-level property that belongs in schema, not something inferred from individual datoms.
 
 #### OpNone is valid and means CardinalityOne
 
-`OpNone` is not an error. It means "this is a CardinalityOne LWW assertion."
-The `processAddWins` function correctly ignores it — `OpNone` datoms are not
-add-wins operations. CardinalityOne resolution handles them: first entry wins.
+`OpNone` is not an error. It means "this is a CardinalityOne LWW assertion." The `processAddWins` function correctly ignores it — `OpNone` datoms are not add-wins operations. CardinalityOne resolution handles them: first entry wins.
 
 #### tx.Set() and tx.Add() are the same for CardinalityOne
 
-Both write `OpNone`. Both are LWW. `tx.Set()` only differs from `tx.Add()` for
-CardinalityMany (replace entire set) and CardinalityVector (replace entire vector).
+Both write `OpNone`. Both are LWW. `tx.Set()` only differs from `tx.Add()` for CardinalityMany (replace entire set) and CardinalityVector (replace entire vector).
 
 #### tx.Remove() works for all cardinalities
 
-Remove writes `OpCRDTRemove` regardless of cardinality. Resolution determines
-what "remove" means:
+Remove writes `OpCRDTRemove` regardless of cardinality. Resolution determines what "remove" means:
 
 - **CardinalityOne**: first entry is `OpCRDTRemove` → attribute doesn't exist
 - **CardinalityMany**: tombstone for that specific value (add-wins)
@@ -107,14 +91,11 @@ what "remove" means:
 
 #### CRDTResolvingIterator is always applied
 
-The `m.schema != nil` guard was wrong. CRDTResolvingIterator handles nil schema
-correctly — it defaults to CardinalityOne for unknown attributes, which is the
-correct schemaless behavior.
+The `m.schema != nil` guard was wrong. CRDTResolvingIterator handles nil schema correctly — it defaults to CardinalityOne for unknown attributes, which is the correct schemaless behavior.
 
 ### Sequence
 
-Tests are written FIRST. All new tests should fail before any implementation
-changes are made. This validates that the tests actually catch the bugs.
+Tests are written FIRST. All new tests should fail before any implementation changes are made. This validates that the tests actually catch the bugs.
 
 1. Write all new tests (expect failures)
 2. Update existing tests (expect failures)
@@ -127,8 +108,7 @@ changes are made. This validates that the tests actually catch the bugs.
 
 **File**: `database.go`, schemaless path of `tx.Add()` (~line 1401)
 
-Our earlier fix changed this from `OpNone` to `OpCRDTAdd`. That was wrong.
-Schemaless default is CardinalityOne. Revert to no explicit Op (zero value = `OpNone`).
+Our earlier fix changed this from `OpNone` to `OpCRDTAdd`. That was wrong. Schemaless default is CardinalityOne. Revert to no explicit Op (zero value = `OpNone`).
 
 ```go
 // CURRENT (wrong):
@@ -227,8 +207,7 @@ case schema.CardinalityOne:
 
 **File**: `database.go`, `tx.Remove()` schemaless/undefined path
 
-Currently defaults to CardinalityMany for schemaless removes. Should default
-to CardinalityOne, consistent with the schemaless default.
+Currently defaults to CardinalityMany for schemaless removes. Should default to CardinalityOne, consistent with the schemaless default.
 
 ```go
 // CURRENT:
@@ -273,54 +252,35 @@ Sites NOT changed (cardinality lookups — correct as-is):
 
 ### Test Changes
 
-Tests are the contract of correctness. They are written FIRST and must fail
-before implementation. Every test encodes a design decision from this plan.
+Tests are the contract of correctness. They are written FIRST and must fail before implementation. Every test encodes a design decision from this plan.
 
 #### Existing tests to update
 
-**`crdt_schemaless_attr_test.go`**: Tests assumed schemaless = add-wins.
-Schemaless = CardinalityOne (LWW).
+**`crdt_schemaless_attr_test.go`**: Tests assumed schemaless = add-wins. Schemaless = CardinalityOne (LWW).
 
-- `TestSchemalessAttrMultipleWrites`: multiple writes to same (E, A) should
-  return only the latest value, not all values
-- `TestSchemalessAttrBoundQuery_BugRepro`: should continue to pass (this IS
-  the original bug reproduction — schema exists, attr not registered, bound query)
+- `TestSchemalessAttrMultipleWrites`: multiple writes to same (E, A) should return only the latest value, not all values
+- `TestSchemalessAttrBoundQuery_BugRepro`: should continue to pass (this IS the original bug reproduction — schema exists, attr not registered, bound query)
 - `TestSchemalessAttrUnboundQuery_BugRepro`: should continue to pass
 
-**`TestRemoveCardinalityValidation`**: Remove on CardinalityOne should succeed,
-not error. Remove on unknown/schemaless should still succeed (now as
-CardinalityOne, not add-wins).
+**`TestRemoveCardinalityValidation`**: Remove on CardinalityOne should succeed, not error. Remove on unknown/schemaless should still succeed (now as CardinalityOne, not add-wins).
 
 #### New tests: CardinalityOne Remove (schema-defined)
 
 These use a database with schema where the attribute is explicitly CardinalityOne.
 
-1. **Remove round-trip**: Add value, Remove, query → attribute doesn't exist.
-   Test with BOTH bound and unbound queries.
-2. **Remove after overwrite**: Add "Alice", Add "Bob", Remove (any V) →
-   attribute doesn't exist. V is irrelevant for CardinalityOne remove — the
-   remove has highest Tx, so the attribute is gone regardless of what V was
-   passed to Remove().
-3. **Remove then re-add**: Add "Alice", Remove, Add "Bob" → "Bob" is current.
-   The Add has higher Tx than the Remove.
-4. **Remove before any add**: Remove first, then Add → value exists. Add has
-   higher Tx, wins over pre-existing tombstone.
-5. **V is irrelevant**: Add "Alice", Remove("Bob") → attribute doesn't exist.
-   Even though "Bob" was never the value, the OpCRDTRemove at highest Tx means
-   the attribute doesn't exist. CardinalityOne has one value; Remove removes it.
-6. **Multiple entities**: Add value for entity1 and entity2. Remove entity1's
-   value. entity2's value unaffected.
+1. **Remove round-trip**: Add value, Remove, query → attribute doesn't exist. Test with BOTH bound and unbound queries.
+2. **Remove after overwrite**: Add "Alice", Add "Bob", Remove (any V) → attribute doesn't exist. V is irrelevant for CardinalityOne remove — the remove has highest Tx, so the attribute is gone regardless of what V was passed to Remove().
+3. **Remove then re-add**: Add "Alice", Remove, Add "Bob" → "Bob" is current. The Add has higher Tx than the Remove.
+4. **Remove before any add**: Remove first, then Add → value exists. Add has higher Tx, wins over pre-existing tombstone.
+5. **V is irrelevant**: Add "Alice", Remove("Bob") → attribute doesn't exist. Even though "Bob" was never the value, the OpCRDTRemove at highest Tx means the attribute doesn't exist. CardinalityOne has one value; Remove removes it.
+6. **Multiple entities**: Add value for entity1 and entity2. Remove entity1's value. entity2's value unaffected.
 
 #### New tests: Schemaless CardinalityOne (default)
 
-These use a database WITHOUT schema (or with schema where the attribute is
-not registered). Exercises the CardinalityUnknown → CardinalityOne default.
+These use a database WITHOUT schema (or with schema where the attribute is not registered). Exercises the CardinalityUnknown → CardinalityOne default.
 
-7. **Schemaless LWW**: multiple `tx.Add()` to same (E, A) → only latest
-   returned. Test with BOTH bound and unbound queries to verify both paths
-   use CardinalityOne resolution.
-8. **Schemaless remove**: `tx.Add()` then `tx.Remove()` → attribute doesn't
-   exist. Test with BOTH bound and unbound queries.
+7. **Schemaless LWW**: multiple `tx.Add()` to same (E, A) → only latest returned. Test with BOTH bound and unbound queries to verify both paths use CardinalityOne resolution.
+8. **Schemaless remove**: `tx.Add()` then `tx.Remove()` → attribute doesn't exist. Test with BOTH bound and unbound queries.
 9. **Schemaless remove then re-add**: Same as test #3 but without schema.
 10. **Schema exists, attribute not registered**: Database has schema with other
     attributes. Unregistered attribute defaults to CardinalityOne. Multiple

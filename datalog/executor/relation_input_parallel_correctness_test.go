@@ -191,23 +191,27 @@ func TestRelationInputParallel_MultisetMatchesSequential(t *testing.T) {
 		},
 	)
 
-	seqExec := NewExecutor(matcher, nil)
-	seqExec.DisableParallelSubqueries()
-	seqResult, err := seqExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			seqExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			seqExec.DisableParallelSubqueries()
+			seqResult, err := seqExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			require.NoError(t, err)
 
-	parExec := NewExecutor(matcher, nil)
-	parExec.EnableParallelSubqueries(4)
-	parResult, err := parExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	require.NoError(t, err)
+			parExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			parExec.EnableParallelSubqueries(4)
+			parResult, err := parExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			require.NoError(t, err)
 
-	seqTuples := sortedTupleStrings(t, seqResult)
-	parTuples := sortedTupleStrings(t, parResult)
+			seqTuples := sortedTupleStrings(t, seqResult)
+			parTuples := sortedTupleStrings(t, parResult)
 
-	require.Equal(t, seqTuples, parTuples,
-		"parallel and sequential must produce identical sorted-tuple lists; "+
-			"a set/map comparison would miss any duplicate-count drift that "+
-			"slipped past downstream dedup")
+			require.Equal(t, seqTuples, parTuples,
+				"parallel and sequential must produce identical sorted-tuple lists; "+
+					"a set/map comparison would miss any duplicate-count drift that "+
+					"slipped past downstream dedup")
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -223,12 +227,10 @@ func TestRelationInputParallel_MultisetMatchesSequential(t *testing.T) {
 // "parallel iteration execution failed: %w", so errors.Is must unwrap to the
 // injected sentinel.
 func TestRelationInputParallel_PropagatesMatcherError(t *testing.T) {
-	// Fail on the very first Match() call. Whichever worker hits it first
-	// will see the error and the function must surface it.
-	fm := &failingMatcher{
-		delegate:   NewMemoryPatternMatcher(buildPeopleDatoms()),
-		shouldFail: func(n int, _ *query.DataPattern) error { return errInjectedMatcher },
-	}
+	// Shared read-only delegate; the stateful failingMatcher wrapper (call
+	// counter) is rebuilt fresh per mode below so each mode's execution sees
+	// its own "fail on call N" state.
+	delegate := NewMemoryPatternMatcher(buildPeopleDatoms())
 
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
 	require.NoError(t, err)
@@ -242,13 +244,24 @@ func TestRelationInputParallel_PropagatesMatcherError(t *testing.T) {
 		},
 	)
 
-	exec := NewExecutor(fm, nil)
-	exec.EnableParallelSubqueries(4)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Fail on the very first Match() call. Whichever worker hits it first
+			// will see the error and the function must surface it.
+			fm := &failingMatcher{
+				delegate:   delegate,
+				shouldFail: func(n int, _ *query.DataPattern) error { return errInjectedMatcher },
+			}
 
-	_, err = exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	require.Error(t, err, "matcher error must not be silently dropped")
-	require.True(t, errors.Is(err, errInjectedMatcher),
-		"error must unwrap to the injected sentinel; got %v", err)
+			exec := NewExecutorWithOptions(fm, nil, mode.plannerOptions())
+			exec.EnableParallelSubqueries(4)
+
+			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			require.Error(t, err, "matcher error must not be silently dropped")
+			require.True(t, errors.Is(err, errInjectedMatcher),
+				"error must unwrap to the injected sentinel; got %v", err)
+		})
+	}
 }
 
 // TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple covers the
@@ -256,19 +269,10 @@ func TestRelationInputParallel_PropagatesMatcherError(t *testing.T) {
 // pre-fix behavior would have been a truncated success; the contract is
 // that error propagates regardless of position.
 func TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple(t *testing.T) {
-	// Fail on the Nth Match() call (across all workers). The exact call
-	// count depends on plan shape; we just need it to be > 1 to verify the
-	// "after some tuples succeeded" case is handled.
-	const failAfter = 5
-	fm := &failingMatcher{
-		delegate: NewMemoryPatternMatcher(buildPeopleDatoms()),
-		shouldFail: func(n int, _ *query.DataPattern) error {
-			if n >= failAfter {
-				return errInjectedMatcher
-			}
-			return nil
-		},
-	}
+	// Shared read-only delegate; the stateful failingMatcher wrapper (call
+	// counter) is rebuilt fresh per mode below so each mode's execution sees
+	// its own "fail on call N" state.
+	delegate := NewMemoryPatternMatcher(buildPeopleDatoms())
 
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
 	require.NoError(t, err)
@@ -284,13 +288,31 @@ func TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple(t *testing.T) 
 		},
 	)
 
-	exec := NewExecutor(fm, nil)
-	exec.EnableParallelSubqueries(4)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Fail on the Nth Match() call (across all workers). The exact call
+			// count depends on plan shape; we just need it to be > 1 to verify
+			// the "after some tuples succeeded" case is handled.
+			const failAfter = 5
+			fm := &failingMatcher{
+				delegate: delegate,
+				shouldFail: func(n int, _ *query.DataPattern) error {
+					if n >= failAfter {
+						return errInjectedMatcher
+					}
+					return nil
+				},
+			}
 
-	_, err = exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	require.Error(t, err, "matcher error after partial success must not be silently dropped")
-	require.True(t, errors.Is(err, errInjectedMatcher),
-		"error must unwrap to the injected sentinel; got %v", err)
+			exec := NewExecutorWithOptions(fm, nil, mode.plannerOptions())
+			exec.EnableParallelSubqueries(4)
+
+			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			require.Error(t, err, "matcher error after partial success must not be silently dropped")
+			require.True(t, errors.Is(err, errInjectedMatcher),
+				"error must unwrap to the injected sentinel; got %v", err)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -306,10 +328,10 @@ func TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple(t *testing.T) 
 // The parallel function consumes per-worker results via collectTuplesInto,
 // which is the contract-enforcing call. This test verifies the wiring.
 func TestRelationInputParallel_PropagatesDeferredIteratorError(t *testing.T) {
-	dm := &deferredFailMatcher{
-		delegate:   NewMemoryPatternMatcher(buildPeopleDatoms()),
-		failOnCall: 1, // first Match() returns a deferred-failure relation
-	}
+	// Shared read-only delegate; the stateful deferredFailMatcher wrapper
+	// (call counter) is rebuilt fresh per mode below so each mode's
+	// execution sees its own "fail on call N" state.
+	delegate := NewMemoryPatternMatcher(buildPeopleDatoms())
 
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
 	require.NoError(t, err)
@@ -322,13 +344,22 @@ func TestRelationInputParallel_PropagatesDeferredIteratorError(t *testing.T) {
 		},
 	)
 
-	exec := NewExecutor(dm, nil)
-	exec.EnableParallelSubqueries(4)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			dm := &deferredFailMatcher{
+				delegate:   delegate,
+				failOnCall: 1, // first Match() returns a deferred-failure relation
+			}
 
-	_, err = exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	require.Error(t, err, "deferred iterator error must propagate, not be laundered into a clean result")
-	require.True(t, errors.Is(err, errInjectedIterator),
-		"error must unwrap to errInjectedIterator (from failingIterator); got %v", err)
+			exec := NewExecutorWithOptions(dm, nil, mode.plannerOptions())
+			exec.EnableParallelSubqueries(4)
+
+			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			require.Error(t, err, "deferred iterator error must propagate, not be laundered into a clean result")
+			require.True(t, errors.Is(err, errInjectedIterator),
+				"error must unwrap to errInjectedIterator (from failingIterator); got %v", err)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -358,42 +389,46 @@ func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 		},
 	)
 
-	exec := NewExecutor(matcher, nil)
-	exec.EnableParallelSubqueries(4)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			exec.EnableParallelSubqueries(4)
 
-	// Warm up: first run amortizes one-time initializations that may park
-	// goroutines (intern caches, etc.). Without this, "before" can be lower
-	// than "after" purely because of first-call setup, not a leak.
-	_, err = exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	require.NoError(t, err)
+			// Warm up: first run amortizes one-time initializations that may park
+			// goroutines (intern caches, etc.). Without this, "before" can be lower
+			// than "after" purely because of first-call setup, not a leak.
+			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			require.NoError(t, err)
 
-	// Let any test-framework or first-call goroutines settle.
-	runtime.GC()
-	time.Sleep(50 * time.Millisecond)
-	runtime.GC()
-	before := runtime.NumGoroutine()
+			// Let any test-framework or first-call goroutines settle.
+			runtime.GC()
+			time.Sleep(50 * time.Millisecond)
+			runtime.GC()
+			before := runtime.NumGoroutine()
 
-	const iterations = 50
-	for i := 0; i < iterations; i++ {
-		_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-		require.NoError(t, err)
+			const iterations = 50
+			for i := 0; i < iterations; i++ {
+				_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+				require.NoError(t, err)
+			}
+
+			// Give the runtime time to reap finished goroutines. The parallel
+			// function returns only after all workers signal done, so there should
+			// be no in-flight workers; what we're guarding against is workers that
+			// linger past the function return.
+			runtime.GC()
+			time.Sleep(100 * time.Millisecond)
+			runtime.GC()
+			after := runtime.NumGoroutine()
+
+			// Generous bound: if any goroutine leaks per call, after-before would
+			// be at least iterations (50). A bound of 10 swallows test-framework
+			// noise without missing a real leak.
+			require.LessOrEqualf(t, after-before, 10,
+				"goroutine leak suspected: started with %d, ended with %d after %d iterations",
+				before, after, iterations)
+		})
 	}
-
-	// Give the runtime time to reap finished goroutines. The parallel
-	// function returns only after all workers signal done, so there should
-	// be no in-flight workers; what we're guarding against is workers that
-	// linger past the function return.
-	runtime.GC()
-	time.Sleep(100 * time.Millisecond)
-	runtime.GC()
-	after := runtime.NumGoroutine()
-
-	// Generous bound: if any goroutine leaks per call, after-before would
-	// be at least iterations (50). A bound of 10 swallows test-framework
-	// noise without missing a real leak.
-	require.LessOrEqualf(t, after-before, 10,
-		"goroutine leak suspected: started with %d, ended with %d after %d iterations",
-		before, after, iterations)
 }
 
 // ---------------------------------------------------------------------------
@@ -517,39 +552,51 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
 	require.NoError(t, err)
 
-	inputRel := newReusingWorkspaceStream(
-		[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
-		inputTuples,
-	)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// newReusingWorkspaceStream wraps a single-use streaming iterator, so
+			// it must be rebuilt fresh per mode rather than shared like the
+			// read-only in-memory matchers above.
+			inputRel := newReusingWorkspaceStream(
+				[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
+				inputTuples,
+			)
 
-	exec := NewExecutor(matcher, nil)
-	exec.EnableParallelSubqueries(4)
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			exec.EnableParallelSubqueries(4)
 
-	result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	require.NoError(t, err)
+			result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			require.NoError(t, err)
 
-	it := result.Iterator()
-	defer it.Close()
-	for it.Next() {
-		key := fmt.Sprintf("%v", it.Tuple())
-		if _, ok := expectedRows[key]; ok {
-			expectedRows[key] = true
-		}
+			seen := make(map[string]bool, len(expectedRows))
+			for key := range expectedRows {
+				seen[key] = false
+			}
+
+			it := result.Iterator()
+			defer it.Close()
+			for it.Next() {
+				key := fmt.Sprintf("%v", it.Tuple())
+				if _, ok := seen[key]; ok {
+					seen[key] = true
+				}
+			}
+			require.NoError(t, it.Error())
+
+			var missing []string
+			for key, found := range seen {
+				if !found {
+					missing = append(missing, key)
+				}
+			}
+			sort.Strings(missing)
+			require.Emptyf(t, missing,
+				"%d of %d expected rows missing from result; the workspace-reuse "+
+					"race let workers read stale workspace values. Run with -race "+
+					"to see the data race directly. Missing (first few): %v",
+				len(missing), entityCount, missing[:min(len(missing), 5)])
+		})
 	}
-	require.NoError(t, it.Error())
-
-	var missing []string
-	for key, seen := range expectedRows {
-		if !seen {
-			missing = append(missing, key)
-		}
-	}
-	sort.Strings(missing)
-	require.Emptyf(t, missing,
-		"%d of %d expected rows missing from result; the workspace-reuse "+
-			"race let workers read stale workspace values. Run with -race "+
-			"to see the data race directly. Missing (first few): %v",
-		len(missing), entityCount, missing[:min(len(missing), 5)])
 }
 
 // TestRelationInputParallel_ConcurrentInvocationCorrectness strengthens the
@@ -576,51 +623,55 @@ func TestRelationInputParallel_ConcurrentInvocationCorrectness(t *testing.T) {
 		},
 	)
 
-	// Compute the expected multiset once, sequentially.
-	seqExec := NewExecutor(matcher, nil)
-	seqExec.DisableParallelSubqueries()
-	expected, err := seqExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	require.NoError(t, err)
-	expectedTuples := sortedTupleStrings(t, expected)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Compute the expected multiset once, sequentially.
+			seqExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			seqExec.DisableParallelSubqueries()
+			expected, err := seqExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			require.NoError(t, err)
+			expectedTuples := sortedTupleStrings(t, expected)
 
-	const concurrency = 16
-	const itersPerGoroutine = 20
+			const concurrency = 16
+			const itersPerGoroutine = 20
 
-	type runResult struct {
-		tuples []string
-		err    error
-	}
-	results := make(chan runResult, concurrency*itersPerGoroutine)
-
-	var wg sync.WaitGroup
-	wg.Add(concurrency)
-	for g := 0; g < concurrency; g++ {
-		go func() {
-			defer wg.Done()
-			// Each outer goroutine gets its own executor, mirroring the
-			// production pattern (per-task or per-request executor).
-			exec := NewExecutor(matcher, nil)
-			exec.EnableParallelSubqueries(4)
-			for i := 0; i < itersPerGoroutine; i++ {
-				rel, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-				if err != nil {
-					results <- runResult{err: err}
-					continue
-				}
-				results <- runResult{tuples: sortedTupleStrings(t, rel)}
+			type runResult struct {
+				tuples []string
+				err    error
 			}
-		}()
-	}
-	wg.Wait()
-	close(results)
+			results := make(chan runResult, concurrency*itersPerGoroutine)
 
-	count := 0
-	for r := range results {
-		count++
-		require.NoError(t, r.err, "concurrent invocation %d failed", count)
-		require.Equal(t, expectedTuples, r.tuples,
-			"concurrent invocation %d produced wrong multiset", count)
+			var wg sync.WaitGroup
+			wg.Add(concurrency)
+			for g := 0; g < concurrency; g++ {
+				go func() {
+					defer wg.Done()
+					// Each outer goroutine gets its own executor, mirroring the
+					// production pattern (per-task or per-request executor).
+					exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+					exec.EnableParallelSubqueries(4)
+					for i := 0; i < itersPerGoroutine; i++ {
+						rel, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+						if err != nil {
+							results <- runResult{err: err}
+							continue
+						}
+						results <- runResult{tuples: sortedTupleStrings(t, rel)}
+					}
+				}()
+			}
+			wg.Wait()
+			close(results)
+
+			count := 0
+			for r := range results {
+				count++
+				require.NoError(t, r.err, "concurrent invocation %d failed", count)
+				require.Equal(t, expectedTuples, r.tuples,
+					"concurrent invocation %d produced wrong multiset", count)
+			}
+			require.Equal(t, concurrency*itersPerGoroutine, count,
+				"expected %d results, got %d", concurrency*itersPerGoroutine, count)
+		})
 	}
-	require.Equal(t, concurrency*itersPerGoroutine, count,
-		"expected %d results, got %d", concurrency*itersPerGoroutine, count)
 }

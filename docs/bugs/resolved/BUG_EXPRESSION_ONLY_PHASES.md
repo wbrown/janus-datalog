@@ -1,9 +1,6 @@
 # BUG: Expression-Only Phases Received Empty Relations
 
-**Date**: 2025-10-14
-**Status**: FIXED
-**Severity**: Critical - Caused conditional aggregate rewriting to return 0 results
-**Commit**: TBD
+**Date**: 2025-10-14 **Status**: FIXED **Severity**: Critical - Caused conditional aggregate rewriting to return 0 results **Commit**: TBD
 
 ## Summary
 

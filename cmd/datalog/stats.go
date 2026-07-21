@@ -19,7 +19,7 @@ import (
 // per-attribute cardinality, value size distribution, and value duplication.
 // The source may be a BadgerDB directory or an .edn/.jdzl dump.
 func runStats(dbPath string) {
-	db, cleanup, err := openDatabaseOrEDN(dbPath)
+	db, cleanup, err := openDatabaseOrEDN(dbPath, nil)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}

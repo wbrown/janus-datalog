@@ -120,24 +120,6 @@ func TestBufferedIterator(t *testing.T) {
 		assert.Equal(t, 4, count)
 	})
 
-	t.Run("IsEmpty", func(t *testing.T) {
-		// Test with non-empty source
-		tuples := []Tuple{{1, "alice"}}
-		source := newMockIterator(tuples)
-		buffered := NewBufferedIterator(source)
-
-		assert.False(t, buffered.IsEmpty())
-
-		// Can still iterate after IsEmpty()
-		assert.True(t, buffered.Next())
-		assert.Equal(t, tuples[0], buffered.Tuple())
-
-		// Test with empty source
-		emptySource := newMockIterator([]Tuple{})
-		emptyBuffered := NewBufferedIterator(emptySource)
-		assert.True(t, emptyBuffered.IsEmpty())
-	})
-
 	t.Run("Clone", func(t *testing.T) {
 		tuples := []Tuple{
 			{1, "alice"},
@@ -175,7 +157,6 @@ func TestBufferedIterator(t *testing.T) {
 		source := newMockIterator([]Tuple{})
 		buffered := NewBufferedIterator(source)
 
-		assert.True(t, buffered.IsEmpty())
 		assert.Equal(t, 0, buffered.Size())
 		assert.False(t, buffered.Next())
 
@@ -209,31 +190,6 @@ func TestBufferedIterator(t *testing.T) {
 		assert.Equal(t, 3, count)
 	})
 
-	t.Run("IsEmptyDoesNotConsumeAll", func(t *testing.T) {
-		// IsEmpty should only consume the first tuple, not all
-		callCount := 0
-		countingIterator := &countingMockIterator{
-			tuples: []Tuple{
-				{1, "alice"},
-				{2, "bob"},
-				{3, "charlie"},
-			},
-			nextCallCount: &callCount,
-		}
-
-		buffered := NewBufferedIterator(countingIterator)
-		assert.False(t, buffered.IsEmpty())
-
-		// Should have only called Next() once
-		assert.Equal(t, 1, callCount, "IsEmpty should only consume first tuple")
-
-		// Can still iterate all tuples
-		count := 0
-		for buffered.Next() {
-			count++
-		}
-		assert.Equal(t, 3, count)
-	})
 }
 
 // countingMockIterator tracks how many times Next() is called
@@ -309,23 +265,4 @@ func TestStreamingRelationWithBuffering(t *testing.T) {
 		assert.Equal(t, results1, results2)
 	})
 
-	t.Run("EfficientIsEmpty", func(t *testing.T) {
-		tuples := []Tuple{{1, "alice"}}
-		symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
-
-		source := newMockIterator(tuples)
-		// Use EnableTrueStreaming=true for this test since we're testing that IsEmpty() is efficient
-		// With true streaming, IsEmpty() returns false without consuming the iterator
-		streamingOpts := ExecutorOptions{EnableTrueStreaming: true}
-		rel := NewStreamingRelationWithOptions(symbols, source, streamingOpts)
-
-		// IsEmpty should not trigger full materialization
-		assert.False(t, rel.IsEmpty())
-
-		// Should still be able to iterate
-		it := rel.Iterator()
-		assert.True(t, it.Next())
-		assert.Equal(t, tuples[0], it.Tuple())
-		it.Close()
-	})
 }

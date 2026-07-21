@@ -1,8 +1,6 @@
 # Slow Single-Pattern Query with Input Parameter
 
-**Date**: 2025-12-21
-**Status**: RESOLVED
-**Severity**: High (was 14-16ms for 63-95 results, now ~100µs)
+**Date**: 2025-12-21 **Status**: RESOLVED **Severity**: High (was 14-16ms for 63-95 results, now ~100µs)
 
 ## Resolution
 

@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -27,22 +25,24 @@ func TestOrJoinContainerItemCardinality(t *testing.T) {
 	kw := datalog.NewKeyword
 
 	t.Run("without_schema_lww_loses_item1", func(t *testing.T) {
-		db, err := NewDatabase(t.TempDir())
-		require.NoError(t, err)
-		defer db.Close()
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				db := createOptimizerModeDB(t, mode)
 
-		tx := db.NewTransaction()
-		tx.Add(containerA, kw(":container/item"), item1)
-		tx.Add(containerA, kw(":container/item"), item2)
-		_, err = tx.Commit()
-		require.NoError(t, err)
+				tx := db.NewTransaction()
+				tx.Add(containerA, kw(":container/item"), item1)
+				tx.Add(containerA, kw(":container/item"), item2)
+				_, err := tx.Commit()
+				require.NoError(t, err)
 
-		results, err := executor.CollectTuples(db.Query(
-			`[:find ?item :where [?c :container/item ?item]]`))
-		require.NoError(t, err)
-		t.Logf("Without schema: %v", results)
-		// LWW: only the last write survives
-		assert.Len(t, results, 1, "without schema, LWW keeps only last write")
+				results, err := executor.CollectTuples(db.Query(
+					`[:find ?item :where [?c :container/item ?item]]`))
+				require.NoError(t, err)
+				t.Logf("Without schema: %v", results)
+				// LWW: only the last write survives
+				assert.Len(t, results, 1, "without schema, LWW keeps only last write")
+			})
+		}
 	})
 
 	t.Run("with_schema_both_items_kept", func(t *testing.T) {
@@ -50,20 +50,29 @@ func TestOrJoinContainerItemCardinality(t *testing.T) {
 			Attribute(":container/item").Type(schema.TypeRef).Many().Add().
 			MustBuild()
 
-		db, err := NewDatabaseWithSchema(t.TempDir(), s)
-		require.NoError(t, err)
-		defer db.Close()
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				popts := mode.plannerOptions()
+				db, err := NewDatabaseWithOptions(DatabaseOptions{
+					Path:           t.TempDir(),
+					Schema:         s,
+					PlannerOptions: &popts,
+				})
+				require.NoError(t, err)
+				defer db.Close()
 
-		tx := db.NewTransaction()
-		tx.Add(containerA, kw(":container/item"), item1)
-		tx.Add(containerA, kw(":container/item"), item2)
-		_, err = tx.Commit()
-		require.NoError(t, err)
+				tx := db.NewTransaction()
+				tx.Add(containerA, kw(":container/item"), item1)
+				tx.Add(containerA, kw(":container/item"), item2)
+				_, err = tx.Commit()
+				require.NoError(t, err)
 
-		results, err := executor.CollectTuples(db.Query(
-			`[:find ?item :where [?c :container/item ?item]]`))
-		require.NoError(t, err)
-		t.Logf("With schema: %v", results)
-		assert.Len(t, results, 2, "with schema, cardinality-many keeps both")
+				results, err := executor.CollectTuples(db.Query(
+					`[:find ?item :where [?c :container/item ?item]]`))
+				require.NoError(t, err)
+				t.Logf("With schema: %v", results)
+				assert.Len(t, results, 2, "with schema, cardinality-many keeps both")
+			})
+		}
 	})
 }

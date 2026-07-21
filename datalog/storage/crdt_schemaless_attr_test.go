@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -32,37 +30,42 @@ import (
 func TestSchemalessAttrBoundQuery_BugRepro(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createCacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
+					defer cleanup()
 
-			// Create schema with some attributes, but NOT :module/input
-			s, err := schema.NewBuilder().
-				Attribute(":module/name").Type(schema.TypeString).One().Add().
-				Build()
-			require.NoError(t, err)
-			db.SetSchema(s)
+					// Create schema with some attributes, but NOT :module/input
+					s, err := schema.NewBuilder().
+						Attribute(":module/name").Type(schema.TypeString).One().Add().
+						Build()
+					require.NoError(t, err)
+					db.SetSchema(s)
 
-			entityID := datalog.NewIdentity("test-entity")
+					entityID := datalog.NewIdentity("test-entity")
 
-			// Write schemaless attribute — should succeed (additive schema)
-			tx := db.NewTransaction()
-			err = tx.Add(entityID, datalog.NewKeyword(":module/input"), "some text")
-			require.NoError(t, err)
-			_, err = tx.Commit()
-			require.NoError(t, err)
+					// Write schemaless attribute — should succeed (additive schema)
+					tx := db.NewTransaction()
+					err = tx.Add(entityID, datalog.NewKeyword(":module/input"), "some text")
+					require.NoError(t, err)
+					_, err = tx.Commit()
+					require.NoError(t, err)
 
-			// Bound query — should find the data
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
-				entityID, datalog.NewKeyword(":module/input"),
-			))
-			require.NoError(t, err)
+					// Bound query — should find the data
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
+						entityID, datalog.NewKeyword(":module/input"),
+					))
+					require.NoError(t, err)
 
-			assert.Len(t, results, 1,
-				"[%s] Bound query for schemaless attribute should return 1 result", mode.name)
-			if len(results) > 0 {
-				assert.Equal(t, "some text", results[0][0],
-					"[%s] Should find the written value", mode.name)
+					assert.Len(t, results, 1,
+						"[%s] Bound query for schemaless attribute should return 1 result", mode.name)
+					if len(results) > 0 {
+						assert.Equal(t, "some text", results[0][0],
+							"[%s] Should find the written value", mode.name)
+					}
+				})
 			}
 		})
 	}
@@ -73,46 +76,51 @@ func TestSchemalessAttrBoundQuery_BugRepro(t *testing.T) {
 func TestSchemalessAttrUnboundQuery_BugRepro(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createCacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
+					defer cleanup()
 
-			// Create schema with some attributes, but NOT :test/data
-			s, err := schema.NewBuilder().
-				Attribute(":test/name").Type(schema.TypeString).One().Add().
-				Build()
-			require.NoError(t, err)
-			db.SetSchema(s)
+					// Create schema with some attributes, but NOT :test/data
+					s, err := schema.NewBuilder().
+						Attribute(":test/name").Type(schema.TypeString).One().Add().
+						Build()
+					require.NoError(t, err)
+					db.SetSchema(s)
 
-			entityID := datalog.NewIdentity("test-entity")
+					entityID := datalog.NewIdentity("test-entity")
 
-			// Write schemaless attribute
-			tx := db.NewTransaction()
-			err = tx.Add(entityID, datalog.NewKeyword(":test/data"), "hello")
-			require.NoError(t, err)
-			_, err = tx.Commit()
-			require.NoError(t, err)
+					// Write schemaless attribute
+					tx := db.NewTransaction()
+					err = tx.Add(entityID, datalog.NewKeyword(":test/data"), "hello")
+					require.NoError(t, err)
+					_, err = tx.Commit()
+					require.NoError(t, err)
 
-			// Unbound query — should find the data
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?e ?a ?v :where [?e ?a ?v]]`,
-			))
-			require.NoError(t, err)
+					// Unbound query — should find the data
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?e ?a ?v :where [?e ?a ?v]]`,
+					))
+					require.NoError(t, err)
 
-			// Should find at least the schemaless attribute
-			found := false
-			for _, tuple := range results {
-				if len(tuple) >= 3 {
-					if kw, ok := tuple[1].(datalog.Keyword); ok {
-						if kw.String() == ":test/data" {
-							found = true
-							assert.Equal(t, "hello", tuple[2],
-								"[%s] Should find correct value for schemaless attr", mode.name)
+					// Should find at least the schemaless attribute
+					found := false
+					for _, tuple := range results {
+						if len(tuple) >= 3 {
+							if kw, ok := tuple[1].(datalog.Keyword); ok {
+								if kw.String() == ":test/data" {
+									found = true
+									assert.Equal(t, "hello", tuple[2],
+										"[%s] Should find correct value for schemaless attr", mode.name)
+								}
+							}
 						}
 					}
-				}
+					assert.True(t, found,
+						"[%s] Unbound query should find schemaless attribute :test/data", mode.name)
+				})
 			}
-			assert.True(t, found,
-				"[%s] Unbound query should find schemaless attribute :test/data", mode.name)
 		})
 	}
 }
@@ -123,57 +131,62 @@ func TestSchemalessAttrUnboundQuery_BugRepro(t *testing.T) {
 func TestSchemalessAttrMultipleWrites(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createCacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
+					defer cleanup()
 
-			// Schema exists but :test/counter is not registered
-			s, err := schema.NewBuilder().
-				Attribute(":test/name").Type(schema.TypeString).One().Add().
-				Build()
-			require.NoError(t, err)
-			db.SetSchema(s)
+					// Schema exists but :test/counter is not registered
+					s, err := schema.NewBuilder().
+						Attribute(":test/name").Type(schema.TypeString).One().Add().
+						Build()
+					require.NoError(t, err)
+					db.SetSchema(s)
 
-			entityID := datalog.NewIdentity("test-entity")
+					entityID := datalog.NewIdentity("test-entity")
 
-			// Write multiple values — each overwrites the previous (LWW)
-			for i := 0; i < 3; i++ {
-				tx := db.NewTransaction()
-				err = tx.Add(entityID, datalog.NewKeyword(":test/counter"), int64(i))
-				require.NoError(t, err)
-				_, err = tx.Commit()
-				require.NoError(t, err)
-			}
+					// Write multiple values — each overwrites the previous (LWW)
+					for i := 0; i < 3; i++ {
+						tx := db.NewTransaction()
+						err = tx.Add(entityID, datalog.NewKeyword(":test/counter"), int64(i))
+						require.NoError(t, err)
+						_, err = tx.Commit()
+						require.NoError(t, err)
+					}
 
-			// Bound query — schemaless = CardinalityOne (LWW), only latest value
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
-				entityID, datalog.NewKeyword(":test/counter"),
-			))
-			require.NoError(t, err)
+					// Bound query — schemaless = CardinalityOne (LWW), only latest value
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
+						entityID, datalog.NewKeyword(":test/counter"),
+					))
+					require.NoError(t, err)
 
-			require.Len(t, results, 1,
-				"[%s] Schemaless = CardinalityOne (LWW): only latest value", mode.name)
-			assert.Equal(t, int64(2), results[0][0],
-				"[%s] Latest value should be 2 (third write)", mode.name)
+					require.Len(t, results, 1,
+						"[%s] Schemaless = CardinalityOne (LWW): only latest value", mode.name)
+					assert.Equal(t, int64(2), results[0][0],
+						"[%s] Latest value should be 2 (third write)", mode.name)
 
-			// Unbound query should also return only latest
-			unboundResults, err := executor.CollectTuples(db.Query(
-				`[:find ?e ?a ?v :where [?e ?a ?v]]`,
-			))
-			require.NoError(t, err)
+					// Unbound query should also return only latest
+					unboundResults, err := executor.CollectTuples(db.Query(
+						`[:find ?e ?a ?v :where [?e ?a ?v]]`,
+					))
+					require.NoError(t, err)
 
-			var counterValues []any
-			for _, tuple := range unboundResults {
-				if len(tuple) >= 3 {
-					if kw, ok := tuple[1].(datalog.Keyword); ok {
-						if kw.String() == ":test/counter" {
-							counterValues = append(counterValues, tuple[2])
+					var counterValues []any
+					for _, tuple := range unboundResults {
+						if len(tuple) >= 3 {
+							if kw, ok := tuple[1].(datalog.Keyword); ok {
+								if kw.String() == ":test/counter" {
+									counterValues = append(counterValues, tuple[2])
+								}
+							}
 						}
 					}
-				}
+					assert.Len(t, counterValues, 1,
+						"[%s] Unbound query should also return only latest value", mode.name)
+				})
 			}
-			assert.Len(t, counterValues, 1,
-				"[%s] Unbound query should also return only latest value", mode.name)
 		})
 	}
 }
@@ -193,60 +206,65 @@ func TestSchemalessAttrMultipleWrites(t *testing.T) {
 func TestSchemalessRemove_RoundTrip(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createCacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
+					defer cleanup()
 
-			// Schema exists but :test/data is not registered
-			s, err := schema.NewBuilder().
-				Attribute(":test/name").Type(schema.TypeString).One().Add().
-				Build()
-			require.NoError(t, err)
-			db.SetSchema(s)
+					// Schema exists but :test/data is not registered
+					s, err := schema.NewBuilder().
+						Attribute(":test/name").Type(schema.TypeString).One().Add().
+						Build()
+					require.NoError(t, err)
+					db.SetSchema(s)
 
-			entityID := datalog.NewIdentity("test-entity")
-			attr := datalog.NewKeyword(":test/data")
+					entityID := datalog.NewIdentity("test-entity")
+					attr := datalog.NewKeyword(":test/data")
 
-			// Add
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Add(entityID, attr, "hello"))
-			_, err = tx.Commit()
-			require.NoError(t, err)
+					// Add
+					tx := db.NewTransaction()
+					require.NoError(t, tx.Add(entityID, attr, "hello"))
+					_, err = tx.Commit()
+					require.NoError(t, err)
 
-			// Verify exists
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
-				entityID, attr,
-			))
-			require.NoError(t, err)
-			require.Len(t, results, 1, "[%s] value should exist after Add", mode.name)
+					// Verify exists
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
+						entityID, attr,
+					))
+					require.NoError(t, err)
+					require.Len(t, results, 1, "[%s] value should exist after Add", mode.name)
 
-			// Remove
-			tx2 := db.NewTransaction()
-			require.NoError(t, tx2.Remove(entityID, attr, "hello"))
-			_, err = tx2.Commit()
-			require.NoError(t, err)
+					// Remove
+					tx2 := db.NewTransaction()
+					require.NoError(t, tx2.Remove(entityID, attr, "hello"))
+					_, err = tx2.Commit()
+					require.NoError(t, err)
 
-			// Bound query → attribute doesn't exist
-			results, err = executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
-				entityID, attr,
-			))
-			require.NoError(t, err)
-			assert.Len(t, results, 0,
-				"[%s] bound query: schemaless attribute should not exist after Remove", mode.name)
+					// Bound query → attribute doesn't exist
+					results, err = executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
+						entityID, attr,
+					))
+					require.NoError(t, err)
+					assert.Len(t, results, 0,
+						"[%s] bound query: schemaless attribute should not exist after Remove", mode.name)
 
-			// Unbound query → also doesn't exist
-			unboundResults, err := executor.CollectTuples(db.Query(
-				`[:find ?e ?a ?v :where [?e ?a ?v]]`,
-			))
-			require.NoError(t, err)
-			for _, tuple := range unboundResults {
-				if len(tuple) >= 3 {
-					if kw, ok := tuple[1].(datalog.Keyword); ok {
-						assert.NotEqual(t, ":test/data", kw.String(),
-							"[%s] unbound query should not find removed schemaless attribute", mode.name)
+					// Unbound query → also doesn't exist
+					unboundResults, err := executor.CollectTuples(db.Query(
+						`[:find ?e ?a ?v :where [?e ?a ?v]]`,
+					))
+					require.NoError(t, err)
+					for _, tuple := range unboundResults {
+						if len(tuple) >= 3 {
+							if kw, ok := tuple[1].(datalog.Keyword); ok {
+								assert.NotEqual(t, ":test/data", kw.String(),
+									"[%s] unbound query should not find removed schemaless attribute", mode.name)
+							}
+						}
 					}
-				}
+				})
 			}
 		})
 	}
@@ -256,40 +274,45 @@ func TestSchemalessRemove_RoundTrip(t *testing.T) {
 func TestSchemalessRemove_ThenReAdd(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createCacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
+					defer cleanup()
 
-			// No schema at all — fully schemaless
-			entityID := datalog.NewIdentity("test-entity")
-			attr := datalog.NewKeyword(":test/data")
+					// No schema at all — fully schemaless
+					entityID := datalog.NewIdentity("test-entity")
+					attr := datalog.NewKeyword(":test/data")
 
-			// Add
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Add(entityID, attr, "first"))
-			_, err := tx.Commit()
-			require.NoError(t, err)
+					// Add
+					tx := db.NewTransaction()
+					require.NoError(t, tx.Add(entityID, attr, "first"))
+					_, err := tx.Commit()
+					require.NoError(t, err)
 
-			// Remove
-			tx2 := db.NewTransaction()
-			require.NoError(t, tx2.Remove(entityID, attr, "first"))
-			_, err = tx2.Commit()
-			require.NoError(t, err)
+					// Remove
+					tx2 := db.NewTransaction()
+					require.NoError(t, tx2.Remove(entityID, attr, "first"))
+					_, err = tx2.Commit()
+					require.NoError(t, err)
 
-			// Re-add with different value
-			tx3 := db.NewTransaction()
-			require.NoError(t, tx3.Add(entityID, attr, "second"))
-			_, err = tx3.Commit()
-			require.NoError(t, err)
+					// Re-add with different value
+					tx3 := db.NewTransaction()
+					require.NoError(t, tx3.Add(entityID, attr, "second"))
+					_, err = tx3.Commit()
+					require.NoError(t, err)
 
-			// Latest Add wins
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
-				entityID, attr,
-			))
-			require.NoError(t, err)
-			require.Len(t, results, 1, "[%s] attribute should exist after re-Add", mode.name)
-			assert.Equal(t, "second", results[0][0],
-				"[%s] re-added value should be returned", mode.name)
+					// Latest Add wins
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
+						entityID, attr,
+					))
+					require.NoError(t, err)
+					require.Len(t, results, 1, "[%s] attribute should exist after re-Add", mode.name)
+					assert.Equal(t, "second", results[0][0],
+						"[%s] re-added value should be returned", mode.name)
+				})
+			}
 		})
 	}
 }
@@ -299,60 +322,65 @@ func TestSchemalessRemove_ThenReAdd(t *testing.T) {
 func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createCacheTestDB(t, mode.disableCache)
-			defer cleanup()
+			for _, omode := range optimizerModes {
+				t.Run(omode.name, func(t *testing.T) {
+					popts := omode.plannerOptions()
+					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
+					defer cleanup()
 
-			// Schema with many attributes, but NOT :unregistered/attr
-			s, err := schema.NewBuilder().
-				Attribute(":person/name").Type(schema.TypeString).One().Add().
-				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
-				Build()
-			require.NoError(t, err)
-			db.SetSchema(s)
+					// Schema with many attributes, but NOT :unregistered/attr
+					s, err := schema.NewBuilder().
+						Attribute(":person/name").Type(schema.TypeString).One().Add().
+						Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+						Build()
+					require.NoError(t, err)
+					db.SetSchema(s)
 
-			entityID := datalog.NewIdentity("test-entity")
-			attr := datalog.NewKeyword(":unregistered/attr")
+					entityID := datalog.NewIdentity("test-entity")
+					attr := datalog.NewKeyword(":unregistered/attr")
 
-			// Multiple writes — should be LWW (CardinalityOne default)
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Add(entityID, attr, "v1"))
-			_, err = tx.Commit()
-			require.NoError(t, err)
+					// Multiple writes — should be LWW (CardinalityOne default)
+					tx := db.NewTransaction()
+					require.NoError(t, tx.Add(entityID, attr, "v1"))
+					_, err = tx.Commit()
+					require.NoError(t, err)
 
-			tx2 := db.NewTransaction()
-			require.NoError(t, tx2.Add(entityID, attr, "v2"))
-			_, err = tx2.Commit()
-			require.NoError(t, err)
+					tx2 := db.NewTransaction()
+					require.NoError(t, tx2.Add(entityID, attr, "v2"))
+					_, err = tx2.Commit()
+					require.NoError(t, err)
 
-			tx3 := db.NewTransaction()
-			require.NoError(t, tx3.Add(entityID, attr, "v3"))
-			_, err = tx3.Commit()
-			require.NoError(t, err)
+					tx3 := db.NewTransaction()
+					require.NoError(t, tx3.Add(entityID, attr, "v3"))
+					_, err = tx3.Commit()
+					require.NoError(t, err)
 
-			// Only latest value returned (LWW)
-			results, err := executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
-				entityID, attr,
-			))
-			require.NoError(t, err)
-			require.Len(t, results, 1,
-				"[%s] unregistered attr defaults to CardinalityOne: only latest", mode.name)
-			assert.Equal(t, "v3", results[0][0],
-				"[%s] should return latest value (v3)", mode.name)
+					// Only latest value returned (LWW)
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
+						entityID, attr,
+					))
+					require.NoError(t, err)
+					require.Len(t, results, 1,
+						"[%s] unregistered attr defaults to CardinalityOne: only latest", mode.name)
+					assert.Equal(t, "v3", results[0][0],
+						"[%s] should return latest value (v3)", mode.name)
 
-			// Remove works
-			tx4 := db.NewTransaction()
-			require.NoError(t, tx4.Remove(entityID, attr, "v3"))
-			_, err = tx4.Commit()
-			require.NoError(t, err)
+					// Remove works
+					tx4 := db.NewTransaction()
+					require.NoError(t, tx4.Remove(entityID, attr, "v3"))
+					_, err = tx4.Commit()
+					require.NoError(t, err)
 
-			results, err = executor.CollectTuples(db.Query(
-				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
-				entityID, attr,
-			))
-			require.NoError(t, err)
-			assert.Len(t, results, 0,
-				"[%s] unregistered attr Remove should work", mode.name)
+					results, err = executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
+						entityID, attr,
+					))
+					require.NoError(t, err)
+					assert.Len(t, results, 0,
+						"[%s] unregistered attr Remove should work", mode.name)
+				})
+			}
 		})
 	}
 }
@@ -372,7 +400,7 @@ func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 
 // Test 14: Nil-schema matcher can read data written with schema
 func TestNilSchemaMatcher_ReadsSchemaData(t *testing.T) {
-	db, cleanup := createCacheTestDB(t, false)
+	db, cleanup := createCacheTestDB(t, false, nil)
 	defer cleanup()
 
 	// Set up schema with CardinalityOne attribute

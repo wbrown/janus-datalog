@@ -40,7 +40,7 @@ func TestPredicateFilterIteratorPropagatesEvaluationError(t *testing.T) {
 		).Iterator(),
 		[]query.Symbol{x},
 		&query.Comparison{
-			Op:    query.OpGT,
+			Op:    datalog.SymGT,
 			Left:  query.VariableTerm{Symbol: missing},
 			Right: query.ConstantTerm{Value: int64(0)},
 		},
@@ -51,6 +51,46 @@ func TestPredicateFilterIteratorPropagatesEvaluationError(t *testing.T) {
 	require.NoError(t, iterator.Close())
 }
 
+// StreamingRelation's relational operations have one implementation:
+// composed iterators. They behave identically under zero-value options —
+// there is no eager mode. (The former EnableIteratorComposition false arm
+// delegated to itself through Materialize, which returns the receiver, and
+// recursed without bound.)
+func TestStreamingOpsStreamUnderZeroOptions(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	open := func() *StreamingRelation {
+		return NewStreamingRelationWithOptions(
+			[]query.Symbol{x},
+			NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}, {int64(2)}, {int64(3)}}).Iterator(),
+			ExecutorOptions{},
+		)
+	}
+
+	filtered := open().FilterWithPredicate(&query.Comparison{
+		Op:    datalog.SymGT,
+		Left:  query.VariableTerm{Symbol: x},
+		Right: query.ConstantTerm{Value: int64(1)},
+	})
+	rows, err := CollectTuples(filtered, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}, {int64(3)}}, rows)
+
+	sum := datalog.NewSymbol("?sum")
+	evaluated := open().EvaluateFunction(
+		&query.ArithmeticFunction{
+			Op:   datalog.SymAdd,
+			Args: []query.Term{query.VariableTerm{Symbol: x}, query.ConstantTerm{Value: int64(1)}},
+		},
+		sum,
+	)
+	rows, err = CollectTuples(evaluated, nil)
+	require.NoError(t, err)
+	require.Equal(t,
+		[][]interface{}{{int64(1), int64(2)}, {int64(2), int64(3)}, {int64(3), int64(4)}},
+		rows,
+	)
+}
+
 func TestStreamingFilterUsesRelationIteratorAndBuildsReplayCache(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	stream := NewStreamingRelationWithOptions(
@@ -59,13 +99,13 @@ func TestStreamingFilterUsesRelationIteratorAndBuildsReplayCache(t *testing.T) {
 			[]query.Symbol{x},
 			[]Tuple{{int64(1)}, {int64(2)}, {int64(3)}},
 		).Iterator(),
-		ExecutorOptions{EnableIteratorComposition: true},
+		ExecutorOptions{},
 	)
 	stream.Materialize()
-	filtered := stream.Filter(&ComparisonFilter{
-		Function: ">",
-		Symbol:   x,
-		Value:    int64(1),
+	filtered := stream.FilterWithPredicate(&query.Comparison{
+		Op:    datalog.SymGT,
+		Left:  query.VariableTerm{Symbol: x},
+		Right: query.ConstantTerm{Value: int64(1)},
 	})
 	filteredRows, err := CollectTuples(filtered, nil)
 	require.NoError(t, err)

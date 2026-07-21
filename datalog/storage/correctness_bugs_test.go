@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 // Regression tests for five correctness bugs flagged in
 // docs/bugs/EXTERNAL_REVIEW_2026_04.md items 1-5.
 //

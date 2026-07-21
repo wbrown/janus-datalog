@@ -73,7 +73,6 @@ func (r *LimitRelation) Properties() RelationProperties {
 }
 func (r *LimitRelation) Iterator() Iterator { return r.ensure().Iterator() }
 func (r *LimitRelation) Size() int          { return r.ensure().Size() }
-func (r *LimitRelation) IsEmpty() bool      { return r.ensure().IsEmpty() }
 func (r *LimitRelation) Get(i int) Tuple    { return r.ensure().Get(i) }
 func (r *LimitRelation) String() string     { return r.ensure().String() }
 func (r *LimitRelation) Table() string      { return r.ensure().Table() }
@@ -89,7 +88,6 @@ func (r *LimitRelation) Materialize() Relation { return r.ensure() }
 func (r *LimitRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return r.ensure().Sort(orderBy)
 }
-func (r *LimitRelation) Filter(filter Filter) Relation { return r.ensure().Filter(filter) }
 func (r *LimitRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	return r.ensure().FilterWithPredicate(pred)
 }

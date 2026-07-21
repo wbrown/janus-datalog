@@ -61,26 +61,30 @@ func (plan *RealizedPlan) Validate() error {
 }
 
 func validatePhaseLiveness(phaseNumber int, phaseQuery *query.Query) error {
+	// After the first loop, available is the phase's full binding closure:
+	// its inputs plus everything its clauses provide.
 	available := make(map[query.Symbol]bool)
 	for _, symbol := range physicalInputSymbols(phaseQuery.In) {
 		available[symbol] = true
 	}
 	for _, clause := range phaseQuery.Where {
-		symbols := extractClauseSymbols(clause)
-		for _, symbol := range symbols.Provides {
+		for _, symbol := range query.ScopeOf(clause).Provides {
 			available[symbol] = true
 		}
 	}
 	for _, clause := range phaseQuery.Where {
-		symbols := extractClauseSymbols(clause)
-		for _, symbol := range symbols.Requires {
-			if symbol.IsSource() {
+		scope := query.ScopeOf(clause)
+		for _, symbol := range scope.Correlates {
+			if symbol.IsSource() || available[symbol] {
 				continue
 			}
-			if !available[symbol] {
-				return fmt.Errorf("phase %d clause %T requires unavailable symbol %s",
-					phaseNumber, clause, symbol)
+			if scope.CorrelatesOptional {
+				// Existential (plain NOT) or global-fallback (or-default):
+				// a correlate the phase cannot bind is legal.
+				continue
 			}
+			return fmt.Errorf("phase %d clause %T requires unavailable symbol %s",
+				phaseNumber, clause, symbol)
 		}
 	}
 	if err := validateFinalizationLiveness(phaseNumber, phaseQuery, available); err != nil {
@@ -140,7 +144,7 @@ func validateFinalizationLiveness(
 func terminalSymbols(q *query.Query) []query.Symbol {
 	var symbols []query.Symbol
 	add := func(symbol query.Symbol) {
-		if symbol != nil && !containsSymbol(symbols, symbol) {
+		if symbol != nil && !query.ContainsSymbol(symbols, symbol) {
 			symbols = append(symbols, symbol)
 		}
 	}
@@ -213,13 +217,4 @@ func samePhysicalSchema(left, right []query.Symbol) bool {
 		}
 	}
 	return true
-}
-
-func containsSymbol(symbols []query.Symbol, symbol query.Symbol) bool {
-	for _, candidate := range symbols {
-		if candidate == symbol {
-			return true
-		}
-	}
-	return false
 }

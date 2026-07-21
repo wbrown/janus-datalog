@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -10,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -30,13 +29,17 @@ import (
 // See: docs/bugs/BUG_SCHEMALESS_ATTR_BOUND_QUERY.md
 // =============================================================================
 
-// createRemoveTestDB creates a database with a CardinalityOne schema
-func createCardinalityOneDB(t *testing.T) (*Database, func()) {
+// createRemoveTestDB creates a database with a CardinalityOne schema.
+// popts sets the database's default planner options (nil = defaults).
+func createCardinalityOneDB(t *testing.T, popts *planner.PlannerOptions) (*Database, func()) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "crdt-one-remove-*")
 	require.NoError(t, err)
 
-	db, err := NewDatabase(dir)
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:           dir,
+		PlannerOptions: popts,
+	})
 	require.NoError(t, err)
 
 	s := schema.NewSchema()
@@ -90,187 +93,217 @@ func queryUnboundForEA(t *testing.T, db *Database, e datalog.Identity, a datalog
 
 // Test 1: Add value, Remove value, query → attribute doesn't exist
 func TestCardinalityOneRemove_RoundTrip(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Add
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Verify value exists
-	results := queryBoundValue(t, db, e, a)
-	require.Len(t, results, 1, "value should exist after Add")
-	assert.Equal(t, "Alice", results[0][0])
+			// Verify value exists
+			results := queryBoundValue(t, db, e, a)
+			require.Len(t, results, 1, "value should exist after Add")
+			assert.Equal(t, "Alice", results[0][0])
 
-	// Remove
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Bound query → doesn't exist
-	results = queryBoundValue(t, db, e, a)
-	assert.Len(t, results, 0, "bound query: attribute should not exist after Remove")
+			// Bound query → doesn't exist
+			results = queryBoundValue(t, db, e, a)
+			assert.Len(t, results, 0, "bound query: attribute should not exist after Remove")
 
-	// Unbound query → also doesn't exist
-	unboundResults := queryUnboundForEA(t, db, e, a)
-	assert.Len(t, unboundResults, 0, "unbound query: attribute should not exist after Remove")
+			// Unbound query → also doesn't exist
+			unboundResults := queryUnboundForEA(t, db, e, a)
+			assert.Len(t, unboundResults, 0, "unbound query: attribute should not exist after Remove")
+		})
+	}
 }
 
 // Test 2: Add "Alice", Add "Bob", Remove (any V) → attribute doesn't exist
 // V is irrelevant for CardinalityOne remove. The OpCRDTRemove at highest Tx
 // means the attribute is gone.
 func TestCardinalityOneRemove_AfterOverwrite(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Add "Alice"
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add "Alice"
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Overwrite with "Bob"
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Bob"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Overwrite with "Bob"
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Bob"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Remove — passing "Bob" as V, but V doesn't matter
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Remove(e, a, "Bob"))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			// Remove — passing "Bob" as V, but V doesn't matter
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Remove(e, a, "Bob"))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	// Attribute doesn't exist
-	results := queryBoundValue(t, db, e, a)
-	assert.Len(t, results, 0, "attribute should not exist after Remove")
+			// Attribute doesn't exist
+			results := queryBoundValue(t, db, e, a)
+			assert.Len(t, results, 0, "attribute should not exist after Remove")
+		})
+	}
 }
 
 // Test 3: Add, Remove, Add again → latest Add wins
 func TestCardinalityOneRemove_ThenReAdd(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Add
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Remove
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Re-add with different value
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Add(e, a, "Bob"))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			// Re-add with different value
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Add(e, a, "Bob"))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	// Latest Add wins
-	results := queryBoundValue(t, db, e, a)
-	require.Len(t, results, 1, "attribute should exist after re-Add")
-	assert.Equal(t, "Bob", results[0][0])
+			// Latest Add wins
+			results := queryBoundValue(t, db, e, a)
+			require.Len(t, results, 1, "attribute should exist after re-Add")
+			assert.Equal(t, "Bob", results[0][0])
+		})
+	}
 }
 
 // Test 4: Remove before any Add → then Add → value exists
 func TestCardinalityOneRemove_BeforeAnyAdd(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Remove first (no existing value)
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Remove(e, a, "phantom"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Remove first (no existing value)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Remove(e, a, "phantom"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Then Add
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Then Add
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Add has higher Tx, wins over pre-existing tombstone
-	results := queryBoundValue(t, db, e, a)
-	require.Len(t, results, 1, "Add should win over earlier Remove")
-	assert.Equal(t, "Alice", results[0][0])
+			// Add has higher Tx, wins over pre-existing tombstone
+			results := queryBoundValue(t, db, e, a)
+			require.Len(t, results, 1, "Add should win over earlier Remove")
+			assert.Equal(t, "Alice", results[0][0])
+		})
+	}
 }
 
 // Test 5: V is irrelevant for CardinalityOne remove
 // Add "Alice", Remove("Bob") → attribute doesn't exist
 // Even though "Bob" was never the value, OpCRDTRemove at highest Tx means gone.
 func TestCardinalityOneRemove_VIsIrrelevant(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Add "Alice"
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add "Alice"
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Remove with completely different V — doesn't matter for CardinalityOne
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Bob"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove with completely different V — doesn't matter for CardinalityOne
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Bob"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Attribute doesn't exist
-	results := queryBoundValue(t, db, e, a)
-	assert.Len(t, results, 0,
-		"attribute should not exist — V is irrelevant for CardinalityOne Remove")
+			// Attribute doesn't exist
+			results := queryBoundValue(t, db, e, a)
+			assert.Len(t, results, 0,
+				"attribute should not exist — V is irrelevant for CardinalityOne Remove")
+		})
+	}
 }
 
 // Test 6: Multiple entities — removing one doesn't affect the other
 func TestCardinalityOneRemove_MultipleEntities(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e1 := datalog.NewIdentity("alice")
-	e2 := datalog.NewIdentity("bob")
-	a := datalog.NewKeyword(":person/name")
+			e1 := datalog.NewIdentity("alice")
+			e2 := datalog.NewIdentity("bob")
+			a := datalog.NewKeyword(":person/name")
 
-	// Add values for both entities
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e1, a, "Alice"))
-	require.NoError(t, tx.Add(e2, a, "Bob"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add values for both entities
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e1, a, "Alice"))
+			require.NoError(t, tx.Add(e2, a, "Bob"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Remove only entity1's value
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e1, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove only entity1's value
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e1, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// entity1: doesn't exist
-	results1 := queryBoundValue(t, db, e1, a)
-	assert.Len(t, results1, 0, "entity1 attribute should not exist after Remove")
+			// entity1: doesn't exist
+			results1 := queryBoundValue(t, db, e1, a)
+			assert.Len(t, results1, 0, "entity1 attribute should not exist after Remove")
 
-	// entity2: unaffected
-	results2 := queryBoundValue(t, db, e2, a)
-	require.Len(t, results2, 1, "entity2 attribute should still exist")
-	assert.Equal(t, "Bob", results2[0][0])
+			// entity2: unaffected
+			results2 := queryBoundValue(t, db, e2, a)
+			require.Len(t, results2, 1, "entity2 attribute should still exist")
+			assert.Equal(t, "Bob", results2[0][0])
+		})
+	}
 }
 
 // =============================================================================
@@ -279,35 +312,40 @@ func TestCardinalityOneRemove_MultipleEntities(t *testing.T) {
 
 // Test 11: Bound query (E and A via :in) after remove → empty
 func TestCardinalityOneRemove_BoundQuery(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Add then Remove
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add then Remove
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Bound query with E and A from :in
-	results, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
-		e, a,
-	))
-	require.NoError(t, err)
-	assert.Len(t, results, 0, "bound query should return empty after Remove")
+			// Bound query with E and A from :in
+			results, err := executor.CollectTuples(db.Query(
+				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
+				e, a,
+			))
+			require.NoError(t, err)
+			assert.Len(t, results, 0, "bound query should return empty after Remove")
+		})
+	}
 }
 
 // Test 12: V-bound query after remove → empty
 func TestCardinalityOneRemove_VBoundQuery(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
+	db, cleanup := createCardinalityOneDB(t, nil)
 	defer cleanup()
 
 	e := datalog.NewIdentity("alice")
@@ -352,26 +390,31 @@ func TestCardinalityOneRemove_VBoundQuery(t *testing.T) {
 
 // Test 13: Unbound query after remove → entity/attribute absent from results
 func TestCardinalityOneRemove_UnboundQuery(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Add then Remove
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add then Remove
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Unbound query — removed attribute should be absent
-	unboundResults := queryUnboundForEA(t, db, e, a)
-	assert.Len(t, unboundResults, 0, "unbound query should not find removed attribute")
+			// Unbound query — removed attribute should be absent
+			unboundResults := queryUnboundForEA(t, db, e, a)
+			assert.Len(t, unboundResults, 0, "unbound query should not find removed attribute")
+		})
+	}
 }
 
 // =============================================================================
@@ -379,26 +422,31 @@ func TestCardinalityOneRemove_UnboundQuery(t *testing.T) {
 // =============================================================================
 
 func TestCardinalityOneRemove_SetThenRemove(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Set (not Add)
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Set (not Add)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Remove
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	results := queryBoundValue(t, db, e, a)
-	assert.Len(t, results, 0, "bound query: attribute should not exist after Set then Remove")
+			results := queryBoundValue(t, db, e, a)
+			assert.Len(t, results, 0, "bound query: attribute should not exist after Set then Remove")
+		})
+	}
 }
 
 // =============================================================================
@@ -406,147 +454,177 @@ func TestCardinalityOneRemove_SetThenRemove(t *testing.T) {
 // =============================================================================
 
 func TestCardinalityOneRemove_Unbound_AfterOverwrite(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Bob"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Bob"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Remove(e, a, "Bob"))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Remove(e, a, "Bob"))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	results := queryUnboundForEA(t, db, e, a)
-	assert.Len(t, results, 0, "unbound: attribute should not exist after overwrite then Remove")
+			results := queryUnboundForEA(t, db, e, a)
+			assert.Len(t, results, 0, "unbound: attribute should not exist after overwrite then Remove")
+		})
+	}
 }
 
 func TestCardinalityOneRemove_Unbound_ThenReAdd(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Add(e, a, "Bob"))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Add(e, a, "Bob"))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	results := queryUnboundForEA(t, db, e, a)
-	require.Len(t, results, 1, "unbound: attribute should exist after re-Add")
-	assert.Equal(t, "Bob", results[0][2])
+			results := queryUnboundForEA(t, db, e, a)
+			require.Len(t, results, 1, "unbound: attribute should exist after re-Add")
+			assert.Equal(t, "Bob", results[0][2])
+		})
+	}
 }
 
 func TestCardinalityOneRemove_Unbound_BeforeAnyAdd(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Remove(e, a, "phantom"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Remove(e, a, "phantom"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	results := queryUnboundForEA(t, db, e, a)
-	require.Len(t, results, 1, "unbound: Add should win over earlier Remove")
-	assert.Equal(t, "Alice", results[0][2])
+			results := queryUnboundForEA(t, db, e, a)
+			require.Len(t, results, 1, "unbound: Add should win over earlier Remove")
+			assert.Equal(t, "Alice", results[0][2])
+		})
+	}
 }
 
 func TestCardinalityOneRemove_Unbound_VIsIrrelevant(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Bob"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Bob"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	results := queryUnboundForEA(t, db, e, a)
-	assert.Len(t, results, 0, "unbound: V is irrelevant for CardinalityOne Remove")
+			results := queryUnboundForEA(t, db, e, a)
+			assert.Len(t, results, 0, "unbound: V is irrelevant for CardinalityOne Remove")
+		})
+	}
 }
 
 func TestCardinalityOneRemove_Unbound_MultipleEntities(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e1 := datalog.NewIdentity("alice")
-	e2 := datalog.NewIdentity("bob")
-	a := datalog.NewKeyword(":person/name")
+			e1 := datalog.NewIdentity("alice")
+			e2 := datalog.NewIdentity("bob")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e1, a, "Alice"))
-	require.NoError(t, tx.Add(e2, a, "Bob"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e1, a, "Alice"))
+			require.NoError(t, tx.Add(e2, a, "Bob"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e1, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e1, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	results1 := queryUnboundForEA(t, db, e1, a)
-	assert.Len(t, results1, 0, "unbound: entity1 should not exist after Remove")
+			results1 := queryUnboundForEA(t, db, e1, a)
+			assert.Len(t, results1, 0, "unbound: entity1 should not exist after Remove")
 
-	results2 := queryUnboundForEA(t, db, e2, a)
-	require.Len(t, results2, 1, "unbound: entity2 should still exist")
-	assert.Equal(t, "Bob", results2[0][2])
+			results2 := queryUnboundForEA(t, db, e2, a)
+			require.Len(t, results2, 1, "unbound: entity2 should still exist")
+			assert.Equal(t, "Bob", results2[0][2])
+		})
+	}
 }
 
 func TestCardinalityOneRemove_Unbound_SetThenRemove(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createCardinalityOneDB(t, &popts)
+			defer cleanup()
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	results := queryUnboundForEA(t, db, e, a)
-	assert.Len(t, results, 0, "unbound: attribute should not exist after Set then Remove")
+			results := queryUnboundForEA(t, db, e, a)
+			assert.Len(t, results, 0, "unbound: attribute should not exist after Set then Remove")
+		})
+	}
 }
 
 // =============================================================================
@@ -581,7 +659,7 @@ func vBoundMatchCount(t *testing.T, db *Database, a datalog.Keyword, v interface
 }
 
 func TestCardinalityOneRemove_VBound_AfterOverwrite(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
+	db, cleanup := createCardinalityOneDB(t, nil)
 	defer cleanup()
 
 	e := datalog.NewIdentity("alice")
@@ -611,7 +689,7 @@ func TestCardinalityOneRemove_VBound_AfterOverwrite(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_VBound_ThenReAdd(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
+	db, cleanup := createCardinalityOneDB(t, nil)
 	defer cleanup()
 
 	e := datalog.NewIdentity("alice")
@@ -639,7 +717,7 @@ func TestCardinalityOneRemove_VBound_ThenReAdd(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_VBound_BeforeAnyAdd(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
+	db, cleanup := createCardinalityOneDB(t, nil)
 	defer cleanup()
 
 	e := datalog.NewIdentity("alice")
@@ -660,7 +738,7 @@ func TestCardinalityOneRemove_VBound_BeforeAnyAdd(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_VBound_VIsIrrelevant(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
+	db, cleanup := createCardinalityOneDB(t, nil)
 	defer cleanup()
 
 	e := datalog.NewIdentity("alice")
@@ -683,7 +761,7 @@ func TestCardinalityOneRemove_VBound_VIsIrrelevant(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_VBound_MultipleEntities(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
+	db, cleanup := createCardinalityOneDB(t, nil)
 	defer cleanup()
 
 	e1 := datalog.NewIdentity("alice")
@@ -708,7 +786,7 @@ func TestCardinalityOneRemove_VBound_MultipleEntities(t *testing.T) {
 }
 
 func TestCardinalityOneRemove_VBound_SetThenRemove(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t)
+	db, cleanup := createCardinalityOneDB(t, nil)
 	defer cleanup()
 
 	e := datalog.NewIdentity("alice")

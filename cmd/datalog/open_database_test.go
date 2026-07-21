@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
@@ -59,57 +60,88 @@ func createTestJDZLDump(t *testing.T) string {
 	return jdzlPath
 }
 
+// The queries below open through openDatabaseOrEDN with the mode's planner
+// options — the same funnel main() uses for the -optimize flag — and query
+// via db.NewExecutor(), which inherits them.
+
 func TestOpenDatabaseOrEDN_BadgerPath(t *testing.T) {
-	dbPath := createTestDatabase(t)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			dbPath := createTestDatabase(t)
 
-	db, cleanup, err := openDatabaseOrEDN(dbPath)
-	if err != nil {
-		t.Fatalf("openDatabaseOrEDN(badger path) failed: %v", err)
-	}
-	defer cleanup()
+			opts := mode.plannerOptions()
+			db, cleanup, err := openDatabaseOrEDN(dbPath, &opts)
+			if err != nil {
+				t.Fatalf("openDatabaseOrEDN(badger path) failed: %v", err)
+			}
+			defer cleanup()
 
-	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [_ :person/name ?name]]`))
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
-	if len(results) != 2 {
-		t.Errorf("Expected 2 names, got %d", len(results))
+			q, err := parser.ParseQuery(`[:find ?name :where [_ :person/name ?name]]`)
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+			results, err := executor.CollectTuples(db.NewExecutor().Execute(q))
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
+			if len(results) != 2 {
+				t.Errorf("Expected 2 names, got %d", len(results))
+			}
+		})
 	}
 }
 
 func TestOpenDatabaseOrEDN_EDNDump(t *testing.T) {
-	ednPath := createTestEDNDump(t)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			ednPath := createTestEDNDump(t)
 
-	db, cleanup, err := openDatabaseOrEDN(ednPath)
-	if err != nil {
-		t.Fatalf("openDatabaseOrEDN(edn dump) failed: %v", err)
-	}
-	defer cleanup()
+			opts := mode.plannerOptions()
+			db, cleanup, err := openDatabaseOrEDN(ednPath, &opts)
+			if err != nil {
+				t.Fatalf("openDatabaseOrEDN(edn dump) failed: %v", err)
+			}
+			defer cleanup()
 
-	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [_ :person/name ?name]]`))
-	if err != nil {
-		t.Fatalf("Query against EDN-backed database failed: %v", err)
-	}
-	if len(results) != 2 {
-		t.Errorf("Expected 2 names from EDN dump, got %d", len(results))
+			q, err := parser.ParseQuery(`[:find ?name :where [_ :person/name ?name]]`)
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+			results, err := executor.CollectTuples(db.NewExecutor().Execute(q))
+			if err != nil {
+				t.Fatalf("Query against EDN-backed database failed: %v", err)
+			}
+			if len(results) != 2 {
+				t.Errorf("Expected 2 names from EDN dump, got %d", len(results))
+			}
+		})
 	}
 }
 
 func TestOpenDatabaseOrEDN_JDZLDump(t *testing.T) {
-	jdzlPath := createTestJDZLDump(t)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			jdzlPath := createTestJDZLDump(t)
 
-	db, cleanup, err := openDatabaseOrEDN(jdzlPath)
-	if err != nil {
-		t.Fatalf("openDatabaseOrEDN(jdzl dump) failed: %v", err)
-	}
-	defer cleanup()
+			opts := mode.plannerOptions()
+			db, cleanup, err := openDatabaseOrEDN(jdzlPath, &opts)
+			if err != nil {
+				t.Fatalf("openDatabaseOrEDN(jdzl dump) failed: %v", err)
+			}
+			defer cleanup()
 
-	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [_ :person/name ?name]]`))
-	if err != nil {
-		t.Fatalf("Query against JDZL-backed database failed: %v", err)
-	}
-	if len(results) != 2 {
-		t.Errorf("Expected 2 names from JDZL dump, got %d", len(results))
+			q, err := parser.ParseQuery(`[:find ?name :where [_ :person/name ?name]]`)
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+			results, err := executor.CollectTuples(db.NewExecutor().Execute(q))
+			if err != nil {
+				t.Fatalf("Query against JDZL-backed database failed: %v", err)
+			}
+			if len(results) != 2 {
+				t.Errorf("Expected 2 names from JDZL dump, got %d", len(results))
+			}
+		})
 	}
 }
 
@@ -119,7 +151,7 @@ func TestOpenDatabaseOrEDN_MissingPath(t *testing.T) {
 		"/nonexistent/path/dump.edn",
 		"/nonexistent/path/dump.jdzl",
 	} {
-		_, _, err := openDatabaseOrEDN(path)
+		_, _, err := openDatabaseOrEDN(path, nil)
 		if err == nil {
 			t.Errorf("openDatabaseOrEDN(%q) succeeded, want error", path)
 			continue
@@ -134,16 +166,20 @@ func TestCLI_QueryFromEDNDump(t *testing.T) {
 	binPath := buildCLI(t)
 	ednPath := createTestEDNDump(t)
 
-	cmd := exec.Command(binPath, "-db", ednPath,
-		"-query", `[:find ?name :where [_ :person/name ?name]]`)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Query against EDN dump failed: %v\n%s", err, out)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			cmd := exec.Command(binPath, "-db", ednPath, mode.cliFlag(),
+				"-query", `[:find ?name :where [_ :person/name ?name]]`)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query against EDN dump failed: %v\n%s", err, out)
+			}
 
-	output := string(out)
-	if !strings.Contains(output, "Alice") || !strings.Contains(output, "Bob") {
-		t.Errorf("Expected Alice and Bob in output:\n%s", output)
+			output := string(out)
+			if !strings.Contains(output, "Alice") || !strings.Contains(output, "Bob") {
+				t.Errorf("Expected Alice and Bob in output:\n%s", output)
+			}
+		})
 	}
 }
 
@@ -190,16 +226,20 @@ func TestCLI_QueryFromJDZLDump(t *testing.T) {
 	binPath := buildCLI(t)
 	jdzlPath := createTestJDZLDump(t)
 
-	cmd := exec.Command(binPath, "-db", jdzlPath,
-		"-query", `[:find ?name :where [_ :person/name ?name]]`)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Query against JDZL dump failed: %v\n%s", err, out)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			cmd := exec.Command(binPath, "-db", jdzlPath, mode.cliFlag(),
+				"-query", `[:find ?name :where [_ :person/name ?name]]`)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query against JDZL dump failed: %v\n%s", err, out)
+			}
 
-	output := string(out)
-	if !strings.Contains(output, "Alice") || !strings.Contains(output, "Bob") {
-		t.Errorf("Expected Alice and Bob in output:\n%s", output)
+			output := string(out)
+			if !strings.Contains(output, "Alice") || !strings.Contains(output, "Bob") {
+				t.Errorf("Expected Alice and Bob in output:\n%s", output)
+			}
+		})
 	}
 }
 
@@ -234,18 +274,27 @@ func TestCLI_ExportBinFromJDZLDump(t *testing.T) {
 		t.Fatalf("Export-bin from JDZL dump failed: %v\n%s", err, out)
 	}
 
-	db, cleanup, err := openDatabaseOrEDN(exportPath)
-	if err != nil {
-		t.Fatalf("open recompressed JDZL failed: %v", err)
-	}
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.plannerOptions()
+			db, cleanup, err := openDatabaseOrEDN(exportPath, &opts)
+			if err != nil {
+				t.Fatalf("open recompressed JDZL failed: %v", err)
+			}
+			defer cleanup()
 
-	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [_ :person/name ?name]]`))
-	if err != nil {
-		t.Fatalf("Query recompressed JDZL failed: %v", err)
-	}
-	if len(results) != 2 {
-		t.Errorf("Expected 2 names from recompressed JDZL, got %d", len(results))
+			q, err := parser.ParseQuery(`[:find ?name :where [_ :person/name ?name]]`)
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+			results, err := executor.CollectTuples(db.NewExecutor().Execute(q))
+			if err != nil {
+				t.Fatalf("Query recompressed JDZL failed: %v", err)
+			}
+			if len(results) != 2 {
+				t.Errorf("Expected 2 names from recompressed JDZL, got %d", len(results))
+			}
+		})
 	}
 }
 

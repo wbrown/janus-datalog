@@ -42,28 +42,65 @@ func (erroringFunction) ReturnType() string { return "any" }
 // marker outside the query package.
 func alwaysTrue() query.Predicate {
 	return &query.Comparison{
-		Op:    query.OpNE,
+		Op:    datalog.SymNE,
 		Left:  query.ConstantTerm{Value: int64(1)},
 		Right: query.ConstantTerm{Value: int64(2)},
 	}
 }
 
-// TestFilterWithPredicateAndLookup_PropagatesIteratorError: a deferred
-// iterator failure must not be laundered into a clean filtered relation.
+// TestThetaJoinPair_PropagatesPredicateEvalError: a predicate eval failure
+// during a theta join must surface, not silently drop the pair — the same
+// fail-fast contract filterWithPredicateAndLookup honors.
+func TestThetaJoinPair_PropagatesPredicateEvalError(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	y := datalog.NewSymbol("?y")
+	left := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}})
+	right := NewMaterializedRelation([]query.Symbol{y}, []Tuple{{int64(2)}})
+	pred := &query.FunctionPredicate{
+		Fn:   "no-such-predicate",
+		Args: []query.PatternElement{query.Variable{Name: x}, query.Variable{Name: y}},
+	}
+	_, err := thetaJoinWithPredicate([]Relation{left, right}, pred, nil, nil, ExecutorOptions{})
+	require.Error(t, err)
+}
+
+// TestThetaJoinPair_PropagatesOuterIteratorError: a failed outer scan must
+// not be presented as a completed join.
+func TestThetaJoinPair_PropagatesOuterIteratorError(t *testing.T) {
+	y := datalog.NewSymbol("?y")
+	outer := newFailingStream(1, Tuple{int64(1)}, Tuple{int64(2)})
+	inner := NewMaterializedRelation([]query.Symbol{y}, []Tuple{{int64(9)}})
+	_, err := thetaJoinPair(outer, inner, nil, nil, nil, ExecutorOptions{})
+	require.ErrorIs(t, err, errInjectedIterator)
+}
+
+// TestThetaJoinPair_PropagatesInnerIteratorError: same for the buffered
+// inner relation.
+func TestThetaJoinPair_PropagatesInnerIteratorError(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	outer := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}})
+	inner := newFailingStream(1, Tuple{int64(9)}, Tuple{int64(8)})
+	_, err := thetaJoinPair(outer, inner, nil, nil, nil, ExecutorOptions{})
+	require.ErrorIs(t, err, errInjectedIterator)
+}
+
+// TestFilterWithPredicateAndLookup_PropagatesIteratorError: an iterator
+// failure must not be laundered into a clean filtered relation. Eager
+// producers return errors in-band.
 func TestFilterWithPredicateAndLookup_PropagatesIteratorError(t *testing.T) {
 	src := newFailingStream(0, Tuple{int64(1)}, Tuple{int64(2)}, Tuple{int64(3)})
-	rel := filterWithPredicateAndLookup(src, alwaysTrue(), nil, nil)
-	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
+	_, err := filterWithPredicateAndLookup(src, alwaysTrue(), nil, nil)
+	require.ErrorIs(t, err, errInjectedIterator)
 }
 
 // TestFilterWithPredicateAndLookup_PropagatesAfterPartialResults: same, but
 // after the iterator has yielded some tuples and then failed. The pre-fix
-// function returns a clean MaterializedRelation containing only the tuples
+// function returned a clean MaterializedRelation containing only the tuples
 // that survived the predicate before the failure — a truncated success.
 func TestFilterWithPredicateAndLookup_PropagatesAfterPartialResults(t *testing.T) {
 	src := newFailingStream(1, Tuple{int64(1)}, Tuple{int64(2)}, Tuple{int64(3)})
-	rel := filterWithPredicateAndLookup(src, alwaysTrue(), nil, nil)
-	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
+	_, err := filterWithPredicateAndLookup(src, alwaysTrue(), nil, nil)
+	require.ErrorIs(t, err, errInjectedIterator)
 }
 
 // TestEvaluateExpressionWithLookup_PropagatesIteratorError: same shape for
@@ -72,8 +109,8 @@ func TestFilterWithPredicateAndLookup_PropagatesAfterPartialResults(t *testing.T
 func TestEvaluateExpressionWithLookup_PropagatesIteratorError(t *testing.T) {
 	src := newFailingStream(0, Tuple{int64(1)}, Tuple{int64(2)}, Tuple{int64(3)})
 	expr := &query.Expression{Binding: datalog.NewSymbol("?y")}
-	rel := evaluateExpressionWithLookup(src, expr, nil, nil)
-	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
+	_, err := evaluateExpressionWithLookup(src, expr, nil, nil)
+	require.ErrorIs(t, err, errInjectedIterator)
 }
 
 // TestProjectToSymbols_PropagatesIteratorError: projection must not launder a
@@ -102,12 +139,11 @@ func TestFilterWithPredicateAndLookup_PropagatesEvalError(t *testing.T) {
 	// ?missing isn't a symbol in `src`, so every tuple's bindings lack it
 	// and Comparison.Eval returns ("cannot resolve left term ?missing").
 	pred := &query.Comparison{
-		Op:    query.OpEQ,
+		Op:    datalog.SymEQ,
 		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?missing")},
 		Right: query.ConstantTerm{Value: int64(1)},
 	}
-	rel := filterWithPredicateAndLookup(src, pred, nil, nil)
-	err := driveErr(rel)
+	_, err := filterWithPredicateAndLookup(src, pred, nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "cannot resolve")
 }
@@ -122,8 +158,8 @@ func TestEvaluateExpressionWithLookup_PropagatesEvalError(t *testing.T) {
 		Function: erroringFunction{},
 		Binding:  datalog.NewSymbol("?y"),
 	}
-	rel := evaluateExpressionWithLookup(src, expr, nil, nil)
-	require.ErrorIs(t, driveErr(rel), errInjectedEval)
+	_, err := evaluateExpressionWithLookup(src, expr, nil, nil)
+	require.ErrorIs(t, err, errInjectedEval)
 }
 
 // TestMaterializedRelation_EvaluateFunction_PropagatesEvalError: same shape as
@@ -166,4 +202,69 @@ func TestUniqueCombinationExtractionPropagatesIteratorAndCloseErrors(t *testing.
 	require.ErrorIs(t, err, closeErr)
 	_, err = getUniqueInputCombinations(closeFailing, []query.Symbol{x})
 	require.ErrorIs(t, err, closeErr)
+}
+
+// TestMaterializedRelation_FilterWithPredicate_PropagatesEvalError: the
+// materialized filter method silently dropped tuples whose predicate failed
+// to evaluate (`err == nil && passes`) — a truncated success. The first eval
+// error must surface as the result's deferred error.
+func TestMaterializedRelation_FilterWithPredicate_PropagatesEvalError(t *testing.T) {
+	src := NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}})
+	pred := &query.Comparison{
+		Op:    datalog.SymEQ,
+		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?missing")},
+		Right: query.ConstantTerm{Value: int64(1)},
+	}
+	rel := src.FilterWithPredicate(pred)
+	err := driveErr(rel)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot resolve")
+}
+
+// TestMaterializedRelation_FilterWithPredicate_CarriesSourceError: filtering
+// an errored relation must not launder the source error into a clean result.
+func TestMaterializedRelation_FilterWithPredicate_CarriesSourceError(t *testing.T) {
+	srcErr := errors.New("source relation failure")
+	src := NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}})
+	src.err = srcErr
+	rel := src.FilterWithPredicate(alwaysTrue())
+	require.ErrorIs(t, driveErr(rel), srcErr)
+}
+
+// TestMatchTreatsErroredEmptyBindingAsError: an errored relation that
+// materialized empty (the genuine route: a stream fails, Sort materializes
+// zero tuples plus the taint) is not an empty binding. Match's emptiness
+// fallback must surface the error instead of discarding the binding and
+// scanning unbound — the laundering half of
+// docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md.
+func TestMatchTreatsErroredEmptyBindingAsError(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	valAttr := datalog.NewKeyword(":item/val")
+	matcher := NewMemoryPatternMatcher([]datalog.Datom{
+		{E: datalog.NewIdentity("item:1"), A: valAttr, V: int64(1), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+	})
+
+	erroredEmpty := newFailingStream(0, Tuple{int64(1)}).Sort(nil)
+	require.Equal(t, 0, erroredEmpty.Size(), "fixture: materialized empty")
+	require.ErrorIs(t, EmptyRelationError(erroredEmpty), errInjectedIterator, "fixture: carries the taint")
+
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: x},
+		query.Constant{Value: valAttr},
+		query.Blank{},
+	}}
+	_, err := matcher.Match(query.PatternQuery(pattern), Relations{erroredEmpty})
+	require.ErrorIs(t, err, errInjectedIterator)
+}
+
+// TestHashJoinSurfacesErroredEmptySide: joining against an errored-empty
+// relation must not present the zero-row join as a clean result.
+func TestHashJoinSurfacesErroredEmptySide(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	y := datalog.NewSymbol("?y")
+	left := NewMaterializedRelation([]query.Symbol{x, y}, []Tuple{{int64(1), int64(2)}})
+	erroredEmpty := newFailingStream(0, Tuple{int64(1)}).Sort(nil)
+
+	joined := HashJoinWithOptions(left, erroredEmpty, []query.Symbol{x}, ExecutorOptions{})
+	require.ErrorIs(t, driveErr(joined), errInjectedIterator)
 }

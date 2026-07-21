@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // TestQueryExecutorCorrelatedSubquery tests that correlated subqueries work correctly
@@ -46,32 +45,37 @@ func TestQueryExecutorCorrelatedSubquery(t *testing.T) {
 	assert.NoError(t, err)
 
 	matcher := NewIndexedMemoryMatcher(datoms)
-	opts := planner.PlannerOptions{}
-	exec := NewExecutorWithOptions(matcher, nil, opts)
-	result, err := exec.Execute(q)
 
-	if err != nil {
-		t.Logf("Error: %v", err)
-		t.Logf("Result symbols (if any): %v", result.Symbols())
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.zeroPlannerOptions()
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			result, err := exec.Execute(q)
+
+			if err != nil {
+				t.Logf("Error: %v", err)
+				t.Logf("Result symbols (if any): %v", result.Symbols())
+			}
+
+			assert.NoError(t, err, "QueryExecutor should handle correlated subqueries")
+
+			// Collect results
+			it := result.Iterator()
+			defer it.Close()
+
+			results := make(map[string]int64)
+			for it.Next() {
+				tuple := it.Tuple()
+				assert.Len(t, tuple, 2)
+				group := tuple[0].(string)
+				maxAge := tuple[1].(int64)
+				results[group] = maxAge
+			}
+
+			// Group A has Alice (30) and Bob (25) -> max = 30
+			// Group B has Charlie (35) -> max = 35
+			assert.Equal(t, int64(30), results["A"], "Group A max age should be 30")
+			assert.Equal(t, int64(35), results["B"], "Group B max age should be 35")
+		})
 	}
-
-	assert.NoError(t, err, "QueryExecutor should handle correlated subqueries")
-
-	// Collect results
-	it := result.Iterator()
-	defer it.Close()
-
-	results := make(map[string]int64)
-	for it.Next() {
-		tuple := it.Tuple()
-		assert.Len(t, tuple, 2)
-		group := tuple[0].(string)
-		maxAge := tuple[1].(int64)
-		results[group] = maxAge
-	}
-
-	// Group A has Alice (30) and Bob (25) -> max = 30
-	// Group B has Charlie (35) -> max = 35
-	assert.Equal(t, int64(30), results["A"], "Group A max age should be 30")
-	assert.Equal(t, int64(35), results["B"], "Group B max age should be 35")
 }

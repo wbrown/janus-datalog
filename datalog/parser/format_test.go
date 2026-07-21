@@ -84,7 +84,7 @@ func TestFormatQueryEDN(t *testing.T) {
 						},
 					},
 					&query.Comparison{
-						Op:    query.OpLT,
+						Op:    datalog.SymLT,
 						Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 						Right: query.ConstantTerm{Value: int64(30)},
 					},
@@ -139,7 +139,7 @@ func TestFormatQueryEDN(t *testing.T) {
 				},
 			},
 			expected: `[:find ?name
- :where [?e :user/friend #db/id "user:alice"]
+ :where [?e :user/friend #identity "` + datalog.NewIdentity("user:alice").L85() + `"]
         [?e :user/name ?name]]`,
 		},
 		{

@@ -15,7 +15,7 @@ func TestMaterializePhaseBoundaryPreservesExactRelationContract(t *testing.T) {
 	symbols := []query.Symbol{entity, payload}
 	tuples := []Tuple{{int64(1), "alpha"}, {int64(2), "beta"}}
 	properties := RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: entity, Descending: false}},
 		Keys:     [][]query.Symbol{{entity}},
 	}
 	base := NewMaterializedRelationWithProperties(

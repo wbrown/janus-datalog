@@ -16,6 +16,8 @@ func parsePredicate(fn string, args []query.PatternElement) (query.Predicate, er
 		return parseNotEqual(args)
 	case "<", "<=", ">", ">=":
 		return parseComparison(fn, args)
+	case "str/starts-with?":
+		return parseStrStartsWith(args)
 	case "ground":
 		return parseGround(args)
 	case "missing":
@@ -32,8 +34,11 @@ func parsePredicate(fn string, args []query.PatternElement) (query.Predicate, er
 	case "tx-between":
 		return parseTxBetweenPredicate(args)
 	default:
-		// All other predicates become FunctionPredicates
-		// This handles things like str/starts-with?, custom predicates, etc.
+		// User-defined predicate functions. Name validation lives in
+		// FunctionPredicate.Validate, enforced by ValidateStaticClauseShapes
+		// at every user boundary (ParseQuery included) — constructing here
+		// and rejecting there keeps one home for the rule across parsed,
+		// qb-built, and hand-built queries.
 		return &query.FunctionPredicate{
 			Fn:   fn,
 			Args: args,
@@ -49,7 +54,7 @@ func parseEquality(args []query.PatternElement) (query.Predicate, error) {
 		right := elementToTerm(args[1])
 
 		return &query.Comparison{
-			Op:    query.OpEQ,
+			Op:    datalog.SymEQ,
 			Left:  left,
 			Right: right,
 		}, nil
@@ -61,7 +66,7 @@ func parseEquality(args []query.PatternElement) (query.Predicate, error) {
 		}
 
 		return &query.ChainedComparison{
-			Op:    query.OpEQ,
+			Op:    datalog.SymEQ,
 			Terms: terms,
 		}, nil
 	}
@@ -69,19 +74,20 @@ func parseEquality(args []query.PatternElement) (query.Predicate, error) {
 	return nil, fmt.Errorf("equality requires at least 2 arguments, got %d", len(args))
 }
 
-// parseComparison handles <, <=, >, >= predicates
+// parseComparison handles <, <=, >, >= predicates. The operator name resolves
+// here, once, to its pre-interned symbol; downstream dispatch is pointer
+// equality.
 func parseComparison(fn string, args []query.PatternElement) (query.Predicate, error) {
-	// Map function name to operator
-	var op query.CompareOp
+	var op query.Symbol
 	switch fn {
 	case "<":
-		op = query.OpLT
+		op = datalog.SymLT
 	case "<=":
-		op = query.OpLTE
+		op = datalog.SymLTE
 	case ">":
-		op = query.OpGT
+		op = datalog.SymGT
 	case ">=":
-		op = query.OpGTE
+		op = datalog.SymGTE
 	default:
 		return nil, fmt.Errorf("unknown comparison operator: %s", fn)
 	}
@@ -124,10 +130,21 @@ func parseNotEqual(args []query.PatternElement) (query.Predicate, error) {
 
 	return &query.NotEqualPredicate{
 		Comparison: query.Comparison{
-			Op:    query.OpEQ,
+			Op:    datalog.SymEQ,
 			Left:  left,
 			Right: right,
 		},
+	}, nil
+}
+
+// parseStrStartsWith handles str/starts-with? predicates
+func parseStrStartsWith(args []query.PatternElement) (query.Predicate, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("str/starts-with? requires exactly 2 arguments, got %d", len(args))
+	}
+	return &query.StrStartsWithPredicate{
+		Value:  elementToTerm(args[0]),
+		Prefix: elementToTerm(args[1]),
 	}, nil
 }
 
@@ -194,7 +211,7 @@ func parseMissingAttrPredicate(args []query.PatternElement) (query.Predicate, er
 	}
 
 	// Validate database reference ($)
-	if err := validateDatabaseRefPredicate(args[0]); err != nil {
+	if err := validateDatabaseRef(args[0]); err != nil {
 		return nil, fmt.Errorf("missing?: %w", err)
 	}
 
@@ -202,7 +219,7 @@ func parseMissingAttrPredicate(args []query.PatternElement) (query.Predicate, er
 	entity := elementToTerm(args[1])
 
 	// Parse attribute (must be a keyword)
-	attr, err := extractKeywordPredicate(args[2])
+	attr, err := extractKeyword(args[2])
 	if err != nil {
 		return nil, fmt.Errorf("missing?: attribute must be a keyword: %w", err)
 	}
@@ -216,49 +233,6 @@ func parseMissingAttrPredicate(args []query.PatternElement) (query.Predicate, er
 	return &query.DatabaseFunctionPredicate{
 		Function: missingFn,
 	}, nil
-}
-
-// validateDatabaseRefPredicate validates that an argument is the database reference ($)
-// This is a copy for the predicate parser to avoid circular imports
-func validateDatabaseRefPredicate(arg query.PatternElement) error {
-	switch a := arg.(type) {
-	case query.Variable:
-		if a.Name == datalog.SymDollar {
-			return nil
-		}
-		return fmt.Errorf("expected database reference ($), got variable %s", a.Name)
-	case query.Constant:
-		if sym, ok := a.Value.(query.Symbol); ok && sym == datalog.SymDollar {
-			return nil
-		}
-		if str, ok := a.Value.(string); ok && str == "$" {
-			return nil
-		}
-		return fmt.Errorf("expected database reference ($), got %v", a.Value)
-	default:
-		return fmt.Errorf("expected database reference ($), got %T", arg)
-	}
-}
-
-// extractKeywordPredicate extracts a Keyword from a pattern element
-// This is a copy for the predicate parser to avoid circular imports
-func extractKeywordPredicate(arg query.PatternElement) (datalog.Keyword, error) {
-	switch a := arg.(type) {
-	case query.Constant:
-		switch v := a.Value.(type) {
-		case datalog.Keyword:
-			return v, nil
-		case string:
-			if len(v) > 0 && v[0] == ':' {
-				return datalog.NewKeyword(v), nil
-			}
-			return nil, fmt.Errorf("string %q is not a keyword", v)
-		default:
-			return nil, fmt.Errorf("expected keyword, got %T", v)
-		}
-	default:
-		return nil, fmt.Errorf("expected keyword constant, got %T", arg)
-	}
 }
 
 // parseTxBetweenPredicate parses [(tx-between ?tx 1000 2000)]

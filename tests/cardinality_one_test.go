@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,191 +34,211 @@ type EntityWithLore struct {
 // The CRDT implementation ensures queries always return the latest value.
 func TestCardinalityOneBehavior(t *testing.T) {
 	t.Run("tx.Add uses LWW semantics for cardinality-one", func(t *testing.T) {
-		tmpDir, err := os.MkdirTemp("", "cardinality-one-add-test")
-		require.NoError(t, err)
-		defer os.RemoveAll(tmpDir)
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				s, err := dlreflect.SchemaFromStruct(EntityWithLore{})
+				require.NoError(t, err)
 
-		s, err := dlreflect.SchemaFromStruct(EntityWithLore{})
-		require.NoError(t, err)
+				popts := mode.plannerOptions()
+				db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+					Path:           t.TempDir(),
+					Schema:         s,
+					PlannerOptions: &popts,
+				})
+				require.NoError(t, err)
+				defer db.Close()
 
-		db, err := storage.NewDatabaseWithSchema(tmpDir, s)
-		require.NoError(t, err)
-		defer db.Close()
+				// Step 1: Create entity with empty Lore via SaveStruct
+				entity := &EntityWithLore{
+					Name: "Test Entity",
+					Lore: "", // Empty lore - will be saved as empty string
+				}
 
-		// Step 1: Create entity with empty Lore via SaveStruct
-		entity := &EntityWithLore{
-			Name: "Test Entity",
-			Lore: "", // Empty lore - will be saved as empty string
+				tx1 := db.NewTransaction()
+				id, err := tx1.SaveStruct(entity)
+				require.NoError(t, err)
+				_, err = tx1.Commit()
+				require.NoError(t, err)
+
+				// Verify: empty string was saved
+				loreValues1, err := executor.CollectTuples(db.Query(
+					`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
+					id,
+				))
+				require.NoError(t, err)
+				require.Len(t, loreValues1, 1, "Empty string should be saved")
+				assert.Equal(t, "", loreValues1[0][0], "Value should be empty string")
+
+				// Step 2: Use tx.Add to add a new lore value
+				// With CRDT implementation, Add() uses LWW semantics for cardinality-one
+				tx2 := db.NewTransaction()
+				loreAttr := datalog.NewKeyword(":entity/lore")
+				tx2.Add(id, loreAttr, "A detailed description.")
+				_, err = tx2.Commit()
+				require.NoError(t, err)
+
+				// Step 3: Query for lore values - with LWW, only latest value is returned
+				loreValues2, err := executor.CollectTuples(db.Query(
+					`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
+					id,
+				))
+				require.NoError(t, err)
+
+				// With CRDT LWW semantics, tx.Add updates the value (highest ElementID wins)
+				t.Logf("After tx.Add: %d lore value(s): %v", len(loreValues2), loreValues2)
+				assert.Len(t, loreValues2, 1, "LWW semantics: only latest value returned")
+				assert.Equal(t, "A detailed description.", loreValues2[0][0], "Latest value should be returned")
+			})
 		}
-
-		tx1 := db.NewTransaction()
-		id, err := tx1.SaveStruct(entity)
-		require.NoError(t, err)
-		_, err = tx1.Commit()
-		require.NoError(t, err)
-
-		// Verify: empty string was saved
-		loreValues1, err := executor.CollectTuples(db.Query(
-			`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
-			id,
-		))
-		require.NoError(t, err)
-		require.Len(t, loreValues1, 1, "Empty string should be saved")
-		assert.Equal(t, "", loreValues1[0][0], "Value should be empty string")
-
-		// Step 2: Use tx.Add to add a new lore value
-		// With CRDT implementation, Add() uses LWW semantics for cardinality-one
-		tx2 := db.NewTransaction()
-		loreAttr := datalog.NewKeyword(":entity/lore")
-		tx2.Add(id, loreAttr, "A detailed description.")
-		_, err = tx2.Commit()
-		require.NoError(t, err)
-
-		// Step 3: Query for lore values - with LWW, only latest value is returned
-		loreValues2, err := executor.CollectTuples(db.Query(
-			`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
-			id,
-		))
-		require.NoError(t, err)
-
-		// With CRDT LWW semantics, tx.Add updates the value (highest ElementID wins)
-		t.Logf("After tx.Add: %d lore value(s): %v", len(loreValues2), loreValues2)
-		assert.Len(t, loreValues2, 1, "LWW semantics: only latest value returned")
-		assert.Equal(t, "A detailed description.", loreValues2[0][0], "Latest value should be returned")
 	})
 
 	t.Run("SaveStruct properly handles cardinality-one upserts", func(t *testing.T) {
-		tmpDir, err := os.MkdirTemp("", "cardinality-one-savestruct-test")
-		require.NoError(t, err)
-		defer os.RemoveAll(tmpDir)
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				s, err := dlreflect.SchemaFromStruct(EntityWithLore{})
+				require.NoError(t, err)
 
-		s, err := dlreflect.SchemaFromStruct(EntityWithLore{})
-		require.NoError(t, err)
+				popts := mode.plannerOptions()
+				db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+					Path:           t.TempDir(),
+					Schema:         s,
+					PlannerOptions: &popts,
+				})
+				require.NoError(t, err)
+				defer db.Close()
 
-		db, err := storage.NewDatabaseWithSchema(tmpDir, s)
-		require.NoError(t, err)
-		defer db.Close()
+				// Step 1: Create entity with empty Lore
+				entity := &EntityWithLore{
+					Name: "Test Entity",
+					Lore: "", // Empty initially
+				}
 
-		// Step 1: Create entity with empty Lore
-		entity := &EntityWithLore{
-			Name: "Test Entity",
-			Lore: "", // Empty initially
+				tx1 := db.NewTransaction()
+				_, err = tx1.SaveStruct(entity)
+				require.NoError(t, err)
+				_, err = tx1.Commit()
+				require.NoError(t, err)
+
+				// Step 2: Update lore via SaveStruct (CORRECT pattern)
+				entity.Lore = "A detailed description."
+				tx2 := db.NewTransaction()
+				_, err = tx2.SaveStruct(entity)
+				require.NoError(t, err)
+				_, err = tx2.Commit()
+				require.NoError(t, err)
+
+				// Step 3: Query - should have exactly ONE value
+				loreValues, err := executor.CollectTuples(db.Query(
+					`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
+					entity.ID,
+				))
+				require.NoError(t, err)
+
+				t.Logf("After SaveStruct update: %d lore value(s): %v", len(loreValues), loreValues)
+				require.Len(t, loreValues, 1, "SaveStruct should maintain cardinality-one")
+				assert.Equal(t, "A detailed description.", loreValues[0][0])
+			})
 		}
-
-		tx1 := db.NewTransaction()
-		_, err = tx1.SaveStruct(entity)
-		require.NoError(t, err)
-		_, err = tx1.Commit()
-		require.NoError(t, err)
-
-		// Step 2: Update lore via SaveStruct (CORRECT pattern)
-		entity.Lore = "A detailed description."
-		tx2 := db.NewTransaction()
-		_, err = tx2.SaveStruct(entity)
-		require.NoError(t, err)
-		_, err = tx2.Commit()
-		require.NoError(t, err)
-
-		// Step 3: Query - should have exactly ONE value
-		loreValues, err := executor.CollectTuples(db.Query(
-			`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
-			entity.ID,
-		))
-		require.NoError(t, err)
-
-		t.Logf("After SaveStruct update: %d lore value(s): %v", len(loreValues), loreValues)
-		require.Len(t, loreValues, 1, "SaveStruct should maintain cardinality-one")
-		assert.Equal(t, "A detailed description.", loreValues[0][0])
 	})
 
 	t.Run("Correct update pattern: load, modify, SaveStruct", func(t *testing.T) {
-		tmpDir, err := os.MkdirTemp("", "correct-update-pattern-test")
-		require.NoError(t, err)
-		defer os.RemoveAll(tmpDir)
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				s, err := dlreflect.SchemaFromStruct(EntityWithLore{})
+				require.NoError(t, err)
 
-		s, err := dlreflect.SchemaFromStruct(EntityWithLore{})
-		require.NoError(t, err)
+				popts := mode.plannerOptions()
+				db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+					Path:           t.TempDir(),
+					Schema:         s,
+					PlannerOptions: &popts,
+				})
+				require.NoError(t, err)
+				defer db.Close()
 
-		db, err := storage.NewDatabaseWithSchema(tmpDir, s)
-		require.NoError(t, err)
-		defer db.Close()
+				// Create entity
+				entity := &EntityWithLore{
+					Name: "Test Entity",
+					Lore: "Initial lore",
+				}
 
-		// Create entity
-		entity := &EntityWithLore{
-			Name: "Test Entity",
-			Lore: "Initial lore",
+				tx1 := db.NewTransaction()
+				id, err := tx1.SaveStruct(entity)
+				require.NoError(t, err)
+				_, err = tx1.Commit()
+				require.NoError(t, err)
+
+				// CORRECT UPDATE PATTERN:
+				// 1. Load the entity
+				var loaded EntityWithLore
+				err = db.PullInto(id, &loaded)
+				require.NoError(t, err)
+
+				// 2. Modify the field
+				loaded.Lore = "Updated lore"
+
+				// 3. Save with SaveStruct
+				tx2 := db.NewTransaction()
+				_, err = tx2.SaveStruct(&loaded)
+				require.NoError(t, err)
+				_, err = tx2.Commit()
+				require.NoError(t, err)
+
+				// Verify: only one value, and it's the updated one
+				loreValues, err := executor.CollectTuples(db.Query(
+					`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
+					id,
+				))
+				require.NoError(t, err)
+				require.Len(t, loreValues, 1)
+				assert.Equal(t, "Updated lore", loreValues[0][0])
+			})
 		}
-
-		tx1 := db.NewTransaction()
-		id, err := tx1.SaveStruct(entity)
-		require.NoError(t, err)
-		_, err = tx1.Commit()
-		require.NoError(t, err)
-
-		// CORRECT UPDATE PATTERN:
-		// 1. Load the entity
-		var loaded EntityWithLore
-		err = db.PullInto(id, &loaded)
-		require.NoError(t, err)
-
-		// 2. Modify the field
-		loaded.Lore = "Updated lore"
-
-		// 3. Save with SaveStruct
-		tx2 := db.NewTransaction()
-		_, err = tx2.SaveStruct(&loaded)
-		require.NoError(t, err)
-		_, err = tx2.Commit()
-		require.NoError(t, err)
-
-		// Verify: only one value, and it's the updated one
-		loreValues, err := executor.CollectTuples(db.Query(
-			`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
-			id,
-		))
-		require.NoError(t, err)
-		require.Len(t, loreValues, 1)
-		assert.Equal(t, "Updated lore", loreValues[0][0])
 	})
 }
 
 // TestEmptyStringsAreSaved documents that SaveStruct saves empty strings
 // (there is no omitempty equivalent for datalog struct tags).
 func TestEmptyStringsAreSaved(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "empty-string-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := dlreflect.SchemaFromStruct(EntityWithLore{})
+			require.NoError(t, err)
 
-	s, err := dlreflect.SchemaFromStruct(EntityWithLore{})
-	require.NoError(t, err)
+			popts := mode.plannerOptions()
+			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         s,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			defer db.Close()
 
-	db, err := storage.NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			// Create entity with empty Lore
+			entity := &EntityWithLore{
+				Name: "Test Entity",
+				Lore: "", // Empty string
+			}
 
-	// Create entity with empty Lore
-	entity := &EntityWithLore{
-		Name: "Test Entity",
-		Lore: "", // Empty string
+			tx := db.NewTransaction()
+			id, err := tx.SaveStruct(entity)
+			require.NoError(t, err)
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			// Query for lore - empty string IS saved
+			loreValues, err := executor.CollectTuples(db.Query(
+				`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
+				id,
+			))
+			require.NoError(t, err)
+
+			// Document: empty strings are persisted
+			require.Len(t, loreValues, 1, "Empty string is saved to database")
+			assert.Equal(t, "", loreValues[0][0], "Value is empty string, not nil/missing")
+
+			t.Log("Note: There is no omitempty equivalent for datalog struct tags.")
+			t.Log("Empty strings ARE persisted. Consider using *string for truly optional fields.")
+		})
 	}
-
-	tx := db.NewTransaction()
-	id, err := tx.SaveStruct(entity)
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Query for lore - empty string IS saved
-	loreValues, err := executor.CollectTuples(db.Query(
-		`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
-		id,
-	))
-	require.NoError(t, err)
-
-	// Document: empty strings are persisted
-	require.Len(t, loreValues, 1, "Empty string is saved to database")
-	assert.Equal(t, "", loreValues[0][0], "Value is empty string, not nil/missing")
-
-	t.Log("Note: There is no omitempty equivalent for datalog struct tags.")
-	t.Log("Empty strings ARE persisted. Consider using *string for truly optional fields.")
 }

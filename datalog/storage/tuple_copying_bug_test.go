@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -60,24 +58,28 @@ func TestMatcherRelationsTupleCopyingBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	require.NoError(t, err)
 
-	matcher := NewBadgerMatcher(db.store)
-	exec := executor.NewExecutor(matcher, db)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			matcher := NewBadgerMatcher(db.store)
+			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
-	result, err := exec.Execute(q)
-	require.NoError(t, err)
+			result, err := exec.Execute(q)
+			require.NoError(t, err)
 
-	// Count results by iterating
-	count := 0
-	it := result.Iterator()
-	defer it.Close()
+			// Count results by iterating
+			count := 0
+			it := result.Iterator()
+			defer it.Close()
 
-	for it.Next() {
-		count++
+			for it.Next() {
+				count++
+			}
+
+			// Should have 30 results (3 symbols × 10 bars)
+			// If matcher_relations.go:241 has the bug, this will return 0
+			// because all bindingTuples point to same (garbage) memory
+			require.Equal(t, 30, count,
+				"Expected 30 results but got %d - likely due to tuple copying bug in matcher_relations.go:241", count)
+		})
 	}
-
-	// Should have 30 results (3 symbols × 10 bars)
-	// If matcher_relations.go:241 has the bug, this will return 0
-	// because all bindingTuples point to same (garbage) memory
-	require.Equal(t, 30, count,
-		"Expected 30 results but got %d - likely due to tuple copying bug in matcher_relations.go:241", count)
 }

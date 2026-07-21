@@ -1,35 +1,15 @@
 # BUG: Uniqueness Validation Is a TOCTOU Check Outside the Write Transaction
 
-**Date**: 2026-04-16
-**Severity**: High - uniqueness races and false rejections possible
-**Status**: Resolved 2026-04-17 — validateUniqueness deleted on `feature/crdt-unique-resolution`
+**Date**: 2026-04-16 **Severity**: High - uniqueness races and false rejections possible **Status**: Resolved 2026-04-17 — validateUniqueness deleted on `feature/crdt-unique-resolution`
 
-> **Note (2026-04-16)**: The bugs described below were real, but the proposed
-> "fix `validateUniqueness`" framing was wrong for this codebase's CRDT-aligned
-> architecture. The right resolution was a read-time (A, V)-LWW redesign that
-> removes write-time enforcement entirely. See
-> [docs/reference/CRDT_UNIQUE_SEMANTICS.md](../reference/CRDT_UNIQUE_SEMANTICS.md)
-> for the design discussion and target model.
+> **Note (2026-04-16)**: The bugs described below were real, but the proposed "fix `validateUniqueness`" framing was wrong for this codebase's CRDT-aligned architecture. The right resolution was a read-time (A, V)-LWW redesign that removes write-time enforcement entirely. See [docs/reference/CRDT_UNIQUE_SEMANTICS.md](../reference/CRDT_UNIQUE_SEMANTICS.md) for the design discussion and target model.
 >
-> **Resolution (2026-04-17, Commit 1 of the redesign)**: `validateUniqueness`
-> and its call site in `Transaction.Commit` have been deleted. Both the TOCTOU
-> race and the retract-and-reassign rejection described below no longer occur
-> because there is no write-time gate. The three Datomic-strict tests that
-> encoded the old behavior (`TestSchemaUniquenessValue`,
-> `TestSchemaUniquenessWithinTransaction`, `TestSchemaUniquenessIdempotent`)
-> were deleted in the same commit. At this point in the redesign, read-side
-> (A, V)-LWW resolution is not yet implemented — reads for unique attributes
-> with multiple claimants will return all claimants. Subsequent commits
-> (Commits 2–5 of the redesign, per CRDT_UNIQUE_SEMANTICS.md) introduce the
-> read-time resolution layer that makes unique attributes behave correctly
-> again under the new semantics.
+> **Resolution (2026-04-17, Commit 1 of the redesign)**: `validateUniqueness` and its call site in `Transaction.Commit` have been deleted. Both the TOCTOU race and the retract-and-reassign rejection described below no longer occur because there is no write-time gate. The three Datomic-strict tests that encoded the old behavior (`TestSchemaUniquenessValue`, `TestSchemaUniquenessWithinTransaction`, `TestSchemaUniquenessIdempotent`) were deleted in the same commit. At this point in the redesign, read-side (A, V)-LWW resolution is not yet implemented — reads for unique attributes with multiple claimants will return all claimants. Subsequent commits (Commits 2–5 of the redesign, per CRDT_UNIQUE_SEMANTICS.md) introduce the read-time resolution layer that makes unique attributes behave correctly again under the new semantics.
 **Affected**: `storage.Transaction.validateUniqueness()`
 
 ## Summary
 
-Uniqueness validation runs **before** any writes are committed and executes as a
-read query against the current store state. It is therefore a classic
-time-of-check/time-of-use (TOCTOU) validation:
+Uniqueness validation runs **before** any writes are committed and executes as a read query against the current store state. It is therefore a classic time-of-check/time-of-use (TOCTOU) validation:
 
 1. Query the database to see if a unique value already exists
 2. If not, proceed
@@ -37,11 +17,8 @@ time-of-check/time-of-use (TOCTOU) validation:
 
 Two problems fall out of this:
 
-1. **Concurrent commits can race**: two transactions can both observe "value does
-   not exist" and both proceed to write it.
-2. **Pending retractions are ignored**: a transaction that removes a unique
-   value from one entity and assigns it to another in the same logical commit
-   can be rejected even though the final state would be valid.
+1. **Concurrent commits can race**: two transactions can both observe "value does not exist" and both proceed to write it.
+2. **Pending retractions are ignored**: a transaction that removes a unique value from one entity and assigns it to another in the same logical commit can be rejected even though the final state would be valid.
 
 ## Discovery
 
@@ -123,8 +100,7 @@ for _, d := range t.datoms {
 }
 ```
 
-There is no logic that treats a pending retract in `t.retracts` as freeing a
-value for re-use inside the same logical commit.
+There is no logic that treats a pending retract in `t.retracts` as freeing a value for re-use inside the same logical commit.
 
 ## Failure Mode 1: Concurrent Commit Race
 
@@ -144,13 +120,11 @@ Possible interleaving:
 3. Tx A writes
 4. Tx B writes
 
-If that interleaving occurs, uniqueness is violated even though both commits
-individually "passed" validation.
+If that interleaving occurs, uniqueness is violated even though both commits individually "passed" validation.
 
 ### Why it matters
 
-There is no global commit lock around uniqueness validation + write, and the
-validation is not delegated to a single storage transaction.
+There is no global commit lock around uniqueness validation + write, and the validation is not delegated to a single storage transaction.
 
 ## Failure Mode 2: Valid Reassign / Move Rejected
 
@@ -176,15 +150,11 @@ alice no longer has the email
 bob now has the email
 ```
 
-But `validateUniqueness()` checks `t.datoms` against the current database state
-and does not consider pending `t.retracts`, so it will still see Alice's value
-and reject Bob's assignment.
+But `validateUniqueness()` checks `t.datoms` against the current database state and does not consider pending `t.retracts`, so it will still see Alice's value and reject Bob's assignment.
 
 ### Why it matters
 
-This is the opposite of a race bug: instead of letting an invalid state through,
-it rejects a valid state transition because validation sees only the pre-commit
-store state.
+This is the opposite of a race bug: instead of letting an invalid state through, it rejects a valid state transition because validation sees only the pre-commit store state.
 
 ## Reproduction Sketches
 
@@ -226,13 +196,11 @@ func TestUniqueValueMoveInSingleCommit(t *testing.T) {
 
 ### 1. Data integrity under concurrency
 
-If the concurrent race is real, uniqueness constraints are advisory rather than
-strict in multi-writer or multi-goroutine usage.
+If the concurrent race is real, uniqueness constraints are advisory rather than strict in multi-writer or multi-goroutine usage.
 
 ### 2. Incomplete transactional semantics
 
-If the reassign/move case fails, uniqueness is enforced against pre-commit state
-rather than final logical state.
+If the reassign/move case fails, uniqueness is enforced against pre-commit state rather than final logical state.
 
 That makes certain valid migrations and ownership transfers impossible.
 
@@ -253,8 +221,7 @@ They do **not** obviously cover:
 
 ### Option 1: Move uniqueness enforcement into the same write transaction
 
-Open one storage write transaction and perform the uniqueness lookup + write
-serialization inside it.
+Open one storage write transaction and perform the uniqueness lookup + write serialization inside it.
 
 This is the most direct fix for the TOCTOU race.
 
@@ -268,9 +235,7 @@ For within-transaction moves:
 
 ### Option 3: Introduce explicit semantics for "move unique value"
 
-If the intended API is that unique values cannot be moved in a single commit,
-that needs to be documented explicitly. Currently the behavior looks accidental,
-not designed.
+If the intended API is that unique values cannot be moved in a single commit, that needs to be documented explicitly. Currently the behavior looks accidental, not designed.
 
 ## Test Plan
 

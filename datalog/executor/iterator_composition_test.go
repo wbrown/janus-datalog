@@ -41,40 +41,6 @@ func (it *mockIterator) Close() error {
 
 func (it *mockIterator) Error() error { return it.err }
 
-func TestFilterIterator(t *testing.T) {
-	// Create test data
-	tuples := []Tuple{
-		{1, "alice", 25},
-		{2, "bob", 30},
-		{3, "charlie", 25},
-		{4, "diana", 35},
-		{5, "eve", 30},
-	}
-	symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
-
-	// Test filtering by age
-	source := newMockIterator(tuples)
-	filter := NewSimpleFilter(func(t Tuple) bool {
-		return t[2].(int) == 30 // Age == 30
-	})
-	filterIter := NewFilterIterator(source, symbols, filter)
-
-	// Collect filtered results
-	var results []Tuple
-	for filterIter.Next() {
-		tuple := filterIter.Tuple()
-		tupleCopy := make(Tuple, len(tuple))
-		copy(tupleCopy, tuple)
-		results = append(results, tupleCopy)
-	}
-	filterIter.Close()
-
-	// Verify results
-	assert.Len(t, results, 2)
-	assert.Equal(t, "bob", results[0][1])
-	assert.Equal(t, "eve", results[1][1])
-}
-
 func TestProjectIterator(t *testing.T) {
 	// Create test data
 	tuples := []Tuple{
@@ -107,67 +73,6 @@ func TestProjectIterator(t *testing.T) {
 	assert.Equal(t, "NYC", results[0][1])
 	assert.Equal(t, "bob", results[1][0])
 	assert.Equal(t, "LA", results[1][1])
-}
-
-func TestTransformIterator(t *testing.T) {
-	// Create test data
-	tuples := []Tuple{
-		{1, 10},
-		{2, 20},
-		{3, 30},
-	}
-
-	// Transform function: double the second value
-	transform := func(t Tuple) Tuple {
-		return Tuple{t[0], t[1].(int) * 2}
-	}
-
-	// Create transform iterator
-	source := newMockIterator(tuples)
-	transformIter := NewTransformIterator(source, transform)
-
-	// Collect transformed results
-	var results []Tuple
-	for transformIter.Next() {
-		tuple := transformIter.Tuple()
-		tupleCopy := make(Tuple, len(tuple))
-		copy(tupleCopy, tuple)
-		results = append(results, tupleCopy)
-	}
-	transformIter.Close()
-
-	// Verify results
-	assert.Len(t, results, 3)
-	assert.Equal(t, 20, results[0][1])
-	assert.Equal(t, 40, results[1][1])
-	assert.Equal(t, 60, results[2][1])
-}
-
-func TestConcatIterator(t *testing.T) {
-	// Create multiple iterators with different data
-	iter1 := newMockIterator([]Tuple{{1, "a"}, {2, "b"}})
-	iter2 := newMockIterator([]Tuple{{3, "c"}})
-	iter3 := newMockIterator([]Tuple{{4, "d"}, {5, "e"}})
-
-	// Create concat iterator
-	concatIter := NewConcatIterator(iter1, iter2, iter3)
-
-	// Collect all results
-	var results []Tuple
-	for concatIter.Next() {
-		tuple := concatIter.Tuple()
-		tupleCopy := make(Tuple, len(tuple))
-		copy(tupleCopy, tuple)
-		results = append(results, tupleCopy)
-	}
-	concatIter.Close()
-
-	// Verify results
-	assert.Len(t, results, 5)
-	assert.Equal(t, 1, results[0][0])
-	assert.Equal(t, "a", results[0][1])
-	assert.Equal(t, 5, results[4][0])
-	assert.Equal(t, "e", results[4][1])
 }
 
 func TestDedupIterator(t *testing.T) {
@@ -204,8 +109,7 @@ func TestDedupIterator(t *testing.T) {
 }
 
 func TestComposedIterators(t *testing.T) {
-	// Test chaining multiple iterators together
-	// Filter -> Project -> Transform
+	// Test chaining multiple iterators together: Filter -> Project
 	tuples := []Tuple{
 		{1, "alice", 25, 1000},
 		{2, "bob", 30, 1500},
@@ -216,10 +120,11 @@ func TestComposedIterators(t *testing.T) {
 
 	// Step 1: Filter by age >= 30
 	source := newMockIterator(tuples)
-	filter := NewSimpleFilter(func(t Tuple) bool {
-		return t[2].(int) >= 30
+	filterIter := NewPredicateFilterIterator(source, symbols, &query.Comparison{
+		Op:    datalog.SymGTE,
+		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
+		Right: query.ConstantTerm{Value: int64(30)},
 	})
-	filterIter := NewFilterIterator(source, symbols, filter)
 
 	// Step 2: Project name and salary only
 	projectedSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?salary")}
@@ -230,39 +135,28 @@ func TestComposedIterators(t *testing.T) {
 		newSymbols: projectedSymbols,
 	}
 
-	// Step 3: Transform to add bonus (10% of salary)
-	transform := func(t Tuple) Tuple {
-		salary := t[1].(int)
-		bonus := salary / 10
-		return Tuple{t[0], salary, bonus}
-	}
-	transformIter := NewTransformIterator(projIter, transform)
-
 	// Collect final results
 	var results []Tuple
-	for transformIter.Next() {
-		tuple := transformIter.Tuple()
+	for projIter.Next() {
+		tuple := projIter.Tuple()
 		tupleCopy := make(Tuple, len(tuple))
 		copy(tupleCopy, tuple)
 		results = append(results, tupleCopy)
 	}
-	transformIter.Close()
+	projIter.Close()
 
 	// Verify results
 	assert.Len(t, results, 2) // Only bob and diana (age >= 30)
 	assert.Equal(t, "bob", results[0][0])
 	assert.Equal(t, 1500, results[0][1])
-	assert.Equal(t, 150, results[0][2]) // 10% bonus
 	assert.Equal(t, "diana", results[1][0])
 	assert.Equal(t, 2000, results[1][1])
-	assert.Equal(t, 200, results[1][2]) // 10% bonus
 }
 
 func TestStreamingRelationWithComposition(t *testing.T) {
-	// Test the StreamingRelation with iterator composition enabled
+	// Test the StreamingRelation with true streaming enabled
 	opts := ExecutorOptions{
-		EnableIteratorComposition: true,
-		EnableTrueStreaming:       true,
+		EnableTrueStreaming: true,
 	}
 
 	tuples := []Tuple{
@@ -282,10 +176,11 @@ func TestStreamingRelationWithComposition(t *testing.T) {
 	assert.Equal(t, -1, size) // Unknown size
 
 	// Test filter operation returns streaming relation
-	filter := NewSimpleFilter(func(t Tuple) bool {
-		return t[2].(int) >= 30
+	filtered := rel.FilterWithPredicate(&query.Comparison{
+		Op:    datalog.SymGTE,
+		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
+		Right: query.ConstantTerm{Value: int64(30)},
 	})
-	filtered := rel.Filter(filter)
 
 	// Verify it's still streaming (not materialized)
 	assert.IsType(t, &StreamingRelation{}, filtered)
@@ -326,7 +221,7 @@ func TestPredicateFilterIterator(t *testing.T) {
 
 	// Create a comparison predicate (y > 20)
 	pred := &query.Comparison{
-		Op:    query.OpGT,
+		Op:    datalog.SymGT,
 		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
 		Right: query.ConstantTerm{Value: 20},
 	}
@@ -361,7 +256,7 @@ func TestFunctionEvaluatorIterator(t *testing.T) {
 
 	// Create an addition function (x + y)
 	fn := query.ArithmeticFunction{
-		Op: query.OpAdd,
+		Op: datalog.SymAdd,
 		Args: []query.Term{
 			query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
@@ -403,7 +298,7 @@ func TestFunctionEvaluatorIterator_UnifiesExistingSymbol(t *testing.T) {
 
 	// identity function on ?x, binding back to ?x — should unify (all pass)
 	fn := query.ArithmeticFunction{
-		Op: query.OpAdd,
+		Op: datalog.SymAdd,
 		Args: []query.Term{
 			query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			query.ConstantTerm{Value: int64(0)},
@@ -442,7 +337,7 @@ func TestFunctionEvaluatorIterator_UnifiesFilters(t *testing.T) {
 
 	// (+ ?x ?y) binding to ?x — unifies: keep only where ?x + ?y == ?x
 	fn := query.ArithmeticFunction{
-		Op: query.OpAdd,
+		Op: datalog.SymAdd,
 		Args: []query.Term{
 			query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
@@ -469,10 +364,11 @@ func TestFunctionEvaluatorIterator_UnifiesFilters(t *testing.T) {
 
 // BenchmarkIteratorComposition benchmarks composed iterators vs materialized operations
 func BenchmarkIteratorComposition(b *testing.B) {
-	// Create large test dataset
+	// Create large test dataset. ?y alternates so the filter below selects
+	// every other tuple (scattered matches, ~50% selectivity).
 	var tuples []Tuple
 	for i := 0; i < 10000; i++ {
-		tuples = append(tuples, Tuple{i, i * 2, i * 3})
+		tuples = append(tuples, Tuple{i, i % 2, i * 3})
 	}
 	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
@@ -480,27 +376,23 @@ func BenchmarkIteratorComposition(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			source := newMockIterator(tuples)
 
-			// Filter -> Project -> Transform
-			filter := NewSimpleFilter(func(t Tuple) bool {
-				return t[0].(int)%2 == 0 // Even numbers
+			// Filter -> Project
+			filterIter := NewPredicateFilterIterator(source, symbols, &query.Comparison{
+				Op:    datalog.SymEQ,
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+				Right: query.ConstantTerm{Value: int64(0)},
 			})
-			filterIter := NewFilterIterator(source, symbols, filter)
 
 			// Wrap in a relation for projection
 			filteredRel := NewStreamingRelation(symbols, filterIter)
 			projIter := NewProjectIterator(filteredRel, symbols, []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")})
 
-			transform := func(t Tuple) Tuple {
-				return Tuple{t[0], t[1].(int) * 10}
-			}
-			transformIter := NewTransformIterator(projIter, transform)
-
 			// Consume results
 			count := 0
-			for transformIter.Next() {
+			for projIter.Next() {
 				count++
 			}
-			transformIter.Close()
+			projIter.Close()
 		}
 	})
 

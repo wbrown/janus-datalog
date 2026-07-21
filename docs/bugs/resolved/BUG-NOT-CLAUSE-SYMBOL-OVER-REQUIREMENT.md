@@ -23,9 +23,7 @@ The variable used in the NOT clause IS bound by prior patterns, but the planner/
         (not [?i :item/deleted true])]
 ```
 
-`?i` is bound by the first two patterns. The NOT clause uses `?i` as a join
-variable against the outer relation. This should work — `?i` is available when
-the NOT executes.
+`?i` is bound by the first two patterns. The NOT clause uses `?i` as a join variable against the outer relation. This should work — `?i` is available when the NOT executes.
 
 ## Root cause (two bugs)
 
@@ -124,21 +122,13 @@ The planner treats `?err` (produced inside the NOT) as a prerequisite. Since `?e
 
 ### The one-line fix
 
-`compileNot` in `algebra/compile.go` already computed the correct join variables:
-`joinSyms = sharedSymbols(current.Symbols(), inner.Symbols())`. It set
-`ExplicitJoin: false`, causing the decompiler to emit `NotClause` (implicit join
-vars). Changed to `ExplicitJoin: true` — the decompiler now emits `NotJoinClause`
-with declared join vars.
+`compileNot` in `algebra/compile.go` already computed the correct join variables: `joinSyms = sharedSymbols(current.Symbols(), inner.Symbols())`. It set `ExplicitJoin: false`, causing the decompiler to emit `NotClause` (implicit join vars). Changed to `ExplicitJoin: true` — the decompiler now emits `NotJoinClause` with declared join vars.
 
-The executor uses standard "all required" scheduling for `NotJoinClause`. No
-special cases, no runtime inference, no planner modifications needed.
+The executor uses standard "all required" scheduling for `NotJoinClause`. No special cases, no runtime inference, no planner modifications needed.
 
 ### Why this works
 
-The algebra bridge has the context to resolve NOT's join variables statically —
-`current.Symbols()` contains the outer relation's symbols at the point the NOT
-is compiled. The intersection with inner symbols gives exactly the join keys.
-This is the same computation a user performs when writing `not-join` manually.
+The algebra bridge has the context to resolve NOT's join variables statically — `current.Symbols()` contains the outer relation's symbols at the point the NOT is compiled. The intersection with inner symbols gives exactly the join keys. This is the same computation a user performs when writing `not-join` manually.
 
 ## Version
 

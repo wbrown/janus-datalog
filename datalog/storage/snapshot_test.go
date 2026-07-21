@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -37,48 +35,52 @@ func snapTestHistoryNames(t *testing.T, d *Database) []string {
 }
 
 func TestSnapshotCaptureAndAsOf(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode)
 
-	snapTestAddName(t, d, "alice", "Alice")
+			snapTestAddName(t, d, "alice", "Alice")
 
-	snap, err := d.Snapshot("cp1")
-	require.NoError(t, err)
-	assert.Equal(t, "cp1", snap.Name)
-	assert.False(t, snap.At.IsZero(), "captured point should be non-zero after a write")
+			snap, err := d.Snapshot("cp1")
+			require.NoError(t, err)
+			assert.Equal(t, "cp1", snap.Name)
+			assert.False(t, snap.At.IsZero(), "captured point should be non-zero after a write")
 
-	// Write after the snapshot.
-	snapTestAddName(t, d, "bob", "Bob")
+			// Write after the snapshot.
+			snapTestAddName(t, d, "bob", "Bob")
 
-	// Live DB sees both; the snapshot handle sees only the pre-snapshot state.
-	assert.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, d))
+			// Live DB sees both; the snapshot handle sees only the pre-snapshot state.
+			assert.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, d))
 
-	asof, err := d.AsOfSnapshot("cp1")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"Alice"}, snapTestNames(t, asof))
+			asof, err := d.AsOfSnapshot("cp1")
+			require.NoError(t, err)
+			assert.Equal(t, []string{"Alice"}, snapTestNames(t, asof))
+		})
+	}
 }
 
 func TestSnapshotEmptyDatabase(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode)
 
-	snap, err := d.Snapshot("empty")
-	require.NoError(t, err)
-	assert.True(t, snap.At.IsZero(), "snapshot of an empty DB captures the zero point")
+			snap, err := d.Snapshot("empty")
+			require.NoError(t, err)
+			assert.True(t, snap.At.IsZero(), "snapshot of an empty DB captures the zero point")
 
-	asof, err := d.AsOfSnapshot("empty")
-	require.NoError(t, err)
-	assert.Empty(t, snapTestNames(t, asof))
+			asof, err := d.AsOfSnapshot("empty")
+			require.NoError(t, err)
+			assert.Empty(t, snapTestNames(t, asof))
 
-	// Writing after the empty snapshot is visible live; the AsOf view stays empty.
-	snapTestAddName(t, d, "alice", "Alice")
-	assert.Equal(t, []string{"Alice"}, snapTestNames(t, d))
+			// Writing after the empty snapshot is visible live; the AsOf view stays empty.
+			snapTestAddName(t, d, "alice", "Alice")
+			assert.Equal(t, []string{"Alice"}, snapTestNames(t, d))
 
-	asof2, err := d.AsOfSnapshot("empty")
-	require.NoError(t, err)
-	assert.Empty(t, snapTestNames(t, asof2))
+			asof2, err := d.AsOfSnapshot("empty")
+			require.NoError(t, err)
+			assert.Empty(t, snapTestNames(t, asof2))
+		})
+	}
 }
 
 func TestSnapshotListCausalOrder(t *testing.T) {
@@ -134,49 +136,53 @@ func TestDeleteSnapshot(t *testing.T) {
 }
 
 func TestTruncateToRemovesLaterWrites(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode)
 
-	snapTestAddName(t, d, "alice", "Alice")
-	_, err = d.Snapshot("cp1")
-	require.NoError(t, err)
-	snapTestAddName(t, d, "bob", "Bob")
-	snapTestAddName(t, d, "carol", "Carol")
+			snapTestAddName(t, d, "alice", "Alice")
+			_, err := d.Snapshot("cp1")
+			require.NoError(t, err)
+			snapTestAddName(t, d, "bob", "Bob")
+			snapTestAddName(t, d, "carol", "Carol")
 
-	require.Equal(t, []string{"Alice", "Bob", "Carol"}, snapTestNames(t, d))
+			require.Equal(t, []string{"Alice", "Bob", "Carol"}, snapTestNames(t, d))
 
-	require.NoError(t, d.TruncateTo("cp1"))
+			require.NoError(t, d.TruncateTo("cp1"))
 
-	// Live reads equal the snapshot exactly.
-	assert.Equal(t, []string{"Alice"}, snapTestNames(t, d))
+			// Live reads equal the snapshot exactly.
+			assert.Equal(t, []string{"Alice"}, snapTestNames(t, d))
 
-	// Physically gone, not just hidden: History no longer shows Bob/Carol.
-	assert.Equal(t, []string{"Alice"}, snapTestHistoryNames(t, d))
+			// Physically gone, not just hidden: History no longer shows Bob/Carol.
+			assert.Equal(t, []string{"Alice"}, snapTestHistoryNames(t, d))
 
-	// The target snapshot survives.
-	snaps, err := d.Snapshots()
-	require.NoError(t, err)
-	require.Len(t, snaps, 1)
-	assert.Equal(t, "cp1", snaps[0].Name)
+			// The target snapshot survives.
+			snaps, err := d.Snapshots()
+			require.NoError(t, err)
+			require.Len(t, snaps, 1)
+			assert.Equal(t, "cp1", snaps[0].Name)
+		})
+	}
 }
 
 func TestTruncateToResumesClockWithoutCollision(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode)
 
-	snapTestAddName(t, d, "alice", "Alice")
-	_, err = d.Snapshot("cp1")
-	require.NoError(t, err)
-	snapTestAddName(t, d, "bob", "Bob")
+			snapTestAddName(t, d, "alice", "Alice")
+			_, err := d.Snapshot("cp1")
+			require.NoError(t, err)
+			snapTestAddName(t, d, "bob", "Bob")
 
-	require.NoError(t, d.TruncateTo("cp1"))
+			require.NoError(t, d.TruncateTo("cp1"))
 
-	// The next write must succeed and read back, with no collision against rewound datoms.
-	snapTestAddName(t, d, "dave", "Dave")
-	assert.Equal(t, []string{"Alice", "Dave"}, snapTestNames(t, d))
-	assert.Equal(t, []string{"Alice", "Dave"}, snapTestHistoryNames(t, d))
+			// The next write must succeed and read back, with no collision against rewound datoms.
+			snapTestAddName(t, d, "dave", "Dave")
+			assert.Equal(t, []string{"Alice", "Dave"}, snapTestNames(t, d))
+			assert.Equal(t, []string{"Alice", "Dave"}, snapTestHistoryNames(t, d))
+		})
+	}
 }
 
 func TestTruncateToPrunesLaterSnapshots(t *testing.T) {
@@ -204,48 +210,52 @@ func TestTruncateToPrunesLaterSnapshots(t *testing.T) {
 }
 
 func TestTruncateToLatestIsNoop(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode)
 
-	snapTestAddName(t, d, "alice", "Alice")
-	_, err = d.Snapshot("cp1")
-	require.NoError(t, err)
+			snapTestAddName(t, d, "alice", "Alice")
+			_, err := d.Snapshot("cp1")
+			require.NoError(t, err)
 
-	// No writes after the snapshot: truncate keeps everything up to and including it.
-	require.NoError(t, d.TruncateTo("cp1"))
-	assert.Equal(t, []string{"Alice"}, snapTestNames(t, d))
+			// No writes after the snapshot: truncate keeps everything up to and including it.
+			require.NoError(t, d.TruncateTo("cp1"))
+			assert.Equal(t, []string{"Alice"}, snapTestNames(t, d))
 
-	// Still writable afterward.
-	snapTestAddName(t, d, "bob", "Bob")
-	assert.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, d))
+			// Still writable afterward.
+			snapTestAddName(t, d, "bob", "Bob")
+			assert.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, d))
+		})
+	}
 }
 
 func TestTruncateThenSnapshotRewoundTimeline(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode)
 
-	snapTestAddName(t, d, "alice", "Alice")
-	_, err = d.Snapshot("cp1")
-	require.NoError(t, err)
-	snapTestAddName(t, d, "bob", "Bob")
+			snapTestAddName(t, d, "alice", "Alice")
+			_, err := d.Snapshot("cp1")
+			require.NoError(t, err)
+			snapTestAddName(t, d, "bob", "Bob")
 
-	require.NoError(t, d.TruncateTo("cp1"))
+			require.NoError(t, d.TruncateTo("cp1"))
 
-	// Snapshot the rewound timeline and read it back.
-	_, err = d.Snapshot("cp2")
-	require.NoError(t, err)
-	snapTestAddName(t, d, "carol", "Carol")
+			// Snapshot the rewound timeline and read it back.
+			_, err = d.Snapshot("cp2")
+			require.NoError(t, err)
+			snapTestAddName(t, d, "carol", "Carol")
 
-	asof, err := d.AsOfSnapshot("cp2")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"Alice"}, snapTestNames(t, asof))
-	assert.Equal(t, []string{"Alice", "Carol"}, snapTestNames(t, d))
+			asof, err := d.AsOfSnapshot("cp2")
+			require.NoError(t, err)
+			assert.Equal(t, []string{"Alice"}, snapTestNames(t, asof))
+			assert.Equal(t, []string{"Alice", "Carol"}, snapTestNames(t, d))
 
-	// truncate -> write -> truncate is stable.
-	require.NoError(t, d.TruncateTo("cp2"))
-	assert.Equal(t, []string{"Alice"}, snapTestNames(t, d))
+			// truncate -> write -> truncate is stable.
+			require.NoError(t, d.TruncateTo("cp2"))
+			assert.Equal(t, []string{"Alice"}, snapTestNames(t, d))
+		})
+	}
 }
 
 func TestTruncateToUnknownSnapshot(t *testing.T) {
@@ -273,32 +283,34 @@ func TestAsOfSnapshotRejectsWrites(t *testing.T) {
 // TestStoreTruncateAfterAndMaxTxForEntity exercises the two BadgerStore primitives
 // directly, independent of the snapshot machinery layered on top.
 func TestStoreDatomsAfterDeleteAndMaxTxForEntity(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode)
 
-	snapTestAddName(t, d, "alice", "Alice")
-	mid, err := d.store.MaxElementID()
-	require.NoError(t, err)
+			snapTestAddName(t, d, "alice", "Alice")
+			mid, err := d.store.MaxElementID()
+			require.NoError(t, err)
 
-	snapTestAddName(t, d, "bob", "Bob")
+			snapTestAddName(t, d, "bob", "Bob")
 
-	// Alice's entity max Tx does not exceed the high-water captured before Bob.
-	maxAlice, ok, err := d.store.MaxTxForEntity(datalog.NewIdentity("alice"))
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.False(t, mid.Less(maxAlice), "alice's max Tx should not exceed the pre-bob high-water")
+			// Alice's entity max Tx does not exceed the high-water captured before Bob.
+			maxAlice, ok, err := d.store.MaxTxForEntity(datalog.NewIdentity("alice"))
+			require.NoError(t, err)
+			require.True(t, ok)
+			assert.False(t, mid.Less(maxAlice), "alice's max Tx should not exceed the pre-bob high-water")
 
-	// Removing everything after mid takes Bob's datoms (and their tx metadata) with it.
-	datoms, err := d.store.DatomsAfter(mid)
-	require.NoError(t, err)
-	n, err := d.store.DeleteDatoms(datoms)
-	require.NoError(t, err)
-	assert.Greater(t, n, 0, "should have deleted Bob's datoms")
-	assert.Equal(t, []string{"Alice"}, snapTestHistoryNames(t, d))
+			// Removing everything after mid takes Bob's datoms (and their tx metadata) with it.
+			datoms, err := d.store.DatomsAfter(mid)
+			require.NoError(t, err)
+			n, err := d.store.DeleteDatoms(datoms)
+			require.NoError(t, err)
+			assert.Greater(t, n, 0, "should have deleted Bob's datoms")
+			assert.Equal(t, []string{"Alice"}, snapTestHistoryNames(t, d))
 
-	// An entity with no datoms reports not-found.
-	_, ok, err = d.store.MaxTxForEntity(datalog.NewIdentity("ghost"))
-	require.NoError(t, err)
-	assert.False(t, ok)
+			// An entity with no datoms reports not-found.
+			_, ok, err = d.store.MaxTxForEntity(datalog.NewIdentity("ghost"))
+			require.NoError(t, err)
+			assert.False(t, ok)
+		})
+	}
 }

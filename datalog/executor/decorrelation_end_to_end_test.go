@@ -5,7 +5,6 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -74,93 +73,97 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
-	// Create executor with decorrelation enabled
-	executor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create executor with decorrelation enabled
+			executor := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
 
-	// Execute the query
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("query execution failed: %v", err)
+			// Execute the query
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("query execution failed: %v", err)
+			}
+
+			// Check symbols
+			expectedSymbols := []query.Symbol{datalog.NewSymbol("?hour"), datalog.NewSymbol("?high"), datalog.NewSymbol("?low")}
+			if !symbolsEqualTest(result.Symbols(), expectedSymbols) {
+				t.Errorf("symbol mismatch:\n  got=%v\n  want=%v",
+					result.Symbols(), expectedSymbols)
+			}
+
+			// Check results
+			// Hour 9: max high = 155.0, min low = 145.0
+			// Hour 10: max high = 165.0, min low = 152.0
+			expectedResults := map[int64]struct {
+				high float64
+				low  float64
+			}{
+				9:  {high: 155.0, low: 145.0},
+				10: {high: 165.0, low: 152.0},
+			}
+
+			if result.Size() != 2 {
+				t.Errorf("expected 2 result tuples, got %d", result.Size())
+				dumpRelationTest(t, result)
+				return
+			}
+
+			it := result.Iterator()
+			defer it.Close()
+
+			found := make(map[int64]bool)
+			for it.Next() {
+				tuple := it.Tuple()
+				if len(tuple) != 3 {
+					t.Errorf("expected tuple length 3, got %d: %v", len(tuple), tuple)
+					continue
+				}
+
+				hour, ok := tuple[0].(int64)
+				if !ok {
+					t.Errorf("expected hour to be int64, got %T: %v", tuple[0], tuple[0])
+					continue
+				}
+
+				high, ok := tuple[1].(float64)
+				if !ok {
+					t.Errorf("expected high to be float64, got %T: %v", tuple[1], tuple[1])
+					continue
+				}
+
+				low, ok := tuple[2].(float64)
+				if !ok {
+					t.Errorf("expected low to be float64, got %T: %v", tuple[2], tuple[2])
+					continue
+				}
+
+				expected, exists := expectedResults[hour]
+				if !exists {
+					t.Errorf("unexpected hour: %d", hour)
+					continue
+				}
+
+				if high != expected.high {
+					t.Errorf("hour %d: expected high=%f, got %f", hour, expected.high, high)
+				}
+
+				if low != expected.low {
+					t.Errorf("hour %d: expected low=%f, got %f", hour, expected.low, low)
+				}
+
+				found[hour] = true
+			}
+
+			// Check all hours were found
+			for hour := range expectedResults {
+				if !found[hour] {
+					t.Errorf("missing results for hour %d", hour)
+				}
+			}
+
+			t.Logf("✓ Decorrelation test passed: 2 subqueries executed with batched inputs")
+		})
 	}
-
-	// Check symbols
-	expectedSymbols := []query.Symbol{datalog.NewSymbol("?hour"), datalog.NewSymbol("?high"), datalog.NewSymbol("?low")}
-	if !symbolsEqualTest(result.Symbols(), expectedSymbols) {
-		t.Errorf("symbol mismatch:\n  got=%v\n  want=%v",
-			result.Symbols(), expectedSymbols)
-	}
-
-	// Check results
-	// Hour 9: max high = 155.0, min low = 145.0
-	// Hour 10: max high = 165.0, min low = 152.0
-	expectedResults := map[int64]struct {
-		high float64
-		low  float64
-	}{
-		9:  {high: 155.0, low: 145.0},
-		10: {high: 165.0, low: 152.0},
-	}
-
-	if result.Size() != 2 {
-		t.Errorf("expected 2 result tuples, got %d", result.Size())
-		dumpRelationTest(t, result)
-		return
-	}
-
-	it := result.Iterator()
-	defer it.Close()
-
-	found := make(map[int64]bool)
-	for it.Next() {
-		tuple := it.Tuple()
-		if len(tuple) != 3 {
-			t.Errorf("expected tuple length 3, got %d: %v", len(tuple), tuple)
-			continue
-		}
-
-		hour, ok := tuple[0].(int64)
-		if !ok {
-			t.Errorf("expected hour to be int64, got %T: %v", tuple[0], tuple[0])
-			continue
-		}
-
-		high, ok := tuple[1].(float64)
-		if !ok {
-			t.Errorf("expected high to be float64, got %T: %v", tuple[1], tuple[1])
-			continue
-		}
-
-		low, ok := tuple[2].(float64)
-		if !ok {
-			t.Errorf("expected low to be float64, got %T: %v", tuple[2], tuple[2])
-			continue
-		}
-
-		expected, exists := expectedResults[hour]
-		if !exists {
-			t.Errorf("unexpected hour: %d", hour)
-			continue
-		}
-
-		if high != expected.high {
-			t.Errorf("hour %d: expected high=%f, got %f", hour, expected.high, high)
-		}
-
-		if low != expected.low {
-			t.Errorf("hour %d: expected low=%f, got %f", hour, expected.low, low)
-		}
-
-		found[hour] = true
-	}
-
-	// Check all hours were found
-	for hour := range expectedResults {
-		if !found[hour] {
-			t.Errorf("missing results for hour %d", hour)
-		}
-	}
-
-	t.Logf("✓ Decorrelation test passed: 2 subqueries executed with batched inputs")
 }
 
 // Test utilities

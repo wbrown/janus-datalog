@@ -34,10 +34,8 @@ func (p RelationProperties) renameSymbols(from, to []query.Symbol) RelationPrope
 		return RelationProperties{}
 	}
 	rename := func(symbol query.Symbol) (query.Symbol, bool) {
-		for i, candidate := range from {
-			if candidate == symbol {
-				return to[i], true
-			}
+		if i := query.SymbolIndex(from, symbol); i >= 0 {
+			return to[i], true
 		}
 		return nil, false
 	}
@@ -49,8 +47,8 @@ func (p RelationProperties) renameSymbols(from, to []query.Symbol) RelationPrope
 			break
 		}
 		result.Ordering = append(result.Ordering, query.OrderByClause{
-			Variable:  symbol,
-			Direction: clause.Direction,
+			Variable:   symbol,
+			Descending: clause.Descending,
 		})
 	}
 	for _, key := range p.Keys {
@@ -109,14 +107,7 @@ func (p RelationProperties) addSymbol(symbol query.Symbol) RelationProperties {
 	}
 	var keys [][]query.Symbol
 	for _, key := range result.Keys {
-		overwritten := false
-		for _, keySymbol := range key {
-			if keySymbol == symbol {
-				overwritten = true
-				break
-			}
-		}
-		if !overwritten {
+		if !query.ContainsSymbol(key, symbol) {
 			keys = append(keys, key)
 		}
 	}
@@ -200,7 +191,7 @@ func orProperties(
 	for _, outerKey := range unaffectedOuterKeys {
 		composite := append([]query.Symbol(nil), outerKey...)
 		for _, symbol := range producedSymbols {
-			if outputSet[symbol] && !symbolInSlice(composite, symbol) {
+			if outputSet[symbol] && !query.ContainsSymbol(composite, symbol) {
 				composite = append(composite, symbol)
 			}
 		}
@@ -224,15 +215,6 @@ func expansionProperties(
 		false,
 	)
 	return result
-}
-
-func symbolInSlice(symbols []query.Symbol, candidate query.Symbol) bool {
-	for _, symbol := range symbols {
-		if symbol == candidate {
-			return true
-		}
-	}
-	return false
 }
 
 func joinProperties(
@@ -291,14 +273,7 @@ func containsSymbolSet(keys [][]query.Symbol, candidate []query.Symbol) bool {
 		}
 		matches := true
 		for _, symbol := range candidate {
-			found := false
-			for _, keySymbol := range key {
-				if keySymbol == symbol {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !query.ContainsSymbol(key, symbol) {
 				matches = false
 				break
 			}

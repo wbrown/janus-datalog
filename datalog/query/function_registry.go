@@ -3,12 +3,17 @@ package query
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
-// FunctionRegistry tracks which functions are supported for FunctionPredicates
-// This allows us to fail at query planning time rather than runtime
+// FunctionRegistry is the function-namespace authority: metadata (name,
+// arity) for parse-time validation, and implementations for user-defined
+// functions invoked at evaluation time. Registration happens at runtime
+// (RegisterImplementation), so all access is mutex-guarded.
 type FunctionRegistry struct {
-	functions map[string]FunctionMetadata
+	mu              sync.RWMutex
+	functions       map[string]FunctionMetadata
+	implementations map[string]func([]interface{}) (interface{}, error)
 }
 
 // FunctionMetadata describes a supported function
@@ -24,7 +29,8 @@ var DefaultRegistry = NewFunctionRegistry()
 
 func NewFunctionRegistry() *FunctionRegistry {
 	r := &FunctionRegistry{
-		functions: make(map[string]FunctionMetadata),
+		functions:       make(map[string]FunctionMetadata),
+		implementations: make(map[string]func([]interface{}) (interface{}, error)),
 	}
 
 	// String functions
@@ -105,18 +111,48 @@ func NewFunctionRegistry() *FunctionRegistry {
 
 // Register adds a function to the registry
 func (r *FunctionRegistry) Register(meta FunctionMetadata) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.functions[meta.Name] = meta
+}
+
+// RegisterImplementation registers a user-defined function under name: its
+// metadata (variadic — arity is the implementation's concern) and its
+// callable. Registered names evaluate in predicate position
+// (FunctionPredicate) and expression position (CustomFunction).
+func (r *FunctionRegistry) RegisterImplementation(name string, fn func([]interface{}) (interface{}, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.functions[name] = FunctionMetadata{
+		Name:        name,
+		MinArgs:     0,
+		MaxArgs:     -1,
+		Description: "user-defined function",
+	}
+	r.implementations[name] = fn
+}
+
+// Implementation returns the user-registered callable for name.
+func (r *FunctionRegistry) Implementation(name string) (func([]interface{}) (interface{}, error), bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	fn, ok := r.implementations[name]
+	return fn, ok
 }
 
 // IsRegistered checks if a function name is registered
 func (r *FunctionRegistry) IsRegistered(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	_, ok := r.functions[name]
 	return ok
 }
 
 // Validate checks if a function call is valid
 func (r *FunctionRegistry) Validate(name string, argCount int) error {
+	r.mu.RLock()
 	meta, ok := r.functions[name]
+	r.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("unknown function '%s' - supported functions: %s",
 			name, r.ListFunctions())
@@ -137,6 +173,8 @@ func (r *FunctionRegistry) Validate(name string, argCount int) error {
 
 // ListFunctions returns a comma-separated list of registered functions
 func (r *FunctionRegistry) ListFunctions() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	names := make([]string, 0, len(r.functions))
 	for name := range r.functions {
 		names = append(names, name)
@@ -146,6 +184,8 @@ func (r *FunctionRegistry) ListFunctions() string {
 
 // GetMetadata returns metadata for a function
 func (r *FunctionRegistry) GetMetadata(name string) (FunctionMetadata, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	meta, ok := r.functions[name]
 	return meta, ok
 }

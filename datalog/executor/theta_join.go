@@ -7,9 +7,11 @@ import (
 // thetaJoinWithPredicate performs a nested-loop join with a predicate filter.
 // This replaces Product() + filterWithPredicateAndLookup for multi-relation predicates,
 // avoiding the StreamingRelation.Iterator() panic by using BufferedIterator for the inner.
-func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) Relation {
+//
+// Eager: errors are knowable synchronously and return in-band.
+func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) (Relation, error) {
 	if len(relevantRels) == 0 {
-		return NewMaterializedRelationWithOptions(nil, nil, opts)
+		return NewMaterializedRelationWithOptions(nil, nil, opts), nil
 	}
 	if len(relevantRels) == 1 {
 		return filterWithPredicateAndLookup(relevantRels[0], pred, lookup, constants)
@@ -22,9 +24,15 @@ func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, looku
 
 	// For 3+ relations: iteratively pair-wise theta-join
 	// Buffer all inner relations, join the first two, then join result with third, etc.
-	result := thetaJoinPair(relevantRels[0], relevantRels[1], nil, nil, constants, opts)
+	result, err := thetaJoinPair(relevantRels[0], relevantRels[1], nil, nil, constants, opts)
+	if err != nil {
+		return nil, err
+	}
 	for i := 2; i < len(relevantRels); i++ {
-		result = thetaJoinPair(result, relevantRels[i], nil, nil, constants, opts)
+		result, err = thetaJoinPair(result, relevantRels[i], nil, nil, constants, opts)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// Apply predicate filter on final combined result
 	return filterWithPredicateAndLookup(result, pred, lookup, constants)
@@ -32,7 +40,10 @@ func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, looku
 
 // thetaJoinPair performs a nested-loop join between two relations with optional predicate.
 // The outer relation streams; the inner is buffered for re-iteration via BufferedIterator.
-func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) Relation {
+//
+// Eager: evaluation, iteration, and close errors are knowable synchronously
+// and return in-band.
+func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) (Relation, error) {
 	outerSyms := outer.Symbols()
 	innerSyms := inner.Symbols()
 	combinedSyms := make([]query.Symbol, 0, len(outerSyms)+len(innerSyms))
@@ -48,9 +59,11 @@ func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.Ent
 	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
 
 	var filtered []Tuple
+	var joinErr error
 
 	outerIt := outer.Iterator()
 	firstOuter := true
+outerLoop:
 	for outerIt.Next() {
 		outerTuple := outerIt.Tuple()
 
@@ -76,12 +89,8 @@ func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.Ent
 				for sym, val := range constants {
 					bindings[sym] = val
 				}
-				for i, sym := range outerSyms {
-					bindings[sym] = outerTuple[i]
-				}
-				for i, sym := range innerSyms {
-					bindings[sym] = innerTuple[i]
-				}
+				bindTuple(bindings, outerSyms, outerTuple)
+				bindTuple(bindings, innerSyms, innerTuple)
 
 				// Evaluate predicate
 				var passes bool
@@ -92,7 +101,11 @@ func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.Ent
 					passes, err = pred.Eval(bindings)
 				}
 				if err != nil {
-					continue
+					// Fail fast — predicate eval errors are real errors, not
+					// "treat as false." Surface to the consumer; do not
+					// silently drop the pair.
+					joinErr = err
+					break outerLoop
 				}
 				if !passes {
 					continue
@@ -102,33 +115,50 @@ func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.Ent
 			filtered = append(filtered, combined)
 		}
 	}
-	outerIt.Close()
-	innerBuf.Close()
+	// A failed outer or inner iteration must not be presented as a
+	// completed join. First error wins; all errors return in-band.
+	if err := outerIt.Error(); joinErr == nil {
+		joinErr = err
+	}
+	if err := innerBuf.Error(); joinErr == nil {
+		joinErr = err
+	}
+	if closeErr := outerIt.Close(); joinErr == nil {
+		joinErr = closeErr
+	}
+	if closeErr := innerBuf.Close(); joinErr == nil {
+		joinErr = closeErr
+	}
+	if joinErr != nil {
+		return nil, joinErr
+	}
 
-	return NewMaterializedRelationWithOptions(combinedSyms, filtered, opts)
+	return NewMaterializedRelationWithOptions(combinedSyms, filtered, opts), nil
 }
 
 // crossJoinWithExpression performs a nested-loop cross-join between multiple relations,
 // then evaluates an expression on each combined tuple.
 // This replaces Product() + evaluateExpressionWithLookup for multi-relation expressions,
 // avoiding the StreamingRelation.Iterator() panic.
-func crossJoinWithExpression(relevantRels []Relation, expr *query.Expression, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) Relation {
+//
+// Eager: errors are knowable synchronously and return in-band.
+func crossJoinWithExpression(relevantRels []Relation, expr *query.Expression, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) (Relation, error) {
 	if len(relevantRels) == 0 {
-		return NewMaterializedRelationWithOptions(nil, nil, opts)
+		return NewMaterializedRelationWithOptions(nil, nil, opts), nil
 	}
 	if len(relevantRels) == 1 {
 		return evaluateExpressionWithLookup(relevantRels[0], expr, lookup, constants)
 	}
 
 	// Cross-join all relations first (no predicate filter)
-	var joined Relation
-	if len(relevantRels) == 2 {
-		joined = thetaJoinPair(relevantRels[0], relevantRels[1], nil, nil, constants, opts)
-	} else {
-		// Iteratively pair-wise cross-join
-		joined = thetaJoinPair(relevantRels[0], relevantRels[1], nil, nil, constants, opts)
-		for i := 2; i < len(relevantRels); i++ {
-			joined = thetaJoinPair(joined, relevantRels[i], nil, nil, constants, opts)
+	joined, err := thetaJoinPair(relevantRels[0], relevantRels[1], nil, nil, constants, opts)
+	if err != nil {
+		return nil, err
+	}
+	for i := 2; i < len(relevantRels); i++ {
+		joined, err = thetaJoinPair(joined, relevantRels[i], nil, nil, constants, opts)
+		if err != nil {
+			return nil, err
 		}
 	}
 

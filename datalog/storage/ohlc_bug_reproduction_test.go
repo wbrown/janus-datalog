@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -73,37 +71,42 @@ func TestOHLCQueryBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	require.NoError(t, err)
 
-	matcher := NewBadgerMatcher(db.store)
-	exec := executor.NewExecutor(matcher, db)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			matcher := NewBadgerMatcher(db.store)
+			popts := mode.plannerOptions()
+			exec := executor.NewExecutorWithOptions(matcher, db, popts)
 
-	// Set a timeout channel to prevent hanging forever
-	done := make(chan bool)
-	var result executor.Relation
-	var execErr error
+			// Set a timeout channel to prevent hanging forever
+			done := make(chan bool)
+			var result executor.Relation
+			var execErr error
 
-	go func() {
-		result, execErr = exec.Execute(q)
-		done <- true
-	}()
+			go func() {
+				result, execErr = exec.Execute(q)
+				done <- true
+			}()
 
-	select {
-	case <-done:
-		// Query completed
-		require.NoError(t, execErr)
+			select {
+			case <-done:
+				// Query completed
+				require.NoError(t, execErr)
 
-		// Count results
-		count := 0
-		it := result.Iterator()
-		for it.Next() {
-			count++
-		}
-		it.Close()
+				// Count results
+				count := 0
+				it := result.Iterator()
+				for it.Next() {
+					count++
+				}
+				it.Close()
 
-		// Should have 1 tuple (grouped by year/month/day)
-		// If bug exists, might get 0 tuples or hang
-		require.Greater(t, count, 0, "Query returned 0 results - tuple copying bug in matcher_relations.go:241")
+				// Should have 1 tuple (grouped by year/month/day)
+				// If bug exists, might get 0 tuples or hang
+				require.Greater(t, count, 0, "Query returned 0 results - tuple copying bug in matcher_relations.go:241")
 
-	case <-time.After(30 * time.Second):
-		t.Fatal("Query hung for 30 seconds - likely due to tuple copying bug causing infinite loop or massive data")
+			case <-time.After(30 * time.Second):
+				t.Fatal("Query hung for 30 seconds - likely due to tuple copying bug causing infinite loop or massive data")
+			}
+		})
 	}
 }

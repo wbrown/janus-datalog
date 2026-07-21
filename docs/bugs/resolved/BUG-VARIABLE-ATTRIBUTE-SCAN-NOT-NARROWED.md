@@ -55,26 +55,8 @@ Queries with variable attributes and collection inputs (`[?self ?fwd ?target]` w
 
 **Resolved.** Verified by reading the code path directly (not delegated):
 
-A pattern `[?self ?fwd ?target]` with both `?self` and `?fwd` bound from the
-binding relation now has **two bound positions** (E and A). In
-`analyzeReuseStrategy` (`storage/matcher_strategy.go`), `len(boundPositions) > 1`
-routes to **`chooseBestMultiPositionStrategy`** (matcher_strategy.go:199), which
-builds per-position cardinality info and selects an index prefix that constrains
-**both** E and A — instead of the previous single-position path that left the
-variable attribute unconstrained and scanned the full EATV index. A
-single-valued variable attribute is additionally resolved up front via
-`resolveKeywordFromBindings` (`matcher_relations.go:74`), so when the bound `?fwd`
-is one keyword it is treated like a constant attribute for cache/prefix
-narrowing.
+A pattern `[?self ?fwd ?target]` with both `?self` and `?fwd` bound from the binding relation now has **two bound positions** (E and A). In `analyzeReuseStrategy` (`storage/matcher_strategy.go`), `len(boundPositions) > 1` routes to **`chooseBestMultiPositionStrategy`** (matcher_strategy.go:199), which builds per-position cardinality info and selects an index prefix that constrains **both** E and A — instead of the previous single-position path that left the variable attribute unconstrained and scanned the full EATV index. A single-valued variable attribute is additionally resolved up front via `resolveKeywordFromBindings` (`matcher_relations.go:74`), so when the bound `?fwd` is one keyword it is treated like a constant attribute for cache/prefix narrowing.
 
-The named reproduction is active and not skipped:
-`TestOrCorrelatedUnionPartialOuterRelation` (`storage/or_correlated_perf_test.go`)
-builds 500 items + an event entity with no `:agent/container`, runs the exact
-`[?self ?fwd ?target]` shape with `?fwd = [:agent/container]`, and asserts
-`elapsed < 1*time.Second` (the comment notes the bug made it take 10+ seconds —
-a >10× discriminator, not a soft threshold).
+The named reproduction is active and not skipped: `TestOrCorrelatedUnionPartialOuterRelation` (`storage/or_correlated_perf_test.go`) builds 500 items + an event entity with no `:agent/container`, runs the exact `[?self ?fwd ?target]` shape with `?fwd = [:agent/container]`, and asserts `elapsed < 1*time.Second` (the comment notes the bug made it take 10+ seconds — a >10× discriminator, not a soft threshold).
 
-Note: this is a performance fix; the reproduction pins it via wall-clock under a
-generous 1s bound rather than a correctness assertion, but the narrowing code
-path (`chooseBestMultiPositionStrategy` building an E+A prefix) was read and
-confirmed present, so the speed is the fix at work, not incidental.
+Note: this is a performance fix; the reproduction pins it via wall-clock under a generous 1s bound rather than a correctness assertion, but the narrowing code path (`chooseBestMultiPositionStrategy` building an E+A prefix) was read and confirmed present, so the speed is the fix at work, not incidental.

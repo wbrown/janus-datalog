@@ -19,13 +19,19 @@ import (
 // rank. These tests pin the comparator laws (antisymmetry, sort-safety,
 // predicate consistency) rather than any single direction outcome.
 
-// mixedTypeValues spans every rank class, for the antisymmetry matrix.
+// mixedTypeValues spans every rank class, for the antisymmetry matrix. The
+// numeric rank deliberately includes all three representations — int64,
+// uint64, float64 — with an equal-magnitude trio (42) so cross-representation
+// ties are exercised, and a uint64 above int64's range.
 func mixedTypeValues() []Value {
 	return []Value{
 		nil,
 		int64(-5),
 		int64(42),
+		uint64(42),
+		uint64(1 << 63),
 		3.14,
+		float64(42),
 		true,
 		false,
 		time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -66,19 +72,42 @@ func TestCompareValues_Antisymmetric(t *testing.T) {
 	}
 }
 
-// TestCompareValues_EqualOnlyWithinSameValue pins that cmp(a,b)==0 implies the
-// values are equal under ValuesEqual (so distinct-type pairs never compare equal
-// by accident).
+// inNumericRank reports whether a value is in the comparator's numeric rank
+// class (typeRank 1), where ordering is by magnitude across representations.
+func inNumericRank(v Value) bool {
+	switch v.(type) {
+	case int, int8, int16, int32, int64, uint64, *uint64, float64:
+		return true
+	}
+	return false
+}
+
+// TestCompareValues_ZeroIsEquality pins what cmp==0 implies. Outside the
+// numeric rank, cmp(a,b)==0 implies ValuesEqual(a,b) — distinct-type pairs
+// never compare equal by accident. Within the numeric rank, cmp==0 means equal
+// magnitude while equality stays representation-strict across the
+// int64/uint64/float64 split: (>= 2 2.0) is true and (= 2 2.0) is false.
 func TestCompareValues_ZeroIsEquality(t *testing.T) {
 	vals := mixedTypeValues()
 	for _, a := range vals {
 		for _, b := range vals {
-			if CompareValues(a, b) == 0 {
-				require.Truef(t, ValuesEqual(a, b),
-					"cmp(%v,%v)==0 but ValuesEqual is false", a, b)
+			if CompareValues(a, b) != 0 {
+				continue
 			}
+			if inNumericRank(a) && inNumericRank(b) {
+				continue // magnitude tie; equality may still be strict
+			}
+			require.Truef(t, ValuesEqual(a, b),
+				"cmp(%v,%v)==0 but ValuesEqual is false", a, b)
 		}
 	}
+
+	// The numeric carve-out is real, not vacuous: equal magnitude across
+	// representations compares 0 without being equal.
+	require.Equal(t, 0, CompareValues(int64(42), float64(42)))
+	require.False(t, ValuesEqual(int64(42), float64(42)))
+	require.Equal(t, 0, CompareValues(int64(42), uint64(42)))
+	require.False(t, ValuesEqual(int64(42), uint64(42)))
 }
 
 // TestCompareValues_Transitive samples transitivity: for any a<b and b<c, a<c.
@@ -116,9 +145,13 @@ func TestCompareValues_SortStable(t *testing.T) {
 	}
 	sort.SliceStable(b, func(i, j int) bool { return CompareValues(b[i], b[j]) < 0 })
 
+	// Equal-magnitude numeric values of different representations compare 0,
+	// so stable sort preserves each initial order within such a tie class.
+	// The law is order-identity up to ties: every position holds a value that
+	// compares equal across the two sorts.
 	require.Equal(t, len(a), len(b))
 	for i := range a {
-		require.Truef(t, ValuesEqual(a[i], b[i]) || (a[i] == nil && b[i] == nil),
+		require.Truef(t, sign(CompareValues(a[i], b[i])) == 0,
 			"sort order differs at %d: %v vs %v", i, a[i], b[i])
 	}
 }
@@ -143,4 +176,55 @@ func TestCompareValues_NumericCrossTypeUnchanged(t *testing.T) {
 	require.Equal(t, 0, sign(CompareValues(int64(2), 2.0)))
 	// Int-width normalization unchanged.
 	require.Equal(t, 0, sign(CompareValues(int32(5), int64(5))))
+}
+
+// TestCompareValues_KnownPairs pins concrete outcomes for representative
+// pairs: same-type orderings, mixed numeric widths, and the specific rank
+// direction between classes (numeric < bool < string), which the law tests
+// above cannot pin.
+func TestCompareValues_KnownPairs(t *testing.T) {
+	tests := []struct {
+		name     string
+		left     interface{}
+		right    interface{}
+		expected int
+	}{
+		// Integer comparisons
+		{"int64 less", int64(10), int64(20), -1},
+		{"int64 equal", int64(20), int64(20), 0},
+		{"int64 greater", int64(30), int64(20), 1},
+
+		// Float comparisons
+		{"float less", 10.5, 20.5, -1},
+		{"float equal", 20.5, 20.5, 0},
+		{"float greater", 30.5, 20.5, 1},
+
+		// String comparisons
+		{"string less", "Alice", "Bob", -1},
+		{"string equal", "Bob", "Bob", 0},
+		{"string greater", "Charlie", "Bob", 1},
+
+		// Boolean comparisons
+		{"bool false < true", false, true, -1},
+		{"bool equal", true, true, 0},
+		{"bool true > false", true, false, 1},
+
+		// Mixed numeric types
+		{"int to int64", int(10), int64(20), -1},
+		{"int64 to float", int64(10), 20.5, -1},
+		{"float to int", 10.5, int(10), 1},
+
+		// Mixed types order by type rank (numeric=1 < bool=2 < string=4).
+		{"string vs int", "test", 123, 1},    // string rank > numeric rank
+		{"bool vs string", true, "test", -1}, // bool rank < string rank
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CompareValues(tt.left, tt.right)
+			if result != tt.expected {
+				t.Errorf("expected %d, got %d", tt.expected, result)
+			}
+		})
+	}
 }

@@ -1,9 +1,6 @@
 # BUG: Iterator Leak in Builtin Database Function Evaluation
 
-**Status**: Resolved (2026-05-25) — see Resolution below
-**Severity**: Resource leak (256 MB WAL file per leaked query; blocks directory cleanup on Windows)
-**Discovered**: 2026-02-23, reported by colleague with Windows reproduction
-**Reproduction**: `TestIteratorLeak_BuiltinPatternDiscoveredEntity` in `datalog/storage/iterator_leak_test.go`
+**Status**: Resolved (2026-05-25) — see Resolution below **Severity**: Resource leak (256 MB WAL file per leaked query; blocks directory cleanup on Windows) **Discovered**: 2026-02-23, reported by colleague with Windows reproduction **Reproduction**: `TestIteratorLeak_BuiltinPatternDiscoveredEntity` in `datalog/storage/iterator_leak_test.go`
 
 ## Symptom
 

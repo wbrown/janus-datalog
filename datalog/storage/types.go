@@ -221,27 +221,3 @@ type Resolver interface {
 	ResolveAttribute(Attribute) datalog.Keyword
 	ResolveTx(Tx) datalog.ElementID
 }
-
-// toStorageValue converts user values to storage values
-func toStorageValue(v interface{}) datalog.Value {
-	// Most values pass through directly
-	switch val := v.(type) {
-	case datalog.Value:
-		return val
-	case string:
-		return datalog.String(val)
-	case int64:
-		return datalog.Int(val)
-	case int:
-		return datalog.Int(int64(val))
-	case float64:
-		return datalog.Float(val)
-	case bool:
-		return datalog.Bool(val)
-	case datalog.Symbol:
-		return datalog.SymbolValue(val)
-	default:
-		// Fall back to string representation
-		return datalog.String(fmt.Sprintf("%v", v))
-	}
-}
