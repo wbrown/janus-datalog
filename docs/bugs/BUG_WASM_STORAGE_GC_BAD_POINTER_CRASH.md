@@ -20,6 +20,9 @@ Three crashes across eleven runs:
 | 11 | manual re-run, same package | pass |
 | 12 | CI `make test-wasm`, linux/amd64, go1.25.12 (two runs of the same commit) | one pass, one **crash** ~30s into storage |
 | 13 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, branch `fix/tuple-builder-string-key` (uncommitted key-encoder rewrite in tree) | **crash** ~35s into storage |
+| 14 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, branch `fix/tuple-builder-string-key` (uncommitted LookupAttribute single-homing in tree) | **crash** ~29s into storage |
+| 15 | 2026-07-21, manual `make test-wasm` re-run of the same tree as run 14 | **crash** ~28s into storage |
+| 16 | 2026-07-21, second manual `make test-wasm` re-run, same tree | **crash** ~28s into storage |
 
 All crashes are the same fatal — the GC write barrier discovering a poisoned pointer slot:
 
@@ -27,6 +30,9 @@ All crashes are the same fatal — the GC write barrier discovering a poisoned p
 - Run 2: `runtime: pointer 0x22300000 to unused region of span` (span base `0x12f30000`) — same fatal, different stack: `bulkBarrierPreWriteSrcOnly` during `growslice`, an append in `storage.(*MemoryStore).scan.func1` (`memory_store.go:153`) inside a btree `AscendRange`, reached from `validatingVBoundIterator.openCRDTScan` (`matcher_relations.go:1077`) via `Next` ← `CountingIterator` ← `LazySeq` realize. Same goroutine number (3932).
 - Run 10: `runtime: pointer 0x21970000 to unallocated span` — and this time the crashing goroutine's **stack itself is corrupted**: `runtime: g 4129: unexpected return pc for gcWriteBarrier called from 0x82ed80` (a stack address in a return-PC slot). The dumped stack memory around the frame contains storage key material — the ASCII bytes `entity/type` and hash-like byte runs — and the symbolizer mis-attributes a data word to `BenchmarkElementID.func3`, i.e. raw data is sitting where the runtime expects frame structure.
 - Run 13: `runtime: pointer 0x22430000 to unallocated span` — same 0x10000-multiple poison shape, discovered in `runtime.wbBufFlush1` from `runtime.wbMove` inside `executor.(*DefaultQueryExecutor).tryFuseAttributeFetchBundle` (`query_executor.go:681`) under `DefaultQueryExecutor.Execute`, goroutine 4697, go1.26.3. Same late-suite timing (~35s), same full-pipeline context.
+- Run 14: `runtime: pointer 0x22430000 to unallocated span` — same poison value as run 13, discovered in `runtime.wbBufFlush1` via `bulkBarrierPreWriteSrcOnly` during `growslice`, an append in `storage.(*MemoryStore).scan.func1` (`memory_store.go:155`) inside a btree iterate — run 2's discovery stack shape. Goroutine 4698, go1.26.3, ~29s into storage, full-pipeline context.
+- Run 15: same poison (`0x22430000`), same goroutine number (4698), discovered at `gcWriteBarrier` with a corrupted return PC (`unexpected return pc for gcWriteBarrier called from 0x1856410`) and fmt frames in the dumped stack — run 10's discovery shape. Back-to-back with run 14, mirroring the run 1–2 pattern.
+- Run 16: same poison, same goroutine 4698, discovered at `gcWriteBarrier` inside `fmt.(*fmt).padString` under a `deferreturn`. **Three consecutive crashes on one tree — a first** (previous maximum was two, runs 1–2); this binary's layout appears to sit in a near-deterministic crash window, consistent with the extreme layout sensitivity the GOGC=1 triage established. Runs 14–16 share one binary (only doc edits between them); run 13's binary was different yet produced the same `0x22430000` poison — the first observation of one poison value recurring across distinct binaries.
 
 What the signature says:
 

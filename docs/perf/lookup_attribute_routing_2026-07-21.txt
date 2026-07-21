@@ -1,0 +1,20 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	     658	   1615971 ns/op	 2194317 B/op	   32218 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	     745	   1584824 ns/op	 2194436 B/op	   32218 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	     720	   1630681 ns/op	 2194437 B/op	   32218 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	     668	   1787004 ns/op	 2194462 B/op	   32219 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	     664	   1787353 ns/op	 2194466 B/op	   32219 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3360	    355556 ns/op	  372460 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3378	    358837 ns/op	  372459 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3429	    362735 ns/op	  372458 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3312	    364818 ns/op	  372460 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3283	    357109 ns/op	  372458 B/op	    5796 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	12.181s
+
+Baseline (same benchmark, pre-routing tree): docs/perf/key_encoder_after_2026-07-21.txt
+per-entity median 3242431 ns/op / 3587506 B/op / 45329 allocs/op
+batch median      402908 ns/op /  372465 B/op /  5796 allocs/op
