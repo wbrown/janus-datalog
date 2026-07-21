@@ -116,10 +116,9 @@ func (it *hashJoinIterator) Next() bool {
 			it.currentProbeTuple = tupleCopy
 		}
 
-		key := NewTupleKey(it.currentProbeTuple, it.probeIndices)
-
-		// Look up matches in hash table
-		if matchesVal, ok := it.hashTable.Get(key); ok {
+		// Look up matches in hash table — a positional probe, so no key
+		// materializes for the (common) miss or for hit-and-consume rows.
+		if matchesVal, ok := it.hashTable.GetPositions(it.currentProbeTuple, it.probeIndices); ok {
 			if it.buildKeysUnique {
 				it.singleMatch[0] = matchesVal.(Tuple)
 				it.matches = it.singleMatch[:]

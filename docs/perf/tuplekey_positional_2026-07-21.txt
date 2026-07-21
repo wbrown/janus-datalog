@@ -1,0 +1,21 @@
+Positional tuple-key probes + split-overflow TupleKeyMap vs baseline
+(commit f1e3189), n=10, Apple M5, same-session back-to-back via worktree.
+
+benchstat, final (split-overflow) variant:
+
+ComplexQueryCheckpoint-10    23.99m ± 3%    22.15m ± 3%   -7.64% (p=0.000 n=10)
+B/op                        44.62Mi ± 0%   43.27Mi ± 0%   -3.01% (p=0.000 n=10)
+allocs/op                    550.4k ± 0%    399.1k ± 0%  -27.50% (p=0.000 n=10)
+
+Intermediate (inline mapBucket, superseded): -5.62% sec/op, -27.50% allocs,
+but +12.73% B/op — the 64-byte inline bucket slots grew the map's storage.
+The split-overflow form (40-byte inline entry slots, separate lazily-nil
+overflow map for true collisions) kept the full allocation-count win,
+inverted the byte regression, and gained two further points of wall time.
+
+Allocation anatomy driving the change (200x memprofile of the checkpoint):
+NewTupleKey ~98,600 objects/op (one values slice per key, probe or store);
+TupleKeyMap.PutIfAbsent ~76,300 and Put ~46,100 (one bucket backing array
+per stored key). Probe conversions: hash-join probe side, cachedBranch
+probe, or-fallback outer-key dedup, batch and streaming aggregation group
+lookups.

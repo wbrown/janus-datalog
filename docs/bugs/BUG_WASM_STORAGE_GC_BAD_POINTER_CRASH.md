@@ -23,6 +23,8 @@ Three crashes across eleven runs:
 | 14 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, branch `fix/tuple-builder-string-key` (uncommitted LookupAttribute single-homing in tree) | **crash** ~29s into storage |
 | 15 | 2026-07-21, manual `make test-wasm` re-run of the same tree as run 14 | **crash** ~28s into storage |
 | 16 | 2026-07-21, second manual `make test-wasm` re-run, same tree | **crash** ~28s into storage |
+| 17 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted tuple-key split-overflow work in tree | **crash** ~29s into storage, poison `0x223f0000` (new per-binary constant; layout shifted by the tuple-key changes), gcWriteBarrier corrupted-return-pc discovery shape |
+| 18 | 2026-07-21, manual `make test-wasm` re-run of the same tree | **crash** ~28s, same poison and goroutine — this binary's layout is in the near-deterministic window, as runs 14–16's was. Root cause is upstream-confirmed (itabInit, CL 803460); reruns stopped per the run-14–16 precedent |
 
 All crashes are the same fatal — the GC write barrier discovering a poisoned pointer slot:
 
@@ -100,8 +102,12 @@ Local corroboration and verification, from the reproducer side:
 
 ## Remaining next steps
 
-1. Track CL 803460 to submission; the crash class ends at the first Go release
-   carrying it.
-2. Until then: the CI wasm job will flake at roughly the stochastic rate;
-   reruns are sanctioned for this signature only, with this doc as the
-   reference.
+1. **CL 803460 merged into Go master (2026-07-21)** — patch set 2, revision
+   `5141d4e`, the exact revision verified 3/3 against this repo's `GOGC=1`
+   reproducer. The crash class ends at the first Go release (or toolchain
+   update) carrying the merge.
+2. Until the gate's toolchain carries it: the wasm job flakes at a
+   layout-determined rate — some binaries sit in a near-deterministic crash
+   window (runs 14–16, 17–18) and stay red until the next code change shifts
+   the layout. Reruns are sanctioned for this signature only, with this doc
+   as the reference.

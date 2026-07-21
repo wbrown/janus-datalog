@@ -762,8 +762,7 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 }
 
 func (cb *cachedBranch) probe(outerTuple Tuple) []Tuple {
-	key := NewTupleKey(outerTuple, cb.outerIdx)
-	if matches, ok := cb.index.Get(key); ok {
+	if matches, ok := cb.index.GetPositions(outerTuple, cb.outerIdx); ok {
 		return matches.([]Tuple)
 	}
 	return nil
@@ -1103,11 +1102,9 @@ func (it *OrFallbackIterator) outerJoinKeys() Relation {
 		if !ok {
 			continue
 		}
-		tk := NewTupleKey(key, keyIdx)
-		if _, dup := seen.Get(tk); dup {
+		if existed := seen.PutIfAbsentPositions(key, keyIdx, true); existed {
 			continue
 		}
-		seen.Put(tk, true)
 		keys = append(keys, key)
 	}
 	outerErr := oit.Error()
