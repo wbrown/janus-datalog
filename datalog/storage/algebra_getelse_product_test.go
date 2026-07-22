@@ -493,7 +493,7 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 	bridged, err := algebra.Compile(&query.Query{Where: q.Where})
 	require.NoError(t, err)
 	t.Logf("Compiled tree:\n%s", bridged.String())
-	opt := algebra.NewOptimizer(algebra.DefaultPasses()...)
+	opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
 	optimizedTree, err := opt.Optimize(bridged)
 	require.NoError(t, err)
 	t.Logf("Optimized tree:\n%s", optimizedTree.String())

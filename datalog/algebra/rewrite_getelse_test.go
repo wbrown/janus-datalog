@@ -26,7 +26,7 @@ func TestGetElseScanRewrite_Simple(t *testing.T) {
 	require.Equal(t, 1, mapsBefore, "should have 1 Map node (get-else)")
 
 	// Apply get-else rewrite
-	optimizer := NewOptimizer(GetElseScanRewritePass())
+	optimizer := NewOptimizer(GetElseScanRewritePass(nil))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	t.Logf("After:\n%s", optimized.String())
@@ -67,7 +67,7 @@ func TestGetElseScanRewrite_Multiple(t *testing.T) {
 	mapsBefore := countNodes(root, RuleMap)
 	require.Equal(t, 4, mapsBefore, "should have 4 Map nodes (get-else)")
 
-	optimizer := NewOptimizer(GetElseScanRewritePass())
+	optimizer := NewOptimizer(GetElseScanRewritePass(nil))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	t.Logf("After:\n%s", optimized.String())
@@ -99,7 +99,7 @@ func TestGetElseScanRewrite_NonGetElsePreserved(t *testing.T) {
 	mapsBefore := countNodes(root, RuleMap)
 	require.Equal(t, 1, mapsBefore)
 
-	optimizer := NewOptimizer(GetElseScanRewritePass())
+	optimizer := NewOptimizer(GetElseScanRewritePass(nil))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 
@@ -124,7 +124,7 @@ func TestGetElseScanRewrite_VectorDefaultRewritten(t *testing.T) {
 	mapsBefore := countNodes(root, RuleMap)
 	require.Equal(t, 1, mapsBefore)
 
-	optimizer := NewOptimizer(GetElseScanRewritePass())
+	optimizer := NewOptimizer(GetElseScanRewritePass(nil))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 
@@ -172,7 +172,7 @@ func TestGetElseScanRewrite_InputParamEntitySkipped(t *testing.T) {
 	mapsBefore := countNodes(root, RuleMap)
 	require.Equal(t, 1, mapsBefore)
 
-	optimizer := NewOptimizer(GetElseScanRewritePass())
+	optimizer := NewOptimizer(GetElseScanRewritePass(nil))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 

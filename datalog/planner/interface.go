@@ -14,6 +14,12 @@ type QueryPlanner interface {
 	// PlanQueryWithBindings creates an optimized query plan with initial bindings.
 	PlanQueryWithBindings(q *query.Query, initialBindings map[query.Symbol]bool, handler annotations.Handler) (*RealizedPlan, error)
 
+	// ExplainPlan plans without executing and returns the algebra
+	// explanation as values — the compiled tree, every rewrite decision,
+	// the optimized tree, the rewritten query — alongside the physical
+	// plan. Bypasses the plan cache in both directions.
+	ExplainPlan(q *query.Query) (*AlgebraExplanation, error)
+
 	// Options returns the planner options
 	Options() PlannerOptions
 

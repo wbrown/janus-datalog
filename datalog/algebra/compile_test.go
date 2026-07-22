@@ -186,7 +186,7 @@ func TestCompileDecompileNotAtEnd(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("Compiled:\n%s", root.String())
 
-	optimizer := NewOptimizer(DefaultPasses()...)
+	optimizer := NewOptimizer(DefaultPasses(nil)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	t.Logf("Optimized:\n%s", optimized.String())
@@ -215,7 +215,7 @@ func TestCompileDecompileWithNot(t *testing.T) {
 	t.Logf("Compiled:\n%s", root.String())
 
 	// Optimize (should be a no-op — no LateralJoins)
-	optimizer := NewOptimizer(DefaultPasses()...)
+	optimizer := NewOptimizer(DefaultPasses(nil)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	t.Logf("Optimized:\n%s", optimized.String())
@@ -259,7 +259,7 @@ func TestCompileCorrelatedNotJoinSeparatesKeysAndRequirements(t *testing.T) {
 		anti.Required,
 	)
 
-	optimizer := NewOptimizer(DefaultPasses()...)
+	optimizer := NewOptimizer(DefaultPasses(nil)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	clauses, err := Decompile(optimized)
@@ -340,7 +340,7 @@ func TestOrJoinSchemaDiagnosticExplainsHeaderContract(t *testing.T) {
 	root, err := Compile(q)
 	require.NoError(t, err)
 
-	optimizer := NewOptimizer(DefaultPasses()...)
+	optimizer := NewOptimizer(DefaultPasses(nil)...)
 	_, err = optimizer.Optimize(root)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "or-join header declares ?world")
@@ -359,7 +359,7 @@ func TestCompileDecompileWithGetElse(t *testing.T) {
 	root, err := Compile(q)
 	require.NoError(t, err)
 
-	optimizer := NewOptimizer(DefaultPasses()...)
+	optimizer := NewOptimizer(DefaultPasses(nil)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 

@@ -421,7 +421,7 @@ func TestDefaultPassesPreserveAnalyzedSchemaAndAreIdempotent(t *testing.T) {
 	beforeAnalysis, err := Analyze(root)
 	require.NoError(t, err)
 
-	optimizer := NewOptimizer(DefaultPasses()...)
+	optimizer := NewOptimizer(DefaultPasses(nil)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	require.Equal(t, before, root.String(), "optimization must not mutate the input tree")

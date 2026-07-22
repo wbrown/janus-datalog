@@ -2,18 +2,21 @@ package algebra
 
 import (
 	"github.com/wbrown/ebnf/parse"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 )
 
 // Optimizer applies algebraic equivalence rules to an algebra tree.
 // Each pass is a parse.TransformMap that matches on algebra node rule names
 // (Scan, Join, LateralJoin, etc.) and rewrites them.
+//
+// Observability rides the passes, not the optimizer: pass constructors take a
+// *RewriteSink, so every pass reports its decisions the same way and a new
+// pass cannot silently lose its provenance the way the former by-name handler
+// rebuild could.
 type Optimizer struct {
-	passes  []Pass
-	handler annotations.Handler
+	passes []Pass
 }
 
-// Pass is a named transform pass with an enablement predicate.
+// Pass is a named transform pass.
 type Pass struct {
 	Name       string
 	Transforms parse.TransformMap
@@ -24,12 +27,6 @@ func NewOptimizer(passes ...Pass) *Optimizer {
 	return &Optimizer{passes: passes}
 }
 
-// WithHandler sets the annotation handler for optimization observability.
-func (o *Optimizer) WithHandler(h annotations.Handler) *Optimizer {
-	o.handler = h
-	return o
-}
-
 // Optimize applies all passes to an algebra tree and returns the rewritten tree.
 // Each pass is a bottom-up transform over the parse.Node representation.
 func (o *Optimizer) Optimize(root *Node) (*Node, error) {
@@ -37,23 +34,9 @@ func (o *Optimizer) Optimize(root *Node) (*Node, error) {
 		return root, nil
 	}
 
-	// Rebuild passes with handler if set, to enable annotations inside transforms
-	passes := o.passes
-	if o.handler != nil {
-		passes = make([]Pass, 0, len(o.passes))
-		for _, p := range o.passes {
-			switch p.Name {
-			case "decorrelation":
-				passes = append(passes, DecorrelationPass(o.handler))
-			default:
-				passes = append(passes, p)
-			}
-		}
-	}
-
 	tree := ToParseTree(root)
 
-	for _, pass := range passes {
+	for _, pass := range o.passes {
 		result, err := parse.TransformPreserveStructure(tree, pass.Transforms)
 		if err != nil {
 			return nil, err
@@ -81,10 +64,11 @@ func (o *Optimizer) Optimize(root *Node) (*Node, error) {
 	return FromParseTree(tree), nil
 }
 
-// DefaultPasses returns the standard optimization passes.
-func DefaultPasses() []Pass {
+// DefaultPasses returns the standard optimization passes, each reporting its
+// rewrite decisions to the sink (nil records nothing).
+func DefaultPasses(sink *RewriteSink) []Pass {
 	return []Pass{
-		DecorrelationPass(nil),
-		GetElseScanRewritePass(),
+		DecorrelationPass(sink),
+		GetElseScanRewritePass(sink),
 	}
 }

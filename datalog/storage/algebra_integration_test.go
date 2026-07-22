@@ -197,7 +197,7 @@ func TestAlgebraIntegration_OrFallbackWithSubquery(t *testing.T) {
 	{
 		parsed, _ := db.resolveQuery(q)
 		root, _ := algebra.Compile(&query.Query{Where: parsed.Where})
-		opt := algebra.NewOptimizer(algebra.DefaultPasses()...)
+		opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
 		optimized, _ := opt.Optimize(root)
 		rewritten, _ := algebra.Decompile(optimized)
 		t.Logf("Rewritten %d clauses:", len(rewritten))
@@ -397,7 +397,7 @@ func TestAlgebraIntegration_MultipleOrFallbacks(t *testing.T) {
 	{
 		parsed, _ := db.resolveQuery(q)
 		root, _ := algebra.Compile(&query.Query{Where: parsed.Where})
-		opt := algebra.NewOptimizer(algebra.DefaultPasses()...)
+		opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
 		optimized, _ := opt.Optimize(root)
 		rewritten, _ := algebra.Decompile(optimized)
 		t.Logf("Rewritten %d clauses:", len(rewritten))

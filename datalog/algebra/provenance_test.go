@@ -1,0 +1,163 @@
+package algebra
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/parser"
+)
+
+// TestRewriteSinkDestinations pins the sink contract: a nil sink is valid and
+// does nothing; Collect gates record accumulation (the normal query path pays
+// nothing for provenance nobody reads); a handler receives each decision's
+// event form regardless of Collect.
+func TestRewriteSinkDestinations(t *testing.T) {
+	var nilSink *RewriteSink
+	nilSink.Record(RewriteRecord{Pass: "p", Action: RewriteApplied}, "pass/apply", nil)
+	nilSink.Emit("pass/detail", nil)
+	require.Nil(t, nilSink.Records())
+
+	var events []annotations.Event
+	handlerOnly := &RewriteSink{Handler: func(e annotations.Event) { events = append(events, e) }}
+	handlerOnly.Record(RewriteRecord{Pass: "p", Action: RewriteApplied}, "pass/apply", map[string]interface{}{"k": 1})
+	require.Empty(t, handlerOnly.Records(), "Collect off: events only, no records")
+	require.Len(t, events, 1)
+	require.Equal(t, "pass/apply", events[0].Name)
+
+	collecting := &RewriteSink{Collect: true}
+	collecting.Record(RewriteRecord{Pass: "p", Action: RewriteDeclined, Reason: "r"}, "pass/skip", nil)
+	require.Len(t, collecting.Records(), 1)
+	require.Equal(t, RewriteDeclined, collecting.Records()[0].Action)
+	require.Equal(t, "r", collecting.Records()[0].Reason)
+}
+
+// TestDecorrelationPassRecords pins the typed provenance of the decorrelation
+// pass: the correlated grouped-aggregate shape produces a considered record
+// followed by an applied record; the pure-DataPattern shape produces a
+// declined record carrying the precondition that failed.
+func TestDecorrelationPassRecords(t *testing.T) {
+	applied, err := parser.ParseQuery(`[:find ?s ?mx
+	  :where
+	  [?s :scenario/name ?n]
+	  [(q [:find (max ?h) :in $ ?s :where [?p :price/scenario ?s] [?p :price/high ?h]] $ ?s) [[?mx]]]]`)
+	require.NoError(t, err)
+	root, err := Compile(applied)
+	require.NoError(t, err)
+
+	sink := &RewriteSink{Collect: true}
+	_, err = NewOptimizer(DecorrelationPass(sink)).Optimize(root)
+	require.NoError(t, err)
+
+	var sawConsidered, sawApplied bool
+	for _, r := range sink.Records() {
+		require.Equal(t, "decorrelation", r.Pass)
+		require.NotEmpty(t, r.Subject)
+		switch r.Action {
+		case RewriteConsidered:
+			sawConsidered = true
+		case RewriteApplied:
+			sawApplied = true
+		}
+	}
+	require.True(t, sawConsidered, "the pass considered the lateral join; records=%v", sink.Records())
+	require.True(t, sawApplied, "the correlated aggregate shape decorrelates; records=%v", sink.Records())
+
+	declined, err := parser.ParseQuery(`[:find ?e ?v
+	  :where
+	  [?e :thing/kind "widget"]
+	  [(q [:find ?x :in $ ?e :where [?e :thing/value ?x]] $ ?e) [[?v] ...]]]`)
+	require.NoError(t, err)
+	root, err = Compile(declined)
+	require.NoError(t, err)
+
+	sink = &RewriteSink{Collect: true}
+	_, err = NewOptimizer(DecorrelationPass(sink)).Optimize(root)
+	require.NoError(t, err)
+
+	var declineReason string
+	for _, r := range sink.Records() {
+		if r.Action == RewriteDeclined {
+			declineReason = r.Reason
+		}
+	}
+	require.Equal(t, "pure DataPattern query — indexed lookup is faster", declineReason,
+		"records=%v", sink.Records())
+}
+
+// TestGetElsePassRecords pins the typed provenance the formerly-silent
+// get-else pass now produces, and its event forms: an applied record when the
+// rewrite fires, a declined record with the failed precondition when the
+// entity is an input parameter the child relation does not provide.
+func TestGetElsePassRecords(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?title
+	  :where
+	  [?e :entity/type :entity.type/project]
+	  [(get-else $ ?e :project/title "") ?title]]`)
+	require.NoError(t, err)
+	root, err := Compile(q)
+	require.NoError(t, err)
+
+	var events []annotations.Event
+	sink := &RewriteSink{
+		Collect: true,
+		Handler: func(e annotations.Event) { events = append(events, e) },
+	}
+	_, err = NewOptimizer(GetElseScanRewritePass(sink)).Optimize(root)
+	require.NoError(t, err)
+
+	records := sink.Records()
+	require.Len(t, records, 1, "one get-else candidate, one decision")
+	require.Equal(t, "get-else-scan-rewrite", records[0].Pass)
+	require.Equal(t, RewriteApplied, records[0].Action)
+	require.NotEmpty(t, records[0].Subject)
+
+	var sawApplyEvent bool
+	for _, e := range events {
+		if e.Name == "algebra/getelse-scan-apply" {
+			sawApplyEvent = true
+		}
+	}
+	require.True(t, sawApplyEvent, "the applied record emits its event form; events=%v", events)
+
+	// A consumer-only get-else compiles to a bare Map leaf: no child
+	// relation exists to join against, and the decline says so.
+	childless, err := parser.ParseQuery(`[:find ?title
+	  :in $ ?e
+	  :where
+	  [(get-else $ ?e :project/title "") ?title]]`)
+	require.NoError(t, err)
+	root, err = Compile(childless)
+	require.NoError(t, err)
+
+	sink = &RewriteSink{Collect: true}
+	_, err = NewOptimizer(GetElseScanRewritePass(sink)).Optimize(root)
+	require.NoError(t, err)
+
+	records = sink.Records()
+	require.Len(t, records, 1, "records=%v", records)
+	require.Equal(t, RewriteDeclined, records[0].Action)
+	require.Equal(t, "no child relation to join against", records[0].Reason,
+		"records=%v", records)
+
+	// With a child relation that does not provide the entity variable (an
+	// input parameter), the decline names that precondition instead.
+	notProvided, err := parser.ParseQuery(`[:find ?title
+	  :in $ ?e
+	  :where
+	  [?x :entity/type :entity.type/project]
+	  [(get-else $ ?e :project/title "") ?title]]`)
+	require.NoError(t, err)
+	root, err = Compile(notProvided)
+	require.NoError(t, err)
+
+	sink = &RewriteSink{Collect: true}
+	_, err = NewOptimizer(GetElseScanRewritePass(sink)).Optimize(root)
+	require.NoError(t, err)
+
+	records = sink.Records()
+	require.Len(t, records, 1, "records=%v", records)
+	require.Equal(t, RewriteDeclined, records[0].Action)
+	require.Equal(t, "entity variable is not provided by the child relation", records[0].Reason,
+		"records=%v", records)
+}

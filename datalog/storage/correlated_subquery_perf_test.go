@@ -419,7 +419,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 		// Log the rewritten clauses
 		q, _ := db.resolveQuery(queryStr)
 		root, _ := algebra.Compile(&query.Query{Where: q.Where})
-		optimizer := algebra.NewOptimizer(algebra.DefaultPasses()...)
+		optimizer := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
 		optimized, _ := optimizer.Optimize(root)
 		rewritten, _ := algebra.Decompile(optimized)
 		t.Logf("Rewritten %d clauses:", len(rewritten))

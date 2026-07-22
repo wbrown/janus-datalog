@@ -815,6 +815,44 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 	return queryPlanner.PlanQuery(q, nil)
 }
 
+// ExplainAlgebra returns, without executing, the full record of what planning
+// does to a query: the relational algebra it compiles to, every rewrite
+// decision the optimization passes made (applied, or declined with the failed
+// precondition), the optimized tree, the Datalog it decompiles back to, and
+// the physical plan — all as values. The query can be either an EDN string or
+// a *query.Query from the query builder.
+//
+// Example:
+//
+//	expl, err := db.ExplainAlgebra(`[:find ?s (max ?h) :in $ :where ...]`)
+//	if err != nil { ... }
+//	fmt.Println(expl.String())          // full rendering
+//	for _, r := range expl.Rewrites {   // typed transform provenance
+//	    fmt.Println(r.Pass, r.Action, r.Reason)
+//	}
+//
+// When this database's planner options disable the algebra optimizer, the
+// explanation carries the compiled algebra view only (the algebra of a query
+// is a fact about the query), no rewrites, and the physical plan exactly as
+// this database would produce it.
+func (d *Database) ExplainAlgebra(queryInput interface{}, inputs ...interface{}) (*planner.AlgebraExplanation, error) {
+	// Resolve the query (string or *query.Query)
+	q, err := d.resolveQuery(queryInput)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve query: %w", err)
+	}
+
+	// Validate inputs match :in clause (same validation as Query)
+	_, err = d.convertInputsToRelations(q, inputs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create executor to get its planner (ensures same options as execution)
+	exec := d.NewExecutor()
+	return exec.GetPlanner().ExplainPlan(q)
+}
+
 // AnalyzeResult contains the query plan and execution statistics from Analyze().
 type AnalyzeResult struct {
 	Plan      *planner.RealizedPlan // The query plan

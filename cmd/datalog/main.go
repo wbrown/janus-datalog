@@ -35,6 +35,7 @@ func main() {
 	var importBinPath string
 	var compressedExport bool
 	var showStats bool
+	var planOnly bool
 
 	var inputValues ednSliceFlag
 
@@ -51,6 +52,7 @@ func main() {
 	flag.StringVar(&exportBinPath, "export-bin", "", "export database to compressed binary JDZL file")
 	flag.StringVar(&importBinPath, "import-bin", "", "import database from compressed binary JDZL file")
 	flag.BoolVar(&showStats, "stats", false, "print per-attribute cardinality, value size, and duplication statistics")
+	flag.BoolVar(&planOnly, "plan-only", false, "plan the query without executing it: print the compiled algebra, every rewrite decision, the rewritten query, and the physical plan (requires -query)")
 	flag.Var(&inputValues, "in", "input parameter as EDN value (repeatable, one per :in binding)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [database_or_dump_path]\n\n", os.Args[0])
@@ -73,6 +75,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -db dump.edn -query '...'       # Query an EDN dump directly (temporary database)\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db dump.jdzl -query '...'      # Query a JDZL dump directly (temporary database)\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -optimize=false -query '...'    # Run on the baseline planner (algebra optimizer off)\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -plan-only -query '...'         # Show the algebra, rewrites, and plan without executing\n", os.Args[0])
 	}
 	flag.Parse()
 
@@ -157,9 +160,17 @@ func main() {
 		handler = annotations.Handler(formatter.Handle)
 	}
 
+	if planOnly && queryStr == "" {
+		log.Fatalf("-plan-only requires -query")
+	}
+
 	if queryStr != "" {
-		// Run single query mode
-		runSingleQuery(db, handler, queryStr, enableDecorrelation, inputValues)
+		if planOnly {
+			runPlanOnly(db, queryStr, inputValues)
+		} else {
+			// Run single query mode
+			runSingleQuery(db, handler, queryStr, enableDecorrelation, inputValues)
+		}
 	} else if interactive {
 		runInteractive(db, handler, enableDecorrelation)
 	} else {
@@ -500,6 +511,26 @@ func runImportBin(dbPath, importPath string) {
 }
 
 // runSingleQuery executes a single query and exits
+// runPlanOnly plans the query without executing it and prints the full
+// algebra explanation: the compiled tree, every rewrite decision the passes
+// made, the optimized tree, the rewritten Datalog, and the physical plan.
+// The database's planner options carry the -optimize mode, so the
+// explanation reflects exactly what this invocation would run.
+func runPlanOnly(db *storage.Database, queryStr string, inputs []string) {
+	goInputs, err := parseEDNInputs(inputs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Input error: %v\n", err)
+		os.Exit(1)
+	}
+
+	expl, err := db.ExplainAlgebra(queryStr, goInputs...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Plan error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Print(expl.String())
+}
+
 func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr string, enableDecorrelation bool, inputs []string) {
 	// Parse query
 	q, err := parser.ParseQuery(queryStr)

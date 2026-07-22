@@ -1,27 +1,42 @@
 package algebra
 
 import (
+	"fmt"
+
 	"github.com/wbrown/ebnf/parse"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+// getElsePassName names the pass in rewrite records and event data.
+const getElsePassName = "get-else-scan-rewrite"
+
 // GetElseScanRewritePass returns a transform pass that rewrites
-// Map(get-else) nodes into LeftOuterJoin + Scan.
+// Map(get-else) nodes into LeftOuterJoin + Scan. Every decision on a
+// get-else candidate — applied, or declined with the failed precondition —
+// goes to the sink as a typed RewriteRecord and as its annotation-event form
+// (a nil sink records nothing). Map nodes that are not get-else expressions
+// are not candidates and produce no record.
 //
 // Rule 5 (ALGEBRA.md): get-else is a disguised left-outer-join.
 // Replace N per-tuple point lookups with 1 index scan + hash join.
-func GetElseScanRewritePass() Pass {
+func GetElseScanRewritePass(sink *RewriteSink) Pass {
 	return Pass{
-		Name: "get-else-scan-rewrite",
+		Name: getElsePassName,
 		Transforms: parse.TransformMap{
-			RuleMap: getElseScanRewriteTransform,
+			RuleMap: makeGetElseScanRewriteTransform(sink),
 		},
+	}
+}
+
+func makeGetElseScanRewriteTransform(sink *RewriteSink) parse.TransformFunc {
+	return func(node *parse.Node, children ...interface{}) interface{} {
+		return getElseScanRewriteTransform(node, sink, children...)
 	}
 }
 
 // getElseScanRewriteTransform detects Map(get-else) and rewrites to
 // LeftOuterJoin(child, Scan([E A ?result])) with default.
-func getElseScanRewriteTransform(node *parse.Node, children ...interface{}) interface{} {
+func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children ...interface{}) interface{} {
 	if node.TransformedValue == nil {
 		return node
 	}
@@ -40,9 +55,23 @@ func getElseScanRewriteTransform(node *parse.Node, children ...interface{}) inte
 		return rebuildWithChildren(node, children)
 	}
 
+	subject := mapData.Expression.String()
+	decline := func(reason string) {
+		sink.Record(RewriteRecord{
+			Pass:    getElsePassName,
+			Action:  RewriteDeclined,
+			Reason:  reason,
+			Subject: subject,
+		}, "algebra/getelse-scan-skip", map[string]interface{}{
+			"reason":     reason,
+			"expression": subject,
+		})
+	}
+
 	// Extract the entity variable from the get-else
 	entityVar, ok := ge.Entity.(query.VariableTerm)
 	if !ok {
+		decline("get-else entity is not a variable")
 		return rebuildWithChildren(node, children)
 	}
 
@@ -52,7 +81,8 @@ func getElseScanRewriteTransform(node *parse.Node, children ...interface{}) inte
 	case query.Symbol:
 		bindingSym = b
 	default:
-		return rebuildWithChildren(node, children) // Can't handle tuple bindings for get-else
+		decline("get-else binds a tuple form")
+		return rebuildWithChildren(node, children)
 	}
 
 	// Recover the child (the relation the get-else operates on)
@@ -61,12 +91,14 @@ func getElseScanRewriteTransform(node *parse.Node, children ...interface{}) inte
 		childNode = recoverChild(children[0])
 	}
 	if childNode == nil {
+		decline("no child relation to join against")
 		return node
 	}
 
 	// Skip rewrite if entity variable isn't provided by the child relation
 	// (e.g., it's an input parameter from :in, not a pattern variable).
 	if !query.ContainsSymbol(childNode.Symbols(), entityVar.Symbol) {
+		decline("entity variable is not provided by the child relation")
 		return rebuildWithChildren(node, children)
 	}
 
@@ -85,6 +117,18 @@ func getElseScanRewriteTransform(node *parse.Node, children ...interface{}) inte
 			Output:  []query.Symbol{entityVar.Symbol, bindingSym},
 		},
 	}
+
+	sink.Record(RewriteRecord{
+		Pass:    getElsePassName,
+		Action:  RewriteApplied,
+		Subject: subject,
+	}, "algebra/getelse-scan-apply", map[string]interface{}{
+		"expression": subject,
+		"scan":       scanPattern.String(),
+		"entity_var": entityVar.Symbol.String(),
+		"binding":    bindingSym.String(),
+		"attribute":  fmt.Sprintf("%v", ge.Attr),
+	})
 
 	// Build: LeftOuterJoin(on=[?entity], default=[ge.Default], attr=ge.Attr)
 	// The DefaultAttr enables the decompiler to emit a get-else expression
