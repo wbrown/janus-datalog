@@ -846,16 +846,21 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		if err != nil {
 			return nil, err
 		}
-		if err := admitExpressionResult(expr.Function, result); err != nil {
+		value, found, err := admitExpressionResult(expr.Function, result)
+		if err != nil {
 			return nil, err
+		}
+		if !found {
+			// Absence with no groups: the expression produces no rows.
+			return []Relation{}, nil
 		}
 
 		// Handle both scalar and tuple bindings
 		switch binding := expr.Binding.(type) {
 		case query.TupleBinding:
-			values, ok := result.([]interface{})
+			values, ok := value.([]interface{})
 			if !ok {
-				return nil, fmt.Errorf("tuple binding requires tuple result, got %T", result)
+				return nil, fmt.Errorf("tuple binding requires tuple result, got %T", value)
 			}
 			if len(values) != len(binding.Variables) {
 				return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
@@ -871,7 +876,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				return groups, nil
 			}
 			symbols := []query.Symbol{binding}
-			tuples := []Tuple{{result}}
+			tuples := []Tuple{{value}}
 			return []Relation{NewMaterializedRelationWithOptions(symbols, tuples, e.options)}, nil
 
 		default:
@@ -931,29 +936,36 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			if err != nil {
 				return nil, err
 			}
-			if err := admitExpressionResult(expr.Function, result); err != nil {
+			value, found, err := admitExpressionResult(expr.Function, result)
+			if err != nil {
 				return nil, err
 			}
 
-			// Determine binding symbols and values
+			// Determine binding symbols, and values when a binding was
+			// produced. Absence still derives the symbols: the emptied
+			// groups below keep the schema this expression provides.
 			var bindingSyms []query.Symbol
 			var bindingValues []interface{}
 			switch binding := expr.Binding.(type) {
 			case query.TupleBinding:
 				bindingSyms = binding.Variables
-				values, ok := result.([]interface{})
-				if !ok {
-					return nil, fmt.Errorf("tuple binding requires tuple result, got %T", result)
+				if found {
+					values, ok := value.([]interface{})
+					if !ok {
+						return nil, fmt.Errorf("tuple binding requires tuple result, got %T", value)
+					}
+					if len(values) != len(binding.Variables) {
+						return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
+							len(values), len(binding.Variables))
+					}
+					bindingValues = values
 				}
-				if len(values) != len(binding.Variables) {
-					return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
-						len(values), len(binding.Variables))
-				}
-				bindingValues = values
 			case query.Symbol:
 				if binding != nil {
 					bindingSyms = []query.Symbol{binding}
-					bindingValues = []interface{}{result}
+					if found {
+						bindingValues = []interface{}{value}
+					}
 				}
 			}
 
@@ -963,6 +975,14 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			var resultRels []Relation
 			for _, rel := range groups {
 				align := alignBinding(rel.Symbols(), bindingSyms)
+				// Absence against the single environment row drops every
+				// row of every group — a universally-false filter. The
+				// emptied relation keeps the aligned schema so the phase
+				// contract's Provides survives.
+				if !found {
+					resultRels = append(resultRels, NewMaterializedRelationWithOptions(align.symbols, nil, e.options))
+					continue
+				}
 				// Pass-through tuples (no extension) must be copied out of
 				// a workspace-reusing source; extension allocates fresh.
 				needsCopy := rel.RequiresCopy()
@@ -1014,25 +1034,21 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				return nil, err
 			}
 
-			// Handle get-some result type. Found=false signals "no attribute
-			// matched"; emit an empty relation rather than a tuple.
-			if gsr, ok := result.(*query.GetSomeResult); ok {
-				if !gsr.Found {
-					return []Relation{}, nil
-				}
-				result = gsr.Value
-			}
-
-			if err := admitExpressionResult(expr.Function, result); err != nil {
+			value, found, err := admitExpressionResult(expr.Function, result)
+			if err != nil {
 				return nil, err
+			}
+			if !found {
+				// Absence: emit an empty result rather than a tuple.
+				return []Relation{}, nil
 			}
 
 			// Create result relation based on binding type
 			switch binding := expr.Binding.(type) {
 			case query.TupleBinding:
-				values, ok := result.([]interface{})
+				values, ok := value.([]interface{})
 				if !ok {
-					return nil, fmt.Errorf("tuple binding requires tuple result, got %T", result)
+					return nil, fmt.Errorf("tuple binding requires tuple result, got %T", value)
 				}
 				if len(values) != len(binding.Variables) {
 					return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
@@ -1041,7 +1057,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				return []Relation{NewMaterializedRelationWithOptions(binding.Variables, []Tuple{values}, e.options)}, nil
 			case query.Symbol:
 				if binding != nil {
-					return []Relation{NewMaterializedRelationWithOptions([]query.Symbol{binding}, []Tuple{{result}}, e.options)}, nil
+					return []Relation{NewMaterializedRelationWithOptions([]query.Symbol{binding}, []Tuple{{value}}, e.options)}, nil
 				}
 			}
 			// No binding - return empty groups (expression evaluated for side effect only)

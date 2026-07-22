@@ -872,19 +872,17 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 			break
 		}
 
-		// get-some signals "no attribute matched" via Found=false (not via
-		// error). Skip the tuple in that case, not the eval-error path.
-		if gsr, ok := result.(*query.GetSomeResult); ok {
-			if !gsr.Found {
-				continue
-			}
-			result = gsr.Value
-		}
-
-		if err := admitExpressionResult(fn, result); err != nil {
-			evalErr = err
+		// Absence (get-some found no attribute) is a soft no-match: skip the
+		// tuple, not the eval-error path.
+		value, found, admitErr := admitExpressionResult(fn, result)
+		if admitErr != nil {
+			evalErr = admitErr
 			break
 		}
+		if !found {
+			continue
+		}
+		result = value
 
 		// Create new tuple with function result
 		newTuple := append(tuple, result)

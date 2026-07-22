@@ -229,21 +229,17 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			break
 		}
 
-		// Extract value from GetSomeResult if needed
-		// get-some returns a struct with Attr, Value, and Found; we just want
-		// the Value for binding. Found=false signals "no attribute matched":
-		// drop this tuple without surfacing an error.
-		if gsr, ok := evalResult.(*query.GetSomeResult); ok {
-			if !gsr.Found {
-				continue
-			}
-			evalResult = gsr.Value
-		}
-
-		if err := admitExpressionResult(expr.Function, evalResult); err != nil {
-			iterErr = err
+		// Absence (get-some found no attribute) is a soft no-match: drop this
+		// tuple without surfacing an error.
+		value, found, admitErr := admitExpressionResult(expr.Function, evalResult)
+		if admitErr != nil {
+			iterErr = admitErr
 			break
 		}
+		if !found {
+			continue
+		}
+		evalResult = value
 
 		// Handle multi-tuple expansion (e.g., enumerate returns [][]interface{})
 		if multiRows, ok := evalResult.([][]interface{}); ok {

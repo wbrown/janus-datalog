@@ -134,17 +134,27 @@ func (it *PredicateFilterIterator) Error() error {
 	return it.source.Error()
 }
 
-// admitExpressionResult checks a function result entering relational flow.
-// Expression evaluation is the one producer of NaN inside the engine —
-// arithmetic over Inf operands (Inf - Inf, 0 * Inf, Inf / Inf), where Inf is
-// itself a value and reachable from finite data by overflow — so NaN fails
-// loudly here rather than entering joins and sorts. The write and input
-// boundaries exclude it everywhere else.
-func admitExpressionResult(fn query.Function, result interface{}) error {
-	if f, ok := result.(float64); ok && math.IsNaN(f) {
-		return fmt.Errorf("expression %v produced NaN, which is not a datalog value", fn)
+// admitExpressionResult resolves a function result entering relational flow.
+// It consumes the get-some absence sentinel — found=false means the function
+// produced no binding, and the caller drops the affected rows per its own
+// semantics; the sentinel itself never escapes this boundary — and validates
+// the resolved value against the datalog domain. Expression evaluation is
+// the one producer of NaN inside the engine — arithmetic over Inf operands
+// (Inf - Inf, 0 * Inf, Inf / Inf), where Inf is itself a value and reachable
+// from finite data by overflow — so NaN fails loudly here rather than
+// entering joins and sorts. The write and input boundaries exclude it
+// everywhere else.
+func admitExpressionResult(fn query.Function, result interface{}) (interface{}, bool, error) {
+	if gsr, ok := result.(*query.GetSomeResult); ok {
+		if !gsr.Found {
+			return nil, false, nil
+		}
+		result = gsr.Value
 	}
-	return nil
+	if f, ok := result.(float64); ok && math.IsNaN(f) {
+		return nil, false, fmt.Errorf("expression %v produced NaN, which is not a datalog value", fn)
+	}
+	return result, true, nil
 }
 
 // FunctionEvaluatorIterator adds a new symbol by evaluating a function
@@ -207,20 +217,18 @@ func (it *FunctionEvaluatorIterator) Next() bool {
 			return false
 		}
 
-		// get-some signals "no attribute matched" via Found=false (not via
-		// error). Skip the tuple in that case — that's a soft no-match, not
-		// the error-as-signal misuse the swallowing loop existed to absorb.
-		if gsr, ok := result.(*query.GetSomeResult); ok {
-			if !gsr.Found {
-				continue
-			}
-			result = gsr.Value
-		}
-
-		if err := admitExpressionResult(it.function, result); err != nil {
-			it.err = err
+		// Absence (get-some found no attribute) is a soft no-match: skip the
+		// tuple, not the error-as-signal misuse the swallowing loop existed
+		// to absorb.
+		value, found, admitErr := admitExpressionResult(it.function, result)
+		if admitErr != nil {
+			it.err = admitErr
 			return false
 		}
+		if !found {
+			continue
+		}
+		result = value
 
 		if it.existingIdx >= 0 {
 			// Unification: check that function result matches existing binding
