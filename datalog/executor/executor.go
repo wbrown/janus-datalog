@@ -334,50 +334,70 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 		currentGroups = []Relation{boundRelation}
 	}
 
-	// Extract constant-only scalar inputs from the phase Datalog :in clauses.
-	// Resolving them as constants prevents disjoint relation groups.
+	// Bind the query's environment and extract constant-only scalar inputs.
+	//
+	// The environment is one single-tuple relation over the query's
+	// single-valued :in parameters (scalar and tuple inputs), projected out
+	// of the bound input relation and carried on the execution context: it
+	// is ambient in every clause scope of this query, including or-branch
+	// bodies, and reaches consumers by join. Projection's set semantics
+	// collapse collection-input multiplicity — env columns are constant
+	// across the bound relation's rows. Scalars the planner proved
+	// constant-only (declared as phase ScalarInputs) are additionally
+	// projected out of the data relation so they don't form disjoint groups;
+	// pattern-consumed scalars keep their relation columns for
+	// index-narrowed matching, and the environment retains what
+	// projection-out removes.
 	if len(currentGroups) > 0 {
-		allConstBindable := make(map[query.Symbol]bool)
-		for _, phase := range plan.Phases {
-			if phase.Query == nil {
-				continue
-			}
-			for _, input := range phase.Query.In {
-				if scalar, ok := input.(query.ScalarInput); ok {
-					allConstBindable[scalar.Symbol] = true
-				}
-			}
-		}
-		if len(allConstBindable) > 0 {
-			// Extract constant values from the bound input relation
+		envBindable := environmentSymbolsOf(plan.Query.In)
+		if len(envBindable) > 0 {
 			boundRel := currentGroups[0]
 			syms := boundRel.Symbols()
 
-			// Find symbol indices for constant-bindable symbols
-			constValues := make(map[query.Symbol]interface{})
-			constSymIndices := make(map[int]bool)
-			for i, sym := range syms {
-				if allConstBindable[sym] {
-					constSymIndices[i] = true
+			var present []query.Symbol
+			for _, sym := range envBindable {
+				if query.ContainsSymbol(syms, sym) {
+					present = append(present, sym)
 				}
 			}
 
-			// Read first tuple to get the constant values (scalar inputs have exactly 1 tuple)
-			if len(constSymIndices) > 0 {
-				it := boundRel.Iterator()
-				if it.Next() {
-					tuple := it.Tuple()
-					for i, sym := range syms {
-						if allConstBindable[sym] && i < len(tuple) {
-							constValues[sym] = tuple[i]
+			var env Relation
+			if len(present) > 0 {
+				projected, err := boundRel.Project(present)
+				if err != nil {
+					return nil, fmt.Errorf("environment projection failed: %w", err)
+				}
+				if projected.Size() == 1 {
+					env = projected
+				}
+				// Size 0: the bound inputs are empty (an empty collection
+				// input) — no joint parameter binding exists; the main
+				// binding path reports the empty result.
+			}
+
+			if env != nil {
+				ctx = ctx.WithEnvironment(env)
+
+				// Constant-only scalars per the phase Datalog :in clauses.
+				allConstBindable := make(map[query.Symbol]bool)
+				for _, phase := range plan.Phases {
+					if phase.Query == nil {
+						continue
+					}
+					for _, input := range phase.Query.In {
+						if scalar, ok := input.(query.ScalarInput); ok {
+							allConstBindable[scalar.Symbol] = true
 						}
 					}
 				}
-				it.Close()
+				constSymIndices := make(map[int]bool)
+				for i, sym := range syms {
+					if allConstBindable[sym] {
+						constSymIndices[i] = true
+					}
+				}
 
-				if len(constValues) > 0 {
-					queryExecutor.constantBindings = constValues
-
+				if len(constSymIndices) > 0 {
 					// Project out constant symbols from the bound relation
 					var keepSyms []query.Symbol
 					for i, sym := range syms {
@@ -1129,6 +1149,7 @@ func (p *preparedIteration) buildBoundRelation(relationInput query.RelationInput
 // flags set at prepare time.
 func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, error) {
 	var currentGroups []Relation
+	var env Relation
 
 	if p.canMutateBindings {
 		// Fast path: mutate the pre-built boundTuple's slots from the
@@ -1139,11 +1160,26 @@ func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, er
 			}
 		}
 		currentGroups = []Relation{p.boundRelation}
+		// Every bound symbol is single-valued by construction (the
+		// RelationInput rewrote to ScalarInputs; collection inputs abort the
+		// fast path), so the bound tuple is this Run's whole environment.
+		// Snapshot it: boundTuple is a per-Run mutable workspace, and the
+		// environment must not change under a consumer between Runs.
+		env = newMaterializedRelationFromSet(
+			p.boundRelation.Symbols(),
+			[]Tuple{copyTuple(p.boundTuple)},
+			ExecutorOptions{},
+			deduplicatedProperties(p.boundRelation.Symbols()),
+		)
 	} else if p.fallbackSession != nil {
 		// Fallback: feed the session, run per-call BindQueryInputs.
 		p.fallbackSession.Update(iterationTuple)
 		boundRelation := BindQueryInputs(p.modifiedQuery, p.fallbackSession.Input())
 		currentGroups = []Relation{boundRelation}
+		env = environmentRelationFromInputs(p.modifiedQuery.In, p.fallbackSession.Input())
+	}
+	if env != nil {
+		ctx = ctx.WithEnvironment(env)
 	}
 
 	// Execute each phase as an independent query.

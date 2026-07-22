@@ -173,3 +173,59 @@ func TestBuildBranchFromEACacheDedupsOuterEntities(t *testing.T) {
 	require.Len(t, matches, 1)
 	assert.Equal(t, int64(2), matches[0][1])
 }
+
+// TestBuildBranchFromEACacheEnvironmentNarrowsV pins the EA-cache arm's
+// environment narrowing: when the branch pattern's V variable is bound by
+// the environment relation, only rows carrying the environment's value
+// survive — the SemiJoin analog of the scan path's environment-narrowed
+// input. Direct construction: no user-facing syntax reaches this arm with an
+// environment-bound V today, so the arm is pinned at the unit level.
+func TestBuildBranchFromEACacheEnvironmentNarrowsV(t *testing.T) {
+	symE := datalog.NewSymbol("?e")
+	symV := datalog.NewSymbol("?v")
+	attr := datalog.NewKeyword(":item/priority")
+	e1 := datalog.NewIdentity("eaenv:e1")
+	e2 := datalog.NewIdentity("eaenv:e2")
+
+	matcher := &countingLookupMatcher{bundleLookupMatcher: &bundleLookupMatcher{
+		values: map[bundleLookupKey]interface{}{
+			{entity: e1, attr: attr}: int64(1),
+			{entity: e2, attr: attr}: int64(2),
+		},
+	}}
+	exec := newQueryExecutor(matcher, nil, ExecutorOptions{})
+
+	outerSyms := []query.Symbol{symE}
+	outerRel := NewMaterializedRelation(outerSyms, []Tuple{{e1}, {e2}})
+
+	it := &OrFallbackIterator{
+		executor:          exec,
+		outerRel:          outerRel,
+		outerSyms:         outerSyms,
+		branchVisibleSyms: []query.Symbol{symE},
+		envRel: NewMaterializedRelation(
+			[]query.Symbol{symV},
+			[]Tuple{{int64(2)}},
+		),
+	}
+	branch := []query.Clause{
+		&query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: symE},
+				query.Constant{Value: attr},
+				query.Variable{Name: symV},
+			},
+		},
+	}
+
+	cb := it.buildBranchFromEACache(branch)
+	require.NoError(t, it.err)
+	require.NotNil(t, cb)
+
+	matches := cb.probe(Tuple{e1})
+	assert.Empty(t, matches, "e1's value 1 does not match the environment's 2")
+
+	matches = cb.probe(Tuple{e2})
+	require.Len(t, matches, 1)
+	assert.Equal(t, int64(2), matches[0][1])
+}

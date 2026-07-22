@@ -26,12 +26,15 @@ type QueryExecutor interface {
 	Execute(ctx Context, q *query.Query, inputs []Relation) ([]Relation, error)
 }
 
-// DefaultQueryExecutor implements QueryExecutor using the PatternMatcher interface
+// DefaultQueryExecutor implements QueryExecutor using the PatternMatcher interface.
+// The executing query scope's environment (single-valued :in parameter values)
+// rides the Context, not the executor: Execute is re-entrant across query
+// scopes (phases, subqueries, or-branch bodies), and each scope binds its own
+// environment at its boundary.
 type DefaultQueryExecutor struct {
-	matcher          PatternMatcher
-	entityResolver   EntityResolver
-	options          ExecutorOptions
-	constantBindings map[query.Symbol]interface{} // Scalar inputs resolved as constants (not relation symbols)
+	matcher        PatternMatcher
+	entityResolver EntityResolver
+	options        ExecutorOptions
 }
 
 // newQueryExecutor creates a new DefaultQueryExecutor.
@@ -257,10 +260,36 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 	// tuples it is the join zero: the whole result is empty (∅ × R = ∅).
 	// Left in place, projection would silently drop it — losing a fail
 	// verdict, or erroring aggregation on "disjoint" groups.
+	//
+	// A group whose symbols are ALL environment symbols is the same shape
+	// one step up: the environment riding as a group. Any group carrying an
+	// env symbol has been collapse-joined with the bound-input group, so an
+	// all-env group holds at most the one env tuple — the join identity
+	// decorated with constants. Absorb it identically: non-empty → drop,
+	// empty → annihilate. Without this, the residual bound-input group left
+	// after or-branches consumed its parameters trips disjoint-groups
+	// aggregation errors.
 	if len(groups) > 1 {
+		env := ctx.Environment()
+		var envSymbols []query.Symbol
+		if env != nil {
+			envSymbols = env.Symbols()
+		}
+		allEnvironment := func(rel Relation) bool {
+			symbols := rel.Symbols()
+			if len(symbols) == 0 || len(envSymbols) == 0 {
+				return false
+			}
+			for _, sym := range symbols {
+				if !query.ContainsSymbol(envSymbols, sym) {
+					return false
+				}
+			}
+			return true
+		}
 		dataGroups := make([]Relation, 0, len(groups))
 		for _, rel := range groups {
-			if len(rel.Symbols()) > 0 {
+			if len(rel.Symbols()) > 0 && !allEnvironment(rel) {
 				dataGroups = append(dataGroups, rel)
 				continue
 			}
@@ -277,7 +306,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 	// values into a relation group before aggregation/projection consume
 	// the symbols: projection treats a missing symbol as empty, so any
 	// later rendering would silently drop rows.
-	rendered, renderErr := e.renderConstantFindSymbols(q, groups)
+	rendered, renderErr := e.renderConstantFindSymbols(environmentBindings(ctx.Environment()), q, groups)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -421,8 +450,8 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 // and aggregate arguments are about to be consumed. Extension preserves set
 // semantics: distinct tuples stay distinct under an every-row-identical
 // column.
-func (e *DefaultQueryExecutor) renderConstantFindSymbols(q *query.Query, groups []Relation) ([]Relation, error) {
-	if len(e.constantBindings) == 0 || len(groups) == 0 {
+func (e *DefaultQueryExecutor) renderConstantFindSymbols(env map[query.Symbol]interface{}, q *query.Query, groups []Relation) ([]Relation, error) {
+	if len(env) == 0 || len(groups) == 0 {
 		return groups, nil
 	}
 
@@ -440,7 +469,7 @@ func (e *DefaultQueryExecutor) renderConstantFindSymbols(q *query.Query, groups 
 
 	var missing []query.Symbol
 	for _, sym := range consumed {
-		if _, isConstant := e.constantBindings[sym]; !isConstant {
+		if _, isBound := env[sym]; !isBound {
 			continue
 		}
 		present := false
@@ -481,7 +510,7 @@ func (e *DefaultQueryExecutor) renderConstantFindSymbols(q *query.Query, groups 
 	symbols := append(append([]query.Symbol{}, rel.Symbols()...), missing...)
 	values := make([]interface{}, len(missing))
 	for i, sym := range missing {
-		values[i] = e.constantBindings[sym]
+		values[i] = env[sym]
 	}
 
 	var tuples []Tuple
@@ -863,10 +892,14 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		}
 	}
 
-	// Filter out symbols already resolved as constants
+	// Filter out symbols the environment binds (single-valued :in
+	// parameters). Interim stage-1 wiring: the environment relation's tuple
+	// is read into the operators' bindings-map currency here; stage 2 swaps
+	// the operators to consume the relation directly.
+	env := environmentBindings(ctx.Environment())
 	var unresolvedExprSyms []query.Symbol
 	for _, sym := range requiredSyms {
-		if _, isConstant := e.constantBindings[sym]; !isConstant {
+		if _, isBound := env[sym]; !isBound {
 			unresolvedExprSyms = append(unresolvedExprSyms, sym)
 		}
 	}
@@ -894,7 +927,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			// This handles OR fallback: (or [subquery] [(ground 0) ?count])
 			// and constant-bindable scalar expressions: [(+ ?age ?bonus) ?adjusted] where ?bonus is constant
 			evalBindings := make(map[query.Symbol]interface{})
-			for sym, val := range e.constantBindings {
+			for sym, val := range env {
 				evalBindings[sym] = val
 			}
 			var result interface{}
@@ -974,7 +1007,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		// This occurs when all required symbols are constant-bindable and there are no data patterns.
 		if len(unresolvedExprSyms) == 0 && len(groups) == 0 {
 			evalBindings := make(map[query.Symbol]interface{})
-			for sym, val := range e.constantBindings {
+			for sym, val := range env {
 				evalBindings[sym] = val
 			}
 
@@ -1043,11 +1076,11 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 	var err error
 	if len(relevantRels) == 1 {
 		// Single relation — evaluate directly, no join needed
-		result, err = evaluateExpressionWithLookup(relevantRels[0], expr, lookup, e.constantBindings)
+		result, err = evaluateExpressionWithLookup(relevantRels[0], expr, lookup, env)
 	} else {
 		// Multiple disjoint relations — cross-join with expression evaluation
 		// Uses BufferedIterator for inner re-iteration instead of Product()
-		result, err = crossJoinWithExpression(relevantRels, expr, lookup, e.constantBindings, e.options)
+		result, err = crossJoinWithExpression(relevantRels, expr, lookup, env, e.options)
 	}
 	if err != nil {
 		return nil, err
@@ -1086,10 +1119,12 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 
 	requiredSyms := pred.RequiredSymbols()
 
-	// Filter out symbols already resolved as constants
+	// Filter out symbols the environment binds (single-valued :in
+	// parameters). Interim stage-1 wiring, as in executeExpression above.
+	env := environmentBindings(ctx.Environment())
 	var unresolvedSyms []query.Symbol
 	for _, sym := range requiredSyms {
-		if _, isConstant := e.constantBindings[sym]; !isConstant {
+		if _, isBound := env[sym]; !isBound {
 			unresolvedSyms = append(unresolvedSyms, sym)
 		}
 	}
@@ -1123,7 +1158,7 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 		// Every required symbol is a resolved constant: the environment
 		// alone decides the predicate. Evaluate it once; the verdict
 		// applies uniformly to every tuple of every group.
-		passes, err := evalPredicateOnce(pred, e.matcher, e.constantBindings)
+		passes, err := evalPredicateOnce(pred, e.matcher, env)
 		if err != nil {
 			return nil, err
 		}
@@ -1163,11 +1198,11 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 	var err error
 	if len(relevantRels) == 1 {
 		// Single relation — filter directly, no join needed
-		result, err = filterWithPredicateAndLookup(relevantRels[0], pred, lookup, e.constantBindings)
+		result, err = filterWithPredicateAndLookup(relevantRels[0], pred, lookup, env)
 	} else {
 		// Multiple disjoint relations — theta-join with predicate filter
 		// Uses BufferedIterator for inner re-iteration instead of Product()
-		result, err = thetaJoinWithPredicate(relevantRels, pred, lookup, e.constantBindings, e.options)
+		result, err = thetaJoinWithPredicate(relevantRels, pred, lookup, env, e.options)
 	}
 	if err != nil {
 		return nil, err
@@ -1254,7 +1289,11 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		if err != nil {
 			return nil, fmt.Errorf("subquery input binding failed: %w", err)
 		}
-		nestedGroups, err := e.Execute(ctx, subq.Query, inputRelations)
+		// The subquery is its own query scope: its environment comes from its
+		// own :in bindings, never the enclosing scope's (whose parameters an
+		// inner name collision must not capture).
+		innerCtx := ctx.WithEnvironment(environmentRelationFromInputs(subq.Query.In, inputRelations))
+		nestedGroups, err := e.Execute(innerCtx, subq.Query, inputRelations)
 		if err != nil {
 			return nil, fmt.Errorf("nested query execution failed: %w", err)
 		}
@@ -1319,8 +1358,11 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 			}
 		}
 
-		// Execute the nested query recursively using QueryExecutor
-		nestedGroups, err := e.Execute(ctx, subq.Query, inputRelations)
+		// Execute the nested query recursively using QueryExecutor. The
+		// subquery is its own query scope: its environment comes from its own
+		// :in bindings for this combination, never the enclosing scope's.
+		innerCtx := ctx.WithEnvironment(environmentRelationFromInputs(subq.Query.In, inputRelations))
+		nestedGroups, err := e.Execute(innerCtx, subq.Query, inputRelations)
 		if err != nil {
 			return nil, fmt.Errorf("nested query execution failed: %w", err)
 		}
@@ -1544,8 +1586,11 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 
 // executeOrClauseCorrelatedUnion evaluates all branches per outer tuple and unions results.
 func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx Context, branches [][]query.Clause, groups Relations) (Relation, error) {
-	neededSymbols := collectOrBranchRequiredSymbols(branches)
-	outerRel, consumed := e.findOuterRelation(neededSymbols, groups)
+	// Inference forms unify on every shared free variable (the language
+	// rule), so every branch free variable — including correlates consumed
+	// only by a branch NOT or predicate — selects its binding group into
+	// the outer relation.
+	outerRel, consumed := e.findOuterRelation(branchFreeVariables(branches), groups)
 	rel := NewOrFallbackRelation(e, ctx, branches, outerRel, e.options, false)
 	rel.consumedGroups = consumed
 	return rel, nil
@@ -1554,8 +1599,9 @@ func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx Context, branc
 // executeOrDefaultClause implements fallback semantics for or-default clauses:
 // For each input tuple, try branches in order until one returns a result.
 func (e *DefaultQueryExecutor) executeOrDefaultClause(ctx Context, clause *query.OrDefaultClause, groups Relations) (Relation, error) {
-	neededSymbols := collectOrBranchRequiredSymbols(clause.Branches)
-	outerRel, consumed := e.findOuterRelation(neededSymbols, groups)
+	// Inference form: outer-group selection by every branch free variable,
+	// as in executeOrClauseCorrelatedUnion above.
+	outerRel, consumed := e.findOuterRelation(branchFreeVariables(clause.Branches), groups)
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
 	rel.consumedGroups = consumed
 	return rel, nil
@@ -1569,8 +1615,14 @@ func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx Context, clause *q
 		return nil, err
 	}
 
-	requiredSet := make(map[query.Symbol]bool, len(clause.RequiredVars))
-	for _, v := range clause.RequiredVars {
+	// Outer-group selection stays keyed on the correlates alone (the
+	// declared RequiredVars — Validate forces branch externals into them):
+	// OutputVars are branch-produced, not unification demands on the outer.
+	// The canonical scope (Provides = OutputVars, Correlates = RequiredVars)
+	// drives branch visibility, matching the declared interface exactly.
+	scope := query.ScopeOf(clause)
+	requiredSet := make(map[query.Symbol]bool, len(scope.Correlates))
+	for _, v := range scope.Correlates {
 		requiredSet[v] = true
 	}
 
@@ -1585,7 +1637,7 @@ func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx Context, clause *q
 	prefetched := false
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
 	rel.joinSyms = clause.RequiredVars
-	rel.headerSyms = append(append([]query.Symbol(nil), clause.RequiredVars...), clause.OutputVars...)
+	rel.scope = &scope
 	rel.prefetched = prefetched
 	rel.consumedGroups = consumed
 	return rel, nil
@@ -1605,8 +1657,12 @@ func branchesNeedCorrelatedExecution(branches [][]query.Clause) bool {
 	return false
 }
 
-// clausesNeedCorrelation recursively checks whether any clause in the
-// list (or nested within it) contains expressions or correlated predicates.
+// clausesNeedCorrelation recursively checks whether any clause in the list
+// (or nested within it) is a correlated form: expressions, subqueries,
+// predicates with inputs, and NOT/not-join — whose anti-join consumes outer
+// bindings by definition (ScopeOf gives them Correlates). A branch containing
+// any of these must evaluate per outer tuple; executing it blind turns the
+// correlation existential and silently widens or narrows the branch.
 func clausesNeedCorrelation(clauses []query.Clause) bool {
 	needs := false
 	query.WalkClauses(clauses, func(clause query.Clause) bool {
@@ -1615,6 +1671,9 @@ func clausesNeedCorrelation(clauses []query.Clause) bool {
 		}
 		switch cl := clause.(type) {
 		case *query.Expression, *query.SubqueryPattern:
+			needs = true
+			return false
+		case *query.NotClause, *query.NotJoinClause:
 			needs = true
 			return false
 		case query.Predicate:
@@ -1814,16 +1873,24 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.Or
 // executeOrJoinClauseCorrelatedUnion evaluates all branches per outer tuple
 // for or-join clauses where branches reference outer symbols.
 func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
-	joinVarSet := make(map[query.Symbol]bool, len(clause.JoinVars))
-	for _, v := range clause.JoinVars {
-		joinVarSet[v] = true
+	// The clause's canonical interface (Provides ∪ Correlates — the header
+	// plus branch externals) selects the outer groups it unifies with, so a
+	// correlate consumed only by a branch NOT/predicate pulls its binding
+	// group into the outer relation instead of turning existential.
+	scope := query.ScopeOf(clause)
+	interfaceSet := make(map[query.Symbol]bool, len(scope.Provides)+len(scope.Correlates))
+	for _, v := range scope.Provides {
+		interfaceSet[v] = true
+	}
+	for _, v := range scope.Correlates {
+		interfaceSet[v] = true
 	}
 
-	outerRel, consumed := e.findOuterRelationBySymbols(joinVarSet, groups)
+	outerRel, consumed := e.findOuterRelationBySymbols(interfaceSet, groups)
 
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, false)
 	rel.joinSyms = clause.JoinVars
-	rel.headerSyms = clause.JoinVars
+	rel.scope = &scope
 	rel.consumedGroups = consumed
 	return rel, nil
 }
@@ -1873,85 +1940,6 @@ func extractEntityIDs(rel Relation, syms []query.Symbol) ([]datalog.Identity, er
 	}
 
 	return entities, nil
-}
-
-// collectOrBranchRequiredSymbols collects symbols that OR branches need from outer context
-func collectOrBranchRequiredSymbols(branches [][]query.Clause) []query.Symbol {
-	seen := make(map[query.Symbol]bool)
-	var result []query.Symbol
-
-	for _, branch := range branches {
-		// Track which symbols this branch provides (to distinguish from required)
-		branchProvides := make(map[query.Symbol]bool)
-
-		// First pass: collect what each clause provides
-		for _, c := range branch {
-			switch clause := c.(type) {
-			case *query.DataPattern:
-				for _, elem := range clause.Elements {
-					if v, ok := elem.(query.Variable); ok {
-						branchProvides[v.Name] = true
-					}
-				}
-			case *query.Expression:
-				switch b := clause.Binding.(type) {
-				case query.Symbol:
-					if b != nil {
-						branchProvides[b] = true
-					}
-				case query.TupleBinding:
-					for _, v := range b.Variables {
-						branchProvides[v] = true
-					}
-				}
-			case *query.SubqueryPattern:
-				// Subquery provides its binding variables
-				for _, v := range clause.Binding.BoundVariables() {
-					branchProvides[v] = true
-				}
-			}
-		}
-
-		// Second pass: collect symbols that are used but must come from outer context
-		for _, c := range branch {
-			switch clause := c.(type) {
-			case *query.DataPattern:
-				// Variables in patterns that would make the pattern more selective
-				// when bound from outer context (typically entity variables)
-				for _, elem := range clause.Elements {
-					if v, ok := elem.(query.Variable); ok {
-						// If this variable appears in the pattern AND could be bound
-						// from outside (not guaranteed to be provided by this pattern alone),
-						// we should consider it as potentially required
-						if !seen[v.Name] {
-							seen[v.Name] = true
-							result = append(result, v.Name)
-						}
-					}
-				}
-			case *query.SubqueryPattern:
-				// Subquery needs variable inputs from outer context
-				for _, input := range clause.Inputs {
-					if v, ok := input.(query.Variable); ok {
-						if !seen[v.Name] {
-							seen[v.Name] = true
-							result = append(result, v.Name)
-						}
-					}
-				}
-			case *query.Expression:
-				// Expression needs its required symbols
-				for _, sym := range clause.Function.RequiredSymbols() {
-					if !seen[sym] {
-						seen[sym] = true
-						result = append(result, sym)
-					}
-				}
-			}
-		}
-	}
-
-	return result
 }
 
 // executeNotClause performs anti-join filtering on groups

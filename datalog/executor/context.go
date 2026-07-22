@@ -23,11 +23,29 @@ type Context interface {
 	// ScanRegistry returns the per-query scan registry for sharing unbound
 	// scan results across subqueries. Lazy-initialized on first call.
 	ScanRegistry() *ScanRegistry
+
+	// Environment returns the executing query scope's environment: one
+	// single-tuple relation over its single-valued :in parameters (scalar
+	// and tuple inputs) — the scope's joint parameter binding. The
+	// environment is ambient — visible in every clause scope of the query it
+	// parameterizes, including or-branch bodies, and never subject to branch
+	// locality or alpha-renaming — and it reaches consumers by join, never
+	// as a bindings map. Multi-valued inputs (collection, relation) are
+	// data, not environment; exactly one tuple is the structural invariant
+	// separating the two. Nil when the scope has no bound inputs.
+	Environment() Relation
+
+	// WithEnvironment derives a context for a query scope with the given
+	// environment, sharing the collector and scan registry. Query-scope
+	// boundaries (top-level plan binding, subquery entry) derive here so an
+	// inner scope never captures an outer scope's environment.
+	WithEnvironment(env Relation) Context
 }
 
 // BaseContext provides a no-op implementation with zero overhead.
 type BaseContext struct {
 	scanRegistry *ScanRegistry
+	env          Relation
 }
 
 // NewContext creates an appropriate context based on whether annotations are needed.
@@ -49,9 +67,12 @@ func NewContext(handler annotations.Handler) Context {
 func forkContext(ctx Context) Context {
 	switch c := ctx.(type) {
 	case *AnnotatedContext:
-		return &AnnotatedContext{collector: c.collector}
+		return &AnnotatedContext{
+			BaseContext: BaseContext{env: c.env},
+			collector:   c.collector,
+		}
 	case *BaseContext:
-		return &BaseContext{}
+		return &BaseContext{env: c.env}
 	default:
 		return ctx
 	}
@@ -83,6 +104,14 @@ func (c *BaseContext) ScanRegistry() *ScanRegistry {
 		c.scanRegistry = NewScanRegistry()
 	}
 	return c.scanRegistry
+}
+
+func (c *BaseContext) Environment() Relation {
+	return c.env
+}
+
+func (c *BaseContext) WithEnvironment(env Relation) Context {
+	return &BaseContext{scanRegistry: c.ScanRegistry(), env: env}
 }
 
 // AnnotatedContext provides full annotation tracking
@@ -234,4 +263,12 @@ func (c *AnnotatedContext) CollapseRelations(rels []Relation, fn func() []Relati
 
 func (c *AnnotatedContext) Collector() *annotations.Collector {
 	return c.collector
+}
+
+func (c *AnnotatedContext) WithEnvironment(env Relation) Context {
+	return &AnnotatedContext{
+		BaseContext: BaseContext{scanRegistry: c.ScanRegistry(), env: env},
+		collector:   c.collector,
+		queryStart:  c.queryStart,
+	}
 }

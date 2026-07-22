@@ -31,14 +31,14 @@ type OrFallbackRelation struct {
 	shortCircuit   bool           // true = fallback (first match wins), false = correlated union (all branches)
 	consumedGroups []int          // Input relation groups already incorporated into outerRel
 
-	// headerSyms is the declared header of an explicit-join form (or-join
-	// JoinVars; or-default-join RequiredVars ∪ OutputVars). Branch
-	// evaluation may see only the outer tuple's header bindings: a branch
-	// variable outside the header is a local, and a name collision with an
-	// outer symbol must not bind (alpha-equivalence). nil means an
-	// inference form (plain or / or-default), which unifies on every
-	// shared free variable by language rule and sees the full outer tuple.
-	headerSyms []query.Symbol
+	// scope is the clause's canonical interface (query.ScopeOf) for
+	// explicit-header forms (or-join, or-default-join). Branch evaluation
+	// may see only the outer bindings of Provides ∪ Correlates: a branch
+	// variable outside that interface is a local, and a name collision with
+	// an outer symbol must not bind (alpha-equivalence). nil means an
+	// inference form (plain or / or-default), which unifies on every shared
+	// free variable by language rule.
+	scope *query.ClauseScope
 }
 
 // NewOrFallbackRelation creates a streaming OR relation.
@@ -416,18 +416,50 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		seen = NewTupleKeyMap()
 	}
 
-	// Branch-visible outer bindings. Inference forms (headerSyms nil) see
-	// the full outer tuple; explicit-header forms see only the header's
-	// projection — branch variables outside the header are locals.
-	branchVisibleSyms := outer.Symbols()
+	// Branch-visible outer bindings, derived from the canon. Explicit-header
+	// forms (scope != nil) see the outer bindings of the clause's declared
+	// interface — Provides ∪ Correlates per query.ScopeOf; a branch variable
+	// outside that interface is a local, and a name collision with an outer
+	// symbol must not bind (alpha-equivalence). Inference forms unify on
+	// every shared free variable by language rule.
+	branchFree := branchFreeVariables(r.branches)
+	interfaceSyms := branchFree
+	if r.scope != nil {
+		interfaceSyms = append(append([]query.Symbol(nil), r.scope.Provides...), r.scope.Correlates...)
+	}
+	var branchVisibleSyms []query.Symbol
 	var branchVisibleIdx []int
-	if r.headerSyms != nil {
-		branchVisibleSyms = nil
-		branchVisibleIdx = make([]int, 0, len(r.headerSyms))
-		for i, sym := range outer.Symbols() {
-			if query.ContainsSymbol(r.headerSyms, sym) {
-				branchVisibleSyms = append(branchVisibleSyms, sym)
-				branchVisibleIdx = append(branchVisibleIdx, i)
+	for i, sym := range outer.Symbols() {
+		if query.ContainsSymbol(interfaceSyms, sym) {
+			branchVisibleSyms = append(branchVisibleSyms, sym)
+			branchVisibleIdx = append(branchVisibleIdx, i)
+		}
+	}
+
+	// Environment bindings the branches consume. The locals rule above
+	// governs relation data only: an :in-bound single-valued parameter is
+	// the query's formal parameter, ambient in every clause scope, so its
+	// relation joins into the branch input at this scope boundary — exactly
+	// as the top-level and subquery boundaries bind it into their input
+	// relations. Restricted to symbols some branch actually uses, minus
+	// those already branch-visible from the outer tuple. Nested compound
+	// clauses join their own consumption when they execute.
+	var envRel Relation
+	if env := r.ctx.Environment(); env != nil {
+		var consumed []query.Symbol
+		for _, sym := range branchFree {
+			if query.ContainsSymbol(env.Symbols(), sym) && !query.ContainsSymbol(branchVisibleSyms, sym) {
+				consumed = append(consumed, sym)
+			}
+		}
+		if len(consumed) > 0 {
+			projected, err := env.Project(consumed)
+			if err != nil {
+				if setupErr == nil {
+					setupErr = err
+				}
+			} else {
+				envRel = projected
 			}
 		}
 	}
@@ -458,11 +490,18 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		options:           r.options,
 		joinSyms:          r.joinSyms,
 		branchVisibleSyms: branchVisibleSyms,
-		branchVisibleIdx:  branchVisibleIdx,
-		prefetched:        r.prefetched,
-		seen:              seen,
-		err:               setupErr,
-		done:              setupErr != nil,
+		envRel:            envRel,
+		branchInput: makeBranchInput(
+			branchVisibleSyms,
+			branchVisibleIdx,
+			len(branchVisibleIdx) == len(outer.Symbols()),
+			envRel,
+			r.options,
+		),
+		prefetched: r.prefetched,
+		seen:       seen,
+		err:        setupErr,
+		done:       setupErr != nil,
 	}
 }
 
@@ -584,13 +623,25 @@ type OrFallbackIterator struct {
 	options      ExecutorOptions
 	joinSyms     []query.Symbol // From or-join: used as cache key (not all shared symbols)
 
-	// Branch-visible outer bindings: the outer symbols a branch may see,
-	// with their positions in the outer tuple. Equal to outerSyms (idx nil)
-	// for inference forms; restricted to the declared header for
-	// explicit-join forms — branch variables outside the header are locals
-	// and must not capture outer bindings of the same name.
+	// Branch-visible outer bindings: the outer symbols of the clause's
+	// canonical interface (query.ScopeOf Provides ∪ Correlates for
+	// explicit-header forms; every shared branch free variable for inference
+	// forms). Shared by filterBranchToOuterTuple and the EA-cache E check.
 	branchVisibleSyms []query.Symbol
-	branchVisibleIdx  []int
+
+	// envRel is the single retained source of the environment bindings the
+	// branches consume: the context's environment relation projected onto
+	// the symbols some branch actually uses, minus those branch-visible from
+	// the outer. Constant for the query's lifetime; consumers read
+	// Symbols()/Get(0) from it — no scalar copies.
+	envRel Relation
+
+	// branchInput builds one outer tuple's branch input — the join of the
+	// branch-visible projection with envRel — and the visible tuple itself
+	// (for shared-symbol filtering of relation data). A closure: the join's
+	// loop-invariant sides (projection indices, output schema, envRel) are
+	// captures, scoped to this single consumer.
+	branchInput func(Tuple) (Relation, Tuple)
 
 	// Current state
 	currentBranchIter Iterator
@@ -630,34 +681,79 @@ type OrFallbackIterator struct {
 	joinKeyRel       Relation
 	joinKeysComputed bool
 
+	// cacheableInput memoizes outerJoinKeys ⋈ envRel: the single evaluation
+	// of a cacheable branch is narrowed by the outer join keys AND the
+	// environment bindings the branches consume.
+	cacheableInput         Relation
+	cacheableInputComputed bool
+
 	// Correlated union state: track which branch we're iterating within the current outer tuple
 	unionBranchIdx  int      // next branch to try for current outer tuple
 	unionOuterTuple Tuple    // current outer tuple being processed
 	unionInputRel   Relation // inputRel for current outer tuple
 }
 
-// branchInput returns the single-tuple relation of outer bindings the
-// branches may see for one outer tuple, and the visible tuple itself (for
-// shared-symbol filtering). Explicit-header forms project the outer tuple to
-// the header; inference forms pass it whole. A nil relation means no visible
-// bindings (unit outer, or an empty header projection) — branches evaluate
-// with no input.
-func (it *OrFallbackIterator) branchInput(outerTuple Tuple) (Relation, Tuple) {
-	visible := outerTuple
-	if it.branchVisibleIdx != nil {
-		visible = make(Tuple, len(it.branchVisibleIdx))
-		for i, idx := range it.branchVisibleIdx {
-			visible[i] = outerTuple[idx]
+// makeBranchInput builds one iterator's branch-input construction: per outer
+// tuple, the join of the branch-visible outer projection with the environment
+// relation, plus the visible tuple itself (for shared-symbol filtering of
+// relation data — env is enforced at evaluation, not there). The join's
+// loop-invariant sides are captured once: the projection indices, the output
+// schema, and envRel — whose single tuple is read by reference (Get(0)) per
+// call, never copied. passThrough marks a projection covering the whole outer
+// tuple (indices are built in outer order, so equal lengths mean identity).
+// A nil returned relation means no bindings at all — branches evaluate with
+// no input.
+func makeBranchInput(
+	visibleSyms []query.Symbol,
+	visibleIdx []int,
+	passThrough bool,
+	envRel Relation,
+	opts ExecutorOptions,
+) func(Tuple) (Relation, Tuple) {
+	inputSyms := visibleSyms
+	if envRel != nil {
+		inputSyms = append(append([]query.Symbol(nil), visibleSyms...), envRel.Symbols()...)
+	}
+	return func(outerTuple Tuple) (Relation, Tuple) {
+		visible := outerTuple
+		if !passThrough {
+			visible = make(Tuple, len(visibleIdx))
+			for i, idx := range visibleIdx {
+				visible[i] = outerTuple[idx]
+			}
+		}
+		if len(inputSyms) == 0 {
+			return nil, visible
+		}
+		input := visible
+		if envRel != nil {
+			envTuple := envRel.Get(0)
+			input = make(Tuple, 0, len(visible)+len(envTuple))
+			input = append(input, visible...)
+			input = append(input, envTuple...)
+		}
+		return NewMaterializedRelationWithOptions(
+			inputSyms,
+			[]Tuple{input},
+			opts,
+		), visible
+	}
+}
+
+// branchFreeVariables returns the union of every branch's free variables
+// (query.FreeVariables), deduplicated in first-appearance order — the
+// canonical answer to "which symbols do these branches consume or produce
+// at their interface."
+func branchFreeVariables(branches [][]query.Clause) []query.Symbol {
+	var free []query.Symbol
+	for _, branch := range branches {
+		for _, sym := range query.FreeVariables(branch) {
+			if !query.ContainsSymbol(free, sym) {
+				free = append(free, sym)
+			}
 		}
 	}
-	if len(it.branchVisibleSyms) == 0 {
-		return nil, visible
-	}
-	return NewMaterializedRelationWithOptions(
-		it.branchVisibleSyms,
-		[]Tuple{visible},
-		it.options,
-	), visible
+	return free
 }
 
 // cachedBranch is an uncorrelated branch result grouped for per-outer-tuple
@@ -770,6 +866,39 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 	if closeErr != nil {
 		it.err = closeErr
 		return nil
+	}
+
+	// An environment-bound V narrows the branch: only rows carrying the
+	// environment's value may match — the same narrowing the scan path
+	// receives via cacheableBranchInput, expressed as a SemiJoin against
+	// the environment projected onto the V symbol.
+	if it.envRel != nil && query.ContainsSymbol(it.envRel.Symbols(), vVar.Name) {
+		vEnv, err := it.envRel.Project([]query.Symbol{vVar.Name})
+		if err != nil {
+			it.err = err
+			return nil
+		}
+		rows := newMaterializedRelationFromSet(
+			branchSyms,
+			collected,
+			it.options,
+			deduplicatedProperties(branchSyms),
+		)
+		narrowed := SemiJoin(rows, vEnv, []query.Symbol{vVar.Name})
+		var filtered []Tuple
+		nit := narrowed.Iterator()
+		for nit.Next() {
+			filtered = append(filtered, nit.Tuple())
+		}
+		narrowErr := nit.Error()
+		if cErr := nit.Close(); narrowErr == nil {
+			narrowErr = cErr
+		}
+		if narrowErr != nil {
+			it.err = narrowErr
+			return nil
+		}
+		collected = filtered
 	}
 
 	return &cachedBranch{
@@ -1138,6 +1267,34 @@ func (it *OrFallbackIterator) outerJoinKeys() Relation {
 	return it.joinKeyRel
 }
 
+// cacheableBranchInput returns the input relation for a cacheable
+// DataPattern-only branch's single evaluation: the outer join keys joined
+// with the branches' environment bindings, so the one scan is narrowed by
+// both. The sides never share symbols (a join symbol present in the outer is
+// branch-visible, and envSyms excludes branch-visible symbols; a join symbol
+// absent from the outer nils outerJoinKeys), so the join is an N×1
+// decoration that preserves the key relation's set property — environment
+// values are constant for the query. With no join keys the environment alone
+// narrows the scan; nil means no narrowing input at all (the caller's
+// unbound-scan fallback).
+func (it *OrFallbackIterator) cacheableBranchInput() Relation {
+	if it.cacheableInputComputed {
+		return it.cacheableInput
+	}
+	it.cacheableInputComputed = true
+
+	keys := it.outerJoinKeys()
+	switch {
+	case it.envRel == nil:
+		it.cacheableInput = keys
+	case keys == nil:
+		it.cacheableInput = it.envRel
+	default:
+		it.cacheableInput = keys.Join(it.envRel)
+	}
+	return it.cacheableInput
+}
+
 // nextShortCircuit tries branches in order until one returns results (fallback semantics).
 func (it *OrFallbackIterator) nextShortCircuit() bool {
 	for {
@@ -1248,14 +1405,15 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 				// isn't warm.
 				isOrJoin := len(it.joinSyms) > 0
 				isCacheable := isCacheableBranch(branch, isOrJoin)
-				// A DataPattern-only branch in an or-join benefits from join-key
-				// narrowing; uncorrelated subqueries (also cacheable) must still
-				// run with no input.
+				// A DataPattern-only branch in an or-join benefits from
+				// join-key + environment narrowing; uncorrelated subqueries
+				// (also cacheable) must still run with no input — the
+				// subquery is its own scope with its own environment.
 				narrowable := isOrJoin && isDataPatternOnlyBranch(branch)
 				var execInput Relation
 				if isCacheable {
 					if narrowable {
-						execInput = it.outerJoinKeys()
+						execInput = it.cacheableBranchInput()
 					}
 				} else {
 					if !inputReady {

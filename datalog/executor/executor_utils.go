@@ -104,6 +104,122 @@ func compareTuplesByOrder(left, right Tuple, orderBy []query.OrderByClause, indi
 	return 0
 }
 
+// environmentSymbolsOf returns the single-valued input symbols of an :in
+// clause — the scalar and tuple parameters that form a query scope's
+// environment — in spec order, deduplicated. Multi-valued inputs
+// (collection, relation) are data, not environment. Returns nil when the
+// clause declares no single-valued input.
+func environmentSymbolsOf(in []query.InputSpec) []query.Symbol {
+	var env []query.Symbol
+	add := func(sym query.Symbol) {
+		if !query.ContainsSymbol(env, sym) {
+			env = append(env, sym)
+		}
+	}
+	for _, input := range in {
+		switch inp := input.(type) {
+		case query.ScalarInput:
+			add(inp.Symbol)
+		case query.TupleInput:
+			for _, sym := range inp.Symbols {
+				add(sym)
+			}
+		}
+	}
+	return env
+}
+
+// environmentRelationFromInputs constructs a query scope's environment — the
+// single-tuple relation over its single-valued :in parameters — from bound
+// input relations, the same relational construction BindQueryInputs performs
+// for the full input set. in and inputRelations align positionally,
+// DatabaseInput consuming no relation slot. Multi-valued inputs contribute
+// nothing; a relation whose read fails here surfaces its error through the
+// main input-binding path that consumes the same relations. Returns nil when
+// no single-valued input is bound.
+func environmentRelationFromInputs(in []query.InputSpec, inputRelations []Relation) Relation {
+	var symbols []query.Symbol
+	var values Tuple
+	bind := func(sym query.Symbol, value interface{}) {
+		if query.ContainsSymbol(symbols, sym) {
+			return
+		}
+		symbols = append(symbols, sym)
+		values = append(values, value)
+	}
+	relationIndex := 0
+	for _, input := range in {
+		switch inp := input.(type) {
+		case query.DatabaseInput:
+			continue
+		case query.ScalarInput:
+			if relationIndex < len(inputRelations) && inputRelations[relationIndex] != nil {
+				it := inputRelations[relationIndex].Iterator()
+				if it.Next() {
+					if tuple := it.Tuple(); len(tuple) > 0 {
+						bind(inp.Symbol, tuple[0])
+					}
+				}
+				it.Close()
+			}
+			relationIndex++
+		case query.TupleInput:
+			if relationIndex < len(inputRelations) && inputRelations[relationIndex] != nil {
+				rel := inputRelations[relationIndex]
+				if len(inp.Symbols) == len(rel.Symbols()) {
+					it := rel.Iterator()
+					if it.Next() {
+						tuple := it.Tuple()
+						for i, sym := range inp.Symbols {
+							if i < len(tuple) {
+								bind(sym, tuple[i])
+							}
+						}
+					}
+					it.Close()
+				}
+			}
+			relationIndex++
+		default:
+			relationIndex++
+		}
+	}
+	if len(symbols) == 0 {
+		return nil
+	}
+	return newMaterializedRelationFromSet(
+		symbols,
+		[]Tuple{values},
+		ExecutorOptions{},
+		deduplicatedProperties(symbols),
+	)
+}
+
+// environmentBindings reads the environment relation's single tuple into the
+// per-clause bindings-map currency that executePredicate/executeExpression
+// still consume. Interim only: stage 2 of the environment work swaps those
+// operators to take the environment relation directly, deleting this
+// conversion (the map must never be an exchange between components).
+func environmentBindings(env Relation) map[query.Symbol]interface{} {
+	if env == nil {
+		return nil
+	}
+	symbols := env.Symbols()
+	it := env.Iterator()
+	defer it.Close()
+	if !it.Next() {
+		return nil
+	}
+	tuple := it.Tuple()
+	bindings := make(map[query.Symbol]interface{}, len(symbols))
+	for i, sym := range symbols {
+		if i < len(tuple) {
+			bindings[sym] = tuple[i]
+		}
+	}
+	return bindings
+}
+
 // BindQueryInputs binds input relations to a query's :in clause specifications.
 // This processes the query's input specifications (ScalarInput, TupleInput, RelationInput, etc.)
 // and creates a unified relation containing all bound input variables.
