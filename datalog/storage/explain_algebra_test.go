@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/algebra"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // Pins for Database.ExplainAlgebra: the record of what planning does to a
@@ -44,6 +46,64 @@ func TestExplainAlgebraDecorrelation(t *testing.T) {
 	require.Contains(t, rendered, "Compiled algebra:")
 	require.Contains(t, rendered, "Rewrites (")
 	require.Contains(t, rendered, "Realized Query Plan:")
+}
+
+// findAntiJoinNodes walks an algebra tree and collects every AntiJoin node.
+func findAntiJoinNodes(node *algebra.Node) []*algebra.AntiJoin {
+	if node == nil {
+		return nil
+	}
+	var found []*algebra.AntiJoin
+	if data, ok := node.Data.(*algebra.AntiJoin); ok {
+		found = append(found, data)
+	}
+	for _, child := range node.Children {
+		found = append(found, findAntiJoinNodes(child)...)
+	}
+	return found
+}
+
+// TestExplainAlgebraNotJoinEnvironmentHeader pins the compiled structure the
+// environment-header ruling produces (NOTJOIN_HEADER_ENV_BINDING_DERIVATION):
+// a not-join declaring an :in-bound symbol compiles to an AntiJoin carrying
+// the symbol in its join set, and the tree's root free requirements name it —
+// the query's demand on its environment, represented as freeness, never as a
+// value in the tree.
+func TestExplainAlgebraNotJoinEnvironmentHeader(t *testing.T) {
+	flag := datalog.NewSymbol("?flag")
+	shapes := map[string]string{
+		"pattern-provided": `[:find ?e
+		  :in $ ?flag
+		  :where
+		  [?e :entity/kind "thing"]
+		  (not-join [?e ?flag] [?e :entity/flag ?flag])]`,
+		"predicate-consumed": `[:find ?e
+		  :in $ ?flag
+		  :where
+		  [?e :entity/kind "thing"]
+		  (not-join [?e ?flag] [?e :entity/flag ?f] [(= ?f ?flag)])]`,
+	}
+
+	for name, queryText := range shapes {
+		t.Run(name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true})
+
+			expl, err := db.ExplainAlgebra(queryText, "hot")
+			require.NoError(t, err)
+			require.Empty(t, expl.CompileError)
+			require.NotNil(t, expl.Compiled)
+
+			antiJoins := findAntiJoinNodes(expl.Compiled)
+			require.Len(t, antiJoins, 1)
+			require.True(t, query.ContainsSymbol(antiJoins[0].JoinSymbols, flag),
+				"the declared environment symbol rides the AntiJoin join set; got %v", antiJoins[0].JoinSymbols)
+
+			analysis, err := algebra.Analyze(expl.Compiled)
+			require.NoError(t, err)
+			require.True(t, query.ContainsSymbol(analysis[expl.Compiled].Required, flag),
+				"the root's free requirements carry the environment demand; got %v", analysis[expl.Compiled].Required)
+		})
+	}
 }
 
 // TestExplainAlgebraGetElse pins the provenance of the formerly-silent

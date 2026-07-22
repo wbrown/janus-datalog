@@ -1999,9 +1999,10 @@ func (e *DefaultQueryExecutor) executeNotJoinClause(ctx Context, clause *query.N
 	}
 
 	// Same subject selection and bridging as executeNotClause above, keyed
-	// on the declared header. filterWithNotJoinClause still demands every
-	// declared variable present in the joined subject — a header variable
-	// bound nowhere stays a loud error.
+	// on the declared header. filterWithNotJoinClause classifies each
+	// declared variable: subject-carried variables key the anti-join,
+	// environment-bound variables constrain the body through its binding,
+	// and a variable bound in neither domain stays a loud error.
 	subject, consumed := e.findOuterRelation(clause.JoinVars, groups)
 	if len(consumed) == 0 {
 		return nil, fmt.Errorf("not-join header variables are bound in no relation group")
@@ -2165,27 +2166,45 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 	input = input.Materialize()
 	inputSyms := input.Symbols()
 
-	// Verify join vars exist in input
+	// Classify each declared header variable by the mechanism that enforces
+	// it. Subject-carried variables discriminate the anti-join key.
+	// Environment-bound variables constrain the body through its binding
+	// (notBodyBinding below); their key contribution would be a constant
+	// equal on both sides, so they stay out of the key entirely. A variable
+	// in neither domain is unbound — a loud error, never a silent
+	// existential.
 	inputSymSet := make(map[query.Symbol]bool)
 	for _, sym := range inputSyms {
 		inputSymSet[sym] = true
 	}
-
+	env := ctx.Environment()
+	var keyVars []query.Symbol
 	for _, v := range clause.JoinVars {
-		if !inputSymSet[v] {
-			return nil, fmt.Errorf("not-join variable %s is not bound in the subject relation", v)
+		if inputSymSet[v] {
+			keyVars = append(keyVars, v)
+			continue
 		}
+		if env != nil && query.ContainsSymbol(env.Symbols(), v) {
+			continue
+		}
+		return nil, fmt.Errorf("not-join variable %s is not bound in the subject relation", v)
+	}
+	if len(keyVars) == 0 {
+		return nil, fmt.Errorf(
+			"not-join header %v shares no variable with the subject relation; the anti-join must unify with the enclosing query through at least one data variable",
+			clause.JoinVars,
+		)
 	}
 
 	// The not-join body is a clause scope: the environment joins into its
 	// binding alongside the declared header, as at every scope boundary.
-	bindingSyms, envExt, err := notBodyBinding(ctx, query.FreeVariables(clause.Clauses), clause.JoinVars)
+	bindingSyms, envExt, err := notBodyBinding(ctx, query.FreeVariables(clause.Clauses), keyVars)
 	if err != nil {
 		return nil, err
 	}
 
-	// Get unique combinations of join variables
-	uniqueCombos, err := getUniqueCombinations(input, clause.JoinVars)
+	// Get unique combinations of the subject-carried key variables
+	uniqueCombos, err := getUniqueCombinations(input, keyVars)
 	if err != nil {
 		return nil, fmt.Errorf("not-join input combinations failed: %w", err)
 	}
@@ -2225,8 +2244,9 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 		}
 	}
 
-	// Build key indices; join vars are validated present in inputSyms above.
-	keyIndices := query.SymbolIndexTable(inputSyms, clause.JoinVars)
+	// Build key indices over the subject-carried key variables, validated
+	// present in inputSyms above.
+	keyIndices := query.SymbolIndexTable(inputSyms, keyVars)
 
 	// Filter
 	var filtered []Tuple

@@ -102,6 +102,24 @@ func environmentSymbols(context []query.Symbol, inputs map[query.Symbol]bool) []
 	return append(env, inputSyms...)
 }
 
+// boundDomain returns the binding domain of a clause scope: the symbols the
+// outer relation produces plus the query's :in-bound environment symbols.
+// This is the one domain every "is this symbol bound?" judgment in the
+// compound-clause compilers consults — an :in-bound symbol is an ordinary
+// bound variable to the language.
+func boundDomain(current *Node, inputs map[query.Symbol]bool) map[query.Symbol]bool {
+	bound := make(map[query.Symbol]bool, len(inputs))
+	for sym := range inputs {
+		bound[sym] = true
+	}
+	if current != nil {
+		for _, sym := range current.Symbols() {
+			bound[sym] = true
+		}
+	}
+	return bound
+}
+
 // compileClause compiles a single clause, potentially joining it with
 // the current accumulated relation. inputs (the query's :in symbols) threads
 // to the compound forms, whose bodies order their own clause lists.
@@ -280,9 +298,11 @@ func compileNot(nc *query.NotClause, current *Node, inputs map[query.Symbol]bool
 	}
 
 	// Join symbols include right-produced equality keys and predicate-only
-	// requirements supplied by the outer relation. The algebra bridge resolves
-	// NOT's context-dependent join variables statically and emits NotJoinClause
-	// so the executor needs no runtime inference.
+	// requirements supplied by the outer relation or the environment. The
+	// algebra bridge resolves NOT's context-dependent join variables
+	// statically and emits NotJoinClause so the executor needs no runtime
+	// inference.
+	bound := boundDomain(current, inputs)
 	joinSyms := sharedSymbols(current.Symbols(), inner.Symbols())
 	analysis, err := Analyze(inner)
 	if err != nil {
@@ -293,7 +313,7 @@ func compileNot(nc *query.NotClause, current *Node, inputs map[query.Symbol]bool
 		if symbol.IsSource() {
 			continue
 		}
-		if !query.ContainsSymbol(current.Symbols(), symbol) {
+		if !bound[symbol] {
 			return nil, fmt.Errorf("NOT body requires unbound outer symbol %s", symbol)
 		}
 		if !query.ContainsSymbol(joinSyms, symbol) {
@@ -332,6 +352,12 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node, inputs map[query.Sym
 		return nil, fmt.Errorf("NOT-JOIN clause requires prior relation")
 	}
 
+	// The clause scope's binding domain: outer-relation symbols plus the
+	// query's environment. An :in-bound symbol is an ordinary bound variable
+	// everywhere the language asks "is this bound?" — every boundness
+	// judgment below consults this one domain.
+	bound := boundDomain(current, inputs)
+
 	inner, err := compileClausesFrom(nj.Clauses, nil, current.Symbols(), inputs)
 	if err != nil {
 		return nil, fmt.Errorf("NOT-JOIN inner clauses: %w", err)
@@ -342,15 +368,15 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node, inputs map[query.Sym
 	}
 	right := analysis[inner]
 	for _, symbol := range nj.JoinVars {
-		if !query.ContainsSymbol(current.Symbols(), symbol) {
-			return nil, fmt.Errorf("not-join header symbol %s is not bound by the outer relation", symbol)
+		if !bound[symbol] {
+			return nil, fmt.Errorf("not-join header symbol %s is bound by neither the outer relation nor the query inputs", symbol)
 		}
 	}
 	for _, symbol := range right.Required {
 		if symbol.IsSource() {
 			continue
 		}
-		if !query.ContainsSymbol(current.Symbols(), symbol) {
+		if !bound[symbol] {
 			return nil, fmt.Errorf("NOT-JOIN body requires unbound outer symbol %s", symbol)
 		}
 		if !query.ContainsSymbol(nj.JoinVars, symbol) {
