@@ -253,7 +253,7 @@ func TestCachedBranchSpanGrouping(t *testing.T) {
 		segment := cb.rows[span.start:span.end]
 		require.NotEmpty(t, segment)
 		for _, row := range segment[1:] {
-			assert.True(t, branchKeysEqual(segment[0], row, cb.branchIdx),
+			assert.True(t, rowKeysEqual(segment[0], row, cb.rowPos),
 				"rows within an unmixed span must share one key")
 		}
 		total += span.end - span.start
@@ -268,7 +268,7 @@ func TestCachedBranchSpanGrouping(t *testing.T) {
 	assert.Equal(t, int64(12), matches[2][1])
 
 	// The probe result is a window into the shared backing, not a copy.
-	span := cb.spans[hashTuplePositions(Tuple{e1}, cb.outerIdx)]
+	span := cb.spans[hashTuplePositions(Tuple{e1}, cb.probePos)]
 	assert.True(t, &matches[0] == &cb.rows[span.start],
 		"probe must return a subslice of the shared backing")
 }
@@ -293,15 +293,17 @@ func TestCachedBranchMixedSpanCollision(t *testing.T) {
 	h2 := hashTuplePositions(Tuple{e2}, []int{0})
 	h3 := hashTuplePositions(Tuple{e3}, []int{0})
 	cb := &cachedBranch{
-		rows: rows,
-		spans: map[uint64]rowSpan{
-			h1: {start: 0, end: 3},
-			h2: {start: 0, end: 3},
-			h3: {start: 0, end: 3}, // hash resolves to the span, key absent
+		groupedRowIndex: &groupedRowIndex{
+			rows: rows,
+			spans: map[uint64]rowSpan{
+				h1: {start: 0, end: 3},
+				h2: {start: 0, end: 3},
+				h3: {start: 0, end: 3}, // hash resolves to the span, key absent
+			},
+			probePos: []int{0},
+			rowPos:   []int{0},
 		},
 		branchSyms: []query.Symbol{symE, symCount},
-		outerIdx:   []int{0},
-		branchIdx:  []int{0},
 	}
 	cb.regroupCollidingSpans()
 

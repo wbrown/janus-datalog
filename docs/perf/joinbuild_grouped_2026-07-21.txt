@@ -1,0 +1,47 @@
+Grouped hash-join build rows + positional semi/anti probes vs baseline
+(commit b01366d), n=10, Apple M5, same-session back-to-back via worktree.
+
+benchstat:
+
+ComplexQueryCheckpoint-10    18.72m ± 4%    18.83m ± 7%        ~ (p=0.529 n=10)
+B/op                        31.66Mi ± 0%   29.79Mi ± 0%   -5.90% (p=0.000 n=10)
+allocs/op                    216.6k ± 0%    141.0k ± 0%  -34.90% (p=0.000 n=10)
+
+Line-level attribution of the join family (~100k/op, 40.7% of checkpoint
+objects) before the change: the build loop materialized a TupleKey values
+slice per build row (:383, ~20.6k/op) duplicating values already present in
+the stored tuple, a one-element []Tuple per distinct key (:391, ~30.7k/op),
+and append-grow plus Get/Put double map access per fanout row (:389,
+~8.8k/op); the materialized probe loop — the default path, missed when the
+positional-probe round converted the streaming iterator — materialized a
+key per probe row (:515, ~16.2k/op). NewTupleKeyFull was confirmed
+alloc-free (it aliases the tuple), so the result-dedup sites were already
+clean.
+
+The rework generalizes the or-fallback span structure into groupedRowIndex
+(datalog/executor/grouped_row_index.go): rows collect once into one backing
+and group by key hash into contiguous spans via counting-sort placement;
+probes hash the probe tuple's key positions and verify against the span's
+first row — the stored rows carry their own key values, so no key ever
+materializes on either side. cachedBranch is now a thin wrapper adding
+branch symbols. The join's buildKeysUnique candidate-key proof is checked
+against the grouped data (keysUnique: every span and collision group holds
+one row) instead of per-insert PutIfAbsent. Both probe consumers — the
+materialized loop and the streaming hashJoinIterator — take the span probe;
+semi/anti-join left probes convert to positional GetPositions membership
+checks (their right-key stores keep TupleKeyMap: the right tuples are
+discarded, so the stored key values are the set itself, as are aggregation
+group keys, which become output rows).
+
+The removed 75.6k allocs/op are small objects (key slices, one-element
+fanout slices) in loops that were already tight; unlike the emit and spans
+rounds, the reduction lands as footprint, not checkpoint wall time.
+
+CPU time is flat alongside wall: identical back-to-back 200-iteration
+profiled runs measure 4.46s -> 4.47s total CPU samples (mallocgc cum
+0.46s -> 0.40s, gcBgMarkWorker 0.28s -> 0.32s, cond_signal 1.25s -> 1.06s
+-- all within single-run variance). The same instrument showed the emit
+round's real CPU drop plainly (5.23s -> 4.42s between those heads), so a
+genuine CPU win here would be visible. The removed allocations were tiny
+objects on the malloc fast path; GC scan cost tracks bytes (-5.9%) more
+than object count.

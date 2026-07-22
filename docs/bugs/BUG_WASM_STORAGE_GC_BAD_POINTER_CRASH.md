@@ -28,6 +28,8 @@ Three crashes across eleven runs:
 | 19 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted span-grouped branch cache in tree | **crash** ~28s into storage, poison `0x22430000` — the runs-13–16 value recurring in a third distinct binary — gcWriteBarrier corrupted-return-pc discovery shape (`called from 0xd1ea0`, frame dump shows `newobject`/`mallocgc`/`gcmarknewobject`), goroutine 4720. Sanctioned rerun green |
 | 20 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted or-fallback direct-emit work in tree | **crash** ~28s into storage, poison `0x22450000` (new per-binary constant for the shifted layout), `wbBufFlush1` discovery, goroutine 4720 |
 | 21 | 2026-07-21, manual `make test-wasm` re-run of the same tree | **crash** ~28s, same poison and goroutine — this binary's layout is in the near-deterministic window, as runs 14–16 and 17–18 were. Reruns stopped per that precedent |
+| 22 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted grouped-join-build work in tree | **crash** ~28s into storage, poison `0x22450000` (the occurrences-20–21 value recurring in a distinct binary), `wbBufFlush1` discovery. Sanctioned rerun green |
+| 23 | 2026-07-21, `make test-wasm` re-run of the run-22 tree (only an executor test file added; the storage wasm binary is unchanged from run 22) | **crash** ~28s into storage, same poison and discovery — the run-22 binary flaking at its stochastic rate after its green rerun. The run's purpose (new executor test under wasm) passed; storage's status for this tree stands on run 22's green rerun |
 
 All crashes are the same fatal — the GC write barrier discovering a poisoned pointer slot:
 
