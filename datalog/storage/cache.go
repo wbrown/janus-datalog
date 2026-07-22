@@ -165,6 +165,12 @@ func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
 		if ok && slot.entry != nil && slot.entry.inFlight {
 			return false // a commit owns this key; do not cache
 		}
+		if ok && slot.entry != nil && slot.entry.version.Compare(entry.version) > 0 {
+			// An existing fresher entry stands. A rebuild from an older
+			// snapshot must never regress the cache: its entry would be
+			// born stale (never served) and would evict a servable one.
+			return false
+		}
 		if !ok {
 			if _, loaded := c.slots.LoadOrStore(key, cacheSlot{entry: entry, version: entry.version}); !loaded {
 				return true
@@ -182,12 +188,19 @@ func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
 	}
 }
 
-// GetOrResolve returns cached entry if fresh, rebuilds if stale
+// GetOrResolve returns the cached entry if fresh, rebuilding if stale.
 //
-// Freshness is tracked via maxVersions sync.Map, updated atomically on every write.
-// This provides O(1) freshness checks without any storage seeks.
+// bound is the caller's snapshot high-water mark, following the matcher's
+// *ElementID mode convention: nil reads latest (any fresh entry serves);
+// non-nil serves a fresh entry only when the slot's version lies within the
+// snapshot, so a sessioned query is never handed cache content newer than
+// the state its scans observe. A bound-rejected lookup resolves through the
+// caller's resolver — the session — instead.
+//
+// Freshness is the slot's own version bookkeeping, updated atomically on
+// every write. This provides O(1) freshness checks without storage seeks.
 // False negatives (returning stale data) are NOT acceptable.
-func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver) *CacheEntry {
+func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalog.ElementID) *CacheEntry {
 	// Fast path: one trie walk yields the entry and its freshness bound.
 	slot, ok := c.slots.Load(key)
 	if ok && slot.entry != nil {
@@ -201,13 +214,23 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver) *CacheEntry {
 			return c.rebuild(key, resolver)
 		}
 
-		// Fresh iff the entry's version matches the slot's high-water mark.
+		// Fresh iff the entry's version matches the slot's high-water mark —
+		// and, for a bounded read, the latest write lies within the snapshot,
+		// which makes the fresh entry identical to the session's resolution.
 		if slot.entry.version == slot.version {
-			return slot.entry // Fresh - cache hit
-		}
-		// Stale - fall through to rebuild
-		if c.handler != nil {
-			c.annotateRebuild(key, "stale", slot)
+			if bound == nil || slot.version.Compare(*bound) <= 0 {
+				return slot.entry // Fresh - cache hit
+			}
+			// Fresh but past the caller's snapshot — resolve through the
+			// caller's session instead of serving the future.
+			if c.handler != nil {
+				c.annotateRebuild(key, "snapshot-bound", slot)
+			}
+		} else {
+			// Stale - fall through to rebuild
+			if c.handler != nil {
+				c.annotateRebuild(key, "stale", slot)
+			}
 		}
 	} else if c.handler != nil {
 		c.annotateRebuild(key, "absent", slot)

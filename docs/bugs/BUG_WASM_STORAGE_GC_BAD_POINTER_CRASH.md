@@ -31,6 +31,7 @@ Three crashes across eleven runs:
 | 22 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted grouped-join-build work in tree | **crash** ~28s into storage, poison `0x22450000` (the occurrences-20–21 value recurring in a distinct binary), `wbBufFlush1` discovery. Sanctioned rerun green |
 | 23 | 2026-07-21, `make test-wasm` re-run of the run-22 tree (only an executor test file added; the storage wasm binary is unchanged from run 22) | **crash** ~28s into storage, same poison and discovery — the run-22 binary flaking at its stochastic rate after its green rerun. The run's purpose (new executor test under wasm) passed; storage's status for this tree stands on run 22's green rerun |
 | 24 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted per-query read-session work in tree | **crash** ~28s into storage, poison `0x22450000` (fourth distinct binary carrying this value), `wbBufFlush1` discovery. Every other wasm package green, including the session-wired storage reads under MemoryStore elsewhere in the suite. Sanctioned rerun green |
+| 25 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted session-bounded cache work in tree | **crash** ~28s into storage, poison `0x22450000` (fifth distinct binary), "unused region of span" discovery (run 2's shape). Every other wasm package green. Sanctioned rerun green |
 
 All crashes are the same fatal — the GC write barrier discovering a poisoned pointer slot:
 

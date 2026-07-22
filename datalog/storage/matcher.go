@@ -19,6 +19,12 @@ type BadgerMatcher struct {
 	// query-scoped matchers attach a ReadSession so all reads observe one
 	// snapshot for the query's lifetime.
 	reader            StoreReader
+	// sessionBounded marks that reader is a ReadSession, so cache reads must
+	// bound themselves to its snapshot high-water mark (cacheBound). The
+	// bound computes lazily once — the session's maximum is snapshot-constant.
+	sessionBounded bool
+	boundOnce      sync.Once
+	readBound      datalog.ElementID
 	encoder           *BinaryKeyEncoder
 	txID              *datalog.ElementID       // nil=latest CRDT-resolved, &ElementID{}=raw history, &ElementID{L,R}=as-of
 	builderCache      *tupleBuilderCache       // Structurally-keyed tuple builders, shared with temporal-handle copies
@@ -102,9 +108,31 @@ func NewBadgerMatcherWithOptions(store Store, opts executor.ExecutorOptions) *Ba
 
 // AttachReadSession routes every subsequent storage read this matcher
 // performs through the session, so the whole query observes one snapshot.
-// The caller owns the session's lifecycle; the matcher only reads through it.
+// Cache reads bound themselves to the session's high-water mark (see
+// cacheBound), so the shared EA cache can never serve this matcher content
+// newer than its snapshot. The caller owns the session's lifecycle; the
+// matcher only reads through it.
 func (m *BadgerMatcher) AttachReadSession(session ReadSession) {
 	m.reader = session
+	m.sessionBounded = true
+}
+
+// cacheBound returns the snapshot high-water mark cache reads must respect:
+// nil for latest-mode matchers (any fresh entry serves), the session's max
+// ElementID for sessioned ones. Computed once per matcher; the session's
+// maximum is snapshot-constant. A bound that fails to compute degrades to
+// the zero ElementID — no cached entry serves, every lookup resolves
+// through the session — which is safe, never wrong.
+func (m *BadgerMatcher) cacheBound() *datalog.ElementID {
+	if !m.sessionBounded {
+		return nil
+	}
+	m.boundOnce.Do(func() {
+		if id, err := m.reader.MaxElementID(); err == nil {
+			m.readBound = id
+		}
+	})
+	return &m.readBound
 }
 
 // AsOf creates a matcher that sees the database as of a specific transaction.
@@ -118,15 +146,16 @@ func (m *BadgerMatcher) AsOf(txID datalog.ElementID) *BadgerMatcher {
 	})
 
 	return &BadgerMatcher{
-		store:        m.store,
-		reader:       m.reader,
-		encoder:      m.encoder,
-		txID:         &txID,
-		builderCache: m.builderCache,
-		handler:      m.handler,
-		options:      m.options,
-		schema:       m.schema,
-		cache:        m.cache,
+		store:          m.store,
+		reader:         m.reader,
+		sessionBounded: m.sessionBounded,
+		encoder:        m.encoder,
+		txID:           &txID,
+		builderCache:   m.builderCache,
+		handler:        m.handler,
+		options:        m.options,
+		schema:         m.schema,
+		cache:          m.cache,
 	}
 }
 
@@ -698,7 +727,7 @@ func (m *BadgerMatcher) LookupAttribute(
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry := m.cache.GetOrResolve(key, m)
+		entry := m.cache.GetOrResolve(key, m, m.cacheBound())
 		if entry != nil {
 			switch card {
 			case schema.CardinalityOne:
@@ -885,7 +914,7 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry := m.cache.GetOrResolve(key, m)
+		entry := m.cache.GetOrResolve(key, m, m.cacheBound())
 		if entry != nil {
 			// Determine cardinality
 			card := schema.CardinalityOne

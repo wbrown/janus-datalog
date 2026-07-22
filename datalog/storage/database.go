@@ -334,7 +334,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 			if !seenEntities[eBytes] {
 				seenEntities[eBytes] = true
 				key := CacheKey{E: eBytes, A: aBytes}
-				d.cache.GetOrResolve(key, matcher)
+				d.cache.GetOrResolve(key, matcher, matcher.cacheBound())
 			}
 		}
 		if err := iter.Error(); err != nil {
@@ -372,7 +372,7 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	// cardinality the same way (GetCardinality over d.schema).
 	var entry *CacheEntry
 	if d.cache != nil {
-		entry = d.cache.GetOrResolve(key, matcher)
+		entry = d.cache.GetOrResolve(key, matcher, matcher.cacheBound())
 	} else {
 		entry = ResolveEntry(key, matcher)
 	}
@@ -412,7 +412,7 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	// cardinality the same way (GetCardinality over d.schema).
 	var entry *CacheEntry
 	if d.cache != nil {
-		entry = d.cache.GetOrResolve(key, matcher)
+		entry = d.cache.GetOrResolve(key, matcher, matcher.cacheBound())
 	} else {
 		entry = ResolveEntry(key, matcher)
 	}
@@ -1955,7 +1955,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 		var entry *CacheEntry
 		if t.db.cache != nil {
-			entry = t.db.cache.GetOrResolve(key, matcher)
+			entry = t.db.cache.GetOrResolve(key, matcher, matcher.cacheBound())
 		} else {
 			// Cache disabled - resolve directly from storage
 			entry = ResolveEntry(key, matcher)
@@ -2052,7 +2052,7 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 
 	var entry *CacheEntry
 	if t.db.cache != nil {
-		entry = t.db.cache.GetOrResolve(cacheKey, matcher)
+		entry = t.db.cache.GetOrResolve(cacheKey, matcher, matcher.cacheBound())
 	} else {
 		entry = ResolveEntry(cacheKey, matcher)
 	}
@@ -2746,7 +2746,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 			if !ok {
 				continue
 			}
-			if entry := d.cache.GetOrResolve(key, matcher); entry != nil {
+			if entry := d.cache.GetOrResolve(key, matcher, matcher.cacheBound()); entry != nil {
 				if val := entryToValue(entry, getValueType(kw)); val != nil {
 					result[kw] = val
 				}
@@ -2769,7 +2769,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		if !ok {
 			continue
 		}
-		if entry := d.cache.GetOrResolve(key, matcher); entry != nil {
+		if entry := d.cache.GetOrResolve(key, matcher, matcher.cacheBound()); entry != nil {
 			if val := entryToValue(entry, getValueType(kw)); val != nil {
 				result[kw] = val
 			}

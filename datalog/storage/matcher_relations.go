@@ -881,7 +881,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 		var aAttr Attribute
 		copy(eEnt[:], eBytes[:])
 		copy(aAttr[:], aStorage[:])
-		entry := it.matcher.cache.GetOrResolve(CacheKey{E: eEnt, A: aAttr}, it.matcher)
+		entry := it.matcher.cache.GetOrResolve(CacheKey{E: eEnt, A: aAttr}, it.matcher, it.matcher.cacheBound())
 		if entry != nil && entry.Cardinality() == schema.CardinalityOne {
 			// oneValue is nil for a tombstoned or never-set (E, A); ValuesEqual
 			// against the (always non-nil) bound V yields false, matching the
@@ -1220,7 +1220,7 @@ func (m *BadgerMatcher) matchFromCache(
 	}
 
 	// Get or resolve from cache
-	entry := m.cache.GetOrResolve(key, m)
+	entry := m.cache.GetOrResolve(key, m, m.cacheBound())
 	if entry == nil {
 		return nil, false // Fallback to storage
 	}
@@ -1451,7 +1451,7 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 		}
 
 		// Get from cache
-		entry := m.cache.GetOrResolve(key, m)
+		entry := m.cache.GetOrResolve(key, m, m.cacheBound())
 		if entry == nil {
 			// Cache miss - fallback to storage for entire query
 			return nil, false, nil

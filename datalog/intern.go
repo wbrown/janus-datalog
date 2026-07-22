@@ -203,6 +203,10 @@ func ClearInterns() {
 	keywordIntern = &keywordInternCache{}
 	identityIntern = &identityInternCache{}
 	symbolIntern = &symbolInternCache{}
+	// The byte-keyed keyword cache holds pointers the string cache produced;
+	// clearing the authority without it would serve stale pre-clear pointers
+	// that panic against fresh interns in Keyword.Equal/Compare.
+	keywordBytes = &keywordByteCache{m: make(map[[32]byte]Keyword)}
 	// Re-intern pre-interned symbols so they remain valid
 	SymDollar = internSymbol("$")
 	SymCount = internSymbol("count")

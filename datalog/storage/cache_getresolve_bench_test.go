@@ -34,6 +34,6 @@ func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		getResolveSink = c.GetOrResolve(key, nil)
+		getResolveSink = c.GetOrResolve(key, nil, nil)
 	}
 }

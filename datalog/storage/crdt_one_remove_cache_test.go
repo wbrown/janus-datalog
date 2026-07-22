@@ -584,7 +584,7 @@ func TestCacheRemove_CacheRebuild(t *testing.T) {
 
 	matcher := NewBadgerMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	entry := db.Cache().GetOrResolve(key, matcher)
+	entry := db.Cache().GetOrResolve(key, matcher, nil)
 
 	// Entry should either be nil or have nil OneValue
 	if entry != nil {
@@ -1217,7 +1217,7 @@ func cacheRebuildOneValue(t *testing.T, db *Database, e datalog.Identity, a data
 	key := CacheKey{E: eStorage, A: aStorage}
 	matcher := NewBadgerMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	entry := db.Cache().GetOrResolve(key, matcher)
+	entry := db.Cache().GetOrResolve(key, matcher, nil)
 	if entry == nil {
 		return nil
 	}

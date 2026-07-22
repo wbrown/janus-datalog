@@ -1,0 +1,39 @@
+Session-bounded EA-cache reads (phase 2) vs baseline (commit ba6ee24),
+Apple M5.
+
+Cost evidence, three instruments:
+
+1. Fresh-hit microbench (BenchmarkGetOrResolve_FreshHit, n=10 each,
+   back-to-back): baseline median ~6.7ns, head ~7.4ns — +0.6-0.7ns for
+   the added bound compare, zero allocations both sides. Within the
+   predicted <=1ns envelope.
+
+2. CPU profile (identical 200-iteration runs): total samples flat
+   (4.33s -> 4.37s); the profile diff is jitter-scale with no new band;
+   cacheBound() including its once-per-query TAEV seek is 0.46% and
+   maxElementIDByScan does not register.
+
+3. Checkpoint benchstat: the machine entered a high-variance window
+   (+/-18-19%) partway through measurement, which made the first pair
+   read +15% by comparing a quiet-window baseline against noisy-window
+   heads. Against a contemporaneous baseline the result is a wash:
+   18.50ms +/-18% -> 18.34ms +/-19% (p=0.796), B/op wash, +0.01%
+   allocs/op (the bound's once-per-matcher state). Recorded with the
+   window caveat; instruments 1 and 2 are the primary cost evidence.
+
+What it buys: the reviewed two-reader tear is closed. GetOrResolve
+takes a bound (nil = latest, the matcher's *ElementID mode convention):
+a fresh entry serves a sessioned query only when the slot's version
+lies within the query's snapshot — in which case it is provably
+identical to the session's own resolution — and anything newer resolves
+through the session instead. storeIfNotInFlight refuses to replace an
+entry with a strictly older-versioned one, so old-snapshot rebuilds can
+no longer evict fresh entries (the born-stale clobber churn is gone).
+The read_session.go guarantee — a query can never observe two database
+states — now holds through the cache, not just the storage path.
+
+Pinned by TestSessionBoundedCacheRead (the review's repro: concurrent
+commit + second latest reader re-warms the slot; the sessioned matcher's
+cache path must agree with its own ResolveLWW) and
+TestStoreGateKeepsFresherEntry (older entries never replace fresher;
+equal-or-newer still store).
