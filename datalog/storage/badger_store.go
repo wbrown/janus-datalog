@@ -491,6 +491,10 @@ type BadgerIterator struct {
 	valid   bool
 	encoder *BinaryKeyEncoder // For decoding Op from key
 	blobs   BlobReader        // Uses the scan transaction for Tier 3 blobs
+	// release, when set, returns the iterator to its owning read session
+	// instead of discarding the transaction: session-owned iterators share
+	// the session's transaction, which outlives any one scan.
+	release func()
 }
 
 // Next advances the iterator
@@ -559,6 +563,8 @@ func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 }
 
 // Close closes the iterator and releases the underlying BadgerDB transaction.
+// Session-owned iterators return themselves to the session instead — the
+// shared transaction is discarded by the session, not by any one scan.
 // Safe to call multiple times.
 func (i *BadgerIterator) Close() error {
 	if i.txn == nil {
@@ -566,7 +572,11 @@ func (i *BadgerIterator) Close() error {
 	}
 	runtime.SetFinalizer(i, nil)
 	i.it.Close()
-	i.txn.Discard()
+	if i.release != nil {
+		i.release()
+	} else {
+		i.txn.Discard()
+	}
 	i.txn = nil
 	return nil
 }

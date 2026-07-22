@@ -13,7 +13,12 @@ import (
 
 // BadgerMatcher implements executor.PatternMatcher over a storage Store.
 type BadgerMatcher struct {
-	store             Store
+	store Store
+	// reader carries every storage read the matcher performs. It defaults
+	// to the store itself (each read opens its own storage transaction);
+	// query-scoped matchers attach a ReadSession so all reads observe one
+	// snapshot for the query's lifetime.
+	reader            StoreReader
 	encoder           *BinaryKeyEncoder
 	txID              *datalog.ElementID       // nil=latest CRDT-resolved, &ElementID{}=raw history, &ElementID{L,R}=as-of
 	builderCache      *tupleBuilderCache       // Structurally-keyed tuple builders, shared with temporal-handle copies
@@ -79,6 +84,7 @@ func (m *BadgerMatcher) cacheKey(e Entity, a Attribute) (CacheKey, bool) {
 func NewBadgerMatcher(store Store) *BadgerMatcher {
 	return &BadgerMatcher{
 		store:   store,
+		reader:  store,
 		encoder: store.Encoder(),
 		options: executor.ExecutorOptions{}, // Default options
 	}
@@ -88,9 +94,17 @@ func NewBadgerMatcher(store Store) *BadgerMatcher {
 func NewBadgerMatcherWithOptions(store Store, opts executor.ExecutorOptions) *BadgerMatcher {
 	return &BadgerMatcher{
 		store:   store,
+		reader:  store,
 		encoder: store.Encoder(),
 		options: opts,
 	}
+}
+
+// AttachReadSession routes every subsequent storage read this matcher
+// performs through the session, so the whole query observes one snapshot.
+// The caller owns the session's lifecycle; the matcher only reads through it.
+func (m *BadgerMatcher) AttachReadSession(session ReadSession) {
+	m.reader = session
 }
 
 // AsOf creates a matcher that sees the database as of a specific transaction.
@@ -105,6 +119,7 @@ func (m *BadgerMatcher) AsOf(txID datalog.ElementID) *BadgerMatcher {
 
 	return &BadgerMatcher{
 		store:        m.store,
+		reader:       m.reader,
 		encoder:      m.encoder,
 		txID:         &txID,
 		builderCache: m.builderCache,
@@ -718,7 +733,7 @@ func (m *BadgerMatcher) LookupAttribute(
 		// Tx is encoded descending, so first entry = highest Tx = current value (LWW)
 		start, end := encoder.EncodePrefixRange(EATV, eBytes[:], aStorage[:])
 
-		iter, err := m.store.ScanKeysOnly(EATV, start, end)
+		iter, err := m.reader.ScanKeysOnly(EATV, start, end)
 		if err != nil {
 			return nil, false, err
 		}
@@ -916,7 +931,7 @@ func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]in
 
 	// Peek at first datom to determine op type
 	start, end := encoder.EncodePrefixRange(AEVT, aBytes, eBytes)
-	iter, err := m.store.ScanKeysOnly(AEVT, start, end)
+	iter, err := m.reader.ScanKeysOnly(AEVT, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("scanning AEVT for LookupAllAttributes: %w", err)
 	}
@@ -961,7 +976,7 @@ func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]in
 	default:
 		// LWW: return the value with the highest ElementID
 		// Re-scan since we closed the iterator
-		iter2, err := m.store.ScanKeysOnly(AEVT, start, end)
+		iter2, err := m.reader.ScanKeysOnly(AEVT, start, end)
 		if err != nil {
 			return nil, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
 		}

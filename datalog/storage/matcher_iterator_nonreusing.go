@@ -87,7 +87,7 @@ func (it *nonReusingIterator) Next() bool {
 	// Choose index and create scan
 	index, start, end := it.matcher.chooseIndex(e, a, v, tx)
 
-	rawIter, err := it.matcher.store.ScanKeysOnly(index, start, end)
+	rawIter, err := it.matcher.reader.ScanKeysOnly(index, start, end)
 	if err != nil {
 		it.err = err
 		return false

@@ -50,7 +50,7 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		// Build prefix range for this entity on EATV: prefix(1) + E(20)
 		start, end := encoder.EncodePrefixRange(EATV, e[:])
 
-		iter, err := m.store.Scan(EATV, start, end)
+		iter, err := m.reader.Scan(EATV, start, end)
 		if err != nil {
 			return err
 		}

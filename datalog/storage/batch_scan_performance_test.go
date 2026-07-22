@@ -55,10 +55,7 @@ func TestBatchScanPerformance(t *testing.T) {
 	}
 
 	// Get the matcher
-	matcher := &BadgerMatcher{
-		store: db.store,
-		txID:  nil,
-	}
+	matcher := NewBadgerMatcher(db.store)
 
 	// Pattern: [?bar :price/time ?time]
 	timePattern := &query.DataPattern{
@@ -89,10 +86,7 @@ func TestBatchScanPerformance(t *testing.T) {
 
 		// Temporarily modify the threshold
 		// We'll do this by creating a new matcher
-		matcher2 := &BadgerMatcher{
-			store: db.store,
-			txID:  nil,
-		}
+		matcher2 := NewBadgerMatcher(db.store)
 
 		start := time.Now()
 		// Note: This now uses batch scanning automatically for >100 bindings

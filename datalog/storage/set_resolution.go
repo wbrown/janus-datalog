@@ -44,7 +44,7 @@ func (m *BadgerMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolution
 	copy(prefix[21:53], aBytes)
 
 	// Values live in the index keys; nothing here needs Badger values.
-	iter, err := m.store.ScanKeysOnly(EAVT, prefix, prefixEnd(prefix))
+	iter, err := m.reader.ScanKeysOnly(EAVT, prefix, prefixEnd(prefix))
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,7 @@ func (m *BadgerMatcher) checkSetMembership(eBytes, aBytes []byte, v interface{})
 	copy(prefix[54:], vData)
 
 	// Scan for entries with this specific value (both Add and Remove ops)
-	iter, err := m.store.Scan(EAVT, prefix, prefixEnd(prefix))
+	iter, err := m.reader.Scan(EAVT, prefix, prefixEnd(prefix))
 	if err != nil {
 		return false, err
 	}

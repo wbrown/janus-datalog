@@ -68,7 +68,7 @@ func (it *reusingIterator) Next() bool {
 		endKey = append(endKey, 0xFF, 0xFF, 0xFF, 0xFF)
 
 		var err error
-		rawIter, err := it.matcher.store.ScanKeysOnly(it.index, startKey, endKey)
+		rawIter, err := it.matcher.reader.ScanKeysOnly(it.index, startKey, endKey)
 		if err != nil {
 			it.err = err
 			return false

@@ -477,7 +477,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(
 		returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
 	}
 
-	rawStorageIter, err := m.store.ScanKeysOnly(index, start, end)
+	rawStorageIter, err := m.reader.ScanKeysOnly(index, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("scan failed: %w", err)
 	}
@@ -906,7 +906,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 
 	// Point lookup on EATV: scan (E, A) prefix, first result is CRDT winner
 	start, end := encoder.EncodePrefixRange(it.validationIndex, eBytes[:], aStorage[:])
-	rawIter, err := it.matcher.store.ScanKeysOnly(it.validationIndex, start, end)
+	rawIter, err := it.matcher.reader.ScanKeysOnly(it.validationIndex, start, end)
 	if err != nil {
 		return false, err
 	}
@@ -1078,7 +1078,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	}
 
 	// Raw scan on V-primary index
-	rawIter, err := it.matcher.store.ScanKeysOnly(it.candidateIndex, start, end)
+	rawIter, err := it.matcher.reader.ScanKeysOnly(it.candidateIndex, start, end)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1930,7 +1930,7 @@ func (m *BadgerMatcher) matchVectorScanAllEntities(
 	prefix[0] = byte(AEVT)
 	copy(prefix[1:33], aBytes[:])
 
-	storageIter, err := m.store.Scan(AEVT, prefix, prefixEnd(prefix))
+	storageIter, err := m.reader.Scan(AEVT, prefix, prefixEnd(prefix))
 	if err != nil {
 		return nil, fmt.Errorf("AEVT scan failed: %w", err)
 	}
@@ -2064,7 +2064,7 @@ func (m *BadgerMatcher) matchCardinalityManyScanAllEntities(
 	prefix[0] = byte(AEVT)
 	copy(prefix[1:33], aBytes[:])
 
-	storageIter, err := m.store.Scan(AEVT, prefix, prefixEnd(prefix))
+	storageIter, err := m.reader.Scan(AEVT, prefix, prefixEnd(prefix))
 	if err != nil {
 		return nil, fmt.Errorf("AEVT scan failed: %w", err)
 	}
@@ -2360,7 +2360,7 @@ func (m *BadgerMatcher) matchCardinalityManyFindEntitiesWithValue(
 	copy(prefix[1:33], aBytes[:])
 	copy(prefix[33:], vBytes)
 
-	storageIter, err := m.store.Scan(AVET, prefix, prefixEnd(prefix))
+	storageIter, err := m.reader.Scan(AVET, prefix, prefixEnd(prefix))
 	if err != nil {
 		return nil, fmt.Errorf("AVET scan failed: %w", err)
 	}

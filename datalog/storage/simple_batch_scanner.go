@@ -72,7 +72,7 @@ func (s *simpleBatchScanner) Scan() error {
 	}
 
 	// Step 3: Open a single scan for the entire range using key-only scanning
-	rawIter, err := s.matcher.store.ScanKeysOnly(s.index, startKey, endKey)
+	rawIter, err := s.matcher.reader.ScanKeysOnly(s.index, startKey, endKey)
 	if err != nil {
 		return fmt.Errorf("failed to open scan: %w", err)
 	}

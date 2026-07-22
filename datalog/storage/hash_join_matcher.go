@@ -191,7 +191,7 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	scanRange := m.calculatePatternScanRangeWithBinding(pattern, index, position, boundValue)
 
 	// PHASE 3: Create storage iterator
-	storageIter, err := m.store.ScanKeysOnly(index, scanRange.start, scanRange.end)
+	storageIter, err := m.reader.ScanKeysOnly(index, scanRange.start, scanRange.end)
 	if err != nil {
 		return nil, fmt.Errorf("hash join scan failed: %w", err)
 	}
@@ -666,7 +666,7 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 	scanRange := m.calculatePatternScanRange(pattern, index)
 
 	// PHASE 3: Create storage iterator
-	storageIter, err := m.store.ScanKeysOnly(index, scanRange.start, scanRange.end)
+	storageIter, err := m.reader.ScanKeysOnly(index, scanRange.start, scanRange.end)
 	if err != nil {
 		return nil, fmt.Errorf("merge join scan failed: %w", err)
 	}

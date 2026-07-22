@@ -73,7 +73,7 @@ func (m *BadgerMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementI
 
 	// Scan EATV for the first entry visible in this matcher mode (highest
 	// non-filtered Tx due to descending sort).
-	iter, err := m.store.Scan(EATV, prefix, prefixEnd(prefix))
+	iter, err := m.reader.Scan(EATV, prefix, prefixEnd(prefix))
 	if err != nil {
 		return nil, datalog.ElementID{}, err
 	}
