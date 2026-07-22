@@ -195,29 +195,17 @@ func environmentRelationFromInputs(in []query.InputSpec, inputRelations []Relati
 	)
 }
 
-// environmentBindings reads the environment relation's single tuple into the
-// per-clause bindings-map currency that executePredicate/executeExpression
-// still consume. Interim only: stage 2 of the environment work swaps those
-// operators to take the environment relation directly, deleting this
-// conversion (the map must never be an exchange between components).
-func environmentBindings(env Relation) map[query.Symbol]interface{} {
+// environmentRow returns the environment relation's schema and single tuple
+// by reference — the loop-invariant side of binding it into per-row
+// evaluation inside an operator. Never copies: the environment relation is
+// the single holder of its content. A nil environment yields nil slices.
+// The one-tuple shape is the environment's structural invariant, enforced at
+// every construction site (executor binding, iteration Runs, subquery entry).
+func environmentRow(env Relation) ([]query.Symbol, Tuple) {
 	if env == nil {
-		return nil
+		return nil, nil
 	}
-	symbols := env.Symbols()
-	it := env.Iterator()
-	defer it.Close()
-	if !it.Next() {
-		return nil
-	}
-	tuple := it.Tuple()
-	bindings := make(map[query.Symbol]interface{}, len(symbols))
-	for i, sym := range symbols {
-		if i < len(tuple) {
-			bindings[sym] = tuple[i]
-		}
-	}
-	return bindings
+	return env.Symbols(), env.Get(0)
 }
 
 // BindQueryInputs binds input relations to a query's :in clause specifications.

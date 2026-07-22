@@ -926,9 +926,8 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 //     through BindQueryInputs per call
 //
 // Safe to reuse across sequential per-tuple calls within a single worker:
-//   - DefaultQueryExecutor's mutable state (constantBindings) is only set
-//     by ExecuteRealized, never inside this code path; reads of a nil map
-//     return zero values in Go.
+//   - DefaultQueryExecutor carries no per-query mutable state; the query
+//     scope's environment rides the Context, derived fresh per Run.
 //   - modifiedQuery is read-only after construction.
 //   - boundTuple mutation: phase execution reads boundTuple's interface{}
 //     values into freshly-allocated result tuples (joins/projections build

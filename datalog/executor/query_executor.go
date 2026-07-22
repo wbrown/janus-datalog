@@ -306,7 +306,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 	// values into a relation group before aggregation/projection consume
 	// the symbols: projection treats a missing symbol as empty, so any
 	// later rendering would silently drop rows.
-	rendered, renderErr := e.renderConstantFindSymbols(environmentBindings(ctx.Environment()), q, groups)
+	rendered, renderErr := e.renderConstantFindSymbols(ctx.Environment(), q, groups)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -450,10 +450,11 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 // and aggregate arguments are about to be consumed. Extension preserves set
 // semantics: distinct tuples stay distinct under an every-row-identical
 // column.
-func (e *DefaultQueryExecutor) renderConstantFindSymbols(env map[query.Symbol]interface{}, q *query.Query, groups []Relation) ([]Relation, error) {
-	if len(env) == 0 || len(groups) == 0 {
+func (e *DefaultQueryExecutor) renderConstantFindSymbols(env Relation, q *query.Query, groups []Relation) ([]Relation, error) {
+	if env == nil || len(groups) == 0 {
 		return groups, nil
 	}
+	envSymbols := env.Symbols()
 
 	var consumed []query.Symbol
 	for _, elem := range q.Find {
@@ -469,7 +470,7 @@ func (e *DefaultQueryExecutor) renderConstantFindSymbols(env map[query.Symbol]in
 
 	var missing []query.Symbol
 	for _, sym := range consumed {
-		if _, isBound := env[sym]; !isBound {
+		if !query.ContainsSymbol(envSymbols, sym) {
 			continue
 		}
 		present := false
@@ -506,38 +507,15 @@ func (e *DefaultQueryExecutor) renderConstantFindSymbols(env map[query.Symbol]in
 		}
 	}
 
-	rel := groups[target]
-	symbols := append(append([]query.Symbol{}, rel.Symbols()...), missing...)
-	values := make([]interface{}, len(missing))
-	for i, sym := range missing {
-		values[i] = env[sym]
+	// The join of the group with the environment's missing columns: the
+	// symbol sets are disjoint by construction (missing = absent from every
+	// group), so this is an N×1 decoration — every tuple gains the constant
+	// columns, set semantics preserved.
+	projected, err := env.Project(missing)
+	if err != nil {
+		return nil, fmt.Errorf("environment projection for find rendering failed: %w", err)
 	}
-
-	var tuples []Tuple
-	if size := rel.Size(); size > 0 {
-		tuples = make([]Tuple, 0, size)
-	}
-	iter := rel.Iterator()
-	for iter.Next() {
-		src := iter.Tuple()
-		out := make(Tuple, 0, len(symbols))
-		out = append(out, src...)
-		out = append(out, values...)
-		tuples = append(tuples, out)
-	}
-	iterErr := iter.Error()
-	if closeErr := iter.Close(); iterErr == nil {
-		iterErr = closeErr
-	}
-	if iterErr != nil {
-		return nil, iterErr
-	}
-
-	properties := rel.Properties()
-	for _, sym := range missing {
-		properties = properties.addSymbol(sym)
-	}
-	groups[target] = NewMaterializedRelationWithProperties(symbols, tuples, rel.Options(), properties)
+	groups[target] = groups[target].Join(projected)
 	return groups, nil
 }
 
@@ -892,14 +870,13 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		}
 	}
 
-	// Filter out symbols the environment binds (single-valued :in
-	// parameters). Interim stage-1 wiring: the environment relation's tuple
-	// is read into the operators' bindings-map currency here; stage 2 swaps
-	// the operators to consume the relation directly.
-	env := environmentBindings(ctx.Environment())
+	// Symbols the environment binds (single-valued :in parameters) need no
+	// relation group: the environment relation binds into the operator.
+	env := ctx.Environment()
+	envSymbols, envRow := environmentRow(env)
 	var unresolvedExprSyms []query.Symbol
 	for _, sym := range requiredSyms {
-		if _, isBound := env[sym]; !isBound {
+		if !query.ContainsSymbol(envSymbols, sym) {
 			unresolvedExprSyms = append(unresolvedExprSyms, sym)
 		}
 	}
@@ -926,9 +903,9 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			// Ground expression (or all-constants) with existing groups - evaluate once and add symbol(s)
 			// This handles OR fallback: (or [subquery] [(ground 0) ?count])
 			// and constant-bindable scalar expressions: [(+ ?age ?bonus) ?adjusted] where ?bonus is constant
-			evalBindings := make(map[query.Symbol]interface{})
-			for sym, val := range env {
-				evalBindings[sym] = val
+			evalBindings := make(map[query.Symbol]interface{}, len(envSymbols))
+			for i := range envSymbols {
+				evalBindings[envSymbols[i]] = envRow[i]
 			}
 			var result interface{}
 			var err error
@@ -1006,9 +983,9 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		// Handle all-constants expression with no groups (e.g., get-some with scalar input only)
 		// This occurs when all required symbols are constant-bindable and there are no data patterns.
 		if len(unresolvedExprSyms) == 0 && len(groups) == 0 {
-			evalBindings := make(map[query.Symbol]interface{})
-			for sym, val := range env {
-				evalBindings[sym] = val
+			evalBindings := make(map[query.Symbol]interface{}, len(envSymbols))
+			for i := range envSymbols {
+				evalBindings[envSymbols[i]] = envRow[i]
 			}
 
 			// Evaluate the expression - check for database function needing lookup
@@ -1119,12 +1096,13 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 
 	requiredSyms := pred.RequiredSymbols()
 
-	// Filter out symbols the environment binds (single-valued :in
-	// parameters). Interim stage-1 wiring, as in executeExpression above.
-	env := environmentBindings(ctx.Environment())
+	// Symbols the environment binds (single-valued :in parameters) need no
+	// relation group: the environment relation binds into the operator.
+	env := ctx.Environment()
+	envSymbols, _ := environmentRow(env)
 	var unresolvedSyms []query.Symbol
 	for _, sym := range requiredSyms {
-		if _, isBound := env[sym]; !isBound {
+		if !query.ContainsSymbol(envSymbols, sym) {
 			unresolvedSyms = append(unresolvedSyms, sym)
 		}
 	}
@@ -1155,13 +1133,24 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 				pred.String(), unresolvedSyms)
 		}
 
-		// Every required symbol is a resolved constant: the environment
-		// alone decides the predicate. Evaluate it once; the verdict
-		// applies uniformly to every tuple of every group.
-		passes, err := evalPredicateOnce(pred, e.matcher, env)
+		// Every required symbol is environment-bound: the environment alone
+		// decides the predicate. Filter its single tuple once — one
+		// evaluation, and a surviving tuple is a uniform pass. With no
+		// environment (a symbol-free predicate), the zero-symbol unit is the
+		// subject: one evaluation with no bindings, the same verdict shape.
+		var lookup query.EntityLookup
+		if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
+			lookup = entityLookupAdapter{lookupMatcher}
+		}
+		subject := env
+		if subject == nil {
+			subject = NewUnitRelation(e.options)
+		}
+		verdict, err := filterWithPredicateAndLookup(subject, pred, lookup, nil)
 		if err != nil {
 			return nil, err
 		}
+		passes := verdict.Size() == 1
 		if !passes {
 			// Uniform fail. With data groups, empty each one
 			// schema-preserving so downstream clauses and Keep projection
@@ -1210,25 +1199,6 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 
 	// Return result + unchanged relations
 	return append([]Relation{result}, otherRels...), nil
-}
-
-// evalPredicateOnce evaluates a predicate whose required symbols are all
-// resolved constants — the all-constants arm of executePredicate, where no
-// relation symbol participates. Database-function predicates evaluate through
-// entity lookup when the matcher supports it; without it, Eval fails loudly
-// (a data-answer path never degrades to a silent skip), mirroring the
-// per-tuple dispatch in filterWithPredicateAndLookup.
-func evalPredicateOnce(pred query.Predicate, matcher PatternMatcher, constantBindings map[query.Symbol]interface{}) (bool, error) {
-	bindings := make(map[query.Symbol]interface{}, len(constantBindings))
-	for sym, val := range constantBindings {
-		bindings[sym] = val
-	}
-	if dbFuncPred, ok := pred.(*query.DatabaseFunctionPredicate); ok {
-		if lookupMatcher, ok := matcher.(EntityLookupMatcher); ok {
-			return dbFuncPred.EvalWithLookup(bindings, entityLookupAdapter{lookupMatcher})
-		}
-	}
-	return pred.Eval(bindings)
 }
 
 // executeSubquery executes a nested subquery
