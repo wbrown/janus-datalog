@@ -559,44 +559,53 @@ func replaceConsumedOrGroups(
 		return append(groups, relation)
 	}
 
-	consumed := make(map[int]bool, len(orRelation.consumedGroups))
-	insertAt := len(groups)
-	for _, index := range orRelation.consumedGroups {
-		if index < 0 || index >= len(groups) {
-			continue
-		}
-		consumed[index] = true
-		if index < insertAt {
-			insertAt = index
-		}
-	}
-	if len(consumed) == 0 {
-		return append(groups, relation)
-	}
-
-	result := make(Relations, 0, len(groups)-len(consumed)+1)
-	inserted := false
-	for index, group := range groups {
-		if index == insertAt {
-			result = append(result, relation)
-			inserted = true
-		}
-		if !consumed[index] {
-			result = append(result, group)
-		}
-	}
-	if !inserted {
-		result = append(result, relation)
-	}
+	result := replaceGroups(groups, orRelation.consumedGroups, relation)
 
 	if collector := ctx.Collector(); collector != nil {
 		collector.Add(annotations.Event{
 			Name: "or/outer-replaced",
 			Data: map[string]interface{}{
-				"consumed_groups":  len(consumed),
+				"consumed_groups":  len(orRelation.consumedGroups),
 				"remaining_groups": len(result),
 			},
 		})
+	}
+	return result
+}
+
+// replaceGroups substitutes the groups at the consumed indices with their
+// single replacement relation, inserted at the first consumed position;
+// every other group passes through in order. Out-of-range indices are
+// ignored; with none in range the replacement appends.
+func replaceGroups(groups Relations, consumed []int, replacement Relation) Relations {
+	consumedSet := make(map[int]bool, len(consumed))
+	insertAt := len(groups)
+	for _, index := range consumed {
+		if index < 0 || index >= len(groups) {
+			continue
+		}
+		consumedSet[index] = true
+		if index < insertAt {
+			insertAt = index
+		}
+	}
+	if len(consumedSet) == 0 {
+		return append(groups, replacement)
+	}
+
+	result := make(Relations, 0, len(groups)-len(consumedSet)+1)
+	inserted := false
+	for index, group := range groups {
+		if index == insertAt {
+			result = append(result, replacement)
+			inserted = true
+		}
+		if !consumedSet[index] {
+			result = append(result, group)
+		}
+	}
+	if !inserted {
+		result = append(result, replacement)
 	}
 	return result
 }
@@ -1920,26 +1929,32 @@ func (e *DefaultQueryExecutor) executeNotClause(ctx Context, clause *query.NotCl
 
 	// Anti-join keys are the body's free variables — the same scope
 	// interface the planner schedules on. filterWithNotClause intersects
-	// them with the input schema: bound variables unify, the rest are
+	// them with the subject's schema: bound variables unify, the rest are
 	// existential (Datomic's unification rule).
 	joinVars := query.FreeVariables(clause.Clauses)
 	if len(joinVars) == 0 {
-		return nil, fmt.Errorf("NOT clause has no variables to join on")
+		return nil, fmt.Errorf("not clause has no variables to join on")
 	}
 
-	// Apply NOT filter to each group
-	var result Relations
-	for _, group := range groups {
-		filtered, err := e.filterWithNotClause(ctx, clause, group, joinVars)
-		if err != nil {
-			return nil, err
-		}
-		if filtered != nil {
-			result = append(result, filtered)
-		}
+	// The groups carrying anti-join keys are the clause's subject; when the
+	// keys span several disjoint groups, the clause's correlation is their
+	// connector — join them once and anti-join the joined relation on the
+	// full key set, the anti-join analog of a bridging predicate's
+	// theta-join. Anti-joining each group separately instead wipes a
+	// correlate-only group with a partially-bound body and turns the
+	// entity side existential
+	// (BUG_NOT_SPANNING_DISJOINT_GROUPS_APPLIED_PER_GROUP). Groups
+	// carrying no key are unrelated to the clause and pass through.
+	subject, consumed := e.findOuterRelation(joinVars, groups)
+	if len(consumed) == 0 {
+		return nil, fmt.Errorf("not clause variables are bound in no relation group")
 	}
 
-	return result, nil
+	filtered, err := e.filterWithNotClause(ctx, clause, subject, joinVars)
+	if err != nil {
+		return nil, err
+	}
+	return replaceGroups(groups, consumed, filtered), nil
 }
 
 // executeNotJoinClause performs anti-join with explicit join variables
@@ -1949,22 +1964,52 @@ func (e *DefaultQueryExecutor) executeNotJoinClause(ctx Context, clause *query.N
 	}
 
 	if len(clause.JoinVars) == 0 {
-		return nil, fmt.Errorf("NOT-JOIN clause has no join variables")
+		return nil, fmt.Errorf("not-join clause has no join variables")
 	}
 
-	// Apply NOT-JOIN filter to each group
-	var result Relations
-	for _, group := range groups {
-		filtered, err := e.filterWithNotJoinClause(ctx, clause, group)
-		if err != nil {
-			return nil, err
-		}
-		if filtered != nil {
-			result = append(result, filtered)
-		}
+	// Same subject selection and bridging as executeNotClause above, keyed
+	// on the declared header. filterWithNotJoinClause still demands every
+	// declared variable present in the joined subject — a header variable
+	// bound nowhere stays a loud error.
+	subject, consumed := e.findOuterRelation(clause.JoinVars, groups)
+	if len(consumed) == 0 {
+		return nil, fmt.Errorf("not-join header variables are bound in no relation group")
 	}
 
-	return result, nil
+	filtered, err := e.filterWithNotJoinClause(ctx, clause, subject)
+	if err != nil {
+		return nil, err
+	}
+	return replaceGroups(groups, consumed, filtered), nil
+}
+
+// notBodyBinding returns the binding schema for a not/not-join body's
+// per-combination evaluation: the anti-join keys extended with the
+// environment's row, restricted to body-consumed symbols the keys don't
+// already carry. The body is a clause scope, and the environment renders
+// into its binding at the boundary — as at the top level, subquery entry,
+// and or-branch evaluation. The extension tuple is a reference into the
+// projected environment relation's own row, never a copy.
+func notBodyBinding(ctx Context, bodyVars, keys []query.Symbol) ([]query.Symbol, Tuple, error) {
+	env := ctx.Environment()
+	if env == nil {
+		return keys, nil, nil
+	}
+	var extra []query.Symbol
+	for _, sym := range env.Symbols() {
+		if query.ContainsSymbol(bodyVars, sym) && !query.ContainsSymbol(keys, sym) {
+			extra = append(extra, sym)
+		}
+	}
+	if len(extra) == 0 {
+		return keys, nil, nil
+	}
+	projected, err := env.Project(extra)
+	if err != nil {
+		return nil, nil, fmt.Errorf("environment projection for anti-join body binding failed: %w", err)
+	}
+	bindingSyms := append(append([]query.Symbol(nil), keys...), extra...)
+	return bindingSyms, projected.Get(0), nil
 }
 
 // filterWithNotClause applies anti-join filtering to a single relation
@@ -1991,13 +2036,22 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 	}
 
 	if len(actualJoinVars) == 0 {
-		return nil, fmt.Errorf("NOT clause variables not found in input relation")
+		return nil, fmt.Errorf("not clause variables are bound in no relation group")
+	}
+
+	// The not body is a clause scope: the environment joins into its
+	// binding, exactly as the top-level, subquery, and or-branch boundaries
+	// render it into theirs. Restricted to body-consumed symbols the
+	// anti-join keys don't already carry.
+	bindingSyms, envExt, err := notBodyBinding(ctx, joinVars, actualJoinVars)
+	if err != nil {
+		return nil, err
 	}
 
 	// Get unique combinations of join variables from input
 	uniqueCombos, err := getUniqueCombinations(input, actualJoinVars)
 	if err != nil {
-		return nil, fmt.Errorf("NOT input combinations failed: %w", err)
+		return nil, fmt.Errorf("not clause input combinations failed: %w", err)
 	}
 
 	// Track which key combinations matched the inner clauses
@@ -2005,25 +2059,32 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 
 	// For each unique combination, execute inner clauses
 	for _, combo := range uniqueCombos {
-		// Create a single-tuple relation with the combo values for binding
-		bindingRel := NewMaterializedRelationWithOptions(actualJoinVars, []Tuple{combo}, e.options)
+		// Create a single-tuple relation binding the combo values plus the
+		// environment's row
+		binding := combo
+		if len(envExt) > 0 {
+			binding = make(Tuple, 0, len(combo)+len(envExt))
+			binding = append(binding, combo...)
+			binding = append(binding, envExt...)
+		}
+		bindingRel := NewMaterializedRelationWithOptions(bindingSyms, []Tuple{binding}, e.options)
 
 		// Execute inner clauses with this binding
 		innerResult, err := e.executeInnerClauses(ctx, clause.Clauses, bindingRel)
 		if err != nil {
-			return nil, fmt.Errorf("NOT inner clause execution failed: %w", err)
+			return nil, fmt.Errorf("not clause body execution failed: %w", err)
 		}
 
 		// Count inner results via ForEach so streaming inner relations
 		// (Size() == -1) register as matches and a failed inner scan
 		// surfaces as an error rather than looking like "no match" — which
-		// would wrongly un-exclude this combo and silently corrupt the NOT
-		// result.
+		// would wrongly un-exclude this combo and silently corrupt the
+		// anti-join result.
 		matched := false
 		if innerResult != nil {
 			count := 0
 			if ferr := ForEach(innerResult, func(Tuple) error { count++; return nil }); ferr != nil {
-				return nil, fmt.Errorf("NOT inner clause execution failed: %w", ferr)
+				return nil, fmt.Errorf("not clause body execution failed: %w", ferr)
 			}
 			matched = count > 0
 		}
@@ -2081,25 +2142,38 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 
 	for _, v := range clause.JoinVars {
 		if !inputSymSet[v] {
-			return nil, fmt.Errorf("NOT-JOIN variable %s not found in input relation", v)
+			return nil, fmt.Errorf("not-join variable %s is not bound in the subject relation", v)
 		}
+	}
+
+	// The not-join body is a clause scope: the environment joins into its
+	// binding alongside the declared header, as at every scope boundary.
+	bindingSyms, envExt, err := notBodyBinding(ctx, query.FreeVariables(clause.Clauses), clause.JoinVars)
+	if err != nil {
+		return nil, err
 	}
 
 	// Get unique combinations of join variables
 	uniqueCombos, err := getUniqueCombinations(input, clause.JoinVars)
 	if err != nil {
-		return nil, fmt.Errorf("NOT-JOIN input combinations failed: %w", err)
+		return nil, fmt.Errorf("not-join input combinations failed: %w", err)
 	}
 
 	// Track matched keys
 	matchedKeys := NewTupleKeyMap()
 
 	for _, combo := range uniqueCombos {
-		bindingRel := NewMaterializedRelationWithOptions(clause.JoinVars, []Tuple{combo}, e.options)
+		binding := combo
+		if len(envExt) > 0 {
+			binding = make(Tuple, 0, len(combo)+len(envExt))
+			binding = append(binding, combo...)
+			binding = append(binding, envExt...)
+		}
+		bindingRel := NewMaterializedRelationWithOptions(bindingSyms, []Tuple{binding}, e.options)
 
 		innerResult, err := e.executeInnerClauses(ctx, clause.Clauses, bindingRel)
 		if err != nil {
-			return nil, fmt.Errorf("NOT-JOIN inner clause execution failed: %w", err)
+			return nil, fmt.Errorf("not-join inner clause execution failed: %w", err)
 		}
 
 		// Count inner results via ForEach so a failed inner scan surfaces as an

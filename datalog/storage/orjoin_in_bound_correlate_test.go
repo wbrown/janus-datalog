@@ -456,10 +456,9 @@ func TestOrJoinEnvironmentUnderRelationInputIteration(t *testing.T) {
 // TestOrJoinBranchNotConsumesWhereBoundExternal pins the externals gap: a
 // WHERE-bound outer symbol consumed only by a bare (not ...) inside a branch,
 // outside the header, must correlate. The canonical visibility derivation
-// delivers the binding into the branch; the remaining red is the branch's
-// NOT anti-joining its disjoint groups separately — tracked in
-// BUG_NOT_SPANNING_DISJOINT_GROUPS_APPLIED_PER_GROUP (ruled split into its
-// own arc; this pin stays red until that arc lands).
+// delivers the binding into the branch, and the branch's anti-join bridges
+// the groups its keys span — see
+// BUG_NOT_SPANNING_DISJOINT_GROUPS_APPLIED_PER_GROUP.
 func TestOrJoinBranchNotConsumesWhereBoundExternal(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
