@@ -97,6 +97,38 @@ func (p RelationProperties) project(symbols []query.Symbol) RelationProperties {
 	return result
 }
 
+// projectionPreservesSet reports whether projecting a set relation with the
+// given source symbols onto targets is structurally guaranteed to remain a
+// set, making a dedup pass unnecessary. Callers have already validated that
+// every target symbol is present in the source. Two cases prove it:
+//
+//  1. The projected properties retain a candidate key of the source: distinct
+//     source tuples keep distinct key values.
+//  2. The projection is a permutation: targets are pairwise distinct and equal
+//     in count to the source symbols, so (with presence validated and source
+//     symbols distinct by the Relation invariant) the targets cover every
+//     source position — injective on tuples.
+//
+// Every other projection can map distinct source tuples to the same output
+// tuple and must restore set semantics with a dedup pass. Arity equality alone
+// is not enough: a repeated target ([?x ?x] over [?x ?y]) passes presence
+// validation at equal arity yet reads one source position twice, which is not
+// injective — hence the pairwise-distinct clause.
+func projectionPreservesSet(source, targets []query.Symbol, projected RelationProperties) bool {
+	if len(projected.Keys) > 0 {
+		return true
+	}
+	if len(targets) != len(source) {
+		return false
+	}
+	for i, symbol := range targets {
+		if query.ContainsSymbol(targets[:i], symbol) {
+			return false
+		}
+	}
+	return true
+}
+
 func (p RelationProperties) addSymbol(symbol query.Symbol) RelationProperties {
 	result := p.clone()
 	for _, clause := range result.Ordering {

@@ -190,8 +190,20 @@ func TestUniqueCombinationExtractionPropagatesIteratorAndCloseErrors(t *testing.
 
 	_, err := getUniqueCombinations(failing, []query.Symbol{x})
 	require.ErrorIs(t, err, errInjectedIterator)
-	_, err = getUniqueInputCombinations(failing, []query.Symbol{x})
-	require.ErrorIs(t, err, errInjectedIterator)
+
+	// getUniqueInputCombinations was deleted: unique-combination extraction is
+	// now filterSourceSymbols + Relation.Project consumed through the
+	// projection's iterator (executeSubquery drains comboIter, then checks
+	// Error() and its deferred Close()). The extraction is streaming, so an
+	// injected failure surfaces as the projection's deferred error, not a
+	// synchronous return — pinned through the same drain-then-check shape.
+	// failingRelation is invisible to MaterializedRelation.Project (which
+	// reads tuples directly); the streaming sources below present the failing
+	// iterator to the path Project actually consumes.
+	dataSymbols := filterSourceSymbols([]query.Symbol{x})
+	combos, err := newFailingStream(1, Tuple{int64(1)}, Tuple{int64(2)}).Project(dataSymbols)
+	require.NoError(t, err)
+	require.ErrorIs(t, driveErr(combos), errInjectedIterator)
 
 	closeFailing := failingRelation{
 		Relation:  NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}}),
@@ -200,8 +212,19 @@ func TestUniqueCombinationExtractionPropagatesIteratorAndCloseErrors(t *testing.
 	}
 	_, err = getUniqueCombinations(closeFailing, []query.Symbol{x})
 	require.ErrorIs(t, err, closeErr)
-	_, err = getUniqueInputCombinations(closeFailing, []query.Symbol{x})
-	require.ErrorIs(t, err, closeErr)
+
+	closeFailingStream := NewStreamingRelation(testSymbols(), &failingIterator{
+		inner:     NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}}).Iterator(),
+		failAfter: 100,
+		closeErr:  closeErr,
+	})
+	combos, err = closeFailingStream.Project(dataSymbols)
+	require.NoError(t, err)
+	closeIter := combos.Iterator()
+	for closeIter.Next() {
+	}
+	require.NoError(t, closeIter.Error())
+	require.ErrorIs(t, closeIter.Close(), closeErr)
 }
 
 // TestMaterializedRelation_FilterWithPredicate_PropagatesEvalError: the

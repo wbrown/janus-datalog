@@ -1212,7 +1212,7 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 
 // executeSubquery executes a nested subquery
 // Subqueries produce new relations from nested query execution
-func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.SubqueryPattern, groups []Relation) (Relation, error) {
+func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.SubqueryPattern, groups []Relation) (result Relation, resultErr error) {
 	// Record the per-input-combination execution path.
 	if collector := ctx.Collector(); collector != nil {
 		collector.Add(annotations.Event{
@@ -1264,7 +1264,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 			return nil, fmt.Errorf("no input groups for subquery with variable inputs")
 		}
 		// No variable inputs - execute subquery once with empty input combination
-		inputRelations, err := createInputRelationsForSubqueryWithOptions(subq, make(map[query.Symbol]interface{}), e.options)
+		inputRelations, err := subqueryInputRelations(subq, nil, nil, e.options)
 		if err != nil {
 			return nil, fmt.Errorf("subquery input binding failed: %w", err)
 		}
@@ -1296,29 +1296,50 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		combinedRel = Relations(materializedGroups).Product()
 	}
 
-	// Get unique combinations of input values
-	inputCombinations, err := getUniqueInputCombinations(combinedRel, inputSymbols)
-	if err != nil {
-		return nil, fmt.Errorf("subquery input extraction failed: %w", err)
+	// The unique input combinations ARE a relation: the outer relation
+	// projected onto the data input symbols (source markers are execution
+	// context, not data). Projection's set semantics is the dedup — typed
+	// value identity, never string rendering. With no data inputs the
+	// zero-symbol unit is the one (empty) combination.
+	dataSymbols := filterSourceSymbols(inputSymbols)
+	var combos Relation
+	if len(dataSymbols) == 0 {
+		combos = NewUnitRelation(e.options)
+	} else {
+		projected, err := combinedRel.Project(dataSymbols)
+		if err != nil {
+			return nil, fmt.Errorf("subquery input projection failed: %w", err)
+		}
+		combos = projected
 	}
-	if collector := ctx.Collector(); collector != nil {
-		collector.Add(annotations.Event{
-			Name: "subquery/input-combinations",
-			Data: map[string]interface{}{
-				"relation_groups":    len(materializedGroups),
-				"product":            len(materializedGroups) > 1,
-				"eager_materialized": false,
-				"combination_count":  len(inputCombinations),
-			},
-		})
-	}
-
-	// Execute subquery for each combination
+	// Execute subquery for each combination — each tuple of the projected
+	// relation. Projection over a product streams, so the combination count
+	// is known only after the pass; the annotation is emitted once the
+	// combinations have been consumed.
 	var allResults []Relation
+	combinationCount := 0
+	combosRequireCopy := combos.RequiresCopy()
 
-	for _, inputValues := range inputCombinations {
+	comboIter := combos.Iterator()
+	// A failed Close must not present a clean result: capture the Close error
+	// on every path, without double-closing.
+	defer func() {
+		if closeErr := comboIter.Close(); closeErr != nil && resultErr == nil {
+			result = nil
+			resultErr = fmt.Errorf("subquery input combinations failed: %w", closeErr)
+		}
+	}()
+	for comboIter.Next() {
+		combo := comboIter.Tuple()
+		// Each combination outlives its iteration (applyBindingForm carries it
+		// into the bound result), so copy when the source iterator reuses its
+		// tuple workspace.
+		if combosRequireCopy {
+			combo = copyTuple(combo)
+		}
+		combinationCount++
 		// Create input relations for this combination
-		inputRelations, err := createInputRelationsForSubqueryWithOptions(subq, inputValues, e.options)
+		inputRelations, err := subqueryInputRelations(subq, dataSymbols, combo, e.options)
 		if err != nil {
 			return nil, fmt.Errorf("subquery input binding failed: %w", err)
 		}
@@ -1359,12 +1380,26 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		}
 
 		// Apply binding form to join results with outer query values
-		boundResult, err := applyBindingForm(nestedResult, subq.Binding, inputValues, inputSymbols)
+		boundResult, err := applyBindingForm(nestedResult, subq.Binding, dataSymbols, combo)
 		if err != nil {
 			return nil, fmt.Errorf("binding form application failed: %w", err)
 		}
 
 		allResults = append(allResults, boundResult)
+	}
+	if err := comboIter.Error(); err != nil {
+		return nil, fmt.Errorf("subquery input combinations failed: %w", err)
+	}
+	if collector := ctx.Collector(); collector != nil {
+		collector.Add(annotations.Event{
+			Name: "subquery/input-combinations",
+			Data: map[string]interface{}{
+				"relation_groups":    len(materializedGroups),
+				"product":            len(materializedGroups) > 1,
+				"eager_materialized": false,
+				"combination_count":  combinationCount,
+			},
+		})
 	}
 
 	// Combine all results
@@ -1375,10 +1410,6 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 
 	// Union all results (they should have the same schema)
 	return combineSubqueryResultsSimple(allResults), nil
-}
-
-func createInputRelationsForSubqueryWithOptions(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}, opts ExecutorOptions) ([]Relation, error) {
-	return createInputRelationsFromPatternWithOptions(subq, outerValues, opts)
 }
 
 // combineSubqueryResultsSimple combines multiple subquery results into a single relation

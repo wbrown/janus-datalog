@@ -2131,7 +2131,11 @@ func TestHistoryModeCardinalityMany(t *testing.T) {
 		t.Errorf("Latest mode: expected 1 result (add-wins resolved), got %d", latestCount)
 	}
 
-	// History mode: should return ALL raw operations (2 adds + 1 remove = 3 datoms)
+	// History mode with Tx projected away: the add and the remove of
+	// "warrior" are distinct operation records, but both project to the same
+	// ("warrior") tuple — and a relation is a set, so the ?tag projection
+	// carries two bindings. Observing every raw operation requires binding
+	// ?tx, which distinguishes the records (each datom has its own ElementID).
 	historyMatcher := db.History()
 	historyResults, err := historyMatcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
@@ -2142,8 +2146,31 @@ func TestHistoryModeCardinalityMany(t *testing.T) {
 	for historyIter.Next() {
 		historyCount++
 	}
-	if historyCount != 3 {
-		t.Errorf("History mode: expected 3 results (2 adds + 1 remove), got %d", historyCount)
+	if historyCount != 2 {
+		t.Errorf("History mode ?tag projection: expected 2 distinct tag bindings, got %d", historyCount)
+	}
+
+	// History mode with Tx bound: all raw operations visible
+	// (2 adds + 1 remove = 3 datoms).
+	txPattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Constant{Value: entityID},
+			query.Constant{Value: attr},
+			query.Variable{Name: datalog.NewSymbol("?tag")},
+			query.Variable{Name: datalog.NewSymbol("?tx")},
+		},
+	}
+	historyTxResults, err := historyMatcher.Match(query.PatternQuery(txPattern), nil)
+	if err != nil {
+		t.Fatalf("History Match with ?tx failed: %v", err)
+	}
+	historyTxCount := 0
+	historyTxIter := historyTxResults.Iterator()
+	for historyTxIter.Next() {
+		historyTxCount++
+	}
+	if historyTxCount != 3 {
+		t.Errorf("History mode ?tag ?tx projection: expected 3 operation records (2 adds + 1 remove), got %d", historyTxCount)
 	}
 }
 

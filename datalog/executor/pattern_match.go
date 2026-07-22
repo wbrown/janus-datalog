@@ -209,6 +209,24 @@ func (it *datomIterator) Close() error {
 
 func (it *datomIterator) Error() error { return nil }
 
+// patternCoversDatomIdentity reports whether every datom component (E, A, V,
+// Tx) is bound by the pattern to a constant or a variable. A memory matcher
+// emits raw datoms with no CRDT resolution, so a datom's full identity is the
+// only candidate key its stream carries: a wildcard — or an absent Tx
+// position — drops a varying component, and two distinct datoms can then
+// project to the same tuple. Such scans must restore set semantics with a
+// dedup pass before the tuple stream becomes a Relation.
+func patternCoversDatomIdentity(pattern *query.DataPattern) bool {
+	for _, elem := range []query.PatternElement{
+		pattern.GetE(), pattern.GetA(), pattern.GetV(), pattern.GetT(),
+	} {
+		if elem == nil || elem.IsBlank() {
+			return false
+		}
+	}
+	return true
+}
+
 // datomsToRelation converts datoms to a streaming relation (zero-copy lazy evaluation)
 func datomsToRelation(datoms []datalog.Datom, pattern *query.DataPattern, symbols []query.Symbol) Relation {
 	return datomsToRelationWithOptions(datoms, pattern, symbols, ExecutorOptions{})
@@ -220,11 +238,17 @@ func datomsToRelationWithOptions(datoms []datalog.Datom, pattern *query.DataPatt
 		return NewMaterializedRelationWithOptions(symbols, nil, opts)
 	}
 
-	iterator := &datomIterator{
+	var iterator Iterator = &datomIterator{
 		datoms:  datoms,
 		pattern: pattern,
 		symbols: symbols,
 		pos:     -1,
+	}
+	if !patternCoversDatomIdentity(pattern) {
+		// The projection drops part of the datom identity: the relation must
+		// be born a set. DatomToTuple allocates a fresh tuple per datom, so
+		// the seen-keys need no copy.
+		iterator = NewDedupIterator(iterator, 0, false)
 	}
 
 	return NewStreamingRelationWithOptions(symbols, iterator, opts)

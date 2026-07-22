@@ -99,7 +99,11 @@ func (m *BadgerMatcher) MatchWithConstraints(
 				if attr := m.schema.GetAttribute(kw); attr != nil {
 					if attr.Cardinality == schema.CardinalityVector {
 						vBound := m.extractValue(pattern.GetV())
-						return m.matchVectorWithBindings(pattern, bindingRel, symbols, kw, vBound, attr.ValueType)
+						rel, err := m.matchVectorWithBindings(pattern, bindingRel, symbols, kw, vBound, attr.ValueType)
+						if err != nil {
+							return nil, err
+						}
+						return m.restoreScanSetSemantics(rel, pattern, symbols), nil
 					}
 				}
 			}
@@ -201,13 +205,18 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		})
 	}
 
-	// Use appropriate matching strategy
+	// Use appropriate matching strategy. Every binding-driven scan flows
+	// through the single exit below so the relation is restored to set
+	// semantics at birth when the pattern's projection drops part of the
+	// emitted stream's candidate key.
+	var rel executor.Relation
 	switch strategy.Type {
 	case SinglePositionReuse:
 		// For V-bound cardinality-one queries, use candidate + validate pattern
 		// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 4
 		if strategy.NeedsValidation {
-			return m.matchWithVValidation(pattern, bindingRel, symbols, strategy, constraints)
+			rel, err = m.matchWithVValidation(pattern, bindingRel, symbols, strategy, constraints)
+			break
 		}
 
 		// Choose join strategy based on selectivity
@@ -230,31 +239,70 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		switch joinStrategy {
 		case HashJoinScan:
 			// Use hash join for medium selectivity (1-50%)
-			return m.matchWithHashJoin(pattern, bindingRel, symbols, strategy.Position, strategy.Index, constraints)
+			rel, err = m.matchWithHashJoin(pattern, bindingRel, symbols, strategy.Position, strategy.Index, constraints)
 
 		case MergeJoin:
 			// Use merge join for high selectivity (>50%) with large binding sets
-			return m.matchWithMergeJoin(pattern, bindingRel, symbols, strategy.Position, strategy.Index, constraints)
-
-		case IndexNestedLoop:
-			// Use iterator reuse for small sets or high selectivity
-			return m.matchWithIteratorReuse(pattern, bindingRel, symbols, strategy, constraints)
+			rel, err = m.matchWithMergeJoin(pattern, bindingRel, symbols, strategy.Position, strategy.Index, constraints)
 
 		default:
-			// Fall back to iterator reuse
-			return m.matchWithIteratorReuse(pattern, bindingRel, symbols, strategy, constraints)
+			// IndexNestedLoop, or fall back to iterator reuse
+			rel, err = m.matchWithIteratorReuse(pattern, bindingRel, symbols, strategy, constraints)
 		}
 
 	case NoReuse:
 		fallthrough
 	default:
 		// Fall back to opening/closing iterator for each tuple
-		return m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, constraints)
+		rel, err = m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, constraints)
 	}
+	if err != nil {
+		return nil, err
+	}
+	return m.restoreScanSetSemantics(rel, pattern, symbols), nil
 }
 
-// matchUnboundAsRelation matches a pattern without bindings and returns a Relation
+// restoreScanSetSemantics returns rel unchanged when the pattern scan
+// provably emits a set: materialized results are born deduplicated by their
+// constructors (matchFromCache, matchWithBindingsFromCache), and streaming
+// scans whose projection covers a candidate key of the emitted stream are
+// injective (scanProjectionPreservesSet). Every other streaming scan wraps a
+// deduplicating pass so the relation is a set at birth. Scan iterators reuse
+// workspace tuples, so the dedup's seen-keys copy.
+func (m *BadgerMatcher) restoreScanSetSemantics(rel executor.Relation, pattern *query.DataPattern, symbols []query.Symbol) executor.Relation {
+	if rel == nil {
+		return nil
+	}
+	if _, ok := rel.(*executor.MaterializedRelation); ok {
+		return rel
+	}
+	if scanProjectionPreservesSet(pattern, m.schema, m.isHistoryMode()) {
+		return rel
+	}
+	return executor.NewStreamingRelationWithOptions(
+		symbols,
+		executor.NewDedupIterator(rel.Iterator(), 0, true),
+		m.options,
+	)
+}
+
+// matchUnboundAsRelation matches a pattern without bindings and returns a
+// Relation, restored to set semantics at birth when the pattern's projection
+// drops part of the emitted stream's candidate key.
 func (m *BadgerMatcher) matchUnboundAsRelation(
+	q *query.Query,
+	pattern *query.DataPattern,
+	symbols []query.Symbol,
+	constraints []executor.StorageConstraint,
+) (executor.Relation, error) {
+	rel, err := m.matchUnboundScan(q, pattern, symbols, constraints)
+	if err != nil {
+		return nil, err
+	}
+	return m.restoreScanSetSemantics(rel, pattern, symbols), nil
+}
+
+func (m *BadgerMatcher) matchUnboundScan(
 	q *query.Query,
 	pattern *query.DataPattern,
 	symbols []query.Symbol,

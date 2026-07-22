@@ -1,10 +1,63 @@
 package storage
 
 import (
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
+
+// scanProjectionPreservesSet reports whether a pattern scan's datom→tuple
+// projection is injective over the stream the scan emits — whether the
+// resulting relation is a set with no restoration pass. The emitted stream's
+// candidate key depends on the mode:
+//
+//   - History mode emits raw operation records. Every datom carries its own
+//     ElementID (Transaction.Add draws clock.Next() per datom), so Tx alone
+//     is a candidate key: a covered Tx position makes any projection
+//     injective. Without Tx, re-assertions of the same (E, A, V) at later
+//     transactions project to identical tuples.
+//   - Current/as-of resolution emits one row per (E, A) group for effective
+//     cardinality-one — including CardinalityUnknown/schemaless, which the
+//     resolver defaults to LWW (CRDTResolvingIterator.startNewGroup) — and
+//     for cardinality-vector (one resolved vector per group). Declared
+//     CardinalityMany emits one row per (E, A, V). With A not constant the
+//     cardinality varies per attribute, so the conservative key is the
+//     superkey {E, A, V}.
+//
+// A key component is covered when the pattern binds it to a constant (it
+// does not vary across the stream) or a variable (it appears in the tuple).
+// A wildcard — or an absent Tx position — drops a varying key component,
+// letting two distinct stream rows project to the same tuple.
+func scanProjectionPreservesSet(pattern *query.DataPattern, provider schema.SchemaProvider, history bool) bool {
+	covered := func(elem query.PatternElement) bool {
+		return elem != nil && !elem.IsBlank()
+	}
+
+	if history {
+		return covered(pattern.GetT())
+	}
+
+	if !covered(pattern.GetE()) || !covered(pattern.GetA()) {
+		return false
+	}
+
+	keyNeedsV := true
+	if aConst, ok := pattern.GetA().(query.Constant); ok {
+		keyNeedsV = false
+		if provider != nil {
+			if aKw, ok := aConst.Value.(datalog.Keyword); ok {
+				if def := provider.GetAttribute(aKw); def != nil && def.Cardinality == schema.CardinalityMany {
+					keyNeedsV = true
+				}
+			}
+		}
+	}
+	if keyNeedsV && !covered(pattern.GetV()) {
+		return false
+	}
+	return true
+}
 
 // unboundScanProperties reports only guarantees directly proven by the chosen
 // physical index and CRDT mode. Unsupported shapes deliberately return no

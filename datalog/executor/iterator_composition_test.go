@@ -88,7 +88,7 @@ func TestDedupIterator(t *testing.T) {
 
 	// Create dedup iterator
 	source := newMockIterator(tuples)
-	dedupIter := NewDedupIterator(source, 10)
+	dedupIter := NewDedupIterator(source, 10, false)
 
 	// Collect deduplicated results
 	var results []Tuple

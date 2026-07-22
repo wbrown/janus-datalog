@@ -322,7 +322,7 @@ func TestSetSemantics_Iterators(t *testing.T) {
 		}
 
 		source := &sliceIterator{tuples: tuples, pos: -1}
-		dedupIter := NewDedupIterator(source, 10)
+		dedupIter := NewDedupIterator(source, 10, false)
 
 		var results []Tuple
 		for dedupIter.Next() {
@@ -358,7 +358,7 @@ func TestSetSemantics_Iterators(t *testing.T) {
 		projIter := NewProjectIterator(rel, symbols, []query.Symbol{datalog.NewSymbol("?v")})
 
 		// Wrap with dedup (this is what the fix should do)
-		dedupIter := NewDedupIterator(projIter, 10)
+		dedupIter := NewDedupIterator(projIter, 10, false)
 
 		var results []Tuple
 		for dedupIter.Next() {

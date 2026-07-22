@@ -1,0 +1,87 @@
+Total-process CPU for the scan-set-semantics + subquery-projection working
+tree vs its baseline commit (27abf3d), measured with fixed work so user+sys
+totals are comparable: compiled storage test binaries per side (baseline
+built from a worktree at 27abf3d), each run as
+
+  /usr/bin/time -l <binary> -test.run '^$' \
+    -test.bench 'BenchmarkComplexQueryCheckpoint$' \
+    -test.benchtime 200x -test.count 5 -test.benchmem
+
+= 1000 checkpoint queries + 5 setups per process, runs alternating
+baseline/after. The first baseline run was discarded: it built the
+worktree's testdata database (one-time setup) inside the measured process.
+Machine: Apple M5, go1.26.3 darwin/arm64, 2026-07-22.
+
+Summary (clean runs):
+
+  axis (per process)        baseline (n=2)      after (n=3)         delta
+  user+sys CPU              23.46 / 23.20 s     22.61 / 22.55 / 22.50 s   -3.3%
+  instructions retired      379.21 / 379.24 G   369.37 / 369.81 / 369.51 G  -2.5%
+  cycles elapsed            97.94 / 96.58 G     94.57 / 94.20 / 94.43 G   -3.0%
+  max RSS                   ~752 MB             ~751 MB             wash
+  fixed-work ns/op (mean)   ~18.13 ms           ~17.55 ms           -3.2%
+
+The spreads are non-overlapping on every CPU axis. The calibrated benchstat
+(scan_set_semantics_benchstat_2026-07-22.txt) reports wall as a wash at
+p=0.165 because variable-iteration calibration buries the ~3% in run-to-run
+variance; the fixed-work runs recover it.
+
+--- baseline run 1 (27abf3d) ---
+
+BenchmarkComplexQueryCheckpoint-10    	     200	  18000375 ns/op	31223762 B/op	  141089 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  18187720 ns/op	31227296 B/op	  141089 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  18005713 ns/op	31228717 B/op	  141088 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  18316897 ns/op	31249457 B/op	  141089 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  18620451 ns/op	31216907 B/op	  141089 allocs/op
+       20.58 real        23.02 user         0.44 sys
+           752091136  maximum resident set size
+        379212857856  instructions retired
+         97941115272  cycles elapsed
+
+--- baseline run 2 (27abf3d) ---
+
+BenchmarkComplexQueryCheckpoint-10    	     200	  17888126 ns/op	31220275 B/op	  141089 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  18415474 ns/op	31234174 B/op	  141090 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17888537 ns/op	31213097 B/op	  141087 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  18183046 ns/op	31243572 B/op	  141088 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17671009 ns/op	31224053 B/op	  141088 allocs/op
+       20.35 real        22.79 user         0.41 sys
+           749731840  maximum resident set size
+        379239433589  instructions retired
+         96575231326  cycles elapsed
+
+--- after run 1 (working tree) ---
+
+BenchmarkComplexQueryCheckpoint-10    	     200	  17641552 ns/op	29332511 B/op	  126091 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17540413 ns/op	29312282 B/op	  126090 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17804015 ns/op	29314715 B/op	  126091 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17369731 ns/op	29309986 B/op	  126090 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17644557 ns/op	29314100 B/op	  126090 allocs/op
+       20.32 real        22.21 user         0.40 sys
+           752500736  maximum resident set size
+        369366340294  instructions retired
+         94565430000  cycles elapsed
+
+--- after run 2 (working tree) ---
+
+BenchmarkComplexQueryCheckpoint-10    	     200	  17342569 ns/op	29312943 B/op	  126090 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17666609 ns/op	29319055 B/op	  126090 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17494012 ns/op	29301433 B/op	  126090 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17655585 ns/op	29299322 B/op	  126091 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17480071 ns/op	29312313 B/op	  126090 allocs/op
+       19.88 real        22.14 user         0.41 sys
+           752173056  maximum resident set size
+        369808423803  instructions retired
+         94195085866  cycles elapsed
+
+--- after run 3 (working tree) ---
+
+BenchmarkComplexQueryCheckpoint-10    	     200	  17454020 ns/op	29318613 B/op	  126090 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17670995 ns/op	29306759 B/op	  126091 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17747978 ns/op	29310670 B/op	  126090 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17476268 ns/op	29329477 B/op	  126091 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	     200	  17425840 ns/op	29326110 B/op	  126091 allocs/op
+       19.91 real        22.09 user         0.41 sys
+           749584384  maximum resident set size
+        369508523100  instructions retired
+         94429179179  cycles elapsed

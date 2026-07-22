@@ -260,25 +260,35 @@ func (it *FunctionEvaluatorIterator) Error() error {
 
 // DedupIterator removes duplicate tuples based on full tuple equality
 type DedupIterator struct {
-	source  Iterator
-	seen    *TupleKeyMap
-	current Tuple
+	source     Iterator
+	seen       *TupleKeyMap
+	current    Tuple
+	copyTuples bool
 }
 
-// NewDedupIterator creates an iterator that removes duplicates
-func NewDedupIterator(source Iterator, expectedSize int) *DedupIterator {
+// NewDedupIterator creates an iterator that removes duplicates. The seen-key
+// map retains each admitted tuple by reference, so copyTuples must be true
+// when the source iterator reuses workspace memory across Next() calls
+// (storage scan iterators); it may be false only when the source yields a
+// fresh tuple per call (ProjectIterator and other composing transforms).
+func NewDedupIterator(source Iterator, expectedSize int, copyTuples bool) *DedupIterator {
 	return &DedupIterator{
-		source: source,
-		seen:   NewTupleKeyMapWithCapacity(expectedSize),
+		source:     source,
+		seen:       NewTupleKeyMapWithCapacity(expectedSize),
+		copyTuples: copyTuples,
 	}
 }
 
 // Next advances to the next unique tuple
 func (it *DedupIterator) Next() bool {
 	for it.source.Next() {
-		it.current = it.source.Tuple()
-		key := NewTupleKeyFull(it.current)
+		tuple := it.source.Tuple()
+		if it.copyTuples {
+			tuple = copyTuple(tuple)
+		}
+		key := NewTupleKeyFull(tuple)
 		if !it.seen.PutIfAbsent(key, true) {
+			it.current = tuple
 			return true
 		}
 	}

@@ -1,6 +1,8 @@
-# BUG: a NOT whose variables span disjoint relation groups anti-joins each group separately
+# BUG: a `not` whose variables span disjoint relation groups anti-joins each group separately
 
-**Status**: Open (2026-07-22). Found while fixing `BUG_ORJOIN_IN_BOUND_CORRELATE_TREATED_AS_BRANCH_LOCAL` — the or-join branch-visibility fix delivered a WHERE-bound external into branch evaluation correctly, and the branch's own NOT execution then mishandled it. The defect is engine-wide, not or-specific.
+**Status**: Fixed (2026-07-22, the anti-join bridging commit). `executeNotClause` and `executeNotJoinClause` now select the clause's subject with `findOuterRelation` — the groups carrying anti-join keys join once (the clause's correlation is their connector, the anti-join analog of a bridging predicate's theta-join), the anti-join runs once on the full key set, and the filtered join replaces the spanning groups; groups carrying no key are unrelated to the clause and pass through. The body binding additionally renders the environment's row (`notBodyBinding`): the `not` body is a clause scope, and the environment joins into its binding at the boundary exactly as at the top level, subquery entry, and or-branch evaluation — which also fixes the algebra mode, whose lowering of a bare `not` to a narrow-header `not-join` had left the `:in`-bound correlate out of the subject. Pinned by the mode-matrixed reproducers in `datalog/storage/not_spanning_groups_test.go` (bare `not`, explicit `not-join` header, and `:in`-bound correlate shapes) and the formerly-red or-branch reproducer `TestOrJoinBranchNotConsumesWhereBoundExternal`.
+
+**Original report** (2026-07-22): Found while fixing `BUG_ORJOIN_IN_BOUND_CORRELATE_TREATED_AS_BRANCH_LOCAL` — the or-join branch-visibility fix delivered a WHERE-bound external into branch evaluation correctly, and the branch's own `not` execution then mishandled it. The defect is engine-wide, not or-specific.
 
 ## Mechanism
 

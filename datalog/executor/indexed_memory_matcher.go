@@ -217,6 +217,13 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
 	}
 
+	// Project the binding relation onto the pattern's symbols: binding rows
+	// differing only in passenger symbols would rebind the identical pattern
+	// and emit the same datoms again. Projection's set semantics makes the
+	// binding rows unique on the values that actually bind the pattern (the
+	// storage matcher projects identically before its binding-driven paths).
+	bindingRel = bindingRel.ProjectFromPattern(pattern)
+
 	// Match with bindings - use streaming iterator for lazy evaluation
 	// Prefer binding relation's options over matcher's options
 	relOpts := bindingRel.Options()
@@ -228,7 +235,7 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	if err != nil {
 		return nil, err
 	}
-	iterator := &boundDatomIterator{
+	var iterator Iterator = &boundDatomIterator{
 		matcher:     m,
 		pattern:     pattern,
 		symbols:     symbols,
@@ -237,6 +244,11 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 		bindingRel:  bindingRel,
 		boundIdx:    -1,
 		datomIdx:    0,
+	}
+	if !patternCoversDatomIdentity(pattern) {
+		// Raw datoms with part of their identity projected away: restore set
+		// semantics at birth (DatomToTuple allocates fresh tuples — no copy).
+		iterator = NewDedupIterator(iterator, 0, false)
 	}
 
 	return NewStreamingRelationWithOptions(symbols, iterator, relOpts), nil

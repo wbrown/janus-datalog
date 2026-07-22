@@ -47,21 +47,32 @@ func BenchmarkSubqueryInputCombinationExtraction(b *testing.B) {
 				}
 				b.Run(mode, func(b *testing.B) {
 					b.ReportAllocs()
+					dataSymbols := filterSourceSymbols([]query.Symbol{x, y})
 					for b.Loop() {
 						var input Relation = NewProductRelation([]Relation{left, right})
 						if eager {
 							input = input.Materialize()
 						}
-						combinations, err := getUniqueInputCombinations(
-							input,
-							[]query.Symbol{x, y},
-						)
+						// Unique input combinations are the input relation
+						// projected onto the data symbols — Project's set
+						// semantics is the dedup.
+						combinations, err := input.Project(dataSymbols)
 						if err != nil {
 							b.Fatal(err)
 						}
+						got := 0
+						it := combinations.Iterator()
+						for it.Next() {
+							got++
+						}
+						iterErr := it.Error()
+						it.Close()
+						if iterErr != nil {
+							b.Fatal(iterErr)
+						}
 						want := shape.leftValues * shape.rightValues
-						if len(combinations) != want {
-							b.Fatalf("got %d combinations, want %d", len(combinations), want)
+						if got != want {
+							b.Fatalf("got %d combinations, want %d", got, want)
 						}
 					}
 				})
