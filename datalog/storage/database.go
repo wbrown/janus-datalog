@@ -2564,6 +2564,15 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 			rows = make([][]interface{}, outerSlice.Len())
 			for i := 0; i < outerSlice.Len(); i++ {
 				innerSlice := outerSlice.Index(i)
+				// Indexing a []interface{} yields Kind Interface even when
+				// the element holds a slice — the shape every EDN-parsed
+				// input and any []any caller produces. Unwrap before the
+				// kind check; a genuinely non-slice row still fails below,
+				// and a nil element stays wrapped so the error path never
+				// calls Interface() on the zero Value.
+				if innerSlice.Kind() == reflect.Interface && !innerSlice.IsNil() {
+					innerSlice = innerSlice.Elem()
+				}
 				if innerSlice.Kind() != reflect.Slice && innerSlice.Kind() != reflect.Array {
 					return nil, fmt.Errorf("expected slice for relation tuple %d, got %T", i, innerSlice.Interface())
 				}

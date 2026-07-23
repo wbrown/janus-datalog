@@ -1,6 +1,10 @@
 # BUG: CLI `-in` rejects the `#id` tagged literal that query text accepts
 
-**Status**: Open (2026-07-22). Found while probing minted-identity rendering during a downstream validation pass at `70474ea`: the same seed-string identity is expressible inline in query text but not as a CLI input, so any parameterized query over a seed-constructed entity has to fall back to `#identity` with a hand-computed hash.
+**Status**: ✅ RESOLVED (2026-07-22). The query dialect's tagged-literal conversion had two homes that drifted: `parser.parseTaggedLiteral` (which gained `#id`) and the CLI's `ednTaggedToGo` (a near-verbatim twin that didn't). The fix single-homes the vocabulary: the parser exports `TaggedLiteralValue` (the value-level conversion for `#identity`/`#id`/`#inst`/`#bytes`), `parseTaggedLiteral` wraps it in a `query.Constant`, and the CLI's copy is deleted — `-in` and query text now share one conversion and cannot drift again. (The export/import dump format keeps its own dialect in the storage package by design: it carries `#lzj` and deliberately omits the `#id` sugar.) Pinned by `TestCLI_QueryWithIDLiteralInput`, mode-matrixed, red-first.
+
+**Original report follows.**
+
+**Status at filing**: Open (2026-07-22). Found while probing minted-identity rendering during a downstream validation pass at `70474ea`: the same seed-string identity is expressible inline in query text but not as a CLI input, so any parameterized query over a seed-constructed entity has to fall back to `#identity` with a hand-computed hash.
 
 ## Reproduction
 

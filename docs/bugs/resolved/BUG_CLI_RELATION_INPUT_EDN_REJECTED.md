@@ -1,6 +1,10 @@
 # BUG: CLI `-in` rejects relation-shaped EDN inputs
 
-**Status**: Open (2026-07-22). Found while empirically verifying the plan-IR fragment shapes for `docs/wip/CORRECT_BY_CONSTRUCTION_PLANS.md`. The engine executes relation inputs correctly (the executor test suites construct them directly); the defect is in the CLI's EDN-to-input conversion.
+**Status**: ✅ RESOLVED (2026-07-22). The suspected mechanism below was wrong on both counts: the CLI's conversion is correct (uniform `[]interface{}` at every nesting level, exactly what EDN should produce), and the refusal was the **engine's** — the RelationInput arm of the input admission in `storage/database.go` is the only arm doing nested reflection, and indexing a `[]interface{}` yields a `reflect.Value` of Kind `Interface`, not `Slice`, so the inner kind check rejected interface-wrapped rows while concrete `[][]interface{}` passed. The fix unwraps `reflect.Interface` elements (guarded against nil, which must stay wrapped so the error path never calls `Interface()` on the zero Value) before the kind check — which also admits any Go caller passing `[]any{[]any{...}}`, not just the CLI. Pinned by `TestRelationInputAcceptsInterfaceWrappedRows` (engine, interface-wrapped rows with the concrete shape staying green) and `TestCLI_QueryWithRelationInput` (CLI subprocess), both mode-matrixed, red-first.
+
+**Original report follows** (its "Mechanism (suspected, unverified)" and fix-location note are superseded by the resolution above).
+
+**Status at filing**: Open (2026-07-22). Found while empirically verifying the plan-IR fragment shapes for `docs/wip/CORRECT_BY_CONSTRUCTION_PLANS.md`. The engine executes relation inputs correctly (the executor test suites construct them directly); the defect is in the CLI's EDN-to-input conversion.
 
 ## Reproduction
 

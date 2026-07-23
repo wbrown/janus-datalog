@@ -318,7 +318,7 @@ Pass `:in` values with the `-in` flag (one per binding, order matches `:in` afte
   -in 20 -in 30
 ```
 
-Each `-in` value is parsed as EDN, so tagged literals work too: `-in '#inst "2024-01-01T00:00:00Z"'`, `-in '#identity "L85hash..."'`. Exception: `#id` is accepted in query text only — the `-in` conversion currently rejects it (`BUG_CLI_IN_FLAG_REJECTS_ID_TAGGED_LITERAL`); pass the entity's `#identity` hash instead.
+Each `-in` value is parsed as EDN, so tagged literals work too — the full query vocabulary: `-in '#inst "2024-01-01T00:00:00Z"'`, `-in '#identity "L85hash..."'`, `-in '#id "user:alice"'`. Relation inputs pass as vectors of tuple vectors: `-in '[["Alice" 30] ["Bob" 25]]'` for `:in $ [[?name ?age] ...]`.
 
 ### Order By
 

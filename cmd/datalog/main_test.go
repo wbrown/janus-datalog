@@ -604,6 +604,67 @@ func TestCLI_QueryWithMultipleInputs(t *testing.T) {
 	}
 }
 
+// TestCLI_QueryWithIDLiteralInput pins the #id tagged literal through -in:
+// the same seed-string identity that query text accepts must parse
+// identically as a CLI input
+// (BUG_CLI_IN_FLAG_REJECTS_ID_TAGGED_LITERAL).
+func TestCLI_QueryWithIDLiteralInput(t *testing.T) {
+	binPath := buildCLI(t)
+	dbPath := createTestDatabase(t)
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
+				"-query", `[:find ?name :in $ ?e :where [?e :person/name ?name]]`,
+				"-in", `#id "alice"`)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query with #id input failed: %v\n%s", err, out)
+			}
+
+			output := string(out)
+			if !strings.Contains(output, "Alice") {
+				t.Errorf("Expected Alice (seed \"alice\"), got: %s", output)
+			}
+			if strings.Contains(output, "Bob") {
+				t.Errorf("Should not contain Bob, got: %s", output)
+			}
+		})
+	}
+}
+
+// TestCLI_QueryWithRelationInput pins relation-shaped EDN through -in: a
+// vector of tuple vectors binds as relation rows
+// (BUG_CLI_RELATION_INPUT_EDN_REJECTED — the engine's relation-input
+// admission rejected interface-wrapped rows, the only shape EDN parsing
+// produces).
+func TestCLI_QueryWithRelationInput(t *testing.T) {
+	binPath := buildCLI(t)
+	dbPath := createTestDatabase(t)
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Alice's row matches her stored age; Bob's row carries a wrong
+			// age, so the relation join keeps Alice only.
+			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
+				"-query", `[:find ?name :in $ [[?name ?age] ...] :where [?p :person/name ?name] [?p :person/age ?age]]`,
+				"-in", `[["Alice" 30] ["Bob" 999]]`)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query with relation input failed: %v\n%s", err, out)
+			}
+
+			output := string(out)
+			if !strings.Contains(output, "Alice") {
+				t.Errorf("Expected Alice (matching row), got: %s", output)
+			}
+			if strings.Contains(output, "Bob") {
+				t.Errorf("Should not contain Bob (age mismatch), got: %s", output)
+			}
+		})
+	}
+}
+
 // TestCLI_PlanOnly pins the -plan-only flag: the query plans without
 // executing, and the output is the algebra explanation — compiled tree,
 // rewrite decisions, and the physical plan — reflecting the -optimize mode.
