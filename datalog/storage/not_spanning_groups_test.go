@@ -262,6 +262,56 @@ func TestNotJoinOmittedHeaderPredicateConsumptionRejected(t *testing.T) {
 	}
 }
 
+// TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors pins the over-declaration
+// rule for environment symbols: a header symbol the body neither produces
+// nor consumes declares a correlation that does not exist — rejected on
+// both modes, mirroring the or-join family's rule that every declared
+// header symbol must be bound by the branches. The shape's likely origin
+// is a body pattern edited into a literal with the header left behind;
+// silent tolerance would hide that authoring error.
+func TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode)
+			notSpanningFixture(t, d)
+
+			_, err := d.Query(`[:find ?e
+			                    :in $ ?flag
+			                    :where
+			                    [?e :entity/kind "thing"]
+			                    (not-join [?e ?flag]
+			                      [?e :entity/flag "hot"])]`,
+				"hot")
+			require.Error(t, err,
+				"a declared header symbol the body never mentions must reject, not silently drop")
+			require.Contains(t, err.Error(), "neither produced nor consumed")
+		})
+	}
+}
+
+// TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors pins the same rule for a
+// WHERE-bound header symbol — the sibling shape, which diverged before the
+// environment widening: the algebra compiler rejected it while the executor
+// keyed the anti-join on it vacuously.
+func TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode)
+			notSpanningFixture(t, d)
+
+			_, err := d.Query(`[:find ?e
+			                    :where
+			                    [_ :probe/flag ?outer]
+			                    [?e :entity/kind "thing"]
+			                    (not-join [?e ?outer]
+			                      [?e :entity/flag "hot"])]`)
+			require.Error(t, err,
+				"a declared header symbol the body never mentions must reject on both modes")
+			require.Contains(t, err.Error(), "neither produced nor consumed")
+		})
+	}
+}
+
 // TestNotJoinHeaderSymbolBoundNowhereErrors is the negative control for the
 // widened binding domain: a header symbol bound neither by the outer
 // relation nor by :in is still an error, not a vacuous match.

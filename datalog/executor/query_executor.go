@@ -2183,7 +2183,11 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 	inputSyms := input.Symbols()
 
 	// Classify each declared header variable by the mechanism that enforces
-	// it. Subject-carried variables discriminate the anti-join key.
+	// it. A symbol the body never mentions declares a correlation that does
+	// not exist — rejected with the algebra compiler's own message, so both
+	// planning modes agree (the or-join family enforces the mirror rule:
+	// every declared header symbol must be bound by the branches).
+	// Subject-carried variables discriminate the anti-join key.
 	// Environment-bound variables constrain the body through its binding
 	// (notBodyBinding below); their key contribution would be a constant
 	// equal on both sides, so they stay out of the key entirely. A variable
@@ -2194,8 +2198,12 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 		inputSymSet[sym] = true
 	}
 	env := ctx.Environment()
+	bodyVars := query.FreeVariables(clause.Clauses)
 	var keyVars []query.Symbol
 	for _, v := range clause.JoinVars {
+		if !query.ContainsSymbol(bodyVars, v) {
+			return nil, fmt.Errorf("not-join header symbol %s is neither produced nor consumed by the body", v)
+		}
 		if inputSymSet[v] {
 			keyVars = append(keyVars, v)
 			continue
@@ -2214,7 +2222,7 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 
 	// The not-join body is a clause scope: the environment joins into its
 	// binding alongside the declared header, as at every scope boundary.
-	bindingSyms, envExt, err := notBodyBinding(ctx, query.FreeVariables(clause.Clauses), keyVars)
+	bindingSyms, envExt, err := notBodyBinding(ctx, bodyVars, keyVars)
 	if err != nil {
 		return nil, err
 	}
