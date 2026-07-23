@@ -68,7 +68,7 @@ func (it *reusingIterator) Next() bool {
 		endKey = append(endKey, 0xFF, 0xFF, 0xFF, 0xFF)
 
 		var err error
-		rawIter, err := it.matcher.store.ScanKeysOnly(it.index, startKey, endKey)
+		rawIter, err := it.matcher.reader.ScanKeysOnly(it.index, startKey, endKey)
 		if err != nil {
 			it.err = err
 			return false
@@ -142,7 +142,7 @@ func (it *reusingIterator) Next() bool {
 									// Same entity but checking attribute
 									if targetKw, ok := c.Value.(datalog.Keyword); ok {
 										// Check if we've passed the target attribute in sort order
-										if datom.A.String() > targetKw.String() {
+										if datalog.CompareValues(datom.A, targetKw) > 0 {
 											// We've passed it - it doesn't exist for this entity
 											movedPast = true
 										}
@@ -155,7 +155,7 @@ func (it *reusingIterator) Next() bool {
 						// AEVT: Attribute + Entity + Value + Tx
 						// When attribute changes, we're past this binding
 						if expectedA, ok := bindingTuple[0].(datalog.Keyword); ok {
-							if datom.A.String() != expectedA.String() {
+							if datom.A != expectedA {
 								movedPast = true
 							}
 						}
@@ -169,7 +169,7 @@ func (it *reusingIterator) Next() bool {
 						if it.index == 2 { // AVET
 							if c, ok := it.pattern.GetA().(query.Constant); ok {
 								if targetKw, ok := c.Value.(datalog.Keyword); ok {
-									if datom.A.String() != targetKw.String() {
+									if datom.A != targetKw {
 										// Wrong attribute - we've gone too far
 										movedPast = true
 										break

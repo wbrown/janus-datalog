@@ -5,12 +5,17 @@ import (
 
 	"github.com/wbrown/ebnf/parse"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+// decorrelationPassName names the pass in rewrite records and event data.
+const decorrelationPassName = "decorrelation"
+
 // DecorrelationPass returns a transform pass that rewrites LateralJoin nodes
-// into regular Join + decorrelated subquery.
+// into regular Join + decorrelated subquery. Every decision — considered,
+// applied, declined with the failed precondition — goes to the sink as a
+// typed RewriteRecord and as its annotation-event form (a nil sink records
+// nothing).
 //
 // Algebraic rule: R ⋈_L S(r.x) → R ⋈ (S GROUP BY x)
 //
@@ -20,17 +25,11 @@ import (
 //   - Binding updated to include the correlation variable
 //   - The subquery runs once for all values, producing groups
 //   - Results joined back on the correlation variable
-func DecorrelationPass(handler annotations.Handler) Pass {
-	emit := func(name string, data map[string]interface{}) {
-		if handler != nil {
-			handler(annotations.Event{Name: name, Data: data})
-		}
-	}
-
+func DecorrelationPass(sink *RewriteSink) Pass {
 	return Pass{
-		Name: "decorrelation",
+		Name: decorrelationPassName,
 		Transforms: parse.TransformMap{
-			RuleLateralJoin: makeDecorrelateTransform(emit),
+			RuleLateralJoin: makeDecorrelateTransform(sink),
 		},
 	}
 }
@@ -39,15 +38,13 @@ func DecorrelationPass(handler annotations.Handler) Pass {
 // It receives the node's children as already-transformed values.
 // If decorrelation is possible, it returns a rewritten algebra Node.
 // Otherwise it returns the original node unchanged.
-type emitFn func(name string, data map[string]interface{})
-
-func makeDecorrelateTransform(emit emitFn) parse.TransformFunc {
+func makeDecorrelateTransform(sink *RewriteSink) parse.TransformFunc {
 	return func(ctx *parse.TransformContext, node *parse.Node, children ...interface{}) interface{} {
-		return decorrelateTransform(ctx, node, emit, children...)
+		return decorrelateTransform(ctx, node, sink, children...)
 	}
 }
 
-func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, emit emitFn, children ...interface{}) interface{} {
+func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *RewriteSink, children ...interface{}) interface{} {
 	if node.TransformedValue == nil {
 		return node
 	}
@@ -68,33 +65,43 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, emit em
 		return rebuildWithChildren(node, children)
 	}
 
-	emit("algebra/decorrelate-check", map[string]interface{}{
+	subject := lj.InnerQuery.String()
+	sink.Record(RewriteRecord{
+		Pass:    decorrelationPassName,
+		Action:  RewriteConsidered,
+		Subject: subject,
+	}, "algebra/decorrelate-check", map[string]interface{}{
 		"correlation_vars": fmt.Sprintf("%v", lj.CorrelationVars),
 		"has_aggregates":   hasAggregates(lj.InnerQuery),
 		"has_defaults":     len(lj.DefaultValues) > 0,
 		"should":           shouldDecorrelate(lj),
-		"inner_query":      lj.InnerQuery.String(),
+		"inner_query":      subject,
 	})
 
-	if !shouldDecorrelate(lj) {
-		emit("algebra/decorrelate-skip", map[string]interface{}{
-			"reason": "pure DataPattern query — indexed lookup is faster",
+	decline := func(reason string) {
+		sink.Record(RewriteRecord{
+			Pass:    decorrelationPassName,
+			Action:  RewriteDeclined,
+			Reason:  reason,
+			Subject: subject,
+		}, "algebra/decorrelate-skip", map[string]interface{}{
+			"reason": reason,
 		})
+	}
+
+	if !shouldDecorrelate(lj) {
+		decline("pure DataPattern query — indexed lookup is faster")
 		return rebuildWithChildren(node, children)
 	}
 
 	if len(lj.CorrelationVars) == 0 {
-		emit("algebra/decorrelate-skip", map[string]interface{}{
-			"reason": "no correlation variables",
-		})
+		decline("no correlation variables")
 		return rebuildWithChildren(node, children)
 	}
 
 	innerParams := mapCorrelationToInnerParams(lj.InnerQuery, lj.CorrelationVars)
 	if len(innerParams) == 0 {
-		emit("algebra/decorrelate-skip", map[string]interface{}{
-			"reason": "cannot map correlation to inner params",
-		})
+		decline("cannot map correlation to inner params")
 		return node
 	}
 
@@ -104,13 +111,15 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, emit em
 	// execution — a lost optimization, never a wrong answer or a late error.
 	plans, declineReason := classifyCorrelationParams(lj.InnerQuery, innerParams)
 	if declineReason != "" {
-		emit("algebra/decorrelate-skip", map[string]interface{}{
-			"reason": declineReason,
-		})
+		decline(declineReason)
 		return rebuildWithChildren(node, children)
 	}
 
-	emit("algebra/decorrelate-apply", map[string]interface{}{
+	sink.Record(RewriteRecord{
+		Pass:    decorrelationPassName,
+		Action:  RewriteApplied,
+		Subject: subject,
+	}, "algebra/decorrelate-apply", map[string]interface{}{
 		"correlation_vars": fmt.Sprintf("%v", lj.CorrelationVars),
 		"inner_params":     fmt.Sprintf("%v", innerParams),
 		"has_aggregates":   hasAggregates(lj.InnerQuery),
@@ -188,8 +197,9 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, emit em
 			return rebuildWithChildren(node, children)
 		}
 
-		// Log the optimized inner WHERE for debugging
-		emit("algebra/decorrelate-inner-optimized", map[string]interface{}{
+		// Diagnostic detail accompanying the applied rewrite: the optimized
+		// inner WHERE. Event-only — the applied record above is the decision.
+		sink.Emit("algebra/decorrelate-inner-optimized", map[string]interface{}{
 			"clause_count": len(optimizedWhere),
 			"clauses":      fmt.Sprintf("%v", optimizedWhere),
 		})

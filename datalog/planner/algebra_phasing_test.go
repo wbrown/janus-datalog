@@ -25,7 +25,7 @@ func TestPhaserSymbolExtraction(t *testing.T) {
 
 	// Compile + decorrelate
 	root, _ := algebra.Compile(q)
-	opt := algebra.NewOptimizer(algebra.DefaultPasses()...)
+	opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
 	optimized, _ := opt.Optimize(root)
 	clauses, _ := algebra.Decompile(optimized)
 
@@ -87,7 +87,7 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	}
 	t.Logf("Before:\n%s", root.String())
 
-	optimizer := algebra.NewOptimizer(algebra.DefaultPasses()...)
+	optimizer := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
 	optimized, err := optimizer.Optimize(root)
 	if err != nil {
 		t.Fatalf("optimize: %v", err)

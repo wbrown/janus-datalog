@@ -65,6 +65,9 @@ const (
 	// Relation lifecycle
 	RelationCacheEnabled = "relation/cache.enabled"
 
+	// EA cache resolution
+	CacheRebuild = "cache/rebuild"
+
 	// Pull API operations
 	PullBegin           = "pull/begin"
 	PullComplete        = "pull/complete"

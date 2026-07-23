@@ -1,0 +1,15 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+                          │ docs/perf/scan_set_semantics_baseline_2026-07-22.txt │ docs/perf/scan_set_semantics_after_2026-07-22.txt │
+                          │                        sec/op                        │             sec/op               vs base          │
+ComplexQueryCheckpoint-10                                            17.85m ± 3%                       17.62m ± 5%  ~ (p=0.165 n=10)
+
+                          │ docs/perf/scan_set_semantics_baseline_2026-07-22.txt │ docs/perf/scan_set_semantics_after_2026-07-22.txt │
+                          │                         B/op                         │            B/op             vs base               │
+ComplexQueryCheckpoint-10                                           29.77Mi ± 0%                 27.95Mi ± 0%  -6.10% (p=0.000 n=10)
+
+                          │ docs/perf/scan_set_semantics_baseline_2026-07-22.txt │ docs/perf/scan_set_semantics_after_2026-07-22.txt │
+                          │                      allocs/op                       │         allocs/op          vs base                │
+ComplexQueryCheckpoint-10                                            141.1k ± 0%                 126.1k ± 0%  -10.63% (p=0.000 n=10)

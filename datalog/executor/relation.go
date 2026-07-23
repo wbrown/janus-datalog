@@ -749,7 +749,7 @@ func (r *MaterializedRelation) Project(symbols []query.Symbol) (Relation, error)
 
 	properties := r.properties.project(symbols)
 	var result *MaterializedRelation
-	if len(properties.Keys) > 0 {
+	if projectionPreservesSet(r.symbols, symbols, properties) {
 		result = newMaterializedRelationFromSet(
 			symbols,
 			projected,
@@ -872,19 +872,17 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 			break
 		}
 
-		// get-some signals "no attribute matched" via Found=false (not via
-		// error). Skip the tuple in that case, not the eval-error path.
-		if gsr, ok := result.(*query.GetSomeResult); ok {
-			if !gsr.Found {
-				continue
-			}
-			result = gsr.Value
-		}
-
-		if err := admitExpressionResult(fn, result); err != nil {
-			evalErr = err
+		// Absence (get-some found no attribute) is a soft no-match: skip the
+		// tuple, not the eval-error path.
+		value, found, admitErr := admitExpressionResult(fn, result)
+		if admitErr != nil {
+			evalErr = admitErr
 			break
 		}
+		if !found {
+			continue
+		}
+		result = value
 
 		// Create new tuple with function result
 		newTuple := append(tuple, result)
@@ -1328,10 +1326,11 @@ func (r *StreamingRelation) Project(symbols []query.Symbol) (Relation, error) {
 	projIter := NewProjectIterator(r, r.symbols, symbols)
 	properties := r.properties.project(symbols)
 	var resultIterator Iterator = projIter
-	if len(properties.Keys) == 0 {
-		// Without a retained candidate key, projection can map distinct input
-		// tuples to the same output tuple and must restore set semantics.
-		resultIterator = NewDedupIterator(projIter, 0)
+	if !projectionPreservesSet(r.symbols, symbols, properties) {
+		// A reducing projection can map distinct input tuples to the same
+		// output tuple and must restore set semantics. ProjectIterator yields
+		// a fresh tuple per Next, so the seen-keys need no copy.
+		resultIterator = NewDedupIterator(projIter, 0, false)
 	}
 	// BUGFIX: Preserve options (especially EnableTrueStreaming) to prevent re-scanning
 	return NewStreamingRelationWithProperties(
@@ -1630,8 +1629,20 @@ func (p *ProductRelation) Project(symbols []query.Symbol) (Relation, error) {
 	// Product relations are streaming - use iterator composition
 	// Pass the relation itself so ProjectIterator can call Iterator() when needed
 	projIter := NewProjectIterator(p, p.Symbols(), symbols)
-	// Use default options since ProductRelation is a wrapper
-	return NewStreamingRelation(symbols, projIter), nil
+	properties := p.Properties().project(symbols)
+	var resultIterator Iterator = projIter
+	if !projectionPreservesSet(p.symbols, symbols, properties) {
+		// A reducing projection can map distinct input tuples to the same
+		// output tuple and must restore set semantics. ProjectIterator yields
+		// a fresh tuple per Next, so the seen-keys need no copy.
+		resultIterator = NewDedupIterator(projIter, 0, false)
+	}
+	return NewStreamingRelationWithProperties(
+		symbols,
+		resultIterator,
+		p.options,
+		properties,
+	), nil
 }
 
 func (p *ProductRelation) Materialize() Relation {

@@ -19,12 +19,35 @@ Three crashes across eleven runs:
 | 10 | `make test` (full gate, later the same day) | **crash**, ~27s in |
 | 11 | manual re-run, same package | pass |
 | 12 | CI `make test-wasm`, linux/amd64, go1.25.12 (two runs of the same commit) | one pass, one **crash** ~30s into storage |
+| 13 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, branch `fix/tuple-builder-string-key` (uncommitted key-encoder rewrite in tree) | **crash** ~35s into storage |
+| 14 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, branch `fix/tuple-builder-string-key` (uncommitted LookupAttribute single-homing in tree) | **crash** ~29s into storage |
+| 15 | 2026-07-21, manual `make test-wasm` re-run of the same tree as run 14 | **crash** ~28s into storage |
+| 16 | 2026-07-21, second manual `make test-wasm` re-run, same tree | **crash** ~28s into storage |
+| 17 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted tuple-key split-overflow work in tree | **crash** ~29s into storage, poison `0x223f0000` (new per-binary constant; layout shifted by the tuple-key changes), gcWriteBarrier corrupted-return-pc discovery shape |
+| 18 | 2026-07-21, manual `make test-wasm` re-run of the same tree | **crash** ~28s, same poison and goroutine — this binary's layout is in the near-deterministic window, as runs 14–16's was. Root cause is upstream-confirmed (itabInit, CL 803460); reruns stopped per the run-14–16 precedent |
+| 19 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted span-grouped branch cache in tree | **crash** ~28s into storage, poison `0x22430000` — the runs-13–16 value recurring in a third distinct binary — gcWriteBarrier corrupted-return-pc discovery shape (`called from 0xd1ea0`, frame dump shows `newobject`/`mallocgc`/`gcmarknewobject`), goroutine 4720. Sanctioned rerun green |
+| 20 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted or-fallback direct-emit work in tree | **crash** ~28s into storage, poison `0x22450000` (new per-binary constant for the shifted layout), `wbBufFlush1` discovery, goroutine 4720 |
+| 21 | 2026-07-21, manual `make test-wasm` re-run of the same tree | **crash** ~28s, same poison and goroutine — this binary's layout is in the near-deterministic window, as runs 14–16 and 17–18 were. Reruns stopped per that precedent |
+| 22 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted grouped-join-build work in tree | **crash** ~28s into storage, poison `0x22450000` (the occurrences-20–21 value recurring in a distinct binary), `wbBufFlush1` discovery. Sanctioned rerun green |
+| 23 | 2026-07-21, `make test-wasm` re-run of the run-22 tree (only an executor test file added; the storage wasm binary is unchanged from run 22) | **crash** ~28s into storage, same poison and discovery — the run-22 binary flaking at its stochastic rate after its green rerun. The run's purpose (new executor test under wasm) passed; storage's status for this tree stands on run 22's green rerun |
+| 24 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted per-query read-session work in tree | **crash** ~28s into storage, poison `0x22450000` (fourth distinct binary carrying this value), `wbBufFlush1` discovery. Every other wasm package green, including the session-wired storage reads under MemoryStore elsewhere in the suite. Sanctioned rerun green |
+| 25 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted session-bounded cache work in tree | **crash** ~28s into storage, poison `0x22450000` (fifth distinct binary), "unused region of span" discovery (run 2's shape). Every other wasm package green. Sanctioned rerun green |
+| 26 | 2026-07-22, CI `make test-wasm`, linux/amd64, go1.25.12, commit `70474ea` (subquery projection + scan set semantics), workflow run 29949559233 | **crash** ~30s into storage, poison `0x21f60000` (new per-binary constant; layout shifted by the commit), `wbBufFlush1` discovery, goroutine 4731. The sibling CI run (29949563963) of the identical commit was fully green including wasm — the run-12 pattern exactly. Every other wasm package green in the crashing run |
+| 27 | 2026-07-22, sanctioned rerun of the run-26 job (same commit, same toolchain, same binary) | **crash** ~35s into storage, same poison `0x21f60000`, same goroutine 4731, `gcWriteBarrier` corrupted-return-pc discovery (`called from 0xcf600`, `mallocgc`/`gcmarknewobject` frames in the dump). This binary's layout is in the near-deterministic window, as runs 14–16 and 20–21 were; reruns stopped per that precedent. The commit's wasm status stands on the sibling run's fully green wasm job and the local darwin/arm64 pre-push full gate |
+| 28 | 2026-07-22, CI `make test-wasm`, linux/amd64, go1.25.12, commit `4480f9b` (typed-input-identity pin + comment + CLI bug report), workflow run 29965347444 | **crash** into storage, poison `0x21fc0000` (new per-binary constant; layout shifted by the commit), `wbBufFlush1` discovery plus `gcWriteBarrier` corrupted-return-pc (`called from 0xb4e20`), goroutine 4804. The sibling CI run (29965345093) of the identical commit was fully green including wasm — the run-12/26 pattern. Every other wasm package green in the crashing run; local darwin/arm64 pre-push full gate was green. Sanctioned rerun issued |
+| 29 | 2026-07-22, sanctioned rerun of the run-28 job (same commit, same toolchain, same binary) | **crash** into storage, same poison `0x21fc0000`, `wbBufFlush1` discovery, "unused region of span" variant (run 2's shape); the rerun's race and test jobs green. This binary's layout is in the near-deterministic window, as runs 14–16, 20–21, and 26–27 were; reruns stopped per that precedent. The commit's wasm status stands on the sibling run's fully green wasm job and the local darwin/arm64 pre-push full gate |
+| 30 | 2026-07-22, CI `make test-wasm`, linux/amd64, go1.25.12, commit `c1c06d4` (doc-only: skill + this occurrence log — the storage wasm binary is unchanged from `4480f9b`), workflow run 29970449260 | **crash** into storage, same poison `0x21fc0000`, same goroutine 4804, `wbBufFlush1` + corrupted-return-pc discovery — the runs-28–29 binary flaking at its rate, the run-23 precedent exactly (doc-only tree, unchanged binary). The sibling CI run (29970447503) was fully green including wasm. Reruns remain stopped for this binary; the commit's wasm status stands on the sibling run and the local pre-push full gate |
+| 31 | 2026-07-22, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted CLI-conversion work in tree (TaggedLiteralValue export + relation-input interface unwrap) | **crash** into storage under wasm, poison `0x22600000` (new per-binary constant; layout shifted by the arc's code), `wbBufFlush1` via `bulkBarrierPreWriteSrcOnly` (run 2's discovery shape), goroutine 4804. The full native suite in the same pipeline was green, including the arc's three new pins; every other wasm package green. First crash on this binary — sanctioned rerun green |
 
-All three crashes are the same fatal — the GC write barrier discovering a poisoned pointer slot:
+All crashes are the same fatal — the GC write barrier discovering a poisoned pointer slot:
 
 - Run 1: `runtime: pointer 0x22300000 to unallocated span` → `fatal error: found bad pointer in Go heap (incorrect use of unsafe or cgo?)`. Discovered in `runtime.wbBufFlush1`; the running goroutine (3932) was in `runtime.wbMove` inside `executor.(*ScanSharingMatcher).Match` (`scan_sharing_matcher.go:81`), under `DefaultQueryExecutor.executePattern` (`query_executor.go:404`).
 - Run 2: `runtime: pointer 0x22300000 to unused region of span` (span base `0x12f30000`) — same fatal, different stack: `bulkBarrierPreWriteSrcOnly` during `growslice`, an append in `storage.(*MemoryStore).scan.func1` (`memory_store.go:153`) inside a btree `AscendRange`, reached from `validatingVBoundIterator.openCRDTScan` (`matcher_relations.go:1077`) via `Next` ← `CountingIterator` ← `LazySeq` realize. Same goroutine number (3932).
 - Run 10: `runtime: pointer 0x21970000 to unallocated span` — and this time the crashing goroutine's **stack itself is corrupted**: `runtime: g 4129: unexpected return pc for gcWriteBarrier called from 0x82ed80` (a stack address in a return-PC slot). The dumped stack memory around the frame contains storage key material — the ASCII bytes `entity/type` and hash-like byte runs — and the symbolizer mis-attributes a data word to `BenchmarkElementID.func3`, i.e. raw data is sitting where the runtime expects frame structure.
+- Run 13: `runtime: pointer 0x22430000 to unallocated span` — same 0x10000-multiple poison shape, discovered in `runtime.wbBufFlush1` from `runtime.wbMove` inside `executor.(*DefaultQueryExecutor).tryFuseAttributeFetchBundle` (`query_executor.go:681`) under `DefaultQueryExecutor.Execute`, goroutine 4697, go1.26.3. Same late-suite timing (~35s), same full-pipeline context.
+- Run 14: `runtime: pointer 0x22430000 to unallocated span` — same poison value as run 13, discovered in `runtime.wbBufFlush1` via `bulkBarrierPreWriteSrcOnly` during `growslice`, an append in `storage.(*MemoryStore).scan.func1` (`memory_store.go:155`) inside a btree iterate — run 2's discovery stack shape. Goroutine 4698, go1.26.3, ~29s into storage, full-pipeline context.
+- Run 15: same poison (`0x22430000`), same goroutine number (4698), discovered at `gcWriteBarrier` with a corrupted return PC (`unexpected return pc for gcWriteBarrier called from 0x1856410`) and fmt frames in the dumped stack — run 10's discovery shape. Back-to-back with run 14, mirroring the run 1–2 pattern.
+- Run 16: same poison, same goroutine 4698, discovered at `gcWriteBarrier` inside `fmt.(*fmt).padString` under a `deferreturn`. **Three consecutive crashes on one tree — a first** (previous maximum was two, runs 1–2); this binary's layout appears to sit in a near-deterministic crash window, consistent with the extreme layout sensitivity the GOGC=1 triage established. Runs 14–16 share one binary (only doc edits between them); run 13's binary was different yet produced the same `0x22430000` poison — the first observation of one poison value recurring across distinct binaries.
 
 What the signature says:
 
@@ -48,7 +71,7 @@ What the instruments established:
 1. **The poison value is a per-binary constant.** `0x21970000` in every run of the current binary across `-v`, `GODEBUG=clobberfree=1`, and `GODEBUG=gccheckmark=1`; earlier binaries produced `0x22300000` (pre-commit tree) and `0x21cc0000` (CI's Go 1.25.12 build). A link-layout-determined value with the `0xNNNN0000` shape of a wasm function-base PC, landing in the write-barrier buffer as a recorded "pointer".
 2. **Not a read of freed heap memory**: `clobberfree=1` (which fills freed objects with a clobber pattern) leaves the poison unchanged.
 3. **Not caught earlier by `gccheckmark=1`**: identical detonation, so the corruption enters through the barrier buffer, not a missed mark.
-4. **Not repo `unsafe`**: an exhaustive audit found exactly one `unsafe` site in the tree (`executor/tuple_key.go` — pointer-address hash, converted to `uint64` in a single expression, stored only in non-pointer slots, and linked equally into the never-crashing executor test binary); dependency `unsafe` is either build-tag-excluded under js/wasm (go-spew, isatty, colorable) or a cold read-only alias (`ll`'s `[]byte`→`string`); no `go:linkname`/`nosplit`/`noescape` anywhere in the graph; interning is plain `sync.Map` with strong references (no stdlib `unique`/`weak`).
+4. **Not repo `unsafe`**: an exhaustive audit found (as of 2026-07-19; `datalog/storage/hashtriemap.go` later added the stdlib HashTrieMap port's two struct-prefix node casts) exactly one `unsafe` site in the tree (`executor/tuple_key.go` — pointer-address hash, converted to `uint64` in a single expression, stored only in non-pointer slots, and linked equally into the never-crashing executor test binary); dependency `unsafe` is either build-tag-excluded under js/wasm (go-spew, isatty, colorable) or a cold read-only alias (`ll`'s `[]byte`→`string`); no `go:linkname`/`nosplit`/`noescape` anywhere in the graph; interning is plain `sync.Map` with strong references (no stdlib `unique`/`weak`).
 5. **Not test-bisectable — extreme layout sensitivity**: the detonating test passes in isolation and with a suffix window; selecting **all 767 preceding tests** via a `-run` regex (preserving execution order) does not crash, while the identical unfiltered run crashes 4/4. The `-run` filter's own allocations perturb the heap enough to mask the bug, so no test-subset instrument can minimize it.
 6. **The "unexpected return pc for gcWriteBarrier called from X" lines show a different X every crash** (a stack address, `0x300`, a heap-like address) while the primary poison stays constant — consistent with the traceback machinery simply failing to unwind through the wasm write-barrier fast path once the throw begins, i.e. secondary noise, not independent corruption.
 
@@ -58,7 +81,46 @@ What the instruments established:
 
 **Filed upstream**: https://github.com/golang/go/issues/80472 (2026-07-19) — traces, the per-binary-constant poison observation, the crashes-at-tip result, and the turnkey reproduction pinned to `ce6baf7`.
 
+## Upstream diagnosis and fix verification (2026-07-21)
+
+Upstream diagnosed the mechanism (Zxilly on golang/go#80472): `runtime.itabInit`
+fills an itab's `Fun` array by storing code pointers through an
+`unsafe.Pointer` slice, for which the compiler emits a write barrier. On wasm a
+code PC is `funcIndex<<16` — small enough to land inside a live heap span, so
+the GC treats the recorded value as a bad heap pointer. Fix: CL 803460
+(`runtime: don't emit write barrier for code pointers in itabInit`) stores
+through a `uintptr` slice and marks `itabInit` `//go:nowritebarrier`.
+
+Local corroboration and verification, from the reproducer side:
+
+1. **The poison is the entry PC of the same interface method in every crash.**
+   Symbolizing each crashing binary's poison against its own wasm name section
+   (Go `PC_F` = wasm function index + `funcValueOffset(0x1000)` − 22 imports;
+   calibration cross-checked against three symbolized frames per binary):
+   `0x22300000` (2026-07-19 binary, also directly visible as frame pc
+   `0x22300046` in run 1), `0x22430000` (runs 13–16's binary), and `0x22ac0000`
+   (tip binary, 2026-07-21) all resolve to
+   `executor.(*ScanSharingMatcher).Match`. The "per-binary constant" was never
+   arbitrary — it is this method's entry PC in each layout. `*ScanSharingMatcher`
+   is first converted to its matcher interface mid-suite, when the heap has
+   grown enough to contain the PC value — explaining both the late-suite timing
+   and the extreme layout sensitivity (test selection shifts when that itab
+   first initializes and how large the heap is at that moment). This answers
+   the upstream request to identify the write barrier's caller: `itabInit`.
+2. **CL 803460 (PS2) fixes the turnkey reproducer.** Same tree, same host
+   (darwin/arm64, node runner), same command, back to back: gotip `9f236fbe`
+   unpatched **crashes** (poison `0x22ac0000`); gotip + CL 803460 cherry-picked
+   (`a583f0a9`) **passes 3/3** `GOGC=1` runs. The patched toolchain remains at
+   `~/sdk/gotip` (detached HEAD `a583f0a9`); `gotip download` restores plain tip.
+
 ## Remaining next steps
 
-1. Track golang/go#80472; run instrumented builds or candidate fixes against the `GOGC=1` reproducer on request.
-2. Until an upstream fix: the CI wasm job will flake at roughly the stochastic rate; reruns are sanctioned for this signature only, with this doc as the reference.
+1. **CL 803460 merged into Go master (2026-07-21)** — patch set 2, revision
+   `5141d4e`, the exact revision verified 3/3 against this repo's `GOGC=1`
+   reproducer. The crash class ends at the first Go release (or toolchain
+   update) carrying the merge.
+2. Until the gate's toolchain carries it: the wasm job flakes at a
+   layout-determined rate — some binaries sit in a near-deterministic crash
+   window (runs 14–16, 17–18) and stay red until the next code change shifts
+   the layout. Reruns are sanctioned for this signature only, with this doc
+   as the reference.

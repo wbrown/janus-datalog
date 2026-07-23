@@ -13,10 +13,21 @@ import (
 
 // BadgerMatcher implements executor.PatternMatcher over a storage Store.
 type BadgerMatcher struct {
-	store             Store
+	store Store
+	// reader carries every storage read the matcher performs. It defaults
+	// to the store itself (each read opens its own storage transaction);
+	// query-scoped matchers attach a ReadSession so all reads observe one
+	// snapshot for the query's lifetime.
+	reader            StoreReader
+	// sessionBounded marks that reader is a ReadSession, so cache reads must
+	// bound themselves to its snapshot high-water mark (cacheBound). The
+	// bound computes lazily once — the session's maximum is snapshot-constant.
+	sessionBounded bool
+	boundOnce      sync.Once
+	readBound      datalog.ElementID
 	encoder           *BinaryKeyEncoder
 	txID              *datalog.ElementID       // nil=latest CRDT-resolved, &ElementID{}=raw history, &ElementID{L,R}=as-of
-	builderCache      *sync.Map                // map[string]*query.InternedTupleBuilder - Thread-safe cache for tuple builders
+	builderCache      *tupleBuilderCache       // Structurally-keyed tuple builders, shared with temporal-handle copies
 	builderCacheOnce  sync.Once                // Ensures builderCache is initialized exactly once
 	handler           annotations.Handler      // Set from HandlerProvider for detailed storage events
 	options           executor.ExecutorOptions // Options for creating relations
@@ -74,23 +85,54 @@ func (m *BadgerMatcher) cacheKey(e Entity, a Attribute) (CacheKey, bool) {
 }
 
 // NewBadgerMatcher creates a new pattern matcher for a storage backend.
+// The tuple-builder cache initializes lazily on first use; Database-minted
+// matchers arrive with the database's shared cache already set.
 func NewBadgerMatcher(store Store) *BadgerMatcher {
 	return &BadgerMatcher{
-		store:        store,
-		encoder:      store.Encoder(),
-		builderCache: &sync.Map{},
-		options:      executor.ExecutorOptions{}, // Default options
+		store:   store,
+		reader:  store,
+		encoder: store.Encoder(),
+		options: executor.ExecutorOptions{}, // Default options
 	}
 }
 
 // NewBadgerMatcherWithOptions creates a new pattern matcher with specific options
 func NewBadgerMatcherWithOptions(store Store, opts executor.ExecutorOptions) *BadgerMatcher {
 	return &BadgerMatcher{
-		store:        store,
-		encoder:      store.Encoder(),
-		builderCache: &sync.Map{},
-		options:      opts,
+		store:   store,
+		reader:  store,
+		encoder: store.Encoder(),
+		options: opts,
 	}
+}
+
+// AttachReadSession routes every subsequent storage read this matcher
+// performs through the session, so the whole query observes one snapshot.
+// Cache reads bound themselves to the session's high-water mark (see
+// cacheBound), so the shared EA cache can never serve this matcher content
+// newer than its snapshot. The caller owns the session's lifecycle; the
+// matcher only reads through it.
+func (m *BadgerMatcher) AttachReadSession(session ReadSession) {
+	m.reader = session
+	m.sessionBounded = true
+}
+
+// cacheBound returns the snapshot high-water mark cache reads must respect:
+// nil for latest-mode matchers (any fresh entry serves), the session's max
+// ElementID for sessioned ones. Computed once per matcher; the session's
+// maximum is snapshot-constant. A bound that fails to compute degrades to
+// the zero ElementID — no cached entry serves, every lookup resolves
+// through the session — which is safe, never wrong.
+func (m *BadgerMatcher) cacheBound() *datalog.ElementID {
+	if !m.sessionBounded {
+		return nil
+	}
+	m.boundOnce.Do(func() {
+		if id, err := m.reader.MaxElementID(); err == nil {
+			m.readBound = id
+		}
+	})
+	return &m.readBound
 }
 
 // AsOf creates a matcher that sees the database as of a specific transaction.
@@ -99,19 +141,21 @@ func (m *BadgerMatcher) AsOf(txID datalog.ElementID) *BadgerMatcher {
 	// Ensure cache is initialized before sharing it
 	m.builderCacheOnce.Do(func() {
 		if m.builderCache == nil {
-			m.builderCache = &sync.Map{}
+			m.builderCache = newTupleBuilderCache()
 		}
 	})
 
 	return &BadgerMatcher{
-		store:        m.store,
-		encoder:      m.encoder,
-		txID:         &txID,
-		builderCache: m.builderCache,
-		handler:      m.handler,
-		options:      m.options,
-		schema:       m.schema,
-		cache:        m.cache,
+		store:          m.store,
+		reader:         m.reader,
+		sessionBounded: m.sessionBounded,
+		encoder:        m.encoder,
+		txID:           &txID,
+		builderCache:   m.builderCache,
+		handler:        m.handler,
+		options:        m.options,
+		schema:         m.schema,
+		cache:          m.cache,
 	}
 }
 
@@ -145,27 +189,96 @@ func (m *BadgerMatcher) SetCache(c *Cache) {
 	m.cache = c
 }
 
-// getTupleBuilder returns a cached tuple builder or creates a new one
+// tupleBuilderKey is the structural identity of an InternedTupleBuilder:
+// where each datom position lands in the output tuple, and the output
+// symbols themselves. Constants contribute nothing to a builder, so they are
+// no part of the key — patterns differing only in constants share one
+// builder, and building the key never renders the pattern.
+type tupleBuilderKey struct {
+	e, a, v, t int8
+	out        [4]query.Symbol
+	n          int8
+}
+
+func newTupleBuilderKey(pattern *query.DataPattern, symbols []query.Symbol) tupleBuilderKey {
+	if len(symbols) > 4 {
+		panic(fmt.Sprintf("a data pattern provides at most 4 symbols, got %d: %v", len(symbols), symbols))
+	}
+	key := tupleBuilderKey{
+		e: tuplePosition(symbols, pattern.GetE()),
+		a: tuplePosition(symbols, pattern.GetA()),
+		v: tuplePosition(symbols, pattern.GetV()),
+		t: tuplePosition(symbols, pattern.GetT()),
+		n: int8(len(symbols)),
+	}
+	copy(key.out[:], symbols)
+	return key
+}
+
+// tuplePosition returns the output-tuple position of a pattern element's
+// variable, or -1 when the element is a constant, a wildcard, or a variable
+// the output does not carry.
+func tuplePosition(symbols []query.Symbol, element query.PatternElement) int8 {
+	variable, ok := element.(query.Variable)
+	if !ok {
+		return -1
+	}
+	for i, sym := range symbols {
+		if sym == variable.Name {
+			return int8(i)
+		}
+	}
+	return -1
+}
+
+// tupleBuilderCache shares structurally-keyed InternedTupleBuilders across
+// every matcher a Database mints and their temporal-handle copies. A typed
+// map under RWMutex keeps the warm lookup allocation-free (a sync.Map key
+// would box per call).
+type tupleBuilderCache struct {
+	mu       sync.RWMutex
+	builders map[tupleBuilderKey]*query.InternedTupleBuilder
+}
+
+func newTupleBuilderCache() *tupleBuilderCache {
+	return &tupleBuilderCache{builders: make(map[tupleBuilderKey]*query.InternedTupleBuilder)}
+}
+
+func (c *tupleBuilderCache) get(key tupleBuilderKey) (*query.InternedTupleBuilder, bool) {
+	c.mu.RLock()
+	builder, ok := c.builders[key]
+	c.mu.RUnlock()
+	return builder, ok
+}
+
+// getOrStore keeps the first builder stored for a key, so concurrent misses
+// converge on a single instance.
+func (c *tupleBuilderCache) getOrStore(key tupleBuilderKey, builder *query.InternedTupleBuilder) *query.InternedTupleBuilder {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if existing, ok := c.builders[key]; ok {
+		return existing
+	}
+	c.builders[key] = builder
+	return builder
+}
+
+// getTupleBuilder returns the cached tuple builder for the pattern's
+// structural identity, creating it on first use.
 func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, symbols []query.Symbol) *query.InternedTupleBuilder {
-	// Initialize cache exactly once (for tests or code paths that don't use NewBadgerMatcher)
+	// Standalone matchers initialize their cache lazily here; Database-minted
+	// matchers arrive with the database's shared cache already set.
 	m.builderCacheOnce.Do(func() {
 		if m.builderCache == nil {
-			m.builderCache = &sync.Map{}
+			m.builderCache = newTupleBuilderCache()
 		}
 	})
 
-	key := pattern.String()
-	for _, sym := range symbols {
-		key += "|" + sym.String()
+	key := newTupleBuilderKey(pattern, symbols)
+	if builder, ok := m.builderCache.get(key); ok {
+		return builder
 	}
-
-	if val, ok := m.builderCache.Load(key); ok {
-		return val.(*query.InternedTupleBuilder)
-	}
-
-	builder := query.NewInternedTupleBuilder(pattern, symbols)
-	actual, _ := m.builderCache.LoadOrStore(key, builder)
-	return actual.(*query.InternedTupleBuilder)
+	return m.builderCache.getOrStore(key, query.NewInternedTupleBuilder(pattern, symbols))
 }
 
 // ForceJoinStrategy overrides the join strategy selection for testing
@@ -323,9 +436,8 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 	} else if a != nil {
 		// A is bound but not E
 		if aKw, ok := a.(datalog.Keyword); ok {
-			// Convert to storage format (intern the keyword)
-			aPtr := datalog.NewKeyword(aKw.String())
-			aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
+			// Convert to storage format; the keyword is already interned
+			aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
 
 			// A and Tx bound (V unbound) — ATEV gives a direct [A][Tx↓] prefix scan,
 			// landing on the exact (or nearest-descending) Tx for the attribute. The
@@ -353,7 +465,7 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 			// - CardinalityOne/Vector: AETV orders by Tx first, first entry is current
 			card := schema.CardinalityOne
 			if m.schema != nil {
-				if attrDef := m.schema.GetAttribute(aPtr); attrDef != nil {
+				if attrDef := m.schema.GetAttribute(aKw); attrDef != nil {
 					card = attrDef.Cardinality
 				}
 			}
@@ -615,7 +727,7 @@ func (m *BadgerMatcher) LookupAttribute(
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry := m.cache.GetOrResolve(key, m)
+		entry := m.cache.GetOrResolve(key, m, m.cacheBound())
 		if entry != nil {
 			switch card {
 			case schema.CardinalityOne:
@@ -650,7 +762,7 @@ func (m *BadgerMatcher) LookupAttribute(
 		// Tx is encoded descending, so first entry = highest Tx = current value (LWW)
 		start, end := encoder.EncodePrefixRange(EATV, eBytes[:], aStorage[:])
 
-		iter, err := m.store.ScanKeysOnly(EATV, start, end)
+		iter, err := m.reader.ScanKeysOnly(EATV, start, end)
 		if err != nil {
 			return nil, false, err
 		}
@@ -698,64 +810,20 @@ func (m *BadgerMatcher) LookupAttribute(
 		return typedVector(result.Elements, valueType), true, nil
 	}
 
-	// For cardinality-many, use AEVT and apply add-wins resolution
-	// Must return ALL values that are currently in the set
-	start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:])
-
-	iter, err := m.store.ScanKeysOnly(AEVT, start, end)
+	// For cardinality-many, resolve the full set membership with add-wins
+	// semantics.
+	set, err := m.resolveAddWinsSet(eBytes[:], aStorage[:])
 	if err != nil {
 		return nil, false, err
 	}
-	defer func() {
-		if closeErr := iter.Close(); lookupErr == nil {
-			lookupErr = closeErr
-		}
-	}()
-
-	// For cardinality-many, we need add-wins resolution
-	// Track the highest add and remove lamport for each value
-	valueAddLamport := make(map[interface{}]uint64)
-	valueRemoveLamport := make(map[interface{}]uint64)
-
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			return nil, false, err
-		}
-
-		// Check transaction filter for as-of queries
-		if m.shouldFilterTx(datom.Tx) {
-			continue
-		}
-
-		if datom.Op == datalog.OpCRDTRemove {
-			if datom.Tx.Lamport > valueRemoveLamport[datom.V] {
-				valueRemoveLamport[datom.V] = datom.Tx.Lamport
-			}
-		} else {
-			// OpCRDTAdd or no op (legacy)
-			if datom.Tx.Lamport > valueAddLamport[datom.V] {
-				valueAddLamport[datom.V] = datom.Tx.Lamport
-			}
-		}
+	if len(set.Members) == 0 {
+		return nil, false, nil
 	}
-	if err := iter.Error(); err != nil {
-		return nil, false, err
+	members := make([]interface{}, 0, len(set.Members))
+	for _, v := range set.Members {
+		members = append(members, v)
 	}
-
-	// Build result: include values where add >= remove (add-wins on tie)
-	var result []interface{}
-	for v, addLamport := range valueAddLamport {
-		removeLamport := valueRemoveLamport[v]
-		if addLamport >= removeLamport { // add-wins on tie
-			result = append(result, v)
-		}
-	}
-
-	if len(result) > 0 {
-		return result, true, nil
-	}
-	return nil, false, nil
+	return members, true, nil
 }
 
 // typedVector converts []any to a typed slice when the schema value type is known.
@@ -846,7 +914,7 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry := m.cache.GetOrResolve(key, m)
+		entry := m.cache.GetOrResolve(key, m, m.cacheBound())
 		if entry != nil {
 			// Determine cardinality
 			card := schema.CardinalityOne
@@ -892,7 +960,7 @@ func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]in
 
 	// Peek at first datom to determine op type
 	start, end := encoder.EncodePrefixRange(AEVT, aBytes, eBytes)
-	iter, err := m.store.ScanKeysOnly(AEVT, start, end)
+	iter, err := m.reader.ScanKeysOnly(AEVT, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("scanning AEVT for LookupAllAttributes: %w", err)
 	}
@@ -937,7 +1005,7 @@ func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]in
 	default:
 		// LWW: return the value with the highest ElementID
 		// Re-scan since we closed the iterator
-		iter2, err := m.store.ScanKeysOnly(AEVT, start, end)
+		iter2, err := m.reader.ScanKeysOnly(AEVT, start, end)
 		if err != nil {
 			return nil, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
 		}

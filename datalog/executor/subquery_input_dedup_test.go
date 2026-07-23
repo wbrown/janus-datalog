@@ -7,7 +7,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// TestGetUniqueInputCombinations_NoStringKeyCollisions is a regression test for
+// TestSubqueryInputProjection_NoStringKeyCollisions is a regression test for
 // BUG_SUBQUERY_INPUT_DEDUP_STRING_COLLISION.
 //
 // Correlated-subquery input dedup must treat two input combinations as equal
@@ -15,7 +15,11 @@ import (
 // string rendering. The old fmt.Sprintf("%v")+"|" key is not injective: distinct
 // combinations stringify to the same key and collapse into one subquery
 // execution, silently dropping results for the others.
-func TestGetUniqueInputCombinations_NoStringKeyCollisions(t *testing.T) {
+//
+// Unique input combinations ARE the outer relation projected onto the data
+// input symbols: Project's set semantics is the dedup, backed by the same
+// TupleKeyMap typed-value-identity machinery the deleted per-tuple scan used.
+func TestSubqueryInputProjection_NoStringKeyCollisions(t *testing.T) {
 	syms := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")}
 
 	cases := []struct {
@@ -37,23 +41,24 @@ func TestGetUniqueInputCombinations_NoStringKeyCollisions(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rel := NewMaterializedRelation(syms, tc.tuples)
-			combos, err := getUniqueInputCombinations(rel, syms)
+			dataSymbols := filterSourceSymbols(syms)
+			combos, err := rel.Project(dataSymbols)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if len(combos) != 2 {
-				t.Fatalf("expected 2 distinct combinations, got %d: %v "+
-					"(distinct typed tuples collapsed by string-key collision)", len(combos), combos)
+			if combos.Size() != 2 {
+				t.Fatalf("expected 2 distinct combinations, got %d: %s "+
+					"(distinct typed tuples collapsed by string-key collision)", combos.Size(), combos.Table())
 			}
 		})
 	}
 }
 
-// TestGetUniqueInputCombinations_SourceMarkerDoesNotCollide ensures a source
-// marker ($) in the input symbols — constant execution context, not in the outer
-// relation — neither breaks dedup of the real data values nor causes accidental
-// collisions.
-func TestGetUniqueInputCombinations_SourceMarkerDoesNotCollide(t *testing.T) {
+// TestSubqueryInputProjection_SourceMarkerExcluded ensures a source marker
+// ($) in the input symbols — execution context, never data — is dropped
+// before projecting: it neither appears in the projected combinations nor
+// breaks dedup of the real data values.
+func TestSubqueryInputProjection_SourceMarkerExcluded(t *testing.T) {
 	source := datalog.NewSymbol("$")
 	if !source.IsSource() {
 		t.Fatalf("expected %q to be a source symbol", source)
@@ -66,18 +71,20 @@ func TestGetUniqueInputCombinations_SourceMarkerDoesNotCollide(t *testing.T) {
 		[]Tuple{{int64(5)}, {"5"}, {int64(5)}}, // int64(5) and "5" are distinct; the second int64(5) is a real duplicate
 	)
 
-	combos, err := getUniqueInputCombinations(rel, inputSymbols)
+	// The source marker is execution context, not a relation symbol: it must
+	// be excluded from the data symbols before projecting, never carried
+	// through as part of a combination.
+	dataSymbols := filterSourceSymbols(inputSymbols)
+	if len(dataSymbols) != 1 || dataSymbols[0] != datalog.NewSymbol("?a") {
+		t.Fatalf("expected filterSourceSymbols to drop the source marker, got %v", dataSymbols)
+	}
+
+	combos, err := rel.Project(dataSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(combos) != 2 {
-		t.Fatalf("expected 2 distinct combinations (int64(5) and \"5\"; the repeated int64(5) deduped), got %d: %v",
-			len(combos), combos)
-	}
-	// Every combination must carry the source marker through unchanged.
-	for _, c := range combos {
-		if c[source] != source {
-			t.Fatalf("source marker not preserved in combination: %v", c)
-		}
+	if combos.Size() != 2 {
+		t.Fatalf("expected 2 distinct combinations (int64(5) and \"5\"; the repeated int64(5) deduped), got %d: %s",
+			combos.Size(), combos.Table())
 	}
 }

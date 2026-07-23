@@ -61,6 +61,14 @@ func (p *ClauseBasedPlanner) Plan(q *query.Query, handler annotations.Handler) (
 // handler (may be nil) is passed through to the algebra bridge rather than read
 // from shared planner state.
 func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings map[query.Symbol]bool, handler annotations.Handler) (*RealizedPlan, error) {
+	return p.planWithBindings(q, initialBindings, handler, nil)
+}
+
+// planWithBindings is the planning body. When expl is non-nil the algebra
+// bridge fills its fields with the compiled tree, the rewrite records, the
+// optimized tree, and the rewritten query; the normal paths pass nil and
+// collect nothing.
+func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, initialBindings map[query.Symbol]bool, handler annotations.Handler, expl *AlgebraExplanation) (*RealizedPlan, error) {
 	// Extract input symbols from :in clause, tracking scalar inputs separately
 	inputSymbols := make(map[query.Symbol]bool)
 	var scalarInputs []query.Symbol
@@ -122,7 +130,7 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 		if len(initialBindings) > 0 {
 			options.EnableJoinProjectInsertion = false
 		}
-		optimized, err := optimizeViaAlgebra(q, options, handler)
+		optimized, err := optimizeViaAlgebra(q, options, handler, expl)
 		if err != nil {
 			return nil, fmt.Errorf("algebra optimization failed: %w", err)
 		}

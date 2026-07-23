@@ -253,7 +253,8 @@ func findConstantBindableScalars(scalarInputs []query.Symbol, clauses []query.Cl
 	collectDataPatternSymbols(clauses, patternSyms)
 
 	// Also collect symbols used as subquery inputs — these must remain in the
-	// relation so executeSubquery can extract them via getUniqueInputCombinations.
+	// relation so executeSubquery can project the outer relation onto them
+	// (the projection's set semantics is the input-combination dedup).
 	subqueryInputSyms := make(map[query.Symbol]bool)
 	collectSubqueryInputSymbols(clauses, subqueryInputSyms)
 

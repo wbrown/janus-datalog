@@ -63,7 +63,7 @@ func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, er
 	copy(prefix[21:53], aBytes)
 
 	// Scan EATV for all entries with this E+A
-	iter, err := m.store.Scan(EATV, prefix, prefixEnd(prefix))
+	iter, err := m.reader.Scan(EATV, prefix, prefixEnd(prefix))
 	if err != nil {
 		return nil, err
 	}

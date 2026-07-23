@@ -46,12 +46,12 @@ func sym(s string) query.Symbol { return datalog.NewSymbol(s) }
 // not an error. Input-value bindings carried through with no rows.
 func TestApplyBindingForm_TupleBinding_StreamingEmpty(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
-	inputValues := map[query.Symbol]interface{}{sym("?e"): "e1"}
+	inputValues := Tuple{"e1"}
 	binding := query.TupleBinding{Variables: []query.Symbol{sym("?age")}}
 
 	result := streamingRelOf(t, []query.Symbol{sym("?age")}, nil)
 
-	out, err := applyBindingForm(result, binding, inputValues, inputSyms)
+	out, err := applyBindingForm(result, binding, inputSyms, inputValues)
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	assert.Equal(t, []query.Symbol{sym("?e"), sym("?age")}, out.Symbols())
@@ -69,12 +69,12 @@ func TestApplyBindingForm_TupleBinding_StreamingEmpty(t *testing.T) {
 // Exactly-1 streaming result → 1 output row: input values + subquery tuple.
 func TestApplyBindingForm_TupleBinding_StreamingSingle(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
-	inputValues := map[query.Symbol]interface{}{sym("?e"): "e1"}
+	inputValues := Tuple{"e1"}
 	binding := query.TupleBinding{Variables: []query.Symbol{sym("?age")}}
 
 	result := streamingRelOf(t, []query.Symbol{sym("?age")}, []Tuple{{int64(42)}})
 
-	out, err := applyBindingForm(result, binding, inputValues, inputSyms)
+	out, err := applyBindingForm(result, binding, inputSyms, inputValues)
 	require.NoError(t, err)
 	assert.Equal(t, []query.Symbol{sym("?e"), sym("?age")}, out.Symbols())
 
@@ -94,13 +94,13 @@ func TestApplyBindingForm_TupleBinding_StreamingSingle(t *testing.T) {
 // because the implementation may short-circuit after the second tuple.
 func TestApplyBindingForm_TupleBinding_StreamingMultiple(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
-	inputValues := map[query.Symbol]interface{}{sym("?e"): "e1"}
+	inputValues := Tuple{"e1"}
 	binding := query.TupleBinding{Variables: []query.Symbol{sym("?age")}}
 
 	result := streamingRelOf(t, []query.Symbol{sym("?age")},
 		[]Tuple{{int64(42)}, {int64(43)}, {int64(44)}})
 
-	_, err := applyBindingForm(result, binding, inputValues, inputSyms)
+	_, err := applyBindingForm(result, binding, inputSyms, inputValues)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tuple binding expects exactly 1 result")
 	assert.NotContains(t, err.Error(), "got -1",
@@ -111,12 +111,12 @@ func TestApplyBindingForm_TupleBinding_StreamingMultiple(t *testing.T) {
 
 func TestApplyBindingForm_ScalarBinding_StreamingEmpty(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
-	inputValues := map[query.Symbol]interface{}{sym("?e"): "e1"}
+	inputValues := Tuple{"e1"}
 	binding := query.ScalarBinding{Variable: sym("?age")}
 
 	result := streamingRelOf(t, []query.Symbol{sym("?age")}, nil)
 
-	out, err := applyBindingForm(result, binding, inputValues, inputSyms)
+	out, err := applyBindingForm(result, binding, inputSyms, inputValues)
 	require.NoError(t, err)
 	assert.Equal(t, []query.Symbol{sym("?e"), sym("?age")}, out.Symbols())
 
@@ -129,12 +129,12 @@ func TestApplyBindingForm_ScalarBinding_StreamingEmpty(t *testing.T) {
 
 func TestApplyBindingForm_ScalarBinding_StreamingSingle(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
-	inputValues := map[query.Symbol]interface{}{sym("?e"): "e1"}
+	inputValues := Tuple{"e1"}
 	binding := query.ScalarBinding{Variable: sym("?age")}
 
 	result := streamingRelOf(t, []query.Symbol{sym("?age")}, []Tuple{{int64(42)}})
 
-	out, err := applyBindingForm(result, binding, inputValues, inputSyms)
+	out, err := applyBindingForm(result, binding, inputSyms, inputValues)
 	require.NoError(t, err)
 
 	var rows []Tuple
@@ -150,13 +150,13 @@ func TestApplyBindingForm_ScalarBinding_StreamingSingle(t *testing.T) {
 
 func TestApplyBindingForm_ScalarBinding_StreamingMultiple(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
-	inputValues := map[query.Symbol]interface{}{sym("?e"): "e1"}
+	inputValues := Tuple{"e1"}
 	binding := query.ScalarBinding{Variable: sym("?age")}
 
 	result := streamingRelOf(t, []query.Symbol{sym("?age")},
 		[]Tuple{{int64(42)}, {int64(43)}})
 
-	_, err := applyBindingForm(result, binding, inputValues, inputSyms)
+	_, err := applyBindingForm(result, binding, inputSyms, inputValues)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "scalar binding expects exactly 1 result")
 	assert.NotContains(t, err.Error(), "got -1")
@@ -166,12 +166,12 @@ func TestApplyBindingForm_ScalarBinding_StreamingMultiple(t *testing.T) {
 
 func TestApplyBindingForm_RelationBinding_StreamingEmpty(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
-	inputValues := map[query.Symbol]interface{}{sym("?e"): "e1"}
+	inputValues := Tuple{"e1"}
 	binding := query.RelationBinding{Variables: []query.Symbol{sym("?t"), sym("?v")}}
 
 	result := streamingRelOf(t, []query.Symbol{sym("?t"), sym("?v")}, nil)
 
-	out, err := applyBindingForm(result, binding, inputValues, inputSyms)
+	out, err := applyBindingForm(result, binding, inputSyms, inputValues)
 	require.NoError(t, err)
 	assert.Equal(t, []query.Symbol{sym("?e"), sym("?t"), sym("?v")}, out.Symbols())
 
@@ -186,7 +186,7 @@ func TestApplyBindingForm_RelationBinding_StreamingEmpty(t *testing.T) {
 // input values. Exercises the per-tuple transform.
 func TestApplyBindingForm_RelationBinding_StreamingMany(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
-	inputValues := map[query.Symbol]interface{}{sym("?e"): "e1"}
+	inputValues := Tuple{"e1"}
 	binding := query.RelationBinding{Variables: []query.Symbol{sym("?t"), sym("?v")}}
 
 	result := streamingRelOf(t, []query.Symbol{sym("?t"), sym("?v")}, []Tuple{
@@ -195,7 +195,7 @@ func TestApplyBindingForm_RelationBinding_StreamingMany(t *testing.T) {
 		{int64(3), "c"},
 	})
 
-	out, err := applyBindingForm(result, binding, inputValues, inputSyms)
+	out, err := applyBindingForm(result, binding, inputSyms, inputValues)
 	require.NoError(t, err)
 	assert.Equal(t, []query.Symbol{sym("?e"), sym("?t"), sym("?v")}, out.Symbols())
 
@@ -218,7 +218,7 @@ func TestApplyBindingForm_RelationBinding_StreamingMany(t *testing.T) {
 // at this boundary defeats the whole streaming pipeline.
 func TestApplyBindingForm_RelationBinding_OutputIsStreaming(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
-	inputValues := map[query.Symbol]interface{}{sym("?e"): "e1"}
+	inputValues := Tuple{"e1"}
 	binding := query.RelationBinding{Variables: []query.Symbol{sym("?t"), sym("?v")}}
 
 	result := streamingRelOf(t, []query.Symbol{sym("?t"), sym("?v")}, []Tuple{
@@ -226,7 +226,7 @@ func TestApplyBindingForm_RelationBinding_OutputIsStreaming(t *testing.T) {
 		{int64(2), "b"},
 	})
 
-	out, err := applyBindingForm(result, binding, inputValues, inputSyms)
+	out, err := applyBindingForm(result, binding, inputSyms, inputValues)
 	require.NoError(t, err)
 	assert.Equal(t, -1, out.Size(),
 		"RelationBinding over a streaming input must return a streaming relation (Size() == -1)")
@@ -236,13 +236,13 @@ func TestApplyBindingForm_RelationBinding_OutputIsStreaming(t *testing.T) {
 // streaming path. This is a schema check, not a cardinality check.
 func TestApplyBindingForm_ScalarBinding_RejectsMultiSymbolTuple(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
-	inputValues := map[query.Symbol]interface{}{sym("?e"): "e1"}
+	inputValues := Tuple{"e1"}
 	binding := query.ScalarBinding{Variable: sym("?v")}
 
 	result := streamingRelOf(t, []query.Symbol{sym("?a"), sym("?b")},
 		[]Tuple{{int64(1), int64(2)}})
 
-	_, err := applyBindingForm(result, binding, inputValues, inputSyms)
+	_, err := applyBindingForm(result, binding, inputSyms, inputValues)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "scalar binding expects 1 symbol")
 	assert.Contains(t, err.Error(), "got 2")

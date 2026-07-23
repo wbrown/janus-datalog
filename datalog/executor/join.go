@@ -17,7 +17,7 @@ import (
 // by concurrent access. Each goroutine must create its own iterator by calling
 // Relation.Iterator(), which returns independent iterator instances.
 type hashJoinIterator struct {
-	hashTable   *TupleKeyMap
+	buildIndex  *groupedRowIndex
 	probeIt     Iterator
 	buildErr    error // deferred error captured from the (eagerly consumed) build relation
 	seen        *TupleKeyMap
@@ -26,7 +26,6 @@ type hashJoinIterator struct {
 	// tuple workspace (RequiresCopy()); only then must currentProbeTuple be
 	// copied before use. Materialized probes return stable tuples and skip it.
 	probeNeedsCopy bool
-	probeIndices   []int
 	// rightNonJoinIndices identifies positions in the right-side tuple
 	// (per buildIsLeft, the probe side when buildIsLeft is true, otherwise
 	// the build side) whose values must be appended to each result tuple.
@@ -40,10 +39,8 @@ type hashJoinIterator struct {
 	currentProbeTuple Tuple
 	currentJoined     Tuple
 	matches           []Tuple
-	singleMatch       [1]Tuple
 	matchIdx          int
 	closed            bool
-	buildKeysUnique   bool
 
 	// metrics is non-nil only when annotations are enabled, keeping counters
 	// off the hot path otherwise.
@@ -116,16 +113,10 @@ func (it *hashJoinIterator) Next() bool {
 			it.currentProbeTuple = tupleCopy
 		}
 
-		key := NewTupleKey(it.currentProbeTuple, it.probeIndices)
-
-		// Look up matches in hash table
-		if matchesVal, ok := it.hashTable.Get(key); ok {
-			if it.buildKeysUnique {
-				it.singleMatch[0] = matchesVal.(Tuple)
-				it.matches = it.singleMatch[:]
-			} else {
-				it.matches = matchesVal.([]Tuple)
-			}
+		// Look up matches in the grouped build rows — a positional probe, so
+		// no key materializes, and a hit is a subslice of the shared backing.
+		if matches := it.buildIndex.probe(it.currentProbeTuple); len(matches) > 0 {
+			it.matches = matches
 			it.matchIdx = 0
 			if it.metrics != nil {
 				it.metrics.matchCount++
@@ -316,22 +307,23 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	}
 	emitJoinStrategyAnnotation(opts, left, right, joinSyms, mode, buildSide, buildKeysUnique)
 
-	// Build phase - create hash table using efficient TupleKeyMap.
+	// Build phase - collect the build rows once, then group them by join-key
+	// hash into contiguous spans of one shared backing (groupedRowIndex).
 	// This is a pure relational join: every build row is preserved. CRDT/temporal
 	// resolution is the storage layer's responsibility (EATV ordering), never
 	// inferred here from a symbol's name.
-	// Pre-size based on build relation size to avoid map growth
-	buildSize := buildRel.Size()
-	if buildSize < 0 {
+	// Pre-size based on build relation size to avoid slice growth
+	collectCap := buildRel.Size()
+	if collectCap < 0 {
 		// Unknown size (streaming), use configurable default
 		// 256 is a good balance: small enough for common cases (50-500 tuples),
 		// large enough to avoid excessive rehashing for medium cases (500-2000 tuples)
-		buildSize = opts.DefaultHashTableSize
-		if buildSize == 0 {
-			buildSize = 256 // Default if not configured
+		collectCap = opts.DefaultHashTableSize
+		if collectCap == 0 {
+			collectCap = 256 // Default if not configured
 		}
 	}
-	hashTable := NewTupleKeyMapWithCapacity(buildSize)
+	buildRows := make([]Tuple, 0, collectCap)
 
 	// CRITICAL: Check if build relation was already consumed
 	// This should never happen - it indicates a bug in the executor
@@ -362,17 +354,10 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	trackCopy := opts.Collector != nil
 	var copyCount, passthruCount int
 
-	// Pure relational build: group every build tuple by its join key. All rows
-	// are preserved; identical output tuples are deduplicated downstream by set
-	// semantics, not here. CRDT/temporal "latest transaction wins" resolution is
-	// handled by the storage layer (EATV index ordering), never inferred from a
-	// symbol's name.
-	buildCount := 0
 	for buildIt.Next() {
 		tuple := buildIt.Tuple()
 		// Copy only when the build relation reuses its tuple workspace; the
-		// hash table retains these tuples for the join's lifetime. Key is built
-		// after the copy — same values, so the join key is unaffected.
+		// grouped index retains these tuples for the join's lifetime.
 		if needsCopy {
 			tuple = copyTuple(tuple)
 			if trackCopy {
@@ -381,18 +366,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		} else if trackCopy {
 			passthruCount++
 		}
-		key := NewTupleKey(tuple, buildIndices)
-		if buildKeysUnique {
-			if existed := hashTable.PutIfAbsent(key, tuple); existed {
-				panic("hash join build relation violated its candidate-key guarantee")
-			}
-		} else if existing, ok := hashTable.Get(key); ok {
-			hashTable.Put(key, append(existing.([]Tuple), tuple))
-		} else {
-			hashTable.Put(key, []Tuple{tuple})
-		}
-		buildCount++
+		buildRows = append(buildRows, tuple)
 	}
+	buildCount := len(buildRows)
 
 	// Capture any deferred error from the build scan before closing it, so a
 	// build-side failure isn't lost (it propagates onto the join result).
@@ -404,6 +380,14 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// Close() signals the CachingIterator, unblocking probe's Size()/Iterator().
 	if closeErr := buildIt.Close(); buildErr == nil {
 		buildErr = closeErr
+	}
+
+	// Group the build rows by join-key hash. The rows carry their own key
+	// values, so no key materializes per row and fanout needs no per-key
+	// slices — probes verify against the rows in place.
+	buildIndex := groupRows(buildRows, probeIndices, buildIndices)
+	if buildKeysUnique && !buildIndex.keysUnique() {
+		panic("hash join build relation violated its candidate-key guarantee")
 	}
 
 	// Emit annotation for copy statistics if collector is available
@@ -452,14 +436,12 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		}
 
 		iter := &hashJoinIterator{
-			hashTable:           hashTable,
+			buildIndex:          buildIndex,
 			probeIt:             probeRel.Iterator(),
 			buildErr:            buildErr,
 			seen:                resultSeen,
 			buildIsLeft:         buildIsLeft,
-			buildKeysUnique:     buildKeysUnique,
 			probeNeedsCopy:      probeRel.RequiresCopy(),
-			probeIndices:        probeIndices,
 			rightNonJoinIndices: rightNonJoinIndices,
 			resultWidth:         resultWidth,
 			options:             opts,
@@ -513,33 +495,28 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	matchCount := 0
 	for probeIt.Next() {
 		probeTuple := probeIt.Tuple()
-		key := NewTupleKey(probeTuple, probeIndices)
 		probeCount++
 
-		if matchesVal, ok := hashTable.Get(key); ok {
-			matchCount++
-			var matches []Tuple
-			var singleMatch [1]Tuple
-			if buildKeysUnique {
-				singleMatch[0] = matchesVal.(Tuple)
-				matches = singleMatch[:]
+		// Positional probe against the grouped build rows — no key
+		// materializes, and the hit is a subslice of the shared backing.
+		matches := buildIndex.probe(probeTuple)
+		if len(matches) == 0 {
+			continue
+		}
+		matchCount++
+		for _, buildTuple := range matches {
+			// Combine tuples via the precomputed projection plan.
+			var joined Tuple
+			if buildIsLeft {
+				joined = combineTuplesIndexed(buildTuple, probeTuple, rightNonJoinIndices, resultWidth)
 			} else {
-				matches = matchesVal.([]Tuple)
+				joined = combineTuplesIndexed(probeTuple, buildTuple, rightNonJoinIndices, resultWidth)
 			}
-			for _, buildTuple := range matches {
-				// Combine tuples via the precomputed projection plan.
-				var joined Tuple
-				if buildIsLeft {
-					joined = combineTuplesIndexed(buildTuple, probeTuple, rightNonJoinIndices, resultWidth)
-				} else {
-					joined = combineTuplesIndexed(probeTuple, buildTuple, rightNonJoinIndices, resultWidth)
-				}
 
-				// A nil seen map means the result candidate key proves this
-				// joined tuple cannot duplicate any prior output.
-				if seen == nil || !seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
-					results = append(results, joined)
-				}
+			// A nil seen map means the result candidate key proves this
+			// joined tuple cannot duplicate any prior output.
+			if seen == nil || !seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
+				results = append(results, joined)
 			}
 		}
 	}
@@ -608,14 +585,13 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		return res
 	}
 
-	// Filter left relation
+	// Filter left relation — positional membership probes materialize no key.
 	var results []Tuple
 	leftNeedsCopy := left.RequiresCopy()
 	leftIt := left.Iterator()
 	for leftIt.Next() {
 		tuple := leftIt.Tuple()
-		key := NewTupleKey(tuple, leftIndices)
-		if rightKeys.Exists(key) {
+		if _, ok := rightKeys.GetPositions(tuple, leftIndices); ok {
 			if leftNeedsCopy {
 				results = append(results, copyTuple(tuple))
 			} else {
@@ -671,14 +647,13 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		return res
 	}
 
-	// Filter left relation
+	// Filter left relation — positional membership probes materialize no key.
 	var results []Tuple
 	leftNeedsCopy := left.RequiresCopy()
 	leftIt := left.Iterator()
 	for leftIt.Next() {
 		tuple := leftIt.Tuple()
-		key := NewTupleKey(tuple, leftIndices)
-		if !rightKeys.Exists(key) {
+		if _, ok := rightKeys.GetPositions(tuple, leftIndices); !ok {
 			if leftNeedsCopy {
 				results = append(results, copyTuple(tuple))
 			} else {

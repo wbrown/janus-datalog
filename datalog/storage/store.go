@@ -59,6 +59,13 @@ type Store interface {
 	// Returns zero ElementID if no data exists for this attribute.
 	MaxElementIDForAttribute(a []byte) (datalog.ElementID, error)
 
+	// NewReadSession opens a consistent read view at the store's current
+	// state: every read through the session observes one snapshot,
+	// regardless of writes committed after it opened. A query executes all
+	// its storage reads through one session, so it can never observe two
+	// different database states mid-execution.
+	NewReadSession() (ReadSession, error)
+
 	// Transaction support
 	BeginTx() (StoreTx, error)
 

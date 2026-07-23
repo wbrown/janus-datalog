@@ -1,0 +1,32 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	    2368	    489485 ns/op	  565478 B/op	    9448 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	    2508	    535819 ns/op	  565518 B/op	    9448 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	    2241	    527189 ns/op	  565514 B/op	    9448 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	    2468	    512036 ns/op	  565512 B/op	    9448 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	    2187	    542757 ns/op	  565520 B/op	    9448 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3418	    353181 ns/op	  372459 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3402	    360952 ns/op	  372458 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3464	    354959 ns/op	  372458 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3402	    355552 ns/op	  372458 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3468	    356000 ns/op	  372458 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/per-entity-10        	     100	  10525641 ns/op	 9548344 B/op	  159882 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/per-entity-10        	     100	  10487042 ns/op	 9548973 B/op	  159884 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/per-entity-10        	     100	  10577495 ns/op	 9548990 B/op	  159884 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/per-entity-10        	     100	  11058629 ns/op	 9549047 B/op	  159885 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/per-entity-10        	     100	  11086039 ns/op	 9549041 B/op	  159885 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10             	     176	   6812829 ns/op	 6278853 B/op	   97554 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10             	     174	   6780765 ns/op	 6278854 B/op	   97554 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10             	     182	   6529007 ns/op	 6278811 B/op	   97554 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10             	     181	   6569110 ns/op	 6278816 B/op	   97554 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10             	     184	   6577089 ns/op	 6278820 B/op	   97554 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	24.292s
+
+Baseline (direct point-lookup routing, prior commit): docs/perf/lookup_attribute_routing_2026-07-21.txt
+entities=230/per-entity median 1630681 ns/op / 2194437 B/op / 32218 allocs/op
+
+Intermediate step (keys-only discovery, before the single-scan walk):
+entities=230/per-entity 29918 allocs/op / 2157647 B/op (time flat)

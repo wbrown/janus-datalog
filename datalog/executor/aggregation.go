@@ -372,12 +372,14 @@ func executeGroupedAggregation(
 	for it.Next() {
 		tuple := it.Tuple()
 
-		key := NewTupleKey(tuple, groupIndices)
-		groupValue, exists := groups.Get(key)
+		// Probe positionally — the common case is another tuple for an
+		// existing group; the key materializes only when the group is new.
+		groupValue, exists := groups.GetPositions(tuple, groupIndices)
 		var group *batchAggregateGroup
 		if exists {
 			group = groupValue.(*batchAggregateGroup)
 		} else {
+			key := NewTupleKey(tuple, groupIndices)
 			group = &batchAggregateGroup{
 				key:    Tuple(key.values),
 				values: make([][]interface{}, len(aggregates)),
@@ -869,12 +871,14 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 		tuple := it.Tuple()
 		tupleCount++
 
-		key := NewTupleKey(tuple, groupIndices)
-		groupValue, exists := groups.Get(key)
+		// Probe positionally — the common case is another tuple for an
+		// existing group; the key materializes only when the group is new.
+		groupValue, exists := groups.GetPositions(tuple, groupIndices)
 		var group *streamingAggregateGroup
 		if exists {
 			group = groupValue.(*streamingAggregateGroup)
 		} else {
+			key := NewTupleKey(tuple, groupIndices)
 			group = &streamingAggregateGroup{
 				key:    Tuple(key.values),
 				states: make([]aggregateAccumulator, len(r.aggregates)),

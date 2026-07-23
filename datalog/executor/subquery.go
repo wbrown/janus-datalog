@@ -8,84 +8,21 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// getUniqueInputCombinations extracts unique combinations of input values.
-// This is a pure function that performs data transformation.
-func getUniqueInputCombinations(
-	rel Relation,
-	inputSymbols []query.Symbol,
-) (combinations []map[query.Symbol]interface{}, resultErr error) {
-	// Find symbol indices for input symbols
-	indices := make([]int, len(inputSymbols))
-	for i, sym := range inputSymbols {
-		if sym.IsSource() {
-			// Source marker - not a symbol, use special index
-			indices[i] = -1
-		} else {
-			indices[i] = SymbolIndex(rel, sym)
-			if indices[i] < 0 {
-				return nil, fmt.Errorf("subquery input symbol %s not found in outer relation (available: %v)", sym, rel.Symbols())
-			}
-		}
-	}
-
-	// Collect unique combinations. Dedup by typed value identity via TupleKeyMap
-	// (which compares values with datalog.ValuesEqual on hash collision), never by
-	// string rendering — fmt.Sprintf("%v")+"|" is not injective and collapses
-	// distinct combinations (e.g. int64(5) vs "5", or "a|b"+"c" vs "a"+"b|c").
-	// Source markers are constant execution context, identical on every tuple, so
-	// they are excluded from the dedup key.
-	seen := NewTupleKeyMap()
-	it := rel.Iterator()
-	defer func() {
-		if closeErr := it.Close(); resultErr == nil {
-			resultErr = closeErr
-		}
-	}()
-
-	for it.Next() {
-		tuple := it.Tuple()
-
-		// Extract input values; build the dedup key from data values only.
-		values := make(map[query.Symbol]interface{})
-		var keyValues Tuple
-
-		for i, sym := range inputSymbols {
-			if sym.IsSource() {
-				// Source marker - pass it through as-is; not part of the key.
-				values[sym] = sym
-			} else {
-				idx := indices[i]
-				if idx < len(tuple) {
-					values[sym] = tuple[idx]
-					keyValues = append(keyValues, tuple[idx])
-				}
-			}
-		}
-
-		key := NewTupleKeyFull(keyValues)
-		if !seen.PutIfAbsent(key, struct{}{}) {
-			combinations = append(combinations, values)
-		}
-	}
-
-	resultErr = it.Error()
-	return combinations, resultErr
-}
-
-func createInputRelationsFromPatternWithOptions(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}, opts ExecutorOptions) ([]Relation, error) {
+func subqueryInputRelations(subq *query.SubqueryPattern, comboSymbols []query.Symbol, combo Tuple, opts ExecutorOptions) ([]Relation, error) {
 	// Process the subquery's actual inputs in order. An input is a Variable
-	// resolved from the outer relation or a Constant (including source
-	// markers); anything unresolvable or of another kind is a loud error —
-	// silently binding nil feeds a non-value into the nested query.
+	// resolved by position from the outer combination tuple or a Constant
+	// (including source markers); anything unresolvable or of another kind
+	// is a loud error — silently binding nil feeds a non-value into the
+	// nested query.
 	var orderedValues []interface{}
 	for _, input := range subq.Inputs {
 		switch inp := input.(type) {
 		case query.Variable:
-			val, ok := outerValues[inp.Name]
-			if !ok {
+			idx := query.SymbolIndex(comboSymbols, inp.Name)
+			if idx < 0 || idx >= len(combo) {
 				return nil, fmt.Errorf("subquery input %s is not bound in the outer relation", inp.Name)
 			}
-			orderedValues = append(orderedValues, val)
+			orderedValues = append(orderedValues, combo[idx])
 		case query.Constant:
 			// Check if it's a source marker
 			if sym, ok := inp.Value.(query.Symbol); ok && sym.IsSource() {
@@ -238,19 +175,19 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 //   - RelationBinding: StreamingRelation that wraps the input iterator
 //     and emits inputValues++tuple per Next(). Preserves end-to-end
 //     streaming through the subquery → union boundary.
-func applyBindingForm(result Relation, binding query.BindingForm, inputValues map[query.Symbol]interface{}, inputSymbols []query.Symbol) (Relation, error) {
+func applyBindingForm(result Relation, binding query.BindingForm, inputSymbols []query.Symbol, inputValues Tuple) (Relation, error) {
 	switch b := binding.(type) {
 	case query.TupleBinding:
 		// TupleBinding [[?a ?b]]: subquery must return exactly one
 		// tuple; its N positions bind to the N variables. Arity of the
 		// subquery's schema must match len(Variables).
-		return applyExactlyOneBinding(result, inputValues, inputSymbols, b.Variables, "tuple", len(b.Variables))
+		return applyExactlyOneBinding(result, inputSymbols, inputValues, b.Variables, "tuple", len(b.Variables))
 
 	case query.ScalarBinding:
 		// ScalarBinding ?x: subquery must return exactly one tuple
 		// with exactly one component; ScalarBinding is the arity-1 case
 		// of TupleBinding.
-		return applyExactlyOneBinding(result, inputValues, inputSymbols, []query.Symbol{b.Variable}, "scalar", 1)
+		return applyExactlyOneBinding(result, inputSymbols, inputValues, []query.Symbol{b.Variable}, "scalar", 1)
 
 	case query.CollectionBinding:
 		// [?coll ...] - collect all values from a single symbol into a collection.
@@ -262,23 +199,16 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 			return nil, fmt.Errorf("relation binding expects %d symbols, got %d", len(b.Variables), len(resultSymbols))
 		}
 
-		realInputSymbols := filterSourceSymbols(inputSymbols)
-		outSymbols := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
-		copy(outSymbols, realInputSymbols)
-		copy(outSymbols[len(realInputSymbols):], b.Variables)
+		outSymbols := make([]query.Symbol, len(inputSymbols)+len(b.Variables))
+		copy(outSymbols, inputSymbols)
+		copy(outSymbols[len(inputSymbols):], b.Variables)
 
-		// Pre-compute the input-value prefix — it's constant for this
-		// applyBindingForm call, applied to every row of the subquery.
-		prefix := make([]interface{}, len(realInputSymbols))
-		for i, sym := range realInputSymbols {
-			prefix[i] = inputValues[sym]
-		}
-
-		// Stream: wrap the subquery's iterator and emit prefix++row per
-		// Next(). No buffering.
+		// The input-value prefix is the combination tuple itself — one row
+		// of the (materialized) projected outer relation, held by reference
+		// and applied to every row of the subquery.
 		wrapped := &prefixingIterator{
 			inner:   result.Iterator(),
-			prefix:  prefix,
+			prefix:  inputValues,
 			bodyLen: len(b.Variables),
 		}
 		properties := result.Properties().renameSymbols(resultSymbols, b.Variables)
@@ -318,16 +248,15 @@ func filterSourceSymbols(inputSymbols []query.Symbol) []query.Symbol {
 // subquery's find spec.
 func applyExactlyOneBinding(
 	result Relation,
-	inputValues map[query.Symbol]interface{},
 	inputSymbols []query.Symbol,
+	inputValues Tuple,
 	bindingVars []query.Symbol,
 	label string,
 	expectedArity int,
 ) (Relation, error) {
-	realInputSymbols := filterSourceSymbols(inputSymbols)
-	outSymbols := make([]query.Symbol, len(realInputSymbols)+len(bindingVars))
-	copy(outSymbols, realInputSymbols)
-	copy(outSymbols[len(realInputSymbols):], bindingVars)
+	outSymbols := make([]query.Symbol, len(inputSymbols)+len(bindingVars))
+	copy(outSymbols, inputSymbols)
+	copy(outSymbols[len(inputSymbols):], bindingVars)
 
 	// Schema check upfront — pure property of the subquery's find
 	// spec, no iteration required.
@@ -354,11 +283,9 @@ func applyExactlyOneBinding(
 	}
 
 	tuple := make(Tuple, len(outSymbols))
-	for i, sym := range realInputSymbols {
-		tuple[i] = inputValues[sym]
-	}
+	copy(tuple, inputValues)
 	for i := range bindingVars {
-		tuple[len(realInputSymbols)+i] = first[i]
+		tuple[len(inputSymbols)+i] = first[i]
 	}
 	return NewMaterializedRelation(outSymbols, []Tuple{tuple}), nil
 }

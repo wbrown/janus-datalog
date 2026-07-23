@@ -325,7 +325,7 @@ func testSchemalessPrefetchVectorNotCollapsed(t *testing.T, c reopenBackendCase)
 	copy(aAttr[:], aStorage[:])
 	key, ok := m.cacheKey(eEnt, aAttr)
 	require.True(t, ok)
-	entry := db.cache.GetOrResolve(key, m)
+	entry := db.cache.GetOrResolve(key, m, nil)
 	require.NotNil(t, entry)
 	require.Equal(t, schema.CardinalityVector, entry.Cardinality(),
 		"prefetch must classify a schemaless vector as Vector, not collapse to One")

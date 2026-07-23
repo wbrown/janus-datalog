@@ -510,6 +510,57 @@ func TestExecuteQueryWithRelationInput(t *testing.T) {
 	}
 }
 
+// TestRelationInputAcceptsInterfaceWrappedRows pins the relation-input
+// admission for rows whose static element type is interface{} — the only
+// shape EDN parsing produces ([]interface{} at every nesting level), and an
+// ordinary shape for Go callers using []any. Reflection on a []interface{}
+// element yields Kind Interface, not Slice; the admission must unwrap it
+// (BUG_CLI_RELATION_INPUT_EDN_REJECTED).
+func TestRelationInputAcceptsInterfaceWrappedRows(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
+
+			tx := db.NewTransaction()
+			alice := datalog.NewIdentity("wrapped-alice")
+			bob := datalog.NewIdentity("wrapped-bob")
+			tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice")
+			tx.Add(alice, datalog.NewKeyword(":person/age"), int64(30))
+			tx.Add(bob, datalog.NewKeyword(":person/name"), "Bob")
+			tx.Add(bob, datalog.NewKeyword(":person/age"), int64(25))
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit: %v", err)
+			}
+
+			// Rows wrapped as []interface{} elements — Bob's row carries a
+			// wrong age, so only Alice's row joins.
+			results, err := executor.CollectTuples(db.Query(
+				`[:find ?e
+		  :in $ [[?name ?target-age] ...]
+		  :where [?e :person/name ?name]
+		         [?e :person/age ?target-age]]`,
+				[]interface{}{
+					[]interface{}{"Alice", int64(30)},
+					[]interface{}{"Bob", int64(999)},
+				},
+			))
+			if err != nil {
+				t.Fatalf("Query with interface-wrapped rows failed: %v", err)
+			}
+			if len(results) != 1 {
+				t.Fatalf("Expected 1 result (Alice), got %d: %v", len(results), results)
+			}
+			id, ok := results[0][0].(datalog.Identity)
+			if !ok {
+				t.Fatalf("?e must be an Identity, got %T", results[0][0])
+			}
+			if id.String() != alice.String() {
+				t.Errorf("Expected %s, got %s", alice, id)
+			}
+		})
+	}
+}
+
 // TestExecuteQueryWithTimeInput tests time.Time values as inputs
 func TestExecuteQueryWithTimeInput(t *testing.T) {
 	for _, mode := range optimizerModes {

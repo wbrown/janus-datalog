@@ -11,7 +11,8 @@ import (
 
 // TestProductPreservesDisjointSymbols verifies that Product() of disjoint
 // relations produces a combined relation with all symbols, and that
-// getUniqueInputCombinations can find symbols from any constituent relation.
+// projecting for subquery input dedup can find symbols from any constituent
+// relation.
 func TestProductPreservesDisjointSymbols(t *testing.T) {
 	rel1 := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")},
@@ -39,9 +40,10 @@ func TestProductPreservesDisjointSymbols(t *testing.T) {
 	mat := product.Materialize()
 	assert.Equal(t, 2, mat.Size())
 
-	combos, err := getUniqueInputCombinations(mat, []query.Symbol{datalog.NewSymbol("?config")})
+	dataSymbols := filterSourceSymbols([]query.Symbol{datalog.NewSymbol("?config")})
+	combos, err := mat.Project(dataSymbols)
 	require.NoError(t, err)
-	assert.Len(t, combos, 1, "should find 1 unique ?config value")
+	assert.Equal(t, 1, combos.Size(), "should find 1 unique ?config value")
 }
 
 // TestProductMaterializeSurfacesSourceError verifies that materializing a
@@ -65,4 +67,46 @@ func TestProductMaterializeSurfacesSourceError(t *testing.T) {
 	mat := product.Materialize()
 	require.ErrorIs(t, driveErr(mat), errInjectedIterator,
 		"materializing a product must surface a constituent's deferred error, not drop it")
+}
+
+// TestProductProjectionRestoresSetOnReduction pins the streaming projection of
+// a product: reducing the symbol set can collapse distinct product tuples
+// (every ?x pairs with every ?y), so the projection must restore set
+// semantics — the dedup the subquery input-combination extraction relies on.
+func TestProductProjectionRestoresSetOnReduction(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	y := datalog.NewSymbol("?y")
+	left := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}, {int64(2)}})
+	right := NewMaterializedRelation([]query.Symbol{y}, []Tuple{{int64(10)}, {int64(20)}})
+
+	product := Relations{left, right}.Product()
+	combos, err := product.Project([]query.Symbol{x})
+	require.NoError(t, err)
+	_, dedups := combos.(*StreamingRelation).iterator.(*DedupIterator)
+	require.True(t, dedups, "a reducing projection of a product must deduplicate")
+	rows, err := CollectTuples(combos, nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, [][]interface{}{{int64(1)}, {int64(2)}}, rows)
+}
+
+// TestProductProjectionPermutationSkipsDedup pins the permutation arm: a
+// projection that reorders the full symbol set is injective on tuples, so the
+// product streams through without a dedup pass or its seen-map state.
+func TestProductProjectionPermutationSkipsDedup(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	y := datalog.NewSymbol("?y")
+	left := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}, {int64(2)}})
+	right := NewMaterializedRelation([]query.Symbol{y}, []Tuple{{int64(10)}, {int64(20)}})
+
+	product := Relations{left, right}.Product()
+	reordered, err := product.Project([]query.Symbol{y, x})
+	require.NoError(t, err)
+	_, dedups := reordered.(*StreamingRelation).iterator.(*DedupIterator)
+	require.False(t, dedups, "a permutation is injective on tuples — no dedup pass")
+	rows, err := CollectTuples(reordered, nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, [][]interface{}{
+		{int64(10), int64(1)}, {int64(20), int64(1)},
+		{int64(10), int64(2)}, {int64(20), int64(2)},
+	}, rows)
 }

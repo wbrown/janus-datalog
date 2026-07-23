@@ -9,7 +9,7 @@ description: >
   subqueries (tuple + relation binding), enumerate and vector fns, :in bindings,
   order-by/limit, and time-travel (History/AsOf). Also use it to inspect/explore a
   .db, check entity attributes, debug query results, or examine CRDT storage state.
-argument-hint: <database-or-edn-dump-path>
+argument-hint: <database-or-dump-path>
 allowed-tools: Bash(~/go/bin/datalog *)
 ---
 
@@ -17,7 +17,7 @@ allowed-tools: Bash(~/go/bin/datalog *)
 
 Query janus-datalog databases for debugging and data exploration.
 
-The user will provide a database path — a BadgerDB directory or an `.edn` dump — and describe what they want to know. Use the `datalog` CLI to run queries against the database. A path ending in `.edn` is loaded into a temporary database automatically (writes are discarded on exit).
+The user will provide a database path — a BadgerDB directory, an `.edn` dump, or a `.jdzl` (binary) dump — and describe what they want to know. Use the `datalog` CLI to run queries against the database. A path ending in `.edn` or `.jdzl` is loaded into a temporary database automatically (writes are discarded on exit).
 
 ## Data Model
 
@@ -46,7 +46,7 @@ go install github.com/wbrown/janus-datalog/cmd/datalog@latest
 
 ## Invocation
 
-`-db <path>` accepts either a BadgerDB database directory or an `.edn` dump file.
+`-db <path>` accepts a BadgerDB database directory, an `.edn` dump file, or a `.jdzl` (compressed binary) dump file.
 
 ```bash
 # Run a query
@@ -58,8 +58,15 @@ go install github.com/wbrown/janus-datalog/cmd/datalog@latest
 # With performance annotations
 ~/go/bin/datalog -db <path> -verbose -query '<EDN query>'
 
+# Plan without executing: the compiled algebra, every optimizer rewrite
+# decision (applied or declined with the reason), and the physical plan
+~/go/bin/datalog -db <path> -plan-only -query '<EDN query>'
+
 # Export entire database to readable EDN (useful for small DBs)
 ~/go/bin/datalog -db <path> -export <output.edn>
+
+# Export to compressed binary JDZL instead (smaller, faster than EDN)
+~/go/bin/datalog -db <path> -export-bin <output.jdzl>
 
 # Per-attribute statistics: cardinality, value sizes, duplication, CRDT ops
 ~/go/bin/datalog -db <path> -stats
@@ -75,6 +82,7 @@ If the user says `/datalog <path>`, treat `$ARGUMENTS` as the database path. Sta
 - Default path when unspecified: `datalog.db` in current directory
 - Test databases are created in temp directories by tests (look for `t.TempDir()` calls)
 - EDN dumps (from `-export`) work directly: `-db dump.edn`
+- JDZL dumps (from `-export-bin`) work directly too: `-db dump.jdzl`
 - Ask the user if the path is unclear
 
 ## EDN Query Syntax
@@ -161,6 +169,11 @@ including predicate/expression-only inputs:
 Variables produced by both sides are equality keys; outer variables consumed
 only by body predicates are correlation inputs. Plain `not` infers both.
 
+An `:in` parameter is an ordinary bound variable here: a body may consume
+it, the header may declare it, and the same declaration rule applies —
+predicate-only consumption of an `:in` parameter requires it in the header,
+while a body pattern providing it may omit it.
+
 **OR clauses** — alternative patterns:
 ```clojure
 (or [?p :person/city "New York"]
@@ -174,8 +187,8 @@ Every `or-join` branch must bind every header variable. Keep branch-specific
 filter inputs out of the header:
 ```clojure
 (or-join [?e]
-  [?e :entity/crawl ?crawl]
-  [?e :entity/world ?world])
+  [?e :item/category ?category]
+  [?e :item/region ?region])
 ```
 
 **OR-default clauses** — fallback semantics (janus extension). Branches are tried in order; the first non-empty result wins:
@@ -230,6 +243,11 @@ Important: `enumerate` produces **multiple output tuples** from a single input t
 [(missing? $ ?e :person/email)]
 [(get-some $ ?e :person/nick :person/name :person/email) ?display]
 ```
+
+`get-some` binds the first listed attribute's value that exists on the
+entity; when **none** exist, the row is dropped — a soft no-match, not an
+error and not a nil binding. Use `get-else` when every row must survive
+with a default.
 
 **Subqueries** — nested queries that bind results into the outer query:
 ```clojure
@@ -300,7 +318,7 @@ Pass `:in` values with the `-in` flag (one per binding, order matches `:in` afte
   -in 20 -in 30
 ```
 
-Each `-in` value is parsed as EDN, so tagged literals work too: `-in '#inst "2024-01-01T00:00:00Z"'`.
+Each `-in` value is parsed as EDN, so tagged literals work too — the full query vocabulary: `-in '#inst "2024-01-01T00:00:00Z"'`, `-in '#identity "L85hash..."'`, `-in '#id "user:alice"'`. Relation inputs pass as vectors of tuple vectors: `-in '[["Alice" 30] ["Bob" 25]]'` for `:in $ [[?name ?age] ...]`.
 
 ### Order By
 

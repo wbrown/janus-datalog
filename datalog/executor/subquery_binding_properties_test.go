@@ -110,11 +110,15 @@ func TestRelationBindingWithConstantPrefixRetainsRemappedKey(t *testing.T) {
 		RelationProperties{Keys: [][]query.Symbol{{innerGroup}}},
 	)
 
+	// Source markers are execution context, not data: filterSourceSymbols
+	// drops them from the input symbols before applyBindingForm pairs
+	// symbols with values positionally.
+	inputSymbols := filterSourceSymbols([]query.Symbol{source, tenant})
 	bound, err := applyBindingForm(
 		inner,
 		query.RelationBinding{Variables: []query.Symbol{outerGroup}},
-		map[query.Symbol]interface{}{tenant: "tenant-1"},
-		[]query.Symbol{source, tenant},
+		inputSymbols,
+		Tuple{"tenant-1"},
 	)
 	require.NoError(t, err)
 	require.Equal(t, []query.Symbol{tenant, outerGroup}, bound.Symbols())

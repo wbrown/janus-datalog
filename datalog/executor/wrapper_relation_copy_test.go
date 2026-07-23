@@ -279,8 +279,8 @@ func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
 	projIt := &projectedIterator{
 		inner:          branchIt,
 		branchRelation: unsafeBranch, // This has RequiresCopy() = true
-		branchSyms:     branchSymbols,
-		outputSyms:     branchSymbols, // Same symbols, no projection needed
+		// Same symbols, no projection needed — identity plan
+		plan: newProjectionPlan(branchSymbols, branchSymbols, nil),
 	}
 
 	var storedTuples []Tuple

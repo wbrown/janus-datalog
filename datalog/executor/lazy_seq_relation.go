@@ -112,8 +112,8 @@ func (r *LazySeqRelation) Project(symbols []query.Symbol) (Relation, error) {
 	}
 	properties := r.properties.project(symbols)
 	var iterator Iterator = NewProjectIterator(r, r.symbols, symbols)
-	if len(properties.Keys) == 0 {
-		iterator = NewDedupIterator(iterator, 0)
+	if !projectionPreservesSet(r.symbols, symbols, properties) {
+		iterator = NewDedupIterator(iterator, 0, false)
 	}
 	return r.fromIterator(iterator, symbols, properties), nil
 }

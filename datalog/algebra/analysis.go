@@ -349,12 +349,17 @@ func analyzeAntiJoin(node *Node, children []Analysis) (Analysis, error) {
 	if !ok {
 		return Analysis{}, dataTypeError(node, "*algebra.AntiJoin")
 	}
+	// A declared symbol the left child does not produce is a free requirement
+	// of the anti-join node itself: the enclosing context — ultimately the
+	// query's environment — supplies it at evaluation. Select and Map treat
+	// their unproduced Required the same way; Union models the same outer
+	// supply as outerRequired. What a symbol *means* (correlation demand of
+	// the right subtree, equality key, declared interface) stays validated
+	// below; only who supplies it widens.
+	var free []query.Symbol
 	for _, symbol := range data.Required {
 		if !query.ContainsSymbol(data.JoinSymbols, symbol) {
 			return Analysis{}, fmt.Errorf("correlation requirement %s is not declared as an anti-join symbol", symbol)
-		}
-		if !query.ContainsSymbol(children[0].Output, symbol) {
-			return Analysis{}, fmt.Errorf("correlation requirement %s is not produced by the left child", symbol)
 		}
 		if query.ContainsSymbol(children[1].Output, symbol) {
 			return Analysis{}, fmt.Errorf("correlation requirement %s is already produced by the right child", symbol)
@@ -362,16 +367,19 @@ func analyzeAntiJoin(node *Node, children []Analysis) (Analysis, error) {
 		if !query.ContainsSymbol(children[1].Required, symbol) {
 			return Analysis{}, fmt.Errorf("correlation requirement %s is not a free requirement of the right child", symbol)
 		}
+		if !query.ContainsSymbol(children[0].Output, symbol) {
+			free = append(free, symbol)
+		}
 	}
 	for _, symbol := range data.JoinSymbols {
-		if !query.ContainsSymbol(children[0].Output, symbol) {
-			return Analysis{}, fmt.Errorf("anti-join symbol %s must be produced by the left child", symbol)
-		}
 		if !query.ContainsSymbol(children[1].Output, symbol) && !query.ContainsSymbol(data.Required, symbol) {
 			return Analysis{}, fmt.Errorf(
 				"anti-join symbol %s must be produced by the right child or declared as a correlation requirement",
 				symbol,
 			)
+		}
+		if !query.ContainsSymbol(children[0].Output, symbol) {
+			free = append(free, symbol)
 		}
 	}
 	for _, symbol := range children[1].Required {
@@ -390,7 +398,7 @@ func analyzeAntiJoin(node *Node, children []Analysis) (Analysis, error) {
 	}
 	return Analysis{
 		Output:   data.Output,
-		Required: antiJoinFreeRequirements(children[0], children[1]),
+		Required: uniqueSymbols(append(antiJoinFreeRequirements(children[0], children[1]), free...)),
 	}, nil
 }
 

@@ -57,7 +57,10 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 }
 
 // filterWithPredicateAndLookup filters a relation using a predicate with optional database lookup.
-// constantBindings are pre-resolved scalar values that are not present as relation symbols.
+// env is the query scope's environment relation (single-valued :in
+// parameters); its one tuple binds into every row's evaluation — the join of
+// the environment into the operator, with the per-row bindings map as
+// operator-internal scratch.
 //
 // Eager: the scan completes before returning, so every error — predicate
 // evaluation, source iteration, close — is knowable synchronously and
@@ -65,10 +68,11 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 // lazily-discovered errors on streaming relations; deferring a known error
 // here left it to consumers that inspect relations structurally (emptiness
 // branches) and laundered it into a silent empty
-// (docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md).
-func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation, resultErr error) {
+// (BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY).
+func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, env Relation) (result Relation, resultErr error) {
 	symbols := rel.Symbols()
 	needsCopy := rel.RequiresCopy()
+	envSymbols, envRow := environmentRow(env)
 
 	// Pre-allocate filtered only for materialized relations to avoid forcing materialization
 	var filtered []Tuple
@@ -79,7 +83,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 	}
 
 	// Reuse single bindings map to avoid repeated allocations
-	bindings := make(map[query.Symbol]interface{}, len(symbols)+len(constantBindings))
+	bindings := make(map[query.Symbol]interface{}, len(symbols)+len(envSymbols))
 
 	// Check if this is a DatabaseFunctionPredicate that needs lookup
 	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
@@ -101,9 +105,10 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		for k := range bindings {
 			delete(bindings, k)
 		}
-		// Pre-populate with constant bindings
-		for sym, val := range constantBindings {
-			bindings[sym] = val
+		// Pre-populate from the environment's tuple (a relation symbol of
+		// the same name overwrites below — relation data wins locally)
+		for i := range envSymbols {
+			bindings[envSymbols[i]] = envRow[i]
 		}
 		bindTuple(bindings, symbols, tuple)
 
@@ -140,9 +145,13 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 // evaluateExpressionWithLookup evaluates an expression with optional database lookup support.
 // If lookup is non-nil and the expression is a DatabaseFunction, it uses EvalWithLookup.
 // Otherwise, it falls back to the standard Eval method.
-// constantBindings are pre-resolved scalar values that are not present as relation symbols.
-func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation, resultErr error) {
+// env is the query scope's environment relation (single-valued :in
+// parameters); its one tuple binds into every row's evaluation. The
+// environmentRow locals are references into the relation, never copies —
+// the relation stays the single holder of its content.
+func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, env Relation) (result Relation, resultErr error) {
 	symbols := rel.Symbols()
+	envSymbols, envRow := environmentRow(env)
 
 	// Determine binding symbols and whether they already exist
 	var bindingSymbols []query.Symbol
@@ -165,7 +174,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	needsCopy := rel.RequiresCopy()
 
 	// Reuse single bindings map to avoid repeated allocations
-	bindings := make(map[query.Symbol]interface{}, len(symbols)+len(constantBindings))
+	bindings := make(map[query.Symbol]interface{}, len(symbols)+len(envSymbols))
 
 	// Pre-allocate newTuples only for materialized relations to avoid forcing materialization
 	var newTuples []Tuple
@@ -197,9 +206,10 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		for k := range bindings {
 			delete(bindings, k)
 		}
-		// Pre-populate with constant bindings
-		for sym, val := range constantBindings {
-			bindings[sym] = val
+		// Pre-populate from the environment's tuple (a relation symbol of
+		// the same name overwrites below — relation data wins locally)
+		for i := range envSymbols {
+			bindings[envSymbols[i]] = envRow[i]
 		}
 		bindTuple(bindings, symbols, tuple)
 
@@ -219,21 +229,17 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			break
 		}
 
-		// Extract value from GetSomeResult if needed
-		// get-some returns a struct with Attr, Value, and Found; we just want
-		// the Value for binding. Found=false signals "no attribute matched":
-		// drop this tuple without surfacing an error.
-		if gsr, ok := evalResult.(*query.GetSomeResult); ok {
-			if !gsr.Found {
-				continue
-			}
-			evalResult = gsr.Value
-		}
-
-		if err := admitExpressionResult(expr.Function, evalResult); err != nil {
-			iterErr = err
+		// Absence (get-some found no attribute) is a soft no-match: drop this
+		// tuple without surfacing an error.
+		value, found, admitErr := admitExpressionResult(expr.Function, evalResult)
+		if admitErr != nil {
+			iterErr = admitErr
 			break
 		}
+		if !found {
+			continue
+		}
+		evalResult = value
 
 		// Handle multi-tuple expansion (e.g., enumerate returns [][]interface{})
 		if multiRows, ok := evalResult.([][]interface{}); ok {

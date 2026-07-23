@@ -65,7 +65,7 @@ func TestQueryPathUsesCache(t *testing.T) {
 	key := CacheKey{E: eBytes, A: aBytes}
 
 	// The cache should now have an entry for this (E, A) pair
-	entry := db.Cache().GetOrResolve(key, bm)
+	entry := db.Cache().GetOrResolve(key, bm, nil)
 	require.NotNil(t, entry)
 	assert.Equal(t, "Alice", entry.OneValue())
 }
@@ -370,7 +370,7 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 			key := CacheKey{E: eBytes, A: nameAttr}
 
 			// The cache should now have an entry from the query execution
-			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher))
+			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher), nil)
 			require.NotNil(t, entry, "cache should be populated after query execution")
 			assert.Equal(t, "Alice", entry.OneValue())
 		})
@@ -430,7 +430,7 @@ func TestJoinQueryUsesCache(t *testing.T) {
 			copy(cityAttr[:], ":person/city")
 			key := CacheKey{E: e1Bytes, A: cityAttr}
 
-			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher))
+			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher), nil)
 			require.NotNil(t, entry, "cache should be populated after join query")
 			assert.Equal(t, "NYC", entry.OneValue())
 		})
@@ -486,7 +486,7 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 			copy(tagsAttr[:], ":person/tags")
 			key := CacheKey{E: eBytes, A: tagsAttr}
 
-			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher))
+			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher), nil)
 			require.NotNil(t, entry, "cache should be populated after cardinality-many query")
 			_, hasDeveloper := entry.ManySet()["developer"]
 			_, hasGolang := entry.ManySet()["golang"]
@@ -527,7 +527,7 @@ func TestCacheConcurrency(t *testing.T) {
 	key := CacheKey{E: eBytes, A: nameAttr}
 
 	// Populate initial entry
-	cache.GetOrResolve(key, matcher)
+	cache.GetOrResolve(key, matcher, nil)
 
 	var wg sync.WaitGroup
 
@@ -536,7 +536,7 @@ func TestCacheConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			entry := cache.GetOrResolve(key, matcher)
+			entry := cache.GetOrResolve(key, matcher, nil)
 			assert.NotNil(t, entry)
 		}()
 	}

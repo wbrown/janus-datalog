@@ -61,8 +61,8 @@ func TestWarmCacheSingleAttribute(t *testing.T) {
 	// The entries should be populated
 	matcher := NewBadgerMatcher(db.Store())
 	matcher.SetSchema(s)
-	entry1 := db.Cache().GetOrResolve(key1, matcher)
-	entry2 := db.Cache().GetOrResolve(key2, matcher)
+	entry1 := db.Cache().GetOrResolve(key1, matcher, nil)
+	entry2 := db.Cache().GetOrResolve(key2, matcher, nil)
 
 	require.NotNil(t, entry1)
 	require.NotNil(t, entry2)
@@ -113,8 +113,8 @@ func TestWarmCacheMultipleAttributes(t *testing.T) {
 	matcher := NewBadgerMatcher(db.Store())
 	matcher.SetSchema(s)
 
-	nameEntry := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: nameAttr}, matcher)
-	ageEntry := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: ageAttr}, matcher)
+	nameEntry := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: nameAttr}, matcher, nil)
+	ageEntry := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: ageAttr}, matcher, nil)
 
 	require.NotNil(t, nameEntry)
 	require.NotNil(t, ageEntry)
@@ -207,7 +207,7 @@ func TestWarmCacheIdempotent(t *testing.T) {
 	matcher := NewBadgerMatcher(db.Store())
 	matcher.SetSchema(s)
 
-	entry := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: a}, matcher)
+	entry := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: a}, matcher, nil)
 	require.NotNil(t, entry)
 	assert.Equal(t, "Alice", entry.OneValue())
 }

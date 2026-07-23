@@ -1,0 +1,46 @@
+Per-query read sessions vs baseline (commit 0d39463), n=10, Apple M5,
+same-session back-to-back via worktree.
+
+benchstat:
+
+ComplexQueryCheckpoint-10    18.04m ± 3%    17.66m ± 3%       ~ (p=0.105 n=10)
+B/op                        29.78Mi ± 0%   29.77Mi ± 0%       ~ (p=0.280 n=10)
+allocs/op                    141.0k ± 0%    141.0k ± 0%  +0.00% (p=0.000 n=10)
+
+A semantics change, priced: one Badger read transaction per query instead
+of one per scan. Wall time and bytes wash; the +0.00% allocation delta is
+the session object and result wrapper per query (a handful of objects,
+detectable only at the checkpoint's ±0% allocation precision).
+
+The scheduler wake churn collapses with it. Identical 200-iteration
+profiled runs, quiet machine: pthread_cond_signal 1,060ms -> 300ms
+(-72%), the wake/spin cluster (signal + usleep + cond_wait) from ~31% of
+checkpoint CPU to ~10% -- roughly 4.8ms/op of side-CPU eliminated --
+and total CPU samples -3% (4,470ms -> 4,330ms). The band was dominated
+by the two WaterMark channel sends (readTs Begin, Discard Done) each
+per-scan transaction fired; one transaction per query removes them
+wholesale. Wall time is unchanged because that CPU always burned beside
+the critical path, never on it. With the band gone, repo work tops the
+checkpoint profile for the first time: cacheTrie.Load, LookupAttribute,
+and Badger read-iterator machinery.
+
+Before this change every BadgerStore.Scan/ScanKeysOnly opened its own
+read transaction, so a query's successive scans could observe different
+database states: a write landing between two scans of one query produced
+rows pairing values from states that never coexisted (the red-first
+reproducer TestQuerySnapshotConsistency pinned a=1 paired with b=2 from
+an initial {1,1} flipped to {2,2} mid-query). All storage reads of one
+query now flow through one ReadSession — one Badger read-only txn
+(handle creation mutex-serialized per Badger's documented contract,
+iteration concurrent), or a copy-on-write B-tree clone on MemoryStore —
+so the query observes one snapshot end to end. The session closes when
+the result relation is exhausted or closed, whichever comes first, with
+a finalizer backstop.
+
+Known residual (ruled, documented): the shared EA cache can serve a
+query an entry newer than its snapshot when a concurrent in-process
+write lands mid-query and another query rebuilds the entry first.
+Rebuilds performed by the query itself route through its session and
+store snapshot-consistent content. Session-version-bounded cache reads
+(the AsOf private-cache machinery generalized) are deferred until the
+current work settles.

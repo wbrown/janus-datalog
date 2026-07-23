@@ -243,6 +243,42 @@ func TestStreamingProjectionSkipsDedupWhenKeyIsRetained(t *testing.T) {
 	require.True(t, unkeyedDedups, "projection without a retained key must deduplicate")
 }
 
+func TestProjectionPreservesSet(t *testing.T) {
+	a := datalog.NewSymbol("?a")
+	b := datalog.NewSymbol("?b")
+	source := []query.Symbol{a, b}
+	keyed := RelationProperties{Keys: [][]query.Symbol{{a}}}
+
+	require.True(t, projectionPreservesSet(source, []query.Symbol{a}, keyed),
+		"a retained candidate key keeps distinct tuples distinct")
+	require.True(t, projectionPreservesSet(source, []query.Symbol{a, b}, RelationProperties{}),
+		"the identity projection is injective")
+	require.True(t, projectionPreservesSet(source, []query.Symbol{b, a}, RelationProperties{}),
+		"a reordering permutation is injective")
+	require.False(t, projectionPreservesSet(source, []query.Symbol{a}, RelationProperties{}),
+		"a reducing projection without a retained key can collapse distinct tuples")
+	require.False(t, projectionPreservesSet(source, []query.Symbol{a, a}, RelationProperties{}),
+		"a repeated target reads one source position twice — equal arity is not injectivity")
+}
+
+func TestStreamingProjectionSkipsDedupOnPermutation(t *testing.T) {
+	a := datalog.NewSymbol("?a")
+	b := datalog.NewSymbol("?b")
+	symbols := []query.Symbol{a, b}
+	base := NewMaterializedRelationFromSet(symbols,
+		[]Tuple{{int64(1), "x"}, {int64(2), "y"}}, ExecutorOptions{})
+	stream := NewStreamingRelationWithOptions(symbols, base.Iterator(), ExecutorOptions{})
+
+	reordered, err := stream.Project([]query.Symbol{b, a})
+	require.NoError(t, err)
+	_, dedups := reordered.(*StreamingRelation).iterator.(*DedupIterator)
+	require.False(t, dedups,
+		"a permutation of the full symbol set is injective on tuples — no dedup pass")
+	rows, err := CollectTuples(reordered, nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, [][]interface{}{{"x", int64(1)}, {"y", int64(2)}}, rows)
+}
+
 func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 	id := datalog.NewSymbol("?id")
 	leftValue := datalog.NewSymbol("?left")
@@ -272,11 +308,10 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 	joined := HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
 	require.Equal(t, RelationProperties{Keys: [][]query.Symbol{{id}}}, joined.Properties())
 	joinIterator := joined.(*StreamingRelation).iterator.(*hashJoinIterator)
-	require.True(t, joinIterator.buildKeysUnique)
-	buildValue, found := joinIterator.hashTable.Get(NewTupleKey(Tuple{int64(1)}, []int{0}))
-	require.True(t, found)
-	require.IsType(t, Tuple{}, buildValue,
-		"a unique build key should store one tuple directly rather than []Tuple")
+	require.True(t, joinIterator.buildIndex.keysUnique(),
+		"the candidate-key proof must hold in the grouped build rows")
+	require.Len(t, joinIterator.buildIndex.probe(Tuple{int64(1)}), 1,
+		"a unique build key groups exactly one row")
 	require.Nil(t, joinIterator.seen,
 		"a proven result key makes internal full-tuple join deduplication redundant")
 
@@ -285,6 +320,32 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 	_, deduplicates := projected.(*StreamingRelation).iterator.(*DedupIterator)
 	require.False(t, deduplicates,
 		"a join against a unique right side cannot duplicate keyed left rows")
+}
+
+func TestHashJoinPanicsWhenCandidateKeyClaimIsViolated(t *testing.T) {
+	id := datalog.NewSymbol("?id")
+	leftValue := datalog.NewSymbol("?left")
+	rightValue := datalog.NewSymbol("?right")
+	opts := ExecutorOptions{}
+
+	left := NewMaterializedRelationWithProperties(
+		[]query.Symbol{id, leftValue},
+		[]Tuple{{int64(1), "left-1"}, {int64(2), "left-2"}, {int64(3), "left-3"}},
+		opts,
+		RelationProperties{},
+	)
+	// The build side claims ?id as a candidate key but carries duplicate ?id
+	// rows — a false proof the grouped build must detect, not trust.
+	right := NewMaterializedRelationWithProperties(
+		[]query.Symbol{id, rightValue},
+		[]Tuple{{int64(1), "right-1"}, {int64(1), "right-2"}},
+		opts,
+		RelationProperties{Keys: [][]query.Symbol{{id}}},
+	)
+
+	require.Panics(t, func() {
+		HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
+	}, "a violated candidate-key guarantee must fail loudly, not join quietly")
 }
 
 func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.T) {
@@ -315,10 +376,9 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 	joined := HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
 	require.Empty(t, joined.Properties().Keys)
 	joinIterator := joined.(*StreamingRelation).iterator.(*hashJoinIterator)
-	require.False(t, joinIterator.buildKeysUnique)
-	buildValue, found := joinIterator.hashTable.Get(NewTupleKey(Tuple{int64(1)}, []int{0}))
-	require.True(t, found)
-	require.Len(t, buildValue.([]Tuple), 2,
+	require.False(t, joinIterator.buildIndex.keysUnique(),
+		"a fanout key must be visible in the grouped build rows")
+	require.Len(t, joinIterator.buildIndex.probe(Tuple{int64(1)}), 2,
 		"a non-unique build key must retain every fanout tuple")
 	require.NotNil(t, joinIterator.seen,
 		"an unkeyed join must retain internal full-tuple deduplication")

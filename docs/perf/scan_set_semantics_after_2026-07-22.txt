@@ -1,0 +1,16 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkComplexQueryCheckpoint-10    	      63	  18228494 ns/op	29306582 B/op	  126088 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      70	  17568479 ns/op	29315727 B/op	  126091 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      68	  17496357 ns/op	29312500 B/op	  126090 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      66	  17535344 ns/op	29284986 B/op	  126088 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      68	  18525085 ns/op	29312230 B/op	  126089 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      68	  18958066 ns/op	29312389 B/op	  126089 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      64	  17499202 ns/op	29314738 B/op	  126089 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      68	  17792570 ns/op	29324481 B/op	  126091 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      66	  17667831 ns/op	29318289 B/op	  126091 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      68	  17498412 ns/op	29271965 B/op	  126088 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	17.033s

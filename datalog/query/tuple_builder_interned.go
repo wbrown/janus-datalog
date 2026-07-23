@@ -63,23 +63,20 @@ func (tb *InternedTupleBuilder) getTxPtr(tx datalog.ElementID) *datalog.ElementI
 func (tb *InternedTupleBuilder) BuildTupleInterned(datom *datalog.Datom) Tuple {
 	result := make(Tuple, len(tb.symbols))
 
-	// Use interned values where possible - store pointers to avoid interface boxing
+	// Datoms decoded from storage carry interned identities and keywords
+	// (datom_decoder.go constructs E via InternIdentityFromHash and A via
+	// InternKeywordFromBytes), so positions copy the canonical pointers.
 	if tb.eIndex >= 0 {
-		// Intern the identity
-		result[tb.eIndex] = datalog.InternIdentity(datom.E)
+		result[tb.eIndex] = datom.E
 	}
 	if tb.aIndex >= 0 {
-		// Intern the keyword
-		result[tb.aIndex] = datalog.InternKeyword(datom.A.String())
+		// Keywords are interned at construction; datom.A is already canonical
+		result[tb.aIndex] = datom.A
 	}
 	if tb.vIndex >= 0 {
-		// Values are more varied, harder to intern effectively
-		// But if it's an Identity, we can intern it
-		if id, ok := datom.V.(datalog.Identity); ok {
-			result[tb.vIndex] = datalog.InternIdentity(id)
-		} else {
-			result[tb.vIndex] = datom.V
-		}
+		// Identity values decode through NewIdentityFromHash (interned);
+		// other value types are not interned. Copy as-is either way.
+		result[tb.vIndex] = datom.V
 	}
 	if tb.tIndex >= 0 {
 		// Use cached pointer for common transaction IDs
@@ -91,23 +88,20 @@ func (tb *InternedTupleBuilder) BuildTupleInterned(datom *datalog.Datom) Tuple {
 
 // BuildTupleInternedInto fills a pre-allocated tuple with interned values
 func (tb *InternedTupleBuilder) BuildTupleInternedInto(datom *datalog.Datom, tuple Tuple) {
-	// Use interned values where possible - store pointers to avoid interface boxing
+	// Datoms decoded from storage carry interned identities and keywords
+	// (datom_decoder.go constructs E via InternIdentityFromHash and A via
+	// InternKeywordFromBytes), so positions copy the canonical pointers.
 	if tb.eIndex >= 0 {
-		// Intern the identity
-		tuple[tb.eIndex] = datalog.InternIdentity(datom.E)
+		tuple[tb.eIndex] = datom.E
 	}
 	if tb.aIndex >= 0 {
-		// Intern the keyword
-		tuple[tb.aIndex] = datalog.InternKeyword(datom.A.String())
+		// Keywords are interned at construction; datom.A is already canonical
+		tuple[tb.aIndex] = datom.A
 	}
 	if tb.vIndex >= 0 {
-		// Values are more varied, harder to intern effectively
-		// But if it's an Identity, we can intern it
-		if id, ok := datom.V.(datalog.Identity); ok {
-			tuple[tb.vIndex] = datalog.InternIdentity(id)
-		} else {
-			tuple[tb.vIndex] = datom.V
-		}
+		// Identity values decode through NewIdentityFromHash (interned);
+		// other value types are not interned. Copy as-is either way.
+		tuple[tb.vIndex] = datom.V
 	}
 	if tb.tIndex >= 0 {
 		// Use cached pointer for common transaction IDs

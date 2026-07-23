@@ -2131,7 +2131,11 @@ func TestHistoryModeCardinalityMany(t *testing.T) {
 		t.Errorf("Latest mode: expected 1 result (add-wins resolved), got %d", latestCount)
 	}
 
-	// History mode: should return ALL raw operations (2 adds + 1 remove = 3 datoms)
+	// History mode with Tx projected away: the add and the remove of
+	// "warrior" are distinct operation records, but both project to the same
+	// ("warrior") tuple — and a relation is a set, so the ?tag projection
+	// carries two bindings. Observing every raw operation requires binding
+	// ?tx, which distinguishes the records (each datom has its own ElementID).
 	historyMatcher := db.History()
 	historyResults, err := historyMatcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
@@ -2142,7 +2146,99 @@ func TestHistoryModeCardinalityMany(t *testing.T) {
 	for historyIter.Next() {
 		historyCount++
 	}
-	if historyCount != 3 {
-		t.Errorf("History mode: expected 3 results (2 adds + 1 remove), got %d", historyCount)
+	if historyCount != 2 {
+		t.Errorf("History mode ?tag projection: expected 2 distinct tag bindings, got %d", historyCount)
+	}
+
+	// History mode with Tx bound: all raw operations visible
+	// (2 adds + 1 remove = 3 datoms).
+	txPattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Constant{Value: entityID},
+			query.Constant{Value: attr},
+			query.Variable{Name: datalog.NewSymbol("?tag")},
+			query.Variable{Name: datalog.NewSymbol("?tx")},
+		},
+	}
+	historyTxResults, err := historyMatcher.Match(query.PatternQuery(txPattern), nil)
+	if err != nil {
+		t.Fatalf("History Match with ?tx failed: %v", err)
+	}
+	historyTxCount := 0
+	historyTxIter := historyTxResults.Iterator()
+	for historyTxIter.Next() {
+		historyTxCount++
+	}
+	if historyTxCount != 3 {
+		t.Errorf("History mode ?tag ?tx projection: expected 3 operation records (2 adds + 1 remove), got %d", historyTxCount)
+	}
+}
+
+// TestLookupAttributeManyBytesMembers exercises the storage-scan fallback of
+// LookupAttribute (matcher without a cache) for a cardinality-many bytes
+// attribute. []byte members must resolve through add-wins like any other
+// value type.
+func TestLookupAttributeManyBytesMembers(t *testing.T) {
+	dir, err := os.MkdirTemp("", "crdt-many-bytes-lookup-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	s := schema.NewSchema()
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":doc/chunks"),
+		ValueType:   schema.TypeBytes,
+		Cardinality: schema.CardinalityMany,
+	})
+	db.SetSchema(s)
+
+	entityID := datalog.NewIdentity("bytes-entity")
+	attr := datalog.NewKeyword(":doc/chunks")
+
+	tx1 := db.NewTransaction()
+	if err := tx1.Add(entityID, attr, []byte("alpha")); err != nil {
+		t.Fatalf("Add alpha failed: %v", err)
+	}
+	if err := tx1.Add(entityID, attr, []byte("beta")); err != nil {
+		t.Fatalf("Add beta failed: %v", err)
+	}
+	if _, err := tx1.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	tx2 := db.NewTransaction()
+	if err := tx2.Remove(entityID, attr, []byte("alpha")); err != nil {
+		t.Fatalf("Remove alpha failed: %v", err)
+	}
+	if _, err := tx2.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	matcher := NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s)
+	value, found := requireAttributeLookup(t, matcher, entityID, attr)
+	if !found {
+		t.Fatal("LookupAttribute returned not found")
+	}
+	members, ok := value.([]interface{})
+	if !ok {
+		t.Fatalf("expected []interface{}, got %T", value)
+	}
+	if len(members) != 1 {
+		t.Fatalf("expected 1 member after remove, got %d: %v", len(members), members)
+	}
+	b, ok := members[0].([]byte)
+	if !ok {
+		t.Fatalf("expected []byte member, got %T", members[0])
+	}
+	if string(b) != "beta" {
+		t.Errorf("expected beta to survive, got %q", b)
 	}
 }

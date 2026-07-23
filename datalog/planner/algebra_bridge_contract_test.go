@@ -34,6 +34,7 @@ func TestOptimizeViaAlgebraReturnsNestedDatalogWithoutMutatingInput(t *testing.T
 			EnableJoinProjectInsertion: true,
 		},
 		handler,
+		nil,
 	)
 	require.NoError(t, err)
 	require.NotSame(t, parsed, optimized)

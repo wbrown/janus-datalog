@@ -19,7 +19,7 @@ func TestSubqueryInputAssemblyRejectsUnresolvedVariable(t *testing.T) {
 		Query:  &query.Query{In: []query.InputSpec{query.ScalarInput{Symbol: datalog.NewSymbol("?x")}}},
 		Inputs: []query.PatternElement{query.Variable{Name: datalog.NewSymbol("?missing")}},
 	}
-	_, err := createInputRelationsFromPatternWithOptions(subq, map[query.Symbol]interface{}{}, ExecutorOptions{})
+	_, err := subqueryInputRelations(subq, nil, nil, ExecutorOptions{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "?missing")
 }
@@ -29,7 +29,7 @@ func TestSubqueryInputAssemblyRejectsUnknownElementKind(t *testing.T) {
 		Query:  &query.Query{In: []query.InputSpec{query.ScalarInput{Symbol: datalog.NewSymbol("?x")}}},
 		Inputs: []query.PatternElement{query.Blank{}},
 	}
-	_, err := createInputRelationsFromPatternWithOptions(subq, map[query.Symbol]interface{}{}, ExecutorOptions{})
+	_, err := subqueryInputRelations(subq, nil, nil, ExecutorOptions{})
 	require.Error(t, err)
 }
 

@@ -604,6 +604,148 @@ func TestCLI_QueryWithMultipleInputs(t *testing.T) {
 	}
 }
 
+// TestCLI_QueryWithIDLiteralInput pins the #id tagged literal through -in:
+// the same seed-string identity that query text accepts must parse
+// identically as a CLI input
+// (BUG_CLI_IN_FLAG_REJECTS_ID_TAGGED_LITERAL).
+func TestCLI_QueryWithIDLiteralInput(t *testing.T) {
+	binPath := buildCLI(t)
+	dbPath := createTestDatabase(t)
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
+				"-query", `[:find ?name :in $ ?e :where [?e :person/name ?name]]`,
+				"-in", `#id "alice"`)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query with #id input failed: %v\n%s", err, out)
+			}
+
+			output := string(out)
+			if !strings.Contains(output, "Alice") {
+				t.Errorf("Expected Alice (seed \"alice\"), got: %s", output)
+			}
+			if strings.Contains(output, "Bob") {
+				t.Errorf("Should not contain Bob, got: %s", output)
+			}
+		})
+	}
+}
+
+// TestCLI_QueryWithRelationInput pins relation-shaped EDN through -in: a
+// vector of tuple vectors binds as relation rows
+// (BUG_CLI_RELATION_INPUT_EDN_REJECTED — the engine's relation-input
+// admission rejected interface-wrapped rows, the only shape EDN parsing
+// produces).
+func TestCLI_QueryWithRelationInput(t *testing.T) {
+	binPath := buildCLI(t)
+	dbPath := createTestDatabase(t)
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Alice's row matches her stored age; Bob's row carries a wrong
+			// age, so the relation join keeps Alice only.
+			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
+				"-query", `[:find ?name :in $ [[?name ?age] ...] :where [?p :person/name ?name] [?p :person/age ?age]]`,
+				"-in", `[["Alice" 30] ["Bob" 999]]`)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query with relation input failed: %v\n%s", err, out)
+			}
+
+			output := string(out)
+			if !strings.Contains(output, "Alice") {
+				t.Errorf("Expected Alice (matching row), got: %s", output)
+			}
+			if strings.Contains(output, "Bob") {
+				t.Errorf("Should not contain Bob (age mismatch), got: %s", output)
+			}
+		})
+	}
+}
+
+// TestCLI_PlanOnly pins the -plan-only flag: the query plans without
+// executing, and the output is the algebra explanation — compiled tree,
+// rewrite decisions, and the physical plan — reflecting the -optimize mode.
+// This test pins mode-specific structure by design, so it sets each mode
+// explicitly rather than asserting one output shape across the axis.
+func TestCLI_PlanOnly(t *testing.T) {
+	binPath := buildCLI(t)
+	dbPath := createTestDatabase(t)
+
+	t.Run("algebra_on", func(t *testing.T) {
+		cmd := exec.Command(binPath, "-db", dbPath, "-optimize=true",
+			"-plan-only",
+			"-query", `[:find ?e ?nick :where [?e :person/name ?name] [(get-else $ ?e :person/nickname "") ?nick]]`)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("-plan-only failed: %v\n%s", err, out)
+		}
+
+		output := string(out)
+		for _, want := range []string{
+			"Compiled algebra:",
+			"Rewrites (",
+			"get-else-scan-rewrite",
+			"Realized Query Plan:",
+		} {
+			if !strings.Contains(output, want) {
+				t.Errorf("expected %q in -plan-only output, got: %s", want, output)
+			}
+		}
+		if strings.Contains(output, "tuples_") {
+			t.Errorf("-plan-only must not execute the query, got results: %s", output)
+		}
+	})
+
+	t.Run("algebra_off", func(t *testing.T) {
+		cmd := exec.Command(binPath, "-db", dbPath, "-optimize=false",
+			"-plan-only",
+			"-query", `[:find ?name :where [?p :person/name ?name]]`)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("-plan-only failed: %v\n%s", err, out)
+		}
+
+		output := string(out)
+		for _, want := range []string{
+			"Compiled algebra:",
+			"Optimizer: disabled",
+			"Realized Query Plan:",
+		} {
+			if !strings.Contains(output, want) {
+				t.Errorf("expected %q in -plan-only output, got: %s", want, output)
+			}
+		}
+	})
+
+	t.Run("with_inputs", func(t *testing.T) {
+		cmd := exec.Command(binPath, "-db", dbPath, "-optimize=true",
+			"-plan-only",
+			"-query", `[:find ?name :in $ ?age :where [?p :person/age ?age] [?p :person/name ?name]]`,
+			"-in", "30")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("-plan-only with inputs failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(string(out), "Realized Query Plan:") {
+			t.Errorf("expected a plan, got: %s", out)
+		}
+	})
+
+	t.Run("requires_query", func(t *testing.T) {
+		cmd := exec.Command(binPath, "-db", dbPath, "-plan-only")
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("-plan-only without -query must fail, got: %s", out)
+		}
+		if !strings.Contains(string(out), "-plan-only requires -query") {
+			t.Errorf("expected the requires-query error, got: %s", out)
+		}
+	})
+}
+
 func TestCLI_ImportNonexistentFile(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := filepath.Join(t.TempDir(), "test.db")

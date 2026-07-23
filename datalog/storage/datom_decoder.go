@@ -24,51 +24,9 @@ func decodeDatomFromKey(index IndexType, key []byte, encoder *BinaryKeyEncoder, 
 		return datalog.Datom{}, fmt.Errorf("failed to decode key: %w", err)
 	}
 
-	// Value (variable length) - first byte is type, rest is data
-	if len(vBytes) < 1 {
-		return datalog.Datom{}, fmt.Errorf("value bytes too short: %d", len(vBytes))
-	}
-	vType := datalog.ValueType(vBytes[0])
-	vData := vBytes[1:]
-
-	// Tier 3: hashed values need blob store lookup
-	if vType == datalog.TypeHashedString || vType == datalog.TypeHashedBytes {
-		if blobs == nil {
-			return datalog.Datom{}, fmt.Errorf("hashed value requires database for blob lookup")
-		}
-		if len(vData) != 20 {
-			return datalog.Datom{}, fmt.Errorf("hashed value hash must be 20 bytes, got %d", len(vData))
-		}
-		var hash [20]byte
-		copy(hash[:], vData)
-		var decompressed interface{}
-		err := blobs.ReadBlob(hash, func(compressed []byte) error {
-			var decodeErr error
-			decompressed, decodeErr = datalog.ValueFromBytes(
-				datalog.ValueType(vType-2), // TypeHashedString→TypeCompressedString, etc.
-				compressed,
-			)
-			return decodeErr
-		})
-		if err != nil {
-			return datalog.Datom{}, fmt.Errorf("failed to read blob: %w", err)
-		}
-		return datalog.Datom{
-			E:        datalog.InternIdentityFromHash(entity),
-			A:        datalog.InternKeywordFromBytes(attr),
-			V:        decompressed,
-			Tx:       Tx(tx).ToElementID(),
-			Op:       datalog.CRDTOp(op),
-			AfterRef: Tx(afterRef).ToElementID(),
-		}, nil
-	}
-
-	v, err := datalog.ValueFromBytes(vType, vData)
+	v, err := valueFromKeySpan(vBytes, blobs)
 	if err != nil {
-		return datalog.Datom{}, fmt.Errorf("failed to decode value: %w", err)
-	}
-	if bytes, ok := v.([]byte); ok {
-		v = append([]byte(nil), bytes...)
+		return datalog.Datom{}, err
 	}
 
 	// E is reconstructed from the stored 20-byte hash only: entities are
@@ -83,4 +41,49 @@ func decodeDatomFromKey(index IndexType, key []byte, encoder *BinaryKeyEncoder, 
 		Op:       datalog.CRDTOp(op),
 		AfterRef: Tx(afterRef).ToElementID(),
 	}, nil
+}
+
+// valueFromKeySpan decodes a value from its key-encoded span: one type byte
+// followed by the value data. Tier-3 hashed values resolve through blobs.
+// []byte values are copied out of the key's backing memory.
+func valueFromKeySpan(vBytes []byte, blobs BlobReader) (interface{}, error) {
+	if len(vBytes) < 1 {
+		return nil, fmt.Errorf("value bytes too short: %d", len(vBytes))
+	}
+	vType := datalog.ValueType(vBytes[0])
+	vData := vBytes[1:]
+
+	// Tier 3: hashed values need blob store lookup
+	if vType == datalog.TypeHashedString || vType == datalog.TypeHashedBytes {
+		if blobs == nil {
+			return nil, fmt.Errorf("hashed value requires database for blob lookup")
+		}
+		if len(vData) != 20 {
+			return nil, fmt.Errorf("hashed value hash must be 20 bytes, got %d", len(vData))
+		}
+		var hash [20]byte
+		copy(hash[:], vData)
+		var decompressed interface{}
+		err := blobs.ReadBlob(hash, func(compressed []byte) error {
+			var decodeErr error
+			decompressed, decodeErr = datalog.ValueFromBytes(
+				datalog.ValueType(vType-2), // TypeHashedString→TypeCompressedString, etc.
+				compressed,
+			)
+			return decodeErr
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to read blob: %w", err)
+		}
+		return decompressed, nil
+	}
+
+	v, err := datalog.ValueFromBytes(vType, vData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode value: %w", err)
+	}
+	if b, ok := v.([]byte); ok {
+		v = append([]byte(nil), b...)
+	}
+	return v, nil
 }

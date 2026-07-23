@@ -26,12 +26,15 @@ type QueryExecutor interface {
 	Execute(ctx Context, q *query.Query, inputs []Relation) ([]Relation, error)
 }
 
-// DefaultQueryExecutor implements QueryExecutor using the PatternMatcher interface
+// DefaultQueryExecutor implements QueryExecutor using the PatternMatcher interface.
+// The executing query scope's environment (single-valued :in parameter values)
+// rides the Context, not the executor: Execute is re-entrant across query
+// scopes (phases, subqueries, or-branch bodies), and each scope binds its own
+// environment at its boundary.
 type DefaultQueryExecutor struct {
-	matcher          PatternMatcher
-	entityResolver   EntityResolver
-	options          ExecutorOptions
-	constantBindings map[query.Symbol]interface{} // Scalar inputs resolved as constants (not relation symbols)
+	matcher        PatternMatcher
+	entityResolver EntityResolver
+	options        ExecutorOptions
 }
 
 // newQueryExecutor creates a new DefaultQueryExecutor.
@@ -257,10 +260,36 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 	// tuples it is the join zero: the whole result is empty (∅ × R = ∅).
 	// Left in place, projection would silently drop it — losing a fail
 	// verdict, or erroring aggregation on "disjoint" groups.
+	//
+	// A group whose symbols are ALL environment symbols is the same shape
+	// one step up: the environment riding as a group. Any group carrying an
+	// env symbol has been collapse-joined with the bound-input group, so an
+	// all-env group holds at most the one env tuple — the join identity
+	// decorated with constants. Absorb it identically: non-empty → drop,
+	// empty → annihilate. Without this, the residual bound-input group left
+	// after or-branches consumed its parameters trips disjoint-groups
+	// aggregation errors.
 	if len(groups) > 1 {
+		env := ctx.Environment()
+		var envSymbols []query.Symbol
+		if env != nil {
+			envSymbols = env.Symbols()
+		}
+		allEnvironment := func(rel Relation) bool {
+			symbols := rel.Symbols()
+			if len(symbols) == 0 || len(envSymbols) == 0 {
+				return false
+			}
+			for _, sym := range symbols {
+				if !query.ContainsSymbol(envSymbols, sym) {
+					return false
+				}
+			}
+			return true
+		}
 		dataGroups := make([]Relation, 0, len(groups))
 		for _, rel := range groups {
-			if len(rel.Symbols()) > 0 {
+			if len(rel.Symbols()) > 0 && !allEnvironment(rel) {
 				dataGroups = append(dataGroups, rel)
 				continue
 			}
@@ -277,7 +306,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 	// values into a relation group before aggregation/projection consume
 	// the symbols: projection treats a missing symbol as empty, so any
 	// later rendering would silently drop rows.
-	rendered, renderErr := e.renderConstantFindSymbols(q, groups)
+	rendered, renderErr := e.renderConstantFindSymbols(ctx.Environment(), q, groups)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -421,10 +450,11 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 // and aggregate arguments are about to be consumed. Extension preserves set
 // semantics: distinct tuples stay distinct under an every-row-identical
 // column.
-func (e *DefaultQueryExecutor) renderConstantFindSymbols(q *query.Query, groups []Relation) ([]Relation, error) {
-	if len(e.constantBindings) == 0 || len(groups) == 0 {
+func (e *DefaultQueryExecutor) renderConstantFindSymbols(env Relation, q *query.Query, groups []Relation) ([]Relation, error) {
+	if env == nil || len(groups) == 0 {
 		return groups, nil
 	}
+	envSymbols := env.Symbols()
 
 	var consumed []query.Symbol
 	for _, elem := range q.Find {
@@ -440,7 +470,7 @@ func (e *DefaultQueryExecutor) renderConstantFindSymbols(q *query.Query, groups 
 
 	var missing []query.Symbol
 	for _, sym := range consumed {
-		if _, isConstant := e.constantBindings[sym]; !isConstant {
+		if !query.ContainsSymbol(envSymbols, sym) {
 			continue
 		}
 		present := false
@@ -477,38 +507,15 @@ func (e *DefaultQueryExecutor) renderConstantFindSymbols(q *query.Query, groups 
 		}
 	}
 
-	rel := groups[target]
-	symbols := append(append([]query.Symbol{}, rel.Symbols()...), missing...)
-	values := make([]interface{}, len(missing))
-	for i, sym := range missing {
-		values[i] = e.constantBindings[sym]
+	// The join of the group with the environment's missing columns: the
+	// symbol sets are disjoint by construction (missing = absent from every
+	// group), so this is an N×1 decoration — every tuple gains the constant
+	// columns, set semantics preserved.
+	projected, err := env.Project(missing)
+	if err != nil {
+		return nil, fmt.Errorf("environment projection for find rendering failed: %w", err)
 	}
-
-	var tuples []Tuple
-	if size := rel.Size(); size > 0 {
-		tuples = make([]Tuple, 0, size)
-	}
-	iter := rel.Iterator()
-	for iter.Next() {
-		src := iter.Tuple()
-		out := make(Tuple, 0, len(symbols))
-		out = append(out, src...)
-		out = append(out, values...)
-		tuples = append(tuples, out)
-	}
-	iterErr := iter.Error()
-	if closeErr := iter.Close(); iterErr == nil {
-		iterErr = closeErr
-	}
-	if iterErr != nil {
-		return nil, iterErr
-	}
-
-	properties := rel.Properties()
-	for _, sym := range missing {
-		properties = properties.addSymbol(sym)
-	}
-	groups[target] = NewMaterializedRelationWithProperties(symbols, tuples, rel.Options(), properties)
+	groups[target] = groups[target].Join(projected)
 	return groups, nil
 }
 
@@ -552,44 +559,53 @@ func replaceConsumedOrGroups(
 		return append(groups, relation)
 	}
 
-	consumed := make(map[int]bool, len(orRelation.consumedGroups))
-	insertAt := len(groups)
-	for _, index := range orRelation.consumedGroups {
-		if index < 0 || index >= len(groups) {
-			continue
-		}
-		consumed[index] = true
-		if index < insertAt {
-			insertAt = index
-		}
-	}
-	if len(consumed) == 0 {
-		return append(groups, relation)
-	}
-
-	result := make(Relations, 0, len(groups)-len(consumed)+1)
-	inserted := false
-	for index, group := range groups {
-		if index == insertAt {
-			result = append(result, relation)
-			inserted = true
-		}
-		if !consumed[index] {
-			result = append(result, group)
-		}
-	}
-	if !inserted {
-		result = append(result, relation)
-	}
+	result := replaceGroups(groups, orRelation.consumedGroups, relation)
 
 	if collector := ctx.Collector(); collector != nil {
 		collector.Add(annotations.Event{
 			Name: "or/outer-replaced",
 			Data: map[string]interface{}{
-				"consumed_groups":  len(consumed),
+				"consumed_groups":  len(orRelation.consumedGroups),
 				"remaining_groups": len(result),
 			},
 		})
+	}
+	return result
+}
+
+// replaceGroups substitutes the groups at the consumed indices with their
+// single replacement relation, inserted at the first consumed position;
+// every other group passes through in order. Out-of-range indices are
+// ignored; with none in range the replacement appends.
+func replaceGroups(groups Relations, consumed []int, replacement Relation) Relations {
+	consumedSet := make(map[int]bool, len(consumed))
+	insertAt := len(groups)
+	for _, index := range consumed {
+		if index < 0 || index >= len(groups) {
+			continue
+		}
+		consumedSet[index] = true
+		if index < insertAt {
+			insertAt = index
+		}
+	}
+	if len(consumedSet) == 0 {
+		return append(groups, replacement)
+	}
+
+	result := make(Relations, 0, len(groups)-len(consumedSet)+1)
+	inserted := false
+	for index, group := range groups {
+		if index == insertAt {
+			result = append(result, replacement)
+			inserted = true
+		}
+		if !consumedSet[index] {
+			result = append(result, group)
+		}
+	}
+	if !inserted {
+		result = append(result, replacement)
 	}
 	return result
 }
@@ -830,16 +846,21 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		if err != nil {
 			return nil, err
 		}
-		if err := admitExpressionResult(expr.Function, result); err != nil {
+		value, found, err := admitExpressionResult(expr.Function, result)
+		if err != nil {
 			return nil, err
+		}
+		if !found {
+			// Absence with no groups: the expression produces no rows.
+			return []Relation{}, nil
 		}
 
 		// Handle both scalar and tuple bindings
 		switch binding := expr.Binding.(type) {
 		case query.TupleBinding:
-			values, ok := result.([]interface{})
+			values, ok := value.([]interface{})
 			if !ok {
-				return nil, fmt.Errorf("tuple binding requires tuple result, got %T", result)
+				return nil, fmt.Errorf("tuple binding requires tuple result, got %T", value)
 			}
 			if len(values) != len(binding.Variables) {
 				return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
@@ -855,7 +876,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				return groups, nil
 			}
 			symbols := []query.Symbol{binding}
-			tuples := []Tuple{{result}}
+			tuples := []Tuple{{value}}
 			return []Relation{NewMaterializedRelationWithOptions(symbols, tuples, e.options)}, nil
 
 		default:
@@ -863,10 +884,13 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		}
 	}
 
-	// Filter out symbols already resolved as constants
+	// Symbols the environment binds (single-valued :in parameters) need no
+	// relation group: the environment relation binds into the operator.
+	env := ctx.Environment()
+	envSymbols, envRow := environmentRow(env)
 	var unresolvedExprSyms []query.Symbol
 	for _, sym := range requiredSyms {
-		if _, isConstant := e.constantBindings[sym]; !isConstant {
+		if !query.ContainsSymbol(envSymbols, sym) {
 			unresolvedExprSyms = append(unresolvedExprSyms, sym)
 		}
 	}
@@ -893,9 +917,9 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			// Ground expression (or all-constants) with existing groups - evaluate once and add symbol(s)
 			// This handles OR fallback: (or [subquery] [(ground 0) ?count])
 			// and constant-bindable scalar expressions: [(+ ?age ?bonus) ?adjusted] where ?bonus is constant
-			evalBindings := make(map[query.Symbol]interface{})
-			for sym, val := range e.constantBindings {
-				evalBindings[sym] = val
+			evalBindings := make(map[query.Symbol]interface{}, len(envSymbols))
+			for i := range envSymbols {
+				evalBindings[envSymbols[i]] = envRow[i]
 			}
 			var result interface{}
 			var err error
@@ -912,29 +936,36 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			if err != nil {
 				return nil, err
 			}
-			if err := admitExpressionResult(expr.Function, result); err != nil {
+			value, found, err := admitExpressionResult(expr.Function, result)
+			if err != nil {
 				return nil, err
 			}
 
-			// Determine binding symbols and values
+			// Determine binding symbols, and values when a binding was
+			// produced. Absence still derives the symbols: the emptied
+			// groups below keep the schema this expression provides.
 			var bindingSyms []query.Symbol
 			var bindingValues []interface{}
 			switch binding := expr.Binding.(type) {
 			case query.TupleBinding:
 				bindingSyms = binding.Variables
-				values, ok := result.([]interface{})
-				if !ok {
-					return nil, fmt.Errorf("tuple binding requires tuple result, got %T", result)
+				if found {
+					values, ok := value.([]interface{})
+					if !ok {
+						return nil, fmt.Errorf("tuple binding requires tuple result, got %T", value)
+					}
+					if len(values) != len(binding.Variables) {
+						return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
+							len(values), len(binding.Variables))
+					}
+					bindingValues = values
 				}
-				if len(values) != len(binding.Variables) {
-					return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
-						len(values), len(binding.Variables))
-				}
-				bindingValues = values
 			case query.Symbol:
 				if binding != nil {
 					bindingSyms = []query.Symbol{binding}
-					bindingValues = []interface{}{result}
+					if found {
+						bindingValues = []interface{}{value}
+					}
 				}
 			}
 
@@ -944,6 +975,14 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			var resultRels []Relation
 			for _, rel := range groups {
 				align := alignBinding(rel.Symbols(), bindingSyms)
+				// Absence against the single environment row drops every
+				// row of every group — a universally-false filter. The
+				// emptied relation keeps the aligned schema so the phase
+				// contract's Provides survives.
+				if !found {
+					resultRels = append(resultRels, NewMaterializedRelationWithOptions(align.symbols, nil, e.options))
+					continue
+				}
 				// Pass-through tuples (no extension) must be copied out of
 				// a workspace-reusing source; extension allocates fresh.
 				needsCopy := rel.RequiresCopy()
@@ -973,9 +1012,9 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		// Handle all-constants expression with no groups (e.g., get-some with scalar input only)
 		// This occurs when all required symbols are constant-bindable and there are no data patterns.
 		if len(unresolvedExprSyms) == 0 && len(groups) == 0 {
-			evalBindings := make(map[query.Symbol]interface{})
-			for sym, val := range e.constantBindings {
-				evalBindings[sym] = val
+			evalBindings := make(map[query.Symbol]interface{}, len(envSymbols))
+			for i := range envSymbols {
+				evalBindings[envSymbols[i]] = envRow[i]
 			}
 
 			// Evaluate the expression - check for database function needing lookup
@@ -995,25 +1034,21 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				return nil, err
 			}
 
-			// Handle get-some result type. Found=false signals "no attribute
-			// matched"; emit an empty relation rather than a tuple.
-			if gsr, ok := result.(*query.GetSomeResult); ok {
-				if !gsr.Found {
-					return []Relation{}, nil
-				}
-				result = gsr.Value
-			}
-
-			if err := admitExpressionResult(expr.Function, result); err != nil {
+			value, found, err := admitExpressionResult(expr.Function, result)
+			if err != nil {
 				return nil, err
+			}
+			if !found {
+				// Absence: emit an empty result rather than a tuple.
+				return []Relation{}, nil
 			}
 
 			// Create result relation based on binding type
 			switch binding := expr.Binding.(type) {
 			case query.TupleBinding:
-				values, ok := result.([]interface{})
+				values, ok := value.([]interface{})
 				if !ok {
-					return nil, fmt.Errorf("tuple binding requires tuple result, got %T", result)
+					return nil, fmt.Errorf("tuple binding requires tuple result, got %T", value)
 				}
 				if len(values) != len(binding.Variables) {
 					return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
@@ -1022,7 +1057,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				return []Relation{NewMaterializedRelationWithOptions(binding.Variables, []Tuple{values}, e.options)}, nil
 			case query.Symbol:
 				if binding != nil {
-					return []Relation{NewMaterializedRelationWithOptions([]query.Symbol{binding}, []Tuple{{result}}, e.options)}, nil
+					return []Relation{NewMaterializedRelationWithOptions([]query.Symbol{binding}, []Tuple{{value}}, e.options)}, nil
 				}
 			}
 			// No binding - return empty groups (expression evaluated for side effect only)
@@ -1043,11 +1078,11 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 	var err error
 	if len(relevantRels) == 1 {
 		// Single relation — evaluate directly, no join needed
-		result, err = evaluateExpressionWithLookup(relevantRels[0], expr, lookup, e.constantBindings)
+		result, err = evaluateExpressionWithLookup(relevantRels[0], expr, lookup, env)
 	} else {
 		// Multiple disjoint relations — cross-join with expression evaluation
 		// Uses BufferedIterator for inner re-iteration instead of Product()
-		result, err = crossJoinWithExpression(relevantRels, expr, lookup, e.constantBindings, e.options)
+		result, err = crossJoinWithExpression(relevantRels, expr, lookup, env, e.options)
 	}
 	if err != nil {
 		return nil, err
@@ -1086,10 +1121,13 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 
 	requiredSyms := pred.RequiredSymbols()
 
-	// Filter out symbols already resolved as constants
+	// Symbols the environment binds (single-valued :in parameters) need no
+	// relation group: the environment relation binds into the operator.
+	env := ctx.Environment()
+	envSymbols, _ := environmentRow(env)
 	var unresolvedSyms []query.Symbol
 	for _, sym := range requiredSyms {
-		if _, isConstant := e.constantBindings[sym]; !isConstant {
+		if !query.ContainsSymbol(envSymbols, sym) {
 			unresolvedSyms = append(unresolvedSyms, sym)
 		}
 	}
@@ -1120,13 +1158,24 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 				pred.String(), unresolvedSyms)
 		}
 
-		// Every required symbol is a resolved constant: the environment
-		// alone decides the predicate. Evaluate it once; the verdict
-		// applies uniformly to every tuple of every group.
-		passes, err := evalPredicateOnce(pred, e.matcher, e.constantBindings)
+		// Every required symbol is environment-bound: the environment alone
+		// decides the predicate. Filter its single tuple once — one
+		// evaluation, and a surviving tuple is a uniform pass. With no
+		// environment (a symbol-free predicate), the zero-symbol unit is the
+		// subject: one evaluation with no bindings, the same verdict shape.
+		var lookup query.EntityLookup
+		if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
+			lookup = entityLookupAdapter{lookupMatcher}
+		}
+		subject := env
+		if subject == nil {
+			subject = NewUnitRelation(e.options)
+		}
+		verdict, err := filterWithPredicateAndLookup(subject, pred, lookup, nil)
 		if err != nil {
 			return nil, err
 		}
+		passes := verdict.Size() == 1
 		if !passes {
 			// Uniform fail. With data groups, empty each one
 			// schema-preserving so downstream clauses and Keep projection
@@ -1163,11 +1212,11 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 	var err error
 	if len(relevantRels) == 1 {
 		// Single relation — filter directly, no join needed
-		result, err = filterWithPredicateAndLookup(relevantRels[0], pred, lookup, e.constantBindings)
+		result, err = filterWithPredicateAndLookup(relevantRels[0], pred, lookup, env)
 	} else {
 		// Multiple disjoint relations — theta-join with predicate filter
 		// Uses BufferedIterator for inner re-iteration instead of Product()
-		result, err = thetaJoinWithPredicate(relevantRels, pred, lookup, e.constantBindings, e.options)
+		result, err = thetaJoinWithPredicate(relevantRels, pred, lookup, env, e.options)
 	}
 	if err != nil {
 		return nil, err
@@ -1177,28 +1226,9 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 	return append([]Relation{result}, otherRels...), nil
 }
 
-// evalPredicateOnce evaluates a predicate whose required symbols are all
-// resolved constants — the all-constants arm of executePredicate, where no
-// relation symbol participates. Database-function predicates evaluate through
-// entity lookup when the matcher supports it; without it, Eval fails loudly
-// (a data-answer path never degrades to a silent skip), mirroring the
-// per-tuple dispatch in filterWithPredicateAndLookup.
-func evalPredicateOnce(pred query.Predicate, matcher PatternMatcher, constantBindings map[query.Symbol]interface{}) (bool, error) {
-	bindings := make(map[query.Symbol]interface{}, len(constantBindings))
-	for sym, val := range constantBindings {
-		bindings[sym] = val
-	}
-	if dbFuncPred, ok := pred.(*query.DatabaseFunctionPredicate); ok {
-		if lookupMatcher, ok := matcher.(EntityLookupMatcher); ok {
-			return dbFuncPred.EvalWithLookup(bindings, entityLookupAdapter{lookupMatcher})
-		}
-	}
-	return pred.Eval(bindings)
-}
-
 // executeSubquery executes a nested subquery
 // Subqueries produce new relations from nested query execution
-func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.SubqueryPattern, groups []Relation) (Relation, error) {
+func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.SubqueryPattern, groups []Relation) (result Relation, resultErr error) {
 	// Record the per-input-combination execution path.
 	if collector := ctx.Collector(); collector != nil {
 		collector.Add(annotations.Event{
@@ -1250,11 +1280,15 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 			return nil, fmt.Errorf("no input groups for subquery with variable inputs")
 		}
 		// No variable inputs - execute subquery once with empty input combination
-		inputRelations, err := createInputRelationsForSubqueryWithOptions(subq, make(map[query.Symbol]interface{}), e.options)
+		inputRelations, err := subqueryInputRelations(subq, nil, nil, e.options)
 		if err != nil {
 			return nil, fmt.Errorf("subquery input binding failed: %w", err)
 		}
-		nestedGroups, err := e.Execute(ctx, subq.Query, inputRelations)
+		// The subquery is its own query scope: its environment comes from its
+		// own :in bindings, never the enclosing scope's (whose parameters an
+		// inner name collision must not capture).
+		innerCtx := ctx.WithEnvironment(environmentRelationFromInputs(subq.Query.In, inputRelations))
+		nestedGroups, err := e.Execute(innerCtx, subq.Query, inputRelations)
 		if err != nil {
 			return nil, fmt.Errorf("nested query execution failed: %w", err)
 		}
@@ -1278,29 +1312,50 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		combinedRel = Relations(materializedGroups).Product()
 	}
 
-	// Get unique combinations of input values
-	inputCombinations, err := getUniqueInputCombinations(combinedRel, inputSymbols)
-	if err != nil {
-		return nil, fmt.Errorf("subquery input extraction failed: %w", err)
+	// The unique input combinations ARE a relation: the outer relation
+	// projected onto the data input symbols (source markers are execution
+	// context, not data). Projection's set semantics is the dedup — typed
+	// value identity, never string rendering. With no data inputs the
+	// zero-symbol unit is the one (empty) combination.
+	dataSymbols := filterSourceSymbols(inputSymbols)
+	var combos Relation
+	if len(dataSymbols) == 0 {
+		combos = NewUnitRelation(e.options)
+	} else {
+		projected, err := combinedRel.Project(dataSymbols)
+		if err != nil {
+			return nil, fmt.Errorf("subquery input projection failed: %w", err)
+		}
+		combos = projected
 	}
-	if collector := ctx.Collector(); collector != nil {
-		collector.Add(annotations.Event{
-			Name: "subquery/input-combinations",
-			Data: map[string]interface{}{
-				"relation_groups":    len(materializedGroups),
-				"product":            len(materializedGroups) > 1,
-				"eager_materialized": false,
-				"combination_count":  len(inputCombinations),
-			},
-		})
-	}
-
-	// Execute subquery for each combination
+	// Execute subquery for each combination — each tuple of the projected
+	// relation. Projection over a product streams, so the combination count
+	// is known only after the pass; the annotation is emitted once the
+	// combinations have been consumed.
 	var allResults []Relation
+	combinationCount := 0
+	combosRequireCopy := combos.RequiresCopy()
 
-	for _, inputValues := range inputCombinations {
+	comboIter := combos.Iterator()
+	// A failed Close must not present a clean result: capture the Close error
+	// on every path, without double-closing.
+	defer func() {
+		if closeErr := comboIter.Close(); closeErr != nil && resultErr == nil {
+			result = nil
+			resultErr = fmt.Errorf("subquery input combinations failed: %w", closeErr)
+		}
+	}()
+	for comboIter.Next() {
+		combo := comboIter.Tuple()
+		// Each combination outlives its iteration (applyBindingForm carries it
+		// into the bound result), so copy when the source iterator reuses its
+		// tuple workspace.
+		if combosRequireCopy {
+			combo = copyTuple(combo)
+		}
+		combinationCount++
 		// Create input relations for this combination
-		inputRelations, err := createInputRelationsForSubqueryWithOptions(subq, inputValues, e.options)
+		inputRelations, err := subqueryInputRelations(subq, dataSymbols, combo, e.options)
 		if err != nil {
 			return nil, fmt.Errorf("subquery input binding failed: %w", err)
 		}
@@ -1319,8 +1374,11 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 			}
 		}
 
-		// Execute the nested query recursively using QueryExecutor
-		nestedGroups, err := e.Execute(ctx, subq.Query, inputRelations)
+		// Execute the nested query recursively using QueryExecutor. The
+		// subquery is its own query scope: its environment comes from its own
+		// :in bindings for this combination, never the enclosing scope's.
+		innerCtx := ctx.WithEnvironment(environmentRelationFromInputs(subq.Query.In, inputRelations))
+		nestedGroups, err := e.Execute(innerCtx, subq.Query, inputRelations)
 		if err != nil {
 			return nil, fmt.Errorf("nested query execution failed: %w", err)
 		}
@@ -1338,12 +1396,26 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		}
 
 		// Apply binding form to join results with outer query values
-		boundResult, err := applyBindingForm(nestedResult, subq.Binding, inputValues, inputSymbols)
+		boundResult, err := applyBindingForm(nestedResult, subq.Binding, dataSymbols, combo)
 		if err != nil {
 			return nil, fmt.Errorf("binding form application failed: %w", err)
 		}
 
 		allResults = append(allResults, boundResult)
+	}
+	if err := comboIter.Error(); err != nil {
+		return nil, fmt.Errorf("subquery input combinations failed: %w", err)
+	}
+	if collector := ctx.Collector(); collector != nil {
+		collector.Add(annotations.Event{
+			Name: "subquery/input-combinations",
+			Data: map[string]interface{}{
+				"relation_groups":    len(materializedGroups),
+				"product":            len(materializedGroups) > 1,
+				"eager_materialized": false,
+				"combination_count":  combinationCount,
+			},
+		})
 	}
 
 	// Combine all results
@@ -1354,10 +1426,6 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 
 	// Union all results (they should have the same schema)
 	return combineSubqueryResultsSimple(allResults), nil
-}
-
-func createInputRelationsForSubqueryWithOptions(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}, opts ExecutorOptions) ([]Relation, error) {
-	return createInputRelationsFromPatternWithOptions(subq, outerValues, opts)
 }
 
 // combineSubqueryResultsSimple combines multiple subquery results into a single relation
@@ -1544,8 +1612,11 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 
 // executeOrClauseCorrelatedUnion evaluates all branches per outer tuple and unions results.
 func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx Context, branches [][]query.Clause, groups Relations) (Relation, error) {
-	neededSymbols := collectOrBranchRequiredSymbols(branches)
-	outerRel, consumed := e.findOuterRelation(neededSymbols, groups)
+	// Inference forms unify on every shared free variable (the language
+	// rule), so every branch free variable — including correlates consumed
+	// only by a branch NOT or predicate — selects its binding group into
+	// the outer relation.
+	outerRel, consumed := e.findOuterRelation(branchFreeVariables(branches), groups)
 	rel := NewOrFallbackRelation(e, ctx, branches, outerRel, e.options, false)
 	rel.consumedGroups = consumed
 	return rel, nil
@@ -1554,8 +1625,9 @@ func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx Context, branc
 // executeOrDefaultClause implements fallback semantics for or-default clauses:
 // For each input tuple, try branches in order until one returns a result.
 func (e *DefaultQueryExecutor) executeOrDefaultClause(ctx Context, clause *query.OrDefaultClause, groups Relations) (Relation, error) {
-	neededSymbols := collectOrBranchRequiredSymbols(clause.Branches)
-	outerRel, consumed := e.findOuterRelation(neededSymbols, groups)
+	// Inference form: outer-group selection by every branch free variable,
+	// as in executeOrClauseCorrelatedUnion above.
+	outerRel, consumed := e.findOuterRelation(branchFreeVariables(clause.Branches), groups)
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
 	rel.consumedGroups = consumed
 	return rel, nil
@@ -1569,8 +1641,14 @@ func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx Context, clause *q
 		return nil, err
 	}
 
-	requiredSet := make(map[query.Symbol]bool, len(clause.RequiredVars))
-	for _, v := range clause.RequiredVars {
+	// Outer-group selection stays keyed on the correlates alone (the
+	// declared RequiredVars — Validate forces branch externals into them):
+	// OutputVars are branch-produced, not unification demands on the outer.
+	// The canonical scope (Provides = OutputVars, Correlates = RequiredVars)
+	// drives branch visibility, matching the declared interface exactly.
+	scope := query.ScopeOf(clause)
+	requiredSet := make(map[query.Symbol]bool, len(scope.Correlates))
+	for _, v := range scope.Correlates {
 		requiredSet[v] = true
 	}
 
@@ -1585,7 +1663,7 @@ func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx Context, clause *q
 	prefetched := false
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
 	rel.joinSyms = clause.RequiredVars
-	rel.headerSyms = append(append([]query.Symbol(nil), clause.RequiredVars...), clause.OutputVars...)
+	rel.scope = &scope
 	rel.prefetched = prefetched
 	rel.consumedGroups = consumed
 	return rel, nil
@@ -1605,8 +1683,12 @@ func branchesNeedCorrelatedExecution(branches [][]query.Clause) bool {
 	return false
 }
 
-// clausesNeedCorrelation recursively checks whether any clause in the
-// list (or nested within it) contains expressions or correlated predicates.
+// clausesNeedCorrelation recursively checks whether any clause in the list
+// (or nested within it) is a correlated form: expressions, subqueries,
+// predicates with inputs, and NOT/not-join — whose anti-join consumes outer
+// bindings by definition (ScopeOf gives them Correlates). A branch containing
+// any of these must evaluate per outer tuple; executing it blind turns the
+// correlation existential and silently widens or narrows the branch.
 func clausesNeedCorrelation(clauses []query.Clause) bool {
 	needs := false
 	query.WalkClauses(clauses, func(clause query.Clause) bool {
@@ -1615,6 +1697,9 @@ func clausesNeedCorrelation(clauses []query.Clause) bool {
 		}
 		switch cl := clause.(type) {
 		case *query.Expression, *query.SubqueryPattern:
+			needs = true
+			return false
+		case *query.NotClause, *query.NotJoinClause:
 			needs = true
 			return false
 		case query.Predicate:
@@ -1814,16 +1899,24 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.Or
 // executeOrJoinClauseCorrelatedUnion evaluates all branches per outer tuple
 // for or-join clauses where branches reference outer symbols.
 func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
-	joinVarSet := make(map[query.Symbol]bool, len(clause.JoinVars))
-	for _, v := range clause.JoinVars {
-		joinVarSet[v] = true
+	// The clause's canonical interface (Provides ∪ Correlates — the header
+	// plus branch externals) selects the outer groups it unifies with, so a
+	// correlate consumed only by a branch NOT/predicate pulls its binding
+	// group into the outer relation instead of turning existential.
+	scope := query.ScopeOf(clause)
+	interfaceSet := make(map[query.Symbol]bool, len(scope.Provides)+len(scope.Correlates))
+	for _, v := range scope.Provides {
+		interfaceSet[v] = true
+	}
+	for _, v := range scope.Correlates {
+		interfaceSet[v] = true
 	}
 
-	outerRel, consumed := e.findOuterRelationBySymbols(joinVarSet, groups)
+	outerRel, consumed := e.findOuterRelationBySymbols(interfaceSet, groups)
 
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, false)
 	rel.joinSyms = clause.JoinVars
-	rel.headerSyms = clause.JoinVars
+	rel.scope = &scope
 	rel.consumedGroups = consumed
 	return rel, nil
 }
@@ -1875,85 +1968,6 @@ func extractEntityIDs(rel Relation, syms []query.Symbol) ([]datalog.Identity, er
 	return entities, nil
 }
 
-// collectOrBranchRequiredSymbols collects symbols that OR branches need from outer context
-func collectOrBranchRequiredSymbols(branches [][]query.Clause) []query.Symbol {
-	seen := make(map[query.Symbol]bool)
-	var result []query.Symbol
-
-	for _, branch := range branches {
-		// Track which symbols this branch provides (to distinguish from required)
-		branchProvides := make(map[query.Symbol]bool)
-
-		// First pass: collect what each clause provides
-		for _, c := range branch {
-			switch clause := c.(type) {
-			case *query.DataPattern:
-				for _, elem := range clause.Elements {
-					if v, ok := elem.(query.Variable); ok {
-						branchProvides[v.Name] = true
-					}
-				}
-			case *query.Expression:
-				switch b := clause.Binding.(type) {
-				case query.Symbol:
-					if b != nil {
-						branchProvides[b] = true
-					}
-				case query.TupleBinding:
-					for _, v := range b.Variables {
-						branchProvides[v] = true
-					}
-				}
-			case *query.SubqueryPattern:
-				// Subquery provides its binding variables
-				for _, v := range clause.Binding.BoundVariables() {
-					branchProvides[v] = true
-				}
-			}
-		}
-
-		// Second pass: collect symbols that are used but must come from outer context
-		for _, c := range branch {
-			switch clause := c.(type) {
-			case *query.DataPattern:
-				// Variables in patterns that would make the pattern more selective
-				// when bound from outer context (typically entity variables)
-				for _, elem := range clause.Elements {
-					if v, ok := elem.(query.Variable); ok {
-						// If this variable appears in the pattern AND could be bound
-						// from outside (not guaranteed to be provided by this pattern alone),
-						// we should consider it as potentially required
-						if !seen[v.Name] {
-							seen[v.Name] = true
-							result = append(result, v.Name)
-						}
-					}
-				}
-			case *query.SubqueryPattern:
-				// Subquery needs variable inputs from outer context
-				for _, input := range clause.Inputs {
-					if v, ok := input.(query.Variable); ok {
-						if !seen[v.Name] {
-							seen[v.Name] = true
-							result = append(result, v.Name)
-						}
-					}
-				}
-			case *query.Expression:
-				// Expression needs its required symbols
-				for _, sym := range clause.Function.RequiredSymbols() {
-					if !seen[sym] {
-						seen[sym] = true
-						result = append(result, sym)
-					}
-				}
-			}
-		}
-	}
-
-	return result
-}
-
 // executeNotClause performs anti-join filtering on groups
 func (e *DefaultQueryExecutor) executeNotClause(ctx Context, clause *query.NotClause, groups Relations) (Relations, error) {
 	if len(groups) == 0 {
@@ -1962,26 +1976,32 @@ func (e *DefaultQueryExecutor) executeNotClause(ctx Context, clause *query.NotCl
 
 	// Anti-join keys are the body's free variables — the same scope
 	// interface the planner schedules on. filterWithNotClause intersects
-	// them with the input schema: bound variables unify, the rest are
+	// them with the subject's schema: bound variables unify, the rest are
 	// existential (Datomic's unification rule).
 	joinVars := query.FreeVariables(clause.Clauses)
 	if len(joinVars) == 0 {
-		return nil, fmt.Errorf("NOT clause has no variables to join on")
+		return nil, fmt.Errorf("not clause has no variables to join on")
 	}
 
-	// Apply NOT filter to each group
-	var result Relations
-	for _, group := range groups {
-		filtered, err := e.filterWithNotClause(ctx, clause, group, joinVars)
-		if err != nil {
-			return nil, err
-		}
-		if filtered != nil {
-			result = append(result, filtered)
-		}
+	// The groups carrying anti-join keys are the clause's subject; when the
+	// keys span several disjoint groups, the clause's correlation is their
+	// connector — join them once and anti-join the joined relation on the
+	// full key set, the anti-join analog of a bridging predicate's
+	// theta-join. Anti-joining each group separately instead wipes a
+	// correlate-only group with a partially-bound body and turns the
+	// entity side existential
+	// (BUG_NOT_SPANNING_DISJOINT_GROUPS_APPLIED_PER_GROUP). Groups
+	// carrying no key are unrelated to the clause and pass through.
+	subject, consumed := e.findOuterRelation(joinVars, groups)
+	if len(consumed) == 0 {
+		return nil, fmt.Errorf("not clause variables are bound in no relation group")
 	}
 
-	return result, nil
+	filtered, err := e.filterWithNotClause(ctx, clause, subject, joinVars)
+	if err != nil {
+		return nil, err
+	}
+	return replaceGroups(groups, consumed, filtered), nil
 }
 
 // executeNotJoinClause performs anti-join with explicit join variables
@@ -1991,22 +2011,53 @@ func (e *DefaultQueryExecutor) executeNotJoinClause(ctx Context, clause *query.N
 	}
 
 	if len(clause.JoinVars) == 0 {
-		return nil, fmt.Errorf("NOT-JOIN clause has no join variables")
+		return nil, fmt.Errorf("not-join clause has no join variables")
 	}
 
-	// Apply NOT-JOIN filter to each group
-	var result Relations
-	for _, group := range groups {
-		filtered, err := e.filterWithNotJoinClause(ctx, clause, group)
-		if err != nil {
-			return nil, err
-		}
-		if filtered != nil {
-			result = append(result, filtered)
-		}
+	// Same subject selection and bridging as executeNotClause above, keyed
+	// on the declared header. filterWithNotJoinClause classifies each
+	// declared variable: subject-carried variables key the anti-join,
+	// environment-bound variables constrain the body through its binding,
+	// and a variable bound in neither domain stays a loud error.
+	subject, consumed := e.findOuterRelation(clause.JoinVars, groups)
+	if len(consumed) == 0 {
+		return nil, fmt.Errorf("not-join header variables are bound in no relation group")
 	}
 
-	return result, nil
+	filtered, err := e.filterWithNotJoinClause(ctx, clause, subject)
+	if err != nil {
+		return nil, err
+	}
+	return replaceGroups(groups, consumed, filtered), nil
+}
+
+// notBodyBinding returns the binding schema for a not/not-join body's
+// per-combination evaluation: the anti-join keys extended with the
+// environment's row, restricted to body-consumed symbols the keys don't
+// already carry. The body is a clause scope, and the environment renders
+// into its binding at the boundary — as at the top level, subquery entry,
+// and or-branch evaluation. The extension tuple is a reference into the
+// projected environment relation's own row, never a copy.
+func notBodyBinding(ctx Context, bodyVars, keys []query.Symbol) ([]query.Symbol, Tuple, error) {
+	env := ctx.Environment()
+	if env == nil {
+		return keys, nil, nil
+	}
+	var extra []query.Symbol
+	for _, sym := range env.Symbols() {
+		if query.ContainsSymbol(bodyVars, sym) && !query.ContainsSymbol(keys, sym) {
+			extra = append(extra, sym)
+		}
+	}
+	if len(extra) == 0 {
+		return keys, nil, nil
+	}
+	projected, err := env.Project(extra)
+	if err != nil {
+		return nil, nil, fmt.Errorf("environment projection for anti-join body binding failed: %w", err)
+	}
+	bindingSyms := append(append([]query.Symbol(nil), keys...), extra...)
+	return bindingSyms, projected.Get(0), nil
 }
 
 // filterWithNotClause applies anti-join filtering to a single relation
@@ -2033,13 +2084,22 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 	}
 
 	if len(actualJoinVars) == 0 {
-		return nil, fmt.Errorf("NOT clause variables not found in input relation")
+		return nil, fmt.Errorf("not clause variables are bound in no relation group")
+	}
+
+	// The not body is a clause scope: the environment joins into its
+	// binding, exactly as the top-level, subquery, and or-branch boundaries
+	// render it into theirs. Restricted to body-consumed symbols the
+	// anti-join keys don't already carry.
+	bindingSyms, envExt, err := notBodyBinding(ctx, joinVars, actualJoinVars)
+	if err != nil {
+		return nil, err
 	}
 
 	// Get unique combinations of join variables from input
 	uniqueCombos, err := getUniqueCombinations(input, actualJoinVars)
 	if err != nil {
-		return nil, fmt.Errorf("NOT input combinations failed: %w", err)
+		return nil, fmt.Errorf("not clause input combinations failed: %w", err)
 	}
 
 	// Track which key combinations matched the inner clauses
@@ -2047,25 +2107,32 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 
 	// For each unique combination, execute inner clauses
 	for _, combo := range uniqueCombos {
-		// Create a single-tuple relation with the combo values for binding
-		bindingRel := NewMaterializedRelationWithOptions(actualJoinVars, []Tuple{combo}, e.options)
+		// Create a single-tuple relation binding the combo values plus the
+		// environment's row
+		binding := combo
+		if len(envExt) > 0 {
+			binding = make(Tuple, 0, len(combo)+len(envExt))
+			binding = append(binding, combo...)
+			binding = append(binding, envExt...)
+		}
+		bindingRel := NewMaterializedRelationWithOptions(bindingSyms, []Tuple{binding}, e.options)
 
 		// Execute inner clauses with this binding
 		innerResult, err := e.executeInnerClauses(ctx, clause.Clauses, bindingRel)
 		if err != nil {
-			return nil, fmt.Errorf("NOT inner clause execution failed: %w", err)
+			return nil, fmt.Errorf("not clause body execution failed: %w", err)
 		}
 
 		// Count inner results via ForEach so streaming inner relations
 		// (Size() == -1) register as matches and a failed inner scan
 		// surfaces as an error rather than looking like "no match" — which
-		// would wrongly un-exclude this combo and silently corrupt the NOT
-		// result.
+		// would wrongly un-exclude this combo and silently corrupt the
+		// anti-join result.
 		matched := false
 		if innerResult != nil {
 			count := 0
 			if ferr := ForEach(innerResult, func(Tuple) error { count++; return nil }); ferr != nil {
-				return nil, fmt.Errorf("NOT inner clause execution failed: %w", ferr)
+				return nil, fmt.Errorf("not clause body execution failed: %w", ferr)
 			}
 			matched = count > 0
 		}
@@ -2115,33 +2182,72 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 	input = input.Materialize()
 	inputSyms := input.Symbols()
 
-	// Verify join vars exist in input
+	// Classify each declared header variable by the mechanism that enforces
+	// it. A symbol the body never mentions declares a correlation that does
+	// not exist — rejected with the algebra compiler's own message, so both
+	// planning modes agree (the or-join family enforces the mirror rule:
+	// every declared header symbol must be bound by the branches).
+	// Subject-carried variables discriminate the anti-join key.
+	// Environment-bound variables constrain the body through its binding
+	// (notBodyBinding below); their key contribution would be a constant
+	// equal on both sides, so they stay out of the key entirely. A variable
+	// in neither domain is unbound — a loud error, never a silent
+	// existential.
 	inputSymSet := make(map[query.Symbol]bool)
 	for _, sym := range inputSyms {
 		inputSymSet[sym] = true
 	}
-
+	env := ctx.Environment()
+	bodyVars := query.FreeVariables(clause.Clauses)
+	var keyVars []query.Symbol
 	for _, v := range clause.JoinVars {
-		if !inputSymSet[v] {
-			return nil, fmt.Errorf("NOT-JOIN variable %s not found in input relation", v)
+		if !query.ContainsSymbol(bodyVars, v) {
+			return nil, fmt.Errorf("not-join header symbol %s is neither produced nor consumed by the body", v)
 		}
+		if inputSymSet[v] {
+			keyVars = append(keyVars, v)
+			continue
+		}
+		if env != nil && query.ContainsSymbol(env.Symbols(), v) {
+			continue
+		}
+		return nil, fmt.Errorf("not-join variable %s is not bound in the subject relation", v)
+	}
+	if len(keyVars) == 0 {
+		return nil, fmt.Errorf(
+			"not-join header %v shares no variable with the subject relation; the anti-join must unify with the enclosing query through at least one data variable",
+			clause.JoinVars,
+		)
 	}
 
-	// Get unique combinations of join variables
-	uniqueCombos, err := getUniqueCombinations(input, clause.JoinVars)
+	// The not-join body is a clause scope: the environment joins into its
+	// binding alongside the declared header, as at every scope boundary.
+	bindingSyms, envExt, err := notBodyBinding(ctx, bodyVars, keyVars)
 	if err != nil {
-		return nil, fmt.Errorf("NOT-JOIN input combinations failed: %w", err)
+		return nil, err
+	}
+
+	// Get unique combinations of the subject-carried key variables
+	uniqueCombos, err := getUniqueCombinations(input, keyVars)
+	if err != nil {
+		return nil, fmt.Errorf("not-join input combinations failed: %w", err)
 	}
 
 	// Track matched keys
 	matchedKeys := NewTupleKeyMap()
 
 	for _, combo := range uniqueCombos {
-		bindingRel := NewMaterializedRelationWithOptions(clause.JoinVars, []Tuple{combo}, e.options)
+		binding := combo
+		if len(envExt) > 0 {
+			binding = make(Tuple, 0, len(combo)+len(envExt))
+			binding = append(binding, combo...)
+			binding = append(binding, envExt...)
+		}
+		bindingRel := NewMaterializedRelationWithOptions(bindingSyms, []Tuple{binding}, e.options)
 
 		innerResult, err := e.executeInnerClauses(ctx, clause.Clauses, bindingRel)
 		if err != nil {
-			return nil, fmt.Errorf("NOT-JOIN inner clause execution failed: %w", err)
+			return nil, fmt.Errorf("not-join inner clause execution failed: %w", err)
 		}
 
 		// Count inner results via ForEach so a failed inner scan surfaces as an
@@ -2162,8 +2268,9 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 		}
 	}
 
-	// Build key indices; join vars are validated present in inputSyms above.
-	keyIndices := query.SymbolIndexTable(inputSyms, clause.JoinVars)
+	// Build key indices over the subject-carried key variables, validated
+	// present in inputSyms above.
+	keyIndices := query.SymbolIndexTable(inputSyms, keyVars)
 
 	// Filter
 	var filtered []Tuple

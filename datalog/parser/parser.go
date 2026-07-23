@@ -903,6 +903,20 @@ func parsePatternElement(node *edn.Node) (query.PatternElement, error) {
 
 // parseTaggedLiteral converts an EDN tagged literal into a query Constant.
 func parseTaggedLiteral(node *edn.Node) (query.PatternElement, error) {
+	value, err := TaggedLiteralValue(node)
+	if err != nil {
+		return nil, err
+	}
+	return query.Constant{Value: value}, nil
+}
+
+// TaggedLiteralValue converts an EDN tagged literal into its datalog value.
+// This is the query dialect's one vocabulary — #identity, #id, #inst,
+// #bytes — shared by query-text parsing and CLI input conversion so the two
+// entry points cannot drift. (The export/import dump format keeps its own
+// dialect in the storage package: it carries #lzj and deliberately omits the
+// #id sugar, since the formatter only emits canonical #identity.)
+func TaggedLiteralValue(node *edn.Node) (interface{}, error) {
 	if node.Tagged == nil {
 		return nil, fmt.Errorf("tagged literal missing value")
 	}
@@ -916,7 +930,7 @@ func parseTaggedLiteral(node *edn.Node) (query.PatternElement, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid L85 in #identity: %w", err)
 		}
-		return query.Constant{Value: datalog.NewIdentityFromHash(hash)}, nil
+		return datalog.NewIdentityFromHash(hash), nil
 
 	case "id":
 		// #id "seed" constructs the identity by hashing the seed — NewIdentity
@@ -925,7 +939,7 @@ func parseTaggedLiteral(node *edn.Node) (query.PatternElement, error) {
 		if val.Type != edn.NodeString {
 			return nil, fmt.Errorf("#id requires string value")
 		}
-		return query.Constant{Value: datalog.NewIdentity(val.Value)}, nil
+		return datalog.NewIdentity(val.Value), nil
 
 	case "inst":
 		if val.Type != edn.NodeString {
@@ -938,20 +952,20 @@ func parseTaggedLiteral(node *edn.Node) (query.PatternElement, error) {
 				return nil, fmt.Errorf("invalid instant: %w", err)
 			}
 		}
-		return query.Constant{Value: t.UTC()}, nil
+		return t.UTC(), nil
 
 	case "bytes":
 		if val.Type != edn.NodeString {
 			return nil, fmt.Errorf("#bytes requires string value")
 		}
 		if val.Value == "" {
-			return query.Constant{Value: []byte{}}, nil
+			return []byte{}, nil
 		}
 		decoded, err := codec.DecodeL85(val.Value)
 		if err != nil {
 			return nil, fmt.Errorf("invalid L85 in #bytes: %w", err)
 		}
-		return query.Constant{Value: decoded}, nil
+		return decoded, nil
 
 	default:
 		return nil, fmt.Errorf("unsupported tagged literal: #%s", node.Tag)

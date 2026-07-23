@@ -271,11 +271,15 @@ func (k TupleKey) Equal(other TupleKey) bool {
 	return true
 }
 
-// TupleKeyMap wraps a simple Go map for better performance
-// We use the hash directly as the key and handle collisions
+// TupleKeyMap wraps a hash-indexed table holding each hash's first entry
+// inline in the map slot — no per-key backing array. Genuine hash
+// collisions are rare by construction, so second and later entries sharing
+// a hash spill into a separate overflow map that stays nil until the first
+// collision. Every lookup compares full values, so collisions cost time,
+// never correctness.
 type TupleKeyMap struct {
-	// Use native Go map with hash as key
-	m map[uint64][]mapEntry
+	entries  map[uint64]mapEntry
+	overflow map[uint64][]mapEntry // nil until the first genuine collision
 }
 
 type mapEntry struct {
@@ -286,7 +290,7 @@ type mapEntry struct {
 // NewTupleKeyMap creates a new TupleKeyMap
 func NewTupleKeyMap() *TupleKeyMap {
 	return &TupleKeyMap{
-		m: make(map[uint64][]mapEntry),
+		entries: make(map[uint64]mapEntry),
 	}
 }
 
@@ -295,89 +299,118 @@ func NewTupleKeyMapWithCapacity(expectedSize int) *TupleKeyMap {
 	// Pre-size the map to avoid reallocation
 	// Use expectedSize directly as map capacity
 	return &TupleKeyMap{
-		m: make(map[uint64][]mapEntry, expectedSize),
+		entries: make(map[uint64]mapEntry, expectedSize),
 	}
 }
 
 // Put adds or updates a key-value pair
 func (m *TupleKeyMap) Put(key TupleKey, value interface{}) {
-	entries := m.m[key.hash]
-
-	// Check if key already exists by comparing values
-	for i := range entries {
-		if tupleValuesEqual(entries[i].values, key.values) {
-			entries[i].value = value
+	first, ok := m.entries[key.hash]
+	if !ok {
+		m.entries[key.hash] = mapEntry{values: key.values, value: value}
+		return
+	}
+	if tupleValuesEqual(first.values, key.values) {
+		first.value = value
+		m.entries[key.hash] = first
+		return
+	}
+	over := m.overflow[key.hash]
+	for i := range over {
+		if tupleValuesEqual(over[i].values, key.values) {
+			over[i].value = value
 			return
 		}
 	}
-
-	// Add new entry
-	m.m[key.hash] = append(entries, mapEntry{
-		values: key.values,
-		value:  value,
-	})
+	if m.overflow == nil {
+		m.overflow = make(map[uint64][]mapEntry)
+	}
+	m.overflow[key.hash] = append(over, mapEntry{values: key.values, value: value})
 }
 
 // PutValue adds or replaces a single-value key without constructing a
 // one-element TupleKey values slice on lookup-heavy paths.
 func (m *TupleKeyMap) PutValue(keyValue, value interface{}) {
 	hash := hashValue(keyValue)
-	entries := m.m[hash]
-	for i := range entries {
-		if len(entries[i].values) == 1 && datalog.ValuesEqual(entries[i].values[0], keyValue) {
-			entries[i].value = value
+	first, ok := m.entries[hash]
+	if !ok {
+		m.entries[hash] = mapEntry{values: []interface{}{keyValue}, value: value}
+		return
+	}
+	if len(first.values) == 1 && datalog.ValuesEqual(first.values[0], keyValue) {
+		first.value = value
+		m.entries[hash] = first
+		return
+	}
+	over := m.overflow[hash]
+	for i := range over {
+		if len(over[i].values) == 1 && datalog.ValuesEqual(over[i].values[0], keyValue) {
+			over[i].value = value
 			return
 		}
 	}
-	m.m[hash] = append(entries, mapEntry{
-		values: []interface{}{keyValue},
-		value:  value,
-	})
+	if m.overflow == nil {
+		m.overflow = make(map[uint64][]mapEntry)
+	}
+	m.overflow[hash] = append(over, mapEntry{values: []interface{}{keyValue}, value: value})
 }
 
 // PutIfAbsent inserts key with the given value only if the key is not
 // already present, and reports whether it already existed. It walks the
-// hash bucket exactly once, where a separate Exists+Put pair would walk it
-// twice (running tupleValuesEqual against every entry both times). This is
-// the hot path for join deduplication, where every matched row probes the
-// seen set.
+// hash's entries exactly once, where a separate Exists+Put pair would walk
+// them twice (running tupleValuesEqual against every entry both times).
+// This is the hot path for join deduplication, where every matched row
+// probes the seen set.
 func (m *TupleKeyMap) PutIfAbsent(key TupleKey, value interface{}) (existed bool) {
-	entries := m.m[key.hash]
-	for i := range entries {
-		if tupleValuesEqual(entries[i].values, key.values) {
+	first, ok := m.entries[key.hash]
+	if !ok {
+		m.entries[key.hash] = mapEntry{values: key.values, value: value}
+		return false
+	}
+	if tupleValuesEqual(first.values, key.values) {
+		return true
+	}
+	over := m.overflow[key.hash]
+	for i := range over {
+		if tupleValuesEqual(over[i].values, key.values) {
 			return true
 		}
 	}
-	m.m[key.hash] = append(entries, mapEntry{
-		values: key.values,
-		value:  value,
-	})
+	if m.overflow == nil {
+		m.overflow = make(map[uint64][]mapEntry)
+	}
+	m.overflow[key.hash] = append(over, mapEntry{values: key.values, value: value})
 	return false
 }
 
 // Get retrieves a value by key
 func (m *TupleKeyMap) Get(key TupleKey) (interface{}, bool) {
-	entries, ok := m.m[key.hash]
+	first, ok := m.entries[key.hash]
 	if !ok {
 		return nil, false
 	}
-
-	for _, entry := range entries {
+	if tupleValuesEqual(first.values, key.values) {
+		return first.value, true
+	}
+	for _, entry := range m.overflow[key.hash] {
 		if tupleValuesEqual(entry.values, key.values) {
 			return entry.value, true
 		}
 	}
-
 	return nil, false
 }
 
 // GetValue retrieves a single-value key without allocating a TupleKey.
 func (m *TupleKeyMap) GetValue(keyValue interface{}) (interface{}, bool) {
-	entries, ok := m.m[hashValue(keyValue)]
+	hash := hashValue(keyValue)
+	first, ok := m.entries[hash]
 	if !ok {
 		return nil, false
 	}
-	for _, entry := range entries {
+	if len(first.values) == 1 && datalog.ValuesEqual(first.values[0], keyValue) {
+		return first.value, true
+	}
+	for _, entry := range m.overflow[hash] {
 		if len(entry.values) == 1 && datalog.ValuesEqual(entry.values[0], keyValue) {
 			return entry.value, true
 		}
@@ -387,17 +420,100 @@ func (m *TupleKeyMap) GetValue(keyValue interface{}) (interface{}, bool) {
 
 // Exists checks if a key exists
 func (m *TupleKeyMap) Exists(key TupleKey) bool {
-	entries, ok := m.m[key.hash]
+	first, ok := m.entries[key.hash]
 	if !ok {
 		return false
 	}
-
-	for _, entry := range entries {
+	if tupleValuesEqual(first.values, key.values) {
+		return true
+	}
+	for _, entry := range m.overflow[key.hash] {
 		if tupleValuesEqual(entry.values, key.values) {
 			return true
 		}
 	}
+	return false
+}
 
+// hashTuplePositions mirrors NewTupleKey's hashing exactly without building
+// a key: a single position hashes the bare value; multiple positions
+// FNV-fold the per-value hashes in position order.
+func hashTuplePositions(tuple Tuple, indices []int) uint64 {
+	if len(indices) == 1 {
+		return hashValue(tuple[indices[0]])
+	}
+	const prime = 1099511628211
+	hash := uint64(14695981039346656037)
+	for _, idx := range indices {
+		hash ^= hashValue(tuple[idx])
+		hash *= prime
+	}
+	return hash
+}
+
+// tupleValuesEqualPositions compares a stored key's values against the
+// selected tuple positions without materializing a slice.
+func tupleValuesEqualPositions(stored []interface{}, tuple Tuple, indices []int) bool {
+	if len(stored) != len(indices) {
+		return false
+	}
+	for i, idx := range indices {
+		if !datalog.ValuesEqual(stored[i], tuple[idx]) {
+			return false
+		}
+	}
+	return true
+}
+
+// GetPositions retrieves the value stored under the key formed by the
+// selected tuple positions, without materializing a TupleKey. Probes
+// allocate nothing.
+func (m *TupleKeyMap) GetPositions(tuple Tuple, indices []int) (interface{}, bool) {
+	hash := hashTuplePositions(tuple, indices)
+	first, ok := m.entries[hash]
+	if !ok {
+		return nil, false
+	}
+	if tupleValuesEqualPositions(first.values, tuple, indices) {
+		return first.value, true
+	}
+	for _, entry := range m.overflow[hash] {
+		if tupleValuesEqualPositions(entry.values, tuple, indices) {
+			return entry.value, true
+		}
+	}
+	return nil, false
+}
+
+// PutIfAbsentPositions inserts the key formed by the selected tuple
+// positions only if absent, and reports whether it already existed. The
+// key's owned values slice materializes only on actual insertion, so the
+// already-seen path — the common case in deduplication — allocates nothing.
+func (m *TupleKeyMap) PutIfAbsentPositions(tuple Tuple, indices []int, value interface{}) (existed bool) {
+	hash := hashTuplePositions(tuple, indices)
+	first, ok := m.entries[hash]
+	if ok {
+		if tupleValuesEqualPositions(first.values, tuple, indices) {
+			return true
+		}
+		for _, entry := range m.overflow[hash] {
+			if tupleValuesEqualPositions(entry.values, tuple, indices) {
+				return true
+			}
+		}
+	}
+	values := make([]interface{}, len(indices))
+	for i, idx := range indices {
+		values[i] = tuple[idx]
+	}
+	if !ok {
+		m.entries[hash] = mapEntry{values: values, value: value}
+		return false
+	}
+	if m.overflow == nil {
+		m.overflow = make(map[uint64][]mapEntry)
+	}
+	m.overflow[hash] = append(m.overflow[hash], mapEntry{values: values, value: value})
 	return false
 }
 

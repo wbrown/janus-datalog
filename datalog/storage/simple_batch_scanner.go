@@ -72,7 +72,7 @@ func (s *simpleBatchScanner) Scan() error {
 	}
 
 	// Step 3: Open a single scan for the entire range using key-only scanning
-	rawIter, err := s.matcher.store.ScanKeysOnly(s.index, startKey, endKey)
+	rawIter, err := s.matcher.reader.ScanKeysOnly(s.index, startKey, endKey)
 	if err != nil {
 		return fmt.Errorf("failed to open scan: %w", err)
 	}
@@ -435,7 +435,7 @@ func (s *simpleBatchScanner) matchesPattern(datom *datalog.Datom, bindingTuple e
 	// Check attribute if it's constant in pattern
 	if c, ok := s.pattern.GetA().(query.Constant); ok {
 		if kw, ok := c.Value.(datalog.Keyword); ok {
-			if datom.A.String() != kw.String() {
+			if datom.A != kw {
 				return false
 			}
 		}

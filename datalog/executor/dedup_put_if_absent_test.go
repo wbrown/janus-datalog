@@ -81,7 +81,7 @@ func BenchmarkDedupInsertionPaths(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				source := &sliceIterator{tuples: tuples, pos: -1}
-				iter := NewDedupIterator(source, len(tuples))
+				iter := NewDedupIterator(source, len(tuples), false)
 				count := 0
 				for iter.Next() {
 					count++

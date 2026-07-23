@@ -82,6 +82,10 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	"drainCond":          fieldZeroed,
 	"rollbackMu":         fieldZeroed,
 
+	// builderCache is snapshot-independent (keyed on pattern structure), so
+	// handles share the parent's builder population.
+	"builderCache": fieldInherited,
+
 	// temporalTxID is the handle's defining value: AsOf pins the snapshot,
 	// History pins the zero ElementID sentinel.
 	"temporalTxID": fieldPerHandle,
@@ -147,6 +151,9 @@ func TestTemporalHandleFieldClassification(t *testing.T) {
 		}
 		if handle.replicaID != db.replicaID {
 			t.Errorf("%s: replicaID not inherited", handleName)
+		}
+		if handle.builderCache != db.builderCache {
+			t.Errorf("%s: builderCache not inherited", handleName)
 		}
 		if handle.temporalTxID == nil {
 			t.Errorf("%s: temporalTxID not set — the handle's defining field", handleName)

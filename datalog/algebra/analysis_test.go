@@ -332,6 +332,93 @@ func TestAnalyzeCorrelatedAntiJoinRequirements(t *testing.T) {
 	require.Contains(t, err.Error(), "not a free requirement of the right child")
 }
 
+// TestAnalyzeAntiJoinEnvironmentSuppliedJoinSymbol pins the free-requirement
+// treatment of an anti-join symbol the left child does not produce: the
+// enclosing context supplies it at evaluation, so it propagates as the
+// node's free requirement instead of erroring — the shape a not-join header
+// declaring an :in-bound symbol compiles to when the body pattern provides
+// the symbol (NOTJOIN_HEADER_ENV_BINDING_DERIVATION).
+func TestAnalyzeAntiJoinEnvironmentSuppliedJoinSymbol(t *testing.T) {
+	entity := datalog.NewSymbol("?e")
+	flag := datalog.NewSymbol("?flag")
+	left := algebraTestScan(entity)
+	right := algebraTestScan(entity, flag)
+	anti := &Node{
+		Op:       RuleAntiJoin,
+		Children: []*Node{left, right},
+		Data: &AntiJoin{
+			JoinSymbols:  []query.Symbol{entity, flag},
+			Output:       []query.Symbol{entity},
+			ExplicitJoin: true,
+		},
+	}
+
+	analysis, err := Analyze(anti)
+	require.NoError(t, err)
+	require.Equal(t, []query.Symbol{flag}, analysis[anti].Required,
+		"a join symbol the left child does not produce is the node's free requirement")
+}
+
+// TestAnalyzeAntiJoinEnvironmentSuppliedCorrelationRequirement pins the same
+// treatment for a declared correlation requirement: the body demands the
+// symbol, the left child does not supply it, and the demand propagates —
+// the shape of predicate-only consumption of an :in-bound symbol.
+func TestAnalyzeAntiJoinEnvironmentSuppliedCorrelationRequirement(t *testing.T) {
+	entity := datalog.NewSymbol("?e")
+	value := datalog.NewSymbol("?f")
+	flag := datalog.NewSymbol("?flag")
+	left := algebraTestScan(entity)
+	rightScan := algebraTestScan(entity, value)
+	right := &Node{
+		Op:       RuleSelect,
+		Children: []*Node{rightScan},
+		Data: &Select{
+			Required: []query.Symbol{value, flag},
+			Output:   []query.Symbol{entity, value},
+		},
+	}
+	anti := &Node{
+		Op:       RuleAntiJoin,
+		Children: []*Node{left, right},
+		Data: &AntiJoin{
+			JoinSymbols:  []query.Symbol{entity, flag},
+			Required:     []query.Symbol{flag},
+			Output:       []query.Symbol{entity},
+			ExplicitJoin: true,
+		},
+	}
+
+	analysis, err := Analyze(anti)
+	require.NoError(t, err)
+	require.Equal(t, []query.Symbol{flag}, analysis[anti].Required,
+		"a correlation requirement the left child does not produce is the node's free requirement")
+}
+
+// TestAnalyzeAntiJoinStillRejectsUndemandedJoinSymbol pins the arm that
+// survives the widening: a declared symbol neither produced by the right
+// child nor declared as a correlation requirement means nothing to the
+// anti-join and stays a loud error.
+func TestAnalyzeAntiJoinStillRejectsUndemandedJoinSymbol(t *testing.T) {
+	entity := datalog.NewSymbol("?e")
+	ghost := datalog.NewSymbol("?ghost")
+	left := algebraTestScan(entity)
+	right := algebraTestScan(entity)
+	anti := &Node{
+		Op:       RuleAntiJoin,
+		Children: []*Node{left, right},
+		Data: &AntiJoin{
+			JoinSymbols:  []query.Symbol{entity, ghost},
+			Output:       []query.Symbol{entity},
+			ExplicitJoin: true,
+		},
+	}
+
+	_, err := Analyze(anti)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "?ghost")
+	require.Contains(t, err.Error(), "must be produced by the right child or declared as a correlation requirement")
+}
+
 func TestAnalyzeRejectsAggregateOutputWithWrongGroupPrefix(t *testing.T) {
 	group := datalog.NewSymbol("?group")
 	value := datalog.NewSymbol("?value")
@@ -421,7 +508,7 @@ func TestDefaultPassesPreserveAnalyzedSchemaAndAreIdempotent(t *testing.T) {
 	beforeAnalysis, err := Analyze(root)
 	require.NoError(t, err)
 
-	optimizer := NewOptimizer(DefaultPasses()...)
+	optimizer := NewOptimizer(DefaultPasses(nil)...)
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	require.Equal(t, before, root.String(), "optimization must not mutate the input tree")

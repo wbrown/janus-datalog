@@ -6,6 +6,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -30,11 +31,21 @@ func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executo
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
+	// One read session per query: every storage read — eager during
+	// execution or lazy during result consumption — observes one snapshot.
+	// The session closes when the result is exhausted or closed.
+	planOpts := d.effectivePlannerOptions()
+	matcher, session, err := d.sessionMatcher(planOpts)
+	if err != nil {
+		return nil, err
+	}
+
 	// Build source map — database is always $
-	sources := buildSourceMap(opts.sources, d.Matcher())
+	sources := buildSourceMap(opts.sources, matcher)
 
 	// Validate declared sources exist
 	if err := validateQuerySources(q, sources); err != nil {
+		_ = session.Close()
 		return nil, err
 	}
 
@@ -43,19 +54,36 @@ func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executo
 
 	inputRelations, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
+		_ = session.Close()
 		return nil, err
 	}
 
 	// Execute with the SourceRouter as the PatternMatcher
-	planOpts := d.effectivePlannerOptions()
 	planOpts.Cache = d.planCache
 	exec := executor.NewExecutorWithOptions(router, d, planOpts)
 	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
 	if err != nil {
+		_ = session.Close()
 		return nil, fmt.Errorf("query execution failed: %w", err)
 	}
 
-	return result, nil
+	return newSessionBoundRelation(result, session), nil
+}
+
+// sessionMatcher mints the default-source matcher with a fresh read session
+// attached, so every storage read of one query observes one snapshot. The
+// caller owns the session's lifecycle; on success it is released by the
+// session-bound result, on failure the caller closes it directly.
+func (d *Database) sessionMatcher(opts planner.PlannerOptions) (executor.PatternMatcher, ReadSession, error) {
+	session, err := d.store.NewReadSession()
+	if err != nil {
+		return nil, nil, err
+	}
+	matcher := d.matcherWithExecOptions(opts)
+	// matcherWithExecOptions constructs *BadgerMatcher in both its arms
+	// (fresh, or the AsOf copy for temporal handles).
+	matcher.(*BadgerMatcher).AttachReadSession(session)
+	return matcher, session, nil
 }
 
 // Assert adds datoms in a single transaction.

@@ -1,0 +1,26 @@
+Span-grouped or-fallback branch cache vs baseline
+(commit 5717e99), n=10, Apple M5, same-session back-to-back.
+
+benchstat:
+
+ComplexQueryCheckpoint-10    22.67m ± 3%    21.68m ± 4%   -4.38% (p=0.004 n=10)
+B/op                        43.27Mi ± 0%   40.61Mi ± 0%   -6.16% (p=0.000 n=10)
+allocs/op                    399.1k ± 0%    338.4k ± 0%  -15.21% (p=0.000 n=10)
+
+cachedBranch previously stored one TupleKey ([]interface{} values slice)
+and one []Tuple per distinct key, with each rows slice boxed into the
+map's interface{} value; probes returned the boxed slice. An interim
+variant (conditional copy + *[]Tuple values + positional probes) measured
+only -3.76% allocs: the escaped slice-header allocation washed one-for-one
+with the interface boxing it removed.
+
+The span form eliminates per-key heap objects entirely: rows are collected
+once (exact-sized backing when Size() >= 0, copy gated on RequiresCopy()),
+grouped by key hash into contiguous spans of one shared []Tuple backing via
+counting-sort placement, and indexed by a typed map[uint64]rowSpan. A probe
+hashes the outer tuple's key positions, verifies the key against the span's
+first row, and returns rows[start:end] — zero allocations on hit, miss, and
+collision paths (pinned by AllocsPerRun tests). Distinct keys sharing a
+hash divert that span to per-key row groups; correctness never rests on
+hash uniqueness. Both builders — the branch-result indexer and the fused
+EA-cache lookup arm — share the grouping.
