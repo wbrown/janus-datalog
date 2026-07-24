@@ -87,7 +87,19 @@
       "Bash(/tmp/datalog-cli-test:*)",
       "Bash(shasum datalog/schema/builder.go)",
       "Bash(shasum datalog/storage/matcher.go)",
-      "WebFetch(domain:docs.claude.com)"
+      "WebFetch(domain:docs.claude.com)",
+      "Bash(gopls references *)",
+      "Bash(gopls workspace_symbol *)",
+      "Bash(gopls implementation *)",
+      "Bash(gopls symbols *)",
+      "Bash(gopls definition *)",
+      "Bash(env GOOS=js GOARCH=wasm go vet *)",
+      "Bash(env PATH=__CMDSUB_OUTPUT__/lib/wasm:__TRACKED_VAR__ GOOS=js GOARCH=wasm go test *)",
+      "Bash(GOOS=js GOARCH=wasm go test *)",
+      "Bash(gh run *)",
+      "Bash(GOGC=1 GOOS=js GOARCH=wasm go test *)",
+      "Bash(GODEBUG=clobberfree=1 GOGC=1 GOOS=js GOARCH=wasm go test *)",
+      "Bash(GODEBUG=gccheckmark=1 GOGC=1 GOOS=js GOARCH=wasm go test *)"
     ],
     "deny": [],
     "additionalDirectories": [
@@ -99,28 +111,73 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/validate-bash.sh" },
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-pretooluse.sh" },
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/review-commit.sh", "timeout": 120 }
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/validate-bash.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-pretooluse.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/review-commit.sh",
+            "timeout": 120
+          }
         ]
       },
       {
         "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-pretooluse.sh" },
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/review-edit.sh", "timeout": 30 },
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/review-reasoning.sh", "timeout": 300 }
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-pretooluse.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/review-edit.sh",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/review-reasoning.sh",
+            "timeout": 300
+          }
         ]
       }
     ],
     "PostToolBatch": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-reset.sh" } ] }
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-reset.sh"
+          }
+        ]
+      }
     ],
     "UserPromptSubmit": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-reset.sh" } ] }
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-reset.sh"
+          }
+        ]
+      }
     ],
     "Stop": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-reset.sh" } ] }
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-reset.sh"
+          }
+        ]
+      }
     ]
   }
 }
