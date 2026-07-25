@@ -64,7 +64,7 @@ func TestMatcherTupleCopyBug(t *testing.T) {
 			opts := executor.ExecutorOptions{
 				EnableTrueStreaming: true,
 			}
-			matcher := NewBadgerMatcherWithOptions(db.store, opts)
+			matcher := NewPatternMatcherWithOptions(db.store, opts)
 			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
 			result, err := exec.Execute(q)

@@ -67,7 +67,7 @@ func TestMultiPositionDebug(t *testing.T) {
 
 	// Now call Match
 	t.Logf("Calling Match...")
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	if err != nil {
 		t.Fatalf("Match error: %v", err)

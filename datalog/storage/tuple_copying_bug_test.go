@@ -60,7 +60,7 @@ func TestMatcherRelationsTupleCopyingBug(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
 			result, err := exec.Execute(q)

@@ -12,7 +12,7 @@ import (
 // simpleBatchScanner implements a simpler approach to batch scanning
 // Instead of complex range grouping, it does a single scan and filters in memory
 type simpleBatchScanner struct {
-	matcher     *BadgerMatcher
+	matcher     *PatternMatcher
 	pattern     *query.DataPattern
 	bindingRel  executor.Relation
 	position    int // Which position has bindings (0=E, 1=A, 2=V, 3=T)
@@ -32,7 +32,7 @@ type simpleBatchScanner struct {
 
 // newSimpleBatchScanner creates a new simple batch scanner
 func newSimpleBatchScanner(
-	matcher *BadgerMatcher,
+	matcher *PatternMatcher,
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	position int,

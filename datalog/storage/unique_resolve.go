@@ -52,7 +52,7 @@ func newUniqueWalkState() *uniqueWalkState {
 // against other entities via AVET. The as-of / history-mode filtering
 // is applied at the caller's iteration level (not here), because the
 // streaming path already filters at its source.
-func (m *BadgerMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Datom, eBytes Entity, aBytes Attribute) (walkEntryDecision, error) {
+func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Datom, eBytes Entity, aBytes Attribute) (walkEntryDecision, error) {
 	vKey := string(encodeValueForSearch(datom.V, m.encoder))
 
 	if datom.Op == datalog.OpCRDTRemove {
@@ -94,7 +94,7 @@ func (m *BadgerMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Da
 // Honors the matcher's temporal mode: entries with Tx > m.txID in as-of
 // mode are skipped. The supersession check against other entities is
 // likewise restricted via m.shouldFilterTx in resolveMaxOtherTxForValue.
-func (m *BadgerMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (any, datalog.ElementID, bool, error) {
+func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (any, datalog.ElementID, bool, error) {
 	start, end := m.encoder.EncodePrefixRange(EATV, eBytes[:], aBytes[:])
 	iter, err := m.reader.ScanKeysOnly(EATV, start, end)
 	if err != nil {
@@ -133,7 +133,7 @@ func (m *BadgerMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (
 //
 // Honors the matcher's temporal mode — entries with Tx > m.txID in as-of
 // mode are excluded.
-func (m *BadgerMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exceptE Entity) (datalog.ElementID, error) {
+func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exceptE Entity) (datalog.ElementID, error) {
 	vBytes := encodeValueForSearch(v, m.encoder)
 	start, end := m.encoder.EncodePrefixRange(AVET, aBytes[:], vBytes)
 	iter, err := m.reader.ScanKeysOnly(AVET, start, end)
@@ -199,7 +199,7 @@ func (m *BadgerMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, excep
 // The walk-based rule gives V-view and entity-view the same underlying
 // semantics, guaranteeing that "E emits v" via the entity walk and
 // "V is owned by E" via resolveAVLWW always agree.
-func (m *BadgerMatcher) resolveAVLWW(a Attribute, vBytes []byte, v any) (datalog.Identity, datalog.ElementID, error) {
+func (m *PatternMatcher) resolveAVLWW(a Attribute, vBytes []byte, v any) (datalog.Identity, datalog.ElementID, error) {
 	// Step 1: find the max-Tx entry for (a, v) across all entities.
 	start, end := m.encoder.EncodePrefixRange(AVET, a[:], vBytes)
 	iter, err := m.reader.ScanKeysOnly(AVET, start, end)

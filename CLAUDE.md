@@ -316,7 +316,7 @@ This separation ensures the query engine remains simple and focused on logic, wh
 The storage layer connects the query engine to BadgerDB:
 - **Database API**: High-level interface for creating transactions and querying
 - **Transaction API**: Write datoms with automatic indexing across all 8 indices
-- **BadgerMatcher**: Implements PatternMatcher interface for the executor
+- **storage.PatternMatcher**: Implements the `executor.PatternMatcher` interface for the executor
   - Chooses optimal index based on bound values in patterns
   - Converts between user types (Identity, Keyword) and storage types ([20]byte for E/Tx, [32]byte for A)
   - Builds binary index prefixes with the same encoding used for writes
@@ -398,7 +398,7 @@ The storage layer connects the query engine to BadgerDB:
 7. **Expression clauses** - Arithmetic (`+`, `-`, `*`, `/`), string operations (`str`), ground values, identity binding
 8. **Variadic comparators** - Clojure-style chained comparisons (e.g., `[(< 0 ?x 100)]`)
 9. **Query executor** - Full pattern matching and query execution with joins
-10. **Storage integration** - Database and Transaction API, BadgerMatcher for pattern matching
+10. **Storage integration** - Database and Transaction API, `storage.PatternMatcher` for pattern matching
 11. **Value encoding** - Proper serialization for all value types including entity references
 12. **Aggregation functions** - `sum`, `count`, `avg`, `min`, `max` with grouping support (with proper time.Time support)
 13. **Temporal queries** - ElementID-based AsOf/History queries for time-travel
@@ -626,7 +626,7 @@ d, _ := db.Open("path/to/db", db.WithAnnotationHandler(handler))
 // All queries through d.Query() will emit annotation events
 
 // Internal equivalent (for advanced usage):
-// baseMatcher := storage.NewBadgerMatcher(database.Store())
+// baseMatcher := storage.NewPatternMatcher(database.Store())
 // matcher := executor.WrapMatcher(baseMatcher, handler)
 // exec := executor.NewExecutor(matcher, database)
 ```

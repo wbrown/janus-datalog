@@ -370,7 +370,7 @@ func TestAfterRefHeuristicBug_FullDBRoundTrip(t *testing.T) {
 	}
 
 	// Read back using LookupAttribute (same path as PullInto)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	fieldLosses := 0

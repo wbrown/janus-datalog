@@ -39,7 +39,7 @@ func TestMergeJoinMixedEntityBindingsMatchOnlyIdentities(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	strategy := MergeJoin
 	matcher.ForceJoinStrategy(&strategy)
 	defer matcher.ForceJoinStrategy(nil)
@@ -100,7 +100,7 @@ func TestChooseJoinStrategySelectsMergeJoinOnlyForEntityPosition(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{

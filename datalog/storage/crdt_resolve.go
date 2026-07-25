@@ -19,7 +19,7 @@ import (
 // Returns (nil, zero ElementID) if no datoms provided. Returns
 // (nil, maxID) if the highest-Tx datom is a Remove — the attribute
 // has been tombstoned and does not currently exist. Mirrors the check
-// in BadgerMatcher.ResolveLWW (cache_resolver.go). Callers use maxID
+// in PatternMatcher.ResolveLWW (cache_resolver.go). Callers use maxID
 // for cache freshness tracking regardless of whether V is nil.
 func ResolveLWWFromDatoms(datoms []datalog.Datom) (any, datalog.ElementID) {
 	if len(datoms) == 0 {

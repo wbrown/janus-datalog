@@ -21,7 +21,7 @@ import (
 // from the store means the store is broken, and callers fail the query —
 // prefetch being an optimization does not make store failures ignorable.
 // Groups cached before the failure hold valid data.
-func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) error {
+func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 	if m.cache == nil || len(entities) == 0 || m.isHistoryMode() {
 		return nil
 	}

@@ -138,7 +138,7 @@ func TestImport_LZJLiteral(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query the imported value
-	matcher := NewBadgerMatcher(db2.Store())
+	matcher := NewPatternMatcher(db2.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -189,7 +189,7 @@ func TestImport_MixedFile(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify all values
-	matcher := NewBadgerMatcher(db2.Store())
+	matcher := NewPatternMatcher(db2.Store())
 	for _, tc := range []struct {
 		attr     string
 		expected interface{}
@@ -291,7 +291,7 @@ func TestImport_AVET_AfterImport(t *testing.T) {
 	require.NoError(t, err)
 
 	// AVET lookup: search by value
-	matcher := NewBadgerMatcher(db2.Store())
+	matcher := NewPatternMatcher(db2.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -351,7 +351,7 @@ func TestImport_Tier3_InlineExport(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read back
-	matcher := NewBadgerMatcher(db2.Store())
+	matcher := NewPatternMatcher(db2.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -407,7 +407,7 @@ func TestImport_ValueEquality_AcrossBoundary(t *testing.T) {
 
 	// Read from both
 	readValue := func(db *Database) string {
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
 				query.Constant{Value: entity},

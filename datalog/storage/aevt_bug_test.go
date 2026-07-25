@@ -94,7 +94,7 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 			ctx := executor.NewContext(handler)
 
 			// Create matcher with annotations using decorator pattern
-			baseMatcher := NewBadgerMatcher(db.Store())
+			baseMatcher := NewPatternMatcher(db.Store())
 			matcher := executor.WrapMatcher(baseMatcher, handler).(executor.PatternMatcher)
 
 			// Bind 3 entities as a RelationInput (this is what triggers the bug)
@@ -184,7 +184,7 @@ func TestEATVPrefixRangeDebug(t *testing.T) {
 	}
 
 	// Get the matcher and inspect prefix range for AEVT
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	// Call chooseIndex with both E and A bound (the bug scenario)
 	index, start, end := matcher.chooseIndex(entityID, attrKw, nil, nil)

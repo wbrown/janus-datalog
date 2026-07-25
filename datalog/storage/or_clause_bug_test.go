@@ -121,7 +121,7 @@ func TestOrClauseBugTraced(t *testing.T) {
 			}
 
 			// Create executor with tracing - use same options as the mode's database
-			baseMatcher := NewBadgerMatcher(db.Store())
+			baseMatcher := NewPatternMatcher(db.Store())
 			wrappedMatcher := executor.WrapMatcher(baseMatcher, handler)
 			opts := mode.plannerOptions()
 			exec := executor.NewExecutorWithOptions(wrappedMatcher, db, opts)

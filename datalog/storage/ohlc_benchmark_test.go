@@ -104,7 +104,7 @@ func BenchmarkOHLCQuery(b *testing.B) {
 
 	// Benchmark without predicate pushdown
 	b.Run("WithoutPushdown", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 		b.ResetTimer()
@@ -123,7 +123,7 @@ func BenchmarkOHLCQuery(b *testing.B) {
 
 	// Benchmark with predicate pushdown
 	b.Run("WithPushdown", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 		b.ResetTimer()
@@ -249,7 +249,7 @@ func BenchmarkOHLCQueryLargeDataset(b *testing.B) {
 	}
 
 	b.Run("WithoutPushdown", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 		b.ResetTimer()
@@ -267,7 +267,7 @@ func BenchmarkOHLCQueryLargeDataset(b *testing.B) {
 	})
 
 	b.Run("WithPushdown", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 		b.ResetTimer()

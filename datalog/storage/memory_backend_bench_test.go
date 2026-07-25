@@ -158,7 +158,7 @@ func BenchmarkMemoryStorageHashJoinCompiledMatching(b *testing.B) {
 		query.Variable{Name: groupSymbol},
 	}}
 	resultSymbols := []query.Symbol{entitySymbol, groupSymbol}
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	b.ReportAllocs()
 	b.ResetTimer()

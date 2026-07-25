@@ -45,7 +45,7 @@ func TestMatcherCacheCardinalityOne(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use matcher with cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	// Verify cache returns correct LWW value
@@ -85,7 +85,7 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use matcher with cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	// Verify cache returns correct set
@@ -128,7 +128,7 @@ func TestMatcherCacheCardinalityVector(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use matcher with cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	// Verify cache returns correct vector
@@ -163,7 +163,7 @@ func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get value via cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	eBytes := Entity(e.Hash())
 	var aBytes Attribute
@@ -206,7 +206,7 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify initial value via cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	eBytes := Entity(e.Hash())
 	var aBytes Attribute
@@ -244,7 +244,7 @@ func TestMatcherCacheWithSchemalessAttribute(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use matcher without schema
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	eBytes := Entity(e.Hash())
 	var aBytes Attribute
@@ -290,7 +290,7 @@ func TestMatcherCacheLWWResolution(t *testing.T) {
 	require.NoError(t, err)
 
 	// Cache should resolve to "Third" (highest ElementID)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	eBytes := Entity(e.Hash())
 	var aBytes Attribute
@@ -337,7 +337,7 @@ func TestMatcherCacheAddWinsResolution(t *testing.T) {
 	require.NoError(t, err)
 
 	// Cache should resolve to "warrior" being in set (add-wins with latest add)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	eBytes := Entity(e.Hash())
 	var aBytes Attribute
@@ -380,7 +380,7 @@ func BenchmarkCachePathTupleBuilding(b *testing.B) {
 	}
 
 	// Warm cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	matcher.SetCache(db.Cache())
 
@@ -416,7 +416,7 @@ func BenchmarkCacheResolutionOverhead(b *testing.B) {
 	tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
 	tx.Commit()
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	eBytes := Entity(e.Hash())
@@ -500,7 +500,7 @@ func BenchmarkCachePathWithBindings(b *testing.B) {
 	})
 
 	// Direct matcher.Match call to isolate the cache path more precisely
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	matcher.SetCache(db.Cache())
 

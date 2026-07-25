@@ -8,7 +8,7 @@ import (
 
 // reusingIterator implements iterator reuse optimization
 type reusingIterator struct {
-	matcher     *BadgerMatcher
+	matcher     *PatternMatcher
 	pattern     *query.DataPattern
 	bindingRel  executor.Relation
 	tuples      []executor.Tuple

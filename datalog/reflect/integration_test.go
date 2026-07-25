@@ -918,7 +918,7 @@ func TestLookupAttributeWithStructAPI(t *testing.T) {
 			t.Logf("Created entity with ID: %s", id.L85())
 
 			// Test LookupAttribute
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 
 			// Lookup name
 			nameAttr := datalog.NewKeyword(":person/name")
@@ -1625,14 +1625,14 @@ func TestCRDTTombstoneReAdd(t *testing.T) {
 			t.Logf("Step 3 - After re-add via SaveStruct: %v", loaded.Tags)
 
 			// Diagnose: show what LookupAllAttributes returns with and without cache
-			matcherNoCache := storage.NewBadgerMatcher(db.Store())
+			matcherNoCache := storage.NewPatternMatcher(db.Store())
 			uncachedVals, err := matcherNoCache.LookupAllAttributes(aliceID, datalog.NewKeyword(":person-with-tags/tags"))
 			if err != nil {
 				t.Fatalf("LookupAllAttributes (no cache): %v", err)
 			}
 			t.Logf("DIAGNOSTIC: LookupAllAttributes WITHOUT cache: %v (%d values)", uncachedVals, len(uncachedVals))
 
-			matcherWithCache := db.Matcher().(*storage.BadgerMatcher)
+			matcherWithCache := db.Matcher().(*storage.PatternMatcher)
 			cachedVals, err := matcherWithCache.LookupAllAttributes(aliceID, datalog.NewKeyword(":person-with-tags/tags"))
 			if err != nil {
 				t.Fatalf("LookupAllAttributes (with cache): %v", err)

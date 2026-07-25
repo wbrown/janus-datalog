@@ -123,7 +123,7 @@ func TestResolveMaxOtherTxForValueSurfacesScanErrors(t *testing.T) {
 	injected := fmt.Errorf("simulated AVET scan failure")
 	for name, iter := range scanFailureShapes(injected) {
 		t.Run(name, func(t *testing.T) {
-			matcher := NewBadgerMatcher(&indexScanOverrideStore{
+			matcher := NewPatternMatcher(&indexScanOverrideStore{
 				Store: store,
 				index: AVET,
 				iter:  iter,
@@ -151,7 +151,7 @@ func TestResolveAVLWWSurfacesScanErrors(t *testing.T) {
 	injected := fmt.Errorf("simulated AVET scan failure")
 	for name, iter := range scanFailureShapes(injected) {
 		t.Run(name, func(t *testing.T) {
-			matcher := NewBadgerMatcher(&indexScanOverrideStore{
+			matcher := NewPatternMatcher(&indexScanOverrideStore{
 				Store: store,
 				index: AVET,
 				iter:  iter,
@@ -181,7 +181,7 @@ func TestPrefetchEntitiesSurfacesScanErrors(t *testing.T) {
 	injected := fmt.Errorf("simulated EATV scan failure")
 	for name, iter := range scanFailureShapes(injected) {
 		t.Run(name, func(t *testing.T) {
-			matcher := NewBadgerMatcher(&indexScanOverrideStore{
+			matcher := NewPatternMatcher(&indexScanOverrideStore{
 				Store: store,
 				index: EATV,
 				iter:  iter,
@@ -208,7 +208,7 @@ func TestValidateCandidateSurfacesScanErrors(t *testing.T) {
 	injected := fmt.Errorf("simulated EATV scan failure")
 	for name, iter := range scanFailureShapes(injected) {
 		t.Run(name, func(t *testing.T) {
-			matcher := NewBadgerMatcher(&indexScanOverrideStore{
+			matcher := NewPatternMatcher(&indexScanOverrideStore{
 				Store: store,
 				index: EATV,
 				iter:  iter,

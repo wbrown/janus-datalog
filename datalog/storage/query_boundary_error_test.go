@@ -263,7 +263,7 @@ func TestIndexNestedLoop_SurfacesBlobDecodeError(t *testing.T) {
 	require.NoError(t, err)
 	pattern := q.Where[0].(*query.DataPattern)
 
-	matcher := NewBadgerMatcherWithOptions(db.store, executor.ExecutorOptions{IndexNestedLoopThreshold: 999999})
+	matcher := NewPatternMatcherWithOptions(db.store, executor.ExecutorOptions{IndexNestedLoopThreshold: 999999})
 	bindingRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, []executor.Tuple{{e}})
 
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})

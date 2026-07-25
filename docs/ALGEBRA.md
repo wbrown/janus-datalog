@@ -910,7 +910,7 @@ cache is warm.
 **What needs to exist**:
 1. `Cache.PrefetchEntities(entities []Entity, resolver CacheResolver)` —
    batch load all (E, A) pairs for a set of entities
-2. `BadgerMatcher.PrefetchEntities(entities []datalog.Identity)` — sorts
+2. `PatternMatcher.PrefetchEntities(entities []datalog.Identity)` — sorts
    by key order, scans EATV, resolves CRDT, populates cache
 3. Integration in executor or or-join to trigger prefetch at the right time
 

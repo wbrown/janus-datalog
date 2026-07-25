@@ -116,7 +116,7 @@ func TestVectorAVETLookup(t *testing.T) {
 	t.Logf("Found entities with stealth: %v (expected: [alice bob])", foundEntities)
 
 	// Cross-check: verify the data IS there via LookupAttribute
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	aliceSkills, found := requireAttributeLookup(t, matcher, alice, skills)
@@ -224,7 +224,7 @@ func TestVectorAVETAfterTombstone(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify via LookupAttribute that stealth is gone
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	result, found := requireAttributeLookup(t, matcher, alice, skills)

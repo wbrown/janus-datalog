@@ -209,7 +209,7 @@ func BenchmarkHashJoinScanRangeComparison(b *testing.B) {
 	}
 
 	b.Run("HashJoinScan_Current", func(b *testing.B) {
-		matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
+		matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{
 			IndexNestedLoopThreshold: 0, // Force HashJoinScan
 		})
 		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
@@ -227,7 +227,7 @@ func BenchmarkHashJoinScanRangeComparison(b *testing.B) {
 	})
 
 	b.Run("IndexNestedLoop_Baseline", func(b *testing.B) {
-		matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
+		matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{
 			IndexNestedLoopThreshold: 999999, // Force IndexNestedLoop
 		})
 		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})

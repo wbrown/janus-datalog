@@ -14,7 +14,7 @@ import (
 
 func vBoundMatchCountWithAnnotations(t *testing.T, db *Database, a datalog.Keyword, v interface{}) int {
 	t.Helper()
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 
 	matcher.SetHandler(func(event annotations.Event) {
@@ -141,7 +141,7 @@ func TestDiag_VBound_VIsIrrelevant(t *testing.T) {
 
 	// Also dump a raw EATV scan for this (E, A) to see what's in storage
 	t.Log("--- Raw EATV scan for (alice, :person/name) ---")
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 	sd := ToStorageDatom(datalog.Datom{E: e, A: a})
 	encoder := db.Store().Encoder()

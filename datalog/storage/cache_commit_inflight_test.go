@@ -52,7 +52,7 @@ func resolveOne(db *Database, e datalog.Identity, a datalog.Keyword) any {
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
 	key := CacheKey{E: Entity(e.Hash()), A: aBytes}
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(db.schema)
 	entry := db.cache.GetOrResolve(key, matcher, nil)
 	if entry == nil {

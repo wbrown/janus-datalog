@@ -124,7 +124,7 @@ func TestMatchWithoutIteratorReuse_SurfacesDeferredBindingError(t *testing.T) {
 	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), ReplicaID: 1})
 	require.NoError(t, err)
 	defer db.Close()
-	m := db.Matcher().(*BadgerMatcher)
+	m := db.Matcher().(*PatternMatcher)
 
 	sentinel := errors.New("deferred binding-relation scan failure")
 	eSym := datalog.NewSymbol("?e")

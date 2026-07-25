@@ -41,7 +41,7 @@ func TestBatchIteratorSimple(t *testing.T) {
 		},
 	}
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 
 	// First, get all entities directly
 	direct, _ := matcher.Match(query.PatternQuery(pattern), nil)

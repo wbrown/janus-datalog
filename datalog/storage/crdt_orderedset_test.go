@@ -41,7 +41,7 @@ func TestOrderedSet_UniqueElementsEnforcement(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify only unique values stored
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	result, found := requireAttributeLookup(t, matcher, alice, prefs)
@@ -91,7 +91,7 @@ func TestOrderedSet_UniqueAcrossTransactions(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	result, found := requireAttributeLookup(t, matcher, alice, prefs)
@@ -138,7 +138,7 @@ func TestOrderedSet_SetReplacement(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	result, found := requireAttributeLookup(t, matcher, alice, prefs)
@@ -233,7 +233,7 @@ func TestOrderedSet_RefType(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	result, found := requireAttributeLookup(t, matcher, alice, follows)
@@ -275,7 +275,7 @@ func TestOrderedSet_VsRegularVector(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	// OrderedSet should have 3 unique values

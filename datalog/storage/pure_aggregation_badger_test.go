@@ -68,7 +68,7 @@ func testPureAggregationWithBadgerDB(t *testing.T, db *Database, mode optimizerM
 		EnableStreamingJoins:       false,
 		EnableStreamingAggregation: true,
 	}
-	matcher := NewBadgerMatcherWithOptions(db.Store(), execOpts)
+	matcher := NewPatternMatcherWithOptions(db.Store(), execOpts)
 	opts := planner.PlannerOptions{
 		EnableAlgebraOptimizer:     mode.algebra,
 		EnableTrueStreaming:        execOpts.EnableTrueStreaming,

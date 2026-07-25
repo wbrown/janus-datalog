@@ -47,7 +47,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 	opts := executor.ExecutorOptions{
 		IndexNestedLoopThreshold: 999999,
 	}
-	testMatcher := NewBadgerMatcherWithOptions(db.store, opts)
+	testMatcher := NewPatternMatcherWithOptions(db.store, opts)
 	testPattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -130,7 +130,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 	t.Run("WithoutIteratorReuse", func(t *testing.T) {
 		// Create a matcher that tracks statistics
 		matcher := &instrumentedMatcher{
-			BadgerMatcher: NewBadgerMatcherWithOptions(db.store, opts),
+			PatternMatcher: NewPatternMatcherWithOptions(db.store, opts),
 			stats:         &matchStats{},
 		}
 
@@ -210,7 +210,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 		// - Iterator reuse only works with primary sort keys
 
 		matcher := &instrumentedMatcher{
-			BadgerMatcher: NewBadgerMatcherWithOptions(db.store, opts),
+			PatternMatcher: NewPatternMatcherWithOptions(db.store, opts),
 			stats:         &matchStats{},
 			forceReuse:    true, // Force iterator reuse for testing
 		}
@@ -280,7 +280,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
-		regularMatcher := NewBadgerMatcherWithOptions(db.store, opts)
+		regularMatcher := NewPatternMatcherWithOptions(db.store, opts)
 		anyResult, err := regularMatcher.Match(query.PatternQuery(anyPattern), nil)
 		if err != nil {
 			t.Fatalf("Any pattern failed: %v", err)
@@ -347,7 +347,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 		t.Logf("Regular matcher with binding found %d bars for AAPL", testCount)
 
 		matcher := &instrumentedMatcher{
-			BadgerMatcher: NewBadgerMatcherWithOptions(db.store, opts),
+			PatternMatcher: NewPatternMatcherWithOptions(db.store, opts),
 			stats:         &matchStats{},
 		}
 
@@ -404,7 +404,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 
 // instrumentedMatcher wraps BadgerMatcher to collect statistics
 type instrumentedMatcher struct {
-	*BadgerMatcher
+	*PatternMatcher
 	stats      *matchStats
 	forceReuse bool
 }
@@ -448,7 +448,7 @@ func (m *instrumentedMatcher) Match(q *query.Query, bindings executor.Relations)
 	}
 
 	// Call the real matcher
-	result, err := m.BadgerMatcher.Match(q, bindings)
+	result, err := m.PatternMatcher.Match(q, bindings)
 	if err != nil {
 		return nil, err
 	}

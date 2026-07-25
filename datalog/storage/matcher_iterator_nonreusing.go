@@ -8,7 +8,7 @@ import (
 
 // nonReusingIterator opens a new scan for each binding tuple
 type nonReusingIterator struct {
-	matcher       *BadgerMatcher
+	matcher       *PatternMatcher
 	pattern       *query.DataPattern
 	bindingRel    executor.Relation
 	bindingTuples []executor.Tuple

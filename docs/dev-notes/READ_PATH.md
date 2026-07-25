@@ -81,7 +81,7 @@
 
        Query Path (matcher_relations.go lines 44-200):
 
-       func (m *BadgerMatcher) Match(pattern *query.DataPattern, bindings executor.Relations) (executor.Relation, error) {
+       func (m *PatternMatcher) Match(pattern *query.DataPattern, bindings executor.Relations) (executor.Relation, error) {
            // Extract values from pattern
            e := m.extractValue(pattern.GetE())  // Gets bound entity from input via bindings
            a := m.extractValue(pattern.GetA())  // Constant attribute
@@ -281,7 +281,7 @@
          - If maxVersions > entry.version, entry is stale → rebuild from storage
          - Storage scan will see committed datoms
        3. No Persisted State Across Queries:
-         - Each query gets fresh BadgerMatcher from Database.Matcher() (lines 368-393)
+         - Each query gets fresh PatternMatcher from Database.Matcher() (lines 368-393)
          - OR: If same matcher instance, its txID=0 means "see latest" (lines 247, 809)
          - Matcher holds NO mutable state (only read configs: schema, cache, txID)
        4. Cache State:
@@ -308,11 +308,11 @@
        - matcher.txID: Immutable per matcher instance
 
        ---
-       7. BADGERMATCHER STATE AND PERSISTENCE
+       7. PATTERNMATCHER STATE AND PERSISTENCE
 
-       BadgerMatcher Structure (matcher.go lines 16-27):
+       PatternMatcher Structure (matcher.go lines 16-27):
 
-       type BadgerMatcher struct {
+       type PatternMatcher struct {
            store             *BadgerStore    // Shared with database (same instance)
            txID              uint64          // 0 = latest, or specific transaction
            timeRanges        []executor.TimeRange
@@ -327,7 +327,7 @@
        Creation (database.go lines 368-393):
 
        func (d *Database) Matcher() executor.PatternMatcher {
-           matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
+           matcher := NewPatternMatcherWithOptions(d.store, execOpts)
            // Set schema for CRDT cardinality-aware resolution
            if d.schema != nil {
                matcher.SetSchema(d.schema)  // Reference, not copy
@@ -340,7 +340,7 @@
        }
 
        Key Point:
-       - Fresh BadgerMatcher created per query
+       - Fresh PatternMatcher created per query
        - OR: Same matcher instance across queries (both OK - stateless reads)
        - store reference is shared (same database)
        - schema and cache are references to database state

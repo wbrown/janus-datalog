@@ -48,7 +48,7 @@ func TestProductionQueryPattern(t *testing.T) {
 		// Pattern: [?bar :price/minute-of-day 570] to find 9:30 AM bars
 		// This identifies which days have data
 
-		matcher := NewBadgerMatcher(store)
+		matcher := NewPatternMatcher(store)
 
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
@@ -90,7 +90,7 @@ func TestProductionQueryPattern(t *testing.T) {
 		// Pattern: [?b :price/symbol ?s] with ?s bound to CRWV
 		// Then filter by date in memory
 
-		matcher := NewBadgerMatcher(store)
+		matcher := NewPatternMatcher(store)
 
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
@@ -145,7 +145,7 @@ func TestProductionQueryPattern(t *testing.T) {
 		totalTime := time.Duration(0)
 
 		for day := 0; day < numDays; day++ {
-			matcher := NewBadgerMatcher(store)
+			matcher := NewPatternMatcher(store)
 
 			pattern := &query.DataPattern{
 				Elements: []query.PatternElement{
@@ -365,7 +365,7 @@ func TestPlannerPredicatePushdownIntegration(t *testing.T) {
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
 				// Create executor with default options
-				matcher := NewBadgerMatcher(db.store)
+				matcher := NewPatternMatcher(db.store)
 				exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
 					EnableAlgebraOptimizer: mode.algebra,
 				})
@@ -399,7 +399,7 @@ func TestPlannerPredicatePushdownIntegration(t *testing.T) {
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
 				// Create executor with predicate pushdown enabled (default)
-				matcher := NewBadgerMatcher(db.store)
+				matcher := NewPatternMatcher(db.store)
 				popts := mode.plannerOptions()
 				exec := executor.NewExecutorWithOptions(matcher, db, popts) // Has pushdown enabled by default
 

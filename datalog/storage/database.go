@@ -294,7 +294,7 @@ func (d *Database) Cache() *Cache {
 // This is O(n) where n = total datoms for the specified attributes.
 // Call during application startup, not on the hot path.
 func (d *Database) WarmCache(attributes []datalog.Keyword) error {
-	matcher := NewBadgerMatcher(d.store)
+	matcher := NewPatternMatcher(d.store)
 	matcher.SetSchema(d.schema)
 
 	for _, attr := range attributes {
@@ -363,7 +363,7 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	matcher := NewBadgerMatcher(d.store)
+	matcher := NewPatternMatcher(d.store)
 	matcher.SetSchema(d.schema)
 
 	// Cache is an optimization, not a correctness requirement: when DisableCache
@@ -403,7 +403,7 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	matcher := NewBadgerMatcher(d.store)
+	matcher := NewPatternMatcher(d.store)
 	matcher.SetSchema(d.schema)
 
 	// Cache is an optimization, not a correctness requirement: when DisableCache
@@ -639,7 +639,7 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 // database-level state: schema, cache, annotation handler, temporal mode.
 // Matcher() funnels through here with the database's effective options.
 func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.PatternMatcher {
-	matcher := NewBadgerMatcherWithOptions(d.store, executor.ExecutorOptionsFromPlanner(opts))
+	matcher := NewPatternMatcherWithOptions(d.store, executor.ExecutorOptionsFromPlanner(opts))
 	matcher.builderCache = d.builderCache
 	matcher.SetHandler(d.annotationHandler)
 	if d.schema != nil {
@@ -1869,7 +1869,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		}
 
 		// Get current set membership from committed state
-		matcher := NewBadgerMatcher(t.db.store)
+		matcher := NewPatternMatcher(t.db.store)
 		eBytes := e.Hash()
 		var aBytes [32]byte
 		copy(aBytes[:], a.String())
@@ -1988,7 +1988,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		copy(aBytes[:], a.String())
 		key := CacheKey{E: Entity(eBytes), A: aBytes}
 
-		matcher := NewBadgerMatcher(t.db.store)
+		matcher := NewPatternMatcher(t.db.store)
 		matcher.SetSchema(t.db.schema)
 
 		var entry *CacheEntry
@@ -2085,7 +2085,7 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 	copy(aBytes[:], a.String())
 	cacheKey := CacheKey{E: Entity(eBytes), A: aBytes}
 
-	matcher := NewBadgerMatcher(t.db.store)
+	matcher := NewPatternMatcher(t.db.store)
 	matcher.SetSchema(t.db.schema)
 
 	var entry *CacheEntry
@@ -2191,7 +2191,7 @@ func (t *Transaction) AddMap(attrs map[string]interface{}) (datalog.Identity, er
 //	person.Name = "Alice Smith"
 //	id, err = tx.SaveStruct(&person)  // Updates name, age unchanged
 func (t *Transaction) SaveStruct(v interface{}) (datalog.Identity, error) {
-	matcher := t.db.Matcher().(*BadgerMatcher)
+	matcher := t.db.Matcher().(*PatternMatcher)
 	return dlreflect.SaveStruct(t, matcher, v, t.db.Schema())
 }
 
@@ -2660,7 +2660,7 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 		return nil, fmt.Errorf("LookupByUnique: attribute %s is not unique", attr.String())
 	}
 
-	matcher, ok := d.Matcher().(*BadgerMatcher)
+	matcher, ok := d.Matcher().(*PatternMatcher)
 	if !ok {
 		return nil, fmt.Errorf("LookupByUnique: unsupported matcher type %T", d.Matcher())
 	}
@@ -2738,7 +2738,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		return make(map[datalog.Keyword]interface{}), nil
 	}
 
-	matcher := d.Matcher().(*BadgerMatcher)
+	matcher := d.Matcher().(*PatternMatcher)
 	result := make(map[datalog.Keyword]interface{})
 
 	// getValueType returns the schema value type for a keyword
@@ -2832,7 +2832,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 // RGA for vector) go through LookupAttribute's direct index scans;
 // history-mode reads fall through to Match for raw datoms. Returns nil if
 // the entity has no current value for the attribute.
-func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr datalog.Keyword, matcher *BadgerMatcher, card schema.Cardinality, valueType schema.ValueType) (interface{}, error) {
+func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr datalog.Keyword, matcher *PatternMatcher, card schema.Cardinality, valueType schema.ValueType) (interface{}, error) {
 	// LookupAttribute applies the same CRDT resolution a matched pattern
 	// would, without the relational Match machinery (pattern construction,
 	// streaming relation, tuple builders). History mode falls through to
@@ -2978,7 +2978,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 		}
 	}
 
-	matcher := d.Matcher().(*BadgerMatcher)
+	matcher := d.Matcher().(*PatternMatcher)
 
 	// History mode: the entity walk below applies CRDT resolution, so raw
 	// reads keep the discovery-then-resolve path. Discovery reads only the

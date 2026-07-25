@@ -24,7 +24,7 @@ type VectorResolutionResult struct {
 // The Tx (ElementID) is the element's ID.
 //
 // After loading all elements, RGA reconstruction builds the final ordered list.
-func (m *BadgerMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolutionResult, error) {
+func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolutionResult, error) {
 	// Use loadRGAElements which handles deduplication
 	elements, err := m.loadRGAElements(eBytes, aBytes)
 	if err != nil {
@@ -55,7 +55,7 @@ func (m *BadgerMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolutionR
 // IMPORTANT: Handles deduplication by element ID. When the same element has multiple
 // versions (e.g., original + tombstoned), the tombstoned version takes precedence.
 // This supports Set() which writes a tombstone record for the element being deleted.
-func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, error) {
+func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, error) {
 	// Build prefix for E+A on EATV index
 	prefix := make([]byte, 1+20+32) // prefix byte + E + A
 	prefix[0] = byte(EATV)

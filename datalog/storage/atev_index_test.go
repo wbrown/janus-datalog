@@ -215,7 +215,7 @@ func TestChooseIndex_ABoundPlusTxBound_PicksATEV(t *testing.T) {
 	}
 	defer store.Close()
 
-	matcher := NewBadgerMatcher(store)
+	matcher := NewPatternMatcher(store)
 	a := datalog.NewKeyword(":atev/matcher")
 	tx := datalog.ElementID{Lamport: 42, ReplicaID: 1}
 
@@ -251,7 +251,7 @@ func TestChooseIndex_ABoundPlusTxBoundPlusVBound_DoesNotPickATEV(t *testing.T) {
 	}
 	defer store.Close()
 
-	matcher := NewBadgerMatcher(store)
+	matcher := NewPatternMatcher(store)
 	a := datalog.NewKeyword(":atev/routing")
 	tx := datalog.ElementID{Lamport: 5, ReplicaID: 1}
 
@@ -300,7 +300,7 @@ func TestEndToEndABoundTxBoundQuery(t *testing.T) {
 
 	// History-mode matcher so the ATEV scan returns raw datoms without
 	// CRDT resolution stripping non-latest entries.
-	matcher := NewBadgerMatcher(store).History()
+	matcher := NewPatternMatcher(store).History()
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -537,7 +537,7 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 	}
 	defer store.Close()
 
-	matcher := NewBadgerMatcher(store)
+	matcher := NewPatternMatcher(store)
 	a := datalog.NewKeyword(":atev/hashjoin")
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
@@ -588,7 +588,7 @@ func TestSimpleBatchScanner_BuildKey_ATEV_VVaries(t *testing.T) {
 	}
 	defer store.Close()
 
-	matcher := NewBadgerMatcher(store)
+	matcher := NewPatternMatcher(store)
 	a := datalog.NewKeyword(":atev/batch-v")
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
@@ -631,7 +631,7 @@ func TestChooseIndex_TxOnly_TAEV_WithElementID(t *testing.T) {
 	}
 	defer store.Close()
 
-	matcher := NewBadgerMatcher(store)
+	matcher := NewPatternMatcher(store)
 	tx := datalog.ElementID{Lamport: 77, ReplicaID: 1}
 
 	idx, start, end := matcher.chooseIndex(nil, nil, nil, tx)

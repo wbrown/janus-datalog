@@ -22,7 +22,7 @@ type AnnotatedMatcher struct {
 //
 // This provides Clojure-like transparent instrumentation:
 //
-//	matcher := storage.NewBadgerMatcher(store)
+//	matcher := storage.NewPatternMatcher(store)
 //	matcher = executor.WrapMatcher(matcher, handler)  // Automatically annotated!
 //
 // All Match() operations on the wrapped matcher will be timed and logged.

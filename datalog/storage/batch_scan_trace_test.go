@@ -57,7 +57,7 @@ func TestBatchScanTrace(t *testing.T) {
 		},
 	}
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 
 	// Get all bars
 	symbolRel, err := matcher.Match(query.PatternQuery(symbolPattern), nil)

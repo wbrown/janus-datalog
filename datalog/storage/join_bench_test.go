@@ -82,7 +82,7 @@ func BenchmarkStorageBackedJoin(b *testing.B) {
 				EnableSymmetricHashJoin: false,
 				DefaultHashTableSize:    256,
 			}
-			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 			exec := executor.NewExecutor(matcher, db)
 
 			b.ResetTimer()
@@ -117,7 +117,7 @@ func BenchmarkStorageBackedJoin(b *testing.B) {
 				EnableSymmetricHashJoin: true,
 				DefaultHashTableSize:    256,
 			}
-			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 			exec := executor.NewExecutor(matcher, db)
 
 			b.ResetTimer()
@@ -173,7 +173,7 @@ func BenchmarkStorageBackedJoinLimit(b *testing.B) {
 				EnableSymmetricHashJoin: false,
 				DefaultHashTableSize:    256,
 			}
-			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 			exec := executor.NewExecutor(matcher, db)
 
 			b.ResetTimer()
@@ -208,7 +208,7 @@ func BenchmarkStorageBackedJoinLimit(b *testing.B) {
 				EnableSymmetricHashJoin: true,
 				DefaultHashTableSize:    256,
 			}
-			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 			exec := executor.NewExecutor(matcher, db)
 
 			b.ResetTimer()
@@ -260,7 +260,7 @@ func BenchmarkStorageBackedJoinWithFilter(b *testing.B) {
 			EnableSymmetricHashJoin: false,
 			DefaultHashTableSize:    256,
 		}
-		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+		matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 		exec := executor.NewExecutor(matcher, db)
 
 		b.ResetTimer()
@@ -291,7 +291,7 @@ func BenchmarkStorageBackedJoinWithFilter(b *testing.B) {
 			EnableSymmetricHashJoin: true,
 			DefaultHashTableSize:    256,
 		}
-		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+		matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 		exec := executor.NewExecutor(matcher, db)
 
 		b.ResetTimer()

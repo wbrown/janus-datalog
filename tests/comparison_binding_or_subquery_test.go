@@ -99,7 +99,7 @@ func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Use executor with annotations to trace execution
 			opts := mode.plannerOptions()
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 			exec := executor.NewExecutorWithOptions(matcher, nil, opts)
 

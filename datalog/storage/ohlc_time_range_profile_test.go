@@ -149,7 +149,7 @@ func BenchmarkOHLCBadgerDBTimeRanges(b *testing.B) {
 			}
 
 			// Create executor with BadgerMatcher
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 			exec := executor.NewExecutor(matcher, db)
 
 			// Warmup
@@ -217,7 +217,7 @@ func BenchmarkSimpleTimeQuery(b *testing.B) {
 		b.Fatalf("Failed to parse query: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	exec := executor.NewExecutor(matcher, db)
 
 	b.ResetTimer()

@@ -76,7 +76,7 @@ func BenchmarkIteratorReuseClean(b *testing.B) {
 			)
 
 			// Create the matcher once
-			matcher := NewBadgerMatcher(store)
+			matcher := NewPatternMatcher(store)
 
 			// Reset timer after all setup
 			b.ResetTimer()

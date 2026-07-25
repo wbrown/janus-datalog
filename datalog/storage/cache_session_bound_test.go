@@ -29,7 +29,7 @@ func TestSessionBoundedCacheRead(t *testing.T) {
 	matcher, session, err := d.sessionMatcher(d.effectivePlannerOptions())
 	require.NoError(t, err)
 	defer session.Close()
-	sessioned := matcher.(*BadgerMatcher)
+	sessioned := matcher.(*PatternMatcher)
 
 	// First read through the session establishes X.
 	v, found, err := sessioned.LookupAttribute(e, attr)
@@ -44,7 +44,7 @@ func TestSessionBoundedCacheRead(t *testing.T) {
 	require.NoError(t, err)
 
 	// ...and another latest reader warms the cache slot to Y.
-	latest := d.Matcher().(*BadgerMatcher)
+	latest := d.Matcher().(*PatternMatcher)
 	v, found, err = latest.LookupAttribute(e, attr)
 	require.NoError(t, err)
 	require.True(t, found)

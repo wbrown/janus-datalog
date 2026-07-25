@@ -45,7 +45,7 @@ func (d *Database) ResolveAllAttributesMany(
 		return results, nil
 	}
 
-	matcher := d.Matcher().(*BadgerMatcher)
+	matcher := d.Matcher().(*PatternMatcher)
 	if matcher.isHistoryMode() {
 		for i, entity := range entities {
 			result, err := d.ResolveAllAttributes(entity)
@@ -125,7 +125,7 @@ func (d *Database) ResolveAllAttributesMany(
 }
 
 func (d *Database) resolveWildcardEntity(
-	matcher *BadgerMatcher,
+	matcher *PatternMatcher,
 	iterator Iterator,
 	entity datalog.Identity,
 	declaredAttrs map[datalog.Keyword]struct{},
@@ -207,7 +207,7 @@ func (d *Database) declaredWildcardAttributes() map[datalog.Keyword]struct{} {
 }
 
 func (d *Database) resolveWildcardDatoms(
-	matcher *BadgerMatcher,
+	matcher *PatternMatcher,
 	entity datalog.Identity,
 	attr datalog.Keyword,
 	datoms []datalog.Datom,

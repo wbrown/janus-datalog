@@ -155,7 +155,7 @@ exec := executor.NewExecutorWithOptions(matcher, opts)
 **What We Built Earlier** (Oct 2025):
 - ✅ **Iterator composition** - Filter/Project/Transform operations stay lazy
 - ✅ **Options propagation** - ExecutorOptions flow through entire pipeline
-- ✅ **BadgerMatcher streaming** - Returns StreamingRelation instead of materializing
+- ✅ **`storage.PatternMatcher` streaming** - Returns StreamingRelation instead of materializing
 - ✅ **Symmetric hash join** - Streaming-to-streaming joins without materialization
 
 **Current Performance Results** (verified 2025-10-25):
@@ -682,7 +682,7 @@ algebra optimizer (`EnableAlgebraOptimizer: true`); there is no
 **Status**: ✅ In-memory indices and entity-dedup sets key on interned pointers; the `Identity.l85` cache was removed
 
 **What changed**:
-- The in-memory matcher's entity/EA indices and the BadgerMatcher entity-dedup set
+- The in-memory matcher's entity/EA indices and the storage `PatternMatcher` entity-dedup set
   keyed on `Identity.L85()` strings (`E.L85()`, `E.L85()+"|"+A.String()`). Since
   identities and keywords are interned (pointer equality ⟺ value equality), these
   now key on the interned pointers directly — `map[datalog.Identity][]int` and
@@ -725,7 +725,7 @@ counting the removed race and the per-identity L85 string.
   against `attrVersions`, so every A-bound cached query path (the gate in front
   of attribute-resolved CRDT lookups) is now constant-time, not linear in the
   attribute's datom count.
-- `BadgerMatcher.chooseIndex` routes A-bound + Tx-bound + V-unbound patterns to
+- `PatternMatcher.chooseIndex` routes A-bound + Tx-bound + V-unbound patterns to
   ATEV. `hash_join_matcher.chooseIndexForValues` and `simple_batch_scanner.buildKey`
   both learned the ATEV layout so joined/batched scans through ATEV produce a
   tight `[A][Tx↓][E]` prefix instead of degrading to a full-attribute scan.
@@ -1517,7 +1517,7 @@ projection without adding this physical cost.
 **Key Finding**: Pattern matching dominates CPU time in-memory queries. Optimizations targeting pattern matching (in-memory indexing) made hash indices the default path throughout the codebase.
 
 ### Storage-Backed Execution Path
-**Profiled**: BadgerMatcher with OHLC queries
+**Profiled**: `storage.PatternMatcher` with OHLC queries
 **Query Time**: 56ms for 260 hours (measured)
 
 **Key Finding**: Storage-backed queries already fast enough for production use. Focus has been on correctness and architectural improvements rather than micro-optimizations.

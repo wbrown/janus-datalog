@@ -78,7 +78,7 @@ func TestCompressedIntegration_WriteReadString(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read back via pattern match
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -111,7 +111,7 @@ func TestCompressedIntegration_WriteReadBytes(t *testing.T) {
 	_, err := tx.Commit()
 	require.NoError(t, err)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -142,7 +142,7 @@ func TestCompressedIntegration_ShortStringUncompressed(t *testing.T) {
 	_, err := tx.Commit()
 	require.NoError(t, err)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -175,7 +175,7 @@ func TestCompressedIntegration_AVET_ExactMatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query with both A and V bound — goes through AVET index
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -210,7 +210,7 @@ func TestCompressedIntegration_AVET_NoFalsePositive(t *testing.T) {
 	require.NoError(t, err)
 
 	// Search for a different value — should find nothing
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -255,7 +255,7 @@ func TestCompressedIntegration_CRDT_CardinalityOne_LWW(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query should return only the latest (version 2)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -299,7 +299,7 @@ func TestCompressedIntegration_CRDT_CardinalityMany(t *testing.T) {
 	require.NoError(t, err)
 
 	// Both values should be present
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -363,7 +363,7 @@ func TestCompressedIntegration_CRDT_CardinalityMany_Remove(t *testing.T) {
 	require.NoError(t, err)
 
 	// Only tag1 should remain
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -404,7 +404,7 @@ func TestCompressedIntegration_MixedValues(t *testing.T) {
 	_, err := tx.Commit()
 	require.NoError(t, err)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	// Read each back and verify
 	for _, tc := range []struct {
@@ -455,7 +455,7 @@ func TestCompressedIntegration_MultipleEntities(t *testing.T) {
 	}
 
 	// AVET lookup for the value should find all 10 entities
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -522,7 +522,7 @@ func TestCompressedIntegration_ValueEquality_CrossBoundary(t *testing.T) {
 
 	// Read back from both — values should be equal
 	readValue := func(db *Database) string {
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
 				query.Constant{Value: entity},
@@ -563,7 +563,7 @@ func TestCompressedIntegration_ScanEntity(t *testing.T) {
 	require.NoError(t, err)
 
 	// Scan all attributes for entity
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -621,7 +621,7 @@ func TestCompressedIntegration_Determinism(t *testing.T) {
 		require.NoError(t, err)
 
 		// AVET lookup
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
 				query.Variable{Name: datalog.NewSymbol("?e")},

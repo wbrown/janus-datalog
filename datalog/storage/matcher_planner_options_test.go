@@ -51,7 +51,7 @@ func TestDatabaseMatcher_HonorsCustomPlannerOptions(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	m := db.Matcher().(*BadgerMatcher)
+	m := db.Matcher().(*PatternMatcher)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},

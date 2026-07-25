@@ -166,7 +166,7 @@ func TestSchemalessLookupAttribute_VectorMatchesSchemaAware(t *testing.T) {
 
 			// Schema-aware truth.
 			schemaDB := c.open(t, DatabaseOptions{Schema: vectorSchema(), ReplicaID: 1})
-			sval, sfound := requireAttributeLookup(t, schemaDB.Matcher().(*BadgerMatcher), e, attr)
+			sval, sfound := requireAttributeLookup(t, schemaDB.Matcher().(*PatternMatcher), e, attr)
 			require.True(t, sfound)
 			require.Equal(t, want, asStringList(t, sval), "schema-aware LookupAttribute must return full vector")
 
@@ -174,7 +174,7 @@ func TestSchemalessLookupAttribute_VectorMatchesSchemaAware(t *testing.T) {
 			// ops, so the production matcher (db.Matcher()) resolves the
 			// vector correctly.
 			db := c.open(t, DatabaseOptions{ReplicaID: 1})
-			val, found := requireAttributeLookup(t, db.Matcher().(*BadgerMatcher), e, attr)
+			val, found := requireAttributeLookup(t, db.Matcher().(*PatternMatcher), e, attr)
 			require.True(t, found)
 			require.Equal(t, want, asStringList(t, val),
 				"schemaless LookupAttribute must reconstruct the vector via the open-time schema, not collapse to the last element")
@@ -310,7 +310,7 @@ func testSchemalessPrefetchVectorNotCollapsed(t *testing.T, c reopenBackendCase)
 
 	db := c.open(t, DatabaseOptions{ReplicaID: 1}) // schemaless, cache enabled
 
-	m := db.Matcher().(*BadgerMatcher)
+	m := db.Matcher().(*PatternMatcher)
 	// Warm the EA cache the way EnableEntityPrefetch does.
 	require.NoError(t, m.PrefetchEntities([]datalog.Identity{e}))
 

@@ -22,19 +22,19 @@ import (
 // Start with Match() and MatchWithConstraints() in this file.
 
 // Ensure BadgerMatcher implements PatternMatcher
-var _ executor.PatternMatcher = (*BadgerMatcher)(nil)
+var _ executor.PatternMatcher = (*PatternMatcher)(nil)
 
 // Ensure BadgerMatcher implements executor.PredicateAwareMatcher
-var _ executor.PredicateAwareMatcher = (*BadgerMatcher)(nil)
+var _ executor.PredicateAwareMatcher = (*PatternMatcher)(nil)
 
 // Match implements PatternMatcher.Match - returns a Relation directly
-func (m *BadgerMatcher) Match(q *query.Query, bindings executor.Relations) (executor.Relation, error) {
+func (m *PatternMatcher) Match(q *query.Query, bindings executor.Relations) (executor.Relation, error) {
 	// Default implementation with no constraints
 	return m.MatchWithConstraints(q, bindings, nil)
 }
 
 // MatchWithConstraints implements predicate-aware matching with storage-level filtering
-func (m *BadgerMatcher) MatchWithConstraints(
+func (m *PatternMatcher) MatchWithConstraints(
 	q *query.Query,
 	bindings executor.Relations,
 	constraints []executor.StorageConstraint,
@@ -269,7 +269,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 // injective (scanProjectionPreservesSet). Every other streaming scan wraps a
 // deduplicating pass so the relation is a set at birth. Scan iterators reuse
 // workspace tuples, so the dedup's seen-keys copy.
-func (m *BadgerMatcher) restoreScanSetSemantics(rel executor.Relation, pattern *query.DataPattern, symbols []query.Symbol) executor.Relation {
+func (m *PatternMatcher) restoreScanSetSemantics(rel executor.Relation, pattern *query.DataPattern, symbols []query.Symbol) executor.Relation {
 	if rel == nil {
 		return nil
 	}
@@ -289,7 +289,7 @@ func (m *BadgerMatcher) restoreScanSetSemantics(rel executor.Relation, pattern *
 // matchUnboundAsRelation matches a pattern without bindings and returns a
 // Relation, restored to set semantics at birth when the pattern's projection
 // drops part of the emitted stream's candidate key.
-func (m *BadgerMatcher) matchUnboundAsRelation(
+func (m *PatternMatcher) matchUnboundAsRelation(
 	q *query.Query,
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
@@ -302,7 +302,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(
 	return m.restoreScanSetSemantics(rel, pattern, symbols), nil
 }
 
-func (m *BadgerMatcher) matchUnboundScan(
+func (m *PatternMatcher) matchUnboundScan(
 	q *query.Query,
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
@@ -549,7 +549,7 @@ func (m *BadgerMatcher) matchUnboundScan(
 }
 
 // matchWithoutIteratorReuse uses separate scan for each binding tuple
-func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bindingRel executor.Relation, symbols []query.Symbol, constraints []executor.StorageConstraint) (executor.Relation, error) {
+func (m *PatternMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bindingRel executor.Relation, symbols []query.Symbol, constraints []executor.StorageConstraint) (executor.Relation, error) {
 	// Emit no-reuse path event
 	if m.handler != nil {
 		m.handler(annotations.Event{
@@ -598,7 +598,7 @@ func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bi
 }
 
 // matchWithIteratorReuse implements the optimized iterator reuse strategy
-func (m *BadgerMatcher) matchWithIteratorReuse(
+func (m *PatternMatcher) matchWithIteratorReuse(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
@@ -641,7 +641,7 @@ func (m *BadgerMatcher) matchWithIteratorReuse(
 // 1. Scan V-primary index (AVET/VAET) for candidate entities
 // 2. For each candidate E, point-lookup EATV to get CRDT winner
 // 3. If winner.V == boundV, emit; otherwise skip (stale candidate)
-func (m *BadgerMatcher) matchWithVValidation(
+func (m *PatternMatcher) matchWithVValidation(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
@@ -701,7 +701,7 @@ func (m *BadgerMatcher) matchWithVValidation(
 //     add-wins with same-Tx tiebreaking, RGA for vectors
 //  3. Only CardinalityOne needs post-validation (LWW winner may have different V)
 type validatingVBoundIterator struct {
-	matcher     *BadgerMatcher
+	matcher     *PatternMatcher
 	pattern     *query.DataPattern
 	bindingRel  executor.Relation
 	tuples      []executor.Tuple
@@ -1184,7 +1184,7 @@ func (it *validatingVBoundIterator) Close() error {
 func (it *validatingVBoundIterator) Error() error { return it.err }
 
 // matchWithSimpleBatchScanning uses simplified batch scanning to process large binding sets efficiently
-func (m *BadgerMatcher) matchWithSimpleBatchScanning(
+func (m *PatternMatcher) matchWithSimpleBatchScanning(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
@@ -1217,7 +1217,7 @@ func (m *BadgerMatcher) matchWithSimpleBatchScanning(
 }
 
 // matchWithBatchScanning uses batch scanning to process large binding sets efficiently
-func (m *BadgerMatcher) matchWithBatchScanning(
+func (m *PatternMatcher) matchWithBatchScanning(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
@@ -1248,7 +1248,7 @@ func (m *BadgerMatcher) matchWithBatchScanning(
 // matchFromCache attempts to resolve a pattern using the cache.
 // Returns (relation, true) if cache was used, (nil, false) if fallback to storage is needed.
 // This provides O(1) access for patterns with E and A bound when querying latest state.
-func (m *BadgerMatcher) matchFromCache(
+func (m *PatternMatcher) matchFromCache(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	e datalog.Identity,
@@ -1383,7 +1383,7 @@ func resolveKeywordFromBindings(aVar query.Variable, bindings executor.Relations
 // When aSymIdx >= 0, A is extracted per-tuple from bindingRel[aSymIdx] instead of using
 // the fixed `a` parameter. This handles the case where both E and A are symbols in the
 // binding relation (e.g., from join results with varying attributes per tuple).
-func (m *BadgerMatcher) matchWithBindingsFromCache(
+func (m *PatternMatcher) matchWithBindingsFromCache(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
@@ -1560,7 +1560,7 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 }
 
 // matchCardinalityManyAsRelation handles cardinality-many patterns using add-wins resolution
-func (m *BadgerMatcher) matchCardinalityManyAsRelation(
+func (m *PatternMatcher) matchCardinalityManyAsRelation(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	e, a interface{},
@@ -1615,7 +1615,7 @@ func (m *BadgerMatcher) matchCardinalityManyAsRelation(
 
 // matchCardinalityVectorAsRelation handles cardinality-vector patterns using RGA resolution.
 // Returns the entire reconstructed vector as a single value bound to the V variable.
-func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
+func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	e, a, v interface{},
@@ -1687,7 +1687,7 @@ func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
 // matchVectorWithBindings handles vector patterns when E is bound via join bindings.
 // For each entity in the bindings, it resolves the vector using RGA reconstruction
 // and returns tuples with the reconstructed vector as the V value.
-func (m *BadgerMatcher) matchVectorWithBindings(
+func (m *PatternMatcher) matchVectorWithBindings(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
@@ -1794,7 +1794,7 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 }
 
 // matchCardinalityManyMembership checks if a specific value is in a cardinality-many set
-func (m *BadgerMatcher) matchCardinalityManyMembership(
+func (m *PatternMatcher) matchCardinalityManyMembership(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	e, a, v interface{},
@@ -1848,7 +1848,7 @@ func (m *BadgerMatcher) matchCardinalityManyMembership(
 // where E is unbound and cardinality is many. It iterates through entities at the
 // entity level - for each entity, it resolves the add-wins set and yields members one by one.
 type cardinalityManyScanAllEntitiesIterator struct {
-	matcher      *BadgerMatcher
+	matcher      *PatternMatcher
 	pattern      *query.DataPattern
 	symbols      []query.Symbol
 	a            interface{}
@@ -1962,7 +1962,7 @@ func (it *cardinalityManyScanAllEntitiesIterator) Error() error { return it.err 
 // Scans all entities with the attribute and resolves each vector using RGA.
 // If v is non-nil, only entities whose resolved vector equals v are returned.
 // If v is nil, all entities with non-empty vectors are returned.
-func (m *BadgerMatcher) matchVectorScanAllEntities(
+func (m *PatternMatcher) matchVectorScanAllEntities(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	a, v interface{},
@@ -2001,7 +2001,7 @@ func (m *BadgerMatcher) matchVectorScanAllEntities(
 // vectorScanAllEntitiesIterator streams results for vector patterns with E unbound.
 // For each unique entity, resolves the RGA vector and yields a tuple if it matches.
 type vectorScanAllEntitiesIterator struct {
-	matcher      *BadgerMatcher
+	matcher      *PatternMatcher
 	pattern      *query.DataPattern
 	symbols      []query.Symbol
 	a, v         interface{}
@@ -2095,7 +2095,7 @@ func (it *vectorScanAllEntitiesIterator) Error() error { return it.err }
 
 // matchCardinalityManyScanAllEntities handles [?e :attr ?v] where E is unbound
 // Scans all entities with the attribute and resolves each set using add-wins
-func (m *BadgerMatcher) matchCardinalityManyScanAllEntities(
+func (m *PatternMatcher) matchCardinalityManyScanAllEntities(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	a interface{},
@@ -2140,7 +2140,7 @@ func (m *BadgerMatcher) matchCardinalityManyScanAllEntities(
 // - Entities grouped together
 // - Within entity: Op=0 (Add) before Op=1 (Remove), then by Tx descending
 type cardinalityManyAVETValueIterator struct {
-	matcher     *BadgerMatcher
+	matcher     *PatternMatcher
 	pattern     *query.DataPattern
 	symbols     []query.Symbol
 	indexer     *query.TupleIndexer
@@ -2296,7 +2296,7 @@ func (it *cardinalityManyAVETValueIterator) Error() error { return it.err }
 // DEPRECATED: Use cardinalityManyAVETValueIterator instead for O(k) performance.
 // This iterator uses AEVT which is O(n) where n = all entities with attribute.
 type cardinalityManyFindEntitiesWithValueIterator struct {
-	matcher      *BadgerMatcher
+	matcher      *PatternMatcher
 	pattern      *query.DataPattern
 	symbols      []query.Symbol
 	a, v         interface{}
@@ -2385,7 +2385,7 @@ func (it *cardinalityManyFindEntitiesWithValueIterator) Error() error { return i
 //
 // Uses AVET index with [A][V] prefix for O(k) lookup where k = datoms with this value,
 // instead of O(n) where n = all entities with the attribute.
-func (m *BadgerMatcher) matchCardinalityManyFindEntitiesWithValue(
+func (m *PatternMatcher) matchCardinalityManyFindEntitiesWithValue(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	a, v interface{},

@@ -133,7 +133,7 @@ func TestAddMethodUsesOpField(t *testing.T) {
 	}
 
 	// Query should find the value
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -216,7 +216,7 @@ func TestRemoveMethodUsesOpField(t *testing.T) {
 	}
 
 	// Query should return empty (remove has higher Lamport)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -284,7 +284,7 @@ func TestAVETLookupWithOpField(t *testing.T) {
 
 	// Query: find all entities with "warrior" tag
 	// This requires AVET index to work with raw string values
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -429,7 +429,7 @@ func TestSetMethodGeneratesCorrectOps(t *testing.T) {
 	}
 
 	// Verify initial set
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{

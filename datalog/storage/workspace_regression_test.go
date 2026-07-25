@@ -79,7 +79,7 @@ func TestWorkspaceRegression_RawIterator(t *testing.T) {
 		},
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
@@ -147,7 +147,7 @@ func TestWorkspaceRegression_WorkspaceReuse(t *testing.T) {
 		},
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
@@ -367,7 +367,7 @@ func TestWorkspaceRegression_StreamingRelationCache(t *testing.T) {
 		},
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
@@ -426,7 +426,7 @@ func TestWorkspaceRegression_BufferedIterator(t *testing.T) {
 		},
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	rel, _ := matcher.Match(query.PatternQuery(agePattern), nil)
 
 	// Wrap streaming iterator in BufferedIterator

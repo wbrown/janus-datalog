@@ -185,7 +185,7 @@ func BenchmarkHighCardinalityKeywords(b *testing.B) {
 			b.Fatalf("Failed to parse query: %v", err)
 		}
 
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 		b.ResetTimer()
@@ -213,7 +213,7 @@ func BenchmarkHighCardinalityKeywords(b *testing.B) {
 			b.Fatalf("Failed to parse query: %v", err)
 		}
 
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 		b.ResetTimer()
@@ -238,7 +238,7 @@ func BenchmarkHighCardinalityKeywords(b *testing.B) {
 			b.Fatalf("Failed to parse query: %v", err)
 		}
 
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 		b.ResetTimer()

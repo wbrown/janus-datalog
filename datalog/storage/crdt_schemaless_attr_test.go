@@ -426,7 +426,7 @@ func TestNilSchemaMatcher_ReadsSchemaData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create matcher WITHOUT schema
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	// Deliberately NOT calling matcher.SetSchema()
 
 	// Query through nil-schema matcher using a DataPattern

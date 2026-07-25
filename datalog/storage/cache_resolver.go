@@ -6,11 +6,11 @@ import (
 )
 
 // Ensure BadgerMatcher implements CacheResolver
-var _ CacheResolver = (*BadgerMatcher)(nil)
+var _ CacheResolver = (*PatternMatcher)(nil)
 
 // GetCardinality returns the cardinality for an attribute
 // Defaults to CardinalityOne if schema is not set or attribute not found
-func (m *BadgerMatcher) GetCardinality(a Attribute) schema.Cardinality {
+func (m *PatternMatcher) GetCardinality(a Attribute) schema.Cardinality {
 	if m.schema == nil {
 		return schema.CardinalityOne
 	}
@@ -45,7 +45,7 @@ func (m *BadgerMatcher) GetCardinality(a Attribute) schema.Cardinality {
 // single raw datom. ResolveLWW in history mode returns the first-entry
 // (highest-Tx raw Set), matching the pre-redesign behavior for
 // non-unique attributes in the same mode.
-func (m *BadgerMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementID, error) {
+func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementID, error) {
 	// Unique-attribute walk path (applies only when schema declares
 	// the attribute unique AND the matcher is not in history mode;
 	// otherwise falls through to the simple first-entry path below).
@@ -104,7 +104,7 @@ func (m *BadgerMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementI
 
 // ResolveAddWins returns the current set members for cardinality-many
 // Uses the existing resolveAddWinsSet method and converts to map
-func (m *BadgerMatcher) ResolveAddWins(e Entity, a Attribute) (map[any]any, datalog.ElementID, error) {
+func (m *PatternMatcher) ResolveAddWins(e Entity, a Attribute) (map[any]any, datalog.ElementID, error) {
 	result, err := m.resolveAddWinsSet(e[:], a[:])
 	if err != nil {
 		return nil, datalog.ElementID{}, err
@@ -114,7 +114,7 @@ func (m *BadgerMatcher) ResolveAddWins(e Entity, a Attribute) (map[any]any, data
 
 // ResolveRGA returns the ordered vector for cardinality-vector
 // Returns (values, positionToElementID, maxElementID, error)
-func (m *BadgerMatcher) ResolveRGA(e Entity, a Attribute) ([]any, []datalog.ElementID, datalog.ElementID, error) {
+func (m *PatternMatcher) ResolveRGA(e Entity, a Attribute) ([]any, []datalog.ElementID, datalog.ElementID, error) {
 	// Load raw RGA elements
 	elements, err := m.loadRGAElements(e[:], a[:])
 	if err != nil {

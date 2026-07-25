@@ -403,7 +403,7 @@ func TestFusion_CoverageFires(t *testing.T) {
 func TestFusionGate_ModeAndCardinality(t *testing.T) {
 	db := openFusionDB(t, true, nil, nil)
 
-	latest, ok := db.Matcher().(*BadgerMatcher)
+	latest, ok := db.Matcher().(*PatternMatcher)
 	require.True(t, ok)
 	assert.True(t, latest.CanFuseAttributeFetch(datalog.NewKeyword(":place/code")),
 		"latest-mode CardinalityOne is fusable")
@@ -414,12 +414,12 @@ func TestFusionGate_ModeAndCardinality(t *testing.T) {
 	assert.False(t, latest.CanFuseAttributeFetch(datalog.NewKeyword(":place/unknown")),
 		"schemaless attribute is not fusable")
 
-	hist, ok := db.History().Matcher().(*BadgerMatcher)
+	hist, ok := db.History().Matcher().(*PatternMatcher)
 	require.True(t, ok)
 	assert.False(t, hist.CanFuseAttributeFetch(datalog.NewKeyword(":place/code")),
 		"history mode is never fusable (raw multi-version reads)")
 
-	asOf, ok := db.AsOf(datalog.ElementID{Lamport: 1, ReplicaID: 1}).Matcher().(*BadgerMatcher)
+	asOf, ok := db.AsOf(datalog.ElementID{Lamport: 1, ReplicaID: 1}).Matcher().(*PatternMatcher)
 	require.True(t, ok)
 	assert.False(t, asOf.CanFuseAttributeFetch(datalog.NewKeyword(":place/code")),
 		"as-of mode must use snapshot CRDT resolution, not latest-value fusion")

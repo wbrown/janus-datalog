@@ -64,7 +64,7 @@ func TestMultiPositionBindingCorrectness(t *testing.T) {
 	)
 
 	// Create matcher and execute
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	require.NoError(t, err)
 
@@ -129,7 +129,7 @@ func TestMultiPositionAllCombinations(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	t.Run("E_and_V_bound", func(t *testing.T) {
 		// Pattern: [?e :attr/name ?name] with ?e and ?name bound
@@ -259,7 +259,7 @@ func TestMultiPositionAsymmetricCardinality(t *testing.T) {
 		bindingTuples,
 	)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	require.NoError(t, err)
 
@@ -301,7 +301,7 @@ func TestMultiPositionNoMatches(t *testing.T) {
 		},
 	)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	require.NoError(t, err)
 
@@ -340,7 +340,7 @@ func TestMultiPositionSingleBinding(t *testing.T) {
 		},
 	)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	require.NoError(t, err)
 
@@ -377,7 +377,7 @@ func TestMultiPositionResultOrdering(t *testing.T) {
 		},
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	// Run with bindings in order 0,1,2,3,4
 	bindingTuples1 := make([]executor.Tuple, 5)
@@ -461,7 +461,7 @@ func TestMultiPositionPerformance(t *testing.T) {
 		bindingTuples,
 	)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	// Warm up
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
@@ -543,7 +543,7 @@ func BenchmarkMultiPositionBinding(b *testing.B) {
 		bindingTuples[i] = executor.Tuple{entities[i], "target"}
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -643,7 +643,7 @@ func TestMultiPositionWithStreamingBinding(t *testing.T) {
 	)
 
 	// Create matcher and execute - this should NOT panic
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{streamingBindingRel})
 	require.NoError(t, err, "Match should not error with streaming binding relation")
 
@@ -718,7 +718,7 @@ func TestMultiPositionWithBytesValue(t *testing.T) {
 		},
 	)
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 
 	// This should not panic
 	results, err := executor.CollectTuples(matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel}))

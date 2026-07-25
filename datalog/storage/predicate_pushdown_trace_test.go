@@ -55,7 +55,7 @@ func TestPredicatePushdownTrace(t *testing.T) {
 		},
 	}
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 
 	// Get all bars (300 total)
 	symbolRel, _ := matcher.Match(query.PatternQuery(symbolPattern), nil)

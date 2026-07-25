@@ -90,7 +90,7 @@ func TestLookupAttribute_StorageFallback_Tombstone(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	v, ok := requireAttributeLookup(t, matcher, alice, name)
 
 	assert.False(t, ok, "tombstoned attribute must not report as present")
@@ -188,7 +188,7 @@ func TestSimpleBatchScanner_BuildKey_AETV(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	scanner := &simpleBatchScanner{
 		matcher:  matcher,
 		index:    AETV,
@@ -220,7 +220,7 @@ func TestSimpleBatchScanner_BuildKey_AllIndices(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	alice := datalog.NewIdentity("alice")
 	name := datalog.NewKeyword(":user/name")
 	var aBytes Attribute
@@ -281,7 +281,7 @@ func TestSimpleBatchScanner_BuildKey_AVET_PositionSemantics(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	emailKw := datalog.NewKeyword(":user/email")
 	var aBytes Attribute
 	copy(aBytes[:], emailKw.String())

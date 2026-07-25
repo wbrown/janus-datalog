@@ -529,7 +529,7 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify ResolveLWW returns value
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
@@ -582,7 +582,7 @@ func TestCacheRemove_CacheRebuild(t *testing.T) {
 	copy(aStorage[:], a.String())
 	key := CacheKey{E: eStorage, A: aStorage}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 	entry := db.Cache().GetOrResolve(key, matcher, nil)
 
@@ -749,7 +749,7 @@ func TestCacheRemove_ResolveLWW_SetThenRemove(t *testing.T) {
 	require.NoError(t, err)
 
 	// ResolveLWW → nil
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
@@ -867,7 +867,7 @@ func TestCacheRemove_ResolveLWW_ReturnsElementID(t *testing.T) {
 	require.NoError(t, err)
 
 	// ResolveLWW should return nil value but non-zero ElementID
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
@@ -1073,7 +1073,7 @@ func TestCacheRemove_Pull_SetThenRemove(t *testing.T) {
 // resolveLWWValue calls ResolveLWW and returns (value, elementID)
 func resolveLWW(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyword) (any, datalog.ElementID) {
 	t.Helper()
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
@@ -1215,7 +1215,7 @@ func cacheRebuildOneValue(t *testing.T, db *Database, e datalog.Identity, a data
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 	key := CacheKey{E: eStorage, A: aStorage}
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 	entry := db.Cache().GetOrResolve(key, matcher, nil)
 	if entry == nil {

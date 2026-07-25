@@ -9,7 +9,7 @@ import (
 
 func requireAttributeLookup(
 	tb testing.TB,
-	matcher *BadgerMatcher,
+	matcher *PatternMatcher,
 	entity datalog.Identity,
 	attribute datalog.Keyword,
 ) (interface{}, bool) {

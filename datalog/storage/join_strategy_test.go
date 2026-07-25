@@ -71,7 +71,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 			EnableSymmetricHashJoin: false,
 			DefaultHashTableSize:    256,
 		}
-		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+		matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 		// Force IndexNestedLoop
 		indexNested := IndexNestedLoop
@@ -108,7 +108,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 			EnableSymmetricHashJoin: false,
 			DefaultHashTableSize:    256,
 		}
-		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+		matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 		// Force hash join strategy
 		hashJoin := HashJoinScan
@@ -145,7 +145,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 			EnableSymmetricHashJoin: false,
 			DefaultHashTableSize:    256,
 		}
-		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+		matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 		// Force IndexNestedLoop
 		indexNested := IndexNestedLoop
@@ -177,7 +177,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 			EnableSymmetricHashJoin: false,
 			DefaultHashTableSize:    256,
 		}
-		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+		matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 		// Force hash join strategy
 		hashJoin := HashJoinScan
@@ -220,7 +220,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 			EnableSymmetricHashJoin: false,
 			DefaultHashTableSize:    256,
 		}
-		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+		matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 		// Force IndexNestedLoop
 		indexNested := IndexNestedLoop
@@ -251,7 +251,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 			EnableSymmetricHashJoin: false,
 			DefaultHashTableSize:    256,
 		}
-		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+		matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 		// Force HashJoinScan
 		hashJoin := HashJoinScan
@@ -337,7 +337,7 @@ func TestVerifyStrategyUsed(t *testing.T) {
 					EnableSymmetricHashJoin: false,
 					DefaultHashTableSize:    256,
 				}
-				matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 				// Add event handler
 				matcher.SetHandler(func(event annotations.Event) {
@@ -374,7 +374,7 @@ func TestVerifyStrategyUsed(t *testing.T) {
 					EnableSymmetricHashJoin: false,
 					DefaultHashTableSize:    256,
 				}
-				matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 				// Force HashJoinScan
 				hashJoin := HashJoinScan
@@ -425,7 +425,7 @@ func TestVerifyStrategyUsed(t *testing.T) {
 					EnableSymmetricHashJoin: false,
 					DefaultHashTableSize:    256,
 				}
-				matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 				// Force IndexNestedLoop
 				indexNested := IndexNestedLoop
@@ -540,7 +540,7 @@ func TestMaterializationDetection(t *testing.T) {
 				EnableSymmetricHashJoin: false,
 				DefaultHashTableSize:    256,
 			}
-			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 			// Add event handler to track what's happening
 			var events []string

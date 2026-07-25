@@ -153,7 +153,7 @@ func TestTier3_WriteRead(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read back
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -218,7 +218,7 @@ func TestTier3_ContentDedup(t *testing.T) {
 	// Both entities should read back correctly
 	for i := 0; i < 2; i++ {
 		entity := datalog.NewIdentity(strings.Repeat("e", i+1))
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
 				query.Constant{Value: entity},
@@ -287,7 +287,7 @@ func TestTier3_WriteRead_String(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -351,7 +351,7 @@ func TestTier3_AVET_ExactMatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// AVET lookup: A+V bound, find E
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -385,7 +385,7 @@ func TestTier3_AVET_NoFalsePositive(t *testing.T) {
 	require.NoError(t, err)
 
 	// Search for different value — should find nothing
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -432,7 +432,7 @@ func TestTier3_CRDT_CardinalityOne_LWW(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query should return only the latest (v2)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -478,7 +478,7 @@ func TestTier3_CRDT_CardinalityMany_AddRetract(t *testing.T) {
 	require.NoError(t, err)
 
 	// Both should be present
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -538,7 +538,7 @@ func TestTier3_EntityScan_MixedTiers(t *testing.T) {
 	require.NoError(t, err)
 
 	// Entity scan: E bound, all A+V
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},

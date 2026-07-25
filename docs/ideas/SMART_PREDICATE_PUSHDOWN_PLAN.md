@@ -59,7 +59,7 @@ The planner should recognize:
 ### Stage 3: Smart Index Selection
 
 ```go
-func (m *BadgerMatcher) chooseIndexWithPredicates(
+func (m *PatternMatcher) chooseIndexWithPredicates(
     pattern *query.DataPattern,
     constraints []StorageConstraint,
 ) (IndexType, []byte, []byte, []StorageConstraint) {

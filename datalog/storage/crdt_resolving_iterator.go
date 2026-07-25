@@ -23,7 +23,7 @@ type CRDTResolvingIterator struct {
 	// than simply emitting the EATV first-entry). Nil is permitted and
 	// disables unique-walk resolution (CardinalityOne falls back to the
 	// non-unique first-entry semantic).
-	uniqueMatcher *BadgerMatcher
+	uniqueMatcher *PatternMatcher
 
 	// Current (E, A) group tracking
 	currentE datalog.Identity
@@ -92,7 +92,7 @@ type rgaElement struct {
 // emitted, with supersession determined by an AVET sub-scan for
 // max-other-Tx per candidate V. When matcher is nil, all CardinalityOne
 // groups use first-entry semantics (the Unique field is ignored).
-func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, txID datalog.ElementID, matcher *BadgerMatcher) *CRDTResolvingIterator {
+func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, txID datalog.ElementID, matcher *PatternMatcher) *CRDTResolvingIterator {
 	return &CRDTResolvingIterator{
 		source:        source,
 		schema:        schema,

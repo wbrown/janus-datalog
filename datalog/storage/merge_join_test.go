@@ -28,7 +28,7 @@ func TestJoinStrategySelection(t *testing.T) {
 	}
 	defer db.Close()
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	tests := []struct {
 		name               string
@@ -169,7 +169,7 @@ func TestMergeJoinCorrectness(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	tests := []struct {
 		name          string
@@ -320,7 +320,7 @@ func TestMergeJoinVsHashJoin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	// Test with different binding set sizes
 	testSizes := []int{100, 500, 1000, 1500, 2000}
@@ -438,7 +438,7 @@ func TestMergeJoinPerformance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	// Test with 5000 entities (50% selectivity - should use merge join)
 	const bindingSize = 5000
@@ -605,7 +605,7 @@ func TestMergeJoinDuplicateKeyBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	collectRows := func(t *testing.T, rel executor.Relation, err error) []string {
 		t.Helper()
@@ -706,7 +706,7 @@ func TestMergeJoinPropagatesDeferredScanError(t *testing.T) {
 	}
 	defer db.Close()
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	entity := datalog.NewSymbol("?e")
 	value := datalog.NewSymbol("?v")

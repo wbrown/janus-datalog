@@ -74,7 +74,7 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Force HashJoinScan by setting threshold to 0 (default behavior after fix)
-			matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
+			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{
 				IndexNestedLoopThreshold: 0, // Always use HashJoinScan
 			})
 			exec := executor.NewExecutorWithOptions(matcher, db,
@@ -155,7 +155,7 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
+			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{
 				IndexNestedLoopThreshold: 0,
 			})
 			exec := executor.NewExecutorWithOptions(matcher, db,
@@ -211,9 +211,9 @@ func TestCompiledBindingMatchUsesPrecomputedSymbolSlots(t *testing.T) {
 		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	}
 
-	assert.True(t, plan.matches(&BadgerMatcher{}, datom, executor.Tuple{"unused", target}))
+	assert.True(t, plan.matches(&PatternMatcher{}, datom, executor.Tuple{"unused", target}))
 	assert.False(t, plan.matches(
-		&BadgerMatcher{},
+		&PatternMatcher{},
 		datom,
 		executor.Tuple{"unused", datalog.NewIdentity("different")},
 	))
@@ -242,7 +242,7 @@ func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
 	assert.NoError(t, err)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
+			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{
 				IndexNestedLoopThreshold: 0,
 			})
 			exec := executor.NewExecutorWithOptions(matcher, db,
@@ -280,7 +280,7 @@ func TestCompiledBindingMatchPlanAllDatomPositions(t *testing.T) {
 	tuple := executor.Tuple{"noise", elementID, "", entity, attribute}
 	plan := compileBindingMatchPlan(pattern, bindingSymbols)
 
-	assert.True(t, plan.matches(&BadgerMatcher{}, datom, tuple))
+	assert.True(t, plan.matches(&PatternMatcher{}, datom, tuple))
 	for bindingIndex := 1; bindingIndex < len(tuple); bindingIndex++ {
 		changed := append(executor.Tuple(nil), tuple...)
 		switch bindingIndex {
@@ -293,11 +293,11 @@ func TestCompiledBindingMatchPlanAllDatomPositions(t *testing.T) {
 		case 4:
 			changed[bindingIndex] = datalog.NewKeyword(":different")
 		}
-		assert.False(t, plan.matches(&BadgerMatcher{}, datom, changed),
+		assert.False(t, plan.matches(&PatternMatcher{}, datom, changed),
 			"binding index %d must participate in matching", bindingIndex)
 	}
 	assert.Panics(t, func() {
-		plan.matches(&BadgerMatcher{}, datom, executor.Tuple{"short"})
+		plan.matches(&PatternMatcher{}, datom, executor.Tuple{"short"})
 	}, "a binding tuple that violates its declared schema must fail loudly")
 }
 
@@ -315,6 +315,6 @@ func TestCompiledBindingMatchPlanBytesByContent(t *testing.T) {
 		V: []byte{1, 2, 3},
 	}
 
-	assert.True(t, plan.matches(&BadgerMatcher{}, datom, executor.Tuple{[]byte{1, 2, 3}}))
-	assert.False(t, plan.matches(&BadgerMatcher{}, datom, executor.Tuple{[]byte{1, 2, 4}}))
+	assert.True(t, plan.matches(&PatternMatcher{}, datom, executor.Tuple{[]byte{1, 2, 3}}))
+	assert.False(t, plan.matches(&PatternMatcher{}, datom, executor.Tuple{[]byte{1, 2, 4}}))
 }

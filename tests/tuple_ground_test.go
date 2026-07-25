@@ -49,7 +49,7 @@ func TestTupleGroundBasic(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
+			exec := executor.NewExecutorWithOptions(storage.NewPatternMatcher(db.Store()), nil, mode.plannerOptions())
 
 			result, err := exec.Execute(q)
 			if err != nil {
@@ -164,7 +164,7 @@ func TestTupleGroundOrFallback(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 			exec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
@@ -281,7 +281,7 @@ func TestTupleGroundBackwardCompatibility(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
+			exec := executor.NewExecutorWithOptions(storage.NewPatternMatcher(db.Store()), nil, mode.plannerOptions())
 
 			result, err := exec.Execute(q)
 			if err != nil {
@@ -349,7 +349,7 @@ func TestTupleGroundQB(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
+			exec := executor.NewExecutorWithOptions(storage.NewPatternMatcher(db.Store()), nil, mode.plannerOptions())
 
 			result, err := exec.Execute(q)
 			if err != nil {
@@ -455,7 +455,7 @@ func TestTupleGroundQBInOr(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
+			exec := executor.NewExecutorWithOptions(storage.NewPatternMatcher(db.Store()), nil, mode.plannerOptions())
 
 			result, err := exec.Execute(q)
 			if err != nil {

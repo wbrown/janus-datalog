@@ -33,7 +33,7 @@ func TestBoundEntityNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -174,7 +174,7 @@ func TestBoundEntityNonMatchOnValuePositionJoin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -246,7 +246,7 @@ func TestBoundAttributeNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{

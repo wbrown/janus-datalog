@@ -73,7 +73,7 @@ func TestOHLCQueryBug(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 			popts := mode.plannerOptions()
 			exec := executor.NewExecutorWithOptions(matcher, db, popts)
 

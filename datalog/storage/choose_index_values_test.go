@@ -47,7 +47,7 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 				t.Fatalf("Failed to commit: %v", err)
 			}
 
-			matcher := db.Matcher().(*BadgerMatcher)
+			matcher := db.Matcher().(*PatternMatcher)
 
 			t.Run("AVET scan range includes value prefix", func(t *testing.T) {
 				attr := datalog.NewKeyword(":task/scenario")
@@ -203,7 +203,7 @@ func TestChooseIndexForValuesVAET(t *testing.T) {
 				t.Fatalf("Failed to commit: %v", err)
 			}
 
-			matcher := db.Matcher().(*BadgerMatcher)
+			matcher := db.Matcher().(*PatternMatcher)
 
 			t.Run("VAET scan range includes value prefix", func(t *testing.T) {
 				attr := datalog.NewKeyword(":child/parent")
@@ -287,7 +287,7 @@ func TestChooseIndexForValuesIdentity(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	attr := datalog.NewKeyword(":task/scenario")
 
 	t.Run("Identity value", func(t *testing.T) {
@@ -331,7 +331,7 @@ func TestChooseIndexForValuesEAVT(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 
 	t.Run("EAVT with entity bound", func(t *testing.T) {
 		_, start, end := matcher.chooseIndexForValues(EAVT, entity, nil, nil, 0)
@@ -391,7 +391,7 @@ func TestChooseIndexForValuesAEVT(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 
 	t.Run("AEVT with attribute bound", func(t *testing.T) {
 		attr := datalog.NewKeyword(":entity/name")
@@ -464,7 +464,7 @@ func TestChooseIndexForValuesAETV(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 
 	t.Run("AETV with attribute bound only", func(t *testing.T) {
 		// Scan AETV for :person/name - should get exactly 3 datoms

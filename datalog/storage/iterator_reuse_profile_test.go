@@ -67,7 +67,7 @@ func BenchmarkIteratorReuse(b *testing.B) {
 	// Run the benchmark
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		matcher := NewBadgerMatcher(store)
+		matcher := NewPatternMatcher(store)
 		result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 		if err != nil {
 			b.Fatal(err)
@@ -135,7 +135,7 @@ func BenchmarkNoIteratorReuse(b *testing.B) {
 				},
 			}
 
-			matcher := NewBadgerMatcher(store)
+			matcher := NewPatternMatcher(store)
 			result, err := matcher.Match(query.PatternQuery(pattern), nil)
 			if err != nil {
 				b.Fatal(err)

@@ -54,7 +54,7 @@ func TestParallelSubqueryWithBadgerDB(t *testing.T) {
 	}
 
 	// Create matcher from database
-	matcher := storage.NewBadgerMatcher(db.Store())
+	matcher := storage.NewPatternMatcher(db.Store())
 	ctx := executor.NewContext(nil)
 
 	// Query to test

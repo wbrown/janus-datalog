@@ -74,7 +74,7 @@ func BenchmarkBatchScanning(b *testing.B) {
 
 	// Benchmark regular iterator reuse (force by temporarily lowering threshold)
 	b.Run("RegularIteratorReuse", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -107,7 +107,7 @@ func BenchmarkBatchScanning(b *testing.B) {
 
 	// Benchmark batch scanning (should use it automatically for 2,500 bindings)
 	b.Run("BatchScanning", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -136,7 +136,7 @@ func BenchmarkBatchScanning(b *testing.B) {
 
 	// Also test without constraints to see the overhead
 	b.Run("NoConstraints", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -195,7 +195,7 @@ func BenchmarkBatchScanScaling(b *testing.B) {
 		}
 
 		b.Run(fmt.Sprintf("Size-%d", size), func(b *testing.B) {
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {

@@ -100,7 +100,7 @@ func TestPredicatePushdownIntegration(t *testing.T) {
 
 	// Test 1: Without predicate pushdown (baseline)
 	t.Run("WithoutPredicatePushdown", func(t *testing.T) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 
 		// Match pattern without constraints
 		rel, err := matcher.Match(query.PatternQuery(pattern), nil)
@@ -123,7 +123,7 @@ func TestPredicatePushdownIntegration(t *testing.T) {
 
 	// Test 2: With predicate pushdown for day=20
 	t.Run("WithPredicatePushdown", func(t *testing.T) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 
 		// Create a second pattern for time
 		timePattern := &query.DataPattern{

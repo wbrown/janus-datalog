@@ -55,7 +55,7 @@ func TestAEVTMatcherBug(t *testing.T) {
 		events = append(events, event)
 	}
 	// Create matcher with annotation tracking using decorator pattern
-	baseMatcher := NewBadgerMatcher(db.Store())
+	baseMatcher := NewPatternMatcher(db.Store())
 	matcher := executor.WrapMatcher(baseMatcher, handler).(executor.PatternMatcher)
 
 	// Create pattern: [?e :person/age ?age]

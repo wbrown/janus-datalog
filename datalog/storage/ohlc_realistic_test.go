@@ -86,7 +86,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create executor
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 			exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
 				EnableAlgebraOptimizer: mode.algebra,
 			})

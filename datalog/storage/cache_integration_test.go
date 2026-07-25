@@ -45,7 +45,7 @@ func TestQueryPathUsesCache(t *testing.T) {
 
 	// Get matcher from database - this should have cache set
 	matcher := db.Matcher()
-	bm, ok := matcher.(*BadgerMatcher)
+	bm, ok := matcher.(*PatternMatcher)
 	require.True(t, ok, "matcher should be a *BadgerMatcher")
 	require.NotNil(t, bm.cache, "matcher should have cache set")
 
@@ -97,7 +97,7 @@ func TestPullAPIUsesCache(t *testing.T) {
 
 	// Get matcher from database
 	matcher := db.Matcher()
-	bm, ok := matcher.(*BadgerMatcher)
+	bm, ok := matcher.(*PatternMatcher)
 	require.True(t, ok)
 
 	// Lookup name (cardinality-one)
@@ -141,7 +141,7 @@ func TestCacheInvalidatedOnCommit(t *testing.T) {
 
 	// Get matcher and populate cache
 	matcher := db.Matcher()
-	bm := matcher.(*BadgerMatcher)
+	bm := matcher.(*PatternMatcher)
 	val, found := requireAttributeLookup(t, bm, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Alice", val)
@@ -155,7 +155,7 @@ func TestCacheInvalidatedOnCommit(t *testing.T) {
 
 	// New matcher should see the updated value
 	matcher2 := db.Matcher()
-	bm2 := matcher2.(*BadgerMatcher)
+	bm2 := matcher2.(*PatternMatcher)
 	val2, found := requireAttributeLookup(t, bm2, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Bob", val2, "cache should reflect updated value after commit")
@@ -183,8 +183,8 @@ func TestMultipleMatchersShareCache(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get two matchers
-	matcher1 := db.Matcher().(*BadgerMatcher)
-	matcher2 := db.Matcher().(*BadgerMatcher)
+	matcher1 := db.Matcher().(*PatternMatcher)
+	matcher2 := db.Matcher().(*PatternMatcher)
 
 	// Both should have the same cache
 	assert.Same(t, db.Cache(), matcher1.cache, "matcher1 should share database cache")
@@ -230,13 +230,13 @@ func TestAsOfDoesNotUseCache(t *testing.T) {
 	require.NoError(t, err)
 
 	// Current value should be "Bob"
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	val, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Bob", val)
 
 	// As-of tx1 should still return "Alice" (bypassing cache)
-	asOfMatcher := db.AsOf(tx1ID).Matcher().(*BadgerMatcher)
+	asOfMatcher := db.AsOf(tx1ID).Matcher().(*PatternMatcher)
 	asOfVal, found := requireAttributeLookup(t, asOfMatcher, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Alice", asOfVal, "as-of query should bypass cache and return historical value")
@@ -265,7 +265,7 @@ func TestVectorCacheIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get matcher from database
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 
 	// Lookup vector via LookupAttribute
 	skills, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":character/skills"))
@@ -303,7 +303,7 @@ func TestCacheResolverInterface(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get matcher which implements CacheResolver
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 
 	// Test that matcher can be used as a CacheResolver
 	eBytes := Entity(e.Hash())
@@ -370,7 +370,7 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 			key := CacheKey{E: eBytes, A: nameAttr}
 
 			// The cache should now have an entry from the query execution
-			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher), nil)
+			entry := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil)
 			require.NotNil(t, entry, "cache should be populated after query execution")
 			assert.Equal(t, "Alice", entry.OneValue())
 		})
@@ -430,7 +430,7 @@ func TestJoinQueryUsesCache(t *testing.T) {
 			copy(cityAttr[:], ":person/city")
 			key := CacheKey{E: e1Bytes, A: cityAttr}
 
-			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher), nil)
+			entry := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil)
 			require.NotNil(t, entry, "cache should be populated after join query")
 			assert.Equal(t, "NYC", entry.OneValue())
 		})
@@ -486,7 +486,7 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 			copy(tagsAttr[:], ":person/tags")
 			key := CacheKey{E: eBytes, A: tagsAttr}
 
-			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher), nil)
+			entry := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil)
 			require.NotNil(t, entry, "cache should be populated after cardinality-many query")
 			_, hasDeveloper := entry.ManySet()["developer"]
 			_, hasGolang := entry.ManySet()["golang"]
@@ -518,7 +518,7 @@ func TestCacheConcurrency(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get matcher (implements CacheResolver)
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	cache := db.Cache()
 
 	eBytes := Entity(e.Hash())

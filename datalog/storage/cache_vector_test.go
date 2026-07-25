@@ -386,7 +386,7 @@ func TestVectorIndexContainsRealElementIDs(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get the cache entry directly via the resolver interface
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	var eBytes Entity
@@ -453,7 +453,7 @@ func TestVectorIndexUsableForTombstone(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get the ElementID for "archery" (position 1) via cache
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	var eBytes Entity
@@ -483,7 +483,7 @@ func TestVectorIndexUsableForTombstone(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify "archery" is now gone
-	matcher2 := NewBadgerMatcher(db.store)
+	matcher2 := NewPatternMatcher(db.store)
 	matcher2.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher2, e, a)
 	require.True(t, found)

@@ -53,7 +53,7 @@ func TestCommitWritesTxInstantOnSuccess(t *testing.T) {
 	// ElementID, which is what Commit() returns.
 	txEntity := datalog.NewIdentity(fmt.Sprintf("tx:%d", txID.Lamport))
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: txEntity},

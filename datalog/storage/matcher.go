@@ -11,8 +11,8 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// BadgerMatcher implements executor.PatternMatcher over a storage Store.
-type BadgerMatcher struct {
+// PatternMatcher implements executor.PatternMatcher over a storage Store.
+type PatternMatcher struct {
 	store Store
 	// reader carries every storage read the matcher performs. It defaults
 	// to the store itself (each read opens its own storage transaction);
@@ -51,21 +51,21 @@ func encodeValueForSearch(v interface{}, encoder *BinaryKeyEncoder) []byte {
 }
 
 // isHistoryMode returns true when raw (non-CRDT-resolved) datoms are requested.
-func (m *BadgerMatcher) isHistoryMode() bool {
+func (m *PatternMatcher) isHistoryMode() bool {
 	return m.txID != nil && *m.txID == (datalog.ElementID{})
 }
 
 // shouldFilterTx returns true if a datom should be skipped because it's
 // from after the as-of target. Returns false in latest mode (nil) and
 // history mode (&ElementID{}).
-func (m *BadgerMatcher) shouldFilterTx(datomTx datalog.ElementID) bool {
+func (m *PatternMatcher) shouldFilterTx(datomTx datalog.ElementID) bool {
 	return m.txID != nil && *m.txID != (datalog.ElementID{}) && m.txID.Less(datomTx)
 }
 
 // crdtTxID returns the ElementID to pass to CRDTResolvingIterator.
 // In latest mode returns ElementID{} (no filter). In as-of mode returns the target.
 // Must NOT be called in history mode (caller should check isHistoryMode first).
-func (m *BadgerMatcher) crdtTxID() datalog.ElementID {
+func (m *PatternMatcher) crdtTxID() datalog.ElementID {
 	if m.txID != nil {
 		return *m.txID
 	}
@@ -77,18 +77,18 @@ func (m *BadgerMatcher) crdtTxID() datalog.ElementID {
 // cached. Latest and concrete AsOf modes both return an (E, A) key; they live
 // in separate Cache instances (the Database's global latest cache vs. the AsOf
 // handle's private cache), so the key never crosses snapshots.
-func (m *BadgerMatcher) cacheKey(e Entity, a Attribute) (CacheKey, bool) {
+func (m *PatternMatcher) cacheKey(e Entity, a Attribute) (CacheKey, bool) {
 	if m.isHistoryMode() {
 		return CacheKey{}, false
 	}
 	return CacheKey{E: e, A: a}, true
 }
 
-// NewBadgerMatcher creates a new pattern matcher for a storage backend.
+// NewPatternMatcher creates a new pattern matcher for a storage backend.
 // The tuple-builder cache initializes lazily on first use; Database-minted
 // matchers arrive with the database's shared cache already set.
-func NewBadgerMatcher(store Store) *BadgerMatcher {
-	return &BadgerMatcher{
+func NewPatternMatcher(store Store) *PatternMatcher {
+	return &PatternMatcher{
 		store:   store,
 		reader:  store,
 		encoder: store.Encoder(),
@@ -96,9 +96,9 @@ func NewBadgerMatcher(store Store) *BadgerMatcher {
 	}
 }
 
-// NewBadgerMatcherWithOptions creates a new pattern matcher with specific options
-func NewBadgerMatcherWithOptions(store Store, opts executor.ExecutorOptions) *BadgerMatcher {
-	return &BadgerMatcher{
+// NewPatternMatcherWithOptions creates a new pattern matcher with specific options
+func NewPatternMatcherWithOptions(store Store, opts executor.ExecutorOptions) *PatternMatcher {
+	return &PatternMatcher{
 		store:   store,
 		reader:  store,
 		encoder: store.Encoder(),
@@ -112,7 +112,7 @@ func NewBadgerMatcherWithOptions(store Store, opts executor.ExecutorOptions) *Ba
 // cacheBound), so the shared EA cache can never serve this matcher content
 // newer than its snapshot. The caller owns the session's lifecycle; the
 // matcher only reads through it.
-func (m *BadgerMatcher) AttachReadSession(session ReadSession) {
+func (m *PatternMatcher) AttachReadSession(session ReadSession) {
 	m.reader = session
 	m.sessionBounded = true
 }
@@ -123,7 +123,7 @@ func (m *BadgerMatcher) AttachReadSession(session ReadSession) {
 // maximum is snapshot-constant. A bound that fails to compute degrades to
 // the zero ElementID — no cached entry serves, every lookup resolves
 // through the session — which is safe, never wrong.
-func (m *BadgerMatcher) cacheBound() *datalog.ElementID {
+func (m *PatternMatcher) cacheBound() *datalog.ElementID {
 	if !m.sessionBounded {
 		return nil
 	}
@@ -137,7 +137,7 @@ func (m *BadgerMatcher) cacheBound() *datalog.ElementID {
 
 // AsOf creates a matcher that sees the database as of a specific transaction.
 // Passing a zero ElementID enters history mode (raw datoms, no CRDT resolution).
-func (m *BadgerMatcher) AsOf(txID datalog.ElementID) *BadgerMatcher {
+func (m *PatternMatcher) AsOf(txID datalog.ElementID) *PatternMatcher {
 	// Ensure cache is initialized before sharing it
 	m.builderCacheOnce.Do(func() {
 		if m.builderCache == nil {
@@ -145,7 +145,7 @@ func (m *BadgerMatcher) AsOf(txID datalog.ElementID) *BadgerMatcher {
 		}
 	})
 
-	return &BadgerMatcher{
+	return &PatternMatcher{
 		store:          m.store,
 		reader:         m.reader,
 		sessionBounded: m.sessionBounded,
@@ -161,14 +161,14 @@ func (m *BadgerMatcher) AsOf(txID datalog.ElementID) *BadgerMatcher {
 
 // History creates a matcher that returns raw datoms without CRDT resolution.
 // All historical versions are visible, including retracted values.
-func (m *BadgerMatcher) History() *BadgerMatcher {
+func (m *PatternMatcher) History() *PatternMatcher {
 	return m.AsOf(datalog.ElementID{})
 }
 
 // SetHandler configures the handler for detailed storage events.
 // This is called by WrapMatcher during construction.
 // Also updates options.Collector so relations inherit the collector for join annotations.
-func (m *BadgerMatcher) SetHandler(handler annotations.Handler) {
+func (m *PatternMatcher) SetHandler(handler annotations.Handler) {
 	m.handler = handler
 	if handler != nil {
 		m.options.Collector = annotations.NewCollector(handler)
@@ -178,14 +178,14 @@ func (m *BadgerMatcher) SetHandler(handler annotations.Handler) {
 // SetSchema sets the schema for cardinality-aware index selection.
 // When schema is set, the matcher uses EATV for cardinality-one attributes
 // and EAVT for cardinality-many attributes (for add-wins resolution).
-func (m *BadgerMatcher) SetSchema(s schema.SchemaProvider) {
+func (m *PatternMatcher) SetSchema(s schema.SchemaProvider) {
 	m.schema = s
 }
 
 // SetCache sets the CRDT resolution cache for O(1) access to resolved views.
 // When cache is set, LookupAttribute() and related methods check the cache
 // before scanning storage, providing O(1) access for cache hits.
-func (m *BadgerMatcher) SetCache(c *Cache) {
+func (m *PatternMatcher) SetCache(c *Cache) {
 	m.cache = c
 }
 
@@ -265,7 +265,7 @@ func (c *tupleBuilderCache) getOrStore(key tupleBuilderKey, builder *query.Inter
 
 // getTupleBuilder returns the cached tuple builder for the pattern's
 // structural identity, creating it on first use.
-func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, symbols []query.Symbol) *query.InternedTupleBuilder {
+func (m *PatternMatcher) getTupleBuilder(pattern *query.DataPattern, symbols []query.Symbol) *query.InternedTupleBuilder {
 	// Standalone matchers initialize their cache lazily here; Database-minted
 	// matchers arrive with the database's shared cache already set.
 	m.builderCacheOnce.Do(func() {
@@ -283,14 +283,14 @@ func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, symbols []qu
 
 // ForceJoinStrategy overrides the join strategy selection for testing
 // Pass nil to restore default behavior
-func (m *BadgerMatcher) ForceJoinStrategy(strategy *JoinStrategy) {
+func (m *PatternMatcher) ForceJoinStrategy(strategy *JoinStrategy) {
 	m.forceJoinStrategy = strategy
 }
 
 // Deprecated functions removed - use Match() which returns executor.Relation
 
 // bindPattern creates a new pattern with variables replaced by tuple values
-func (m *BadgerMatcher) bindPattern(pattern *query.DataPattern, tuple executor.Tuple, rel executor.Relation) *query.DataPattern {
+func (m *PatternMatcher) bindPattern(pattern *query.DataPattern, tuple executor.Tuple, rel executor.Relation) *query.DataPattern {
 	// Get symbol positions in the relation
 	symbols := rel.Symbols()
 	symbolIndex := make(map[query.Symbol]int)
@@ -342,7 +342,7 @@ func (m *BadgerMatcher) bindPattern(pattern *query.DataPattern, tuple executor.T
 }
 
 // extractValue extracts the value from a pattern element
-func (m *BadgerMatcher) extractValue(elem query.PatternElement) interface{} {
+func (m *PatternMatcher) extractValue(elem query.PatternElement) interface{} {
 	switch e := elem.(type) {
 	case query.Variable:
 		// Variables match anything
@@ -365,7 +365,7 @@ func (m *BadgerMatcher) extractValue(elem query.PatternElement) interface{} {
 }
 
 // chooseIndex selects the best index based on bound values
-func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte, []byte) {
+func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte, []byte) {
 	// Priority order for index selection:
 	// 1. EAVT - if E is bound
 	// 2. AEVT - if A is bound but not E
@@ -568,7 +568,7 @@ func filterTypedPositionBindings(pattern *query.DataPattern, symbols []query.Sym
 }
 
 // matchesDatom checks if a datom matches the pattern constraints
-func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface{}) bool {
+func (m *PatternMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface{}) bool {
 	// Note: Identity is always a pointer type now, no dereferencing needed
 	// Note: Do NOT dereference *Keyword - they must stay as interned pointers
 	if ptr, ok := tx.(*uint64); ok {
@@ -645,7 +645,7 @@ func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface
 }
 
 // valuesEqual checks if two values are equal
-func (m *BadgerMatcher) valuesEqual(v1, v2 interface{}) bool {
+func (m *PatternMatcher) valuesEqual(v1, v2 interface{}) bool {
 	// Use the global ValuesEqual which handles pointers
 	return datalog.ValuesEqual(v1, v2)
 }
@@ -687,7 +687,7 @@ func indexName(idx IndexType) string {
 // history mode — the two conditions under which LookupAttribute returns the
 // single value a matched pattern would. Returns false for schemaless,
 // CardinalityMany/Vector, or history-mode matchers (raw multi-version reads).
-func (m *BadgerMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
+func (m *PatternMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
 	if m.schema == nil || m.txID != nil {
 		return false
 	}
@@ -695,7 +695,7 @@ func (m *BadgerMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
 	return def != nil && def.Cardinality == schema.CardinalityOne
 }
 
-func (m *BadgerMatcher) LookupAttribute(
+func (m *PatternMatcher) LookupAttribute(
 	entity datalog.Identity,
 	attr datalog.Keyword,
 ) (value interface{}, found bool, lookupErr error) {
@@ -879,7 +879,7 @@ func typedVector(elements []any, vt schema.ValueType) any {
 // TypeDefault converts a default value to match the attribute's schema type.
 // For vector attributes with TypeString, converts []interface{} to []string, etc.
 // This implements query.TypedDefaulter.
-func (m *BadgerMatcher) TypeDefault(attr datalog.Keyword, defaultVal interface{}) interface{} {
+func (m *PatternMatcher) TypeDefault(attr datalog.Keyword, defaultVal interface{}) interface{} {
 	if m.schema == nil {
 		return defaultVal
 	}
@@ -897,7 +897,7 @@ func (m *BadgerMatcher) TypeDefault(attr datalog.Keyword, defaultVal interface{}
 
 // LookupAllAttributes retrieves all values of a cardinality-many attribute for an entity.
 // Returns all matching values, or empty slice if none found.
-func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error) {
+func (m *PatternMatcher) LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error) {
 	if entity == nil {
 		return nil, nil
 	}
@@ -955,7 +955,7 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 //   - OpNone → LWW (cardinality-one): return latest value by ElementID
 //   - OpCRDTAdd/OpCRDTRemove → add-wins set (cardinality-many): resolve membership
 //   - OpRGAInsert/OpRGATombstone → RGA vector (cardinality-vector): reconstruct ordered list
-func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]interface{}, error) {
+func (m *PatternMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]interface{}, error) {
 	encoder := m.encoder
 
 	// Peek at first datom to determine op type

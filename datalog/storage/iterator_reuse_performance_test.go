@@ -74,7 +74,7 @@ func TestIteratorReusePerformance(t *testing.T) {
 				opts := executor.ExecutorOptions{
 					IndexNestedLoopThreshold: 999999,
 				}
-				matcher := NewBadgerMatcherWithOptions(store, opts)
+				matcher := NewPatternMatcherWithOptions(store, opts)
 
 				// Hack: Set a flag to force no reuse
 				// For now, we'll measure with current settings
@@ -108,7 +108,7 @@ func TestIteratorReusePerformance(t *testing.T) {
 				opts := executor.ExecutorOptions{
 					IndexNestedLoopThreshold: 999999,
 				}
-				matcher := NewBadgerMatcherWithOptions(store, opts)
+				matcher := NewPatternMatcherWithOptions(store, opts)
 
 				start := time.Now()
 				result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})

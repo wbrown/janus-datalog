@@ -1118,7 +1118,7 @@ func TestLookupAttributeDirectly(t *testing.T) {
 	}
 
 	matcher := db.Matcher()
-	badgerMatcher, ok := matcher.(*BadgerMatcher)
+	badgerMatcher, ok := matcher.(*PatternMatcher)
 	if !ok {
 		t.Fatalf("Expected BadgerMatcher, got %T", matcher)
 	}

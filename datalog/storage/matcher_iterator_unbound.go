@@ -7,7 +7,7 @@ import (
 
 // unboundIterator streams results for patterns without bindings
 type unboundIterator struct {
-	matcher     *BadgerMatcher
+	matcher     *PatternMatcher
 	index       IndexType
 	start, end  []byte
 	pattern     *query.DataPattern

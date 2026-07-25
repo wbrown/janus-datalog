@@ -456,10 +456,10 @@ func (f *OutputFormatter) Format(event Event) string {
 		return fmt.Sprintf("%s %s", latency, patternStr)
 
 	case "badger/match-with-bindings":
-		// Debug output to see if BadgerMatcher is being used
+		// Debug output to see if the store-backed PatternMatcher is being used
 		pattern := event.Data["pattern"].(string)
 		bindings := event.Data["bindings"].(int)
-		return fmt.Sprintf("%s BadgerMatcher.MatchWithRelation([%s], %d bindings)",
+		return fmt.Sprintf("%s PatternMatcher.MatchWithRelation([%s], %d bindings)",
 			latency, pattern, bindings)
 
 	case "expression/evaluate":

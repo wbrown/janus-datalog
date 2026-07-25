@@ -210,7 +210,7 @@ func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 			}
 
 			// Test direct Match (via db.Matcher())
-			matcher := NewBadgerMatcher(db.Store())
+			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 
 			pattern := &query.DataPattern{
@@ -348,7 +348,7 @@ func testAllQueryMethodsCRDTResolution(t *testing.T, mode optimizerMode) {
 
 	// 1. Direct Matcher.Match (control - known working)
 	t.Run("DirectMatch", func(t *testing.T) {
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		matcher.SetSchema(s)
 
 		pattern := &query.DataPattern{

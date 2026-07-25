@@ -104,7 +104,7 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 
 	for _, tc := range testCases {
 		b.Run(tc.name, func(b *testing.B) {
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 
 			// Setup bindings if provided
 			var bindings executor.Relations
@@ -151,7 +151,7 @@ func BenchmarkPrebuiltDatabase_FullQuery(b *testing.B) {
 	// Simulate a realistic OHLC aggregation query
 	// This would be executed by the query engine, but we'll benchmark the storage layer
 	b.Run("DailyOHLC_30Days", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 
 		// Pattern: [?bar :price/symbol ?symbol]
 		symbolPattern := &query.DataPattern{

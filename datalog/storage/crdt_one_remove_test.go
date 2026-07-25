@@ -363,7 +363,7 @@ func TestCardinalityOneRemove_VBoundQuery(t *testing.T) {
 	require.NoError(t, err)
 
 	// V-bound query: find entities where :person/name = "Alice"
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 
 	pattern := &query.DataPattern{
@@ -634,7 +634,7 @@ func TestCardinalityOneRemove_Unbound_SetThenRemove(t *testing.T) {
 // countVBoundMatches counts V-bound pattern matches for a given attribute and value
 func vBoundMatchCount(t *testing.T, db *Database, a datalog.Keyword, v interface{}) int {
 	t.Helper()
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 
 	pattern := &query.DataPattern{

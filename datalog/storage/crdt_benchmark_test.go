@@ -152,7 +152,7 @@ func BenchmarkCRDTRead(b *testing.B) {
 			tx.Commit()
 		}
 
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		matcher.SetSchema(s)
 
 		b.ResetTimer()
@@ -181,7 +181,7 @@ func BenchmarkCRDTRead(b *testing.B) {
 		}
 		tx.Commit()
 
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		matcher.SetSchema(s)
 
 		b.ResetTimer()
@@ -210,7 +210,7 @@ func BenchmarkCRDTRead(b *testing.B) {
 		}
 		tx.Commit()
 
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		matcher.SetSchema(s)
 
 		b.ResetTimer()
@@ -239,7 +239,7 @@ func BenchmarkCRDTRead(b *testing.B) {
 		}
 		tx.Commit()
 
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		matcher.SetSchema(s)
 
 		b.ResetTimer()
@@ -268,7 +268,7 @@ func BenchmarkCRDTRead(b *testing.B) {
 		}
 		tx.Commit()
 
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		matcher.SetSchema(s)
 
 		b.ResetTimer()
@@ -302,7 +302,7 @@ func BenchmarkCRDTResolution(b *testing.B) {
 		}
 		tx.Commit()
 
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		matcher.SetSchema(s)
 
 		b.ResetTimer()
@@ -340,7 +340,7 @@ func BenchmarkCRDTResolution(b *testing.B) {
 		}
 		tx.Commit()
 
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		matcher.SetSchema(s)
 
 		b.ResetTimer()
@@ -372,7 +372,7 @@ func BenchmarkCRDTResolution(b *testing.B) {
 			tx.Commit()
 		}
 
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		matcher.SetSchema(s)
 
 		b.ResetTimer()

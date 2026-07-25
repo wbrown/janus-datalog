@@ -59,7 +59,7 @@ func TestWarmCacheSingleAttribute(t *testing.T) {
 	key2 := CacheKey{E: e2Bytes, A: a}
 
 	// The entries should be populated
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	entry1 := db.Cache().GetOrResolve(key1, matcher, nil)
 	entry2 := db.Cache().GetOrResolve(key2, matcher, nil)
@@ -110,7 +110,7 @@ func TestWarmCacheMultipleAttributes(t *testing.T) {
 	var ageAttr Attribute
 	copy(ageAttr[:], ":person/age")
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	nameEntry := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: nameAttr}, matcher, nil)
@@ -204,7 +204,7 @@ func TestWarmCacheIdempotent(t *testing.T) {
 	var a Attribute
 	copy(a[:], ":person/name")
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	entry := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: a}, matcher, nil)

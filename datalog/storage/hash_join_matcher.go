@@ -37,7 +37,7 @@ func (js JoinStrategy) String() string {
 }
 
 // chooseJoinStrategy selects the optimal join strategy based on selectivity
-func (m *BadgerMatcher) chooseJoinStrategy(
+func (m *PatternMatcher) chooseJoinStrategy(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	position int,
@@ -111,7 +111,7 @@ func (m *BadgerMatcher) chooseJoinStrategy(
 }
 
 // estimatePatternCardinality estimates total datoms matching pattern's constant parts
-func (m *BadgerMatcher) estimatePatternCardinality(pattern *query.DataPattern) int {
+func (m *PatternMatcher) estimatePatternCardinality(pattern *query.DataPattern) int {
 	// TODO: Implement proper cardinality estimation using statistics
 	// For now, use simple heuristics based on what's bound
 
@@ -131,7 +131,7 @@ func (m *BadgerMatcher) estimatePatternCardinality(pattern *query.DataPattern) i
 }
 
 // matchWithHashJoin performs a hash join between binding relation and pattern
-func (m *BadgerMatcher) matchWithHashJoin(
+func (m *PatternMatcher) matchWithHashJoin(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
@@ -231,13 +231,13 @@ type scanRange struct {
 }
 
 // calculatePatternScanRange determines the scan range for a pattern
-func (m *BadgerMatcher) calculatePatternScanRange(pattern *query.DataPattern, index IndexType) scanRange {
+func (m *PatternMatcher) calculatePatternScanRange(pattern *query.DataPattern, index IndexType) scanRange {
 	return m.calculatePatternScanRangeWithBinding(pattern, index, -1, nil)
 }
 
 // calculatePatternScanRangeWithBinding determines the scan range for a pattern,
 // optionally using a bound value for a specific position to narrow the range
-func (m *BadgerMatcher) calculatePatternScanRangeWithBinding(
+func (m *PatternMatcher) calculatePatternScanRangeWithBinding(
 	pattern *query.DataPattern,
 	index IndexType,
 	boundPosition int, // -1 means no bound position, 0=E, 1=A, 2=V, 3=T
@@ -289,7 +289,7 @@ func (m *BadgerMatcher) calculatePatternScanRangeWithBinding(
 }
 
 // chooseIndexForValues computes scan range for a specific index
-func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interface{}) (IndexType, []byte, []byte) {
+func (m *PatternMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interface{}) (IndexType, []byte, []byte) {
 	// Use the provided index and compute range based on bound values
 	var startParts, endParts [][]byte
 
@@ -451,7 +451,7 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 // filterTypedPositionBindings) are dropped here: they are typed non-matches,
 // and dropping them at construction keeps them away from the probe's
 // full-tuple verification.
-func (m *BadgerMatcher) buildHashSet(
+func (m *PatternMatcher) buildHashSet(
 	bindingRel executor.Relation,
 	position int,
 	typed func(executor.Tuple) bool,
@@ -561,7 +561,7 @@ func compileBindingMatchPlan(
 }
 
 func (p bindingMatchPlan) matches(
-	matcher *BadgerMatcher,
+	matcher *PatternMatcher,
 	datom *datalog.Datom,
 	bindingTuple executor.Tuple,
 ) bool {
@@ -577,7 +577,7 @@ func (p bindingMatchPlan) matches(
 }
 
 // matchesWithBindingTuple checks if datom matches pattern with the given binding tuple
-func (m *BadgerMatcher) matchesWithBindingTuple(
+func (m *PatternMatcher) matchesWithBindingTuple(
 	datom *datalog.Datom,
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
@@ -638,7 +638,7 @@ func (m *BadgerMatcher) matchesWithBindingTuple(
 // matchWithMergeJoin performs a merge join between sorted binding relation and sorted scan
 // This is optimal for high selectivity (>50%) with large binding sets (>1000 entities)
 // Complexity: O(n + m) where n = binding size, m = datoms scanned
-func (m *BadgerMatcher) matchWithMergeJoin(
+func (m *PatternMatcher) matchWithMergeJoin(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
@@ -709,7 +709,7 @@ func extractBindingKey(tuple executor.Tuple, position int) interface{} {
 
 // hashJoinIterator performs lazy hash join iteration
 type hashJoinIterator struct {
-	matcher         *BadgerMatcher
+	matcher         *PatternMatcher
 	patternString   string
 	matchPlan       bindingMatchPlan
 	symbols         []query.Symbol
@@ -812,7 +812,7 @@ func (it *hashJoinIterator) Error() error { return it.err }
 
 // mergeJoinIterator performs lazy merge join iteration
 type mergeJoinIterator struct {
-	matcher      *BadgerMatcher
+	matcher      *PatternMatcher
 	pattern      *query.DataPattern
 	bindingRel   executor.Relation
 	symbols      []query.Symbol

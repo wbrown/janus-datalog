@@ -67,7 +67,7 @@ func TestAlgebraMatrix_ComparisonBindingOr(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			opts := storage.DefaultPlannerOptions()
 			opts.EnableAlgebraOptimizer = algebra
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 			exec := executor.NewExecutorWithOptions(matcher, nil, opts)
 			result, err := exec.Execute(q)
 			if err != nil {

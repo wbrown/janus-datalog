@@ -2079,7 +2079,7 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 			               [?goal :entity/name ?name]]`,
 		},
 		// The missing? analogue on a capable matcher is pinned in the storage
-		// package (TestLeadingMissingWithInBoundEntity, BadgerMatcher). Its
+		// package (TestLeadingMissingWithInBoundEntity, PatternMatcher). Its
 		// behavior on THIS lookup-less matcher is pinned separately below —
 		// red — by TestMissingOnLookupLessMatcherFailsLoudly.
 	}

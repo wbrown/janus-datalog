@@ -84,7 +84,7 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 
 	// Benchmark without predicate pushdown
 	b.Run("WithoutPushdown", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -126,7 +126,7 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 
 	// Benchmark with predicate pushdown
 	b.Run("WithPushdown", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 
 		// Create time extraction constraint for day=5
 		constraint := &timeExtractionConstraint{
@@ -169,7 +169,7 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 	// Benchmark the worst case - filtering to 1 day out of 10 (10% selectivity)
 	b.Run("WorstCase-1of10Days", func(b *testing.B) {
 		b.Run("WithoutPushdown", func(b *testing.B) {
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -208,7 +208,7 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 		})
 
 		b.Run("WithPushdown", func(b *testing.B) {
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 			constraint := &timeExtractionConstraint{
 				position:  2,
 				extractFn: "day",
@@ -288,7 +288,7 @@ func BenchmarkPredicatePushdownAllocs(b *testing.B) {
 	}
 
 	b.Run("AllocsWithoutPushdown", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		b.ReportAllocs()
 		b.ResetTimer()
 
@@ -313,7 +313,7 @@ func BenchmarkPredicatePushdownAllocs(b *testing.B) {
 	})
 
 	b.Run("AllocsWithPushdown", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		constraint := &timeExtractionConstraint{
 			position:  2,
 			extractFn: "day",

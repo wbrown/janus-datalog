@@ -83,7 +83,7 @@ func BenchmarkJoinStrategyThreshold(b *testing.B) {
 					EnableSymmetricHashJoin: false,
 					DefaultHashTableSize:    256,
 				}
-				matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 				// Force IndexNestedLoop
 				indexNested := IndexNestedLoop
@@ -118,7 +118,7 @@ func BenchmarkJoinStrategyThreshold(b *testing.B) {
 					EnableSymmetricHashJoin: false,
 					DefaultHashTableSize:    256,
 				}
-				matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 				// Force HashJoinScan
 				hashJoin := HashJoinScan

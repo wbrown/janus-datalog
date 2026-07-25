@@ -36,7 +36,7 @@ type SetResolutionResult struct {
 // NOTE: ReplicaID is NOT used for add-wins comparison. It's only used for
 // LWW (cardinality-one). For add-wins, "concurrent" means same Lamport,
 // and add always wins at concurrent operations regardless of ReplicaID.
-func (m *BadgerMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutionResult, error) {
+func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutionResult, error) {
 	// Build prefix for E+A
 	prefix := make([]byte, 1+20+32) // prefix byte + E + A
 	prefix[0] = byte(EAVT)
@@ -121,12 +121,12 @@ func (s *addWinsState) record(tx datalog.ElementID, op datalog.CRDTOp) {
 // addWinsAccumulator is the single home of add-wins set resolution state:
 // every scan variant feeds it, and finish applies the membership rule.
 type addWinsAccumulator struct {
-	matcher *BadgerMatcher
+	matcher *PatternMatcher
 	result  *SetResolutionResult
 	states  map[string]*addWinsState
 }
 
-func newAddWinsAccumulator(m *BadgerMatcher) *addWinsAccumulator {
+func newAddWinsAccumulator(m *PatternMatcher) *addWinsAccumulator {
 	return &addWinsAccumulator{
 		matcher: m,
 		result:  &SetResolutionResult{Members: make(map[interface{}]interface{})},
@@ -257,7 +257,7 @@ func prefixEnd(prefix []byte) []byte {
 // To find all entries for a specific value, we build prefix:
 // [EAVT][E][A][type][value]
 // This matches all ops (Add/Remove) for that value.
-func (m *BadgerMatcher) checkSetMembership(eBytes, aBytes []byte, v interface{}) (bool, error) {
+func (m *PatternMatcher) checkSetMembership(eBytes, aBytes []byte, v interface{}) (bool, error) {
 	// Encode the user value to get its type and bytes
 	vType := byte(datalog.Type(v))
 	vData := datalog.ValueBytes(v)
