@@ -41,12 +41,21 @@ func TestMemoryStoreTxRetractThenAssertPreservesDatom(t *testing.T) {
 	require.NoError(t, stx.Commit())
 
 	require.Equal(t, 1, countStoreIndex(t, store, EAVT))
-	got, err := store.Get(EAVT, store.Encoder().EncodeKey(EAVT, &datalog.Datom{
-		E: entity, A: attr, V: "X", Tx: tx2,
-	}))
+
+	// Scanning the (E, A) run asserts more than a point lookup would: not that
+	// a tx2 datom exists, but that the one surviving datom is the tx2 one.
+	sd := ToStorageDatom(datalog.Datom{E: entity, A: attr})
+	start, end := store.Encoder().EncodePrefixRange(EAVT, sd.E[:], sd.A[:])
+	iter, err := store.Scan(EAVT, start, end)
 	require.NoError(t, err)
-	require.NotNil(t, got)
+	defer iter.Close()
+
+	require.True(t, iter.Next(), "the surviving datom must be present")
+	got, err := iter.Datom()
+	require.NoError(t, err)
 	require.Equal(t, tx2, got.Tx)
+	require.False(t, iter.Next(), "exactly one datom must survive")
+	require.NoError(t, iter.Error())
 }
 
 func TestMemoryStoreRetractRemovesMatchingDatom(t *testing.T) {

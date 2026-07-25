@@ -76,24 +76,6 @@ func (s *memoryReadSession) scan(index IndexType, start, end []byte) (Iterator, 
 	}, nil
 }
 
-func (s *memoryReadSession) Get(index IndexType, key []byte) (*datalog.Datom, error) {
-	s.mu.Lock()
-	keysTree := s.keys
-	closed := s.closed
-	s.mu.Unlock()
-	if closed || keysTree == nil {
-		return nil, errReadSessionClosed
-	}
-	if _, ok := keysTree.Get(string(key)); !ok {
-		return nil, nil
-	}
-	datom, err := decodeDatomFromKey(index, key, s.store.encoder, memoryBlobReader{store: s.store})
-	if err != nil {
-		return nil, err
-	}
-	return &datom, nil
-}
-
 func (s *memoryReadSession) MaxElementID() (datalog.ElementID, error) {
 	return maxElementIDByScan(s)
 }

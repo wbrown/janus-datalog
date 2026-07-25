@@ -16,8 +16,6 @@ type StoreReader interface {
 	Encoder() *BinaryKeyEncoder
 	Scan(index IndexType, start, end []byte) (Iterator, error)
 	ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error)
-	// Get retrieves a single datom by full index key. Missing keys return (nil, nil).
-	Get(index IndexType, key []byte) (*datalog.Datom, error)
 	MaxElementID() (datalog.ElementID, error)
 	MaxElementIDForAttribute(a []byte) (datalog.ElementID, error)
 	MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error)

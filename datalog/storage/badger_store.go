@@ -260,33 +260,6 @@ func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error)
 	return NewKeyOnlyIterator(s, index, start, end)
 }
 
-// Get retrieves a single datom by key
-// Values are not stored - all datom information is decoded from the key
-func (s *BadgerStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
-	var result *datalog.Datom
-
-	err := s.db.View(func(txn *badger.Txn) error {
-		_, err := txn.Get(key)
-		if err != nil {
-			return err
-		}
-
-		// Decode datom from key - values are not stored
-		datom, err := DatomFromKey(index, key, s.encoder, badgerTxnBlobReader{txn: txn})
-		if err != nil {
-			return err
-		}
-		result = &datom
-		return nil
-	})
-
-	if err == badger.ErrKeyNotFound {
-		return nil, nil
-	}
-
-	return result, err
-}
-
 // MaxElementID returns the highest ElementID in the store by scanning TAEV index.
 // With bitwise NOT encoding for Tx, forward scan gives highest Tx first (O(1)).
 // Returns zero ElementID if store is empty.

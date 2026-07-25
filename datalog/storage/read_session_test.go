@@ -24,6 +24,25 @@ func countSessionIndex(t *testing.T, r StoreReader, index IndexType) int {
 	return count
 }
 
+// countSessionEntity counts the datoms a reader observes for one entity, by
+// scanning that entity's EAVT run. Membership of a specific datom is the
+// degenerate case of the same scan with every component bound.
+func countSessionEntity(t *testing.T, r StoreReader, encoder *BinaryKeyEncoder, e datalog.Identity) int {
+	t.Helper()
+	var eBytes Entity
+	copy(eBytes[:], e.Bytes())
+	start, end := encoder.EncodePrefixRange(EAVT, eBytes[:])
+	iter, err := r.ScanKeysOnly(EAVT, start, end)
+	require.NoError(t, err)
+	defer iter.Close()
+	count := 0
+	for iter.Next() {
+		count++
+	}
+	require.NoError(t, iter.Error())
+	return count
+}
+
 func TestReadSessionSnapshotIsolation(t *testing.T) {
 	for _, testCase := range storeContractCases() {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -64,18 +83,14 @@ func TestReadSessionSnapshotIsolation(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, datalog.ElementID{Lamport: 1, ReplicaID: 1}, attrMax)
 
-			// Get through the session: pre-snapshot key found, post-snapshot
-			// key absent.
-			preDatom := datalog.Datom{E: entity, A: attr, V: int64(1), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}
-			preKey := store.Encoder().EncodeKey(EAVT, &preDatom)
-			got, err := session.Get(EAVT, preKey)
-			require.NoError(t, err)
-			require.NotNil(t, got, "pre-snapshot datom must be visible")
-			postDatom := datalog.Datom{E: later, A: attr, V: int64(2), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}}
-			postKey := store.Encoder().EncodeKey(EAVT, &postDatom)
-			got, err = session.Get(EAVT, postKey)
-			require.NoError(t, err)
-			assert.Nil(t, got, "post-snapshot datom must be invisible")
+			// Per entity through the session: the pre-snapshot entity is
+			// present, the post-snapshot one is not. Scanning each entity's
+			// run asks the question directly, without the test having to know
+			// a Tx in order to name a key.
+			assert.Equal(t, 1, countSessionEntity(t, session, store.Encoder(), entity),
+				"pre-snapshot entity must be visible")
+			assert.Equal(t, 0, countSessionEntity(t, session, store.Encoder(), later),
+				"post-snapshot entity must be invisible")
 		})
 	}
 }
@@ -107,8 +122,8 @@ func TestReadSessionCloseSemantics(t *testing.T) {
 			require.NoError(t, session.Close())
 			_, err = session.Scan(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
 			require.Error(t, err, "scan on a closed session must error")
-			_, err = session.Get(EAVT, []byte{0})
-			require.Error(t, err, "get on a closed session must error")
+			_, err = session.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			require.Error(t, err, "keys-only scan on a closed session must error")
 		})
 	}
 }

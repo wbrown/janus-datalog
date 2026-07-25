@@ -36,12 +36,18 @@ type Store interface {
 	DeleteDatoms(datoms []datalog.Datom) (int, error)
 
 	// Read operations
+	//
+	// There is no point lookup. A complete index key names one (E, A, V, Tx),
+	// but Tx is what CRDT resolution determines — first entry of the ordered
+	// group wins — so a reader that already knew it would have nothing left to
+	// ask. Every read is a prefix scan; a scan whose range binds all four
+	// components is the point lookup, and returns at most one datom because Tx
+	// is unique per operation.
+	//
+	// CountKeys is likewise not on Store — it remains *BadgerStore-only
+	// (debug/test); see docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md.
 	Scan(index IndexType, start, end []byte) (Iterator, error)
 	ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error)
-	// Get retrieves a single datom by full index key. Missing keys return (nil, nil).
-	// CountKeys is not on Store — it remains *BadgerStore-only (debug/test);
-	// see docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md.
-	Get(index IndexType, key []byte) (*datalog.Datom, error)
 	DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error)
 	MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error)
 	GetMetadataUint64(key string) (uint64, bool, error)

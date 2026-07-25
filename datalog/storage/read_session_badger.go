@@ -82,26 +82,6 @@ func (s *badgerReadSession) releaseIterator(it *badger.Iterator) {
 	delete(s.openIters, it)
 }
 
-func (s *badgerReadSession) Get(index IndexType, key []byte) (*datalog.Datom, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, errReadSessionClosed
-	}
-	_, err := s.txn.Get(key)
-	if err == badger.ErrKeyNotFound {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	datom, err := DatomFromKey(index, key, s.store.encoder, badgerTxnBlobReader{txn: s.txn})
-	if err != nil {
-		return nil, err
-	}
-	return &datom, nil
-}
-
 func (s *badgerReadSession) MaxElementID() (datalog.ElementID, error) {
 	return maxElementIDByScan(s)
 }

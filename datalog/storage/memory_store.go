@@ -107,23 +107,6 @@ func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	return len(datoms), nil
 }
 
-func (s *MemoryStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
-		return nil, errMemoryStoreClosed
-	}
-	if _, ok := s.entries[string(key)]; !ok {
-		return nil, nil
-	}
-	// Already under RLock; blob reads must not re-enter the mutex.
-	datom, err := decodeDatomFromKey(index, key, s.encoder, memoryEntriesBlobReader{entries: s.entries})
-	if err != nil {
-		return nil, err
-	}
-	return &datom, nil
-}
-
 func (s *MemoryStore) Scan(index IndexType, start, end []byte) (Iterator, error) {
 	return s.scan(index, start, end)
 }
