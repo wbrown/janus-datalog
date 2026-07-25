@@ -44,7 +44,7 @@ func txFromDescending(encoded []byte) [16]byte {
 //	EATV: [prefix][E][A][Tx↓][type][value][AfterRef?][Op]  - first entry is current (E-primary CRDT)
 //	AEVT: [prefix][A][E][type][value][Tx↓][AfterRef?][Op]  - by attribute (V before Tx)
 //	AETV: [prefix][A][E][Tx↓][type][value][AfterRef?][Op]  - first entry is current (A-primary CRDT)
-//	ATEV: [prefix][A][Tx↓][E][type][value][AfterRef?][Op]  - first entry is global max Tx for A (O(1) freshness + AsOf-by-attribute)
+//	ATEV: [prefix][A][Tx↓][E][type][value][AfterRef?][Op]  - Tx↓ ahead of E: AsOf-by-attribute seeks straight to the transaction
 //	AVET: [prefix][A][type][value][E][Tx↓][AfterRef?][Op]  - value lookup
 //	VAET: [prefix][type][value][A][E][Tx↓][AfterRef?][Op]  - reverse refs
 //	TAEV: [prefix][Tx↓][A][E][type][value][AfterRef?][Op]  - transaction log

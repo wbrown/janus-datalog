@@ -17,7 +17,7 @@ const (
 	EATV                  // Entity-Attribute-Tx-Value (for cardinality-one: first = current)
 	AEVT                  // Attribute-Entity-Value-Tx
 	AETV                  // Attribute-Entity-Tx-Value (for A-primary CRDT: first = current)
-	ATEV                  // Attribute-Tx-Entity-Value (for O(1) attribute high-water mark + AsOf-by-attribute)
+	ATEV                  // Attribute-Tx-Entity-Value (for AsOf-by-attribute: A-bound + Tx-bound scans seek straight to the transaction)
 	AVET                  // Attribute-Value-Entity-Tx
 	VAET                  // Value-Attribute-Entity-Tx
 	TAEV                  // Tx-Attribute-Entity-Value (for clock recovery, audit log)
@@ -57,13 +57,6 @@ type Store interface {
 	// Used to restore the Lamport clock on database open.
 	// Returns zero ElementID if store is empty.
 	MaxElementID() (datalog.ElementID, error)
-
-	// MaxElementIDForAttribute returns the highest ElementID for any (E, A) with this attribute.
-	// Used for fast cache freshness checks on A-bound queries.
-	// Performs an O(1) forward seek on the ATEV index — first entry under [A]
-	// is the global max-Tx datom because ATEV orders A → Tx↓ → E → V.
-	// Returns zero ElementID if no data exists for this attribute.
-	MaxElementIDForAttribute(a []byte) (datalog.ElementID, error)
 
 	// NewReadSession opens a consistent read view at the store's current
 	// state: every read through the session observes one snapshot,

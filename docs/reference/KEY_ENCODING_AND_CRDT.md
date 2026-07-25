@@ -268,7 +268,7 @@ The system maintains eight different index orderings, each optimized for specifi
 | **EAVT** | E→A→V→Tx↓ | Cardinality-Many (add-wins) | E+A bound, cardinality=many |
 | **AETV** | A→E→Tx↓→V | Cardinality-One (LWW), A-primary | A bound, E from input, cardinality=one |
 | **AEVT** | A→E→V→Tx↓ | Attribute scans (no CRDT resolution) | A bound, E unbound, cardinality=many |
-| **ATEV** | A→Tx↓→E→V | O(1) attribute high-water mark; AsOf-by-attribute | Cache freshness gate; A+Tx-bound, V-unbound |
+| **ATEV** | A→Tx↓→E→V | AsOf-by-attribute | A+Tx-bound, V-unbound |
 | **AVET** | A→V→E→Tx↓ | Value lookups | A+V bound |
 | **VAET** | V→A→E→Tx↓ | Reverse reference lookup | V bound (for refs) |
 | **TAEV** | Tx↓→A→E→V | Transaction log / time-travel | Time-based queries |

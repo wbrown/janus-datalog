@@ -86,11 +86,6 @@ type Cache struct {
 	// the rebuild path and nothing on the hit path.
 	handler annotations.Handler
 
-	// Per-attribute version tracking for fast A-bound query freshness checks
-	// When querying [?e :name "Bob"], we can check if ANY :name has changed
-	// without checking every individual (E, :name) pair
-	attrVersions sync.Map // map[Attribute]datalog.ElementID
-
 	// Per-entity attribute tracking - tracks which attributes we've cached per entity
 	// This is NOT source of truth - just tracks what's in cache for difference-based
 	// decisions on whether to do individual lookups vs full entity scan
@@ -302,13 +297,8 @@ func (c *Cache) Invalidate(touched []CacheKey) {
 // again. Pairs with BeginInFlight: that opens the uncached window before the delete, this
 // closes it after.
 func (c *Cache) InvalidateRewind(touched []CacheKey) {
-	seenAttr := make(map[Attribute]struct{}, len(touched))
 	for _, key := range touched {
 		c.slots.Delete(key)
-		if _, ok := seenAttr[key.A]; !ok {
-			seenAttr[key.A] = struct{}{}
-			c.attrVersions.Delete(key.A)
-		}
 	}
 }
 
@@ -324,9 +314,7 @@ func (c *Cache) InvalidateRewind(touched []CacheKey) {
 // approach is simpler and correct.
 //
 // Also removes the per-(E, A) max-version entries for this attribute so
-// the next read recomputes freshness from storage. attrVersions (for
-// whole-attribute freshness) is not touched here — subsequent writes
-// on any E still advance the per-key max.
+// the next read recomputes freshness from storage.
 func (c *Cache) InvalidateAttribute(a Attribute) {
 	c.slots.Range(func(key CacheKey, _ cacheSlot) bool {
 		if key.A == a {
@@ -336,49 +324,10 @@ func (c *Cache) InvalidateAttribute(a Attribute) {
 	})
 }
 
-// IsAttributeFresh checks if the entire attribute is fresh in cache
-// Used for A-bound queries like [?e :name "Bob"] to avoid checking every entity
-//
-// IMPLEMENTATION NOTE: MaxElementIDForAttribute() performs an O(1) forward seek
-// on the ATEV index. ATEV is ordered A → Tx↓ → E → V, so the first entry under
-// prefix [A] is the global max-Tx datom for the attribute in a single seek.
-//
-// EDGE CASE - Initial population after restart:
-// After process restart, attrVersions is empty. The first A-bound query will:
-// 1. Return false from IsAttributeFresh (no cached version)
-// 2. Trigger resolution of all entities for that attribute
-// 3. Call UpdateAttributeVersion with the max seen
-//
-// For attributes with millions of entities, this first query after restart
-// may be slow. Subsequent queries use the cached attrVersions and are O(1).
-type attributeVersionStore interface {
-	MaxElementIDForAttribute(a []byte) (datalog.ElementID, error)
-}
-
-func (c *Cache) IsAttributeFresh(a Attribute, store attributeVersionStore) bool {
-	val, ok := c.attrVersions.Load(a)
-	if !ok {
-		return false // No cached version - first query after restart will be slow
-	}
-	cachedMax := val.(datalog.ElementID)
-	storeMax, err := store.MaxElementIDForAttribute(a[:])
-	if err != nil {
-		return false
-	}
-	return cachedMax == storeMax
-}
-
-// UpdateAttributeVersion updates the cached version for an attribute
-// Called after resolving all entities for an attribute
-func (c *Cache) UpdateAttributeVersion(a Attribute, version datalog.ElementID) {
-	c.attrVersions.Store(a, version)
-}
-
 // Clear removes all entries from the cache
 // Useful for testing or forced cache invalidation
 func (c *Cache) Clear() {
 	c.slots.Clear()
-	c.attrVersions = sync.Map{}
 	c.entityAttrs = sync.Map{}
 }
 

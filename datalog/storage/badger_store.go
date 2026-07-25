@@ -299,53 +299,6 @@ func (s *BadgerStore) MaxElementID() (datalog.ElementID, error) {
 	return maxID, err
 }
 
-// MaxElementIDForAttribute returns the highest ElementID for any (E, A) with this attribute.
-// Used for fast cache freshness checks on A-bound queries.
-//
-// O(1): single forward seek on the ATEV index. ATEV orders A → Tx↓ → E → V, so the
-// first entry under prefix [A] has the global maximum Tx for the attribute (Tx is
-// encoded with bitwise NOT for descending sort within (A) groups).
-//
-// Returns zero ElementID if no ATEV data exists for this attribute.
-func (s *BadgerStore) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
-	var maxID datalog.ElementID
-
-	err := s.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false // Keys only
-
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		// Build ATEV prefix for this attribute: [prefix:1][A:32]
-		atevPrefix := make([]byte, 1+32)
-		atevPrefix[0] = byte(ATEV)
-		copy(atevPrefix[1:33], a)
-
-		it.Seek(atevPrefix)
-		if !it.Valid() {
-			return nil
-		}
-
-		// Seek may land past the attribute's ATEV range (different index or
-		// different attribute) when no ATEV entries exist for this attribute.
-		key := it.Item().Key()
-		if key[0] != byte(ATEV) || !bytesEqual(key[1:33], atevPrefix[1:33]) {
-			return nil
-		}
-
-		// First entry under [ATEV][A] holds the global max Tx for the attribute.
-		_, _, _, tx, _, _, decodeErr := s.encoder.DecodeKey(ATEV, key)
-		if decodeErr != nil {
-			return decodeErr
-		}
-		maxID = Tx(tx).ToElementID()
-		return nil
-	})
-
-	return maxID, err
-}
-
 // bytesEqual compares two byte slices for equality
 func bytesEqual(a, b []byte) bool {
 	if len(a) != len(b) {

@@ -903,7 +903,7 @@ Every fact is a datom. The entire database is just a collection of datoms with m
 | **EATV** | Current value for entity+attribute (cardinality-one LWW) |
 | **AEVT** | Find all entities with an attribute |
 | **AETV** | A-primary CRDT queries (cardinality-one LWW) |
-| **ATEV** | O(1) attribute high-water mark; AsOf-by-attribute scans |
+| **ATEV** | AsOf-by-attribute scans (A-bound + Tx-bound + V-unbound) |
 | **AVET** | Find entities by attribute value |
 | **VAET** | Reverse lookup (who references this entity?) |
 | **TAEV** | Time-based queries |

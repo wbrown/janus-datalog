@@ -340,7 +340,7 @@ Every datom includes a full ElementID (Lamport + ReplicaID) for temporal orderin
 ### 10. Storage Model
 
 - **EAVT model** with Entity-Attribute-Value-Transaction tuples
-- **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV (EATV/AETV use Tx-descending for CRDT resolution; ATEV gives O(1) attribute high-water mark and AsOf-by-attribute access)
+- **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV (EATV/AETV use Tx-descending for CRDT resolution; ATEV puts Tx↓ ahead of E for AsOf-by-attribute access)
 - **BadgerDB backend** for persistence
 - **Raw binary encoding** for sortable, compact physical keys
 - **Export/Import** to EDN format for backup and migration (see [docs/reference/EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md))

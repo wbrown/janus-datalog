@@ -80,10 +80,6 @@ func (s *memoryReadSession) MaxElementID() (datalog.ElementID, error) {
 	return maxElementIDByScan(s)
 }
 
-func (s *memoryReadSession) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
-	return maxElementIDForAttributeByScan(s, a)
-}
-
 func (s *memoryReadSession) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {
 	return maxTxForEntityByScan(s, e)
 }

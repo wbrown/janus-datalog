@@ -86,10 +86,6 @@ func (s *badgerReadSession) MaxElementID() (datalog.ElementID, error) {
 	return maxElementIDByScan(s)
 }
 
-func (s *badgerReadSession) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
-	return maxElementIDForAttributeByScan(s, a)
-}
-
 func (s *badgerReadSession) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {
 	return maxTxForEntityByScan(s, e)
 }

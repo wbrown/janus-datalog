@@ -140,39 +140,6 @@ func TestWarmCacheEmptyAttribute(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestWarmCacheUpdatesAttrVersion(t *testing.T) {
-	db, cleanup := createWarmupTestDatabase(t)
-	defer cleanup()
-
-	// Create schema
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
-
-	// Add data
-	tx := db.NewTransaction()
-	e1 := datalog.NewIdentity("person1")
-	err = tx.Set(e1, datalog.NewKeyword(":person/name"), "Alice")
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Clear cache
-	db.Cache().Clear()
-
-	// Warm cache
-	err = db.WarmCache([]datalog.Keyword{datalog.NewKeyword(":person/name")})
-	require.NoError(t, err)
-
-	// Attribute freshness should now be tracked
-	var a Attribute
-	copy(a[:], ":person/name")
-	fresh := db.Cache().IsAttributeFresh(a, db.Store())
-	assert.True(t, fresh, "attribute should be fresh after warmup")
-}
-
 func TestWarmCacheIdempotent(t *testing.T) {
 	db, cleanup := createWarmupTestDatabase(t)
 	defer cleanup()

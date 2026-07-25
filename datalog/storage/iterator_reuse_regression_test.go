@@ -131,7 +131,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 		// Create a matcher that tracks statistics
 		matcher := &instrumentedMatcher{
 			PatternMatcher: NewPatternMatcherWithOptions(db.store, opts),
-			stats:         &matchStats{},
+			stats:          &matchStats{},
 		}
 
 		// Pattern: [?bar :price/minute-of-day 570]
@@ -211,8 +211,8 @@ func TestIteratorReuseRegression(t *testing.T) {
 
 		matcher := &instrumentedMatcher{
 			PatternMatcher: NewPatternMatcherWithOptions(db.store, opts),
-			stats:         &matchStats{},
-			forceReuse:    true, // Force iterator reuse for testing
+			stats:          &matchStats{},
+			forceReuse:     true, // Force iterator reuse for testing
 		}
 
 		pattern := &query.DataPattern{
@@ -348,7 +348,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 
 		matcher := &instrumentedMatcher{
 			PatternMatcher: NewPatternMatcherWithOptions(db.store, opts),
-			stats:         &matchStats{},
+			stats:          &matchStats{},
 		}
 
 		// This is what happens in the subquery: for each symbol,

@@ -17,7 +17,6 @@ type StoreReader interface {
 	Scan(index IndexType, start, end []byte) (Iterator, error)
 	ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error)
 	MaxElementID() (datalog.ElementID, error)
-	MaxElementIDForAttribute(a []byte) (datalog.ElementID, error)
 	MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error)
 }
 
@@ -39,21 +38,6 @@ type ReadSession interface {
 // carries the highest ElementID.
 func maxElementIDByScan(r StoreReader) (datalog.ElementID, error) {
 	iter, err := r.ScanKeysOnly(TAEV, []byte{byte(TAEV)}, []byte{byte(TAEV) + 1})
-	if err != nil {
-		return datalog.ElementID{}, err
-	}
-	defer iter.Close()
-	if !iter.Next() {
-		return datalog.ElementID{}, iter.Error()
-	}
-	return iter.ElementID(), nil
-}
-
-// maxElementIDForAttributeByScan derives the attribute high-water mark from
-// ATEV ordering (A → Tx↓ → E → V): the first entry under [A] is the max.
-func maxElementIDForAttributeByScan(r StoreReader, a []byte) (datalog.ElementID, error) {
-	start, end := r.Encoder().EncodePrefixRange(ATEV, a)
-	iter, err := r.ScanKeysOnly(ATEV, start, end)
 	if err != nil {
 		return datalog.ElementID{}, err
 	}

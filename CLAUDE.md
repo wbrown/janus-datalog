@@ -216,7 +216,7 @@ This is **standard database query optimization** (similar to Selinger's algorith
 - **Fixed 69-byte keys**: E(20) + A(32) + Tx(16) + Op(1) for efficient indexing
 - **Unbounded values**: Stored last with 2-byte size prefix and 1-byte type
 - **Binary physical encoding**: Raw fixed-width E/A/Tx components preserve byte order without text expansion
-- **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV for different access patterns and cardinalities. ATEV's `[A][Tx↓][E][V]` layout gives O(1) attribute high-water mark for cache freshness and direct AsOf-by-attribute scans.
+- **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV for different access patterns and cardinalities. ATEV's `[A][Tx↓][E][V]` layout puts Tx↓ ahead of E, so an A-bound, Tx-bound, V-unbound pattern seeks straight to the transaction: direct AsOf-by-attribute scans.
 - **CRDT semantics**: LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector
 - **Keyword interning**: Keywords hashed once and reused
 - **RefValues**: Entity references are stored as raw 20-byte identity hashes

@@ -18,13 +18,13 @@ type PatternMatcher struct {
 	// to the store itself (each read opens its own storage transaction);
 	// query-scoped matchers attach a ReadSession so all reads observe one
 	// snapshot for the query's lifetime.
-	reader            StoreReader
+	reader StoreReader
 	// sessionBounded marks that reader is a ReadSession, so cache reads must
 	// bound themselves to its snapshot high-water mark (cacheBound). The
 	// bound computes lazily once — the session's maximum is snapshot-constant.
-	sessionBounded bool
-	boundOnce      sync.Once
-	readBound      datalog.ElementID
+	sessionBounded    bool
+	boundOnce         sync.Once
+	readBound         datalog.ElementID
 	encoder           *BinaryKeyEncoder
 	txID              *datalog.ElementID       // nil=latest CRDT-resolved, &ElementID{}=raw history, &ElementID{L,R}=as-of
 	builderCache      *tupleBuilderCache       // Structurally-keyed tuple builders, shared with temporal-handle copies

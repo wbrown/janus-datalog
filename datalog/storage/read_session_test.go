@@ -75,13 +75,6 @@ func TestReadSessionSnapshotIsolation(t *testing.T) {
 			maxID, err := session.MaxElementID()
 			require.NoError(t, err)
 			assert.Equal(t, datalog.ElementID{Lamport: 1, ReplicaID: 1}, maxID)
-			// Attribute bytes as ToStorageDatom encodes them: the keyword's
-			// rendered name zero-padded into the 32-byte Attribute.
-			var attrBytes Attribute
-			copy(attrBytes[:], attr.String())
-			attrMax, err := session.MaxElementIDForAttribute(attrBytes[:])
-			require.NoError(t, err)
-			assert.Equal(t, datalog.ElementID{Lamport: 1, ReplicaID: 1}, attrMax)
 
 			// Per entity through the session: the pre-snapshot entity is
 			// present, the post-snapshot one is not. Scanning each entity's

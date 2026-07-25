@@ -111,25 +111,6 @@ func TestMemoryStoreMaintainsSortedKeys(t *testing.T) {
 	})
 }
 
-func TestMemoryStoreMaxElementIDForAttribute(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
-	t.Cleanup(func() { _ = store.Close() })
-
-	attr := datalog.NewKeyword(":memory/hwm")
-	low := datalog.ElementID{Lamport: 10, ReplicaID: 1}
-	high := datalog.ElementID{Lamport: 20, ReplicaID: 1}
-	require.NoError(t, store.Assert([]datalog.Datom{
-		{E: datalog.NewIdentity("memory:a"), A: attr, V: "a", Tx: low},
-		{E: datalog.NewIdentity("memory:b"), A: attr, V: "b", Tx: high},
-	}))
-
-	var attrBytes [32]byte
-	copy(attrBytes[:], attr.String())
-	got, err := store.MaxElementIDForAttribute(attrBytes[:])
-	require.NoError(t, err)
-	require.Equal(t, high, got)
-}
-
 func TestMemoryStoreScanOrdersManyKeys(t *testing.T) {
 	store := NewMemoryStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })

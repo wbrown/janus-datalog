@@ -312,7 +312,6 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
 
-		var maxAttrVersion datalog.ElementID
 		seenEntities := make(map[Entity]bool)
 
 		for iter.Next() {
@@ -320,11 +319,6 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 			if err != nil {
 				iter.Close()
 				return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
-			}
-
-			// Track max version for attribute-level freshness
-			if datom.Tx.Compare(maxAttrVersion) > 0 {
-				maxAttrVersion = datom.Tx
 			}
 
 			// Get entity bytes
@@ -344,9 +338,6 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 		if err := iter.Close(); err != nil {
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
-
-		// Update attribute-level version
-		d.cache.UpdateAttributeVersion(aBytes, maxAttrVersion)
 	}
 
 	return nil

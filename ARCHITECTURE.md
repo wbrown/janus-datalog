@@ -474,7 +474,7 @@ Returns all attributes for an entity with CRDT conflict resolution applied. Used
 | EATV  | Entity lookups, LWW resolution (cardinality-one/vector) |
 | AEVT  | Attribute scans across entities |
 | AETV  | Attribute scans with temporal ordering |
-| ATEV  | O(1) attribute high-water mark; AsOf-by-attribute access |
+| ATEV  | AsOf-by-attribute access (A-bound + Tx-bound + V-unbound) |
 | AVET  | Value-based lookups (uniqueness, reverse lookup) |
 | VAET  | Reverse reference traversal |
 | TAEV  | Transaction-based queries, history |

@@ -159,19 +159,6 @@ func (s *MemoryStore) MaxElementID() (datalog.ElementID, error) {
 	return iter.ElementID(), nil
 }
 
-func (s *MemoryStore) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
-	start, end := s.encoder.EncodePrefixRange(ATEV, a)
-	iter, err := s.ScanKeysOnly(ATEV, start, end)
-	if err != nil {
-		return datalog.ElementID{}, err
-	}
-	defer iter.Close()
-	if !iter.Next() {
-		return datalog.ElementID{}, iter.Error()
-	}
-	return iter.ElementID(), nil
-}
-
 func (s *MemoryStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {
 	start, end := s.encoder.EncodePrefixRange(EAVT, e.Bytes())
 	iter, err := s.ScanKeysOnly(EAVT, start, end)
