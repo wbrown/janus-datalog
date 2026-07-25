@@ -329,3 +329,70 @@ func (e *BinaryKeyEncoder) EncodePrefixRange(index IndexType, parts ...[]byte) (
 	end = incrementLastByte(start)
 	return start, end
 }
+
+// EncodeScanBound renders a typed ScanBound as the byte range a binary-key
+// scan needs. This is the Badger-side projection of the bound: a backend that
+// compares typed components directly never calls it.
+func (e *BinaryKeyEncoder) EncodeScanBound(b ScanBound) (start, end []byte, err error) {
+	order, err := componentOrder(b.Index)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(b.Prefix) > len(order) {
+		return nil, nil, fmt.Errorf(
+			"scan bound on %v: prefix binds %d components, index orders %d",
+			b.Index, len(b.Prefix), len(order))
+	}
+
+	parts := make([][]byte, 0, len(b.Prefix))
+	for i, v := range b.Prefix {
+		part, err := e.encodeBoundComponent(order[i], v)
+		if err != nil {
+			return nil, nil, fmt.Errorf("scan bound on %v at position %d: %w", b.Index, i, err)
+		}
+		parts = append(parts, part)
+	}
+
+	start, end = e.EncodePrefixRange(b.Index, parts...)
+	return start, end, nil
+}
+
+// encodeBoundComponent renders one bound component in the storage form its
+// position uses. Each position is inhabited by exactly one kind of value, so
+// anything else is a caller bug rather than something to coerce. V is the
+// exception only in that its domain is the whole value domain, which
+// datalog.Type enforces.
+func (e *BinaryKeyEncoder) encodeBoundComponent(c keyComponent, v datalog.Value) ([]byte, error) {
+	switch c {
+	case componentE:
+		id, ok := v.(datalog.Identity)
+		if !ok || id == nil {
+			return nil, fmt.Errorf("E must be bound to a non-nil Identity, got %T", v)
+		}
+		var entity Entity
+		copy(entity[:], id.Bytes())
+		return entity[:], nil
+
+	case componentA:
+		kw, ok := v.(datalog.Keyword)
+		if !ok || kw == nil {
+			return nil, fmt.Errorf("A must be bound to a non-nil Keyword, got %T", v)
+		}
+		var attr Attribute
+		copy(attr[:], kw.String())
+		return attr[:], nil
+
+	case componentV:
+		return encodeValueForSearch(v, e), nil
+
+	case componentTx:
+		eid, ok := v.(datalog.ElementID)
+		if !ok {
+			return nil, fmt.Errorf("Tx must be bound to an ElementID, got %T", v)
+		}
+		return e.EncodeTxForPrefix(NewTxFromElementID(eid)), nil
+
+	default:
+		return nil, fmt.Errorf("unknown key component %v", c)
+	}
+}
