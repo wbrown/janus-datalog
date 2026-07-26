@@ -43,13 +43,14 @@ func (r badgerTxnBlobReader) ReadBlob(hash [20]byte, read func([]byte) error) er
 	return nil
 }
 
-// putBlob stores compressed data at its content-addressed key.
-// Idempotent: writing the same content twice is a no-op.
-func putBlob(txn *badger.Txn, hash [20]byte, data []byte) error {
+// putBlob stores compressed data at its content-addressed key, through
+// whatever accumulates the caller's writes — a transaction's Set or a write
+// batch's. Idempotent: writing the same content twice is a no-op.
+func putBlob(set func(key, value []byte) error, hash [20]byte, data []byte) error {
 	var key [21]byte
 	key[0] = blobKeyPrefix
 	copy(key[1:], hash[:])
-	return txn.Set(key[:], data)
+	return set(key[:], data)
 }
 
 // getBlob retrieves compressed data by its SHA1 hash.

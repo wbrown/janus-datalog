@@ -44,7 +44,7 @@ func TestBlobStore_PutGet(t *testing.T) {
 
 	// Put
 	err := db.Update(func(txn *badger.Txn) error {
-		return putBlob(txn, hash, data)
+		return putBlob(txn.Set, hash, data)
 	})
 	require.NoError(t, err)
 
@@ -64,7 +64,7 @@ func TestBlobStore_ContentAddressing(t *testing.T) {
 	// Put twice
 	for i := 0; i < 2; i++ {
 		err := db.Update(func(txn *badger.Txn) error {
-			return putBlob(txn, hash, data)
+			return putBlob(txn.Set, hash, data)
 		})
 		require.NoError(t, err)
 	}
