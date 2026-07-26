@@ -40,9 +40,10 @@ func keyTailSize(key []byte) int {
 	return opSize
 }
 
-// componentKeySize is the encoded width of a fixed-width key component.
-// componentV has none — a value is as long as it is, which is the whole reason
-// a V-bound byte range is a prefix range.
+// componentKeySize is the encoded width of a fixed-width key component, and
+// whether the component has one at all. Panics on a component nobody has
+// classified: sharing componentV's "no fixed width" answer would let a later
+// addition read as variable-width and mis-measure every key behind it.
 func componentKeySize(c keyComponent) (int, bool) {
 	switch c {
 	case componentE:
@@ -52,10 +53,55 @@ func componentKeySize(c keyComponent) (int, bool) {
 	case componentTx:
 		return txSize, true
 	case componentV:
+		// A value is as long as it is, which is the whole reason a V-bound
+		// byte range is a prefix range rather than an exact one.
 		return 0, false
 	default:
-		return 0, false
+		panic(fmt.Sprintf("key component %v has no declared width", c))
 	}
+}
+
+// runMembership decides which keys inside a scan's byte range belong to the
+// bound that produced it.
+//
+// A range and its membership are the same thing only when every bound component
+// is fixed width. A V payload carries no length, so a range whose components
+// include a variable-length V is a *prefix* range: the keys for "abcd" sort
+// inside the range for "abc", interleaved with them — the byte after the shared
+// prefix is 'd' on one side and the first byte of a hash on the other — so no
+// choice of endpoints separates the two. What separates them is length. Every
+// component behind V is fixed width and Op announces AfterRef, so a key
+// carrying the bound's own value has exactly one length per Op class, and a key
+// whose value merely starts with it is longer by the excess.
+//
+// This is a value, not two fields on the run, because a Seek replaces the
+// membership rule while keeping the scan's range: one assignment, with no way
+// for the two halves to be copied apart.
+type runMembership struct {
+	// exact is true when the byte range already names the run exactly. size is
+	// otherwise the length of a member key excluding its tail, which
+	// keyTailSize reads from the key itself.
+	exact bool
+	size  int
+}
+
+// holds reports whether a key is one the bound names. Total: an absent key is
+// a member of nothing, whichever kind of run is asking.
+func (m runMembership) holds(key []byte) bool {
+	if len(key) == 0 {
+		return false
+	}
+	if m.exact {
+		return true
+	}
+	return len(key) == m.size+keyTailSize(key)
+}
+
+// EncodedRun is a ScanBound projected onto binary keys: the range a scan walks,
+// and the rule deciding which keys inside it the bound actually names.
+type EncodedRun struct {
+	Start, End []byte
+	Membership runMembership
 }
 
 // txToDescending applies bitwise NOT to Tx bytes for descending sort order.
@@ -391,13 +437,11 @@ func (e *BinaryKeyEncoder) EncodeScanBound(b ScanBound) (EncodedRun, error) {
 		return EncodedRun{}, err
 	}
 
-	run := EncodedRun{Start: start, End: incrementLastByte(start), exact: !variableV}
+	run := EncodedRun{Start: start, End: incrementLastByte(start)}
 	if variableV {
-		behind, err := widthBehind(order, len(b.Prefix))
-		if err != nil {
-			return EncodedRun{}, fmt.Errorf("scan bound on %v: %w", b.Index, err)
-		}
-		run.memberSize = len(start) + behind
+		run.Membership.size = len(start) + widthBehind(order, len(b.Prefix))
+	} else {
+		run.Membership.exact = true
 	}
 	return run, nil
 }
@@ -441,17 +485,20 @@ func (e *BinaryKeyEncoder) encodeBoundEndpoint(
 
 // widthBehind is the total encoded width of the components an index orders
 // after the first n. Every caller reaches it having bound a V within those
-// first n, so nothing behind them is V and all of them are fixed width.
-func widthBehind(order [componentsPerIndex]keyComponent, n int) (int, error) {
+// first n, and an index orders V once, so nothing behind them is V and all of
+// them are fixed width — a V here would mean the caller's own precondition was
+// violated, which is why this panics rather than returning an error nobody can
+// act on.
+func widthBehind(order [componentsPerIndex]keyComponent, n int) int {
 	total := 0
 	for _, c := range order[n:] {
 		width, fixed := componentKeySize(c)
 		if !fixed {
-			return 0, fmt.Errorf("component %v at position %d has no fixed width", c, n)
+			panic(fmt.Sprintf("widthBehind: component %v at position %d has no fixed width", c, n))
 		}
 		total += width
 	}
-	return total, nil
+	return total
 }
 
 // encodeBoundComponent renders one bound component in the storage form its

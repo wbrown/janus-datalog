@@ -16,11 +16,11 @@ type KeyOnlyIterator struct {
 	*BadgerIterator
 	encoder *BinaryKeyEncoder
 	blobs   BlobReader
-	// run is the bound this iterator is walking, projected onto keys. Its
-	// range positioned the Badger cursor; its membership test drops the keys
-	// the range over-covers, which happens whenever a bound component is a
-	// variable-length V. Seek replaces it, because a seek names a new run.
-	run          EncodedRun
+	// membership decides which keys in the scan's range the current bound
+	// names, dropping the ones the range over-covers when a bound component is
+	// a variable-length V. Seek replaces it — a seek names a new run inside the
+	// same range — and it is one value so the two cannot be copied apart.
+	membership   runMembership
 	currentDatom datalog.Datom
 	hasDatom     bool
 	currentError error
@@ -47,7 +47,7 @@ func NewKeyOnlyIterator(store *BadgerStore, index IndexType, run EncodedRun) (It
 		BadgerIterator: badgerIterator,
 		encoder:        store.encoder,
 		blobs:          badgerTxnBlobReader{txn: txn},
-		run:            run,
+		membership:     run.Membership,
 	}, nil
 }
 
@@ -59,7 +59,7 @@ func (i *KeyOnlyIterator) Next() bool {
 	}
 	i.hasDatom = false
 	for i.BadgerIterator.Next() {
-		if i.run.Holds(i.BadgerIterator.Key()) {
+		if i.positioned() {
 			return true
 		}
 	}
@@ -67,7 +67,7 @@ func (i *KeyOnlyIterator) Next() bool {
 }
 
 func (i *KeyOnlyIterator) Key() []byte {
-	if !i.positionedInRange() {
+	if !i.positioned() {
 		return nil
 	}
 	return i.BadgerIterator.Key()
@@ -80,7 +80,7 @@ func (i *KeyOnlyIterator) Datom() (*datalog.Datom, error) {
 	// Next() returns false at the exclusive end bound while the underlying
 	// Badger iterator can still be Valid() on the successor key. Refuse that
 	// out-of-range position so Datom() matches the ScanKeysOnly contract.
-	if !i.positionedInRange() {
+	if !i.positioned() {
 		return nil, fmt.Errorf("no current datom")
 	}
 	if !i.hasDatom {
@@ -100,14 +100,19 @@ func (i *KeyOnlyIterator) Datom() (*datalog.Datom, error) {
 	return &i.currentDatom, nil
 }
 
-func (i *KeyOnlyIterator) positionedInRange() bool {
+// positioned reports whether the cursor is on a key this scan may expose: in
+// the byte range, and one the bound's membership rule holds. Next, Key and
+// Datom all consult it, so there is one notion of "current" rather than a range
+// check in three places and a membership check in one.
+func (i *KeyOnlyIterator) positioned() bool {
 	if !i.BadgerIterator.valid || i.it == nil || !i.it.Valid() {
 		return false
 	}
-	if i.end == nil {
-		return true
+	key := i.it.Item().Key()
+	if i.end != nil && bytes.Compare(key, i.end) >= 0 {
+		return false
 	}
-	return bytes.Compare(i.it.Item().Key(), i.end) < 0
+	return i.membership.holds(key)
 }
 
 func (i *KeyOnlyIterator) Seek(bound ScanBound) {
@@ -122,9 +127,9 @@ func (i *KeyOnlyIterator) Seek(bound ScanBound) {
 		return
 	}
 	// The seek names a new run inside the scan's range: its start repositions
-	// the cursor, and its membership test governs what follows. The range end
+	// the cursor, and its membership rule governs what follows. The range end
 	// stays the scan's — a seek moves within a scan, it does not open one.
-	i.run.exact, i.run.memberSize = run.exact, run.memberSize
+	i.membership = run.Membership
 	i.BadgerIterator.Seek(run.Start)
 	i.hasDatom = false
 }

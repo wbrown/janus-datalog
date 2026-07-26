@@ -66,12 +66,12 @@ func (s *memoryReadSession) scan(bound ScanBound) (Iterator, error) {
 		return true
 	})
 	return &memoryIterator{
-		index:    index,
-		keys:     keys,
-		position: -1,
-		run:      run,
-		encoder:  s.store.encoder,
-		blobs:    memoryBlobReader{store: s.store},
+		index:      index,
+		keys:       keys,
+		position:   -1,
+		membership: run.Membership,
+		encoder:    s.store.encoder,
+		blobs:      memoryBlobReader{store: s.store},
 	}, nil
 }
 

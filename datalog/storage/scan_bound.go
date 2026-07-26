@@ -81,40 +81,6 @@ type ScanBound struct {
 	Prefix []datalog.Value
 }
 
-// EncodedRun is a ScanBound projected onto binary keys: the range a scan walks,
-// and the test deciding which keys inside it the bound actually names.
-//
-// The two are the same thing only when every bound component is fixed width.
-// A V payload carries no length, so a range whose components include a
-// variable-length V is a *prefix* range: the keys for "abcd" sort inside the
-// range for "abc", interleaved with them (the byte after the shared prefix is
-// 'd' on one side and the first byte of a hash on the other), so no choice of
-// endpoints separates the two. What does separate them is length. Every
-// component behind V is fixed width and Op announces AfterRef, so a key of the
-// bound's own value has exactly one length for each Op class, and a key whose
-// value merely starts with it is longer by the excess.
-type EncodedRun struct {
-	Start, End []byte
-
-	// exact is true when the byte range already names the run and Holds needs
-	// no test. memberSize is otherwise the length of a member key excluding
-	// its tail, which keyTailSize reads from the key itself.
-	exact      bool
-	memberSize int
-}
-
-// Holds reports whether a key drawn from the range is one the bound names.
-// It is meaningful only for keys already inside [Start, End).
-func (r EncodedRun) Holds(key []byte) bool {
-	if r.exact {
-		return true
-	}
-	if len(key) == 0 {
-		return false
-	}
-	return len(key) == r.memberSize+keyTailSize(key)
-}
-
 // addBoundFields reports a scan bound into an annotation event's data: the
 // index, the positions the run binds in that index's component order, and the
 // values bound to them.

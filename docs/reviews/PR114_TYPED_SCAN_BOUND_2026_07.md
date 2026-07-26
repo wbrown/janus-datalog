@@ -5,7 +5,9 @@
 **Scope**: `datalog/storage`, `datalog/annotations`, and the documentation the branch wrote or invalidated
 **Method**: a review was received against `566e806`; every claim in it was then independently verified in this tree — by executable reproducer where behaviour was alleged, by `gopls references` where deadness was alleged, and by reading where a document or a constant was alleged wrong. Nine reproducers were written; all are red at `566e806` and compile on native and js/wasm.
 
-**Evidence-scope caveat**: every "zero callers" claim below is an **in-repository** observation from `gopls references`. Unexported symbols' deadness is decidable in-repo; exported surface may have downstream consumers no workspace index can see, and removing exported surface is a compatibility decision, not a reference count.
+**Evidence-scope caveat**: every "zero callers" claim below is an **in-repository** observation from `gopls references`, which settles deadness for anything that is not consumer-facing API. Only for consumer-facing API does an in-repo count fall short, because a downstream caller no workspace index can see may exist.
+
+**What is consumer-facing is an editorial fact, not a capitalization** (corrected by owner ruling, 2026-07-26). An earlier draft of this caveat said that removing *exported* surface is a compatibility decision rather than a reference count, stated as a general rule. That is wrong, and it produced four escalations in this review that should never have been raised — `Store.Get`, `MaxElementIDForAttribute`, `Cache.IsAttributeFresh`/`UpdateAttributeVersion`, and `EncodePrefixRange`. Go's export marker is how a package's own files and tests reach each other and how sibling packages in a module compose; it is not a versioning contract. What this module invites consumers to import is what it documents. In `datalog/storage` that is the injectable backend contract — `Store`, `StoreTx`, `Iterator` — which `docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md` documents under *Custom backends* for exactly that purpose. `BinaryKeyEncoder` and its methods are machinery those implementations happen to share, and are **not** API; their surface carries no compatibility question and needs no ruling. The one place the two touch is `Store.Encoder() *BinaryKeyEncoder`, which sits on the consumer-facing interface and which a typed memory backend under PR B has nothing to return — a PR B question, not a surface question.
 
 **Status convention** (as `docs/bugs/`): each finding carries a `Status:` line. Anything without `Status: Resolved (date, commit)` is open as of this document's date. Re-read the cited code before treating an entry as live, and update the `Status:` line in place when you fix or refute one.
 
@@ -143,7 +145,9 @@ Two consequences for this PR's record. Its commit message and PR body report the
 
 ### B2. Four orphaned symbols
 
-**Status**: Resolved (2026-07-26). Re-verified after the iterator-reuse removal, which changed the orphan set, and all four deleted. Every one is unexported — `badgerReadSession` and `memoryReadSession` are unexported types, so their `Encoder()` methods are unreachable from outside the package — so in-repo deadness settles it and no compatibility question arises. **Corollary refuted** (below). **One new orphan surfaced and is not resolved here**: `BinaryKeyEncoder.EncodePrefixRange` now has no production caller. Its only remaining use is as the oracle in `TestScanBoundEncodesAsPrefixRange`, and D1 already records that this oracle shares the arithmetic it is meant to check. It is exported surface, so removing it is a compatibility decision rather than a reference count. `EncodePrefix` keeps a production caller in `encodeBoundEndpoint`.
+**Status**: Resolved (2026-07-26). Re-verified after the iterator-reuse removal, which changed the orphan set, and all four deleted. None is consumer-facing API, so the in-repo count settles it. **Corollary refuted** (below).
+
+**A fifth was reported here and withdrawn.** `BinaryKeyEncoder.EncodePrefixRange` has no production caller — its only use is as the oracle in `TestScanBoundEncodesAsPrefixRange`, which D1 already records as sharing the arithmetic it is meant to check. This entry previously raised its removal as a compatibility decision because the method is exported. Per the owner ruling above, that is not a question: the key encoder is not API, so its surface carries no compatibility weight, and nothing here needs deciding. Nothing outside `datalog/storage` calls **any** exported method of `BinaryKeyEncoder`, or `Store.Encoder()`. What actually keeps `EncodePrefixRange` alive is a test, and whether that test still earns its oracle is an ordinary internal question for whoever next touches it.
 **Sites**: `read_session_badger.go:41`, `read_session_memory.go:36`, `matcher_relations.go:1143`, `badger_store.go:307`
 
 All four report zero references:
@@ -227,9 +231,13 @@ Commit `50c119b` — the **first commit on this branch** — expanded that listi
 ### E2. The upgrade note says `Store.Get` remains on the interface
 
 **Status**: Resolved (2026-07-26). The note no longer claims `Get` remains, and
-gained a migration section for the typed bound plus the other exported removals a
-caller meets: `StoreReader.Encoder()`, `MaxElementIDForAttribute`, and
-`IndexNestedLoopThreshold`.
+gained a migration section for the typed bound plus the other removals a caller
+meets. Two of those are genuinely the backend contract — `Store.Get` and
+`Store.MaxElementIDForAttribute` are methods a custom backend no longer has to
+provide — and `IndexNestedLoopThreshold` is a planner option a caller may have
+set. `StoreReader.Encoder()` is documented as a fact rather than an obligation:
+it changes nothing a backend must implement, since `Encoder()` remains on
+`Store`.
 **Site**: `docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md:19`; cited by `store.go:47-48`
 
 `Store.Get(index, key)` was removed by `d22fc7d`. The note still describes it as present, and `store.go` points readers at that note.

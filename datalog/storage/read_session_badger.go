@@ -77,7 +77,7 @@ func (s *badgerReadSession) newIterator(bound ScanBound) (Iterator, error) {
 		BadgerIterator: badgerIterator,
 		encoder:        s.store.encoder,
 		blobs:          badgerTxnBlobReader{txn: s.txn},
-		run:            run,
+		membership:     run.Membership,
 	}, nil
 }
 

@@ -4,7 +4,11 @@
 **Scope**: `datalog/query`, `datalog/executor`, `datalog/parser`, `datalog/planner`, `datalog/storage`, `datalog/qb`
 **Method**: static caller analysis (production vs `_test.go` callers separated for every flagged symbol), switch/default enumeration, delegation-chain termination proofs, and pattern sweeps for the antipattern classes eliminated by the value-semantics consolidation (PR #112).
 
-**Evidence-scope caveat (added 2026-07-19)**: every "zero callers" / "test-only" claim in this document is an **in-repository** observation. Exported symbols of this published module may have downstream consumers no workspace index can see; whether they do is the owner's knowledge. Unexported symbols' deadness IS decidable in-repo. Deletions of exported surface are compatibility decisions, never derivable from reference counts alone.
+**Evidence-scope caveat (added 2026-07-19; scoped 2026-07-26)**: every "zero callers" / "test-only" claim in this document is an **in-repository** observation, which settles deadness for anything that is not consumer-facing API.
+
+**What is consumer-facing is an editorial fact, not a capitalization.** Go's export marker is how a package's files and tests reach each other and how sibling packages compose; it is not a versioning contract. API is what the module *documents and invites consumers to import* — a doc comment declaring an audience, an entry in the upgrade guide, a documented extension point. That declaration is the counter-evidence a workspace index cannot see, and only then does deletion become a compatibility decision for the owner. Absent one, capitalization means nothing and the reference count settles it.
+
+Two entries below meet that bar and are correctly escalated: C9 (`executor/testing.go`, whose own doc comment reads "Exported for use by external test packages") and C5's `RegisterCustomFunction` (documented extension point). The rest of Class C is engine machinery that happens to be capitalized so sibling packages and tests can reach it.
 
 **Status convention** (same as `docs/bugs/`): every finding below carries a `Status:` line. A finding without `Status: Resolved (date, commit)` is believed open *as of the audit date*. Before treating any entry as live, re-read the cited code; when you fix or refute one, update its `Status:` line in place so the next reader does not re-derive it.
 
@@ -106,7 +110,7 @@ Two-valued flag, typed-constant comparison rather than multi-way dispatch. If to
 
 The deleted-`Filter` profile: exported machinery whose only in-repo initiators are tests, while production does the equivalent work elsewhere. Each entry lists what the production path actually is.
 
-**Standard of proof — read before acting on this class.** "No production references" throughout this audit means: *zero callers inside this repository outside `_test.go` files*. That standard proves deadness for **unexported** symbols — nothing outside the repo can reach them. For **exported** symbols of this library it proves only "unused internally": downstream consumers are invisible to in-repo caller analysis, and extension points exist precisely for them. Every exported entry below is therefore a per-symbol **API-surface decision** informed by whether downstream use is plausible — not a mechanical dead-code sweep. (The already-deleted `Filter` system was handled this way: removed as a deliberate API decision, recorded in the PR's compatibility notes.)
+**Standard of proof — read before acting on this class (scoped 2026-07-26).** "No production references" throughout this audit means: *zero callers inside this repository outside `_test.go` files*. That standard settles deadness for engine machinery whether or not it is capitalized — capitalization is how sibling packages and tests reach a symbol, not a published contract. It does **not** settle deadness where the code declares an audience the workspace index cannot see: a doc comment naming external consumers, or a documented extension point. In this class that is C9 (`executor/testing.go`) and C5's `RegisterCustomFunction`; for those two, deletion is an owner-level compatibility decision. Everything else here is an ordinary internal call, made on the role facts (what the artifact *is* in the architecture), not on its capital letter.
 
 ### C1. `UnionRelation` — entire subsystem test-only
 
@@ -284,7 +288,7 @@ All four findings confirmed against the code:
 
 1. **Class A** — the live defects: A1 (surface the Eval error), A2 (default arm), A3 (first-error-wins guards), A4 (Tx panic), A5 (reject at write boundary), A6 (loud defaults). Small, independent, each pinnable with a test.
 2. **B1 + B2** — `ArithmeticOp` and time-field symbolization, mirroring the CompareOp commit shape (pre-interned symbols, parse-time resolution, pointer dispatch), deleting the two duplicate time switches with it.
-3. **Class C** — per-symbol API decisions under the standard-of-proof note: C1/C2/C3 whole units, C7 small exports, C8 temporal leftovers, the C4 interface-method prune, and the C5 wire-or-remove and C6 decisions. Each removal is an API-surface change for the compatibility notes, not silent cleanup.
+3. **Class C** — per-symbol decisions under the standard-of-proof note: C1/C2/C3 whole units, C7 small exports, C8 temporal leftovers, the C4 interface-method prune, and the C5 wire-or-remove and C6 decisions. Each is made on the role facts — what the artifact is in the architecture — not on a reference count. Only C9 and C5's `RegisterCustomFunction` carry a declared external audience and therefore reach the compatibility notes.
 4. **Class D cheap wins** — D5 (delete the parser copies), D2 (`BoundVariables()`), D6, D1, D3.
 5. **D4** — the clause-walk framework, as its own designed change.
 6. **E1** — decide the `Materialize()` convention and enforce or document it.

@@ -142,12 +142,12 @@ func (s *MemoryStore) scan(bound ScanBound) (Iterator, error) {
 		return true
 	})
 	return &memoryIterator{
-		index:    index,
-		keys:     keys,
-		position: -1,
-		run:      run,
-		encoder:  s.encoder,
-		blobs:    memoryBlobReader{store: s},
+		index:      index,
+		keys:       keys,
+		position:   -1,
+		membership: run.Membership,
+		encoder:    s.encoder,
+		blobs:      memoryBlobReader{store: s},
 	}, nil
 }
 
@@ -487,17 +487,27 @@ type memoryIterator struct {
 	index    IndexType
 	keys     [][]byte
 	position int
-	// run is the bound this iterator is walking, projected onto keys. Its
-	// range selected the keys; its membership test drops the ones the range
-	// over-covers, which happens whenever a bound component is a
-	// variable-length V. Seek replaces it, because a seek names a new run.
-	run          EncodedRun
+	// membership decides which of the selected keys the current bound names,
+	// dropping the ones the range over-covers when a bound component is a
+	// variable-length V. Seek replaces it — a seek names a new run inside the
+	// same key set — and it is one value so the two cannot be copied apart.
+	membership   runMembership
 	encoder      *BinaryKeyEncoder
 	blobs        BlobReader
 	currentDatom datalog.Datom
 	hasDatom     bool
 	err          error
 	closed       bool
+}
+
+// positioned reports whether the cursor is on a key this scan may expose: a key
+// exists at the cursor, and the bound's membership rule holds it. Next, Key and
+// Datom all consult it, so there is one notion of "current".
+func (i *memoryIterator) positioned() bool {
+	if i.closed || i.position < 0 || i.position >= len(i.keys) {
+		return false
+	}
+	return i.membership.holds(i.keys[i.position])
 }
 
 // Next advances to the next key the run holds, stepping over the keys its byte
@@ -512,14 +522,14 @@ func (i *memoryIterator) Next() bool {
 		if i.position >= len(i.keys) {
 			return false
 		}
-		if i.run.Holds(i.keys[i.position]) {
+		if i.positioned() {
 			return true
 		}
 	}
 }
 
 func (i *memoryIterator) Key() []byte {
-	if i.closed || i.position < 0 || i.position >= len(i.keys) {
+	if !i.positioned() {
 		return nil
 	}
 	return i.keys[i.position]
@@ -529,7 +539,7 @@ func (i *memoryIterator) Datom() (*datalog.Datom, error) {
 	if i.err != nil {
 		return nil, i.err
 	}
-	if i.closed || i.position < 0 || i.position >= len(i.keys) {
+	if !i.positioned() {
 		return nil, errors.New("no current datom")
 	}
 	if !i.hasDatom {
@@ -567,9 +577,9 @@ func (i *memoryIterator) Seek(bound ScanBound) {
 		return
 	}
 	// The seek names a new run inside the scan's keys: its start repositions
-	// the cursor, and its membership test governs what follows. The key set
+	// the cursor, and its membership rule governs what follows. The key set
 	// stays the scan's — a seek moves within a scan, it does not open one.
-	i.run.exact, i.run.memberSize = run.exact, run.memberSize
+	i.membership = run.Membership
 	i.position = sort.Search(len(i.keys), func(index int) bool {
 		return bytes.Compare(i.keys[index], run.Start) >= 0
 	}) - 1
