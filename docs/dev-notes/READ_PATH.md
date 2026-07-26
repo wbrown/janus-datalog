@@ -102,8 +102,8 @@
                }
            }
 
-           // If cache miss or not applicable, scan storage (lines 405-415)
-           rawStorageIter, err := m.store.ScanKeysOnly(index, start, end)
+           // If cache miss or not applicable, scan storage
+           rawStorageIter, err := m.reader.ScanKeysOnly(bound)
            // Wrap with CRDTResolvingIterator
            regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
        }
@@ -138,7 +138,6 @@
        type Cache struct {
            entries sync.Map         // map[CacheKey]*CacheEntry
            maxVersions sync.Map     // map[CacheKey]datalog.ElementID (CRITICAL for freshness)
-           attrVersions sync.Map    // map[Attribute]datalog.ElementID (for A-bound queries)
            entityAttrs sync.Map     // map[Entity]*sync.Map (for entity-level tracking)
        }
 

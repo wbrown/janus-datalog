@@ -46,7 +46,7 @@ func TestQueryPathUsesCache(t *testing.T) {
 	// Get matcher from database - this should have cache set
 	matcher := db.Matcher()
 	bm, ok := matcher.(*PatternMatcher)
-	require.True(t, ok, "matcher should be a *BadgerMatcher")
+	require.True(t, ok, "matcher should be a *PatternMatcher")
 	require.NotNil(t, bm.cache, "matcher should have cache set")
 
 	// Clear the cache entries (but keep the maxVersions tracking)
@@ -278,7 +278,7 @@ func TestVectorCacheIntegration(t *testing.T) {
 	assert.Equal(t, "archery", skillSlice[1])
 }
 
-// TestCacheResolverInterface verifies that BadgerMatcher implements CacheResolver
+// TestCacheResolverInterface verifies that PatternMatcher implements CacheResolver
 // correctly when used by the cache.
 func TestCacheResolverInterface(t *testing.T) {
 	db, cleanup := createCacheIntegrationTestDatabase(t)

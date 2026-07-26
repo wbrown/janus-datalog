@@ -1,7 +1,7 @@
 // Reproduction for docs/bugs/BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.md
 //
 // Database.Query builds the executor from the database's effective
-// PlannerOptions, but Database.Matcher() built its BadgerMatcher from
+// PlannerOptions, but Database.Matcher() built its PatternMatcher from
 // DefaultPlannerOptions(). Because a matcher stamps its ExecutorOptions onto
 // every StreamingRelation/MaterializedRelation it returns, a custom-options
 // query ran with the executor seeing the custom options while every

@@ -617,7 +617,7 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 	return executor.NewExecutorWithOptions(matcher, d, opts)
 }
 
-// matcherWithExecOptions builds a fully-configured BadgerMatcher using the
+// matcherWithExecOptions builds a fully-configured PatternMatcher using the
 // given planner options (converted through executor.ExecutorOptionsFromPlanner,
 // the single source of truth shared with the executor) while applying all
 // database-level state: schema, cache, annotation handler, temporal mode.

@@ -58,10 +58,14 @@ func TestATEVEncoderRoundTrip(t *testing.T) {
 	}
 }
 
-// TestATEVDescendingTxOrder verifies the key property that makes
-// MaxElementIDForAttribute O(1): within a single attribute prefix, the
-// lowest-byte (lexicographically first) ATEV key is the one with the highest Tx.
-// This is what lets a single forward seek on [ATEV][A] yield the global max Tx.
+// TestATEVDescendingTxOrder verifies the key property two capabilities rest on:
+// within a single attribute prefix, the lexicographically first ATEV key is the
+// one with the highest Tx. That ordering is what lets an A-bound, Tx-bound,
+// V-unbound pattern seek straight to its transaction — chooseIndex binds
+// [A][Tx↓] and lands on the exact Tx, or the nearest below it — and it is what
+// makes an attribute's high-water mark a single forward seek. The cache gate
+// that consumed the mark was removed in 2026-07 as unwired; the property this
+// test pins is what any rebuilt gate would use.
 func TestATEVDescendingTxOrder(t *testing.T) {
 	entity := sha1.Sum([]byte("atev-order"))
 	attr := datalog.NewKeyword(":atev/order")
@@ -91,8 +95,8 @@ func TestATEVDescendingTxOrder(t *testing.T) {
 }
 
 // TestATEVIsPopulatedOnCommit catches regressions where the write path stops
-// writing ATEV. If ATEV is not populated, MaxElementIDForAttribute returns zero
-// even though the attribute has data, breaking cache freshness checks.
+// writing ATEV. If ATEV is not populated, an A-bound, Tx-bound pattern scans an
+// empty run and reports no datoms even though the attribute has data.
 func TestATEVIsPopulatedOnCommit(t *testing.T) {
 	dir, err := os.MkdirTemp("", "atev-populate-*")
 	if err != nil {

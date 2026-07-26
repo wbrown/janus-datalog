@@ -211,7 +211,7 @@ func TestValidateCandidateSurfacesScanErrors(t *testing.T) {
 				index: EATV,
 				iter:  iter,
 			})
-			// NewBadgerMatcher attaches no cache, so validation takes the
+			// NewPatternMatcher attaches no cache, so validation takes the
 			// EATV point-scan branch.
 			it := &validatingVBoundIterator{
 				matcher:         matcher,

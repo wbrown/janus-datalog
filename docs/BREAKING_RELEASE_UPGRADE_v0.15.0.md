@@ -16,10 +16,42 @@ It now returns the `storage.Store` interface.
 store := database.Store() // storage.Store
 ```
 
-`Store.Get(index, key)` remains on the interface (point lookup by full index
-key; missing keys return `(nil, nil)`). `(*BadgerStore).CountKeys` was never on
-`Store` and is no longer reachable through `db.Store()` — keep a concrete
-`*BadgerStore` handle if you need Badger-only key counting.
+`(*BadgerStore).CountKeys` was never on `Store` and is no longer reachable
+through `db.Store()` — keep a concrete `*BadgerStore` handle if you need
+Badger-only key counting.
+
+### Scans take a typed `ScanBound`; there is no point lookup
+
+`Store.Scan` and `Store.ScanKeysOnly` took `(index IndexType, start, end []byte)`
+and now take a single `ScanBound` — an index plus the leading components of that
+index's component order, bound to datalog values:
+
+```go
+it, err := store.ScanKeysOnly(storage.ScanBound{
+    Index:  storage.AVET,
+    Prefix: []datalog.Value{attr, value},
+})
+```
+
+`Iterator.Seek` takes a `ScanBound` for the same reason. A backend that keys on
+bytes projects the bound at its own boundary; one that compares typed components
+directly never encodes.
+
+`Store.Get(index, key)` is **removed**, along with `StoreReader.Get`. A complete
+index key names one (E, A, V, Tx), but Tx is what CRDT resolution determines, so
+a caller holding one has nothing left to ask. A scan whose bound binds all four
+components is that point lookup, and returns at most one datom because Tx is
+unique per operation.
+
+`StoreReader.Encoder()` is also removed — the read seam exposes no binary
+encoder. `Encoder()` remains on `Store` itself.
+
+`Store.MaxElementIDForAttribute` is removed along with the cache gate it served,
+which had no production caller. This removes an implementation, not a capability:
+ATEV's `[A][Tx↓][E][V]` layout still makes the first key under `[A]` the
+attribute's max-Tx datom, so a caller needing the mark can scan
+`ScanBound{Index: ATEV, Prefix: []datalog.Value{attr}}` and read the first
+entry's `ElementID`. `MaxElementID` remains on the interface.
 
 Call sites that type-asserted to `*storage.BadgerStore` must either:
 
@@ -63,6 +95,19 @@ workspace-decoded scan contract:
 - callers that retain values after those calls must copy
 - Tier-3 blob decode uses the active scan session; sticky `Error()` retains the
   first decode failure after valid preceding rows
+
+### The index-nested-loop join strategy is removed
+
+`PlannerOptions.IndexNestedLoopThreshold` and `ExecutorOptions.IndexNestedLoopThreshold`
+no longer exist, and neither does the `storage.IndexNestedLoop` value of
+`storage.JoinStrategy`. Delete any line that sets or names them; binding-driven
+scans use `HashJoinScan`, or `MergeJoin` for large high-selectivity
+entity-position binding sets.
+
+The strategy had been off by default since 2025-10 and was independently
+incorrect — its precondition, bindings sorted in index order, is unmet for the
+Tx and V positions, where `CompareValues` order deliberately differs from key
+order. See item 29 in `docs/wip/DECISION_LEDGER.md`.
 
 ## Browser persistence
 

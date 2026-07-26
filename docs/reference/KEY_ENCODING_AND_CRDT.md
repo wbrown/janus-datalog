@@ -368,9 +368,9 @@ Single Index Set: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV (8 indices)
 | System | What You Get | Actual Index Structures |
 |--------|--------------|------------------------|
 | Datomic | Current + History | 8 (4 per segment) |
-| Janus | Current + History + CRDT Resolution + O(1) attribute high-water mark | 8 (unified) |
+| Janus | Current + History + CRDT Resolution + AsOf-by-attribute + O(1) attribute high-water mark | 8 (unified) |
 
-Janus provides MORE functionality (CRDT semantics, time-travel via TAEV, O(1) attribute-level freshness via ATEV) with the **same** number of index structures Datomic uses across its current+history segments, because the unified design with bitwise NOT eliminates the need for segmentation — and frees up an index slot to add ATEV for cache-freshness gating.
+Janus provides MORE functionality (CRDT semantics, time-travel via TAEV, AsOf-by-attribute and a constant-time attribute high-water mark via ATEV) with the **same** number of index structures Datomic uses across its current+history segments, because the unified design with bitwise NOT eliminates the need for segmentation — and frees up an index slot for ATEV. The high-water mark is a property of ATEV's layout; the cache gate that consumed it was removed in 2026-07 and can be rebuilt.
 
 ---
 
@@ -556,13 +556,6 @@ type Cache struct {
     // Per-(E,A) max ElementID — updated atomically on every write.
     // Drives per-(E,A) freshness without touching storage.
     maxVersions sync.Map // map[CacheKey]ElementID
-
-    // Per-attribute max ElementID — populated lazily via the storage-side
-    // O(1) ATEV seek. Used to decide whether to even start resolving any
-    // (E, A) pair for an A-bound query: if the attribute is unchanged
-    // since we cached it, all per-(E,A) entries under that A are also
-    // unchanged.
-    attrVersions sync.Map // map[Attribute]ElementID
 }
 
 type CacheEntry struct {
@@ -578,9 +571,14 @@ type CacheEntry struct {
 ```
 
 **Key insight:** The cache stores **resolved views**, not operation history.
-Freshness lives at **two granularities**: per-(E,A) for point lookups, and
-per-attribute for A-bound bulk scans. Per-(E,A) freshness is write-tracked
-in memory; per-attribute freshness is a single ATEV seek away.
+Freshness is per-(E,A) and write-tracked in memory: a commit advances
+`maxVersions[key]`, and a cached entry serves only while its own version still
+equals it.
+
+A second, coarser granularity once existed — a per-attribute gate that could
+skip every (E,A) under an unchanged attribute in one ATEV seek. It was never
+wired to a production caller and was removed in 2026-07 along with
+`Cache.IsAttributeFresh`, `attrVersions`, and `Store.MaxElementIDForAttribute`.
 
 ### Cache Lifecycle
 
@@ -593,8 +591,6 @@ WRITE PATH (Transaction.Commit):
 │                                                             │
 │ After all writes:                                           │
 │   3. cache.Invalidate(touched)  ← remove stale per-(E,A)    │
-│      attrVersions is NOT updated here; it's reconciled on   │
-│      next IsAttributeFresh() call via an ATEV seek.         │
 └─────────────────────────────────────────────────────────────┘
 
 READ PATH — per-(E,A) (cache.GetOrResolve):
@@ -603,20 +599,6 @@ READ PATH — per-(E,A) (cache.GetOrResolve):
 │ 2. Compare entry.version to maxVersions[key] (O(1) map)     │
 │    EQUAL → Return cached (O(1))                             │
 │    LESS  → Rebuild from storage, store in cache             │
-└─────────────────────────────────────────────────────────────┘
-
-READ PATH — per-attribute (cache.IsAttributeFresh):
-┌─────────────────────────────────────────────────────────────┐
-│ 1. Load cached attrVersions[A]                              │
-│    MISS → store.MaxElementIDForAttribute(A)                 │
-│             (single forward Seek on ATEV [A] prefix; O(1)   │
-│             constant ≈ 1µs regardless of attribute size)    │
-│           → store it, return "must resolve"                 │
-│ 2. Compare to a fresh MaxElementIDForAttribute(A)           │
-│    EQUAL → All (E,A) entries under this A are fresh; skip   │
-│            any further per-(E,A) work for this attribute.   │
-│    LESS  → Attribute has changed; fall through to per-(E,A) │
-│            freshness checks per entity.                     │
 └─────────────────────────────────────────────────────────────┘
 
 READ PATH — bypass (no cache, direct storage):
@@ -646,53 +628,31 @@ if entry.version == maxVersions[key] {
 The `maxVersions` map is updated atomically on commit, so per-(E,A)
 freshness never touches storage on the read path.
 
-**Per-attribute — storage-tracked via ATEV, O(1) seek.**
+**Per-attribute — the property stands; the gate built on it does not, yet.**
 
-```go
-// On the read path of an A-bound query:
-func (c *Cache) IsAttributeFresh(a Attribute, store Store) bool {
-    val, ok := c.attrVersions.Load(a)
-    if !ok {
-        // Not in the in-memory cache yet — populate from storage.
-        storeMax, _ := store.MaxElementIDForAttribute(a[:])
-        c.attrVersions.Store(a, storeMax)
-        return false  // "must resolve at least once"
-    }
-    storeMax, _ := store.MaxElementIDForAttribute(a[:])
-    return val.(ElementID) == storeMax
-}
-```
+ATEV's `[A][Tx↓][E][V]` layout sorts highest Tx first, so **the first key under
+`[A]` is that attribute's max-Tx datom** — the high-water mark is one forward
+seek away, in constant time regardless of how many datoms the attribute has.
+That is a property of the index and it is unchanged.
 
-`MaxElementIDForAttribute` is a **single forward Seek on the ATEV `[A]`
-prefix** — the first key under that prefix is the global max-Tx datom for A,
-because ATEV's `[A][Tx↓][E][V]` layout sorts highest Tx first. Constant time
-regardless of how many datoms exist for that attribute.
-
-Per-attribute freshness is **the gate**: if the attribute is unchanged
-since the last bulk scan, the executor skips the per-(E,A) path entirely
-for every entity under that A. For A-bound queries over large attributes,
-this is the difference between "scan every (E,A) in the cache" and "one
-ATEV seek and we're done."
+A coarser cache gate was built on it: if an attribute's mark had not moved, every
+(E,A) under it could be served without a per-entity check. That implementation —
+`Cache.IsAttributeFresh`, `attrVersions`, `Store.MaxElementIDForAttribute` — was
+removed in 2026-07, having never been wired to a production caller and so never
+exercised. The gate is a capability the index still supports and may get a
+working implementation later; what was deleted was code that did not work and
+that nothing called.
 
 ### Why the Cache Is Invalidated, Not Maintained, on Writes
 
 `UpdateMaxVersion` tracks the newest version without touching the
 resolved view. The view itself is only **invalidated** — actual
-resolution happens lazily on next read. `attrVersions` is updated even
-more lazily: writes don't touch it at all; the next `IsAttributeFresh`
-call re-fetches the ATEV high-water mark and reconciles.
+resolution happens lazily on next read.
 
-This separation matters because:
-
-1. Writes shouldn't pay the cost of re-resolving CRDTs on every commit
-   (especially for add-wins sets and RGA vectors, where resolution is
-   O(n)).
-2. ATEV's O(1) seek makes per-attribute reconciliation cheap enough to
-   happen on demand — no need to keep `attrVersions` write-current.
-3. Per-(E,A) freshness is the "hot" check (every point read does it), so
-   it pays the small in-memory update cost on writes. Per-attribute
-   freshness is the "warm" check (gates bulk scans), so it can afford a
-   1µs ATEV seek per check.
+This separation matters because writes shouldn't pay the cost of re-resolving
+CRDTs on every commit, especially for add-wins sets and RGA vectors, where
+resolution is O(n). Per-(E,A) freshness is the check every point read makes, so
+it pays a small in-memory update on write and never touches storage on read.
 
 ### Why the Cache Exists (Asymmetric by Cardinality)
 
@@ -977,7 +937,7 @@ There's no incremental update for RGA that's cheaper than rebuild.
 | **Fixed 16-byte ElementID** | O(1) size regardless of replica count |
 | **Bitwise NOT on Tx** | Forward scan = newest first = O(1) current value |
 | **Unified current/history** | 8 unified indices vs Datomic's 4+4 segmented, no data movement on writes |
-| **Eight indices** | Cardinality-aware access patterns; ATEV adds O(1) attribute high-water mark |
+| **Eight indices** | Cardinality-aware access patterns; ATEV adds AsOf-by-attribute and an O(1) attribute high-water mark |
 | **LSM-tree (BadgerDB)** | Natural append-only for CRDT history |
 | **Value types for hot paths** | No heap allocation in decode/encode |
 | **No separate CRDT layer** | Resolution IS the index access |
@@ -1005,7 +965,7 @@ Most CRDT systems require loading and reconstructing documents to access data. J
 - **LWW**: Seek + read first key = current value is IN the key (O(1) in practice)
 - **Sets**: Scan keys grouped by value + add-wins comparison
 - **Vectors**: Load keys + RGA graph traversal
-- **Unified storage**: Current and historical values in same indices (Datomic uses 4+4 segmented; Janus uses 8 unified, with ATEV added for O(1) attribute high-water mark)
+- **Unified storage**: Current and historical values in same indices (Datomic uses 4+4 segmented; Janus uses 8 unified, with ATEV added for AsOf-by-attribute and the O(1) attribute high-water mark)
 
 The cache is optional for LWW, essential for repeated set/vector access, and uses invalidation (not write-through) because it stores resolved views rather than operations.
 

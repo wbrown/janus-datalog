@@ -20,10 +20,10 @@ import (
 //
 // Start with Match() and MatchWithConstraints() in this file.
 
-// Ensure BadgerMatcher implements PatternMatcher
+// Ensure PatternMatcher implements PatternMatcher
 var _ executor.PatternMatcher = (*PatternMatcher)(nil)
 
-// Ensure BadgerMatcher implements executor.PredicateAwareMatcher
+// Ensure PatternMatcher implements executor.PredicateAwareMatcher
 var _ executor.PredicateAwareMatcher = (*PatternMatcher)(nil)
 
 // Match implements PatternMatcher.Match - returns a Relation directly
@@ -1098,11 +1098,6 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	}
 
 	return crdtIter, rawIter, nil
-}
-
-// encodeValue converts a value to bytes for index prefix
-func (it *validatingVBoundIterator) encodeValue(v any) []byte {
-	return encodeValueForSearch(v, it.matcher.encoder)
 }
 
 func (it *validatingVBoundIterator) Tuple() executor.Tuple {

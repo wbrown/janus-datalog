@@ -1092,7 +1092,7 @@ func TestGetElseWithPopulatedVectorDefault(t *testing.T) {
 }
 
 func TestLookupAttributeDirectly(t *testing.T) {
-	// Test the LookupAttribute method directly on BadgerMatcher
+	// Test the LookupAttribute method directly on PatternMatcher
 	dir, err := os.MkdirTemp("", "lookup-attr-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -1120,7 +1120,7 @@ func TestLookupAttributeDirectly(t *testing.T) {
 	matcher := db.Matcher()
 	badgerMatcher, ok := matcher.(*PatternMatcher)
 	if !ok {
-		t.Fatalf("Expected BadgerMatcher, got %T", matcher)
+		t.Fatalf("Expected PatternMatcher, got %T", matcher)
 	}
 
 	// Test string attribute

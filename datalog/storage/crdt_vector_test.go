@@ -2191,7 +2191,7 @@ func TestSetWithTypedSlices(t *testing.T) {
 	})
 }
 
-// TestTypeDefault verifies BadgerMatcher.TypeDefault converts default values
+// TestTypeDefault verifies PatternMatcher.TypeDefault converts default values
 // to match schema types for vector and many attributes.
 func TestTypeDefault(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "type-default-test")

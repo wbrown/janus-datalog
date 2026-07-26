@@ -13,14 +13,14 @@ import (
 // TestGetElseWithAnnotationHandler reproduces a bug where get-else silently
 // returns no results when the database has an annotation handler enabled.
 //
-// Root cause: AnnotatedMatcher wraps BadgerMatcher but does not implement
+// Root cause: AnnotatedMatcher wraps PatternMatcher but does not implement
 // EntityLookupMatcher. When the executor checks for EntityLookupMatcher via
 // type assertion, the wrapper fails the check. get-else then falls through
 // to Eval() (instead of EvalWithLookup), which returns an error that is
 // silently swallowed — every tuple is skipped, producing 0 results.
 //
 // This bug only manifests with annotation handlers because without one,
-// WrapMatcher returns the unwrapped BadgerMatcher directly.
+// WrapMatcher returns the unwrapped PatternMatcher directly.
 func TestGetElseWithAnnotationHandler(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

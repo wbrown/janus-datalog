@@ -303,19 +303,6 @@ func (s *BadgerStore) MaxElementID() (datalog.ElementID, error) {
 	return maxID, err
 }
 
-// bytesEqual compares two byte slices for equality
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // BeginTx starts a new transaction
 func (s *BadgerStore) BeginTx() (StoreTx, error) {
 	txn := s.db.NewTransaction(true)

@@ -1535,8 +1535,8 @@ func TestPullInto_CardinalityManyStrings_MultipleValues(t *testing.T) {
 // TestCRDTTombstoneReAdd demonstrates a bug where SaveStruct cannot re-add a
 // value to a cardinality-many field after that value was previously removed.
 //
-// ROOT CAUSE: Transaction.SaveStruct creates a BadgerMatcher via
-// NewBadgerMatcher(t.db.Store()) which does NOT set the cache field. This
+// ROOT CAUSE: Transaction.SaveStruct creates a PatternMatcher via
+// NewPatternMatcher(t.db.Store()) which does NOT set the cache field. This
 // causes LookupAllAttributes to use a fallback code path (raw AEVT scan) that
 // returns ALL datoms — both Add and Remove ops — without performing add-wins
 // CRDT resolution. The diff logic in updateSliceField then sees tombstoned

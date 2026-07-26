@@ -188,7 +188,7 @@ func TestProductionQueryPattern(t *testing.T) {
 		// The pattern is: [?bar :price/minute-of-day ?mod] with ?mod bound to different values
 
 		// Test with matcher_v2 which has iterator reuse logic
-		// matcher := NewBadgerMatcher(store) // Not used in this test
+		// matcher := NewPatternMatcher(store) // Not used in this test
 
 		// Pattern with minute-of-day that will be bound
 		pattern := &query.DataPattern{

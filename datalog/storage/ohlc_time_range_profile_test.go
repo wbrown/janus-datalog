@@ -148,7 +148,7 @@ func BenchmarkOHLCBadgerDBTimeRanges(b *testing.B) {
 				b.Fatalf("Failed to parse query: %v", err)
 			}
 
-			// Create executor with BadgerMatcher
+			// Create executor with PatternMatcher
 			matcher := NewPatternMatcher(db.store)
 			exec := executor.NewExecutor(matcher, db)
 

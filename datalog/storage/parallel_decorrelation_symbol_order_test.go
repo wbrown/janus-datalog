@@ -11,7 +11,7 @@ import (
 )
 
 // TestParallelDecorrelationSymbolOrderBadger pins OHLC subquery execution
-// against BadgerMatcher: four correlated aggregate subqueries whose
+// against PatternMatcher: four correlated aggregate subqueries whose
 // correlation parameters are consumed only by equality predicates, verified
 // slot-by-slot so a symbol-order scramble or a decorrelation regression
 // fails loudly. Originally reproduced a symbol-order scramble from

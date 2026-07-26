@@ -38,8 +38,6 @@ func (s *BadgerStore) NewReadSession() (ReadSession, error) {
 	return session, nil
 }
 
-func (s *badgerReadSession) Encoder() *BinaryKeyEncoder { return s.store.encoder }
-
 func (s *badgerReadSession) Scan(bound ScanBound) (Iterator, error) {
 	return s.newIterator(bound)
 }

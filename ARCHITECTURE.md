@@ -421,18 +421,19 @@ type Store interface {
     Retract(datoms []datalog.Datom) error
     DeleteDatoms(datoms []datalog.Datom) (int, error)
 
-    // Read operations
-    Scan(index IndexType, start, end []byte) (Iterator, error)
-    ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error)
-    Get(index IndexType, key []byte) (*datalog.Datom, error)
+    // Read operations. There is no point lookup: a complete index key names
+    // one (E, A, V, Tx), but Tx is what CRDT resolution determines, so a
+    // reader that already knew it would have nothing left to ask. Every read
+    // is a prefix scan.
+    Scan(bound ScanBound) (Iterator, error)
+    ScanKeysOnly(bound ScanBound) (Iterator, error)
     DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error)
     MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error)
     GetMetadataUint64(key string) (uint64, bool, error)
     SetMetadataUint64(key string, value uint64) error
 
-    // High-water marks, derived from index ordering
+    // High-water mark, derived from index ordering
     MaxElementID() (datalog.ElementID, error)
-    MaxElementIDForAttribute(a []byte) (datalog.ElementID, error)
 
     // Consistent read view
     NewReadSession() (ReadSession, error)
@@ -441,6 +442,8 @@ type Store interface {
     Close() error
 }
 ```
+
+A scan names a **`ScanBound`**: an index, plus the leading components of that index's component order bound to datalog values. The k-th element binds the k-th component, so `ScanBound{Index: AVET, Prefix: []datalog.Value{attr, value}}` is "every datom with this attribute and this value." It is typed, not a byte range — a backend that keys on bytes projects the bound at its own boundary, and one that compares typed components directly never encodes at all.
 
 Raw datom storage with 8 indices. Two implementations: `BadgerStore` (BadgerDB, on-disk) and `MemoryStore` (in-process, persisting the same binary keys and all eight indices). Backend selection is by build tag — `openDefaultStore` returns a `BadgerStore` on native targets and a `MemoryStore` under `js && wasm`, where `MemoryStore` is the only backend.
 

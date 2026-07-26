@@ -390,7 +390,7 @@ func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 // =============================================================================
 //
 // Test 14: Data written with schema (tx.Set, OpNone), queried through a
-// BadgerMatcher created without schema → CardinalityOne default works.
+// PatternMatcher created without schema → CardinalityOne default works.
 //
 // This exercises the code path where CRDTResolvingIterator runs with nil schema
 // and must default to CardinalityOne for all attributes.

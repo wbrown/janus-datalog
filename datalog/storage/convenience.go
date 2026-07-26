@@ -80,7 +80,7 @@ func (d *Database) sessionMatcher(opts planner.PlannerOptions) (executor.Pattern
 		return nil, nil, err
 	}
 	matcher := d.matcherWithExecOptions(opts)
-	// matcherWithExecOptions constructs *BadgerMatcher in both its arms
+	// matcherWithExecOptions constructs *PatternMatcher in both its arms
 	// (fresh, or the AsOf copy for temporal handles).
 	matcher.(*PatternMatcher).AttachReadSession(session)
 	return matcher, session, nil

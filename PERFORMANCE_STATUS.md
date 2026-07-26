@@ -24,7 +24,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **CRDT allocation optimization**: **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main branch while adding full CRDT semantics (verified 2026-02-02)
 - ✅ **AETV index & value elimination**: **5% faster**, **19% less memory**, **17% fewer allocations** (geomean); complex queries see **35% memory reduction** (verified 2026-02-06)
 - ✅ **LZ77+FSE compression codec**: **2.1-2.4 GB/s decompression** (7 allocs), **3.6x on prose**, **10-13x on structured/repetitive** data (verified 2026-03-28)
-- ✅ **ATEV index**: `[A][Tx↓][E][V]` places Tx↓ ahead of E, so an A-bound, Tx-bound, V-unbound pattern seeks straight to the transaction instead of scanning every entity (AETV) or every value (AEVT). Costs ~14% more write work per commit (1 of 8 indices). *Amended 2026-07-25*: the index originally also served an O(1) attribute high-water-mark seek behind `Cache.IsAttributeFresh` (measured 2.2× → 555× against the prior AEVT scan). That freshness path was never wired to a production caller and has been removed; the benchmark went with it. AsOf-by-attribute is the index's remaining, live purpose.
+- ✅ **ATEV index**: `[A][Tx↓][E][V]` places Tx↓ ahead of E, so an A-bound, Tx-bound, V-unbound pattern seeks straight to the transaction instead of scanning every entity (AETV) or every value (AEVT). The same layout makes the first key under `[A]` the attribute's max-Tx datom, so an attribute high-water mark is one constant-time seek away (measured 2.2× → 555× against the prior AEVT scan). Costs ~14% more write work per commit (1 of 8 indices). *Amended 2026-07-25*: the cache gate that consumed the high-water mark — `Cache.IsAttributeFresh` — was removed along with `Store.MaxElementIDForAttribute`, `attrVersions`, and their benchmark. It had never been wired to a production caller, so it was never exercised. The index property is unaffected and the gate can be rebuilt on it; AsOf-by-attribute is the purpose currently in use.
 - ✅ **Relation-input parallel iteration**: worker pool + workspace reuse for `:in $ [[?x ?y] ...]`-shape queries. **10–25% wall-time improvement** uniformly across worker counts that fit in P-cores; **1.4% fewer allocations** per query. Eliminates per-tuple goroutine spawn (`len(tuples)` goroutines → `numWorkers`), per-call `QueryExecutor`/`modifiedQuery` rebuild, and per-call `BindQueryInputs` machinery. Fixes an iterator-workspace-reuse race on streaming inputs (verified 2026-05-26).
 - ✅ **Hash-join hot-path optimizations**: **~25% faster Identity-keyed joins** (entity references — the dominant real-world shape), **~14% faster int64-keyed**, **~4.4% fewer allocations** (n=10 geomean) from six targeted inner-loop findings. Biggest wins: pointer-hashing interned Identity/Keyword instead of their SHA1 content (−12.7% Identity) and hoisting the `combineTuples` projection plan out of the inner loop (−8.8%) (verified 2026-05-29, M3 Ultra).
 - ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` binding attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne latest-state queries only; history, as-of, and CardinalityMany stay on the ordinary path. On by default (verified 2026-05-29, M5).
@@ -708,9 +708,19 @@ counting the removed race and the per-identity L85 string.
 
 **Details**: See `docs/bugs/resolved/BUG_IDENTITY_L85_LAZY_RACE.md`
 
-### 16. ATEV Index — O(1) Attribute High-Water Mark (COMPLETE - May 2026)
-**Status**: ✅ New `[A][Tx↓][E][V]` index; `MaxElementIDForAttribute` and every
-`Cache.IsAttributeFresh` call are now a single forward seek
+### 16. ATEV Index — AsOf-by-Attribute and O(1) Attribute High-Water Mark (COMPLETE - May 2026)
+**Status**: ✅ New `[A][Tx↓][E][V]` index. An A-bound, Tx-bound, V-unbound
+pattern seeks straight to its transaction, and the first key under `[A]` is that
+attribute's max-Tx datom.
+
+**Amended 2026-07-25.** The *consumer* of the high-water mark — the cache gate
+`Cache.IsAttributeFresh`, with `MaxElementIDForAttribute`, `Cache.attrVersions`,
+and the benchmark that measured them — has been removed. It had never been wired
+to a production caller, so it was never exercised. **What was removed is an
+implementation, not the capability**: the index layout below still yields the
+mark in one seek, and a working gate can be built on it. The measurements are
+retained as the record of why the index was added, and remain valid for the seek
+itself; only the caching layer above them is gone.
 
 **What changed**:
 - Added an 8th index, **ATEV** (`[prefix][A][Tx↓][E][type][V][AfterRef?][Op]`),
@@ -726,12 +736,16 @@ counting the removed race and the per-identity L85 string.
   of attribute-resolved CRDT lookups) is now constant-time, not linear in the
   attribute's datom count.
 - `PatternMatcher.chooseIndex` routes A-bound + Tx-bound + V-unbound patterns to
-  ATEV. `hash_join_matcher.chooseIndexForValues` and `simple_batch_scanner.buildKey`
-  both learned the ATEV layout so joined/batched scans through ATEV produce a
-  tight `[A][Tx↓][E]` prefix instead of degrading to a full-attribute scan.
+  ATEV. The join and batch scan-bound builders learned the ATEV layout too, so
+  those scans produce a tight `[A][Tx↓][E]` prefix instead of degrading to a
+  full-attribute scan. (Of those two, `scanBoundForValues` is the survivor; the
+  batch scanner was removed in 2026-07 as unreachable.)
 
-**Read-side measurement** (`atev_index_bench_test.go`,
-`BenchmarkMaxElementIDForAttribute_ATEVSeek_vs_AEVTScan`, Apple M5, Badger v4):
+**Read-side measurement**, May 2026 (`atev_index_bench_test.go`,
+`BenchmarkMaxElementIDForAttribute_ATEVSeek_vs_AEVTScan`, Apple M5, Badger v4).
+The benchmark and the `MaxElementIDForAttribute` wrapper it drove were removed in
+2026-07; the seek they measured is a property of the ATEV layout and still costs
+what it cost:
 
 | N (datoms-for-A) | ATEV seek | AEVT scan | Speedup |
 |------------------|-----------|-----------|---------|
@@ -762,13 +776,11 @@ once per datom across all indices via `EncodeKeyWithValueBytes`).
 **Crossover** (writes to amortize one saved freshness check at N=10K): saved
 ~621 µs ÷ added ~0.8 µs/datom ≈ 775 datoms. Any commit smaller than that into a
 10K-cardinality attribute is "paid for" by a single subsequent freshness check
-that would have scanned. Read-mostly workloads (the narrative-generators shape)
-win convincingly; bulk-import-then-never-query workloads pay the ~14% tax with
-no read recovery.
+that would have scanned. This is the trade a rebuilt gate would recover; with no
+gate wired today, ATEV's ~14% write cost currently buys AsOf-by-attribute alone,
+and no read-side measurement of *that* path has been taken.
 
-**Migration**: None required. ATEV is populated by every commit; the freshness
-seek finds nothing (zero ElementID, treated as "no data") on attributes that have
-no writes since the index was added.
+**Migration**: None required. ATEV is populated by every commit.
 
 **Defensive-code cleanup that came with it**: `extractElementIDFromKey` now
 panics on an unknown index type (it previously returned `ElementID{}` silently,

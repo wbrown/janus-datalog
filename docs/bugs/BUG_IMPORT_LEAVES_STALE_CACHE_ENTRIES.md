@@ -17,23 +17,28 @@ though storage holds a newer datom that wins CRDT resolution.
 
 Cache freshness is `slot.entry.version == slot.version` (`cache.go`,
 `GetOrResolve`). That is a **write-notification** design: `slot.version`
-advances only when a writer tells the cache, and the complete production
-notification surface is three calls, all inside `Transaction.Commit`:
+advances only when a writer tells the cache. The complete production
+notification surface is four methods, every call inside `Transaction.Commit`
+(cited by enclosing function — an earlier revision of this document cited line
+numbers, and they had drifted by 22 within a month):
 
-- `Cache.Invalidate` — `database.go:2287`, `database.go:2351`
-- `Cache.InvalidateAttribute` — `database.go:2357`
+- `Cache.UpdateMaxVersion` — twice, once per cardinality arm. **This is the only
+  call that advances `slot.version`**, and therefore the only one whose absence
+  can make a stale entry read as fresh.
+- `Cache.Invalidate` — once on the commit path, and once on the failure path to
+  clear in-flight sentinels. Drops the entry and *keeps* `slot.version`.
+- `Cache.InvalidateAttribute` — for schema-affecting writes.
+- `Cache.BeginInFlight` — opens the uncached window before the write lands.
 
 (`Cache.Clear` has no production callers.) Invalidation is driven off
 `t.datoms` / `t.retracts`, the transaction's own buffer.
 
-Both import entry points bypass that path entirely:
-
-- `Database.Import` (EDN) — `export.go:158`, `export.go:171`
-- `Database.ImportBinary` (JDZL) — `export_bin.go:247`
-
-Neither constructs a `Transaction`; both call `d.store.Assert` on batches and
-never reference `d.cache`. Because nothing advanced `slot.version`, a
-pre-import entry satisfies `entry.version == slot.version` and reads as fresh.
+Both import entry points bypass that path entirely: `Database.Import` (EDN, in
+`export.go`) and `Database.ImportBinary` (JDZL, in `export_bin.go`). Neither
+constructs a `Transaction`; both call `d.store.Assert` on batches and never
+reference `d.cache`. Because nothing called `UpdateMaxVersion`, `slot.version`
+never advanced, so a pre-import entry satisfies `entry.version == slot.version`
+and reads as fresh.
 Neither guard in `GetOrResolve` helps: the in-flight sentinel is only set by
 `BeginInFlight`, which import never calls, and the snapshot bound only refuses
 entries that are too *new* — a pre-import entry sits below any bound and

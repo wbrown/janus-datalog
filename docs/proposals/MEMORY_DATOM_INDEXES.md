@@ -4,7 +4,7 @@
 
 Proposal. Motivated by the wasm / injectable-`Store` work (`MemoryStore` today) and the realization that mirroring Badger’s binary key layout in process memory is the wrong representation for an in-memory engine.
 
-Kickoff questions ruled 2026-07-25; see *Decisions of record (2026-07-25)*. Implementation not started.
+Kickoff questions ruled 2026-07-25; see *Decisions of record (2026-07-25)*. PR 0 (hash-only `Identity`) verified already satisfied. **PR A landed** — the read seam speaks typed `ScanBound`s — with its departures from Ruling 1's scope recorded under *What landed (PR A)*. PR B, the representation swap, is queued and not started.
 
 ## Summary
 
@@ -195,7 +195,7 @@ All three kickoff questions are ruled. Grounds are recorded because two of them 
 
 Three point-in-time corrections to the notes above.
 
-- **`StoreReader` / `ReadSession` exist** (`datalog/storage/read_session.go`). `StoreReader` is the read subset of `Store` — `Encoder`, `Scan`, `ScanKeysOnly`, `Get`, `MaxElementID`, `MaxElementIDForAttribute`, `MaxTxForEntity` — satisfied by both a `Store` (each call opens its own storage transaction) and a `ReadSession` (every call observes one snapshot), with read paths already written against it. The narrow read seam this document asks for is in the tree. What it lacks is a store-agnostic vocabulary.
+- **`StoreReader` / `ReadSession` exist** (`datalog/storage/read_session.go`). `StoreReader` is the read subset of `Store` — as surveyed, `Encoder`, `Scan`, `ScanKeysOnly`, `Get`, `MaxElementID`, `MaxElementIDForAttribute`, `MaxTxForEntity` — satisfied by both a `Store` (each call opens its own storage transaction) and a `ReadSession` (every call observes one snapshot), with read paths already written against it. The narrow read seam this document asks for is in the tree. What it lacks is a store-agnostic vocabulary. *(PR A supplied exactly that and shortened the set: `Scan`/`ScanKeysOnly` take a typed `ScanBound`, and `Encoder`, `Get` and `MaxElementIDForAttribute` are gone. See* What landed (PR A) *below.)*
 - **`Store.NewReadSession` carries a snapshot contract**: every read through a session observes one state regardless of writes committed after it opened, so a query can never observe two database states mid-execution. `MemoryStore` honors it with an O(1) copy-on-write clone of the key B-tree (`read_session_memory.go`), taken under the write lock.
 - **`memoryReadSession.scan` still materializes.** It collects every key in range into a fresh `[][]byte` before returning its iterator, although the clone already isolates the walk from concurrent writes. The copy is vestigial under the session design and must not be carried into the tree backend.
 
@@ -245,7 +245,7 @@ All eight index orders become trees. Encoder and comparator are both derived pro
 Grounds, in order of force:
 
 1. Index ordering *is* the CRDT resolution. EATV/AETV first-entry-wins, ATEV's attribute high-water mark, and TAEV's descending clock recovery are definitions, not access-path optimizations. Dropping an order means losing a resolution path or re-implementing it by buffering.
-2. Non-matcher consumers pin orders regardless of matcher selection: TAEV (`MaxElementID`, `DatomsAfter`), ATEV (`MaxElementIDForAttribute`), EAVT (`MaxTxForEntity`, `ExportBinary`, the retract search prefix). "Only those the matcher selects" was never the full requirement.
+2. Non-matcher consumers pin orders regardless of matcher selection: TAEV (`MaxElementID`, `DatomsAfter`), ATEV (the attribute high-water mark), EAVT (`MaxTxForEntity`, `ExportBinary`, the retract search prefix). "Only those the matcher selects" was never the full requirement. (`MaxElementIDForAttribute`, the wrapper that read ATEV's mark, was removed in 2026-07 with the unwired cache gate above it; the ordering requirement is unchanged, and ATEV is additionally pinned by `chooseIndex`'s A-bound + Tx-bound arm.)
 3. Under shared typed datoms the marginal cost of an order is a pointer per datom rather than a full key copy, so the consideration that motivated a subset does not survive the representation change.
 4. A subset would make the two backends disagree about which access paths are efficient, forcing backend-conditional index selection into the planner.
 
@@ -301,6 +301,8 @@ Pointer content is 32 bytes (E, A, V); the non-pointer bulk is 40 (Tx, Op+paddin
 **Model at N = 3,000,000.** Estimated inputs, stated rather than measured: Go map effective occupancy ~75%, `btree.BTreeG` node fill ~65% plus ~3% interior amortization. The projected tree term assumes **high branching factor and a sorted bulk build** — packing near full, per-node overhead and interior spine together under 1% — which is the configuration the JDZL hydration path produces. Exact inputs from code: eight index entries per datom, key length `71 + |V|`, map slot headers 16 + 24, B-tree item 16, pointer 8.
 
 Occupancy is a *build* property, not a structural constant, so the projected tree term has a real spread. Random insertion converges on ~69% (ln 2); a sorted build packs near full. Across the plausible configurations the eight slots cost 67 B/datom (high branching, bulk-built) to 114 B/datom (low branching, incrementally inserted) — the table below uses the bulk-built figure because that is what hydration produces, and the resting memory of an incrementally-written store is correspondingly higher.
+
+**Unresolved (flagged 2026-07-26).** This paragraph says the table uses 67; the table's tree-slot row says 73, and its totals are computed from 73 (64 + 73 + 8 = 145). The two are not reconcilable from the inputs stated above: eight slots holding one `*Datom` each is 64 bytes of content, so 67 implies ~95.5% node fill and 73 implies ~87.7%, and the paragraph's own "under 1% overhead" would give ~65. Whichever figure is right, the fill fraction it assumes has to be stated — this section exists so the case need not be re-derived, which the disagreement defeats. With 67 the projected per-datom figures are 139 and 155, and the ~9× headline is unchanged either way.
 
 | | \|V\|=8 | \|V\|=24 |
 |---|---|---|

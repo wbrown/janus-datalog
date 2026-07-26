@@ -44,8 +44,6 @@ type PlannerOptions struct {
 
     EnableStreamingJoins       bool // opt-in
     EnableStreamingAggregation bool // default-active
-
-    IndexNestedLoopThreshold int // default 0
 }
 ```
 
@@ -66,7 +64,6 @@ EnableParallelSubqueries:   true
 MaxSubqueryWorkers:         0      // executor default: 4 workers
 EnableStreamingJoins:       false
 EnableStreamingAggregation: true
-IndexNestedLoopThreshold:   0      // always HashJoinScan
 ```
 
 So, off by default (opt-in): `EnableJoinProjectInsertion`,
@@ -145,14 +142,6 @@ uses 3.78% more memory, and performs 8.34% more allocations than the default
 Streaming aggregation (no full materialization of the input). Consumed in
 `executor/aggregation.go`.
 
-### Storage join strategy
-
-#### IndexNestedLoopThreshold — **default 0**
-For binding sets of size ≤ threshold the matcher uses index-nested-loop (iterator
-reuse with seeks); above it, HashJoinScan. Default `0` means always HashJoinScan
-(benchmarks show it wins even at size 1). Consumed in
-`storage/hash_join_matcher.go`.
-
 ### Plan cache
 
 #### Cache *PlanCache
@@ -163,9 +152,9 @@ set this by hand.
 
 ## Removed options (historical)
 
-These knobs existed in earlier versions and were **removed in 2026-05** because
-they were inert no-ops under the clause-based planner — setting them changed
-nothing:
+These knobs existed in earlier versions and have been removed. Most were inert
+no-ops under the clause-based planner — setting them changed nothing; the rest
+give their own reason and date below.
 
 | Removed option | Why |
 |----------------|-----|
@@ -184,6 +173,7 @@ nothing:
 | `EnableDebugLogging` | Removed in 2026-07. Join and relation diagnostics are structured annotation events. |
 | `EnableStreamingAggregationDebug` | Removed in 2026-07. Aggregation strategy and materialization diagnostics are structured annotation events. |
 | `EnableIteratorComposition` | Removed in 2026-07. Composed iterators are the only implementation of streaming relation operations; the flag's false arm ("materialize then delegate") recursed without bound because `StreamingRelation.Materialize` returns the receiver, and no production path ever ran with the flag off. Materialization is a consumer decision made through `Materialize()`, not a mode. |
+| `IndexNestedLoopThreshold` | Removed in 2026-07 with the index-nested-loop join strategy it gated. The strategy had been off by default since 2025-10 on a benchmark that does not survive inspection, and was independently incorrect: its precondition — bindings sorted in index order — is unmet for the Tx and V positions, where `CompareValues` order deliberately differs from key order. Binding-driven scans use HashJoinScan, or MergeJoin for large high-selectivity entity-position sets. See item 29 in `docs/wip/DECISION_LEDGER.md`. |
 
 If your code sets any of these, delete the lines — the fields no longer exist.
 
@@ -210,13 +200,6 @@ db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
         // Handle join/*, aggregation/*, relation/*, and other events.
     },
 })
-```
-
-### Force index-nested-loop (testing)
-
-```go
-opts := storage.DefaultPlannerOptions()
-opts.IndexNestedLoopThreshold = 999999 // use IndexNestedLoop for all binding sizes
 ```
 
 ---

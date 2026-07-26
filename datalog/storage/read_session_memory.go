@@ -33,8 +33,6 @@ func (s *MemoryStore) NewReadSession() (ReadSession, error) {
 	return &memoryReadSession{store: s, keys: s.keys.Clone()}, nil
 }
 
-func (s *memoryReadSession) Encoder() *BinaryKeyEncoder { return s.store.encoder }
-
 func (s *memoryReadSession) Scan(bound ScanBound) (Iterator, error) {
 	return s.scan(bound)
 }

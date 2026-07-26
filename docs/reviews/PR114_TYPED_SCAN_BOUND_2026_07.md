@@ -143,7 +143,7 @@ Two consequences for this PR's record. Its commit message and PR body report the
 
 ### B2. Four orphaned symbols
 
-**Status**: Open. All four lost their last caller on this branch. **Corollary refuted.**
+**Status**: Resolved (2026-07-26). Re-verified after the iterator-reuse removal, which changed the orphan set, and all four deleted. Every one is unexported — `badgerReadSession` and `memoryReadSession` are unexported types, so their `Encoder()` methods are unreachable from outside the package — so in-repo deadness settles it and no compatibility question arises. **Corollary refuted** (below). **One new orphan surfaced and is not resolved here**: `BinaryKeyEncoder.EncodePrefixRange` now has no production caller. Its only remaining use is as the oracle in `TestScanBoundEncodesAsPrefixRange`, and D1 already records that this oracle shares the arithmetic it is meant to check. It is exported surface, so removing it is a compatibility decision rather than a reference count. `EncodePrefix` keeps a production caller in `encodeBoundEndpoint`.
 **Sites**: `read_session_badger.go:41`, `read_session_memory.go:36`, `matcher_relations.go:1143`, `badger_store.go:307`
 
 All four report zero references:
@@ -215,7 +215,9 @@ Position 0 is E (`simple_batch_scanner.go:18`). The case names itself V-bound an
 
 ### E1. ARCHITECTURE.md declares the API this branch removed
 
-**Status**: Open.
+**Status**: Resolved (2026-07-26). The Store block now matches the interface
+method for method, with a paragraph explaining what a `ScanBound` is — the
+listing alone left an implementer to guess. Swept for other stale API; none.
 **Site**: `ARCHITECTURE.md:425-427`, `:435`
 
 The Store block declares byte-range `Scan` and `ScanKeysOnly`, `Get`, and `MaxElementIDForAttribute`. A backend written from it cannot satisfy `storage.Store` (`store.go:49-51`).
@@ -224,42 +226,67 @@ Commit `50c119b` — the **first commit on this branch** — expanded that listi
 
 ### E2. The upgrade note says `Store.Get` remains on the interface
 
-**Status**: Open.
+**Status**: Resolved (2026-07-26). The note no longer claims `Get` remains, and
+gained a migration section for the typed bound plus the other exported removals a
+caller meets: `StoreReader.Encoder()`, `MaxElementIDForAttribute`, and
+`IndexNestedLoopThreshold`.
 **Site**: `docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md:19`; cited by `store.go:47-48`
 
 `Store.Get(index, key)` was removed by `d22fc7d`. The note still describes it as present, and `store.go` points readers at that note.
 
 ### E3. The deleted per-attribute freshness path is present tense in nine places
 
-**Status**: Open. `3684e04` removed the path and amended only `PERFORMANCE_STATUS.md:27`.
+**Status**: Resolved (2026-07-26). No Go file mentions the path. Two stale
+comments in `cache.go`, three test comments justifying live tests by a dead
+consumer, and the reference doc's per-attribute diagram, code block and rationale
+are corrected; `PERFORMANCE_STATUS.md` §16 and the `TODO.md` entry are amended in
+place, keeping the May 2026 measurements as record. **Framing corrected by owner
+ruling (2026-07-26)**: what was removed is the unwired cache gate, not the
+capability. ATEV's layout still makes the first key under `[A]` the attribute's
+max-Tx datom; the mark may get a working implementation later, and the docs now
+say so rather than describing the capability as retired.
 **Sites**: `PERFORMANCE_STATUS.md:712-734` (which also cites the deleted `BenchmarkMaxElementIDForAttribute_ATEVSeek_vs_AEVTScan`), `TODO.md:82`, `docs/reference/KEY_ENCODING_AND_CRDT.md:565`, `:596-597`, `:608-620`, `:652-674`, `docs/dev-notes/READ_PATH.md:141`, `datalog/storage/cache.go:288-295`, `atev_index_test.go:62`, `:94`, `unique_benchmark_test.go:67`
 
 **Correction.** The review cites `READ_PATH.md` under `docs/reference/`; the file is at `docs/dev-notes/READ_PATH.md`. Its `:141` is the freshness path (`attrVersions`); its `:106` is stale for a different reason — the removed byte-range `ScanKeysOnly(index, start, end)` signature.
 
 ### E4. `BadgerMatcher` survives the rename in live source and in the status document
 
-**Status**: Open. Renamed by `50c119b`.
+**Status**: Resolved (2026-07-26). Twenty-one references across fifteen live Go
+files, including two failure-message strings that printed the old name. The
+status document's `chooseIndexForValues`/`buildKey` mention went with the ATEV
+section rewrite.
 **Sites**: `matcher_relations.go:23`, `:26`, `convenience.go:83`, `database.go:624`, `cache_resolver.go:8`; failure text in `cache_integration_test.go:49` and `database_function_integration_test.go:1123`; `PERFORMANCE_STATUS.md:729` also names `chooseIndexForValues` and `buildKey`, both renamed by `566e806`
 
 A further fourteen test comments carry the old name; the review's list is a subset.
 
 ### E5. Ledger item 29 attributes PR A to a SHA not on the branch
 
-**Status**: Open.
+**Status**: Resolved (2026-07-26). The entry cites PR #114 rather than a SHA, per
+this finding's own advice: no SHA written inside a branch can be its delivered
+head.
 **Site**: `docs/wip/DECISION_LEDGER.md:68`
 
 The entry reads "PR A executed (`53caf46`, branch `feat/typed-bound-scan-seam`)". `53caf46` was amended into `566e806` when the docs were folded in; no commit on the branch carries that SHA. The entry ships **inside** the branch it records, so no SHA written there can be the delivered head. Name the PR, or a merge commit, or nothing.
 
 ### E6. `BUG_IMPORT_LEAVES_STALE_CACHE_ENTRIES` citations drifted and its notification list is incomplete
 
-**Status**: Open. The drift is from this branch's own edits to `database.go`.
+**Status**: Resolved (2026-07-26). Cited by enclosing function rather than line —
+this finding's own lesson. The notification surface is four methods, not three:
+the missing one was `UpdateMaxVersion`, the only call that advances
+`slot.version` and therefore the only one whose absence produces the bug.
 **Site**: `docs/bugs/BUG_IMPORT_LEAVES_STALE_CACHE_ENTRIES.md:23-24`, `:55-56`
 
 Cited `database.go:2287`, `:2351`, `:2357`; actual `:2265`, `:2329`, `:2335` — off by 22 on all three. The document's claim that "the complete notification surface is three calls" omits `Cache.UpdateMaxVersion` (`database.go:2305`, `:2320`), which the review identifies as the only call that advances `slot.version`.
 
 ### E7. Proposal status line and sizing figure
 
-**Status**: Open.
+**Status**: Partly resolved (2026-07-26). The status line now reflects PR 0
+satisfied, PR A landed, PR B queued. **The sizing disagreement stands and is
+recorded in place**: 67 and 73 are not reconcilable from the stated inputs — eight
+slots of one `*Datom` is 64 bytes of content, so 67 implies ~95.5% node fill and
+73 implies ~87.7%, while the paragraph's own "under 1% overhead" gives ~65. The
+fill fraction has to be stated; inventing a reconciliation would defeat the
+section's purpose. The ~9× headline holds either way.
 **Site**: `docs/proposals/MEMORY_DATOM_INDEXES.md:7`, `:303` vs `:313-316`
 
 `:7` still reads "Implementation not started" with PR 0 satisfied and PR A executed. Separately, `:303` states the eight tree slots cost **67 B/datom** bulk-built and that the table below uses that figure; `:313` reads **73**, and `:315-316` are computed from 73 (64+73+8 = 145). With 67 the projected per-datom figure is 139. The section exists so the case need not be re-derived (`:296`), which makes the internal disagreement the whole cost.

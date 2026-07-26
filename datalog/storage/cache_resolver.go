@@ -5,7 +5,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// Ensure BadgerMatcher implements CacheResolver
+// Ensure PatternMatcher implements CacheResolver
 var _ CacheResolver = (*PatternMatcher)(nil)
 
 // GetCardinality returns the cardinality for an attribute

@@ -63,8 +63,8 @@ func setupUniqueBenchmarkDB(b *testing.B, n int) (*Database, []datalog.Identity,
 		b.Fatal(err)
 	}
 
-	// Warm cache on each attribute for at least one entity so
-	// attribute-level metadata is populated (attrVersions, etc).
+	// Warm the cache on each attribute for at least one entity, so the
+	// benchmark measures a warm read rather than the first resolution.
 	_, _ = db.ResolveEntityAttributes(entities[0], []datalog.Keyword{email, name})
 
 	return db, entities, func() { db.Close() }
