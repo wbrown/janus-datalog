@@ -59,26 +59,41 @@ func NewBadgerStore(path string, encoder *BinaryKeyEncoder) (*BadgerStore, error
 	}, nil
 }
 
-// Assert adds datoms to the store
+// Assert adds datoms to the store.
+//
+// The writes go through a WriteBatch rather than one transaction. A caller
+// hands this arbitrarily many datoms, and at eight index keys each plus a blob
+// per out-of-line value, Badger's per-transaction ceiling arrives long before
+// a caller has reason to suspect a limit exists — a single entity's history is
+// enough. The batch splits at that ceiling itself, so the arithmetic stays
+// Badger's and cannot drift from it.
+//
+// The cost is that Assert is not atomic: a mid-way failure leaves the datoms
+// already committed in place. Re-asserting is safe, because an index key is
+// derived wholly from its datom and a repeated write reproduces it exactly.
+// A caller that needs a boundary uses BeginTx, whose StoreTx.Assert still
+// writes into the one transaction that caller owns.
 func (s *BadgerStore) Assert(datoms []datalog.Datom) error {
-	return s.db.Update(func(txn *badger.Txn) error {
-		for _, d := range datoms {
-			if err := s.assertDatom(txn, &d); err != nil {
-				return err
-			}
+	wb := s.db.NewWriteBatch()
+	defer wb.Cancel()
+	for _, d := range datoms {
+		if err := s.assertDatom(wb.Set, &d); err != nil {
+			return err
 		}
-		return nil
-	})
+	}
+	return wb.Flush()
 }
 
-// assertDatom adds a single datom to all indices
-func (s *BadgerStore) assertDatom(txn *badger.Txn, d *datalog.Datom) error {
+// assertDatom writes one datom's eight index keys, and its blob when the value
+// is stored out of line, through set: a transaction's Set where the caller owns
+// the transaction boundary, a write batch's where it does not.
+func (s *BadgerStore) assertDatom(set func(key, value []byte) error, d *datalog.Datom) error {
 	// Pre-encode value bytes once (avoids recomputing compression 7 times)
 	vBytes, blobData := s.encoder.EncodeValueBytes(d.V)
 
 	// Tier 3: write compressed data to blob store
 	if blobData != nil {
-		if err := putBlob(txn, blobData.Hash, blobData.CompressedBytes); err != nil {
+		if err := putBlob(set, blobData.Hash, blobData.CompressedBytes); err != nil {
 			return fmt.Errorf("failed to write blob: %w", err)
 		}
 	}
@@ -88,7 +103,7 @@ func (s *BadgerStore) assertDatom(txn *badger.Txn, d *datalog.Datom) error {
 	sd := ToStorageDatom(*d)
 	for _, idx := range Indices {
 		key := s.encoder.encodeKeyWithParts(idx, &sd, vBytes)
-		if err := txn.Set(key, nil); err != nil {
+		if err := set(key, nil); err != nil {
 			return fmt.Errorf("failed to write to %v index: %w", idx, err)
 		}
 	}
@@ -615,10 +630,12 @@ type BadgerTx struct {
 	txn   *badger.Txn
 }
 
-// Assert adds datoms within a transaction
+// Assert adds datoms within a transaction. Unlike BadgerStore.Assert this does
+// not split: the caller owns the transaction boundary, so an oversized commit
+// surfaces Badger's ErrTxnTooBig for the caller to handle.
 func (t *BadgerTx) Assert(datoms []datalog.Datom) error {
 	for _, d := range datoms {
-		if err := t.store.assertDatom(t.txn, &d); err != nil {
+		if err := t.store.assertDatom(t.txn.Set, &d); err != nil {
 			return err
 		}
 	}
