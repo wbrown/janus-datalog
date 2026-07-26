@@ -594,10 +594,6 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		// Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple
 		// LookupAttribute binding instead of match + hash join.
 		EnableAttributeFetchFusion: true,
-
-		// Storage join strategy
-		IndexNestedLoopThreshold: 0, // Default to HashJoinScan for all binding sizes
-
 	}
 }
 

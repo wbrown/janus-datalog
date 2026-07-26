@@ -78,7 +78,7 @@ func emitIteratorStatistics(
 
 	data := map[string]interface{}{
 		"pattern":        pattern.String(),
-		"index":          indexName(index),
+		"index":          index.String(),
 		"datoms.scanned": datomsScanned,
 		"datoms.matched": datomsMatched,
 	}

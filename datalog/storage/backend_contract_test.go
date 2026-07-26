@@ -449,6 +449,93 @@ func TestStoreBackendTransactionOrderedScan(t *testing.T) {
 	}
 }
 
+// TestStoreBackendVBoundRunExcludesValueExtensions is the backend-parity pin
+// the typed bound owed. A V payload carries no length, so a byte range whose
+// last bound component is a variable-length V is a prefix range: the keys for
+// "abcd" sort inside the range for "abc", interleaved with them, and no range
+// can separate the two. Narrowing the range to the run the bound names is the
+// store's job, and both stores must do it the same way.
+//
+// Op is load-bearing here: an RGA datom's key carries an AfterRef ahead of Op
+// and is 16 bytes longer for the same value, so a store that measures a key
+// without reading Op drops every RGA datom from a V-bound scan.
+func TestStoreBackendVBoundRunExcludesValueExtensions(t *testing.T) {
+	for _, testCase := range storeContractCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := testCase.open(t, &BinaryKeyEncoder{})
+			defer store.Close()
+
+			attr := datalog.NewKeyword(":run/tag")
+			other := datalog.NewKeyword(":run/other")
+			short := datalog.NewIdentity("run:short")
+			long := datalog.NewIdentity("run:long")
+			empty := datalog.NewIdentity("run:empty")
+			rga := datalog.NewIdentity("run:rga")
+			rgaLong := datalog.NewIdentity("run:rga-long")
+			raw := datalog.NewIdentity("run:raw")
+			rawLong := datalog.NewIdentity("run:raw-long")
+
+			tx := func(l uint64) datalog.ElementID {
+				return datalog.ElementID{Lamport: l, ReplicaID: 1}
+			}
+			after := datalog.ElementID{Lamport: 99, ReplicaID: 1}
+
+			require.NoError(t, store.Assert([]datalog.Datom{
+				{E: short, A: attr, V: "abc", Tx: tx(1)},
+				{E: long, A: attr, V: "abcd", Tx: tx(2)},
+				{E: empty, A: attr, V: "", Tx: tx(3)},
+				{E: rga, A: attr, V: "abc", Tx: tx(4),
+					Op: datalog.OpRGAInsert, AfterRef: after},
+				{E: rgaLong, A: attr, V: "abcd", Tx: tx(5),
+					Op: datalog.OpRGAInsert, AfterRef: after},
+				{E: raw, A: other, V: []byte("xy"), Tx: tx(6)},
+				{E: rawLong, A: other, V: []byte("xyz"), Tx: tx(7)},
+			}))
+
+			for _, run := range []struct {
+				name  string
+				bound ScanBound
+				want  []datalog.Identity
+			}{
+				{"AVET/string", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{attr, "abc"}},
+					[]datalog.Identity{short, rga}},
+				{"AVET/empty-string", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{attr, ""}},
+					[]datalog.Identity{empty}},
+				{"AVET/bytes", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{other, []byte("xy")}},
+					[]datalog.Identity{raw}},
+				{"VAET/value-first", ScanBound{Index: VAET,
+					Prefix: []datalog.Value{"abc"}},
+					[]datalog.Identity{short, rga}},
+				{"EAVT/value-last", ScanBound{Index: EAVT,
+					Prefix: []datalog.Value{short, attr, "abc"}},
+					[]datalog.Identity{short}},
+				{"EAVT/value-belongs-to-another-entity", ScanBound{Index: EAVT,
+					Prefix: []datalog.Value{long, attr, "abc"}},
+					nil},
+			} {
+				t.Run(run.name, func(t *testing.T) {
+					iter, err := store.ScanKeysOnly(run.bound)
+					require.NoError(t, err)
+					defer iter.Close()
+
+					var got []datalog.Identity
+					for iter.Next() {
+						datom, err := iter.Datom()
+						require.NoError(t, err)
+						got = append(got, datom.E)
+					}
+					require.NoError(t, iter.Error())
+					require.ElementsMatch(t, run.want, got,
+						"the run must hold exactly the datoms carrying the bound value")
+				})
+			}
+		})
+	}
+}
+
 func collectIndexDatoms(t *testing.T, store Store, useScan bool) []datalog.Datom {
 	t.Helper()
 	var (

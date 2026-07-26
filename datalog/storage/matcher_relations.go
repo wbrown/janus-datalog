@@ -196,7 +196,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 			Data: map[string]interface{}{
 				"pattern":          pattern.String(),
 				"strategy_type":    strategy.Type.String(),
-				"index":            indexName(strategy.Index),
+				"index":            strategy.Index.String(),
 				"position":         strategy.Position,
 				"needs_validation": strategy.NeedsValidation,
 				"bound_a":          fmt.Sprintf("%v", strategy.BoundA),
@@ -230,7 +230,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 					"pattern":       pattern.String(),
 					"join_strategy": joinStrategy.String(),
 					"position":      strategy.Position,
-					"index":         indexName(strategy.Index),
+					"index":         strategy.Index.String(),
 				},
 			})
 		}
@@ -245,8 +245,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 			rel, err = m.matchWithMergeJoin(pattern, bindingRel, symbols, strategy.Position, strategy.Index, constraints)
 
 		default:
-			// IndexNestedLoop, or fall back to iterator reuse
-			rel, err = m.matchWithIteratorReuse(pattern, bindingRel, symbols, strategy, constraints)
+			panic(fmt.Sprintf("unhandled join strategy %v", joinStrategy))
 		}
 
 	case NoReuse:
@@ -585,44 +584,6 @@ func (m *PatternMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, b
 	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
 }
 
-// matchWithIteratorReuse implements the optimized iterator reuse strategy
-func (m *PatternMatcher) matchWithIteratorReuse(
-	pattern *query.DataPattern,
-	bindingRel executor.Relation,
-	symbols []query.Symbol,
-	strategy ReuseStrategy,
-	constraints []executor.StorageConstraint,
-) (executor.Relation, error) {
-	// Get sorted tuples - THIS IS CRITICAL!
-	// Without sorted tuples, we cannot use Seek() to jump forward in the iterator
-	// Sorted() will auto-materialize if needed
-	sortedTuples, err := bindingRel.Sorted()
-	if err != nil {
-		return nil, err
-	}
-	sortedTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), sortedTuples)
-
-	// Create streaming iterator that will reuse storage iterator
-	iter := &reusingIterator{
-		matcher:          m,
-		pattern:          pattern,
-		bindingRel:       bindingRel,
-		tuples:           sortedTuples,
-		position:         strategy.Position,
-		index:            strategy.Index,
-		opened:           time.Now(),
-		symbols:          symbols,
-		constraints:      constraints,
-		currentIdx:       -1,
-		workspace:        make(executor.Tuple, len(symbols)),
-		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Symbols()),
-		tupleBuilder:     m.getTupleBuilder(pattern, symbols),
-	}
-
-	// Return streaming relation with the iterator
-	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
-}
-
 // matchWithVValidation implements the candidate + validate pattern for V-bound
 // cardinality-one queries. See docs/reference/INDEX_SELECTION_PROOF.md Theorem 4.
 //
@@ -643,7 +604,7 @@ func (m *PatternMatcher) matchWithVValidation(
 			Start: time.Now(),
 			Data: map[string]any{
 				"pattern":     pattern.String(),
-				"index":       indexName(strategy.Index),
+				"index":       strategy.Index.String(),
 				"bound_a":     fmt.Sprintf("%v", strategy.BoundA),
 				"binding_rel": bindingRel.Symbols(),
 			},
@@ -736,12 +697,12 @@ func (it *validatingVBoundIterator) Next() bool {
 						Name:  "v-validation/candidate",
 						Start: time.Now(),
 						Data: map[string]any{
-							"e":     datom.E.String(),
-							"a":     datom.A.String(),
-							"v":     fmt.Sprintf("%v", datom.V),
-							"tx":    datom.Tx.String(),
-							"op":    fmt.Sprintf("%d", datom.Op),
-							"bound": fmt.Sprintf("%v", it.currentBoundV),
+							"e":       datom.E.String(),
+							"a":       datom.A.String(),
+							"v":       fmt.Sprintf("%v", datom.V),
+							"tx":      datom.Tx.String(),
+							"op":      fmt.Sprintf("%d", datom.Op),
+							"bound.v": fmt.Sprintf("%v", it.currentBoundV),
 						},
 					})
 				}
@@ -1008,9 +969,9 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 			Name:  "v-validation/no-winner",
 			Start: time.Now(),
 			Data: map[string]any{
-				"e":     e.String(),
-				"a":     a.String(),
-				"bound": fmt.Sprintf("%v", it.currentBoundV),
+				"e":       e.String(),
+				"a":       a.String(),
+				"bound.v": fmt.Sprintf("%v", it.currentBoundV),
 			},
 		})
 	}
@@ -1130,7 +1091,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 			Name:  "v-validation/scan-opened",
 			Start: time.Now(),
 			Data: map[string]any{
-				"index":        indexName(it.candidateIndex),
+				"index":        it.candidateIndex.String(),
 				"crdt_wrapped": true,
 			},
 		})
@@ -1161,68 +1122,6 @@ func (it *validatingVBoundIterator) Close() error {
 }
 
 func (it *validatingVBoundIterator) Error() error { return it.err }
-
-// matchWithSimpleBatchScanning uses simplified batch scanning to process large binding sets efficiently
-func (m *PatternMatcher) matchWithSimpleBatchScanning(
-	pattern *query.DataPattern,
-	bindingRel executor.Relation,
-	symbols []query.Symbol,
-	strategy ReuseStrategy,
-	constraints []executor.StorageConstraint,
-) (executor.Relation, error) {
-	// Determine which index and position to use
-	index := strategy.Index
-	position := strategy.Position
-
-	// Create simple batch scanner
-	scanner := newSimpleBatchScanner(
-		m,
-		pattern,
-		bindingRel,
-		position,
-		IndexType(index),
-		symbols,
-		constraints,
-	)
-
-	// Perform the batch scan
-	if err := scanner.Scan(); err != nil {
-		return nil, fmt.Errorf("batch scan failed: %w", err)
-	}
-
-	// Return streaming relation wrapping the scanner
-	// Note: scanner materializes internally but we avoid secondary materialization
-	return executor.NewStreamingRelationWithOptions(symbols, scanner, m.options), nil
-}
-
-// matchWithBatchScanning uses batch scanning to process large binding sets efficiently
-func (m *PatternMatcher) matchWithBatchScanning(
-	pattern *query.DataPattern,
-	bindingRel executor.Relation,
-	symbols []query.Symbol,
-	strategy ReuseStrategy,
-	constraints []executor.StorageConstraint,
-) (executor.Relation, error) {
-	// Use the simplified batch scanner
-	scanner := newSimpleBatchScanner(
-		m,
-		pattern,
-		bindingRel,
-		strategy.Position,
-		strategy.Index,
-		symbols,
-		constraints,
-	)
-
-	// Perform the scan
-	if err := scanner.Scan(); err != nil {
-		return nil, err
-	}
-
-	// Return streaming relation wrapping the scanner
-	// Note: scanner materializes internally but we avoid secondary materialization
-	return executor.NewStreamingRelationWithOptions(symbols, scanner, m.options), nil
-}
 
 // matchFromCache attempts to resolve a pattern using the cache.
 // Returns (relation, true) if cache was used, (nil, false) if fallback to storage is needed.

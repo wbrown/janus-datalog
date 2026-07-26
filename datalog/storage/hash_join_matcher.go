@@ -13,26 +13,21 @@ import (
 type JoinStrategy int
 
 const (
-	// IndexNestedLoop uses Seek() per binding value (good for small sets or high selectivity)
-	IndexNestedLoop JoinStrategy = iota
-
 	// HashJoinScan builds hash set and does single scan (good for medium selectivity 1-50%)
-	HashJoinScan
+	HashJoinScan JoinStrategy = iota
 
-	// MergeJoin merges sorted streams (future: good for large sets >50% selectivity)
+	// MergeJoin merges sorted streams (good for large sets >50% selectivity)
 	MergeJoin
 )
 
 func (js JoinStrategy) String() string {
 	switch js {
-	case IndexNestedLoop:
-		return "index-nested-loop"
 	case HashJoinScan:
 		return "hash-join-scan"
 	case MergeJoin:
 		return "merge-join"
 	default:
-		return "unknown"
+		return fmt.Sprintf("JoinStrategy(%d)", int(js))
 	}
 }
 
@@ -54,31 +49,6 @@ func (m *PatternMatcher) chooseJoinStrategy(
 
 	// Calculate selectivity: what % of pattern matches are in the binding set?
 	selectivity := float64(bindingSize) / float64(patternCard)
-
-	// Strategy selection based on selectivity and absolute size
-	//
-	// NOTE: IndexNestedLoop was originally thought to be better for small binding sets,
-	// but comprehensive benchmarking revealed that the Sorted() call in matchWithIteratorReuse()
-	// (which materializes AND sorts) adds so much overhead that HashJoinScan is faster
-	// even for single bindings:
-	//
-	//   Size 1:  IndexNestedLoop 821µs vs HashJoinScan 204µs (4.0× speedup)
-	//   Size 2:  IndexNestedLoop 1522µs vs HashJoinScan 203µs (7.5× speedup)
-	//   Size 3:  IndexNestedLoop 2298µs vs HashJoinScan 203µs (11.3× speedup)
-	//   Size 10: IndexNestedLoop 7660µs vs HashJoinScan 206µs (37× speedup)
-	//
-	// The sorting overhead dominates seek cost at all tested binding sizes.
-	// See: datalog/storage/join_strategy_threshold_bench_test.go
-
-	// Check if IndexNestedLoop is preferred for small binding sets (configurable via options)
-	threshold := m.options.IndexNestedLoopThreshold
-
-	// CRITICAL: Size() returns -1 for streaming relations with unknown size
-	// Don't use IndexNestedLoop for unknown sizes (-1 <= 0 would be true!)
-	// Default to HashJoinScan for streaming relations
-	if bindingSize >= 0 && bindingSize <= threshold {
-		return IndexNestedLoop
-	}
 
 	// For small to medium-sized binding sets (1-1000), use hash join
 	if bindingSize <= 1000 {
@@ -707,7 +677,7 @@ func (it *hashJoinIterator) Close() error {
 			Name: "pattern/hash-join-complete",
 			Data: map[string]interface{}{
 				"pattern":        it.patternString,
-				"index":          indexName(it.index),
+				"index":          it.index.String(),
 				"binding.size":   it.bindingKeyCount,
 				"datoms.scanned": it.datomsScanned,
 				"matches.found":  it.matchesFound,

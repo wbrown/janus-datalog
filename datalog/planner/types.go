@@ -133,9 +133,6 @@ type PlannerOptions struct {
 	// Executor join/aggregation options
 	EnableStreamingJoins       bool // Return StreamingRelation from joins instead of materializing
 	EnableStreamingAggregation bool // Enable streaming aggregation (default: true)
-
-	// Storage join strategy options
-	IndexNestedLoopThreshold int // Threshold for choosing IndexNestedLoop vs HashJoinScan (default: 0)
 }
 
 func indexName(idx IndexType) string {

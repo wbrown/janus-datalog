@@ -166,7 +166,9 @@ func TestChooseIndex_ABoundPlusTxBound_PicksATEV(t *testing.T) {
 	}
 	// The assertions below are about the byte range the bound addresses, so
 	// they render it the way this store's keys are encoded.
-	start, end, err := matcher.encoder.EncodeScanBound(bound)
+	run, err := matcher.encoder.EncodeScanBound(bound)
+	start := run.Start
+	end := run.End
 	if err != nil {
 		t.Fatalf("encode ATEV scan bound: %v", err)
 	}
@@ -335,50 +337,6 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 			t.Error("range start must sort before end")
 		}
 	})
-}
-
-// TestSimpleBatchScanner_BindingPrefix_ATEV_VVaries covers bindingPrefix's
-// ATEV branch for position=2 (V varies across bindings, with A and Tx fixed as
-// pattern constants). The position=0 case is already covered by
-// TestSimpleBatchScanner_BindingPrefix_AllIndices; this fills the other half.
-func TestSimpleBatchScanner_BindingPrefix_ATEV_VVaries(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-batch-v-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	matcher := NewPatternMatcher(store)
-	a := datalog.NewKeyword(":atev/batch-v")
-	var aBytes Attribute
-	copy(aBytes[:], a.String())
-	tx := datalog.ElementID{Lamport: 11, ReplicaID: 1}
-	constT := matcher.store.Encoder().EncodeTxForPrefix(NewTxFromElementID(tx))
-
-	scanner := &simpleBatchScanner{
-		matcher:  matcher,
-		index:    ATEV,
-		position: 2, // V varies
-	}
-
-	// V is between Tx and the trailing positions in ATEV [A][Tx][E][V]; with E
-	// unbound, tightening stops at [A][Tx]. Any V value should produce that
-	// same prefix.
-	prefix, ok := scanner.bindingPrefix("any-value", a, &tx)
-	if !ok {
-		t.Fatal("bindingPrefix(ATEV, position=2) reported no run")
-	}
-	got, _ := encodeScanBoundForTest(t, matcher, ScanBound{Index: ATEV, Prefix: prefix})
-	expected := matcher.store.Encoder().EncodePrefix(ATEV, aBytes[:], constT)
-	if !bytes.Equal(got, expected) {
-		t.Errorf("ATEV position=2 key mismatch: got %x, want %x", got, expected)
-	}
 }
 
 // TestChooseIndex_TxOnly_TAEV_WithElementID is the regression check for the

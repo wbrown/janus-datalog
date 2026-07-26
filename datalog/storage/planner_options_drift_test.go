@@ -35,5 +35,4 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 
 	// Numeric defaults.
 	require.Equal(t, 0, opts.MaxSubqueryWorkers, "MaxSubqueryWorkers default is 0 (= 4 executor workers)")
-	require.Equal(t, 0, opts.IndexNestedLoopThreshold, "IndexNestedLoopThreshold default is 0 (always HashJoinScan)")
 }

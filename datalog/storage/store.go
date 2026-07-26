@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
@@ -25,6 +27,32 @@ const (
 
 // Indices lists all indices used for queries
 var Indices = []IndexType{EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV}
+
+// String names the index. It is the one rendering of an IndexType, so %v in an
+// error or an annotation reads "AVET" rather than "5" — the numbering is an
+// implementation detail of the key prefix and means nothing to a reader.
+func (i IndexType) String() string {
+	switch i {
+	case EAVT:
+		return "EAVT"
+	case EATV:
+		return "EATV"
+	case AEVT:
+		return "AEVT"
+	case AETV:
+		return "AETV"
+	case ATEV:
+		return "ATEV"
+	case AVET:
+		return "AVET"
+	case VAET:
+		return "VAET"
+	case TAEV:
+		return "TAEV"
+	default:
+		return fmt.Sprintf("IndexType(%d)", uint8(i))
+	}
+}
 
 // Store is the interface for datom storage
 type Store interface {

@@ -81,7 +81,6 @@ func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 		EnableScanSharing:          opts.EnableScanSharing,
 		EnableEntityPrefetch:       opts.EnableEntityPrefetch,
 		EnableAttributeFetchFusion: opts.EnableAttributeFetchFusion,
-		IndexNestedLoopThreshold:   opts.IndexNestedLoopThreshold,
 	}
 }
 

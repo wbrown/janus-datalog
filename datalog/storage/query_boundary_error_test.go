@@ -11,9 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
-	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // Integration reproduction for docs/bugs/BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md.
@@ -248,30 +246,6 @@ func TestQueryNot_SurfacesBlobDecodeError(t *testing.T) {
 			require.ErrorContains(t, err, "blob", "a failed inner scan must surface, not silently un-exclude the entity")
 		})
 	}
-}
-
-// TestIndexNestedLoop_SurfacesBlobDecodeError: the index-nested-loop strategy
-// (reusingIterator) is not reachable via db.Query (the matcher hardcodes
-// HashJoinScan), so this drives it directly with IndexNestedLoopThreshold high.
-// The reusingIterator must surface the inner scan's deferred error on exhaustion.
-func TestIndexNestedLoop_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t, nil)
-	defer db.Close()
-
-	q, err := parser.ParseQuery(`[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`)
-	require.NoError(t, err)
-	pattern := q.Where[0].(*query.DataPattern)
-
-	matcher := NewPatternMatcherWithOptions(db.store, executor.ExecutorOptions{IndexNestedLoopThreshold: 999999})
-	bindingRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, []executor.Tuple{{e}})
-
-	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
-	require.NoError(t, err)
-	it := result.Iterator()
-	for it.Next() {
-	}
-	require.ErrorContains(t, it.Error(), "blob", "index-nested-loop scan must surface the blob decode error")
-	it.Close()
 }
 
 // TestQueryGroupedAggregate_SurfacesBlobDecodeError: a grouped aggregation

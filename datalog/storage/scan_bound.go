@@ -73,29 +73,51 @@ func componentOrder(index IndexType) ([componentsPerIndex]keyComponent, error) {
 // exactly E, A, V and Tx, and binding one requires binding every position
 // ahead of it.
 //
-// Through extends the run past Prefix's own subtree: it starts where Prefix
-// starts and ends where Through's subtree ends, so both endpoints and
-// everything ordered between them are included. It exists for the batch scans,
-// which cover a set of per-binding prefixes in one pass by spanning from the
-// lowest to the highest and seeking between them. An absent Through — the
-// common case — makes the run exactly Prefix, and a Through equal to Prefix
-// says the same thing. Through need not be the same length as Prefix, but its
-// subtree must end above where Prefix begins; a Through naming an empty range
-// is a caller bug, and is rejected rather than scanned as zero matches.
-//
-// Prefix and Through elements are ordinary datalog values — Identity for E,
-// Keyword for A, any domain value for V, ElementID for Tx — so a bound
-// introduces no value kinds beyond the closed domain.
+// Prefix elements are ordinary datalog values — Identity for E, Keyword for A,
+// any domain value for V, ElementID for Tx — so a bound introduces no value
+// kinds beyond the closed domain.
 type ScanBound struct {
-	Index   IndexType
-	Prefix  []datalog.Value
-	Through []datalog.Value
+	Index  IndexType
+	Prefix []datalog.Value
+}
+
+// EncodedRun is a ScanBound projected onto binary keys: the range a scan walks,
+// and the test deciding which keys inside it the bound actually names.
+//
+// The two are the same thing only when every bound component is fixed width.
+// A V payload carries no length, so a range whose components include a
+// variable-length V is a *prefix* range: the keys for "abcd" sort inside the
+// range for "abc", interleaved with them (the byte after the shared prefix is
+// 'd' on one side and the first byte of a hash on the other), so no choice of
+// endpoints separates the two. What does separate them is length. Every
+// component behind V is fixed width and Op announces AfterRef, so a key of the
+// bound's own value has exactly one length for each Op class, and a key whose
+// value merely starts with it is longer by the excess.
+type EncodedRun struct {
+	Start, End []byte
+
+	// exact is true when the byte range already names the run and Holds needs
+	// no test. memberSize is otherwise the length of a member key excluding
+	// its tail, which keyTailSize reads from the key itself.
+	exact      bool
+	memberSize int
+}
+
+// Holds reports whether a key drawn from the range is one the bound names.
+// It is meaningful only for keys already inside [Start, End).
+func (r EncodedRun) Holds(key []byte) bool {
+	if r.exact {
+		return true
+	}
+	if len(key) == 0 {
+		return false
+	}
+	return len(key) == r.memberSize+keyTailSize(key)
 }
 
 // addBoundFields reports a scan bound into an annotation event's data: the
 // index, the positions the run binds in that index's component order, and the
-// values bound to them — plus the same pair for Through when the run spans to
-// a second prefix.
+// values bound to them.
 //
 // This is the seam's own account of what it addressed. It deliberately does
 // not carry the encoded key range: that is one backend's projection of the
@@ -103,14 +125,9 @@ type ScanBound struct {
 // absent entirely for a backend that compares typed components directly.
 func addBoundFields(data map[string]interface{}, bound ScanBound) {
 	positions, values := describeRun(bound.Index, bound.Prefix)
-	data["index"] = indexName(bound.Index)
+	data["index"] = bound.Index.String()
 	data["bound"] = positions
 	data["bound.values"] = values
-	if len(bound.Through) > 0 {
-		throughPositions, throughValues := describeRun(bound.Index, bound.Through)
-		data["bound.through"] = throughPositions
-		data["bound.through.values"] = throughValues
-	}
 }
 
 // describeRun names the positions one endpoint of a bound binds, in index's

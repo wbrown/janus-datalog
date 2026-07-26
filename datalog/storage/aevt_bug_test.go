@@ -191,12 +191,14 @@ func TestEATVPrefixRangeDebug(t *testing.T) {
 	index := bound.Index
 	// The assertions below are about the byte range the bound addresses, so
 	// they render it the way this store's keys are encoded.
-	start, end, err := matcher.encoder.EncodeScanBound(bound)
+	run, err := matcher.encoder.EncodeScanBound(bound)
+	start := run.Start
+	end := run.End
 	if err != nil {
 		t.Fatalf("Failed to encode scan bound: %v", err)
 	}
 
-	t.Logf("Index selected: %s", indexName(index))
+	t.Logf("Index selected: %s", index.String())
 	t.Logf("Start key length: %d bytes", len(start))
 	t.Logf("End key length: %d bytes", len(end))
 	t.Logf("Start key (hex): % x", start)
@@ -207,7 +209,7 @@ func TestEATVPrefixRangeDebug(t *testing.T) {
 	expectedPrefixLen := 20 + 32 // E + A
 
 	if index != EATV {
-		t.Errorf("Expected EATV index (for schemaless/cardinality-one), got %s", indexName(index))
+		t.Errorf("Expected EATV index (for schemaless/cardinality-one), got %s", index.String())
 	}
 
 	// Check if start key has proper length for (A, E) prefix

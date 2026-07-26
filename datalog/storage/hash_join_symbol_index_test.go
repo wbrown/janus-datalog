@@ -74,9 +74,7 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Force HashJoinScan by setting threshold to 0 (default behavior after fix)
-			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{
-				IndexNestedLoopThreshold: 0, // Always use HashJoinScan
-			})
+			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
@@ -155,9 +153,7 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{
-				IndexNestedLoopThreshold: 0,
-			})
+			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
@@ -242,9 +238,7 @@ func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
 	assert.NoError(t, err)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{
-				IndexNestedLoopThreshold: 0,
-			})
+			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 

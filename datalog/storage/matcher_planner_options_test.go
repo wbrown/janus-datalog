@@ -33,15 +33,13 @@ func getDefaultExecutorOptions() executor.ExecutorOptions {
 // TestDatabaseMatcher_HonorsCustomPlannerOptions asserts that relations
 // produced by the default-source matcher carry the database's effective
 // options, not DefaultPlannerOptions(). It exercises both drift directions:
-// fields Matcher() copied but from the wrong source (EnableTrueStreaming,
-// IndexNestedLoopThreshold) and fields Matcher() dropped entirely
-// (EnableScanSharing, EnableEntityPrefetch).
+// a field Matcher() copied but from the wrong source (EnableTrueStreaming) and
+// fields Matcher() dropped entirely (EnableScanSharing, EnableEntityPrefetch).
 func TestDatabaseMatcher_HonorsCustomPlannerOptions(t *testing.T) {
 	custom := DefaultPlannerOptions()
-	custom.EnableTrueStreaming = false       // default true
-	custom.EnableScanSharing = true          // default false; dropped by Matcher() pre-fix
-	custom.EnableEntityPrefetch = true       // default false; dropped by Matcher() pre-fix
-	custom.IndexNestedLoopThreshold = 999999 // default 0; built from defaults pre-fix
+	custom.EnableTrueStreaming = false // default true
+	custom.EnableScanSharing = true    // default false; dropped by Matcher() pre-fix
+	custom.EnableEntityPrefetch = true // default false; dropped by Matcher() pre-fix
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:           t.TempDir(),
@@ -69,6 +67,4 @@ func TestDatabaseMatcher_HonorsCustomPlannerOptions(t *testing.T) {
 		"custom EnableScanSharing=true must reach matcher-produced relations")
 	require.True(t, opts.EnableEntityPrefetch,
 		"custom EnableEntityPrefetch=true must reach matcher-produced relations")
-	require.Equal(t, 999999, opts.IndexNestedLoopThreshold,
-		"custom IndexNestedLoopThreshold must reach matcher-produced relations")
 }

@@ -49,7 +49,7 @@ func (s *badgerReadSession) ScanKeysOnly(bound ScanBound) (Iterator, error) {
 }
 
 func (s *badgerReadSession) newIterator(bound ScanBound) (Iterator, error) {
-	start, end, err := s.store.encoder.EncodeScanBound(bound)
+	run, err := s.store.encoder.EncodeScanBound(bound)
 	if err != nil {
 		return nil, err
 	}
@@ -68,8 +68,8 @@ func (s *badgerReadSession) newIterator(bound ScanBound) (Iterator, error) {
 	badgerIterator := &BadgerIterator{
 		txn:     s.txn,
 		it:      iterator,
-		start:   start,
-		end:     end,
+		start:   run.Start,
+		end:     run.End,
 		index:   index,
 		release: func() { s.releaseIterator(iterator) },
 	}
@@ -79,6 +79,7 @@ func (s *badgerReadSession) newIterator(bound ScanBound) (Iterator, error) {
 		BadgerIterator: badgerIterator,
 		encoder:        s.store.encoder,
 		blobs:          badgerTxnBlobReader{txn: s.txn},
+		run:            run,
 	}, nil
 }
 

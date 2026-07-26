@@ -208,39 +208,17 @@ func BenchmarkHashJoinScanRangeComparison(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	b.Run("HashJoinScan_Current", func(b *testing.B) {
-		matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{
-			IndexNestedLoopThreshold: 0, // Force HashJoinScan
-		})
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
+	matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
+	exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			result, err := exec.Execute(q)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if result.Size() != 1000 {
-				b.Fatalf("Expected 1000 results, got %d", result.Size())
-			}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result, err := exec.Execute(q)
+		if err != nil {
+			b.Fatal(err)
 		}
-	})
-
-	b.Run("IndexNestedLoop_Baseline", func(b *testing.B) {
-		matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{
-			IndexNestedLoopThreshold: 999999, // Force IndexNestedLoop
-		})
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			result, err := exec.Execute(q)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if result.Size() != 1000 {
-				b.Fatalf("Expected 1000 results, got %d", result.Size())
-			}
+		if result.Size() != 1000 {
+			b.Fatalf("Expected 1000 results, got %d", result.Size())
 		}
-	})
+	}
 }

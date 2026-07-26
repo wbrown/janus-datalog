@@ -76,7 +76,7 @@ func TestBoundEntityNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 		}
 	}
 
-	for _, strategy := range []JoinStrategy{HashJoinScan, MergeJoin, IndexNestedLoop} {
+	for _, strategy := range []JoinStrategy{HashJoinScan, MergeJoin} {
 		strategy := strategy
 		t.Run(strategy.String(), func(t *testing.T) {
 			matcher.ForceJoinStrategy(&strategy)
@@ -197,7 +197,7 @@ func TestBoundEntityNonMatchOnValuePositionJoin(t *testing.T) {
 		)
 	}
 
-	for _, strategy := range []JoinStrategy{HashJoinScan, IndexNestedLoop} {
+	for _, strategy := range []JoinStrategy{HashJoinScan} {
 		strategy := strategy
 		t.Run(strategy.String(), func(t *testing.T) {
 			matcher.ForceJoinStrategy(&strategy)
@@ -269,7 +269,7 @@ func TestBoundAttributeNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 		)
 	}
 
-	for _, strategy := range []JoinStrategy{HashJoinScan, MergeJoin, IndexNestedLoop} {
+	for _, strategy := range []JoinStrategy{HashJoinScan, MergeJoin} {
 		strategy := strategy
 		t.Run(strategy.String(), func(t *testing.T) {
 			matcher.ForceJoinStrategy(&strategy)

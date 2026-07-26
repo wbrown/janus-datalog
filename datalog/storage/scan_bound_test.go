@@ -26,62 +26,95 @@ var scanBoundComponentOrder = map[IndexType][]string{
 	TAEV: {"Tx", "A", "E", "V"},
 }
 
+// scanBoundValueFixtures gives the tables below a mid-range V and one whose
+// ordered encoding ends 0xFF. The second is what makes the exclusion assertion
+// in TestScanBoundContainsItsDatomKey a pin on the end key's carry: orderedInt64
+// encodes -1 as 0x7FFFFFFFFFFFFFFF, so its prefix's exclusive successor can only
+// be reached by carrying, and int64(7) — 0x8000000000000007 — is the first key
+// of the sibling subtree an end that skipped the carry would swallow.
+var scanBoundValueFixtures = []struct {
+	name  string
+	value int64
+	other int64
+}{
+	{"midrange", 0x5150, 0x5151},
+	{"carry", -1, 7},
+}
+
 // TestScanBoundEncodesAsPrefixRange is the transcription proof: for every
 // index and every prefix length, a typed ScanBound must encode to the exact
 // bytes EncodePrefixRange produces for the same logical bound. The conversion
 // of the byte-range call sites rests on this equality.
+//
+// Equality is all it proves. Both sides derive their end from the same
+// incrementLastByte call, so this table cannot tell a correct exclusive
+// successor from an incorrect one — it can only tell that the typed form and
+// the byte form agree. The end arithmetic itself is pinned by
+// TestScanBoundEndIsTheExclusiveSuccessor and by the exclusion assertion in
+// TestScanBoundContainsItsDatomKey, both of which compare against keys the
+// encoder actually laid down rather than against a second copy of the
+// arithmetic.
 func TestScanBoundEncodesAsPrefixRange(t *testing.T) {
 	encoder := &BinaryKeyEncoder{}
 
 	entity := datalog.NewIdentity("scanbound:entity")
 	attr := datalog.NewKeyword(":scanbound/attr")
-	value := int64(0x5150)
 	tx := datalog.ElementID{Lamport: 0x1234, ReplicaID: 0x5678}
 
-	typed := map[string]datalog.Value{"E": entity, "A": attr, "V": value, "Tx": tx}
+	for _, fixture := range scanBoundValueFixtures {
+		value := fixture.value
+		typed := map[string]datalog.Value{"E": entity, "A": attr, "V": value, "Tx": tx}
 
-	// The four components encode to distinct byte runs of distinct lengths, so
-	// a transposed component order cannot coincidentally produce equal bytes.
-	sd := ToStorageDatom(datalog.Datom{E: entity, A: attr})
-	encodedPart := map[string][]byte{
-		"E":  sd.E[:],
-		"A":  sd.A[:],
-		"V":  encodeValueForSearch(value, encoder),
-		"Tx": encoder.EncodeTxForPrefix(NewTxFromElementID(tx)),
-	}
+		// The four components encode to distinct byte runs of distinct lengths, so
+		// a transposed component order cannot coincidentally produce equal bytes.
+		sd := ToStorageDatom(datalog.Datom{E: entity, A: attr})
+		encodedPart := map[string][]byte{
+			"E":  sd.E[:],
+			"A":  sd.A[:],
+			"V":  encodeValueForSearch(value, encoder),
+			"Tx": encoder.EncodeTxForPrefix(NewTxFromElementID(tx)),
+		}
 
-	for _, index := range Indices {
-		order, ok := scanBoundComponentOrder[index]
-		require.True(t, ok, "index %v missing from the expected component order", index)
-		require.Len(t, order, 4)
+		for _, index := range Indices {
+			order, ok := scanBoundComponentOrder[index]
+			require.True(t, ok, "index %v missing from the expected component order", index)
+			require.Len(t, order, 4)
 
-		for n := 0; n <= len(order); n++ {
-			t.Run(fmt.Sprintf("%s/prefix%d", indexName(index), n), func(t *testing.T) {
-				prefix := make([]datalog.Value, 0, n)
-				parts := make([][]byte, 0, n)
-				for _, name := range order[:n] {
-					prefix = append(prefix, typed[name])
-					parts = append(parts, encodedPart[name])
-				}
+			for n := 0; n <= len(order); n++ {
+				t.Run(fmt.Sprintf("%s/%s/prefix%d", fixture.name, index.String(), n), func(t *testing.T) {
+					prefix := make([]datalog.Value, 0, n)
+					parts := make([][]byte, 0, n)
+					for _, name := range order[:n] {
+						prefix = append(prefix, typed[name])
+						parts = append(parts, encodedPart[name])
+					}
 
-				wantStart, wantEnd := encoder.EncodePrefixRange(index, parts...)
+					wantStart, wantEnd := encoder.EncodePrefixRange(index, parts...)
 
-				gotStart, gotEnd, err := encoder.EncodeScanBound(ScanBound{Index: index, Prefix: prefix})
-				require.NoError(t, err)
-				require.Equal(t, wantStart, gotStart, "start bytes")
-				require.Equal(t, wantEnd, gotEnd, "end bytes")
-			})
+					run, err := encoder.EncodeScanBound(ScanBound{Index: index, Prefix: prefix})
+					gotStart := run.Start
+					gotEnd := run.End
+					require.NoError(t, err)
+					require.Equal(t, wantStart, gotStart, "start bytes")
+					require.Equal(t, wantEnd, gotEnd, "end bytes")
+				})
+			}
 		}
 	}
 }
 
-// TestScanBoundContainsItsDatomKey ties the component order to the real key
-// layout rather than to the test's own table. TestScanBoundEncodesAsPrefixRange
-// compares two orderings that both feed EncodePrefixRange, so a misreading of
-// the layout shared by both tables would agree with itself. Here the bound is
-// checked against a key that encodeKeyWithParts actually laid down: for every
-// index and prefix length, the bound built from a datom's own components must
-// start that datom's key, and the key must fall inside the range.
+// TestScanBoundContainsItsDatomKey ties the bound to the real key layout rather
+// than to the test's own table. TestScanBoundEncodesAsPrefixRange compares two
+// orderings that both feed EncodePrefixRange, so a misreading of the layout
+// shared by both tables — or a wrong exclusive end computed the same way twice —
+// would agree with itself. Here the bound is checked against keys that
+// encodeKeyWithParts actually laid down, in both directions:
+//
+//   - containment: the bound built from a datom's own components starts that
+//     datom's key, and the key sorts inside the range;
+//   - exclusion: a datom differing in the deepest bound component is not under
+//     the prefix, so its key sorts outside the range. With the carry fixture
+//     this is what a non-carrying end key fails.
 func TestScanBoundContainsItsDatomKey(t *testing.T) {
 	// Compression off, so EncodeKey's value encoding and encodeValueForSearch
 	// take the same branch and the comparison is meaningful.
@@ -89,130 +122,66 @@ func TestScanBoundContainsItsDatomKey(t *testing.T) {
 
 	entity := datalog.NewIdentity("scanbound:entity")
 	attr := datalog.NewKeyword(":scanbound/attr")
-	value := int64(0x5150)
 	tx := datalog.ElementID{Lamport: 0x1234, ReplicaID: 0x5678}
 
-	datom := datalog.Datom{E: entity, A: attr, V: value, Tx: tx}
-	typed := map[string]datalog.Value{"E": entity, "A": attr, "V": value, "Tx": tx}
+	// Alternates for the exclusion assertion. None is a byte extension of the
+	// component it replaces, so this table reports the end-key carry rather
+	// than the missing V length delimiter, which has its own reproducer.
+	otherEntity := datalog.NewIdentity("scanbound:other-entity")
+	otherAttr := datalog.NewKeyword(":scanbound/other")
+	otherTx := datalog.ElementID{Lamport: 0x4321, ReplicaID: 0x8765}
 
-	for _, index := range Indices {
-		order := scanBoundComponentOrder[index]
-		key := encoder.EncodeKey(index, &datom)
+	for _, fixture := range scanBoundValueFixtures {
+		value := fixture.value
+		datom := datalog.Datom{E: entity, A: attr, V: value, Tx: tx}
+		typed := map[string]datalog.Value{"E": entity, "A": attr, "V": value, "Tx": tx}
 
-		for n := 0; n <= len(order); n++ {
-			t.Run(fmt.Sprintf("%s/prefix%d", indexName(index), n), func(t *testing.T) {
-				prefix := make([]datalog.Value, 0, n)
-				for _, name := range order[:n] {
-					prefix = append(prefix, typed[name])
-				}
+		for _, index := range Indices {
+			order := scanBoundComponentOrder[index]
+			key := encoder.EncodeKey(index, &datom)
 
-				start, end, err := encoder.EncodeScanBound(ScanBound{Index: index, Prefix: prefix})
-				require.NoError(t, err)
-				require.True(t, bytes.HasPrefix(key, start),
-					"bound start %x must prefix the datom's key %x", start, key)
-				require.Negative(t, bytes.Compare(key, end),
-					"datom's key %x must sort below the range end %x", key, end)
-			})
+			for n := 0; n <= len(order); n++ {
+				t.Run(fmt.Sprintf("%s/%s/prefix%d", fixture.name, index.String(), n), func(t *testing.T) {
+					prefix := make([]datalog.Value, 0, n)
+					for _, name := range order[:n] {
+						prefix = append(prefix, typed[name])
+					}
+
+					run, err := encoder.EncodeScanBound(ScanBound{Index: index, Prefix: prefix})
+					start := run.Start
+					end := run.End
+					require.NoError(t, err)
+					require.True(t, bytes.HasPrefix(key, start),
+						"bound start %x must prefix the datom's key %x", start, key)
+					require.Negative(t, bytes.Compare(key, end),
+						"datom's key %x must sort below the range end %x", key, end)
+
+					if n == 0 {
+						return
+					}
+
+					deepest := order[n-1]
+					neighbour := datom
+					switch deepest {
+					case "E":
+						neighbour.E = otherEntity
+					case "A":
+						neighbour.A = otherAttr
+					case "V":
+						neighbour.V = fixture.other
+					case "Tx":
+						neighbour.Tx = otherTx
+					}
+					neighbourKey := encoder.EncodeKey(index, &neighbour)
+					require.True(t,
+						bytes.Compare(neighbourKey, start) < 0 || bytes.Compare(neighbourKey, end) >= 0,
+						"a datom differing in %s is not under the prefix, so its key must sort "+
+							"outside [start, end); start=%x end=%x key=%x",
+						deepest, start, end, neighbourKey)
+				})
+			}
 		}
 	}
-}
-
-// TestScanBoundThroughSpansToSecondPrefix pins the span form: the run starts
-// at Prefix and ends at Through's exclusive successor, so every datom under
-// Through's own prefix is included.
-func TestScanBoundThroughSpansToSecondPrefix(t *testing.T) {
-	encoder := &BinaryKeyEncoder{}
-
-	first := datalog.NewIdentity("scanbound:span-a")
-	last := datalog.NewIdentity("scanbound:span-z")
-
-	gotStart, gotEnd, err := encoder.EncodeScanBound(ScanBound{
-		Index:   EAVT,
-		Prefix:  []datalog.Value{first},
-		Through: []datalog.Value{last},
-	})
-	require.NoError(t, err)
-
-	wantStart, _ := encoder.EncodePrefixRange(EAVT, entityBytesFor(first))
-	_, wantEnd := encoder.EncodePrefixRange(EAVT, entityBytesFor(last))
-	require.Equal(t, wantStart, gotStart, "start is the first prefix's start")
-	require.Equal(t, wantEnd, gotEnd, "end is the last prefix's exclusive successor")
-
-	// The span must contain both endpoints' own keys.
-	require.Negative(t, bytes.Compare(gotStart, gotEnd))
-}
-
-// TestScanBoundThroughEqualToPrefixIsThePlainPrefix pins that the span form
-// degenerates exactly, so the two shapes are one concept rather than two.
-func TestScanBoundThroughEqualToPrefixIsThePlainPrefix(t *testing.T) {
-	encoder := &BinaryKeyEncoder{}
-	entity := datalog.NewIdentity("scanbound:degenerate")
-
-	plainStart, plainEnd, err := encoder.EncodeScanBound(ScanBound{
-		Index:  EAVT,
-		Prefix: []datalog.Value{entity},
-	})
-	require.NoError(t, err)
-
-	spanStart, spanEnd, err := encoder.EncodeScanBound(ScanBound{
-		Index:   EAVT,
-		Prefix:  []datalog.Value{entity},
-		Through: []datalog.Value{entity},
-	})
-	require.NoError(t, err)
-
-	require.Equal(t, plainStart, spanStart)
-	require.Equal(t, plainEnd, spanEnd)
-}
-
-// TestScanBoundInvertedThroughRejected pins loud failure over a silent empty
-// result: a Through that sorts below Prefix names an empty range, which every
-// scan would report as "no matches" rather than as the caller bug it is.
-func TestScanBoundInvertedThroughRejected(t *testing.T) {
-	encoder := &BinaryKeyEncoder{}
-
-	low := datalog.NewIdentity("scanbound:span-a")
-	high := datalog.NewIdentity("scanbound:span-z")
-
-	// Establish which of the two actually sorts lower, so the test asserts
-	// inversion rather than an assumption about hash ordering.
-	lowBytes, highBytes := entityBytesFor(low), entityBytesFor(high)
-	if bytes.Compare(lowBytes, highBytes) > 0 {
-		low, high = high, low
-	}
-
-	_, _, err := encoder.EncodeScanBound(ScanBound{
-		Index:   EAVT,
-		Prefix:  []datalog.Value{high},
-		Through: []datalog.Value{low},
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Through")
-}
-
-// TestScanBoundThroughValidatedLikePrefix pins that Through is held to the
-// same component rules as Prefix rather than being a second, laxer path.
-func TestScanBoundThroughValidatedLikePrefix(t *testing.T) {
-	encoder := &BinaryKeyEncoder{}
-	entity := datalog.NewIdentity("scanbound:through-validation")
-	attr := datalog.NewKeyword(":scanbound/attr")
-	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
-
-	// Over-long Through.
-	_, _, err := encoder.EncodeScanBound(ScanBound{
-		Index:   EAVT,
-		Prefix:  []datalog.Value{entity},
-		Through: []datalog.Value{entity, attr, int64(1), tx, int64(2)},
-	})
-	require.Error(t, err)
-
-	// Mistyped Through component: EAVT's leading component is E.
-	_, _, err = encoder.EncodeScanBound(ScanBound{
-		Index:   EAVT,
-		Prefix:  []datalog.Value{entity},
-		Through: []datalog.Value{"not-an-identity"},
-	})
-	require.Error(t, err)
 }
 
 // TestIndexSelectionEventReportsBound pins the observability contract of the
@@ -313,11 +282,11 @@ func TestIndexSelectionEventReportsBound(t *testing.T) {
 // both Badger-only and portable test files.
 func encodeScanBoundForTest(t *testing.T, m *PatternMatcher, bound ScanBound) (start, end []byte) {
 	t.Helper()
-	start, end, err := m.encoder.EncodeScanBound(bound)
+	run, err := m.encoder.EncodeScanBound(bound)
 	if err != nil {
 		t.Fatalf("encode scan bound on %v: %v", bound.Index, err)
 	}
-	return start, end
+	return run.Start, run.End
 }
 
 // entityBytesFor renders an Identity in the storage form the E component uses.
@@ -337,7 +306,7 @@ func TestScanBoundOverlongPrefixRejected(t *testing.T) {
 	attr := datalog.NewKeyword(":scanbound/attr")
 	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
 
-	_, _, err := encoder.EncodeScanBound(ScanBound{
+	_, err := encoder.EncodeScanBound(ScanBound{
 		Index:  EAVT,
 		Prefix: []datalog.Value{entity, attr, int64(1), tx, int64(2)},
 	})
@@ -352,7 +321,7 @@ func TestScanBoundRejectsMistypedComponent(t *testing.T) {
 	encoder := &BinaryKeyEncoder{}
 
 	// EAVT's leading component is E, inhabited only by Identity.
-	_, _, err := encoder.EncodeScanBound(ScanBound{
+	_, err := encoder.EncodeScanBound(ScanBound{
 		Index:  EAVT,
 		Prefix: []datalog.Value{"not-an-identity"},
 	})
@@ -360,7 +329,7 @@ func TestScanBoundRejectsMistypedComponent(t *testing.T) {
 
 	// ATEV's second component is Tx, inhabited only by ElementID.
 	attr := datalog.NewKeyword(":scanbound/attr")
-	_, _, err = encoder.EncodeScanBound(ScanBound{
+	_, err = encoder.EncodeScanBound(ScanBound{
 		Index:  ATEV,
 		Prefix: []datalog.Value{attr, int64(7)},
 	})
@@ -371,6 +340,6 @@ func TestScanBoundRejectsMistypedComponent(t *testing.T) {
 func TestScanBoundUnknownIndexRejected(t *testing.T) {
 	encoder := &BinaryKeyEncoder{}
 
-	_, _, err := encoder.EncodeScanBound(ScanBound{Index: IndexType(200)})
+	_, err := encoder.EncodeScanBound(ScanBound{Index: IndexType(200)})
 	require.Error(t, err)
 }

@@ -119,7 +119,7 @@ func (s *MemoryStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
 // on the same bytes Badger does. PR B replaces that with typed component
 // compare; the seam above does not change when it does.
 func (s *MemoryStore) scan(bound ScanBound) (Iterator, error) {
-	start, end, err := s.encoder.EncodeScanBound(bound)
+	run, err := s.encoder.EncodeScanBound(bound)
 	if err != nil {
 		return nil, err
 	}
@@ -130,8 +130,8 @@ func (s *MemoryStore) scan(bound ScanBound) (Iterator, error) {
 		return nil, errMemoryStoreClosed
 	}
 	index := bound.Index
-	startKey := string(start)
-	endKey := string(end)
+	startKey := string(run.Start)
+	endKey := string(run.End)
 	keys := make([][]byte, 0)
 	s.keys.AscendRange(startKey, endKey, func(encoded string) bool {
 		key := []byte(encoded)
@@ -145,6 +145,7 @@ func (s *MemoryStore) scan(bound ScanBound) (Iterator, error) {
 		index:    index,
 		keys:     keys,
 		position: -1,
+		run:      run,
 		encoder:  s.encoder,
 		blobs:    memoryBlobReader{store: s},
 	}, nil
@@ -483,9 +484,14 @@ func readMemoryBlob(entries map[string][]byte, hash [20]byte, read func([]byte) 
 }
 
 type memoryIterator struct {
-	index        IndexType
-	keys         [][]byte
-	position     int
+	index    IndexType
+	keys     [][]byte
+	position int
+	// run is the bound this iterator is walking, projected onto keys. Its
+	// range selected the keys; its membership test drops the ones the range
+	// over-covers, which happens whenever a bound component is a
+	// variable-length V. Seek replaces it, because a seek names a new run.
+	run          EncodedRun
 	encoder      *BinaryKeyEncoder
 	blobs        BlobReader
 	currentDatom datalog.Datom
@@ -494,13 +500,22 @@ type memoryIterator struct {
 	closed       bool
 }
 
+// Next advances to the next key the run holds, stepping over the keys its byte
+// range over-covers.
 func (i *memoryIterator) Next() bool {
 	if i.closed || i.err != nil {
 		return false
 	}
 	i.hasDatom = false
-	i.position++
-	return i.position < len(i.keys)
+	for {
+		i.position++
+		if i.position >= len(i.keys) {
+			return false
+		}
+		if i.run.Holds(i.keys[i.position]) {
+			return true
+		}
+	}
 }
 
 func (i *memoryIterator) Key() []byte {
@@ -544,15 +559,19 @@ func (i *memoryIterator) Seek(bound ScanBound) {
 	if i.closed || i.err != nil {
 		return
 	}
-	start, _, err := i.encoder.EncodeScanBound(bound)
+	run, err := i.encoder.EncodeScanBound(bound)
 	if err != nil {
 		// Seek cannot return; the failure becomes the iterator's sticky error
 		// rather than a silently unmoved cursor.
 		i.err = err
 		return
 	}
+	// The seek names a new run inside the scan's keys: its start repositions
+	// the cursor, and its membership test governs what follows. The key set
+	// stays the scan's — a seek moves within a scan, it does not open one.
+	i.run.exact, i.run.memberSize = run.exact, run.memberSize
 	i.position = sort.Search(len(i.keys), func(index int) bool {
-		return bytes.Compare(i.keys[index], start) >= 0
+		return bytes.Compare(i.keys[index], run.Start) >= 0
 	}) - 1
 	i.hasDatom = false
 }

@@ -36,18 +36,13 @@ type PatternMatcher struct {
 	cache             *Cache                   // CRDT resolution cache for O(1) access to resolved views
 }
 
-// encodeValueForSearch encodes a value for use in index lookups, applying
-// compression if the encoder has it enabled. This ensures the search prefix
-// matches the stored key's value encoding.
+// encodeValueForSearch encodes a value for use in index lookups. It is
+// EncodeValueBytes without the Tier 3 blob: a search never writes one, and a
+// second encoding of the same run is how a bound and the keys it addresses
+// drift apart.
 func encodeValueForSearch(v interface{}, encoder *BinaryKeyEncoder) []byte {
-	if encoder.CompressionThreshold > 0 {
-		vType, vData, _ := datalog.EncodeValue(v, encoder.CompressionThreshold)
-		return append([]byte{byte(vType)}, vData...)
-	}
-
-	vType := byte(datalog.Type(v))
-	vData := datalog.ValueBytes(v)
-	return append([]byte{vType}, vData...)
+	vBytes, _ := encoder.EncodeValueBytes(v)
+	return vBytes
 }
 
 // isHistoryMode returns true when raw (non-CRDT-resolved) datoms are requested.
@@ -620,30 +615,6 @@ func (m *PatternMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interfac
 func (m *PatternMatcher) valuesEqual(v1, v2 interface{}) bool {
 	// Use the global ValuesEqual which handles pointers
 	return datalog.ValuesEqual(v1, v2)
-}
-
-// indexName returns a string name for the index type (for debugging)
-func indexName(idx IndexType) string {
-	switch idx {
-	case EAVT:
-		return "EAVT"
-	case EATV:
-		return "EATV"
-	case AEVT:
-		return "AEVT"
-	case AETV:
-		return "AETV"
-	case ATEV:
-		return "ATEV"
-	case AVET:
-		return "AVET"
-	case VAET:
-		return "VAET"
-	case TAEV:
-		return "TAEV"
-	default:
-		return "UNKNOWN"
-	}
 }
 
 // LookupAttribute retrieves the value of an attribute for an entity.
