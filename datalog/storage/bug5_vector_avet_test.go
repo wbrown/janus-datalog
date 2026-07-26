@@ -64,31 +64,12 @@ func TestVectorAVETLookup(t *testing.T) {
 	_, err = tx2.Commit()
 	require.NoError(t, err)
 
-	// Use AVET scan to find all entities with "stealth" skill
-	// This mimics what a query like [?e :skills "stealth"] would do
-	encoder := &BinaryKeyEncoder{}
-
-	// Encode the value with type prefix
-	vType := byte(datalog.TypeString)
-	vData := []byte("stealth")
-	vBytes := append([]byte{vType}, vData...)
-
-	// Encode attribute as the 32-byte Attribute the storage layer writes.
-	a := attrBytes(skills)
-
-	// Build AVET prefix: [prefix][A][V]
-	prefix := make([]byte, 1+32+len(vBytes))
-	prefix[0] = byte(AVET)
-	copy(prefix[1:33], a[:])
-	copy(prefix[33:], vBytes)
-
-	// Build end range
-	end := make([]byte, len(prefix))
-	copy(end, prefix)
-	end[len(end)-1]++ // Increment last byte to get exclusive end
-
-	// Scan AVET index
-	iter, err := db.store.Scan(AVET, prefix, end)
+	// Bind [A][V] on AVET to find all entities with "stealth" skill.
+	// This mimics what a query like [?e :skills "stealth"] would do.
+	iter, err := db.store.Scan(ScanBound{
+		Index:  AVET,
+		Prefix: []datalog.Value{skills, "stealth"},
+	})
 	require.NoError(t, err)
 	defer iter.Close()
 
@@ -122,8 +103,6 @@ func TestVectorAVETLookup(t *testing.T) {
 	aliceSkills, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found, "alice should have skills")
 	t.Logf("Alice's skills via LookupAttribute: %v", aliceSkills)
-
-	_ = encoder // Used for documentation, actual encoding done manually
 }
 
 // TestVectorAVETMultipleEntities verifies AVET returns all entities with same value.
@@ -160,22 +139,11 @@ func TestVectorAVETMultipleEntities(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Build AVET prefix for "important"
-	a := attrBytes(tags)
-	vType := byte(datalog.TypeString)
-	vData := []byte("important")
-	vBytes := append([]byte{vType}, vData...)
-
-	prefix := make([]byte, 1+32+len(vBytes))
-	prefix[0] = byte(AVET)
-	copy(prefix[1:33], a[:])
-	copy(prefix[33:], vBytes)
-
-	end := make([]byte, len(prefix))
-	copy(end, prefix)
-	end[len(end)-1]++
-
-	iter, err := db.store.Scan(AVET, prefix, end)
+	// Bind [A][V] on AVET for "important"
+	iter, err := db.store.Scan(ScanBound{
+		Index:  AVET,
+		Prefix: []datalog.Value{tags, "important"},
+	})
 	require.NoError(t, err)
 	defer iter.Close()
 
@@ -270,25 +238,11 @@ func TestVectorVAETReverseLookup(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	// VAET lookup: Who has bob as a friend?
-	// Build VAET prefix: [prefix][V][A]
-	bobRef := datalog.Reference(bob)
-	vType := byte(datalog.TypeReference)
-	vData := bobRef.Bytes()
-	vBytes := append([]byte{vType}, vData...)
-
-	a := attrBytes(friends)
-
-	prefix := make([]byte, 1+len(vBytes)+32)
-	prefix[0] = byte(VAET)
-	copy(prefix[1:1+len(vBytes)], vBytes)
-	copy(prefix[1+len(vBytes):], a[:])
-
-	end := make([]byte, len(prefix))
-	copy(end, prefix)
-	end[len(end)-1]++
-
-	iter, err := db.store.Scan(VAET, prefix, end)
+	// VAET lookup: Who has bob as a friend? Bind [V][A].
+	iter, err := db.store.Scan(ScanBound{
+		Index:  VAET,
+		Prefix: []datalog.Value{datalog.Reference(bob), friends},
+	})
 	require.NoError(t, err)
 	defer iter.Close()
 
@@ -332,17 +286,7 @@ func TestVectorValueTypePreserved(t *testing.T) {
 	require.NoError(t, err)
 
 	// Scan EAVT for this entity and check value types
-	eBytes := entity.Hash()
-
-	prefix := make([]byte, 1+20)
-	prefix[0] = byte(EAVT)
-	copy(prefix[1:21], eBytes[:])
-
-	end := make([]byte, len(prefix))
-	copy(end, prefix)
-	end[len(end)-1]++
-
-	iter, err := db.store.Scan(EAVT, prefix, end)
+	iter, err := db.store.Scan(ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}})
 	require.NoError(t, err)
 	defer iter.Close()
 

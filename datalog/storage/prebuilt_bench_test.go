@@ -24,7 +24,7 @@ import (
 //	go tool pprof -http=:8080 cpu.prof
 func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 	// Open pre-built database (read-only, no setup overhead!)
-	db, err := OpenTestDatabase("testdata/ohlc_benchmark.db")
+	db, err := OpenTestDatabase(BenchmarkDatabasePath)
 	if err != nil {
 		b.Skipf("Test database not found: %v\nRun: go test -run=^$ -bench=^BenchmarkBuildTestDatabase$ ./datalog/storage -benchtime=1x", err)
 		return
@@ -141,7 +141,7 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 // BenchmarkPrebuiltDatabase_FullQuery profiles complete query execution
 func BenchmarkPrebuiltDatabase_FullQuery(b *testing.B) {
 	// Open pre-built database
-	db, err := OpenTestDatabase("testdata/ohlc_benchmark.db")
+	db, err := OpenTestDatabase(BenchmarkDatabasePath)
 	if err != nil {
 		b.Skipf("Test database not found: %v", err)
 		return

@@ -11,6 +11,55 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
+// BenchmarkDatabasePath names the pre-built OHLC benchmark database, from the
+// module root. Where it lives is fixed by its readers — the benchmarks in this
+// package open it — not chosen by whoever builds it.
+//
+// Every test-data path in this file is named from the module root and anchored
+// by resolveTestDataPath, because the builder and the readers run from
+// different directories: cmd/build-testdb from the module root, the package's
+// tests from the package. A path relative to the current directory means two
+// different files to those two callers, which is how `make build-testdb` came
+// to fill a location nothing reads while its own guard checked another.
+const BenchmarkDatabasePath = "datalog/storage/testdata/ohlc_benchmark.db"
+
+// moduleRoot walks up from dir to the directory holding go.mod — the anchor
+// every test-data path is named from. Outside a module there is no correct
+// answer, since the database is only ever read by tests in this repository, so
+// this reports the failure rather than letting a caller write a copy that
+// nothing will read.
+func moduleRoot(dir string) (string, error) {
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf(
+				"no go.mod at or above %s: test-data paths are named from the module root", dir)
+		}
+		dir = parent
+	}
+}
+
+// resolveTestDataPath anchors a module-root-relative test-data path against the
+// module root, so callers in different directories name the same file. An
+// absolute path is the caller naming a location explicitly and passes through.
+func resolveTestDataPath(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolving test-data path %s: %w", path, err)
+	}
+	root, err := moduleRoot(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolving test-data path %s: %w", path, err)
+	}
+	return filepath.Join(root, path), nil
+}
+
 // TestDataConfig specifies what kind of test database to build
 type TestDataConfig struct {
 	NumSymbols      int       // Number of stock symbols
@@ -28,7 +77,7 @@ func DefaultOHLCConfig() TestDataConfig {
 		NumSymbols:      10, // 10 stock symbols
 		NumDays:         30, // 30 days of data
 		BarsPerDay:      24, // Hourly bars
-		OutputPath:      "testdata/ohlc_benchmark.db",
+		OutputPath:      BenchmarkDatabasePath,
 		AttributePrefix: "price/",
 		StartDate:       time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
 	}
@@ -41,7 +90,7 @@ func MediumOHLCConfig() TestDataConfig {
 		NumSymbols:      50, // 50 stock symbols
 		NumDays:         30, // 30 days of data
 		BarsPerDay:      24, // Hourly bars
-		OutputPath:      "testdata/ohlc_medium.db",
+		OutputPath:      "datalog/storage/testdata/ohlc_medium.db",
 		AttributePrefix: "price/",
 		StartDate:       time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
 	}
@@ -53,14 +102,23 @@ func LargeOHLCConfig() TestDataConfig {
 		NumSymbols:      500, // 500 stock symbols
 		NumDays:         365, // 1 year of data
 		BarsPerDay:      390, // Minute bars (6.5 hour trading day)
-		OutputPath:      "testdata/ohlc_large.db",
+		OutputPath:      "datalog/storage/testdata/ohlc_large.db",
 		AttributePrefix: "price/",
 		StartDate:       time.Date(2024, 1, 1, 9, 30, 0, 0, time.UTC),
 	}
 }
 
-// BuildTestDatabase creates a pre-populated BadgerDB for benchmarking
+// BuildTestDatabase creates a pre-populated BadgerDB for benchmarking.
+// config.OutputPath is named from the module root (see BenchmarkDatabasePath),
+// so the database lands where its readers look no matter which directory the
+// builder was started in.
 func BuildTestDatabase(config TestDataConfig) (*Database, error) {
+	outputPath, err := resolveTestDataPath(config.OutputPath)
+	if err != nil {
+		return nil, err
+	}
+	config.OutputPath = outputPath
+
 	// Remove existing database
 	if err := os.RemoveAll(config.OutputPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("failed to remove existing db: %w", err)
@@ -223,8 +281,15 @@ func generateOHLCData(config TestDataConfig) []datalog.Datom {
 	return datoms
 }
 
-// OpenTestDatabase opens a pre-built test database
+// OpenTestDatabase opens a pre-built test database. The path is named from the
+// module root (see BenchmarkDatabasePath), so a reader names the same file the
+// builder wrote regardless of which directory either was started in.
 func OpenTestDatabase(path string) (*Database, error) {
+	path, err := resolveTestDataPath(path)
+	if err != nil {
+		return nil, err
+	}
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("test database not found: %s (run BuildTestDatabase first)", path)
 	}

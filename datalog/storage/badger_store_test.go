@@ -69,10 +69,7 @@ func TestBadgerStore(t *testing.T) {
 
 	// Test EAVT scan (get all facts about Alice)
 	t.Run("EAVT Scan", func(t *testing.T) {
-		aliceHash := alice.Hash()
-		start, end := encoder.EncodePrefixRange(EAVT, aliceHash[:])
-
-		it, err := store.Scan(EAVT, start, end)
+		it, err := store.Scan(ScanBound{Index: EAVT, Prefix: []datalog.Value{alice}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -100,11 +97,10 @@ func TestBadgerStore(t *testing.T) {
 
 	// Test AVET scan (find all users by name attribute)
 	t.Run("AVET Scan", func(t *testing.T) {
-		var nameAttr Attribute
-		copy(nameAttr[:], ":user/name")
-		start, end := encoder.EncodePrefixRange(AVET, nameAttr[:])
-
-		it, err := store.Scan(AVET, start, end)
+		it, err := store.Scan(ScanBound{
+			Index:  AVET,
+			Prefix: []datalog.Value{datalog.NewKeyword(":user/name")},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -154,12 +150,10 @@ func TestBadgerStore(t *testing.T) {
 		}
 
 		// Verify it was added
-		var emailAttr Attribute
-		copy(emailAttr[:], ":user/email")
-		bobHash := bob.Hash()
-		start, end := encoder.EncodePrefixRange(EAVT, bobHash[:], emailAttr[:])
-
-		it, err := store.Scan(EAVT, start, end)
+		it, err := store.Scan(ScanBound{
+			Index:  EAVT,
+			Prefix: []datalog.Value{bob, datalog.NewKeyword(":user/email")},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -186,12 +180,10 @@ func TestBadgerStore(t *testing.T) {
 		}
 
 		// Verify it's gone
-		var nameAttr Attribute
-		copy(nameAttr[:], ":user/name")
-		bobHash := bob.Hash()
-		start, end := encoder.EncodePrefixRange(EAVT, bobHash[:], nameAttr[:])
-
-		it, err := store.Scan(EAVT, start, end)
+		it, err := store.Scan(ScanBound{
+			Index:  EAVT,
+			Prefix: []datalog.Value{bob, datalog.NewKeyword(":user/name")},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -255,11 +247,8 @@ func TestRetractWithDifferentTx(t *testing.T) {
 	}
 
 	// Verify it was stored
-	aliceHash := alice.Hash()
-	var attr Attribute
-	copy(attr[:], ":person/name")
-	start, end := encoder.EncodePrefixRange(EAVT, aliceHash[:], attr[:])
-	it, err := store.Scan(EAVT, start, end)
+	bound := ScanBound{Index: EAVT, Prefix: []datalog.Value{alice, nameAttr}}
+	it, err := store.Scan(bound)
 	if err != nil {
 		t.Fatalf("Scan failed: %v", err)
 	}
@@ -279,7 +268,7 @@ func TestRetractWithDifferentTx(t *testing.T) {
 	}
 
 	// Verify the datom was actually retracted
-	it, err = store.Scan(EAVT, start, end)
+	it, err = store.Scan(bound)
 	if err != nil {
 		t.Fatalf("Scan after retract failed: %v", err)
 	}
@@ -333,10 +322,8 @@ func TestKeyOnlyScanning(t *testing.T) {
 
 	// Test counting with regular scan (fetches values)
 	t.Run("Regular Scan Count", func(t *testing.T) {
-		start, end := encoder.EncodePrefixRange(EAVT)
-
 		startTime := time.Now()
-		it, err := store.Scan(EAVT, start, end)
+		it, err := store.Scan(ScanBound{Index: EAVT})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -362,10 +349,8 @@ func TestKeyOnlyScanning(t *testing.T) {
 
 	// Test counting with key-only scan (no values fetched)
 	t.Run("Key-Only Scan Count", func(t *testing.T) {
-		start, end := encoder.EncodePrefixRange(EAVT)
-
 		startTime := time.Now()
-		it, err := store.ScanKeysOnly(EAVT, start, end)
+		it, err := store.ScanKeysOnly(ScanBound{Index: EAVT})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -411,11 +396,10 @@ func TestKeyOnlyScanning(t *testing.T) {
 	t.Run("Key-Only Correctness", func(t *testing.T) {
 		// Get first entity's datoms
 		entity := datalog.NewIdentity("entity:0")
-		entityHash := entity.Hash()
-		start, end := encoder.EncodePrefixRange(EAVT, entityHash[:])
+		entityBound := ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}}
 
 		// Get datoms with regular scan
-		regularIt, err := store.Scan(EAVT, start, end)
+		regularIt, err := store.Scan(entityBound)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -431,7 +415,7 @@ func TestKeyOnlyScanning(t *testing.T) {
 		}
 
 		// Get datoms with key-only scan
-		keyOnlyIt, err := store.ScanKeysOnly(EAVT, start, end)
+		keyOnlyIt, err := store.ScanKeysOnly(entityBound)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -537,9 +521,9 @@ func TestKeyOnlyScanningAllTypes(t *testing.T) {
 	for _, idx := range indices {
 		t.Run(idx.name, func(t *testing.T) {
 			// Get all datoms with regular scan
-			start, end := encoder.EncodePrefixRange(idx.index)
+			wholeIndex := ScanBound{Index: idx.index}
 
-			regularIt, err := store.Scan(idx.index, start, end)
+			regularIt, err := store.Scan(wholeIndex)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -555,7 +539,7 @@ func TestKeyOnlyScanningAllTypes(t *testing.T) {
 			}
 
 			// Get all datoms with key-only scan
-			keyOnlyIt, err := store.ScanKeysOnly(idx.index, start, end)
+			keyOnlyIt, err := store.ScanKeysOnly(wholeIndex)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -686,18 +670,13 @@ func TestTimeBasedQueries(t *testing.T) {
 		startTime := time.Date(2024, 1, 1, 10, 30, 0, 0, time.UTC)
 		endTime := time.Date(2024, 1, 1, 11, 30, 0, 0, time.UTC)
 
-		startTx := NewTxFromElementID(datalog.ElementID{Lamport: uint64(startTime.UnixNano())})
-		endTx := NewTxFromElementID(datalog.ElementID{Lamport: uint64(endTime.UnixNano())})
-
-		// With bitwise NOT encoding, higher Tx encodes to lower bytes
-		// So for range [startTime, endTime], scan from encoded(endTime) to encoded(startTime)
-		encodedStart := encoder.EncodeTxForPrefix(endTx)
-		encodedEnd := encoder.EncodeTxForPrefix(startTx)
-
-		start := encoder.EncodePrefix(TAEV, encodedStart)
-		end := encoder.EncodePrefix(TAEV, encodedEnd)
-
-		it, err := store.Scan(TAEV, start, end)
+		// Tx is stored descending, so the later time sorts first: the run
+		// starts at endTime's Tx and reaches through startTime's.
+		it, err := store.Scan(ScanBound{
+			Index:   TAEV,
+			Prefix:  []datalog.Value{datalog.ElementID{Lamport: uint64(endTime.UnixNano())}},
+			Through: []datalog.Value{datalog.ElementID{Lamport: uint64(startTime.UnixNano())}},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}

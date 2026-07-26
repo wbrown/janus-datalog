@@ -46,8 +46,8 @@ type Store interface {
 	//
 	// CountKeys is likewise not on Store — it remains *BadgerStore-only
 	// (debug/test); see docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md.
-	Scan(index IndexType, start, end []byte) (Iterator, error)
-	ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error)
+	Scan(bound ScanBound) (Iterator, error)
+	ScanKeysOnly(bound ScanBound) (Iterator, error)
 	DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error)
 	MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error)
 	GetMetadataUint64(key string) (uint64, bool, error)
@@ -98,7 +98,11 @@ type Iterator interface {
 	Next() bool
 	Datom() (*datalog.Datom, error)
 	Close() error
-	Seek(key []byte) // Position iterator at or after the given key
+
+	// Seek repositions at or after the bound's start. A bound that cannot be
+	// encoded is recorded as the iterator's sticky error rather than dropped:
+	// Seek has no return, so Error() is where the failure surfaces.
+	Seek(bound ScanBound)
 
 	// ElementID returns the transaction ElementID of the current entry.
 	// This is more efficient than Datom() when only the ElementID is needed

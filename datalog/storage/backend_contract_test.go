@@ -87,7 +87,7 @@ func TestStoreBackendOrderedScanAndSeek(t *testing.T) {
 			}))
 
 			for _, index := range Indices {
-				iter, err := store.ScanKeysOnly(index, []byte{byte(index)}, []byte{byte(index) + 1})
+				iter, err := store.ScanKeysOnly(ScanBound{Index: index})
 				require.NoError(t, err, "index %v", index)
 				var keys [][]byte
 				require.True(t, iter.Next(), "index %v", index)
@@ -103,7 +103,7 @@ func TestStoreBackendOrderedScanAndSeek(t *testing.T) {
 				if index != EAVT {
 					continue
 				}
-				iter, err = store.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+				iter, err = store.ScanKeysOnly(ScanBound{Index: EAVT})
 				require.NoError(t, err)
 				require.True(t, iter.Next())
 				datom, err := iter.Datom()
@@ -113,8 +113,12 @@ func TestStoreBackendOrderedScanAndSeek(t *testing.T) {
 				require.True(t, iter.Next())
 				secondDatom, err := iter.Datom()
 				require.NoError(t, err)
-				secondKey := store.Encoder().EncodeKey(EAVT, secondDatom)
-				iter.Seek(secondKey)
+				// Binding all four orderable components names a run holding
+				// exactly this datom, which is how a bound reaches one key.
+				iter.Seek(ScanBound{
+					Index:  EAVT,
+					Prefix: []datalog.Value{secondDatom.E, secondDatom.A, secondDatom.V, secondDatom.Tx},
+				})
 				require.True(t, iter.Next())
 				afterSeek, err := iter.Datom()
 				require.NoError(t, err)
@@ -142,7 +146,7 @@ func TestScanAndScanKeysOnlyShareWorkspaceContract(t *testing.T) {
 			keysOnly := collectIndexDatoms(t, store, false)
 			require.Equal(t, scan, keysOnly)
 
-			iter, err := store.Scan(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			iter, err := store.Scan(ScanBound{Index: EAVT})
 			require.NoError(t, err)
 			defer iter.Close()
 			require.True(t, iter.Next())
@@ -179,8 +183,8 @@ func TestStoreBackendsRetainByteValuesAndStickyBlobErrors(t *testing.T) {
 				{E: entity, A: blobAttr, V: payload, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 			}))
 
-			start, end := encoder.EncodePrefixRange(EAVT, entity.Bytes())
-			iter, err := store.ScanKeysOnly(EAVT, start, end)
+			entityBound := ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}}
+			iter, err := store.ScanKeysOnly(entityBound)
 			require.NoError(t, err)
 			var retained [][]byte
 			for iter.Next() {
@@ -202,7 +206,7 @@ func TestStoreBackendsRetainByteValuesAndStickyBlobErrors(t *testing.T) {
 
 			require.Greater(t, deleteStoreBlobs(t, store), 0)
 
-			iter, err = store.ScanKeysOnly(EAVT, start, end)
+			iter, err = store.ScanKeysOnly(entityBound)
 			require.NoError(t, err)
 			defer iter.Close()
 			seenInline := 0
@@ -391,7 +395,7 @@ func TestStoreBackendTransactionOrderedScan(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tx.Assert(datoms))
 			require.NoError(t, tx.Rollback())
-			iter, err := store.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			iter, err := store.ScanKeysOnly(ScanBound{Index: EAVT})
 			require.NoError(t, err)
 			require.False(t, iter.Next())
 			require.NoError(t, iter.Close())
@@ -400,7 +404,7 @@ func TestStoreBackendTransactionOrderedScan(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tx.Assert(datoms))
 			require.NoError(t, tx.Commit())
-			iter, err = store.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			iter, err = store.ScanKeysOnly(ScanBound{Index: EAVT})
 			require.NoError(t, err)
 			var got []datalog.Datom
 			for iter.Next() {
@@ -425,7 +429,7 @@ func TestStoreBackendTransactionOrderedScan(t *testing.T) {
 				})
 			}
 			require.NoError(t, store.Assert(extra))
-			iter, err = store.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			iter, err = store.ScanKeysOnly(ScanBound{Index: EAVT})
 			require.NoError(t, err)
 			var keys [][]byte
 			for iter.Next() {
@@ -452,9 +456,9 @@ func collectIndexDatoms(t *testing.T, store Store, useScan bool) []datalog.Datom
 		err  error
 	)
 	if useScan {
-		iter, err = store.Scan(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+		iter, err = store.Scan(ScanBound{Index: EAVT})
 	} else {
-		iter, err = store.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+		iter, err = store.ScanKeysOnly(ScanBound{Index: EAVT})
 	}
 	require.NoError(t, err)
 	defer iter.Close()
@@ -474,7 +478,7 @@ func collectIndexDatoms(t *testing.T, store Store, useScan bool) []datalog.Datom
 
 func countStoreIndex(t *testing.T, store Store, index IndexType) int {
 	t.Helper()
-	iterator, err := store.ScanKeysOnly(index, []byte{byte(index)}, []byte{byte(index) + 1})
+	iterator, err := store.ScanKeysOnly(ScanBound{Index: index})
 	require.NoError(t, err)
 	defer iterator.Close()
 	count := 0

@@ -55,12 +55,19 @@ func validateDatomWithConstraints(
 // emitIteratorStatistics emits annotation events for iterator performance tracking.
 // This consolidates the Close() logic that was duplicated across iterator types.
 //
+// opened is when the scan was opened, so the event's Latency is the iterator's
+// lifetime through Close. That span includes time the consumer spent between
+// Next calls, so it measures how long the scan was held open rather than CPU
+// spent scanning. Latency is the field every other timed event carries and the
+// one the output formatter renders as the line's prefix.
+//
 // Called only once per iterator (in Close()), so performance overhead is negligible.
 func emitIteratorStatistics(
 	handler func(annotations.Event),
 	eventName string,
 	pattern *query.DataPattern,
 	index IndexType,
+	opened time.Time,
 	datomsScanned int,
 	datomsMatched int,
 	extraData map[string]interface{},
@@ -82,8 +89,9 @@ func emitIteratorStatistics(
 	}
 
 	handler(annotations.Event{
-		Name:  eventName,
-		Start: time.Now(),
-		Data:  data,
+		Name:    eventName,
+		Start:   opened,
+		Latency: time.Since(opened),
+		Data:    data,
 	})
 }

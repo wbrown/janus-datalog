@@ -17,7 +17,7 @@ type deferredErrorIterator struct {
 func (it *deferredErrorIterator) Next() bool                     { return false }
 func (it *deferredErrorIterator) Datom() (*datalog.Datom, error) { return nil, nil }
 func (it *deferredErrorIterator) Close() error                   { return nil }
-func (it *deferredErrorIterator) Seek(key []byte)                {}
+func (it *deferredErrorIterator) Seek(bound ScanBound)           {}
 func (it *deferredErrorIterator) ElementID() datalog.ElementID   { return datalog.ElementID{} }
 func (it *deferredErrorIterator) Error() error                   { return it.err }
 
@@ -30,18 +30,18 @@ type indexScanOverrideStore struct {
 	iter  Iterator
 }
 
-func (s *indexScanOverrideStore) ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error) {
-	if index == s.index {
+func (s *indexScanOverrideStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	if bound.Index == s.index {
 		return s.iter, nil
 	}
-	return s.Store.ScanKeysOnly(index, start, end)
+	return s.Store.ScanKeysOnly(bound)
 }
 
-func (s *indexScanOverrideStore) Scan(index IndexType, start, end []byte) (Iterator, error) {
-	if index == s.index {
+func (s *indexScanOverrideStore) Scan(bound ScanBound) (Iterator, error) {
+	if bound.Index == s.index {
 		return s.iter, nil
 	}
-	return s.Store.Scan(index, start, end)
+	return s.Store.Scan(bound)
 }
 
 // datomErrorIterator models a scan whose entry decode fails: Next() yields
@@ -60,7 +60,7 @@ func (it *datomErrorIterator) Next() bool {
 }
 func (it *datomErrorIterator) Datom() (*datalog.Datom, error) { return nil, it.err }
 func (it *datomErrorIterator) Close() error                   { return nil }
-func (it *datomErrorIterator) Seek(key []byte)                {}
+func (it *datomErrorIterator) Seek(bound ScanBound)           {}
 func (it *datomErrorIterator) ElementID() datalog.ElementID   { return datalog.ElementID{} }
 func (it *datomErrorIterator) Error() error                   { return nil }
 
@@ -159,10 +159,8 @@ func TestResolveAVLWWSurfacesScanErrors(t *testing.T) {
 
 			var aStorage Attribute
 			copy(aStorage[:], datalog.NewKeyword(":user/email").String())
-			v := "a@example.com"
-			vBytes := encodeValueForSearch(v, matcher.encoder)
 
-			_, _, err := matcher.resolveAVLWW(aStorage, vBytes, v)
+			_, _, err := matcher.resolveAVLWW(aStorage, "a@example.com")
 			if err == nil {
 				t.Fatal("expected the scan failure to surface, got nil error")
 			}

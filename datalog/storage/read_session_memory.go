@@ -35,27 +35,27 @@ func (s *MemoryStore) NewReadSession() (ReadSession, error) {
 
 func (s *memoryReadSession) Encoder() *BinaryKeyEncoder { return s.store.encoder }
 
-func (s *memoryReadSession) Scan(index IndexType, start, end []byte) (Iterator, error) {
-	return s.scan(index, start, end)
+func (s *memoryReadSession) Scan(bound ScanBound) (Iterator, error) {
+	return s.scan(bound)
 }
 
-func (s *memoryReadSession) ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error) {
-	return s.scan(index, start, end)
+func (s *memoryReadSession) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	return s.scan(bound)
 }
 
-func (s *memoryReadSession) scan(index IndexType, start, end []byte) (Iterator, error) {
+func (s *memoryReadSession) scan(bound ScanBound) (Iterator, error) {
+	start, end, err := s.store.encoder.EncodeScanBound(bound)
+	if err != nil {
+		return nil, err
+	}
+	index := bound.Index
+
 	s.mu.Lock()
 	keysTree := s.keys
 	closed := s.closed
 	s.mu.Unlock()
 	if closed || keysTree == nil {
 		return nil, errReadSessionClosed
-	}
-	if start == nil {
-		start = []byte{byte(index)}
-	}
-	if end == nil {
-		end = []byte{byte(index) + 1}
 	}
 	// The cloned tree is never written, so the walk needs no store lock.
 	keys := make([][]byte, 0)

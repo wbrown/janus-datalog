@@ -187,7 +187,14 @@ func TestEATVPrefixRangeDebug(t *testing.T) {
 	matcher := NewPatternMatcher(db.Store())
 
 	// Call chooseIndex with both E and A bound (the bug scenario)
-	index, start, end := matcher.chooseIndex(entityID, attrKw, nil, nil)
+	bound := matcher.chooseIndex(entityID, attrKw, nil, nil)
+	index := bound.Index
+	// The assertions below are about the byte range the bound addresses, so
+	// they render it the way this store's keys are encoded.
+	start, end, err := matcher.encoder.EncodeScanBound(bound)
+	if err != nil {
+		t.Fatalf("Failed to encode scan bound: %v", err)
+	}
 
 	t.Logf("Index selected: %s", indexName(index))
 	t.Logf("Start key length: %d bytes", len(start))

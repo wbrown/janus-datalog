@@ -40,15 +40,21 @@ func (s *BadgerStore) NewReadSession() (ReadSession, error) {
 
 func (s *badgerReadSession) Encoder() *BinaryKeyEncoder { return s.store.encoder }
 
-func (s *badgerReadSession) Scan(index IndexType, start, end []byte) (Iterator, error) {
-	return s.newIterator(index, start, end)
+func (s *badgerReadSession) Scan(bound ScanBound) (Iterator, error) {
+	return s.newIterator(bound)
 }
 
-func (s *badgerReadSession) ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error) {
-	return s.newIterator(index, start, end)
+func (s *badgerReadSession) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	return s.newIterator(bound)
 }
 
-func (s *badgerReadSession) newIterator(index IndexType, start, end []byte) (Iterator, error) {
+func (s *badgerReadSession) newIterator(bound ScanBound) (Iterator, error) {
+	start, end, err := s.store.encoder.EncodeScanBound(bound)
+	if err != nil {
+		return nil, err
+	}
+	index := bound.Index
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {

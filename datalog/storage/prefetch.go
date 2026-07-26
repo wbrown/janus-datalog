@@ -44,13 +44,14 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		prev = e
 	}
 
-	encoder := m.encoder
-
 	for _, e := range deduped {
-		// Build prefix range for this entity on EATV: prefix(1) + E(20)
-		start, end := encoder.EncodePrefixRange(EATV, e[:])
-
-		iter, err := m.reader.Scan(EATV, start, end)
+		// Bind E on EATV. The dedup above works in the storage projection, so
+		// the identity is re-interned here; the constructor returns the
+		// canonical pointer for an already-interned hash.
+		iter, err := m.reader.Scan(ScanBound{
+			Index:  EATV,
+			Prefix: []datalog.Value{datalog.NewIdentityFromHash(e)},
+		})
 		if err != nil {
 			return err
 		}

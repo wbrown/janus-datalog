@@ -95,8 +95,15 @@ func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.D
 // mode are skipped. The supersession check against other entities is
 // likewise restricted via m.shouldFilterTx in resolveMaxOtherTxForValue.
 func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (any, datalog.ElementID, bool, error) {
-	start, end := m.encoder.EncodePrefixRange(EATV, eBytes[:], aBytes[:])
-	iter, err := m.reader.ScanKeysOnly(EATV, start, end)
+	// The caller holds storage projections; both constructors return the
+	// canonical interned pointer for an already-interned value.
+	iter, err := m.reader.ScanKeysOnly(ScanBound{
+		Index: EATV,
+		Prefix: []datalog.Value{
+			datalog.NewIdentityFromHash(eBytes),
+			datalog.InternKeywordFromBytes(aBytes),
+		},
+	})
 	if err != nil {
 		return nil, datalog.ElementID{}, false, err
 	}
@@ -134,9 +141,10 @@ func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) 
 // Honors the matcher's temporal mode — entries with Tx > m.txID in as-of
 // mode are excluded.
 func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exceptE Entity) (datalog.ElementID, error) {
-	vBytes := encodeValueForSearch(v, m.encoder)
-	start, end := m.encoder.EncodePrefixRange(AVET, aBytes[:], vBytes)
-	iter, err := m.reader.ScanKeysOnly(AVET, start, end)
+	iter, err := m.reader.ScanKeysOnly(ScanBound{
+		Index:  AVET,
+		Prefix: []datalog.Value{datalog.InternKeywordFromBytes(aBytes), v},
+	})
 	if err != nil {
 		return datalog.ElementID{}, err
 	}
@@ -199,10 +207,12 @@ func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exce
 // The walk-based rule gives V-view and entity-view the same underlying
 // semantics, guaranteeing that "E emits v" via the entity walk and
 // "V is owned by E" via resolveAVLWW always agree.
-func (m *PatternMatcher) resolveAVLWW(a Attribute, vBytes []byte, v any) (datalog.Identity, datalog.ElementID, error) {
+func (m *PatternMatcher) resolveAVLWW(a Attribute, v any) (datalog.Identity, datalog.ElementID, error) {
 	// Step 1: find the max-Tx entry for (a, v) across all entities.
-	start, end := m.encoder.EncodePrefixRange(AVET, a[:], vBytes)
-	iter, err := m.reader.ScanKeysOnly(AVET, start, end)
+	iter, err := m.reader.ScanKeysOnly(ScanBound{
+		Index:  AVET,
+		Prefix: []datalog.Value{datalog.InternKeywordFromBytes(a), v},
+	})
 	if err != nil {
 		return nil, datalog.ElementID{}, err
 	}

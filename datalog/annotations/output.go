@@ -302,38 +302,22 @@ func (f *OutputFormatter) Format(event Event) string {
 		return fmt.Sprintf("%s %s → %s", latency, patternStr, relationStr)
 
 	case PatternIndexSelection:
-		// Store index info for the next scan event
-		f.lastIndex = event.Data["index"].(string)
-
-		// Build bound string from individual fields if needed
-		if bound, ok := event.Data["bound"].(string); ok {
-			f.lastBound = bound
-		} else {
-			// Build from individual bound fields
-			boundParts := []string{}
-			if e, ok := event.Data["bound.e"].(bool); ok {
-				boundParts = append(boundParts, fmt.Sprintf("E=%v", e))
-			}
-			if a, ok := event.Data["bound.a"].(bool); ok {
-				boundParts = append(boundParts, fmt.Sprintf("A=%v", a))
-			}
-			if v, ok := event.Data["bound.v"].(bool); ok {
-				boundParts = append(boundParts, fmt.Sprintf("V=%v", v))
-			}
-			if t, ok := event.Data["bound.t"].(bool); ok {
-				boundParts = append(boundParts, fmt.Sprintf("T=%v", t))
-			}
-			f.lastBound = strings.Join(boundParts, " ")
-		}
+		// Store index and bound for the scan event that follows.
+		f.lastIndex, _ = event.Data["index"].(string)
+		f.lastBound = renderBoundPositions(event.Data["bound"])
 		return ""
 
 	case PatternStorageScan:
-		// Format as Scan([pattern], index, bound) → X datoms in Yms
+		// Format as Scan([pattern], index, bound) → X datoms. The scan's
+		// duration is the line's latency prefix, carried on the event like
+		// every other timed event's; there is no separate duration field.
 		pattern := event.Data["pattern"].(string)
 		datoms := event.Data["datoms.scanned"].(int)
-		duration := event.Data["scan.duration"]
 
-		// Use stored index info if available
+		// Use stored index info if available. An empty bound means no
+		// index-selection event preceded this scan, which is different from a
+		// selection that bound nothing — renderBoundPositions reports the
+		// latter as "none".
 		index := f.lastIndex
 		bound := f.lastBound
 		if index == "" {
@@ -341,26 +325,6 @@ func (f *OutputFormatter) Format(event Event) string {
 		}
 		if bound == "" {
 			bound = "?"
-		} else {
-			// Convert "E=false A=true V=true T=false" to "AV"
-			boundParts := []string{}
-			if strings.Contains(bound, "E=true") {
-				boundParts = append(boundParts, "E")
-			}
-			if strings.Contains(bound, "A=true") {
-				boundParts = append(boundParts, "A")
-			}
-			if strings.Contains(bound, "V=true") {
-				boundParts = append(boundParts, "V")
-			}
-			if strings.Contains(bound, "T=true") {
-				boundParts = append(boundParts, "T")
-			}
-			if len(boundParts) > 0 {
-				bound = strings.Join(boundParts, "")
-			} else {
-				bound = "none"
-			}
 		}
 
 		var scanStr string
@@ -377,16 +341,14 @@ func (f *OutputFormatter) Format(event Event) string {
 
 		if f.useColor {
 			arrow := color.YellowString(" → ")
-			return fmt.Sprintf("%s %s%s%s in %v",
+			return fmt.Sprintf("%s %s%s%s",
 				latency,
 				scanStr,
 				arrow,
-				f.colorizeCount("datoms", datoms),
-				duration)
+				f.colorizeCount("datoms", datoms))
 		}
 
-		return fmt.Sprintf("%s %s → %d datoms in %v",
-			latency, scanStr, datoms, duration)
+		return fmt.Sprintf("%s %s → %d datoms", latency, scanStr, datoms)
 
 	case PatternFiltering:
 		// Skip - filtering info is redundant with Pattern output
@@ -528,6 +490,22 @@ func (f *OutputFormatter) Format(event Event) string {
 		// Generic format for unknown events
 		return fmt.Sprintf("%s %s %v", latency, event.Name, event.Data)
 	}
+}
+
+// renderBoundPositions renders a pattern/index-selection event's "bound" field
+// — the positions the scan's run binds, in the index's component order — as the
+// compact form the scan line carries (E, A, V, Tx concatenated, matching the
+// index-name idiom on the same line).
+//
+// A selection that bound no positions is a whole-index scan and renders
+// "none"; the scan line distinguishes that from "?", which means no selection
+// event preceded the scan at all.
+func renderBoundPositions(field interface{}) string {
+	positions, ok := field.([]string)
+	if !ok || len(positions) == 0 {
+		return "none"
+	}
+	return strings.Join(positions, "")
 }
 
 // formatLatency formats a duration as [XXXms] or [XXXµs] with color coding.

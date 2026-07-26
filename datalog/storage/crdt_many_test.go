@@ -103,19 +103,11 @@ func TestSetEntryStorageRoundTrip(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	// Build scan prefix for EAVT
-	var eBytes [20]byte
-	var aBytes [32]byte
-	copy(eBytes[:], entityID.Bytes())
-	copy(aBytes[:], attr.String())
-
-	prefix := make([]byte, 1+20+32)
-	prefix[0] = byte(EAVT)
-	copy(prefix[1:21], eBytes[:])
-	copy(prefix[21:53], aBytes[:])
-
 	// Scan EAVT to retrieve the datom
-	iter, err := db.Store().Scan(EAVT, prefix, prefixEnd(prefix))
+	iter, err := db.Store().Scan(ScanBound{
+		Index:  EAVT,
+		Prefix: []datalog.Value{entityID, attr},
+	})
 	if err != nil {
 		t.Fatalf("Scan failed: %v", err)
 	}

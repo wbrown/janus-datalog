@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"time"
+
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -33,8 +35,9 @@ type reusingIterator struct {
 	tupleBuilder *query.InternedTupleBuilder
 
 	// Performance tracking
-	datomsScanned int // Total datoms scanned
-	datomsMatched int // Total datoms matched
+	opened        time.Time // scan open; Close reports the lifetime as the event's latency
+	datomsScanned int       // Total datoms scanned
+	datomsMatched int       // Total datoms matched
 
 	err error // First error from storage operations
 }
@@ -50,25 +53,21 @@ func (it *reusingIterator) Next() bool {
 			return false
 		}
 
-		// Calculate range that encompasses all tuples
-		// Start with the first tuple's seek key
+		// One run encompassing every tuple: it starts at the first tuple's
+		// bound and reaches through the last tuple's, and the loop below seeks
+		// between the bindings inside it. The tuples are sorted, so those two
+		// are the run's endpoints.
 		firstTuple := it.tuples[0]
 		it.updateBoundPattern(firstTuple)
-		index, startKey, _ := it.calculateSeekKey(firstTuple)
+		bound := it.seekBound(firstTuple)
 		// The scan decodes with the same index the keys were encoded for.
-		it.index = index
+		it.index = bound.Index
 
-		// For the end key, we need to go past the last tuple
-		// The safest approach is to use a key that's definitely past all our data
-		// For EAVT index with E bound, we can use the last entity + max suffix
 		lastTuple := it.tuples[len(it.tuples)-1]
 		it.updateBoundPattern(lastTuple)
-		_, _, endKey := it.calculateSeekKey(lastTuple)
-		// Extend the end key to ensure we capture all datoms for the last entity
-		endKey = append(endKey, 0xFF, 0xFF, 0xFF, 0xFF)
+		bound.Through = it.seekBound(lastTuple).Prefix
 
-		var err error
-		rawIter, err := it.matcher.reader.ScanKeysOnly(it.index, startKey, endKey)
+		rawIter, err := it.matcher.reader.ScanKeysOnly(bound)
 		if err != nil {
 			it.err = err
 			return false
@@ -227,11 +226,8 @@ func (it *reusingIterator) Next() bool {
 		bindingTuple := it.tuples[it.currentIdx]
 		it.updateBoundPattern(bindingTuple)
 
-		// Calculate seek key based on the binding
-		_, seekKey, _ := it.calculateSeekKey(bindingTuple)
-
-		// Seek to the new position
-		it.storageIter.Seek(seekKey)
+		// Seek to this binding's position inside the run
+		it.storageIter.Seek(it.seekBound(bindingTuple))
 		// Loop back to try reading from the new position
 	}
 }
@@ -247,6 +243,7 @@ func (it *reusingIterator) Close() error {
 		"pattern/iterator-reuse-complete",
 		it.pattern,
 		it.index,
+		it.opened,
 		it.datomsScanned,
 		it.datomsMatched,
 		map[string]interface{}{
@@ -273,13 +270,13 @@ func (it *reusingIterator) updateBoundPattern(bindingTuple executor.Tuple) {
 	it.currentTx = values.T
 }
 
-// calculateSeekKey calculates the index and key range to seek to based on the
-// binding tuple and position. The returned index is authoritative for the
-// scan: the keys are encoded for it, and the storage iterator must decode
-// with it. (The strategy's index is a planning hint; chooseIndex is the one
-// authority for key encoding, so the two must not be mixed — a range encoded
-// for one index layout decodes as garbage under another.)
-func (it *reusingIterator) calculateSeekKey(bindingTuple executor.Tuple) (IndexType, []byte, []byte) {
+// seekBound names the run this binding tuple occupies. The bound's index is
+// authoritative for the scan: the components are ordered for it, and the
+// storage iterator must decode with it. (The strategy's index is a planning
+// hint; chooseIndex is the one authority for the component order, so the two
+// must not be mixed — a bound built for one index layout addresses a different
+// run under another.)
+func (it *reusingIterator) seekBound(bindingTuple executor.Tuple) ScanBound {
 	// Get symbol mapping
 	symbols := it.bindingRel.Symbols()
 	symIndex := make(map[query.Symbol]int)
@@ -329,11 +326,9 @@ func (it *reusingIterator) calculateSeekKey(bindingTuple executor.Tuple) (IndexT
 	// When the strategy chose TAEV (position 3), only pass tx to avoid
 	// chooseIndex selecting AETV due to a constant A in the pattern.
 	if it.position == 3 && it.index == TAEV {
-		index, start, end := it.matcher.chooseIndex(nil, nil, nil, tx)
-		return index, start, end
+		return it.matcher.chooseIndex(nil, nil, nil, tx)
 	}
-	index, start, end := it.matcher.chooseIndex(e, a, v, tx)
-	return index, start, end
+	return it.matcher.chooseIndex(e, a, v, tx)
 }
 
 // matchesCurrentPattern checks if datom matches with current binding

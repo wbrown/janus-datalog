@@ -154,7 +154,7 @@ func TestIteratorDatomStability(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	it, err := db.Store().ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+	it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestBadgerIteratorKeyBufferReuse(t *testing.T) {
 	}
 
 	t.Run("DatomValuesAreCorrectAcrossIteration", func(t *testing.T) {
-		it, err := db.Store().ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+		it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -279,7 +279,7 @@ func TestBadgerIteratorKeyBufferReuse(t *testing.T) {
 		// KeyOnlyIterator uses workspace reuse (currentDatom field).
 		// This means Datom() returns a pointer to the SAME memory each time.
 		// Callers must copy values if they need them after calling Next().
-		it, err := db.Store().ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+		it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -317,7 +317,7 @@ func TestBadgerIteratorKeyBufferReuse(t *testing.T) {
 	})
 
 	t.Run("MultipleDatomCallsAtSamePosition", func(t *testing.T) {
-		it, err := db.Store().ScanKeysOnly(EAVT, nil, nil)
+		it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -366,11 +366,7 @@ func TestKeyOnlyIteratorRetainedByteValuesOutliveBorrowedKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	iter, err := db.Store().ScanKeysOnly(
-		EAVT,
-		[]byte{byte(EAVT)},
-		[]byte{byte(EAVT) + 1},
-	)
+	iter, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
 	if err != nil {
 		t.Fatal(err)
 	}

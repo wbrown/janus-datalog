@@ -44,9 +44,7 @@ func TestMemoryStoreTxRetractThenAssertPreservesDatom(t *testing.T) {
 
 	// Scanning the (E, A) run asserts more than a point lookup would: not that
 	// a tx2 datom exists, but that the one surviving datom is the tx2 one.
-	sd := ToStorageDatom(datalog.Datom{E: entity, A: attr})
-	start, end := store.Encoder().EncodePrefixRange(EAVT, sd.E[:], sd.A[:])
-	iter, err := store.Scan(EAVT, start, end)
+	iter, err := store.Scan(ScanBound{Index: EAVT, Prefix: []datalog.Value{entity, attr}})
 	require.NoError(t, err)
 	defer iter.Close()
 
@@ -128,7 +126,7 @@ func TestMemoryStoreScanOrdersManyKeys(t *testing.T) {
 	}
 	require.NoError(t, store.Assert(datoms))
 
-	iter, err := store.Scan(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+	iter, err := store.Scan(ScanBound{Index: EAVT})
 	require.NoError(t, err)
 	defer iter.Close()
 	var keys [][]byte

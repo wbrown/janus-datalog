@@ -143,10 +143,7 @@ func TestDiag_VBound_VIsIrrelevant(t *testing.T) {
 	t.Log("--- Raw EATV scan for (alice, :person/name) ---")
 	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	sd := ToStorageDatom(datalog.Datom{E: e, A: a})
-	encoder := db.Store().Encoder()
-	start, end := encoder.EncodePrefixRange(EATV, sd.E[:], sd.A[:])
-	iter, err := db.Store().Scan(EATV, start, end)
+	iter, err := db.Store().Scan(ScanBound{Index: EATV, Prefix: []datalog.Value{e, a}})
 	require.NoError(t, err)
 	defer iter.Close()
 	i := 0
@@ -163,12 +160,7 @@ func TestDiag_VBound_VIsIrrelevant(t *testing.T) {
 
 	// Also dump raw AVET scan for (A, V=Alice)
 	t.Log("--- Raw AVET scan for (:person/name, Alice) ---")
-	dummyDatom := ToStorageDatom(datalog.Datom{E: e, A: a, V: "Alice"})
-	vType := byte(datalog.Type(dummyDatom.V))
-	vData := datalog.ValueBytes(dummyDatom.V)
-	vBytes := append([]byte{vType}, vData...)
-	start2, end2 := encoder.EncodePrefixRange(AVET, sd.A[:], vBytes)
-	iter2, err := db.Store().Scan(AVET, start2, end2)
+	iter2, err := db.Store().Scan(ScanBound{Index: AVET, Prefix: []datalog.Value{a, "Alice"}})
 	require.NoError(t, err)
 	defer iter2.Close()
 	i = 0
@@ -185,12 +177,7 @@ func TestDiag_VBound_VIsIrrelevant(t *testing.T) {
 
 	// Also dump raw AVET scan for (A, V=Bob) to see tombstone
 	t.Log("--- Raw AVET scan for (:person/name, Bob) ---")
-	dummyDatom2 := ToStorageDatom(datalog.Datom{E: e, A: a, V: "Bob"})
-	vType2 := byte(datalog.Type(dummyDatom2.V))
-	vData2 := datalog.ValueBytes(dummyDatom2.V)
-	vBytes2 := append([]byte{vType2}, vData2...)
-	start3, end3 := encoder.EncodePrefixRange(AVET, sd.A[:], vBytes2)
-	iter3, err := db.Store().Scan(AVET, start3, end3)
+	iter3, err := db.Store().Scan(ScanBound{Index: AVET, Prefix: []datalog.Value{a, "Bob"}})
 	require.NoError(t, err)
 	defer iter3.Close()
 	i = 0

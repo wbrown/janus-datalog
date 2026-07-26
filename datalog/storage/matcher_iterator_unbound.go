@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"time"
+
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -8,8 +11,8 @@ import (
 // unboundIterator streams results for patterns without bindings
 type unboundIterator struct {
 	matcher     *PatternMatcher
-	index       IndexType
-	start, end  []byte
+	index       IndexType // reported in the scan statistics on Close
+	opened      time.Time // scan open; Close reports the lifetime as the event's latency
 	pattern     *query.DataPattern
 	symbols     []query.Symbol
 	e, a, v, tx interface{}
@@ -81,9 +84,10 @@ func (it *unboundIterator) Close() error {
 	// Emit scan statistics if handler is available
 	emitIteratorStatistics(
 		it.matcher.handler,
-		"pattern/storage-scan",
+		annotations.PatternStorageScan,
 		it.pattern,
 		it.index,
+		it.opened,
 		it.datomsScanned,
 		it.datomsMatched,
 		nil, // no extra data

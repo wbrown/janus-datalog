@@ -351,17 +351,10 @@ func TestBadgerIteratorDecodesOp(t *testing.T) {
 	}
 
 	// Scan EAVT and verify Op is decoded
-	var eBytes [20]byte
-	var aBytes [32]byte
-	copy(eBytes[:], entityID.Bytes())
-	copy(aBytes[:], attr.String())
-
-	prefix := make([]byte, 1+20+32)
-	prefix[0] = byte(EAVT)
-	copy(prefix[1:21], eBytes[:])
-	copy(prefix[21:53], aBytes[:])
-
-	iter, err := db.Store().Scan(EAVT, prefix, prefixEnd(prefix))
+	iter, err := db.Store().Scan(ScanBound{
+		Index:  EAVT,
+		Prefix: []datalog.Value{entityID, attr},
+	})
 	if err != nil {
 		t.Fatalf("Scan failed: %v", err)
 	}

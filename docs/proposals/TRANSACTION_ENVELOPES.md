@@ -428,7 +428,9 @@ accepted baseline behavior.
   satisfied stays in staging and never enters the live store. This is what
   lets local Latest stay unfiltered while envelopes may arrive out of order.
 - **AsOf:** uses the immutable basis derived from the selected transaction
-  record (`ParentBasis` + own range + ID).
+  record (`ParentBasis` + own range + ID). Whether that basis is *evaluated*
+  per datom or *held* as a retained tree root is open under the prerequisite
+  project's Ruling 2 — see the PR 4 amendment in the implementation plan.
 - **History:** returns raw datoms from complete published envelopes and bypasses
   CRDT resolution, but never exposes a partially applied envelope.
 - **Cache:** latest and each fixed AsOf basis have distinct cache state exactly
@@ -964,6 +966,8 @@ Compile-level API breaks may land within the current v0.x patch series. The stor
 **PR 3 — Envelope flag day (the minor version bump).** Everything that must change together, in one PR: envelope/record/basis types and the canonical digest; the Badger transaction-log key families and the typed memory record trees; `StoreTx.ApplyEnvelope` and the Store transaction-log read methods; provisional IDs, `PendingRef`, the per-owner commit sequencer, and authoritative-range remapping; `Commit()` returning `TransactionID`; no physical `:db/txInstant`; clock restore from the maximum of TAEV and the transaction keyspace; tier-3 blob writes joining `ApplyEnvelope`'s storage transaction; the physical storage-format version marker; and rejection of pre-envelope Badger directories, EDN dumps, and JDZL files. Old-format rejection belongs in this PR, not the formats PR: the moment commits produce envelopes, importing a record-less dump would manufacture exactly the mixed state the hard break forbids. Bridge state until PR 4: `TransactionID.ElementID` remains valid as a scalar `AsOf` point, and commit-time contiguous ranges already close most of the current interleaving defect for local databases.
 
 **PR 4 — Transaction-closed AsOf.** Changes the temporal contract: `AsOf` accepts a `TransactionID` and rejects raw operation IDs, resolving the basis through the transaction record; `Snapshot`/`AsOfSnapshot`/`TruncateTo` move to `ParentBasis` semantics; basis-not-retained and transaction-not-yet-known become distinct errors; `TransactionByOperation` provides the migration path for persisted operation-ID bases. First after the flag day because downstream migration is blocked on it.
+
+*Amended 2026-07-25.* The prerequisite project ruled persistent trees ([MEMORY_DATOM_INDEXES.md](MEMORY_DATOM_INDEXES.md) Ruling 2): a database version *is* a root pointer, and a read session is a retained root. A fixed-basis temporal read can then be served by retaining the basis root rather than by evaluating `Visibility.Includes` per datom, which changes this PR's cost profile and its retention story — basis-not-retained becomes "that root is no longer reachable," a reachability fact, rather than truncation bookkeeping. The change is not uniform: Badger has no roots, so its fixed-basis reads remain predicate filtering, and a frontier basis names a per-replica high-water set that need not correspond to any root this replica ever held. **Open:** whether `Visibility` stays the single mechanism with root retention as a memory-backend implementation beneath it, or whether fixed-basis reads select between the two at the seam; and whether either answer moves work out of this PR. Ledger item 30.
 
 **PR 5 — Transaction relation.** Establishes Datalog queryability of transactions: the composite matcher behind the default `$` source and the `:db/txID`/`:db/txInstant`/`:db/txOperation` projection with all four access patterns. Open decision: between PR 3 and PR 5, `[?tx :db/txInstant ?instant]` queries return nothing (instants are reachable only through the typed Go API). If that query-shape gap on main is unacceptable, PR 5 folds into PR 3 and the flag day grows.
 

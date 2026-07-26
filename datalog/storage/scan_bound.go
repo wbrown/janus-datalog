@@ -67,15 +67,80 @@ func componentOrder(index IndexType) ([componentsPerIndex]keyComponent, error) {
 // element binds the k-th component of Index's order, so elements carry no
 // position tag of their own. An empty Prefix names the whole index.
 //
-// A bound is always a prefix, never an asymmetric start/end pair. Every index
-// layout places Op last and AfterRef (when present) immediately before it, so
-// neither is ever a bound component; the orderable positions are exactly E, A,
-// V and Tx, and binding one requires binding every position ahead of it.
+// Bound components are always leading components, never an interior selection.
+// Every index layout places Op last and AfterRef (when present) immediately
+// before it, so neither is ever a bound component; the orderable positions are
+// exactly E, A, V and Tx, and binding one requires binding every position
+// ahead of it.
 //
-// Prefix elements are ordinary datalog values — Identity for E, Keyword for A,
-// any domain value for V, ElementID for Tx — so a bound introduces no value
-// kinds beyond the closed domain.
+// Through extends the run past Prefix's own subtree: it starts where Prefix
+// starts and ends where Through's subtree ends, so both endpoints and
+// everything ordered between them are included. It exists for the batch scans,
+// which cover a set of per-binding prefixes in one pass by spanning from the
+// lowest to the highest and seeking between them. An absent Through — the
+// common case — makes the run exactly Prefix, and a Through equal to Prefix
+// says the same thing. Through need not be the same length as Prefix, but its
+// subtree must end above where Prefix begins; a Through naming an empty range
+// is a caller bug, and is rejected rather than scanned as zero matches.
+//
+// Prefix and Through elements are ordinary datalog values — Identity for E,
+// Keyword for A, any domain value for V, ElementID for Tx — so a bound
+// introduces no value kinds beyond the closed domain.
 type ScanBound struct {
-	Index  IndexType
-	Prefix []datalog.Value
+	Index   IndexType
+	Prefix  []datalog.Value
+	Through []datalog.Value
+}
+
+// addBoundFields reports a scan bound into an annotation event's data: the
+// index, the positions the run binds in that index's component order, and the
+// values bound to them — plus the same pair for Through when the run spans to
+// a second prefix.
+//
+// This is the seam's own account of what it addressed. It deliberately does
+// not carry the encoded key range: that is one backend's projection of the
+// bound, uninterpretable by a consumer that does not hold the encoder, and
+// absent entirely for a backend that compares typed components directly.
+func addBoundFields(data map[string]interface{}, bound ScanBound) {
+	positions, values := describeRun(bound.Index, bound.Prefix)
+	data["index"] = indexName(bound.Index)
+	data["bound"] = positions
+	data["bound.values"] = values
+	if len(bound.Through) > 0 {
+		throughPositions, throughValues := describeRun(bound.Index, bound.Through)
+		data["bound.through"] = throughPositions
+		data["bound.through.values"] = throughValues
+	}
+}
+
+// describeRun names the positions one endpoint of a bound binds, in index's
+// component order, alongside the rendered values bound to them. The slices are
+// parallel — position k carries value k — which is the run's own structure: an
+// ordered sequence of components, each fixed to a value. Both are empty for a
+// whole-index run.
+//
+// Positions are named rather than implied so a consumer never needs the index
+// layout to read the bound. Values are rendered to strings because an event's
+// Data is a display surface, matching every neighbouring storage event; a
+// consumer that needs the typed value has the query, not the annotation.
+//
+// An index outside the taxonomy renders its positions as "?": the scan itself
+// fails loudly at encode time, so a renderer that refused here would replace a
+// readable event with no event at all.
+func describeRun(index IndexType, values []datalog.Value) (positions, rendered []string) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	order, err := componentOrder(index)
+	positions = make([]string, 0, len(values))
+	rendered = make([]string, 0, len(values))
+	for i, v := range values {
+		if err != nil || i >= len(order) {
+			positions = append(positions, "?")
+		} else {
+			positions = append(positions, order[i].String())
+		}
+		rendered = append(rendered, fmt.Sprintf("%v", v))
+	}
+	return positions, rendered
 }

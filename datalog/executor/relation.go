@@ -119,7 +119,6 @@ type Relation interface {
 	// Size returns the number of tuples (may be expensive for iterators)
 	Size() int
 
-
 	// Get returns a specific tuple by index (may be expensive for streaming relations)
 	Get(i int) Tuple
 

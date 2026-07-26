@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 
@@ -338,23 +339,57 @@ func (e *BinaryKeyEncoder) EncodeScanBound(b ScanBound) (start, end []byte, err 
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(b.Prefix) > len(order) {
-		return nil, nil, fmt.Errorf(
-			"scan bound on %v: prefix binds %d components, index orders %d",
-			b.Index, len(b.Prefix), len(order))
+
+	start, err = e.encodeBoundEndpoint(b.Index, order, b.Prefix, "prefix")
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(b.Through) == 0 {
+		return start, incrementLastByte(start), nil
 	}
 
-	parts := make([][]byte, 0, len(b.Prefix))
-	for i, v := range b.Prefix {
+	through, err := e.encodeBoundEndpoint(b.Index, order, b.Through, "Through")
+	if err != nil {
+		return nil, nil, err
+	}
+	// The range is [start, end); end at or below start names no keys at all,
+	// which every scan would report as "no matches" rather than as the
+	// inverted-endpoints bug it is.
+	end = incrementLastByte(through)
+	if bytes.Compare(end, start) <= 0 {
+		return nil, nil, fmt.Errorf(
+			"scan bound on %v: Through ends at or below where prefix begins, naming an empty range",
+			b.Index)
+	}
+	return start, end, nil
+}
+
+// encodeBoundEndpoint renders one endpoint of a bound: the leading components
+// of order, each in the storage form its position uses, concatenated behind the
+// index byte. endpoint names which of the two is being rendered, so an error
+// says where the caller's bound went wrong.
+func (e *BinaryKeyEncoder) encodeBoundEndpoint(
+	index IndexType,
+	order [componentsPerIndex]keyComponent,
+	values []datalog.Value,
+	endpoint string,
+) ([]byte, error) {
+	if len(values) > len(order) {
+		return nil, fmt.Errorf(
+			"scan bound on %v: %s binds %d components, index orders %d",
+			index, endpoint, len(values), len(order))
+	}
+
+	parts := make([][]byte, 0, len(values))
+	for i, v := range values {
 		part, err := e.encodeBoundComponent(order[i], v)
 		if err != nil {
-			return nil, nil, fmt.Errorf("scan bound on %v at position %d: %w", b.Index, i, err)
+			return nil, fmt.Errorf("scan bound on %v: %s at position %d: %w",
+				index, endpoint, i, err)
 		}
 		parts = append(parts, part)
 	}
-
-	start, end = e.EncodePrefixRange(b.Index, parts...)
-	return start, end, nil
+	return e.EncodePrefix(index, parts...), nil
 }
 
 // encodeBoundComponent renders one bound component in the storage form its

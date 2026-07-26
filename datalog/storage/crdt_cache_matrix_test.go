@@ -460,9 +460,7 @@ func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
 					// Debug: scan EATV index directly to see ALL datoms
 					t.Log("=== Scanning EATV index for all datoms ===")
 					store := db.Store()
-					startE := []byte{byte(EATV)}
-					endE := []byte{byte(EATV) + 1}
-					iterE, err := store.ScanKeysOnly(EATV, startE, endE)
+					iterE, err := store.ScanKeysOnly(ScanBound{Index: EATV})
 					require.NoError(t, err)
 					countE := 0
 					for iterE.Next() {
@@ -478,9 +476,7 @@ func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
 
 					// Debug: scan VAET index directly to see what's there
 					t.Log("=== Scanning VAET index ===")
-					start := []byte{byte(VAET)}
-					end := []byte{byte(VAET) + 1}
-					iter, err := store.ScanKeysOnly(VAET, start, end)
+					iter, err := store.ScanKeysOnly(ScanBound{Index: VAET})
 					require.NoError(t, err)
 					count := 0
 					for iter.Next() {

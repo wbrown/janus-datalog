@@ -75,8 +75,7 @@ func valueTypeFromValue(v interface{}) schema.ValueType {
 // defaults to one. Returns a non-nil (possibly empty) schema.
 func inferSchemaFromStore(store Store) (*schema.Schema, error) {
 	s := schema.NewSchema()
-	start, end := store.Encoder().EncodePrefixRange(ATEV)
-	iter, err := store.ScanKeysOnly(ATEV, start, end)
+	iter, err := store.ScanKeysOnly(ScanBound{Index: ATEV})
 	if err != nil {
 		return nil, err
 	}

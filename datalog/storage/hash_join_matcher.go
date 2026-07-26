@@ -188,10 +188,10 @@ func (m *PatternMatcher) matchWithHashJoin(
 	if keyCount != 1 {
 		boundValue = nil
 	}
-	scanRange := m.calculatePatternScanRangeWithBinding(pattern, index, position, boundValue)
+	bound := m.patternScanBoundWithBinding(pattern, index, position, boundValue)
 
 	// PHASE 3: Create storage iterator
-	storageIter, err := m.reader.ScanKeysOnly(index, scanRange.start, scanRange.end)
+	storageIter, err := m.reader.ScanKeysOnly(bound)
 	if err != nil {
 		return nil, fmt.Errorf("hash join scan failed: %w", err)
 	}
@@ -224,25 +224,19 @@ func (m *PatternMatcher) matchWithHashJoin(
 	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
 }
 
-// scanRange holds start and end keys for a storage scan
-type scanRange struct {
-	start []byte
-	end   []byte
+// patternScanBound determines the scan bound for a pattern
+func (m *PatternMatcher) patternScanBound(pattern *query.DataPattern, index IndexType) ScanBound {
+	return m.patternScanBoundWithBinding(pattern, index, -1, nil)
 }
 
-// calculatePatternScanRange determines the scan range for a pattern
-func (m *PatternMatcher) calculatePatternScanRange(pattern *query.DataPattern, index IndexType) scanRange {
-	return m.calculatePatternScanRangeWithBinding(pattern, index, -1, nil)
-}
-
-// calculatePatternScanRangeWithBinding determines the scan range for a pattern,
-// optionally using a bound value for a specific position to narrow the range
-func (m *PatternMatcher) calculatePatternScanRangeWithBinding(
+// patternScanBoundWithBinding determines the scan bound for a pattern,
+// optionally using a bound value for a specific position to narrow it
+func (m *PatternMatcher) patternScanBoundWithBinding(
 	pattern *query.DataPattern,
 	index IndexType,
 	boundPosition int, // -1 means no bound position, 0=E, 1=A, 2=V, 3=T
 	boundValue interface{}, // The bound value for that position (nil if no bound)
-) scanRange {
+) ScanBound {
 	// Extract constant parts of pattern
 	var e, a, v, tx interface{}
 
@@ -281,73 +275,33 @@ func (m *PatternMatcher) calculatePatternScanRangeWithBinding(
 		}
 	}
 
-	// Use existing chooseIndex logic to determine range
-	// But we already know which index to use, so just compute the range
-	_, start, end := m.chooseIndexForValues(index, e, a, v, tx)
-
-	return scanRange{start: start, end: end}
+	return m.scanBoundForValues(index, e, a, v, tx)
 }
 
-// chooseIndexForValues computes scan range for a specific index
-func (m *PatternMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interface{}) (IndexType, []byte, []byte) {
-	// Use the provided index and compute range based on bound values
-	var startParts, endParts [][]byte
-
-	encoder := m.encoder
+// scanBoundForValues binds a pattern's constants to the leading components of
+// an index the caller has already picked. Unlike chooseIndex it does not select
+// the index, only how much of it the scan covers: each position is bound while
+// the pattern supplies it and the position ahead of it is bound, and the first
+// gap ends the prefix.
+func (m *PatternMatcher) scanBoundForValues(index IndexType, e, a, v, tx interface{}) ScanBound {
+	var prefix []datalog.Value
 
 	switch index {
 	case EAVT, EATV: // E-primary indices: E first, then A
-		if e != nil {
+		if entity, ok := e.(datalog.Identity); ok {
+			prefix = append(prefix, entity)
+
+			if kw, ok := a.(datalog.Keyword); ok {
+				prefix = append(prefix, kw)
+			}
+		}
+
+	case AEVT, AETV: // A-primary indices: A first, then E
+		if kw, ok := a.(datalog.Keyword); ok {
+			prefix = append(prefix, kw)
+
 			if entity, ok := e.(datalog.Identity); ok {
-				hash := entity.Hash()
-				startParts = append(startParts, hash[:])
-				endParts = append(endParts, hash[:])
-
-				if a != nil {
-					if kw, ok := a.(datalog.Keyword); ok {
-						var attr Attribute
-						copy(attr[:], kw.String())
-						startParts = append(startParts, attr[:])
-						endParts = append(endParts, attr[:])
-					}
-				}
-			}
-		}
-
-	case AEVT:
-		if a != nil {
-			if kw, ok := a.(datalog.Keyword); ok {
-				var attr Attribute
-				copy(attr[:], kw.String())
-				startParts = append(startParts, attr[:])
-				endParts = append(endParts, attr[:])
-
-				if e != nil {
-					if entity, ok := e.(datalog.Identity); ok {
-						hash := entity.Hash()
-						startParts = append(startParts, hash[:])
-						endParts = append(endParts, hash[:])
-					}
-				}
-			}
-		}
-
-	case AETV: // A-primary CRDT index (A → E → Tx↓ → V)
-		// Same prefix structure as AEVT: A first, then E
-		if a != nil {
-			if kw, ok := a.(datalog.Keyword); ok {
-				var attr Attribute
-				copy(attr[:], kw.String())
-				startParts = append(startParts, attr[:])
-				endParts = append(endParts, attr[:])
-
-				if e != nil {
-					if entity, ok := e.(datalog.Identity); ok {
-						hash := entity.Hash()
-						startParts = append(startParts, hash[:])
-						endParts = append(endParts, hash[:])
-					}
-				}
+				prefix = append(prefix, entity)
 			}
 		}
 
@@ -355,93 +309,52 @@ func (m *PatternMatcher) chooseIndexForValues(index IndexType, e, a, v, tx inter
 		// are bound. Contract: a is a Keyword, tx is an ElementID,
 		// e (if set) is an Identity. Type assertions surface a planner bug
 		// loudly rather than degrading to a full scan.
-		var attr Attribute
-		copy(attr[:], a.(datalog.Keyword).String())
-		startParts = append(startParts, attr[:])
-		endParts = append(endParts, attr[:])
+		prefix = append(prefix, a.(datalog.Keyword))
 
 		eid, ok := datalog.DerefElementID(tx)
 		if !ok {
 			panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
 		}
-		encTx := encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
-		startParts = append(startParts, encTx)
-		endParts = append(endParts, encTx)
+		prefix = append(prefix, eid)
 
 		if e != nil {
-			hash := e.(datalog.Identity).Hash()
-			startParts = append(startParts, hash[:])
-			endParts = append(endParts, hash[:])
+			prefix = append(prefix, e.(datalog.Identity))
 		}
 
 	case AVET:
-		if a != nil {
-			if kw, ok := a.(datalog.Keyword); ok {
-				var attr Attribute
-				copy(attr[:], kw.String())
-				startParts = append(startParts, attr[:])
-				endParts = append(endParts, attr[:])
+		if kw, ok := a.(datalog.Keyword); ok {
+			prefix = append(prefix, kw)
 
-				if v != nil {
-					// Encode value for the prefix
-					// Values in AVET keys are encoded as: [type byte][value data]
-					// For Identity/Reference values: [TypeReference][20-byte hash]
-					if entity, ok := v.(datalog.Identity); ok && entity != nil {
-						hash := entity.Hash()
-						vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
-						startParts = append(startParts, vBytes)
-						endParts = append(endParts, vBytes)
-					}
-					// For other value types, we could add similar handling
-					// but fall back to attribute-only prefix for now
-				}
+			// Only reference values narrow the scan here; every other value
+			// type falls back to the attribute-only prefix, which is wider but
+			// still correct. chooseIndex binds V of any type.
+			if entity, ok := v.(datalog.Identity); ok && entity != nil {
+				prefix = append(prefix, entity)
 			}
 		}
 
-	case VAET:
-		// VAET: Value-Attribute-Entity-Transaction
-		// Key format: [index][V][A][E][Op][Tx] (Op before Tx, not between V and A)
-		// Values in VAET are encoded with type prefix
-		if v != nil {
-			// For Identity/Reference values
-			if entity, ok := v.(datalog.Identity); ok && entity != nil {
-				hash := entity.Hash()
-				vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
-				startParts = append(startParts, vBytes)
-				endParts = append(endParts, vBytes)
+	case VAET: // V → A → E → Tx, the reverse-reference index
+		if entity, ok := v.(datalog.Identity); ok && entity != nil {
+			prefix = append(prefix, entity)
 
-				if a != nil {
-					if kw, ok := a.(datalog.Keyword); ok {
-						var attr Attribute
-						copy(attr[:], kw.String())
-						startParts = append(startParts, attr[:])
-						endParts = append(endParts, attr[:])
-					}
-				}
+			if kw, ok := a.(datalog.Keyword); ok {
+				prefix = append(prefix, kw)
 			}
 		}
 
 	case TAEV:
 		// TAEV: Transaction-Attribute-Entity-Value.
-		// Tx is always an ElementID by contract; encode with bitwise-NOT for
-		// descending sort order.
+		// Tx is always an ElementID by contract.
 		if tx != nil {
 			eid, ok := datalog.DerefElementID(tx)
 			if !ok {
 				panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
 			}
-			encTx := encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
-			startParts = append(startParts, encTx)
-			endParts = append(endParts, encTx)
+			prefix = append(prefix, eid)
 		}
 	}
 
-	start := encoder.EncodePrefix(index, startParts...)
-	// Use incrementLastByte for proper prefix range scan
-	// This creates an exclusive upper bound that includes all suffixes
-	end := incrementLastByte(start)
-
-	return index, start, end
+	return ScanBound{Index: index, Prefix: prefix}
 }
 
 // buildHashSet creates a typed hash set from the binding relation. It returns
@@ -663,10 +576,10 @@ func (m *PatternMatcher) matchWithMergeJoin(
 	}
 
 	// PHASE 2: Determine scan range for the pattern
-	scanRange := m.calculatePatternScanRange(pattern, index)
+	bound := m.patternScanBound(pattern, index)
 
 	// PHASE 3: Create storage iterator
-	storageIter, err := m.reader.ScanKeysOnly(index, scanRange.start, scanRange.end)
+	storageIter, err := m.reader.ScanKeysOnly(bound)
 	if err != nil {
 		return nil, fmt.Errorf("merge join scan failed: %w", err)
 	}

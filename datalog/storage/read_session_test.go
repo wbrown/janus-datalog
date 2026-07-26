@@ -13,7 +13,7 @@ import (
 
 func countSessionIndex(t *testing.T, r StoreReader, index IndexType) int {
 	t.Helper()
-	iter, err := r.ScanKeysOnly(index, []byte{byte(index)}, []byte{byte(index) + 1})
+	iter, err := r.ScanKeysOnly(ScanBound{Index: index})
 	require.NoError(t, err)
 	defer iter.Close()
 	count := 0
@@ -27,12 +27,9 @@ func countSessionIndex(t *testing.T, r StoreReader, index IndexType) int {
 // countSessionEntity counts the datoms a reader observes for one entity, by
 // scanning that entity's EAVT run. Membership of a specific datom is the
 // degenerate case of the same scan with every component bound.
-func countSessionEntity(t *testing.T, r StoreReader, encoder *BinaryKeyEncoder, e datalog.Identity) int {
+func countSessionEntity(t *testing.T, r StoreReader, e datalog.Identity) int {
 	t.Helper()
-	var eBytes Entity
-	copy(eBytes[:], e.Bytes())
-	start, end := encoder.EncodePrefixRange(EAVT, eBytes[:])
-	iter, err := r.ScanKeysOnly(EAVT, start, end)
+	iter, err := r.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{e}})
 	require.NoError(t, err)
 	defer iter.Close()
 	count := 0
@@ -80,9 +77,9 @@ func TestReadSessionSnapshotIsolation(t *testing.T) {
 			// present, the post-snapshot one is not. Scanning each entity's
 			// run asks the question directly, without the test having to know
 			// a Tx in order to name a key.
-			assert.Equal(t, 1, countSessionEntity(t, session, store.Encoder(), entity),
+			assert.Equal(t, 1, countSessionEntity(t, session, entity),
 				"pre-snapshot entity must be visible")
-			assert.Equal(t, 0, countSessionEntity(t, session, store.Encoder(), later),
+			assert.Equal(t, 0, countSessionEntity(t, session, later),
 				"post-snapshot entity must be invisible")
 		})
 	}
@@ -105,7 +102,7 @@ func TestReadSessionCloseSemantics(t *testing.T) {
 
 			// Closing with an iterator still open must not panic; the
 			// straggler's own Close afterwards is safe.
-			iter, err := session.Scan(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			iter, err := session.Scan(ScanBound{Index: EAVT})
 			require.NoError(t, err)
 			require.True(t, iter.Next())
 			require.NoError(t, session.Close())
@@ -113,9 +110,9 @@ func TestReadSessionCloseSemantics(t *testing.T) {
 
 			// Double close is safe; reads after close fail loudly.
 			require.NoError(t, session.Close())
-			_, err = session.Scan(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			_, err = session.Scan(ScanBound{Index: EAVT})
 			require.Error(t, err, "scan on a closed session must error")
-			_, err = session.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			_, err = session.ScanKeysOnly(ScanBound{Index: EAVT})
 			require.Error(t, err, "keys-only scan on a closed session must error")
 		})
 	}
@@ -152,7 +149,7 @@ func TestReadSessionConcurrentScans(t *testing.T) {
 				wg.Add(1)
 				go func(g int) {
 					defer wg.Done()
-					iter, err := session.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+					iter, err := session.ScanKeysOnly(ScanBound{Index: EAVT})
 					if err != nil {
 						errs[g] = err
 						return

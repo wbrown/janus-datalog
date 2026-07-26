@@ -102,10 +102,10 @@ func TestKeyOnlyIteratorRetainsBlobErrorAfterRepeatedNext(t *testing.T) {
 	db, entity, attr := writeTier3ValueThenCorruptBlob(t, nil)
 	defer db.Close()
 
-	entityBytes := entity.Bytes()
-	attrBytes := ToStorageDatom(datalog.Datom{A: attr}).A
-	start, end := db.store.Encoder().EncodePrefixRange(EATV, entityBytes[:], attrBytes[:])
-	iter, err := db.store.ScanKeysOnly(EATV, start, end)
+	iter, err := db.store.ScanKeysOnly(ScanBound{
+		Index:  EATV,
+		Prefix: []datalog.Value{entity, attr},
+	})
 	require.NoError(t, err)
 	defer iter.Close()
 
@@ -139,8 +139,7 @@ func TestKeyOnlyIterator_DatomRejectsEndBoundSuccessor(t *testing.T) {
 	require.NoError(t, err)
 
 	firstBytes := first.Bytes()
-	start, end := db.store.Encoder().EncodePrefixRange(EAVT, firstBytes[:])
-	iter, err := db.store.ScanKeysOnly(EAVT, start, end)
+	iter, err := db.store.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{first}})
 	require.NoError(t, err)
 	defer iter.Close()
 

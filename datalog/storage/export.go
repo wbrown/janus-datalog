@@ -46,9 +46,7 @@ func (d *Database) ExportCompressed(w io.Writer) error {
 
 // export is the shared implementation for Export and ExportCompressed.
 func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string, skipEntity func(datalog.Identity) bool) error {
-	start := []byte{byte(EAVT)}
-	end := []byte{byte(EATV)}
-	iter, err := d.store.Scan(EAVT, start, end)
+	iter, err := d.store.Scan(ScanBound{Index: EAVT})
 	if err != nil {
 		return fmt.Errorf("failed to scan database: %w", err)
 	}

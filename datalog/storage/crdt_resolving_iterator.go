@@ -476,8 +476,9 @@ func (it *CRDTResolvingIterator) Close() error {
 	return nil
 }
 
-// Seek positions the iterator at or after the given key.
-func (it *CRDTResolvingIterator) Seek(key []byte) {
+// Seek positions the iterator at or after the bound's start, discarding the
+// group state accumulated for the run it is leaving.
+func (it *CRDTResolvingIterator) Seek(bound ScanBound) {
 	it.hasGroup = false
 	it.emitted = nil
 	it.tombstones = nil
@@ -487,7 +488,7 @@ func (it *CRDTResolvingIterator) Seek(key []byte) {
 	it.sourceExhausted = false
 	it.pendingDatom = nil
 	it.currentDatom = nil
-	it.source.Seek(key)
+	it.source.Seek(bound)
 }
 
 // ElementID returns the transaction ElementID of the current entry.

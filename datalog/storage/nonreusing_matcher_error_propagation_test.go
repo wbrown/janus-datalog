@@ -44,7 +44,7 @@ func (it *deferredErrorScan) Next() bool {
 }
 func (it *deferredErrorScan) Datom() (*datalog.Datom, error) { return &datalog.Datom{}, nil }
 func (it *deferredErrorScan) Close() error                   { it.closed = true; return nil }
-func (it *deferredErrorScan) Seek(key []byte)                {}
+func (it *deferredErrorScan) Seek(bound ScanBound)           {}
 func (it *deferredErrorScan) ElementID() datalog.ElementID   { return datalog.ElementID{} }
 func (it *deferredErrorScan) Error() error                   { return it.err }
 

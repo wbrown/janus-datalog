@@ -364,8 +364,10 @@ func (m *PatternMatcher) extractValue(elem query.PatternElement) interface{} {
 	}
 }
 
-// chooseIndex selects the best index based on bound values
-func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte, []byte) {
+// chooseIndex selects the index whose component order lets the bound positions
+// form a prefix, and returns that prefix as a ScanBound. It performs no
+// encoding: the bound carries typed values and the store projects them.
+func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 	// Priority order for index selection:
 	// 1. EAVT - if E is bound
 	// 2. AEVT - if A is bound but not E
@@ -374,36 +376,23 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte
 	// 5. TAEV - if only Tx is bound
 	// 6. EAVT - full scan if nothing is bound
 
-	encoder := m.encoder
-
 	if e != nil {
 		// E is bound
-		if eId, ok := e.(datalog.Identity); ok {
-			// Entity is already 20 bytes
-			eBytes := eId.Bytes()
-
+		if eID, ok := e.(datalog.Identity); ok {
 			if a != nil {
-				// E and A are bound - use AEVT for direct lookup
 				var aPtr datalog.Keyword
 				switch kw := a.(type) {
 				case datalog.Keyword:
 					aPtr = kw
 				}
 				if aPtr != nil {
-					// Convert to storage format
-					aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
-					_ = aStorage // used below
-
 					if v != nil {
-						// E, A, and V are bound - use AEVT prefix range
-						// CRITICAL: Must use prefix range, not exact key!
-						// EncodeKey includes Tx=0, but actual datoms have real Tx values.
-						// The scan range [A+E+V+Tx(0), A+E+V+Tx(1)) would miss all real datoms.
-						// Instead, use EncodePrefixRange to scan all Tx values for (A, E, V) prefix.
-						valueBytes := encodeValueForSearch(v, encoder)
-						// AEVT order: A + E + V + Tx, so prefix with (A, E, V) to scan all Tx
-						start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:], valueBytes)
-						return AEVT, start, end
+						// E, A and V bound. AEVT orders A → E → V → Tx, so the
+						// three bound positions are its leading prefix and the
+						// scan covers every Tx for them. Binding Tx as well
+						// would name one datom, which no reader wants: Tx is
+						// what resolution determines.
+						return ScanBound{Index: AEVT, Prefix: []datalog.Value{aPtr, eID, v}}
 					}
 
 					// E and A bound, V unbound - use cardinality-aware index selection
@@ -418,27 +407,21 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte
 					}
 					if card == schema.CardinalityMany {
 						// EAVT: E → A → V → Tx - values grouped together for add-wins
-						start, end := encoder.EncodePrefixRange(EAVT, eBytes[:], aStorage[:])
-						return EAVT, start, end
+						return ScanBound{Index: EAVT, Prefix: []datalog.Value{eID, aPtr}}
 					}
 					// EATV: E → A → Tx → V - first entry is current (highest Tx)
-					start, end := encoder.EncodePrefixRange(EATV, eBytes[:], aStorage[:])
-					return EATV, start, end
+					return ScanBound{Index: EATV, Prefix: []datalog.Value{eID, aPtr}}
 				}
 			}
 
 			// Only E bound - use EATV for CRDT resolution
 			// EATV: E → A → Tx↓ → V - first entry for each (E, A) is LWW winner
 			// This is required for CRDTResolvingIterator's "first entry wins" logic
-			start, end := encoder.EncodePrefixRange(EATV, eBytes[:])
-			return EATV, start, end
+			return ScanBound{Index: EATV, Prefix: []datalog.Value{eID}}
 		}
 	} else if a != nil {
 		// A is bound but not E
 		if aKw, ok := a.(datalog.Keyword); ok {
-			// Convert to storage format; the keyword is already interned
-			aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
-
 			// A and Tx bound (V unbound) — ATEV gives a direct [A][Tx↓] prefix scan,
 			// landing on the exact (or nearest-descending) Tx for the attribute. The
 			// equivalent on AETV would scan every entity, on AEVT every value.
@@ -447,16 +430,12 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte
 				if !ok {
 					panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
 				}
-				encTx := encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
-				start, end := encoder.EncodePrefixRange(ATEV, aStorage[:], encTx)
-				return ATEV, start, end
+				return ScanBound{Index: ATEV, Prefix: []datalog.Value{aKw, eid}}
 			}
 
 			if v != nil {
 				// A and V bound - use AVET index
-				valueBytes := encodeValueForSearch(v, encoder)
-				start, end := encoder.EncodePrefixRange(AVET, aStorage[:], valueBytes)
-				return AVET, start, end
+				return ScanBound{Index: AVET, Prefix: []datalog.Value{aKw, v}}
 			}
 
 			// Only A bound - use cardinality-aware index selection
@@ -471,35 +450,28 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte
 			}
 			if card == schema.CardinalityMany {
 				// AEVT: A → E → V → Tx - values grouped together for add-wins
-				start, end := encoder.EncodePrefixRange(AEVT, aStorage[:])
-				return AEVT, start, end
+				return ScanBound{Index: AEVT, Prefix: []datalog.Value{aKw}}
 			}
 			// AETV: A → E → Tx → V - first entry is current (highest Tx)
-			start, end := encoder.EncodePrefixRange(AETV, aStorage[:])
-			return AETV, start, end
+			return ScanBound{Index: AETV, Prefix: []datalog.Value{aKw}}
 		}
 	} else if v != nil {
 		// Only V bound - use VAET index with per-datom cardinality resolution
 		// VAET: V → A → E → Tx↓ - groups by A, enabling efficient cardinality lookup
-		valueBytes := encodeValueForSearch(v, encoder)
-		start, end := encoder.EncodePrefixRange(VAET, valueBytes)
-		return VAET, start, end
+		return ScanBound{Index: VAET, Prefix: []datalog.Value{v}}
 	} else if tx != nil {
 		// Use TAEV index. Tx is always an ElementID by contract.
 		eid, ok := datalog.DerefElementID(tx)
 		if !ok {
 			panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
 		}
-		encTx := encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
-		start, end := encoder.EncodePrefixRange(TAEV, encTx)
-		return TAEV, start, end
+		return ScanBound{Index: TAEV, Prefix: []datalog.Value{eid}}
 	}
 
 	// Full scan on EATV for CRDT resolution
 	// EATV: E → A → Tx↓ → V - first entry for each (E, A) is LWW winner
 	// This is required for CRDTResolvingIterator's "first entry wins" logic
-	start, end := encoder.EncodePrefixRange(EATV)
-	return EATV, start, end
+	return ScanBound{Index: EATV}
 }
 
 // typedPositionBindingCheck returns the per-tuple check behind
@@ -707,8 +679,6 @@ func (m *PatternMatcher) LookupAttribute(
 	eBytes := entity.Bytes()
 	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
 
-	encoder := m.encoder
-
 	// Determine cardinality and value type for correct resolution
 	card := schema.CardinalityOne // default
 	var valueType schema.ValueType
@@ -760,9 +730,10 @@ func (m *PatternMatcher) LookupAttribute(
 	if card == schema.CardinalityOne {
 		// For cardinality-one, use EATV index where Tx comes before V
 		// Tx is encoded descending, so first entry = highest Tx = current value (LWW)
-		start, end := encoder.EncodePrefixRange(EATV, eBytes[:], aStorage[:])
-
-		iter, err := m.reader.ScanKeysOnly(EATV, start, end)
+		iter, err := m.reader.ScanKeysOnly(ScanBound{
+			Index:  EATV,
+			Prefix: []datalog.Value{entity, attr},
+		})
 		if err != nil {
 			return nil, false, err
 		}
@@ -947,7 +918,7 @@ func (m *PatternMatcher) LookupAllAttributes(entity datalog.Identity, attr datal
 	// Fallback to storage scan (for as-of queries or when cache is not set).
 	// Infer cardinality from the CRDT ops present in the datoms and resolve
 	// accordingly, rather than returning raw datoms including tombstones.
-	return m.lookupAllAttributesFallback(eBytes[:], aStorage[:])
+	return m.lookupAllAttributesFallback(entity, attr)
 }
 
 // lookupAllAttributesFallback resolves values for (E, A) without cache by
@@ -955,12 +926,16 @@ func (m *PatternMatcher) LookupAllAttributes(entity datalog.Identity, attr datal
 //   - OpNone → LWW (cardinality-one): return latest value by ElementID
 //   - OpCRDTAdd/OpCRDTRemove → add-wins set (cardinality-many): resolve membership
 //   - OpRGAInsert/OpRGATombstone → RGA vector (cardinality-vector): reconstruct ordered list
-func (m *PatternMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]interface{}, error) {
-	encoder := m.encoder
+func (m *PatternMatcher) lookupAllAttributesFallback(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error) {
+	// AEVT orders A → E → V → Tx, so (A, E) is its leading prefix.
+	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{attr, entity}}
+
+	// The set and vector resolvers below still take storage projections.
+	eBytes := entity.Bytes()
+	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
 
 	// Peek at first datom to determine op type
-	start, end := encoder.EncodePrefixRange(AEVT, aBytes, eBytes)
-	iter, err := m.reader.ScanKeysOnly(AEVT, start, end)
+	iter, err := m.reader.ScanKeysOnly(bound)
 	if err != nil {
 		return nil, fmt.Errorf("scanning AEVT for LookupAllAttributes: %w", err)
 	}
@@ -980,7 +955,7 @@ func (m *PatternMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]i
 	switch {
 	case firstOp == datalog.OpCRDTAdd || firstOp == datalog.OpCRDTRemove:
 		// Add-wins set resolution
-		result, err := m.resolveAddWinsSet(eBytes, aBytes)
+		result, err := m.resolveAddWinsSet(eBytes, aStorage[:])
 		if err != nil {
 			return nil, fmt.Errorf("resolving add-wins set: %w", err)
 		}
@@ -992,7 +967,7 @@ func (m *PatternMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]i
 
 	case firstOp == datalog.OpRGAInsert || firstOp == datalog.OpRGATombstone:
 		// RGA vector resolution
-		result, err := m.resolveVector(eBytes, aBytes)
+		result, err := m.resolveVector(eBytes, aStorage[:])
 		if err != nil {
 			return nil, fmt.Errorf("resolving RGA vector: %w", err)
 		}
@@ -1005,7 +980,7 @@ func (m *PatternMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]i
 	default:
 		// LWW: return the value with the highest ElementID
 		// Re-scan since we closed the iterator
-		iter2, err := m.reader.ScanKeysOnly(AEVT, start, end)
+		iter2, err := m.reader.ScanKeysOnly(bound)
 		if err != nil {
 			return nil, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
 		}

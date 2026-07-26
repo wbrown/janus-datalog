@@ -298,16 +298,13 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 	matcher.SetSchema(d.schema)
 
 	for _, attr := range attributes {
+		// Cache keys carry the storage projection of the attribute, so it is
+		// rendered once here and reused for every entity the scan turns up.
 		var aBytes Attribute
 		copy(aBytes[:], attr.String())
 
-		// Build prefix for this attribute on AEVT index
-		prefix := make([]byte, 1+32) // prefix byte + A
-		prefix[0] = byte(AEVT)
-		copy(prefix[1:33], aBytes[:])
-
 		// Scan AEVT for all entities with this attribute
-		iter, err := d.store.Scan(AEVT, prefix, prefixEnd(prefix))
+		iter, err := d.store.Scan(ScanBound{Index: AEVT, Prefix: []datalog.Value{attr}})
 		if err != nil {
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
@@ -1656,23 +1653,13 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 			}
 		}
 
-		// Build EAVT prefix: [prefix][E][A][V] for O(k) scan
-		// EAVT key order: [E][A][V][Tx↓][Op][AfterRef?]
-		// Tx descending means highest Tx (most recent) comes first
-		eBytes := e.Hash()
-		var aBytes [32]byte
-		copy(aBytes[:], a.String())
-		vType := byte(datalog.Type(v))
-		vData := datalog.ValueBytes(v)
-		vBytes := append([]byte{vType}, vData...)
-
-		prefix := make([]byte, 1+20+32+len(vBytes))
-		prefix[0] = byte(EAVT)
-		copy(prefix[1:21], eBytes[:])
-		copy(prefix[21:53], aBytes[:])
-		copy(prefix[53:], vBytes)
-
-		iter, err := t.db.store.Scan(EAVT, prefix, prefixEnd(prefix))
+		// Bind [E][A][V] on EAVT for an O(k) scan of this element's writes.
+		// EAVT orders Tx descending after V, so the highest Tx comes first and
+		// a tombstone is seen before the insert it deletes.
+		iter, err := t.db.store.Scan(ScanBound{
+			Index:  EAVT,
+			Prefix: []datalog.Value{e, a, v},
+		})
 		if err != nil {
 			return fmt.Errorf("EAVT scan for vector Remove failed: %w", err)
 		}
@@ -2658,9 +2645,8 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 
 	var aBytes Attribute
 	copy(aBytes[:], attr.String())
-	vBytes := encodeValueForSearch(value, d.encoder)
 
-	owner, _, err := matcher.resolveAVLWW(aBytes, vBytes, value)
+	owner, _, err := matcher.resolveAVLWW(aBytes, value)
 	if err != nil {
 		return nil, fmt.Errorf("LookupByUnique: resolution failed: %w", err)
 	}
@@ -2976,11 +2962,9 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	// attribute span of each key — values stay undecoded and Tier-3 blobs
 	// are never dereferenced.
 	if matcher.isHistoryMode() {
-		eBytes := entity.Bytes()
 		encoder := d.encoder
-		start, end := encoder.EncodePrefixRange(EAVT, eBytes[:])
 
-		iter, err := d.store.ScanKeysOnly(EAVT, start, end)
+		iter, err := d.store.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}})
 		if err != nil {
 			return nil, fmt.Errorf("EAVT scan failed: %w", err)
 		}
@@ -3023,9 +3007,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	// discovering and resolving every attribute from the same scan — one
 	// store read session instead of a discovery scan plus one lookup per
 	// attribute. This is the batch wildcard walk applied to one entity.
-	eBytes := entity.Bytes()
-	start, end := d.encoder.EncodePrefixRange(EATV, eBytes[:])
-	iterator, err := d.store.ScanKeysOnly(EATV, start, end)
+	iterator, err := d.store.ScanKeysOnly(ScanBound{Index: EATV, Prefix: []datalog.Value{entity}})
 	if err != nil {
 		return nil, fmt.Errorf("EATV scan failed: %w", err)
 	}

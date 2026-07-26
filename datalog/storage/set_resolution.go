@@ -37,14 +37,21 @@ type SetResolutionResult struct {
 // LWW (cardinality-one). For add-wins, "concurrent" means same Lamport,
 // and add always wins at concurrent operations regardless of ReplicaID.
 func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutionResult, error) {
-	// Build prefix for E+A
-	prefix := make([]byte, 1+20+32) // prefix byte + E + A
-	prefix[0] = byte(EAVT)
-	copy(prefix[1:21], eBytes)
-	copy(prefix[21:53], aBytes)
+	// The caller holds storage projections; both constructors return the
+	// canonical interned pointer for an already-interned value.
+	var e Entity
+	copy(e[:], eBytes)
+	var a Attribute
+	copy(a[:], aBytes)
 
 	// Values live in the index keys; nothing here needs Badger values.
-	iter, err := m.reader.ScanKeysOnly(EAVT, prefix, prefixEnd(prefix))
+	iter, err := m.reader.ScanKeysOnly(ScanBound{
+		Index: EAVT,
+		Prefix: []datalog.Value{
+			datalog.NewIdentityFromHash(e),
+			datalog.InternKeywordFromBytes(a),
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -229,25 +236,6 @@ func scanAddWinsMemory(encoder *BinaryKeyEncoder, it *memoryIterator, acc *addWi
 	return nil
 }
 
-// prefixEnd returns the end key for a prefix scan (exclusive)
-// This is the smallest key that is greater than all keys with the given prefix
-func prefixEnd(prefix []byte) []byte {
-	end := make([]byte, len(prefix))
-	copy(end, prefix)
-
-	// Increment the last byte, handling overflow
-	for i := len(end) - 1; i >= 0; i-- {
-		end[i]++
-		if end[i] != 0 {
-			return end
-		}
-		// Overflow - continue to next byte
-	}
-
-	// All bytes overflowed - return nil (scan to end)
-	return nil
-}
-
 // checkSetMembership checks if a specific value is currently in the set
 // This is an optimized version that only scans entries for the specific value
 //
@@ -258,20 +246,22 @@ func prefixEnd(prefix []byte) []byte {
 // [EAVT][E][A][type][value]
 // This matches all ops (Add/Remove) for that value.
 func (m *PatternMatcher) checkSetMembership(eBytes, aBytes []byte, v interface{}) (bool, error) {
-	// Encode the user value to get its type and bytes
-	vType := byte(datalog.Type(v))
-	vData := datalog.ValueBytes(v)
+	// The caller holds storage projections; both constructors return the
+	// canonical interned pointer for an already-interned value.
+	var e Entity
+	copy(e[:], eBytes)
+	var a Attribute
+	copy(a[:], aBytes)
 
-	// Build prefix: [EAVT][E][A][type][value]
-	prefix := make([]byte, 1+20+32+1+len(vData))
-	prefix[0] = byte(EAVT)
-	copy(prefix[1:21], eBytes)
-	copy(prefix[21:53], aBytes)
-	prefix[53] = vType
-	copy(prefix[54:], vData)
-
-	// Scan for entries with this specific value (both Add and Remove ops)
-	iter, err := m.reader.Scan(EAVT, prefix, prefixEnd(prefix))
+	// Bind [E][A][V] on EAVT, matching every op (Add/Remove) for that value.
+	iter, err := m.reader.Scan(ScanBound{
+		Index: EAVT,
+		Prefix: []datalog.Value{
+			datalog.NewIdentityFromHash(e),
+			datalog.InternKeywordFromBytes(a),
+			v,
+		},
+	})
 	if err != nil {
 		return false, err
 	}

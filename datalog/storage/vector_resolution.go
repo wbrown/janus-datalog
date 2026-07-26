@@ -56,14 +56,21 @@ func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolution
 // versions (e.g., original + tombstoned), the tombstoned version takes precedence.
 // This supports Set() which writes a tombstone record for the element being deleted.
 func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, error) {
-	// Build prefix for E+A on EATV index
-	prefix := make([]byte, 1+20+32) // prefix byte + E + A
-	prefix[0] = byte(EATV)
-	copy(prefix[1:21], eBytes)
-	copy(prefix[21:53], aBytes)
+	// The caller holds storage projections; both constructors return the
+	// canonical interned pointer for an already-interned value.
+	var e Entity
+	copy(e[:], eBytes)
+	var a Attribute
+	copy(a[:], aBytes)
 
 	// Scan EATV for all entries with this E+A
-	iter, err := m.reader.Scan(EATV, prefix, prefixEnd(prefix))
+	iter, err := m.reader.Scan(ScanBound{
+		Index: EATV,
+		Prefix: []datalog.Value{
+			datalog.NewIdentityFromHash(e),
+			datalog.InternKeywordFromBytes(a),
+		},
+	})
 	if err != nil {
 		return nil, err
 	}

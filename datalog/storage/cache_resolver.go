@@ -65,15 +65,14 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.Element
 		}
 	}
 
-	// Build prefix for E+A on EATV index
-	prefix := make([]byte, 1+20+32) // prefix byte + E + A
-	prefix[0] = byte(EATV)
-	copy(prefix[1:21], e[:])
-	copy(prefix[21:53], a[:])
-
 	// Scan EATV for the first entry visible in this matcher mode (highest
-	// non-filtered Tx due to descending sort).
-	iter, err := m.reader.Scan(EATV, prefix, prefixEnd(prefix))
+	// non-filtered Tx due to descending sort). The caller holds the storage
+	// projections, so the bound's components are re-interned from them; both
+	// constructors return the canonical pointer for an already-interned value.
+	iter, err := m.reader.Scan(ScanBound{
+		Index:  EATV,
+		Prefix: []datalog.Value{datalog.NewIdentityFromHash(e), datalog.InternKeywordFromBytes(a)},
+	})
 	if err != nil {
 		return nil, datalog.ElementID{}, err
 	}

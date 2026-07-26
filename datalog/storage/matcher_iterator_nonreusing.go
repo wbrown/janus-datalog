@@ -85,9 +85,7 @@ func (it *nonReusingIterator) Next() bool {
 	e, a, v, tx := it.extractBoundValues(bindingTuple)
 
 	// Choose index and create scan
-	index, start, end := it.matcher.chooseIndex(e, a, v, tx)
-
-	rawIter, err := it.matcher.reader.ScanKeysOnly(index, start, end)
+	rawIter, err := it.matcher.reader.ScanKeysOnly(it.matcher.chooseIndex(e, a, v, tx))
 	if err != nil {
 		it.err = err
 		return false

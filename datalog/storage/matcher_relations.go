@@ -6,7 +6,6 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
-	"github.com/wbrown/janus-datalog/datalog/codec"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
@@ -462,47 +461,37 @@ func (m *PatternMatcher) matchUnboundScan(
 		return m.matchCardinalityManyFindEntitiesWithValue(pattern, symbols, a, v)
 	}
 
-	// Choose index and create scan range
-	index, start, end := m.chooseIndex(e, a, v, tx)
-	properties := unboundScanProperties(pattern, index, card, m.isHistoryMode())
+	// Choose index and create scan bound
+	bound := m.chooseIndex(e, a, v, tx)
+	properties := unboundScanProperties(pattern, bound.Index, card, m.isHistoryMode())
 	if orderedProperties, ok := historyTAEVProperties(q, pattern, m.isHistoryMode()); ok {
-		index = TAEV
-		start, end = m.encoder.EncodePrefixRange(TAEV)
+		bound = ScanBound{Index: TAEV}
 		properties = orderedProperties
 	} else if orderedProperties, ok := historyAETVProperties(q, pattern, m.isHistoryMode()); ok {
 		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
-			attr := ToStorageDatom(datalog.Datom{A: keyword}).A
-			index = AETV
-			start, end = m.encoder.EncodePrefixRange(AETV, attr[:])
+			bound = ScanBound{Index: AETV, Prefix: []datalog.Value{keyword}}
 			properties = orderedProperties
 		}
 	} else if orderedProperties, ok := historyEATVProperties(q, pattern, m.isHistoryMode()); ok {
 		if identity, identityOK := e.(datalog.Identity); identityOK {
-			entity := ToStorageDatom(datalog.Datom{E: identity}).E
-			index = EATV
-			start, end = m.encoder.EncodePrefixRange(EATV, entity[:])
+			bound = ScanBound{Index: EATV, Prefix: []datalog.Value{identity}}
 			properties = orderedProperties
 		}
 	} else if orderedProperties, ok := historyATEVProperties(q, pattern, m.isHistoryMode()); ok {
 		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
-			attr := ToStorageDatom(datalog.Datom{A: keyword}).A
-			index = ATEV
-			start, end = m.encoder.EncodePrefixRange(ATEV, attr[:])
+			bound = ScanBound{Index: ATEV, Prefix: []datalog.Value{keyword}}
 			properties = orderedProperties
 		}
 	}
 
-	// Emit index selection event if handler is available
+	// Emit index selection event if handler is available.
 	if m.handler != nil {
+		data := map[string]interface{}{"pattern": pattern.String()}
+		addBoundFields(data, bound)
 		m.handler(annotations.Event{
 			Name:  "pattern/index-selection",
 			Start: time.Now(),
-			Data: map[string]interface{}{
-				"pattern":    pattern.String(),
-				"index":      indexName(index),
-				"scan.start": codec.EncodeL85(start),
-				"scan.end":   codec.EncodeL85(end),
-			},
+			Data:  data,
 		})
 	}
 
@@ -510,9 +499,8 @@ func (m *PatternMatcher) matchUnboundScan(
 	// current/as-of mode, or raw scan in history mode.
 	regularIter := &unboundIterator{
 		matcher:         m,
-		index:           index,
-		start:           start,
-		end:             end,
+		index:           bound.Index,
+		opened:          time.Now(),
 		pattern:         pattern,
 		symbols:         symbols,
 		e:               e,
@@ -525,7 +513,7 @@ func (m *PatternMatcher) matchUnboundScan(
 		returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
 	}
 
-	rawStorageIter, err := m.reader.ScanKeysOnly(index, start, end)
+	rawStorageIter, err := m.reader.ScanKeysOnly(bound)
 	if err != nil {
 		return nil, fmt.Errorf("scan failed: %w", err)
 	}
@@ -622,6 +610,7 @@ func (m *PatternMatcher) matchWithIteratorReuse(
 		tuples:           sortedTuples,
 		position:         strategy.Position,
 		index:            strategy.Index,
+		opened:           time.Now(),
 		symbols:          symbols,
 		constraints:      constraints,
 		currentIdx:       -1,
@@ -875,9 +864,8 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 	aKw := it.boundA.(datalog.Keyword)
 	var aStorage Attribute
 	copy(aStorage[:], aKw.String())
-	vBytes := encodeValueForSearch(it.currentBoundV, it.matcher.encoder)
 
-	owner, ownerTx, err := it.matcher.resolveAVLWW(aStorage, vBytes, it.currentBoundV)
+	owner, ownerTx, err := it.matcher.resolveAVLWW(aStorage, it.currentBoundV)
 	if err != nil {
 		return false, err
 	}
@@ -900,8 +888,6 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 // A storage or decode failure surfaces as an error — it must never collapse
 // to "candidate doesn't match", which would silently drop valid results.
 func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword) (bool, error) {
-	encoder := it.matcher.encoder
-
 	// Convert E to storage bytes
 	eBytes := ToStorageDatom(datalog.Datom{E: e}).E
 
@@ -953,8 +939,10 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	}
 
 	// Point lookup on EATV: scan (E, A) prefix, first result is CRDT winner
-	start, end := encoder.EncodePrefixRange(it.validationIndex, eBytes[:], aStorage[:])
-	rawIter, err := it.matcher.reader.ScanKeysOnly(it.validationIndex, start, end)
+	rawIter, err := it.matcher.reader.ScanKeysOnly(ScanBound{
+		Index:  it.validationIndex,
+		Prefix: []datalog.Value{e, a},
+	})
 	if err != nil {
 		return false, err
 	}
@@ -1078,20 +1066,7 @@ func (it *validatingVBoundIterator) getCardinalityEnum(a datalog.Keyword) schema
 // openCRDTScan opens a CRDT-resolving scan on the V-primary index for current bound V.
 // Returns both the CRDTResolvingIterator wrapper and the raw iterator (for proper Close).
 func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iterator, error) {
-	encoder := it.matcher.encoder
-	var start, end []byte
-
-	if it.matcher.handler != nil {
-		it.matcher.handler(annotations.Event{
-			Name:  "v-validation/open-scan",
-			Start: time.Now(),
-			Data: map[string]any{
-				"bound_v": fmt.Sprintf("%v", it.currentBoundV),
-				"bound_a": fmt.Sprintf("%v", it.boundA),
-				"index":   indexName(it.candidateIndex),
-			},
-		})
-	}
+	var bound ScanBound
 
 	if it.boundA != nil {
 		// A is constant: use AVET with (A, V) prefix
@@ -1100,33 +1075,37 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 			return nil, nil, fmt.Errorf("boundA is not a Keyword")
 		}
 
-		// Convert A to storage bytes; the keyword is already interned
-		aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
-
-		// Encode V with type prefix
-		valueBytes := it.encodeValue(it.currentBoundV)
-
-		start, end = encoder.EncodePrefixRange(it.candidateIndex, aStorage[:], valueBytes)
+		bound = ScanBound{
+			Index:  it.candidateIndex,
+			Prefix: []datalog.Value{aKw, it.currentBoundV},
+		}
 	} else {
 		// A is variable: use VAET with V prefix
-		valueBytes := it.encodeValue(it.currentBoundV)
-		start, end = encoder.EncodePrefixRange(it.candidateIndex, valueBytes)
-
-		if it.matcher.handler != nil {
-			it.matcher.handler(annotations.Event{
-				Name:  "v-validation/scan-range",
-				Start: time.Now(),
-				Data: map[string]any{
-					"value_bytes": fmt.Sprintf("%x", valueBytes),
-					"start":       fmt.Sprintf("%x", start),
-					"end":         fmt.Sprintf("%x", end),
-				},
-			})
+		bound = ScanBound{
+			Index:  it.candidateIndex,
+			Prefix: []datalog.Value{it.currentBoundV},
 		}
 	}
 
+	// One event per opened scan, reporting the run it addresses. This fires
+	// after the bound is built so it can carry it, and on both branches — the
+	// A-variable branch previously emitted a second event carrying only the
+	// encoded key range, which is the one thing an annotation must not report.
+	if it.matcher.handler != nil {
+		data := map[string]any{
+			"bound_v": fmt.Sprintf("%v", it.currentBoundV),
+			"bound_a": fmt.Sprintf("%v", it.boundA),
+		}
+		addBoundFields(data, bound)
+		it.matcher.handler(annotations.Event{
+			Name:  "v-validation/open-scan",
+			Start: time.Now(),
+			Data:  data,
+		})
+	}
+
 	// Raw scan on V-primary index
-	rawIter, err := it.matcher.reader.ScanKeysOnly(it.candidateIndex, start, end)
+	rawIter, err := it.matcher.reader.ScanKeysOnly(bound)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1974,11 +1953,7 @@ func (m *PatternMatcher) matchVectorScanAllEntities(
 	}
 
 	// Scan AEVT to find all entities with this attribute
-	prefix := make([]byte, 1+32)
-	prefix[0] = byte(AEVT)
-	copy(prefix[1:33], aBytes[:])
-
-	storageIter, err := m.reader.Scan(AEVT, prefix, prefixEnd(prefix))
+	storageIter, err := m.reader.Scan(ScanBound{Index: AEVT, Prefix: []datalog.Value{a}})
 	if err != nil {
 		return nil, fmt.Errorf("AEVT scan failed: %w", err)
 	}
@@ -2107,12 +2082,7 @@ func (m *PatternMatcher) matchCardinalityManyScanAllEntities(
 	}
 
 	// Scan AEVT to find all entities with this attribute
-	// AEVT key format: [prefix:1][A:32][E:20][V:var][Tx:16]
-	prefix := make([]byte, 1+32)
-	prefix[0] = byte(AEVT)
-	copy(prefix[1:33], aBytes[:])
-
-	storageIter, err := m.reader.Scan(AEVT, prefix, prefixEnd(prefix))
+	storageIter, err := m.reader.Scan(ScanBound{Index: AEVT, Prefix: []datalog.Value{a}})
 	if err != nil {
 		return nil, fmt.Errorf("AEVT scan failed: %w", err)
 	}
@@ -2396,19 +2366,9 @@ func (m *PatternMatcher) matchCardinalityManyFindEntitiesWithValue(
 		copy(aBytes[:], kw.String())
 	}
 
-	// Encode value with type prefix (same as key encoding)
-	vType := byte(datalog.Type(v))
-	vData := datalog.ValueBytes(v)
-	vBytes := append([]byte{vType}, vData...)
-
-	// Build AVET prefix: [index][A][type+value]
-	// This directly seeks to entries with this specific value - O(k) not O(n)
-	prefix := make([]byte, 1+32+len(vBytes))
-	prefix[0] = byte(AVET)
-	copy(prefix[1:33], aBytes[:])
-	copy(prefix[33:], vBytes)
-
-	storageIter, err := m.reader.Scan(AVET, prefix, prefixEnd(prefix))
+	// Bind [A][V] on AVET, which seeks straight to entries carrying this
+	// value — O(k) in those entries, not O(n) in the attribute's entities.
+	storageIter, err := m.reader.Scan(ScanBound{Index: AVET, Prefix: []datalog.Value{a, v}})
 	if err != nil {
 		return nil, fmt.Errorf("AVET scan failed: %w", err)
 	}

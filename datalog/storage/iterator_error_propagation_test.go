@@ -52,7 +52,7 @@ func (it *failingIterator) Datom() (*datalog.Datom, error) {
 }
 
 func (it *failingIterator) Close() error                 { return nil }
-func (it *failingIterator) Seek(key []byte)              {}
+func (it *failingIterator) Seek(bound ScanBound)         {}
 func (it *failingIterator) ElementID() datalog.ElementID { return datalog.ElementID{} }
 func (it *failingIterator) Error() error                 { return it.err }
 

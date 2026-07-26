@@ -107,26 +107,29 @@ func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	return len(datoms), nil
 }
 
-func (s *MemoryStore) Scan(index IndexType, start, end []byte) (Iterator, error) {
-	return s.scan(index, start, end)
+func (s *MemoryStore) Scan(bound ScanBound) (Iterator, error) {
+	return s.scan(bound)
 }
 
-func (s *MemoryStore) ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error) {
-	return s.scan(index, start, end)
+func (s *MemoryStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	return s.scan(bound)
 }
 
-func (s *MemoryStore) scan(index IndexType, start, end []byte) (Iterator, error) {
+// scan projects the bound through the binary encoder because MemoryStore keys
+// on the same bytes Badger does. PR B replaces that with typed component
+// compare; the seam above does not change when it does.
+func (s *MemoryStore) scan(bound ScanBound) (Iterator, error) {
+	start, end, err := s.encoder.EncodeScanBound(bound)
+	if err != nil {
+		return nil, err
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
 		return nil, errMemoryStoreClosed
 	}
-	if start == nil {
-		start = []byte{byte(index)}
-	}
-	if end == nil {
-		end = []byte{byte(index) + 1}
-	}
+	index := bound.Index
 	startKey := string(start)
 	endKey := string(end)
 	keys := make([][]byte, 0)
@@ -148,7 +151,7 @@ func (s *MemoryStore) scan(index IndexType, start, end []byte) (Iterator, error)
 }
 
 func (s *MemoryStore) MaxElementID() (datalog.ElementID, error) {
-	iter, err := s.ScanKeysOnly(TAEV, []byte{byte(TAEV)}, []byte{byte(TAEV) + 1})
+	iter, err := s.ScanKeysOnly(ScanBound{Index: TAEV})
 	if err != nil {
 		return datalog.ElementID{}, err
 	}
@@ -160,8 +163,7 @@ func (s *MemoryStore) MaxElementID() (datalog.ElementID, error) {
 }
 
 func (s *MemoryStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {
-	start, end := s.encoder.EncodePrefixRange(EAVT, e.Bytes())
-	iter, err := s.ScanKeysOnly(EAVT, start, end)
+	iter, err := s.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{e}})
 	if err != nil {
 		return datalog.ElementID{}, false, err
 	}
@@ -182,7 +184,7 @@ func (s *MemoryStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, boo
 }
 
 func (s *MemoryStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error) {
-	iter, err := s.ScanKeysOnly(TAEV, []byte{byte(TAEV)}, []byte{byte(TAEV) + 1})
+	iter, err := s.ScanKeysOnly(ScanBound{Index: TAEV})
 	if err != nil {
 		return nil, err
 	}
@@ -538,12 +540,19 @@ func (i *memoryIterator) Close() error {
 	return nil
 }
 
-func (i *memoryIterator) Seek(key []byte) {
+func (i *memoryIterator) Seek(bound ScanBound) {
 	if i.closed || i.err != nil {
 		return
 	}
+	start, _, err := i.encoder.EncodeScanBound(bound)
+	if err != nil {
+		// Seek cannot return; the failure becomes the iterator's sticky error
+		// rather than a silently unmoved cursor.
+		i.err = err
+		return
+	}
 	i.position = sort.Search(len(i.keys), func(index int) bool {
-		return bytes.Compare(i.keys[index], key) >= 0
+		return bytes.Compare(i.keys[index], start) >= 0
 	}) - 1
 	i.hasDatom = false
 }

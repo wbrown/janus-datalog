@@ -118,12 +118,7 @@ func TestATEVIsPopulatedOnCommit(t *testing.T) {
 
 	// Scan the ATEV prefix for this attribute; we should see exactly one key,
 	// and decoding it should yield our Tx.
-	var aStorage [32]byte
-	copy(aStorage[:], a.String())
-	atevPrefix := append([]byte{byte(ATEV)}, aStorage[:]...)
-	atevEnd := incrementLastByte(atevPrefix)
-
-	it, err := store.Scan(ATEV, atevPrefix, atevEnd)
+	it, err := store.Scan(ScanBound{Index: ATEV, Prefix: []datalog.Value{a}})
 	if err != nil {
 		t.Fatalf("scan ATEV: %v", err)
 	}
@@ -165,9 +160,15 @@ func TestChooseIndex_ABoundPlusTxBound_PicksATEV(t *testing.T) {
 	a := datalog.NewKeyword(":atev/matcher")
 	tx := datalog.ElementID{Lamport: 42, ReplicaID: 1}
 
-	idx, start, end := matcher.chooseIndex(nil, a, nil, tx)
-	if idx != ATEV {
-		t.Errorf("chooseIndex(nil, A, nil, Tx) = %v, want ATEV", idx)
+	bound := matcher.chooseIndex(nil, a, nil, tx)
+	if bound.Index != ATEV {
+		t.Errorf("chooseIndex(nil, A, nil, Tx) = %v, want ATEV", bound.Index)
+	}
+	// The assertions below are about the byte range the bound addresses, so
+	// they render it the way this store's keys are encoded.
+	start, end, err := matcher.encoder.EncodeScanBound(bound)
+	if err != nil {
+		t.Fatalf("encode ATEV scan bound: %v", err)
 	}
 	if len(start) == 0 || len(end) == 0 {
 		t.Error("ATEV prefix range start/end should be non-empty")
@@ -201,8 +202,7 @@ func TestChooseIndex_ABoundPlusTxBoundPlusVBound_DoesNotPickATEV(t *testing.T) {
 	a := datalog.NewKeyword(":atev/routing")
 	tx := datalog.ElementID{Lamport: 5, ReplicaID: 1}
 
-	idx, _, _ := matcher.chooseIndex(nil, a, "hello", tx)
-	if idx == ATEV {
+	if idx := matcher.chooseIndex(nil, a, "hello", tx).Index; idx == ATEV {
 		t.Errorf("chooseIndex with V bound should NOT pick ATEV; got ATEV anyway")
 	}
 }
@@ -310,7 +310,8 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 	eHash := e.Hash()
 
 	t.Run("A+Tx_only", func(t *testing.T) {
-		_, start, end := matcher.chooseIndexForValues(ATEV, nil, a, nil, tx)
+		start, end := encodeScanBoundForTest(t, matcher,
+			matcher.scanBoundForValues(ATEV, nil, a, nil, tx))
 		expected := matcher.store.Encoder().EncodePrefix(ATEV, aStorage[:],
 			matcher.store.Encoder().EncodeTxForPrefix(NewTxFromElementID(tx)))
 		if !bytes.HasPrefix(start, expected) {
@@ -322,7 +323,8 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 	})
 
 	t.Run("A+Tx+E", func(t *testing.T) {
-		_, start, end := matcher.chooseIndexForValues(ATEV, e, a, nil, tx)
+		start, end := encodeScanBoundForTest(t, matcher,
+			matcher.scanBoundForValues(ATEV, e, a, nil, tx))
 		expected := matcher.store.Encoder().EncodePrefix(ATEV, aStorage[:],
 			matcher.store.Encoder().EncodeTxForPrefix(NewTxFromElementID(tx)),
 			eHash[:])
@@ -335,11 +337,11 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 	})
 }
 
-// TestSimpleBatchScanner_BuildKey_ATEV_VVaries covers buildKey's ATEV branch
-// for position=2 (V varies across bindings, with A and Tx fixed as pattern
-// constants). The position=0 case is already covered by
-// TestSimpleBatchScanner_BuildKey_AllIndices; this fills the other half.
-func TestSimpleBatchScanner_BuildKey_ATEV_VVaries(t *testing.T) {
+// TestSimpleBatchScanner_BindingPrefix_ATEV_VVaries covers bindingPrefix's
+// ATEV branch for position=2 (V varies across bindings, with A and Tx fixed as
+// pattern constants). The position=0 case is already covered by
+// TestSimpleBatchScanner_BindingPrefix_AllIndices; this fills the other half.
+func TestSimpleBatchScanner_BindingPrefix_ATEV_VVaries(t *testing.T) {
 	dir, err := os.MkdirTemp("", "atev-batch-v-*")
 	if err != nil {
 		t.Fatal(err)
@@ -368,10 +370,11 @@ func TestSimpleBatchScanner_BuildKey_ATEV_VVaries(t *testing.T) {
 	// V is between Tx and the trailing positions in ATEV [A][Tx][E][V]; with E
 	// unbound, tightening stops at [A][Tx]. Any V value should produce that
 	// same prefix.
-	got := scanner.buildKey("any-value", aBytes[:], constT)
-	if got == nil {
-		t.Fatal("buildKey(ATEV, position=2) returned nil")
+	prefix, ok := scanner.bindingPrefix("any-value", a, &tx)
+	if !ok {
+		t.Fatal("bindingPrefix(ATEV, position=2) reported no run")
 	}
+	got, _ := encodeScanBoundForTest(t, matcher, ScanBound{Index: ATEV, Prefix: prefix})
 	expected := matcher.store.Encoder().EncodePrefix(ATEV, aBytes[:], constT)
 	if !bytes.Equal(got, expected) {
 		t.Errorf("ATEV position=2 key mismatch: got %x, want %x", got, expected)
@@ -398,10 +401,11 @@ func TestChooseIndex_TxOnly_TAEV_WithElementID(t *testing.T) {
 	matcher := NewPatternMatcher(store)
 	tx := datalog.ElementID{Lamport: 77, ReplicaID: 1}
 
-	idx, start, end := matcher.chooseIndex(nil, nil, nil, tx)
-	if idx != TAEV {
-		t.Errorf("chooseIndex(nil, nil, nil, ElementID) = %v, want TAEV", idx)
+	bound := matcher.chooseIndex(nil, nil, nil, tx)
+	if bound.Index != TAEV {
+		t.Errorf("chooseIndex(nil, nil, nil, ElementID) = %v, want TAEV", bound.Index)
 	}
+	start, end := encodeScanBoundForTest(t, matcher, bound)
 	if len(start) == 0 || len(end) == 0 {
 		t.Error("TAEV prefix range start/end should be non-empty")
 	}
@@ -414,10 +418,11 @@ func TestChooseIndex_TxOnly_TAEV_WithElementID(t *testing.T) {
 
 	// Same Tx passed through *ElementID — DerefElementID handles both, so the
 	// pointer form should produce identical routing.
-	idxPtr, startPtr, _ := matcher.chooseIndex(nil, nil, nil, &tx)
-	if idxPtr != TAEV {
-		t.Errorf("chooseIndex with *ElementID = %v, want TAEV", idxPtr)
+	boundPtr := matcher.chooseIndex(nil, nil, nil, &tx)
+	if boundPtr.Index != TAEV {
+		t.Errorf("chooseIndex with *ElementID = %v, want TAEV", boundPtr.Index)
 	}
+	startPtr, _ := encodeScanBoundForTest(t, matcher, boundPtr)
 	if !bytes.Equal(start, startPtr) {
 		t.Errorf("ElementID and *ElementID should produce identical prefix; got %x vs %x", start, startPtr)
 	}

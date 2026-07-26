@@ -256,8 +256,12 @@ func (s *BadgerStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 // Scan returns a workspace-decoded iterator for a range of keys.
 // Scan and ScanKeysOnly share the same KeyOnlyIterator contract: Datom()
 // returns the iterator's current workspace until Next, Seek, or Close.
-func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error) {
-	return NewKeyOnlyIterator(s, index, start, end)
+func (s *BadgerStore) Scan(bound ScanBound) (Iterator, error) {
+	start, end, err := s.encoder.EncodeScanBound(bound)
+	if err != nil {
+		return nil, err
+	}
+	return NewKeyOnlyIterator(s, bound.Index, start, end)
 }
 
 // MaxElementID returns the highest ElementID in the store by scanning TAEV index.
@@ -377,8 +381,12 @@ func (s *BadgerStore) SetMetadataUint64(key string, value uint64) error {
 
 // ScanKeysOnly returns an iterator that decodes datoms from keys without fetching values
 // This is much faster than regular scanning as it avoids the redundant value fetch
-func (s *BadgerStore) ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error) {
-	return NewKeyOnlyIterator(s, index, start, end)
+func (s *BadgerStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	start, end, err := s.encoder.EncodeScanBound(bound)
+	if err != nil {
+		return nil, err
+	}
+	return NewKeyOnlyIterator(s, bound.Index, start, end)
 }
 
 // CountKeys counts keys in a range without fetching values (fast counting)

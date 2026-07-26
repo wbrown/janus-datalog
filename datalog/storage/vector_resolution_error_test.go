@@ -35,9 +35,7 @@ func TestLoadRGAElementsPropagatesDatomDecodeError(t *testing.T) {
 
 	entityBytes := entity.Bytes()
 	attributeBytes := ToStorageDatom(datalog.Datom{A: attribute}).A
-	prefix := append([]byte{byte(EATV)}, entityBytes[:]...)
-	prefix = append(prefix, attributeBytes[:]...)
-	iter, err := store.Scan(EATV, prefix, prefixEnd(prefix))
+	iter, err := store.Scan(ScanBound{Index: EATV, Prefix: []datalog.Value{entity, attribute}})
 	require.NoError(t, err)
 	require.True(t, iter.Next(), "malformed key is still a positioned scan entry")
 	_, err = iter.Datom()

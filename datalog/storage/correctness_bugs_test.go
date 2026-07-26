@@ -166,18 +166,18 @@ func TestExtractElementIDFromKey_TailIndicesWithAfterRef(t *testing.T) {
 }
 
 // ================================================================
-// Item 4: simpleBatchScanner.buildKey uses pre-expansion enum
+// Item 4: simpleBatchScanner.bindingPrefix uses pre-expansion enum
 // ================================================================
 
-// TestSimpleBatchScanner_BuildKey_AETV verifies that buildKey
+// TestSimpleBatchScanner_BindingPrefix_AETV verifies that bindingPrefix
 // produces a valid AETV prefix when invoked with AETV as s.index.
-// The current code path routes through "case 3" which is
-// labeled (incorrectly) as VAET — so buildKey with AETV builds a
+// The original code path routed through "case 3" which was
+// labeled (incorrectly) as VAET — so the AETV case built a
 // VAET-shaped key that cannot hit real data.
 //
-// Pre-fix: test fails because buildKey returns a VAET-shaped prefix
+// Pre-fix: test fails because the prefix is VAET-shaped
 // (or wrong bytes) when s.index == AETV.
-func TestSimpleBatchScanner_BuildKey_AETV(t *testing.T) {
+func TestSimpleBatchScanner_BindingPrefix_AETV(t *testing.T) {
 	dir := t.TempDir()
 	s, err := schema.NewBuilder().
 		Attribute(":user/name").Type(schema.TypeString).One().Add().
@@ -200,21 +200,22 @@ func TestSimpleBatchScanner_BuildKey_AETV(t *testing.T) {
 	var aBytes Attribute
 	copy(aBytes[:], name.String())
 
-	got := scanner.buildKey(alice, aBytes[:], nil)
-	require.NotNil(t, got, "buildKey must not return nil for AETV with E-bound + A-constant")
+	prefix, ok := scanner.bindingPrefix(alice, name, nil)
+	require.True(t, ok, "bindingPrefix must name a run for AETV with E-bound + A-constant")
+	got, _ := encodeScanBoundForTest(t, matcher, ScanBound{Index: AETV, Prefix: prefix})
 
 	// The expected prefix for AETV with E+A bound is [prefix][A][E].
 	encoder := matcher.store.Encoder()
 	expected := encoder.EncodePrefix(AETV, aBytes[:], alice.Bytes())
 	assert.True(t, bytes.Equal(got, expected),
-		"buildKey on AETV must produce [prefix][A][E]; got %x, expected %x", got, expected)
+		"bindingPrefix on AETV must produce [prefix][A][E]; got %x, expected %x", got, expected)
 }
 
-// TestSimpleBatchScanner_BuildKey_AllIndices verifies buildKey
-// handles every index it's likely to see. Indices EATV and AVET are
-// not in the current switch at all — buildKey returns nil for them,
+// TestSimpleBatchScanner_BindingPrefix_AllIndices verifies bindingPrefix
+// handles every index it's likely to see. Indices EATV and AVET were
+// not in the original switch at all — it reported no run for them,
 // which silently degrades callers.
-func TestSimpleBatchScanner_BuildKey_AllIndices(t *testing.T) {
+func TestSimpleBatchScanner_BindingPrefix_AllIndices(t *testing.T) {
 	dir := t.TempDir()
 	db, err := NewDatabase(dir)
 	require.NoError(t, err)
@@ -223,32 +224,28 @@ func TestSimpleBatchScanner_BuildKey_AllIndices(t *testing.T) {
 	matcher := db.Matcher().(*PatternMatcher)
 	alice := datalog.NewIdentity("alice")
 	name := datalog.NewKeyword(":user/name")
-	var aBytes Attribute
-	copy(aBytes[:], name.String())
 
 	// Batch scanning's Position field names the binding component
-	// (0=E, 1=A, 2=V). buildKey must handle every (index, position)
-	// combination its signature admits — silent nil returns cause
+	// (0=E, 1=A, 2=V). bindingPrefix must handle every (index, position)
+	// combination its signature admits — a silent "no run" causes
 	// silent zero-result scans, the exact failure mode the external
 	// review flagged for this function.
 	// Tx constant used by the ATEV case below; the value chosen doesn't
-	// matter so long as it encodes to a non-empty constT.
-	constTBytes := matcher.store.Encoder().EncodeTxForPrefix(
-		NewTxFromElementID(datalog.ElementID{Lamport: 1, ReplicaID: 1}),
-	)
+	// matter so long as constT is present.
+	constT := datalog.ElementID{Lamport: 1, ReplicaID: 1}
 	for _, tc := range []struct {
 		name     string
 		index    IndexType
 		position int
 		value    interface{}
-		constA   []byte
-		constT   []byte
+		constA   datalog.Keyword
+		constT   *datalog.ElementID
 	}{
-		{"EAVT_Ebound", EAVT, 0, alice, aBytes[:], nil},
-		{"EATV_Ebound", EATV, 0, alice, aBytes[:], nil},
-		{"AEVT_Ebound", AEVT, 0, alice, aBytes[:], nil},
-		{"AETV_Ebound", AETV, 0, alice, aBytes[:], nil},
-		{"ATEV_Ebound", ATEV, 0, alice, aBytes[:], constTBytes},
+		{"EAVT_Ebound", EAVT, 0, alice, name, nil},
+		{"EATV_Ebound", EATV, 0, alice, name, nil},
+		{"AEVT_Ebound", AEVT, 0, alice, name, nil},
+		{"AETV_Ebound", AETV, 0, alice, name, nil},
+		{"ATEV_Ebound", ATEV, 0, alice, name, &constT},
 		{"AVET_Abound", AVET, 1, name, nil, nil},
 		{"VAET_Vbound", VAET, 0, "some-value", nil, nil},
 	} {
@@ -258,24 +255,25 @@ func TestSimpleBatchScanner_BuildKey_AllIndices(t *testing.T) {
 				index:    tc.index,
 				position: tc.position,
 			}
-			got := scanner.buildKey(tc.value, tc.constA, tc.constT)
-			require.NotNil(t, got,
-				"buildKey returned nil for index %s, position %d — scanner would silently produce no results",
+			prefix, ok := scanner.bindingPrefix(tc.value, tc.constA, tc.constT)
+			require.True(t, ok,
+				"bindingPrefix reported no run for index %s, position %d — scanner would silently produce no results",
 				indexName(tc.index), tc.position)
+			got, _ := encodeScanBoundForTest(t, matcher, ScanBound{Index: tc.index, Prefix: prefix})
 			// Weaker check: at minimum, the first byte must be the correct index prefix.
 			require.Greater(t, len(got), 0)
 			assert.Equal(t, byte(tc.index), got[0],
-				"first byte of buildKey result must be the index prefix %d for %s",
+				"first byte of the encoded bound must be the index prefix %d for %s",
 				byte(tc.index), indexName(tc.index))
 		})
 	}
 }
 
-// TestSimpleBatchScanner_BuildKey_AVET_PositionSemantics isolates AVET
+// TestSimpleBatchScanner_BindingPrefix_AVET_PositionSemantics isolates AVET
 // position handling to distinguish "type assertion failed" from "branch
-// not entered" when the broader BuildKey_AllIndices test flags AVET.
+// not entered" when the broader BindingPrefix_AllIndices test flags AVET.
 // Asserts the concrete prefix bytes against the encoder's direct output.
-func TestSimpleBatchScanner_BuildKey_AVET_PositionSemantics(t *testing.T) {
+func TestSimpleBatchScanner_BindingPrefix_AVET_PositionSemantics(t *testing.T) {
 	dir := t.TempDir()
 	db, err := NewDatabase(dir)
 	require.NoError(t, err)
@@ -289,26 +287,27 @@ func TestSimpleBatchScanner_BuildKey_AVET_PositionSemantics(t *testing.T) {
 	// Case 1: A varies across bindings (position=1, value is a Keyword).
 	// Scan range: [A] prefix over AVET.
 	scanner := &simpleBatchScanner{matcher: matcher, index: AVET, position: 1}
-	got := scanner.buildKey(emailKw, nil, nil)
+	prefix, ok := scanner.bindingPrefix(emailKw, nil, nil)
+	require.True(t, ok,
+		"AVET position=1 with Keyword value: bindingPrefix reported no run. "+
+			"Type of value in test: %T", emailKw)
+	got, _ := encodeScanBoundForTest(t, matcher, ScanBound{Index: AVET, Prefix: prefix})
 
 	expected := matcher.store.Encoder().EncodePrefix(AVET, aBytes[:])
-	require.NotNil(t, got,
-		"AVET position=1 with Keyword value: buildKey returned nil. "+
-			"Type of value in test: %T", emailKw)
 	assert.True(t, bytes.Equal(got, expected),
 		"AVET position=1: expected [A] prefix %x, got %x", expected, got)
 
 	// Case 2: E varies across bindings (position=0, value is an Identity,
 	// constA carries the attribute). Scan range: [A][V?][E] — but with
 	// only E from bindings, the realistic prefix is [A][... V comes
-	// from elsewhere]. buildKey cannot produce a narrower-than-[A]
-	// prefix here because V isn't known; it should still emit a useful
-	// key range rather than nil.
+	// from elsewhere]. bindingPrefix cannot produce a narrower-than-[A]
+	// prefix here because V isn't known; it should still name a useful
+	// run rather than reporting none.
 	alice := datalog.NewIdentity("alice")
 	scanner = &simpleBatchScanner{matcher: matcher, index: AVET, position: 0}
-	got = scanner.buildKey(alice, aBytes[:], nil)
-	require.NotNil(t, got,
-		"AVET position=0 with Identity value: buildKey returned nil")
+	_, ok = scanner.bindingPrefix(alice, emailKw, nil)
+	require.True(t, ok,
+		"AVET position=0 with Identity value: bindingPrefix reported no run")
 }
 
 // ================================================================

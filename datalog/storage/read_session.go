@@ -12,10 +12,14 @@ var errReadSessionClosed = errors.New("read session closed")
 // own storage transaction) and a ReadSession (every call observes one shared
 // snapshot) satisfy it, so read paths written against StoreReader run
 // identically in either mode.
+//
+// The vocabulary is store-agnostic: a scan names a typed ScanBound, not a byte
+// range, and no binary encoder is exposed. A backend that keys on bytes
+// projects the bound through BinaryKeyEncoder.EncodeScanBound at its own
+// boundary; a backend that compares typed components directly does neither.
 type StoreReader interface {
-	Encoder() *BinaryKeyEncoder
-	Scan(index IndexType, start, end []byte) (Iterator, error)
-	ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error)
+	Scan(bound ScanBound) (Iterator, error)
+	ScanKeysOnly(bound ScanBound) (Iterator, error)
 	MaxElementID() (datalog.ElementID, error)
 	MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error)
 }
@@ -37,7 +41,7 @@ type ReadSession interface {
 // ElementID high-water mark: TAEV orders Tx descending, so the first entry
 // carries the highest ElementID.
 func maxElementIDByScan(r StoreReader) (datalog.ElementID, error) {
-	iter, err := r.ScanKeysOnly(TAEV, []byte{byte(TAEV)}, []byte{byte(TAEV) + 1})
+	iter, err := r.ScanKeysOnly(ScanBound{Index: TAEV})
 	if err != nil {
 		return datalog.ElementID{}, err
 	}
@@ -51,8 +55,7 @@ func maxElementIDByScan(r StoreReader) (datalog.ElementID, error) {
 // maxTxForEntityByScan walks the entity's EAVT range for its highest
 // ElementID (EAVT is not Tx-ordered, so the full range is examined).
 func maxTxForEntityByScan(r StoreReader, e datalog.Identity) (datalog.ElementID, bool, error) {
-	start, end := r.Encoder().EncodePrefixRange(EAVT, e.Bytes())
-	iter, err := r.ScanKeysOnly(EAVT, start, end)
+	iter, err := r.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{e}})
 	if err != nil {
 		return datalog.ElementID{}, false, err
 	}

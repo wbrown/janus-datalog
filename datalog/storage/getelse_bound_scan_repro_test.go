@@ -14,9 +14,10 @@ import (
 )
 
 // indexForAttrPattern returns the index chosen for the pattern/index-selection
-// event whose pattern mentions attrFragment, plus the scan range. Empty index
+// event whose pattern mentions attrFragment, plus the run that scan addresses:
+// the positions its bound binds and the values bound to them. Empty index
 // means no scan was issued for that attribute (e.g. a fused per-entity lookup).
-func indexForAttrPattern(events []annotations.Event, attrFragment string) (index, scanStart, scanEnd string) {
+func indexForAttrPattern(events []annotations.Event, attrFragment string) (index, bound string) {
 	for _, e := range events {
 		if e.Name != "pattern/index-selection" {
 			continue
@@ -26,10 +27,29 @@ func indexForAttrPattern(events []annotations.Event, attrFragment string) (index
 			continue
 		}
 		index = fmt.Sprint(e.Data["index"])
-		scanStart = fmt.Sprint(e.Data["scan.start"])
-		scanEnd = fmt.Sprint(e.Data["scan.end"])
+		bound = renderBoundForTest(e)
 	}
-	return index, scanStart, scanEnd
+	return index, bound
+}
+
+// renderBoundForTest pairs an index-selection event's bound positions with
+// their values for a diagnostic log line: "A=:repro/note", or "whole index"
+// when the scan binds nothing.
+func renderBoundForTest(e annotations.Event) string {
+	positions, _ := e.Data["bound"].([]string)
+	values, _ := e.Data["bound.values"].([]string)
+	if len(positions) == 0 {
+		return "whole index"
+	}
+	parts := make([]string, 0, len(positions))
+	for i, position := range positions {
+		if i < len(values) {
+			parts = append(parts, position+"="+values[i])
+			continue
+		}
+		parts = append(parts, position)
+	}
+	return strings.Join(parts, " ")
 }
 
 // TestGetElseBoundEntityScanNotNarrowed reproduces the performance bug in
@@ -112,7 +132,7 @@ func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 			if len(plainResults) != 1 || plainResults[0][0] != "note-0" {
 				t.Fatalf("plain: expected [[note-0]], got %v", plainResults)
 			}
-			plainIdx, _, _ := indexForAttrPattern(plainEvents, ":repro/note")
+			plainIdx, _ := indexForAttrPattern(plainEvents, ":repro/note")
 			t.Logf("plain    [?e :repro/note ?note]: index=%s  wall=%s  results=%d",
 				plainIdx, plainDur, len(plainResults))
 
@@ -127,10 +147,10 @@ func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 			if len(geResults) != 1 || geResults[0][0] != "note-0" {
 				t.Fatalf("get-else: expected [[note-0]], got %v", geResults)
 			}
-			geIdx, geStart, geEnd := indexForAttrPattern(geEvents, ":repro/note")
+			geIdx, geBound := indexForAttrPattern(geEvents, ":repro/note")
 			t.Logf("get-else (get-else $ ?e :repro/note): index=%s  wall=%s  results=%d",
 				geIdx, geDur, len(geResults))
-			t.Logf(":repro/note extent=%d datoms; get-else scan range [%s, %s)", extent, geStart, geEnd)
+			t.Logf(":repro/note extent=%d datoms; get-else scan bound: %s", extent, geBound)
 			if plainDur > 0 {
 				t.Logf("get-else / plain wall-time ratio: %.1fx", float64(geDur)/float64(plainDur))
 			}
@@ -346,7 +366,7 @@ func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
 	// Defense in depth: a narrowed branch takes the bound matcher path (cache /
 	// reuse strategy), which never emits the unbound pattern/index-selection that
 	// matchUnboundAsRelation (the full attribute scan) emits.
-	idx, _, _ := indexForAttrPattern(events, ":repro/note")
+	idx, _ := indexForAttrPattern(events, ":repro/note")
 	attrPrimary := map[string]bool{"AETV": true, "AEVT": true, "AVET": true, "ATEV": true}
 	if attrPrimary[idx] {
 		t.Fatalf("get-else over %d bound entities scanned :repro/note via attribute-primary "+

@@ -67,12 +67,11 @@ func profileQueryExecution(t *testing.T, profileName string, datasetSize int) {
 	defer pprof.StopCPUProfile()
 
 	// Run queries to stress the decoding path
-	attrHash := ToStorageDatom(datoms[0]).A
-	start, end := encoder.EncodePrefixRange(AEVT, attrHash[:])
+	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{datoms[0].A}}
 
 	totalScanned := 0
 	for i := 0; i < 100; i++ {
-		it, err := store.Scan(AEVT, start, end)
+		it, err := store.Scan(bound)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,14 +141,13 @@ func BenchmarkDecodingInPipeline(b *testing.B) {
 						b.Fatal(err)
 					}
 
-					attrHash := ToStorageDatom(datoms[0]).A
-					start, end := encoder.EncodePrefixRange(AEVT, attrHash[:])
+					bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{datoms[0].A}}
 
 					b.ResetTimer()
 					b.ReportAllocs()
 
 					for i := 0; i < b.N; i++ {
-						it, err := store.Scan(AEVT, start, end)
+						it, err := store.Scan(bound)
 						if err != nil {
 							b.Fatal(err)
 						}

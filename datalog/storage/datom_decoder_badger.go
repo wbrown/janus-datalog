@@ -97,11 +97,18 @@ func (i *KeyOnlyIterator) positionedInRange() bool {
 	return bytes.Compare(i.it.Item().Key(), i.end) < 0
 }
 
-func (i *KeyOnlyIterator) Seek(key []byte) {
+func (i *KeyOnlyIterator) Seek(bound ScanBound) {
 	if i.currentError != nil {
 		return
 	}
-	i.BadgerIterator.Seek(key)
+	start, _, err := i.encoder.EncodeScanBound(bound)
+	if err != nil {
+		// Seek cannot return; the failure becomes the iterator's sticky error
+		// rather than a silently unmoved cursor.
+		i.currentError = err
+		return
+	}
+	i.BadgerIterator.Seek(start)
 	i.hasDatom = false
 }
 

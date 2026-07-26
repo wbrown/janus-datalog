@@ -213,6 +213,16 @@ Scope. The conversion is not confined to the scan methods:
 
 The write surface already speaks typed datoms (`Assert([]datalog.Datom)`). Only reads were encoded; the asymmetry has nothing behind it.
 
+#### What landed (PR A, 2026-07-25)
+
+Three departures from the scope list above, recorded here because the list is what the next reader will check against.
+
+- **`Get` was removed, not converted.** The typed form made the question vanish rather than restate it: a complete index key names one `(E, A, V, Tx)`, but Tx is what CRDT resolution *determines*, so a reader that already knew it had nothing left to ask. Every read is a scan; a bound binding all four components is the point lookup, and returns at most one datom because Tx is unique per operation. `Store.Get` and `StoreReader.Get` are both gone.
+- **`maxElementIDForAttributeByScan` was deleted, not converted.** It served the per-attribute cache-freshness shortcut, which was removed in the same arc. ATEV stays for its AsOf-by-attribute seeks; `maxTxForEntityByScan` converted as described.
+- **A bound is not always a pure prefix.** Two batch-scan sites — `matcher_iterator_reusing.go` and `simple_batch_scanner.go` — cover a *set* of per-binding prefixes in one pass, spanning from the lowest to the highest and seeking between them inside the run. `ScanBound` carries an optional `Through` for that: the run starts at `Prefix` and ends where `Through`'s subtree ends. Absent `Through` (the common case) means the run is exactly `Prefix`, so the degenerate form is byte-identical to `EncodePrefixRange`. An inverted `Through` is rejected rather than scanned as zero matches.
+
+The set-of-prefixes shape — a bound carrying N prefixes, leaving the store to choose between spanning-and-filtering and issuing N seeks — is the more expressive design and is **not** taken. It would move the min/max computation out of the two call sites and let them state intent rather than mechanism, at the cost of reworking the batch scanners' per-binding `Seek` logic.
+
 ### Ruling 2 — persistent trees; a database version is a value and the store is a pointer to it
 
 Trees are persistent — structurally shared and immutable. Commit is a root-pointer swap, a read session is a retained root, and a database version *is* a root.

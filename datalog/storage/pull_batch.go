@@ -74,8 +74,7 @@ func (d *Database) ResolveAllAttributesMany(
 	resolved := make(map[[20]byte]map[datalog.Keyword]interface{}, len(sortedEntities))
 	declaredAttrs := d.declaredWildcardAttributes()
 	var uniqueLookups []wildcardUniqueLookup
-	scanStart, scanEnd := d.encoder.EncodePrefixRange(EATV)
-	iterator, err := d.store.ScanKeysOnly(EATV, scanStart, scanEnd)
+	iterator, err := d.store.ScanKeysOnly(ScanBound{Index: EATV})
 	if err != nil {
 		return nil, fmt.Errorf("batch wildcard scan failed: %w", err)
 	}
@@ -131,7 +130,6 @@ func (d *Database) resolveWildcardEntity(
 	declaredAttrs map[datalog.Keyword]struct{},
 ) (map[datalog.Keyword]interface{}, []wildcardUniqueLookup, error) {
 	entityBytes := entity.Bytes()
-	start, _ := d.encoder.EncodePrefixRange(EATV, entityBytes[:])
 	result := make(map[datalog.Keyword]interface{})
 	var pending []wildcardUniqueLookup
 	var currentAttr datalog.Keyword
@@ -163,7 +161,7 @@ func (d *Database) resolveWildcardEntity(
 		currentDatoms = currentDatoms[:0]
 	}
 
-	iterator.Seek(start)
+	iterator.Seek(ScanBound{Index: EATV, Prefix: []datalog.Value{entity}})
 	for iterator.Next() {
 		// Bound the entity before decoding. The shared EATV scan advances one
 		// key into the successor entity; decoding that key would surface
