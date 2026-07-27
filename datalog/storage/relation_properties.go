@@ -65,7 +65,7 @@ func scanProjectionPreservesSet(pattern *query.DataPattern, provider schema.Sche
 func unboundScanProperties(
 	pattern *query.DataPattern,
 	index IndexType,
-	cardinality schema.Cardinality,
+	cardinality datalog.Keyword,
 	history bool,
 ) executor.RelationProperties {
 	if history || index != AETV || cardinality != schema.CardinalityOne {

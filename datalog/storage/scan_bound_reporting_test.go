@@ -17,10 +17,9 @@ import (
 // times each.
 //
 // The depth is the point. With one write per entity every term of the funnel is
-// three, and a counter wired to the wrong term — or to nothing — still passes.
-// That is how three separate implementations of the intake counter shipped with
-// no assertion between them: the fixtures made intake and resolution the same
-// number. Three writes and last-write-wins make them nine and three.
+// three, so a counter wired to the wrong term — or to nothing — still passes,
+// and a fixture like that cannot tell the three counters apart. Three writes
+// and last-write-wins make intake and resolution nine and three.
 // An array rather than a slice so len() is a constant expression and the
 // counts derived from it below can be constants too.
 var bindingDrivenPeople = [3]string{"person:alice", "person:bob", "person:carol"}
@@ -100,13 +99,14 @@ func drainRelation(t *testing.T, rel executor.Relation) int {
 
 // TestBindingDrivenStrategiesReportTheirFunnel pins all three intake counters
 // the binding-driven paths maintain — one per strategy, each a separate
-// implementation, and until this test each unasserted.
+// implementation.
 //
-// Hardcoding hash_join_matcher.go's datoms.scanned to zero, or replacing
-// nonReusingIterator's accumulate-before-discard with a discard, left the whole
-// package green. The counter's contract is that a key the membership rule
-// rejected is still counted, which is only checkable against a fixture where
-// intake and resolution differ — hence bindingDrivenFixture's history depth.
+// Nothing else holds them. Hardcode hash_join_matcher.go's datoms.scanned to
+// zero, or replace nonReusingIterator's accumulate-before-discard with a
+// discard, and the rest of the package stays green. The counter's contract is
+// that a key the membership rule rejected is still counted, which is only
+// checkable against a fixture where intake and resolution differ — hence
+// bindingDrivenFixture's history depth.
 //
 // Each strategy is driven directly rather than reached through a query. Which
 // one chooseJoinStrategy picks depends on binding-set size and its own
@@ -256,10 +256,10 @@ func TestIndexTypeNamesEveryConstant(t *testing.T) {
 // TestBoundAnnotationKeyHasOneType pins that one key in one event family
 // carries one payload type. addBoundFields writes "bound" as the run's bound
 // positions ([]string); the rendered bound value is a different datum and
-// travels under "bound_v" across the whole v-validation family. Before this
-// was pinned, two sibling events wrote the rendered value under "bound" too,
-// so a handler filtering v-validation/* had to type-switch to learn which of
-// the two it had been given.
+// travels under "bound_v" across the whole v-validation family. If a sibling
+// event wrote the rendered value under "bound" as well, a handler filtering
+// v-validation/* would have to type-switch to learn which of the two it had
+// been handed.
 func TestBoundAnnotationKeyHasOneType(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

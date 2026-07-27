@@ -10,13 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestBenchmarkDatabasePathIsWorkingDirectoryIndependent is the pin for the
-// defect that made `make build-testdb` inert: the builder and the benchmarks
-// that read what it built run from different working directories —
-// cmd/build-testdb from the module root, the storage tests from this package —
-// and both resolved the same relative string, so they named different files.
-// The Makefile's guard checked one location while its build step filled the
-// other, and the target could never satisfy its own check.
+// TestBenchmarkDatabasePathIsWorkingDirectoryIndependent pins that the builder
+// and the benchmarks that read what it built name one file.
+//
+// They run from different working directories — cmd/build-testdb from the
+// module root, the storage tests from this package — so a path resolved
+// relative to the current directory names a different file to each. Nothing
+// else catches that: the build succeeds, the read succeeds against whatever is
+// already there, and a guard checking one location while the build fills the
+// other never reports a thing.
 func TestBenchmarkDatabasePathIsWorkingDirectoryIndependent(t *testing.T) {
 	packageDir, err := os.Getwd()
 	require.NoError(t, err)

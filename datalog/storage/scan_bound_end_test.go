@@ -95,12 +95,11 @@ func TestScanBoundOnNegativeLongDoesNotMatchItsNeighbour(t *testing.T) {
 // length and no terminator, so "abc" and "abcd" differ only by length and no
 // end key separates them — and the AVET consumers never re-compare datom.V.
 //
-// Unlike the successor defect above this predates the typed bound: the byte
-// form was already [A][type][value] with the same exclusive end, and the typed
-// bound inherits it. No pair of endpoints can be made exact, so the store
-// narrows instead — EncodedRun carries a membership rule on key length, and
-// ScanBound's contract states that narrowing as the backend's obligation
-// rather than claiming the range already meets it.
+// Unlike the successor arithmetic above, this one no end key can fix: with the
+// value's length absent from the key, no pair of endpoints separates "abc" from
+// "abcd". The store narrows instead — EncodedRun carries a membership rule on
+// key length — and ScanBound's contract names that narrowing as the backend's
+// obligation rather than claiming the range already meets it.
 func TestScanBoundOnStringDoesNotMatchItsExtension(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

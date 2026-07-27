@@ -11,8 +11,8 @@ import (
 // TestMain runs before all tests and ensures test database exists
 func TestMain(m *testing.M) {
 	// Check if test database exists. The path is resolved the same way the
-	// builder resolves it, so this cannot check one location and fill another —
-	// the defect that made `make build-testdb` inert.
+	// builder resolves it, so this cannot check one location while the build
+	// step below fills another.
 	dbPath, err := resolveTestDataPath(BenchmarkDatabasePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Failed to locate the test database: %v\n", err)

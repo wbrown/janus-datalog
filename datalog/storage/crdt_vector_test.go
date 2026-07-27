@@ -1915,9 +1915,9 @@ func TestTypedVector_AllBranches(t *testing.T) {
 
 	t.Run("unknown/fallback", func(t *testing.T) {
 		input := []any{"x", "y"}
-		result := typedVector(input, "")
+		result := typedVector(input, nil)
 		vec, ok := result.([]any)
-		require.True(t, ok, "empty ValueType should fall through to []any, got %T", result)
+		require.True(t, ok, "an undeclared value type should fall through to []any, got %T", result)
 		assert.Len(t, vec, 2)
 	})
 

@@ -42,7 +42,7 @@ func TestLiteralValueMatchesPredicateForm(t *testing.T) {
 
 	cases := []struct {
 		name       string
-		schemaType schema.ValueType
+		schemaType datalog.Keyword
 		match      interface{}
 		other      interface{}
 		literal    string // EDN text for the matching value in pattern V position

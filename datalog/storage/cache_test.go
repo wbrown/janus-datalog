@@ -12,7 +12,7 @@ import (
 
 // mockCacheResolver is a test mock for CacheResolver
 type mockCacheResolver struct {
-	cardinality     schema.Cardinality
+	cardinality     datalog.Keyword
 	lwwValue        any
 	lwwMaxID        datalog.ElementID
 	lwwScanned      int
@@ -31,7 +31,7 @@ type mockCacheResolver struct {
 	resolveRGACalls int
 }
 
-func (m *mockCacheResolver) GetCardinality(a Attribute) schema.Cardinality {
+func (m *mockCacheResolver) GetCardinality(a Attribute) datalog.Keyword {
 	return m.cardinality
 }
 
@@ -546,9 +546,9 @@ func TestCacheRebuildStoreError(t *testing.T) {
 	copy(a[:], ":person/name")
 	key := CacheKey{E: e, A: a}
 
-	// The resolver's error reaches the caller. Before this it was dropped and
-	// GetOrResolve returned a nil entry, so a failed read was indistinguishable
-	// from an attribute that has no value.
+	// The resolver's error reaches the caller. A nil entry means the attribute
+	// has no value, so a dropped error would make a failed read and an absent
+	// attribute the same answer.
 	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.ErrorIs(t, err, assert.AnError)
 	assert.Nil(t, entry)

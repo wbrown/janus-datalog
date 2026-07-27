@@ -18,9 +18,9 @@ import (
 // Every test-data path in this file is named from the module root and anchored
 // by resolveTestDataPath, because the builder and the readers run from
 // different directories: cmd/build-testdb from the module root, the package's
-// tests from the package. A path relative to the current directory means two
-// different files to those two callers, which is how `make build-testdb` came
-// to fill a location nothing reads while its own guard checked another.
+// tests from the package. A path relative to the current directory names two
+// different files to those two callers, so a builder can fill one location
+// while every reader — and the Makefile's own guard — looks at another.
 const BenchmarkDatabasePath = "datalog/storage/testdata/ohlc_benchmark.db"
 
 // moduleRoot walks up from dir to the directory holding go.mod — the anchor

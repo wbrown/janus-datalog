@@ -9,8 +9,8 @@ import (
 
 // ValidateValue checks if a value matches the expected type
 // Returns nil if valid, error if type mismatch
-func ValidateValue(value interface{}, expected ValueType) error {
-	if expected == "" {
+func ValidateValue(value interface{}, expected datalog.Keyword) error {
+	if expected == nil {
 		return nil // No type constraint
 	}
 
@@ -98,7 +98,7 @@ func ValidateDatom(s SchemaProvider, attr datalog.Keyword, value interface{}) er
 	}
 
 	// Type validation
-	if def.ValueType != "" {
+	if def.ValueType != nil {
 		if err := ValidateValue(value, def.ValueType); err != nil {
 			return err
 		}

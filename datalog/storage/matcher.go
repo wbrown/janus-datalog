@@ -652,7 +652,7 @@ func (m *PatternMatcher) LookupAttribute(
 
 	// Determine cardinality and value type for correct resolution
 	card := schema.CardinalityOne // default
-	var valueType schema.ValueType
+	var valueType datalog.Keyword
 	if m.schema != nil {
 		if def := m.schema.GetAttribute(attr); def != nil {
 			card = def.Cardinality
@@ -774,7 +774,7 @@ func (m *PatternMatcher) LookupAttribute(
 // typedVector converts []any to a typed slice when the schema value type is known.
 // For TypeString returns []string, for TypeLong returns []int64, etc.
 // Falls back to returning the original []any if the type is unknown or mixed.
-func typedVector(elements []any, vt schema.ValueType) any {
+func typedVector(elements []any, vt datalog.Keyword) any {
 	switch vt {
 	case schema.TypeString:
 		result := make([]string, 0, len(elements))

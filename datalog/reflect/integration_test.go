@@ -43,25 +43,27 @@ type EntityWithKeyword struct {
 }
 
 func TestSchemaFromStruct(t *testing.T) {
-	schema, err := dlreflect.SchemaFromStruct(Person{})
+	// Named sch, not schema: the assertions below name the schema package's
+	// value-type keywords, which a local called schema would shadow.
+	sch, err := dlreflect.SchemaFromStruct(Person{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Check that attributes are defined
-	nameAttr := schema.GetAttribute(datalog.NewKeyword(":person/name"))
+	nameAttr := sch.GetAttribute(datalog.NewKeyword(":person/name"))
 	if nameAttr == nil {
 		t.Fatal("expected :person/name attribute")
 	}
-	if nameAttr.ValueType != "db.type/string" {
+	if nameAttr.ValueType != schema.TypeString {
 		t.Errorf("expected name to be string, got %s", nameAttr.ValueType)
 	}
 
-	ageAttr := schema.GetAttribute(datalog.NewKeyword(":person/age"))
+	ageAttr := sch.GetAttribute(datalog.NewKeyword(":person/age"))
 	if ageAttr == nil {
 		t.Fatal("expected :person/age attribute")
 	}
-	if ageAttr.ValueType != "db.type/long" {
+	if ageAttr.ValueType != schema.TypeLong {
 		t.Errorf("expected age to be long, got %s", ageAttr.ValueType)
 	}
 }

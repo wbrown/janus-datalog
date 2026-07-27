@@ -63,9 +63,8 @@ func TestATEVEncoderRoundTrip(t *testing.T) {
 // one with the highest Tx. That ordering is what lets an A-bound, Tx-bound,
 // V-unbound pattern seek straight to its transaction — chooseIndex binds
 // [A][Tx↓] and lands on the exact Tx, or the nearest below it — and it is what
-// makes an attribute's high-water mark a single forward seek. The cache gate
-// that consumed the mark was removed in 2026-07 as unwired; the property this
-// test pins is what any rebuilt gate would use.
+// makes an attribute's high-water mark reachable in a single forward seek,
+// which is the property any freshness gate over an attribute would rest on.
 func TestATEVDescendingTxOrder(t *testing.T) {
 	entity := sha1.Sum([]byte("atev-order"))
 	attr := datalog.NewKeyword(":atev/order")

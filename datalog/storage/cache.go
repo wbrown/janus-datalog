@@ -29,7 +29,7 @@ type CacheEntry struct {
 	// are unset on a sentinel.
 	inFlight    bool
 	version     datalog.ElementID // Max ElementID when this entry was computed
-	cardinality schema.Cardinality
+	cardinality datalog.Keyword
 
 	// Resolved views (one populated based on cardinality)
 	oneValue    any                 // Cardinality-One: single current value
@@ -71,7 +71,7 @@ func (e *CacheEntry) valueCount() int {
 }
 
 // Cardinality returns the cardinality of this cache entry
-func (e *CacheEntry) Cardinality() schema.Cardinality {
+func (e *CacheEntry) Cardinality() datalog.Keyword {
 	return e.cardinality
 }
 
@@ -124,11 +124,11 @@ func NewCache() *Cache {
 // check handler != nil before calling; the emission itself never guards.
 //
 // The handler arrives per call rather than being stored on the Cache. A stored
-// copy has to be kept in step with the one on the Database, which is what
-// forced Database.SetAnnotationHandler to exist as a method: a plain assignment
-// cannot fan out to duplicates. Every emission site here is inside
+// copy would be a second home for a value the Database already owns, and an
+// assignment to that one cannot reach this one — keeping them in step needs a
+// method where a field would do. Every emission site here is inside
 // GetOrResolve, which is handed the handler along with the resolver and the
-// snapshot bound — per-call context, not retained state, so there is nothing to
+// snapshot bound: per-call context, not retained state, so there is nothing to
 // go stale.
 func annotateRebuild(handler annotations.Handler, key CacheKey, reason string, slot cacheSlot) {
 	data := map[string]interface{}{
@@ -405,7 +405,7 @@ func (c *Cache) GetCachedAttrs(e Entity) map[Attribute]bool {
 // This is the dispatch target for PrefetchEntities: as the EATV iterator
 // crosses an attribute boundary, the accumulated datoms are resolved and
 // cached here in a single call.
-func (c *Cache) PopulateFromDatoms(key CacheKey, card schema.Cardinality, datoms []datalog.Datom) {
+func (c *Cache) PopulateFromDatoms(key CacheKey, card datalog.Keyword, datoms []datalog.Datom) {
 	// Skip if a commit to this (E, A) is in flight (the committer owns the cache
 	// for this key), or if already cached and fresh.
 	if slot, ok := c.slots.Load(key); ok && slot.entry != nil {
@@ -465,10 +465,10 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card schema.Cardinality, datoms
 
 // rebuild resolves the current value for (E, A) based on cardinality.
 //
-// A failed resolution returns an error, never a nil entry. Dropping the
-// resolver's error and returning nil made a failed scan reach the reader as
-// "this (E, A) has no value" — a wrong answer with no signal, and the shape the
-// storage rules forbid materialization from producing.
+// A failed resolution returns an error, never a nil entry. A nil entry means
+// this (E, A) has no value, so returning one on a failed scan hands the reader
+// a wrong answer with no signal — the shape the storage rules forbid
+// materialization from producing.
 //
 // NOTE: this switch and its three arms duplicate ResolveEntry, arm for arm,
 // differing only in that GetOrResolve caches what this returns. The duplication
@@ -549,7 +549,7 @@ func (c *Cache) rebuildVector(key CacheKey, resolver CacheResolver) (*CacheEntry
 // on the CacheEntry, which is what the read bought.
 type CacheResolver interface {
 	// GetCardinality returns the cardinality for an attribute
-	GetCardinality(a Attribute) schema.Cardinality
+	GetCardinality(a Attribute) datalog.Keyword
 
 	// ResolveLWW returns the current value for cardinality-one (highest ElementID wins)
 	// Returns (value, maxElementID, datomsScanned, error)
@@ -569,10 +569,10 @@ type CacheResolver interface {
 // check and the store, and the cache-disabled read path calls it directly.
 //
 // A failed resolution returns an error, never a nil entry. The two are not the
-// same answer and a caller cannot recover the difference: this switch used to
-// drop every resolver error and return nil, so a failed scan reached the reader
-// as "this (E, A) has no value" — a wrong answer with no signal, and the exact
-// shape the storage rules forbid materialization from producing.
+// same answer and a caller cannot recover the difference: nil means this (E, A)
+// has no value, so a dropped error reaches the reader as a wrong answer with no
+// signal — the exact shape the storage rules forbid materialization from
+// producing.
 func ResolveEntry(key CacheKey, resolver CacheResolver) (*CacheEntry, error) {
 	card := resolver.GetCardinality(key.A)
 

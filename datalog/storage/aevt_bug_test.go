@@ -124,10 +124,9 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 			for i, event := range events {
 				t.Logf("Event %d: %s - Data: %+v", i, event.Name, event.Data)
 
-				// pattern/index-selection is the only one of the four names this
-				// loop used to check that has a producer, and it names the index
-				// rather than counting datoms — so the count read here never
-				// found its key and accumulated zero.
+				// pattern/index-selection names the index and carries no datom
+				// count; the scan volume this test asserts on comes from
+				// pattern/hash-join-complete instead.
 				if event.Name == "pattern/index-selection" {
 					if idx, ok := event.Data["index"].(string); ok {
 						indexUsed = idx

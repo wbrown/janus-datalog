@@ -334,8 +334,8 @@ func (m *PatternMatcher) matchUnboundScan(
 	useAddWinsScanAllEntities := false
 	useAddWinsScanAllEntitiesWithValue := false
 	useVectorResolution := false
-	var card schema.Cardinality = schema.CardinalityOne // Default for schemaless
-	var valueType schema.ValueType
+	var card datalog.Keyword = schema.CardinalityOne // Default for schemaless
+	var valueType datalog.Keyword
 
 	// Determine cardinality and value type when A is bound (regardless of E)
 	if a != nil {
@@ -809,11 +809,7 @@ func (it *validatingVBoundIterator) isBoundAUniqueAttr() bool {
 	if it.matcher.schema == nil {
 		return false
 	}
-	def := it.matcher.schema.GetAttribute(aKw)
-	if def == nil {
-		return false
-	}
-	return def.Unique != ""
+	return it.matcher.schema.GetAttribute(aKw).HasUniqueConstraint()
 }
 
 // tryEmitUniqueWinner resolves the (A, V)-LWW winner for the current
@@ -1016,13 +1012,12 @@ func (it *validatingVBoundIterator) attrIsUnique(a datalog.Keyword) bool {
 	if it.matcher.schema == nil {
 		return false
 	}
-	def := it.matcher.schema.GetAttribute(a)
-	return def != nil && def.Unique != ""
+	return it.matcher.schema.GetAttribute(a).HasUniqueConstraint()
 }
 
 // getCardinalityEnum looks up the cardinality enum for an attribute
 // Returns CardinalityUnknown (0) for schemaless or undefined attributes
-func (it *validatingVBoundIterator) getCardinalityEnum(a datalog.Keyword) schema.Cardinality {
+func (it *validatingVBoundIterator) getCardinalityEnum(a datalog.Keyword) datalog.Keyword {
 	if it.matcher.schema == nil {
 		return schema.CardinalityUnknown
 	}
@@ -1057,10 +1052,10 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 		}
 	}
 
-	// One event per opened scan, reporting the run it addresses. This fires
-	// after the bound is built so it can carry it, and on both branches — the
-	// A-variable branch previously emitted a second event carrying only the
-	// encoded key range, which is the one thing an annotation must not report.
+	// One event per opened scan, reporting the run it addresses. It fires after
+	// the bound is built so it can carry it, and on both branches: a branch
+	// that reported an encoded key range instead would be naming bytes only
+	// this backend's encoder can interpret, which is not what a run is.
 	if it.matcher.handler != nil {
 		data := map[string]any{
 			"bound_v": fmt.Sprintf("%v", it.currentBoundV),
@@ -1143,8 +1138,8 @@ func (m *PatternMatcher) matchFromCache(
 	e datalog.Identity,
 	a datalog.Keyword,
 	v interface{}, // nil if V is unbound
-	card schema.Cardinality,
-	valueType schema.ValueType,
+	card datalog.Keyword,
+	valueType datalog.Keyword,
 ) (executor.Relation, bool, error) {
 	// Build cache key
 	eBytes := Entity(e.Hash())
@@ -1167,7 +1162,8 @@ func (m *PatternMatcher) matchFromCache(
 	}
 
 	// This arm is the default for every E-and-A-bound pattern, which makes it
-	// the most common shape in the engine, and it reported nothing until now.
+	// the most common shape in the engine and the one a trace can least afford
+	// to be silent about.
 	//
 	// It emits no pattern/index-selection because it addresses no run: the
 	// cache picks the index by cardinality inside resolution, and a hit reads
@@ -1188,9 +1184,11 @@ func (m *PatternMatcher) matchFromCache(
 				Latency: time.Since(opened),
 				Data: map[string]interface{}{
 					"pattern": pattern.String(),
-					// Cardinality is a keyword, and its Go value is that
-					// keyword's name — there is nothing to format.
-					"cardinality":     string(card),
+					// The keyword itself. Rendering belongs to the formatter,
+					// which is the renderer; flattening it here would cost an
+					// allocation on every emit and hand the consumer a string
+					// to parse instead of a value to compare.
+					"cardinality":     card,
 					"datoms.scanned":  spent,
 					"datoms.resolved": entry.valueCount(),
 					"datoms.matched":  matched,
@@ -1332,8 +1330,8 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 	}
 
 	// Pre-compute fixed-A values when A is constant across all tuples
-	var fixedCard schema.Cardinality
-	var fixedValueType schema.ValueType
+	var fixedCard datalog.Keyword
+	var fixedValueType datalog.Keyword
 	var fixedAAttr Attribute
 	if aSymIdx < 0 {
 		fixedCard = schema.CardinalityOne
@@ -1393,8 +1391,8 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		}
 
 		// Determine A and cardinality for this tuple
-		var rowCard schema.Cardinality
-		var rowValueType schema.ValueType
+		var rowCard datalog.Keyword
+		var rowValueType datalog.Keyword
 		var rowAAttr Attribute
 		if aSymIdx >= 0 {
 			// Per-tuple A: extract from binding tuple
@@ -1568,7 +1566,7 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	e, a, v interface{},
-	valueType schema.ValueType,
+	valueType datalog.Keyword,
 ) (executor.Relation, error) {
 	// Get entity and attribute bytes
 	var eBytes [20]byte
@@ -1659,7 +1657,7 @@ func (m *PatternMatcher) matchVectorWithBindings(
 	symbols []query.Symbol,
 	attr datalog.Keyword,
 	v interface{},
-	valueType schema.ValueType,
+	valueType datalog.Keyword,
 ) (executor.Relation, error) {
 	// Find which symbol in bindings provides the entity
 	var eSymIdx int = -1
@@ -1985,7 +1983,7 @@ func (m *PatternMatcher) matchVectorScanAllEntities(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	a, v interface{},
-	valueType schema.ValueType,
+	valueType datalog.Keyword,
 ) (executor.Relation, error) {
 	var aBytes [32]byte
 	if kw, ok := a.(datalog.Keyword); ok {
@@ -2028,7 +2026,7 @@ type vectorScanAllEntitiesIterator struct {
 	symbols      []query.Symbol
 	a, v         interface{}
 	aBytes       [32]byte
-	valueType    schema.ValueType
+	valueType    datalog.Keyword
 	storageIter  Iterator
 	seenEntities map[[20]byte]bool
 

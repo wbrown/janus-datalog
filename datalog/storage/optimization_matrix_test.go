@@ -19,7 +19,7 @@ func optimizationMatrixSchema() *schema.Schema {
 	s := schema.NewSchema()
 	for _, definition := range []struct {
 		attr      string
-		valueType schema.ValueType
+		valueType datalog.Keyword
 	}{
 		{":entity/type", schema.TypeKeyword},
 		{":scenario/title", schema.TypeString},

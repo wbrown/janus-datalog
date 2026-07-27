@@ -29,7 +29,7 @@ type CRDTResolvingIterator struct {
 	currentE datalog.Identity
 	currentA datalog.Keyword
 	hasGroup bool
-	card     schema.Cardinality
+	card     datalog.Keyword
 
 	// CardinalityMany: streaming state (no buffering!)
 	// Because we iterate Tx descending:
@@ -270,7 +270,7 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 			// Unique CardinalityOne attributes use the walk-based
 			// resolution. Other cardinalities ignore Unique (uniqueness
 			// applies only to single-valued attributes).
-			if attr.Cardinality == schema.CardinalityOne && attr.Unique != "" && it.uniqueMatcher != nil {
+			if attr.Cardinality == schema.CardinalityOne && attr.HasUniqueConstraint() && it.uniqueMatcher != nil {
 				it.uniqueMode = true
 			}
 		}
@@ -503,8 +503,8 @@ func (it *CRDTResolvingIterator) Seek(bound ScanBound) {
 // source's, the gap between it and what resolution emitted being the history
 // depth the index made the query pay for. Unique CardinalityOne is the
 // exception: processUniqueEntry opens an AVET supersession scan per Set entry,
-// so those reads are added here. Reporting only the source would have hidden
-// the largest read on that path behind the smallest.
+// so those reads are added here. Reporting only the source hides the largest
+// read on that path behind the smallest.
 func (it *CRDTResolvingIterator) Scanned() int {
 	return it.source.Scanned() + it.uniqueScanned
 }

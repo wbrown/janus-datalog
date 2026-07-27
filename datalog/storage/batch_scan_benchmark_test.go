@@ -90,8 +90,8 @@ func BenchmarkBatchScanning(b *testing.B) {
 
 // BenchmarkBatchScanScaling measures how binding-driven scans scale with binding
 // count. The sizes span chooseJoinStrategy's 1000-binding boundary, so the series
-// covers both HashJoinScan and MergeJoin. The name predates v0.15.0, which removed
-// the batch scanner; it is kept because archived benchmark records cite it.
+// covers both HashJoinScan and MergeJoin. The name says "batch scan" because
+// archived benchmark records cite it by that name; renaming it orphans them.
 func BenchmarkBatchScanScaling(b *testing.B) {
 	tempDir := b.TempDir()
 	db, err := NewDatabase(tempDir)

@@ -82,16 +82,35 @@ func main() {
 	tx.Rollback()
 
 	fmt.Println("\n=== 4. Uniqueness constraint ===")
-	// :person/email has UniqueValue -- duplicate values are rejected at commit.
+	// :person/email is UniqueValue. Uniqueness here is a read-time property,
+	// not a write-time rejection: there is no single transactor to serialize a
+	// check-then-write, so both writes land and the value resolves to exactly
+	// one owner when read. LookupByUnique is that read, and the entity view
+	// agrees with it -- the entity that lost the value stops reporting it.
+	// See docs/reference/CRDT_UNIQUE_SEMANTICS.md.
 	tx = d.NewTransaction()
 	tx.Add(bob, name, "Bob Smith")
-	tx.Add(bob, email, "alice@example.com") // already used by Alice
-	_, err = tx.Commit()
-	if err != nil {
-		fmt.Printf("  Uniqueness error caught: %v\n", err)
-	} else {
-		fmt.Println("  (no error -- uniqueness not enforced at this level)")
+	tx.Add(bob, email, "alice@example.com") // already claimed by Alice
+	if _, err := tx.Commit(); err != nil {
+		log.Fatal(err)
 	}
+	fmt.Println("  Commit succeeded -- the duplicate is not rejected")
+
+	owner, err := d.LookupByUnique(email, "alice@example.com")
+	if err != nil {
+		log.Fatal(err)
+	}
+	ownerName, _, err := d.GetString(owner, name)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("  LookupByUnique: the value belongs to %s\n", ownerName)
+
+	aliceEmail, found, err := d.GetString(alice, email)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("  Alice's email now reads %q (present: %t)\n", aliceEmail, found)
 
 	fmt.Println("\n=== 5. Cardinality-one: last write wins ===")
 	// Updating a cardinality-one attribute replaces the old value.

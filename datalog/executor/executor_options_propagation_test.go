@@ -1,15 +1,14 @@
 // Reproduction for docs/bugs/BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.md
 // (executor half).
 //
-// The PlannerOptions -> ExecutorOptions conversion dropped a field, so a custom
-// value never reached the executor's effective options. This is the field-set
-// drift the bug report flags: the storage-side and executor-side conversions
-// copied different subsets.
+// PlannerOptions -> ExecutorOptions is a hand-written field-by-field copy, and
+// so is the storage-side conversion. A field either converter omits compiles,
+// runs, and silently leaves the caller's value at the zero default; nothing but
+// a test that sets one and reads it back downstream can tell.
 //
-// The field originally dropped was IndexNestedLoopThreshold, removed with the
-// iterator-reuse strategy. MaxSubqueryWorkers stands in for it: the same
-// hazard, a non-boolean the hand-written converter must copy and can silently
-// omit.
+// MaxSubqueryWorkers is the probe because it is numeric: an omitted bool is
+// caught only when the custom value differs from the default, while a numeric
+// read back as zero is caught outright.
 
 package executor
 

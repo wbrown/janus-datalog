@@ -40,10 +40,9 @@ func TestDatabaseMatcher_HonorsCustomPlannerOptions(t *testing.T) {
 	custom.EnableTrueStreaming = false // default true
 	custom.EnableScanSharing = true    // default false; dropped by Matcher() pre-fix
 	custom.EnableEntityPrefetch = true // default false; dropped by Matcher() pre-fix
-	// A numeric field as well as booleans: a copy that drops a field is caught
-	// by a bool only when the default differs, while a wrong-valued numeric is
-	// caught outright. This axis was IndexNestedLoopThreshold's until that
-	// option was removed in v0.15.0.
+	// A numeric field as well as booleans: a dropped bool is caught only when
+	// the custom value differs from the default, while a numeric read back as
+	// zero is caught outright.
 	custom.MaxSubqueryWorkers = 7 // default 0, meaning 4
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{

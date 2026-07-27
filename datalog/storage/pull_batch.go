@@ -248,17 +248,16 @@ func (d *Database) isUniqueAttribute(attr datalog.Keyword) bool {
 	if d.schema == nil {
 		return false
 	}
-	definition := d.schema.GetAttribute(attr)
-	return definition != nil && definition.Unique != ""
+	return d.schema.GetAttribute(attr).HasUniqueConstraint()
 }
 
-func (d *Database) attributeValueType(attr datalog.Keyword) schema.ValueType {
+func (d *Database) attributeValueType(attr datalog.Keyword) datalog.Keyword {
 	if d.schema == nil {
-		return ""
+		return nil
 	}
 	definition := d.schema.GetAttribute(attr)
 	if definition == nil {
-		return ""
+		return nil
 	}
 	return definition.ValueType
 }

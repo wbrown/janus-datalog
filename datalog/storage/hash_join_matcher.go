@@ -178,7 +178,7 @@ func (m *PatternMatcher) matchWithHashJoin(
 	// PHASE 4: Create streaming hash join iterator
 	iter := &hashJoinIterator{
 		matcher:         m,
-		patternString:   pattern.String(),
+		pattern:         pattern,
 		matchPlan:       compileBindingMatchPlan(pattern, bindingRel.Symbols()),
 		symbols:         symbols,
 		position:        position,
@@ -567,20 +567,19 @@ func (m *PatternMatcher) matchWithMergeJoin(
 
 	// PHASE 4: Create streaming merge join iterator
 	iter := &mergeJoinIterator{
-		matcher:       m,
-		pattern:       pattern,
-		patternString: pattern.String(),
-		bindingRel:    bindingRel,
-		symbols:       symbols,
-		position:      position,
-		index:         index,
-		constraints:   constraints,
-		sortedTuples:  sortedTuples,
-		bindingIdx:    0,
-		iter:          resolvedIterMerge,
-		workspace:     make(executor.Tuple, len(symbols)),
-		tupleBuilder:  m.getTupleBuilder(pattern, symbols),
-		scanStart:     scanStart,
+		matcher:      m,
+		pattern:      pattern,
+		bindingRel:   bindingRel,
+		symbols:      symbols,
+		position:     position,
+		index:        index,
+		constraints:  constraints,
+		sortedTuples: sortedTuples,
+		bindingIdx:   0,
+		iter:         resolvedIterMerge,
+		workspace:    make(executor.Tuple, len(symbols)),
+		tupleBuilder: m.getTupleBuilder(pattern, symbols),
+		scanStart:    scanStart,
 	}
 
 	// Return streaming relation
@@ -597,8 +596,11 @@ func extractBindingKey(tuple executor.Tuple, position int) interface{} {
 
 // hashJoinIterator performs lazy hash join iteration
 type hashJoinIterator struct {
-	matcher         *PatternMatcher
-	patternString   string
+	matcher *PatternMatcher
+	// The pattern, not a rendering of it: String() is annotation argument
+	// preparation, so it belongs inside the handler guard at Close. A rendered
+	// form held here would be built by every hash join, handler or not.
+	pattern         *query.DataPattern
 	matchPlan       bindingMatchPlan
 	symbols         []query.Symbol
 	position        int
@@ -610,8 +612,8 @@ type hashJoinIterator struct {
 	tupleBuilder    *query.InternedTupleBuilder
 	current         executor.Tuple
 	workspace       executor.Tuple // Reusable workspace for tuple building
-	datomsResolved  int            // Track number of datoms scanned for event reporting
-	matchesFound    int            // Track number of matches for event reporting
+	datomsResolved  int            // Datoms the inner iterator produced
+	matchesFound    int            // Rows this join emitted
 	scanStart       time.Time      // When the scan opened; the completion event's duration
 	err             error          // First error from storage operations
 }
@@ -690,7 +692,7 @@ func (it *hashJoinIterator) Close() error {
 			Start:   it.scanStart,
 			Latency: time.Since(it.scanStart),
 			Data: map[string]interface{}{
-				"pattern":         it.patternString,
+				"pattern":         it.pattern.String(),
 				"index":           it.index.String(),
 				"binding.size":    it.bindingKeyCount,
 				"datoms.scanned":  it.iter.Scanned(),
@@ -712,7 +714,6 @@ func (it *hashJoinIterator) Error() error { return it.err }
 type mergeJoinIterator struct {
 	matcher        *PatternMatcher
 	pattern        *query.DataPattern
-	patternString  string
 	bindingRel     executor.Relation
 	symbols        []query.Symbol
 	position       int
@@ -827,15 +828,14 @@ func (it *mergeJoinIterator) Tuple() executor.Tuple {
 
 func (it *mergeJoinIterator) Close() error {
 	// Merge join is the strategy chosen for the largest binding sets, so it is
-	// the one whose scan volume most needs reporting. It reported nothing until
-	// 2026-07-26.
+	// the one whose scan volume most needs reporting.
 	if it.matcher.handler != nil {
 		it.matcher.handler(annotations.Event{
 			Name:    annotations.PatternMergeJoinComplete,
 			Start:   it.scanStart,
 			Latency: time.Since(it.scanStart),
 			Data: map[string]interface{}{
-				"pattern":         it.patternString,
+				"pattern":         it.pattern.String(),
 				"index":           it.index.String(),
 				"binding.size":    len(it.sortedTuples),
 				"datoms.scanned":  it.iter.Scanned(),

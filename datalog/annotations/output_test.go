@@ -36,10 +36,11 @@ func TestRenderBoundPositionsCompactsComponentOrder(t *testing.T) {
 
 // TestScanLineReportsBoundFromIndexSelection is the pairing pin: the scan line's
 // index and bound come from the preceding pattern/index-selection event, so the
-// two events must agree on the payload's shape. Before the typed-bound
-// conversion this pairing was broken — the formatter read fields no emitter
-// produced, and every scan line rendered "bound: ?" — which no test caught
-// because the formatter had none.
+// two events must agree on the payload's shape.
+//
+// Nothing else checks that agreement. A formatter reading a key no emitter
+// writes still compiles, still runs, and renders "bound: ?" on every line —
+// a wrong answer that looks like missing instrumentation.
 func TestScanLineReportsBoundFromIndexSelection(t *testing.T) {
 	var out bytes.Buffer
 	f := NewPlainTextFormatter(&out)

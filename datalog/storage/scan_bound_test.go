@@ -263,10 +263,9 @@ func TestIndexSelectionEventReportsBound(t *testing.T) {
 			})
 
 			// The producer and the formatter are pinned separately — here they
-			// meet. Separate pins agreeing on a payload shape is exactly what
-			// failed before: the formatter read fields no emitter produced, and
-			// every scan line rendered "bound: ?" because nothing ran the two
-			// together.
+			// meet. Separate pins can agree on a payload shape that neither
+			// side produces: a formatter reading keys no emitter writes still
+			// renders, and every scan line comes out "bound: ?".
 			t.Run("the formatter renders what the matcher emits", func(t *testing.T) {
 				events = nil
 				result, err := db.Query(`[:find ?e ?n :where [?e :person/name ?n]]`)

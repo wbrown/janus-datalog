@@ -18,11 +18,17 @@ import (
 // maps to exactly one marker entity.
 const snapshotEntityPrefix = "db.snapshot/"
 
+// The marker's attributes, interned once. Well-known because these are package
+// variables: ClearInterns replaces the intern tables, and a variable holding a
+// pre-clear instance is an orphan that panics in Keyword.Equal against the next
+// fresh intern of the same name. Registering is not conditional on having
+// traced a comparison to a panic — the rule is that a package variable holding
+// an interned instance is registered, so that nobody has to trace one.
 var (
-	snapshotNameAttr      = datalog.NewKeyword(":db.snapshot/name")
-	snapshotAtLamportAttr = datalog.NewKeyword(":db.snapshot/at-lamport")
-	snapshotAtReplicaAttr = datalog.NewKeyword(":db.snapshot/at-replica")
-	snapshotCreatedAttr   = datalog.NewKeyword(":db.snapshot/created")
+	snapshotNameAttr      = datalog.WellKnownKeyword(":db.snapshot/name")
+	snapshotAtLamportAttr = datalog.WellKnownKeyword(":db.snapshot/at-lamport")
+	snapshotAtReplicaAttr = datalog.WellKnownKeyword(":db.snapshot/at-replica")
+	snapshotCreatedAttr   = datalog.WellKnownKeyword(":db.snapshot/created")
 )
 
 var (

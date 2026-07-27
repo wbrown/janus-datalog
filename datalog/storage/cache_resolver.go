@@ -10,7 +10,7 @@ var _ CacheResolver = (*PatternMatcher)(nil)
 
 // GetCardinality returns the cardinality for an attribute
 // Defaults to CardinalityOne if schema is not set or attribute not found
-func (m *PatternMatcher) GetCardinality(a Attribute) schema.Cardinality {
+func (m *PatternMatcher) GetCardinality(a Attribute) datalog.Keyword {
 	if m.schema == nil {
 		return schema.CardinalityOne
 	}
@@ -52,7 +52,7 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.Element
 	if m.schema != nil && !m.isHistoryMode() {
 		kw := decodeAttribute(a)
 		if kw != "" {
-			if def := m.schema.GetAttribute(datalog.NewKeyword(kw)); def != nil && def.Unique != "" {
+			if m.schema.GetAttribute(datalog.NewKeyword(kw)).HasUniqueConstraint() {
 				v, tx, found, scanned, err := m.walkUniqueEntityValue(e, a)
 				if err != nil {
 					return nil, datalog.ElementID{}, scanned, err

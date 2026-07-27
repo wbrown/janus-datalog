@@ -44,8 +44,8 @@ func getOrderedSetElementType(t reflect.Type) reflect.Type {
 	return itemsField.Type.Elem()
 }
 
-// GoTypeToSchemaType maps a Go reflect.Type to a schema.ValueType
-func GoTypeToSchemaType(t reflect.Type) (schema.ValueType, error) {
+// GoTypeToSchemaType maps a Go reflect.Type to a :db/valueType keyword.
+func GoTypeToSchemaType(t reflect.Type) (datalog.Keyword, error) {
 	// Check pointer type aliases BEFORE dereferencing
 	// Identity and Keyword are pointer type aliases (*identity, *keyword)
 	if t == identityType {
@@ -109,13 +109,13 @@ func GoTypeToSchemaType(t reflect.Type) (schema.ValueType, error) {
 		return schema.TypeRef, nil
 	}
 
-	return "", fmt.Errorf("unsupported type: %s", t)
+	return nil, fmt.Errorf("unsupported type: %s", t)
 }
 
-// InferCardinality determines cardinality from a Go type
-// Slices (except []byte) are cardinality-many, everything else is one
-// OrderedSet[T] is cardinality-vector (ordered with unique elements)
-func InferCardinality(t reflect.Type) schema.Cardinality {
+// InferCardinality determines the :db/cardinality keyword from a Go type.
+// Slices (except []byte) are cardinality-many, everything else is one.
+// OrderedSet[T] is cardinality-vector (ordered with unique elements).
+func InferCardinality(t reflect.Type) datalog.Keyword {
 	// Check pointer type aliases BEFORE dereferencing
 	// Identity and Keyword are pointer type aliases (*identity, *keyword)
 	if t == identityType || t == keywordType {

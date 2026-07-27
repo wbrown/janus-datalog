@@ -60,14 +60,13 @@ func funnelFixture(t *testing.T, db *Database) datalog.Identity {
 	return e
 }
 
-// TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel is the pin for the
-// finding that most of the matcher's dispatch arms opened scans and said
-// nothing. Each case aims a query at one arm and asserts two things: the arm
-// announced the run it addressed, and it reported what that run cost.
+// TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel holds every dispatch
+// arm to the same two obligations: announce the run it addressed, and report
+// what that run cost. Each case aims a query at one arm.
 //
-// Deleting either emit from any arm reds exactly the row for that arm, which is
-// what the previous round lacked — three arms gained emitIndexSelection and
-// deleting all three left the suite green.
+// One row per arm, rather than one query asserting "some arm reported": delete
+// either emit from any arm and exactly that arm's row reds. A test that only
+// showed a query producing events stays green while several arms scan silently.
 //
 // The cache is disabled for the E-and-A-bound arms because matchFromCache
 // intercepts them otherwise; that arm has its own case below.
@@ -221,7 +220,10 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 			require.NotNil(t, miss, "the cache arm must report what it cost")
 			require.Nil(t, lastEventNamed(events, annotations.PatternIndexSelection),
 				"the cache arm addresses no run and must not announce one")
-			require.Equal(t, "db.cardinality/one", miss.Data["cardinality"])
+			// The keyword, not a rendering of it. Flattening at the producer
+			// would cost an allocation per emit and hand the consumer a string
+			// to parse instead of a value to compare by pointer.
+			require.Equal(t, schema.CardinalityOne, miss.Data["cardinality"])
 			require.Positive(t, miss.Data["datoms.scanned"],
 				"a miss resolved from storage and read the index to do it")
 			require.Equal(t, 1, miss.Data["datoms.matched"])

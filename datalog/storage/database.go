@@ -872,9 +872,9 @@ func (ar *AnalyzeResult) String() string {
 				eventCounts[annotations.PatternStorageScan], float64(t.Microseconds())/1000))
 		}
 
-		// Relational joins. The executor performs hash joins only; the
-		// nested and merge counts this line used to carry were names for
-		// operations it does not have, and always read zero.
+		// Relational joins. The executor performs hash joins only, so this line
+		// names that one operation: a count for an operation the executor does
+		// not have would read zero forever and tell a reader nothing.
 		if hashJoins := eventCounts[annotations.JoinHash]; hashJoins > 0 {
 			sb.WriteString(fmt.Sprintf("  Joins: hash=%d\n", hashJoins))
 			if t := eventTimes[annotations.JoinHash]; t > 0 {
@@ -882,9 +882,9 @@ func (ar *AnalyzeResult) String() string {
 			}
 		}
 
-		// Binding-driven scans, by the strategy chooseJoinStrategy picked.
-		// Merge join is selected for the largest binding sets, so its absence
-		// from this report was the absence of the biggest scans.
+		// Binding-driven scans, by the strategy chooseJoinStrategy picked. All
+		// three are listed because merge join is selected for the largest
+		// binding sets: omitting it omits the biggest scans in the report.
 		bindingScans := []struct {
 			label string
 			event string
@@ -1470,7 +1470,7 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 	}
 
 	// Check cardinality for CRDT semantics
-	var card schema.Cardinality
+	var card datalog.Keyword
 	var def *schema.AttributeDefinition
 	hasSchema := false
 	if s := t.db.Schema(); s != nil {
@@ -1612,7 +1612,7 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 	}
 
 	// Determine cardinality: schemaless/undefined defaults to CardinalityOne
-	var card schema.Cardinality
+	var card datalog.Keyword
 	if def != nil {
 		card = def.Cardinality
 	} else {
@@ -2313,7 +2313,7 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 			if sch == nil || !sch.HasSchema() {
 				return
 			}
-			if def := sch.GetAttribute(a); def != nil && def.Unique != "" {
+			if sch.GetAttribute(a).HasUniqueConstraint() {
 				uniqueAttrsWritten[aBytes] = true
 			}
 		}
@@ -2660,7 +2660,7 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 	if def == nil {
 		return nil, fmt.Errorf("LookupByUnique: attribute %s not found in schema", attr.String())
 	}
-	if def.Unique == "" {
+	if !def.HasUniqueConstraint() {
 		return nil, fmt.Errorf("LookupByUnique: attribute %s is not unique", attr.String())
 	}
 
@@ -2672,10 +2672,11 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 	var aBytes Attribute
 	copy(aBytes[:], attr.String())
 
-	// This is a scan-opening path like any other: resolveAVLWW walks AVET for
-	// the value, then walks the claimant's EATV history with a supersession
-	// scan per Set entry. Called in a loop it is the dominant read in a
-	// program, and it reported nothing until 2026-07-27.
+	// This is a scan-opening path like any other, and it reports as one:
+	// resolveAVLWW walks AVET for the value, then walks the claimant's EATV
+	// history with a supersession scan per Set entry. Called in a loop — which
+	// is how application-layer upsert uses it — it is the dominant read in a
+	// program, so a trace that omitted it would omit the program's largest cost.
 	start := time.Now()
 	owner, _, scanned, err := matcher.resolveAVLWW(aBytes, value)
 	if d.AnnotationHandler != nil {
@@ -2766,7 +2767,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 	result := make(map[datalog.Keyword]interface{})
 
 	// getValueType returns the schema value type for a keyword
-	getValueType := func(kw datalog.Keyword) schema.ValueType {
+	getValueType := func(kw datalog.Keyword) datalog.Keyword {
 		if d.schema != nil {
 			if s, ok := d.schema.(*schema.Schema); ok {
 				if def := s.GetAttribute(kw); def != nil {
@@ -2774,7 +2775,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 				}
 			}
 		}
-		return ""
+		return nil
 	}
 
 	// Cache-less path: the cache is an optimization, not a correctness
@@ -2864,7 +2865,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 // RGA for vector) go through LookupAttribute's direct index scans;
 // history-mode reads fall through to Match for raw datoms. Returns nil if
 // the entity has no current value for the attribute.
-func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr datalog.Keyword, matcher *PatternMatcher, card schema.Cardinality, valueType schema.ValueType) (interface{}, error) {
+func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr datalog.Keyword, matcher *PatternMatcher, card datalog.Keyword, valueType datalog.Keyword) (interface{}, error) {
 	// LookupAttribute applies the same CRDT resolution a matched pattern
 	// would, without the relational Match machinery (pattern construction,
 	// streaming relation, tuple builders). History mode falls through to
@@ -2919,7 +2920,7 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 			tuple := iter.Tuple()
 			if len(tuple) > 0 && tuple[0] != nil {
 				if vec, ok := tuple[0].([]interface{}); ok {
-					if valueType != "" {
+					if valueType != nil {
 						return typedVector(vec, valueType), nil
 					}
 					return vec, nil
@@ -2953,7 +2954,7 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 
 // entryToValue converts a CacheEntry to its appropriate value representation.
 // For vector entries, valueType is used to return typed slices (e.g. []string).
-func entryToValue(entry *CacheEntry, valueType schema.ValueType) interface{} {
+func entryToValue(entry *CacheEntry, valueType datalog.Keyword) interface{} {
 	switch entry.Cardinality() {
 	case schema.CardinalityOne:
 		return entry.OneValue()

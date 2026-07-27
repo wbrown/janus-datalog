@@ -21,8 +21,8 @@ const joinProjectPassName = "join-project-insertion"
 // hold the before and after.
 func optimizeAlgebra(q *query.Query, handler annotations.Handler, sink *algebra.RewriteSink) (compiled *algebra.Node, optimized *algebra.Node, err error) {
 	// The guard is the caller's, never the emitter's: `tree` is a whole-tree
-	// walk through algebra.formatNode, and Go evaluates it before the call. With
-	// the check inside, every plan paid for two renders it then discarded.
+	// walk through algebra.formatNode, and Go evaluates it before the call, so a
+	// check inside emit would render both trees and discard them on every plan.
 	emit := func(name string, data map[string]interface{}) {
 		handler(annotations.Event{Name: name, Data: data})
 	}

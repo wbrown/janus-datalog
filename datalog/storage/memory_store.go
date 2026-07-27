@@ -116,8 +116,9 @@ func (s *MemoryStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
 }
 
 // scan projects the bound through the binary encoder because MemoryStore keys
-// on the same bytes Badger does. PR B replaces that with typed component
-// compare; the seam above does not change when it does.
+// on the same bytes Badger does. That is this backend's choice, not the seam's:
+// a store comparing typed components directly would satisfy the same interface
+// without encoding anything.
 func (s *MemoryStore) scan(bound ScanBound) (Iterator, error) {
 	run, err := s.encoder.EncodeScanBound(bound)
 	if err != nil {

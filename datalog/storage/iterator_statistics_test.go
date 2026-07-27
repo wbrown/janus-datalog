@@ -18,8 +18,7 @@ import (
 // resolution produced from it. Their gap is history the query paid to read and
 // did not use — for a cardinality-one attribute written N times, the index
 // holds N datoms and resolution emits one. Reporting only the second number
-// makes a scan over deep history indistinguishable from a scan over none,
-// which is exactly what the metric was doing before it was split.
+// makes a scan over deep history indistinguishable from a scan over none.
 func TestScanReportsIntakeAndResolution(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -75,9 +74,9 @@ func TestScanReportsIntakeAndResolution(t *testing.T) {
 				"the history the index charged for is only visible as the gap between the two")
 
 			// The producer and the formatter are pinned separately elsewhere;
-			// here they meet. Two pins agreeing on a payload shape without ever
-			// running together is what let the scan line render fields no
-			// emitter produced.
+			// here they meet. Two pins can agree on a payload shape that
+			// neither side actually produces — only running them together
+			// catches a formatter reading keys no emitter writes.
 			var rendered bytes.Buffer
 			formatter := annotations.NewPlainTextFormatter(&rendered)
 			for _, e := range events {
@@ -95,9 +94,9 @@ func TestScanReportsIntakeAndResolution(t *testing.T) {
 // own Latency field, the mechanism every other timed event uses and the one the
 // output formatter renders as the line's prefix.
 //
-// Before this, emitIteratorStatistics left Latency zero and no emitter wrote the
-// "scan.duration" key the formatter reads, so every scan line claimed "[0µs]"
-// and ended "in <nil>" — the same dead-contract shape as the bound field.
+// A duration carried in a bespoke data key instead would have to be written by
+// every emitter and read by the formatter, and neither half fails visibly when
+// the other is missing: the line renders "[0µs]" and trails "in <nil>".
 func TestScanStatisticsCarryTheirDuration(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

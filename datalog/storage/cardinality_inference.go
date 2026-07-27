@@ -23,7 +23,7 @@ import (
 // cardinality-one tombstone (database.go Remove, CardinalityOne) and a
 // cardinality-many member removal (CardinalityMany), so it cannot classify an
 // attribute by itself — callers skip Remove entries and wait for a decisive op.
-func cardFromOp(op datalog.CRDTOp) (schema.Cardinality, bool) {
+func cardFromOp(op datalog.CRDTOp) (datalog.Keyword, bool) {
 	switch op {
 	case datalog.OpCRDTAdd:
 		return schema.CardinalityMany, true
@@ -40,7 +40,7 @@ func cardFromOp(op datalog.CRDTOp) (schema.Cardinality, bool) {
 // populate an inferred attribute's ValueType from a representative stored value
 // (affects typed-vector formatting, not resolution correctness); falls back to
 // TypeString for anything unrecognized.
-func valueTypeFromValue(v interface{}) schema.ValueType {
+func valueTypeFromValue(v interface{}) datalog.Keyword {
 	switch v.(type) {
 	case string:
 		return schema.TypeString
@@ -86,7 +86,7 @@ func inferSchemaFromStore(store Store) (*schema.Schema, error) {
 	haveA := false
 	decided := false
 	card := schema.CardinalityOne
-	var vt schema.ValueType
+	var vt datalog.Keyword
 
 	flush := func() {
 		if haveA {

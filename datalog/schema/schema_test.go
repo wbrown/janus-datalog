@@ -191,6 +191,70 @@ func TestBuilderWithUnique(t *testing.T) {
 	assert.Equal(t, UniqueIdentity, id.Unique)
 }
 
+// TestBuilderRejectsKeywordFromTheWrongVocabulary pins the builder's membership
+// check, which is the only thing standing between a caller and a definition
+// carrying a keyword from the wrong vocabulary.
+//
+// The three schema vocabularies are all datalog.Keyword, so nothing stops
+// Type(CardinalityOne) from compiling — a distinct Go type would have, but Go
+// forbids methods on a defined type whose underlying type is a pointer, and a
+// struct wrapping a keyword is a wrapper type this codebase does not have. So
+// each vocabulary keeps a closed set and the builder checks membership. Without
+// this test that check is unpinned, and deleting it leaves the suite green
+// while a definition silently carries :db.cardinality/one as its value type.
+//
+// The last row is the control: a builder that rejected everything would pass
+// every row above it.
+func TestBuilderRejectsKeywordFromTheWrongVocabulary(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		build   func(*AttributeBuilder) *AttributeBuilder
+		wantErr string
+	}{
+		{"cardinality as a value type",
+			func(ab *AttributeBuilder) *AttributeBuilder { return ab.Type(CardinalityOne) },
+			":db.cardinality/one is not a value type"},
+		{"unique as a value type",
+			func(ab *AttributeBuilder) *AttributeBuilder { return ab.Type(UniqueValue) },
+			":db.unique/value is not a value type"},
+		{"an unrelated keyword as a value type",
+			func(ab *AttributeBuilder) *AttributeBuilder { return ab.Type(datalog.NewKeyword(":not/a-type")) },
+			":not/a-type is not a value type"},
+		{"value type as a uniqueness constraint",
+			func(ab *AttributeBuilder) *AttributeBuilder { return ab.Type(TypeString).Unique(TypeString) },
+			":db.type/string is not a uniqueness constraint"},
+		{"cardinality as a uniqueness constraint",
+			func(ab *AttributeBuilder) *AttributeBuilder { return ab.Type(TypeString).Unique(CardinalityMany) },
+			":db.cardinality/many is not a uniqueness constraint"},
+
+		// Absence is written by omitting the call, not by naming it. Accepting
+		// nil here would make Unique(nil) and leaving Unique out two ways to
+		// say one thing.
+		{"nil as a uniqueness constraint",
+			func(ab *AttributeBuilder) *AttributeBuilder { return ab.Type(TypeString).Unique(nil) },
+			"is not a uniqueness constraint"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewBuilder()
+			_, err := tc.build(b.Attribute(":person/x")).Add().Build()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr,
+				"the error must name the keyword that was rejected")
+		})
+	}
+
+	t.Run("the right vocabularies build clean", func(t *testing.T) {
+		s, err := NewBuilder().
+			Attribute(":person/x").Type(TypeString).Unique(UniqueValue).Add().
+			Build()
+		require.NoError(t, err)
+		def := s.GetAttribute(kw(":person/x"))
+		require.NotNil(t, def)
+		assert.Equal(t, TypeString, def.ValueType)
+		assert.Equal(t, UniqueValue, def.Unique)
+	})
+}
+
 func TestBuilderWithDoc(t *testing.T) {
 	schema, err := NewBuilder().
 		Attribute(":person/name").Type(TypeString).Doc("The person's full name").Add().

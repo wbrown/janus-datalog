@@ -10,14 +10,12 @@ import (
 // Event names. Every event the engine emits is named here, and every producer
 // emits through one of these constants rather than writing the string.
 //
-// The two halves have to stay together or neither sweep can see the whole set.
-// Nine formatter arms for events with no producer survived a sweep that deleted
-// seven others, because the seven were written `case "pattern/match":` and the
-// nine `case PatternFiltering:` — a search keyed on names could not see the
-// second kind. Simultaneously, five live storage events were emitted as literals
-// and three had no constant at all, so a search keyed on constants could not see
-// them either. One vocabulary, declared in one place, is what makes "does
-// anything emit this?" a question with an answer.
+// Both halves matter. A producer writing `Emit("pattern/match", …)` and a
+// consumer writing `case PatternFiltering:` are invisible to each other: a
+// search for the name misses the constant and a search for the constant misses
+// the name, so neither can answer "does anything emit this?" or "does anything
+// read this?". One vocabulary, declared here, referenced everywhere, is what
+// makes both questions answerable at all.
 const (
 	// Query lifecycle
 	QueryInvoked                      = "query/invoked"
