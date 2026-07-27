@@ -23,6 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -113,6 +115,80 @@ func TestLookupByUnique_SingleOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, owner)
 	assert.True(t, owner.Equal(alice), "single claimant should be returned")
+}
+
+// TestUniqueLookupReportsItsFunnel pins that LookupByUnique reports the same
+// three-term funnel every other scan-opening path reports, and that the third
+// term carries information the other two cannot.
+//
+// resolved and matched differ exactly where the AVET index holds an entry that
+// resolution rejects: the store is append-only, so a superseded value keeps its
+// AVET entry forever, and looking that value up finds a candidate, walks it, and
+// gets a different value. That is a real read — a scan, a walk, a rejection —
+// and reporting it as "nothing found" makes it indistinguishable from a value
+// nobody ever wrote, which costs nothing at all.
+func TestUniqueLookupReportsItsFunnel(t *testing.T) {
+	db, cleanup := setupUniqueTestDB(t)
+	defer cleanup()
+
+	alice := datalog.NewIdentity("alice")
+	email := datalog.NewKeyword(":user/email")
+
+	// Two writes to the same (E, A): the first value keeps its AVET entry.
+	for _, v := range []string{"old@example.com", "new@example.com"} {
+		tx := db.NewTransaction()
+		require.NoError(t, tx.Set(alice, email, v))
+		_, err := tx.Commit()
+		require.NoError(t, err)
+	}
+
+	for _, tc := range []struct {
+		name              string
+		value             string
+		owner             datalog.Identity
+		resolved          int
+		matched           int
+		scannedIsPositive bool
+	}{
+		{name: "current owner", value: "new@example.com", owner: alice,
+			resolved: 1, matched: 1, scannedIsPositive: true},
+		{name: "superseded value still in AVET", value: "old@example.com",
+			resolved: 1, matched: 0, scannedIsPositive: true},
+		{name: "never written", value: "never@example.com",
+			resolved: 0, matched: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var events []annotations.Event
+			db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
+			defer func() { db.AnnotationHandler = nil }()
+
+			owner, err := db.LookupByUnique(email, tc.value)
+			require.NoError(t, err)
+			if tc.owner == nil {
+				require.Nil(t, owner)
+			} else {
+				require.NotNil(t, owner)
+				require.True(t, owner.Equal(tc.owner))
+			}
+
+			complete := lastEventNamed(events, annotations.UniqueLookupComplete)
+			require.NotNil(t, complete, "the lookup opened scans and must report what they cost")
+			require.Equal(t, tc.resolved, complete.Data[annotations.KeyDatomsResolved])
+			require.Equal(t, tc.matched, complete.Data[annotations.KeyDatomsMatched])
+			if tc.scannedIsPositive {
+				require.Positive(t, complete.Data[annotations.KeyDatomsScanned],
+					"a candidate was found and walked, which reads the index")
+			}
+
+			// The pattern the lookup resolves, carried rather than rendered —
+			// the same subject every other scan event names.
+			pattern, ok := complete.Data[annotations.KeyPattern].(*query.DataPattern)
+			require.True(t, ok, "carries a pattern, not a rendering of one; got %T",
+				complete.Data[annotations.KeyPattern])
+			require.Contains(t, pattern.String(), ":user/email")
+			require.Contains(t, pattern.String(), tc.value)
+		})
+	}
 }
 
 // TestLookupByUnique_UniqueIdentity: UniqueIdentity supports lookup the

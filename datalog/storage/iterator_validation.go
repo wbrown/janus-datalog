@@ -52,55 +52,74 @@ func validateDatomWithConstraints(
 	return true
 }
 
-// emitIteratorStatistics emits annotation events for iterator performance tracking.
-// This consolidates the Close() logic that was duplicated across iterator types.
+// scanFunnel is what a scan cost the query, narrowest last. The three counts
+// travel together because each is only readable against the others: scanned
+// over resolved is what the index charged, resolved over matched is what the
+// pattern rejected, and either number alone makes a wide scan and a narrow one
+// look alike.
 //
-// opened is when the scan was opened, so the event's Latency is the iterator's
+// A struct rather than three int parameters. The counts are three ints in a
+// fixed order, which is the shape where a transposed pair compiles and then
+// reports a scan that read less than it returned.
+type scanFunnel struct {
+	// scanned is intake: keys taken from the index, including any the bound's
+	// membership rule then rejected. Comes from Iterator.Scanned.
+	scanned int
+	// resolved is what the scan's source produced. On the normal read path that
+	// source is CRDT resolution, so this sits below intake by the history depth:
+	// resolution emits one datom per (E, A) for a cardinality-one attribute
+	// however many times it was written. In history mode there is no resolution
+	// and it nearly meets intake.
+	resolved int
+	// matched is what survived the pattern and its constraints.
+	matched int
+}
+
+// emitScanCompletion emits the event a scan owes its reader when it finishes:
+// what it was scanning for, and what it cost. Every scan-completion event in
+// the engine goes through here — the unbound and cardinality-dispatch scans,
+// the three binding-driven strategies, and cache resolution — so the funnel
+// keys and the event envelope have one definition rather than one per producer.
+//
+// opened is when the scan was opened, so the event's Latency is the scan's
 // lifetime through Close. That span includes time the consumer spent between
 // Next calls, so it measures how long the scan was held open rather than CPU
-// spent scanning. Latency is the field every other timed event carries and the
-// one the output formatter renders as the line's prefix.
+// spent scanning. Latency is the field every other timed event carries: the
+// output formatter renders it as the line's prefix and Database.Analyze sums it
+// per event name, so a scan that omitted it would report as 0 ms in both.
 //
-// The three counts are the query's funnel through this scan, narrowest last:
+// The index is not a parameter. Two of the producers address no single run:
+// cache resolution picks an index by cardinality inside resolution and reads
+// none at all on a hit, and the per-binding path runs chooseIndex once per
+// binding tuple. A producer that walked one index names it in extraData under
+// annotations.KeyIndex; the rest say nothing rather than naming a run that did
+// not happen.
 //
-//   - datomsScanned — intake: keys taken from the index, including any the
-//     bound's membership rule then rejected. Comes from Iterator.Scanned.
-//   - datomsResolved — what the iterator's source produced. On the normal read
-//     path that source is CRDT resolution, so this sits below intake by the
-//     history depth: resolution emits one datom per (E, A) for a
-//     cardinality-one attribute however many times it was written. In history
-//     mode there is no resolution and it nearly meets intake.
-//   - datomsMatched — what survived the pattern and its constraints.
+// Values go in typed — the pattern, and whatever the producer adds. Rendering
+// belongs to the formatter, and flattening here would spend an allocation per
+// emit to hand the consumer a string to parse.
 //
-// scanned/resolved is what the index charged; resolved/matched is what the
-// pattern rejected. Reporting only one of them makes a wide scan and a narrow
-// one look alike.
-//
-// Called only once per iterator (in Close()), so performance overhead is negligible.
+// Called once per scan, so the map construction is not on any hot path.
 //
 // The caller guards on the handler. That guard belongs to the caller because it
 // gates the caller's own argument preparation — the extraData map above all —
 // as well as the map built here, and because at the call site it marks the
-// block as observability rather than part of closing the iterator. A nil
-// handler reaching here is a caller that skipped its guard, and panics rather
-// than silently doing nothing.
-func emitIteratorStatistics(
+// block as observability rather than part of finishing the scan. A nil handler
+// reaching here is a caller that skipped its guard, and panics rather than
+// silently doing nothing.
+func emitScanCompletion(
 	handler func(annotations.Event),
 	eventName string,
 	pattern *query.DataPattern,
-	index IndexType,
 	opened time.Time,
-	datomsScanned int,
-	datomsResolved int,
-	datomsMatched int,
+	funnel scanFunnel,
 	extraData map[string]interface{},
 ) {
 	data := map[string]interface{}{
-		"pattern":         pattern.String(),
-		"index":           index.String(),
-		"datoms.scanned":  datomsScanned,
-		"datoms.resolved": datomsResolved,
-		"datoms.matched":  datomsMatched,
+		annotations.KeyPattern:        pattern,
+		annotations.KeyDatomsScanned:  funnel.scanned,
+		annotations.KeyDatomsResolved: funnel.resolved,
+		annotations.KeyDatomsMatched:  funnel.matched,
 	}
 
 	// Merge in extra data

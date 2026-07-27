@@ -1,8 +1,6 @@
 package algebra
 
 import (
-	"fmt"
-
 	"github.com/wbrown/ebnf/parse"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -55,16 +53,24 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 		return rebuildWithChildren(node, children)
 	}
 
-	subject := mapData.Expression.String()
+	// Ask before building the payload map, which is paid once per get-else this
+	// pass visits; a guard inside Record cannot prevent it, because Go evaluates
+	// arguments before the call. The subject is carried rather than rendered, so
+	// it costs nothing either way. The sink may be nil: several callers build
+	// this pass with GetElseScanRewritePass(nil).
+	observing := sink != nil && (sink.Collect || sink.Handler != nil)
 	decline := func(reason string) {
+		if !observing {
+			return
+		}
 		sink.Record(RewriteRecord{
 			Pass:    getElsePassName,
 			Action:  RewriteDeclined,
 			Reason:  reason,
-			Subject: subject,
+			Subject: mapData.Expression,
 		}, "algebra/getelse-scan-skip", map[string]interface{}{
 			"reason":     reason,
-			"expression": subject,
+			"expression": mapData.Expression,
 		})
 	}
 
@@ -118,17 +124,19 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 		},
 	}
 
-	sink.Record(RewriteRecord{
-		Pass:    getElsePassName,
-		Action:  RewriteApplied,
-		Subject: subject,
-	}, "algebra/getelse-scan-apply", map[string]interface{}{
-		"expression": subject,
-		"scan":       scanPattern.String(),
-		"entity_var": entityVar.Symbol.String(),
-		"binding":    bindingSym.String(),
-		"attribute":  fmt.Sprintf("%v", ge.Attr),
-	})
+	if observing {
+		sink.Record(RewriteRecord{
+			Pass:    getElsePassName,
+			Action:  RewriteApplied,
+			Subject: mapData.Expression,
+		}, "algebra/getelse-scan-apply", map[string]interface{}{
+			"expression": mapData.Expression,
+			"scan":       scanPattern,
+			"entity_var": entityVar.Symbol,
+			"binding":    bindingSym,
+			"attribute":  ge.Attr,
+		})
+	}
 
 	// Build: LeftOuterJoin(on=[?entity], default=[ge.Default], attr=ge.Attr)
 	// The DefaultAttr enables the decompiler to emit a get-else expression

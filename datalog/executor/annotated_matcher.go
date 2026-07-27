@@ -76,14 +76,14 @@ func (m *AnnotatedMatcher) Match(q *query.Query, bindings Relations) (Relation, 
 
 	// Record completion with grouped metrics
 	data := m.collector.GetDataMap()
-	data["pattern"] = pattern.String()
+	data[annotations.KeyPattern] = pattern
 	data["match.count"] = 0
 	data["success"] = err == nil
 
 	// Add binding information if it was present
 	if len(bindingSymbols) > 0 {
 		data["binding.symbols"] = bindingSymbols
-		data["binding.size"] = bindingSize
+		data[annotations.KeyBindingSize] = bindingSize
 	}
 
 	if result != nil {
@@ -142,7 +142,7 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 
 		// Record completion
 		data := m.collector.GetDataMap()
-		data["pattern"] = pattern.String()
+		data[annotations.KeyPattern] = pattern
 		data["constraint.count"] = len(constraints)
 		data["match.count"] = 0
 		data["success"] = err == nil
@@ -150,7 +150,7 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 		// Add binding information if it was present
 		if len(bindingSymbols) > 0 {
 			data["binding.symbols"] = bindingSymbols
-			data["binding.size"] = bindingSize
+			data[annotations.KeyBindingSize] = bindingSize
 		}
 
 		if result != nil {

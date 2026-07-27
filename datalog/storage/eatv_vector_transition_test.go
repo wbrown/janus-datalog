@@ -69,7 +69,7 @@ func TestEATV_VectorTransitionDropsDatom(t *testing.T) {
 			for _, e := range events {
 				if e.Name == "storage/reuse-strategy" {
 					t.Logf("EVENT: %s %v", e.Name, e.Data)
-					if idx, ok := e.Data["index"]; ok && fmt.Sprint(idx) == "EATV" {
+					if idx, ok := e.Data[annotations.KeyIndex]; ok && idx == EATV {
 						usedEATV = true
 					}
 				}

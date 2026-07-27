@@ -5,7 +5,7 @@
 **Scope**: the round-2 findings' resolution status, plus what the round-2 remediation itself introduced or left behind
 **Method**: a round-3 review was received against `400f0e1`; every claim in it was then independently verified against this tree by reading the cited code, never accepted from the report. Two of the report's own claims are corrected below.
 
-**Remediation status (2026-07-27)**: sixteen of the eighteen new findings are closed; T10, T11 and T18 are partly closed, each with the remainder recorded as a convention question or held under ruling 4.
+**Remediation status (2026-07-27)**: seventeen of the eighteen new findings are closed; T11 and T18 are partly closed, each with the remainder recorded as a convention question or held under ruling 4. Ruling 7 is extended to the payload keys and to the values under them — see "The payload vocabulary" in the disposition.
 
 **Verification scope**: every finding in this document was checked directly against `400f0e1`. Nothing here is carried on the reporter's citation alone. Line numbers are as of `400f0e1`; cite by symbol when acting.
 
@@ -185,7 +185,7 @@ Deleting all three (`matcher_relations.go:1845`, `:1978`, `:2205`) leaves `go te
 
 ### T10. The formatter sweep removed the seven dead arms written as string literals and left nine written as constants
 
-**Status**: Partly resolved (2026-07-26). The nine arms are deleted. The tenth, `PhaseComplete`, was resolved the other way: it and `PhaseBegin` now have producers (T19), so both arms are live and `PhaseBegin`'s is restored — written against the data the producer actually sends, not the `pattern.count` the old arm expected from a producer that never existed. `case JoinHash, JoinNested, JoinMerge:` narrowed to `case JoinHash:`.
+**Status**: Resolved (2026-07-26; label corrected 2026-07-27 — it read "partly" with no remainder named, and there is none). The nine arms are deleted. The tenth, `PhaseComplete`, was resolved the other way: it and `PhaseBegin` now have producers (T19), so both arms are live and `PhaseBegin`'s is restored — written against the data the producer actually sends, not the `pattern.count` the old arm expected from a producer that never existed. `case JoinHash, JoinNested, JoinMerge:` narrowed to `case JoinHash:`.
 
 Under ruling 6, and ruling 7 extending it, **twenty** dead exported constants are deleted: `RelationIndexing`, `RelationIndexed`, `CombineRelsBegin`, `CombineRelsCollapsed`, `PatternsToRelationsBegin`, `PatternsToRelationsRealized`, `PatternFiltering`, `PatternToRelation`, `JoinNested`, `JoinMerge`, `QueryTuplesTransmitted`, `PhaseScore`, `OrClauseBranchBegin`, `OrClauseFallback`, `OrSubqueryInput`, `OrSubqueryResult`, `ErrorQueryParsing`, `ErrorQueryBinding`, `ErrorQueryInternal`, `ErrorBackend`.
 
@@ -322,15 +322,27 @@ On N14's count: the review makes it twelve by `grep -c "range optimizerModes"`. 
 
 ## Disposition
 
-**Closed**: T1, T2, T3, T4, T5, T6, T7, T8, T9, T12, T13, T14, T15, T16, T17, T19.
+**Closed**: T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T12, T13, T14, T15, T16, T17, T19.
 
-**Partly closed**: T10 (twenty dead constants deleted and every producer moved onto a constant; `CLAUDE.md`'s event-type list rewritten), T11 (the costly site fixed; the three siblings have no argument cost and sweeping them is a convention question, not a defect), T18 (live source, tests and the live status claim corrected; five documents held per ruling 4).
+**Partly closed**: T11 (the costly site fixed; the three siblings have no argument cost and sweeping them is a convention question, not a defect), T18 (live source, tests and the live status claim corrected; five documents held per ruling 4).
 
 **Open**: none.
 
 The five that were open at the last update — T1, T2, T7, T8, T15 — were one arc: every dispatch arm announces the run it walks and reports the funnel that run cost, each arm's pair of emits is pinned by a row that reds alone, and every completion event has a formatter arm. Ruling 10 settled the one semantic question the arc raised, on what `datoms.scanned` means when the read came from cache.
 
-The one thing that stayed a question rather than becoming a defect: the four hand-built event maps in `hash_join_matcher.go` and `matcher_iterator_nonreusing.go` duplicate the funnel keys that `emitIteratorStatistics` types for the seven `pattern/storage-scan` producers. Routing them through it too would make one signature own the vocabulary — but it needs the pattern as a string and the index optional, which is a change to a shared emitter rather than a fix, so it is not made here.
+### The payload vocabulary (ruling 7's other half)
+
+Ruling 7 declared one vocabulary for event *names*. The keys inside the payload were left as literals, and the four hand-built event maps were the visible consequence: `hashJoinIterator.Close`, `mergeJoinIterator.Close`, `nonReusingIterator.Close` and `matchFromCache` each spelled the funnel keys themselves rather than going through the emitter the seven `pattern/storage-scan` producers use.
+
+They did not go through it because it required an index, and two of the four address no single run — cache resolution picks one by cardinality inside resolution and reads none at all on a hit, and the per-binding path runs `chooseIndex` once per binding tuple. **The index is not a property of the event family**, so it is not a parameter: `emitScanCompletion` owns the pattern, the envelope and the funnel, and a producer that walked one run names it in the extras under `annotations.KeyIndex`. All eleven now emit through it.
+
+The funnel travels as `scanFunnel{scanned, resolved, matched}` rather than three positional ints — three ints in a fixed order is the shape where a transposed pair compiles and then reports a scan that returned more than it read.
+
+The keys shared across producers are declared in `annotations/types.go` beside the event names, for the reason stated there: eleven producers and one consumer cannot spell a key at the producer and have the formatter find it. Keys with a single producer stay literals, and the const block says so.
+
+Values travel typed. `IndexType` and `*query.DataPattern` reached the formatter as `.String()` renderings from thirteen producers; both now go in as values and the formatter renders, since it is the renderer and a producer that flattens spends an allocation per emit to hand its consumer something to parse. Neither type is nameable in `annotations` — both live in packages that import it — so the formatter reaches them through `fmt`, which reports a panicking `String` method inline rather than taking the trace down. The three tests that read the index through `.(string)` with comma-ok were converted: each would have gone silently false and asserted nothing.
+
+**A collision found by the sweep, and fixed**: `subquery/input-relation` wrote its relation's ordinal under `"index"`, the key the scan events use for the physical ordering they walked. `Database.Analyze` prints `Data[KeyIndex]` for every event it traces, so a subquery rendered `(index=0)` as though it named a run. It is `"relation.position"` now — in this engine an index is one of the eight orderings — and `TestIndexAnnotationKeyCarriesOnlyAnIndexType` pins that nothing else carries a second meaning there, requiring both event families in the trace so it cannot pass by exercising neither.
 
 ### Work in this pass that the review did not raise
 

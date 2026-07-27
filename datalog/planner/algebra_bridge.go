@@ -45,7 +45,7 @@ func optimizeAlgebra(q *query.Query, handler annotations.Handler, sink *algebra.
 
 	if handler != nil {
 		emit(annotations.AlgebraCompiled, map[string]interface{}{
-			"tree": compiled.String(),
+			"tree": compiled,
 		})
 	}
 
@@ -62,7 +62,7 @@ func optimizeAlgebra(q *query.Query, handler annotations.Handler, sink *algebra.
 
 	if handler != nil {
 		emit(annotations.AlgebraOptimized, map[string]interface{}{
-			"tree": optimized.String(),
+			"tree": optimized,
 		})
 	}
 	return compiled, optimized, nil
@@ -98,27 +98,40 @@ func optimizeViaAlgebra(
 				break
 			}
 		}
+		// sink is the composite literal above, so no nil check: a guard must
+		// encode a claim that can be false.
+		observing := sink.Collect || sink.Handler != nil
 		if hasValueInput {
-			sink.Record(algebra.RewriteRecord{
-				Pass:    joinProjectPassName,
-				Action:  algebra.RewriteDeclined,
-				Reason:  "query has value inputs",
-				Subject: fmt.Sprintf("%v", terminalSymbols(q)),
-			}, "algebra/join-project-skip", map[string]interface{}{
-				"reason": "query has value inputs",
-			})
+			// terminalSymbols walks the query, and on this branch nothing else
+			// needs the answer.
+			if observing {
+				sink.Record(algebra.RewriteRecord{
+					Pass:    joinProjectPassName,
+					Action:  algebra.RewriteDeclined,
+					Reason:  "query has value inputs",
+					Subject: terminalSymbols(q),
+				}, "algebra/join-project-skip", map[string]interface{}{
+					"reason": "query has value inputs",
+				})
+			}
 		} else {
-			optimized, err = algebra.InsertJoinProjects(optimized, terminalSymbols(q))
+			// One walk for the transform and its record, so the record names
+			// the symbols actually inserted rather than a second computation of
+			// them.
+			terminals := terminalSymbols(q)
+			optimized, err = algebra.InsertJoinProjects(optimized, terminals)
 			if err != nil {
 				return nil, fmt.Errorf("algebra project insertion: %w", err)
 			}
-			sink.Record(algebra.RewriteRecord{
-				Pass:    joinProjectPassName,
-				Action:  algebra.RewriteApplied,
-				Subject: fmt.Sprintf("%v", terminalSymbols(q)),
-			}, "algebra/join-project-apply", map[string]interface{}{
-				"terminal_symbols": fmt.Sprintf("%v", terminalSymbols(q)),
-			})
+			if observing {
+				sink.Record(algebra.RewriteRecord{
+					Pass:    joinProjectPassName,
+					Action:  algebra.RewriteApplied,
+					Subject: terminals,
+				}, "algebra/join-project-apply", map[string]interface{}{
+					"terminal_symbols": terminals,
+				})
+			}
 		}
 	}
 	clauses, err := algebra.Decompile(optimized)

@@ -62,7 +62,9 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinSyms []query.Symbol,
 		}
 	}
 	resultProperties := joinProperties(left.Properties(), right.Properties(), joinSyms)
-	emitJoinStrategyAnnotation(opts, left, right, joinSyms, "symmetric", "both", false)
+	if opts.Collector != nil {
+		emitJoinStrategyAnnotation(opts, left, right, joinSyms, "symmetric", "both", false)
+	}
 
 	// Determine initial hash table size
 	// Use configurable DefaultHashTableSize for better cache locality

@@ -92,7 +92,11 @@ func (it *hashJoinIterator) Next() bool {
 
 		// Need next probe tuple
 		if !it.probeIt.Next() {
-			it.emitProbeAnnotation()
+			// metrics is allocated only when a collector exists, so its
+			// presence is the existence guard on this path.
+			if it.metrics != nil {
+				it.emitProbeAnnotation()
+			}
 			return false
 		}
 
@@ -135,7 +139,9 @@ func (it *hashJoinIterator) Tuple() Tuple {
 func (it *hashJoinIterator) Close() error {
 	if !it.closed {
 		it.closed = true
-		it.emitProbeAnnotation()
+		if it.metrics != nil {
+			it.emitProbeAnnotation()
+		}
 		if it.probeIt != nil {
 			return it.probeIt.Close()
 		}
@@ -153,8 +159,13 @@ func (it *hashJoinIterator) Error() error {
 	return nil
 }
 
+// emitProbeAnnotation reports the probe's counters. Its callers guard on
+// metrics, which is allocated only when a collector exists (see the
+// construction below), so its presence is what "annotations are on" means on
+// this path. What remains here is the once-only latch: exhaustion and Close
+// both reach this, and the counters belong to whichever arrives first.
 func (it *hashJoinIterator) emitProbeAnnotation() {
-	if it.metrics == nil || it.metrics.emitted || it.options.Collector == nil {
+	if it.metrics.emitted {
 		return
 	}
 	it.metrics.emitted = true
@@ -169,6 +180,12 @@ func (it *hashJoinIterator) emitProbeAnnotation() {
 	})
 }
 
+// emitJoinStrategyAnnotation reports which join shape was chosen and what it
+// was chosen over. Callers guard on opts.Collector.
+//
+// left and right are rendered by type, not by value: the datum is which
+// Relation implementation each side is, and a Relation is a live stream that
+// must not be spent to describe itself.
 func emitJoinStrategyAnnotation(
 	opts ExecutorOptions,
 	left, right Relation,
@@ -176,9 +193,6 @@ func emitJoinStrategyAnnotation(
 	mode, buildSide string,
 	buildKeyUnique bool,
 ) {
-	if opts.Collector == nil {
-		return
-	}
 	opts.Collector.Add(annotations.Event{
 		Name: annotations.JoinStrategy,
 		Data: map[string]interface{}{
@@ -305,7 +319,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	if buildIsLeft {
 		buildSide = "left"
 	}
-	emitJoinStrategyAnnotation(opts, left, right, joinSyms, mode, buildSide, buildKeysUnique)
+	if opts.Collector != nil {
+		emitJoinStrategyAnnotation(opts, left, right, joinSyms, mode, buildSide, buildKeysUnique)
+	}
 
 	// Build phase - collect the build rows once, then group them by join-key
 	// hash into contiguous spans of one shared backing (groupedRowIndex).

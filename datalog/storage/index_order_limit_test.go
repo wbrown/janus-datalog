@@ -30,7 +30,7 @@ func TestIndexOrderedLimitStopsSatisfiedScan(t *testing.T) {
 				// one row per entity however deep the history is, so a scan
 				// that walked the whole index would satisfy a bound on the
 				// resolved count.
-				if count, ok := event.Data["datoms.scanned"].(int); ok {
+				if count, ok := event.Data[annotations.KeyDatomsScanned].(int); ok {
 					scanned.Add(int64(count))
 				}
 			}

@@ -122,11 +122,11 @@ func TestAEVTMatcherBug(t *testing.T) {
 		// number by the history depth. They coincide here only because the
 		// fixture writes each entity once.
 		if event.Name == "pattern/hash-join-complete" {
-			if scanned, ok := event.Data["datoms.scanned"].(int); ok {
+			if scanned, ok := event.Data[annotations.KeyDatomsScanned].(int); ok {
 				datomsScanned = scanned
 			}
-			if idx, ok := event.Data["index"].(string); ok {
-				indexUsed = idx
+			if idx, ok := event.Data[annotations.KeyIndex].(IndexType); ok {
+				indexUsed = idx.String()
 			}
 		}
 	}

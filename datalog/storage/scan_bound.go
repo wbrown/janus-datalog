@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 )
 
 // keyComponent identifies a datom position within an index's key order.
@@ -100,8 +101,8 @@ type ScanBound struct {
 // absent entirely for a backend that compares typed components directly.
 func addBoundFields(data map[string]interface{}, bound ScanBound) {
 	positions, values := describeRun(bound.Index, bound.Prefix)
-	data["index"] = bound.Index.String()
-	data["bound"] = positions
+	data[annotations.KeyIndex] = bound.Index
+	data[annotations.KeyBound] = positions
 	data["bound.values"] = values
 }
 

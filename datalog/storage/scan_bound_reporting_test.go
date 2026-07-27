@@ -157,12 +157,12 @@ func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
 			complete := lastEventNamed(events, tc.event)
 			require.NotNil(t, complete, "%s must report what its scan cost", tc.strategy)
 
-			require.Equal(t, wantScanned, complete.Data["datoms.scanned"],
+			require.Equal(t, wantScanned, complete.Data[annotations.KeyDatomsScanned],
 				"%s read every write in each group; reporting %d would be reporting resolution's output",
 				tc.strategy, entities)
-			require.Equal(t, entities, complete.Data["datoms.resolved"])
-			require.Equal(t, entities, complete.Data["datoms.matched"])
-			require.Equal(t, entities, complete.Data["binding.size"])
+			require.Equal(t, entities, complete.Data[annotations.KeyDatomsResolved])
+			require.Equal(t, entities, complete.Data[annotations.KeyDatomsMatched])
+			require.Equal(t, entities, complete.Data[annotations.KeyBindingSize])
 			require.Positive(t, complete.Latency,
 				"a completion event without a duration reports as 0 ms in Analyze")
 		})
@@ -202,7 +202,7 @@ func TestPerBindingScanReportsOneCountedEvent(t *testing.T) {
 	require.Len(t, complete, 1,
 		"the path reports once for the whole run; %d events means it reports per binding", len(complete))
 
-	require.Equal(t, len(bindingDrivenPeople), complete[0].Data["scans.opened"],
+	require.Equal(t, len(bindingDrivenPeople), complete[0].Data[annotations.KeyScansOpened],
 		"the count is the datum a per-binding path owes its reader")
 }
 
@@ -286,7 +286,7 @@ func TestBoundAnnotationKeyHasOneType(t *testing.T) {
 
 			seen := map[string]bool{}
 			for _, e := range events {
-				raw, ok := e.Data["bound"]
+				raw, ok := e.Data[annotations.KeyBound]
 				if !ok {
 					continue
 				}
@@ -306,4 +306,62 @@ func TestBoundAnnotationKeyHasOneType(t *testing.T) {
 					`bound value across the v-validation family; saw %v`, seen)
 		})
 	}
+}
+
+// TestIndexAnnotationKeyCarriesOnlyAnIndexType is the sibling of the bound pin
+// above, and it closes a collision that was live: the subquery input-relation
+// event wrote its relation's ordinal under "index", the same key the scan events
+// use for the physical ordering they walked. Database.Analyze prints
+// Data[KeyIndex] for every event it traces, so a subquery rendered "(index=0)"
+// as though it named a run.
+//
+// The query is deliberately wide — a scan under a constant E and a subquery that
+// scans again per value — because a key only collides where two event families
+// meet in one trace. Both are required to appear, so this cannot pass by
+// exercising neither.
+//
+// One optimizer mode rather than the package's loop: with the algebra optimizer
+// on, decorrelation rewrites this correlated subquery into a join and the
+// subquery family never reaches the trace. Where the producer does not run there
+// is no collision to pin, and the scan events' own typing is covered in both
+// modes by the tests above.
+func TestIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T) {
+	var events []annotations.Event
+	opts := optimizerMode{name: "algebra_off", algebra: false}.plannerOptions()
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:           t.TempDir(),
+		Schema:         funnelSchema(t),
+		PlannerOptions: &opts,
+	})
+	require.NoError(t, err)
+	defer db.Close()
+
+	funnelFixture(t, db)
+	db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
+
+	result, err := db.Query(`[:find ?v ?c
+	     :where [#id "funnel:alice" :person/tag ?v]
+	            [(q [:find (count ?e) :in $ ?t
+	                 :where [?e :person/tag ?t]] $ ?v) [[?c]]]]`)
+	require.NoError(t, err)
+	_, err = executor.CollectTuples(result, nil)
+	require.NoError(t, err)
+
+	var sawIndex, sawSubqueryInput bool
+	for _, e := range events {
+		if e.Name == annotations.SubqueryInputRelation {
+			sawSubqueryInput = true
+		}
+		raw, ok := e.Data[annotations.KeyIndex]
+		if !ok {
+			continue
+		}
+		sawIndex = true
+		require.IsType(t, IndexType(0), raw,
+			"event %s carries %T under the index key; that key names one of the "+
+				"eight physical orderings and nothing else", e.Name, raw)
+	}
+	require.True(t, sawIndex, "the trace must contain an event naming the run it walked")
+	require.True(t, sawSubqueryInput,
+		"the subquery family must be in the trace, or this pins nothing")
 }

@@ -62,9 +62,9 @@ func TestScanReportsIntakeAndResolution(t *testing.T) {
 			}
 			require.NotNil(t, scan, "the unbound scan path must report its statistics")
 
-			resolved, ok := scan.Data["datoms.resolved"].(int)
+			resolved, ok := scan.Data[annotations.KeyDatomsResolved].(int)
 			require.True(t, ok, "the scan must report what resolution produced")
-			scanned, ok := scan.Data["datoms.scanned"].(int)
+			scanned, ok := scan.Data[annotations.KeyDatomsScanned].(int)
 			require.True(t, ok, "the scan must report what it took in from the index")
 
 			require.Equal(t, 1, resolved, "resolution emits the LWW winner alone")

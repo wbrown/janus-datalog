@@ -144,7 +144,7 @@ func (f *OutputFormatter) Format(event Event) string {
 		return fmt.Sprintf("%s %s", latency, joinStr)
 
 	case MatchesToRelations:
-		pattern := event.Data["pattern"].(string)
+		pattern := renderPayloadValue(event.Data[KeyPattern])
 		matchCount := event.Data["match.count"].(int)
 
 		// Extract bound symbols from the pattern to determine output symbols
@@ -188,8 +188,8 @@ func (f *OutputFormatter) Format(event Event) string {
 
 	case PatternIndexSelection:
 		// Store index and bound for the scan event that follows.
-		f.lastIndex, _ = event.Data["index"].(string)
-		f.lastBound = renderBoundPositions(event.Data["bound"])
+		f.lastIndex = renderPayloadValue(event.Data[KeyIndex])
+		f.lastBound = renderBoundPositions(event.Data[KeyBound])
 		return ""
 
 	case PatternStorageScan:
@@ -201,14 +201,14 @@ func (f *OutputFormatter) Format(event Event) string {
 		// renderScanFunnel below: this is the one event with seven producers,
 		// and a producer that omits a key should cost the reader one wrong line
 		// rather than panic the formatter in the middle of a trace.
-		pattern, _ := event.Data["pattern"].(string)
-		datoms, _ := event.Data["datoms.resolved"].(int)
+		pattern := renderPayloadValue(event.Data[KeyPattern])
+		datoms, _ := event.Data[KeyDatomsResolved].(int)
 
 		// Intake is appended only when it exceeds what came out. A bound that
 		// narrowed and a bound that did nothing produce the same line
 		// otherwise, which is the reading this count exists to prevent; a scan
 		// that returned everything it read stays one number.
-		scanned, _ := event.Data["datoms.scanned"].(int)
+		scanned, _ := event.Data[KeyDatomsScanned].(int)
 		amplification := ""
 		if scanned > datoms {
 			amplification = fmt.Sprintf(" (%d scanned)", scanned)
@@ -263,7 +263,7 @@ func (f *OutputFormatter) Format(event Event) string {
 		}
 		return fmt.Sprintf("%s %s([%v], %v, %v bindings) → %s",
 			latency, strategy,
-			event.Data["pattern"], event.Data["index"], event.Data["binding.size"],
+			event.Data[KeyPattern], event.Data[KeyIndex], event.Data[KeyBindingSize],
 			renderScanFunnel(event.Data))
 
 	case PatternPerBindingScanComplete:
@@ -273,7 +273,7 @@ func (f *OutputFormatter) Format(event Event) string {
 		// the datum this path owes its reader.
 		return fmt.Sprintf("%s PerBindingScan([%v], %v scans over %v bindings) → %s",
 			latency,
-			event.Data["pattern"], event.Data["scans.opened"], event.Data["binding.size"],
+			event.Data[KeyPattern], event.Data[KeyScansOpened], event.Data[KeyBindingSize],
 			renderScanFunnel(event.Data))
 
 	case PatternCacheResolveComplete:
@@ -281,7 +281,7 @@ func (f *OutputFormatter) Format(event Event) string {
 		// resolution, and a hit reads no index at all. Zero scanned is a hit.
 		return fmt.Sprintf("%s CacheResolve([%v], %v) → %s",
 			latency,
-			event.Data["pattern"], event.Data["cardinality"],
+			event.Data[KeyPattern], event.Data[KeyCardinality],
 			renderScanFunnel(event.Data))
 
 	default:
@@ -297,10 +297,26 @@ func (f *OutputFormatter) Format(event Event) string {
 // Comma-ok reads rather than assertions: an event that omits one of the three
 // should render a zero, not panic the formatter mid-trace.
 func renderScanFunnel(data map[string]interface{}) string {
-	matched, _ := data["datoms.matched"].(int)
-	resolved, _ := data["datoms.resolved"].(int)
-	scanned, _ := data["datoms.scanned"].(int)
+	matched, _ := data[KeyDatomsMatched].(int)
+	resolved, _ := data[KeyDatomsResolved].(int)
+	scanned, _ := data[KeyDatomsScanned].(int)
 	return fmt.Sprintf("%d matched, %d resolved, %d scanned", matched, resolved, scanned)
+}
+
+// renderPayloadValue renders a value a producer left typed — an IndexType as
+// "AEVT", a *query.DataPattern as its bracket form. Those types belong to
+// packages that import this one, so they arrive as interface values and render
+// through fmt, which reports a panicking String method inline instead of taking
+// the trace down with it. A missing key renders empty, which callers here
+// distinguish from a value that is present.
+func renderPayloadValue(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
 }
 
 // renderBoundPositions renders a pattern/index-selection event's "bound" field

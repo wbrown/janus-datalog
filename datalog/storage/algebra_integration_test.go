@@ -362,7 +362,7 @@ func TestAlgebraIntegration_PrefetchInDecorrelatedSubquery(t *testing.T) {
 	// Log match events to trace cache vs storage usage
 	t.Logf("Total matches->relations events: %d", len(matchEvents))
 	for _, e := range matchEvents {
-		pattern := e.Data["pattern"]
+		pattern := e.Data[annotations.KeyPattern]
 		count := e.Data["match.count"]
 		t.Logf("  [%v] %v matches (latency: %v)", pattern, count, e.Latency)
 	}

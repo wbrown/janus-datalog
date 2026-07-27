@@ -39,7 +39,7 @@ func benchmarkIndexOrderedLimit(b *testing.B, countScans bool) {
 			}
 			// Intake: what the benchmark reports is scan volume, not the row
 			// count the query returned.
-			if count, ok := event.Data["datoms.scanned"].(int); ok {
+			if count, ok := event.Data[annotations.KeyDatomsScanned].(int); ok {
 				scanned.Add(int64(count))
 			}
 		}

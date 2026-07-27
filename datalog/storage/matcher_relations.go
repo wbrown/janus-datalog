@@ -115,11 +115,11 @@ func (m *PatternMatcher) MatchWithConstraints(
 		m.handler(annotations.Event{
 			Name: annotations.CacheCheck,
 			Data: map[string]interface{}{
-				"pattern":      pattern.String(),
-				"a_resolved":   fmt.Sprintf("%v (%T)", aResolved, aResolved),
-				"cache_nil":    m.cache == nil,
-				"txID_nil":     m.txID == nil,
-				"has_bindings": bindings != nil && len(bindings) > 0,
+				annotations.KeyPattern: pattern,
+				"a_resolved":           fmt.Sprintf("%v (%T)", aResolved, aResolved),
+				"cache_nil":            m.cache == nil,
+				"txID_nil":             m.txID == nil,
+				"has_bindings":         bindings != nil && len(bindings) > 0,
 			},
 		})
 	}
@@ -136,8 +136,8 @@ func (m *PatternMatcher) MatchWithConstraints(
 						m.handler(annotations.Event{
 							Name: annotations.CacheMatchHandled,
 							Data: map[string]interface{}{
-								"pattern": pattern.String(),
-								"results": cacheResult.Size(),
+								annotations.KeyPattern: pattern,
+								"results":              cacheResult.Size(),
 							},
 						})
 					}
@@ -194,12 +194,12 @@ func (m *PatternMatcher) MatchWithConstraints(
 			Name:  annotations.StorageReuseStrategy,
 			Start: time.Now(),
 			Data: map[string]interface{}{
-				"pattern":          pattern.String(),
-				"strategy_type":    strategy.Type.String(),
-				"index":            strategy.Index.String(),
-				"position":         strategy.Position,
-				"needs_validation": strategy.NeedsValidation,
-				"bound_a":          fmt.Sprintf("%v", strategy.BoundA),
+				annotations.KeyPattern: pattern,
+				annotations.KeyIndex:   strategy.Index,
+				"strategy_type":        strategy.Type,
+				"position":             strategy.Position,
+				"needs_validation":     strategy.NeedsValidation,
+				"bound_a":              fmt.Sprintf("%v", strategy.BoundA),
 			},
 		})
 	}
@@ -227,10 +227,10 @@ func (m *PatternMatcher) MatchWithConstraints(
 				Name:  annotations.StorageJoinStrategy,
 				Start: time.Now(),
 				Data: map[string]interface{}{
-					"pattern":       pattern.String(),
-					"join_strategy": joinStrategy.String(),
-					"position":      strategy.Position,
-					"index":         strategy.Index.String(),
+					annotations.KeyPattern: pattern,
+					annotations.KeyIndex:   strategy.Index,
+					"join_strategy":        joinStrategy,
+					"position":             strategy.Position,
 				},
 			})
 		}
@@ -538,8 +538,8 @@ func (m *PatternMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, b
 			Name:  annotations.StorageNoReusePath,
 			Start: time.Now(),
 			Data: map[string]interface{}{
-				"pattern":       pattern.String(),
-				"relation_type": fmt.Sprintf("%T", bindingRel),
+				annotations.KeyPattern: pattern,
+				"relation_type":        fmt.Sprintf("%T", bindingRel),
 			},
 		})
 	}
@@ -599,10 +599,10 @@ func (m *PatternMatcher) matchWithVValidation(
 			Name:  annotations.VValidationEntry,
 			Start: time.Now(),
 			Data: map[string]any{
-				"pattern":     pattern.String(),
-				"index":       strategy.Index.String(),
-				"bound_a":     fmt.Sprintf("%v", strategy.BoundA),
-				"binding_rel": bindingRel.Symbols(),
+				annotations.KeyPattern: pattern,
+				annotations.KeyIndex:   strategy.Index,
+				"bound_a":              fmt.Sprintf("%v", strategy.BoundA),
+				"binding_rel":          bindingRel.Symbols(),
 			},
 		})
 	}
@@ -827,8 +827,11 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 	var aStorage Attribute
 	copy(aStorage[:], aKw.String())
 
-	owner, ownerTx, scanned, err := it.matcher.resolveAVLWW(aStorage, it.currentBoundV)
-	it.datomsScanned += scanned
+	// Nested resolution contributes its intake to the enclosing pattern's count
+	// rather than emitting an event of its own; the funnel's other two terms
+	// are this iterator's to report, from what it emits.
+	owner, ownerTx, funnel, err := it.matcher.resolveAVLWW(aStorage, it.currentBoundV)
+	it.datomsScanned += funnel.scanned
 	if err != nil {
 		return false, err
 	}
@@ -948,15 +951,15 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 				Name:  annotations.VValidationResult,
 				Start: time.Now(),
 				Data: map[string]any{
-					"e":           e.String(),
-					"a":           a.String(),
-					"bound_v":     fmt.Sprintf("%v", it.currentBoundV),
-					"winner_v":    fmt.Sprintf("%v", winner.V),
-					"winner_tx":   winner.Tx.String(),
-					"winner_op":   fmt.Sprintf("%d", winner.Op),
-					"matches":     matches,
-					"will_emit":   matches,
-					"cardinality": it.getCardinality(a),
+					"e":                        e.String(),
+					"a":                        a.String(),
+					"bound_v":                  fmt.Sprintf("%v", it.currentBoundV),
+					"winner_v":                 fmt.Sprintf("%v", winner.V),
+					"winner_tx":                winner.Tx.String(),
+					"winner_op":                fmt.Sprintf("%d", winner.Op),
+					"matches":                  matches,
+					"will_emit":                matches,
+					annotations.KeyCardinality: it.getCardinality(a),
 				},
 			})
 		}
@@ -1095,8 +1098,8 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 			Name:  annotations.VValidationScanOpened,
 			Start: time.Now(),
 			Data: map[string]any{
-				"index":        it.candidateIndex.String(),
-				"crdt_wrapped": true,
+				annotations.KeyIndex: it.candidateIndex,
+				"crdt_wrapped":       true,
 			},
 		})
 	}
@@ -1178,22 +1181,14 @@ func (m *PatternMatcher) matchFromCache(
 	matched := 0
 	if m.handler != nil {
 		defer func() {
-			m.handler(annotations.Event{
-				Name:    annotations.PatternCacheResolveComplete,
-				Start:   opened,
-				Latency: time.Since(opened),
-				Data: map[string]interface{}{
-					"pattern": pattern.String(),
-					// The keyword itself. Rendering belongs to the formatter,
-					// which is the renderer; flattening it here would cost an
-					// allocation on every emit and hand the consumer a string
-					// to parse instead of a value to compare.
-					"cardinality":     card,
-					"datoms.scanned":  spent,
-					"datoms.resolved": entry.valueCount(),
-					"datoms.matched":  matched,
+			emitScanCompletion(m.handler, annotations.PatternCacheResolveComplete,
+				pattern, opened,
+				scanFunnel{
+					scanned:  spent,
+					resolved: entry.valueCount(),
+					matched:  matched,
 				},
-			})
+				map[string]interface{}{annotations.KeyCardinality: card})
 		}()
 	}
 
@@ -1523,9 +1518,14 @@ func (m *PatternMatcher) matchCardinalityManyAsRelation(
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, result.Bound)
 		defer func() {
-			emitIteratorStatistics(m.handler, annotations.PatternStorageScan,
-				pattern, result.Bound.Index, opened,
-				result.Scanned, len(result.Members), len(result.Members), nil)
+			emitScanCompletion(m.handler, annotations.PatternStorageScan,
+				pattern, opened,
+				scanFunnel{
+					scanned:  result.Scanned,
+					resolved: len(result.Members),
+					matched:  len(result.Members),
+				},
+				map[string]interface{}{annotations.KeyIndex: result.Bound.Index})
 		}()
 	}
 
@@ -1595,9 +1595,14 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, result.Bound)
 		defer func() {
-			emitIteratorStatistics(m.handler, annotations.PatternStorageScan,
-				pattern, result.Bound.Index, opened,
-				result.Scanned, len(result.Elements), matched, nil)
+			emitScanCompletion(m.handler, annotations.PatternStorageScan,
+				pattern, opened,
+				scanFunnel{
+					scanned:  result.Scanned,
+					resolved: len(result.Elements),
+					matched:  matched,
+				},
+				map[string]interface{}{annotations.KeyIndex: result.Bound.Index})
 		}()
 	}
 
@@ -1806,8 +1811,10 @@ func (m *PatternMatcher) matchCardinalityManyMembership(
 		if isMember {
 			resolved = 1
 		}
-		emitIteratorStatistics(m.handler, annotations.PatternStorageScan,
-			pattern, bound.Index, opened, scanned, resolved, resolved, nil)
+		emitScanCompletion(m.handler, annotations.PatternStorageScan,
+			pattern, opened,
+			scanFunnel{scanned: scanned, resolved: resolved, matched: resolved},
+			map[string]interface{}{annotations.KeyIndex: bound.Index})
 	}
 
 	// If not a member, return empty relation
@@ -1965,10 +1972,14 @@ func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
-		emitIteratorStatistics(it.matcher.handler, annotations.PatternStorageScan,
-			it.pattern, it.index, it.opened,
-			it.storageIter.Scanned()+it.nestedScanned,
-			it.datomsResolved, it.datomsMatched, nil)
+		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
+			it.pattern, it.opened,
+			scanFunnel{
+				scanned:  it.storageIter.Scanned() + it.nestedScanned,
+				resolved: it.datomsResolved,
+				matched:  it.datomsMatched,
+			},
+			map[string]interface{}{annotations.KeyIndex: it.index})
 	}
 	return it.storageIter.Close()
 }
@@ -2125,10 +2136,14 @@ func (it *vectorScanAllEntitiesIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
-		emitIteratorStatistics(it.matcher.handler, annotations.PatternStorageScan,
-			it.pattern, it.index, it.opened,
-			it.storageIter.Scanned()+it.nestedScanned,
-			it.datomsResolved, it.datomsMatched, nil)
+		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
+			it.pattern, it.opened,
+			scanFunnel{
+				scanned:  it.storageIter.Scanned() + it.nestedScanned,
+				resolved: it.datomsResolved,
+				matched:  it.datomsMatched,
+			},
+			map[string]interface{}{annotations.KeyIndex: it.index})
 	}
 	return it.storageIter.Close()
 }
@@ -2346,9 +2361,14 @@ func (it *cardinalityManyAVETValueIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
-		emitIteratorStatistics(it.matcher.handler, annotations.PatternStorageScan,
-			it.pattern, it.index, it.opened,
-			it.storageIter.Scanned(), it.datomsResolved, it.datomsMatched, nil)
+		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
+			it.pattern, it.opened,
+			scanFunnel{
+				scanned:  it.storageIter.Scanned(),
+				resolved: it.datomsResolved,
+				matched:  it.datomsMatched,
+			},
+			map[string]interface{}{annotations.KeyIndex: it.index})
 	}
 	return it.storageIter.Close()
 }
@@ -2358,10 +2378,9 @@ func (it *cardinalityManyAVETValueIterator) Error() error { return it.err }
 // emitIndexSelection announces the run a pattern's scan is about to walk.
 //
 // The caller guards on m.handler; that guard belongs to the caller because it
-// gates the caller's own argument preparation as well as the map, the
-// pattern.String() and describeRun's two slices in here — and because at the
-// call site it marks the block as observability rather than a step in opening
-// the scan.
+// gates the caller's own argument preparation as well as the map and
+// describeRun's two slices in here — and because at the call site it marks the
+// block as observability rather than a step in opening the scan.
 //
 // Every path that opens a scan for a pattern emits this — the general arm and
 // the five that return before it. A bound only narrows observably if the scan
@@ -2379,7 +2398,7 @@ func (it *cardinalityManyAVETValueIterator) Error() error { return it.err }
 // Callers pass the same ScanBound they hand the reader, so the announced run
 // and the walked run cannot drift.
 func (m *PatternMatcher) emitIndexSelection(pattern *query.DataPattern, bound ScanBound) {
-	data := map[string]interface{}{"pattern": pattern.String()}
+	data := map[string]interface{}{annotations.KeyPattern: pattern}
 	addBoundFields(data, bound)
 	m.handler(annotations.Event{
 		Name:  annotations.PatternIndexSelection,

@@ -88,16 +88,17 @@ func (it *unboundIterator) Close() error {
 		if it.storageIter != nil {
 			scanned = it.storageIter.Scanned()
 		}
-		emitIteratorStatistics(
+		emitScanCompletion(
 			it.matcher.handler,
 			annotations.PatternStorageScan,
 			it.pattern,
-			it.index,
 			it.opened,
-			scanned,
-			it.datomsResolved,
-			it.datomsMatched,
-			nil, // no extra data
+			scanFunnel{
+				scanned:  scanned,
+				resolved: it.datomsResolved,
+				matched:  it.datomsMatched,
+			},
+			map[string]interface{}{annotations.KeyIndex: it.index},
 		)
 	}
 

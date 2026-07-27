@@ -128,8 +128,8 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 				// count; the scan volume this test asserts on comes from
 				// pattern/hash-join-complete instead.
 				if event.Name == "pattern/index-selection" {
-					if idx, ok := event.Data["index"].(string); ok {
-						indexUsed = idx
+					if idx, ok := event.Data[annotations.KeyIndex].(IndexType); ok {
+						indexUsed = idx.String()
 					}
 				}
 			}

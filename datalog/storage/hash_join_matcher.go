@@ -685,21 +685,17 @@ func (it *hashJoinIterator) Close() error {
 	// the scan reports a large datoms.scanned against zero resolved. A fully
 	// tombstoned cardinality-many group reaches it the same way.
 	if it.matcher.handler != nil {
-		// Start and Latency are what Database.Analyze sums per event name;
-		// without them every hash-join scan reports as 0 ms.
-		it.matcher.handler(annotations.Event{
-			Name:    annotations.PatternHashJoinComplete,
-			Start:   it.scanStart,
-			Latency: time.Since(it.scanStart),
-			Data: map[string]interface{}{
-				"pattern":         it.pattern.String(),
-				"index":           it.index.String(),
-				"binding.size":    it.bindingKeyCount,
-				"datoms.scanned":  it.iter.Scanned(),
-				"datoms.resolved": it.datomsResolved,
-				"datoms.matched":  it.matchesFound,
+		emitScanCompletion(it.matcher.handler, annotations.PatternHashJoinComplete,
+			it.pattern, it.scanStart,
+			scanFunnel{
+				scanned:  it.iter.Scanned(),
+				resolved: it.datomsResolved,
+				matched:  it.matchesFound,
 			},
-		})
+			map[string]interface{}{
+				annotations.KeyIndex:       it.index,
+				annotations.KeyBindingSize: it.bindingKeyCount,
+			})
 	}
 
 	if it.iter != nil {
@@ -830,19 +826,17 @@ func (it *mergeJoinIterator) Close() error {
 	// Merge join is the strategy chosen for the largest binding sets, so it is
 	// the one whose scan volume most needs reporting.
 	if it.matcher.handler != nil {
-		it.matcher.handler(annotations.Event{
-			Name:    annotations.PatternMergeJoinComplete,
-			Start:   it.scanStart,
-			Latency: time.Since(it.scanStart),
-			Data: map[string]interface{}{
-				"pattern":         it.pattern.String(),
-				"index":           it.index.String(),
-				"binding.size":    len(it.sortedTuples),
-				"datoms.scanned":  it.iter.Scanned(),
-				"datoms.resolved": it.datomsResolved,
-				"datoms.matched":  it.datomsMatched,
+		emitScanCompletion(it.matcher.handler, annotations.PatternMergeJoinComplete,
+			it.pattern, it.scanStart,
+			scanFunnel{
+				scanned:  it.iter.Scanned(),
+				resolved: it.datomsResolved,
+				matched:  it.datomsMatched,
 			},
-		})
+			map[string]interface{}{
+				annotations.KeyIndex:       it.index,
+				annotations.KeyBindingSize: len(it.sortedTuples),
+			})
 	}
 
 	if it.iter != nil {

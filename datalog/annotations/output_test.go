@@ -34,6 +34,16 @@ func TestRenderBoundPositionsCompactsComponentOrder(t *testing.T) {
 	}
 }
 
+// producerValue stands in for the typed values real producers carry — a
+// storage.IndexType, a *query.DataPattern — neither of which is nameable in
+// this package, since both live in packages that import it. The formatter
+// reaches them through fmt, so a stand-in that renders the same way exercises
+// the same path. Using plain strings here would pin a payload shape no producer
+// emits.
+type producerValue string
+
+func (p producerValue) String() string { return string(p) }
+
 // TestScanLineReportsBoundFromIndexSelection is the pairing pin: the scan line's
 // index and bound come from the preceding pattern/index-selection event, so the
 // two events must agree on the payload's shape.
@@ -48,9 +58,9 @@ func TestScanLineReportsBoundFromIndexSelection(t *testing.T) {
 	require.Empty(t, f.Format(Event{
 		Name: PatternIndexSelection,
 		Data: map[string]interface{}{
-			"pattern":      "[?e :task/scenario ?s]",
-			"index":        "AVET",
-			"bound":        []string{"A", "V"},
+			KeyPattern:     producerValue("[?e :task/scenario ?s]"),
+			KeyIndex:       producerValue("AVET"),
+			KeyBound:       []string{"A", "V"},
 			"bound.values": []string{":task/scenario", "scenario-alpha"},
 		},
 	}), "index selection is folded into the following scan line, not printed itself")
@@ -59,9 +69,9 @@ func TestScanLineReportsBoundFromIndexSelection(t *testing.T) {
 		Name:    PatternStorageScan,
 		Latency: 2 * time.Millisecond,
 		Data: map[string]interface{}{
-			"pattern":         "[?e :task/scenario ?s]",
-			"datoms.scanned":  10,
-			"datoms.resolved": 10,
+			KeyPattern:        producerValue("[?e :task/scenario ?s]"),
+			KeyDatomsScanned:  10,
+			KeyDatomsResolved: 10,
 			"scan.duration":   2 * time.Millisecond,
 		},
 	})
@@ -89,9 +99,9 @@ func TestScanLineShowsIntakeWhenItExceedsOutput(t *testing.T) {
 		Name:    PatternStorageScan,
 		Latency: time.Millisecond,
 		Data: map[string]interface{}{
-			"pattern":         "[?e :person/name ?n]",
-			"datoms.scanned":  10,
-			"datoms.resolved": 1,
+			KeyPattern:        producerValue("[?e :person/name ?n]"),
+			KeyDatomsScanned:  10,
+			KeyDatomsResolved: 1,
 		},
 	})
 	require.Contains(t, line, "1 datoms")
@@ -107,8 +117,8 @@ func TestScanLineWholeIndexBoundIsNotUnknown(t *testing.T) {
 	scan := Event{
 		Name: PatternStorageScan,
 		Data: map[string]interface{}{
-			"pattern":         "[?e ?a ?v]",
-			"datoms.resolved": 500,
+			KeyPattern:        producerValue("[?e ?a ?v]"),
+			KeyDatomsResolved: 500,
 			"scan.duration":   time.Millisecond,
 		},
 	}
@@ -118,9 +128,9 @@ func TestScanLineWholeIndexBoundIsNotUnknown(t *testing.T) {
 	f.Format(Event{
 		Name: PatternIndexSelection,
 		Data: map[string]interface{}{
-			"pattern":      "[?e ?a ?v]",
-			"index":        "EATV",
-			"bound":        []string(nil),
+			KeyPattern:     producerValue("[?e ?a ?v]"),
+			KeyIndex:       producerValue("EATV"),
+			KeyBound:       []string(nil),
 			"bound.values": []string(nil),
 		},
 	})
@@ -141,9 +151,9 @@ func TestFormatterHandleWritesScanLine(t *testing.T) {
 	f.Handle(Event{
 		Name: PatternIndexSelection,
 		Data: map[string]interface{}{
-			"pattern": "[?e :person/name ?n]",
-			"index":   "AETV",
-			"bound":   []string{"A"},
+			KeyPattern: producerValue("[?e :person/name ?n]"),
+			KeyIndex:   producerValue("AETV"),
+			KeyBound:   []string{"A"},
 		},
 	})
 	require.Empty(t, out.String())
@@ -151,8 +161,8 @@ func TestFormatterHandleWritesScanLine(t *testing.T) {
 	f.Handle(Event{
 		Name: PatternStorageScan,
 		Data: map[string]interface{}{
-			"pattern":         "[?e :person/name ?n]",
-			"datoms.resolved": 3,
+			KeyPattern:        producerValue("[?e :person/name ?n]"),
+			KeyDatomsResolved: 3,
 			"scan.duration":   time.Millisecond,
 		},
 	})

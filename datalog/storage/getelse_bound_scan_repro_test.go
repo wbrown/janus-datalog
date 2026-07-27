@@ -22,11 +22,10 @@ func indexForAttrPattern(events []annotations.Event, attrFragment string) (index
 		if e.Name != "pattern/index-selection" {
 			continue
 		}
-		p, _ := e.Data["pattern"].(string)
-		if !strings.Contains(p, attrFragment) {
+		if !strings.Contains(fmt.Sprint(e.Data[annotations.KeyPattern]), attrFragment) {
 			continue
 		}
-		index = fmt.Sprint(e.Data["index"])
+		index = fmt.Sprint(e.Data[annotations.KeyIndex])
 		bound = renderBoundForTest(e)
 	}
 	return index, bound
@@ -36,7 +35,7 @@ func indexForAttrPattern(events []annotations.Event, attrFragment string) (index
 // their values for a diagnostic log line: "A=:repro/note", or "whole index"
 // when the scan binds nothing.
 func renderBoundForTest(e annotations.Event) string {
-	positions, _ := e.Data["bound"].([]string)
+	positions, _ := e.Data[annotations.KeyBound].([]string)
 	values, _ := e.Data["bound.values"].([]string)
 	if len(positions) == 0 {
 		return "whole index"

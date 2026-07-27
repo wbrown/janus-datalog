@@ -217,17 +217,23 @@ func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exce
 // The walk-based rule gives V-view and entity-view the same underlying
 // semantics, guaranteeing that "E emits v" via the entity walk and
 // "V is owned by E" via resolveAVLWW always agree.
-// The reported intake is this AVET scan plus the ownership walk in step 2,
-// which opens an EATV scan of its own and a supersession scan per Set entry
-// within it.
-func (m *PatternMatcher) resolveAVLWW(a Attribute, v any) (datalog.Identity, datalog.ElementID, int, error) {
+// The returned funnel is this resolution's cost and outcome. Intake is the AVET
+// scan plus the ownership walk in step 2, which opens an EATV scan of its own
+// and a supersession scan per Set entry within it. Resolved is 1 when the walk
+// emitted a value for the claimant and matched is 1 when that value is v, so
+// the gap between them names the case the two-term form could not: the index
+// held an entry for a value its claimant has since replaced, and rejecting it
+// cost a scan and a walk. Reporting that as "nothing found" makes it read like
+// a value nobody ever wrote, which costs nothing.
+func (m *PatternMatcher) resolveAVLWW(a Attribute, v any) (datalog.Identity, datalog.ElementID, scanFunnel, error) {
+	var funnel scanFunnel
 	// Step 1: find the max-Tx entry for (a, v) across all entities.
 	iter, err := m.reader.ScanKeysOnly(ScanBound{
 		Index:  AVET,
 		Prefix: []datalog.Value{datalog.InternKeywordFromBytes(a), v},
 	})
 	if err != nil {
-		return nil, datalog.ElementID{}, 0, err
+		return nil, datalog.ElementID{}, funnel, err
 	}
 
 	var (
@@ -257,27 +263,31 @@ func (m *PatternMatcher) resolveAVLWW(a Attribute, v any) (datalog.Identity, dat
 		scanErr = iter.Error()
 	}
 	// Taken before Close, which is what ends the scan's own accounting.
-	scanned := iter.Scanned()
+	funnel.scanned = iter.Scanned()
 	iter.Close()
 	if scanErr != nil {
-		return nil, datalog.ElementID{}, scanned, scanErr
+		return nil, datalog.ElementID{}, funnel, scanErr
 	}
 
 	if bestE == nil {
-		return nil, datalog.ElementID{}, scanned, nil
+		return nil, datalog.ElementID{}, funnel, nil
 	}
 
 	// Step 2 + 3: verify the max-Tx entity's walk actually emits v.
 	walkV, walkTx, found, walkScanned, err := m.walkUniqueEntityValue(Entity(bestE.Hash()), a)
-	scanned += walkScanned
+	funnel.scanned += walkScanned
 	if err != nil {
-		return nil, datalog.ElementID{}, scanned, err
+		return nil, datalog.ElementID{}, funnel, err
 	}
 	if !found {
-		return nil, datalog.ElementID{}, scanned, nil
+		return nil, datalog.ElementID{}, funnel, nil
 	}
+	// Resolution produced the claimant's current value; whether it is the value
+	// asked for is the next question.
+	funnel.resolved = 1
 	if !datalog.ValuesEqual(walkV, v) {
-		return nil, datalog.ElementID{}, scanned, nil
+		return nil, datalog.ElementID{}, funnel, nil
 	}
-	return bestE, walkTx, scanned, nil
+	funnel.matched = 1
+	return bestE, walkTx, funnel, nil
 }

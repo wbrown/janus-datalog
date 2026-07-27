@@ -142,6 +142,40 @@ const (
 	ReflectUpdateComplete = "reflect/update.complete"
 )
 
+// Payload keys shared by the scan events — the index-selection announcement and
+// the five completion events that report a funnel. Declared here for the same
+// reason the event names above are: these keys have eleven producers and one
+// consumer, so a key spelled at the producer is invisible to the formatter that
+// reads it and to any other producer that must spell it the same way.
+//
+// Only shared keys belong here. A key one producer writes and nothing else
+// reads is that producer's business and answering "who else uses this?" for it
+// is a one-file question.
+//
+// Values travel typed: KeyIndex carries an IndexType, KeyPattern a
+// *query.DataPattern, KeyCardinality a datalog.Keyword. The formatter renders —
+// it is the renderer, and a producer that flattens a value to a string spends an
+// allocation on every emit to hand its consumer something to parse instead of
+// something to compare. The storage types are not nameable here (storage imports
+// this package), so consumers read them through fmt.Stringer.
+const (
+	// The scan's subject and the run it addressed.
+	KeyPattern     = "pattern"
+	KeyIndex       = "index"
+	KeyBound       = "bound"
+	KeyCardinality = "cardinality"
+
+	// What a binding-driven scan was driven by.
+	KeyBindingSize = "binding.size"
+	KeyScansOpened = "scans.opened"
+
+	// The funnel, narrowest last: intake from the index, what CRDT resolution
+	// produced from it, what survived the pattern and its constraints.
+	KeyDatomsScanned  = "datoms.scanned"
+	KeyDatomsResolved = "datoms.resolved"
+	KeyDatomsMatched  = "datoms.matched"
+)
+
 // Event represents a single annotation event during query execution.
 type Event struct {
 	Name    string                 // Event name using hierarchical constants above

@@ -924,7 +924,7 @@ func (ar *AnalyzeResult) String() string {
 			if outputSize, ok := e.Data["output_size"]; ok {
 				sb.WriteString(fmt.Sprintf(" (output=%v)", outputSize))
 			}
-			if index, ok := e.Data["index"]; ok {
+			if index, ok := e.Data[annotations.KeyIndex]; ok {
 				sb.WriteString(fmt.Sprintf(" (index=%v)", index))
 			}
 		}
@@ -2678,22 +2678,25 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 	// is how application-layer upsert uses it — it is the dominant read in a
 	// program, so a trace that omitted it would omit the program's largest cost.
 	start := time.Now()
-	owner, _, scanned, err := matcher.resolveAVLWW(aBytes, value)
+	owner, _, funnel, err := matcher.resolveAVLWW(aBytes, value)
 	if d.AnnotationHandler != nil {
-		found := 0
-		if owner != nil {
-			found = 1
-		}
-		d.AnnotationHandler(annotations.Event{
-			Name:    annotations.UniqueLookupComplete,
-			Start:   start,
-			Latency: time.Since(start),
-			Data: map[string]interface{}{
-				"attribute":      attr.String(),
-				"datoms.scanned": scanned,
-				"datoms.matched": found,
+		// The pattern this call resolves — which entity holds (attr, value) —
+		// named the way every other scan event names its subject. The Go
+		// signature is what hides the pattern here; the operation is the
+		// A-bound, V-bound, E-unbound scan, and the query path reaches the same
+		// resolver from that pattern spelled out.
+		//
+		// No index: resolution walks AVET for the claimant and then the
+		// claimant's EATV history, so no single run is the one this addressed.
+		pattern := &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: datalog.NewSymbol("?e")},
+				query.Constant{Value: attr},
+				query.Constant{Value: value},
 			},
-		})
+		}
+		emitScanCompletion(d.AnnotationHandler, annotations.UniqueLookupComplete,
+			pattern, start, funnel, nil)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("LookupByUnique: resolution failed: %w", err)

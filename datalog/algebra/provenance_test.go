@@ -32,6 +32,43 @@ func TestRewriteSinkDestinations(t *testing.T) {
 	require.Equal(t, "r", collecting.Records()[0].Reason)
 }
 
+// TestSilentSinkBuildsNoProvenance pins the cost the call-site guards exist for,
+// which
+// no assertion on records or events can reach: a pass renders its subject and
+// builds a payload map for every node it looks at, and the guards inside Record
+// and Emit cannot prevent that, because Go evaluates arguments before the call.
+// On the normal query path — no handler, no explanation — nothing consumes any
+// of it.
+//
+// The assertion is relative rather than a fixed count. What must hold is that a
+// silent sink does strictly less work than an observing one; move the guards
+// back inside the sink and the two converge, which is the regression itself. A
+// fixed number would instead break on every unrelated allocation change.
+func TestSilentSinkBuildsNoProvenance(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?s ?mx
+	  :where
+	  [?s :scenario/name ?n]
+	  [(q [:find (max ?h) :in $ ?s :where [?p :price/scenario ?s] [?p :price/high ?h]] $ ?s) [[?mx]]]]`)
+	require.NoError(t, err)
+	root, err := Compile(q)
+	require.NoError(t, err)
+
+	optimizeWith := func(sink *RewriteSink) float64 {
+		return testing.AllocsPerRun(20, func() {
+			if _, err := NewOptimizer(DecorrelationPass(sink)).Optimize(root); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+
+	silent := optimizeWith(&RewriteSink{})
+	observing := optimizeWith(&RewriteSink{Collect: true})
+	t.Logf("allocations per optimize: silent %v, observing %v", silent, observing)
+	require.Less(t, silent, observing,
+		"a silent sink allocated as much as a collecting one (%v vs %v): the pass is "+
+			"building records and payloads nothing consumes", silent, observing)
+}
+
 // TestDecorrelationPassRecords pins the typed provenance of the decorrelation
 // pass: the correlated grouped-aggregate shape produces a considered record
 // followed by an applied record; the pure-DataPattern shape produces a

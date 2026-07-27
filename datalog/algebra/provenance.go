@@ -29,10 +29,16 @@ type RewriteRecord struct {
 	// Reason states the failed precondition for declined records; empty
 	// otherwise.
 	Reason string
-	// Subject renders the context the decision was made on (the inner query
-	// of a lateral join, the expression being rewritten, the terminal
-	// symbols of an insertion).
-	Subject string
+	// Subject is the context the decision was made on — the inner query of a
+	// lateral join, the expression being rewritten, the terminal symbols of an
+	// insertion. It is carried, not rendered: ExplainAlgebra is the renderer,
+	// and rendering here would walk the node on every visit to build a string
+	// that the normal query path never reads.
+	//
+	// `any` because the three subjects are three types (*query.Query, an
+	// expression, []query.Symbol) with no interface between them beyond being
+	// printable — the same reason the event payload beside it is a map of any.
+	Subject any
 }
 
 // RewriteSink is where a pass's rewrite decisions go. Each recorded decision

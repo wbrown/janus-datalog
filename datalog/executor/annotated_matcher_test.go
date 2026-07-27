@@ -274,8 +274,8 @@ func TestWrapMatcher_WithBindings(t *testing.T) {
 		t.Errorf("Expected binding.symbols=[?x], got %v", event.Data["binding.symbols"])
 	}
 
-	if event.Data["binding.size"] != 3 {
-		t.Errorf("Expected binding.size=3, got %v", event.Data["binding.size"])
+	if event.Data[annotations.KeyBindingSize] != 3 {
+		t.Errorf("Expected binding.size=3, got %v", event.Data[annotations.KeyBindingSize])
 	}
 }
 

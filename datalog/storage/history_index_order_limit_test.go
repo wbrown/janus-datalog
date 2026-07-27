@@ -36,11 +36,13 @@ func (c *historyOrderScanCapture) handler(event annotations.Event) {
 	defer c.mu.Unlock()
 	// Intake, not resolution's output: the assertions this capture drives are
 	// about how far the scan walked before the limit was satisfied.
-	if scanned, ok := event.Data["datoms.scanned"].(int); ok {
+	if scanned, ok := event.Data[annotations.KeyDatomsScanned].(int); ok {
 		c.scanned += scanned
 	}
-	if index, ok := event.Data["index"].(string); ok {
-		c.index = index
+	// The producer carries the IndexType; rendering here keeps "" meaning no
+	// scan was seen, which reset() and the assertions below rely on.
+	if index, ok := event.Data[annotations.KeyIndex].(IndexType); ok {
+		c.index = index.String()
 	}
 }
 

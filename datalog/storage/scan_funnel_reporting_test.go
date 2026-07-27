@@ -84,28 +84,29 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 			for _, tc := range []struct {
 				arm         string
 				query       string
-				inputEntity bool     // supply E as an :in parameter
-				index       string   // "" when the path announces no run
-				completions []string // any one of these carries the funnel
+				inputEntity bool      // supply E as an :in parameter
+				index       IndexType // the run the arm must announce
+				noRun       bool      // set instead when the arm addresses none
+				completions []string  // any one of these carries the funnel
 			}{
 				{arm: "matchCardinalityManyAsRelation",
 					query: `[:find ?v :where [#id "funnel:alice" :person/tag ?v]]`,
-					index: "EAVT", completions: []string{annotations.PatternStorageScan}},
+					index: EAVT, completions: []string{annotations.PatternStorageScan}},
 				{arm: "matchCardinalityVectorAsRelation",
 					query: `[:find ?v :where [#id "funnel:alice" :person/skill ?v]]`,
-					index: "EATV", completions: []string{annotations.PatternStorageScan}},
+					index: EATV, completions: []string{annotations.PatternStorageScan}},
 				{arm: "matchCardinalityManyMembership",
 					query: `[:find ?tx :where [#id "funnel:alice" :person/tag "dev" ?tx]]`,
-					index: "EAVT", completions: []string{annotations.PatternStorageScan}},
+					index: EAVT, completions: []string{annotations.PatternStorageScan}},
 				{arm: "matchCardinalityManyScanAllEntities",
 					query: `[:find ?e ?v :where [?e :person/tag ?v]]`,
-					index: "AEVT", completions: []string{annotations.PatternStorageScan}},
+					index: AEVT, completions: []string{annotations.PatternStorageScan}},
 				{arm: "matchCardinalityManyFindEntitiesWithValue",
 					query: `[:find ?e :where [?e :person/tag "dev"]]`,
-					index: "AVET", completions: []string{annotations.PatternStorageScan}},
+					index: AVET, completions: []string{annotations.PatternStorageScan}},
 				{arm: "matchVectorScanAllEntities",
 					query: `[:find ?e ?v :where [?e :person/skill ?v]]`,
-					index: "AEVT", completions: []string{annotations.PatternStorageScan}},
+					index: AEVT, completions: []string{annotations.PatternStorageScan}},
 
 				// A binding relation over the same cardinality-many attribute.
 				// Which strategy chooseJoinStrategy picks is its own business
@@ -113,6 +114,7 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 				// what this row asserts is that whichever it picks reports.
 				{arm: "binding-driven, E from :in",
 					query: `[:find ?v :in $ ?e :where [?e :person/tag ?v]]`, inputEntity: true,
+					noRun: true,
 					completions: []string{
 						annotations.PatternHashJoinComplete,
 						annotations.PatternMergeJoinComplete,
@@ -147,13 +149,16 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 					require.NoError(t, err)
 
 					selection := lastEventNamed(events, annotations.PatternIndexSelection)
-					if tc.index == "" {
+					if tc.noRun {
 						require.Nil(t, selection,
 							"%s addresses no run of its own and must not announce one", tc.arm)
 					} else {
 						require.NotNil(t, selection,
 							"%s opened a scan and must announce the run it addressed", tc.arm)
-						require.Equal(t, tc.index, selection.Data["index"])
+						// The IndexType, not a rendering of it: a producer that
+						// flattened would still read "EAVT" in a trace, and only
+						// a typed comparison catches it.
+						require.Equal(t, tc.index, selection.Data[annotations.KeyIndex])
 					}
 
 					var completion *annotations.Event
@@ -171,12 +176,12 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 						"%s opened a scan and must report what it cost; expected one of %v",
 						tc.arm, tc.completions)
 
-					scanned, ok := completion.Data["datoms.scanned"].(int)
+					scanned, ok := completion.Data[annotations.KeyDatomsScanned].(int)
 					require.True(t, ok, "the completion event must carry intake")
 					require.Positive(t, scanned,
 						"the arm read the index to answer; zero intake would mean it did not")
-					require.Contains(t, completion.Data, "datoms.resolved")
-					require.Contains(t, completion.Data, "datoms.matched")
+					require.Contains(t, completion.Data, annotations.KeyDatomsResolved)
+					require.Contains(t, completion.Data, annotations.KeyDatomsMatched)
 				})
 			}
 		})
@@ -223,10 +228,10 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 			// The keyword, not a rendering of it. Flattening at the producer
 			// would cost an allocation per emit and hand the consumer a string
 			// to parse instead of a value to compare by pointer.
-			require.Equal(t, schema.CardinalityOne, miss.Data["cardinality"])
-			require.Positive(t, miss.Data["datoms.scanned"],
+			require.Equal(t, schema.CardinalityOne, miss.Data[annotations.KeyCardinality])
+			require.Positive(t, miss.Data[annotations.KeyDatomsScanned],
 				"a miss resolved from storage and read the index to do it")
-			require.Equal(t, 1, miss.Data["datoms.matched"])
+			require.Equal(t, 1, miss.Data[annotations.KeyDatomsMatched])
 
 			// Second read of the same (E, A): a hit, which reads no index.
 			events = nil
@@ -237,9 +242,9 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 
 			hit := lastEventNamed(events, annotations.PatternCacheResolveComplete)
 			require.NotNil(t, hit)
-			require.Equal(t, 0, hit.Data["datoms.scanned"],
+			require.Equal(t, 0, hit.Data[annotations.KeyDatomsScanned],
 				"a hit reads no index, and zero is the answer rather than an absent field")
-			require.Equal(t, 1, hit.Data["datoms.matched"])
+			require.Equal(t, 1, hit.Data[annotations.KeyDatomsMatched])
 		})
 	}
 }
@@ -277,9 +282,9 @@ func TestMemoryBackendReportsIntakeNatively(t *testing.T) {
 
 	scan := lastEventNamed(events, annotations.PatternStorageScan)
 	require.NotNil(t, scan)
-	require.Equal(t, 3, scan.Data["datoms.scanned"],
+	require.Equal(t, 3, scan.Data[annotations.KeyDatomsScanned],
 		"three writes are three datoms under this attribute, and the memory store read them all")
-	require.Equal(t, 1, scan.Data["datoms.resolved"])
+	require.Equal(t, 1, scan.Data[annotations.KeyDatomsResolved])
 }
 
 // lastEventNamed returns the final event with the given name, or nil. Last

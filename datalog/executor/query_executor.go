@@ -1360,15 +1360,21 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 			return nil, fmt.Errorf("subquery input binding failed: %w", err)
 		}
 
-		// DEBUG: Log input relations
+		// One event per input relation, naming where it sits in the list.
+		//
+		// "relation.position", not "index": in this engine an index is one of the
+		// eight physical orderings, and annotations.KeyIndex carries an
+		// IndexType. A second meaning under the same key would reach
+		// Database.Analyze, which prints Data[KeyIndex] for every event it traces
+		// and would render this ordinal as though it named a run.
 		if collector := ctx.Collector(); collector != nil {
 			for i, rel := range inputRelations {
 				collector.Add(annotations.Event{
 					Name: annotations.SubqueryInputRelation,
 					Data: map[string]interface{}{
-						"index":   i,
-						"symbols": rel.Symbols(),
-						"size":    rel.Size(),
+						"relation.position": i,
+						"symbols":           rel.Symbols(),
+						"size":              rel.Size(),
 					},
 				})
 			}

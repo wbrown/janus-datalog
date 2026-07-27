@@ -133,19 +133,20 @@ func (it *nonReusingIterator) Close() error {
 	// shape under its own instrumentation — a reader tracing a query needs the
 	// count, not the enumeration.
 	if it.matcher.handler != nil && it.scansOpened > 0 {
-		it.matcher.handler(annotations.Event{
-			Name:    annotations.PatternPerBindingScanComplete,
-			Start:   it.scanStart,
-			Latency: time.Since(it.scanStart),
-			Data: map[string]interface{}{
-				"pattern":         it.pattern.String(),
-				"binding.size":    len(it.bindingTuples),
-				"scans.opened":    it.scansOpened,
-				"datoms.scanned":  it.totalScanned,
-				"datoms.resolved": it.totalResolved,
-				"datoms.matched":  it.totalMatched,
+		// No index: chooseIndex runs per binding tuple, so this run addressed as
+		// many as it opened scans and naming one would name whichever happened
+		// to be last. scans.opened is what stands in its place.
+		emitScanCompletion(it.matcher.handler, annotations.PatternPerBindingScanComplete,
+			it.pattern, it.scanStart,
+			scanFunnel{
+				scanned:  it.totalScanned,
+				resolved: it.totalResolved,
+				matched:  it.totalMatched,
 			},
-		})
+			map[string]interface{}{
+				annotations.KeyBindingSize: len(it.bindingTuples),
+				annotations.KeyScansOpened: it.scansOpened,
+			})
 	}
 	return err
 }

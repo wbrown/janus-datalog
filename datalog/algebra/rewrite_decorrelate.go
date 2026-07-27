@@ -66,25 +66,39 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		return rebuildWithChildren(node, children)
 	}
 
-	subject := lj.InnerQuery.String()
-	sink.Record(RewriteRecord{
-		Pass:    decorrelationPassName,
-		Action:  RewriteConsidered,
-		Subject: subject,
-	}, "algebra/decorrelate-check", map[string]interface{}{
-		"correlation_vars": fmt.Sprintf("%v", lj.CorrelationVars),
-		"has_aggregates":   hasAggregates(lj.InnerQuery),
-		"has_defaults":     len(lj.DefaultValues) > 0,
-		"should":           shouldDecorrelate(lj),
-		"inner_query":      subject,
-	})
+	// Ask the sink before building the payload. The subject and the correlation
+	// vars are carried, so they cost nothing, but the map itself and the two
+	// walks of the inner query inside it (hasAggregates, shouldDecorrelate) are
+	// paid per LateralJoin this pass visits, and a guard inside Record cannot
+	// prevent that — Go evaluates arguments before the call. On the normal query
+	// path — no handler, no explanation — nothing consumes any of it.
+	//
+	// The sink may be nil: the inner optimizer below builds its pass with
+	// DecorrelationPass(nil).
+	observing := sink != nil && (sink.Collect || sink.Handler != nil)
+	if observing {
+		sink.Record(RewriteRecord{
+			Pass:    decorrelationPassName,
+			Action:  RewriteConsidered,
+			Subject: lj.InnerQuery,
+		}, "algebra/decorrelate-check", map[string]interface{}{
+			"correlation_vars": lj.CorrelationVars,
+			"has_aggregates":   hasAggregates(lj.InnerQuery),
+			"has_defaults":     len(lj.DefaultValues) > 0,
+			"should":           shouldDecorrelate(lj),
+			"inner_query":      lj.InnerQuery,
+		})
+	}
 
 	decline := func(reason string) {
+		if !observing {
+			return
+		}
 		sink.Record(RewriteRecord{
 			Pass:    decorrelationPassName,
 			Action:  RewriteDeclined,
 			Reason:  reason,
-			Subject: subject,
+			Subject: lj.InnerQuery,
 		}, "algebra/decorrelate-skip", map[string]interface{}{
 			"reason": reason,
 		})
@@ -116,15 +130,17 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		return rebuildWithChildren(node, children)
 	}
 
-	sink.Record(RewriteRecord{
-		Pass:    decorrelationPassName,
-		Action:  RewriteApplied,
-		Subject: subject,
-	}, "algebra/decorrelate-apply", map[string]interface{}{
-		"correlation_vars": fmt.Sprintf("%v", lj.CorrelationVars),
-		"inner_params":     fmt.Sprintf("%v", innerParams),
-		"has_aggregates":   hasAggregates(lj.InnerQuery),
-	})
+	if observing {
+		sink.Record(RewriteRecord{
+			Pass:    decorrelationPassName,
+			Action:  RewriteApplied,
+			Subject: lj.InnerQuery,
+		}, "algebra/decorrelate-apply", map[string]interface{}{
+			"correlation_vars": lj.CorrelationVars,
+			"inner_params":     innerParams,
+			"has_aggregates":   hasAggregates(lj.InnerQuery),
+		})
+	}
 
 	// Decorrelate: remove correlation params from :in, add the classified
 	// group-by columns to :find, consume translated correlation equalities.
@@ -199,11 +215,16 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		}
 
 		// Diagnostic detail accompanying the applied rewrite: the optimized
-		// inner WHERE. Event-only — the applied record above is the decision.
-		sink.Emit(annotations.AlgebraDecorrelateInnerOptimized, map[string]interface{}{
-			"clause_count": len(optimizedWhere),
-			"clauses":      fmt.Sprintf("%v", optimizedWhere),
-		})
+		// inner WHERE. Event-only — the applied record above is the decision —
+		// so the guard is the handler alone, not `observing`: a collect-only
+		// sink discards this payload, and rendering the clause list to build it
+		// is the argument preparation the guard exists to skip.
+		if sink != nil && sink.Handler != nil {
+			sink.Emit(annotations.AlgebraDecorrelateInnerOptimized, map[string]interface{}{
+				"clause_count": len(optimizedWhere),
+				"clauses":      optimizedWhere,
+			})
+		}
 
 		// Build the decorrelated query with optimized WHERE
 		optimizedDecorrelated := &query.Query{
