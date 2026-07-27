@@ -1446,7 +1446,45 @@ exercises:
 - Multi-key ordering and bounded `:limit 25`
 - Public query, parse-cache, plan-cache, and result-collection boundaries
 
-**Checkpoint** (`benchtime=1s`, `count=10`, darwin/arm64):
+### Current (2026-07-27, PR #114 branch HEAD `0c30a7a`)
+
+| Metric | Result |
+|--------|-------:|
+| Time | **17.98 ms/op ±2%** |
+| Memory | **27.95 MiB/op** |
+| Allocations | **126.1k/op** |
+
+Against `docs/perf/scan_set_semantics_after_2026-07-22.txt`: time and bytes are
+washes (p=0.089, p=0.684), allocations +0.01% — twelve per operation, constant
+rather than per-key. The typed read-seam conversion is not visible in this
+benchmark. Artifacts:
+`docs/perf/typed_scan_bound_checkpoint_{,benchstat_}2026-07-27.txt` (n=10, Apple
+M5, go1.26.3 darwin/arm64). The comparison is cross-session, which matters for
+the wall-time row only; B/op and allocs/op are deterministic counts.
+
+The figures below are the checkpoint's history, kept as dated records. Read them
+as a chain rather than as competing current claims — the benchmark's cost fell
+roughly 2.7× in time and 8.9× in allocations across July 2026:
+
+| Date | Time | Memory | Allocations | Artifact |
+|------|-----:|-------:|------------:|----------|
+| July 2026 (below) | 47.88 ms | 87.57 MiB | 1.118M | — |
+| 2026-07-13 | 46.89 ms | 84.04 MiB | 1.043M | — |
+| 2026-07-21, allocation round | 33.5 ms | 46.79 MB | 550.4k | `round_checkpoint_after_2026-07-21.txt` |
+| 2026-07-21, four further rounds the same day | 22.15 → 17.78 ms | 43.27 → 29.79 MiB | 399.1k → 141.0k | `tuplekey_positional`, `branchcache_spans`, `orfallback_direct_emit`, `joinbuild_grouped` (all `_2026-07-21.txt`) |
+| 2026-07-22, baseline | 17.8 ms | 31.2 MB | 141.1k | `scan_set_semantics_baseline_2026-07-22.txt` |
+| 2026-07-22, after | 17.6 ms | 29.3 MB | 126.1k | `scan_set_semantics_after_2026-07-22.txt` |
+| 2026-07-27 | 17.98 ms | 27.95 MiB | 126.1k | `typed_scan_bound_checkpoint_2026-07-27.txt` |
+
+The four 2026-07-21 rounds each have their own bullet in the status list at the
+top of this file; the 550.4k row is that day's *starting* point, not where it
+ended. `scan_set_semantics_baseline_2026-07-22.txt` picks up exactly where
+`joinbuild_grouped` left off.
+
+**Checkpoint** (`benchtime=1s`, `count=10`, darwin/arm64) — **superseded; see the
+table above.** The profile findings under it were taken against this state and
+its ~1.1M allocations, so their percentages describe that tree, not the current
+one:
 
 | Metric | Result |
 |--------|-------:|

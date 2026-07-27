@@ -40,6 +40,35 @@ go tool pprof -top -cum -nodecount=40 /tmp/exec.test <prof>.prof
 
 ## Current baselines
 
+### Typed scan-bound checkpoint (`typed_scan_bound_checkpoint_*_2026-07-27.txt`)
+
+`BenchmarkComplexQueryCheckpoint` on PR #114's branch HEAD (`0c30a7a`, the typed
+read-seam conversion), against `scan_set_semantics_after_2026-07-22.txt` as the
+baseline rather than a fresh paired run.
+
+Machine: Apple M5, go1.26.3 darwin/arm64, n=10, `benchtime` default.
+
+| Stem | What | n |
+|------|------|---|
+| `typed_scan_bound_checkpoint_2026-07-27.txt` | complex checkpoint at branch HEAD | 10 |
+| `typed_scan_bound_checkpoint_benchstat_2026-07-27.txt` | vs the 2026-07-22 baseline | 10 |
+
+| Metric | 2026-07-22 baseline | 2026-07-27 HEAD | |
+|--------|--------------------:|----------------:|---|
+| sec/op | 17.62m ± 5% | 17.98m ± 2% | ~ (p=0.089) |
+| B/op | 27.95Mi ± 0% | 27.95Mi ± 0% | ~ (p=0.684) |
+| allocs/op | 126.1k ± 0% | 126.1k ± 0% | +0.01% (p=0.000) |
+
+**This is a cross-session comparison, which the M3 Ultra rerun note below says to
+distrust — for wall time.** It does not weaken the conclusion here, because the
+two metrics that carry it are deterministic counts rather than timings: B/op and
+allocs/op are byte-identical and +12/op respectively, and neither depends on
+thermal state or machine load. The +12 allocations are a constant, not per-key,
+and reach p=0.000 only because the run-to-run variance on that counter is nil.
+The wall-time row is the one to re-measure paired if it ever matters; it reads
+marginally *slower* here, which is the direction a cross-session artifact would
+produce anyway.
+
 ### Correctness-campaign A/B (`*_correctness_campaign_*_2026-07-20.txt`)
 
 Same-session A/B measuring the fix/identity-hash-only correctness campaign (PR #112, 27 commits): `baseline` = the branch merge-base (`9bd60a4`, main at fork), `after` = branch HEAD (`d6d4721`), run back to back on the same machine so cross-session thermal artifacts (see the M3 Ultra rerun note below) cancel. Both sides carry the May–June perf findings identically, so the delta is attributable to the campaign alone.
