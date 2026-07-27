@@ -69,7 +69,7 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	"planCache":         fieldInherited,
 	"parseCache":        fieldInherited, // shared parse results are immutable post-parse
 	"schema":            fieldInherited,
-	"annotationHandler": fieldInherited,
+	"AnnotationHandler": fieldInherited, // exported: assigned directly, no setter to fan out
 	"plannerOptions":    fieldInherited, // the regenerated instance of the class bug
 	"clock":             fieldInherited,
 	"replicaID":         fieldInherited,

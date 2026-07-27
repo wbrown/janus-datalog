@@ -172,8 +172,11 @@ prefixes, so there is no span to report.
 
 ### C2. The annotation key `bound` carries two payload types inside one event family
 
-**Status**: Resolved (2026-07-26). The two v-validation leaf events write `bound.v`;
-`bound` carries the run's bound positions across the whole family.
+**Status**: Resolved (2026-07-26); this line was itself wrong until round 3.
+The two v-validation leaf events write **`bound_v`**, not `bound.v`. The C2 fix
+introduced `bound.v` as a third name for a datum that already had one; D1 moved
+both sites onto the `bound_v` the rest of the family used, and this status was
+not followed. `bound` carries the run's bound positions across the whole family.
 **Site**: `scan_bound.go:107` versus `matcher_relations.go:744`, `:1013`
 
 `addBoundFields` sets `data["bound"]` to the run's bound positions (`[]string`) on `v-validation/open-scan`. The siblings `v-validation/candidate` and `v-validation/no-winner` set the same key to `fmt.Sprintf("%v", it.currentBoundV)` (a `string`). A handler filtering `v-validation/*` must type-switch to learn which it received. Both types are observed in the event stream of a single V-bound query.
@@ -306,13 +309,15 @@ Cited `database.go:2287`, `:2351`, `:2357`; actual `:2265`, `:2329`, `:2335` —
 
 ### E7. Proposal status line and sizing figure
 
-**Status**: Partly resolved (2026-07-26). The status line now reflects PR 0
-satisfied, PR A landed, PR B queued. **The sizing disagreement stands and is
-recorded in place**: 67 and 73 are not reconcilable from the stated inputs — eight
-slots of one `*Datom` is 64 bytes of content, so 67 implies ~95.5% node fill and
-73 implies ~87.7%, while the paragraph's own "under 1% overhead" gives ~65. The
-fill fraction has to be stated; inventing a reconciliation would defeat the
-section's purpose. The ~9× headline holds either way.
+**Status**: Resolved (2026-07-26); this line went on demanding something that had
+already been withdrawn, and is corrected in round 3. The status line now reflects
+PR 0 satisfied, PR A landed, PR B queued. The sizing disagreement closed under
+R17 the same day, in the opposite direction from what this entry asked for:
+`MEMORY_DATOM_INDEXES.md:307-309` states the 67–114 spread as a property of how
+the tree is built, says the table uses 73 because that is the bulk-built end, and
+records that **the fill fraction is deliberately not pinned** — the ~9× headline
+holds across the whole range, so the precision this entry demanded is cognition
+the estimate does not repay.
 **Site**: `docs/proposals/MEMORY_DATOM_INDEXES.md:7`, `:303` vs `:313-316`
 
 `:7` still reads "Implementation not started" with PR 0 satisfied and PR A executed. Separately, `:303` states the eight tree slots cost **67 B/datom** bulk-built and that the table below uses that figure; `:313` reads **73**, and `:315-316` are computed from 73 (64+73+8 = 145). With 67 the projected per-datom figure is 139. The section exists so the case need not be re-derived (`:296`), which makes the internal disagreement the whole cost.

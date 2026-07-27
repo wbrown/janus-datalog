@@ -222,7 +222,7 @@ func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
 
 			var mu sync.Mutex
 			var trail []string
-			db.SetAnnotationHandler(func(ev annotations.Event) {
+			db.AnnotationHandler = func(ev annotations.Event) {
 				if strings.HasPrefix(ev.Name, "v-validation/") ||
 					strings.Contains(ev.Name, "join") ||
 					strings.Contains(ev.Name, "collapse") ||
@@ -232,7 +232,7 @@ func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
 					trail = append(trail, fmt.Sprintf("%s %v", ev.Name, ev.Data))
 					mu.Unlock()
 				}
-			})
+			}
 
 			v := []byte{0xde, 0xad, 0xbe, 0xef}
 			tx := db.NewTransaction()

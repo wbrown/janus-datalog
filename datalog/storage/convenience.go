@@ -61,7 +61,7 @@ func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executo
 	// Execute with the SourceRouter as the PatternMatcher
 	planOpts.Cache = d.planCache
 	exec := executor.NewExecutorWithOptions(router, d, planOpts)
-	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
+	result, err := exec.ExecuteWithRelations(executor.NewContext(d.AnnotationHandler), q, inputRelations)
 	if err != nil {
 		_ = session.Close()
 		return nil, fmt.Errorf("query execution failed: %w", err)

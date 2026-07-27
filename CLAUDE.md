@@ -637,14 +637,16 @@ d, _ := db.Open("path/to/db", db.WithAnnotationHandler(handler))
 **Key Design Principles**:
 - **Decorator pattern**: `WrapMatcher()` wraps any `PatternMatcher` with annotation support
 - **Handler injection**: Storage layer receives handler via `SetHandler()` for detailed events
-- **Zero overhead when disabled**: Pass `nil` handler for production deployments
+- **Zero overhead when disabled**: Pass `nil` handler for production deployments. The existence guard lives at the **call site**, never inside the emitting function, because it must also gate the caller's argument preparation — a guard inside the emitter still evaluates everything passed to it. `Database.AnnotationHandler` is a plain field read, not an accessor, so asking whether annotations are on costs nothing.
+- **Concurrency is the handler's**: the engine emits from parallel workers and does not wrap what you install. Wrap it yourself if it needs it: `d.AnnotationHandler = annotations.Synchronized(h)`.
 - **Type transparency**: Wrapped matcher implements same interface as base matcher
 
-**Event Types**:
-- **Pattern Matching**: Index selection, storage scan, filtering, and relation conversion
-- **Join Operations**: Type (hash/nested/merge), sizes, and reduction ratios
-- **Expression Evaluation**: Input/output sizes and computation time
-- **Phase Execution**: Overall timing and tuple counts
+**Event Types**. `datalog/annotations/types.go` is the authority — every event the engine emits is named there and every producer emits through one of those constants rather than writing the string. Do not add an event by writing a literal; the two halves have to stay together or a sweep for dead names can only see one of them. The families:
+- **Pattern matching**: index selection, and the scan funnel — `datoms.scanned` (intake from the index, counted before any narrowing), `datoms.resolved` (what CRDT resolution produced), `datoms.matched` (what survived the pattern and its constraints)
+- **Binding-driven scans**: one completion event per strategy `chooseJoinStrategy` picks — hash-join, merge-join, per-binding, each carrying the same funnel
+- **Joins**: hash-join timing and sizes, build/probe completion, strategy selection
+- **Phase execution**: begin and complete, with the phase's duration and tuple count (`-1` where a streaming group declines to size itself rather than be consumed for the number)
+- **V-bound validation, OR and fallback branches, subqueries, algebra rewrites, pull, reflection, cache rebuilds, unique-attribute lookups**
 
 ### Critical Performance Insights
 1. **Avoid Intermediate Materialization**: Use streaming iterators wherever possible

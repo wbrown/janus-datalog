@@ -52,34 +52,38 @@ func newUniqueWalkState() *uniqueWalkState {
 // against other entities via AVET. The as-of / history-mode filtering
 // is applied at the caller's iteration level (not here), because the
 // streaming path already filters at its source.
-func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Datom, eBytes Entity, aBytes Attribute) (walkEntryDecision, error) {
+//
+// Returns the index intake of the supersession scan, which the caller adds to
+// its own. The decisions that short-circuit before that scan report zero,
+// because they read no index.
+func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Datom, eBytes Entity, aBytes Attribute) (walkEntryDecision, int, error) {
 	vKey := string(encodeValueForSearch(datom.V, m.encoder))
 
 	if datom.Op == datalog.OpCRDTRemove {
 		if existing, ok := state.retracted[vKey]; !ok || existing.Less(datom.Tx) {
 			state.retracted[vKey] = datom.Tx
 		}
-		return walkEntryRetract, nil
+		return walkEntryRetract, 0, nil
 	}
 
 	// Set (or default OpNone). Check if this V has been retracted at a
 	// higher Tx by a later entry in this entity's own history.
 	if rTx, ok := state.retracted[vKey]; ok && datom.Tx.Less(rTx) {
-		return walkEntrySkip, nil
+		return walkEntrySkip, 0, nil
 	}
 
 	// Supersession check against other entities' assertions of V.
-	maxOther, err := m.resolveMaxOtherTxForValue(aBytes, datom.V, eBytes)
+	maxOther, scanned, err := m.resolveMaxOtherTxForValue(aBytes, datom.V, eBytes)
 	if err != nil {
-		return walkEntrySkip, err
+		return walkEntrySkip, scanned, err
 	}
 	// Emit iff no other entity's assertion of V has a Tx greater than
 	// ours. Strict < check; ties (same Lamport, different replica)
 	// favor the current entity.
 	if datom.Tx.Less(maxOther) {
-		return walkEntrySkip, nil
+		return walkEntrySkip, scanned, nil
 	}
-	return walkEntryEmit, nil
+	return walkEntryEmit, scanned, nil
 }
 
 // walkUniqueEntityValue resolves E's current value for unique attribute
@@ -94,7 +98,11 @@ func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.D
 // Honors the matcher's temporal mode: entries with Tx > m.txID in as-of
 // mode are skipped. The supersession check against other entities is
 // likewise restricted via m.shouldFilterTx in resolveMaxOtherTxForValue.
-func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (any, datalog.ElementID, bool, error) {
+// The reported intake is this walk's own EATV scan plus every supersession
+// scan walkApplyEntry opened underneath it. Those AVET reads are real index
+// reads on the resolution path — one per Set entry the walk considers — and
+// counting only the outer scan would report the cheapest part of the work.
+func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (any, datalog.ElementID, bool, int, error) {
 	// The caller holds storage projections; both constructors return the
 	// canonical interned pointer for an already-interned value.
 	iter, err := m.reader.ScanKeysOnly(ScanBound{
@@ -105,33 +113,35 @@ func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) 
 		},
 	})
 	if err != nil {
-		return nil, datalog.ElementID{}, false, err
+		return nil, datalog.ElementID{}, false, 0, err
 	}
 	defer iter.Close()
 
+	nested := 0
 	state := newUniqueWalkState()
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return nil, datalog.ElementID{}, false, err
+			return nil, datalog.ElementID{}, false, iter.Scanned() + nested, err
 		}
 		if m.shouldFilterTx(datom.Tx) {
 			continue
 		}
-		decision, err := m.walkApplyEntry(state, datom, eBytes, aBytes)
+		decision, supersession, err := m.walkApplyEntry(state, datom, eBytes, aBytes)
+		nested += supersession
 		if err != nil {
-			return nil, datalog.ElementID{}, false, err
+			return nil, datalog.ElementID{}, false, iter.Scanned() + nested, err
 		}
 		if decision == walkEntryEmit {
-			return datom.V, datom.Tx, true, nil
+			return datom.V, datom.Tx, true, iter.Scanned() + nested, nil
 		}
 		// walkEntrySkip or walkEntryRetract — continue to next entry.
 	}
 	// Surface any deferred error from the scan.
 	if err := iter.Error(); err != nil {
-		return nil, datalog.ElementID{}, false, err
+		return nil, datalog.ElementID{}, false, iter.Scanned() + nested, err
 	}
-	return nil, datalog.ElementID{}, false, nil
+	return nil, datalog.ElementID{}, false, iter.Scanned() + nested, nil
 }
 
 // resolveMaxOtherTxForValue scans AVET for (a, v) and returns the highest
@@ -140,13 +150,13 @@ func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) 
 //
 // Honors the matcher's temporal mode — entries with Tx > m.txID in as-of
 // mode are excluded.
-func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exceptE Entity) (datalog.ElementID, error) {
+func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exceptE Entity) (datalog.ElementID, int, error) {
 	iter, err := m.reader.ScanKeysOnly(ScanBound{
 		Index:  AVET,
 		Prefix: []datalog.Value{datalog.InternKeywordFromBytes(aBytes), v},
 	})
 	if err != nil {
-		return datalog.ElementID{}, err
+		return datalog.ElementID{}, 0, err
 	}
 	defer iter.Close()
 
@@ -154,7 +164,7 @@ func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exce
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return datalog.ElementID{}, err
+			return datalog.ElementID{}, iter.Scanned(), err
 		}
 		if datom.E == nil {
 			continue
@@ -190,9 +200,9 @@ func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exce
 	// A failed scan is not "no competing assertion" — the walk would emit a
 	// value that may actually be superseded. Surface it.
 	if err := iter.Error(); err != nil {
-		return datalog.ElementID{}, err
+		return datalog.ElementID{}, iter.Scanned(), err
 	}
-	return maxTx, nil
+	return maxTx, iter.Scanned(), nil
 }
 
 // resolveAVLWW returns the entity currently owning (a, v) under the
@@ -207,14 +217,17 @@ func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exce
 // The walk-based rule gives V-view and entity-view the same underlying
 // semantics, guaranteeing that "E emits v" via the entity walk and
 // "V is owned by E" via resolveAVLWW always agree.
-func (m *PatternMatcher) resolveAVLWW(a Attribute, v any) (datalog.Identity, datalog.ElementID, error) {
+// The reported intake is this AVET scan plus the ownership walk in step 2,
+// which opens an EATV scan of its own and a supersession scan per Set entry
+// within it.
+func (m *PatternMatcher) resolveAVLWW(a Attribute, v any) (datalog.Identity, datalog.ElementID, int, error) {
 	// Step 1: find the max-Tx entry for (a, v) across all entities.
 	iter, err := m.reader.ScanKeysOnly(ScanBound{
 		Index:  AVET,
 		Prefix: []datalog.Value{datalog.InternKeywordFromBytes(a), v},
 	})
 	if err != nil {
-		return nil, datalog.ElementID{}, err
+		return nil, datalog.ElementID{}, 0, err
 	}
 
 	var (
@@ -243,25 +256,28 @@ func (m *PatternMatcher) resolveAVLWW(a Attribute, v any) (datalog.Identity, dat
 	if scanErr == nil {
 		scanErr = iter.Error()
 	}
+	// Taken before Close, which is what ends the scan's own accounting.
+	scanned := iter.Scanned()
 	iter.Close()
 	if scanErr != nil {
-		return nil, datalog.ElementID{}, scanErr
+		return nil, datalog.ElementID{}, scanned, scanErr
 	}
 
 	if bestE == nil {
-		return nil, datalog.ElementID{}, nil
+		return nil, datalog.ElementID{}, scanned, nil
 	}
 
 	// Step 2 + 3: verify the max-Tx entity's walk actually emits v.
-	walkV, walkTx, found, err := m.walkUniqueEntityValue(Entity(bestE.Hash()), a)
+	walkV, walkTx, found, walkScanned, err := m.walkUniqueEntityValue(Entity(bestE.Hash()), a)
+	scanned += walkScanned
 	if err != nil {
-		return nil, datalog.ElementID{}, err
+		return nil, datalog.ElementID{}, scanned, err
 	}
 	if !found {
-		return nil, datalog.ElementID{}, nil
+		return nil, datalog.ElementID{}, scanned, nil
 	}
 	if !datalog.ValuesEqual(walkV, v) {
-		return nil, datalog.ElementID{}, nil
+		return nil, datalog.ElementID{}, scanned, nil
 	}
-	return bestE, walkTx, nil
+	return bestE, walkTx, scanned, nil
 }

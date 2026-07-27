@@ -39,7 +39,7 @@ func TestJoinCopyAnnotationE2E(t *testing.T) {
 			}
 
 			// Set annotation handler on database
-			db.SetAnnotationHandler(handler)
+			db.AnnotationHandler = handler
 
 			// Execute a query that requires a join
 			queryStr := `[:find ?name ?dept

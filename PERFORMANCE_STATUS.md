@@ -115,11 +115,13 @@ exec := executor.NewExecutorWithOptions(matcher, opts)
 **Location**: `datalog/planner/cache.go`, `datalog/storage/database.go:34`
 **Performance**: ~3× speedup for repeated queries (measured)
 
-### 2. Batch Scanning with Iterator Reuse (ACTIVE)
-**Status**: ✅ Implemented, used for large binding sets
-**Location**: `datalog/storage/matcher_relations.go:122-128`
-**Threshold**: Activated when `bindingRel.Size() > 100`
-**Result**: Code clarity improvement, minimal performance impact
+### 2. Binding-Driven Scan Strategy (ACTIVE)
+**Status**: ✅ Implemented, chosen per pattern with a binding relation
+**Location**: `chooseJoinStrategy` in `datalog/storage/hash_join_matcher.go`
+**Threshold**: `HashJoinScan` at or below 1000 bindings, and above it whenever selectivity is under 50% or the join key is not the entity position; `MergeJoin` only for high-selectivity entity-position sets, where scan order and `CompareValues` order provably agree
+**Result**: One scan plus a hash probe, rather than one seek per binding
+
+*(This entry described "Batch Scanning with Iterator Reuse" until 2026-07-26. Both mechanisms were removed in v0.15.0 — `simple_batch_scanner.go` and `matcher_iterator_reusing.go` each had no live caller — and the 100-binding threshold it cited no longer exists. What occupies that decision point is the strategy choice above.)*
 
 ### 3. Predicate Classification (ACTIVE)
 **Status**: ✅ Infrastructure in place, used by executor

@@ -249,7 +249,7 @@ func (c *AnnotatedContext) CollapseRelations(rels []Relation, fn func() []Relati
 	}
 
 	if outputCount < inputCount || outputTuples < inputTuples {
-		c.collector.AddTiming("collapse/success", start, map[string]interface{}{
+		c.collector.AddTiming(annotations.CollapseSuccess, start, map[string]interface{}{
 			"relations.before": inputCount,
 			"relations.after":  outputCount,
 			"tuples.before":    inputTuples,

@@ -293,7 +293,7 @@ func queryWithPlannerOptions(db *Database, queryStr string, opts planner.Planner
 	}
 	opts.Cache = db.planCache
 	exec := executor.NewExecutorWithOptions(router, db, opts)
-	return exec.ExecuteWithRelations(executor.NewContext(db.AnnotationHandler()), q, inputs)
+	return exec.ExecuteWithRelations(executor.NewContext(db.AnnotationHandler), q, inputs)
 }
 
 // TestCorrelatedSubqueryAlgebraOptimizer compares baseline (no algebra optimizer)
@@ -411,7 +411,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 	})
 
 	t.Run("algebra_optimizer", func(t *testing.T) {
-		t.Logf("annotation handler nil: %v", db.AnnotationHandler() == nil)
+		t.Logf("annotation handler nil: %v", db.AnnotationHandler == nil)
 		opts := DefaultPlannerOptions()
 		opts.EnableAlgebraOptimizer = true
 		db.ClearPlanCache()

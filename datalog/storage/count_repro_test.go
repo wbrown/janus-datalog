@@ -37,9 +37,9 @@ func TestCountRepro_WithVector(t *testing.T) {
 			require.NoError(t, err)
 
 			var events []annotations.Event
-			db.SetAnnotationHandler(func(e annotations.Event) {
+			db.AnnotationHandler = func(e annotations.Event) {
 				events = append(events, e)
-			})
+			}
 
 			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
@@ -49,7 +49,7 @@ func TestCountRepro_WithVector(t *testing.T) {
 				}))
 			require.NoError(t, err)
 
-			db.SetAnnotationHandler(nil)
+			db.AnnotationHandler = nil
 
 			t.Logf("Got %d results: %v", len(results), results)
 			for _, e := range events {

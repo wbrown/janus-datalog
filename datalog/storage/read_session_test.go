@@ -224,55 +224,63 @@ func TestReadSessionConcurrentScans(t *testing.T) {
 // a write landing between two storage scans of one query must not produce a
 // torn result — a row pairing values from two different database states.
 func TestQuerySnapshotConsistency(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.plannerOptions()
+			d, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				PlannerOptions: &opts,
+			})
+			require.NoError(t, err)
+			defer d.Close()
 
-	e1 := datalog.NewIdentity("torn:e1")
-	attrA := datalog.NewKeyword(":snap/a")
-	attrB := datalog.NewKeyword(":snap/b")
+			e1 := datalog.NewIdentity("torn:e1")
+			attrA := datalog.NewKeyword(":snap/a")
+			attrB := datalog.NewKeyword(":snap/b")
 
-	tx := d.NewTransaction()
-	require.NoError(t, tx.Add(e1, attrA, int64(1)))
-	require.NoError(t, tx.Add(e1, attrB, int64(1)))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Add(e1, attrA, int64(1)))
+			require.NoError(t, tx.Add(e1, attrB, int64(1)))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// After the first pattern's scan completes, flip both attributes to 2.
-	// Without a session, the second pattern's scan runs against the store
-	// post-write and pairs a=1 with b=2 (or b=1 with a=2) — a state that
-	// never existed. With a per-query session both scans read the snapshot.
-	var once sync.Once
-	handler := func(event annotations.Event) {
-		if !strings.HasPrefix(event.Name, "pattern/") {
-			return
-		}
-		once.Do(func() {
-			wtx := d.NewTransaction()
-			if err := wtx.Add(e1, attrA, int64(2)); err != nil {
-				t.Errorf("mid-query write add a: %v", err)
-				return
+			// After the first pattern's scan completes, flip both attributes to 2.
+			// Without a session, the second pattern's scan runs against the store
+			// post-write and pairs a=1 with b=2 (or b=1 with a=2) — a state that
+			// never existed. With a per-query session both scans read the snapshot.
+			var once sync.Once
+			handler := func(event annotations.Event) {
+				if !strings.HasPrefix(event.Name, "pattern/") {
+					return
+				}
+				once.Do(func() {
+					wtx := d.NewTransaction()
+					if err := wtx.Add(e1, attrA, int64(2)); err != nil {
+						t.Errorf("mid-query write add a: %v", err)
+						return
+					}
+					if err := wtx.Add(e1, attrB, int64(2)); err != nil {
+						t.Errorf("mid-query write add b: %v", err)
+						return
+					}
+					if _, err := wtx.Commit(); err != nil {
+						t.Errorf("mid-query write commit: %v", err)
+					}
+				})
 			}
-			if err := wtx.Add(e1, attrB, int64(2)); err != nil {
-				t.Errorf("mid-query write add b: %v", err)
-				return
-			}
-			if _, err := wtx.Commit(); err != nil {
-				t.Errorf("mid-query write commit: %v", err)
-			}
+			d.AnnotationHandler = handler
+
+			rel, err := d.Query(`[:find ?va ?vb :where [?e :snap/a ?va] [?e :snap/b ?vb]]`)
+			require.NoError(t, err)
+			iter := rel.Iterator()
+			defer iter.Close()
+			require.True(t, iter.Next(), "query must produce a row")
+			row := iter.Tuple()
+			require.Len(t, row, 2)
+			assert.Equal(t, int64(1), row[0], "?va must come from the query's snapshot")
+			assert.Equal(t, int64(1), row[1], "?vb must come from the query's snapshot")
+			require.False(t, iter.Next(), "exactly one row expected")
+			require.NoError(t, iter.Error())
 		})
 	}
-	d.SetAnnotationHandler(handler)
-
-	rel, err := d.Query(`[:find ?va ?vb :where [?e :snap/a ?va] [?e :snap/b ?vb]]`)
-	require.NoError(t, err)
-	iter := rel.Iterator()
-	defer iter.Close()
-	require.True(t, iter.Next(), "query must produce a row")
-	row := iter.Tuple()
-	require.Len(t, row, 2)
-	assert.Equal(t, int64(1), row[0], "?va must come from the query's snapshot")
-	assert.Equal(t, int64(1), row[1], "?vb must come from the query's snapshot")
-	require.False(t, iter.Next(), "exactly one row expected")
-	require.NoError(t, iter.Error())
 }

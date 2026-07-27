@@ -54,7 +54,8 @@ func TestMatcherCacheCardinalityOne(t *testing.T) {
 	copy(aBytes[:], ":person/name")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, schema.CardinalityOne, entry.Cardinality())
 	assert.Equal(t, "Alice", entry.OneValue())
@@ -94,7 +95,8 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 	copy(aBytes[:], ":person/tags")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, schema.CardinalityMany, entry.Cardinality())
 	_, hasWarrior := entry.ManySet()["warrior"]
@@ -137,7 +139,8 @@ func TestMatcherCacheCardinalityVector(t *testing.T) {
 	copy(aBytes[:], ":character/skills")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, schema.CardinalityVector, entry.Cardinality())
 	assert.Equal(t, []any{"stealth", "archery"}, entry.VectorList())
@@ -170,7 +173,8 @@ func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
 	copy(aBytes[:], ":person/name")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	require.NoError(t, err)
 	cachedValue := entry.OneValue()
 
 	// Get value via direct lookup (LookupAttribute)
@@ -213,7 +217,8 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 	copy(aBytes[:], ":person/name")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry1 := db.Cache().GetOrResolve(key, matcher, nil)
+	entry1, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	require.NoError(t, err)
 	assert.Equal(t, "Alice", entry1.OneValue())
 
 	// Update data
@@ -224,7 +229,8 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	// Cache should be invalidated, next resolve should see new value
-	entry2 := db.Cache().GetOrResolve(key, matcher, nil)
+	entry2, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	require.NoError(t, err)
 	assert.Equal(t, "Bob", entry2.OneValue())
 }
 
@@ -251,7 +257,8 @@ func TestMatcherCacheWithSchemalessAttribute(t *testing.T) {
 	copy(aBytes[:], ":unknown/attr")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	// Should default to cardinality-one
 	assert.Equal(t, schema.CardinalityOne, entry.Cardinality())
@@ -297,7 +304,8 @@ func TestMatcherCacheLWWResolution(t *testing.T) {
 	copy(aBytes[:], ":person/name")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, "Third", entry.OneValue())
 }
@@ -344,7 +352,8 @@ func TestMatcherCacheAddWinsResolution(t *testing.T) {
 	copy(aBytes[:], ":person/tags")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	_, hasWarrior2 := entry.ManySet()["warrior"]
 	assert.True(t, hasWarrior2, "warrior should be in set after add-remove-add")
@@ -427,7 +436,10 @@ func BenchmarkCacheResolutionOverhead(b *testing.B) {
 	b.Run("CacheGetOrResolve", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			entry := db.Cache().GetOrResolve(key, matcher, nil)
+			entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+			if err != nil {
+				b.Fatal(err)
+			}
 			if entry == nil {
 				b.Fatal("cache miss")
 			}

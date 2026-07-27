@@ -3,7 +3,10 @@ package storage
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
@@ -342,4 +345,93 @@ func TestScanBoundUnknownIndexRejected(t *testing.T) {
 
 	_, err := encoder.EncodeScanBound(ScanBound{Index: IndexType(200)})
 	require.Error(t, err)
+}
+
+// TestScanBoundMembershipFollowsThePayloadClassification pins every entry of
+// PayloadIsFixedWidth through the field that consumes it. A bound ending on V
+// produces an exact run when the payload's length follows from its tag and a
+// length-narrowed one when it does not, so moving any tag between the two arms
+// of the classification reds this table.
+//
+// This is the pin a behavioural test cannot be. Answering "variable" for a
+// fixed-width tag computes size + tail to exactly the length the exact arm
+// admits, so a scan returns the same datoms under either rule and only the run's
+// own membership records which one produced them. In the other direction a
+// behavioural test needs a fixture whose value is a byte prefix of another
+// stored value, which is a property of the fixture rather than of the
+// classification — which is why the compressed parity case stayed green with
+// both compressed types moved to the fixed arm.
+func TestScanBoundMembershipFollowsThePayloadClassification(t *testing.T) {
+	const threshold = 32
+	encoder := &BinaryKeyEncoder{CompressionThreshold: threshold}
+	attr := datalog.NewKeyword(":classify/attr")
+
+	// Tier 3 needs a compressed form above maxKeyValueSize. The incompressible
+	// region keeps it above; the compressible one makes Compress report a net
+	// benefit, so it returns bytes rather than falling back to the raw tag.
+	oversize := make([]byte, 80*1024)
+	_, err := rand.New(rand.NewSource(1)).Read(oversize)
+	require.NoError(t, err)
+	oversize = append(oversize, make([]byte, 80*1024)...)
+
+	// fixed is a deliberate second, independent copy of PayloadIsFixedWidth's
+	// two arms. Reading the production classification here instead would make
+	// the assertion self-consistent: encodeBoundEndpoint decides exactness by
+	// calling that same function, so both sides of the comparison would move
+	// together and a tag switched between arms would pass.
+	cases := []struct {
+		name  string
+		tag   datalog.ValueType
+		fixed bool
+		value datalog.Value
+	}{
+		{"string", datalog.TypeString, false, "abc"},
+		{"int", datalog.TypeInt, true, int64(7)},
+		{"float", datalog.TypeFloat, true, 1.5},
+		{"bool", datalog.TypeBool, true, true},
+		{"time", datalog.TypeTime, true, time.Unix(1_700_000_000, 0).UTC()},
+		{"bytes", datalog.TypeBytes, false, []byte("abc")},
+		{"reference", datalog.TypeReference, true, datalog.NewIdentity("classify:entity")},
+		{"keyword", datalog.TypeKeyword, false, datalog.NewKeyword(":classify/value")},
+		{"symbol", datalog.TypeSymbol, false, datalog.NewSymbol("classify-value")},
+		{"elementid", datalog.TypeElementID, true, datalog.ElementID{Lamport: 3, ReplicaID: 4}},
+		{"compressed-string", datalog.TypeCompressedString, false, strings.Repeat("compressible-", 8)},
+		{"compressed-bytes", datalog.TypeCompressedBytes, false, bytes.Repeat([]byte("0123456789"), 8)},
+		{"hashed-string", datalog.TypeHashedString, true, string(oversize)},
+		{"hashed-bytes", datalog.TypeHashedBytes, true, oversize},
+	}
+
+	// Enumerate the domain: a tag with no case here would be classified by
+	// PayloadIsFixedWidth and pinned by nothing.
+	covered := map[datalog.ValueType]bool{}
+	for _, tc := range cases {
+		covered[tc.tag] = true
+	}
+	for tag := datalog.TypeString; tag <= datalog.TypeHashedBytes; tag++ {
+		require.True(t, covered[tag], "value type %d has no case in this table", tag)
+	}
+	require.Len(t, covered, int(datalog.TypeHashedBytes)+1,
+		"the value-type block grew without this table")
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// A fixture that stops landing on the tag it names would exercise a
+			// different arm and say nothing about this one.
+			gotTag, _, _ := datalog.EncodeValue(tc.value, threshold)
+			require.Equal(t, tc.tag, gotTag, "fixture no longer encodes to the tag it names")
+
+			require.Equal(t, tc.fixed, datalog.PayloadIsFixedWidth(tc.tag),
+				"the classification moved this tag between arms")
+
+			// AVET orders V second, so this bound ends on V and every component
+			// behind it is fixed width.
+			run, err := encoder.EncodeScanBound(ScanBound{
+				Index:  AVET,
+				Prefix: []datalog.Value{attr, tc.value},
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.fixed, run.Membership.exact,
+				"a run is exact exactly when the bound V's payload width follows from its tag")
+		})
+	}
 }

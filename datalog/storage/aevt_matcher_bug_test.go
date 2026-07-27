@@ -116,8 +116,13 @@ func TestAEVTMatcherBug(t *testing.T) {
 
 		// pattern/hash-join-complete is the only completion event a binding-driven
 		// scan produces; it carries the scan statistics this test reads.
+		//
+		// datoms.scanned, not datoms.resolved: the assertion below is about how
+		// much of the index the scan read, and resolution's output is a lower
+		// number by the history depth. They coincide here only because the
+		// fixture writes each entity once.
 		if event.Name == "pattern/hash-join-complete" {
-			if scanned, ok := event.Data["datoms.resolved"].(int); ok {
+			if scanned, ok := event.Data["datoms.scanned"].(int); ok {
 				datomsScanned = scanned
 			}
 			if idx, ok := event.Data["index"].(string); ok {

@@ -206,7 +206,7 @@ func TestGetElsePipelineInvariant(t *testing.T) {
 
 	maxGroups := 0
 	replacements := 0
-	db.SetAnnotationHandler(func(event annotations.Event) {
+	db.AnnotationHandler = func(event annotations.Event) {
 		switch event.Name {
 		case "collapse/success":
 			if after, ok := event.Data["relations.after"]; ok {
@@ -220,8 +220,8 @@ func TestGetElsePipelineInvariant(t *testing.T) {
 				maxGroups = remaining
 			}
 		}
-	})
-	defer db.SetAnnotationHandler(nil)
+	}
+	defer func() { db.AnnotationHandler = nil }()
 
 	db.ClearPlanCache()
 	rel, err := queryWithAlgebra(db, q)

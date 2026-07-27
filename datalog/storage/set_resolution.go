@@ -16,6 +16,12 @@ type SetResolutionResult struct {
 	// MaxElementID is the highest ElementID seen during resolution
 	// Used for cache freshness tracking
 	MaxElementID datalog.ElementID
+
+	// Scanned is the index intake this resolution spent. Resolution reads the
+	// index on the pattern's behalf and emits no event of its own, so the only
+	// way the pattern can report what it cost is for the resolver to hand the
+	// number back with the result.
+	Scanned int
 }
 
 // resolveAddWinsSet scans entries for (E,A) and resolves current set membership
@@ -74,7 +80,7 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutio
 		if err := it.Error(); err != nil {
 			return nil, err
 		}
-		return acc.finish(it.blobs)
+		return finishWithIntake(acc, it.blobs, iter)
 	}
 	if blobs, ok, err := scanAddWinsBadger(m.encoder, iter, acc); ok {
 		if err != nil {
@@ -83,7 +89,7 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutio
 		if err := iter.Error(); err != nil {
 			return nil, err
 		}
-		return acc.finish(blobs)
+		return finishWithIntake(acc, blobs, iter)
 	}
 
 	for iter.Next() {
@@ -96,7 +102,20 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutio
 	if err := iter.Error(); err != nil {
 		return nil, err
 	}
-	return acc.finish(nil)
+	return finishWithIntake(acc, nil, iter)
+}
+
+// finishWithIntake completes an add-wins resolution and records what its scan
+// read. Every arm of resolveAddWinsSet goes through here so the intake cannot
+// be attached on one path and forgotten on another; the count has to be taken
+// before the deferred Close.
+func finishWithIntake(acc *addWinsAccumulator, blobs BlobReader, iter Iterator) (*SetResolutionResult, error) {
+	result, err := acc.finish(blobs)
+	if err != nil {
+		return nil, err
+	}
+	result.Scanned = iter.Scanned()
+	return result, nil
 }
 
 // addWinsState is the per-value resolution state: the highest add/remove
@@ -236,34 +255,26 @@ func scanAddWinsMemory(encoder *BinaryKeyEncoder, it *memoryIterator, acc *addWi
 	return nil
 }
 
-// checkSetMembership checks if a specific value is currently in the set
-// This is an optimized version that only scans entries for the specific value
+// checkSetMembership reports whether the value the bound names is currently in
+// the set, scanning only the entries carrying that value.
 //
-// With Op in the key, the key format is:
-// [prefix:1][E:20][A:32][type:1][value:var][Op:1][Tx:16]
+// With Op in the key the format is
+// [prefix:1][E:20][A:32][type:1][value:var][Op:1][Tx:16], so a bound binding
+// [E][A][V] on EAVT matches every op (Add/Remove) for that value.
 //
-// To find all entries for a specific value, we build prefix:
-// [EAVT][E][A][type][value]
-// This matches all ops (Add/Remove) for that value.
-func (m *PatternMatcher) checkSetMembership(eBytes, aBytes []byte, v interface{}) (bool, error) {
-	// The caller holds storage projections; both constructors return the
-	// canonical interned pointer for an already-interned value.
-	var e Entity
-	copy(e[:], eBytes)
-	var a Attribute
-	copy(a[:], aBytes)
-
-	// Bind [E][A][V] on EAVT, matching every op (Add/Remove) for that value.
-	iter, err := m.reader.Scan(ScanBound{
-		Index: EAVT,
-		Prefix: []datalog.Value{
-			datalog.NewIdentityFromHash(e),
-			datalog.InternKeywordFromBytes(a),
-			v,
-		},
-	})
+// The caller supplies the bound rather than the components, because the caller
+// is the one that announces it: passing the same ScanBound value to the
+// annotation and to the reader is what keeps the announced run and the walked
+// run from drifting.
+//
+// Returns the scan's index intake alongside the answer. A variable-width V
+// leaves this run inexact, so the store steps over the keys the byte range
+// over-covers and the intake exceeds what the loop below sees — which is
+// precisely the amplification the caller has to be able to report.
+func (m *PatternMatcher) checkSetMembership(bound ScanBound) (bool, int, error) {
+	iter, err := m.reader.Scan(bound)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	defer iter.Close()
 
@@ -274,7 +285,7 @@ func (m *PatternMatcher) checkSetMembership(eBytes, aBytes []byte, v interface{}
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return false, err
+			return false, iter.Scanned(), err
 		}
 
 		elemID := datom.Tx
@@ -294,19 +305,20 @@ func (m *PatternMatcher) checkSetMembership(eBytes, aBytes []byte, v interface{}
 		}
 	}
 	if err := iter.Error(); err != nil {
-		return false, err
+		return false, iter.Scanned(), err
 	}
+	scanned := iter.Scanned()
 
 	// Determine membership using add-wins semantics
 	// CRITICAL: Compare only Lamport values for add-wins.
 	if !hasAdd {
-		return false, nil // No adds ever - not in set
+		return false, scanned, nil // No adds ever - not in set
 	}
 	if !hasRemove {
-		return true, nil // Only adds - in set
+		return true, scanned, nil // Only adds - in set
 	}
 
 	// Both exist - compare Lamport timestamps only
 	// At same Lamport (concurrent operations), add wins
-	return highestAddTx.Lamport >= highestRemoveTx.Lamport, nil
+	return highestAddTx.Lamport >= highestRemoveTx.Lamport, scanned, nil
 }

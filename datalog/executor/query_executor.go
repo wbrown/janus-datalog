@@ -128,7 +128,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 					if len(entities) > 50 {
 						if collector := ctx.Collector(); collector != nil {
 							collector.Add(annotations.Event{
-								Name: "prefetch/trigger",
+								Name: annotations.PrefetchTrigger,
 								Data: map[string]interface{}{
 									"entity_count": len(entities),
 									"symbols":      fmt.Sprintf("%v", g.Symbols()),
@@ -563,7 +563,7 @@ func replaceConsumedOrGroups(
 
 	if collector := ctx.Collector(); collector != nil {
 		collector.Add(annotations.Event{
-			Name: "or/outer-replaced",
+			Name: annotations.OrOuterReplaced,
 			Data: map[string]interface{}{
 				"consumed_groups":  len(orRelation.consumedGroups),
 				"remaining_groups": len(result),
@@ -1232,7 +1232,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 	// Record the per-input-combination execution path.
 	if collector := ctx.Collector(); collector != nil {
 		collector.Add(annotations.Event{
-			Name: "subquery/executor-path",
+			Name: annotations.SubqueryExecutorPath,
 			Data: map[string]interface{}{
 				"path":         "Per-combination QueryExecutor",
 				"query":        subq.Query.String(),
@@ -1364,7 +1364,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		if collector := ctx.Collector(); collector != nil {
 			for i, rel := range inputRelations {
 				collector.Add(annotations.Event{
-					Name: "subquery/input-relation",
+					Name: annotations.SubqueryInputRelation,
 					Data: map[string]interface{}{
 						"index":   i,
 						"symbols": rel.Symbols(),
@@ -1408,7 +1408,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 	}
 	if collector := ctx.Collector(); collector != nil {
 		collector.Add(annotations.Event{
-			Name: "subquery/input-combinations",
+			Name: annotations.SubqueryInputCombinations,
 			Data: map[string]interface{}{
 				"relation_groups":    len(materializedGroups),
 				"product":            len(materializedGroups) > 1,

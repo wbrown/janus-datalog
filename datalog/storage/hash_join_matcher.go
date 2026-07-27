@@ -551,6 +551,7 @@ func (m *PatternMatcher) matchWithMergeJoin(
 	bound := m.patternScanBound(pattern, index)
 
 	// PHASE 3: Create storage iterator
+	scanStart := time.Now()
 	storageIter, err := m.reader.ScanKeysOnly(bound)
 	if err != nil {
 		return nil, fmt.Errorf("merge join scan failed: %w", err)
@@ -566,18 +567,20 @@ func (m *PatternMatcher) matchWithMergeJoin(
 
 	// PHASE 4: Create streaming merge join iterator
 	iter := &mergeJoinIterator{
-		matcher:      m,
-		pattern:      pattern,
-		bindingRel:   bindingRel,
-		symbols:      symbols,
-		position:     position,
-		index:        index,
-		constraints:  constraints,
-		sortedTuples: sortedTuples,
-		bindingIdx:   0,
-		iter:         resolvedIterMerge,
-		workspace:    make(executor.Tuple, len(symbols)),
-		tupleBuilder: m.getTupleBuilder(pattern, symbols),
+		matcher:       m,
+		pattern:       pattern,
+		patternString: pattern.String(),
+		bindingRel:    bindingRel,
+		symbols:       symbols,
+		position:      position,
+		index:         index,
+		constraints:   constraints,
+		sortedTuples:  sortedTuples,
+		bindingIdx:    0,
+		iter:          resolvedIterMerge,
+		workspace:     make(executor.Tuple, len(symbols)),
+		tupleBuilder:  m.getTupleBuilder(pattern, symbols),
+		scanStart:     scanStart,
 	}
 
 	// Return streaming relation
@@ -673,13 +676,17 @@ func (it *hashJoinIterator) Tuple() executor.Tuple {
 }
 
 func (it *hashJoinIterator) Close() error {
-	// Emit event with scan statistics for performance monitoring
-	// ONLY emit if we actually scanned datoms (avoid emitting on unused iterators)
-	if it.matcher.handler != nil && it.datomsResolved > 0 {
+	// No guard on the counts. Suppressing the event when resolution produced
+	// nothing hides exactly the case the intake counter exists for: a
+	// variable-width V leaves the run inexact, every key the range over-covers
+	// is counted into intake and stepped over before the wrapper sees it, and
+	// the scan reports a large datoms.scanned against zero resolved. A fully
+	// tombstoned cardinality-many group reaches it the same way.
+	if it.matcher.handler != nil {
 		// Start and Latency are what Database.Analyze sums per event name;
 		// without them every hash-join scan reports as 0 ms.
 		it.matcher.handler(annotations.Event{
-			Name:    "pattern/hash-join-complete",
+			Name:    annotations.PatternHashJoinComplete,
 			Start:   it.scanStart,
 			Latency: time.Since(it.scanStart),
 			Data: map[string]interface{}{
@@ -688,7 +695,7 @@ func (it *hashJoinIterator) Close() error {
 				"binding.size":    it.bindingKeyCount,
 				"datoms.scanned":  it.iter.Scanned(),
 				"datoms.resolved": it.datomsResolved,
-				"matches.found":   it.matchesFound,
+				"datoms.matched":  it.matchesFound,
 			},
 		})
 	}
@@ -703,22 +710,26 @@ func (it *hashJoinIterator) Error() error { return it.err }
 
 // mergeJoinIterator performs lazy merge join iteration
 type mergeJoinIterator struct {
-	matcher      *PatternMatcher
-	pattern      *query.DataPattern
-	bindingRel   executor.Relation
-	symbols      []query.Symbol
-	position     int
-	index        IndexType
-	constraints  []executor.StorageConstraint
-	sortedTuples []executor.Tuple // Sorted binding tuples
-	bindingIdx   int              // Start of the current key group in sortedTuples
-	groupDatom   *datalog.Datom   // Datom being paired with its key group; nil = pull the next datom
-	groupOffset  int              // Next tuple within the key group to try against groupDatom
-	iter         Iterator         // Storage iterator
-	tupleBuilder *query.InternedTupleBuilder
-	current      executor.Tuple
-	workspace    executor.Tuple // Reusable workspace for tuple building
-	err          error          // First error from storage operations
+	matcher        *PatternMatcher
+	pattern        *query.DataPattern
+	patternString  string
+	bindingRel     executor.Relation
+	symbols        []query.Symbol
+	position       int
+	index          IndexType
+	constraints    []executor.StorageConstraint
+	sortedTuples   []executor.Tuple // Sorted binding tuples
+	bindingIdx     int              // Start of the current key group in sortedTuples
+	groupDatom     *datalog.Datom   // Datom being paired with its key group; nil = pull the next datom
+	groupOffset    int              // Next tuple within the key group to try against groupDatom
+	iter           Iterator         // Storage iterator
+	tupleBuilder   *query.InternedTupleBuilder
+	current        executor.Tuple
+	workspace      executor.Tuple // Reusable workspace for tuple building
+	datomsResolved int            // Datoms the inner iterator produced
+	datomsMatched  int            // Rows this join emitted
+	scanStart      time.Time      // When the scan opened; the completion event's duration
+	err            error          // First error from storage operations
 }
 
 // Next advances to the next joined row. Binding tuples are sorted by join
@@ -744,6 +755,7 @@ func (it *mergeJoinIterator) Next() bool {
 				if it.matcher.matchesWithBindingTuple(it.groupDatom, it.pattern, it.bindingRel, tuple) {
 					it.tupleBuilder.BuildTupleInternedInto(it.groupDatom, it.workspace)
 					it.current = it.workspace
+					it.datomsMatched++
 					return true
 				}
 			}
@@ -761,6 +773,11 @@ func (it *mergeJoinIterator) Next() bool {
 			it.err = err
 			return false
 		}
+
+		// Count what resolution produced, before the join narrows it — the
+		// same point hashJoinIterator counts, so the two strategies' funnels
+		// are comparable.
+		it.datomsResolved++
 
 		// Check transaction validity
 		if it.matcher.shouldFilterTx(datom.Tx) {
@@ -809,6 +826,25 @@ func (it *mergeJoinIterator) Tuple() executor.Tuple {
 }
 
 func (it *mergeJoinIterator) Close() error {
+	// Merge join is the strategy chosen for the largest binding sets, so it is
+	// the one whose scan volume most needs reporting. It reported nothing until
+	// 2026-07-26.
+	if it.matcher.handler != nil {
+		it.matcher.handler(annotations.Event{
+			Name:    annotations.PatternMergeJoinComplete,
+			Start:   it.scanStart,
+			Latency: time.Since(it.scanStart),
+			Data: map[string]interface{}{
+				"pattern":         it.patternString,
+				"index":           it.index.String(),
+				"binding.size":    len(it.sortedTuples),
+				"datoms.scanned":  it.iter.Scanned(),
+				"datoms.resolved": it.datomsResolved,
+				"datoms.matched":  it.datomsMatched,
+			},
+		})
+	}
+
 	if it.iter != nil {
 		return it.iter.Close()
 	}

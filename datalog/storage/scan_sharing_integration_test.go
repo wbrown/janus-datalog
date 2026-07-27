@@ -78,11 +78,11 @@ func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
 	// With scan sharing
 	db.ClearPlanCache()
 	var sharingEvents []annotations.Event
-	db.SetAnnotationHandler(func(e annotations.Event) {
+	db.AnnotationHandler = func(e annotations.Event) {
 		if e.Name == "scan-sharing/cache-hit" || e.Name == "scan-sharing/cache-miss" {
 			sharingEvents = append(sharingEvents, e)
 		}
-	})
+	}
 	sharingOpts := DefaultPlannerOptions()
 	sharingOpts.EnableAlgebraOptimizer = true
 	sharingOpts.EnableScanSharing = true
@@ -161,11 +161,11 @@ func TestScanSharing_DisabledByDefault(t *testing.T) {
 	                  [(ground 0) ?count])]`
 
 	var sharingEvents int
-	db.SetAnnotationHandler(func(e annotations.Event) {
+	db.AnnotationHandler = func(e annotations.Event) {
 		if e.Name == "scan-sharing/cache-hit" || e.Name == "scan-sharing/cache-miss" {
 			sharingEvents++
 		}
-	})
+	}
 
 	db.ClearPlanCache()
 	opts := DefaultPlannerOptions()

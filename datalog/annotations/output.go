@@ -86,43 +86,27 @@ func (f *OutputFormatter) Format(event Event) string {
 			f.colorizeCount("Tuples", event.Data["tuples.count"].(int)))
 
 	case PhaseBegin:
-		phase := event.Data["phase"]
-		delimiter := f.colorize("===", color.FgYellow)
-		if count, ok := event.Data["pattern.count"]; ok {
-			return fmt.Sprintf("%s %s %s starting with %d patterns",
-				latency,
-				delimiter,
-				phase,
-				count)
-		}
-		return fmt.Sprintf("%s %s %s starting",
+		return fmt.Sprintf("%s %s Phase %v starting on %v input group(s)",
 			latency,
-			delimiter,
-			phase)
+			f.colorize("===", color.FgYellow),
+			event.Data["phase"],
+			event.Data["input_groups"])
 
 	case PhaseComplete:
-		return fmt.Sprintf("%s %s completed with %s",
+		// -1 is a streaming group declining to size itself rather than be
+		// consumed to produce the number. Report the decline; printing it as a
+		// count would read as "minus one tuples".
+		count, ok := event.Data["tuple.count"].(int)
+		tuples := f.colorizeCount("tuples", count)
+		if !ok || count < 0 {
+			tuples = "an unsized stream"
+		}
+		return fmt.Sprintf("%s Phase %v completed with %s",
 			latency,
 			event.Data["phase"],
-			f.colorizeCount("tuples", event.Data["tuple.count"].(int)))
+			tuples)
 
-	case CombineRelsBegin:
-		old := event.Data["relations/count-old"].(int)
-		new := event.Data["relations/count-new"].(int)
-		return fmt.Sprintf("%s Combining %s with %s",
-			latency,
-			f.colorizeCount("Relations", old),
-			f.colorizeCount("Relations", new))
-
-	case CombineRelsCollapsed:
-		reduction := event.Data["reduction"].(float64)
-		after := event.Data["relations/after"].([]map[string]interface{})
-		return fmt.Sprintf("%s Collapsed to %s (%.1f%% reduction)",
-			latency,
-			f.colorizeCount("Relations", len(after)),
-			(1.0-reduction)*100)
-
-	case JoinHash, JoinNested, JoinMerge:
+	case JoinHash:
 		left := event.Data["left.size"].(int)
 		right := event.Data["right.size"].(int)
 		result := event.Data["result.size"].(int)
@@ -158,28 +142,6 @@ func (f *OutputFormatter) Format(event Event) string {
 
 		// Normal join
 		return fmt.Sprintf("%s %s", latency, joinStr)
-
-	case RelationIndexing:
-		return fmt.Sprintf("%s Indexing relation with %s on %v",
-			latency,
-			f.colorizeCount("tuples", event.Data["relation.size"].(int)),
-			event.Data["relation.attrs"])
-
-	case RelationIndexed:
-		return fmt.Sprintf("%s Indexed with %s strategy",
-			latency,
-			event.Data["index.type"])
-
-	case PatternsToRelationsBegin:
-		return fmt.Sprintf("%s Converting %d patterns to relations",
-			latency,
-			event.Data["pattern.count"])
-
-	case PatternsToRelationsRealized:
-		return fmt.Sprintf("%s Realized %s with %s",
-			latency,
-			f.colorizeCount("relations", event.Data["relation.count"].(int)),
-			f.colorizeCount("tuples", event.Data["tuple.count"].(int)))
 
 	case MatchesToRelations:
 		pattern := event.Data["pattern"].(string)
@@ -283,14 +245,6 @@ func (f *OutputFormatter) Format(event Event) string {
 		}
 
 		return fmt.Sprintf("%s %s → %d datoms%s", latency, scanStr, datoms, amplification)
-
-	case PatternFiltering:
-		// Skip - filtering info is redundant with Pattern output
-		return ""
-
-	case PatternToRelation:
-		// Skip - convert info is redundant
-		return ""
 
 	default:
 		// Generic format for unknown events

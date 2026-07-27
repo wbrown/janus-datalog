@@ -535,7 +535,7 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
-	val, _, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, _, _, err := matcher.ResolveLWW(eStorage, aStorage)
 	require.NoError(t, err)
 	assert.Equal(t, "Alice", val, "precondition: ResolveLWW should return value")
 
@@ -546,7 +546,7 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 	require.NoError(t, err)
 
 	// ResolveLWW should return nil after Remove
-	val, _, err = matcher.ResolveLWW(eStorage, aStorage)
+	val, _, _, err = matcher.ResolveLWW(eStorage, aStorage)
 	require.NoError(t, err)
 	assert.Nil(t, val,
 		"BUG: ResolveLWW returns value after Remove(). "+
@@ -584,7 +584,8 @@ func TestCacheRemove_CacheRebuild(t *testing.T) {
 
 	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	require.NoError(t, err)
 
 	// Entry should either be nil or have nil OneValue
 	if entry != nil {
@@ -755,7 +756,7 @@ func TestCacheRemove_ResolveLWW_SetThenRemove(t *testing.T) {
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
-	val, _, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, _, _, err := matcher.ResolveLWW(eStorage, aStorage)
 	require.NoError(t, err)
 	assert.Nil(t, val,
 		"BUG: ResolveLWW returns value after Set() then Remove()")
@@ -873,7 +874,7 @@ func TestCacheRemove_ResolveLWW_ReturnsElementID(t *testing.T) {
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
-	val, elemID, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, elemID, _, err := matcher.ResolveLWW(eStorage, aStorage)
 	require.NoError(t, err, "ResolveLWW should not error after Remove")
 	assert.Nil(t, val, "value should be nil after Remove")
 	assert.NotEqual(t, datalog.ElementID{}, elemID,
@@ -1078,7 +1079,7 @@ func resolveLWW(t *testing.T, db *Database, e datalog.Identity, a datalog.Keywor
 	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
-	val, eid, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, eid, _, err := matcher.ResolveLWW(eStorage, aStorage)
 	require.NoError(t, err)
 	return val, eid
 }
@@ -1217,7 +1218,8 @@ func cacheRebuildOneValue(t *testing.T, db *Database, e datalog.Identity, a data
 	key := CacheKey{E: eStorage, A: aStorage}
 	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	require.NoError(t, err)
 	if entry == nil {
 		return nil
 	}

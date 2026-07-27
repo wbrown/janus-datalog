@@ -294,10 +294,10 @@ func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 			// The event stream is logged on failure so the reproducer shows
 			// where the row vanishes, not just that it did.
 			var events []annotations.Event
-			db.SetAnnotationHandler(func(event annotations.Event) { events = append(events, event) })
+			db.AnnotationHandler = func(event annotations.Event) { events = append(events, event) }
 			results, err = executor.CollectTuples(db.Query(
 				`[:find ?e :in $ ?e :where [(missing? $ ?e :user/email)]]`, bob))
-			db.SetAnnotationHandler(nil)
+			db.AnnotationHandler = nil
 			if err != nil {
 				t.Fatalf("Consumer-only query failed: %v", err)
 			}

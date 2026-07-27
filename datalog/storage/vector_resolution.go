@@ -14,6 +14,11 @@ type VectorResolutionResult struct {
 	MaxElementID datalog.ElementID
 	// Stats provides debugging information
 	Stats RGAStats
+	// Scanned is the index intake this resolution spent. Resolution reads the
+	// index on the pattern's behalf and emits no event of its own, so the only
+	// way the pattern can report what it cost is for the resolver to hand the
+	// number back with the result.
+	Scanned int
 }
 
 // resolveVector loads all RGA elements for (E, A) and reconstructs the ordered vector.
@@ -26,7 +31,7 @@ type VectorResolutionResult struct {
 // After loading all elements, RGA reconstruction builds the final ordered list.
 func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolutionResult, error) {
 	// Use loadRGAElements which handles deduplication
-	elements, err := m.loadRGAElements(eBytes, aBytes)
+	elements, scanned, err := m.loadRGAElements(eBytes, aBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -41,6 +46,7 @@ func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolution
 		Elements:     ordered,
 		MaxElementID: stats.MaxID,
 		Stats:        stats,
+		Scanned:      scanned,
 	}, nil
 }
 
@@ -55,7 +61,12 @@ func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolution
 // IMPORTANT: Handles deduplication by element ID. When the same element has multiple
 // versions (e.g., original + tombstoned), the tombstoned version takes precedence.
 // This supports Set() which writes a tombstone record for the element being deleted.
-func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, error) {
+//
+// Returns the scan's index intake with the elements. An RGA group is every
+// insert and tombstone ever written for the (E, A), so this is the resolution
+// whose intake most exceeds what it produces, and the pattern above it has no
+// other way to learn the difference.
+func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, int, error) {
 	// The caller holds storage projections; both constructors return the
 	// canonical interned pointer for an already-interned value.
 	var e Entity
@@ -72,7 +83,7 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, e
 		},
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer iter.Close()
 
@@ -84,7 +95,7 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, e
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return nil, fmt.Errorf("decode RGA element: %w", err)
+			return nil, iter.Scanned(), fmt.Errorf("decode RGA element: %w", err)
 		}
 
 		// Only process RGA operations
@@ -147,7 +158,7 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, e
 		}
 	}
 	if err := iter.Error(); err != nil {
-		return nil, fmt.Errorf("decode RGA element: %w", err)
+		return nil, iter.Scanned(), fmt.Errorf("decode RGA element: %w", err)
 	}
 
 	// Convert map to slice
@@ -156,5 +167,5 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, e
 		elements = append(elements, elem)
 	}
 
-	return elements, nil
+	return elements, iter.Scanned(), nil
 }

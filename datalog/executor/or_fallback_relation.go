@@ -400,7 +400,7 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 			outer = materialized
 			if collector := r.ctx.Collector(); collector != nil {
 				collector.Add(annotations.Event{
-					Name: "or-fallback/outer.materialized",
+					Name: annotations.OrFallbackOuterMaterialized,
 					Data: map[string]interface{}{
 						"reason":      "join-key-narrowing",
 						"tuple_count": len(tuples),
@@ -468,7 +468,7 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 	// Note: Don't call outer.Size() - it may block for streaming relations
 	if collector := r.ctx.Collector(); collector != nil {
 		collector.Add(annotations.Event{
-			Name:  "or-fallback/iterator.created",
+			Name:  annotations.OrFallbackIteratorCreated,
 			Start: time.Now(),
 			Data: map[string]interface{}{
 				"iterator_count": r.iteratorCount,
@@ -1345,7 +1345,7 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 			// Emit annotation when outer iterator exhausted
 			if collector := it.ctx.Collector(); collector != nil {
 				collector.Add(annotations.Event{
-					Name:  "or-fallback/outer.exhausted",
+					Name:  annotations.OrFallbackOuterExhausted,
 					Start: time.Now(),
 					Data:  map[string]interface{}{},
 				})
@@ -1359,7 +1359,7 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 		// Emit annotation for each outer tuple being processed
 		if collector := it.ctx.Collector(); collector != nil {
 			collector.Add(annotations.Event{
-				Name:  "or-fallback/outer.tuple",
+				Name:  annotations.OrFallbackOuterTuple,
 				Start: time.Now(),
 				Data: map[string]interface{}{
 					"tuple": fmt.Sprintf("%v", outerTuple),
@@ -1439,7 +1439,7 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 							data["reason"] = "outer not re-iterable for join-key extraction"
 						}
 						collector.Add(annotations.Event{
-							Name:  "or-fallback/branch.narrowed",
+							Name:  annotations.OrFallbackBranchNarrowed,
 							Start: time.Now(),
 							Data:  data,
 						})
@@ -1489,7 +1489,7 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 					if isCacheable || execInput == nil {
 						if collector := it.ctx.Collector(); collector != nil {
 							collector.Add(annotations.Event{
-								Name: "or-fallback/cache-build",
+								Name: annotations.OrFallbackCacheBuild,
 								Data: map[string]interface{}{
 									"branch":      branchIdx,
 									"branch_syms": fmt.Sprintf("%v", branchResult.Symbols()),
@@ -1530,7 +1530,7 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 				if branchIter.Next() {
 					if collector := it.ctx.Collector(); collector != nil {
 						collector.Add(annotations.Event{
-							Name:  "or-fallback/branch.success",
+							Name:  annotations.OrFallbackBranchSuccess,
 							Start: time.Now(),
 							Data: map[string]interface{}{
 								"branch_index": branchIdx,
@@ -1690,7 +1690,7 @@ func (it *OrFallbackIterator) emitCachedMatches(branchIdx int, cb *cachedBranch,
 	}
 	if collector := it.ctx.Collector(); collector != nil {
 		collector.Add(annotations.Event{
-			Name:  "or-fallback/branch.success",
+			Name:  annotations.OrFallbackBranchSuccess,
 			Start: time.Now(),
 			Data: map[string]interface{}{
 				"branch_index": branchIdx,

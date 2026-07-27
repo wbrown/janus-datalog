@@ -5,6 +5,7 @@ import (
 
 	"github.com/wbrown/ebnf/parse"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -199,7 +200,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 
 		// Diagnostic detail accompanying the applied rewrite: the optimized
 		// inner WHERE. Event-only — the applied record above is the decision.
-		sink.Emit("algebra/decorrelate-inner-optimized", map[string]interface{}{
+		sink.Emit(annotations.AlgebraDecorrelateInnerOptimized, map[string]interface{}{
 			"clause_count": len(optimizedWhere),
 			"clauses":      fmt.Sprintf("%v", optimizedWhere),
 		})

@@ -3,6 +3,7 @@ package executor
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
@@ -244,7 +245,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		if dropped := len(plan.Query.OrderBy) - len(effective); dropped > 0 {
 			if collector := ctx.Collector(); collector != nil {
 				collector.Add(annotations.Event{
-					Name: "sort/constant-keys-dropped",
+					Name: annotations.SortConstantKeysDropped,
 					Data: map[string]interface{}{
 						"count": dropped,
 					},
@@ -439,7 +440,7 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 			data["rewritten.subquery.count"] = condAggCount
 			data["optimization"] = "conditional-aggregate-rewriting"
 			collector.Add(annotations.Event{
-				Name: "query/rewrite.conditional-aggregates",
+				Name: annotations.QueryRewriteConditionalAggregates,
 				Data: data,
 			})
 		}
@@ -449,11 +450,12 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 	for i, phase := range plan.Phases {
 		phaseIndex := i
 		isLastPhase := (i == len(plan.Phases)-1)
+		phaseStart := time.Now()
 
-		// DEBUG: Log phase execution
 		if collector := ctx.Collector(); collector != nil {
 			collector.Add(annotations.Event{
-				Name: "realized/phase-begin",
+				Name:  annotations.PhaseBegin,
+				Start: phaseStart,
 				Data: map[string]interface{}{
 					"phase":        phaseIndex + 1,
 					"input_groups": len(currentGroups),
@@ -472,17 +474,6 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 			return nil, err
 		}
 
-		// DEBUG: Log phase output before projection
-		if collector := ctx.Collector(); collector != nil {
-			collector.Add(annotations.Event{
-				Name: "realized/phase-output",
-				Data: map[string]interface{}{
-					"phase":  phaseIndex + 1,
-					"groups": len(groups),
-				},
-			})
-		}
-
 		// Non-final Query fragments already emit their exact Keep schema. Make
 		// each result reusable for the next phase without projecting it again.
 		if !isLastPhase && len(phase.Keep) > 0 {
@@ -491,15 +482,16 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 			}
 		}
 
-		// DEBUG: Log after boundary materialization
-		if collector := ctx.Collector(); collector != nil && !isLastPhase {
-			collector.Add(annotations.Event{
-				Name: "realized/phase-materialized",
-				Data: map[string]interface{}{
-					"phase":  phaseIndex + 1,
-					"groups": len(groups),
-					"keep":   phase.Keep,
-				},
+		// Completion is reported after boundary materialization, so the phase's
+		// duration covers the whole of its work and its size is free to ask for
+		// on every phase that materialized. A streaming final phase declines
+		// with -1 rather than being consumed to produce a number.
+		if collector := ctx.Collector(); collector != nil {
+			collector.AddTiming(annotations.PhaseComplete, phaseStart, map[string]interface{}{
+				"phase":       phaseIndex + 1,
+				"groups":      len(groups),
+				"keep":        phase.Keep,
+				"tuple.count": declaredTupleCount(groups),
 			})
 		}
 
@@ -1223,6 +1215,26 @@ func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, er
 	// ExecuteRealized over that whole union (a per-tuple sort here would be
 	// discarded by the union and would not produce a global ordering).
 	return currentGroups[0], nil
+}
+
+// declaredTupleCount totals the tuples across a phase's output groups, or
+// returns -1 if any group declines to answer.
+//
+// It only ever asks Size(), never iterates: a streaming relation answers from
+// its cache or its completed-consumption counter and otherwise returns -1
+// rather than touching its source. Reporting a phase's size must not be the
+// call that spends the phase's tuples, so one declining group makes the whole
+// count unknown instead of provoking a realization to fill the gap.
+func declaredTupleCount(groups []Relation) int {
+	total := 0
+	for _, group := range groups {
+		size := group.Size()
+		if size < 0 {
+			return -1
+		}
+		total += size
+	}
+	return total
 }
 
 func validatePhaseOutput(phaseNumber int, phase planner.RealizedPhase, groups []Relation) error {

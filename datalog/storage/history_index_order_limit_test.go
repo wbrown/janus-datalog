@@ -34,7 +34,9 @@ func (c *historyOrderScanCapture) handler(event annotations.Event) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if scanned, ok := event.Data["datoms.resolved"].(int); ok {
+	// Intake, not resolution's output: the assertions this capture drives are
+	// about how far the scan walked before the limit was satisfied.
+	if scanned, ok := event.Data["datoms.scanned"].(int); ok {
 		c.scanned += scanned
 	}
 	if index, ok := event.Data["index"].(string); ok {

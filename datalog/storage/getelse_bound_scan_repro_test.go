@@ -106,13 +106,13 @@ func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 			}
 
 			captureQuery := func(q string, args ...interface{}) (results [][]interface{}, dur time.Duration, events []annotations.Event) {
-				db.SetAnnotationHandler(func(e annotations.Event) {
+				db.AnnotationHandler = func(e annotations.Event) {
 					events = append(events, e)
-				})
+				}
 				start := time.Now()
 				results, err := executor.CollectTuples(db.Query(q, args...))
 				dur = time.Since(start)
-				db.SetAnnotationHandler(nil)
+				db.AnnotationHandler = nil
 				if err != nil {
 					t.Fatalf("query failed: %v\nquery: %s", err, q)
 				}
@@ -312,13 +312,13 @@ func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
 	defer cleanup()
 
 	var events []annotations.Event
-	db.SetAnnotationHandler(func(e annotations.Event) { events = append(events, e) })
+	db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
 	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?note
 		  :where [?e :repro/kind _]
 		         [(get-else $ ?e :repro/note "MISSING") ?note]]`,
 	))
-	db.SetAnnotationHandler(nil)
+	db.AnnotationHandler = nil
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

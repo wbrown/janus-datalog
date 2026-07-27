@@ -51,6 +51,12 @@ type CRDTResolvingIterator struct {
 	uniqueRetracted map[string]datalog.ElementID
 	uniqueEmitted   bool
 
+	// uniqueScanned accumulates the intake of the AVET supersession scans the
+	// unique walk opens, one per Set entry it considers. Those are index reads
+	// this iterator causes and the source knows nothing about, so without this
+	// the reported intake would omit the largest read on the unique path.
+	uniqueScanned int
+
 	// CardinalityVector: TODO - placeholder for discussion
 	rgaElements []rgaElement
 
@@ -491,13 +497,19 @@ func (it *CRDTResolvingIterator) Seek(bound ScanBound) {
 	it.source.Seek(bound)
 }
 
-// ElementID returns the transaction ElementID of the current entry.
-// Scanned delegates to the scan beneath it. Resolution reads no index of its
-// own — it consumes what the source produced — so the intake it reports is the
-// source's, and the gap between that and what resolution emitted is the
-// history depth the index made the query pay for.
-func (it *CRDTResolvingIterator) Scanned() int { return it.source.Scanned() }
+// Scanned reports the source's intake plus the unique walk's own.
+//
+// Resolution normally reads no index of its own and the count is just the
+// source's, the gap between it and what resolution emitted being the history
+// depth the index made the query pay for. Unique CardinalityOne is the
+// exception: processUniqueEntry opens an AVET supersession scan per Set entry,
+// so those reads are added here. Reporting only the source would have hidden
+// the largest read on that path behind the smallest.
+func (it *CRDTResolvingIterator) Scanned() int {
+	return it.source.Scanned() + it.uniqueScanned
+}
 
+// ElementID returns the transaction ElementID of the current entry.
 func (it *CRDTResolvingIterator) ElementID() datalog.ElementID {
 	if it.currentDatom != nil {
 		return it.currentDatom.Tx
@@ -528,7 +540,8 @@ func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool,
 	eBytes := Entity(datom.E.Hash())
 
 	state := &uniqueWalkState{retracted: it.uniqueRetracted}
-	decision, err := it.uniqueMatcher.walkApplyEntry(state, datom, eBytes, aBytes)
+	decision, scanned, err := it.uniqueMatcher.walkApplyEntry(state, datom, eBytes, aBytes)
+	it.uniqueScanned += scanned
 	if err != nil {
 		return false, err
 	}

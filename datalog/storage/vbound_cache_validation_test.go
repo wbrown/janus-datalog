@@ -43,8 +43,9 @@ import (
 //     candidate→outcome trace); the tests merely read them to prove coverage.
 // =============================================================================
 
-// vboundCapture tallies annotation events by name. The database wraps the
-// handler in annotations.Synchronized, so the mutex here is belt-and-suspenders.
+// vboundCapture tallies annotation events by name. The mutex is load-bearing:
+// the engine emits from parallel workers and does not wrap installed handlers,
+// so serializing is the handler's own responsibility.
 type vboundCapture struct {
 	mu     sync.Mutex
 	counts map[string]int

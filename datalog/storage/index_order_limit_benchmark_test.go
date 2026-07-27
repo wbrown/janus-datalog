@@ -37,7 +37,9 @@ func benchmarkIndexOrderedLimit(b *testing.B, countScans bool) {
 			if event.Name != "pattern/storage-scan" {
 				return
 			}
-			if count, ok := event.Data["datoms.resolved"].(int); ok {
+			// Intake: what the benchmark reports is scan volume, not the row
+			// count the query returned.
+			if count, ok := event.Data["datoms.scanned"].(int); ok {
 				scanned.Add(int64(count))
 			}
 		}

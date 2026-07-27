@@ -102,10 +102,10 @@ func TestEACacheBypass_Reproduction(t *testing.T) {
 
 			t.Run("A_constant_uses_cache", func(t *testing.T) {
 				var events []annotations.Event
-				db.SetAnnotationHandler(func(e annotations.Event) {
+				db.AnnotationHandler = func(e annotations.Event) {
 					events = append(events, e)
-				})
-				defer db.SetAnnotationHandler(nil)
+				}
+				defer func() { db.AnnotationHandler = nil }()
 
 				results, err := executor.CollectTuples(db.Query(
 					`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
@@ -120,10 +120,10 @@ func TestEACacheBypass_Reproduction(t *testing.T) {
 
 			t.Run("A_scalar_input_uses_cache", func(t *testing.T) {
 				var events []annotations.Event
-				db.SetAnnotationHandler(func(e annotations.Event) {
+				db.AnnotationHandler = func(e annotations.Event) {
 					events = append(events, e)
-				})
-				defer db.SetAnnotationHandler(nil)
+				}
+				defer func() { db.AnnotationHandler = nil }()
 
 				results, err := executor.CollectTuples(db.Query(
 					`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
@@ -598,10 +598,10 @@ func TestEACacheBypass_PerRowA_UsesCache(t *testing.T) {
 			require.NoError(t, err)
 
 			var events []annotations.Event
-			db.SetAnnotationHandler(func(e annotations.Event) {
+			db.AnnotationHandler = func(e annotations.Event) {
 				events = append(events, e)
-			})
-			defer db.SetAnnotationHandler(nil)
+			}
+			defer func() { db.AnnotationHandler = nil }()
 
 			// Query: for each entity in the collection, look up its config/attr to get ?a,
 			// then look up [?e ?a ?v]. After pattern 1, binding has 2 tuples with varying A.
@@ -652,9 +652,9 @@ func TestEACacheBypass_PerRowVector_RelationInput(t *testing.T) {
 					require.NoError(t, err)
 
 					var events []annotations.Event
-					db.SetAnnotationHandler(func(e annotations.Event) {
+					db.AnnotationHandler = func(e annotations.Event) {
 						events = append(events, e)
-					})
+					}
 
 					results, err := executor.CollectTuples(db.Query(
 						`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
@@ -664,7 +664,7 @@ func TestEACacheBypass_PerRowVector_RelationInput(t *testing.T) {
 						}))
 					require.NoError(t, err)
 
-					db.SetAnnotationHandler(nil)
+					db.AnnotationHandler = nil
 
 					if len(results) != 2 {
 						t.Logf("[%s] Got %d results: %v", mode.name, len(results), results)

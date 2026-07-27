@@ -75,7 +75,9 @@ It also now states the part an implementer will not infer from the type: **the s
 
 `matchCardinalityManyFindEntitiesWithValue` opens `AVET[a, v]` with a string V — a non-exact `Membership`, so the store steps over keys the range over-covers — and returned before the `pattern/index-selection` emit. A key dropped by `holds()` was indistinguishable in the stream from a key never in range and from a scan that never narrowed, on exactly the query class the round-2 fix was built for.
 
-`emitIndexSelection` now builds and emits, and **every call site carries its own visible `if m.handler != nil`**. The guard is the caller's: it gates the caller's own argument preparation as well as the map, the `pattern.String()` and `describeRun`'s slices, and at the call site it marks the block as observability rather than a step in opening the scan. All four scan-opening arms — the general one and the three that returned before it — announce their bound, each passing the same `ScanBound` value it hands the reader so the announced run cannot drift from the walked one.
+`emitIndexSelection` now builds and emits, and **every call site carries its own visible `if m.handler != nil`**. The guard is the caller's: it gates the caller's own argument preparation as well as the map, the `pattern.String()` and `describeRun`'s slices, and at the call site it marks the block as observability rather than a step in opening the scan. Four scan-opening arms — the general one and the three cardinality-many/-vector arms that returned before it — announce their bound, each passing the same `ScanBound` value it hands the reader so the announced run cannot drift from the walked one.
+
+**Corrected in round 3**: "all four" was wrong, and `emitIndexSelection`'s own doc comment repeated it as a completeness claim. Three further dispatch arms open scans and announce nothing — `matchCardinalityVectorAsRelation`, `matchCardinalityManyAsRelation`, `matchCardinalityManyMembership` — as does `matchFromCache`, the default for every E-and-A-bound pattern and so the most common shape in the engine. See round 3's T1 and T2.
 
 One downstream consequence is fixed: `pattern/hash-join-complete` carries `Start` and `Latency`, so `Database.Analyze` no longer reports 0 ms for every hash-join scan.
 
@@ -114,6 +116,8 @@ The eight fixed-width entries remain unpinnable through `EncodeScanBound`, and p
 
 **Live status claims, corrected.** README's four freshness sites and `docs/ideas/README.md`. The README figure turned out sound: 2.2×–555× measures the *high-water-mark seek*, which ATEV still provides; only the cache gate built on it was removed. The figure was reattached to what it measured rather than deleted.
 
+One live status claim was missed and is corrected in round 3: `PERFORMANCE_STATUS.md`'s *What's Actually Working* list carried "Batch Scanning with Iterator Reuse (ACTIVE)" with a 100-binding threshold and a line citation that now points at the cache-check block. Both mechanisms it named were removed in v0.15.0. The entry now describes `chooseJoinStrategy`, which is what occupies that decision point.
+
 **Dated changelog entries, annotated in place.** `CLAUDE.md`'s August 2025 and June 2026 blocks and `PERFORMANCE_STATUS.md`'s rejected-consolidation record. These are history; rewriting them erases what was believed at the time. The `PERFORMANCE_STATUS.md` note also records its own internal inconsistency (it says four and lists three).
 
 **Standing instructions, marked discharged or moot.** `ITERATOR_LIFECYCLE_MANAGEMENT.md`'s "Immediate (do now)", the `BUG_ELEMENTID_NOT_FIRST_CLASS` and `BUG_ELEMENTID_ASOF_THROUGHOUT` work tables, `KEYWORD_POINTER_OPTIMIZATION.md`'s location list. These are not records — they direct future work at files that no longer exist.
@@ -150,7 +154,7 @@ The finding also named `store.go`'s `Scan`/`ScanKeysOnly` as silent on the oblig
 
 ### N12. `BUG_VALUE_DOMAIN_UNENFORCED_IN_COMPARISON` cited moved lines
 
-**Status**: Resolved (2026-07-26). The `CompareValues` sites are cited at their current lines and by enclosing function; the position-0 rationale citation is corrected.
+**Status**: Resolved (2026-07-26); the line citations drifted again within the same commit, and are corrected in round 3. The `CompareValues` sites are cited by enclosing function, which holds. Their line numbers do not: this round's own edits to `hash_join_matcher.go` — the `Start`/`Latency` block and the intake key on `Close` — moved all three down by eight, so `BUG_VALUE_DOMAIN_UNENFORCED_IN_COMPARISON.md` said `:732`, `:766`, `:774` against an actual `:740`, `:774`, `:782`. A finding about drifted citations, re-drifted by the commit that fixed it.
 
 ### N13. Coverage lost with the deleted benchmarks
 
@@ -160,7 +164,9 @@ The finding also named `store.go`'s `Scan`/`ScanKeysOnly` as silent on the oblig
 
 **Status**: Resolved (2026-07-26).
 
-All five files are on the optimizer-mode axis — fifteen test functions. One deliberate exception, stated in the code: `TestVBoundCardinalityOneBytes_DirectMatcher` drives the matcher rather than the executor, so the algebra optimizer is not on its path; it pins one mode explicitly, which is what the convention prescribes instead of looping an axis that means nothing there.
+Ten test functions across those files loop the optimizer-mode axis: six in `vbound_bytes_validation_test.go`, two in `scan_bound_end_test.go`, one in `scan_bound_test.go`, one in `backend_contract_test.go`. One deliberate exception, stated in the code: `TestVBoundCardinalityOneBytes_DirectMatcher` drives the matcher rather than the executor, so the algebra optimizer is not on its path; it pins one mode explicitly, which is what the convention prescribes instead of looping an axis that means nothing there.
+
+*(This entry said "all five files are on the optimizer-mode axis — fifteen test functions" until round 3. The count was wrong, and so was the framing: `matcher_planner_options_test.go` gained a numeric axis, not this one, and most of `backend_contract_test.go`'s test functions execute no query, so the axis does not apply to them at all. Round 3 also found two tests still off the axis; see T17.)*
 
 `matcher_planner_options_test.go` regains a numeric axis via `MaxSubqueryWorkers`, the remaining numeric `PlannerOptions` field with an `ExecutorOptions` counterpart. Non-vacuous by construction: default 0, custom 7, so a dropped field reds rather than coincidentally matching.
 

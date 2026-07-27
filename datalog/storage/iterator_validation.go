@@ -14,7 +14,8 @@ import (
 // PERFORMANCE NOTE: These functions introduce a small overhead (~6.4% or 0.2ns per datom)
 // compared to inlined code, as measured by BenchmarkIteratorLoop. This tradeoff was
 // accepted to eliminate ~120 lines of duplicated validation and statistics code across
-// three iterator types. The absolute overhead is minimal:
+// the three iterator types that existed then; reusingIterator was deleted in
+// v0.15.0, leaving the two named below. The absolute overhead is minimal:
 //   - 1M datoms:  +200 microseconds
 //   - 10M datoms: +2 milliseconds
 //   - 100M datoms: +20 milliseconds

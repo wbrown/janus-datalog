@@ -45,6 +45,6 @@ func TestLoadRGAElementsPropagatesDatomDecodeError(t *testing.T) {
 	require.NoError(t, iter.Close())
 
 	matcher := NewPatternMatcher(store)
-	_, err = matcher.loadRGAElements(entityBytes[:], attributeBytes[:])
+	_, _, err = matcher.loadRGAElements(entityBytes[:], attributeBytes[:])
 	require.Error(t, err)
 }

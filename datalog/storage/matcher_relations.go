@@ -113,7 +113,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 	// use the cache for each E value instead of storage scans.
 	if m.handler != nil {
 		m.handler(annotations.Event{
-			Name: "cache/check",
+			Name: annotations.CacheCheck,
 			Data: map[string]interface{}{
 				"pattern":      pattern.String(),
 				"a_resolved":   fmt.Sprintf("%v (%T)", aResolved, aResolved),
@@ -134,7 +134,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 				if handled {
 					if m.handler != nil {
 						m.handler(annotations.Event{
-							Name: "cache/match-handled",
+							Name: annotations.CacheMatchHandled,
 							Data: map[string]interface{}{
 								"pattern": pattern.String(),
 								"results": cacheResult.Size(),
@@ -191,7 +191,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 	// Emit strategy selection event
 	if m.handler != nil {
 		m.handler(annotations.Event{
-			Name:  "storage/reuse-strategy",
+			Name:  annotations.StorageReuseStrategy,
 			Start: time.Now(),
 			Data: map[string]interface{}{
 				"pattern":          pattern.String(),
@@ -224,7 +224,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 		// Emit join strategy selection event
 		if m.handler != nil {
 			m.handler(annotations.Event{
-				Name:  "storage/join-strategy",
+				Name:  annotations.StorageJoinStrategy,
 				Start: time.Now(),
 				Data: map[string]interface{}{
 					"pattern":       pattern.String(),
@@ -355,7 +355,10 @@ func (m *PatternMatcher) matchUnboundScan(
 	if m.cache != nil && !m.isHistoryMode() && e != nil && a != nil {
 		if eIdent, ok := e.(datalog.Identity); ok {
 			if aKw, ok := a.(datalog.Keyword); ok {
-				cacheResult, handled := m.matchFromCache(pattern, symbols, eIdent, aKw, v, card, valueType)
+				cacheResult, handled, err := m.matchFromCache(pattern, symbols, eIdent, aKw, v, card, valueType)
+				if err != nil {
+					return nil, err
+				}
 				if handled {
 					return cacheResult, nil
 				}
@@ -532,7 +535,7 @@ func (m *PatternMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, b
 	// Emit no-reuse path event
 	if m.handler != nil {
 		m.handler(annotations.Event{
-			Name:  "storage/no-reuse-path",
+			Name:  annotations.StorageNoReusePath,
 			Start: time.Now(),
 			Data: map[string]interface{}{
 				"pattern":       pattern.String(),
@@ -593,7 +596,7 @@ func (m *PatternMatcher) matchWithVValidation(
 ) (executor.Relation, error) {
 	if m.handler != nil {
 		m.handler(annotations.Event{
-			Name:  "v-validation/entry",
+			Name:  annotations.VValidationEntry,
 			Start: time.Now(),
 			Data: map[string]any{
 				"pattern":     pattern.String(),
@@ -670,6 +673,15 @@ type validatingVBoundIterator struct {
 	// Current V value being searched
 	currentBoundV any
 
+	// Reporting. This path opens a candidate scan per binding and discards it
+	// before the next, so the counts have to accumulate as it goes: by Close
+	// every scan but the last is gone. datomsScanned covers the per-binding
+	// candidate scans plus the unique-ownership walks tryEmitUniqueWinner runs.
+	scansOpened   int
+	datomsScanned int
+	datomsMatched int
+	scanStart     time.Time
+
 	err error // First error from storage operations
 }
 
@@ -687,7 +699,7 @@ func (it *validatingVBoundIterator) Next() bool {
 				// Emit annotation for CRDT-resolved candidate
 				if it.matcher.handler != nil {
 					it.matcher.handler(annotations.Event{
-						Name:  "v-validation/candidate",
+						Name:  annotations.VValidationCandidate,
 						Start: time.Now(),
 						Data: map[string]any{
 							"e":       datom.E.String(),
@@ -819,7 +831,8 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 	var aStorage Attribute
 	copy(aStorage[:], aKw.String())
 
-	owner, ownerTx, err := it.matcher.resolveAVLWW(aStorage, it.currentBoundV)
+	owner, ownerTx, scanned, err := it.matcher.resolveAVLWW(aStorage, it.currentBoundV)
+	it.datomsScanned += scanned
 	if err != nil {
 		return false, err
 	}
@@ -869,7 +882,10 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 		var aAttr Attribute
 		copy(eEnt[:], eBytes[:])
 		copy(aAttr[:], aStorage[:])
-		entry := it.matcher.cache.GetOrResolve(CacheKey{E: eEnt, A: aAttr}, it.matcher, it.matcher.cacheBound())
+		entry, err := it.matcher.cache.GetOrResolve(CacheKey{E: eEnt, A: aAttr}, it.matcher, it.matcher.cacheBound(), it.matcher.handler)
+		if err != nil {
+			return false, err
+		}
 		if entry != nil && entry.Cardinality() == schema.CardinalityOne {
 			// oneValue is nil for a tombstoned or never-set (E, A); ValuesEqual
 			// against the (always non-nil) bound V yields false, matching the
@@ -877,7 +893,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 			matches := datalog.ValuesEqual(entry.OneValue(), it.currentBoundV)
 			if it.matcher.handler != nil {
 				it.matcher.handler(annotations.Event{
-					Name:  "v-validation/cache-resolved",
+					Name:  annotations.VValidationCacheResolved,
 					Start: time.Now(),
 					Data: map[string]any{
 						"e":        e.String(),
@@ -933,7 +949,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 
 		if it.matcher.handler != nil {
 			it.matcher.handler(annotations.Event{
-				Name:  "v-validation/result",
+				Name:  annotations.VValidationResult,
 				Start: time.Now(),
 				Data: map[string]any{
 					"e":           e.String(),
@@ -959,7 +975,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	// No entry visible under this snapshot — the attribute has no value as-of T.
 	if it.matcher.handler != nil {
 		it.matcher.handler(annotations.Event{
-			Name:  "v-validation/no-winner",
+			Name:  annotations.VValidationNoWinner,
 			Start: time.Now(),
 			Data: map[string]any{
 				"e":       e.String(),
@@ -1052,7 +1068,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 		}
 		addBoundFields(data, bound)
 		it.matcher.handler(annotations.Event{
-			Name:  "v-validation/open-scan",
+			Name:  annotations.VValidationOpenScan,
 			Start: time.Now(),
 			Data:  data,
 		})
@@ -1081,7 +1097,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 
 	if it.matcher.handler != nil {
 		it.matcher.handler(annotations.Event{
-			Name:  "v-validation/scan-opened",
+			Name:  annotations.VValidationScanOpened,
 			Start: time.Now(),
 			Data: map[string]any{
 				"index":        it.candidateIndex.String(),
@@ -1112,8 +1128,15 @@ func (it *validatingVBoundIterator) Close() error {
 func (it *validatingVBoundIterator) Error() error { return it.err }
 
 // matchFromCache attempts to resolve a pattern using the cache.
-// Returns (relation, true) if cache was used, (nil, false) if fallback to storage is needed.
+// Returns (relation, true, nil) if cache was used, (nil, false, nil) if fallback
+// to storage is needed, and a non-nil error if resolution itself failed.
 // This provides O(1) access for patterns with E and A bound when querying latest state.
+//
+// A resolution failure is distinct from "the cache cannot serve this". Falling
+// back to storage on error would re-run the read that just failed and, if it
+// failed for a reason the retry also hits, report it from a second place — or,
+// worse, succeed and leave the first failure unaccounted. The error is the
+// answer.
 func (m *PatternMatcher) matchFromCache(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
@@ -1122,7 +1145,7 @@ func (m *PatternMatcher) matchFromCache(
 	v interface{}, // nil if V is unbound
 	card schema.Cardinality,
 	valueType schema.ValueType,
-) (executor.Relation, bool) {
+) (executor.Relation, bool, error) {
 	// Build cache key
 	eBytes := Entity(e.Hash())
 	aStorage := ToStorageDatom(datalog.Datom{A: a}).A
@@ -1130,13 +1153,16 @@ func (m *PatternMatcher) matchFromCache(
 	copy(aAttr[:], aStorage[:])
 	key, ok := m.cacheKey(eBytes, aAttr)
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Get or resolve from cache
-	entry := m.cache.GetOrResolve(key, m, m.cacheBound())
+	entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler)
+	if err != nil {
+		return nil, false, err
+	}
 	if entry == nil {
-		return nil, false // Fallback to storage
+		return nil, false, nil // Fallback to storage
 	}
 
 	// Get tuple builder for building tuples
@@ -1159,22 +1185,22 @@ func (m *PatternMatcher) matchFromCache(
 		val := entry.OneValue()
 		if val == nil {
 			// No value - return empty relation
-			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
+			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 		}
 		if v != nil {
 			// V is bound - check if it matches
 			if !datalog.ValuesEqual(val, v) {
-				return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
+				return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 			}
 		}
 		// Build tuple with the cached value
 		tuple := buildTuple(val, entry.Version())
-		return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true
+		return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true, nil
 
 	case schema.CardinalityMany:
 		set := entry.ManySet()
 		if len(set) == 0 {
-			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
+			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 		}
 		if v != nil {
 			// V is bound - membership check
@@ -1185,9 +1211,9 @@ func (m *PatternMatcher) matchFromCache(
 			}
 			if _, exists := set[lookupKey]; exists {
 				tuple := buildTuple(v, entry.Version())
-				return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true
+				return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true, nil
 			}
-			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
+			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 		}
 		// V is unbound - return all set members
 		tuples := make([]executor.Tuple, 0, len(set))
@@ -1195,7 +1221,7 @@ func (m *PatternMatcher) matchFromCache(
 			tuple := buildTuple(val, entry.Version())
 			tuples = append(tuples, tuple)
 		}
-		return executor.NewMaterializedRelationWithOptions(symbols, tuples, m.options), true
+		return executor.NewMaterializedRelationWithOptions(symbols, tuples, m.options), true, nil
 
 	case schema.CardinalityVector:
 		list := entry.VectorList()
@@ -1203,19 +1229,19 @@ func (m *PatternMatcher) matchFromCache(
 		if v != nil {
 			// V is bound - compare resolved vector against bound value
 			if !datalog.ValuesEqual(resolved, v) {
-				return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
+				return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 			}
 			// Matched — fall through to build tuple
 		}
 		if len(list) == 0 && v == nil {
 			// Empty vector with unbound V — no tuples
-			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
+			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 		}
 		tuple := buildTuple(resolved, entry.Version())
-		return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true
+		return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true, nil
 	}
 
-	return nil, false // Unknown cardinality, fallback to storage
+	return nil, false, nil // Unknown cardinality, fallback to storage
 }
 
 // resolveKeywordFromBindings searches all binding relations for a single-tuple relation
@@ -1365,7 +1391,10 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		}
 
 		// Get from cache
-		entry := m.cache.GetOrResolve(key, m, m.cacheBound())
+		entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler)
+		if err != nil {
+			return nil, false, err
+		}
 		if entry == nil {
 			// Cache miss - fallback to storage for entire query
 			return nil, false, nil
@@ -1676,10 +1705,40 @@ func (m *PatternMatcher) matchCardinalityManyMembership(
 		copy(aBytes[:], kw.String())
 	}
 
+	// Bind [E][A][V] on EAVT, which covers every op recorded for this value.
+	// A string or bytes V makes the run inexact, so the store steps over the
+	// keys the range over-covers; the statistics below are what make that
+	// stepping visible.
+	//
+	// The caller holds storage projections; both constructors return the
+	// canonical interned pointer for an already-interned value.
+	bound := ScanBound{
+		Index: EAVT,
+		Prefix: []datalog.Value{
+			datalog.NewIdentityFromHash(eBytes),
+			datalog.InternKeywordFromBytes(aBytes),
+			v,
+		},
+	}
+	if m.handler != nil {
+		m.emitIndexSelection(pattern, bound)
+	}
+
 	// Check if the value is in the set using add-wins semantics
-	isMember, err := m.checkSetMembership(eBytes[:], aBytes[:], v)
+	opened := time.Now()
+	isMember, scanned, err := m.checkSetMembership(bound)
 	if err != nil {
 		return nil, fmt.Errorf("membership check failed: %w", err)
+	}
+	if m.handler != nil {
+		// A membership check resolves to the one value it asked about or to
+		// nothing, and the pattern binds V, so resolution and match agree.
+		resolved := 0
+		if isMember {
+			resolved = 1
+		}
+		emitIteratorStatistics(m.handler, annotations.PatternStorageScan,
+			pattern, bound.Index, opened, scanned, resolved, resolved, nil)
 	}
 
 	// If not a member, return empty relation
@@ -2154,11 +2213,6 @@ func (it *cardinalityManyAVETValueIterator) Close() error {
 
 func (it *cardinalityManyAVETValueIterator) Error() error { return it.err }
 
-// matchCardinalityManyFindEntitiesWithValue handles [?e :attr "value"] where E is unbound
-// Finds all entities where the specific value is in the set.
-//
-// Uses AVET index with [A][V] prefix for O(k) lookup where k = datoms with this value,
-// instead of O(n) where n = all entities with the attribute.
 // emitIndexSelection announces the run a pattern's scan is about to walk.
 //
 // The caller guards on m.handler; that guard belongs to the caller because it
@@ -2179,7 +2233,7 @@ func (m *PatternMatcher) emitIndexSelection(pattern *query.DataPattern, bound Sc
 	data := map[string]interface{}{"pattern": pattern.String()}
 	addBoundFields(data, bound)
 	m.handler(annotations.Event{
-		Name:  "pattern/index-selection",
+		Name:  annotations.PatternIndexSelection,
 		Start: time.Now(),
 		Data:  data,
 	})

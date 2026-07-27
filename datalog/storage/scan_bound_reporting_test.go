@@ -22,11 +22,14 @@ import (
 //
 // It drives matchWithoutIteratorReuse directly rather than fishing for a query
 // shape that routes to NoReuse, so the pin holds whatever the strategy chooser
-// does later.
+// does later. That also takes the planner — and therefore the algebra optimizer
+// — off its path, so it pins one mode explicitly instead of looping the axis.
 func TestPerBindingScanReportsOneCountedEvent(t *testing.T) {
 	var events []annotations.Event
+	opts := optimizerMode{name: "algebra_off", algebra: false}.plannerOptions()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:              t.TempDir(),
+		PlannerOptions:    &opts,
 		AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 	})
 	require.NoError(t, err)
@@ -88,7 +91,7 @@ func TestPerBindingScanReportsOneCountedEvent(t *testing.T) {
 	require.Equal(t, len(people), e.Data["scans.opened"],
 		"the count is the datum a per-binding path owes its reader")
 	require.Equal(t, len(people), e.Data["binding.size"])
-	require.Equal(t, len(people), e.Data["matches.found"])
+	require.Equal(t, len(people), e.Data["datoms.matched"])
 	require.Positive(t, e.Latency,
 		"a completion event without a duration reports as 0 ms in Analyze")
 }

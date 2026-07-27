@@ -318,18 +318,35 @@ func TestCheckSetMembershipDirect(t *testing.T) {
 	copy(eBytes[:], entityID.Bytes())
 	copy(aBytes[:], attr.String())
 
+	// The bound is the caller's: checkSetMembership is handed the same
+	// ScanBound the pattern arm announces, so the run it walks and the run
+	// reported to a handler cannot differ.
+	membershipBound := func(v datalog.Value) ScanBound {
+		return ScanBound{
+			Index: EAVT,
+			Prefix: []datalog.Value{
+				datalog.NewIdentityFromHash(Entity(eBytes)),
+				datalog.InternKeywordFromBytes(Attribute(aBytes)),
+				v,
+			},
+		}
+	}
+
 	// Check membership for "present" (should be true)
-	isMember, err := matcher.checkSetMembership(eBytes[:], aBytes[:], "present")
+	isMember, scanned, err := matcher.checkSetMembership(membershipBound("present"))
 	if err != nil {
 		t.Fatalf("checkSetMembership failed: %v", err)
 	}
-	t.Logf("Membership of 'present': %v", isMember)
+	t.Logf("Membership of 'present': %v (%d datoms read)", isMember, scanned)
 	if !isMember {
 		t.Error("Expected 'present' to be a member")
 	}
+	if scanned <= 0 {
+		t.Error("a membership check that found the value must report the index reads that found it")
+	}
 
 	// Check membership for "absent" (should be false)
-	isMember2, err := matcher.checkSetMembership(eBytes[:], aBytes[:], "absent")
+	isMember2, _, err := matcher.checkSetMembership(membershipBound("absent"))
 	if err != nil {
 		t.Fatalf("checkSetMembership failed: %v", err)
 	}

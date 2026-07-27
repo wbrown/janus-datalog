@@ -25,7 +25,12 @@ func TestIndexOrderedLimitStopsSatisfiedScan(t *testing.T) {
 				if event.Name != "pattern/storage-scan" {
 					return
 				}
-				if count, ok := event.Data["datoms.resolved"].(int); ok {
+				// Intake, not resolution's output: "stopped after the requested
+				// rows" is a claim about what the scan read. Resolution emits
+				// one row per entity however deep the history is, so a scan
+				// that walked the whole index would satisfy a bound on the
+				// resolved count.
+				if count, ok := event.Data["datoms.scanned"].(int); ok {
 					scanned.Add(int64(count))
 				}
 			}

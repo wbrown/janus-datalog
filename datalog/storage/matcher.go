@@ -668,7 +668,10 @@ func (m *PatternMatcher) LookupAttribute(
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry := m.cache.GetOrResolve(key, m, m.cacheBound())
+		entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler)
+		if err != nil {
+			return nil, false, err
+		}
 		if entry != nil {
 			switch card {
 			case schema.CardinalityOne:
@@ -856,7 +859,10 @@ func (m *PatternMatcher) LookupAllAttributes(entity datalog.Identity, attr datal
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry := m.cache.GetOrResolve(key, m, m.cacheBound())
+		entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler)
+		if err != nil {
+			return nil, err
+		}
 		if entry != nil {
 			// Determine cardinality
 			card := schema.CardinalityOne

@@ -65,9 +65,9 @@ func TestOrClauseTupleStability(t *testing.T) {
 			}
 
 			// Enable annotations to see what's happening
-			db.SetAnnotationHandler(func(e annotations.Event) {
+			db.AnnotationHandler = func(e annotations.Event) {
 				t.Logf("[TRACE] %s: %v", e.Name, e.Data)
-			})
+			}
 
 			// Query with OR clause using DATA PATTERNS (not expression predicates)
 			// This exercises the storage-backed StreamingRelation path through OrFallbackRelation

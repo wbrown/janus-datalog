@@ -95,6 +95,8 @@ workspace-decoded scan contract:
 - callers that retain values after those calls must copy
 - Tier-3 blob decode uses the active scan session; sticky `Error()` retains the
   first decode failure after valid preceding rows
+- `Scanned() int` reports intake: how many datoms the iterator has taken in from
+  the index so far
 
 A scan yields **exactly** the datoms whose bound components equal the
 `ScanBound`'s values — no more. That is an obligation on the backend, not on the
@@ -105,6 +107,14 @@ in-tree backends narrow by key length; see `EncodedRun` and `runMembership` in
 `key_encoder_binary.go`. A backend that returns everything inside a byte range
 will return datoms the caller did not ask for, and no test above this seam will
 say so.
+
+`Scanned()` is what makes that obligation auditable, which is why it is required
+rather than optional. Count **before** narrowing: a key the range covered and the
+membership rule rejected is intake, because the scan paid to look at it. Against
+the consumer's own count of what survived, the ratio is the amplification the
+index charged; an absent count is indistinguishable from a scan that read nothing
+and from instrumentation that was never wired. A wrapping iterator delegates to
+the scan beneath it — it reads no index of its own.
 
 ### The index-nested-loop join strategy is removed
 
@@ -124,6 +134,45 @@ The strategy had been off by default since 2025-10 and was independently
 incorrect — its precondition, bindings sorted in index order, is unmet for the
 Tx and V positions, where `CompareValues` order deliberately differs from key
 order. See item 29 in `docs/wip/DECISION_LEDGER.md`.
+
+### The annotation handler is a field, and the engine no longer wraps it
+
+`Database.AnnotationHandler()` and `Database.SetAnnotationHandler()` are gone.
+The handler is a field:
+
+```go
+// before
+db.SetAnnotationHandler(h)
+h := db.AnnotationHandler()
+
+// after
+db.AnnotationHandler = h
+h := db.AnnotationHandler
+```
+
+`db.Open(path, db.WithAnnotationHandler(h))` is unchanged and remains the usual
+way to install one.
+
+The pair existed because the handler was *copied* into the cache and every
+matcher, and an assignment cannot fan out to duplicates. The copies are gone —
+`Cache` no longer holds one, receiving the handler per call — so there is
+nothing left for a setter to keep in step, and the mutex that guarded the field
+against the setter is gone with it.
+
+**The engine no longer wraps installed handlers in `annotations.Synchronized`.**
+It emits from parallel workers, so a handler that is not safe for concurrent
+calls must now be wrapped by whoever installs it:
+
+```go
+db.AnnotationHandler = annotations.Synchronized(myHandler)
+```
+
+`annotations.Synchronized` is unchanged and still exported. Wrapping was dropped
+rather than moved because applying it at one assignment path and not another
+would give one field two concurrency contracts depending on how it was
+populated; it also put a process-wide lock on every event on the hot path,
+whether or not the handler needed one. A handler that only appends under its own
+mutex, writes to a channel, or is already safe now pays nothing.
 
 ## Browser persistence
 

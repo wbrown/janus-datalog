@@ -134,7 +134,7 @@ func (it *nonReusingIterator) Close() error {
 	// count, not the enumeration.
 	if it.matcher.handler != nil && it.scansOpened > 0 {
 		it.matcher.handler(annotations.Event{
-			Name:    "pattern/per-binding-scan-complete",
+			Name:    annotations.PatternPerBindingScanComplete,
 			Start:   it.scanStart,
 			Latency: time.Since(it.scanStart),
 			Data: map[string]interface{}{
@@ -143,7 +143,7 @@ func (it *nonReusingIterator) Close() error {
 				"scans.opened":    it.scansOpened,
 				"datoms.scanned":  it.totalScanned,
 				"datoms.resolved": it.totalResolved,
-				"matches.found":   it.totalMatched,
+				"datoms.matched":  it.totalMatched,
 			},
 		})
 	}

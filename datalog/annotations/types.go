@@ -7,40 +7,56 @@ import (
 	"time"
 )
 
-// Event name constants following hierarchical naming pattern
+// Event names. Every event the engine emits is named here, and every producer
+// emits through one of these constants rather than writing the string.
+//
+// The two halves have to stay together or neither sweep can see the whole set.
+// Nine formatter arms for events with no producer survived a sweep that deleted
+// seven others, because the seven were written `case "pattern/match":` and the
+// nine `case PatternFiltering:` — a search keyed on names could not see the
+// second kind. Simultaneously, five live storage events were emitted as literals
+// and three had no constant at all, so a search keyed on constants could not see
+// them either. One vocabulary, declared in one place, is what makes "does
+// anything emit this?" a question with an answer.
 const (
 	// Query lifecycle
-	QueryInvoked           = "query/invoked"
-	QueryPlanCreated       = "query/plan.created"
-	QueryComplete          = "query/completed"
-	QueryTuplesTransmitted = "query/tuples.transmitted"
+	QueryInvoked                      = "query/invoked"
+	QueryPlanCreated                  = "query/plan.created"
+	QueryComplete                     = "query/completed"
+	QueryRewriteConditionalAggregates = "query/rewrite.conditional-aggregates"
 
 	// Phase execution
 	PhaseBegin    = "phase/begin"
 	PhaseComplete = "phase/complete"
-	PhaseScore    = "phase/score"
-
-	// Relation operations
-	RelationIndexing     = "relation/indexing"
-	RelationIndexed      = "relation/indexed"
-	CombineRelsBegin     = "combine-rels/begin"
-	CombineRelsCollapsed = "combine-rels/collapsed"
 
 	// Pattern matching
-	PatternsToRelationsBegin    = "patterns->relations/begin"
-	PatternsToRelationsRealized = "patterns->relations/realized"
-	MatchesToRelations          = "matches->relations"
+	MatchesToRelations = "matches->relations"
 
 	// Detailed pattern matching timing
 	PatternIndexSelection = "pattern/index-selection"
 	PatternStorageScan    = "pattern/storage-scan"
-	PatternFiltering      = "pattern/filtering"
-	PatternToRelation     = "pattern/to-relation"
+
+	// Binding-driven scan completion, one per strategy chooseJoinStrategy picks
+	PatternHashJoinComplete       = "pattern/hash-join-complete"
+	PatternMergeJoinComplete      = "pattern/merge-join-complete"
+	PatternPerBindingScanComplete = "pattern/per-binding-scan-complete"
+
+	// Storage strategy selection
+	StorageReuseStrategy = "storage/reuse-strategy"
+	StorageJoinStrategy  = "storage/join-strategy"
+	StorageNoReusePath   = "storage/no-reuse-path"
+
+	// V-bound candidate validation
+	VValidationEntry         = "v-validation/entry"
+	VValidationCandidate     = "v-validation/candidate"
+	VValidationCacheResolved = "v-validation/cache-resolved"
+	VValidationResult        = "v-validation/result"
+	VValidationNoWinner      = "v-validation/no-winner"
+	VValidationOpenScan      = "v-validation/open-scan"
+	VValidationScanOpened    = "v-validation/scan-opened"
 
 	// Join operations
 	JoinHash      = "join/hash"
-	JoinNested    = "join/nested"
-	JoinMerge     = "join/merge"
 	JoinBuildCopy = "join/build.copy" // Tuple copy statistics during hash join build phase
 	JoinStrategy  = "join/strategy.selected"
 	JoinBuild     = "join/build.complete"
@@ -49,13 +65,34 @@ const (
 	// OR clause operations
 	OrClauseBegin          = "or/begin"
 	OrClauseComplete       = "or/complete"
-	OrClauseBranchBegin    = "or/branch.begin"
 	OrClauseBranchComplete = "or/branch.complete"
-	OrClauseFallback       = "or/fallback"
 	OrClauseUnion          = "or/union"
-	OrSubqueryInput        = "or/subquery.input"
-	OrSubqueryResult       = "or/subquery.result"
 	OrPropertiesDerived    = "or/properties.derived"
+	OrOuterReplaced        = "or/outer-replaced"
+
+	// OR fallback evaluation
+	OrFallbackOuterMaterialized = "or-fallback/outer.materialized"
+	OrFallbackIteratorCreated   = "or-fallback/iterator.created"
+	OrFallbackOuterExhausted    = "or-fallback/outer.exhausted"
+	OrFallbackOuterTuple        = "or-fallback/outer.tuple"
+	OrFallbackBranchNarrowed    = "or-fallback/branch.narrowed"
+	OrFallbackBranchSuccess     = "or-fallback/branch.success"
+	OrFallbackCacheBuild        = "or-fallback/cache-build"
+
+	// Subquery execution
+	SubqueryExecutorPath      = "subquery/executor-path"
+	SubqueryInputRelation     = "subquery/input-relation"
+	SubqueryInputCombinations = "subquery/input-combinations"
+
+	// Algebra bridge and rewrites
+	AlgebraBridgeBegin               = "algebra/bridge-begin"
+	AlgebraBridgeComplete            = "algebra/bridge-complete"
+	AlgebraCompiled                  = "algebra/compiled"
+	AlgebraCompileError              = "algebra/compile-error"
+	AlgebraOptimized                 = "algebra/optimized"
+	AlgebraOptimizeError             = "algebra/optimize-error"
+	AlgebraDecompileError            = "algebra/decompile-error"
+	AlgebraDecorrelateInnerOptimized = "algebra/decorrelate-inner-optimized"
 
 	// Aggregation operations
 	AggregationExecuted     = "aggregation/executed"
@@ -64,9 +101,21 @@ const (
 
 	// Relation lifecycle
 	RelationCacheEnabled = "relation/cache.enabled"
+	CollapseSuccess      = "collapse/success"
+
+	// Result ordering
+	SortConstantKeysDropped = "sort/constant-keys-dropped"
+
+	// Unique-attribute ownership lookup
+	UniqueLookupComplete = "unique/lookup-complete"
+
+	// Prefetch
+	PrefetchTrigger = "prefetch/trigger"
 
 	// EA cache resolution
-	CacheRebuild = "cache/rebuild"
+	CacheRebuild      = "cache/rebuild"
+	CacheCheck        = "cache/check"
+	CacheMatchHandled = "cache/match-handled"
 
 	// Pull API operations
 	PullBegin           = "pull/begin"
@@ -89,12 +138,6 @@ const (
 	ReflectWriteComplete  = "reflect/write.complete"
 	ReflectUpdateBegin    = "reflect/update.begin"
 	ReflectUpdateComplete = "reflect/update.complete"
-
-	// Errors
-	ErrorQueryParsing  = "error/query.parsing"
-	ErrorQueryBinding  = "error/query.binding"
-	ErrorQueryInternal = "error/query.internal"
-	ErrorBackend       = "error/backend"
 )
 
 // Event represents a single annotation event during query execution.

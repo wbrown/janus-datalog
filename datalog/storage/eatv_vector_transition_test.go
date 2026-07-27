@@ -51,9 +51,9 @@ func TestEATV_VectorTransitionDropsDatom(t *testing.T) {
 			}
 
 			var events []annotations.Event
-			db.SetAnnotationHandler(func(e annotations.Event) {
+			db.AnnotationHandler = func(e annotations.Event) {
 				events = append(events, e)
-			})
+			}
 
 			// Collection input [?e ...] — only E is bound, A is free → forces EATV
 			entitySlice := []any{entities[0], entities[1], entities[2]}
@@ -62,7 +62,7 @@ func TestEATV_VectorTransitionDropsDatom(t *testing.T) {
 				entitySlice))
 			require.NoError(t, err)
 
-			db.SetAnnotationHandler(nil)
+			db.AnnotationHandler = nil
 
 			// Verify EATV was selected
 			usedEATV := false

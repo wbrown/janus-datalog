@@ -303,9 +303,9 @@ func TestCacheMatrix_VOnlyBound(t *testing.T) {
 					tx.Commit()
 
 					// Enable annotations to trace query execution
-					db.SetAnnotationHandler(func(e annotations.Event) {
+					db.AnnotationHandler = func(e annotations.Event) {
 						t.Logf("[TRACE] %s: %v", e.Name, e.Data)
-					})
+					}
 
 					// Pattern: ONLY V bound - "what entities/attributes reference leader?"
 					// This uses VAET index with per-datom cardinality resolution
@@ -453,9 +453,9 @@ func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
 					require.NoError(t, err, "Commit should succeed")
 
 					// Enable annotations to trace query execution
-					db.SetAnnotationHandler(func(e annotations.Event) {
+					db.AnnotationHandler = func(e annotations.Event) {
 						t.Logf("[TRACE] %s: %v", e.Name, e.Data)
-					})
+					}
 
 					// Debug: scan EATV index directly to see ALL datoms
 					t.Log("=== Scanning EATV index for all datoms ===")

@@ -201,10 +201,10 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 			q := buildComplexNotQuery()
 			t.Logf("Query: %s", q.String())
 
-			db.SetAnnotationHandler(func(event annotations.Event) {
+			db.AnnotationHandler = func(event annotations.Event) {
 				t.Logf("ANNOTATION: %s %v", event.Name, event.Data)
-			})
-			defer db.SetAnnotationHandler(nil)
+			}
+			defer func() { db.AnnotationHandler = nil }()
 
 			tuples, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err, "Complex query with NOT clauses should not fail")

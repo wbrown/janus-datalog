@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -35,6 +36,12 @@ type CacheEntry struct {
 	manySet     map[any]any         // Cardinality-Many: hashable key → original value
 	vectorList  []any               // Cardinality-Vector: ordered elements
 	vectorIndex []datalog.ElementID // Cardinality-Vector: position → ElementID for O(1) access
+
+	// scanned is the index intake the resolution that built this entry spent.
+	// It belongs on the entry rather than on the call that triggered the build:
+	// the entry is what the cost bought, so a later reader of the same entry can
+	// say what it cost, and a hit reports zero because a hit reads no index.
+	scanned int
 }
 
 // Version returns the ElementID when this entry was computed
@@ -81,11 +88,6 @@ type Cache struct {
 	// in-flight, check freshness — is a single trie walk.
 	slots *cacheTrie
 
-	// handler, when set, receives cache/rebuild events. Callers guard on
-	// nil at every emission site: a disabled handler costs one branch on
-	// the rebuild path and nothing on the hit path.
-	handler annotations.Handler
-
 	// Per-entity attribute tracking - tracks which attributes we've cached per entity
 	// This is NOT source of truth - just tracks what's in cache for difference-based
 	// decisions on whether to do individual lookups vs full entity scan
@@ -97,15 +99,17 @@ func NewCache() *Cache {
 	return &Cache{slots: newCacheTrie()}
 }
 
-// SetHandler configures the handler for cache resolution events, following
-// the storage layer's SetHandler convention. Pass nil to disable.
-func (c *Cache) SetHandler(handler annotations.Handler) {
-	c.handler = handler
-}
-
 // annotateRebuild reports one cache rebuild and why it happened. Callers
-// check c.handler != nil before calling; the emission itself never guards.
-func (c *Cache) annotateRebuild(key CacheKey, reason string, slot cacheSlot) {
+// check handler != nil before calling; the emission itself never guards.
+//
+// The handler arrives per call rather than being stored on the Cache. A stored
+// copy has to be kept in step with the one on the Database, which is what
+// forced Database.SetAnnotationHandler to exist as a method: a plain assignment
+// cannot fan out to duplicates. Every emission site here is inside
+// GetOrResolve, which is handed the handler along with the resolver and the
+// snapshot bound — per-call context, not retained state, so there is nothing to
+// go stale.
+func annotateRebuild(handler annotations.Handler, key CacheKey, reason string, slot cacheSlot) {
 	data := map[string]interface{}{
 		"attribute":    datalog.InternKeywordFromBytes(key.A).String(),
 		"reason":       reason,
@@ -114,7 +118,7 @@ func (c *Cache) annotateRebuild(key CacheKey, reason string, slot cacheSlot) {
 	if slot.entry != nil {
 		data["entry_version"] = slot.entry.version.Lamport
 	}
-	c.handler(annotations.Event{Name: annotations.CacheRebuild, Data: data})
+	handler(annotations.Event{Name: annotations.CacheRebuild, Data: data})
 }
 
 // inFlightEntry is the shared sentinel stored for an (E, A) while its commit is
@@ -195,7 +199,7 @@ func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
 // Freshness is the slot's own version bookkeeping, updated atomically on
 // every write. This provides O(1) freshness checks without storage seeks.
 // False negatives (returning stale data) are NOT acceptable.
-func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalog.ElementID) *CacheEntry {
+func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalog.ElementID, handler annotations.Handler) (*CacheEntry, error) {
 	// Fast path: one trie walk yields the entry and its freshness bound.
 	slot, ok := c.slots.Load(key)
 	if ok && slot.entry != nil {
@@ -203,8 +207,8 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 		// (the rebuild below) without caching, so the result reflects whichever
 		// side of the commit is currently durable — never a stale cache hit.
 		if slot.entry.inFlight {
-			if c.handler != nil {
-				c.annotateRebuild(key, "in-flight", slot)
+			if handler != nil {
+				annotateRebuild(handler, key, "in-flight", slot)
 			}
 			return c.rebuild(key, resolver)
 		}
@@ -214,27 +218,33 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 		// which makes the fresh entry identical to the session's resolution.
 		if slot.entry.version == slot.version {
 			if bound == nil || slot.version.Compare(*bound) <= 0 {
-				return slot.entry // Fresh - cache hit
+				return slot.entry, nil // Fresh - cache hit
 			}
 			// Fresh but past the caller's snapshot — resolve through the
 			// caller's session instead of serving the future.
-			if c.handler != nil {
-				c.annotateRebuild(key, "snapshot-bound", slot)
+			if handler != nil {
+				annotateRebuild(handler, key, "snapshot-bound", slot)
 			}
 		} else {
 			// Stale - fall through to rebuild
-			if c.handler != nil {
-				c.annotateRebuild(key, "stale", slot)
+			if handler != nil {
+				annotateRebuild(handler, key, "stale", slot)
 			}
 		}
-	} else if c.handler != nil {
-		c.annotateRebuild(key, "absent", slot)
+	} else if handler != nil {
+		annotateRebuild(handler, key, "absent", slot)
 	}
 
 	// Slow path: rebuild and store
 	// Note: Two goroutines might both rebuild for the same key.
 	// That's fine - CRDT resolution is deterministic, both compute same result.
-	entry := c.rebuild(key, resolver)
+	entry, err := c.rebuild(key, resolver)
+	if err != nil {
+		// A failed resolution is not an absent value, and it is emphatically
+		// not something to cache: storing it would make one failed scan the
+		// answer every later reader of this (E, A) receives.
+		return nil, err
+	}
 	if entry != nil {
 		// storeIfNotInFlight refuses to overwrite an in-flight sentinel, so a
 		// rebuild that raced a commit doesn't re-cache the pre-commit value.
@@ -244,7 +254,7 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 			c.TrackEntityAttr(key.E, key.A)
 		}
 	}
-	return entry
+	return entry, nil
 }
 
 // UpdateMaxVersion updates the max ElementID for a (E,A) pair.
@@ -419,8 +429,17 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card schema.Cardinality, datoms
 	}
 }
 
-// rebuild resolves the current value for (E, A) based on cardinality
-func (c *Cache) rebuild(key CacheKey, resolver CacheResolver) *CacheEntry {
+// rebuild resolves the current value for (E, A) based on cardinality.
+//
+// A failed resolution returns an error, never a nil entry. Dropping the
+// resolver's error and returning nil made a failed scan reach the reader as
+// "this (E, A) has no value" — a wrong answer with no signal, and the shape the
+// storage rules forbid materialization from producing.
+//
+// NOTE: this switch and its three arms duplicate ResolveEntry, arm for arm,
+// differing only in that GetOrResolve caches what this returns. The duplication
+// is recorded, not resolved.
+func (c *Cache) rebuild(key CacheKey, resolver CacheResolver) (*CacheEntry, error) {
 	card := resolver.GetCardinality(key.A)
 
 	switch card {
@@ -441,38 +460,40 @@ func (c *Cache) rebuild(key CacheKey, resolver CacheResolver) *CacheEntry {
 
 // rebuildOne resolves cardinality-one using LWW semantics
 // Scans EATV with descending ElementID, first entry is current
-func (c *Cache) rebuildOne(key CacheKey, resolver CacheResolver) *CacheEntry {
-	value, maxID, err := resolver.ResolveLWW(key.E, key.A)
+func (c *Cache) rebuildOne(key CacheKey, resolver CacheResolver) (*CacheEntry, error) {
+	value, maxID, scanned, err := resolver.ResolveLWW(key.E, key.A)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("resolve LWW value: %w", err)
 	}
 
 	return &CacheEntry{
 		version:     maxID,
 		cardinality: schema.CardinalityOne,
 		oneValue:    value,
-	}
+		scanned:     scanned,
+	}, nil
 }
 
 // rebuildMany resolves cardinality-many using add-wins semantics
-func (c *Cache) rebuildMany(key CacheKey, resolver CacheResolver) *CacheEntry {
-	members, maxID, err := resolver.ResolveAddWins(key.E, key.A)
+func (c *Cache) rebuildMany(key CacheKey, resolver CacheResolver) (*CacheEntry, error) {
+	members, maxID, scanned, err := resolver.ResolveAddWins(key.E, key.A)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("resolve add-wins set: %w", err)
 	}
 
 	return &CacheEntry{
 		version:     maxID,
 		cardinality: schema.CardinalityMany,
 		manySet:     members,
-	}
+		scanned:     scanned,
+	}, nil
 }
 
 // rebuildVector resolves cardinality-vector using RGA reconstruction
-func (c *Cache) rebuildVector(key CacheKey, resolver CacheResolver) *CacheEntry {
-	elements, positions, maxID, err := resolver.ResolveRGA(key.E, key.A)
+func (c *Cache) rebuildVector(key CacheKey, resolver CacheResolver) (*CacheEntry, error) {
+	elements, positions, maxID, scanned, err := resolver.ResolveRGA(key.E, key.A)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("resolve RGA vector: %w", err)
 	}
 
 	return &CacheEntry{
@@ -480,78 +501,96 @@ func (c *Cache) rebuildVector(key CacheKey, resolver CacheResolver) *CacheEntry 
 		cardinality: schema.CardinalityVector,
 		vectorList:  elements,
 		vectorIndex: positions,
-	}
+		scanned:     scanned,
+	}, nil
 }
 
 // CacheResolver provides methods to resolve CRDT values from storage
 // This interface decouples the cache from specific storage implementation
+//
+// Every resolve method reports the index intake it spent alongside its result.
+// Resolution reads the index on a pattern's behalf and emits no annotation of
+// its own — one event per nested read would bury the query the stream exists to
+// describe — so the count travels back with the value, and the cache stores it
+// on the CacheEntry, which is what the read bought.
 type CacheResolver interface {
 	// GetCardinality returns the cardinality for an attribute
 	GetCardinality(a Attribute) schema.Cardinality
 
 	// ResolveLWW returns the current value for cardinality-one (highest ElementID wins)
-	// Returns (value, maxElementID, error)
-	ResolveLWW(e Entity, a Attribute) (any, datalog.ElementID, error)
+	// Returns (value, maxElementID, datomsScanned, error)
+	ResolveLWW(e Entity, a Attribute) (any, datalog.ElementID, int, error)
 
 	// ResolveAddWins returns the current set members for cardinality-many
-	// Returns (members, maxElementID, error)
-	ResolveAddWins(e Entity, a Attribute) (map[any]any, datalog.ElementID, error)
+	// Returns (members, maxElementID, datomsScanned, error)
+	ResolveAddWins(e Entity, a Attribute) (map[any]any, datalog.ElementID, int, error)
 
 	// ResolveRGA returns the ordered vector for cardinality-vector
-	// Returns (elements, positionIndex, maxElementID, error)
-	ResolveRGA(e Entity, a Attribute) ([]any, []datalog.ElementID, datalog.ElementID, error)
+	// Returns (elements, positionIndex, maxElementID, datomsScanned, error)
+	ResolveRGA(e Entity, a Attribute) ([]any, []datalog.ElementID, datalog.ElementID, int, error)
 }
 
-// ResolveEntry resolves a CacheEntry directly from storage without caching.
-// This is used when cache is disabled but CRDT resolution is still needed.
-func ResolveEntry(key CacheKey, resolver CacheResolver) *CacheEntry {
+// ResolveEntry resolves (E, A) from storage into a CacheEntry, without caching.
+// It is the resolution step on its own: GetOrResolve is this plus the freshness
+// check and the store, and the cache-disabled read path calls it directly.
+//
+// A failed resolution returns an error, never a nil entry. The two are not the
+// same answer and a caller cannot recover the difference: this switch used to
+// drop every resolver error and return nil, so a failed scan reached the reader
+// as "this (E, A) has no value" — a wrong answer with no signal, and the exact
+// shape the storage rules forbid materialization from producing.
+func ResolveEntry(key CacheKey, resolver CacheResolver) (*CacheEntry, error) {
 	card := resolver.GetCardinality(key.A)
 
 	switch card {
 	case schema.CardinalityOne:
-		value, maxID, err := resolver.ResolveLWW(key.E, key.A)
+		value, maxID, scanned, err := resolver.ResolveLWW(key.E, key.A)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("resolve LWW value: %w", err)
 		}
 		return &CacheEntry{
 			version:     maxID,
 			cardinality: schema.CardinalityOne,
 			oneValue:    value,
-		}
+			scanned:     scanned,
+		}, nil
 
 	case schema.CardinalityMany:
-		members, maxID, err := resolver.ResolveAddWins(key.E, key.A)
+		members, maxID, scanned, err := resolver.ResolveAddWins(key.E, key.A)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("resolve add-wins set: %w", err)
 		}
 		return &CacheEntry{
 			version:     maxID,
 			cardinality: schema.CardinalityMany,
 			manySet:     members,
-		}
+			scanned:     scanned,
+		}, nil
 
 	case schema.CardinalityVector:
-		elements, positions, maxID, err := resolver.ResolveRGA(key.E, key.A)
+		elements, positions, maxID, scanned, err := resolver.ResolveRGA(key.E, key.A)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("resolve RGA vector: %w", err)
 		}
 		return &CacheEntry{
 			version:     maxID,
 			cardinality: schema.CardinalityVector,
 			vectorList:  elements,
 			vectorIndex: positions,
-		}
+			scanned:     scanned,
+		}, nil
 
 	default:
 		// Default to cardinality-one for schemaless
-		value, maxID, err := resolver.ResolveLWW(key.E, key.A)
+		value, maxID, scanned, err := resolver.ResolveLWW(key.E, key.A)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("resolve LWW value: %w", err)
 		}
 		return &CacheEntry{
 			version:     maxID,
 			cardinality: schema.CardinalityOne,
 			oneValue:    value,
-		}
+			scanned:     scanned,
+		}, nil
 	}
 }
