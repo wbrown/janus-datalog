@@ -36,6 +36,10 @@ const (
 	PatternIndexSelection = "pattern/index-selection"
 	PatternStorageScan    = "pattern/storage-scan"
 
+	// Cache-resolved patterns. Carries no index: the cache picks one by
+	// cardinality inside resolution, and a hit reads no index at all.
+	PatternCacheResolveComplete = "pattern/cache-resolve-complete"
+
 	// Binding-driven scan completion, one per strategy chooseJoinStrategy picks
 	PatternHashJoinComplete       = "pattern/hash-join-complete"
 	PatternMergeJoinComplete      = "pattern/merge-join-complete"

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -8,7 +9,165 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
+
+// bindingDrivenPeople is the fixture the binding-driven pins share: three
+// entities under one cardinality-one attribute, written bindingDrivenWrites
+// times each.
+//
+// The depth is the point. With one write per entity every term of the funnel is
+// three, and a counter wired to the wrong term — or to nothing — still passes.
+// That is how three separate implementations of the intake counter shipped with
+// no assertion between them: the fixtures made intake and resolution the same
+// number. Three writes and last-write-wins make them nine and three.
+// An array rather than a slice so len() is a constant expression and the
+// counts derived from it below can be constants too.
+var bindingDrivenPeople = [3]string{"person:alice", "person:bob", "person:carol"}
+
+const bindingDrivenWrites = 3
+
+// bindingDrivenFixture opens a database whose schema declares the attribute
+// cardinality-one — so resolution is unambiguously LWW rather than inferred —
+// writes the fixture, and returns the pattern, the binding relation over E and
+// the output symbols the three strategies share.
+//
+// The annotation handler is installed by the caller after the writes, so the
+// transactions' own events stay out of the assertion.
+func bindingDrivenFixture(t *testing.T) (*Database, *query.DataPattern, executor.Relation, []query.Symbol) {
+	t.Helper()
+
+	s, err := schema.NewBuilder().
+		Attribute(":person/name").Type(schema.TypeString).One().Add().
+		Build()
+	require.NoError(t, err)
+
+	// One mode pinned explicitly rather than the package's optimizer-mode loop:
+	// these tests drive the matcher directly, so the planner — and therefore the
+	// algebra optimizer — is not on their path.
+	opts := optimizerMode{name: "algebra_off", algebra: false}.plannerOptions()
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:           t.TempDir(),
+		Schema:         s,
+		PlannerOptions: &opts,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+
+	name := datalog.NewKeyword(":person/name")
+	bindings := make([]executor.Tuple, len(bindingDrivenPeople))
+	for i, seed := range bindingDrivenPeople {
+		who := datalog.NewIdentity(seed)
+		bindings[i] = executor.Tuple{who}
+		// Separate transactions: each Set must land on its own Tx for the
+		// earlier ones to be history rather than overwritten in the buffer.
+		for w := 0; w < bindingDrivenWrites; w++ {
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(who, name, fmt.Sprintf("%s-%d", seed, w)))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+		}
+	}
+
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: name},
+			query.Variable{Name: datalog.NewSymbol("?n")},
+		},
+	}
+	bindingRel := executor.NewMaterializedRelation(
+		[]query.Symbol{datalog.NewSymbol("?e")}, bindings)
+	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?n")}
+
+	return db, pattern, bindingRel, symbols
+}
+
+// drainRelation iterates a relation to exhaustion and returns the row count.
+// The completion events these tests read are emitted on Close, so a strategy
+// left un-drained reports nothing at all.
+func drainRelation(t *testing.T, rel executor.Relation) int {
+	t.Helper()
+	iter := rel.Iterator()
+	rows := 0
+	for iter.Next() {
+		rows++
+	}
+	require.NoError(t, iter.Error())
+	require.NoError(t, iter.Close())
+	return rows
+}
+
+// TestBindingDrivenStrategiesReportTheirFunnel pins all three intake counters
+// the binding-driven paths maintain — one per strategy, each a separate
+// implementation, and until this test each unasserted.
+//
+// Hardcoding hash_join_matcher.go's datoms.scanned to zero, or replacing
+// nonReusingIterator's accumulate-before-discard with a discard, left the whole
+// package green. The counter's contract is that a key the membership rule
+// rejected is still counted, which is only checkable against a fixture where
+// intake and resolution differ — hence bindingDrivenFixture's history depth.
+//
+// Each strategy is driven directly rather than reached through a query. Which
+// one chooseJoinStrategy picks depends on binding-set size and its own
+// thresholds, so a query-level test would pin whichever it picks today and
+// silently stop covering the other two.
+func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
+	const (
+		entities = len(bindingDrivenPeople)
+		// Every write is intake: the scan reads the whole (A, E) group and CRDT
+		// resolution emits the highest-Tx entry, so intake exceeds output by the
+		// history depth. That gap is what the funnel exists to show.
+		wantScanned = entities * bindingDrivenWrites
+	)
+
+	for _, tc := range []struct {
+		strategy string
+		event    string
+		match    func(m *PatternMatcher, pattern *query.DataPattern,
+			bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error)
+	}{
+		{strategy: "HashJoinScan", event: annotations.PatternHashJoinComplete,
+			match: func(m *PatternMatcher, pattern *query.DataPattern,
+				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
+				return m.matchWithHashJoin(pattern, bindingRel, symbols, 0, AETV, nil)
+			}},
+		{strategy: "MergeJoin", event: annotations.PatternMergeJoinComplete,
+			match: func(m *PatternMatcher, pattern *query.DataPattern,
+				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
+				return m.matchWithMergeJoin(pattern, bindingRel, symbols, 0, AETV, nil)
+			}},
+		{strategy: "NoReuse", event: annotations.PatternPerBindingScanComplete,
+			match: func(m *PatternMatcher, pattern *query.DataPattern,
+				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
+				return m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, nil)
+			}},
+	} {
+		t.Run(tc.strategy, func(t *testing.T) {
+			db, pattern, bindingRel, symbols := bindingDrivenFixture(t)
+
+			var events []annotations.Event
+			db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
+
+			rel, err := tc.match(db.Matcher().(*PatternMatcher), pattern, bindingRel, symbols)
+			require.NoError(t, err)
+			require.Equal(t, entities, drainRelation(t, rel),
+				"last write wins, so each entity contributes one row")
+
+			complete := lastEventNamed(events, tc.event)
+			require.NotNil(t, complete, "%s must report what its scan cost", tc.strategy)
+
+			require.Equal(t, wantScanned, complete.Data["datoms.scanned"],
+				"%s read every write in each group; reporting %d would be reporting resolution's output",
+				tc.strategy, entities)
+			require.Equal(t, entities, complete.Data["datoms.resolved"])
+			require.Equal(t, entities, complete.Data["datoms.matched"])
+			require.Equal(t, entities, complete.Data["binding.size"])
+			require.Positive(t, complete.Latency,
+				"a completion event without a duration reports as 0 ms in Analyze")
+		})
+	}
+}
 
 // TestPerBindingScanReportsOneCountedEvent pins the reporting shape for the
 // scan-per-binding path: one completion event carrying the scan count, never
@@ -20,80 +179,31 @@ import (
 // the datum, and the enumeration would put the instrumentation in front of the
 // query it exists to describe.
 //
-// It drives matchWithoutIteratorReuse directly rather than fishing for a query
-// shape that routes to NoReuse, so the pin holds whatever the strategy chooser
-// does later. That also takes the planner — and therefore the algebra optimizer
-// — off its path, so it pins one mode explicitly instead of looping the axis.
+// Its funnel is asserted by TestBindingDrivenStrategiesReportTheirFunnel above,
+// which shares the fixture; what is left here is the count of events and the
+// scan count only this strategy carries.
 func TestPerBindingScanReportsOneCountedEvent(t *testing.T) {
+	db, pattern, bindingRel, symbols := bindingDrivenFixture(t)
+
 	var events []annotations.Event
-	opts := optimizerMode{name: "algebra_off", algebra: false}.plannerOptions()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:              t.TempDir(),
-		PlannerOptions:    &opts,
-		AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
-	})
-	require.NoError(t, err)
-	defer db.Close()
-
-	name := datalog.NewKeyword(":person/name")
-	people := []datalog.Identity{
-		datalog.NewIdentity("person:alice"),
-		datalog.NewIdentity("person:bob"),
-		datalog.NewIdentity("person:carol"),
-	}
-	tx := db.NewTransaction()
-	for i, who := range people {
-		require.NoError(t, tx.Add(who, name, []string{"Alice", "Bob", "Carol"}[i]))
-	}
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: name},
-			query.Variable{Name: datalog.NewSymbol("?n")},
-		},
-	}
-	bindings := make([]executor.Tuple, len(people))
-	for i, who := range people {
-		bindings[i] = executor.Tuple{who}
-	}
-	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{datalog.NewSymbol("?e")}, bindings)
+	db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
 
 	m := db.Matcher().(*PatternMatcher)
-	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?n")}
-
-	events = nil
 	rel, err := m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, nil)
 	require.NoError(t, err)
-
-	iter := rel.Iterator()
-	rows := 0
-	for iter.Next() {
-		rows++
-	}
-	require.NoError(t, iter.Error())
-	require.NoError(t, iter.Close())
-	require.Equal(t, len(people), rows)
+	require.Equal(t, len(bindingDrivenPeople), drainRelation(t, rel))
 
 	var complete []annotations.Event
 	for _, e := range events {
-		if e.Name == "pattern/per-binding-scan-complete" {
+		if e.Name == annotations.PatternPerBindingScanComplete {
 			complete = append(complete, e)
 		}
 	}
 	require.Len(t, complete, 1,
 		"the path reports once for the whole run; %d events means it reports per binding", len(complete))
 
-	e := complete[0]
-	require.Equal(t, len(people), e.Data["scans.opened"],
+	require.Equal(t, len(bindingDrivenPeople), complete[0].Data["scans.opened"],
 		"the count is the datum a per-binding path owes its reader")
-	require.Equal(t, len(people), e.Data["binding.size"])
-	require.Equal(t, len(people), e.Data["datoms.matched"])
-	require.Positive(t, e.Latency,
-		"a completion event without a duration reports as 0 ms in Analyze")
 }
 
 // TestScanBoundErrorNamesItsIndex pins that the loud failure the typed bound

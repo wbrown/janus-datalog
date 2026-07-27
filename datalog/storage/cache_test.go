@@ -51,12 +51,15 @@ func (m *mockCacheResolver) ResolveRGA(e Entity, a Attribute) ([]any, []datalog.
 }
 
 // TestCacheEntryCarriesResolutionIntake pins that the index intake a resolution
-// spends reaches the entry it built, for all three cardinalities.
+// spends reaches the entry it built, for all three cardinalities, and that the
+// intake GetOrResolve returns is what *that call* read.
 //
-// The entry is what the read bought, so the cost belongs on it: a later reader
-// of the same entry can say what it cost, and a hit reports zero because a hit
-// reads no index. Without this the resolvers would report intake into a field
-// nothing observes, which is indistinguishable from not reporting it.
+// The two are different numbers and both are needed. entry.scanned is what the
+// entry cost to build and stays with it for the entry's life, so a later reader
+// of the same entry can say what it cost. The returned intake is per-call: the
+// build cost when this call built it, zero when it came from cache, because a
+// hit reads no index. Reporting entry.scanned on a hit would make a trace of a
+// thousand hits claim a thousand index reads that never happened.
 func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
 	var e Entity
 	copy(e[:], "entity1")
@@ -89,20 +92,57 @@ func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
 			key := CacheKey{E: e, A: a}
 
 			cache := NewCache()
-			entry, err := cache.GetOrResolve(key, tc.resolver, nil, nil)
+			entry, spent, err := cache.GetOrResolve(key, tc.resolver, nil, nil)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 
 			want := tc.resolver.lwwScanned + tc.resolver.addWinsScanned + tc.resolver.rgaScanned
 			require.Equal(t, want, entry.scanned,
 				"the entry must carry what its resolution read")
+			require.Equal(t, want, spent,
+				"the call that built the entry spent the build cost")
 
-			// A hit rebuilds nothing, so it reads no index — and reports the
-			// build cost of the entry it serves, not a fresh zero.
-			hit, err := cache.GetOrResolve(key, tc.resolver, nil, nil)
+			// A hit rebuilds nothing, so it reads no index: it reports zero
+			// intake, while the entry keeps the cost of the build it came from.
+			hit, hitSpent, err := cache.GetOrResolve(key, tc.resolver, nil, nil)
 			require.NoError(t, err)
 			require.Same(t, entry, hit, "second call must be a hit, not a rebuild")
-			require.Equal(t, want, hit.scanned)
+			require.Equal(t, 0, hitSpent, "a hit reads no index")
+			require.Equal(t, want, hit.scanned,
+				"the entry still carries what building it read")
+		})
+	}
+}
+
+// TestCacheEntryValueCountsWhatResolutionProduced pins the middle term of the
+// funnel a cache-resolved pattern reports — what resolution emitted, between
+// the index intake that built the entry and the tuples the pattern matched.
+//
+// The absent cardinality-one case is the one worth pinning: a never-set (E, A)
+// and one whose highest-Tx entry is a tombstone both resolve to no value, and
+// counting either as one would make a tombstoned attribute read in the stream
+// exactly like a present one.
+func TestCacheEntryValueCountsWhatResolutionProduced(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		entry *CacheEntry
+		want  int
+	}{
+		{"one", &CacheEntry{cardinality: schema.CardinalityOne, oneValue: "Alice"}, 1},
+		{"one absent", &CacheEntry{cardinality: schema.CardinalityOne}, 0},
+		{"many", &CacheEntry{cardinality: schema.CardinalityMany,
+			manySet: map[any]any{"dev": "dev", "ops": "ops"}}, 2},
+		{"many empty", &CacheEntry{cardinality: schema.CardinalityMany,
+			manySet: map[any]any{}}, 0},
+		{"vector", &CacheEntry{cardinality: schema.CardinalityVector,
+			vectorList: []any{"x", "y", "z"}}, 3},
+		{"vector empty", &CacheEntry{cardinality: schema.CardinalityVector,
+			vectorList: []any{}}, 0},
+		{"schemaless resolves last-write-wins", &CacheEntry{
+			cardinality: schema.CardinalityUnknown, oneValue: int64(7)}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, tc.entry.valueCount())
 		})
 	}
 }
@@ -127,14 +167,14 @@ func TestCacheFreshness(t *testing.T) {
 	key := CacheKey{E: e, A: a}
 
 	// First call should resolve from storage
-	entry1, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry1, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, entry1)
 	assert.Equal(t, "Alice", entry1.OneValue())
 	assert.Equal(t, 1, resolver.resolveLWWCalls)
 
 	// Second call should return cached entry (no additional resolve)
-	entry2, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry2, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, entry2)
 	assert.Equal(t, "Alice", entry2.OneValue())
@@ -156,7 +196,7 @@ func TestCacheInvalidation(t *testing.T) {
 	key := CacheKey{E: e, A: a}
 
 	// Populate cache
-	_, err := cache.GetOrResolve(key, resolver, nil, nil)
+	_, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, resolver.resolveLWWCalls)
 
@@ -171,7 +211,7 @@ func TestCacheInvalidation(t *testing.T) {
 	cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: 200, ReplicaID: 1})
 
 	// Next call should resolve again
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, "Bob", entry.OneValue())
@@ -193,7 +233,7 @@ func TestCacheRebuildWhenStale(t *testing.T) {
 	key := CacheKey{E: e, A: a}
 
 	// Populate cache
-	entry1, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry1, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, datalog.ElementID{Lamport: 100, ReplicaID: 1}, entry1.Version())
 
@@ -205,7 +245,7 @@ func TestCacheRebuildWhenStale(t *testing.T) {
 	resolver.lwwMaxID = datalog.ElementID{Lamport: 200, ReplicaID: 1}
 
 	// Next call should rebuild
-	entry2, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry2, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "Carol", entry2.OneValue())
 	assert.Equal(t, datalog.ElementID{Lamport: 200, ReplicaID: 1}, entry2.Version())
@@ -237,7 +277,7 @@ func TestCacheMockThreadSafety(t *testing.T) {
 				lwwValue:    "Alice",
 				lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
 			}
-			entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+			entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 			assert.NoError(t, err)
 			assert.NotNil(t, entry)
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -272,7 +312,7 @@ func TestUpdateMaxVersion(t *testing.T) {
 		lwwValue:    "test",
 		lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
 	}
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	// Entry should be at version 100, but maxVersion is 200, so it should rebuild
 	// Actually the entry is nil initially, so it will resolve
@@ -316,7 +356,7 @@ func TestCacheRebuildCardinalityOne(t *testing.T) {
 	copy(a[:], ":person/name")
 	key := CacheKey{E: e, A: a}
 
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, schema.CardinalityOne, entry.Cardinality())
@@ -339,7 +379,7 @@ func TestCacheRebuildCardinalityMany(t *testing.T) {
 	copy(a[:], ":person/tags")
 	key := CacheKey{E: e, A: a}
 
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, schema.CardinalityMany, entry.Cardinality())
@@ -366,7 +406,7 @@ func TestCacheRebuildCardinalityVector(t *testing.T) {
 	copy(a[:], ":character/skills")
 	key := CacheKey{E: e, A: a}
 
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, schema.CardinalityVector, entry.Cardinality())
@@ -390,7 +430,7 @@ func TestCacheManySetMembership(t *testing.T) {
 	copy(a[:], ":tags")
 	key := CacheKey{E: e, A: a}
 
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 
@@ -420,7 +460,7 @@ func TestCacheManyEmptyAfterRemoves(t *testing.T) {
 	copy(a[:], ":tags")
 	key := CacheKey{E: e, A: a}
 
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, 0, len(entry.ManySet()))
@@ -441,7 +481,7 @@ func TestCacheClear(t *testing.T) {
 	key := CacheKey{E: e, A: a}
 
 	// Populate cache
-	_, err := cache.GetOrResolve(key, resolver, nil, nil)
+	_, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, resolver.resolveLWWCalls)
 
@@ -454,7 +494,7 @@ func TestCacheClear(t *testing.T) {
 	// Next call should resolve again
 	resolver.lwwValue = "Bob"
 	resolver.lwwMaxID = datalog.ElementID{Lamport: 200, ReplicaID: 1}
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "Bob", entry.OneValue())
 	assert.Equal(t, 2, resolver.resolveLWWCalls)
@@ -477,7 +517,7 @@ func TestCacheAfterRestart(t *testing.T) {
 	key := CacheKey{E: e, A: a}
 
 	// First access after restart should resolve
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, "Alice", entry.OneValue())
@@ -485,7 +525,7 @@ func TestCacheAfterRestart(t *testing.T) {
 
 	// maxVersions should now be populated
 	// Second access should use cache
-	entry2, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry2, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, entry2)
 	assert.Equal(t, 1, resolver.resolveLWWCalls)
@@ -509,7 +549,7 @@ func TestCacheRebuildStoreError(t *testing.T) {
 	// The resolver's error reaches the caller. Before this it was dropped and
 	// GetOrResolve returned a nil entry, so a failed read was indistinguishable
 	// from an attribute that has no value.
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.ErrorIs(t, err, assert.AnError)
 	assert.Nil(t, entry)
 	assert.Equal(t, 1, resolver.resolveLWWCalls)
@@ -529,7 +569,7 @@ func TestCacheRebuildAddWinsError(t *testing.T) {
 	copy(a[:], ":tags")
 	key := CacheKey{E: e, A: a}
 
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.ErrorIs(t, err, assert.AnError)
 	assert.Nil(t, entry)
 	assert.Equal(t, 1, resolver.resolveAddCalls)
@@ -549,7 +589,7 @@ func TestCacheRebuildRGAError(t *testing.T) {
 	copy(a[:], ":skills")
 	key := CacheKey{E: e, A: a}
 
-	entry, err := cache.GetOrResolve(key, resolver, nil, nil)
+	entry, _, err := cache.GetOrResolve(key, resolver, nil, nil)
 	require.ErrorIs(t, err, assert.AnError)
 	assert.Nil(t, entry)
 	assert.Equal(t, 1, resolver.resolveRGACalls)

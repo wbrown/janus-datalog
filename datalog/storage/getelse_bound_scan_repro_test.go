@@ -345,10 +345,13 @@ func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
 		}
 	}
 
-	// Bound matcher paths emit storage/reuse-strategy or cache events, never the
-	// unbound pattern/index-selection (emitted only by matchUnboundAsRelation —
-	// the full attribute scan). So an attribute-primary index-selection on
-	// :repro/note means the scan was not narrowed to the bound entities.
+	// Bound matcher paths emit storage/reuse-strategy or cache events. Several
+	// arms now emit pattern/index-selection, but none that a bound E reaches:
+	// the cardinality-many and -vector arms need those cardinalities, and
+	// matchFromCache announces no run at all because it addresses none. So an
+	// attribute-primary index-selection on :repro/note still means the scan
+	// was not narrowed to the bound entities — it means matchUnboundAsRelation
+	// ran, which is the full attribute scan.
 	// Primary, direct assertion: the or-fallback branch reports it narrowed the
 	// scan to the bound join keys (one per kind-bearing entity), rather than
 	// silently falling back to a full attribute scan.
@@ -364,8 +367,9 @@ func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
 	}
 
 	// Defense in depth: a narrowed branch takes the bound matcher path (cache /
-	// reuse strategy), which never emits the unbound pattern/index-selection that
-	// matchUnboundAsRelation (the full attribute scan) emits.
+	// reuse strategy), which does not reach the attribute-primary
+	// pattern/index-selection that matchUnboundAsRelation (the full attribute
+	// scan) emits.
 	idx, _ := indexForAttrPattern(events, ":repro/note")
 	attrPrimary := map[string]bool{"AETV": true, "AEVT": true, "AVET": true, "ATEV": true}
 	if attrPrimary[idx] {

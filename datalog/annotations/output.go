@@ -196,8 +196,13 @@ func (f *OutputFormatter) Format(event Event) string {
 		// Format as Scan([pattern], index, bound) → X datoms. The scan's
 		// duration is the line's latency prefix, carried on the event like
 		// every other timed event's; there is no separate duration field.
-		pattern := event.Data["pattern"].(string)
-		datoms := event.Data["datoms.resolved"].(int)
+		//
+		// Comma-ok rather than assertions, on the same grounds as
+		// renderScanFunnel below: this is the one event with seven producers,
+		// and a producer that omits a key should cost the reader one wrong line
+		// rather than panic the formatter in the middle of a trace.
+		pattern, _ := event.Data["pattern"].(string)
+		datoms, _ := event.Data["datoms.resolved"].(int)
 
 		// Intake is appended only when it exceeds what came out. A bound that
 		// narrowed and a bound that did nothing produce the same line
@@ -246,10 +251,56 @@ func (f *OutputFormatter) Format(event Event) string {
 
 		return fmt.Sprintf("%s %s → %d datoms%s", latency, scanStr, datoms, amplification)
 
+	case PatternHashJoinComplete, PatternMergeJoinComplete:
+		// One scan of the index probed against a binding set. Same three counts
+		// as the unbound scan line, but all three always shown: on these paths
+		// the gap between what was read and what came out is the reason the
+		// event exists, so it is not conditional the way the unbound line's
+		// amplification suffix is.
+		strategy := "HashJoinScan"
+		if event.Name == PatternMergeJoinComplete {
+			strategy = "MergeJoin"
+		}
+		return fmt.Sprintf("%s %s([%v], %v, %v bindings) → %s",
+			latency, strategy,
+			event.Data["pattern"], event.Data["index"], event.Data["binding.size"],
+			renderScanFunnel(event.Data))
+
+	case PatternPerBindingScanComplete:
+		// One scan per binding, reported once. No index: chooseIndex runs per
+		// binding and can pick a different one each time, so a single index
+		// here would name whichever happened to be last. The count of scans is
+		// the datum this path owes its reader.
+		return fmt.Sprintf("%s PerBindingScan([%v], %v scans over %v bindings) → %s",
+			latency,
+			event.Data["pattern"], event.Data["scans.opened"], event.Data["binding.size"],
+			renderScanFunnel(event.Data))
+
+	case PatternCacheResolveComplete:
+		// No index and no bound: the cache picks one by cardinality inside
+		// resolution, and a hit reads no index at all. Zero scanned is a hit.
+		return fmt.Sprintf("%s CacheResolve([%v], %v) → %s",
+			latency,
+			event.Data["pattern"], event.Data["cardinality"],
+			renderScanFunnel(event.Data))
+
 	default:
 		// Generic format for unknown events
 		return fmt.Sprintf("%s %s %v", latency, event.Name, event.Data)
 	}
+}
+
+// renderScanFunnel renders the three counts every completion event carries, in
+// the order the query pays them: intake from the index, what CRDT resolution
+// produced from it, what survived the pattern and its constraints.
+//
+// Comma-ok reads rather than assertions: an event that omits one of the three
+// should render a zero, not panic the formatter mid-trace.
+func renderScanFunnel(data map[string]interface{}) string {
+	matched, _ := data["datoms.matched"].(int)
+	resolved, _ := data["datoms.resolved"].(int)
+	scanned, _ := data["datoms.scanned"].(int)
+	return fmt.Sprintf("%d matched, %d resolved, %d scanned", matched, resolved, scanned)
 }
 
 // renderBoundPositions renders a pattern/index-selection event's "bound" field

@@ -49,6 +49,27 @@ func (e *CacheEntry) Version() datalog.ElementID {
 	return e.version
 }
 
+// valueCount is how many values this entry's resolution produced, across
+// whichever view its cardinality populated. It is the middle term of the funnel
+// a cache-resolved pattern reports: what resolution emitted, between the index
+// intake that built the entry and the tuples the pattern went on to match.
+func (e *CacheEntry) valueCount() int {
+	switch e.cardinality {
+	case schema.CardinalityMany:
+		return len(e.manySet)
+	case schema.CardinalityVector:
+		return len(e.vectorList)
+	default:
+		// CardinalityOne and schemaless. A never-set (E, A), and one whose
+		// highest-Tx entry is a tombstone, both resolve to no value — zero,
+		// not one, or a tombstoned attribute would read like a present one.
+		if e.oneValue == nil {
+			return 0
+		}
+		return 1
+	}
+}
+
 // Cardinality returns the cardinality of this cache entry
 func (e *CacheEntry) Cardinality() schema.Cardinality {
 	return e.cardinality
@@ -199,7 +220,14 @@ func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
 // Freshness is the slot's own version bookkeeping, updated atomically on
 // every write. This provides O(1) freshness checks without storage seeks.
 // False negatives (returning stale data) are NOT acceptable.
-func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalog.ElementID, handler annotations.Handler) (*CacheEntry, error) {
+// The returned int is the index intake *this call* spent: the entry's build
+// cost when this call built it, and zero when the entry came from cache. It is
+// not entry.scanned, which is the entry's build cost forever. The distinction
+// is the difference between "what this read cost" and "what this (E, A) cost to
+// resolve once, some time ago", and datoms.scanned means the first everywhere
+// else in the engine — a trace of a thousand hits must not report a thousand
+// index reads that did not happen.
+func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalog.ElementID, handler annotations.Handler) (*CacheEntry, int, error) {
 	// Fast path: one trie walk yields the entry and its freshness bound.
 	slot, ok := c.slots.Load(key)
 	if ok && slot.entry != nil {
@@ -210,7 +238,11 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 			if handler != nil {
 				annotateRebuild(handler, key, "in-flight", slot)
 			}
-			return c.rebuild(key, resolver)
+			entry, err := c.rebuild(key, resolver)
+			if err != nil {
+				return nil, 0, err
+			}
+			return entry, entry.scanned, nil
 		}
 
 		// Fresh iff the entry's version matches the slot's high-water mark —
@@ -218,7 +250,8 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 		// which makes the fresh entry identical to the session's resolution.
 		if slot.entry.version == slot.version {
 			if bound == nil || slot.version.Compare(*bound) <= 0 {
-				return slot.entry, nil // Fresh - cache hit
+				// Fresh - cache hit. No index was read to answer this call.
+				return slot.entry, 0, nil
 			}
 			// Fresh but past the caller's snapshot — resolve through the
 			// caller's session instead of serving the future.
@@ -243,18 +276,19 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 		// A failed resolution is not an absent value, and it is emphatically
 		// not something to cache: storing it would make one failed scan the
 		// answer every later reader of this (E, A) receives.
-		return nil, err
+		return nil, 0, err
 	}
-	if entry != nil {
-		// storeIfNotInFlight refuses to overwrite an in-flight sentinel, so a
-		// rebuild that raced a commit doesn't re-cache the pre-commit value.
-		// It also advances the slot's high-water mark to the entry's version.
-		if c.storeIfNotInFlight(key, entry) {
-			// Track that we've cached this attribute for this entity
-			c.TrackEntityAttr(key.E, key.A)
-		}
+	// rebuild returns an error or a non-nil entry, never both nil, so past the
+	// error check above the entry is there to read.
+	//
+	// storeIfNotInFlight refuses to overwrite an in-flight sentinel, so a
+	// rebuild that raced a commit doesn't re-cache the pre-commit value.
+	// It also advances the slot's high-water mark to the entry's version.
+	if c.storeIfNotInFlight(key, entry) {
+		// Track that we've cached this attribute for this entity
+		c.TrackEntityAttr(key.E, key.A)
 	}
-	return entry, nil
+	return entry, entry.scanned, nil
 }
 
 // UpdateMaxVersion updates the max ElementID for a (E,A) pair.

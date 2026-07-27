@@ -5,7 +5,7 @@
 **Scope**: the round-2 findings' resolution status, plus what the round-2 remediation itself introduced or left behind
 **Method**: a round-3 review was received against `400f0e1`; every claim in it was then independently verified against this tree by reading the cited code, never accepted from the report. Two of the report's own claims are corrected below.
 
-**Remediation status (2026-07-26)**: all eighteen new findings are open. Nothing has been changed in response to this review yet.
+**Remediation status (2026-07-27)**: sixteen of the eighteen new findings are closed; T10, T11 and T18 are partly closed, each with the remainder recorded as a convention question or held under ruling 4.
 
 **Verification scope**: every finding in this document was checked directly against `400f0e1`. Nothing here is carried on the reporter's citation alone. Line numbers are as of `400f0e1`; cite by symbol when acting.
 
@@ -36,6 +36,10 @@ Nested resolution reads — the per-entity and per-entry scans inside set, vecto
 `annotations.Synchronized` is no longer applied on the way in. Wrapping at one assignment path and not another would give one field two concurrency contracts, and it put a process-wide lock on every event on the hot path. Handlers that are not concurrency-safe are wrapped by whoever installs them. **This is a change to a documented promise** and belongs in the upgrade guide.
 
 **4. Leave the five held documents alone** (T18). The `CLAUDE.md` convention already tells readers not to infer current state from a dated document and to re-read the cited code before acting. The four documents edited last round under the rejected rationale stay as they are; they are not re-edited here in either direction.
+
+**10. `datoms.scanned` is what *this call* read** (T1, refining ruling 5). Ruling 5 put the build cost on the entry and had `matchFromCache` read it back, which makes a trace of a thousand cache hits claim a thousand index reads that never happened. The two numbers are different and both exist: `CacheEntry.scanned` is what building the entry cost and stays with it for its life, while `GetOrResolve` returns the intake of the call — the build cost when that call built it, zero when it came from cache. Every other producer of the key already means this-operation's intake, and one key means one thing.
+
+The value is returned, not read back through a method. A function whose body is a field access, or a field access behind a nil check, is the expression at the call site written twice; `Cache.GetOrResolve` is measured at 6.1 ns on a hit, which is not a budget for one.
 
 ---
 
@@ -83,7 +87,7 @@ All four correct the *round-2 review's* description of the tree, and all four ag
 
 ### T1. The intake counter is emitted by three events, none of them on a path whose run can exclude a key
 
-**Status**: Open, with the plumbing done and one arm converted.
+**Status**: Resolved (2026-07-27). Every arm that opens a scan for a pattern now reports the funnel on a completion event, and `TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel` gives each arm a row that reds alone if its emit is deleted. `matchFromCache` reports the call's intake per ruling 10 — the build cost when it built the entry, zero on a hit — on `pattern/cache-resolve-complete`.
 
 Every resolver now returns the intake it spends — `resolveAddWinsSet` and `resolveVector` on their result structs, `checkSetMembership`, `loadRGAElements`, `resolveMaxOtherTxForValue`, `resolveAVLWW` and `walkUniqueEntityValue` as a return — and `CacheResolver` carries it to `CacheEntry`. `matchCardinalityManyMembership` is converted end to end and is the worked example: it builds the `ScanBound`, hands the same value to `emitIndexSelection` and to `checkSetMembership`, and reports the funnel on `pattern/storage-scan`. `LookupByUnique` gained `unique/lookup-complete` for the same reason. What remains is the other arms.
 
@@ -97,7 +101,7 @@ So on every path the round-2 finding named, a key `holds()` dropped remains indi
 
 ### T2. Three sibling dispatch arms open a scan and announce nothing, and `emitIndexSelection`'s doc comment says they do
 
-**Status**: Open.
+**Status**: Resolved (2026-07-27). All three announce the bound their scan walked, carried back on the resolution result rather than rebuilt, so the announced run cannot drift from the walked one. `matchFromCache` is the deliberate exception and the doc comment now states it: the cache picks an index by cardinality inside resolution and a hit reads no index, so announcing a bound there would name a run the call did not choose. `TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun` pins both halves — the absent selection and the present funnel.
 
 `matcher_relations.go:2170` reads "Every path that opens a scan for a pattern emits this, including the arms that return before the general one." The arms at `:439`, `:444` and `:449` return before the general emit at `:486` and reach scans at `vector_resolution.go:67`, `set_resolution.go:48` and `set_resolution.go:257`. The third is the inexact one, reachable from query text at `:386` when E, A and V are all bound on a cardinality-many attribute.
 
@@ -142,7 +146,13 @@ The review verified the correction is safe: switching `aevt_matcher_bug_test.go:
 
 ### T7. Three intake counters, one assertion between them, and it is on the wrong backend
 
-**Status**: Open.
+**Status**: Resolved (2026-07-27). Two tests, on the two axes the finding names.
+
+`TestMemoryBackendReportsIntakeNatively` injects `NewMemoryStore(nil)` through `DatabaseOptions.Store` instead of opening a temp directory, so the memory store's counter is exercised on the native gate rather than only under `GOOS=js`. It writes three times and asserts intake 3 against resolution 1, so a counter returning a constant zero reds natively.
+
+`TestBindingDrivenStrategiesReportTheirFunnel` covers the other two counters and the one `emitIteratorStatistics` owns, driving `matchWithHashJoin`, `matchWithMergeJoin` and `matchWithoutIteratorReuse` directly — which strategy `chooseJoinStrategy` picks is its own business, and reaching them through a query would pin whichever it picks today and silently stop covering the rest. The shared fixture writes each of three entities three times under a cardinality-one attribute, so the funnel is 9 / 3 / 3 and the three terms are distinguishable: a counter wired to resolution's output, or to nothing, reds.
+
+That fixture depth is the finding's real lesson, and it is T6's as well. `TestPerBindingScanReportsOneCountedEvent` now shares it and keeps the claim only it makes — one event for the whole run, never one per binding.
 
 No test calls `Scanned()` to assert its value. The sole assertion is the annotation payload in `TestScanReportsIntakeAndResolution` (`iterator_statistics_test.go:68-73`), which opens with `Path: t.TempDir()` — Badger natively, `NewMemoryStore` under wasm. So `memory_store.go:538` can return a constant 0 and `go test ./datalog/storage` stays green; only `GOOS=js GOARCH=wasm` reds. On wasm the memory store is the only backend, so its intake is what every `-verbose` scan line and `Database.Analyze` reading depends on there. No case in `storeContractCases()` asserts `Scanned()`.
 
@@ -152,7 +162,9 @@ This is round 2's N3 with the backends reversed.
 
 ### T8. The three `emitIndexSelection` call sites this round added are pinned by nothing, including the one the round-2 finding was about
 
-**Status**: Open.
+**Status**: Resolved (2026-07-27). `TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel` gives each arm its own row, naming the index that arm addresses, so deleting one emit reds exactly one row. The cardinality-many and cardinality-vector arms the suite never reached with an appropriate attribute are reached now: `funnelSchema` declares one attribute per cardinality and each row picks the one that routes to its arm.
+
+`Latency` on the three binding-driven completion events is asserted by `TestBindingDrivenStrategiesReportTheirFunnel`, which is what keeps them out of `Database.Analyze`'s 0 ms column.
 
 Deleting all three (`matcher_relations.go:1845`, `:1978`, `:2205`) leaves `go test ./datalog/storage` green. The suite reaches all three, so this is absence of assertion rather than absence of execution: `TestIndexSelectionEventReportsBound` exercises the general arm and the v-validation path only, and no subtest uses a cardinality-many or cardinality-vector attribute.
 
@@ -231,7 +243,13 @@ Reclassifying either would be a silent behaviour change, since the exact arm adm
 
 ### T15. Two completion events name no index and no bound, and no formatter arm renders either
 
-**Status**: Open.
+**Status**: Resolved (2026-07-27), the index question by argument rather than by adding the field.
+
+Four completion events gained formatter arms: `pattern/hash-join-complete` and `pattern/merge-join-complete` share one (they differ only in the strategy name), `pattern/per-binding-scan-complete` and `pattern/cache-resolve-complete` have their own. All four render the funnel through `renderScanFunnel`, which prints all three counts unconditionally — on these paths the gap between what was read and what came out is the reason the event exists, so it is not the conditional suffix the unbound scan line carries.
+
+`pattern/per-binding-scan-complete` still names no index, and that is the answer rather than the omission. `chooseIndex` runs once per binding and can pick a different index each time, so a single `index` field would name whichever binding happened to be last. What that path owes its reader instead is `scans.opened`, which it carries. Same reasoning for `pattern/cache-resolve-complete`, whose arm says so: the cache picks an index by cardinality inside resolution, and a hit reads none.
+
+The adjacent unchecked `.(int)` is fixed. `pattern/storage-scan` is the one event with seven producers, and the formatter now reads both `pattern` and `datoms.resolved` comma-ok, on the same grounds `renderScanFunnel` already stated: a producer that omits a key should cost the reader one wrong line, not panic the formatter mid-trace.
 
 `matcher_iterator_nonreusing.go:140-147` writes `pattern`, `binding.size`, `scans.opened`, `datoms.scanned`, `datoms.resolved`, `matches.found`. The bound is recomputed per binding by `chooseIndex` at `:99` and can be `AEVT[a,e,v]`, `AVET[a,v]` or `VAET[v]` with V of any type, so the run is often inexact and the index varies per binding. Every other scan event in the package carries `index`.
 
@@ -304,17 +322,15 @@ On N14's count: the review makes it twelve by `grep -c "range optimizerModes"`. 
 
 ## Disposition
 
-**Closed**: T3, T4, T5, T6, T9, T12, T13, T14, T16, T17, T19.
+**Closed**: T1, T2, T3, T4, T5, T6, T7, T8, T9, T12, T13, T14, T15, T16, T17, T19.
 
 **Partly closed**: T10 (twenty dead constants deleted and every producer moved onto a constant; `CLAUDE.md`'s event-type list rewritten), T11 (the costly site fixed; the three siblings have no argument cost and sweeping them is a convention question, not a defect), T18 (live source, tests and the live status claim corrected; five documents held per ruling 4).
 
-**Open**: T1, T2, T7, T8, T15.
+**Open**: none.
 
-T1 and T2 are one remaining piece: the four dispatch arms other than membership — `matchCardinalityVectorAsRelation`, `matchCardinalityManyAsRelation`, and `matchFromCache` — still neither announce their bound nor report a funnel. The plumbing they need now exists: every resolver returns its intake, `CacheEntry` carries what its build cost, and `matchCardinalityManyMembership` is the worked example of the shape. What is left is wiring the remaining arms to it.
+The five that were open at the last update — T1, T2, T7, T8, T15 — were one arc: every dispatch arm announces the run it walks and reports the funnel that run cost, each arm's pair of emits is pinned by a row that reds alone, and every completion event has a formatter arm. Ruling 10 settled the one semantic question the arc raised, on what `datoms.scanned` means when the read came from cache.
 
-T7 and T8 are pins over that surface and follow it.
-
-T15's formatter arms wait on the same: `pattern/hash-join-complete`, `pattern/merge-join-complete` and `pattern/per-binding-scan-complete` all render as raw map dumps today.
+The one thing that stayed a question rather than becoming a defect: the four hand-built event maps in `hash_join_matcher.go` and `matcher_iterator_nonreusing.go` duplicate the funnel keys that `emitIteratorStatistics` types for the seven `pattern/storage-scan` producers. Routing them through it too would make one signature own the vocabulary — but it needs the pattern as a string and the index optional, which is a change to a shared emitter rather than a fix, so it is not made here.
 
 ### Work in this pass that the review did not raise
 

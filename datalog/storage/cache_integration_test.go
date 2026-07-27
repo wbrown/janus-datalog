@@ -65,7 +65,7 @@ func TestQueryPathUsesCache(t *testing.T) {
 	key := CacheKey{E: eBytes, A: aBytes}
 
 	// The cache should now have an entry for this (E, A) pair
-	entry, err := db.Cache().GetOrResolve(key, bm, nil, nil)
+	entry, _, err := db.Cache().GetOrResolve(key, bm, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, "Alice", entry.OneValue())
@@ -373,7 +373,7 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 			key := CacheKey{E: eBytes, A: nameAttr}
 
 			// The cache should now have an entry from the query execution
-			entry, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil)
+			entry, _, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after query execution")
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -434,7 +434,7 @@ func TestJoinQueryUsesCache(t *testing.T) {
 			copy(cityAttr[:], ":person/city")
 			key := CacheKey{E: e1Bytes, A: cityAttr}
 
-			entry, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil)
+			entry, _, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after join query")
 			assert.Equal(t, "NYC", entry.OneValue())
@@ -491,7 +491,7 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 			copy(tagsAttr[:], ":person/tags")
 			key := CacheKey{E: eBytes, A: tagsAttr}
 
-			entry, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil)
+			entry, _, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after cardinality-many query")
 			_, hasDeveloper := entry.ManySet()["developer"]
@@ -533,7 +533,7 @@ func TestCacheConcurrency(t *testing.T) {
 	key := CacheKey{E: eBytes, A: nameAttr}
 
 	// Populate initial entry
-	_, err = cache.GetOrResolve(key, matcher, nil, nil)
+	_, _, err = cache.GetOrResolve(key, matcher, nil, nil)
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
@@ -543,7 +543,7 @@ func TestCacheConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			entry, err := cache.GetOrResolve(key, matcher, nil, nil)
+			entry, _, err := cache.GetOrResolve(key, matcher, nil, nil)
 			assert.NoError(t, err)
 			assert.NotNil(t, entry)
 		}()

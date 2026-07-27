@@ -114,8 +114,9 @@ func (m *PatternMatcher) ResolveAddWins(e Entity, a Attribute) (map[any]any, dat
 // ResolveRGA returns the ordered vector for cardinality-vector
 // Returns (values, positionToElementID, maxElementID, error)
 func (m *PatternMatcher) ResolveRGA(e Entity, a Attribute) ([]any, []datalog.ElementID, datalog.ElementID, int, error) {
-	// Load raw RGA elements
-	elements, scanned, err := m.loadRGAElements(e[:], a[:])
+	// Load raw RGA elements. The bound is the resolver's own; a cache rebuild
+	// has no pattern arm above it to announce one.
+	elements, _, scanned, err := m.loadRGAElements(e[:], a[:])
 	if err != nil {
 		return nil, nil, datalog.ElementID{}, scanned, err
 	}

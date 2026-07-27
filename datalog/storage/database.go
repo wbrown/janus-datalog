@@ -333,7 +333,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 			if !seenEntities[eBytes] {
 				seenEntities[eBytes] = true
 				key := CacheKey{E: eBytes, A: aBytes}
-				if _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler); err != nil {
+				if _, _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler); err != nil {
 					iter.Close()
 					return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 				}
@@ -372,7 +372,7 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	var entry *CacheEntry
 	var err error
 	if d.cache != nil {
-		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
+		entry, _, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
 	} else {
 		entry, err = ResolveEntry(key, matcher)
 	}
@@ -416,7 +416,7 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	var entry *CacheEntry
 	var err error
 	if d.cache != nil {
-		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
+		entry, _, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
 	} else {
 		entry, err = ResolveEntry(key, matcher)
 	}
@@ -1981,7 +1981,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		var entry *CacheEntry
 		var err error
 		if t.db.cache != nil {
-			entry, err = t.db.cache.GetOrResolve(key, matcher, matcher.cacheBound(), t.db.AnnotationHandler)
+			entry, _, err = t.db.cache.GetOrResolve(key, matcher, matcher.cacheBound(), t.db.AnnotationHandler)
 		} else {
 			// Cache disabled - resolve directly from storage
 			entry, err = ResolveEntry(key, matcher)
@@ -2091,7 +2091,7 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 	var entry *CacheEntry
 	var err error
 	if t.db.cache != nil {
-		entry, err = t.db.cache.GetOrResolve(cacheKey, matcher, matcher.cacheBound(), t.db.AnnotationHandler)
+		entry, _, err = t.db.cache.GetOrResolve(cacheKey, matcher, matcher.cacheBound(), t.db.AnnotationHandler)
 	} else {
 		entry, err = ResolveEntry(cacheKey, matcher)
 	}
@@ -2817,7 +2817,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 			if !ok {
 				continue
 			}
-			entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
+			entry, _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
 			if err != nil {
 				return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 			}
@@ -2844,7 +2844,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		if !ok {
 			continue
 		}
-		entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
+		entry, _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 		}

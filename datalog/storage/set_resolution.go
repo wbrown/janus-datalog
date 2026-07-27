@@ -22,6 +22,11 @@ type SetResolutionResult struct {
 	// way the pattern can report what it cost is for the resolver to hand the
 	// number back with the result.
 	Scanned int
+
+	// Bound is the run this resolution walked. The pattern arm announces it,
+	// and it travels back rather than being rebuilt there so the announced run
+	// and the walked run are the same value and cannot drift.
+	Bound ScanBound
 }
 
 // resolveAddWinsSet scans entries for (E,A) and resolves current set membership
@@ -51,13 +56,14 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutio
 	copy(a[:], aBytes)
 
 	// Values live in the index keys; nothing here needs Badger values.
-	iter, err := m.reader.ScanKeysOnly(ScanBound{
+	bound := ScanBound{
 		Index: EAVT,
 		Prefix: []datalog.Value{
 			datalog.NewIdentityFromHash(e),
 			datalog.InternKeywordFromBytes(a),
 		},
-	})
+	}
+	iter, err := m.reader.ScanKeysOnly(bound)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +86,7 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutio
 		if err := it.Error(); err != nil {
 			return nil, err
 		}
-		return finishWithIntake(acc, it.blobs, iter)
+		return finishWithIntake(acc, it.blobs, iter, bound)
 	}
 	if blobs, ok, err := scanAddWinsBadger(m.encoder, iter, acc); ok {
 		if err != nil {
@@ -89,7 +95,7 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutio
 		if err := iter.Error(); err != nil {
 			return nil, err
 		}
-		return finishWithIntake(acc, blobs, iter)
+		return finishWithIntake(acc, blobs, iter, bound)
 	}
 
 	for iter.Next() {
@@ -102,19 +108,20 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutio
 	if err := iter.Error(); err != nil {
 		return nil, err
 	}
-	return finishWithIntake(acc, nil, iter)
+	return finishWithIntake(acc, nil, iter, bound)
 }
 
 // finishWithIntake completes an add-wins resolution and records what its scan
 // read. Every arm of resolveAddWinsSet goes through here so the intake cannot
 // be attached on one path and forgotten on another; the count has to be taken
 // before the deferred Close.
-func finishWithIntake(acc *addWinsAccumulator, blobs BlobReader, iter Iterator) (*SetResolutionResult, error) {
+func finishWithIntake(acc *addWinsAccumulator, blobs BlobReader, iter Iterator, bound ScanBound) (*SetResolutionResult, error) {
 	result, err := acc.finish(blobs)
 	if err != nil {
 		return nil, err
 	}
 	result.Scanned = iter.Scanned()
+	result.Bound = bound
 	return result, nil
 }
 
