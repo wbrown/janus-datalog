@@ -129,7 +129,6 @@ func (d *Database) resolveWildcardEntity(
 	entity datalog.Identity,
 	declaredAttrs map[datalog.Keyword]struct{},
 ) (map[datalog.Keyword]interface{}, []wildcardUniqueLookup, error) {
-	entityBytes := entity.Bytes()
 	result := make(map[datalog.Keyword]interface{})
 	var pending []wildcardUniqueLookup
 	var currentAttr datalog.Keyword
@@ -161,22 +160,15 @@ func (d *Database) resolveWildcardEntity(
 		currentDatoms = currentDatoms[:0]
 	}
 
+	// One scan, one seek per entity: the bound names this entity's run, and the
+	// iterator stops at its end. Nothing here re-checks the entity, and nothing
+	// here reads a key — the run's end is the seam's to enforce, and a caller
+	// that enforced it itself could only do so by slicing the encoded key.
 	iterator.Seek(ScanBound{Index: EATV, Prefix: []datalog.Value{entity}})
 	for iterator.Next() {
-		// Bound the entity before decoding. The shared EATV scan advances one
-		// key into the successor entity; decoding that key would surface
-		// unrequested blob/decode errors and pay an extra Tier-3 read.
-		if key, ok := iteratorCurrentKey(iterator); ok {
-			if len(key) < 21 || !bytes.Equal(key[1:21], entityBytes[:]) {
-				break
-			}
-		}
 		datom, err := iterator.Datom()
 		if err != nil {
 			return nil, nil, err
-		}
-		if !bytes.Equal(datom.E.Bytes(), entityBytes[:]) {
-			break
 		}
 		if matcher.shouldFilterTx(datom.Tx) {
 			continue

@@ -17,10 +17,12 @@ type deferredErrorIterator struct {
 func (it *deferredErrorIterator) Next() bool                     { return false }
 func (it *deferredErrorIterator) Datom() (*datalog.Datom, error) { return nil, nil }
 func (it *deferredErrorIterator) Close() error                   { return nil }
-func (it *deferredErrorIterator) Seek(bound ScanBound)           {}
-func (it *deferredErrorIterator) ElementID() datalog.ElementID   { return datalog.ElementID{} }
-func (it *deferredErrorIterator) Error() error                   { return it.err }
-func (it *deferredErrorIterator) Scanned() int                   { return 0 }
+func (it *deferredErrorIterator) Seek(bound ScanBound) {
+	panic("deferredErrorIterator has no index to seek within")
+}
+func (it *deferredErrorIterator) ElementID() datalog.ElementID { return datalog.ElementID{} }
+func (it *deferredErrorIterator) Error() error                 { return it.err }
+func (it *deferredErrorIterator) Scanned() int                 { return 0 }
 
 // indexScanOverrideStore delegates to a real store but substitutes the
 // iterator returned by ScanKeysOnly for one index — models a failing scan on
@@ -61,9 +63,11 @@ func (it *datomErrorIterator) Next() bool {
 }
 func (it *datomErrorIterator) Datom() (*datalog.Datom, error) { return nil, it.err }
 func (it *datomErrorIterator) Close() error                   { return nil }
-func (it *datomErrorIterator) Seek(bound ScanBound)           {}
-func (it *datomErrorIterator) ElementID() datalog.ElementID   { return datalog.ElementID{} }
-func (it *datomErrorIterator) Error() error                   { return nil }
+func (it *datomErrorIterator) Seek(bound ScanBound) {
+	panic("datomErrorIterator has no index to seek within")
+}
+func (it *datomErrorIterator) ElementID() datalog.ElementID { return datalog.ElementID{} }
+func (it *datomErrorIterator) Error() error                 { return nil }
 
 // Scanned reports the one position Next yields, so the fake's intake matches
 // what it actually handed out rather than reporting a flat zero.

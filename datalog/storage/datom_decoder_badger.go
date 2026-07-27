@@ -16,10 +16,11 @@ type KeyOnlyIterator struct {
 	*BadgerIterator
 	encoder *BinaryKeyEncoder
 	blobs   BlobReader
-	// membership decides which keys in the scan's range the current bound
-	// names, dropping the ones the range over-covers when a bound component is
-	// a variable-length V. Seek replaces it — a seek names a new run inside the
-	// same range — and it is one value so the two cannot be copied apart.
+	// membership decides which keys in the current run's range the bound names,
+	// dropping the ones the range over-covers when a bound component is a
+	// variable-length V. Seek replaces it alongside the embedded iterator's end,
+	// because a run is its start, its end and its membership rule together, and
+	// adopting a subset of the three yields a run nobody asked for.
 	membership   runMembership
 	currentDatom datalog.Datom
 	hasDatom     bool
@@ -126,10 +127,18 @@ func (i *KeyOnlyIterator) Seek(bound ScanBound) {
 		i.currentError = err
 		return
 	}
-	// The seek names a new run inside the scan's range: its start repositions
-	// the cursor, and its membership rule governs what follows. The range end
-	// stays the scan's — a seek moves within a scan, it does not open one.
+	// The seek names a new run inside the scan's keys, and it names all of it:
+	// the start repositions the cursor, the end stops it, and the membership
+	// rule governs what lies between. All three come from one EncodedRun, so a
+	// caller gets the run it asked for.
+	//
+	// Adopting only the start would leave the iterator walking past the sought
+	// bound into whatever the scan's wider range still held, and leave the
+	// caller to work out where its own run ended — from the encoded key, the
+	// only material it has. That is how key-layout arithmetic gets back above
+	// this seam.
 	i.membership = run.Membership
+	i.end = run.End
 	i.BadgerIterator.Seek(run.Start)
 	i.hasDatom = false
 }

@@ -17,6 +17,7 @@
 package storage
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
@@ -187,6 +188,19 @@ func TestUniqueLookupReportsItsFunnel(t *testing.T) {
 				complete.Data[annotations.KeyPattern])
 			require.Contains(t, pattern.String(), ":user/email")
 			require.Contains(t, pattern.String(), tc.value)
+
+			// The formatter's arm is pinned in its own package against a
+			// hand-built event; here the two meet. Separate pins can agree on a
+			// payload shape neither side produces, and this is the event whose
+			// producer was rewritten to feed that arm.
+			var rendered bytes.Buffer
+			formatter := annotations.NewPlainTextFormatter(&rendered)
+			for _, e := range events {
+				formatter.Handle(e)
+			}
+			require.Contains(t, rendered.String(),
+				fmt.Sprintf("%d matched, %d resolved", tc.matched, tc.resolved),
+				"the funnel the matcher emitted must be the funnel the formatter renders")
 		})
 	}
 }

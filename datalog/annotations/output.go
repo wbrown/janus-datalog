@@ -276,6 +276,15 @@ func (f *OutputFormatter) Format(event Event) string {
 			event.Data[KeyPattern], event.Data[KeyScansOpened], event.Data[KeyBindingSize],
 			renderScanFunnel(event.Data))
 
+	case UniqueLookupComplete:
+		// Named like the cache arm and for the same reason: resolution walks
+		// AVET for the claimant and then the claimant's own history, so no
+		// single run is the one this call addressed and there is no index to
+		// name. The funnel is what it owes its reader — resolved above matched
+		// is an index entry whose claimant has since replaced the value.
+		return fmt.Sprintf("%s UniqueLookup([%v]) → %s",
+			latency, event.Data[KeyPattern], renderScanFunnel(event.Data))
+
 	case PatternCacheResolveComplete:
 		// No index and no bound: the cache picks one by cardinality inside
 		// resolution, and a hit reads no index at all. Zero scanned is a hit.

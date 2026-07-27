@@ -44,6 +44,38 @@ type producerValue string
 
 func (p producerValue) String() string { return string(p) }
 
+// TestUniqueLookupLineReportsItsFunnel pins the arm for the sixth event in the
+// scan-completion family. It carries the same payload as the other five — a
+// pattern and the three counts — so a reader tracing a program whose dominant
+// read is LookupByUnique must see it as a scan line rather than a raw map.
+//
+// The two counts that differ are the ones asserted apart: resolved above
+// matched is an index entry whose claimant has since replaced the value, and a
+// line collapsing them back together would hide the case the third term was
+// added for.
+func TestUniqueLookupLineReportsItsFunnel(t *testing.T) {
+	var out bytes.Buffer
+	f := NewPlainTextFormatter(&out)
+
+	line := f.Format(Event{
+		Name:    UniqueLookupComplete,
+		Latency: 3 * time.Millisecond,
+		Data: map[string]interface{}{
+			KeyPattern:        producerValue("[?e :user/email \"a@example.com\"]"),
+			KeyDatomsScanned:  12,
+			KeyDatomsResolved: 1,
+			KeyDatomsMatched:  0,
+		},
+	})
+	require.Contains(t, line, `[?e :user/email "a@example.com"]`,
+		"the line must name what was looked up")
+	require.Contains(t, line, "0 matched, 1 resolved, 12 scanned",
+		"a claimant was resolved and rejected; that is not the same as finding nothing")
+	require.Contains(t, line, "[3.0ms]")
+	require.NotContains(t, line, "map[",
+		"an arm renders; falling through to the default dumps the payload")
+}
+
 // TestScanLineReportsBoundFromIndexSelection is the pairing pin: the scan line's
 // index and bound come from the preceding pattern/index-selection event, so the
 // two events must agree on the payload's shape.

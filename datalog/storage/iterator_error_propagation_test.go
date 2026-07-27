@@ -51,8 +51,15 @@ func (it *failingIterator) Datom() (*datalog.Datom, error) {
 	return &d, nil
 }
 
-func (it *failingIterator) Close() error                 { return nil }
-func (it *failingIterator) Seek(bound ScanBound)         {}
+func (it *failingIterator) Close() error { return nil }
+
+// Seek panics rather than absorbing the call. This fake yields a fixed slice
+// with no index behind it, so it cannot honour a bound's start, end or
+// membership rule; a no-op would let a future caller seek it and get the whole
+// slice, passing for a reason the test did not intend.
+func (it *failingIterator) Seek(bound ScanBound) {
+	panic("failingIterator has no index to seek within")
+}
 func (it *failingIterator) ElementID() datalog.ElementID { return datalog.ElementID{} }
 func (it *failingIterator) Error() error                 { return it.err }
 

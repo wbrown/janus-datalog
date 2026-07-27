@@ -5,7 +5,9 @@
 **Scope**: the round-2 findings' resolution status, plus what the round-2 remediation itself introduced or left behind
 **Method**: a round-3 review was received against `400f0e1`; every claim in it was then independently verified against this tree by reading the cited code, never accepted from the report. Two of the report's own claims are corrected below.
 
-**Remediation status (2026-07-27)**: seventeen of the eighteen new findings are closed; T11 and T18 are partly closed, each with the remainder recorded as a convention question or held under ruling 4. Ruling 7 is extended to the payload keys and to the values under them — see "The payload vocabulary" in the disposition.
+**Remediation status (2026-07-27)**: of the eighteen received findings, seventeen are closed and T18 alone is partly closed, its five documents held under ruling 4; T19, found in this pass, is closed. Ruling 7 is extended to the payload keys and to the values under them — see "The payload vocabulary" in the disposition. Two further defects were found in this pass rather than reported: an index-key collision that made `Database.Analyze` render a subquery's ordinal as a physical index, and `Seek` discarding the end of the run it was handed.
+
+A third was found the same way and is fixed here: `pull/attr.lookup` reported `found: false` on every event, in every trace, since the context was written.
 
 **Verification scope**: every finding in this document was checked directly against `400f0e1`. Nothing here is carried on the reporter's citation alone. Line numbers are as of `400f0e1`; cite by symbol when acting.
 
@@ -203,9 +205,24 @@ Every deleted arm was `case "pattern/multi-match":`; every survivor is `case Pha
 
 ### T11. The guard-inside-emitter ruling landed inside `datalog/storage` and nowhere else, and at one site it costs real work with annotations off
 
-**Status**: Partly resolved (2026-07-26). `optimizeAlgebra`'s guard moved to its four call sites, so `compiled.String()` and `optimized.String()` are no longer evaluated on every plan with a nil handler.
+**Status**: Resolved (2026-07-27). `optimizeAlgebra`'s guard moved to its four call sites on 2026-07-26, so `compiled.String()` and `optimized.String()` are no longer evaluated on every plan with a nil handler.
 
-The three sibling sites are **held**, because none of them has the defect and sweeping them is a convention question rather than a fix. `RewriteSink.Emit`'s check is a nil-*receiver* guard on an exported method whose contract is "to the handler, if any"; `emitProbeAnnotation` guards a once-only latch as well as the collector, which is state logic; and `emitJoinStrategyAnnotation` computes its only expensive arguments (`%T` renders) inside itself, after the guard. All three take arguments that are free to evaluate.
+**The 2026-07-26 status held the three sibling sites on the claim that "all three take arguments that are free to evaluate". Measured, that is false.**
+
+The `RewriteSink` call sites were the largest instance of the defect in the tree. `rewrite_decorrelate.go` rendered `lj.InnerQuery.String()` — the whole inner query — once per LateralJoin visited, `rewrite_getelse.go` rendered its expression per get-else, `algebra_bridge.go` called `terminalSymbols(q)` three times and `Sprintf`'d each, and every payload map built its values with `%v`. All of it unconditional, on the normal query path where nothing consumes any of it.
+
+The renderings are removed rather than guarded: `RewriteRecord.Subject` is `any` and carries the node, payloads carry `CorrelationVars`, `innerParams`, `optimizedWhere`, `scanPattern` and `ge.Attr`, and `ExplainAlgebra` renders. The call-site guards then cover only the payload map itself, inlined at each site — a nil-safe predicate method would be the same defect one layer up — and the nil test appears only where a nil sink is reachable (`DecorrelationPass(nil)`, `rewrite_decorrelate.go:204`), not at `algebra_bridge.go:102` where the sink is a composite literal fourteen lines above.
+
+Measured over the decorrelation pass with `AllocsPerRun`, pinned by `TestSilentSinkBuildsNoProvenance`:
+
+| | silent sink | collecting sink |
+|---|---|---|
+| before | 252 | 252 |
+| after | 215 | 222 |
+
+The stringification was 30 of the 37 and it helps the observing path too; the guard was 7.
+
+The two `executor/join.go` emitters were argument-free, verified by reading rather than asserted — but the rule is that the guard lives at the call site, and reading its rationale as licence to disapply it is not a reading. Both moved. `emitProbeAnnotation`'s third clause was dead: `metrics` is allocated only when a collector exists, at the single construction site, so `it.options.Collector == nil` could not be true when `it.metrics != nil` was. Its once-only latch stays where the state it latches lives.
 
 `planner/algebra_bridge.go:23-27` holds the guard inside the emitter, and its callers at `:41-43` and `:54-56` pass `compiled.String()` and `optimized.String()`, which Go evaluates before the call — so `algebra.formatNode` walks the whole tree whether or not a handler exists. `planner_clause_based.go:128-133` runs this on every plan, and `PlanWithBindings` is not plan-cached, so it is per subquery plan.
 
@@ -322,9 +339,9 @@ On N14's count: the review makes it twelve by `grep -c "range optimizerModes"`. 
 
 ## Disposition
 
-**Closed**: T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T12, T13, T14, T15, T16, T17, T19.
+**Closed**: T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T19.
 
-**Partly closed**: T11 (the costly site fixed; the three siblings have no argument cost and sweeping them is a convention question, not a defect), T18 (live source, tests and the live status claim corrected; five documents held per ruling 4).
+**Partly closed**: T18 (live source, tests and the live status claim corrected; five documents held per ruling 4).
 
 **Open**: none.
 
@@ -343,6 +360,38 @@ The keys shared across producers are declared in `annotations/types.go` beside t
 Values travel typed. `IndexType` and `*query.DataPattern` reached the formatter as `.String()` renderings from thirteen producers; both now go in as values and the formatter renders, since it is the renderer and a producer that flattens spends an allocation per emit to hand its consumer something to parse. Neither type is nameable in `annotations` — both live in packages that import it — so the formatter reaches them through `fmt`, which reports a panicking `String` method inline rather than taking the trace down. The three tests that read the index through `.(string)` with comma-ok were converted: each would have gone silently false and asserted nothing.
 
 **A collision found by the sweep, and fixed**: `subquery/input-relation` wrote its relation's ordinal under `"index"`, the key the scan events use for the physical ordering they walked. `Database.Analyze` prints `Data[KeyIndex]` for every event it traces, so a subquery rendered `(index=0)` as though it named a run. It is `"relation.position"` now — in this engine an index is one of the eight orderings — and `TestIndexAnnotationKeyCarriesOnlyAnIndexType` pins that nothing else carries a second meaning there, requiring both event families in the trace so it cannot pass by exercising neither.
+
+### `unique/lookup-complete` was outside the family it belongs to
+
+It reported two of the three funnel terms and built its map by hand. It has a pattern despite the Go signature not spelling one: `LookupByUnique` resolves `[?e attr value]`, the A-bound, V-bound, E-unbound shape, and `tryEmitUniqueWinner` — the other caller of the same `resolveAVLWW` — arrives there from that pattern written out, folding its intake into the enclosing event per ruling 1.
+
+It emits through `emitScanCompletion` now, with that pattern, and `resolveAVLWW` returns a `scanFunnel` rather than a bare count. The third term is load-bearing rather than symmetry: `resolved=1, matched=0` is an AVET entry whose claimant has since replaced the value — the store is append-only, so a superseded value keeps its index entry forever, and rejecting it costs an AVET scan plus a claimant walk. Under the two-term form that read exactly like a value nobody ever wrote, which costs nothing. `TestUniqueLookupReportsItsFunnel` pins all three rows.
+
+Moving it into the family left it the only member without a formatter arm, rendering as a raw payload dump — T15's defect on a sixth event. It has one now, and the two halves meet: the storage test runs the formatter over the events it captured, because separate pins can agree on a payload shape neither side produces.
+
+### `Seek` took two thirds of the run it was given
+
+Found while answering the ledger's open question on whether an ordered-range predicate belongs alongside the equality bound. It does not — the two backends do not agree on value order, so "between" would name different sets (see item 29 for the derivation). But the question turned up a live defect in the seam it was asked about.
+
+`EncodeScanBound` returns `EncodedRun{Start, End, Membership}`. `Seek` took `Start` and `Membership` and discarded `End`, under a comment stating the choice: "the range end stays the scan's — a seek moves within a scan, it does not open one." A caller that seeks a narrower run inside an open scan therefore had no way to say where its run stopped.
+
+`pull_batch.go` is that caller, and it did what the shape forces: `key[1:21]` against the entity hash — the index prefix byte and the 20-byte E, sliced out of an encoded key, above the seam whose whole purpose is that no caller holds a key layout. It is correct only while the index prefix is one byte and E is 20 bytes, and neither fact is stated anywhere near it.
+
+A run is its start, its end and its membership rule together; adopting a subset yields a run nobody asked for. `Seek` now adopts all three on both backends. `memoryIterator` gains the `end` its construction never needed — it filters `keys` to the scan's range instead — and its `Next` stops there rather than treating past-the-end as a key to step over, which would have walked the remainder of the scan looking for a member that cannot be there and counted every key of it as intake.
+
+`pull_batch.go`'s key arithmetic is deleted, along with the second entity check it made after decoding.
+
+`TestSeekHonoursTheRunItNames` pins the shape both the caller and the shared-scan optimisation depend on, across both backends: open wide, seek, get that run and nothing else, seek again. The second seek is not decoration — an iterator that stopped by exhausting itself would pass the first assertion and fail every caller that reuses it.
+
+### `pull/attr.lookup` reported `found: false` on every event
+
+`PullContext.AttributeLookup` took `found bool` as a parameter and the closure that performs the lookup as another. Go evaluates arguments before the call, so the parameter carried the zero value of a variable the closure had not yet assigned — `pull.go:213` and `:223` both declared `var found bool` and passed it straight in. `AnnotatedPullContext.AttributeLookup` then recorded its own parameter. Every attribute lookup in every pull trace reported the attribute as missing, including the ones that returned a value.
+
+Nothing caught it because nothing read the field: the pull annotation test asserted `spec_count` and `success` and never opened an attribute-lookup event.
+
+The outcome now returns through the closure — `fn func() bool`, the shape `AllAttributes(entity, fn func() int) int` three lines above it in the same interface already used — which also deletes the `var found bool` the two call sites were shadowing. `TestPullAttributeLookupReportsWhetherItFound` pins both rows: an attribute that exists and one that does not, because a field hard-wired to either constant passes a one-row test.
+
+The rest of `pull_context.go` carried the same defect the payload vocabulary work removed elsewhere — thirteen `entity.String()` / `attr.String()` renderings at the producer. They are values now, and the test keys its results by the interned `Keyword` rather than a rendering of it, so a producer that goes back to flattening fails rather than passing on a string that reads the same.
 
 ### Work in this pass that the review did not raise
 

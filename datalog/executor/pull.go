@@ -208,20 +208,22 @@ func (pe *PullExecutor) lookupAttribute(
 	// Use EntityLookupMatcher interface if available
 	if lookupMatcher, ok := pe.matcher.(EntityLookupMatcher); ok {
 		var val interface{}
-		var found bool
 		var lookupErr error
-		pe.ctx.AttributeLookup(entity, attr, found, "direct", func() {
-			val, found, lookupErr = lookupMatcher.LookupAttribute(entity, attr)
+		found := pe.ctx.AttributeLookup(entity, attr, "direct", func() bool {
+			var ok bool
+			val, ok, lookupErr = lookupMatcher.LookupAttribute(entity, attr)
+			return ok
 		})
 		return val, found, lookupErr
 	}
 
 	// Fallback: use pattern matching
 	var val interface{}
-	var found bool
 	var lookupErr error
-	pe.ctx.AttributeLookup(entity, attr, found, "pattern", func() {
-		val, found, lookupErr = pe.lookupAttributeViaPattern(entity, attr)
+	found := pe.ctx.AttributeLookup(entity, attr, "pattern", func() bool {
+		var ok bool
+		val, ok, lookupErr = pe.lookupAttributeViaPattern(entity, attr)
+		return ok
 	})
 	return val, found, lookupErr
 }

@@ -21,8 +21,10 @@ type PullContext interface {
 	// Cycle detection
 	CycleDetected(entity datalog.Identity, depth int)
 
-	// Attribute lookups
-	AttributeLookup(entity datalog.Identity, attr datalog.Keyword, found bool, via string, fn func())
+	// Attribute lookups. Each reports its outcome through the closure's return
+	// rather than a parameter: the closure is what performs the lookup, so a
+	// parameter would be evaluated at the call site before the value exists.
+	AttributeLookup(entity datalog.Identity, attr datalog.Keyword, via string, fn func() bool) bool
 	AllAttributes(entity datalog.Identity, fn func() int) int
 	ManyValues(entity datalog.Identity, attr datalog.Keyword, fn func() int) int
 
@@ -41,8 +43,8 @@ func (c *BasePullContext) EntityBegin(entity datalog.Identity, depth, specCount 
 func (c *BasePullContext) EntityComplete(entity datalog.Identity, depth, attrCount int) {}
 func (c *BasePullContext) CycleDetected(entity datalog.Identity, depth int)             {}
 
-func (c *BasePullContext) AttributeLookup(entity datalog.Identity, attr datalog.Keyword, found bool, via string, fn func()) {
-	fn()
+func (c *BasePullContext) AttributeLookup(entity datalog.Identity, attr datalog.Keyword, via string, fn func() bool) bool {
+	return fn()
 }
 
 func (c *BasePullContext) AllAttributes(entity datalog.Identity, fn func() int) int {
@@ -79,7 +81,7 @@ func (c *AnnotatedPullContext) PullBegin(entity datalog.Identity, specCount int,
 		Name:  annotations.PullBegin,
 		Start: c.pullStart,
 		Data: map[string]interface{}{
-			"entity":     entity.String(),
+			"entity":     entity,
 			"spec_count": specCount,
 			"resolved":   resolved,
 		},
@@ -94,7 +96,7 @@ func (c *AnnotatedPullContext) PullComplete(entity datalog.Identity, attrCount i
 		End:     end,
 		Latency: end.Sub(c.pullStart),
 		Data: map[string]interface{}{
-			"entity":     entity.String(),
+			"entity":     entity,
 			"attr_count": attrCount,
 			"resolved":   resolved,
 			"success":    err == nil,
@@ -136,7 +138,7 @@ func (c *AnnotatedPullContext) EntityBegin(entity datalog.Identity, depth, specC
 		Name:  annotations.PullEntityBegin,
 		Start: time.Now(),
 		Data: map[string]interface{}{
-			"entity":     entity.String(),
+			"entity":     entity,
 			"depth":      depth,
 			"spec_count": specCount,
 		},
@@ -147,7 +149,7 @@ func (c *AnnotatedPullContext) EntityComplete(entity datalog.Identity, depth, at
 	c.handler(annotations.Event{
 		Name: annotations.PullEntityComplete,
 		Data: map[string]interface{}{
-			"entity":     entity.String(),
+			"entity":     entity,
 			"depth":      depth,
 			"attr_count": attrCount,
 		},
@@ -158,15 +160,15 @@ func (c *AnnotatedPullContext) CycleDetected(entity datalog.Identity, depth int)
 	c.handler(annotations.Event{
 		Name: annotations.PullCycleDetected,
 		Data: map[string]interface{}{
-			"entity": entity.String(),
+			"entity": entity,
 			"depth":  depth,
 		},
 	})
 }
 
-func (c *AnnotatedPullContext) AttributeLookup(entity datalog.Identity, attr datalog.Keyword, found bool, via string, fn func()) {
+func (c *AnnotatedPullContext) AttributeLookup(entity datalog.Identity, attr datalog.Keyword, via string, fn func() bool) bool {
 	start := time.Now()
-	fn()
+	found := fn()
 	end := time.Now()
 	c.handler(annotations.Event{
 		Name:    annotations.PullAttributeLookup,
@@ -174,12 +176,13 @@ func (c *AnnotatedPullContext) AttributeLookup(entity datalog.Identity, attr dat
 		End:     end,
 		Latency: end.Sub(start),
 		Data: map[string]interface{}{
-			"entity": entity.String(),
-			"attr":   attr.String(),
+			"entity": entity,
+			"attr":   attr,
 			"found":  found,
 			"via":    via,
 		},
 	})
+	return found
 }
 
 func (c *AnnotatedPullContext) AllAttributes(entity datalog.Identity, fn func() int) int {
@@ -192,7 +195,7 @@ func (c *AnnotatedPullContext) AllAttributes(entity datalog.Identity, fn func() 
 		End:     end,
 		Latency: end.Sub(start),
 		Data: map[string]interface{}{
-			"entity":     entity.String(),
+			"entity":     entity,
 			"attr_count": count,
 		},
 	})
@@ -209,8 +212,8 @@ func (c *AnnotatedPullContext) ManyValues(entity datalog.Identity, attr datalog.
 		End:     end,
 		Latency: end.Sub(start),
 		Data: map[string]interface{}{
-			"entity":      entity.String(),
-			"attr":        attr.String(),
+			"entity":      entity,
+			"attr":        attr,
 			"value_count": count,
 		},
 	})
@@ -222,9 +225,9 @@ func (c *AnnotatedPullContext) NestedBegin(parentEntity datalog.Identity, attr d
 		Name:  annotations.PullNestedBegin,
 		Start: time.Now(),
 		Data: map[string]interface{}{
-			"parent_entity": parentEntity.String(),
-			"attr":          attr.String(),
-			"ref_entity":    refEntity.String(),
+			"parent_entity": parentEntity,
+			"attr":          attr,
+			"ref_entity":    refEntity,
 			"depth":         depth,
 			"is_many":       isMany,
 		},
@@ -235,9 +238,9 @@ func (c *AnnotatedPullContext) NestedComplete(parentEntity datalog.Identity, att
 	c.handler(annotations.Event{
 		Name: annotations.PullNestedComplete,
 		Data: map[string]interface{}{
-			"parent_entity": parentEntity.String(),
-			"attr":          attr.String(),
-			"ref_entity":    refEntity.String(),
+			"parent_entity": parentEntity,
+			"attr":          attr,
+			"ref_entity":    refEntity,
 			"depth":         depth,
 			"attr_count":    attrCount,
 			"success":       err == nil,

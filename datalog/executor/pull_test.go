@@ -563,6 +563,71 @@ func TestPullExecutor_AnnotationsEmitted(t *testing.T) {
 	}
 }
 
+// TestPullAttributeLookupReportsWhetherItFound pins the outcome of the lookup
+// the event exists to describe.
+//
+// The `found` field was a parameter of PullContext.AttributeLookup, taken by
+// value at the call site — before the closure that performs the lookup and
+// assigns it has run. Every event in every trace therefore reported false,
+// including for attributes that were present, and no assertion anywhere read
+// the field to notice. The interface now returns the outcome through the
+// closure, which is the shape AllAttributes three lines above it already uses.
+//
+// Both rows matter: an event hard-wired to false passes a present-attribute
+// assertion only if that assertion is missing, and one hard-wired to true would
+// pass this test's first row alone.
+func TestPullAttributeLookupReportsWhetherItFound(t *testing.T) {
+	alice := datalog.NewIdentity("user:alice")
+	nameAttr := datalog.NewKeyword(":user/name")
+
+	matcher := NewIndexedMemoryMatcher([]datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+	})
+	puller := NewPullExecutor(matcher, nil)
+
+	var events []annotations.Event
+	puller.SetHandler(func(e annotations.Event) { events = append(events, e) })
+
+	pattern, err := parser.ParsePullPattern(`[:user/name :user/absent]`)
+	if err != nil {
+		t.Fatalf("failed to parse pattern: %v", err)
+	}
+	if _, err := puller.Pull(alice, pattern); err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+
+	// Keyed by the Keyword itself, which is interned: the producer carries the
+	// value and the formatter renders, so a producer that went back to
+	// flattening fails here rather than passing on a string that reads the same.
+	byAttr := map[datalog.Keyword]bool{}
+	for _, e := range events {
+		if e.Name != annotations.PullAttributeLookup {
+			continue
+		}
+		attr, ok := e.Data["attr"].(datalog.Keyword)
+		if !ok {
+			t.Fatalf("attribute lookup event carries %T under attr", e.Data["attr"])
+		}
+		found, ok := e.Data["found"].(bool)
+		if !ok {
+			t.Fatalf("attribute lookup event carries %T under found", e.Data["found"])
+		}
+		byAttr[attr] = found
+	}
+
+	if got, ok := byAttr[nameAttr]; !ok {
+		t.Fatalf("no lookup event for the attribute that exists; saw %v", byAttr)
+	} else if !got {
+		t.Error("the entity carries :user/name and the lookup returned it; the event says it did not")
+	}
+	absent := datalog.NewKeyword(":user/absent")
+	if got, ok := byAttr[absent]; !ok {
+		t.Fatalf("no lookup event for the absent attribute; saw %v", byAttr)
+	} else if got {
+		t.Error("the entity carries no :user/absent; the event says it was found")
+	}
+}
+
 func TestPullExecutor_NoEventsWhenHandlerNil(t *testing.T) {
 	// Create test data
 	alice := datalog.NewIdentity("user:alice")

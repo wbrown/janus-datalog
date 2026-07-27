@@ -46,10 +46,12 @@ func (it *deferredErrorScan) Next() bool {
 }
 func (it *deferredErrorScan) Datom() (*datalog.Datom, error) { return &datalog.Datom{}, nil }
 func (it *deferredErrorScan) Close() error                   { it.closed = true; return nil }
-func (it *deferredErrorScan) Seek(bound ScanBound)           {}
-func (it *deferredErrorScan) ElementID() datalog.ElementID   { return datalog.ElementID{} }
-func (it *deferredErrorScan) Error() error                   { return it.err }
-func (it *deferredErrorScan) Scanned() int                   { return it.scanned }
+func (it *deferredErrorScan) Seek(bound ScanBound) {
+	panic("deferredErrorScan has no index to seek within")
+}
+func (it *deferredErrorScan) ElementID() datalog.ElementID { return datalog.ElementID{} }
+func (it *deferredErrorScan) Error() error                 { return it.err }
+func (it *deferredErrorScan) Scanned() int                 { return it.scanned }
 
 var _ Iterator = (*deferredErrorScan)(nil)
 

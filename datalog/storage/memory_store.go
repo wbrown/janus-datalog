@@ -147,6 +147,7 @@ func (s *MemoryStore) scan(bound ScanBound) (Iterator, error) {
 		keys:       keys,
 		position:   -1,
 		membership: run.Membership,
+		end:        run.End,
 		encoder:    s.encoder,
 		blobs:      memoryBlobReader{store: s},
 	}, nil
@@ -493,9 +494,14 @@ type memoryIterator struct {
 	scanned int
 	// membership decides which of the selected keys the current bound names,
 	// dropping the ones the range over-covers when a bound component is a
-	// variable-length V. Seek replaces it — a seek names a new run inside the
-	// same key set — and it is one value so the two cannot be copied apart.
-	membership   runMembership
+	// variable-length V. Seek replaces it alongside end, because a run is its
+	// start, its end and its membership rule together, and adopting a subset of
+	// the three yields a run nobody asked for.
+	membership runMembership
+	// end is the current run's exclusive upper bound. keys already holds only
+	// the scan's own range, so this is what a seek to a narrower run inside it
+	// stops at.
+	end          []byte
 	encoder      *BinaryKeyEncoder
 	blobs        BlobReader
 	currentDatom datalog.Datom
@@ -511,6 +517,9 @@ func (i *memoryIterator) positioned() bool {
 	if i.closed || i.position < 0 || i.position >= len(i.keys) {
 		return false
 	}
+	if i.end != nil && bytes.Compare(i.keys[i.position], i.end) >= 0 {
+		return false
+	}
 	return i.membership.holds(i.keys[i.position])
 }
 
@@ -524,6 +533,13 @@ func (i *memoryIterator) Next() bool {
 	for {
 		i.position++
 		if i.position >= len(i.keys) {
+			return false
+		}
+		// Past the run's end ends the iteration; it is not a key to step over.
+		// The membership rule rejects keys *inside* the run, so treating this
+		// one the same way would walk the rest of the scan looking for a member
+		// that cannot be there, and count every key of it as intake.
+		if i.end != nil && bytes.Compare(i.keys[i.position], i.end) >= 0 {
 			return false
 		}
 		// Counted before the membership test, not after: a key the range
@@ -586,10 +602,13 @@ func (i *memoryIterator) Seek(bound ScanBound) {
 		i.err = err
 		return
 	}
-	// The seek names a new run inside the scan's keys: its start repositions
-	// the cursor, and its membership rule governs what follows. The key set
-	// stays the scan's — a seek moves within a scan, it does not open one.
+	// The seek names a new run inside the scan's keys, and it names all of it:
+	// the start repositions the cursor, the end stops it, and the membership
+	// rule governs what lies between. All three come from one EncodedRun, so a
+	// caller gets the run it asked for rather than its start and the scan's
+	// remainder.
 	i.membership = run.Membership
+	i.end = run.End
 	i.position = sort.Search(len(i.keys), func(index int) bool {
 		return bytes.Compare(i.keys[index], run.Start) >= 0
 	}) - 1
