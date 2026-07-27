@@ -27,16 +27,20 @@ import (
 // the comparison panics with "comparing uncomparable type []uint8". The fix is
 // to use datalog.ValuesEqual / m.valuesEqual.
 
-func newBytesOneDB(t *testing.T) (*Database, datalog.Identity, datalog.Keyword) {
+func newBytesOneDB(t *testing.T, mode optimizerMode) (*Database, datalog.Identity, datalog.Keyword) {
 	t.Helper()
-	dir := t.TempDir()
 	// Cardinality-one, NOT unique: forces the candidate+validate path
 	// (validateCandidate), not the unique (A,V)-LWW short-circuit.
 	s, err := schema.NewBuilder().
 		Attribute(":doc/hash").Type(schema.TypeBytes).One().Add().
 		Build()
 	require.NoError(t, err)
-	db, err := NewDatabaseWithSchema(dir, s)
+	opts := mode.plannerOptions()
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:           t.TempDir(),
+		Schema:         s,
+		PlannerOptions: &opts,
+	})
 	require.NoError(t, err)
 	return db, datalog.NewIdentity("doc-1"), datalog.NewKeyword(":doc/hash")
 }
@@ -57,181 +61,207 @@ func queryByHash(t *testing.T, db *Database, v []byte) []datalog.Identity {
 // TestVBoundCardinalityOneBytes_NoPanic: a V-bound query on a byte attribute
 // must not panic and must return the matching entity.
 func TestVBoundCardinalityOneBytes_NoPanic(t *testing.T) {
-	db, e, a := newBytesOneDB(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, e, a := newBytesOneDB(t, mode)
+			defer db.Close()
 
-	v := []byte{0xde, 0xad, 0xbe, 0xef}
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, v))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			v := []byte{0xde, 0xad, 0xbe, 0xef}
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, v))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("V-bound []byte query panicked (bug reproduced): %v", r)
-		}
-	}()
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("V-bound []byte query panicked (bug reproduced): %v", r)
+				}
+			}()
 
-	got := queryByHash(t, db, v)
-	require.Len(t, got, 1)
-	require.True(t, got[0].Equal(e))
+			got := queryByHash(t, db, v)
+			require.Len(t, got, 1)
+			require.True(t, got[0].Equal(e))
+		})
+	}
 }
 
 // TestVBoundCardinalityOneBytes_MatchesByContent: a different slice instance
 // with identical content must still match (byte-content equality).
 func TestVBoundCardinalityOneBytes_MatchesByContent(t *testing.T) {
-	db, e, a := newBytesOneDB(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, e, a := newBytesOneDB(t, mode)
+			defer db.Close()
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, []byte{0xca, 0xfe, 0xba, 0xbe}))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, []byte{0xca, 0xfe, 0xba, 0xbe}))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("V-bound []byte content match panicked (bug reproduced): %v", r)
-		}
-	}()
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("V-bound []byte content match panicked (bug reproduced): %v", r)
+				}
+			}()
 
-	// Distinct slice, same content as stored.
-	got := queryByHash(t, db, []byte{0xca, 0xfe, 0xba, 0xbe})
-	require.Len(t, got, 1)
-	require.True(t, got[0].Equal(e))
+			// Distinct slice, same content as stored.
+			got := queryByHash(t, db, []byte{0xca, 0xfe, 0xba, 0xbe})
+			require.Len(t, got, 1)
+			require.True(t, got[0].Equal(e))
+		})
+	}
 }
 
 // TestVBoundCardinalityOneBytes_RejectsStaleCandidate: after overwrite, the old
 // value still has an AVET candidate row, but the EATV winner differs. The
 // candidate must be rejected (and rejection must compare by content, not panic).
 func TestVBoundCardinalityOneBytes_RejectsStaleCandidate(t *testing.T) {
-	db, e, a := newBytesOneDB(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, e, a := newBytesOneDB(t, mode)
+			defer db.Close()
 
-	v1 := []byte{0x01, 0x01}
-	v2 := []byte{0x02, 0x02}
+			v1 := []byte{0x01, 0x01}
+			v2 := []byte{0x02, 0x02}
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, v1))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, v1))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, v2)) // LWW overwrite; v1 row remains in AVET
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, v2)) // LWW overwrite; v1 row remains in AVET
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("V-bound stale-candidate validation panicked (bug reproduced): %v", r)
-		}
-	}()
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("V-bound stale-candidate validation panicked (bug reproduced): %v", r)
+				}
+			}()
 
-	require.Empty(t, queryByHash(t, db, v1), "stale value must not match the current winner")
+			require.Empty(t, queryByHash(t, db, v1), "stale value must not match the current winner")
+		})
+	}
 }
 
 // TestVBoundCardinalityOneBytes_AfterOverwrite: querying the current value after
 // an overwrite returns the entity.
 func TestVBoundCardinalityOneBytes_AfterOverwrite(t *testing.T) {
-	db, e, a := newBytesOneDB(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, e, a := newBytesOneDB(t, mode)
+			defer db.Close()
 
-	v1 := []byte{0x0a}
-	v2 := []byte{0x0b}
+			v1 := []byte{0x0a}
+			v2 := []byte{0x0b}
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, v1))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, v1))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, v2))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, v2))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("V-bound post-overwrite query panicked (bug reproduced): %v", r)
-		}
-	}()
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("V-bound post-overwrite query panicked (bug reproduced): %v", r)
+				}
+			}()
 
-	got := queryByHash(t, db, v2)
-	require.Len(t, got, 1)
-	require.True(t, got[0].Equal(e))
+			got := queryByHash(t, db, v2)
+			require.Len(t, got, 1)
+			require.True(t, got[0].Equal(e))
+		})
+	}
 }
 
 // TestVBoundCardinalityOneBytes_AfterRemove: after a tombstone the value must
 // not match. (The Op==Remove check precedes the == comparison, so this is a
 // contract test that complements the panic reproductions above.)
 func TestVBoundCardinalityOneBytes_AfterRemove(t *testing.T) {
-	db, e, a := newBytesOneDB(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, e, a := newBytesOneDB(t, mode)
+			defer db.Close()
 
-	v := []byte{0xfe, 0xed}
+			v := []byte{0xfe, 0xed}
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, v))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, v))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Remove(e, a, v))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Remove(e, a, v))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("V-bound post-remove query panicked (bug reproduced): %v", r)
-		}
-	}()
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("V-bound post-remove query panicked (bug reproduced): %v", r)
+				}
+			}()
 
-	require.Empty(t, queryByHash(t, db, v), "removed value must not match")
+			require.Empty(t, queryByHash(t, db, v), "removed value must not match")
+		})
+	}
 }
 
 // TestVBoundCardinalityOneBytes_ValidationTrail captures the v-validation
 // annotation trail so the failure under -race can be diagnosed: it shows whether
 // the candidate scan found a candidate and what the EATV winner comparison saw.
 func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
-	db, e, a := newBytesOneDB(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, e, a := newBytesOneDB(t, mode)
+			defer db.Close()
 
-	var mu sync.Mutex
-	var trail []string
-	db.SetAnnotationHandler(func(ev annotations.Event) {
-		if strings.HasPrefix(ev.Name, "v-validation/") ||
-			strings.Contains(ev.Name, "join") ||
-			strings.Contains(ev.Name, "collapse") ||
-			strings.Contains(ev.Name, "phase") ||
-			strings.Contains(ev.Name, "pattern") {
+			var mu sync.Mutex
+			var trail []string
+			db.SetAnnotationHandler(func(ev annotations.Event) {
+				if strings.HasPrefix(ev.Name, "v-validation/") ||
+					strings.Contains(ev.Name, "join") ||
+					strings.Contains(ev.Name, "collapse") ||
+					strings.Contains(ev.Name, "phase") ||
+					strings.Contains(ev.Name, "pattern") {
+					mu.Lock()
+					trail = append(trail, fmt.Sprintf("%s %v", ev.Name, ev.Data))
+					mu.Unlock()
+				}
+			})
+
+			v := []byte{0xde, 0xad, 0xbe, 0xef}
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, v))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			rows, err := executor.CollectTuples(db.Query(`[:find ?e :in $ ?v :where [?e :doc/hash ?v]]`, v))
+			require.NoError(t, err)
+
 			mu.Lock()
-			trail = append(trail, fmt.Sprintf("%s %v", ev.Name, ev.Data))
+			for _, s := range trail {
+				t.Log(s)
+			}
 			mu.Unlock()
-		}
-	})
 
-	v := []byte{0xde, 0xad, 0xbe, 0xef}
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, v))
-	_, err := tx.Commit()
-	require.NoError(t, err)
-
-	rows, err := executor.CollectTuples(db.Query(`[:find ?e :in $ ?v :where [?e :doc/hash ?v]]`, v))
-	require.NoError(t, err)
-
-	mu.Lock()
-	for _, s := range trail {
-		t.Log(s)
+			require.Len(t, rows, 1)
+		})
 	}
-	mu.Unlock()
-
-	require.Len(t, rows, 1)
 }
 
 // TestVBoundCardinalityOneBytes_DirectMatcher drives the matcher directly with
 // ?v bound, bypassing the executor's join of the pattern result with the :in
 // input. This isolates matcher behaviour from the join: if this returns the
 // entity under -race but the full query does not, the join is the culprit.
+// It drives the matcher rather than the executor, so the algebra optimizer is
+// not on its path: it pins one mode explicitly instead of looping the axis.
 func TestVBoundCardinalityOneBytes_DirectMatcher(t *testing.T) {
-	db, e, a := newBytesOneDB(t)
+	db, e, a := newBytesOneDB(t, optimizerMode{name: "algebra_off", algebra: false})
 	defer db.Close()
 
 	v := []byte{0xde, 0xad, 0xbe, 0xef}

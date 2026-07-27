@@ -25,7 +25,7 @@ func TestIndexOrderedLimitStopsSatisfiedScan(t *testing.T) {
 				if event.Name != "pattern/storage-scan" {
 					return
 				}
-				if count, ok := event.Data["datoms.scanned"].(int); ok {
+				if count, ok := event.Data["datoms.resolved"].(int); ok {
 					scanned.Add(int64(count))
 				}
 			}

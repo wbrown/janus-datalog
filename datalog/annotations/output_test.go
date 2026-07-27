@@ -58,19 +58,44 @@ func TestScanLineReportsBoundFromIndexSelection(t *testing.T) {
 		Name:    PatternStorageScan,
 		Latency: 2 * time.Millisecond,
 		Data: map[string]interface{}{
-			"pattern":        "[?e :task/scenario ?s]",
-			"datoms.scanned": 10,
-			"scan.duration":  2 * time.Millisecond,
+			"pattern":         "[?e :task/scenario ?s]",
+			"datoms.scanned":  10,
+			"datoms.resolved": 10,
+			"scan.duration":   2 * time.Millisecond,
 		},
 	})
 	require.Contains(t, line, "Scan([[?e :task/scenario ?s]], AVET, bound: AV)")
 	require.Contains(t, line, "10 datoms")
+	require.NotContains(t, line, "scanned",
+		"a scan that returned everything it read says one number, not two")
 	// The scan's duration is the line's latency prefix, the mechanism every
 	// other timed event uses. It must not also be appended from a data key —
 	// nothing writes one, so the line read "in <nil>".
 	require.Contains(t, line, "[2.0ms]")
 	require.NotContains(t, line, "<nil>")
 	require.NotContains(t, line, " in ")
+}
+
+// TestScanLineShowsIntakeWhenItExceedsOutput pins the amplification the typed
+// bound exists to control: a scan that read ten datoms to return one must say
+// so on the line a human reads, or a bound that narrowed and a bound that did
+// nothing render identically.
+func TestScanLineShowsIntakeWhenItExceedsOutput(t *testing.T) {
+	var out bytes.Buffer
+	f := NewPlainTextFormatter(&out)
+
+	line := f.Format(Event{
+		Name:    PatternStorageScan,
+		Latency: time.Millisecond,
+		Data: map[string]interface{}{
+			"pattern":         "[?e :person/name ?n]",
+			"datoms.scanned":  10,
+			"datoms.resolved": 1,
+		},
+	})
+	require.Contains(t, line, "1 datoms")
+	require.Contains(t, line, "(10 scanned)",
+		"the index charged ten reads for one datom and the line must show it")
 }
 
 // TestScanLineWholeIndexBoundIsNotUnknown separates the two ways a scan line can
@@ -81,9 +106,9 @@ func TestScanLineWholeIndexBoundIsNotUnknown(t *testing.T) {
 	scan := Event{
 		Name: PatternStorageScan,
 		Data: map[string]interface{}{
-			"pattern":        "[?e ?a ?v]",
-			"datoms.scanned": 500,
-			"scan.duration":  time.Millisecond,
+			"pattern":         "[?e ?a ?v]",
+			"datoms.resolved": 500,
+			"scan.duration":   time.Millisecond,
 		},
 	}
 
@@ -125,9 +150,9 @@ func TestFormatterHandleWritesScanLine(t *testing.T) {
 	f.Handle(Event{
 		Name: PatternStorageScan,
 		Data: map[string]interface{}{
-			"pattern":        "[?e :person/name ?n]",
-			"datoms.scanned": 3,
-			"scan.duration":  time.Millisecond,
+			"pattern":         "[?e :person/name ?n]",
+			"datoms.resolved": 3,
+			"scan.duration":   time.Millisecond,
 		},
 	})
 	require.Equal(t, 1, strings.Count(out.String(), "\n"))

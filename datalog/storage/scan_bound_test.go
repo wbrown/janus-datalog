@@ -191,89 +191,96 @@ func TestScanBoundContainsItsDatomKey(t *testing.T) {
 // projection of the bound, which a handler cannot interpret and a typed backend
 // never produces.
 func TestIndexSelectionEventReportsBound(t *testing.T) {
-	var events []annotations.Event
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:              t.TempDir(),
-		AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
-	})
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var events []annotations.Event
+			opts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:              t.TempDir(),
+				PlannerOptions:    &opts,
+				AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
+			})
+			require.NoError(t, err)
+			defer db.Close()
 
-	name := datalog.NewKeyword(":person/name")
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(datalog.NewIdentity("p1"), name, "Alice"))
-	require.NoError(t, tx.Add(datalog.NewIdentity("p2"), name, "Bob"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			name := datalog.NewKeyword(":person/name")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(datalog.NewIdentity("p1"), name, "Alice"))
+			require.NoError(t, tx.Add(datalog.NewIdentity("p2"), name, "Bob"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	eventFor := func(t *testing.T, name, query string) annotations.Event {
-		t.Helper()
-		events = nil
-		result, err := db.Query(query)
-		require.NoError(t, err)
-		_, err = executor.CollectTuples(result, nil)
-		require.NoError(t, err)
-		for i := len(events) - 1; i >= 0; i-- {
-			if events[i].Name == name {
-				return events[i]
+			eventFor := func(t *testing.T, name, query string) annotations.Event {
+				t.Helper()
+				events = nil
+				result, err := db.Query(query)
+				require.NoError(t, err)
+				_, err = executor.CollectTuples(result, nil)
+				require.NoError(t, err)
+				for i := len(events) - 1; i >= 0; i-- {
+					if events[i].Name == name {
+						return events[i]
+					}
+				}
+				t.Fatalf("no %s event; saw %d events", name, len(events))
+				return annotations.Event{}
 			}
-		}
-		t.Fatalf("no %s event; saw %d events", name, len(events))
-		return annotations.Event{}
+
+			// Every scan-reporting event must describe its run the same way, so
+			// the assertions below are shared: no encoded range, and parallel
+			// position and value slices naming what the run binds.
+			requireBound := func(t *testing.T, e annotations.Event, index string, positions, values []string) {
+				t.Helper()
+				require.Equal(t, index, e.Data["index"])
+				require.Equal(t, positions, e.Data["bound"])
+				require.Equal(t, values, e.Data["bound.values"])
+				for _, byteField := range []string{"scan.start", "scan.end", "start", "end", "value_bytes"} {
+					require.NotContains(t, e.Data, byteField,
+						"an encoded key range is one backend's projection, not an annotation")
+				}
+			}
+
+			t.Run("A bound, unbound scan path", func(t *testing.T) {
+				e := eventFor(t, "pattern/index-selection", `[:find ?e ?n :where [?e :person/name ?n]]`)
+				requireBound(t, e, "AETV", []string{"A"}, []string{":person/name"})
+			})
+
+			t.Run("A and V bound, V-validation path", func(t *testing.T) {
+				e := eventFor(t, "v-validation/open-scan", `[:find ?e :where [?e :person/name "Alice"]]`)
+				requireBound(t, e, "AVET",
+					[]string{"A", "V"}, []string{":person/name", "Alice"})
+			})
+
+			t.Run("nothing bound", func(t *testing.T) {
+				e := eventFor(t, "pattern/index-selection", `[:find ?e ?a ?v :where [?e ?a ?v]]`)
+				require.Empty(t, e.Data["bound"],
+					"a whole-index scan binds no component, and says so rather than omitting the field")
+				require.Empty(t, e.Data["bound.values"])
+				require.Contains(t, e.Data, "bound", "the field is present even when the run binds nothing")
+			})
+
+			// The producer and the formatter are pinned separately — here they
+			// meet. Separate pins agreeing on a payload shape is exactly what
+			// failed before: the formatter read fields no emitter produced, and
+			// every scan line rendered "bound: ?" because nothing ran the two
+			// together.
+			t.Run("the formatter renders what the matcher emits", func(t *testing.T) {
+				events = nil
+				result, err := db.Query(`[:find ?e ?n :where [?e :person/name ?n]]`)
+				require.NoError(t, err)
+				_, err = executor.CollectTuples(result, nil)
+				require.NoError(t, err)
+
+				var out bytes.Buffer
+				formatter := annotations.NewPlainTextFormatter(&out)
+				for _, e := range events {
+					formatter.Handle(e)
+				}
+				require.Contains(t, out.String(), "AETV, bound: A",
+					"the scan line must name the run the matcher actually addressed")
+			})
+		})
 	}
-
-	// Every scan-reporting event must describe its run the same way, so the
-	// assertions below are shared: no encoded range, and parallel position and
-	// value slices naming what the run binds.
-	requireBound := func(t *testing.T, e annotations.Event, index string, positions, values []string) {
-		t.Helper()
-		require.Equal(t, index, e.Data["index"])
-		require.Equal(t, positions, e.Data["bound"])
-		require.Equal(t, values, e.Data["bound.values"])
-		for _, byteField := range []string{"scan.start", "scan.end", "start", "end", "value_bytes"} {
-			require.NotContains(t, e.Data, byteField,
-				"an encoded key range is one backend's projection, not an annotation")
-		}
-	}
-
-	t.Run("A bound, unbound scan path", func(t *testing.T) {
-		e := eventFor(t, "pattern/index-selection", `[:find ?e ?n :where [?e :person/name ?n]]`)
-		requireBound(t, e, "AETV", []string{"A"}, []string{":person/name"})
-	})
-
-	t.Run("A and V bound, V-validation path", func(t *testing.T) {
-		e := eventFor(t, "v-validation/open-scan", `[:find ?e :where [?e :person/name "Alice"]]`)
-		requireBound(t, e, "AVET",
-			[]string{"A", "V"}, []string{":person/name", "Alice"})
-	})
-
-	t.Run("nothing bound", func(t *testing.T) {
-		e := eventFor(t, "pattern/index-selection", `[:find ?e ?a ?v :where [?e ?a ?v]]`)
-		require.Empty(t, e.Data["bound"],
-			"a whole-index scan binds no component, and says so rather than omitting the field")
-		require.Empty(t, e.Data["bound.values"])
-		require.Contains(t, e.Data, "bound", "the field is present even when the run binds nothing")
-	})
-
-	// The producer and the formatter are pinned separately — here they meet.
-	// Separate pins agreeing on a payload shape is exactly what failed before:
-	// the formatter read fields no emitter produced, and every scan line
-	// rendered "bound: ?" because nothing ran the two together.
-	t.Run("the formatter renders what the matcher emits", func(t *testing.T) {
-		events = nil
-		result, err := db.Query(`[:find ?e ?n :where [?e :person/name ?n]]`)
-		require.NoError(t, err)
-		_, err = executor.CollectTuples(result, nil)
-		require.NoError(t, err)
-
-		var out bytes.Buffer
-		formatter := annotations.NewPlainTextFormatter(&out)
-		for _, e := range events {
-			formatter.Handle(e)
-		}
-		require.Contains(t, out.String(), "AETV, bound: A",
-			"the scan line must name the run the matcher actually addressed")
-	})
 }
 
 // encodeScanBoundForTest renders a bound as the byte range it addresses, for
@@ -287,13 +294,6 @@ func encodeScanBoundForTest(t *testing.T, m *PatternMatcher, bound ScanBound) (s
 		t.Fatalf("encode scan bound on %v: %v", bound.Index, err)
 	}
 	return run.Start, run.End
-}
-
-// entityBytesFor renders an Identity in the storage form the E component uses.
-func entityBytesFor(id datalog.Identity) []byte {
-	var e Entity
-	copy(e[:], id.Bytes())
-	return e[:]
 }
 
 // TestScanBoundOverlongPrefixRejected pins loud failure over silent

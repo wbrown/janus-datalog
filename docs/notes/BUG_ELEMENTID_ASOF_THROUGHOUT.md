@@ -54,7 +54,7 @@ These are mechanical — change the zero check and extract `.Lamport` for the co
 | `matcher_relations.go` | 107, 270 | `m.txID == 0` (cache eligibility) |
 | `hash_join_matcher.go` | 757, 845 | `it.matcher.txID > 0 && datom.Tx.Lamport > it.matcher.txID` |
 | `batch_iterator.go` | 286 | same pattern |
-| `simple_batch_scanner.go` | 283 | same pattern |
+| ~~`simple_batch_scanner.go`~~ | ~~283~~ | **Moot (2026-07-26)** — file deleted in v0.15.0 |
 
 ### 7. Callers of AsOf/MatchAsOf
 
@@ -106,7 +106,7 @@ The plan above recommended `datom.Tx.Lamport > m.txID.Lamport` for as-of filteri
 - `matcher.go`: `m.txID != (datalog.ElementID{}) && m.txID.Less(datom.Tx)`
 - `crdt_resolving_iterator.go`: `it.txID != (datalog.ElementID{}) && it.txID.Less(datom.Tx)`
 - `iterator_helpers.go`: `txID != (datalog.ElementID{}) && txID.Less(datom.Tx)`
-- `batch_iterator.go`, `hash_join_matcher.go`, `simple_batch_scanner.go`: same pattern via `it.matcher.txID` / `s.matcher.txID`
+- `batch_iterator.go`, `hash_join_matcher.go`: same pattern via `it.matcher.txID` (`simple_batch_scanner.go` also carried it and was deleted in v0.15.0)
 - `MatchAsOf`: `targetTx.Less(datom.Tx)` for the target parameter
 
 ### Additional changes not in original plan

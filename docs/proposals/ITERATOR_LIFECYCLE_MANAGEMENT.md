@@ -412,7 +412,7 @@ This is the correct API. Streaming is the primitive. Materialization is a conven
 
 ## Recommendation
 
-**Immediate (do now)**: Fix the two missing `iter.Close()` calls in `helpers.go` and the one in `simple_batch_scanner.go`. This is the correct fix for the concrete bug.
+**Immediate (do now)** — ~~Fix the two missing `iter.Close()` calls in `helpers.go` and the one in `simple_batch_scanner.go`.~~ **Discharged (2026-07-26).** `simple_batch_scanner.go` was deleted in v0.15.0, taking its site with it; the `helpers.go` sites moved when that file was split under the no-helpers rule. Re-derive against the current tree before acting on the rows below — the file table is as of this document's date.
 
 **Short-term (next feature)**: Option D — `Query()` returns `*Tuples`. This is the correct public API and addresses the real design gap. The streaming architecture currently stops at the API boundary. This carries it through to the consumer.
 

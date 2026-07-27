@@ -287,9 +287,8 @@ func (d *Database) Cache() *Cache {
 // Use this after process restart for attributes with high query frequency
 // to avoid cold-start latency on first access.
 //
-// For each attribute, this scans all entities and populates:
-// - Per-(E,A) cache entries with resolved CRDT values
-// - Attribute-level version tracking for freshness checks
+// For each attribute, this scans all entities and populates per-(E,A) cache
+// entries with resolved CRDT values.
 //
 // This is O(n) where n = total datoms for the specified attributes.
 // Call during application startup, not on the hot path.

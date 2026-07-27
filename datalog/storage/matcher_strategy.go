@@ -35,7 +35,6 @@ type ReuseStrategy struct {
 	NeedsValidation bool      // If true, V-bound query needs CRDT validation
 	ValidationIndex IndexType // Index to use for validation (EATV for point lookups)
 	BoundA          any       // The bound A value (for validation lookups)
-	BoundV          any       // The bound V value (for validation comparison)
 }
 
 // analyzeReuseStrategy determines if and how iterator reuse can be applied.
@@ -197,7 +196,7 @@ func chooseBestMultiPositionStrategy(
 ) (ReuseStrategy, executor.Relation) {
 	// CRITICAL: Materialize streaming relations before iterating
 	// This function iterates the relation to count cardinalities, and later code
-	// (matchWithIteratorReuse, matchWithHashJoin) needs to iterate again.
+	// (matchWithHashJoin) needs to iterate again.
 	// StreamingRelation panics if Iterator() is called twice without Materialize().
 	// See: TestMultiPositionWithStreamingBinding
 	if streamRel, isStreaming := bindingRel.(*executor.StreamingRelation); isStreaming {

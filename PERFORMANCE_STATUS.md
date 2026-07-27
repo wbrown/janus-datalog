@@ -2278,7 +2278,7 @@ Each relation type has fundamentally different storage and iteration logic. The 
 
 **Storage Iterator Consolidation (REJECTED)**
 
-Problem statement: Four iterator implementations (`matcher_iterator_reusing.go`, `matcher_iterator_nonreusing.go`, `matcher_iterator_unbound.go`) with ~573 lines total. Initial estimate: 200-300 lines savings.
+Problem statement: Four iterator implementations (`matcher_iterator_reusing.go`, `matcher_iterator_nonreusing.go`, `matcher_iterator_unbound.go`) with ~573 lines total. Initial estimate: 200-300 lines savings. *(As written: the count says four and the list names three. Superseded 2026-07-26 — `matcher_iterator_reusing.go` was deleted in v0.15.0, so the consolidation question is moot for the two that remain.)*
 
 Analysis revealed these are **different iteration strategies**, not duplicated code:
 - `unboundIterator`: Simple scan, no bindings

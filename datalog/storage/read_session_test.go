@@ -40,6 +40,55 @@ func countSessionEntity(t *testing.T, r StoreReader, e datalog.Identity) int {
 	return count
 }
 
+// TestReadSessionVBoundRunExcludesValueExtensions pins the membership rule on
+// the read-session path.
+//
+// TestStoreBackendVBoundRunExcludesValueExtensions pins the same rule, but it
+// calls the store's own Scan/ScanKeysOnly and so reaches MemoryStore.scan and
+// BadgerStore's iterator constructor. The sessions carry their own copy of the
+// membership assignment; deleting the one in read_session_memory.go leaves the
+// store-path test green and only the wasm leg red. This closes that gap on both
+// legs and both backends.
+func TestReadSessionVBoundRunExcludesValueExtensions(t *testing.T) {
+	for _, testCase := range storeContractCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := testCase.open(t, &BinaryKeyEncoder{})
+			defer store.Close()
+
+			attr := datalog.NewKeyword(":session/tag")
+			short := datalog.NewIdentity("session:short")
+			long := datalog.NewIdentity("session:long")
+			require.NoError(t, store.Assert([]datalog.Datom{
+				{E: short, A: attr, V: "abc", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: long, A: attr, V: "abcd", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+			}))
+
+			session, err := store.NewReadSession()
+			require.NoError(t, err)
+			defer session.Close()
+
+			// "abcd" sorts inside the byte range for "abc"; only the length
+			// test separates them, and only if the session applied it.
+			iter, err := session.ScanKeysOnly(ScanBound{
+				Index:  AVET,
+				Prefix: []datalog.Value{attr, "abc"},
+			})
+			require.NoError(t, err)
+			defer iter.Close()
+
+			var got []datalog.Identity
+			for iter.Next() {
+				datom, err := iter.Datom()
+				require.NoError(t, err)
+				got = append(got, datom.E)
+			}
+			require.NoError(t, iter.Error())
+			require.Equal(t, []datalog.Identity{short}, got,
+				"the session's run must hold only the datom carrying the bound value")
+		})
+	}
+}
+
 func TestReadSessionSnapshotIsolation(t *testing.T) {
 	for _, testCase := range storeContractCases() {
 		t.Run(testCase.name, func(t *testing.T) {

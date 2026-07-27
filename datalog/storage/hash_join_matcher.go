@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
@@ -188,6 +189,7 @@ func (m *PatternMatcher) matchWithHashJoin(
 		iter:            resolvedIter,
 		workspace:       make(executor.Tuple, len(symbols)),
 		tupleBuilder:    m.getTupleBuilder(pattern, symbols),
+		scanStart:       time.Now(),
 	}
 
 	// Return streaming relation
@@ -605,8 +607,9 @@ type hashJoinIterator struct {
 	tupleBuilder    *query.InternedTupleBuilder
 	current         executor.Tuple
 	workspace       executor.Tuple // Reusable workspace for tuple building
-	datomsScanned   int            // Track number of datoms scanned for event reporting
+	datomsResolved  int            // Track number of datoms scanned for event reporting
 	matchesFound    int            // Track number of matches for event reporting
+	scanStart       time.Time      // When the scan opened; the completion event's duration
 	err             error          // First error from storage operations
 }
 
@@ -619,7 +622,7 @@ func (it *hashJoinIterator) Next() bool {
 		}
 
 		// Count every datom scanned for performance monitoring
-		it.datomsScanned++
+		it.datomsResolved++
 
 		// Check transaction validity
 		if it.matcher.shouldFilterTx(datom.Tx) {
@@ -672,15 +675,20 @@ func (it *hashJoinIterator) Tuple() executor.Tuple {
 func (it *hashJoinIterator) Close() error {
 	// Emit event with scan statistics for performance monitoring
 	// ONLY emit if we actually scanned datoms (avoid emitting on unused iterators)
-	if it.matcher.handler != nil && it.datomsScanned > 0 {
+	if it.matcher.handler != nil && it.datomsResolved > 0 {
+		// Start and Latency are what Database.Analyze sums per event name;
+		// without them every hash-join scan reports as 0 ms.
 		it.matcher.handler(annotations.Event{
-			Name: "pattern/hash-join-complete",
+			Name:    "pattern/hash-join-complete",
+			Start:   it.scanStart,
+			Latency: time.Since(it.scanStart),
 			Data: map[string]interface{}{
-				"pattern":        it.patternString,
-				"index":          it.index.String(),
-				"binding.size":   it.bindingKeyCount,
-				"datoms.scanned": it.datomsScanned,
-				"matches.found":  it.matchesFound,
+				"pattern":         it.patternString,
+				"index":           it.index.String(),
+				"binding.size":    it.bindingKeyCount,
+				"datoms.scanned":  it.iter.Scanned(),
+				"datoms.resolved": it.datomsResolved,
+				"matches.found":   it.matchesFound,
 			},
 		})
 	}

@@ -114,11 +114,10 @@ func TestAEVTMatcherBug(t *testing.T) {
 	for i, event := range events {
 		t.Logf("Event %d: %s - %+v", i, event.Name, event.Data)
 
-		// Check iterator-reuse-complete, multi-match, and hash-join-complete events
-		if event.Name == "pattern/iterator-reuse-complete" ||
-			event.Name == "pattern/multi-match" ||
-			event.Name == "pattern/hash-join-complete" {
-			if scanned, ok := event.Data["datoms.scanned"].(int); ok {
+		// pattern/hash-join-complete is the only completion event a binding-driven
+		// scan produces; it carries the scan statistics this test reads.
+		if event.Name == "pattern/hash-join-complete" {
+			if scanned, ok := event.Data["datoms.resolved"].(int); ok {
 				datomsScanned = scanned
 			}
 			if idx, ok := event.Data["index"].(string); ok {
@@ -139,14 +138,9 @@ func TestAEVTMatcherBug(t *testing.T) {
 		t.Errorf("Expected AETV index (CRDT-aware A-primary), got %s", indexUsed)
 	}
 
-	// PERFORMANCE TEST: With HashJoinScan strategy, we scan all :person/age datoms (10)
-	// but probe hash set for matches. This is faster than IndexNestedLoop's 3 seeks
-	// because IndexNestedLoop calls Sorted() which adds massive overhead.
-	//
-	// Benchmarks show:
-	//   - Size 3: IndexNestedLoop 2298µs vs HashJoinScan 203µs (11.3× faster)
-	//
-	// So even though HashJoinScan scans more datoms (10 vs 3), the total time is faster.
+	// With HashJoinScan we scan all :person/age datoms (10) and probe the hash
+	// set for matches, rather than seeking once per binding. The scan count is
+	// therefore the attribute's size, not the binding count.
 	expectedScans := 10 // All :person/age datoms
 	tolerance := 5      // Allow some overhead
 

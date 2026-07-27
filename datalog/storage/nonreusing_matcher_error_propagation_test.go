@@ -31,6 +31,7 @@ import (
 // the loss site is specifically the deferred Error() channel.
 type deferredErrorScan struct {
 	remaining int
+	scanned   int
 	err       error
 	closed    bool
 }
@@ -38,6 +39,7 @@ type deferredErrorScan struct {
 func (it *deferredErrorScan) Next() bool {
 	if it.remaining > 0 {
 		it.remaining--
+		it.scanned++
 		return true
 	}
 	return false
@@ -47,6 +49,7 @@ func (it *deferredErrorScan) Close() error                   { it.closed = true;
 func (it *deferredErrorScan) Seek(bound ScanBound)           {}
 func (it *deferredErrorScan) ElementID() datalog.ElementID   { return datalog.ElementID{} }
 func (it *deferredErrorScan) Error() error                   { return it.err }
+func (it *deferredErrorScan) Scanned() int                   { return it.scanned }
 
 var _ Iterator = (*deferredErrorScan)(nil)
 

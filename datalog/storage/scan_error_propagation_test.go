@@ -20,6 +20,7 @@ func (it *deferredErrorIterator) Close() error                   { return nil }
 func (it *deferredErrorIterator) Seek(bound ScanBound)           {}
 func (it *deferredErrorIterator) ElementID() datalog.ElementID   { return datalog.ElementID{} }
 func (it *deferredErrorIterator) Error() error                   { return it.err }
+func (it *deferredErrorIterator) Scanned() int                   { return 0 }
 
 // indexScanOverrideStore delegates to a real store but substitutes the
 // iterator returned by ScanKeysOnly for one index — models a failing scan on
@@ -63,6 +64,15 @@ func (it *datomErrorIterator) Close() error                   { return nil }
 func (it *datomErrorIterator) Seek(bound ScanBound)           {}
 func (it *datomErrorIterator) ElementID() datalog.ElementID   { return datalog.ElementID{} }
 func (it *datomErrorIterator) Error() error                   { return nil }
+
+// Scanned reports the one position Next yields, so the fake's intake matches
+// what it actually handed out rather than reporting a flat zero.
+func (it *datomErrorIterator) Scanned() int {
+	if it.stepped {
+		return 1
+	}
+	return 0
+}
 
 // scanFailureShapes returns the two failure shapes every scan loop must
 // surface: a sticky deferred error (failed scan presenting as exhausted) and

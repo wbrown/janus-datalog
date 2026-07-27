@@ -42,7 +42,7 @@ func TestJoinStrategySelection(t *testing.T) {
 			bindingSize:        2,
 			patternCardinality: 1000,
 			expectedStrategy:   HashJoinScan,
-			reason:             "bindingSize ≤ 1000 (Sorted() overhead makes IndexNestedLoop slow even for tiny sets)",
+			reason:             "bindingSize ≤ 1000, below the merge-join crossover",
 		},
 		{
 			name:               "small set uses hash join",

@@ -54,32 +54,39 @@ func TestScanBoundEndIsTheExclusiveSuccessor(t *testing.T) {
 // the same defect, on the default path with no options set: a query for one
 // value must not return entities carrying a different value.
 func TestScanBoundOnNegativeLongDoesNotMatchItsNeighbour(t *testing.T) {
-	s, err := schema.NewBuilder().
-		Attribute(":person/count").Type(schema.TypeLong).Many().Add().
-		Build()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":person/count").Type(schema.TypeLong).Many().Add().
+				Build()
+			require.NoError(t, err)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), Schema: s})
-	require.NoError(t, err)
-	defer db.Close()
+			opts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path: t.TempDir(), Schema: s, PlannerOptions: &opts,
+			})
+			require.NoError(t, err)
+			defer db.Close()
 
-	count := datalog.NewKeyword(":person/count")
-	negative := datalog.NewIdentity("person:negative")
-	positive := datalog.NewIdentity("person:positive")
+			count := datalog.NewKeyword(":person/count")
+			negative := datalog.NewIdentity("person:negative")
+			positive := datalog.NewIdentity("person:positive")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(negative, count, int64(-1)))
-	require.NoError(t, tx.Add(positive, count, int64(7)))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(negative, count, int64(-1)))
+			require.NoError(t, tx.Add(positive, count, int64(7)))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	result, err := db.Query(`[:find ?e :where [?e :person/count -1]]`)
-	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
-	require.NoError(t, err)
+			result, err := db.Query(`[:find ?e :where [?e :person/count -1]]`)
+			require.NoError(t, err)
+			rows, err := executor.CollectTuples(result, nil)
+			require.NoError(t, err)
 
-	require.Len(t, rows, 1, "only the entity holding -1 matches; got %v", rows)
-	require.True(t, rows[0][0].(datalog.Identity).Equal(negative))
+			require.Len(t, rows, 1, "only the entity holding -1 matches; got %v", rows)
+			require.True(t, rows[0][0].(datalog.Identity).Equal(negative))
+		})
+	}
 }
 
 // TestScanBoundOnStringDoesNotMatchItsExtension pins the second half of the
@@ -89,35 +96,43 @@ func TestScanBoundOnNegativeLongDoesNotMatchItsNeighbour(t *testing.T) {
 // end key separates them — and the AVET consumers never re-compare datom.V.
 //
 // Unlike the successor defect above this predates the typed bound: the byte
-// form was already [A][type][value] with the same exclusive end. The typed
-// bound inherits it, and the doc comment on ScanBound asserting that a bound
-// names a contiguous run of exactly the bound values is wrong for a
-// variable-length V until it is fixed.
+// form was already [A][type][value] with the same exclusive end, and the typed
+// bound inherits it. No pair of endpoints can be made exact, so the store
+// narrows instead — EncodedRun carries a membership rule on key length, and
+// ScanBound's contract states that narrowing as the backend's obligation
+// rather than claiming the range already meets it.
 func TestScanBoundOnStringDoesNotMatchItsExtension(t *testing.T) {
-	s, err := schema.NewBuilder().
-		Attribute(":person/tag").Type(schema.TypeString).Many().Add().
-		Build()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":person/tag").Type(schema.TypeString).Many().Add().
+				Build()
+			require.NoError(t, err)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), Schema: s})
-	require.NoError(t, err)
-	defer db.Close()
+			opts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path: t.TempDir(), Schema: s, PlannerOptions: &opts,
+			})
+			require.NoError(t, err)
+			defer db.Close()
 
-	tag := datalog.NewKeyword(":person/tag")
-	short := datalog.NewIdentity("person:short")
-	long := datalog.NewIdentity("person:long")
+			tag := datalog.NewKeyword(":person/tag")
+			short := datalog.NewIdentity("person:short")
+			long := datalog.NewIdentity("person:long")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(short, tag, "abc"))
-	require.NoError(t, tx.Add(long, tag, "abcd"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(short, tag, "abc"))
+			require.NoError(t, tx.Add(long, tag, "abcd"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	result, err := db.Query(`[:find ?e :where [?e :person/tag "abc"]]`)
-	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
-	require.NoError(t, err)
+			result, err := db.Query(`[:find ?e :where [?e :person/tag "abc"]]`)
+			require.NoError(t, err)
+			rows, err := executor.CollectTuples(result, nil)
+			require.NoError(t, err)
 
-	require.Len(t, rows, 1, `only the entity tagged "abc" matches; got %v`, rows)
-	require.True(t, rows[0][0].(datalog.Identity).Equal(short))
+			require.Len(t, rows, 1, `only the entity tagged "abc" matches; got %v`, rows)
+			require.True(t, rows[0][0].(datalog.Identity).Equal(short))
+		})
+	}
 }

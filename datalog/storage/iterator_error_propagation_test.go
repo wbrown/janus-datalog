@@ -56,6 +56,15 @@ func (it *failingIterator) Seek(bound ScanBound)         {}
 func (it *failingIterator) ElementID() datalog.ElementID { return datalog.ElementID{} }
 func (it *failingIterator) Error() error                 { return it.err }
 
+// Scanned reports the positions Next has yielded — index counts advances, and
+// the last one may be past the end, so cap at what the fake actually holds.
+func (it *failingIterator) Scanned() int {
+	if it.index > len(it.datoms) {
+		return len(it.datoms)
+	}
+	return it.index
+}
+
 // TestIterator_ErrorPropagationContract locks in the Iterator interface
 // contract: Error() returns the first error encountered. Implementations
 // that track errors surface them; implementations that can't error

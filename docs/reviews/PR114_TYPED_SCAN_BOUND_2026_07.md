@@ -244,7 +244,14 @@ it changes nothing a backend must implement, since `Encoder()` remains on
 
 ### E3. The deleted per-attribute freshness path is present tense in nine places
 
-**Status**: Resolved (2026-07-26). No Go file mentions the path. Two stale
+**Status**: Resolved (2026-07-26), **but this status overclaimed when written and
+was corrected on re-review** — see round 2, R13. It said no Go file mentioned the
+path while `database.go:292` still listed "Attribute-level version tracking for
+freshness checks" among what `WarmCache` populates, and `READ_PATH.md:379` still
+showed the byte-range `ScanKeysOnly`. Both are corrected now; the claim below is
+true as of the round-2 remediation, not as of the date it was first written.
+
+Two stale
 comments in `cache.go`, three test comments justifying live tests by a dead
 consumer, and the reference doc's per-attribute diagram, code block and rationale
 are corrected; `PERFORMANCE_STATUS.md` §16 and the `TODO.md` entry are amended in
@@ -269,19 +276,30 @@ A further fourteen test comments carry the old name; the review's list is a subs
 
 ### E5. Ledger item 29 attributes PR A to a SHA not on the branch
 
-**Status**: Resolved (2026-07-26). The entry cites PR #114 rather than a SHA, per
-this finding's own advice: no SHA written inside a branch can be its delivered
-head.
+**Status**: Not a defect in the ledger; **this status was wrong** — see round 2,
+S2. It claimed the entry cites PR #114 rather than a SHA. `DECISION_LEDGER.md:68`
+still reads "PR A executed (`53caf46`, …)", and correctly so: the ledger's
+convention at `:3` is amend rather than rewrite, so the withdrawal in the
+amendment paragraph at `:70` *is* the correction, and the original text stays as
+the record of what was claimed. The finding was addressed; the status describing
+how was the inaccurate part.
 **Site**: `docs/wip/DECISION_LEDGER.md:68`
 
 The entry reads "PR A executed (`53caf46`, branch `feat/typed-bound-scan-seam`)". `53caf46` was amended into `566e806` when the docs were folded in; no commit on the branch carries that SHA. The entry ships **inside** the branch it records, so no SHA written there can be the delivered head. Name the PR, or a merge commit, or nothing.
 
 ### E6. `BUG_IMPORT_LEAVES_STALE_CACHE_ENTRIES` citations drifted and its notification list is incomplete
 
-**Status**: Resolved (2026-07-26). Cited by enclosing function rather than line —
-this finding's own lesson. The notification surface is four methods, not three:
-the missing one was `UpdateMaxVersion`, the only call that advances
-`slot.version` and therefore the only one whose absence produces the bug.
+**Status**: Resolved (2026-07-26), **twice overclaimed when written and corrected
+on re-review** — see round 2, R16 and S3. Two citations at `:60-61` were left as
+line numbers (`database.go:2796`, `:2819`) and had drifted to `:2769` and `:2792`;
+`:2819` had landed inside `resolveAttributeViaMatcher`, a different function from
+the one the sentence named. And the surface is **five** methods, not four: the
+status said "every call inside `Transaction.Commit`", which excludes
+`Cache.InvalidateRewind`, called from `Database.TruncateTo` — the one notifier
+that retreats the version high-water, and one the same document already named two
+sections lower. Both are corrected now. A finding whose own lesson is "cite by
+enclosing function" shipped a status that cited lines and then drifted; that is
+the lesson failing on itself, not a clerical slip.
 **Site**: `docs/bugs/BUG_IMPORT_LEAVES_STALE_CACHE_ENTRIES.md:23-24`, `:55-56`
 
 Cited `database.go:2287`, `:2351`, `:2357`; actual `:2265`, `:2329`, `:2335` — off by 22 on all three. The document's claim that "the complete notification surface is three calls" omits `Cache.UpdateMaxVersion` (`database.go:2305`, `:2320`), which the review identifies as the only call that advances `slot.version`.

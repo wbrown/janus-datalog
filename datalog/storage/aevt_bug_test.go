@@ -121,27 +121,21 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 			t.Logf("Total events captured: %d", len(events))
 
 			var indexUsed string
-			var datomsScanned int
-
 			for i, event := range events {
 				t.Logf("Event %d: %s - Data: %+v", i, event.Name, event.Data)
 
-				// Check multiple event types for index and scan info
-				if event.Name == "pattern/iterator-reuse" ||
-					event.Name == "pattern/multi-match" ||
-					event.Name == "pattern/index-selection" ||
-					event.Name == "pattern/match-with-bindings" {
+				// pattern/index-selection is the only one of the four names this
+				// loop used to check that has a producer, and it names the index
+				// rather than counting datoms — so the count read here never
+				// found its key and accumulated zero.
+				if event.Name == "pattern/index-selection" {
 					if idx, ok := event.Data["index"].(string); ok {
 						indexUsed = idx
-					}
-					if scanned, ok := event.Data["datoms.scanned"].(int); ok {
-						datomsScanned += scanned // Accumulate across multiple events
 					}
 				}
 			}
 
 			t.Logf("Index used: %s", indexUsed)
-			t.Logf("Datoms scanned: %d", datomsScanned)
 			t.Logf("Entities bound: 3")
 			t.Logf("Total datoms in DB: 50")
 

@@ -18,9 +18,11 @@ though storage holds a newer datom that wins CRDT resolution.
 Cache freshness is `slot.entry.version == slot.version` (`cache.go`,
 `GetOrResolve`). That is a **write-notification** design: `slot.version`
 advances only when a writer tells the cache. The complete production
-notification surface is four methods, every call inside `Transaction.Commit`
-(cited by enclosing function — an earlier revision of this document cited line
-numbers, and they had drifted by 22 within a month):
+notification surface is five methods (cited by enclosing function — earlier
+revisions of this document cited line numbers twice, and both times they had
+drifted within a month):
+
+Four are called from `Transaction.Commit`:
 
 - `Cache.UpdateMaxVersion` — twice, once per cardinality arm. **This is the only
   call that advances `slot.version`**, and therefore the only one whose absence
@@ -29,6 +31,14 @@ numbers, and they had drifted by 22 within a month):
   clear in-flight sentinels. Drops the entry and *keeps* `slot.version`.
 - `Cache.InvalidateAttribute` — for schema-affecting writes.
 - `Cache.BeginInFlight` — opens the uncached window before the write lands.
+
+The fifth is not on the commit path at all:
+
+- `Cache.InvalidateRewind` — called from `Database.TruncateTo`, on both the
+  success and failure paths. A rewind *retreats* the version high-water, which
+  monotonic `UpdateMaxVersion` cannot express, so it drops cached state outright.
+  Any survey of "who notifies the cache" that starts from `Transaction.Commit`
+  misses it, which is the same open-world hazard this bug is an instance of.
 
 (`Cache.Clear` has no production callers.) Invalidation is driven off
 `t.datoms` / `t.retracts`, the transaction's own buffer.
@@ -57,8 +67,9 @@ Reproduced against `MemoryStore` (see below):
   an (E, A) the winner — no query path involved, so the assertion isolates the
   layer.
 - `Database.ResolveEntityAttributes` returns the pre-import value. It routes
-  every attribute through `d.cache.GetOrResolve` (`database.go:2796`,
-  `database.go:2819`), so it is unambiguously the cache path.
+  every attribute through `d.cache.GetOrResolve` — twice, once for the
+  already-cached arm and once for the missing-attribute loop — so it is
+  unambiguously the cache path.
 
 ## What was not established
 

@@ -181,83 +181,6 @@ func (f *OutputFormatter) Format(event Event) string {
 			f.colorizeCount("relations", event.Data["relation.count"].(int)),
 			f.colorizeCount("tuples", event.Data["tuple.count"].(int)))
 
-	case "pattern/multi-match":
-		pattern := event.Data["pattern"].(string)
-		bindingTuples := event.Data["binding.tuples"].(int)
-		bindingSymbols := event.Data["binding.symbols"].([]string)
-		totalMatches := event.Data["match.total"].(int)
-		scansPerformed := event.Data["scans.performed"].(int)
-		datomsScanned := event.Data["datoms.scanned"].(int)
-
-		// Format the binding relation
-		bindingRelStr := f.renderer.RenderRelationWithAttrs(bindingSymbols, bindingTuples)
-
-		// Format like: MultiMatch([pattern]) with binding Relation → Y tuples (Z scans, W datoms)
-		var matchStr string
-		if f.useColor {
-			matchStr = fmt.Sprintf("%s%s%s",
-				color.BlueString("MultiMatch(["),
-				color.CyanString(pattern),
-				color.BlueString(")"))
-		} else {
-			matchStr = fmt.Sprintf("MultiMatch([%s])", pattern)
-		}
-
-		if f.useColor {
-			arrow := color.YellowString(" → ")
-			scanInfo := color.RedString(fmt.Sprintf(" (%d scans, %d datoms scanned)", scansPerformed, datomsScanned))
-			return fmt.Sprintf("%s %s with binding %s%s%s%s",
-				latency,
-				matchStr,
-				bindingRelStr,
-				arrow,
-				f.colorizeCount("tuples", totalMatches),
-				scanInfo)
-		}
-
-		return fmt.Sprintf("%s %s with binding %s → %d tuples (%d scans, %d datoms scanned)",
-			latency, matchStr, bindingRelStr, totalMatches, scansPerformed, datomsScanned)
-
-	case "pattern/multi-match-filter":
-		pattern := event.Data["pattern"].(string)
-		primarySymbol := event.Data["primary.symbol"].(string)
-		primaryCount := event.Data["primary.count"].(int)
-		totalMatches := event.Data["match.total"].(int)
-
-		// Show all bindings if available
-		bindingsStr := fmt.Sprintf("%s=%d", primarySymbol, primaryCount)
-		if allBindings, ok := event.Data["all.bindings"].(map[string]int); ok && len(allBindings) > 1 {
-			var parts []string
-			for sym, count := range allBindings {
-				parts = append(parts, fmt.Sprintf("%s=%d", sym, count))
-			}
-			bindingsStr = fmt.Sprintf("{%s}", strings.Join(parts, ", "))
-		}
-
-		// Format like: MultiMatch([pattern]) with bindings {...} → Y tuples
-		var matchStr string
-		if f.useColor {
-			matchStr = fmt.Sprintf("%s%s%s",
-				color.BlueString("MultiMatch(["),
-				color.CyanString(pattern),
-				color.BlueString(")"))
-		} else {
-			matchStr = fmt.Sprintf("MultiMatch([%s])", pattern)
-		}
-
-		if f.useColor {
-			arrow := color.YellowString(" → ")
-			return fmt.Sprintf("%s %s with bindings %s%s%s",
-				latency,
-				matchStr,
-				bindingsStr,
-				arrow,
-				f.colorizeCount("tuples", totalMatches))
-		}
-
-		return fmt.Sprintf("%s %s with bindings %s → %d tuples",
-			latency, matchStr, bindingsStr, totalMatches)
-
 	case MatchesToRelations:
 		pattern := event.Data["pattern"].(string)
 		matchCount := event.Data["match.count"].(int)
@@ -312,7 +235,17 @@ func (f *OutputFormatter) Format(event Event) string {
 		// duration is the line's latency prefix, carried on the event like
 		// every other timed event's; there is no separate duration field.
 		pattern := event.Data["pattern"].(string)
-		datoms := event.Data["datoms.scanned"].(int)
+		datoms := event.Data["datoms.resolved"].(int)
+
+		// Intake is appended only when it exceeds what came out. A bound that
+		// narrowed and a bound that did nothing produce the same line
+		// otherwise, which is the reading this count exists to prevent; a scan
+		// that returned everything it read stays one number.
+		scanned, _ := event.Data["datoms.scanned"].(int)
+		amplification := ""
+		if scanned > datoms {
+			amplification = fmt.Sprintf(" (%d scanned)", scanned)
+		}
 
 		// Use stored index info if available. An empty bound means no
 		// index-selection event preceded this scan, which is different from a
@@ -341,14 +274,15 @@ func (f *OutputFormatter) Format(event Event) string {
 
 		if f.useColor {
 			arrow := color.YellowString(" → ")
-			return fmt.Sprintf("%s %s%s%s",
+			return fmt.Sprintf("%s %s%s%s%s",
 				latency,
 				scanStr,
 				arrow,
-				f.colorizeCount("datoms", datoms))
+				f.colorizeCount("datoms", datoms),
+				color.RedString(amplification))
 		}
 
-		return fmt.Sprintf("%s %s → %d datoms", latency, scanStr, datoms)
+		return fmt.Sprintf("%s %s → %d datoms%s", latency, scanStr, datoms, amplification)
 
 	case PatternFiltering:
 		// Skip - filtering info is redundant with Pattern output
@@ -357,134 +291,6 @@ func (f *OutputFormatter) Format(event Event) string {
 	case PatternToRelation:
 		// Skip - convert info is redundant
 		return ""
-
-	case "pattern/match":
-		// Format pattern match with result information
-		pattern := event.Data["pattern"].(string)
-		matchCount := 0
-		if count, ok := event.Data["match.count"].(int); ok {
-			matchCount = count
-		}
-
-		// Build symbol list if available
-		var symbols []string
-		if syms, ok := event.Data["symbol.order"].([]string); ok {
-			symbols = syms
-		}
-
-		// Format as Pattern(...) → Relation([symbols], count)
-		var patternStr string
-		if f.useColor {
-			patternStr = fmt.Sprintf("%s%s%s",
-				color.BlueString("Pattern("),
-				color.CyanString(pattern),
-				color.BlueString(")"))
-		} else {
-			patternStr = fmt.Sprintf("Pattern(%s)", pattern)
-		}
-
-		relationStr := f.renderer.RenderRelationWithAttrs(symbols, matchCount)
-
-		if f.useColor {
-			arrow := color.YellowString(" → ")
-			return fmt.Sprintf("%s %s%s%s", latency, patternStr, arrow, relationStr)
-		}
-
-		return fmt.Sprintf("%s %s → %s", latency, patternStr, relationStr)
-
-	case "pattern/match-with-bindings":
-		// Format pattern match that has input bindings
-		pattern := event.Data["pattern"].(string)
-		bindingSyms := event.Data["binding.symbols"].([]string)
-		bindingSize := event.Data["binding.size"].(int)
-
-		// Format the binding relation
-		bindingRelStr := f.renderer.RenderRelationWithAttrs(bindingSyms, bindingSize)
-
-		// Format as Pattern(...) with binding Relation([symbols], N tuples)
-		var patternStr string
-		if f.useColor {
-			patternStr = fmt.Sprintf("%s%s%s %s %s",
-				color.BlueString("Pattern("),
-				color.CyanString(pattern),
-				color.BlueString(")"),
-				"with binding",
-				bindingRelStr)
-		} else {
-			patternStr = fmt.Sprintf("Pattern(%s) with binding %s",
-				pattern, bindingRelStr)
-		}
-
-		return fmt.Sprintf("%s %s", latency, patternStr)
-
-	case "badger/match-with-bindings":
-		// Debug output to see if the store-backed PatternMatcher is being used
-		pattern := event.Data["pattern"].(string)
-		bindings := event.Data["bindings"].(int)
-		return fmt.Sprintf("%s PatternMatcher.MatchWithRelation([%s], %d bindings)",
-			latency, pattern, bindings)
-
-	case "expression/evaluate":
-		// Format as Expression(...) on X Tuples → X Tuples
-		expr := event.Data["expression"].(string)
-		inputSize := event.Data["input.size"].(int)
-		resultSize := event.Data["result.size"].(int)
-
-		var exprStr string
-		if f.useColor {
-			exprStr = fmt.Sprintf("%s%s%s",
-				color.BlueString("Expression("),
-				color.CyanString(expr),
-				color.BlueString(")"))
-		} else {
-			exprStr = fmt.Sprintf("Expression(%s)", expr)
-		}
-
-		if f.useColor {
-			arrow := color.YellowString(" → ")
-			return fmt.Sprintf("%s %s on %s%s%s",
-				latency,
-				exprStr,
-				f.colorizeCount("Tuples", inputSize),
-				arrow,
-				f.colorizeCount("Tuples", resultSize))
-		}
-
-		return fmt.Sprintf("%s %s on %d Tuples → %d Tuples",
-			latency, exprStr, inputSize, resultSize)
-
-	case "filter/predicate":
-		// Format as Predicate(...) on X Tuples → Y Tuples (filtered Z)
-		pred := event.Data["predicate"].(string)
-		inputSize := event.Data["input.size"].(int)
-		outputSize := event.Data["output.size"].(int)
-		filtered := event.Data["filtered"].(int)
-		selectivity := event.Data["selectivity"].(float64)
-
-		var predStr string
-		if f.useColor {
-			predStr = fmt.Sprintf("%s%s%s",
-				color.BlueString("Predicate("),
-				color.CyanString(pred),
-				color.BlueString(")"))
-		} else {
-			predStr = fmt.Sprintf("Predicate(%s)", pred)
-		}
-
-		if f.useColor {
-			arrow := color.YellowString(" → ")
-			filterInfo := color.RedString(fmt.Sprintf(" (filtered %d, %.1f%% selectivity)", filtered, selectivity*100))
-			return fmt.Sprintf("%s %s on %s%s%s%s",
-				latency,
-				predStr,
-				f.colorizeCount("Tuples", inputSize),
-				arrow,
-				f.colorizeCount("Tuples", outputSize),
-				filterInfo)
-		}
-
-		return fmt.Sprintf("%s %s on %d Tuples → %d Tuples (filtered %d, %.1f%% selectivity)",
-			latency, predStr, inputSize, outputSize, filtered, selectivity*100)
 
 	default:
 		// Generic format for unknown events

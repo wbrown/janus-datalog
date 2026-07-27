@@ -95,7 +95,7 @@ func TestPredicatePushdownTrace(t *testing.T) {
 
 	// Check if iterator reuse is actually happening
 	if strategy.Type == SinglePositionReuse {
-		t.Logf("Iterator reuse SHOULD be used (position %d, index %d)",
+		t.Logf("Iterator reuse SHOULD be used (position %d, index %s)",
 			strategy.Position, strategy.Index)
 	} else {
 		t.Logf("Iterator reuse NOT used - this explains the slowdown!")

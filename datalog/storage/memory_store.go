@@ -487,6 +487,9 @@ type memoryIterator struct {
 	index    IndexType
 	keys     [][]byte
 	position int
+	// scanned counts keys taken from the range, including the ones the
+	// membership rule then rejects — see Scanned.
+	scanned int
 	// membership decides which of the selected keys the current bound names,
 	// dropping the ones the range over-covers when a bound component is a
 	// variable-length V. Seek replaces it — a seek names a new run inside the
@@ -522,11 +525,17 @@ func (i *memoryIterator) Next() bool {
 		if i.position >= len(i.keys) {
 			return false
 		}
+		// Counted before the membership test, not after: a key the range
+		// covered and the bound rejected is still intake.
+		i.scanned++
 		if i.positioned() {
 			return true
 		}
 	}
 }
+
+// Scanned reports keys taken from the index inside this iterator's range.
+func (i *memoryIterator) Scanned() int { return i.scanned }
 
 func (i *memoryIterator) Key() []byte {
 	if !i.positioned() {

@@ -437,8 +437,8 @@ func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 
 // reusingWorkspaceIterator yields tuples by mutating a single shared
 // workspace slice — the standard storage-iterator pattern used in
-// matcher_iterator_reusing.go, matcher_iterator_nonreusing.go, and
-// hash_join_matcher.go (search for `BuildTupleInternedInto(datom, it.workspace)`).
+// matcher_iterator_nonreusing.go and hash_join_matcher.go (search for
+// `BuildTupleInternedInto(datom, it.workspace)`).
 // Callers that retain the result of Tuple() across Next() calls without
 // copying will see whatever values the most recent Next() wrote.
 //
@@ -498,7 +498,7 @@ func (it *reusingWorkspaceIterator) Error() error { return nil }
 // TestRelationInputParallel_HandlesWorkspaceReuseIterator: a streaming input
 // relation whose iterator reuses a single workspace slice across Next() calls
 // (the production-default storage-iterator pattern, used by
-// matcher_iterator_reusing.go and hash_join_matcher.go) must produce the
+// matcher_iterator_nonreusing.go and hash_join_matcher.go) must produce the
 // same multiset of results as a materialized input. Without a producer-side
 // copy, workers race against the producer's workspace overwrites — and
 // `go test -race` reports it as a data race on the workspace's backing

@@ -62,10 +62,19 @@ func componentOrder(index IndexType) ([componentsPerIndex]keyComponent, error) {
 	}
 }
 
-// ScanBound names a contiguous run of one index: the leading components of
-// that index's component order, each bound to a value. The k-th Prefix
-// element binds the k-th component of Index's order, so elements carry no
-// position tag of their own. An empty Prefix names the whole index.
+// ScanBound names the datoms of one index whose leading components — in that
+// index's component order — equal the bound's values. The k-th Prefix element
+// binds the k-th component of Index's order, so elements carry no position tag
+// of their own. An empty Prefix names the whole index.
+//
+// This is a logical set, not a byte range, and the difference is load-bearing
+// for any backend that projects the bound onto keys. A V payload carries no
+// length, so the keys for "abcd" sort inside the range for "abc" interleaved
+// with them, and no choice of endpoints separates the two. Narrowing to the
+// datoms the bound actually names is the backend's obligation, not the
+// caller's: a scan yields exactly these datoms, and how a backend achieves
+// that is not seam vocabulary. See EncodedRun and runMembership for how the
+// binary-key backends discharge it.
 //
 // Bound components are always leading components, never an interior selection.
 // Every index layout places Op last and AfterRef (when present) immediately

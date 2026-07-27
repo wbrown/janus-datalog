@@ -23,8 +23,8 @@ type unboundIterator struct {
 	workspace    executor.Tuple // Reusable workspace for tuple building
 
 	// Statistics tracking
-	datomsScanned int
-	datomsMatched int
+	datomsResolved int
+	datomsMatched  int
 
 	// Optimized tuple builder
 	tupleBuilder *query.InternedTupleBuilder
@@ -49,7 +49,7 @@ func (it *unboundIterator) Next() bool {
 			return false
 		}
 
-		it.datomsScanned++
+		it.datomsResolved++
 
 		// Check if datom matches pattern
 		if it.matcher.matchesDatom(datom, it.e, it.a, it.v, it.tx) {
@@ -81,17 +81,25 @@ func (it *unboundIterator) Tuple() executor.Tuple {
 func (it *unboundIterator) Error() error { return it.err }
 
 func (it *unboundIterator) Close() error {
-	// Emit scan statistics if handler is available
-	emitIteratorStatistics(
-		it.matcher.handler,
-		annotations.PatternStorageScan,
-		it.pattern,
-		it.index,
-		it.opened,
-		it.datomsScanned,
-		it.datomsMatched,
-		nil, // no extra data
-	)
+	if it.matcher.handler != nil {
+		// storageIter is assigned after the literal, so match the nil stance
+		// the Close below already takes rather than assume it is always set.
+		scanned := 0
+		if it.storageIter != nil {
+			scanned = it.storageIter.Scanned()
+		}
+		emitIteratorStatistics(
+			it.matcher.handler,
+			annotations.PatternStorageScan,
+			it.pattern,
+			it.index,
+			it.opened,
+			scanned,
+			it.datomsResolved,
+			it.datomsMatched,
+			nil, // no extra data
+		)
+	}
 
 	if it.storageIter != nil {
 		return it.storageIter.Close()

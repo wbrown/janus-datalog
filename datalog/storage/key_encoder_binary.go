@@ -151,8 +151,8 @@ func txFromDescending(encoded []byte) [16]byte {
 // component behind V in every index layout is fixed width, and Op — the last
 // byte of every key — says whether AfterRef is present, so a key's own length
 // determines where its V ended. DecodeKey recovers V from that arithmetic, and
-// a scan narrows a V-bound prefix range by the same arithmetic (ScanBound's run
-// predicate). A delimiter would buy exact byte ranges at the cost of the
+// a scan narrows a V-bound prefix range by the same arithmetic (EncodedRun's
+// membership rule). A delimiter would buy exact byte ranges at the cost of the
 // on-disk format.
 //
 // This is the only producer of a V run. A scan bound's V component goes through
@@ -406,10 +406,14 @@ func (e *BinaryKeyEncoder) EncodePrefix(index IndexType, parts ...[]byte) []byte
 	return result
 }
 
-// EncodeTxForPrefix encodes a Tx with bitwise NOT for use in prefix keys.
-// Use this when constructing scan ranges involving Tx (e.g., TAEV time-range queries).
-// Note: With bitwise NOT, higher Tx values encode to lower byte values,
-// so for a time range [low, high], the scan should be from encoded(high) to encoded(low).
+// EncodeTxForPrefix encodes a Tx with bitwise NOT — the form Tx takes inside a
+// key. Higher Tx values encode to lower byte values, so an index that orders Tx
+// yields newest first. encodeBoundComponent renders a bound's Tx component
+// through here, so a bound and the keys it addresses agree on the encoding.
+//
+// A ScanBound binds Tx to a value; it has no second endpoint. A caller wanting
+// a Tx *range* seeks to one end and walks with its own stop condition, as
+// pull_batch.go does.
 func (e *BinaryKeyEncoder) EncodeTxForPrefix(tx Tx) []byte {
 	result := txToDescending(tx)
 	return result[:]

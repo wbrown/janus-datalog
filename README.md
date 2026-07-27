@@ -684,13 +684,16 @@ Three consequences:
   NOT so the first key under each `(E, A)` prefix is the LWW winner.
   Reading the current value of an attribute is a single forward seek.
 
-The eighth index — **ATEV** (`[A][Tx↓][E][V]`) — exists for one job:
-the first key under any `[A]` prefix is the **global max-Tx datom for
-that attribute**. That gives O(1) (~1 µs) attribute-level cache
-freshness regardless of how many datoms exist under A — **555× faster
-than the prior approach at 10,000 datoms per attribute**. "Has this
-attribute been touched since I last looked?" is now a single seek
-instead of a scan.
+The eighth index — **ATEV** (`[A][Tx↓][E][V]`) — puts Tx↓ ahead of E, so
+an A-bound, Tx-bound, V-unbound pattern seeks straight to the
+transaction: AsOf-by-attribute scans, which is the job it does today.
+The same layout makes the first key under any `[A]` prefix the **global
+max-Tx datom for that attribute**, so "newest Tx anywhere under A" is
+one O(1) (~1 µs) seek regardless of how many datoms exist under A —
+**555× faster than scanning at 10,000 datoms per attribute**. The cache
+gate that consumed that high-water mark was removed in v0.15.0, never
+having been wired to a production caller; the index property is
+unaffected and a gate can be rebuilt on it.
 
 ### Explicit Error Handling
 
@@ -808,7 +811,7 @@ this number; the storage layer is designed for both.
 - **4.06× faster** iterator composition with 89% memory reduction
 - **2.22× faster** streaming execution with 52% memory reduction
 - **2.06× faster** parallel subquery execution (8 workers)
-- **555× faster** attribute-level cache freshness (ATEV index, 10K datoms/attr)
+- **555× faster** attribute high-water-mark seek (ATEV index, 10K datoms/attr)
 - **44 µs** for simple queries (e.g. attribute lookup, 1–3 patterns)
 - **21–27 ms** for complex 7-pattern queries with predicate pushdown (OHLC shape, persistent storage)
 - **2–4 s** for OHLC monthly-aggregation queries with 4 parallel subqueries
@@ -823,7 +826,7 @@ this number; the storage layer is designed for both.
 | Predicate pushdown | 1.58–2.78× | Filter at storage layer (scales with dataset size) |
 | Time-range scanning | 4× | Multi-range queries for OHLC data |
 | Parallel subqueries | 2.06× | Worker pool for concurrent execution |
-| ATEV attribute-freshness seek | 2.2× – 555× | O(1) cache-freshness gate; replaces an O(datoms-for-A) scan |
+| ATEV attribute high-water seek | 2.2× – 555× | O(1) newest-Tx-under-A seek; replaces an O(datoms-for-A) scan |
 | Conditional aggregate rewriting | 7.7× | Correlated aggregate subqueries — folded into the algebra optimizer |
 | Identity & Keyword interning | 6.26× | Pointer-equality joins; lock-free intern caches |
 | Value elimination (keys-only) | ~50% storage | Every datom field lives in the key; the value slot is empty |
@@ -908,7 +911,7 @@ Every fact is a datom. The entire database is just a collection of datoms with m
 | **VAET** | Reverse lookup (who references this entity?) |
 | **TAEV** | Time-based queries |
 
-The EATV, AETV, and ATEV indices store Tx with bitwise NOT for descending order, enabling O(1) current-value lookup (first entry = highest Tx = LWW winner). ATEV's `[A][Tx↓][E][V]` ordering also gives an O(1) "newest Tx anywhere for this attribute" seek — used as a cache-freshness gate. The query planner picks the best index based on which values are bound in your pattern.
+The EATV, AETV, and ATEV indices store Tx with bitwise NOT for descending order, enabling O(1) current-value lookup (first entry = highest Tx = LWW winner). ATEV's `[A][Tx↓][E][V]` ordering also gives an O(1) "newest Tx anywhere for this attribute" seek. The query planner picks the best index based on which values are bound in your pattern.
 
 ### Type System: Direct Go Types
 

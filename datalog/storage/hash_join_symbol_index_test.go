@@ -73,7 +73,6 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Force HashJoinScan by setting threshold to 0 (default behavior after fix)
 			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})

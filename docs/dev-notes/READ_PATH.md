@@ -376,7 +376,7 @@
          ↓
        chooseIndex() → EATV (E + A bound, V unbound)
          ↓
-       ScanKeysOnly(EATV, [E][A][Tx_min], [E][A][Tx_max])
+       ScanKeysOnly(ScanBound{Index: EATV, Prefix: []datalog.Value{e, a}})
          → Returns in descending Tx order (bitwise NOT encoding)
          ↓
        NewCRDTResolvingIterator(rawIter, schema, txID)

@@ -617,8 +617,8 @@ func newPerTupleInputBuilder(inputRelations []Relation, iterationIndex int, rela
 
 // perTupleInputSession is a workspace-reusable handle for repeated per-tuple
 // input-list builds, mirroring the BuildTupleInternedInto / it.workspace
-// pattern used by the storage iterators (matcher_iterator_reusing.go,
-// hash_join_matcher.go): all per-iteration state is pre-allocated, and each
+// pattern used by the storage iterators (hash_join_matcher.go): all
+// per-iteration state is pre-allocated, and each
 // step does an in-place update instead of an allocation.
 //
 // Pre-allocated once per worker:

@@ -11,7 +11,7 @@ import (
 
 // TestChooseIndexForValuesAVET verifies that AVET index scan ranges
 // are correctly narrowed when attribute and value are bound.
-// This was a bug where the AVET case was missing from chooseIndexForValues(),
+// This was a bug where the AVET case was missing from scanBoundForValues(),
 // causing full index scans instead of targeted lookups.
 func TestChooseIndexForValuesAVET(t *testing.T) {
 	for _, mode := range optimizerModes {
@@ -424,7 +424,7 @@ func TestChooseIndexForValuesAEVT(t *testing.T) {
 // TestChooseIndexForValuesAETV verifies that AETV index scan ranges
 // are correctly narrowed when attribute and/or entity are bound.
 // AETV is the A-primary CRDT-aware index (A → E → Tx↓ → V).
-// This test ensures chooseIndexForValues handles AETV properly.
+// This test ensures scanBoundForValues handles AETV properly.
 func TestChooseIndexForValuesAETV(t *testing.T) {
 	dir, err := os.MkdirTemp("", "choose-index-aetv-test-*")
 	if err != nil {
@@ -504,7 +504,7 @@ func TestChooseIndexForValuesAETV(t *testing.T) {
 	})
 
 	t.Run("AETV scan should not exceed attribute datom count", func(t *testing.T) {
-		// This test verifies the bug is fixed: without AETV case in chooseIndexForValues,
+		// This test verifies the bug is fixed: without AETV case in scanBoundForValues,
 		// it would scan ALL datoms in the index instead of just the attribute's datoms
 		attr := datalog.NewKeyword(":person/age")
 		iter, err := matcher.store.ScanKeysOnly(

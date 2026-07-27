@@ -492,6 +492,12 @@ func (it *CRDTResolvingIterator) Seek(bound ScanBound) {
 }
 
 // ElementID returns the transaction ElementID of the current entry.
+// Scanned delegates to the scan beneath it. Resolution reads no index of its
+// own — it consumes what the source produced — so the intake it reports is the
+// source's, and the gap between that and what resolution emitted is the
+// history depth the index made the query pay for.
+func (it *CRDTResolvingIterator) Scanned() int { return it.source.Scanned() }
+
 func (it *CRDTResolvingIterator) ElementID() datalog.ElementID {
 	if it.currentDatom != nil {
 		return it.currentDatom.Tx

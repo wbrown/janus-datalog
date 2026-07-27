@@ -592,8 +592,8 @@ func collectEntityIDs(result executor.Relation) []string {
 
 // TestMultiPositionWithStreamingBinding verifies that streaming relations work correctly
 // as binding inputs with multi-position binding. This tests the potential panic issue
-// where chooseBestMultiPositionStrategy iterates the relation, then matchWithIteratorReuse
-// tries to call Sorted() which needs Materialize().
+// where chooseBestMultiPositionStrategy iterates the relation, then the binding-driven
+// scan iterates it again — which a StreamingRelation refuses without Materialize().
 func TestMultiPositionWithStreamingBinding(t *testing.T) {
 	tempDir := t.TempDir()
 	db, err := NewDatabase(tempDir)

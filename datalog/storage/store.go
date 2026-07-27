@@ -74,6 +74,16 @@ type Store interface {
 	//
 	// CountKeys is likewise not on Store — it remains *BadgerStore-only
 	// (debug/test); see docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md.
+	//
+	// A scan yields EXACTLY the datoms whose bound components equal the
+	// ScanBound's values, and narrowing to them is the implementation's
+	// obligation. It is not free for a backend that projects the bound onto
+	// byte keys: a V payload carries no length, so the keys for "abcd" sort
+	// inside the range for "abc" interleaved with them and no endpoints
+	// separate the two — the in-tree stores narrow by key length (EncodedRun,
+	// runMembership). A backend comparing typed components directly has no such
+	// gap. Returning everything inside a range returns datoms the caller did not
+	// ask for, and no test above this seam will say so.
 	Scan(bound ScanBound) (Iterator, error)
 	ScanKeysOnly(bound ScanBound) (Iterator, error)
 	DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error)
@@ -143,6 +153,21 @@ type Iterator interface {
 	// propagate from their inner iterator (return the first non-nil
 	// between the outer's own error and inner.Error()).
 	Error() error
+
+	// Scanned reports how many datoms this iterator has taken in from the
+	// index so far — intake, before any narrowing this iterator performs.
+	// A key the bound's membership rule rejects is counted: the range covered
+	// it and the scan paid to look at it.
+	//
+	// This is what makes narrowing auditable. Against the consumer's own count
+	// of what survived, the ratio is the amplification the index charged, and
+	// it is the only way to see whether a bound narrowed anything. Required
+	// rather than optional for that reason: an absent count is indistinguishable
+	// from a scan that read nothing and from instrumentation that was never
+	// wired, which is the failure this seam's annotations exist to prevent.
+	//
+	// Wrapping iterators delegate — a wrapper reads no index of its own.
+	Scanned() int
 }
 
 // StoreTx represents a storage transaction

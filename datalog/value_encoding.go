@@ -155,7 +155,8 @@ func decodeOrderedFloat64(data []byte) float64 {
 // from the tag alone. It does not, for the string-shaped and compressed types,
 // whose payload is as long as the value is — which is why a byte range whose
 // last bound component is such a V is a prefix range rather than an exact one,
-// and why a scan narrows it by key length (see ScanBound's run predicate).
+// and why a scan narrows it by key length (see storage.EncodedRun's membership
+// rule).
 //
 // Panics on an unclassified tag: a value type added without a decision here
 // would otherwise silently pick a width and mis-measure every key holding it.

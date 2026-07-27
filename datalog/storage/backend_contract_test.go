@@ -474,6 +474,14 @@ func TestStoreBackendVBoundRunExcludesValueExtensions(t *testing.T) {
 			rgaLong := datalog.NewIdentity("run:rga-long")
 			raw := datalog.NewIdentity("run:raw")
 			rawLong := datalog.NewIdentity("run:raw-long")
+			// Keyword and Symbol are variable-width too — PayloadIsFixedWidth
+			// classifies both false, and their payload is []byte(String()), so
+			// :status/act is a byte prefix of :status/active exactly as "abc"
+			// is of "abcd".
+			kw := datalog.NewIdentity("run:kw")
+			kwLong := datalog.NewIdentity("run:kw-long")
+			sym := datalog.NewIdentity("run:sym")
+			symLong := datalog.NewIdentity("run:sym-long")
 
 			tx := func(l uint64) datalog.ElementID {
 				return datalog.ElementID{Lamport: l, ReplicaID: 1}
@@ -490,6 +498,10 @@ func TestStoreBackendVBoundRunExcludesValueExtensions(t *testing.T) {
 					Op: datalog.OpRGAInsert, AfterRef: after},
 				{E: raw, A: other, V: []byte("xy"), Tx: tx(6)},
 				{E: rawLong, A: other, V: []byte("xyz"), Tx: tx(7)},
+				{E: kw, A: attr, V: datalog.NewKeyword(":status/act"), Tx: tx(8)},
+				{E: kwLong, A: attr, V: datalog.NewKeyword(":status/active"), Tx: tx(9)},
+				{E: sym, A: attr, V: datalog.NewSymbol("run"), Tx: tx(10)},
+				{E: symLong, A: attr, V: datalog.NewSymbol("running"), Tx: tx(11)},
 			}))
 
 			for _, run := range []struct {
@@ -515,6 +527,12 @@ func TestStoreBackendVBoundRunExcludesValueExtensions(t *testing.T) {
 				{"EAVT/value-belongs-to-another-entity", ScanBound{Index: EAVT,
 					Prefix: []datalog.Value{long, attr, "abc"}},
 					nil},
+				{"AVET/keyword", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{attr, datalog.NewKeyword(":status/act")}},
+					[]datalog.Identity{kw}},
+				{"AVET/symbol", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{attr, datalog.NewSymbol("run")}},
+					[]datalog.Identity{sym}},
 			} {
 				t.Run(run.name, func(t *testing.T) {
 					iter, err := store.ScanKeysOnly(run.bound)
@@ -530,6 +548,93 @@ func TestStoreBackendVBoundRunExcludesValueExtensions(t *testing.T) {
 					require.NoError(t, iter.Error())
 					require.ElementsMatch(t, run.want, got,
 						"the run must hold exactly the datoms carrying the bound value")
+				})
+			}
+		})
+	}
+}
+
+// TestStoreBackendCompressedVBoundRun covers the two variable-width value types
+// the plain V-bound parity test cannot reach. TypeCompressedString and
+// TypeCompressedBytes exist only when the encoder carries a compression
+// threshold, and that test opens its store with the zero-threshold encoder, so
+// its strings and bytes stay uncompressed.
+//
+// PayloadIsFixedWidth classifies both compressed types false, so both take the
+// inexact arm and rest on the same key-length arithmetic. Getting that
+// arithmetic wrong for a compressed value fails closed — every key is excluded
+// and the scan returns nothing — which is what these assertions catch.
+func TestStoreBackendCompressedVBoundRun(t *testing.T) {
+	for _, testCase := range storeContractCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			const threshold = 32
+			store := testCase.open(t, &BinaryKeyEncoder{CompressionThreshold: threshold})
+			defer store.Close()
+
+			text := string(bytes.Repeat([]byte("compressible-"), 8))
+			otherText := string(bytes.Repeat([]byte("distinct-value-"), 8))
+			raw := bytes.Repeat([]byte("0123456789"), 8)
+			otherRaw := bytes.Repeat([]byte("abcdefghij"), 8)
+
+			// Tier 2 is where these values have to land for the test to mean
+			// anything: below the threshold they stay plain, above the key-size
+			// ceiling they move out of line and become fixed-width hashes.
+			// Assert it rather than skip, so a fixture that stops exercising
+			// the tier says so.
+			for _, v := range []datalog.Value{text, otherText} {
+				vType, _, blob := datalog.EncodeValue(v, threshold)
+				require.Equal(t, datalog.TypeCompressedString, vType,
+					"fixture must reach Tier 2 compressed-string, got %v", vType)
+				require.Nil(t, blob, "Tier 2 stays in the key")
+			}
+			for _, v := range []datalog.Value{raw, otherRaw} {
+				vType, _, blob := datalog.EncodeValue(v, threshold)
+				require.Equal(t, datalog.TypeCompressedBytes, vType,
+					"fixture must reach Tier 2 compressed-bytes, got %v", vType)
+				require.Nil(t, blob, "Tier 2 stays in the key")
+			}
+
+			strAttr := datalog.NewKeyword(":zip/text")
+			bytesAttr := datalog.NewKeyword(":zip/raw")
+			wantText := datalog.NewIdentity("zip:text")
+			otherTextE := datalog.NewIdentity("zip:text-other")
+			wantRaw := datalog.NewIdentity("zip:raw")
+			otherRawE := datalog.NewIdentity("zip:raw-other")
+
+			tx := func(l uint64) datalog.ElementID {
+				return datalog.ElementID{Lamport: l, ReplicaID: 1}
+			}
+			require.NoError(t, store.Assert([]datalog.Datom{
+				{E: wantText, A: strAttr, V: text, Tx: tx(1)},
+				{E: otherTextE, A: strAttr, V: otherText, Tx: tx(2)},
+				{E: wantRaw, A: bytesAttr, V: raw, Tx: tx(3)},
+				{E: otherRawE, A: bytesAttr, V: otherRaw, Tx: tx(4)},
+			}))
+
+			for _, run := range []struct {
+				name  string
+				bound ScanBound
+				want  datalog.Identity
+			}{
+				{"AVET/compressed-string", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{strAttr, text}}, wantText},
+				{"AVET/compressed-bytes", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{bytesAttr, raw}}, wantRaw},
+			} {
+				t.Run(run.name, func(t *testing.T) {
+					iter, err := store.ScanKeysOnly(run.bound)
+					require.NoError(t, err)
+					defer iter.Close()
+
+					var got []datalog.Identity
+					for iter.Next() {
+						datom, err := iter.Datom()
+						require.NoError(t, err)
+						got = append(got, datom.E)
+					}
+					require.NoError(t, iter.Error())
+					require.Equal(t, []datalog.Identity{run.want}, got,
+						"the run must hold exactly the datom carrying the bound value")
 				})
 			}
 		})

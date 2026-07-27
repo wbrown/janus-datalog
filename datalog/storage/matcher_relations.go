@@ -14,9 +14,9 @@ import (
 // Pattern matching implementation is split across multiple files:
 //   - matcher_relations.go: Main Match() logic and strategy dispatch
 //   - matcher_strategy.go: ReuseStrategy analysis and decision logic
-//   - matcher_iterator_reusing.go: Optimized iterator reuse with Seek()
 //   - matcher_iterator_nonreusing.go: Simple per-tuple iteration
 //   - matcher_iterator_unbound.go: Full scans without bindings
+//   - hash_join_matcher.go: Binding-driven scans (hash join, merge join)
 //
 // Start with Match() and MatchWithConstraints() in this file.
 
@@ -405,7 +405,6 @@ func (m *PatternMatcher) matchUnboundScan(
 			Index:           AVET,
 			ValidationIndex: EATV,
 			BoundA:          a,
-			BoundV:          v,
 		}
 		return m.matchWithVValidation(pattern, bindingRel, symbols, strategy, nil)
 	} else if e == nil && a != nil && card == schema.CardinalityVector {
@@ -483,15 +482,8 @@ func (m *PatternMatcher) matchUnboundScan(
 		}
 	}
 
-	// Emit index selection event if handler is available.
 	if m.handler != nil {
-		data := map[string]interface{}{"pattern": pattern.String()}
-		addBoundFields(data, bound)
-		m.handler(annotations.Event{
-			Name:  "pattern/index-selection",
-			Start: time.Now(),
-			Data:  data,
-		})
+		m.emitIndexSelection(pattern, bound)
 	}
 
 	// Streaming iterator: key-only scan wrapped with CRDT resolution in
@@ -578,6 +570,7 @@ func (m *PatternMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, b
 		workspace:        make(executor.Tuple, len(symbols)),
 		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Symbols()),
 		tupleBuilder:     m.getTupleBuilder(pattern, symbols),
+		scanStart:        time.Now(),
 	}
 
 	// Return streaming relation with the iterator
@@ -702,7 +695,7 @@ func (it *validatingVBoundIterator) Next() bool {
 							"v":       fmt.Sprintf("%v", datom.V),
 							"tx":      datom.Tx.String(),
 							"op":      fmt.Sprintf("%d", datom.Op),
-							"bound.v": fmt.Sprintf("%v", it.currentBoundV),
+							"bound_v": fmt.Sprintf("%v", it.currentBoundV),
 						},
 					})
 				}
@@ -971,7 +964,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 			Data: map[string]any{
 				"e":       e.String(),
 				"a":       a.String(),
-				"bound.v": fmt.Sprintf("%v", it.currentBoundV),
+				"bound_v": fmt.Sprintf("%v", it.currentBoundV),
 			},
 		})
 	}
@@ -1847,7 +1840,11 @@ func (m *PatternMatcher) matchVectorScanAllEntities(
 	}
 
 	// Scan AEVT to find all entities with this attribute
-	storageIter, err := m.reader.Scan(ScanBound{Index: AEVT, Prefix: []datalog.Value{a}})
+	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{a}}
+	if m.handler != nil {
+		m.emitIndexSelection(pattern, bound)
+	}
+	storageIter, err := m.reader.Scan(bound)
 	if err != nil {
 		return nil, fmt.Errorf("AEVT scan failed: %w", err)
 	}
@@ -1976,7 +1973,11 @@ func (m *PatternMatcher) matchCardinalityManyScanAllEntities(
 	}
 
 	// Scan AEVT to find all entities with this attribute
-	storageIter, err := m.reader.Scan(ScanBound{Index: AEVT, Prefix: []datalog.Value{a}})
+	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{a}}
+	if m.handler != nil {
+		m.emitIndexSelection(pattern, bound)
+	}
+	storageIter, err := m.reader.Scan(bound)
 	if err != nil {
 		return nil, fmt.Errorf("AEVT scan failed: %w", err)
 	}
@@ -2153,102 +2154,37 @@ func (it *cardinalityManyAVETValueIterator) Close() error {
 
 func (it *cardinalityManyAVETValueIterator) Error() error { return it.err }
 
-// cardinalityManyFindEntitiesWithValueIterator streams results for [?e :attr "value"] patterns
-// where E is unbound and cardinality is many. It iterates through entities and checks
-// membership for each, yielding one tuple per entity where the value is in the set.
-//
-// DEPRECATED: Use cardinalityManyAVETValueIterator instead for O(k) performance.
-// This iterator uses AEVT which is O(n) where n = all entities with attribute.
-type cardinalityManyFindEntitiesWithValueIterator struct {
-	matcher      *PatternMatcher
-	pattern      *query.DataPattern
-	symbols      []query.Symbol
-	a, v         interface{}
-	aBytes       [32]byte
-	storageIter  Iterator
-	seenEntities map[[20]byte]bool
-	currentTuple executor.Tuple
-	err          error // First error from storage operations
-}
-
-func (it *cardinalityManyFindEntitiesWithValueIterator) Next() bool {
-	for it.storageIter.Next() {
-		datom, err := it.storageIter.Datom()
-		if err != nil {
-			if it.err == nil {
-				it.err = err
-			}
-			return false
-		}
-
-		// Get entity bytes
-		eBytes := datom.E.Hash()
-
-		// Skip if we've already processed this entity
-		if it.seenEntities[eBytes] {
-			continue
-		}
-		it.seenEntities[eBytes] = true
-
-		// Check if the specific value is in this entity's set
-		isMember, err := it.matcher.checkSetMembership(eBytes[:], it.aBytes[:], it.v)
-		if err != nil {
-			if it.err == nil {
-				it.err = err
-			}
-			return false
-		}
-
-		if !isMember {
-			continue
-		}
-
-		// Value is in the set - build tuple
-		tuple := make(executor.Tuple, len(it.symbols))
-		for i, sym := range it.symbols {
-			switch {
-			case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
-				it.pattern.GetE().(query.Variable).Name == sym:
-				tuple[i] = datom.E
-			case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
-				it.pattern.GetA().(query.Variable).Name == sym:
-				tuple[i] = it.a
-			case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
-				it.pattern.GetV().(query.Variable).Name == sym:
-				tuple[i] = it.v
-			case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
-				it.pattern.GetT().(query.Variable).Name == sym:
-				tuple[i] = datalog.ElementID{}
-			}
-		}
-		it.currentTuple = tuple
-		return true
-	}
-	// Propagate any deferred error from the inner storage iterator.
-	if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
-		it.err = srcErr
-	}
-	return false
-}
-
-func (it *cardinalityManyFindEntitiesWithValueIterator) Tuple() executor.Tuple {
-	return it.currentTuple
-}
-
-func (it *cardinalityManyFindEntitiesWithValueIterator) Close() error {
-	if it.storageIter != nil {
-		return it.storageIter.Close()
-	}
-	return nil
-}
-
-func (it *cardinalityManyFindEntitiesWithValueIterator) Error() error { return it.err }
-
 // matchCardinalityManyFindEntitiesWithValue handles [?e :attr "value"] where E is unbound
 // Finds all entities where the specific value is in the set.
 //
 // Uses AVET index with [A][V] prefix for O(k) lookup where k = datoms with this value,
 // instead of O(n) where n = all entities with the attribute.
+// emitIndexSelection announces the run a pattern's scan is about to walk.
+//
+// The caller guards on m.handler; that guard belongs to the caller because it
+// gates the caller's own argument preparation as well as the map, the
+// pattern.String() and describeRun's two slices in here — and because at the
+// call site it marks the block as observability rather than a step in opening
+// the scan.
+//
+// Every path that opens a scan for a pattern emits this, including the arms
+// that return before the general one. A bound only narrows observably if the
+// scan says what it narrowed to: where the run is inexact the store steps over
+// the keys the byte range over-covers, and such a key is otherwise
+// indistinguishable in the stream from one that was never in range.
+//
+// Callers pass the same ScanBound they hand the reader, so the announced run
+// and the walked run cannot drift.
+func (m *PatternMatcher) emitIndexSelection(pattern *query.DataPattern, bound ScanBound) {
+	data := map[string]interface{}{"pattern": pattern.String()}
+	addBoundFields(data, bound)
+	m.handler(annotations.Event{
+		Name:  "pattern/index-selection",
+		Start: time.Now(),
+		Data:  data,
+	})
+}
+
 func (m *PatternMatcher) matchCardinalityManyFindEntitiesWithValue(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
@@ -2262,7 +2198,13 @@ func (m *PatternMatcher) matchCardinalityManyFindEntitiesWithValue(
 
 	// Bind [A][V] on AVET, which seeks straight to entries carrying this
 	// value — O(k) in those entries, not O(n) in the attribute's entities.
-	storageIter, err := m.reader.Scan(ScanBound{Index: AVET, Prefix: []datalog.Value{a, v}})
+	// A string or bytes V makes this run inexact, so the store steps over the
+	// keys the range over-covers; the event is what makes that stepping visible.
+	bound := ScanBound{Index: AVET, Prefix: []datalog.Value{a, v}}
+	if m.handler != nil {
+		m.emitIndexSelection(pattern, bound)
+	}
+	storageIter, err := m.reader.Scan(bound)
 	if err != nil {
 		return nil, fmt.Errorf("AVET scan failed: %w", err)
 	}

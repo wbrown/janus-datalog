@@ -416,6 +416,11 @@ type BadgerIterator struct {
 	// instead of discarding the transaction: session-owned iterators share
 	// the session's transaction, which outlives any one scan.
 	release func()
+	// scanned counts keys taken from the index inside the byte range. The
+	// key one past the range is examined but not counted — it is not part of
+	// the run. KeyOnlyIterator's membership test runs above this, so keys it
+	// rejects are counted here, which is the point.
+	scanned int
 }
 
 // Next advances the iterator
@@ -443,8 +448,12 @@ func (i *BadgerIterator) Next() bool {
 		}
 	}
 
+	i.scanned++
 	return true
 }
+
+// Scanned reports keys taken from the index inside this iterator's range.
+func (i *BadgerIterator) Scanned() int { return i.scanned }
 
 // Key returns the current index key without decoding the datom or resolving blobs.
 // Valid after Next returns true until the next Next, Seek, or Close.

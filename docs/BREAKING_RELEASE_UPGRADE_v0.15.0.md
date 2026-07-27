@@ -96,6 +96,16 @@ workspace-decoded scan contract:
 - Tier-3 blob decode uses the active scan session; sticky `Error()` retains the
   first decode failure after valid preceding rows
 
+A scan yields **exactly** the datoms whose bound components equal the
+`ScanBound`'s values — no more. That is an obligation on the backend, not on the
+caller, and it is not free for a backend that projects the bound onto byte keys:
+a V payload carries no length, so the keys for `"abcd"` sort inside the range for
+`"abc"` interleaved with them, and no choice of endpoints separates the two. The
+in-tree backends narrow by key length; see `EncodedRun` and `runMembership` in
+`key_encoder_binary.go`. A backend that returns everything inside a byte range
+will return datoms the caller did not ask for, and no test above this seam will
+say so.
+
 ### The index-nested-loop join strategy is removed
 
 `PlannerOptions.IndexNestedLoopThreshold` and `ExecutorOptions.IndexNestedLoopThreshold`
@@ -103,6 +113,12 @@ no longer exist, and neither does the `storage.IndexNestedLoop` value of
 `storage.JoinStrategy`. Delete any line that sets or names them; binding-driven
 scans use `HashJoinScan`, or `MergeJoin` for large high-selectivity
 entity-position binding sets.
+
+Removing the first constant renumbered the two that remain: `HashJoinScan` moved
+from 1 to 0 and `MergeJoin` from 2 to 1. Nothing persists a `JoinStrategy`, so
+this matters only to code comparing against a stored integer or asserting on the
+numeric value in an annotation; compare against the constants, or against
+`String()`, which now renders an unknown value as `JoinStrategy(N)`.
 
 The strategy had been off by default since 2025-10 and was independently
 incorrect — its precondition, bindings sorted in index order, is unmet for the

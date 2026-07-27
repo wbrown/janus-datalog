@@ -23,7 +23,7 @@ import (
 // - Result: Scans ALL :price/symbol datoms (10,000+) instead of just 78
 //
 // With production dataset (28,040 datoms), this causes a 10+ second hang.
-// With IndexNestedLoop disabled (threshold=0), this becomes the default path.
+// This is the default path for binding-driven scans.
 func TestHashJoinScanRangeBug(t *testing.T) {
 	tempDir := t.TempDir()
 	db, err := NewDatabase(tempDir)
@@ -111,8 +111,7 @@ func TestHashJoinScanRangeBug(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Force HashJoinScan (our default now) and use same options as datalog-cli
-			// NOTE: db.NewExecutorWithOptions creates matcher with IndexNestedLoopThreshold: 0 by default
+			// Same options as datalog-cli; binding-driven scans use HashJoinScan.
 			exec := db.NewExecutorWithOptions(mode.plannerOptions())
 
 			// Time the query - should be <100ms but currently can be 10+ seconds

@@ -383,6 +383,9 @@ The storage layer connects the query engine to BadgerDB:
    - SimpleBatchScanner for large binding sets (>100 tuples)
    - Threshold-based activation in matcher_relations.go
    - Modest performance impact, cleaner code structure
+   - **Removed in v0.15.0**: the scanner had no caller. Binding-driven scans
+     go through `hash_join_matcher.go` (HashJoinScan, or MergeJoin for large
+     high-selectivity entity-position sets).
 3. **Predicate Infrastructure** - Classification and constraints
    - PredicateClassifier for analyzing pushdown candidates
    - StorageConstraint infrastructure in place
@@ -1150,7 +1153,9 @@ bugs just as easily as a missing note hides real ones.
    - Batch scanning implemented with threshold-based activation (>100 tuples)
    - SimpleBatchScanner used for large binding sets
    - Benchmarks show code clarity benefits, modest performance impact
-   - See `PERFORMANCE_STATUS.md` for current state
+   - **Both removed in v0.15.0**: neither had a live caller, and the
+     iterator-reuse strategy had been default-off since 2025-10 on a benchmark
+     that does not survive inspection. See `PERFORMANCE_STATUS.md`.
 
 **Pattern**: When existing abstractions can't handle new requirements, replace them entirely rather than patching.
 
