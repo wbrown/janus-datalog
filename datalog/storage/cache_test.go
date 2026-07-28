@@ -29,25 +29,31 @@ type mockCacheResolver struct {
 	resolveLWWCalls int
 	resolveAddCalls int
 	resolveRGACalls int
+
+	// absent arranges an (E, A) carrying no datoms, so every resolve method
+	// reports present=false and the cache stores no key for it. Zero-valued
+	// because every fixture below arranges a resolvable value; a test that
+	// wants absence says so.
+	absent bool
 }
 
 func (m *mockCacheResolver) GetCardinality(a Attribute) datalog.Keyword {
 	return m.cardinality
 }
 
-func (m *mockCacheResolver) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementID, int, error) {
+func (m *mockCacheResolver) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementID, int, bool, error) {
 	m.resolveLWWCalls++
-	return m.lwwValue, m.lwwMaxID, m.lwwScanned, m.lwwErr
+	return m.lwwValue, m.lwwMaxID, m.lwwScanned, !m.absent, m.lwwErr
 }
 
-func (m *mockCacheResolver) ResolveAddWins(e Entity, a Attribute) (map[any]any, datalog.ElementID, int, error) {
+func (m *mockCacheResolver) ResolveAddWins(e Entity, a Attribute) (map[any]any, datalog.ElementID, int, bool, error) {
 	m.resolveAddCalls++
-	return m.addWinsSet, m.addWinsMaxID, m.addWinsScanned, m.addWinsErr
+	return m.addWinsSet, m.addWinsMaxID, m.addWinsScanned, !m.absent, m.addWinsErr
 }
 
-func (m *mockCacheResolver) ResolveRGA(e Entity, a Attribute) ([]any, []datalog.ElementID, datalog.ElementID, int, error) {
+func (m *mockCacheResolver) ResolveRGA(e Entity, a Attribute) ([]any, []datalog.ElementID, datalog.ElementID, int, bool, error) {
 	m.resolveRGACalls++
-	return m.rgaElements, m.rgaPositions, m.rgaMaxID, m.rgaScanned, m.rgaErr
+	return m.rgaElements, m.rgaPositions, m.rgaMaxID, m.rgaScanned, !m.absent, m.rgaErr
 }
 
 // TestCacheEntryCarriesResolutionIntake pins that the index intake a resolution
@@ -130,6 +136,12 @@ func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
 // pattern that filtered nothing. Elements are the vector's contents, not
 // separate values; if a reader wants that count it is a different key, and
 // nothing asks for it.
+//
+// An empty vectorList serves one value for the same reason: it is a *cleared*
+// vector, and the empty vector is a value. There is no never-set entry for it
+// to be mistaken for, because an absent (E, A) has no entry at all — which is
+// what makes the count answerable here. It was 0 while the entry could stand
+// for either state and the arm reading it guessed absence.
 func TestCacheEntryValueCountsWhatResolutionProduced(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -145,8 +157,8 @@ func TestCacheEntryValueCountsWhatResolutionProduced(t *testing.T) {
 		{"vector serves one value, not its element count",
 			&CacheEntry{cardinality: schema.CardinalityVector,
 				vectorList: []any{"x", "y", "z"}}, 1},
-		{"vector empty serves nothing", &CacheEntry{cardinality: schema.CardinalityVector,
-			vectorList: []any{}}, 0},
+		{"vector cleared serves the empty vector", &CacheEntry{cardinality: schema.CardinalityVector,
+			vectorList: []any{}}, 1},
 		{"schemaless resolves last-write-wins", &CacheEntry{
 			cardinality: schema.CardinalityUnknown, oneValue: int64(7)}, 1},
 	} {

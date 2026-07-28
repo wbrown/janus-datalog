@@ -91,9 +91,16 @@ func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.D
 // walk iterates E's EATV history in descending Tx order and emits the
 // first entry that passes retraction and supersession checks.
 //
-// Returns (value, tx, true, nil) when a value is found, or
-// (nil, zero, false, nil) when E has no current value. The returned tx
-// is the Tx of the emitted Set, suitable for cache-freshness tracking.
+// Returns found=true with the value and the Tx of the emitted Set, suitable
+// for cache-freshness tracking, or found=false when E has no current value.
+//
+// present is reported separately and is not the same question: it is whether
+// the walk saw any datom for (E, a) within its temporal bound. A value can be
+// absent while the attribute exists — every assertion retracted, or every one
+// superseded by another entity's claim on the same unique value — and that is
+// an attribute holding nothing, not an attribute that was never written. A
+// caller that collapses the two loses the entity's resolved answer and falls
+// back to a path that never applied the unique rule.
 //
 // Honors the matcher's temporal mode: entries with Tx > m.txID in as-of
 // mode are skipped. The supersession check against other entities is
@@ -102,7 +109,7 @@ func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.D
 // scan walkApplyEntry opened underneath it. Those AVET reads are real index
 // reads on the resolution path — one per Set entry the walk considers — and
 // counting only the outer scan would report the cheapest part of the work.
-func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (any, datalog.ElementID, bool, int, error) {
+func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (value any, tx datalog.ElementID, found bool, present bool, scanned int, err error) {
 	// The caller holds storage projections; both constructors return the
 	// canonical interned pointer for an already-interned value.
 	iter, err := m.reader.ScanKeysOnly(ScanBound{
@@ -113,7 +120,7 @@ func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) 
 		},
 	})
 	if err != nil {
-		return nil, datalog.ElementID{}, false, 0, err
+		return nil, datalog.ElementID{}, false, false, 0, err
 	}
 	defer iter.Close()
 
@@ -122,26 +129,29 @@ func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) 
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return nil, datalog.ElementID{}, false, iter.Scanned() + nested, err
+			return nil, datalog.ElementID{}, false, present, iter.Scanned() + nested, err
 		}
 		if m.shouldFilterTx(datom.Tx) {
 			continue
 		}
+		// A datom for (E, a) exists within the bound. Whatever the walk decides
+		// about its value, the attribute is present from here on.
+		present = true
 		decision, supersession, err := m.walkApplyEntry(state, datom, eBytes, aBytes)
 		nested += supersession
 		if err != nil {
-			return nil, datalog.ElementID{}, false, iter.Scanned() + nested, err
+			return nil, datalog.ElementID{}, false, present, iter.Scanned() + nested, err
 		}
 		if decision == walkEntryEmit {
-			return datom.V, datom.Tx, true, iter.Scanned() + nested, nil
+			return datom.V, datom.Tx, true, true, iter.Scanned() + nested, nil
 		}
 		// walkEntrySkip or walkEntryRetract — continue to next entry.
 	}
 	// Surface any deferred error from the scan.
 	if err := iter.Error(); err != nil {
-		return nil, datalog.ElementID{}, false, iter.Scanned() + nested, err
+		return nil, datalog.ElementID{}, false, present, iter.Scanned() + nested, err
 	}
-	return nil, datalog.ElementID{}, false, iter.Scanned() + nested, nil
+	return nil, datalog.ElementID{}, false, present, iter.Scanned() + nested, nil
 }
 
 // resolveMaxOtherTxForValue scans AVET for (a, v) and returns the highest
@@ -274,7 +284,17 @@ func (m *PatternMatcher) resolveAVLWW(a Attribute, v any) (datalog.Identity, dat
 	}
 
 	// Step 2 + 3: verify the max-Tx entity's walk actually emits v.
-	walkV, walkTx, found, walkScanned, err := m.walkUniqueEntityValue(Entity(bestE.Hash()), a)
+	//
+	// present is discarded because it is true by construction here, which is
+	// checkable rather than assumed: bestE is assigned only from the E of an
+	// AVET [a][v] entry that passed m.shouldFilterTx, so a datom for
+	// (bestE, a) exists within the bound. The walk scans EATV [bestE][a],
+	// which covers that datom, and marks present on the first entry surviving
+	// the same filter on the same matcher. It cannot miss it.
+	//
+	// found is the question this step asks, and it is a different one: the
+	// claimant may have superseded or retracted v since asserting it.
+	walkV, walkTx, found, _, walkScanned, err := m.walkUniqueEntityValue(Entity(bestE.Hash()), a)
 	funnel.scanned += walkScanned
 	if err != nil {
 		return nil, datalog.ElementID{}, funnel, err

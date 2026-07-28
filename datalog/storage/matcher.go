@@ -381,30 +381,40 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 					aPtr = kw
 				}
 				if aPtr != nil {
-					if v != nil {
-						// E, A and V bound. AEVT orders A → E → V → Tx, so the
-						// three bound positions are its leading prefix and the
-						// scan covers every Tx for them. Binding Tx as well
-						// would name one datom, which no reader wants: Tx is
-						// what resolution determines.
-						return ScanBound{Index: AEVT, Prefix: []datalog.Value{aPtr, eID, v}}
-					}
-
-					// E and A bound, V unbound - use cardinality-aware index selection
-					// For CRDT semantics:
-					// - CardinalityMany: EAVT groups by V first, enabling add-wins resolution
-					// - CardinalityOne/Vector: EATV orders by Tx first, first entry is current
+					// Resolution decides which datom of the (E, A) group is
+					// current, so the run must contain the whole group. A bound
+					// V may join the prefix only where the datom's V is the unit
+					// the pattern names AND the resolution decision for that V
+					// is contained in the V-filtered run. That holds for a
+					// cardinality-many member — its adds and removes all carry
+					// its own value — and for nothing else: a cardinality-one
+					// winner may carry a different V, so filtering on V leaves
+					// resolution reading a group it has already reduced to the
+					// loser; a cardinality-vector datom holds one element while
+					// the pattern's V names the whole collection.
 					card := schema.CardinalityOne
 					if m.schema != nil {
 						if attrDef := m.schema.GetAttribute(aPtr); attrDef != nil {
 							card = attrDef.Cardinality
 						}
 					}
+
 					if card == schema.CardinalityMany {
+						if v != nil {
+							// AEVT orders A → E → V → Tx, so the three bound
+							// positions are its leading prefix and the scan
+							// covers every Tx for them. Binding Tx as well would
+							// name one datom, which no reader wants: Tx is what
+							// resolution determines.
+							return ScanBound{Index: AEVT, Prefix: []datalog.Value{aPtr, eID, v}}
+						}
 						// EAVT: E → A → V → Tx - values grouped together for add-wins
 						return ScanBound{Index: EAVT, Prefix: []datalog.Value{eID, aPtr}}
 					}
-					// EATV: E → A → Tx → V - first entry is current (highest Tx)
+
+					// EATV: E → A → Tx↓ → V - first entry is current (highest
+					// Tx). A bound V is compared against what resolution
+					// produced, downstream of this scan, never by narrowing it.
 					return ScanBound{Index: EATV, Prefix: []datalog.Value{eID, aPtr}}
 				}
 			}
@@ -747,7 +757,7 @@ func (m *PatternMatcher) LookupAttribute(
 		if err != nil {
 			return nil, false, err
 		}
-		if len(result.Elements) == 0 && result.Stats.TotalElements == 0 {
+		if !result.Present {
 			// Never-set: no datoms ever written for this (E, A)
 			return nil, false, nil
 		}
@@ -817,6 +827,19 @@ func typedVector(elements []any, vt datalog.Keyword) any {
 		}
 		return result
 	default:
+		if len(elements) == 0 {
+			// A cleared vector arrives with a nil element slice, and an
+			// unrecognised value type would otherwise hand that nil straight
+			// back — into a tuple's value position, where nil is not a datalog
+			// value and the equality and hashing layers panic on it. The empty
+			// vector is the value here; nil is the absence of one, and absence
+			// never reaches this function: it is answered before resolution
+			// produces a vector at all.
+			//
+			// The typed arms above cannot produce nil — each builds with make
+			// and returns that — so this is the only path that could.
+			return []any{}
+		}
 		return elements
 	}
 }

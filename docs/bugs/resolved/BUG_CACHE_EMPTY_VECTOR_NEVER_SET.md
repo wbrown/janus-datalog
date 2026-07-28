@@ -1,10 +1,40 @@
 # A never-set vector attribute matches an empty-vector literal through the cache and not without it
 
-**Status**: Open, reproduced, awaiting owner ruling on scope. The reproducer is
-in the tree and **red**: `TestCacheMatrix_NeverSetVectorAgainstEmptyVectorLiteral`
-in `datalog/storage/crdt_cache_matrix_test.go`. It is committed red rather than
-withheld, because the divergence contradicts the invariant that file exists to
-hold — a cache is an optimization, not a correctness input.
+**Status**: **Fixed** (2026-07-28, PR #114). Reading (1) below was ruled correct
+and the fix went further than this document proposed — see *Resolution*.
+`TestCacheMatrix_NeverSetVectorAgainstEmptyVectorLiteral` in
+`datalog/storage/crdt_cache_matrix_test.go` is green, as are the
+`vector/never set, V bound empty` and `vector/cleared to empty, V unbound` cases
+of `TestConstantPatternCacheParity`. `make test` green, native and wasm.
+
+## Resolution
+
+The ruling: **presence is resolved, not counted, and an (E, A) that never existed
+has no key in the cache.**
+
+That is stronger than the fix this document sketched. Rather than `CacheEntry`
+gaining a field to answer one predicate, all three `CacheResolver` methods report
+`present`, `rebuild*` return a nil entry for an absent (E, A), and the cache
+stores nothing for it — so entry existence *is* attribute existence and no arm
+reconstructs the fact from a count or a nil slice.
+
+The diagnosis below located the defect in the cache arm, which is where it
+showed. The cause was one layer up: presence had never been modelled anywhere,
+and the streaming arm only appeared correct because it borrowed
+`Stats.TotalElements` from a struct whose constructor is documented "for
+debugging and monitoring". Four correctness sites read that field; all four now
+read a resolved `Present`, and `RGAStats` is off the correctness path entirely.
+
+The internal inconsistency named at the end of *Mechanism* — the unbound-V branch
+treating an empty `vectorList` as absence while the bound-V branch treats it as
+the empty value — was a second, separate defect. Both arms held it, so the
+cache-parity harness could not see it; it is recorded as D8 in
+`docs/wip/COLLECTION_VALUE_SEMANTICS.md`.
+
+`valueCount`'s vector arm now reports **1** for an empty `vectorList`, which is
+correct precisely because of the change above: an entry exists only for an (E, A)
+with datoms, so an empty list is a *cleared* vector and the empty vector is the
+one value it serves.
 
 ## Summary
 
@@ -61,12 +91,14 @@ is a separate question from whether the two arms agree once they have one. The
 divergence is between `matchFromCache` and `matchCardinalityVectorAsRelation`,
 so the reproducer calls the dispatch that chooses between them.
 
-**Not established**: whether the parser can produce an empty-vector V constant,
-and therefore whether the divergence is reachable from query text. If it cannot,
-this is a latent inconsistency rather than a live wrong answer, and the scope
-ruling should say so. Checking it is one read of the parser's value-position
-handling, deliberately left for whoever takes the ruling rather than guessed at
-here.
+~~**Not established**: whether the parser can produce an empty-vector V constant,
+and therefore whether the divergence is reachable from query text.~~
+
+**Established, and it was reachable.** `TestConstantPatternCacheParity` drives
+`[#id "cache-parity:subject" :person/skill [] ?tx]` through `db.Query` and
+reproduces the same divergence the direct-matcher reproducer does. The parser
+produces the empty-vector constant, so this was a live wrong answer from query
+text, not a latent inconsistency between two internal arms.
 
 ## Where it surfaced
 

@@ -317,15 +317,17 @@ func TestCacheResolverInterface(t *testing.T) {
 	assert.Equal(t, schema.CardinalityMany, matcher.GetCardinality(tagsAttr))
 
 	// Test ResolveLWW
-	val, maxID, lwwScanned, err := matcher.ResolveLWW(eBytes, nameAttr)
+	val, maxID, lwwScanned, present, err := matcher.ResolveLWW(eBytes, nameAttr)
 	require.NoError(t, err)
+	assert.True(t, present, "the (E, A) carries datoms, so it is present")
 	assert.Equal(t, "Alice", val)
 	assert.NotZero(t, maxID.Lamport)
 	assert.Positive(t, lwwScanned, "resolution read the index and must report it")
 
 	// Test ResolveAddWins
-	set, maxID, addWinsScanned, err := matcher.ResolveAddWins(eBytes, tagsAttr)
+	set, maxID, addWinsScanned, present, err := matcher.ResolveAddWins(eBytes, tagsAttr)
 	require.NoError(t, err)
+	assert.True(t, present, "the (E, A) carries datoms, so it is present")
 	_, hasDev := set["dev"]
 	assert.True(t, hasDev)
 	assert.NotZero(t, maxID.Lamport)

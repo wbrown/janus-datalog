@@ -1192,6 +1192,14 @@ func (m *PatternMatcher) matchFromCache(
 	matched := 0
 	if m.handler != nil {
 		defer func() {
+			// An absent (E, A) has no entry and therefore serves nothing. The
+			// call still happened and still cost its intake, so it reports —
+			// the absence of the event would be indistinguishable from a path
+			// that never ran.
+			served := 0
+			if entry != nil {
+				served = entry.valueCount()
+			}
 			m.handler(annotations.Event{
 				Name:    annotations.PatternCacheResolveComplete,
 				Start:   opened,
@@ -1200,11 +1208,19 @@ func (m *PatternMatcher) matchFromCache(
 					annotations.KeyPattern:       pattern,
 					annotations.KeyCardinality:   card,
 					annotations.KeyDatomsScanned: spent,
-					annotations.KeyValuesServed:  entry.valueCount(),
+					annotations.KeyValuesServed:  served,
 					annotations.KeyDatomsMatched: matched,
 				},
 			})
 		}()
+	}
+
+	if entry == nil {
+		// The (E, A) carries no datoms, so the attribute does not exist and the
+		// pattern matches nothing. This is the cache answering, not declining:
+		// absence is a resolved state, and falling back to storage would re-run
+		// the scan that just established it.
+		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 	}
 
 	// Get tuple builder for building tuples
@@ -1269,6 +1285,10 @@ func (m *PatternMatcher) matchFromCache(
 		return executor.NewMaterializedRelationWithOptions(symbols, tuples, m.options), true, nil
 
 	case schema.CardinalityVector:
+		// An entry exists only for an (E, A) that has datoms, so the resolved
+		// vector is a value whatever its length — an empty one is a vector that
+		// was cleared, and it binds. Absence was handled above, where there is
+		// no entry at all.
 		list := entry.VectorList()
 		resolved := typedVector(list, valueType)
 		if v != nil {
@@ -1277,10 +1297,6 @@ func (m *PatternMatcher) matchFromCache(
 				return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 			}
 			// Matched — fall through to build tuple
-		}
-		if len(list) == 0 && v == nil {
-			// Empty vector with unbound V — no tuples
-			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
 		}
 		tuple := buildTuple(resolved, entry.Version())
 		matched = 1
@@ -1441,6 +1457,11 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		if err != nil {
 			return nil, false, err
 		}
+		if entry == nil {
+			// No datoms for this (E, A): the attribute is absent on this
+			// entity, which contributes no tuple.
+			continue
+		}
 
 		// Process based on cardinality
 		switch tupleCard {
@@ -1599,11 +1620,11 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 		return nil, fmt.Errorf("vector resolution failed: %w", err)
 	}
 
-	// Reported on every exit below, of which there are four. An RGA group's
+	// Reported on every exit below, of which there are three. An RGA group's
 	// intake is every insert and tombstone ever written for the (E, A), and the
-	// exits that produce no tuple — never set, bound V mismatched, empty vector
-	// — are exactly the ones where the gap between what was read and what came
-	// out is widest, so those are the paths that most need to say so.
+	// exits that produce no tuple — never set, bound V mismatched — are exactly
+	// the ones where the gap between what was read and what came out is widest,
+	// so those are the paths that most need to say so.
 	matched := 0
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, result.Bound)
@@ -1622,7 +1643,7 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 	}
 
 	// No datoms at all → attribute was never set
-	if result.Stats.TotalElements == 0 {
+	if !result.Present {
 		return executor.NewMaterializedRelation(symbols, nil), nil
 	}
 
@@ -1637,11 +1658,11 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 		// Matched — fall through to build the tuple
 	}
 
-	// If empty vector (and V was nil/matched), return empty relation
-	// Empty vectors produce no tuples for unbound V queries.
-	if len(result.Elements) == 0 && v == nil {
-		return executor.NewMaterializedRelation(symbols, nil), nil
-	}
+	// Past the TotalElements check above, an empty element list means the
+	// vector was set and then cleared: datoms exist and RGA reconstruction
+	// resolved them to nothing live. That is a value — the empty vector — and
+	// it binds. Absence is the case handled above, where the (E, A) carries no
+	// datoms at all, and it is the only case that produces no tuple here.
 
 	// Build a single tuple with the entire vector as the V value
 	tuple := make(executor.Tuple, len(symbols))
@@ -1723,7 +1744,7 @@ func (m *PatternMatcher) matchVectorWithBindings(
 
 		resolved := typedVector(result.Elements, valueType)
 
-		neverSet := result.Stats.TotalElements == 0
+		neverSet := !result.Present
 
 		// Entity has no datoms at all for this attribute — skip always
 		if neverSet {
@@ -2107,7 +2128,7 @@ func (it *vectorScanAllEntitiesIterator) Next() bool {
 		it.datomsResolved += len(result.Elements)
 
 		// Never set — skip
-		if result.Stats.TotalElements == 0 {
+		if !result.Present {
 			continue
 		}
 

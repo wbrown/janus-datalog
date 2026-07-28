@@ -394,8 +394,9 @@ func TestVectorIndexContainsRealElementIDs(t *testing.T) {
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
 
-	values, positions, maxID, scanned, err := matcher.ResolveRGA(eBytes, aBytes)
+	values, positions, maxID, scanned, present, err := matcher.ResolveRGA(eBytes, aBytes)
 	require.NoError(t, err)
+	require.True(t, present, "the (E, A) carries RGA datoms, so it is present")
 	require.Positive(t, scanned, "RGA reconstruction read the index and must report it")
 
 	// Verify we got 3 elements
@@ -462,8 +463,9 @@ func TestVectorIndexUsableForTombstone(t *testing.T) {
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
 
-	_, positions, _, scanned, err := matcher.ResolveRGA(eBytes, aBytes)
+	_, positions, _, scanned, present, err := matcher.ResolveRGA(eBytes, aBytes)
 	require.NoError(t, err)
+	require.True(t, present, "the (E, A) carries RGA datoms, so it is present")
 	require.Positive(t, scanned, "RGA reconstruction read the index and must report it")
 	require.Len(t, positions, 3)
 

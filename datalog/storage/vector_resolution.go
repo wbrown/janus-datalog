@@ -10,10 +10,22 @@ import (
 type VectorResolutionResult struct {
 	// Elements contains the ordered values after RGA reconstruction
 	Elements []any
+
+	// Present reports whether the (E, A) carries any RGA datom at all, and it
+	// is the resolved answer to whether the attribute exists.
+	//
+	// A vector that was never set and one whose every element was tombstoned
+	// both reconstruct to zero live elements, so Elements cannot separate them;
+	// only the presence of datoms can, and the two are different states — the
+	// first has no value, the second has the empty vector. This is resolved
+	// alongside the value rather than counted afterwards: a statistic describes
+	// a resolution, it does not constitute one, and every reader that reached
+	// for RGAStats.TotalElements to answer this was borrowing a debugging
+	// number for a semantic question.
+	Present bool
+
 	// MaxElementID is the highest ElementID seen (for cache versioning)
 	MaxElementID datalog.ElementID
-	// Stats provides debugging information
-	Stats RGAStats
 	// Scanned is the index intake this resolution spent. Resolution reads the
 	// index on the pattern's behalf and emits no event of its own, so the only
 	// way the pattern can report what it cost is for the resolver to hand the
@@ -44,13 +56,12 @@ func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolution
 	// Reconstruct the ordered vector
 	ordered := ReconstructRGA(elements)
 
-	// Compute stats for debugging and cache versioning
-	stats := ComputeRGAStats(elements)
-
 	return &VectorResolutionResult{
-		Elements:     ordered,
-		MaxElementID: stats.MaxID,
-		Stats:        stats,
+		Elements: ordered,
+		// Every insert and tombstone ever written for the (E, A) is in
+		// elements, so their presence is the attribute's.
+		Present:      len(elements) > 0,
+		MaxElementID: FindMaxElementID(elements),
 		Scanned:      scanned,
 		Bound:        bound,
 	}, nil

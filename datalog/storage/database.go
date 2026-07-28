@@ -389,6 +389,11 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	if err != nil {
 		return nil, err
 	}
+	if entry == nil {
+		// No datoms for this (E, A): the attribute does not exist, which is the
+		// nil the doc comment above already promises.
+		return nil, nil
+	}
 
 	if entry.Cardinality() != schema.CardinalityVector {
 		return nil, fmt.Errorf("attribute %s is not a vector", a.String())
@@ -429,6 +434,11 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	}
 	if err != nil {
 		return 0, err
+	}
+	if entry == nil {
+		// No datoms for this (E, A): "doesn't exist" in the doc comment above,
+		// which it gives as 0.
+		return 0, nil
 	}
 
 	if entry.Cardinality() != schema.CardinalityVector {

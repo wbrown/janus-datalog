@@ -13,6 +13,18 @@ type SetResolutionResult struct {
 	// Iteration: for _, v := range Members
 	Members map[interface{}]interface{}
 
+	// Present reports whether the (E, A) carries any datom at all within this
+	// matcher's temporal bound, and it is the resolved answer to whether the
+	// attribute exists.
+	//
+	// A set that was never written and one whose every member has been removed
+	// both resolve to zero members, so Members cannot separate them; only the
+	// presence of datoms can, and the two are different states — the first has
+	// no value, the second has the empty set. Resolved alongside the members
+	// rather than counted afterwards: a statistic describes a resolution, it
+	// does not constitute one.
+	Present bool
+
 	// MaxElementID is the highest ElementID seen during resolution
 	// Used for cache freshness tracking
 	MaxElementID datalog.ElementID
@@ -210,6 +222,11 @@ func (a *addWinsAccumulator) observeDatom(datom *datalog.Datom) {
 // Members observed as spans decode here, through blobs — only survivors
 // pay for a value decode.
 func (a *addWinsAccumulator) finish(blobs BlobReader) (*SetResolutionResult, error) {
+	// states holds one entry per distinct value observed within the temporal
+	// bound, from an add or a remove alike, so a non-empty map is exactly "this
+	// (E, A) has datoms" — the question membership cannot answer.
+	a.result.Present = len(a.states) > 0
+
 	for _, state := range a.states {
 		inSet := false
 		if state.hasAdd && !state.hasRemove {

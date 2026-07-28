@@ -535,8 +535,9 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
-	val, _, _, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, _, _, present, err := matcher.ResolveLWW(eStorage, aStorage)
 	require.NoError(t, err)
+	assert.True(t, present, "precondition: the (E, A) carries datoms")
 	assert.Equal(t, "Alice", val, "precondition: ResolveLWW should return value")
 
 	// Remove
@@ -546,8 +547,10 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 	require.NoError(t, err)
 
 	// ResolveLWW should return nil after Remove
-	val, _, _, err = matcher.ResolveLWW(eStorage, aStorage)
+	val, _, _, present, err = matcher.ResolveLWW(eStorage, aStorage)
 	require.NoError(t, err)
+	assert.True(t, present,
+		"a tombstone is a datom: the (E, A) stays present and holds no value")
 	assert.Nil(t, val,
 		"BUG: ResolveLWW returns value after Remove(). "+
 			"Expected nil, got %v. Does not check datom.Op.", val)
@@ -756,8 +759,10 @@ func TestCacheRemove_ResolveLWW_SetThenRemove(t *testing.T) {
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
-	val, _, _, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, _, _, present, err := matcher.ResolveLWW(eStorage, aStorage)
 	require.NoError(t, err)
+	assert.True(t, present,
+		"a tombstone is a datom: the (E, A) stays present and holds no value")
 	assert.Nil(t, val,
 		"BUG: ResolveLWW returns value after Set() then Remove()")
 }
@@ -874,8 +879,10 @@ func TestCacheRemove_ResolveLWW_ReturnsElementID(t *testing.T) {
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
-	val, elemID, _, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, elemID, _, present, err := matcher.ResolveLWW(eStorage, aStorage)
 	require.NoError(t, err, "ResolveLWW should not error after Remove")
+	assert.True(t, present,
+		"a tombstone is a datom: the (E, A) stays present and holds no value")
 	assert.Nil(t, val, "value should be nil after Remove")
 	assert.NotEqual(t, datalog.ElementID{}, elemID,
 		"ElementID should be non-zero after Remove — needed for cache freshness tracking")
@@ -1071,7 +1078,15 @@ func TestCacheRemove_Pull_SetThenRemove(t *testing.T) {
 // P7×S2-S6: ResolveLWW direct — full scenario coverage
 // =============================================================================
 
-// resolveLWWValue calls ResolveLWW and returns (value, elementID)
+// resolveLWW reads a written (e, a) through the LWW resolver and returns the
+// resolved value with the ElementID carrying it.
+//
+// Every caller commits datoms for (e, a) before reading, so the attribute
+// exists — and the value may still be nil, which is what these tests are about.
+// A tombstoned attribute is present and holds nothing, which is not the same as
+// absent, and asserting presence here is what keeps the two apart. A test that
+// wants a genuinely absent (e, a) needs its own read: this one promises a value
+// position, and absence has none.
 func resolveLWW(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyword) (any, datalog.ElementID) {
 	t.Helper()
 	matcher := NewPatternMatcher(db.Store())
@@ -1079,8 +1094,10 @@ func resolveLWW(t *testing.T, db *Database, e datalog.Identity, a datalog.Keywor
 	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
-	val, eid, _, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, eid, _, present, err := matcher.ResolveLWW(eStorage, aStorage)
 	require.NoError(t, err)
+	require.True(t, present,
+		"(e, a) was written before this read, so it is present whether or not a value survived")
 	return val, eid
 }
 
