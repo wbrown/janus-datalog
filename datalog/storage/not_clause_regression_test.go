@@ -224,7 +224,7 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 					"Deleted project should not appear in results")
 			}
 
-			// Pin the aggregate columns exactly, as int64 — nil here means an
+			// Pin the aggregate positions exactly, as int64 — nil here means an
 			// aggregate silently skipped its inputs, and a bare Go int means a
 			// builder constant bypassed boundary normalization
 			// (docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md).

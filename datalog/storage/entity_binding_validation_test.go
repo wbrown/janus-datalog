@@ -12,7 +12,7 @@ import (
 // constants (validated at match entry) and :in inputs (validated at query
 // entry). Binding relations reaching the matcher are interior data flow: a
 // non-Identity value bound into entity position names no entity, so it
-// contributes zero rows — the typed non-match of the equality join — never an
+// contributes no tuples — the typed non-match of the equality join — never an
 // error and never a panic. Every join strategy must agree on that result,
 // because the strategy chosen is an optimization detail.
 
@@ -42,7 +42,7 @@ func TestBoundEntityNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 			query.Variable{Name: datalog.NewSymbol("?n")},
 		},
 	}
-	// Mixed column: two real entities, a seed string, and the L85 text of a
+	// Mixed entity position: two real entities, a seed string, and the L85 text of a
 	// real entity. Only the identities may join.
 	mixedBindings := func() executor.Relation {
 		return executor.NewMaterializedRelation(
@@ -56,14 +56,14 @@ func TestBoundEntityNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 		)
 	}
 
-	assertIdentityRowsOnly := func(t *testing.T, rel executor.Relation, err error) {
+	assertIdentityTuplesOnly := func(t *testing.T, rel executor.Relation, err error) {
 		t.Helper()
 		tuples, err := executor.CollectTuples(rel, err)
 		if err != nil {
 			t.Fatalf("interior mixed bindings must join, not error: %v", err)
 		}
 		if len(tuples) != 2 {
-			t.Fatalf("expected exactly the 2 Identity-bound rows, got %d: %v", len(tuples), tuples)
+			t.Fatalf("expected exactly the 2 Identity-bound tuples, got %d: %v", len(tuples), tuples)
 		}
 		for _, tuple := range tuples {
 			e, ok := tuple[0].(datalog.Identity)
@@ -87,7 +87,7 @@ func TestBoundEntityNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 				executor.Relations{mixedBindings()},
 				nil,
 			)
-			assertIdentityRowsOnly(t, rel, err)
+			assertIdentityTuplesOnly(t, rel, err)
 		})
 	}
 
@@ -107,7 +107,7 @@ func TestBoundEntityNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 			executor.Relations{multiRel},
 			nil,
 		)
-		assertIdentityRowsOnly(t, rel, err)
+		assertIdentityTuplesOnly(t, rel, err)
 	})
 }
 
@@ -115,7 +115,7 @@ func TestBoundEntityNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 // produces mixed entity bindings: a value joined from V position into E
 // position over schemaless data holding both refs and strings — including
 // strings that are the L85 text of real entities. The join keeps ref-partnered
-// rows and drops the rest; no error.
+// tuples and drops the rest; no error.
 func TestVEJoinOverMixedDataMatchesOnlyRefs(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -142,7 +142,7 @@ func TestVEJoinOverMixedDataMatchesOnlyRefs(t *testing.T) {
 				t.Fatalf("mixed V→E join must not error: %v", err)
 			}
 			if len(tuples) != 1 {
-				t.Fatalf("expected 1 row (only the real ref joins), got %d: %v", len(tuples), tuples)
+				t.Fatalf("expected 1 tuple (only the real ref joins), got %d: %v", len(tuples), tuples)
 			}
 			if name, ok := tuples[0][0].(string); !ok || name != "Admins" {
 				t.Errorf("expected \"Admins\", got %v", tuples[0][0])
@@ -154,7 +154,7 @@ func TestVEJoinOverMixedDataMatchesOnlyRefs(t *testing.T) {
 // TestBoundEntityNonMatchOnValuePositionJoin pins the contract when the join
 // lands on the V position while the binding relation also binds E: the probe
 // verifies non-join positions from the binding tuple, and a non-Identity value
-// in entity position is a typed non-match — that tuple contributes zero rows,
+// in entity position is a typed non-match — that tuple contributes no tuples,
 // never an error and never a panic. The seek strategies drop such tuples at
 // construction; the hash join must agree.
 func TestBoundEntityNonMatchOnValuePositionJoin(t *testing.T) {
@@ -213,7 +213,7 @@ func TestBoundEntityNonMatchOnValuePositionJoin(t *testing.T) {
 				t.Fatalf("interior mixed bindings must join, not error: %v", err)
 			}
 			if len(tuples) != 1 {
-				t.Fatalf("expected exactly the Identity-bound row, got %d: %v", len(tuples), tuples)
+				t.Fatalf("expected exactly the Identity-bound tuple, got %d: %v", len(tuples), tuples)
 			}
 			if e, ok := tuples[0][0].(datalog.Identity); !ok || !e.Equal(alice) {
 				t.Errorf("expected alice in entity position, got %v", tuples[0][0])
@@ -228,7 +228,7 @@ func TestBoundEntityNonMatchOnValuePositionJoin(t *testing.T) {
 // TestBoundAttributeNonMatchAgreesAcrossJoinStrategies pins the A-position
 // analogue: an E-position join whose binding tuples also bind the attribute
 // variable treats a non-Keyword attribute value as a typed non-match on every
-// join strategy — zero rows from that tuple, never an error and never a panic.
+// join strategy — no tuples from that tuple, never an error and never a panic.
 func TestBoundAttributeNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir()})
 	if err != nil {
@@ -285,7 +285,7 @@ func TestBoundAttributeNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 				t.Fatalf("interior mixed bindings must join, not error: %v", err)
 			}
 			if len(tuples) != 1 {
-				t.Fatalf("expected exactly bob's row, got %d: %v", len(tuples), tuples)
+				t.Fatalf("expected exactly bob's tuple, got %d: %v", len(tuples), tuples)
 			}
 			if e, ok := tuples[0][0].(datalog.Identity); !ok || !e.Equal(bob) {
 				t.Errorf("expected bob in entity position, got %v", tuples[0][0])

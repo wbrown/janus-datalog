@@ -207,7 +207,7 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	}
 	if bindingRel.Size() == 0 {
 		// An errored relation that materialized empty is not an empty
-		// binding: its zero rows mean the upstream scan failed. Falling
+		// binding: its zero tuples mean the upstream scan failed. Falling
 		// back to an unbound scan here laundered that failure into a
 		// silent empty result.
 		if err := EmptyRelationError(bindingRel); err != nil {
@@ -217,10 +217,10 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
 	}
 
-	// Project the binding relation onto the pattern's symbols: binding rows
+	// Project the binding relation onto the pattern's symbols: binding tuples
 	// differing only in passenger symbols would rebind the identical pattern
 	// and emit the same datoms again. Projection's set semantics makes the
-	// binding rows unique on the values that actually bind the pattern (the
+	// binding tuples unique on the values that actually bind the pattern (the
 	// storage matcher projects identically before its binding-driven paths).
 	bindingRel = bindingRel.ProjectFromPattern(pattern)
 

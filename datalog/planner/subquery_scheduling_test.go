@@ -105,7 +105,7 @@ func TestUncorrelatedSubqueryKeepsDataSourceScheduling(t *testing.T) {
 // joins the accumulated relation on whichever of its binding variables are
 // bound at selection time; scheduling it while another pending clause still
 // provides one of those variables joins on a subset of the keys, and the
-// under-keyed join admits row combinations no later clause is entitled to
+// under-keyed join admits tuple combinations no later clause is entitled to
 // remove. The subquery must defer until the pending providers of its binding
 // variables have run. The exemption pin above still holds: a binding
 // variable nothing else provides never defers the subquery.

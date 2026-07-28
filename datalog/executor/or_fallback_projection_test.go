@@ -135,7 +135,7 @@ func TestBuildBranchFromEACacheDedupsOuterEntities(t *testing.T) {
 	exec := newQueryExecutor(matcher, nil, ExecutorOptions{})
 
 	// The outer relation repeats e1 across distinct tuples. The collected
-	// branch rows must stay a set: one lookup and one row per entity.
+	// branch tuples must stay a set: one lookup and one tuple per entity.
 	outerSyms := []query.Symbol{symE, symName}
 	outerRel := NewMaterializedRelation(outerSyms, []Tuple{
 		{e1, "first"},
@@ -166,7 +166,7 @@ func TestBuildBranchFromEACacheDedupsOuterEntities(t *testing.T) {
 	assert.Equal(t, 2, matcher.calls, "one lookup per distinct entity")
 
 	matches := cb.probe(Tuple{e1, "first"})
-	require.Len(t, matches, 1, "repeated outer entity must not duplicate rows")
+	require.Len(t, matches, 1, "repeated outer entity must not duplicate tuples")
 	assert.Equal(t, int64(1), matches[0][1])
 
 	matches = cb.probe(Tuple{e2, "third"})
@@ -176,7 +176,7 @@ func TestBuildBranchFromEACacheDedupsOuterEntities(t *testing.T) {
 
 // TestBuildBranchFromEACacheEnvironmentNarrowsV pins the EA-cache arm's
 // environment narrowing: when the branch pattern's V variable is bound by
-// the environment relation, only rows carrying the environment's value
+// the environment relation, only tuples carrying the environment's value
 // survive — the SemiJoin analog of the scan path's environment-narrowed
 // input. Direct construction: no user-facing syntax reaches this arm with an
 // environment-bound V today, so the arm is pinned at the unit level.

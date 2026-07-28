@@ -653,7 +653,7 @@ type OrFallbackIterator struct {
 
 	// Cached-branch emit state: a probe result being emitted directly from
 	// the branch cache's shared backing — no wrapper relation, no
-	// re-deduplication (the rows are a contiguous span of a relation that is
+	// re-deduplication (the tuples are a contiguous span of a relation that is
 	// already a set), no per-probe iterator.
 	cachedMatches  []Tuple
 	cachedMatchPos int
@@ -757,11 +757,11 @@ func branchFreeVariables(branches [][]query.Clause) []query.Symbol {
 }
 
 // cachedBranch is an uncorrelated branch result grouped for per-outer-tuple
-// probing: a groupedRowIndex keyed probe-side by the outer tuple's join
-// positions and row-side by the branch tuple's, carrying the branch's result
-// symbols for output projection.
+// probing: a groupedTupleIndex keyed probe-side by the outer tuple's join
+// positions and stored-side by the branch tuple's, carrying the branch's
+// result symbols for output projection.
 type cachedBranch struct {
-	*groupedRowIndex
+	*groupedTupleIndex
 	branchSyms []query.Symbol
 }
 
@@ -820,7 +820,7 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 		return nil
 	}
 
-	// Build branch rows from EA cache lookups.
+	// Build branch tuples from EA cache lookups.
 	// Iterate the materialized outer relation (safe to create second iterator).
 	branchSyms := []query.Symbol{eVar.Name, vVar.Name}
 	bIdx := []int{0} // E is at position 0 in branch tuples
@@ -829,8 +829,9 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 	if n := it.outerRel.Size(); n >= 0 {
 		collected = make([]Tuple, 0, n)
 	}
-	// Outer tuples are distinct but their entity column can repeat; one
-	// lookup and one row per distinct entity keeps the collected rows a set.
+	// Outer tuples are distinct but the value at their entity position can
+	// repeat; one lookup and one tuple per distinct entity keeps the collected
+	// tuples a set.
 	seenEntities := make(map[datalog.Identity]struct{})
 	outerIt := it.outerRel.Iterator()
 	for outerIt.Next() {
@@ -868,7 +869,7 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 		return nil
 	}
 
-	// An environment-bound V narrows the branch: only rows carrying the
+	// An environment-bound V narrows the branch: only tuples carrying the
 	// environment's value may match — the same narrowing the scan path
 	// receives via cacheableBranchInput, expressed as a SemiJoin against
 	// the environment projected onto the V symbol.
@@ -878,13 +879,13 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 			it.err = err
 			return nil
 		}
-		rows := newMaterializedRelationFromSet(
+		branchRel := newMaterializedRelationFromSet(
 			branchSyms,
 			collected,
 			it.options,
 			deduplicatedProperties(branchSyms),
 		)
-		narrowed := SemiJoin(rows, vEnv, []query.Symbol{vVar.Name})
+		narrowed := SemiJoin(branchRel, vEnv, []query.Symbol{vVar.Name})
 		var filtered []Tuple
 		nit := narrowed.Iterator()
 		for nit.Next() {
@@ -902,8 +903,8 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 	}
 
 	return &cachedBranch{
-		groupedRowIndex: groupRows(collected, []int{eIdx}, bIdx),
-		branchSyms:      branchSyms,
+		groupedTupleIndex: groupTuples(collected, []int{eIdx}, bIdx),
+		branchSyms:        branchSyms,
 	}
 }
 
@@ -1044,8 +1045,8 @@ func buildCachedBranch(
 	}
 
 	return &cachedBranch{
-		groupedRowIndex: groupRows(collected, oIdx, bIdx),
-		branchSyms:      branchSyms,
+		groupedTupleIndex: groupTuples(collected, oIdx, bIdx),
+		branchSyms:        branchSyms,
 	}, nil
 }
 
@@ -1191,8 +1192,8 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 //
 // The result has identical reachable content to the unbounded scan's cache:
 // the per-tuple probe only ever looks up outer entities' join keys, so the
-// unbounded scan's extra rows are dead entries. Deduplicating the keys keeps
-// the matcher from emitting duplicate (entity, value) rows for a repeated
+// unbounded scan's extra tuples are dead entries. Deduplicating the keys keeps
+// the matcher from emitting duplicate (entity, value) tuples for a repeated
 // outer entity, matching the unbounded scan's cardinality.
 func (it *OrFallbackIterator) outerJoinKeys() Relation {
 	if it.joinKeysComputed {
@@ -1298,16 +1299,16 @@ func (it *OrFallbackIterator) cacheableBranchInput() Relation {
 // nextShortCircuit tries branches in order until one returns results (fallback semantics).
 func (it *OrFallbackIterator) nextShortCircuit() bool {
 	for {
-		// Drain an in-progress cached-branch emit: remaining probe rows come
-		// straight off the branch cache's backing.
+		// Drain an in-progress cached-branch emit: the remaining probe matches
+		// come straight off the branch cache's backing.
 		if it.cachedMatches != nil {
 			if it.cachedMatchPos < len(it.cachedMatches) {
-				row := it.cachedMatches[it.cachedMatchPos]
+				matched := it.cachedMatches[it.cachedMatchPos]
 				it.cachedMatchPos++
 				if it.cachedPlan.identity {
-					it.currentTuple = row
+					it.currentTuple = matched
 				} else {
-					it.currentTuple = it.cachedPlan.project(row, it.cachedOuter)
+					it.currentTuple = it.cachedPlan.project(matched, it.cachedOuter)
 				}
 				return true
 			}
@@ -1378,7 +1379,7 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 			var branchResult Relation
 
 			// Check cache for uncorrelated branches (O(1) probe): matching
-			// rows emit directly from the cache's backing, and an empty probe
+			// tuples emit directly from the cache's backing, and an empty probe
 			// falls through to the next branch.
 			if cb, cached := it.branchCache[branchIdx]; cached {
 				if it.emitCachedMatches(branchIdx, cb, cb.probe(outerTuple), outerTuple) {
@@ -1614,13 +1615,13 @@ func symbolsMatch(a, b []query.Symbol) bool {
 	return true
 }
 
-// projectionPlan precomputes, per output position, where a branch row's
+// projectionPlan precomputes, per output position, where a branch tuple's
 // value comes from: a branch-tuple position, else an outer-tuple position
 // (a branch such as a ground default doesn't produce every output symbol —
 // the outer tuple's values fill the gaps), else nothing. The mapping depends
 // only on the branch, output, and outer symbol lists — per-branch constants —
 // so one plan serves every tuple the branch emits. identity means the branch
-// symbols already match the output symbols exactly and rows pass through
+// symbols already match the output symbols exactly and tuples pass through
 // unprojected; the emit sites own the copy-vs-alias decision for that case.
 type projectionPlan struct {
 	identity  bool
@@ -1681,8 +1682,8 @@ func (it *OrFallbackIterator) projectionFor(branchIdx int, branchSyms []query.Sy
 // emitCachedMatches begins emitting a probe result directly from the branch
 // cache's backing, setting the first output tuple as current. Returns false
 // when there are no matches (the caller falls through to the next branch).
-// The rows already form a set — a contiguous span of a deduplicated branch
-// relation — so nothing re-deduplicates here, and identity-shaped rows alias
+// The matches already form a set — a contiguous span of a deduplicated branch
+// relation — so nothing re-deduplicates here, and identity-shaped tuples alias
 // the cache's backing exactly as the wrapper relation's tuples did.
 func (it *OrFallbackIterator) emitCachedMatches(branchIdx int, cb *cachedBranch, matches []Tuple, outerTuple Tuple) bool {
 	if len(matches) == 0 {
@@ -1739,10 +1740,10 @@ func (it *projectedIterator) Tuple() Tuple {
 	return tuple
 }
 
-// filterBranchToOuterTuple filters a branch result to rows matching the
+// filterBranchToOuterTuple filters a branch result to the tuples matching the
 // current outer tuple on shared symbols. Needed for uncorrelated subqueries
 // that return results for ALL outer tuples — without filtering, every outer
-// tuple would get every result row.
+// tuple would get every result tuple.
 func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms []query.Symbol) Relation {
 	branchSyms := branchResult.Symbols()
 
@@ -1758,7 +1759,7 @@ func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms
 		return branchResult
 	}
 
-	// Filter to matching rows
+	// Filter to matching tuples
 	var tuples []Tuple
 	iter := branchResult.Iterator()
 	for iter.Next() {

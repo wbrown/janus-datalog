@@ -25,7 +25,7 @@ func TestExecuteAggregations(t *testing.T) {
 		name            string
 		findElements    []query.FindElement
 		expectedSymbols []query.Symbol
-		expectedRows    int
+		expectedTuples  int
 		validate        func(*testing.T, Relation)
 	}{
 		{
@@ -35,7 +35,7 @@ func TestExecuteAggregations(t *testing.T) {
 				query.FindVariable{Symbol: datalog.NewSymbol("?age")},
 			},
 			expectedSymbols: []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age")},
-			expectedRows:    4,
+			expectedTuples:  4,
 			validate: func(t *testing.T, result Relation) {
 				// Should have all 4 tuples with just name and age
 				if result.Size() != 4 {
@@ -49,7 +49,7 @@ func TestExecuteAggregations(t *testing.T) {
 				query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?name")},
 			},
 			expectedSymbols: []query.Symbol{datalog.NewSymbol("(count ?name)")},
-			expectedRows:    1,
+			expectedTuples:  1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
 				defer it.Close()
@@ -67,7 +67,7 @@ func TestExecuteAggregations(t *testing.T) {
 				query.FindAggregate{Function: datalog.SymAvg, Arg: datalog.NewSymbol("?age")},
 			},
 			expectedSymbols: []query.Symbol{datalog.NewSymbol("(avg ?age)")},
-			expectedRows:    1,
+			expectedTuples:  1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
 				defer it.Close()
@@ -85,7 +85,7 @@ func TestExecuteAggregations(t *testing.T) {
 				query.FindAggregate{Function: datalog.SymMax, Arg: datalog.NewSymbol("?score")},
 			},
 			expectedSymbols: []query.Symbol{datalog.NewSymbol("(max ?score)")},
-			expectedRows:    1,
+			expectedTuples:  1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
 				defer it.Close()
@@ -105,7 +105,7 @@ func TestExecuteAggregations(t *testing.T) {
 				query.FindAggregate{Function: datalog.SymAvg, Arg: datalog.NewSymbol("?score")},
 			},
 			expectedSymbols: []query.Symbol{datalog.NewSymbol("?age"), datalog.NewSymbol("(count ?name)"), datalog.NewSymbol("(avg ?score)")},
-			expectedRows:    3, // 3 unique ages: 25, 30, 35
+			expectedTuples:  3, // 3 unique ages: 25, 30, 35
 			validate: func(t *testing.T, result Relation) {
 				// Find the tuple for age 25 (should have count=2, avg=90)
 				it := result.Iterator()
@@ -136,7 +136,7 @@ func TestExecuteAggregations(t *testing.T) {
 				query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?score")},
 			},
 			expectedSymbols: []query.Symbol{datalog.NewSymbol("(min ?age)"), datalog.NewSymbol("(max ?age)"), datalog.NewSymbol("(sum ?score)")},
-			expectedRows:    1,
+			expectedTuples:  1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
 				defer it.Close()
@@ -166,8 +166,8 @@ func TestExecuteAggregations(t *testing.T) {
 			}
 
 			// Check tuple count
-			if result.Size() != tt.expectedRows {
-				t.Errorf("expected %d tuples, got %d", tt.expectedRows, result.Size())
+			if result.Size() != tt.expectedTuples {
+				t.Errorf("expected %d tuples, got %d", tt.expectedTuples, result.Size())
 			}
 
 			// Run custom validation

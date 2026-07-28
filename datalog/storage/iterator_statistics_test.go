@@ -50,9 +50,9 @@ func TestScanReportsIntakeAndResolution(t *testing.T) {
 			events = nil
 			result, err := db.Query(`[:find ?e ?n :where [?e :person/name ?n]]`)
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, 1, "last write wins, so one row survives")
+			require.Len(t, tuples, 1, "last write wins, so one tuple survives")
 
 			var scan *annotations.Event
 			for i := range events {
@@ -120,9 +120,9 @@ func TestScanStatisticsCarryTheirDuration(t *testing.T) {
 
 			result, err := db.Query(`[:find ?e ?n :where [?e :person/name ?n]]`)
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, 3)
+			require.Len(t, tuples, 3)
 
 			var scan *annotations.Event
 			for i := range events {
@@ -132,7 +132,7 @@ func TestScanStatisticsCarryTheirDuration(t *testing.T) {
 			}
 			require.NotNil(t, scan, "the unbound scan path must report its statistics")
 			require.Positive(t, scan.Latency,
-				"a scan that returned rows took measurable time; a zero latency is an unset field, not a fast scan")
+				"a scan that returned tuples took measurable time; a zero latency is an unset field, not a fast scan")
 			require.NotContains(t, scan.Data, "scan.duration",
 				"timing rides the Event's Latency, not a bespoke data key")
 		})

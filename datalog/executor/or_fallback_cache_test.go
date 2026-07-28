@@ -227,7 +227,7 @@ func TestCachedBranchSpanGrouping(t *testing.T) {
 	symE := datalog.NewSymbol("?e")
 	symCount := datalog.NewSymbol("?count")
 
-	// Interleaved keys: grouping must make each key's rows contiguous.
+	// Interleaved keys: grouping must make each key's tuples contiguous.
 	branchResult := NewMaterializedRelation(
 		[]query.Symbol{symE, symCount},
 		[]Tuple{
@@ -244,23 +244,23 @@ func TestCachedBranchSpanGrouping(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cb)
 
-	// Spans tile the shared backing: every row belongs to exactly one span,
-	// and every row within an unmixed span carries the span's key.
+	// Spans tile the shared backing: every tuple belongs to exactly one span,
+	// and every tuple within an unmixed span carries the span's key.
 	require.Len(t, cb.spans, 3, "one span per distinct key")
 	total := int32(0)
 	for _, span := range cb.spans {
 		require.False(t, span.mixed, "distinct real values must not collide")
-		segment := cb.rows[span.start:span.end]
+		segment := cb.tuples[span.start:span.end]
 		require.NotEmpty(t, segment)
-		for _, row := range segment[1:] {
-			assert.True(t, rowKeysEqual(segment[0], row, cb.rowPos),
-				"rows within an unmixed span must share one key")
+		for _, tuple := range segment[1:] {
+			assert.True(t, tupleKeysEqual(segment[0], tuple, cb.storedPos),
+				"tuples within an unmixed span must share one key")
 		}
 		total += span.end - span.start
 	}
-	assert.Equal(t, int32(len(cb.rows)), total, "spans cover every row exactly once")
+	assert.Equal(t, int32(len(cb.tuples)), total, "spans cover every tuple exactly once")
 
-	// Fanout probes return all rows for the key, in collection order.
+	// Fanout probes return all tuples for the key, in collection order.
 	matches := cb.probe(Tuple{e1})
 	require.Len(t, matches, 3)
 	assert.Equal(t, int64(10), matches[0][1])
@@ -269,13 +269,13 @@ func TestCachedBranchSpanGrouping(t *testing.T) {
 
 	// The probe result is a window into the shared backing, not a copy.
 	span := cb.spans[hashTuplePositions(Tuple{e1}, cb.probePos)]
-	assert.True(t, &matches[0] == &cb.rows[span.start],
+	assert.True(t, &matches[0] == &cb.tuples[span.start],
 		"probe must return a subslice of the shared backing")
 }
 
 func TestCachedBranchMixedSpanCollision(t *testing.T) {
 	// Two distinct keys sharing one hash cannot be constructed from real
-	// values, so drive regroupCollidingSpans on a hand-placed state: rows of
+	// values, so drive regroupCollidingSpans on a hand-placed state: tuples of
 	// two keys laid into one span, with each probe hash mapping to it — the
 	// state counting-sort placement produces when key hashes collide.
 	e1 := datalog.NewIdentity("entity:1")
@@ -284,7 +284,7 @@ func TestCachedBranchMixedSpanCollision(t *testing.T) {
 	symE := datalog.NewSymbol("?e")
 	symCount := datalog.NewSymbol("?count")
 
-	rows := []Tuple{
+	tuples := []Tuple{
 		{e1, int64(10)},
 		{e2, int64(20)},
 		{e1, int64(11)},
@@ -293,15 +293,15 @@ func TestCachedBranchMixedSpanCollision(t *testing.T) {
 	h2 := hashTuplePositions(Tuple{e2}, []int{0})
 	h3 := hashTuplePositions(Tuple{e3}, []int{0})
 	cb := &cachedBranch{
-		groupedRowIndex: &groupedRowIndex{
-			rows: rows,
-			spans: map[uint64]rowSpan{
+		groupedTupleIndex: &groupedTupleIndex{
+			tuples: tuples,
+			spans: map[uint64]tupleSpan{
 				h1: {start: 0, end: 3},
 				h2: {start: 0, end: 3},
 				h3: {start: 0, end: 3}, // hash resolves to the span, key absent
 			},
-			probePos: []int{0},
-			rowPos:   []int{0},
+			probePos:  []int{0},
+			storedPos: []int{0},
 		},
 		branchSyms: []query.Symbol{symE, symCount},
 	}
@@ -312,7 +312,7 @@ func TestCachedBranchMixedSpanCollision(t *testing.T) {
 	require.Len(t, cb.collisions[h1], 2, "two distinct keys → two groups")
 
 	matches := cb.probe(Tuple{e1})
-	require.Len(t, matches, 2, "mixed-span probe returns only the probed key's rows")
+	require.Len(t, matches, 2, "mixed-span probe returns only the probed key's tuples")
 	assert.Equal(t, int64(10), matches[0][1])
 	assert.Equal(t, int64(11), matches[1][1])
 

@@ -125,7 +125,7 @@ func buildPeopleDatoms() []datalog.Datom {
 }
 
 // peopleQueryNoAgg is `[:find ?n ?y ?age :in $ [[?n ?y] ...] :where ...]`.
-// Returns one row per matching entity, so duplicates in the input relation
+// Returns one tuple per matching entity, so duplicates in the input relation
 // flow through to duplicates in the output — which is what gap (1) exercises.
 const peopleQueryNoAgg = `[:find ?n ?y ?age
  :in $ [[?n ?y] ...]
@@ -510,13 +510,13 @@ func (it *reusingWorkspaceIterator) Error() error { return nil }
 //
 // Design notes:
 //   - Each input tuple matches exactly ONE entity in the dataset, so each
-//     iteration produces exactly one unique result row. Any workspace
+//     iteration produces exactly one unique result tuple. Any workspace
 //     corruption that causes a worker to see a different input's values
-//     will silently drop an expected row (the wrong entity is found, or
+//     will silently drop an expected tuple (the wrong entity is found, or
 //     no match at all).
 //   - We use 100 distinct inputs so even a small per-tuple corruption rate
 //     produces visible misses. With set-semantic output, the test asserts
-//     that all 100 expected rows are present — any miss fails the test.
+//     that all 100 expected tuples are present — any miss fails the test.
 //   - runtime.Gosched in the iterator's Next() widens the race window so
 //     workers reliably interleave with producer writes; without it the
 //     producer can finish all sends before any worker reads its tuple,
@@ -530,10 +530,10 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 	const entityCount = 100
 
 	// Build entityCount distinct entities — each input tuple matches one,
-	// so corruption to ANY tuple drops exactly one expected output row.
+	// so corruption to ANY tuple drops exactly one expected output tuple.
 	var datoms []datalog.Datom
 	var inputTuples []Tuple
-	expectedRows := make(map[string]bool, entityCount)
+	expectedTuples := make(map[string]bool, entityCount)
 	for i := 0; i < entityCount; i++ {
 		name := fmt.Sprintf("P%03d", i)
 		year := int64(2000 + i)
@@ -545,7 +545,7 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 			datalog.Datom{E: datalog.NewIdentity(eid), A: ageAttr, V: age, Tx: datalog.ElementID{Lamport: uint64(i*3 + 3), ReplicaID: 1}},
 		)
 		inputTuples = append(inputTuples, Tuple{name, year})
-		expectedRows[fmt.Sprintf("[%s %d %d]", name, year, age)] = false
+		expectedTuples[fmt.Sprintf("[%s %d %d]", name, year, age)] = false
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -568,8 +568,8 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 			result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
 			require.NoError(t, err)
 
-			seen := make(map[string]bool, len(expectedRows))
-			for key := range expectedRows {
+			seen := make(map[string]bool, len(expectedTuples))
+			for key := range expectedTuples {
 				seen[key] = false
 			}
 
@@ -591,7 +591,7 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 			}
 			sort.Strings(missing)
 			require.Emptyf(t, missing,
-				"%d of %d expected rows missing from result; the workspace-reuse "+
+				"%d of %d expected tuples missing from result; the workspace-reuse "+
 					"race let workers read stale workspace values. Run with -race "+
 					"to see the data race directly. Missing (first few): %v",
 				len(missing), entityCount, missing[:min(len(missing), 5)])

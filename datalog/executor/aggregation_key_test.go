@@ -82,10 +82,10 @@ func BenchmarkGroupedAggregationKeying(b *testing.B) {
 	}
 
 	const (
-		rowCount   = 10_000
+		tupleCount = 10_000
 		groupCount = 100
 	)
-	tuples := make([]Tuple, rowCount)
+	tuples := make([]Tuple, tupleCount)
 	for i := range tuples {
 		group := i % groupCount
 		tuples[i] = Tuple{int64(group), fmt.Sprintf("group-%d", group), float64(i)}

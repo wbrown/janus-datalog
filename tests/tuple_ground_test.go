@@ -61,21 +61,21 @@ func TestTupleGroundBasic(t *testing.T) {
 			iter := result.Iterator()
 			for iter.Next() {
 				tuple := iter.Tuple()
-				row := make([]interface{}, len(tuple))
-				copy(row, tuple)
-				tuples = append(tuples, row)
+				copied := make([]interface{}, len(tuple))
+				copy(copied, tuple)
+				tuples = append(tuples, copied)
 			}
 			iter.Close()
 
-			// Should have 1 row with values [1, 2, 3]
+			// Should have 1 tuple with values [1, 2, 3]
 			if len(tuples) != 1 {
-				t.Errorf("Expected 1 row, got %d", len(tuples))
+				t.Errorf("Expected 1 tuple, got %d", len(tuples))
 			}
 
 			if len(tuples) > 0 {
-				row := tuples[0]
-				if row[0] != int64(1) || row[1] != int64(2) || row[2] != int64(3) {
-					t.Errorf("Expected [1 2 3], got %v", row)
+				first := tuples[0]
+				if first[0] != int64(1) || first[1] != int64(2) || first[2] != int64(3) {
+					t.Errorf("Expected [1 2 3], got %v", first)
 				}
 			}
 		})
@@ -182,17 +182,17 @@ func TestTupleGroundOrFallback(t *testing.T) {
 			iter := result.Iterator()
 			for iter.Next() {
 				tuple := iter.Tuple()
-				row := make([]interface{}, len(tuple))
-				copy(row, tuple)
-				tuples = append(tuples, row)
+				copied := make([]interface{}, len(tuple))
+				copy(copied, tuple)
+				tuples = append(tuples, copied)
 			}
 			iter.Close()
 
 			t.Logf("Result count: %d", len(tuples))
 
-			// Should have 3 rows
+			// Should have 3 tuples
 			if len(tuples) != 3 {
-				t.Errorf("Expected 3 rows, got %d", len(tuples))
+				t.Errorf("Expected 3 tuples, got %d", len(tuples))
 			}
 
 			// Build result map (sum returns float64, count returns int64)
@@ -216,7 +216,7 @@ func TestTupleGroundOrFallback(t *testing.T) {
 					taskCount  int64
 					totalValue float64
 				}{taskCount, totalValue}
-				t.Logf("Row: name=%s, taskCount=%d, totalValue=%v", name, taskCount, totalValue)
+				t.Logf("Tuple: name=%s, taskCount=%d, totalValue=%v", name, taskCount, totalValue)
 			}
 
 			// Scenario One: 2 tasks, total value 30 (10 + 20)
@@ -293,15 +293,15 @@ func TestTupleGroundBackwardCompatibility(t *testing.T) {
 			iter := result.Iterator()
 			for iter.Next() {
 				tuple := iter.Tuple()
-				row := make([]interface{}, len(tuple))
-				copy(row, tuple)
-				tuples = append(tuples, row)
+				copied := make([]interface{}, len(tuple))
+				copy(copied, tuple)
+				tuples = append(tuples, copied)
 			}
 			iter.Close()
 
-			// Should have 1 row with value 42
+			// Should have 1 tuple with value 42
 			if len(tuples) != 1 {
-				t.Errorf("Expected 1 row, got %d", len(tuples))
+				t.Errorf("Expected 1 tuple, got %d", len(tuples))
 			}
 
 			if len(tuples) > 0 && tuples[0][0] != int64(42) {
@@ -361,26 +361,26 @@ func TestTupleGroundQB(t *testing.T) {
 			iter := result.Iterator()
 			for iter.Next() {
 				tuple := iter.Tuple()
-				row := make([]interface{}, len(tuple))
-				copy(row, tuple)
-				tuples = append(tuples, row)
+				copied := make([]interface{}, len(tuple))
+				copy(copied, tuple)
+				tuples = append(tuples, copied)
 			}
 			iter.Close()
 
 			t.Logf("Result count: %d", len(tuples))
 			for _, tuple := range tuples {
-				t.Logf("Row: %v", tuple)
+				t.Logf("Tuple: %v", tuple)
 			}
 
-			// Should have 1 row with [1, 2, 3]
+			// Should have 1 tuple with [1, 2, 3]
 			if len(tuples) != 1 {
-				t.Errorf("Expected 1 row, got %d", len(tuples))
+				t.Errorf("Expected 1 tuple, got %d", len(tuples))
 			}
 
 			if len(tuples) > 0 {
-				row := tuples[0]
-				if row[0] != int64(1) || row[1] != int64(2) || row[2] != int64(3) {
-					t.Errorf("Expected [1 2 3], got %v", row)
+				first := tuples[0]
+				if first[0] != int64(1) || first[1] != int64(2) || first[2] != int64(3) {
+					t.Errorf("Expected [1 2 3], got %v", first)
 				}
 			}
 		})
@@ -467,22 +467,22 @@ func TestTupleGroundQBInOr(t *testing.T) {
 			iter := result.Iterator()
 			for iter.Next() {
 				tuple := iter.Tuple()
-				row := make([]interface{}, len(tuple))
-				copy(row, tuple)
-				tuples = append(tuples, row)
+				copied := make([]interface{}, len(tuple))
+				copy(copied, tuple)
+				tuples = append(tuples, copied)
 			}
 			iter.Close()
 
 			t.Logf("Result count: %d", len(tuples))
 			for _, tuple := range tuples {
-				t.Logf("Row: %v", tuple)
+				t.Logf("Tuple: %v", tuple)
 			}
 
 			// OR fallback correctly triggers for each scenario:
 			// - Scenario One: has tasks, pattern branch matches with count 5
 			// - Scenario Two: no tasks, fallback branch triggers with count 0
 			if len(tuples) != 2 {
-				t.Errorf("Expected 2 rows (both scenarios), got %d", len(tuples))
+				t.Errorf("Expected 2 tuples (both scenarios), got %d", len(tuples))
 			}
 
 			// Build expected results map (order may vary)

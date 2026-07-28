@@ -17,7 +17,7 @@ The order-by panic is one instance of a general class: **any two or more post-pu
 |------|------------|--------|
 | `SortRelation` (`executor_utils.go`) | pull + `:order-by` (tied sort keys, or relations containing only pull results) | **FIXED by relocation** — maps never reach the sort. `TestOrderByPullWithTiedSortKeys` green; `TestSortRelationRejectsNonValueTuples` pins that a hand-built map-bearing relation now fails loudly as a value-domain violation |
 | Post-sort strip (`executor.go`) | pull + non-projected `:order-by` | **FIXED by relocation** — the strip is a plain deduplicating projection over value attributes (`TestOrderByNonProjectedWithPull` green); the former pull-exempt branch was deleted as dead code |
-| `LimitRelation.ensure` (`limit_relation.go:58`) | pull + `:limit ≥2` | **FIXED by relocation** — the capped result deduplicates `Identity` rows, then the boundary pulls only the surviving N (`TestPullWithLimitTwoRows` green) |
+| `LimitRelation.ensure` (`limit_relation.go:58`) | pull + `:limit ≥2` | **FIXED by relocation** — the capped result deduplicates `Identity` tuples, then the boundary pulls only the surviving N (`TestPullWithLimitTwoTuples` green) |
 | Relation-input iteration combine (`executor.go`) | pull + `:in $ [[?x] ...]` | **FIXED by relocation** — the union deduplicates `Identity` rows (correct by-entity set semantics), then the boundary pulls each surviving row (`TestPullWithRelationInputUnion` green) |
 | Multi-group product path (`query_executor.go`) | pull + disjoint find groups | never crashed, previously uncovered — `TestPullWithDisjointFindGroups` pins pull rendering through it end-to-end |
 

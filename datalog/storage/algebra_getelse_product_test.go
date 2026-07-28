@@ -109,7 +109,7 @@ func setupGetElseWithItemsDB(t testing.TB, popts *planner.PlannerOptions) (*Data
 }
 
 // TestGetElseMultiple_NoCartesianProduct tests that multiple get-else
-// expressions on the same entity produce one row per entity, not a
+// expressions on the same entity produce one tuple per entity, not a
 // Cartesian product.
 func TestGetElseMultiple_NoCartesianProduct(t *testing.T) {
 	db, cleanup := setupGetElseTestDB(t)
@@ -127,7 +127,7 @@ func TestGetElseMultiple_NoCartesianProduct(t *testing.T) {
 	require.NoError(t, err)
 	baseline, err := executor.CollectTuples(baselineRel, nil)
 	require.NoError(t, err)
-	require.Len(t, baseline, 3, "baseline: one row per project")
+	require.Len(t, baseline, 3, "baseline: one tuple per project")
 
 	db.ClearPlanCache()
 	optimizedRel, err := queryWithAlgebra(db, q)
@@ -135,7 +135,7 @@ func TestGetElseMultiple_NoCartesianProduct(t *testing.T) {
 	optimized, err := executor.CollectTuples(optimizedRel, nil)
 	require.NoError(t, err)
 	assert.Len(t, optimized, 3,
-		"algebra bridge: must produce one row per project, not a Cartesian product")
+		"algebra bridge: must produce one tuple per project, not a Cartesian product")
 }
 
 // TestGetElseMultiple_CorrectValues verifies that get-else returns the
@@ -184,7 +184,7 @@ func TestGetElseMultiple_CorrectValues(t *testing.T) {
 		optimizedByName[tuple[0].(string)] = tuple
 	}
 
-	assert.Len(t, optimized, len(baseline), "same row count")
+	assert.Len(t, optimized, len(baseline), "same tuple count")
 	for name, expected := range baselineByName {
 		actual, ok := optimizedByName[name]
 		require.True(t, ok, "missing result for %s", name)
@@ -241,7 +241,7 @@ func TestGetElsePipelineInvariant(t *testing.T) {
 //
 // Tests the full complex structure: pattern + 6 get-else + pattern +
 // 3 OR-with-subquery + comparison binding + order-by.
-// Each test expects 2 rows (one per project), not a Cartesian product.
+// Each test expects 2 tuples (one per project), not a Cartesian product.
 // =============================================================================
 
 // buildComplexQuery_OrClause builds the complex query using qb.Or()
@@ -460,7 +460,7 @@ const parsedComplexQuery_OrDefault = `
      [(ground [:none #inst "0001-01-01T00:00:00Z"]) [[?lastTag ?lastUpdatedAt]]])
  :order-by [[?lastUpdatedAt :desc]]]`
 
-func runComplexQueryTest(t *testing.T, db *Database, q interface{}, label string, expectedRows int) {
+func runComplexQueryTest(t *testing.T, db *Database, q interface{}, label string, expectedTuples int) {
 	t.Helper()
 
 	tuples, err := executor.CollectTuples(db.Query(q))
@@ -471,7 +471,7 @@ func runComplexQueryTest(t *testing.T, db *Database, q interface{}, label string
 		t.Logf("  %v", tuple)
 	}
 
-	assert.Len(t, tuples, expectedRows, "%s: expected %d rows", label, expectedRows)
+	assert.Len(t, tuples, expectedTuples, "%s: expected %d tuples", label, expectedTuples)
 }
 
 // TestGetElseComplex_OrSemantics compares the (or ...) query result with and
@@ -534,14 +534,14 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 	}
 
 	assert.Equal(t, len(baseline), len(optimized),
-		"algebra bridge must produce same row count as base executor")
+		"algebra bridge must produce same tuple count as base executor")
 }
 
 // TestGetElseComplex_ParsedOr tests with parsed (or ...) — union semantics.
-// Both branches contribute rows when both match. Verified empirically:
-// base executor without algebra bridge also produces 9 rows
+// Both branches contribute tuples when both match. Verified empirically:
+// base executor without algebra bridge also produces 9 tuples
 // (TestGetElseComplex_OrSemantics). This is correct union behavior, not a bug.
-// Use (or-default ...) for fallback semantics (2 rows).
+// Use (or-default ...) for fallback semantics (2 tuples).
 func TestGetElseComplex_ParsedOr(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -554,7 +554,7 @@ func TestGetElseComplex_ParsedOr(t *testing.T) {
 }
 
 // TestGetElseComplex_ParsedOrDefault tests with parsed (or-default ...).
-// Fallback semantics: one row per project.
+// Fallback semantics: one tuple per project.
 func TestGetElseComplex_ParsedOrDefault(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -567,7 +567,7 @@ func TestGetElseComplex_ParsedOrDefault(t *testing.T) {
 }
 
 // TestGetElseComplex_QBOr tests with qb.Or() → *query.OrClause.
-// Same union semantics as parsed (or ...): 9 rows.
+// Same union semantics as parsed (or ...): 9 tuples.
 func TestGetElseComplex_QBOr(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -582,7 +582,7 @@ func TestGetElseComplex_QBOr(t *testing.T) {
 }
 
 // TestGetElseComplex_QBOrDefault tests with qb.OrDefault() → *query.OrDefaultClause.
-// Fallback semantics: 2 rows.
+// Fallback semantics: 2 tuples.
 func TestGetElseComplex_QBOrDefault(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

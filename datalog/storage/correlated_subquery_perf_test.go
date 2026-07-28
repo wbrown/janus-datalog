@@ -151,7 +151,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 			results, err := executor.CollectTuples(db.Query(queryStr))
 			elapsed := time.Since(start)
 			require.NoError(t, err)
-			require.Len(t, results, numScenarios, "should return one row per scenario")
+			require.Len(t, results, numScenarios, "should return one tuple per scenario")
 			t.Logf("Query returned %d results in %s", len(results), elapsed)
 
 			// Verify correctness of first result (ordered by lastUpdatedAt desc, so last scenario)
@@ -160,12 +160,12 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 				last[0], last[1], last[3], last[4], last[6], last[7])
 
 			// Every scenario has 100 completed tasks
-			for i, row := range results {
-				taskCount := row[3]
+			for i, tuple := range results {
+				taskCount := tuple[3]
 				if tc, ok := taskCount.(int); ok {
 					require.Equal(t, tasksPerScenario, tc, "scenario %d should have %d tasks", i, tasksPerScenario)
 				}
-				complete := row[6]
+				complete := tuple[6]
 				require.Equal(t, true, complete, "scenario %d should be complete (has opening task)", i)
 			}
 
@@ -402,11 +402,11 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 		require.Len(t, results, numScenarios)
 		t.Logf("Baseline: %d results in %s", len(results), elapsed)
 
-		for i, row := range results {
-			if tc, ok := row[3].(int); ok {
+		for i, tuple := range results {
+			if tc, ok := tuple[3].(int); ok {
 				require.Equal(t, tasksPerScenario, tc, "scenario %d task count", i)
 			}
-			require.Equal(t, true, row[6], "scenario %d complete", i)
+			require.Equal(t, true, tuple[6], "scenario %d complete", i)
 		}
 	})
 
@@ -441,11 +441,11 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 		}
 		t.Logf("Optimized: %d results in %s", len(results), elapsed)
 
-		for i, row := range results {
-			if tc, ok := row[3].(int); ok {
+		for i, tuple := range results {
+			if tc, ok := tuple[3].(int); ok {
 				require.Equal(t, tasksPerScenario, tc, "scenario %d task count", i)
 			}
-			require.Equal(t, true, row[6], "scenario %d complete", i)
+			require.Equal(t, true, tuple[6], "scenario %d complete", i)
 		}
 	})
 }
@@ -563,9 +563,9 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 		// Verify: scenarios with tasks have counts > 0, those without have 0
 		withTasks := 0
 		withoutTasks := 0
-		for _, row := range results {
+		for _, tuple := range results {
 			tc := int64(0)
-			switch v := row[3].(type) {
+			switch v := tuple[3].(type) {
 			case int64:
 				tc = v
 			case int:
@@ -603,9 +603,9 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 		// Same verification as baseline
 		withTasks := 0
 		withoutTasks := 0
-		for _, row := range results {
+		for _, tuple := range results {
 			tc := int64(0)
-			switch v := row[3].(type) {
+			switch v := tuple[3].(type) {
 			case int64:
 				tc = v
 			case int:
@@ -760,9 +760,9 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 		require.Len(t, results, numProjects, "baseline must return ALL projects")
 		t.Logf("Baseline: %d results in %s", len(results), elapsed)
 
-		for _, row := range results {
+		for _, tuple := range results {
 			ic := int64(0)
-			switch v := row[8].(type) {
+			switch v := tuple[8].(type) {
 			case int64:
 				ic = v
 			case int:
@@ -787,9 +787,9 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 			"algebra optimizer must return ALL projects with production-structure query")
 		t.Logf("Optimized: %d results in %s", len(results), elapsed)
 
-		for _, row := range results {
+		for _, tuple := range results {
 			ic := int64(0)
-			switch v := row[8].(type) {
+			switch v := tuple[8].(type) {
 			case int64:
 				ic = v
 			case int:

@@ -44,14 +44,14 @@ func TestCorrelatedSubqueryStreamsInputProductIntoCombinationExtraction(t *testi
 		[]Relation{left, right},
 	)
 	require.NoError(t, err)
-	rows, err := CollectTuples(result, nil)
+	tuples, err := CollectTuples(result, nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, [][]interface{}{
 		{int64(1), int64(10), int64(11)},
 		{int64(1), int64(20), int64(21)},
 		{int64(2), int64(10), int64(12)},
 		{int64(2), int64(20), int64(22)},
-	}, rows)
+	}, tuples)
 	require.Equal(t, 2, combinationEvent.Data["relation_groups"])
 	require.Equal(t, true, combinationEvent.Data["product"])
 	require.Equal(t, false, combinationEvent.Data["eager_materialized"])

@@ -46,9 +46,9 @@ func TestFindOuterRelationCombinesMultipleStreamsReusably(t *testing.T) {
 		Relations{left, right},
 	)
 	require.Equal(t, []int{0, 1}, consumed)
-	rows, err := CollectTuples(selected, nil)
+	tuples, err := CollectTuples(selected, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(2), int64(3)}}, rows)
+	require.Equal(t, [][]interface{}{{int64(2), int64(3)}}, tuples)
 }
 
 func TestOrFallbackAnnotatesDeferredOuterMaterialization(t *testing.T) {
@@ -91,9 +91,9 @@ func TestOrFallbackAnnotatesDeferredOuterMaterialization(t *testing.T) {
 	)
 	relation.joinSyms = []query.Symbol{entitySymbol}
 
-	rows, err := CollectTuples(relation, nil)
+	tuples, err := CollectTuples(relation, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{entity, "present"}}, rows)
+	require.Equal(t, [][]interface{}{{entity, "present"}}, tuples)
 	require.Equal(t, 1, materializations)
 }
 
@@ -124,12 +124,12 @@ func TestOrFallbackSinglePassBranchKeepsOuterStreaming(t *testing.T) {
 		true,
 	)
 
-	rows, err := CollectTuples(relation, nil)
+	tuples, err := CollectTuples(relation, nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, [][]interface{}{
 		{int64(1), "default"},
 		{int64(2), "default"},
-	}, rows)
+	}, tuples)
 	require.Zero(t, materializations)
 }
 
@@ -163,9 +163,9 @@ func TestOuterJoinKeysProducesSetWithJoinKey(t *testing.T) {
 	iterator := relation.Iterator().(*OrFallbackIterator)
 
 	keys := iterator.outerJoinKeys()
-	rows, err := CollectTuples(keys, nil)
+	tuples, err := CollectTuples(keys, nil)
 	require.NoError(t, err)
-	require.ElementsMatch(t, [][]interface{}{{e1}, {e2}}, rows)
+	require.ElementsMatch(t, [][]interface{}{{e1}, {e2}}, tuples)
 	require.Equal(t,
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 		keys.Properties(),

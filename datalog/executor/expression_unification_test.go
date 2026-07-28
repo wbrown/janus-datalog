@@ -14,8 +14,8 @@ import (
 // never replaced. The executor's ground-constants path already implements
 // exactly this ("filter (unify) instead of extending", executeExpression);
 // these tests pin the same contract for the per-tuple path, which today
-// overwrites the bound value instead. Overwriting silently corrupts rows:
-// the OHLC decorrelation failure produced rows whose ?datetime came from the
+// overwrites the bound value instead. Overwriting silently corrupts tuples:
+// the OHLC decorrelation failure produced tuples whose ?datetime came from the
 // outer bar while the aggregates belonged to a different group, because the
 // hour expressions overwrote the join keys instead of filtering.
 //
@@ -98,9 +98,9 @@ func TestExpressionOntoBoundVariableUnifies(t *testing.T) {
 						}
 						t.Fatalf("expected exactly the unifying entity (1 tuple), got %d", result.Size())
 					}
-					row := result.Get(0)
-					if !datalog.ValuesEqual(row[0], int64(1)) || !datalog.ValuesEqual(row[1], int64(2)) {
-						t.Fatalf("expected [1 2], got %v", row)
+					tuple := result.Get(0)
+					if !datalog.ValuesEqual(tuple[0], int64(1)) || !datalog.ValuesEqual(tuple[1], int64(2)) {
+						t.Fatalf("expected [1 2], got %v", tuple)
 					}
 				})
 			}
@@ -113,8 +113,8 @@ func TestExpressionOntoBoundVariableUnifies(t *testing.T) {
 // symbol is bound and the tuple survives unification unchanged, the
 // retained tuple must be copied out of a workspace-reusing source — the
 // same boundary rule every other retain-site honors. Without the copy,
-// every retained row aliases the iterator workspace and reads as the last
-// row.
+// every retained tuple aliases the iterator workspace and reads as the last
+// tuple.
 func TestEvaluateExpressionUnifyPassThroughCopiesFromUnsafeSource(t *testing.T) {
 	xSym := datalog.NewSymbol("?x")
 	ySym := datalog.NewSymbol("?y")
@@ -124,7 +124,7 @@ func TestEvaluateExpressionUnifyPassThroughCopiesFromUnsafeSource(t *testing.T) 
 			{int64(1), int64(2)},
 			{int64(2), int64(3)},
 			{int64(3), int64(4)},
-		}, // every row unifies: ?y = ?x + 1
+		}, // every tuple unifies: ?y = ?x + 1
 	)
 
 	q, err := parser.ParseQuery(`[:find ?x ?y
@@ -164,7 +164,7 @@ func TestEvaluateExpressionUnifyPassThroughCopiesFromUnsafeSource(t *testing.T) 
 	for i := range want {
 		for j := range want[i] {
 			if !datalog.ValuesEqual(got[i][j], want[i][j]) {
-				t.Fatalf("tuple %d = %v, want %v (workspace aliasing corrupts retained rows)", i, got[i], want[i])
+				t.Fatalf("tuple %d = %v, want %v (workspace aliasing corrupts retained tuples)", i, got[i], want[i])
 			}
 		}
 	}
@@ -172,8 +172,8 @@ func TestEvaluateExpressionUnifyPassThroughCopiesFromUnsafeSource(t *testing.T) 
 
 // TestEvaluateExpressionUnifiesBoundBindings pins the per-tuple evaluation
 // path directly, one case per write site: scalar binding with the symbol
-// bound, multi-row expansion (enumerate) with every binding symbol bound,
-// and multi-row expansion with a partial overlap (one symbol bound, one
+// bound, multi-tuple expansion (enumerate) with every binding symbol bound,
+// and multi-tuple expansion with a partial overlap (one symbol bound, one
 // new). In every case a bound symbol filters; only genuinely new symbols
 // extend the tuple.
 func TestEvaluateExpressionUnifiesBoundBindings(t *testing.T) {
@@ -215,7 +215,7 @@ func TestEvaluateExpressionUnifiesBoundBindings(t *testing.T) {
 			exprIndex: 3,
 			symbols:   []query.Symbol{vecSym, idxSym, tagSym},
 			tuples: []Tuple{
-				{vecAB, int64(0), "a"}, // (0 "a") is an expansion row — survives once
+				{vecAB, int64(0), "a"}, // (0 "a") is an expansion tuple — survives once
 				{vecAB, int64(0), "b"}, // (0 "b") is not — dropped
 			},
 			wantSymbols: []query.Symbol{vecSym, idxSym, tagSym},
@@ -229,8 +229,8 @@ func TestEvaluateExpressionUnifiesBoundBindings(t *testing.T) {
 			exprIndex: 2,
 			symbols:   []query.Symbol{vecSym, tagSym},
 			tuples: []Tuple{
-				// ?tag bound to "b": only the (1 "b") expansion row unifies,
-				// extending the tuple with ?idx = 1. The (0 "a") row does not.
+				// ?tag bound to "b": only the (1 "b") expansion tuple unifies,
+				// extending the tuple with ?idx = 1. The (0 "a") tuple does not.
 				{vecAB, "b"},
 			},
 			wantSymbols: []query.Symbol{vecSym, tagSym, idxSym},

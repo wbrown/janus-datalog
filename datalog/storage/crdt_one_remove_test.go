@@ -79,9 +79,9 @@ func queryUnboundForEA(t *testing.T, db *Database, e datalog.Identity, a datalog
 	var filtered [][]interface{}
 	for _, tuple := range results {
 		if len(tuple) >= 3 {
-			if rowE, ok := tuple[0].(datalog.Identity); ok {
-				if rowA, ok := tuple[1].(datalog.Keyword); ok {
-					if rowE.Hash() == e.Hash() && rowA == a {
+			if boundE, ok := tuple[0].(datalog.Identity); ok {
+				if boundA, ok := tuple[1].(datalog.Keyword); ok {
+					if boundE.Hash() == e.Hash() && boundA == a {
 						filtered = append(filtered, tuple)
 					}
 				}

@@ -147,7 +147,7 @@ func runTopNDifferential(t *testing.T, seed int64) {
 		for i := range tuples {
 			tuples[i] = Tuple{
 				int64(random.Intn(12) - 6),
-				fmt.Sprintf("case-%03d-row-%03d", caseIndex, i),
+				fmt.Sprintf("case-%03d-tuple-%03d", caseIndex, i),
 			}
 		}
 		orderBy := []query.OrderByClause{
@@ -216,11 +216,11 @@ func TestTopNRelationCompleteTiesRemainValid(t *testing.T) {
 		[]query.OrderByClause{{Variable: score, Descending: false}},
 		5,
 	)
-	rows, err := collectTypedTuples(result)
+	tuples, err := collectTypedTuples(result)
 	require.NoError(t, err)
-	require.Len(t, rows, 5)
-	for _, row := range rows {
-		require.Equal(t, int64(1), row[0])
+	require.Len(t, tuples, 5)
+	for _, tuple := range tuples {
+		require.Equal(t, int64(1), tuple[0])
 	}
 }
 
@@ -234,9 +234,9 @@ func TestTopNRelationZeroAndMalformedOrderDoNotOpenSource(t *testing.T) {
 		[]query.OrderByClause{{Variable: x, Descending: false}},
 		0,
 	)
-	rows, err := collectTypedTuples(zero)
+	tuples, err := collectTypedTuples(zero)
 	require.NoError(t, err)
-	require.Empty(t, rows)
+	require.Empty(t, tuples)
 	require.Zero(t, source.iteratorCalls)
 
 	malformed := TopNRelation(

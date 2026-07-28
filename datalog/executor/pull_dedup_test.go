@@ -13,9 +13,9 @@ import (
 // the result boundary after sort/strip/limit, so relational operations
 // (dedup, union, limit) only ever see Identity in the entity binding.
 
-// Pull + :limit N≥2: LimitRelation.ensure deduplicates Identity rows, then
-// the boundary pull renders only the N surviving rows.
-func TestPullWithLimitTwoRows(t *testing.T) {
+// Pull + :limit N≥2: LimitRelation.ensure deduplicates Identity tuples, then
+// the boundary pull renders only the N surviving tuples.
+func TestPullWithLimitTwoTuples(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
 
 	q, err := parser.ParseQuery(`[:find (pull ?e [:user/name])
@@ -34,15 +34,15 @@ func TestPullWithLimitTwoRows(t *testing.T) {
 				t.Fatalf("execution failed: %v", err)
 			}
 			if result.Size() != 3 {
-				t.Fatalf("expected 3 pulled rows, got %d", result.Size())
+				t.Fatalf("expected 3 pulled tuples, got %d", result.Size())
 			}
 		})
 	}
 }
 
 // Pull + relation input: the iteration path unions per-tuple results and
-// deduplicates them on Identity rows (by-entity set semantics); the
-// boundary pull renders each surviving row.
+// deduplicates them on Identity tuples (by-entity set semantics); the
+// boundary pull renders each surviving tuple.
 func TestPullWithRelationInputUnion(t *testing.T) {
 	keyAttr := datalog.NewKeyword(":item/key")
 	valAttr := datalog.NewKeyword(":item/val")
@@ -81,7 +81,7 @@ func TestPullWithRelationInputUnion(t *testing.T) {
 				t.Fatalf("execution failed: %v", err)
 			}
 			if result.Size() != 3 {
-				t.Fatalf("expected 3 pulled rows across the union, got %d", result.Size())
+				t.Fatalf("expected 3 pulled tuples across the union, got %d", result.Size())
 			}
 		})
 	}

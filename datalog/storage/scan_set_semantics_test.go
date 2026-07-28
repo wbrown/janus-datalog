@@ -45,12 +45,12 @@ func TestScanProjectionPreservesSet(t *testing.T) {
 		return &query.DataPattern{Elements: elems}
 	}
 
-	// Current/as-of mode: resolution emits one row per (E, A) group for
+	// Current/as-of mode: resolution emits one tuple per (E, A) group for
 	// effective cardinality-one, one per (E, A, V) for declared many.
 	require.True(t, scanProjectionPreservesSet(pattern(eVar, oneConst, vVar), s, false),
 		"declared one, E and V variables: {E, A} covered")
 	require.True(t, scanProjectionPreservesSet(pattern(eVar, oneConst, query.Blank{}), s, false),
-		"declared one, V wildcard: LWW emits one row per (E, A)")
+		"declared one, V wildcard: LWW emits one tuple per (E, A)")
 	require.False(t, scanProjectionPreservesSet(pattern(query.Blank{}, oneConst, vVar), s, false),
 		"E wildcard drops a key component")
 	require.False(t, scanProjectionPreservesSet(pattern(eVar, manyConst, query.Blank{}), s, false),
@@ -62,7 +62,7 @@ func TestScanProjectionPreservesSet(t *testing.T) {
 	require.True(t, scanProjectionPreservesSet(pattern(eVar, aVar, vVar), s, false),
 		"A variable with V covered: {E, A, V} is a superkey in every cardinality")
 	require.True(t, scanProjectionPreservesSet(pattern(eVar, oneConst, query.Blank{}), nil, false),
-		"schemaless: the resolver defaults to LWW, one row per (E, A)")
+		"schemaless: the resolver defaults to LWW, one tuple per (E, A)")
 
 	// History mode: raw operation records, each with its own ElementID —
 	// Tx alone is a candidate key.
@@ -100,10 +100,10 @@ func TestScanSetSemantics_DeclaredManyValueWildcard(t *testing.T) {
 
 			rel, err := db.Query(`[:find ?e :where [?e :scan/tags _]]`)
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(rel, nil)
+			tuples, err := executor.CollectTuples(rel, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, 2,
-				"one row per entity: a multi-member set must not duplicate its entity")
+			require.Len(t, tuples, 2,
+				"one tuple per entity: a multi-member set must not duplicate its entity")
 		})
 	}
 }
@@ -129,16 +129,16 @@ func TestScanSetSemantics_HistoryReassertedValue(t *testing.T) {
 			hist := db.History()
 			rel, err := hist.Query(`[:find ?e ?v :where [?e :scan/value ?v]]`)
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(rel, nil)
+			tuples, err := executor.CollectTuples(rel, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, 1,
+			require.Len(t, tuples, 1,
 				"two operation records project to one (E, V) binding — a relation is a set")
 
 			withTx, err := hist.Query(`[:find ?e ?v ?tx :where [?e :scan/value ?v ?tx]]`)
 			require.NoError(t, err)
-			txRows, err := executor.CollectTuples(withTx, nil)
+			txTuples, err := executor.CollectTuples(withTx, nil)
 			require.NoError(t, err)
-			require.Len(t, txRows, 2, "Tx distinguishes the two operation records")
+			require.Len(t, txTuples, 2, "Tx distinguishes the two operation records")
 		})
 	}
 }

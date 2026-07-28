@@ -38,15 +38,15 @@ func TestEqualVectorValuesJoin(t *testing.T) {
 	y := datalog.NewSymbol("?y")
 
 	left := NewMaterializedRelation([]query.Symbol{x, v}, []Tuple{
-		{"left-row", []interface{}{"a", int64(1)}},
+		{"left-tuple", []interface{}{"a", int64(1)}},
 	})
 	right := NewMaterializedRelation([]query.Symbol{v, y}, []Tuple{
-		{[]interface{}{"a", int64(1)}, "right-row"},
+		{[]interface{}{"a", int64(1)}, "right-tuple"},
 	})
 
 	joined := left.HashJoin(right, []query.Symbol{v})
 	if joined.Size() != 1 {
-		t.Fatalf("equal vector join keys must match: expected 1 row, got %d", joined.Size())
+		t.Fatalf("equal vector join keys must match: expected 1 tuple, got %d", joined.Size())
 	}
 }
 
@@ -166,7 +166,7 @@ func TestSignedZeroHashesConsistentlyAcrossSetOperations(t *testing.T) {
 		[]Tuple{{negative, "right"}},
 	)
 	if got := HashJoin(left, right, []query.Symbol{value}).Size(); got != 1 {
-		t.Fatalf("signed-zero join keys must match, got %d rows", got)
+		t.Fatalf("signed-zero join keys must match, got %d tuples", got)
 	}
 
 	grouped := executeGroupedAggregation(

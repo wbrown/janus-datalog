@@ -84,9 +84,9 @@ func TestProductProjectionRestoresSetOnReduction(t *testing.T) {
 	require.NoError(t, err)
 	_, dedups := combos.(*StreamingRelation).iterator.(*DedupIterator)
 	require.True(t, dedups, "a reducing projection of a product must deduplicate")
-	rows, err := CollectTuples(combos, nil)
+	tuples, err := CollectTuples(combos, nil)
 	require.NoError(t, err)
-	require.ElementsMatch(t, [][]interface{}{{int64(1)}, {int64(2)}}, rows)
+	require.ElementsMatch(t, [][]interface{}{{int64(1)}, {int64(2)}}, tuples)
 }
 
 // TestProductProjectionPermutationSkipsDedup pins the permutation arm: a
@@ -103,10 +103,10 @@ func TestProductProjectionPermutationSkipsDedup(t *testing.T) {
 	require.NoError(t, err)
 	_, dedups := reordered.(*StreamingRelation).iterator.(*DedupIterator)
 	require.False(t, dedups, "a permutation is injective on tuples — no dedup pass")
-	rows, err := CollectTuples(reordered, nil)
+	tuples, err := CollectTuples(reordered, nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, [][]interface{}{
 		{int64(10), int64(1)}, {int64(20), int64(1)},
 		{int64(10), int64(2)}, {int64(20), int64(2)},
-	}, rows)
+	}, tuples)
 }

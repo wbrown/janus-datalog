@@ -359,7 +359,7 @@ func (m *TupleKeyMap) PutValue(keyValue, value interface{}) {
 // already present, and reports whether it already existed. It walks the
 // hash's entries exactly once, where a separate Exists+Put pair would walk
 // them twice (running tupleValuesEqual against every entry both times).
-// This is the hot path for join deduplication, where every matched row
+// This is the hot path for join deduplication, where every matched tuple
 // probes the seen set.
 func (m *TupleKeyMap) PutIfAbsent(key TupleKey, value interface{}) (existed bool) {
 	first, ok := m.entries[key.hash]

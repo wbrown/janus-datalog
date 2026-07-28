@@ -252,7 +252,7 @@ The dispatch (`clause_utils.go`) has a silent `default: return ClauseSymbols{}` 
 
 ## Addendum — external review of 2026-07-19 (against `4a43b5d`), audited and confirmed
 
-The review's two live findings are ledgered: `docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_ROWS.md` — confirmed by reproduction, fixed 2026-07-19 (correlated or/or-join now round-trips through the algebra bridge as itself; the fallback encoding was never a valid lowering for union semantics, a wider defect than the review's correlation-key symptom); `docs/bugs/resolved/BUG_DISJOINT_NOT_FAILS_AT_EXECUTOR.md` — confirmed mechanically, ruled and resolved 2026-07-19: fully-disjoint NOT is rejected at planning, the global-anti-join reading declined, with the aggregate-subquery idiom as the expressible existence gate. Its two cleanups, confirmed:
+The review's two live findings are ledgered: `docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_TUPLES.md` — confirmed by reproduction, fixed 2026-07-19 (correlated or/or-join now round-trips through the algebra bridge as itself; the fallback encoding was never a valid lowering for union semantics, a wider defect than the review's correlation-key symptom); `docs/bugs/resolved/BUG_DISJOINT_NOT_FAILS_AT_EXECUTOR.md` — confirmed mechanically, ruled and resolved 2026-07-19: fully-disjoint NOT is rejected at planning, the global-anti-join reading declined, with the aggregate-subquery idiom as the expressible existence gate. Its two cleanups, confirmed:
 
 ### R1. `query.unionSymbolSets` is dead
 

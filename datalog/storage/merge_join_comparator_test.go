@@ -19,7 +19,7 @@ import (
 
 // TestMergeJoinMixedEntityBindingsMatchOnlyIdentities pins the advance
 // comparator's cross-type behavior: non-Identity values in an entity-position
-// binding column sort before every Identity under the canonical rank order and
+// binding position sort before every Identity under the canonical rank order and
 // never compare equal to a probe — including a string that is exactly an
 // entity's L85 text, which the old Sprintf fallback compared equal.
 func TestMergeJoinMixedEntityBindingsMatchOnlyIdentities(t *testing.T) {
@@ -70,7 +70,7 @@ func TestMergeJoinMixedEntityBindingsMatchOnlyIdentities(t *testing.T) {
 		t.Fatalf("mixed entity bindings must join, not error: %v", err)
 	}
 	if len(tuples) != 2 {
-		t.Fatalf("expected exactly the 2 Identity-bound rows, got %d: %v", len(tuples), tuples)
+		t.Fatalf("expected exactly the 2 Identity-bound tuples, got %d: %v", len(tuples), tuples)
 	}
 	for _, tuple := range tuples {
 		e, ok := tuple[0].(datalog.Identity)

@@ -543,14 +543,14 @@ func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 // Phase 2 Tests: Per-tuple A from relation/join bindings
 // =============================================================================
 
-// TestEACacheBypass_PerRowA_UsesCache tests that the cache is used when both E and A
+// TestEACacheBypass_PerTupleA_UsesCache tests that the cache is used when both E and A
 // are symbols in the binding relation with multiple tuples (per-tuple A from join results).
 // This is the Phase 2 optimization target.
 //
 // Setup: Each entity has a :config/attr that names its own value attribute.
 // Pattern 1 resolves the attribute name. Pattern 2 looks up the value.
 // After pattern 1, the binding for pattern 2 has multiple tuples with varying (E, A).
-func TestEACacheBypass_PerRowA_UsesCache(t *testing.T) {
+func TestEACacheBypass_PerTupleA_UsesCache(t *testing.T) {
 	for _, omode := range optimizerModes {
 		t.Run(omode.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -622,7 +622,7 @@ func TestEACacheBypass_PerRowA_UsesCache(t *testing.T) {
 	}
 }
 
-func TestEACacheBypass_PerRowVector_RelationInput(t *testing.T) {
+func TestEACacheBypass_PerTupleVector_RelationInput(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {

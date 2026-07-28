@@ -504,7 +504,7 @@ func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbo
 // pattern's entity-position variable is not an Identity, or whose value for
 // the attribute-position variable is not a Keyword. Such values name no
 // entity or attribute — the typed non-match of the equality join — so they
-// contribute zero rows and no seek is constructed for them. Every join
+// contribute zero tuples and no seek is constructed for them. Every join
 // strategy applies this check at construction (the seek paths and the merge
 // join filter their tuple slices; the hash join drops tuples while building
 // its hash set), so matchesDatom only ever sees correctly typed position

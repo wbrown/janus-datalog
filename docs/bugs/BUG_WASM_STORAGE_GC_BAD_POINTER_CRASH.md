@@ -65,7 +65,7 @@ What the signature says:
 
 ## Context
 
-First observed on the first wasm run after the correlated or-join round-trip fix landed in the working tree (see `resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_ROWS.md`). That diff contains no unsafe, no memory-representation code, and no storage/executor runtime changes; its new tests pass standalone under wasm; and the crashes occur late in the suite, long after those tests run. It did change which executor paths correlated or/or-join queries exercise and shifted suite composition/heap history. None of that establishes or excludes causality — recorded here as fact, not attribution.
+First observed on the first wasm run after the correlated or-join round-trip fix landed in the working tree (see `resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_TUPLES.md`). That diff contains no unsafe, no memory-representation code, and no storage/executor runtime changes; its new tests pass standalone under wasm; and the crashes occur late in the suite, long after those tests run. It did change which executor paths correlated or/or-join queries exercise and shifted suite composition/heap history. None of that establishes or excludes causality — recorded here as fact, not attribution.
 
 ## Triage results (2026-07-19)
 

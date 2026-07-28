@@ -281,7 +281,7 @@ func TestMatchTreatsErroredEmptyBindingAsError(t *testing.T) {
 }
 
 // TestHashJoinSurfacesErroredEmptySide: joining against an errored-empty
-// relation must not present the zero-row join as a clean result.
+// relation must not present the empty join as a clean result.
 func TestHashJoinSurfacesErroredEmptySide(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	y := datalog.NewSymbol("?y")

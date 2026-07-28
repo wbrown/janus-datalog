@@ -305,7 +305,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 	// find clause consumes one, which makes it result data. Render those
 	// values into a relation group before aggregation/projection consume
 	// the symbols: projection treats a missing symbol as empty, so any
-	// later rendering would silently drop rows.
+	// later rendering would silently drop tuples.
 	rendered, renderErr := e.renderConstantFindSymbols(ctx.Environment(), q, groups)
 	if renderErr != nil {
 		return nil, renderErr
@@ -448,8 +448,8 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 // one place environment becomes result data, so the value is rendered into
 // the relation at the find boundary, where variables, pull entity variables,
 // and aggregate arguments are about to be consumed. Extension preserves set
-// semantics: distinct tuples stay distinct under an every-row-identical
-// column.
+// semantics: distinct tuples stay distinct when the added symbol takes the
+// same value in every one of them.
 func (e *DefaultQueryExecutor) renderConstantFindSymbols(env Relation, q *query.Query, groups []Relation) ([]Relation, error) {
 	if env == nil || len(groups) == 0 {
 		return groups, nil
@@ -507,10 +507,10 @@ func (e *DefaultQueryExecutor) renderConstantFindSymbols(env Relation, q *query.
 		}
 	}
 
-	// The join of the group with the environment's missing columns: the
+	// The join of the group with the environment's missing symbols: the
 	// symbol sets are disjoint by construction (missing = absent from every
 	// group), so this is an N×1 decoration — every tuple gains the constant
-	// columns, set semantics preserved.
+	// values at the added positions, set semantics preserved.
 	projected, err := env.Project(missing)
 	if err != nil {
 		return nil, fmt.Errorf("environment projection for find rendering failed: %w", err)
@@ -851,7 +851,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			return nil, err
 		}
 		if !found {
-			// Absence with no groups: the expression produces no rows.
+			// Absence with no groups: the expression produces no tuples.
 			return []Relation{}, nil
 		}
 
@@ -887,7 +887,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 	// Symbols the environment binds (single-valued :in parameters) need no
 	// relation group: the environment relation binds into the operator.
 	env := ctx.Environment()
-	envSymbols, envRow := environmentRow(env)
+	envSymbols, envTuple := environmentTuple(env)
 	var unresolvedExprSyms []query.Symbol
 	for _, sym := range requiredSyms {
 		if !query.ContainsSymbol(envSymbols, sym) {
@@ -919,7 +919,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			// and constant-bindable scalar expressions: [(+ ?age ?bonus) ?adjusted] where ?bonus is constant
 			evalBindings := make(map[query.Symbol]interface{}, len(envSymbols))
 			for i := range envSymbols {
-				evalBindings[envSymbols[i]] = envRow[i]
+				evalBindings[envSymbols[i]] = envTuple[i]
 			}
 			var result interface{}
 			var err error
@@ -975,9 +975,9 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			var resultRels []Relation
 			for _, rel := range groups {
 				align := alignBinding(rel.Symbols(), bindingSyms)
-				// Absence against the single environment row drops every
-				// row of every group — a universally-false filter. The
-				// emptied relation keeps the aligned schema so the phase
+				// Absence against the single environment tuple drops every
+				// tuple of every group — a universally-false filter. The
+				// emptied relation keeps the aligned symbols so the phase
 				// contract's Provides survives.
 				if !found {
 					resultRels = append(resultRels, NewMaterializedRelationWithOptions(align.symbols, nil, e.options))
@@ -1014,7 +1014,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		if len(unresolvedExprSyms) == 0 && len(groups) == 0 {
 			evalBindings := make(map[query.Symbol]interface{}, len(envSymbols))
 			for i := range envSymbols {
-				evalBindings[envSymbols[i]] = envRow[i]
+				evalBindings[envSymbols[i]] = envTuple[i]
 			}
 
 			// Evaluate the expression - check for database function needing lookup
@@ -1124,7 +1124,7 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 	// Symbols the environment binds (single-valued :in parameters) need no
 	// relation group: the environment relation binds into the operator.
 	env := ctx.Environment()
-	envSymbols, _ := environmentRow(env)
+	envSymbols, _ := environmentTuple(env)
 	var unresolvedSyms []query.Symbol
 	for _, sym := range requiredSyms {
 		if !query.ContainsSymbol(envSymbols, sym) {
@@ -1153,7 +1153,7 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 			// The planner assigns predicates where their symbols are
 			// Available; unresolved symbols no group provides means the
 			// contract is broken upstream. Skipping would silently drop
-			// the filter and report unfiltered rows as the answer.
+			// the filter and report unfiltered tuples as the answer.
 			return nil, fmt.Errorf("predicate %s requires symbols %v that no relation group provides",
 				pred.String(), unresolvedSyms)
 		}
@@ -2037,13 +2037,13 @@ func (e *DefaultQueryExecutor) executeNotJoinClause(ctx Context, clause *query.N
 	return replaceGroups(groups, consumed, filtered), nil
 }
 
-// notBodyBinding returns the binding schema for a not/not-join body's
+// notBodyBinding returns the binding symbols for a not/not-join body's
 // per-combination evaluation: the anti-join keys extended with the
-// environment's row, restricted to body-consumed symbols the keys don't
+// environment's tuple, restricted to body-consumed symbols the keys don't
 // already carry. The body is a clause scope, and the environment renders
 // into its binding at the boundary — as at the top level, subquery entry,
 // and or-branch evaluation. The extension tuple is a reference into the
-// projected environment relation's own row, never a copy.
+// projected environment relation's own tuple, never a copy.
 func notBodyBinding(ctx Context, bodyVars, keys []query.Symbol) ([]query.Symbol, Tuple, error) {
 	env := ctx.Environment()
 	if env == nil {
@@ -2114,7 +2114,7 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 	// For each unique combination, execute inner clauses
 	for _, combo := range uniqueCombos {
 		// Create a single-tuple relation binding the combo values plus the
-		// environment's row
+		// environment's tuple
 		binding := combo
 		if len(envExt) > 0 {
 			binding = make(Tuple, 0, len(combo)+len(envExt))

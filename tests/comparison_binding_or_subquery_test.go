@@ -117,17 +117,17 @@ func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 			iter := result.Iterator()
 			for iter.Next() {
 				tuple := iter.Tuple()
-				row := make([]interface{}, len(tuple))
-				copy(row, tuple)
-				tuples = append(tuples, row)
+				copied := make([]interface{}, len(tuple))
+				copy(copied, tuple)
+				tuples = append(tuples, copied)
 			}
 			iter.Close()
 
 			t.Logf("Result count: %d", len(tuples))
 
-			// Verify we got 3 rows
+			// Verify we got 3 tuples
 			if len(tuples) != 3 {
-				t.Errorf("Expected 3 rows, got %d", len(tuples))
+				t.Errorf("Expected 3 tuples, got %d", len(tuples))
 			}
 
 			// Verify results
@@ -144,7 +144,7 @@ func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 					taskCount int64
 					complete  bool
 				}{taskCount, complete}
-				t.Logf("Row: name=%s, taskCount=%d, complete=%v", name, taskCount, complete)
+				t.Logf("Tuple: name=%s, taskCount=%d, complete=%v", name, taskCount, complete)
 			}
 
 			// Scenario One: taskCount=2 > 0, complete=true

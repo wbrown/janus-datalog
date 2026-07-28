@@ -250,8 +250,8 @@ func setupGetElseNarrowingDB(t *testing.T, popts *planner.PlannerOptions) (db *D
 	return db, want, cleanup
 }
 
-// TestGetElseMultiEntityStoredOrDefault pins get-else row semantics over
-// several pattern-bound entities in both optimizer modes: one row per
+// TestGetElseMultiEntityStoredOrDefault pins get-else tuple semantics over
+// several pattern-bound entities in both optimizer modes: one tuple per
 // kind-bearing entity, carrying its stored note or the default, with the
 // filler extent excluded. The scan-narrowing structure of the same query is
 // pinned separately in TestGetElseMultiEntityScanNarrowed (algebra path only).
@@ -272,19 +272,19 @@ func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 			}
 
 			got := make(map[datalog.Identity]string, len(results))
-			for _, row := range results {
-				e, ok := row[0].(datalog.Identity)
+			for _, tuple := range results {
+				e, ok := tuple[0].(datalog.Identity)
 				if !ok {
-					t.Fatalf("expected Identity in ?e, got %T", row[0])
+					t.Fatalf("expected Identity in ?e, got %T", tuple[0])
 				}
-				n, ok := row[1].(string)
+				n, ok := tuple[1].(string)
 				if !ok {
-					t.Fatalf("expected string in ?note, got %T", row[1])
+					t.Fatalf("expected string in ?note, got %T", tuple[1])
 				}
 				got[e] = n
 			}
 			if len(got) != len(want) {
-				t.Fatalf("expected %d rows, got %d: %v", len(want), len(got), results)
+				t.Fatalf("expected %d tuples, got %d: %v", len(want), len(got), results)
 			}
 			for e, w := range want {
 				if got[e] != w {
@@ -301,8 +301,8 @@ func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 // attribute extent. It pins the algebra path's plan structure — the
 // or-fallback branch lowering that emits or-fallback/branch.narrowed exists
 // only there — so per docs/wip/OPTIMIZER_MODE_MATRIX.md it declares its mode
-// explicitly. Row semantics for the same query run on both modes in
-// TestGetElseMultiEntityStoredOrDefault, and cross-mode row equivalence in
+// explicitly. Tuple semantics for the same query run on both modes in
+// TestGetElseMultiEntityStoredOrDefault, and cross-mode tuple equivalence in
 // TestGetElseScanNarrowing_SemanticPreservation.
 func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
 	popts := DefaultPlannerOptions()
@@ -322,21 +322,21 @@ func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
 		t.Fatalf("query failed: %v", err)
 	}
 
-	// One row per kind-bearing entity, each with its stored note or the default.
+	// One tuple per kind-bearing entity, each with its stored note or the default.
 	got := make(map[datalog.Identity]string, len(results))
-	for _, row := range results {
-		e, ok := row[0].(datalog.Identity)
+	for _, tuple := range results {
+		e, ok := tuple[0].(datalog.Identity)
 		if !ok {
-			t.Fatalf("expected Identity in ?e, got %T", row[0])
+			t.Fatalf("expected Identity in ?e, got %T", tuple[0])
 		}
-		n, ok := row[1].(string)
+		n, ok := tuple[1].(string)
 		if !ok {
-			t.Fatalf("expected string in ?note, got %T", row[1])
+			t.Fatalf("expected string in ?note, got %T", tuple[1])
 		}
 		got[e] = n
 	}
 	if len(got) != len(want) {
-		t.Fatalf("expected %d rows, got %d: %v", len(want), len(got), results)
+		t.Fatalf("expected %d tuples, got %d: %v", len(want), len(got), results)
 	}
 	for e, w := range want {
 		if got[e] != w {
@@ -393,7 +393,7 @@ func narrowingEvent(events []annotations.Event) *annotations.Event {
 // TestGetElseScanNarrowing_SemanticPreservation is the differential / structural
 // test the project's optimization-testing guidance calls for: the rewrite +
 // narrowing (algebra optimizer ON) must return exactly the same (?e, ?note)
-// rows — defaults included — as the un-rewritten, per-tuple get-else (algebra
+// tuples — defaults included — as the un-rewritten, per-tuple get-else (algebra
 // optimizer OFF).
 func TestGetElseScanNarrowing_SemanticPreservation(t *testing.T) {
 	db, _, cleanup := setupGetElseNarrowingDB(t, nil)
@@ -423,16 +423,16 @@ func TestGetElseScanNarrowing_SemanticPreservation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	norm := func(rows [][]interface{}) map[datalog.Identity]string {
-		m := make(map[datalog.Identity]string, len(rows))
-		for _, r := range rows {
+	norm := func(tuples [][]interface{}) map[datalog.Identity]string {
+		m := make(map[datalog.Identity]string, len(tuples))
+		for _, r := range tuples {
 			m[r[0].(datalog.Identity)] = r[1].(string)
 		}
 		return m
 	}
 	baseMap, optMap := norm(baseline), norm(optimized)
 	if len(baseMap) != len(optMap) {
-		t.Fatalf("row count differs: optimizer-off=%d optimizer-on=%d", len(baseMap), len(optMap))
+		t.Fatalf("tuple count differs: optimizer-off=%d optimizer-on=%d", len(baseMap), len(optMap))
 	}
 	for e, bv := range baseMap {
 		if ov, ok := optMap[e]; !ok || ov != bv {

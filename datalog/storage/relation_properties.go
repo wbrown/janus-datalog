@@ -17,18 +17,18 @@ import (
 //     is a candidate key: a covered Tx position makes any projection
 //     injective. Without Tx, re-assertions of the same (E, A, V) at later
 //     transactions project to identical tuples.
-//   - Current/as-of resolution emits one row per (E, A) group for effective
+//   - Current/as-of resolution emits one tuple per (E, A) group for effective
 //     cardinality-one — including CardinalityUnknown/schemaless, which the
 //     resolver defaults to LWW (CRDTResolvingIterator.startNewGroup) — and
 //     for cardinality-vector (one resolved vector per group). Declared
-//     CardinalityMany emits one row per (E, A, V). With A not constant the
+//     CardinalityMany emits one tuple per (E, A, V). With A not constant the
 //     cardinality varies per attribute, so the conservative key is the
 //     superkey {E, A, V}.
 //
 // A key component is covered when the pattern binds it to a constant (it
 // does not vary across the stream) or a variable (it appears in the tuple).
 // A wildcard — or an absent Tx position — drops a varying key component,
-// letting two distinct stream rows project to the same tuple.
+// letting two distinct stream tuples project to the same tuple.
 func scanProjectionPreservesSet(pattern *query.DataPattern, provider schema.SchemaProvider, history bool) bool {
 	covered := func(elem query.PatternElement) bool {
 		return elem != nil && !elem.IsBlank()
@@ -205,7 +205,7 @@ func historyAETVProperties(
 	}
 
 	// AETV is [A][E][Tx↓][V]. With A constant and no value filter, raw
-	// history rows are emitted in the requested total E/Tx order.
+	// history tuples are emitted in the requested total E/Tx order.
 	return executor.RelationProperties{
 		Ordering: append([]query.OrderByClause(nil), q.OrderBy...),
 	}, true
@@ -235,7 +235,7 @@ func historyEATVProperties(
 	}
 
 	// EATV is [E][A][Tx↓][V]. With E constant and no value filter, raw
-	// history rows are emitted in the requested total A/Tx order.
+	// history tuples are emitted in the requested total A/Tx order.
 	return executor.RelationProperties{
 		Ordering: append([]query.OrderByClause(nil), q.OrderBy...),
 	}, true

@@ -33,7 +33,7 @@ func TestBindTuplePopulates(t *testing.T) {
 
 // A tuple narrower than its symbol list is a broken Relation invariant —
 // every tuple carries exactly its relation's symbols. Binding must fail
-// loudly, never silently bind a partial row.
+// loudly, never silently bind a partial tuple.
 func TestBindTupleShortTuplePanics(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	y := datalog.NewSymbol("?y")

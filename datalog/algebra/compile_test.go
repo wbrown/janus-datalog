@@ -72,8 +72,8 @@ func TestCompileDecompileRoundTrip(t *testing.T) {
 // or-join round-trip: branches with correlated predicates compile against
 // the outer schema and decompile back to the or-join itself. Union
 // semantics have no fallback encoding — decompiling to an or-default form
-// re-executes the clause as first-match-wins and drops rows (see
-// docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_ROWS.md).
+// re-executes the clause as first-match-wins and drops tuples (see
+// docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_TUPLES.md).
 func TestRoundTrip_CorrelatedOrJoinPreservesClauseType(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?v
 	  :where

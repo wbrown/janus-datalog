@@ -152,7 +152,7 @@ func main() {
 	fmt.Println("\n=== 5. Cross-product prevention ===")
 	// When patterns share NO variables, the engine detects the disjoint
 	// groups and raises an error instead of silently creating a Cartesian
-	// product (18 people x 4 departments = 72 meaningless rows).
+	// product (18 people x 4 departments = 72 meaningless tuples).
 	personName := qb.NewVar("pname")
 	deptN := qb.NewVar("dname")
 	p := qb.NewVar("p")

@@ -79,24 +79,24 @@ func openFusionDB(t *testing.T, fusion bool, handler annotations.Handler, popts 
 	return db
 }
 
-func fusionRows(t *testing.T, db *Database, query string, args ...interface{}) []string {
+func fusionTuples(t *testing.T, db *Database, query string, args ...interface{}) []string {
 	t.Helper()
 	rel, err := db.Query(query, args...)
 	require.NoError(t, err)
-	var rows []string
+	var tuples []string
 	it := rel.Iterator()
 	for it.Next() {
-		rows = append(rows, fmt.Sprintf("%v", it.Tuple()))
+		tuples = append(tuples, fmt.Sprintf("%v", it.Tuple()))
 	}
 	require.NoError(t, it.Error())
 	it.Close()
-	sort.Strings(rows)
-	return rows
+	sort.Strings(tuples)
+	return tuples
 }
 
 // assertFusionEquivalent applies the same ops to a fusion-off and a fusion-on
 // database (identical data, pinned ReplicaID) and asserts the query returns
-// identical rows. popts sets the databases' remaining planner options
+// identical tuples. popts sets the databases' remaining planner options
 // (nil = defaults); the fusion flag is applied on top.
 func assertFusionEquivalent(t *testing.T, popts *planner.PlannerOptions, apply func(*Database), query string, args ...interface{}) {
 	t.Helper()
@@ -104,9 +104,9 @@ func assertFusionEquivalent(t *testing.T, popts *planner.PlannerOptions, apply f
 	apply(off)
 	on := openFusionDB(t, true, nil, popts)
 	apply(on)
-	want := fusionRows(t, off, query, args...)
-	got := fusionRows(t, on, query, args...)
-	assert.Equal(t, want, got, "fusion-ON must return the same rows as fusion-OFF")
+	want := fusionTuples(t, off, query, args...)
+	got := fusionTuples(t, on, query, args...)
+	assert.Equal(t, want, got, "fusion-ON must return the same tuples as fusion-OFF")
 }
 
 const fusionCodeQuery = `[:find ?e ?c :where [?e :place/type "room"] [?e :place/code ?c]]`
@@ -308,10 +308,10 @@ func TestFusionConstantConstraintCoverage(t *testing.T) {
 				_, err := tx.Commit()
 				require.NoError(t, err)
 
-				rows := fusionRows(t, db, `[:find ?e
+				tuples := fusionTuples(t, db, `[:find ?e
 					:where [?e :place/code "R1"]
 					       [?e :place/type "room"]]`)
-				require.Len(t, rows, 1)
+				require.Len(t, tuples, 1)
 				require.Equal(t, 1, cap.get("pattern/fused-constraint"))
 			})
 
@@ -324,10 +324,10 @@ func TestFusionConstantConstraintCoverage(t *testing.T) {
 				_, err := tx.Commit()
 				require.NoError(t, err)
 
-				rows := fusionRows(t, db, `[:find ?e
+				tuples := fusionTuples(t, db, `[:find ?e
 					:where [?e :place/code ?c]
 					       [?e :place/tags "selected"]]`)
-				require.Len(t, rows, 1)
+				require.Len(t, tuples, 1)
 				require.Zero(t, cap.get("pattern/fused-constraint"))
 			})
 		})
@@ -375,7 +375,7 @@ func TestFusion_CoverageFires(t *testing.T) {
 				_, err := tx.Commit()
 				require.NoError(t, err)
 
-				_ = fusionRows(t, db, fusionCodeQuery)
+				_ = fusionTuples(t, db, fusionCodeQuery)
 				assert.Positive(t, cap.get("pattern/fused-fetch"),
 					"CardinalityOne fetch must take the fused path")
 			})
@@ -390,7 +390,7 @@ func TestFusion_CoverageFires(t *testing.T) {
 				_, err := tx.Commit()
 				require.NoError(t, err)
 
-				_ = fusionRows(t, db, `[:find ?e ?tag :where [?e :place/type "room"] [?e :place/tags ?tag]]`)
+				_ = fusionTuples(t, db, `[:find ?e ?tag :where [?e :place/type "room"] [?e :place/tags ?tag]]`)
 				assert.Zero(t, cap.get("pattern/fused-fetch"),
 					"CardinalityMany fetch must NOT be fused")
 			})
@@ -472,8 +472,8 @@ func TestFusionDifferentialAsOfUpdatesAndTombstones(t *testing.T) {
 				{name: "after tombstone", off: off.removeTx, on: on.removeTx},
 			} {
 				t.Run(snapshot.name, func(t *testing.T) {
-					want := fusionRows(t, off.db.AsOf(snapshot.off), fusionCodeQuery)
-					got := fusionRows(t, on.db.AsOf(snapshot.on), fusionCodeQuery)
+					want := fusionTuples(t, off.db.AsOf(snapshot.off), fusionCodeQuery)
+					got := fusionTuples(t, on.db.AsOf(snapshot.on), fusionCodeQuery)
 					require.Equal(t, want, got)
 				})
 			}

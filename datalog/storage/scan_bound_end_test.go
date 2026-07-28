@@ -80,11 +80,11 @@ func TestScanBoundOnNegativeLongDoesNotMatchItsNeighbour(t *testing.T) {
 
 			result, err := db.Query(`[:find ?e :where [?e :person/count -1]]`)
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
 
-			require.Len(t, rows, 1, "only the entity holding -1 matches; got %v", rows)
-			require.True(t, rows[0][0].(datalog.Identity).Equal(negative))
+			require.Len(t, tuples, 1, "only the entity holding -1 matches; got %v", tuples)
+			require.True(t, tuples[0][0].(datalog.Identity).Equal(negative))
 		})
 	}
 }
@@ -127,11 +127,11 @@ func TestScanBoundOnStringDoesNotMatchItsExtension(t *testing.T) {
 
 			result, err := db.Query(`[:find ?e :where [?e :person/tag "abc"]]`)
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
 
-			require.Len(t, rows, 1, `only the entity tagged "abc" matches; got %v`, rows)
-			require.True(t, rows[0][0].(datalog.Identity).Equal(short))
+			require.Len(t, tuples, 1, `only the entity tagged "abc" matches; got %v`, tuples)
+			require.True(t, tuples[0][0].(datalog.Identity).Equal(short))
 		})
 	}
 }

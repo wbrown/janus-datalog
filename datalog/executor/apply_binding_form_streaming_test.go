@@ -43,7 +43,7 @@ func sym(s string) query.Symbol { return datalog.NewSymbol(s) }
 // --- TupleBinding ---
 
 // Empty streaming result → empty relation (datalog pattern-fails-to-match),
-// not an error. Input-value bindings carried through with no rows.
+// not an error. Input-value bindings carried through with no tuples.
 func TestApplyBindingForm_TupleBinding_StreamingEmpty(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
 	inputValues := Tuple{"e1"}
@@ -56,17 +56,17 @@ func TestApplyBindingForm_TupleBinding_StreamingEmpty(t *testing.T) {
 	require.NotNil(t, out)
 	assert.Equal(t, []query.Symbol{sym("?e"), sym("?age")}, out.Symbols())
 
-	var rows []Tuple
+	var tuples []Tuple
 	it := out.Iterator()
 	for it.Next() {
-		rows = append(rows, append(Tuple{}, it.Tuple()...))
+		tuples = append(tuples, append(Tuple{}, it.Tuple()...))
 	}
 	require.NoError(t, it.Error())
 	it.Close()
-	assert.Empty(t, rows, "empty streaming subquery must produce zero output rows")
+	assert.Empty(t, tuples, "empty streaming subquery must produce zero output tuples")
 }
 
-// Exactly-1 streaming result → 1 output row: input values + subquery tuple.
+// Exactly-1 streaming result → 1 output tuple: input values + subquery tuple.
 func TestApplyBindingForm_TupleBinding_StreamingSingle(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
 	inputValues := Tuple{"e1"}
@@ -78,15 +78,15 @@ func TestApplyBindingForm_TupleBinding_StreamingSingle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []query.Symbol{sym("?e"), sym("?age")}, out.Symbols())
 
-	var rows []Tuple
+	var tuples []Tuple
 	it := out.Iterator()
 	for it.Next() {
-		rows = append(rows, append(Tuple{}, it.Tuple()...))
+		tuples = append(tuples, append(Tuple{}, it.Tuple()...))
 	}
 	require.NoError(t, it.Error())
 	it.Close()
-	require.Len(t, rows, 1)
-	assert.Equal(t, Tuple{"e1", int64(42)}, rows[0])
+	require.Len(t, tuples, 1)
+	assert.Equal(t, Tuple{"e1", int64(42)}, tuples[0])
 }
 
 // More than 1 streaming result → error mentioning "expects 1 result".
@@ -124,7 +124,7 @@ func TestApplyBindingForm_ScalarBinding_StreamingEmpty(t *testing.T) {
 	hasAny := it.Next()
 	require.NoError(t, it.Error())
 	it.Close()
-	assert.False(t, hasAny, "empty streaming scalar binding must produce zero rows")
+	assert.False(t, hasAny, "empty streaming scalar binding must produce zero tuples")
 }
 
 func TestApplyBindingForm_ScalarBinding_StreamingSingle(t *testing.T) {
@@ -137,15 +137,15 @@ func TestApplyBindingForm_ScalarBinding_StreamingSingle(t *testing.T) {
 	out, err := applyBindingForm(result, binding, inputSyms, inputValues)
 	require.NoError(t, err)
 
-	var rows []Tuple
+	var tuples []Tuple
 	it := out.Iterator()
 	for it.Next() {
-		rows = append(rows, append(Tuple{}, it.Tuple()...))
+		tuples = append(tuples, append(Tuple{}, it.Tuple()...))
 	}
 	require.NoError(t, it.Error())
 	it.Close()
-	require.Len(t, rows, 1)
-	assert.Equal(t, Tuple{"e1", int64(42)}, rows[0])
+	require.Len(t, tuples, 1)
+	assert.Equal(t, Tuple{"e1", int64(42)}, tuples[0])
 }
 
 func TestApplyBindingForm_ScalarBinding_StreamingMultiple(t *testing.T) {
@@ -182,7 +182,7 @@ func TestApplyBindingForm_RelationBinding_StreamingEmpty(t *testing.T) {
 	assert.False(t, hasAny)
 }
 
-// N-tuple streaming RelationBinding → N output rows, each prefixed with
+// N-tuple streaming RelationBinding → N output tuples, each prefixed with
 // input values. Exercises the per-tuple transform.
 func TestApplyBindingForm_RelationBinding_StreamingMany(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
@@ -199,10 +199,10 @@ func TestApplyBindingForm_RelationBinding_StreamingMany(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []query.Symbol{sym("?e"), sym("?t"), sym("?v")}, out.Symbols())
 
-	var rows []Tuple
+	var tuples []Tuple
 	it := out.Iterator()
 	for it.Next() {
-		rows = append(rows, append(Tuple{}, it.Tuple()...))
+		tuples = append(tuples, append(Tuple{}, it.Tuple()...))
 	}
 	require.NoError(t, it.Error())
 	it.Close()
@@ -210,7 +210,7 @@ func TestApplyBindingForm_RelationBinding_StreamingMany(t *testing.T) {
 		{"e1", int64(1), "a"},
 		{"e1", int64(2), "b"},
 		{"e1", int64(3), "c"},
-	}, rows)
+	}, tuples)
 }
 
 // RelationBinding must preserve streaming end-to-end: the output

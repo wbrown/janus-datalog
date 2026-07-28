@@ -83,8 +83,8 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 				require.Len(t, results, 3)
 
 				byName := make(map[string]int64)
-				for _, row := range results {
-					byName[row[0].(string)] = row[1].(int64)
+				for _, tuple := range results {
+					byName[tuple[0].(string)] = tuple[1].(int64)
 				}
 				assert.Equal(t, int64(100), byName["Alice"])
 				assert.Equal(t, int64(200), byName["Bob"])
@@ -110,8 +110,8 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 				require.Len(t, results, 3)
 
 				byName := make(map[string]int64)
-				for _, row := range results {
-					byName[row[0].(string)] = row[1].(int64)
+				for _, tuple := range results {
+					byName[tuple[0].(string)] = tuple[1].(int64)
 				}
 				assert.Equal(t, int64(100), byName["Alice"])
 				assert.Equal(t, int64(200), byName["Bob"])
@@ -163,8 +163,8 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 				require.Greater(t, len(results), 0)
 
 				byPair := make(map[string]bool)
-				for _, row := range results {
-					byPair[row[0].(string)+"→"+row[1].(string)] = true
+				for _, tuple := range results {
+					byPair[tuple[0].(string)+"→"+tuple[1].(string)] = true
 				}
 				assert.True(t, byPair["Alice→Bob"], "Alice should find friend Bob")
 				assert.True(t, byPair["Bob→Alice"], "Bob should find friend Alice")
@@ -271,8 +271,8 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 			 [?related :entity/type ?rtype]]`))
 				require.NoError(t, err)
 				t.Logf("Results (%d):", len(results))
-				for _, row := range results {
-					t.Logf("  %s (%s)", row[0], row[1])
+				for _, tuple := range results {
+					t.Logf("  %s (%s)", tuple[0], tuple[1])
 				}
 
 				// A1 is type alpha. Branch 1 applies:
@@ -280,8 +280,8 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 				//   [?self :rel/region ?rgn] [?related :rel/region ?rgn]
 				//     → A1 in R1, A2 also in R1 → A2 is related via shared region
 				byName := make(map[string]bool)
-				for _, row := range results {
-					byName[row[0].(string)] = true
+				for _, tuple := range results {
+					byName[tuple[0].(string)] = true
 				}
 				require.Greater(t, len(results), 0, "A1 should find related entities")
 				assert.True(t, byName["A2"], "should find A2 via shared region")
@@ -334,8 +334,8 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 				require.Len(t, results, 3)
 
 				byName := make(map[string]int64)
-				for _, row := range results {
-					byName[row[0].(string)] = row[1].(int64)
+				for _, tuple := range results {
+					byName[tuple[0].(string)] = tuple[1].(int64)
 				}
 				assert.Equal(t, int64(3), byName["Alice"])
 				assert.Equal(t, int64(1), byName["Bob"])
@@ -401,8 +401,8 @@ func TestOrCorrelatedUnionWithNestedOrExpression_E2E(t *testing.T) {
 
 			t.Logf("Results (%d):", len(results))
 			identities := make(map[datalog.Identity]bool)
-			for i, row := range results {
-				val := row[0]
+			for i, tuple := range results {
+				val := tuple[0]
 				id, ok := val.(datalog.Identity)
 				if !ok {
 					t.Errorf("result[%d]: expected Identity, got %T (%v)", i, val, val)

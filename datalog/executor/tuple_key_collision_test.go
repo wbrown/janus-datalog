@@ -2,8 +2,8 @@
 //
 // Background: the retired notOrTupleKey implementation built dedup keys via
 // fmt.Sprintf("%v",...) joined by "|". That stringification was not injective:
-// distinct tuples could map to the same key, silently dropping valid rows or
-// matching the wrong anti-join rows.
+// distinct tuples could map to the same key, silently dropping valid tuples or
+// matching the wrong anti-join tuples.
 //
 // These tests pin the migrated TupleKey/TupleKeyMap semantics and prevent the
 // string-key collision behavior from returning.
@@ -141,7 +141,7 @@ func TestTupleKeyMap_DistinguishesAdversarialPairs(t *testing.T) {
 // DIFFERENT buckets and the ValuesEqual fallback — which only resolves collisions
 // WITHIN a bucket — never ran. That made byte-valued joins/dedup miss; it surfaced
 // as resolved/BUG_VBOUND_BYTES_WRONG_RESULTS_UNDER_RACE (a join on a byte key
-// dropped rows, only reliably under -race because the bogus address hash happened
+// dropped tuples, only reliably under -race because the bogus address hash happened
 // to collide otherwise).
 //
 // Exercises: tuple_key.go hashValue/TupleKey/TupleKeyMap with []byte values

@@ -42,7 +42,7 @@ func TestQueryLimitThroughStorage(t *testing.T) {
 			_, err := tx.Commit()
 			require.NoError(t, err)
 
-			t.Run("limit caps rows without order-by", func(t *testing.T) {
+			t.Run("limit caps tuples without order-by", func(t *testing.T) {
 				rel, err := d.Query(`[:find ?seq
 				                      :where [?e :event/kind "telemetry"]
 				                             [?e :event/seq ?seq]
@@ -64,7 +64,7 @@ func TestQueryLimitThroughStorage(t *testing.T) {
 				require.Equal(t, int64(5), got[0])
 			})
 
-			t.Run("limit zero yields no rows", func(t *testing.T) {
+			t.Run("limit zero yields no tuples", func(t *testing.T) {
 				rel, err := d.Query(`[:find ?seq
 				                      :where [?e :event/kind "telemetry"]
 				                             [?e :event/seq ?seq]
@@ -89,7 +89,7 @@ func TestQueryLimitThroughStorage(t *testing.T) {
 
 // TestLimitComposesWithAsOf is the production pattern: "latest snapshot as of a
 // point in time" — :order-by desc + :limit 1 against an AsOf view must return
-// the latest row visible at that transaction, not the absolute latest.
+// the latest tuple visible at that transaction, not the absolute latest.
 func TestLimitComposesWithAsOf(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

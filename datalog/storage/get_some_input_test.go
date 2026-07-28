@@ -159,7 +159,7 @@ func getSomeGroupsFixture(t *testing.T, db *Database) (named, bare datalog.Ident
 // groups are present: a data pattern in :where routes the query through the
 // with-groups arm of executeExpression, unlike TestGetSome_WithScalarInput_NoMatch,
 // whose pattern-free :where routes through the no-groups arm. With every
-// listed attribute missing, the rows drop — the get-some no-match sentinel
+// listed attribute missing, the tuples drop — the get-some no-match sentinel
 // must be consumed by the expression, never escape into tuples
 // (BUG_GETSOME_ALL_ATTRS_MISSING_PANICS_TUPLE_KEY_HASH).
 func TestGetSome_InBoundEntityWithGroups_AllMissing(t *testing.T) {
@@ -212,7 +212,7 @@ func TestGetSome_InBoundEntityWithGroups_AttrPresent(t *testing.T) {
 // path: a relation input iterates the query once per entity, and each Run
 // rebuilds the environment the expression evaluates against. One Run finds
 // :entity/name, the other finds nothing — the miss must drop only its own
-// Run's rows (BUG_GETSOME_ALL_ATTRS_MISSING_PANICS_TUPLE_KEY_HASH).
+// Run's tuples (BUG_GETSOME_ALL_ATTRS_MISSING_PANICS_TUPLE_KEY_HASH).
 func TestGetSome_RelationInputEntities_MixedFound(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

@@ -338,7 +338,7 @@ func TestQueryMultiPhase_SurfacesBlobDecodeError(t *testing.T) {
 }
 
 // writeValidThenCorruptBlob writes two :doc/blob datoms so an unbound scan yields
-// a VALID row first and a FAILING row second. The attr-bound, E/V-unbound scan is
+// a VALID datom first and a FAILING one second. The attr-bound, E/V-unbound scan is
 // E-primary (AETV for cardinality-one, AEVT for cardinality-many), and the raw
 // identity hash is the E key component, so the entity with the lower hash is
 // scanned first. That entity gets a small inline value (always decodes);
@@ -402,10 +402,10 @@ func writeValidThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions) *Dat
 }
 
 // TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults: QueryInto consumes a
-// scan that yields one valid row then fails (Failure Mode 3, truncation). The
+// scan that yields one valid datom then fails (Failure Mode 3, truncation). The
 // error must surface AND the destination must not be populated with the partial
 // prefix. If the ForEach error check were missing, out would hold the valid "ok"
-// row and err would be nil.
+// entry and err would be nil.
 func TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -422,9 +422,9 @@ func TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults(t *testing.T) {
 }
 
 // TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext: QueryOneInto reads a
-// valid first row, then the second Next() fails (Verification Plan #4). The error
+// valid first tuple, then the second Next() fails (Verification Plan #4). The error
 // must surface as found=false. If the second-Next() Error() check were missing,
-// the first row would be mapped and the call would return found=true, nil.
+// the first tuple would be mapped and the call would return found=true, nil.
 func TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -440,12 +440,12 @@ func TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext(t *testing.T) {
 	}
 }
 
-// TestScan_YieldsValidRowThenFails asserts the precondition the two tests above
-// rely on: the scan yields exactly one valid row and THEN fails. This is what
+// TestScan_YieldsValidDatomThenFails asserts the precondition the two tests above
+// rely on: the scan yields exactly one valid datom and THEN fails. This is what
 // makes them exercise the truncation / second-Next() branches rather than the
 // already-covered first-Next() path. If the scan order ever changes, this fails
 // and flags the coverage regression directly.
-func TestScan_YieldsValidRowThenFails(t *testing.T) {
+func TestScan_YieldsValidDatomThenFails(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
@@ -462,7 +462,7 @@ func TestScan_YieldsValidRowThenFails(t *testing.T) {
 				yielded++
 			}
 			require.ErrorContains(t, it.Error(), "blob")
-			require.Equal(t, 1, yielded, "exactly one valid row must precede the failing row (truncation precondition)")
+			require.Equal(t, 1, yielded, "exactly one valid datom must precede the failing one (truncation precondition)")
 		})
 	}
 }

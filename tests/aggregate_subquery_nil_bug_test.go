@@ -295,10 +295,10 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			}
 
 			resultTuples := collectTuples(result)
-			t.Logf("Main query result: %d rows", len(resultTuples))
+			t.Logf("Main query result: %d tuples", len(resultTuples))
 
 			if len(resultTuples) != 1 {
-				t.Fatalf("Expected 1 result row, got %d", len(resultTuples))
+				t.Fatalf("Expected 1 result tuple, got %d", len(resultTuples))
 			}
 
 			tuple := resultTuples[0]

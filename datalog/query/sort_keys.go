@@ -5,7 +5,7 @@ package query
 // The result of the :where body is sorted before the final projection to
 // :find (π_find ∘ τ_keys over the satisfying-assignment relation), so a sort
 // key may be any variable bound by :where — projected or not. Scalar and
-// tuple :in inputs are per-execution constants: every row carries the same
+// tuple :in inputs are per-execution constants: every tuple carries the same
 // value, so a sort clause keyed on one is a well-defined identity and is
 // dropped at the execution boundary. See the Design Decision section of
 // docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md for the
@@ -46,7 +46,7 @@ func IteratedInputSymbols(specs []InputSpec) map[Symbol]bool {
 }
 
 // EffectiveOrderBy returns the :order-by clauses that can actually order
-// rows, dropping clauses keyed on constant inputs (identity sorts).
+// tuples, dropping clauses keyed on constant inputs (identity sorts).
 func EffectiveOrderBy(q *Query) []OrderByClause {
 	if len(q.OrderBy) == 0 {
 		return nil

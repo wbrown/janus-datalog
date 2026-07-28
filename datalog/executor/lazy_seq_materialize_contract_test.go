@@ -51,11 +51,11 @@ func TestLazySeqRelationEagerConsumersStillRealizeCompleteRelation(t *testing.T)
 		Variable:   x,
 		Descending: false,
 	}})
-	rows, err := CollectTuples(sorted, nil)
+	tuples, err := CollectTuples(sorted, nil)
 	require.NoError(t, err)
 	require.Equal(t,
 		[][]interface{}{{int64(1)}, {int64(2)}, {int64(3)}},
-		rows,
+		tuples,
 	)
 	require.Equal(t, 3, nextCalls)
 }

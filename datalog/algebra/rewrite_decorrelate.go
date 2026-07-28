@@ -143,7 +143,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 	}
 
 	// Decorrelate: remove correlation params from :in, add the classified
-	// group-by columns to :find, consume translated correlation equalities.
+	// group-by symbols to :find, consume translated correlation equalities.
 	decorrelated := decorrelateQuery(lj.InnerQuery, plans)
 	if decorrelated == nil {
 		return node
@@ -348,13 +348,13 @@ type paramPlan struct {
 	// param is the inner :in parameter this plan covers; it is removed
 	// from the decorrelated query's :in.
 	param query.Symbol
-	// groupCol is the inner column that becomes the group-by key: the
+	// groupSym is the inner symbol that becomes the group-by key: the
 	// parameter itself when a pattern binds it (data-bound), or the
 	// inner-provided side of its single equality predicate
 	// (equality-bound) — the correlation predicate IS the join condition,
-	// so the grouped result joins the outer on that column, positionally
+	// so the grouped result joins the outer on that symbol, positionally
 	// renamed to the outer correlation name by the binding.
-	groupCol query.Symbol
+	groupSym query.Symbol
 	// dropClause is the consumed correlation equality to remove from the
 	// inner :where (nil for data-bound parameters — their patterns stay).
 	dropClause query.Clause
@@ -365,7 +365,7 @@ type paramPlan struct {
 // taxonomy, with a conservative default:
 //
 //   - data-bound: a DataPattern position binds the parameter — the pattern
-//     provides the group-by column when the input is freed (today's rule).
+//     provides the group-by symbol when the input is freed (today's rule).
 //   - equality-bound: the parameter's only consumption is one
 //     [(= ?inner ?param)] comparison whose other side the body provides —
 //     the predicate is the join condition; group by the inner side and
@@ -379,7 +379,7 @@ type paramPlan struct {
 // See docs/bugs/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
 func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]paramPlan, string) {
 	// Extra scalar inputs beyond the correlation parameters (e.g. call-site
-	// constants) have no outer column to join on, and the rewrite discards
+	// constants) have no outer symbol to join on, and the rewrite discards
 	// their bindings; their presence declines the rewrite.
 	scalarInputs := 0
 	for _, in := range q.In {
@@ -392,9 +392,9 @@ func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]pa
 	}
 
 	// The inner-provided symbols — the only candidates for equality-
-	// translated group-by columns. Provides only: a symbol merely consumed
+	// translated group-by symbols. Provides only: a symbol merely consumed
 	// elsewhere (including the parameter itself, which every correlation
-	// equality correlates on) is not a column the grouped result can carry.
+	// equality correlates on) is not a symbol the grouped result can carry.
 	var provided []query.Symbol
 	for _, c := range q.Where {
 		for _, sym := range query.ScopeOf(c).Provides {
@@ -442,9 +442,9 @@ func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]pa
 
 		switch {
 		case dataBound:
-			// The pattern provides the column regardless of other uses;
+			// The pattern provides the symbol regardless of other uses;
 			// remaining predicates stay as ordinary filters.
-			plans = append(plans, paramPlan{param: param, groupCol: param})
+			plans = append(plans, paramPlan{param: param, groupSym: param})
 		case otherUse:
 			return nil, fmt.Sprintf("correlation parameter %s is consumed outside data patterns and single equality predicates", param)
 		case len(equalities) == 1:
@@ -453,7 +453,7 @@ func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]pa
 			if !ok {
 				return nil, fmt.Sprintf("correlation parameter %s equates with a variable the inner body does not provide", param)
 			}
-			plans = append(plans, paramPlan{param: param, groupCol: inner, dropClause: eq})
+			plans = append(plans, paramPlan{param: param, groupSym: inner, dropClause: eq})
 		case len(equalities) > 1:
 			return nil, fmt.Sprintf("correlation parameter %s is consumed by multiple equality predicates", param)
 		default:
@@ -484,7 +484,7 @@ func equalityInnerSide(eq *query.Comparison, param query.Symbol, provided []quer
 
 // decorrelateQuery rewrites a correlated query into a decorrelated one
 // according to the classified plans. Each correlation parameter is removed
-// from :in and its group-by column prepended to :find:
+// from :in and its group-by symbol prepended to :find:
 //
 //	data-bound:     [:find (count ?t) :in $ ?s :where [?t :task/root ?s] ...]
 //	             →  [:find ?s (count ?t) :in $ :where [?t :task/root ?s] ...]
@@ -513,10 +513,10 @@ func decorrelateQuery(q *query.Query, plans []paramPlan) *query.Query {
 		newIn = append(newIn, in)
 	}
 
-	// Build new :find — prepend the group-by columns in parameter order
+	// Build new :find — prepend the group-by symbols in parameter order
 	newFind := make([]query.FindElement, 0, len(plans)+len(q.Find))
 	for _, p := range plans {
-		newFind = append(newFind, query.FindVariable{Symbol: p.groupCol})
+		newFind = append(newFind, query.FindVariable{Symbol: p.groupSym})
 	}
 	newFind = append(newFind, q.Find...)
 

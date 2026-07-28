@@ -145,14 +145,14 @@ func BenchmarkHashJoinIdentityKeys(b *testing.B) {
 // BenchmarkHashJoinIdentityHighFanout exercises a realistic cardinality-many
 // join shape: K distinct entities, each appearing M times on the left
 // (different payloads) and M times on the right (different payloads). The
-// join on ?e produces K * M * M result rows.
+// join on ?e produces K * M * M result tuples.
 //
 // Stresses:
 //   - Same-key Put updates in TupleKeyMap during build accumulation. Each
 //     Get + Put after the first hits an existing bucket entry, calling
 //     ValuesEqual twice (finding #2 path).
-//   - High result-row volume drives combineTuples, seen dedup with many
-//     distinct rows, and tuple-copy paths.
+//   - High result-tuple volume drives combineTuples, seen dedup with many
+//     distinct tuples, and tuple-copy paths.
 //
 // This shape is closer to real datalog joins (person x posts, account x
 // transactions) than the 1:1 cardinality of BenchmarkHashJoinIdentityKeys.
@@ -162,9 +162,9 @@ func BenchmarkHashJoinIdentityHighFanout(b *testing.B) {
 		keys int
 		m    int
 	}{
-		{"keys100/fanout10", 100, 10}, // 10k result rows
-		{"keys100/fanout50", 100, 50}, // 250k result rows
-		{"keys500/fanout20", 500, 20}, // 200k result rows
+		{"keys100/fanout10", 100, 10}, // 10k result tuples
+		{"keys100/fanout50", 100, 50}, // 250k result tuples
+		{"keys500/fanout20", 500, 20}, // 200k result tuples
 	}
 
 	for _, sh := range shapes {
@@ -237,7 +237,7 @@ func BenchmarkHashJoinIdentityDuplicates(b *testing.B) {
 			rightSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?attr_r")}
 
 			// SHARED payload per key — every repetition of a given key
-			// carries the same value, so result rows collapse to K unique
+			// carries the same value, so result tuples collapse to K unique
 			// tuples after dedup. Raw struct construction keeps input
 			// duplicates intact for the join.
 			leftTuples := make([]Tuple, 0, sh.keys*sh.reps)

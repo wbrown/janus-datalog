@@ -573,9 +573,9 @@ func TestPullExecutor_AnnotationsEmitted(t *testing.T) {
 // the field to notice. The interface now returns the outcome through the
 // closure, which is the shape AllAttributes three lines above it already uses.
 //
-// Both rows matter: an event hard-wired to false passes a present-attribute
+// Both tuples matter: an event hard-wired to false passes a present-attribute
 // assertion only if that assertion is missing, and one hard-wired to true would
-// pass this test's first row alone.
+// pass this test's first tuple alone.
 func TestPullAttributeLookupReportsWhetherItFound(t *testing.T) {
 	alice := datalog.NewIdentity("user:alice")
 	nameAttr := datalog.NewKeyword(":user/name")

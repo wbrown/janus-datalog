@@ -47,12 +47,12 @@ func newBytesOneDB(t *testing.T, mode optimizerMode) (*Database, datalog.Identit
 
 func queryByHash(t *testing.T, db *Database, v []byte) []datalog.Identity {
 	t.Helper()
-	rows, err := executor.CollectTuples(db.Query(`[:find ?e :in $ ?v :where [?e :doc/hash ?v]]`, v))
+	tuples, err := executor.CollectTuples(db.Query(`[:find ?e :in $ ?v :where [?e :doc/hash ?v]]`, v))
 	require.NoError(t, err)
-	out := make([]datalog.Identity, 0, len(rows))
-	for _, row := range rows {
-		id, ok := row[0].(datalog.Identity)
-		require.Truef(t, ok, "expected Identity, got %T", row[0])
+	out := make([]datalog.Identity, 0, len(tuples))
+	for _, tuple := range tuples {
+		id, ok := tuple[0].(datalog.Identity)
+		require.Truef(t, ok, "expected Identity, got %T", tuple[0])
 		out = append(out, id)
 	}
 	return out
@@ -113,7 +113,7 @@ func TestVBoundCardinalityOneBytes_MatchesByContent(t *testing.T) {
 }
 
 // TestVBoundCardinalityOneBytes_RejectsStaleCandidate: after overwrite, the old
-// value still has an AVET candidate row, but the EATV winner differs. The
+// value still has an AVET candidate entry, but the EATV winner differs. The
 // candidate must be rejected (and rejection must compare by content, not panic).
 func TestVBoundCardinalityOneBytes_RejectsStaleCandidate(t *testing.T) {
 	for _, mode := range optimizerModes {
@@ -130,7 +130,7 @@ func TestVBoundCardinalityOneBytes_RejectsStaleCandidate(t *testing.T) {
 			require.NoError(t, err)
 
 			tx = db.NewTransaction()
-			require.NoError(t, tx.Set(e, a, v2)) // LWW overwrite; v1 row remains in AVET
+			require.NoError(t, tx.Set(e, a, v2)) // v1's AVET entry remains; LWW supersedes it
 			_, err = tx.Commit()
 			require.NoError(t, err)
 
@@ -240,7 +240,7 @@ func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
 			_, err := tx.Commit()
 			require.NoError(t, err)
 
-			rows, err := executor.CollectTuples(db.Query(`[:find ?e :in $ ?v :where [?e :doc/hash ?v]]`, v))
+			tuples, err := executor.CollectTuples(db.Query(`[:find ?e :in $ ?v :where [?e :doc/hash ?v]]`, v))
 			require.NoError(t, err)
 
 			mu.Lock()
@@ -249,7 +249,7 @@ func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
 			}
 			mu.Unlock()
 
-			require.Len(t, rows, 1)
+			require.Len(t, tuples, 1)
 		})
 	}
 }

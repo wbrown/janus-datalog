@@ -53,7 +53,7 @@ func TestOrderByNonProjectedThroughStorage(t *testing.T) {
 				require.Len(t, rel.Symbols(), 1)
 			})
 
-			t.Run("highest-priority row via non-projected key and limit 1", func(t *testing.T) {
+			t.Run("highest-priority tuple via non-projected key and limit 1", func(t *testing.T) {
 				rel, err := d.Query(`[:find ?name
 				                      :where [?t :task/name ?name]
 				                             [?t :task/priority ?p]

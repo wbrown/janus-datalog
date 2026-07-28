@@ -259,10 +259,10 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 			if orderSatisfied {
 				// The physical relation already supplies the requested Datalog
 				// order. Leave it streaming; the limit applied below can stop
-				// the source iterator after N rows. If retained sort symbols
+				// the source iterator after N tuples. If retained sort symbols
 				// are projected away, projection/dedup runs before that limit.
 			} else if plan.Query.Limit != nil && len(retained) == 0 {
-				// No post-sort projection can collapse rows, so bounded Top-N
+				// No post-sort projection can collapse tuples, so bounded Top-N
 				// is equivalent to full sort followed by limit.
 				result = TopNRelation(result, effective, *plan.Query.Limit)
 				limitApplied = true
@@ -288,7 +288,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 	// Pull rendering is result presentation, not a relational operation:
 	// pulled maps are not datalog values, so they are produced here, at the
 	// terminal boundary — after sort, strip, and limit — for exactly the
-	// rows the query returns. Entity bindings are Identity values through
+	// tuples the query returns. Entity bindings are Identity values through
 	// every relational operation above. Aggregate find clauses do not apply
 	// pulls. See docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
 	if hasPulls(plan.Query.Find) {
@@ -341,11 +341,11 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 	// of the bound input relation and carried on the execution context: it
 	// is ambient in every clause scope of this query, including or-branch
 	// bodies, and reaches consumers by join. Projection's set semantics
-	// collapse collection-input multiplicity — env columns are constant
-	// across the bound relation's rows. Scalars the planner proved
-	// constant-only (declared as phase ScalarInputs) are additionally
+	// collapse collection-input multiplicity — the environment's symbols take
+	// one value across every tuple of the bound relation. Scalars the planner
+	// proved constant-only (declared as phase ScalarInputs) are additionally
 	// projected out of the data relation so they don't form disjoint groups;
-	// pattern-consumed scalars keep their relation columns for
+	// pattern-consumed scalars keep their relation symbols for
 	// index-narrowed matching, and the environment retains what
 	// projection-out removes.
 	if len(currentGroups) > 0 {

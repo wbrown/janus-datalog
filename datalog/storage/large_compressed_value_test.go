@@ -75,7 +75,7 @@ func TestLargeCompressedValue_RoundTripsThroughStorage(t *testing.T) {
 					// Compare without dumping 2 MB on mismatch.
 					assert.Equal(t, len(body), len(got), "decoded length must match")
 					assert.True(t, body == got, "2 MB value must round-trip through storage")
-					assert.False(t, it.Next(), "expected exactly one row")
+					assert.False(t, it.Next(), "expected exactly one tuple")
 					require.NoError(t, it.Error())
 				})
 			}

@@ -82,7 +82,7 @@ func TestAlgebraMatrix_ComparisonBindingOr(t *testing.T) {
 				count++
 			}
 			iter.Close()
-			t.Logf("Total: %d rows", count)
+			t.Logf("Total: %d tuples", count)
 		})
 	}
 }

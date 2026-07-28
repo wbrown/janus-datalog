@@ -58,7 +58,7 @@ func TestNotJoinAcceptsNestedExistentialNot(t *testing.T) {
 				for i := 0; i < result.Size(); i++ {
 					t.Logf("tuple %d: %v", i, result.Get(i))
 				}
-				t.Fatalf("expected only the event-less goal to survive, got %d rows", result.Size())
+				t.Fatalf("expected only the event-less goal to survive, got %d tuples", result.Size())
 			}
 			if !datalog.ValuesEqual(result.Get(0)[0], "b") {
 				t.Fatalf("expected goal b to survive, got %v", result.Get(0))

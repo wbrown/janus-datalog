@@ -99,7 +99,7 @@ If a caller truly needs latest-by-transaction behavior:
 **Resolved.** The name-based transaction-dedup path was removed from `HashJoin` outright, with no replacement. `HashJoinWithOptions` now runs a single pure relational build loop that preserves every row.
 
 - `datalog/executor/join.go` — deleted the `?tx`/`?t`/`?txid`/`?transaction` symbol-name detection, the first-tuple type sniff, and the ~150-line "latest-transaction-wins" branch (≈190 lines out, ≈28 in). Dropped the now-unused `datalog` import.
-- `datalog/executor/join_tx_name_dedup_test.go` — `TestHashJoin_TxNameVariablesDoNotDropRows` exercises all four names as ordinary build-side integer attributes. It dropped a row before the fix and preserves both rows after.
+- `datalog/executor/join_tx_name_dedup_test.go` — `TestHashJoin_TxNameVariablesDoNotDropTuples` exercises all four names as ordinary build-side integer attributes. It dropped a tuple before the fix and preserves both tuples after.
 
 ### Corrections to this report's assumptions
 

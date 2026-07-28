@@ -135,14 +135,14 @@ func (d *Database) AsOfSnapshot(name string) (*Database, error) {
 
 // Snapshots lists every snapshot, in causal order (by captured point, then name).
 func (d *Database) Snapshots() ([]SnapshotInfo, error) {
-	type row struct {
+	type snapshotFields struct {
 		Name    string    `datalog:"?name"`
 		Lamport int64     `datalog:"?lamport"`
 		Replica int64     `datalog:"?replica"`
 		Created time.Time `datalog:"?created"`
 	}
-	var rows []row
-	err := d.QueryInto(&rows, `[:find ?name ?lamport ?replica ?created
+	var found []snapshotFields
+	err := d.QueryInto(&found, `[:find ?name ?lamport ?replica ?created
 		:where [?s :db.snapshot/name ?name]
 		       [?s :db.snapshot/at-lamport ?lamport]
 		       [?s :db.snapshot/at-replica ?replica]
@@ -151,8 +151,8 @@ func (d *Database) Snapshots() ([]SnapshotInfo, error) {
 		return nil, fmt.Errorf("Snapshots: %w", err)
 	}
 
-	out := make([]SnapshotInfo, 0, len(rows))
-	for _, r := range rows {
+	out := make([]SnapshotInfo, 0, len(found))
+	for _, r := range found {
 		out = append(out, SnapshotInfo{
 			Name:    r.Name,
 			At:      datalog.ElementID{Lamport: uint64(r.Lamport), ReplicaID: uint64(r.Replica)},
@@ -215,13 +215,13 @@ func (d *Database) DeleteSnapshot(name string) error {
 // lookupSnapshot resolves a snapshot by name via a Datalog query. Returns nil if no such
 // snapshot exists.
 func (d *Database) lookupSnapshot(name string) (*SnapshotInfo, error) {
-	type row struct {
+	type snapshotFields struct {
 		Lamport int64     `datalog:"?lamport"`
 		Replica int64     `datalog:"?replica"`
 		Created time.Time `datalog:"?created"`
 	}
-	var rows []row
-	err := d.QueryInto(&rows, `[:find ?lamport ?replica ?created
+	var found []snapshotFields
+	err := d.QueryInto(&found, `[:find ?lamport ?replica ?created
 		:in $ ?name
 		:where [?s :db.snapshot/name ?name]
 		       [?s :db.snapshot/at-lamport ?lamport]
@@ -230,10 +230,10 @@ func (d *Database) lookupSnapshot(name string) (*SnapshotInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("lookup snapshot %q: %w", name, err)
 	}
-	if len(rows) == 0 {
+	if len(found) == 0 {
 		return nil, nil
 	}
-	r := rows[0]
+	r := found[0]
 	return &SnapshotInfo{
 		Name:    name,
 		At:      datalog.ElementID{Lamport: uint64(r.Lamport), ReplicaID: uint64(r.Replica)},

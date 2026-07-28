@@ -222,7 +222,7 @@ func TestReadSessionConcurrentScans(t *testing.T) {
 
 // TestQuerySnapshotConsistency pins the semantic the read session exists for:
 // a write landing between two storage scans of one query must not produce a
-// torn result — a row pairing values from two different database states.
+// torn result — a tuple pairing values from two different database states.
 func TestQuerySnapshotConsistency(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -274,12 +274,12 @@ func TestQuerySnapshotConsistency(t *testing.T) {
 			require.NoError(t, err)
 			iter := rel.Iterator()
 			defer iter.Close()
-			require.True(t, iter.Next(), "query must produce a row")
-			row := iter.Tuple()
-			require.Len(t, row, 2)
-			assert.Equal(t, int64(1), row[0], "?va must come from the query's snapshot")
-			assert.Equal(t, int64(1), row[1], "?vb must come from the query's snapshot")
-			require.False(t, iter.Next(), "exactly one row expected")
+			require.True(t, iter.Next(), "query must produce a tuple")
+			tuple := iter.Tuple()
+			require.Len(t, tuple, 2)
+			assert.Equal(t, int64(1), tuple[0], "?va must come from the query's snapshot")
+			assert.Equal(t, int64(1), tuple[1], "?vb must come from the query's snapshot")
+			require.False(t, iter.Next(), "exactly one tuple expected")
 			require.NoError(t, iter.Error())
 		})
 	}

@@ -185,7 +185,7 @@ func TestOptimizationMatrix(t *testing.T) {
 // path's plan structure: the relation keys asserted below come from the
 // optimizer's or-fallback property derivation (or/properties.derived).
 // The baseline path derives no such keys and compensates with conservative
-// deduplication — correct rows, no key metadata — so the assertions cannot
+// deduplication — correct tuples, no key metadata — so the assertions cannot
 // hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its
 // mode explicitly. Cross-mode result equivalence for the same query body
 // is covered by TestOptimizationMatrix.
@@ -284,9 +284,9 @@ func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
 
 	result, err := db.Query(optimizationMatrixQuery(0))
 	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
+	tuples, err := executor.CollectTuples(result, nil)
 	require.NoError(t, err)
-	require.Len(t, rows, 3)
+	require.Len(t, tuples, 3)
 
 	lastKey := datalog.NewSymbol("?lastKey")
 	lastUpdatedAt := datalog.NewSymbol("?lastUpdatedAt")
@@ -305,7 +305,7 @@ func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
 		}
 	}
 	require.True(t, foundComposite,
-		"the multi-row argmax fallback must retain its proven composite key; keys=%v",
+		"the multi-tuple argmax fallback must retain its proven composite key; keys=%v",
 		result.Properties().Keys)
 }
 
@@ -364,9 +364,9 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 	populateOptimizationMatrix(t, db, 10, 20)
 	result, err := db.Query(optimizationMatrixQuery(10))
 	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
+	tuples, err := executor.CollectTuples(result, nil)
 	require.NoError(t, err)
-	require.Len(t, rows, 10)
+	require.Len(t, tuples, 10)
 	require.Equal(t, int64(4), subqueryExecutions.Load())
 	require.Equal(t, int64(5), fallbackCacheBuilds.Load())
 	require.Equal(t, int64(5), fusedConstraints.Load())
@@ -465,12 +465,12 @@ func benchmarkComplexQueryCheckpoint(b *testing.B, options *planner.PlannerOptio
 	// steady-state query execution through the public API.
 	warm, err := db.Query(queryText)
 	require.NoError(b, err)
-	warmRows, err := executor.CollectTuples(warm, nil)
+	warmTuples, err := executor.CollectTuples(warm, nil)
 	require.NoError(b, err)
-	require.Len(b, warmRows, resultLimit)
-	for i := 1; i < len(warmRows); i++ {
-		previous := warmRows[i-1][8].(time.Time)
-		current := warmRows[i][8].(time.Time)
+	require.Len(b, warmTuples, resultLimit)
+	for i := 1; i < len(warmTuples); i++ {
+		previous := warmTuples[i-1][8].(time.Time)
+		current := warmTuples[i][8].(time.Time)
 		require.False(b, previous.Before(current), "results must be ordered by lastUpdatedAt descending")
 	}
 
@@ -481,12 +481,12 @@ func benchmarkComplexQueryCheckpoint(b *testing.B, options *planner.PlannerOptio
 		if err != nil {
 			b.Fatal(err)
 		}
-		rows, err := executor.CollectTuples(result, nil)
+		tuples, err := executor.CollectTuples(result, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
-		if len(rows) != resultLimit {
-			b.Fatalf("got %d rows, want %d", len(rows), resultLimit)
+		if len(tuples) != resultLimit {
+			b.Fatalf("got %d tuples, want %d", len(tuples), resultLimit)
 		}
 	}
 }

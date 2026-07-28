@@ -23,10 +23,10 @@ func collectEntityResults(t *testing.T, rel executor.Relation) map[string]bool {
 	iter := rel.Iterator()
 	defer iter.Close()
 	for iter.Next() {
-		row := iter.Tuple()
-		require.Len(t, row, 1)
-		id, ok := row[0].(datalog.Identity)
-		require.True(t, ok, "?e must be an Identity, got %T", row[0])
+		tuple := iter.Tuple()
+		require.Len(t, tuple, 1)
+		id, ok := tuple[0].(datalog.Identity)
+		require.True(t, ok, "?e must be an Identity, got %T", tuple[0])
 		got[id.String()] = true
 	}
 	require.NoError(t, iter.Error())
@@ -196,7 +196,7 @@ func TestOrJoinInBoundMixedCorrelatesAggregate(t *testing.T) {
 			require.NoError(t, err)
 			iter := rel.Iterator()
 			defer iter.Close()
-			require.True(t, iter.Next(), "aggregate must produce one row")
+			require.True(t, iter.Next(), "aggregate must produce one tuple")
 			require.Equal(t, int64(2), iter.Tuple()[0],
 				"count over the mixed-correlate shape must absorb the residual environment group")
 			require.NoError(t, iter.Error())
@@ -313,11 +313,11 @@ func TestOrDefaultJoinBranchConsumesEnvironment(t *testing.T) {
 			iter := rel.Iterator()
 			defer iter.Close()
 			for iter.Next() {
-				row := iter.Tuple()
-				require.Len(t, row, 2)
-				id, ok := row[0].(datalog.Identity)
+				tuple := iter.Tuple()
+				require.Len(t, tuple, 2)
+				id, ok := tuple[0].(datalog.Identity)
 				require.True(t, ok)
-				got[id.String()] = row[1].(bool)
+				got[id.String()] = tuple[1].(bool)
 			}
 			require.NoError(t, iter.Error())
 			require.Equal(t, map[string]bool{named.String(): true, otherNamed.String(): false}, got,
@@ -362,11 +362,11 @@ func TestOrDefaultJoinCacheableBranchConsumesEnvironment(t *testing.T) {
 			iter := rel.Iterator()
 			defer iter.Close()
 			for iter.Next() {
-				row := iter.Tuple()
-				require.Len(t, row, 2)
-				id, ok := row[0].(datalog.Identity)
+				tuple := iter.Tuple()
+				require.Len(t, tuple, 2)
+				id, ok := tuple[0].(datalog.Identity)
 				require.True(t, ok)
-				got[id.String()] = row[1].(string)
+				got[id.String()] = tuple[1].(string)
 			}
 			require.NoError(t, iter.Error())
 			require.Equal(t, map[string]string{named.String(): "code-1", otherNamed.String(): "none"}, got,

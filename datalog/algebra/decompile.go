@@ -473,7 +473,7 @@ func decompileAggregate(n *Node) ([]query.Clause, error) {
 	// grouped keys and aggregate results.
 	// Uses Constant($) for the database source marker (not Variable).
 	// RelationBinding (not TupleBinding) because the decorrelated query
-	// returns multiple rows (one per GROUP BY value).
+	// returns multiple tuples (one per distinct group key).
 	sp := &query.SubqueryPattern{
 		Query:   innerQuery,
 		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},

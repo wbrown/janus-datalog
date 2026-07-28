@@ -10,7 +10,7 @@ import (
 )
 
 // BenchmarkSortRelation measures the standalone sort cost on a materialized
-// relation (10k rows, two symbols, sort key in the relation), including the
+// relation (10k tuples, two symbols, sort key in the relation), including the
 // deduplicating result materialization.
 func BenchmarkSortRelation(b *testing.B) {
 	const n = 10000
@@ -27,7 +27,7 @@ func BenchmarkSortRelation(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		result := SortRelation(rel, orderBy)
 		if result.Size() != n {
-			b.Fatalf("expected %d rows, got %d", n, result.Size())
+			b.Fatalf("expected %d tuples, got %d", n, result.Size())
 		}
 	}
 }
@@ -65,7 +65,7 @@ func benchmarkOrderByQuery(b *testing.B, queryStr string) {
 			b.Fatalf("execute: %v", err)
 		}
 		if result.Size() != 10000 {
-			b.Fatalf("expected 10000 rows, got %d", result.Size())
+			b.Fatalf("expected 10000 tuples, got %d", result.Size())
 		}
 	}
 }

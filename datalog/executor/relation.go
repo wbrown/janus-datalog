@@ -536,7 +536,7 @@ func (r *MaterializedRelation) carryErr(derived Relation) Relation {
 
 // EmptyRelationError returns the deferred (taint) error of a relation that
 // reports zero tuples. An errored relation that materialized empty is not an
-// empty relation — its zero rows mean "the scan failed", not "no data" — so
+// empty relation — its zero tuples mean "the scan failed", not "no data" — so
 // every consumer that branches on emptiness must consult this before
 // treating absence of tuples as absence of data. Laundering the distinction
 // turned a mandated loud failure into a silent empty

@@ -109,7 +109,7 @@ func TestExpressionProducingNaNIsError(t *testing.T) {
 				t.Fatalf("+Inf must flow through expressions: %v", err)
 			}
 			if len(tuples) != 1 {
-				t.Fatalf("expected 1 row, got %d", len(tuples))
+				t.Fatalf("expected 1 tuple, got %d", len(tuples))
 			}
 			if r, ok := tuples[0][0].(float64); !ok || !math.IsInf(r, 1) {
 				t.Errorf("expected +Inf, got %v", tuples[0][0])

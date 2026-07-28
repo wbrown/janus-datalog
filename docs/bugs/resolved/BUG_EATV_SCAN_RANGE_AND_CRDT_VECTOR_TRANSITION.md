@@ -4,7 +4,7 @@
 
 ## Symptom
 
-`TestEACacheBypass_PerRowVector_RelationInput/cache_disabled` intermittently returns 1 result instead of 2. The `:person/name "Alice"` result disappears; only the `:doc/content` vector result survives.
+`TestEACacheBypass_PerTupleVector_RelationInput/cache_disabled` intermittently returns 1 result instead of 2. The `:person/name "Alice"` result disappears; only the `:doc/content` vector result survives.
 
 The failure is **nondeterministic** — depends on which index `chooseBestMultiPositionStrategy` selects, which in turn depends on Go's randomized map iteration order.
 

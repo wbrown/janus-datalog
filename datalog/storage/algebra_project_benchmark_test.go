@@ -69,12 +69,12 @@ func BenchmarkJoinProjectInsertion(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				rows, err := executor.CollectTuples(result, nil)
+				tuples, err := executor.CollectTuples(result, nil)
 				if err != nil {
 					b.Fatal(err)
 				}
-				if len(rows) != 980 {
-					b.Fatalf("got %d rows, want 980", len(rows))
+				if len(tuples) != 980 {
+					b.Fatalf("got %d tuples, want 980", len(tuples))
 				}
 			}
 		})

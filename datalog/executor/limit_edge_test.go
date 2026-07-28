@@ -36,7 +36,7 @@ func catItemDatoms() []datalog.Datom {
 // results) are not:
 //   - Interim: parsing rejects the subquery :limit (no silent wrong results).
 //   - Future: parsing succeeds AND the cap is applied per invocation —
-//     A=5 items -> 2, B=2 items -> 2, total 4 rows.
+//     A=5 items -> 2, B=2 items -> 2, total 4 tuples.
 //
 // A global cap (2) or a dropped limit (7) must fail this test. When per-
 // invocation support lands, simply removing the parse rejection makes the
@@ -67,7 +67,7 @@ func TestSubqueryLimitIsPerInvocation(t *testing.T) {
 				t.Fatalf("execute: %v", err)
 			}
 			if result.Size() != 4 {
-				t.Errorf("expected 4 rows (per-invocation limit 2: A->2, B->2), got %d", result.Size())
+				t.Errorf("expected 4 tuples (per-invocation limit 2: A->2, B->2), got %d", result.Size())
 				dumpRelationTest(t, result)
 			}
 		})
@@ -109,7 +109,7 @@ func TestSubqueryLimitTopPerGroup(t *testing.T) {
 				t.Fatalf("execute: %v", err)
 			}
 			if result.Size() != 2 {
-				t.Fatalf("expected 2 rows (top-1 per group), got %d", result.Size())
+				t.Fatalf("expected 2 tuples (top-1 per group), got %d", result.Size())
 			}
 			got := map[string]int64{}
 			it := result.Iterator()
@@ -125,7 +125,7 @@ func TestSubqueryLimitTopPerGroup(t *testing.T) {
 	}
 }
 
-// TestPureAggregateWithLimit: a pure (ungrouped) aggregate yields one row;
+// TestPureAggregateWithLimit: a pure (ungrouped) aggregate yields one tuple;
 // limit 1 keeps it, limit 0 yields none.
 func TestPureAggregateWithLimit(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(catItemDatoms())
@@ -134,7 +134,7 @@ func TestPureAggregateWithLimit(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-			t.Run("limit 1 keeps the single aggregate row", func(t *testing.T) {
+			t.Run("limit 1 keeps the single aggregate tuple", func(t *testing.T) {
 				q, err := parser.ParseQuery(`[:find (count ?e) .
 		                              :where [?e :item/val ?v]
 		                              :limit 1]`)
@@ -146,14 +146,14 @@ func TestPureAggregateWithLimit(t *testing.T) {
 					t.Fatalf("execute: %v", err)
 				}
 				if result.Size() != 1 {
-					t.Fatalf("expected 1 row, got %d", result.Size())
+					t.Fatalf("expected 1 tuple, got %d", result.Size())
 				}
 				if result.Get(0)[0].(int64) != 7 {
 					t.Errorf("expected count 7, got %v", result.Get(0)[0])
 				}
 			})
 
-			t.Run("limit 0 drops the aggregate row", func(t *testing.T) {
+			t.Run("limit 0 drops the aggregate tuple", func(t *testing.T) {
 				q, err := parser.ParseQuery(`[:find (count ?e)
 		                              :where [?e :item/val ?v]
 		                              :limit 0]`)
@@ -165,14 +165,14 @@ func TestPureAggregateWithLimit(t *testing.T) {
 					t.Fatalf("execute: %v", err)
 				}
 				if result.Size() != 0 {
-					t.Errorf("expected 0 rows, got %d", result.Size())
+					t.Errorf("expected 0 tuples, got %d", result.Size())
 				}
 			})
 		})
 	}
 }
 
-// TestPullWithLimit: :limit caps the number of pulled entities (rows).
+// TestPullWithLimit: :limit caps the number of pulled entities (tuples).
 func TestPullWithLimit(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(catItemDatoms())
 
@@ -191,7 +191,7 @@ func TestPullWithLimit(t *testing.T) {
 				t.Fatalf("execute: %v", err)
 			}
 			if result.Size() != 1 {
-				t.Errorf("expected 1 pulled row, got %d", result.Size())
+				t.Errorf("expected 1 pulled tuple, got %d", result.Size())
 			}
 		})
 	}

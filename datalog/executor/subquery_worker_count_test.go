@@ -110,7 +110,7 @@ func TestSubqueryTupleBinding_ScalesWithInputSize(t *testing.T) {
 				t.Run(mode.name, func(t *testing.T) {
 					got := runExecuteWithWorkers(t, datoms, buildQuery(), runtime.NumCPU(), mode.algebra)
 					assert.Len(t, got, numPeople,
-						"each per-?e subquery returns exactly 1 tuple; outer produces %d rows, expected %d results",
+						"each per-?e subquery returns exactly 1 tuple; outer produces %d tuples, expected %d results",
 						numPeople, numPeople)
 				})
 			}

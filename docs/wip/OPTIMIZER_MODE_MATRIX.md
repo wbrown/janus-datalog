@@ -40,7 +40,7 @@ Benchmarks are outside the ruling's scope (tests were the ruling); they keep the
 
 Every test that executes a query must exercise both the non-optimizer and optimizer paths. The optimizer must never change results, and must never make things work: a query that fails without the algebra optimizer must fail with it, and vice versa. The two paths are observationally equivalent — same result set, same error/no-error outcome — for every query the engine accepts.
 
-Two wrong-results bugs motivated the ruling, both instances of the same gap: the correlated or-join fallback encoding dropped rows only on the optimizer path (`docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_ROWS.md`), and a NOT written before its binding clause plans on the baseline path but errors on the optimizer path (`docs/bugs/BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER.md`). The differential net that catches this class existed only where hand-built — a handful of baseline-vs-optimized pins — while the rest of the suite exercised a single path.
+Two wrong-results bugs motivated the ruling, both instances of the same gap: the correlated or-join fallback encoding dropped tuples only on the optimizer path (`docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_TUPLES.md`), and a NOT written before its binding clause plans on the baseline path but errors on the optimizer path (`docs/bugs/BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER.md`). The differential net that catches this class existed only where hand-built — a handful of baseline-vs-optimized pins — while the rest of the suite exercised a single path.
 
 ## The mechanism — the existing matrix-test convention, nothing new
 

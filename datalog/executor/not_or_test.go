@@ -89,7 +89,7 @@ func TestNotClause(t *testing.T) {
 
 // TestNotClauseWithOrJoinBody pins NOT-over-or-join correlation: an or-join
 // inside a NOT body exposes its JoinVars, and those are anti-join keys
-// between the outer relation and the body. Rows whose ?v matches through the
+// between the outer relation and the body. Tuples whose ?v matches through the
 // or-join are filtered; the rest survive.
 func TestNotClauseWithOrJoinBody(t *testing.T) {
 	valAttr := datalog.NewKeyword(":item/val")
@@ -135,16 +135,16 @@ func TestNotClauseWithOrJoinBody(t *testing.T) {
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
-			rows, err := CollectTuples(result, nil)
+			tuples, err := CollectTuples(result, nil)
 			if err != nil {
 				t.Fatalf("collect failed: %v", err)
 			}
 			got := map[int64]bool{}
-			for _, row := range rows {
-				got[row[0].(int64)] = true
+			for _, tuple := range tuples {
+				got[tuple[0].(int64)] = true
 			}
-			if len(rows) != 2 || !got[1] || !got[3] || got[2] {
-				t.Errorf("expected {1 3} to survive the NOT (2 is seen), got %v", rows)
+			if len(tuples) != 2 || !got[1] || !got[3] || got[2] {
+				t.Errorf("expected {1 3} to survive the NOT (2 is seen), got %v", tuples)
 			}
 		})
 	}
@@ -152,7 +152,7 @@ func TestNotClauseWithOrJoinBody(t *testing.T) {
 
 // TestNotClauseWithExistentialBodyVariable pins the plain-pattern sibling of
 // the or-join reproducer: (not [?d :seen/val ?v]) where ?d is existential
-// (body-local) and ?v correlates with the outer relation. Rows whose ?v has
+// (body-local) and ?v correlates with the outer relation. Tuples whose ?v has
 // any :seen/val match are filtered; ?d must not become a scheduling
 // requirement.
 func TestNotClauseWithExistentialBodyVariable(t *testing.T) {
@@ -194,16 +194,16 @@ func TestNotClauseWithExistentialBodyVariable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
-			rows, err := CollectTuples(result, nil)
+			tuples, err := CollectTuples(result, nil)
 			if err != nil {
 				t.Fatalf("collect failed: %v", err)
 			}
 			got := map[int64]bool{}
-			for _, row := range rows {
-				got[row[0].(int64)] = true
+			for _, tuple := range tuples {
+				got[tuple[0].(int64)] = true
 			}
-			if len(rows) != 2 || !got[1] || !got[3] || got[2] {
-				t.Errorf("expected {1 3} to survive the NOT (2 is seen), got %v", rows)
+			if len(tuples) != 2 || !got[1] || !got[3] || got[2] {
+				t.Errorf("expected {1 3} to survive the NOT (2 is seen), got %v", tuples)
 			}
 		})
 	}
@@ -281,16 +281,16 @@ func TestOrDefaultJoinBranchLocalAlphaEquivalence(t *testing.T) {
 				if err != nil {
 					t.Fatalf("execution failed with branch local %s: %v", local, err)
 				}
-				rows, err := CollectTuples(result, nil)
+				tuples, err := CollectTuples(result, nil)
 				if err != nil {
 					t.Fatalf("collect failed with branch local %s: %v", local, err)
 				}
 				got := map[int64]bool{}
-				for _, row := range rows {
-					got[row[0].(int64)] = row[1].(bool)
+				for _, tuple := range tuples {
+					got[tuple[0].(int64)] = tuple[1].(bool)
 				}
 				if len(got) != 3 {
-					t.Fatalf("expected 3 distinct ?v with branch local %s, got %v", local, rows)
+					t.Fatalf("expected 3 distinct ?v with branch local %s, got %v", local, tuples)
 				}
 				return got
 			}
@@ -368,13 +368,13 @@ func TestOrJoinBranchLocalAlphaEquivalence(t *testing.T) {
 				if err != nil {
 					t.Fatalf("execution failed with branch local %s: %v", local, err)
 				}
-				rows, err := CollectTuples(result, nil)
+				tuples, err := CollectTuples(result, nil)
 				if err != nil {
 					t.Fatalf("collect failed with branch local %s: %v", local, err)
 				}
 				got := map[int64]bool{}
-				for _, row := range rows {
-					got[row[0].(int64)] = true
+				for _, tuple := range tuples {
+					got[tuple[0].(int64)] = true
 				}
 				return got
 			}
@@ -2053,7 +2053,7 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 		{E: goalA, A: nameAttr, V: "alpha", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		{E: goalB, A: nameAttr, V: "beta", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// Only goal:a has an event; queries bind ?goal to goal:b, so the
-		// leading negation clause must keep the row.
+		// leading negation clause must keep the tuple.
 		{E: event1, A: eventGoalAttr, V: goalA, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
@@ -2189,8 +2189,8 @@ func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 // Both execution contexts are pinned independently — they fail through
 // different defects (docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md):
 // bare, the predicate's Eval error is deferred and was laundered by
-// emptiness-branching consumers (0 rows, err=nil); annotated, the collector
-// wrapper fabricated "attribute absent" for every lookup (wrong rows,
+// emptiness-branching consumers (0 tuples, err=nil); annotated, the collector
+// wrapper fabricated "attribute absent" for every lookup (wrong tuples,
 // err=nil). Observability must never change results: both contexts must
 // yield the same loud error.
 func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
@@ -2232,7 +2232,7 @@ func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
 
 				result, err := executor.ExecuteWithRelations(tc.ctx(), q, []Relation{inputRel})
 				if err == nil {
-					t.Fatalf("missing? on a matcher without entity lookup completed silently (rows=%d); want a loud error", result.Size())
+					t.Fatalf("missing? on a matcher without entity lookup completed silently (tuples=%d); want a loud error", result.Size())
 				}
 			})
 		}

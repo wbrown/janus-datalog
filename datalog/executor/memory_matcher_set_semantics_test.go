@@ -47,9 +47,9 @@ func TestMemoryMatcherScanRestoresSetSemantics(t *testing.T) {
 	}}
 	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
-	rows, err := CollectTuples(rel, nil)
+	tuples, err := CollectTuples(rel, nil)
 	require.NoError(t, err)
-	require.ElementsMatch(t, [][]interface{}{{"shared"}, {"unique"}}, rows,
+	require.ElementsMatch(t, [][]interface{}{{"shared"}, {"unique"}}, tuples,
 		"a wildcard-E projection of raw datoms must dedup shared values")
 }
 
@@ -75,8 +75,8 @@ func TestMemoryMatcherBoundScanIgnoresPassengerMultiplicity(t *testing.T) {
 	}}
 	rel, err := matcher.Match(query.PatternQuery(pattern), bindings)
 	require.NoError(t, err)
-	rows, err := CollectTuples(rel, nil)
+	tuples, err := CollectTuples(rel, nil)
 	require.NoError(t, err)
-	require.ElementsMatch(t, [][]interface{}{{e1, "x"}}, rows,
-		"binding rows differing only in passenger symbols must not duplicate the match")
+	require.ElementsMatch(t, [][]interface{}{{e1, "x"}}, tuples,
+		"binding tuples differing only in passenger symbols must not duplicate the match")
 }

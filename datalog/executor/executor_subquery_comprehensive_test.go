@@ -138,8 +138,8 @@ func TestSubqueryWithRelationBinding(t *testing.T) {
 	}
 }
 
-// TestSubqueryWithMultipleOuterRows tests subquery executed for multiple outer tuples
-func TestSubqueryWithMultipleOuterRows(t *testing.T) {
+// TestSubqueryWithMultipleOuterTuples tests subquery executed for multiple outer tuples
+func TestSubqueryWithMultipleOuterTuples(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			"[:department/name _]": {

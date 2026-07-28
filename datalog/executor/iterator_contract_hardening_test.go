@@ -71,9 +71,9 @@ func TestStreamingOpsStreamUnderZeroOptions(t *testing.T) {
 		Left:  query.VariableTerm{Symbol: x},
 		Right: query.ConstantTerm{Value: int64(1)},
 	})
-	rows, err := CollectTuples(filtered, nil)
+	tuples, err := CollectTuples(filtered, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(2)}, {int64(3)}}, rows)
+	require.Equal(t, [][]interface{}{{int64(2)}, {int64(3)}}, tuples)
 
 	sum := datalog.NewSymbol("?sum")
 	evaluated := open().EvaluateFunction(
@@ -83,11 +83,11 @@ func TestStreamingOpsStreamUnderZeroOptions(t *testing.T) {
 		},
 		sum,
 	)
-	rows, err = CollectTuples(evaluated, nil)
+	tuples, err = CollectTuples(evaluated, nil)
 	require.NoError(t, err)
 	require.Equal(t,
 		[][]interface{}{{int64(1), int64(2)}, {int64(2), int64(3)}, {int64(3), int64(4)}},
-		rows,
+		tuples,
 	)
 }
 
@@ -107,15 +107,15 @@ func TestStreamingFilterUsesRelationIteratorAndBuildsReplayCache(t *testing.T) {
 		Left:  query.VariableTerm{Symbol: x},
 		Right: query.ConstantTerm{Value: int64(1)},
 	})
-	filteredRows, err := CollectTuples(filtered, nil)
+	filteredTuples, err := CollectTuples(filtered, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(2)}, {int64(3)}}, filteredRows)
+	require.Equal(t, [][]interface{}{{int64(2)}, {int64(3)}}, filteredTuples)
 
-	replayedRows, err := CollectTuples(stream, nil)
+	replayedTuples, err := CollectTuples(stream, nil)
 	require.NoError(t, err)
 	require.Equal(t,
 		[][]interface{}{{int64(1)}, {int64(2)}, {int64(3)}},
-		replayedRows,
+		replayedTuples,
 	)
 }
 

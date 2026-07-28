@@ -158,7 +158,7 @@ func TestPredicateSyntaxCoverage(t *testing.T) {
 // boundary for predicate position, mirroring expression position: an unknown
 // function name is a parse error, not a per-tuple eval guard. The eval guard
 // never fires when upstream clauses match nothing, so a typo'd predicate
-// after a fully-pruned pattern returned err=nil with zero rows — a silent
+// after a fully-pruned pattern returned err=nil with no tuples — a silent
 // wrong answer. Registered user-defined names parse; built-in predicate
 // forms take their explicit arms and are unaffected.
 func TestPredicatePositionUnknownFunctionRejectedAtParse(t *testing.T) {

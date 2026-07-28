@@ -114,10 +114,10 @@ func queryEntitySet(t *testing.T, db *Database, queryStr string, args ...interfa
 	results, err := executor.CollectTuples(db.Query(queryStr, args...))
 	require.NoError(t, err)
 	set := make(map[string]bool, len(results))
-	for _, row := range results {
-		require.NotEmpty(t, row)
-		id, ok := row[0].(datalog.Identity)
-		require.Truef(t, ok, "expected Identity in ?e position, got %T", row[0])
+	for _, tuple := range results {
+		require.NotEmpty(t, tuple)
+		id, ok := tuple[0].(datalog.Identity)
+		require.Truef(t, ok, "expected Identity in ?e position, got %T", tuple[0])
 		set[id.String()] = true
 	}
 	return set

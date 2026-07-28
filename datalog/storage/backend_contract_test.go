@@ -221,7 +221,7 @@ func TestStoreBackendsRetainByteValuesAndStickyBlobErrors(t *testing.T) {
 					seenInline++
 				}
 			}
-			require.Equal(t, 2, seenInline, "valid rows before a corrupt blob must remain visible")
+			require.Equal(t, 2, seenInline, "valid datoms before a corrupt blob must remain visible")
 			if firstErr == nil {
 				firstErr = iter.Error()
 			}
@@ -318,11 +318,11 @@ func TestDatabaseBackendsPublicSemantics(t *testing.T) {
 					require.NoError(t, database.Export(&dump))
 					imported := openContractDatabase(t, testCase, DatabaseOptions{PlannerOptions: &popts})
 					require.NoError(t, imported.Import(bytes.NewReader(dump.Bytes())))
-					importedRows, err := executor.CollectTuples(imported.Query(
+					importedTuples, err := executor.CollectTuples(imported.Query(
 						`[:find ?name :where [?entity :item/name ?name]]`,
 					))
 					require.NoError(t, err)
-					require.Equal(t, latest, importedRows)
+					require.Equal(t, latest, importedTuples)
 
 					require.NoError(t, database.TruncateTo("base"))
 					afterTruncate, err := executor.CollectTuples(database.Query(

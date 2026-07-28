@@ -107,7 +107,7 @@ func TestOrDefaultRelationBindingWithFreshGroupDoesNotPreserveOuterKey(t *testin
 		ExecutorOptions{},
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
-	multirow := &query.SubqueryPattern{
+	multiTuple := &query.SubqueryPattern{
 		Query: &query.Query{Find: []query.FindElement{
 			query.FindVariable{Symbol: entity},
 			query.FindVariable{Symbol: key},
@@ -119,7 +119,7 @@ func TestOrDefaultRelationBindingWithFreshGroupDoesNotPreserveOuterKey(t *testin
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 		NewContext(nil),
 		[][]query.Clause{
-			{multirow},
+			{multiTuple},
 			{&query.Expression{
 				Function: query.GroundFunction{Value: []interface{}{":none", ":none"}},
 				Binding:  query.TupleBinding{Variables: []query.Symbol{key, updatedAt}},
@@ -137,7 +137,7 @@ func TestOrDefaultRelationBindingWithFreshGroupDoesNotPreserveOuterKey(t *testin
 	))
 }
 
-func TestOrDefaultMultirowBranchesDeriveCompositeKey(t *testing.T) {
+func TestOrDefaultMultiTupleBranchesDeriveCompositeKey(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	name := datalog.NewSymbol("?name")
 	tag := datalog.NewSymbol("?tag")
@@ -349,10 +349,10 @@ func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
 		ExecutorOptions{},
 		true,
 	)
-	rows, err := collectTypedTuples(relation)
+	tuples, err := collectTypedTuples(relation)
 	require.NoError(t, err)
-	require.Equal(t, []Tuple{{int64(1), int64(1)}}, rows)
-	assertRelationPropertiesHold(t, relation, rows, 0)
+	require.Equal(t, []Tuple{{int64(1), int64(1)}}, tuples)
+	assertRelationPropertiesHold(t, relation, tuples, 0)
 
 	emptyOuter := NewMaterializedRelationWithProperties(
 		[]query.Symbol{entity},
@@ -368,10 +368,10 @@ func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
 		ExecutorOptions{},
 		true,
 	)
-	emptyRows, err := collectTypedTuples(empty)
+	emptyTuples, err := collectTypedTuples(empty)
 	require.NoError(t, err)
-	require.Empty(t, emptyRows)
-	assertRelationPropertiesHold(t, empty, emptyRows, 1)
+	require.Empty(t, emptyTuples)
+	assertRelationPropertiesHold(t, empty, emptyTuples, 1)
 }
 
 func TestFilterBranchToOuterTupleComparesVectorValues(t *testing.T) {
@@ -413,17 +413,17 @@ func runOrPropertyDifferential(t *testing.T, seed int64) {
 	outerSymbols := []query.Symbol{entity, vector}
 
 	for caseIndex := 0; caseIndex < cases; caseIndex++ {
-		rowCount := 1 + random.Intn(8)
-		outerTuples := make([]Tuple, rowCount)
+		tupleCount := 1 + random.Intn(8)
+		outerTuples := make([]Tuple, tupleCount)
 		var datoms []datalog.Datom
-		for rowIndex := range outerTuples {
-			id := datalog.NewIdentity(fmt.Sprintf("random-or:%d:%d", caseIndex, rowIndex))
+		for tupleIndex := range outerTuples {
+			id := datalog.NewIdentity(fmt.Sprintf("random-or:%d:%d", caseIndex, tupleIndex))
 			vectorLength := 1 + random.Intn(4)
 			vectorValue := make([]interface{}, vectorLength)
 			for i := range vectorValue {
 				vectorValue[i] = int64(random.Intn(3))
 			}
-			outerTuples[rowIndex] = Tuple{id, vectorValue}
+			outerTuples[tupleIndex] = Tuple{id, vectorValue}
 
 			tagCount := random.Intn(4)
 			for tagIndex := 0; tagIndex < tagCount; tagIndex++ {
@@ -712,8 +712,8 @@ func BenchmarkOrFallbackPropertyPropagation(b *testing.B) {
 		ExecutorOptions{},
 	)
 
-	for _, rows := range []int{10_000, 100_000} {
-		tuples := make([]Tuple, rows)
+	for _, count := range []int{10_000, 100_000} {
+		tuples := make([]Tuple, count)
 		for i := range tuples {
 			tuples[i] = Tuple{int64(i), fmt.Sprintf("payload-%d", i)}
 		}
@@ -730,7 +730,7 @@ func BenchmarkOrFallbackPropertyPropagation(b *testing.B) {
 				ExecutorOptions{},
 				properties,
 			)
-			b.Run(fmt.Sprintf("%s/rows_%d", name, rows), func(b *testing.B) {
+			b.Run(fmt.Sprintf("%s/tuples_%d", name, count), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					rel := NewOrFallbackRelation(
@@ -745,8 +745,8 @@ func BenchmarkOrFallbackPropertyPropagation(b *testing.B) {
 					if err != nil {
 						b.Fatal(err)
 					}
-					if projected.Size() != rows {
-						b.Fatalf("projected size = %d, want %d", projected.Size(), rows)
+					if projected.Size() != count {
+						b.Fatalf("projected size = %d, want %d", projected.Size(), count)
 					}
 				}
 			})

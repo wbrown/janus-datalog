@@ -265,7 +265,7 @@ func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 				t.Fatalf("Failed to commit: %v", err)
 			}
 
-			// Bob has no email: missing? is true, the row survives.
+			// Bob has no email: missing? is true, the tuple survives.
 			results, err := executor.CollectTuples(db.Query(
 				`[:find ?name :in $ ?e :where [(missing? $ ?e :user/email)] [?e :user/name ?name]]`, bob))
 			if err != nil {
@@ -278,7 +278,7 @@ func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 				t.Errorf("Expected 'Bob', got %v", results[0][0])
 			}
 
-			// Alice has an email: missing? is false, no rows.
+			// Alice has an email: missing? is false, no tuples.
 			results, err = executor.CollectTuples(db.Query(
 				`[:find ?name :in $ ?e :where [(missing? $ ?e :user/email)] [?e :user/name ?name]]`, alice))
 			if err != nil {
@@ -292,7 +292,7 @@ func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 			// filtering the :in-bound input directly — no generator anywhere.
 			// The input relation is the relation; both modes must execute it.
 			// The event stream is logged on failure so the reproducer shows
-			// where the row vanishes, not just that it did.
+			// where the tuple vanishes, not just that it did.
 			var events []annotations.Event
 			db.AnnotationHandler = func(event annotations.Event) { events = append(events, event) }
 			results, err = executor.CollectTuples(db.Query(
@@ -318,8 +318,8 @@ func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 
 			// Mixed shape: a generator provides ?name while ?e stays a pure
 			// predicate input that the :find also returns. The predicate's
-			// verdict applies uniformly to every generated row, and the
-			// constant ?e must render into each surviving row.
+			// verdict applies uniformly to every generated tuple, and the
+			// constant ?e must render into each surviving tuple.
 			results, err = executor.CollectTuples(db.Query(
 				`[:find ?e ?name :in $ ?e :where [?p :user/name ?name] [(missing? $ ?e :user/email)]]`, bob))
 			if err != nil {
