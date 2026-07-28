@@ -177,6 +177,11 @@ func (m *PatternMatcher) matchWithHashJoin(
 		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m)
 	}
 
+	var scanStart time.Time
+	if m.handler != nil {
+		scanStart = time.Now()
+	}
+
 	// PHASE 4: Create streaming hash join iterator
 	iter := &hashJoinIterator{
 		matcher:           m,
@@ -191,7 +196,7 @@ func (m *PatternMatcher) matchWithHashJoin(
 		iter:              resolvedIter,
 		workspace:         make(executor.Tuple, len(symbols)),
 		tupleBuilder:      m.getTupleBuilder(pattern, symbols),
-		scanStart:         time.Now(),
+		scanStart:         scanStart,
 	}
 
 	// Return streaming relation
@@ -572,7 +577,10 @@ func (m *PatternMatcher) matchWithMergeJoin(
 	bound := m.patternScanBound(pattern, index)
 
 	// PHASE 3: Create storage iterator
-	scanStart := time.Now()
+	var scanStart time.Time
+	if m.handler != nil {
+		scanStart = time.Now()
+	}
 	storageIter, err := m.reader.ScanKeysOnly(bound)
 	if err != nil {
 		return nil, fmt.Errorf("merge join scan failed: %w", err)

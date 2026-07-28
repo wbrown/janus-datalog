@@ -450,9 +450,13 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 	for i, phase := range plan.Phases {
 		phaseIndex := i
 		isLastPhase := (i == len(plan.Phases)-1)
-		phaseStart := time.Now()
 
-		if collector := ctx.Collector(); collector != nil {
+		// One question, asked once: ctx.Collector() is an interface dispatch, and
+		// its answer governs both the clock read and the two emits below.
+		collector := ctx.Collector()
+		var phaseStart time.Time
+		if collector != nil {
+			phaseStart = time.Now()
 			collector.Add(annotations.Event{
 				Name:  annotations.PhaseBegin,
 				Start: phaseStart,
@@ -486,7 +490,7 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 		// duration covers the whole of its work and its size is free to ask for
 		// on every phase that materialized. A streaming final phase declines
 		// with -1 rather than being consumed to produce a number.
-		if collector := ctx.Collector(); collector != nil {
+		if collector != nil {
 			collector.AddTiming(annotations.PhaseComplete, phaseStart, map[string]interface{}{
 				"phase":       phaseIndex + 1,
 				"groups":      len(groups),

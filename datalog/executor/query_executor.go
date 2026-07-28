@@ -1559,8 +1559,11 @@ func applyFindPulls(matcher PatternMatcher, entityResolver EntityResolver, rel R
 // Routes to correlated union (per-tuple, all branches) when branches reference
 // outer symbols, or uncorrelated union (independent execution) otherwise.
 func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
-	start := time.Now()
 	collector := ctx.Collector()
+	var start time.Time
+	if collector != nil {
+		start = time.Now()
+	}
 
 	if len(clause.Branches) == 0 {
 		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
@@ -1826,7 +1829,10 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.O
 	var commonSyms []query.Symbol
 
 	for i, branch := range clause.Branches {
-		branchStart := time.Now()
+		var branchStart time.Time
+		if collector != nil {
+			branchStart = time.Now()
+		}
 		// Execute this branch's clauses against storage (no prior bindings)
 		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
 		if err != nil {

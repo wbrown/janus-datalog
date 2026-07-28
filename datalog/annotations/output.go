@@ -321,22 +321,52 @@ func (f *OutputFormatter) Format(event Event) string {
 
 		return fmt.Sprintf("%s %s → %d datoms%s", latency, scanStr, datoms, amplification)
 
-	case PatternCacheResolveComplete:
-		// No index and no bound: the cache picks one by cardinality inside
-		// resolution, and a hit reads no index at all. Zero scanned is a hit.
-		//
+	case StorageResolveComplete:
+		// Cause and mechanism are read off which fields are populated, per the
+		// event's contract: KeyPattern or KeyEntity with KeyAttribute names the
+		// subject, and a run appears only where the call read storage to answer.
+		// No run means the cache answered — it picks an index per entry by
+		// cardinality inside resolution, and a hit walks none.
+		var subject string
+		if pattern, ok := event.Data[KeyPattern]; ok {
+			subject = fmt.Sprintf("[%v]", pattern)
+		} else {
+			subject = fmt.Sprintf("%v %v", event.Data[KeyEntity], event.Data[KeyAttribute])
+		}
+		if card, ok := event.Data[KeyCardinality]; ok {
+			subject = fmt.Sprintf("%s, %v", subject, card)
+		}
+		if index, ok := event.Data[KeyIndex]; ok {
+			subject = fmt.Sprintf("%s, %v, bound: %v", subject, index, event.Data[KeyBound])
+		}
+		if bindings, ok := event.Data[KeyBindingSize]; ok {
+			subject = fmt.Sprintf("%s, %v bindings", subject, bindings)
+		}
+
+		scanned, _ := event.Data[KeyDatomsScanned].(int)
+
+		// A populating read answers nobody, so served and matched would both
+		// print zero for work that filled the cache.
+		if populated, ok := event.Data[KeyEntriesPopulated].(int); ok {
+			return fmt.Sprintf("%s Resolve(%s) → %d entries populated (%d scanned)",
+				latency, subject, populated, scanned)
+		}
+
 		// Not renderScanFunnel. The three terms narrow, and printing this arm's
 		// two counts in that frame reads a hit as resolution producing a value
 		// out of an intake of zero — which is what a reader would then go
 		// looking for a bug in. Served and matched, with intake named as its
 		// own number.
+		//
+		// Matched only where a pattern was the cause: a read handed an (E, A)
+		// matches nothing, and a zero printed for it reads as having found none.
 		served, _ := event.Data[KeyValuesServed].(int)
-		matched, _ := event.Data[KeyDatomsMatched].(int)
-		scanned, _ := event.Data[KeyDatomsScanned].(int)
-		return fmt.Sprintf("%s CacheResolve([%v], %v) → %d matched of %d served (%d scanned to build)",
-			latency,
-			event.Data[KeyPattern], event.Data[KeyCardinality],
-			matched, served, scanned)
+		if matched, ok := event.Data[KeyDatomsMatched].(int); ok {
+			return fmt.Sprintf("%s Resolve(%s) → %d matched of %d served (%d scanned)",
+				latency, subject, matched, served, scanned)
+		}
+		return fmt.Sprintf("%s Resolve(%s) → %d served (%d scanned)",
+			latency, subject, served, scanned)
 
 	default:
 		// Generic format for unknown events
@@ -348,9 +378,9 @@ func (f *OutputFormatter) Format(event Event) string {
 // in the order the query pays them: intake from the index, what CRDT resolution
 // produced from it, what survived the pattern and its constraints.
 //
-// Not every completion event — the cache arm resolves nothing and has its own
-// arm above. Rendering its two counts in this frame is what made a hit read as
-// resolution producing a value out of an intake of zero.
+// Not every completion event — a resolve has no middle term and has its own arm
+// above. Rendering its two counts in this frame reads a cache hit as resolution
+// producing a value out of an intake of zero.
 //
 // Comma-ok reads rather than assertions: an event that omits one of the three
 // should render a zero, not panic the formatter mid-trace.

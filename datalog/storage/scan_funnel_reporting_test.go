@@ -7,6 +7,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -91,9 +92,8 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 			// No completions column. Every arm reports through
 			// annotations.StorageScanComplete — the one completion event — so a
 			// per-arm list of names would restate the same constant eight times.
-			// It used to be a column because the name varied by strategy; the
-			// strategy is a payload field now, and this table does not care
-			// which one an arm picked, only that it reported.
+			// Which strategy an arm picked is not what this table asserts, only
+			// that it reported.
 			for _, tc := range []struct {
 				arm         string
 				query       string
@@ -284,7 +284,7 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 			_, err = executor.CollectTuples(result, nil)
 			require.NoError(t, err)
 
-			miss := lastEventNamed(events, annotations.PatternCacheResolveComplete)
+			miss := lastEventNamed(events, annotations.StorageResolveComplete)
 			require.NotNil(t, miss, "the cache arm must report what it cost")
 			require.Nil(t, lastEventNamed(events, annotations.PatternIndexSelection),
 				"the cache arm addresses no run and must not announce one")
@@ -307,7 +307,7 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 			_, err = executor.CollectTuples(result, nil)
 			require.NoError(t, err)
 
-			hit := lastEventNamed(events, annotations.PatternCacheResolveComplete)
+			hit := lastEventNamed(events, annotations.StorageResolveComplete)
 			require.NotNil(t, hit)
 			require.Equal(t, 0, hit.Data[annotations.KeyDatomsScanned],
 				"a hit reads no index, and zero is the answer rather than an absent field")
@@ -319,6 +319,285 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 					"against zero intake renders as resolution producing what no scan read")
 		})
 	}
+}
+
+// TestBindingDrivenCacheArmReportsWhatItServed pins the completion for the arm
+// that answers a binding-driven pattern with E bound and A known. It is the
+// first thing MatchWithConstraints tries once bindings are present, which makes
+// it the most-travelled read in the engine, and it emitted nothing at all — so
+// the busiest path there is was, in a trace, indistinguishable from one that
+// never ran.
+//
+// It reports on the cache-resolve event rather than the scan one for the same
+// reason matchFromCache does: a hit walks no index, so there is no funnel to
+// narrow and values.served stands where the middle term would be. Only arity
+// differs — one call covers a whole binding set — so the keys keep their
+// meanings and each total is a sum over the bindings read.
+//
+// A bound entity lacking the attribute is included deliberately. It resolves to
+// no entry and contributes no tuple, but establishing that costs a read, and an
+// arm reporting only its matches prices that read at nothing.
+func TestBindingDrivenCacheArmReportsWhatItServed(t *testing.T) {
+	var events []annotations.Event
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:   t.TempDir(),
+		Schema: funnelSchema(t),
+	})
+	require.NoError(t, err)
+	defer db.Close()
+
+	name := datalog.NewKeyword(":person/name")
+	alice := funnelFixture(t, db)
+
+	bob := datalog.NewIdentity("funnel:bob")
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Set(bob, name, "Bob"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Carol carries a different attribute, so she binds, reads, and resolves to
+	// nothing.
+	carol := datalog.NewIdentity("funnel:carol")
+	tx = db.NewTransaction()
+	require.NoError(t, tx.Add(carol, datalog.NewKeyword(":person/tag"), "dev"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: name},
+			query.Variable{Name: datalog.NewSymbol("?v")},
+		},
+	}
+
+	// Bound directly rather than through db.Query: the planner is free to reach
+	// this pattern with no bindings at all, and this arm is only entered when a
+	// binding relation carrying E is already in hand.
+	match := func(want int, bound ...datalog.Identity) *annotations.Event {
+		t.Helper()
+		tuples := make([]executor.Tuple, len(bound))
+		for i, e := range bound {
+			tuples[i] = executor.Tuple{e}
+		}
+		bindings := executor.NewMaterializedRelation(
+			[]query.Symbol{datalog.NewSymbol("?e")}, tuples)
+
+		events = nil
+		m := db.Matcher().(*PatternMatcher)
+		rel, err := m.MatchWithConstraints(
+			query.PatternQuery(pattern), executor.Relations{bindings}, nil)
+		require.NoError(t, err)
+		got, err := executor.CollectTuples(rel, nil)
+		require.NoError(t, err)
+		require.Len(t, got, want)
+
+		ev := lastEventNamed(events, annotations.StorageResolveComplete)
+		require.NotNil(t, ev, "the arm owes a completion for the binding set it read")
+		return ev
+	}
+
+	db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
+
+	cold := match(2, alice, bob, carol)
+	require.Equal(t, 3, cold.Data[annotations.KeyBindingSize],
+		"three bindings were read, including the one that resolved to nothing")
+	require.Equal(t, 2, cold.Data[annotations.KeyDatomsMatched])
+	require.Equal(t, 2, cold.Data[annotations.KeyValuesServed],
+		"two entries, each cardinality-one and holding one current value")
+	require.Positive(t, cold.Data[annotations.KeyDatomsScanned],
+		"a cold cache resolves from storage")
+	require.Equal(t, schema.CardinalityOne, cold.Data[annotations.KeyCardinality],
+		"A is fixed for this call, so one cardinality describes it")
+	require.NotContains(t, cold.Data, annotations.KeyDatomsResolved,
+		"this arm reports no funnel; a middle term here would be read as one")
+	require.NotContains(t, cold.Data, annotations.KeyIndex,
+		"the cache picks an index per entry by cardinality, and this call resolved three")
+
+	warm := match(2, alice, bob)
+	require.Equal(t, 0, warm.Data[annotations.KeyDatomsScanned],
+		"both entries are cached now, so this call read no index — reporting their "+
+			"build cost instead would make a trace of repeated joins claim scans "+
+			"that never happened")
+	require.Equal(t, 2, warm.Data[annotations.KeyDatomsMatched])
+	require.Equal(t, 2, warm.Data[annotations.KeyValuesServed])
+
+	// An absent (E, A) is resolved and not cached, so it is re-established on
+	// every call, and it produces no tuple to show for it. Its intake is zero
+	// and stays zero however many times it is asked: the prefix names an empty
+	// run, so the seek reads no datoms. The event is therefore the only trace
+	// this work leaves, and binding.size is what says it happened — an arm that
+	// stayed silent here and an arm that was never reached read identically.
+	absent := match(0, carol)
+	require.Equal(t, 1, absent.Data[annotations.KeyBindingSize])
+	require.Equal(t, 0, absent.Data[annotations.KeyDatomsMatched])
+	require.Equal(t, 0, absent.Data[annotations.KeyValuesServed])
+	require.Equal(t, 0, absent.Data[annotations.KeyDatomsScanned])
+}
+
+// TestPatternLessReadsReportUnderEntityAndAttribute pins the reads the Pull API
+// and a fused attribute fetch make. No pattern names their subject, so the
+// entity and the attribute do, and whether they name a run is what says which
+// mechanism answered: the cache picks an index per entry inside resolution and
+// a hit walks none, while a storage arm walks exactly one and names it.
+//
+// A run is named only where the call addressed one. LookupAllAttributes always
+// peeks before it resolves, so it walks two and reports the count instead —
+// naming an index there would name whichever arm reached it last.
+func TestPatternLessReadsReportUnderEntityAndAttribute(t *testing.T) {
+	name := datalog.NewKeyword(":person/name")
+	tag := datalog.NewKeyword(":person/tag")
+
+	open := func(t *testing.T, disableCache bool) (*Database, *[]annotations.Event, datalog.Identity) {
+		t.Helper()
+		var events []annotations.Event
+		db, err := NewDatabaseWithOptions(DatabaseOptions{
+			Path:         t.TempDir(),
+			Schema:       funnelSchema(t),
+			DisableCache: disableCache,
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { db.Close() })
+		e := funnelFixture(t, db)
+		db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
+		return db, &events, e
+	}
+
+	resolve := func(t *testing.T, events *[]annotations.Event) *annotations.Event {
+		t.Helper()
+		ev := lastEventNamed(*events, annotations.StorageResolveComplete)
+		require.NotNil(t, ev, "a read that walked the index owes a completion")
+		return ev
+	}
+
+	t.Run("LookupAttribute answered from storage names its run", func(t *testing.T) {
+		db, events, e := open(t, true)
+		m := db.Matcher().(*PatternMatcher)
+
+		v, found, err := m.LookupAttribute(e, name)
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, "Alys", v, "the last of three writes wins")
+
+		ev := resolve(t, events)
+		// Typed, not rendered: a producer that flattened would still read
+		// correctly in a trace, and only a typed comparison catches it.
+		require.Equal(t, e, ev.Data[annotations.KeyEntity])
+		require.Equal(t, name, ev.Data[annotations.KeyAttribute])
+		require.NotContains(t, ev.Data, annotations.KeyPattern,
+			"no pattern named this read")
+		require.Equal(t, EATV, ev.Data[annotations.KeyIndex],
+			"the storage arm walked one run and owes its name")
+		require.Equal(t, 1, ev.Data[annotations.KeyValuesServed])
+		require.Positive(t, ev.Data[annotations.KeyDatomsScanned],
+			"three writes are three datoms, and the arm read past the winner's history")
+		require.NotContains(t, ev.Data, annotations.KeyDatomsMatched,
+			"matching is a pattern's business; a zero here would read as no result")
+	})
+
+	t.Run("LookupAttribute answered from cache names no run", func(t *testing.T) {
+		db, events, e := open(t, false)
+		m := db.Matcher().(*PatternMatcher)
+
+		// First read builds the entry; the second is the hit under test.
+		_, _, err := m.LookupAttribute(e, name)
+		require.NoError(t, err)
+		*events = nil
+		v, found, err := m.LookupAttribute(e, name)
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, "Alys", v)
+
+		ev := resolve(t, events)
+		require.NotContains(t, ev.Data, annotations.KeyIndex,
+			"a hit reads no index, so there is no run to name")
+		require.Equal(t, 0, ev.Data[annotations.KeyDatomsScanned],
+			"and none to charge intake for")
+		require.Equal(t, 1, ev.Data[annotations.KeyValuesServed])
+	})
+
+	t.Run("LookupAllAttributes counts the runs it walked", func(t *testing.T) {
+		db, events, e := open(t, true)
+		m := db.Matcher().(*PatternMatcher)
+
+		values, err := m.LookupAllAttributes(e, tag)
+		require.NoError(t, err)
+		require.Len(t, values, 1, "one tag was added, removed, and one remains")
+
+		ev := resolve(t, events)
+		require.Equal(t, e, ev.Data[annotations.KeyEntity])
+		require.Equal(t, tag, ev.Data[annotations.KeyAttribute])
+		require.NotContains(t, ev.Data, annotations.KeyIndex,
+			"the peek and the resolution are two runs, and neither speaks for the other")
+		require.Equal(t, 2, ev.Data[annotations.KeyScansOpened])
+		require.Equal(t, 1, ev.Data[annotations.KeyValuesServed])
+		require.Positive(t, ev.Data[annotations.KeyDatomsScanned],
+			"the set's history is deeper than its membership, and intake is what shows it")
+	})
+}
+
+// TestBulkReadsReportUnderNoSingleSubject pins the two reads whose subject is a
+// set of entities rather than one (E, A). Neither can carry a cause, and what
+// separates them in a trace is the run: prefetch opens one per entity and names
+// none, batch pull shares a single EATV traversal and names it.
+func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
+	t.Run("prefetch reports what it filled", func(t *testing.T) {
+		var events []annotations.Event
+		db, err := NewDatabaseWithOptions(DatabaseOptions{
+			Path:   t.TempDir(),
+			Schema: funnelSchema(t),
+		})
+		require.NoError(t, err)
+		defer db.Close()
+
+		alice := funnelFixture(t, db)
+		bob := datalog.NewIdentity("funnel:bob")
+		tx := db.NewTransaction()
+		require.NoError(t, tx.Set(bob, datalog.NewKeyword(":person/name"), "Bob"))
+		_, err = tx.Commit()
+		require.NoError(t, err)
+
+		db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
+		m := db.Matcher().(*PatternMatcher)
+		require.NoError(t, m.PrefetchEntities([]datalog.Identity{alice, bob}))
+
+		ev := lastEventNamed(events, annotations.StorageResolveComplete)
+		require.NotNil(t, ev, "a warm that read the index owes a completion")
+		require.NotContains(t, ev.Data, annotations.KeyIndex,
+			"one scan per entity: naming an index would name whichever came last")
+		require.Equal(t, 2, ev.Data[annotations.KeyScansOpened])
+		require.Equal(t, 4, ev.Data[annotations.KeyEntriesPopulated],
+			"alice carries three attributes and bob one")
+		require.NotContains(t, ev.Data, annotations.KeyValuesServed,
+			"a warm answers nobody, and a zero here would read as having found none")
+		require.Positive(t, ev.Data[annotations.KeyDatomsScanned])
+	})
+
+	t.Run("batch pull names its shared run", func(t *testing.T) {
+		var events []annotations.Event
+		db, err := NewDatabaseWithOptions(DatabaseOptions{
+			Path:   t.TempDir(),
+			Schema: funnelSchema(t),
+		})
+		require.NoError(t, err)
+		defer db.Close()
+
+		alice := funnelFixture(t, db)
+
+		db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
+		results, err := db.ResolveAllAttributesMany([]datalog.Identity{alice})
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		require.Len(t, results[0], 3, "alice carries all three attributes")
+
+		ev := lastEventNamed(events, annotations.StorageResolveComplete)
+		require.NotNil(t, ev)
+		require.Equal(t, EATV, ev.Data[annotations.KeyIndex],
+			"one traversal shared across the entity set, and it is nameable")
+		require.Equal(t, 1, ev.Data[annotations.KeyScansOpened])
+		require.Equal(t, 3, ev.Data[annotations.KeyValuesServed])
+		require.Positive(t, ev.Data[annotations.KeyDatomsScanned])
+	})
 }
 
 // TestMemoryBackendReportsIntakeNatively closes the gap that left

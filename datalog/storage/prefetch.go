@@ -3,8 +3,10 @@ package storage
 import (
 	"bytes"
 	"sort"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 )
 
 // PrefetchEntities loads all attributes for a set of entities into the EA cache
@@ -24,6 +26,25 @@ import (
 func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 	if m.cache == nil || len(entities) == 0 || m.isHistoryMode() {
 		return nil
+	}
+
+	// One scan per entity, so no single run to name.
+	var opened time.Time
+	var intake, scansOpened, populated int
+	if m.handler != nil {
+		opened = time.Now()
+		defer func() {
+			m.handler(annotations.Event{
+				Name:    annotations.StorageResolveComplete,
+				Start:   opened,
+				Latency: time.Since(opened),
+				Data: map[string]interface{}{
+					annotations.KeyDatomsScanned:    intake,
+					annotations.KeyScansOpened:      scansOpened,
+					annotations.KeyEntriesPopulated: populated,
+				},
+			})
+		}()
 	}
 
 	// Sort entities by their 20-byte hash (= disk order)
@@ -55,6 +76,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		if err != nil {
 			return err
 		}
+		scansOpened++
 
 		// Single-pass: iterate EATV, accumulate datoms per (E, A) group,
 		// dispatch to cache at each attribute boundary.
@@ -65,6 +87,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		for iter.Next() {
 			d, err := iter.Datom()
 			if err != nil {
+				intake += iter.Scanned()
 				_ = iter.Close()
 				return err
 			}
@@ -80,6 +103,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 				card := m.GetCardinality(currentAttr)
 				if key, ok := m.cacheKey(e, currentAttr); ok {
 					m.cache.PopulateFromDatoms(key, card, currentDatoms)
+					populated++
 				}
 				currentDatoms = currentDatoms[:0]
 			}
@@ -89,6 +113,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 			hasGroup = true
 		}
 		if err := iter.Error(); err != nil {
+			intake += iter.Scanned()
 			_ = iter.Close()
 			return err
 		}
@@ -97,8 +122,10 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 			card := m.GetCardinality(currentAttr)
 			if key, ok := m.cacheKey(e, currentAttr); ok {
 				m.cache.PopulateFromDatoms(key, card, currentDatoms)
+				populated++
 			}
 		}
+		intake += iter.Scanned()
 		if err := iter.Close(); err != nil {
 			return err
 		}

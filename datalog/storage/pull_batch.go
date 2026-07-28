@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -74,10 +76,33 @@ func (d *Database) ResolveAllAttributesMany(
 	resolved := make(map[[20]byte]map[datalog.Keyword]interface{}, len(sortedEntities))
 	declaredAttrs := d.declaredWildcardAttributes()
 	var uniqueLookups []wildcardUniqueLookup
-	iterator, err := d.store.ScanKeysOnly(ScanBound{Index: EATV})
+	bound := ScanBound{Index: EATV}
+	iterator, err := d.store.ScanKeysOnly(bound)
 	if err != nil {
 		return nil, fmt.Errorf("batch wildcard scan failed: %w", err)
 	}
+
+	// The unique walks below are their own reads and report themselves.
+	var opened time.Time
+	var intake, served int
+	if d.AnnotationHandler != nil {
+		opened = time.Now()
+		defer func() {
+			data := map[string]interface{}{
+				annotations.KeyDatomsScanned: intake,
+				annotations.KeyValuesServed:  served,
+				annotations.KeyScansOpened:   1,
+			}
+			addBoundFields(data, bound)
+			d.AnnotationHandler(annotations.Event{
+				Name:    annotations.StorageResolveComplete,
+				Start:   opened,
+				Latency: time.Since(opened),
+				Data:    data,
+			})
+		}()
+	}
+
 	for _, entity := range sortedEntities {
 		entityResult, pending, err := d.resolveWildcardEntity(
 			matcher,
@@ -86,13 +111,16 @@ func (d *Database) ResolveAllAttributesMany(
 			declaredAttrs,
 		)
 		if err != nil {
+			intake += iterator.Scanned()
 			_ = iterator.Close()
 			return nil, err
 		}
+		served += len(entityResult)
 		resolved[entity.Hash()] = entityResult
 		uniqueLookups = append(uniqueLookups, pending...)
 	}
 	iterErr := iterator.Error()
+	intake += iterator.Scanned()
 	closeErr := iterator.Close()
 	if iterErr != nil {
 		return nil, fmt.Errorf("batch wildcard scan failed: %w", iterErr)

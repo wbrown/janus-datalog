@@ -142,9 +142,12 @@ func NewCache() *Cache {
 // go stale.
 func annotateRebuild(handler annotations.Handler, key CacheKey, reason string, slot cacheSlot) {
 	data := map[string]interface{}{
-		"attribute":    datalog.InternKeywordFromBytes(key.A).String(),
-		"reason":       reason,
-		"slot_version": slot.version.Lamport,
+		// The keyword, not its rendering. Interning already produced the
+		// canonical pointer; String() would spend an allocation per rebuild to
+		// hand the consumer something to parse back.
+		annotations.KeyAttribute: datalog.InternKeywordFromBytes(key.A),
+		"reason":                 reason,
+		"slot_version":           slot.version.Lamport,
 	}
 	if slot.entry != nil {
 		data["entry_version"] = slot.entry.version.Lamport

@@ -355,6 +355,19 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		}
 	}
 
+	// copyCount/passthruCount feed the JoinBuildCopy annotation below; only
+	// track them when a collector will read them. Inlined into the build loop
+	// (no closure) to avoid a per-join heap allocation.
+	trackCopy := opts.Collector != nil
+	var copyCount, passthruCount int
+	// The interval the copies were made in: draining the build relation. It ends
+	// at the loop rather than at the emit, which happens after grouping — a cost
+	// the copy statistics do not describe.
+	var buildStart, buildEnd time.Time
+	if trackCopy {
+		buildStart = time.Now()
+	}
+
 	// Create build iterator - single iteration only
 	// Close explicitly after build loop, not deferred. The build relation may share
 	// underlying iterators with the probe relation (e.g., OrFallbackRelation wraps the
@@ -364,11 +377,6 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// Check if we need to copy tuples from the build relation
 	// This avoids unnecessary copies when the source guarantees stable tuples
 	needsCopy := buildRel.RequiresCopy()
-	// copyCount/passthruCount feed the JoinBuildCopy annotation below; only
-	// track them when a collector will read them. Inlined into the build loop
-	// (no closure) to avoid a per-join heap allocation.
-	trackCopy := opts.Collector != nil
-	var copyCount, passthruCount int
 
 	for buildIt.Next() {
 		tuple := buildIt.Tuple()
@@ -397,6 +405,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	if closeErr := buildIt.Close(); buildErr == nil {
 		buildErr = closeErr
 	}
+	if trackCopy {
+		buildEnd = time.Now()
+	}
 
 	// Group the build tuples by join-key hash. The tuples carry their own key
 	// values, so no key materializes per tuple and fanout needs no per-key
@@ -409,9 +420,10 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// Emit annotation for copy statistics if collector is available
 	if opts.Collector != nil && (copyCount > 0 || passthruCount > 0) {
 		opts.Collector.Add(annotations.Event{
-			Name:  annotations.JoinBuildCopy,
-			Start: time.Now(),
-			End:   time.Now(),
+			Name:    annotations.JoinBuildCopy,
+			Start:   buildStart,
+			End:     buildEnd,
+			Latency: buildEnd.Sub(buildStart),
 			Data: map[string]interface{}{
 				"copied":        copyCount,
 				"passthru":      passthruCount,

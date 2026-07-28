@@ -491,10 +491,14 @@ func (m *PatternMatcher) matchUnboundScan(
 
 	// Streaming iterator: key-only scan wrapped with CRDT resolution in
 	// current/as-of mode, or raw scan in history mode.
+	var opened time.Time
+	if m.handler != nil {
+		opened = time.Now()
+	}
 	regularIter := &unboundIterator{
 		matcher:         m,
 		bound:           bound,
-		opened:          time.Now(),
+		opened:          opened,
 		pattern:         pattern,
 		symbols:         symbols,
 		e:               e,
@@ -561,6 +565,11 @@ func (m *PatternMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, b
 	}
 	bindingTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), bindingTuples)
 
+	var scanStart time.Time
+	if m.handler != nil {
+		scanStart = time.Now()
+	}
+
 	// Create iterator that will scan for each binding tuple
 	iter := &nonReusingIterator{
 		matcher:          m,
@@ -573,7 +582,7 @@ func (m *PatternMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, b
 		workspace:        make(executor.Tuple, len(symbols)),
 		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Symbols()),
 		tupleBuilder:     m.getTupleBuilder(pattern, symbols),
-		scanStart:        time.Now(),
+		scanStart:        scanStart,
 	}
 
 	// Return streaming relation with the iterator
@@ -612,6 +621,11 @@ func (m *PatternMatcher) matchWithVValidation(
 		return nil, err
 	}
 
+	var validationStart time.Time
+	if m.handler != nil {
+		validationStart = time.Now()
+	}
+
 	// Create validating iterator
 	iter := &validatingVBoundIterator{
 		matcher:          m,
@@ -627,6 +641,11 @@ func (m *PatternMatcher) matchWithVValidation(
 		workspace:        make(executor.Tuple, len(symbols)),
 		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Symbols()),
 		tupleBuilder:     m.getTupleBuilder(pattern, symbols),
+		// Taken here rather than at the first candidate scan, because the
+		// unique short-circuit resolves a claimant and emits without opening
+		// one. Started at construction, the completion's latency spans the
+		// whole per-binding sequence on either branch.
+		scanStart: validationStart,
 	}
 
 	return executor.NewStreamingRelationWithProperties(
@@ -674,13 +693,22 @@ type validatingVBoundIterator struct {
 	currentBoundV any
 
 	// Reporting. This path opens a candidate scan per binding and discards it
-	// before the next, so the counts have to accumulate as it goes: by Close
-	// every scan but the last is gone. datomsScanned covers the per-binding
-	// candidate scans plus the unique-ownership walks tryEmitUniqueWinner runs.
-	scansOpened   int
-	datomsScanned int
-	datomsMatched int
-	scanStart     time.Time
+	// before the next, so the counts accumulate as it goes: by Close every scan
+	// but the last is gone, and reading intake there would report only the
+	// final binding's.
+	//
+	// datomsScanned covers the per-binding candidate scans and the
+	// unique-ownership walk, which hands its funnel back through
+	// tryEmitUniqueWinner. It does not cover the validation lookup
+	// validateCandidate opens per candidate: that one returns (ok, error) and
+	// its intake reaches nobody, which is the nested-read gap the scan scope is
+	// for. Counting it here would mean claiming a number this iterator cannot
+	// see.
+	scansOpened    int
+	datomsScanned  int
+	datomsResolved int
+	datomsMatched  int
+	scanStart      time.Time
 
 	err error // First error from storage operations
 }
@@ -695,6 +723,11 @@ func (it *validatingVBoundIterator) Next() bool {
 					it.err = err
 					return false
 				}
+				// What CRDT resolution produced, before validation narrows it.
+				// The gap between this and datomsMatched below is what the
+				// candidate-then-validate design costs: candidates found by V
+				// whose (E, A) winner turned out to carry a different one.
+				it.datomsResolved++
 
 				// Emit annotation for CRDT-resolved candidate
 				if it.matcher.handler != nil {
@@ -740,6 +773,7 @@ func (it *validatingVBoundIterator) Next() bool {
 
 				// Build result tuple
 				it.currentTuple = it.tupleBuilder.BuildTupleInterned(datom)
+				it.datomsMatched++
 				return true
 			}
 			// Inner iterator exhausted — propagate any deferred error
@@ -751,6 +785,12 @@ func (it *validatingVBoundIterator) Next() bool {
 			}
 			if closeErr := it.crdtIter.Close(); closeErr != nil && it.err == nil {
 				it.err = closeErr
+			}
+			// Take this scan's intake before dropping it. This is the only
+			// point it is still reachable: the next binding opens a new scan
+			// over the same field, and Close sees whichever was last.
+			if it.rawIter != nil {
+				it.datomsScanned += it.rawIter.Scanned()
 			}
 			it.crdtIter = nil
 			it.rawIter = nil
@@ -779,6 +819,10 @@ func (it *validatingVBoundIterator) Next() bool {
 			it.err = err
 			return false
 		} else if emitted {
+			// Counted here as well as in the candidate loop below: this branch
+			// emits a tuple without going near it, so incrementing only there
+			// would report every unique-attribute binding as matching nothing.
+			it.datomsMatched++
 			return true
 		} else if it.isBoundAUniqueAttr() {
 			// Attribute is unique but no valid claimant — skip this binding.
@@ -827,11 +871,13 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 	var aStorage Attribute
 	copy(aStorage[:], aKw.String())
 
-	// Nested resolution contributes its intake to the enclosing pattern's count
-	// rather than emitting an event of its own; the funnel's other two terms
-	// are this iterator's to report, from what it emits.
+	// Nested resolution contributes to the enclosing pattern's counts rather
+	// than emitting an event of its own. Intake and what the walk resolved both
+	// travel back on its funnel; matched stays this iterator's to report, from
+	// what it actually emits.
 	owner, ownerTx, funnel, err := it.matcher.resolveAVLWW(aStorage, it.currentBoundV)
 	it.datomsScanned += funnel.scanned
+	it.datomsResolved += funnel.resolved
 	if err != nil {
 		return false, err
 	}
@@ -1077,6 +1123,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	if err != nil {
 		return nil, nil, err
 	}
+	it.scansOpened++
 
 	// Wrap with CRDTResolvingIterator for correct CRDT semantics
 	// CRDTResolvingIterator handles:
@@ -1117,6 +1164,11 @@ func (it *validatingVBoundIterator) Tuple() executor.Tuple {
 }
 
 func (it *validatingVBoundIterator) Close() error {
+	// The live scan's intake, taken before Close discards it. Every earlier
+	// scan added its own at the point Next released it.
+	if it.rawIter != nil {
+		it.datomsScanned += it.rawIter.Scanned()
+	}
 	if it.crdtIter != nil {
 		it.crdtIter.Close()
 		it.crdtIter = nil
@@ -1124,6 +1176,37 @@ func (it *validatingVBoundIterator) Close() error {
 	if it.rawIter != nil {
 		it.rawIter.Close()
 		it.rawIter = nil
+	}
+
+	// This arm reported nothing at all until now: it declared these fields and
+	// never wrote them, so on a unique or set-once attribute — the deepest read
+	// a query makes, one candidate scan per binding plus a validation lookup
+	// per candidate — a trace showed no scan and no cost.
+	//
+	// No run. Like the per-binding path, it opens one scan per binding tuple,
+	// so naming a single one would name whichever came last. scans.opened is
+	// what stands in its place.
+	//
+	// Not gated on having opened one. The unique short-circuit resolves its
+	// claimant through a walk and emits without ever opening a candidate scan,
+	// so a scansOpened guard would silence the branch that reads deepest — and
+	// an arm that ran and read nothing still owes that as a report, since the
+	// absent event is exactly what makes it indistinguishable from an arm that
+	// never ran.
+	if it.matcher.handler != nil {
+		emitScanCompletion(it.matcher.handler, annotations.StorageScanComplete,
+			it.scanStart,
+			scanFunnel{
+				scanned:  it.datomsScanned,
+				resolved: it.datomsResolved,
+				matched:  it.datomsMatched,
+			},
+			map[string]interface{}{
+				annotations.KeyPattern:     it.pattern,
+				annotations.KeyStrategy:    annotations.ScanVValidation,
+				annotations.KeyBindingSize: len(it.tuples),
+				annotations.KeyScansOpened: it.scansOpened,
+			})
 	}
 	return nil
 }
@@ -1160,7 +1243,11 @@ func (m *PatternMatcher) matchFromCache(
 	}
 
 	// Get or resolve from cache
-	opened := time.Now()
+	annotating := m.handler != nil
+	var opened time.Time
+	if annotating {
+		opened = time.Now()
+	}
 	entry, spent, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler)
 	if err != nil {
 		return nil, false, err
@@ -1190,7 +1277,7 @@ func (m *PatternMatcher) matchFromCache(
 	// Intake and matched keep their meanings from the funnel; only the middle
 	// term has none here, and values.served is what stands in its place.
 	matched := 0
-	if m.handler != nil {
+	if annotating {
 		defer func() {
 			// An absent (E, A) has no entry and therefore serves nothing. The
 			// call still happened and still cost its intake, so it reports —
@@ -1201,7 +1288,7 @@ func (m *PatternMatcher) matchFromCache(
 				served = entry.valueCount()
 			}
 			m.handler(annotations.Event{
-				Name:    annotations.PatternCacheResolveComplete,
+				Name:    annotations.StorageResolveComplete,
 				Start:   opened,
 				Latency: time.Since(opened),
 				Data: map[string]interface{}{
@@ -1337,6 +1424,13 @@ func resolveKeywordFromBindings(aVar query.Variable, bindings executor.Relations
 // When aSymIdx >= 0, A is extracted per-tuple from bindingRel[aSymIdx] instead of using
 // the fixed `a` parameter. This handles the case where both E and A are symbols in the
 // binding relation (e.g., from join results with varying attributes per tuple).
+//
+// Both call sites reach this from inside a live-cache, non-history branch, so
+// the one refusal cacheKey makes is already decided before the loop starts.
+// That is what lets the completion event cover every path out of the loop: a
+// refusal first noticed on the fourth binding would have to report three
+// bindings' intake under a call that, as far as the event could say, read the
+// index and served nothing.
 func (m *PatternMatcher) matchWithBindingsFromCache(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
@@ -1393,12 +1487,49 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		return tupleBuilder.BuildTupleInterned(&datomBuf)
 	}
 
+	// One call covers a whole binding set, so each total is a sum over the
+	// bindings it read and binding.size is what they are summed over.
+	//
+	// No index is named: the cache picks one per entry by cardinality, and this
+	// call resolves many. Cardinality is named only when A is fixed for the
+	// call, for the same reason — with A varying per tuple, one value would be
+	// whichever tuple came last.
+	annotating := m.handler != nil
+	var opened time.Time
+	intake, served, bindingsRead := 0, 0, 0
+	// Assigned on the successful return only. Every other way out of the loop is
+	// a refusal or a failure that hands the pattern back for a full scan, and
+	// those served the caller nothing however much they cost to discover.
+	matched := 0
+	if annotating {
+		opened = time.Now()
+		defer func() {
+			data := map[string]interface{}{
+				annotations.KeyPattern:       pattern,
+				annotations.KeyBindingSize:   bindingsRead,
+				annotations.KeyDatomsScanned: intake,
+				annotations.KeyValuesServed:  served,
+				annotations.KeyDatomsMatched: matched,
+			}
+			if aSymIdx < 0 {
+				data[annotations.KeyCardinality] = fixedCard
+			}
+			m.handler(annotations.Event{
+				Name:    annotations.StorageResolveComplete,
+				Start:   opened,
+				Latency: time.Since(opened),
+				Data:    data,
+			})
+		}()
+	}
+
 	// Iterate bindings and collect results from cache
 	var resultTuples []executor.Tuple
 	iter := bindingRel.Iterator()
 	defer iter.Close()
 
 	for iter.Next() {
+		bindingsRead++
 		tuple := iter.Tuple()
 		if eSymIdx >= len(tuple) {
 			continue
@@ -1445,22 +1576,24 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			tupleAAttr = fixedAAttr
 		}
 
-		// Build cache key
-		eBytes := Entity(eIdent.Hash())
-		key, ok := m.cacheKey(eBytes, tupleAAttr)
-		if !ok {
-			return nil, false, nil
-		}
+		// The one refusal cacheKey makes is settled above, so the key here is
+		// the pair itself.
+		key := CacheKey{E: Entity(eIdent.Hash()), A: tupleAAttr}
 
 		// Get from cache
-		entry, _, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler)
+		entry, spent, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler)
 		if err != nil {
 			return nil, false, err
 		}
+		intake += spent
 		if entry == nil {
 			// No datoms for this (E, A): the attribute is absent on this
-			// entity, which contributes no tuple.
+			// entity, which contributes no tuple. It still cost its intake to
+			// establish, which is already counted above.
 			continue
+		}
+		if annotating {
+			served += entry.valueCount()
 		}
 
 		// Process based on cardinality
@@ -1514,6 +1647,7 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		return nil, false, err
 	}
 
+	matched = len(resultTuples)
 	return executor.NewMaterializedRelationWithOptions(symbols, resultTuples, m.options), true, nil
 }
 
@@ -1535,7 +1669,10 @@ func (m *PatternMatcher) matchCardinalityManyAsRelation(
 	}
 
 	// Resolve the set using add-wins semantics
-	opened := time.Now()
+	var opened time.Time
+	if m.handler != nil {
+		opened = time.Now()
+	}
 	result, err := m.resolveAddWinsSet(eBytes[:], aBytes[:])
 	if err != nil {
 		return nil, fmt.Errorf("add-wins resolution failed: %w", err)
@@ -1617,7 +1754,10 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 	}
 
 	// Resolve the vector using RGA reconstruction
-	opened := time.Now()
+	var opened time.Time
+	if m.handler != nil {
+		opened = time.Now()
+	}
 	result, err := m.resolveVector(eBytes[:], aBytes[:])
 	if err != nil {
 		return nil, fmt.Errorf("vector resolution failed: %w", err)
@@ -1836,12 +1976,13 @@ func (m *PatternMatcher) matchCardinalityManyMembership(
 			v,
 		},
 	}
+	var opened time.Time
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, bound)
+		opened = time.Now()
 	}
 
 	// Check if the value is in the set using add-wins semantics
-	opened := time.Now()
 	isMember, scanned, err := m.checkSetMembership(bound)
 	if err != nil {
 		return nil, fmt.Errorf("membership check failed: %w", err)
@@ -2059,10 +2200,11 @@ func (m *PatternMatcher) matchVectorScanAllEntities(
 
 	// Scan AEVT to find all entities with this attribute
 	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{a}}
+	var opened time.Time
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, bound)
+		opened = time.Now()
 	}
-	opened := time.Now()
 	storageIter, err := m.reader.Scan(bound)
 	if err != nil {
 		return nil, fmt.Errorf("AEVT scan failed: %w", err)
@@ -2230,10 +2372,11 @@ func (m *PatternMatcher) matchCardinalityManyScanAllEntities(
 
 	// Scan AEVT to find all entities with this attribute
 	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{a}}
+	var opened time.Time
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, bound)
+		opened = time.Now()
 	}
-	opened := time.Now()
 	storageIter, err := m.reader.Scan(bound)
 	if err != nil {
 		return nil, fmt.Errorf("AEVT scan failed: %w", err)
@@ -2467,8 +2610,8 @@ func (it *cardinalityManyAVETValueIterator) Error() error { return it.err }
 // addresses no run. The cache chooses an index by cardinality inside
 // resolution, and a hit reads no index at all, so a bound announced here would
 // name a run this call did not choose and, on a hit, one that nothing walked.
-// It reports its cost on pattern/cache-resolve-complete instead, where a hit's
-// zero intake is a real answer rather than a missing one.
+// It reports its cost on storage/resolve-complete instead, where a hit's zero
+// intake is a real answer rather than a missing one.
 //
 // Callers pass the same ScanBound they hand the reader, so the announced run
 // and the walked run cannot drift.
@@ -2498,10 +2641,11 @@ func (m *PatternMatcher) matchCardinalityManyFindEntitiesWithValue(
 	// A string or bytes V makes this run inexact, so the store steps over the
 	// keys the range over-covers; the event is what makes that stepping visible.
 	bound := ScanBound{Index: AVET, Prefix: []datalog.Value{a, v}}
+	var opened time.Time
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, bound)
+		opened = time.Now()
 	}
-	opened := time.Now()
 	storageIter, err := m.reader.Scan(bound)
 	if err != nil {
 		return nil, fmt.Errorf("AVET scan failed: %w", err)

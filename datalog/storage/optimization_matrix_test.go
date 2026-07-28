@@ -387,7 +387,12 @@ func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
 		resultLimit      = 25
 	)
 	var recording atomic.Bool
-	type rebuildKey struct{ attribute, reason string }
+	// The attribute arrives interned rather than rendered, so grouping by it
+	// compares pointers.
+	type rebuildKey struct {
+		attribute datalog.Keyword
+		reason    string
+	}
 	counts := map[rebuildKey]int{}
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:   t.TempDir(),
@@ -397,7 +402,7 @@ func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
 				return
 			}
 			counts[rebuildKey{
-				attribute: event.Data["attribute"].(string),
+				attribute: event.Data[annotations.KeyAttribute].(datalog.Keyword),
 				reason:    event.Data["reason"].(string),
 			}]++
 		},

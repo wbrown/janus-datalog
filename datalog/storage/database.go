@@ -876,13 +876,18 @@ func (ar *AnalyzeResult) String() string {
 	// payload. Tallied in this pass rather than by walking the events twice.
 	scanCounts := make(map[annotations.ScanStrategy]int)
 	scanTimes := make(map[annotations.ScanStrategy]time.Duration)
+	resolveIntake := 0
 	for _, e := range ar.Events {
 		eventCounts[e.Name]++
 		eventTimes[e.Name] += e.Latency
-		if e.Name == annotations.StorageScanComplete {
+		switch e.Name {
+		case annotations.StorageScanComplete:
 			strategy, _ := e.Data[annotations.KeyStrategy].(annotations.ScanStrategy)
 			scanCounts[strategy]++
 			scanTimes[strategy] += e.Latency
+		case annotations.StorageResolveComplete:
+			scanned, _ := e.Data[annotations.KeyDatomsScanned].(int)
+			resolveIntake += scanned
 		}
 	}
 
@@ -891,11 +896,8 @@ func (ar *AnalyzeResult) String() string {
 
 		// Every scan the query performed, whatever strategy performed it and
 		// whatever asked for it. One line because one event name covers the
-		// family: this total cannot miss a scan performed by a strategy added
-		// after this code was written, which is what the previous shape did —
-		// it summed one name here and listed three more below by string
-		// literal, so a fourth strategy was invisible and unique lookups were
-		// never counted at all.
+		// family, so the total cannot miss a scan performed by a strategy added
+		// after this code was written.
 		if t, ok := eventTimes[annotations.StorageScanComplete]; ok {
 			sb.WriteString(fmt.Sprintf("  Storage scans: %d (%.2fms total)\n",
 				eventCounts[annotations.StorageScanComplete], float64(t.Microseconds())/1000))
@@ -927,6 +929,15 @@ func (ar *AnalyzeResult) String() string {
 						s, c, float64(scanTimes[s].Microseconds())/1000))
 				}
 			}
+		}
+
+		// Every read that produced current values for (E, A) entries, whatever
+		// asked for it and whether the cache or storage answered. Intake is the
+		// term that separates those two: a hit reads no index.
+		if t, ok := eventTimes[annotations.StorageResolveComplete]; ok {
+			sb.WriteString(fmt.Sprintf("  Entry resolves: %d (%.2fms total, %d datoms read)\n",
+				eventCounts[annotations.StorageResolveComplete],
+				float64(t.Microseconds())/1000, resolveIntake))
 		}
 
 		// Relational joins. The executor performs hash joins only, so this line
@@ -2715,7 +2726,10 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 	// history with a supersession scan per Set entry. Called in a loop — which
 	// is how application-layer upsert uses it — it is the dominant read in a
 	// program, so a trace that omitted it would omit the program's largest cost.
-	start := time.Now()
+	var start time.Time
+	if d.AnnotationHandler != nil {
+		start = time.Now()
+	}
 	owner, _, funnel, err := matcher.resolveAVLWW(aBytes, value)
 	if d.AnnotationHandler != nil {
 		// The pattern this call resolves — which entity holds (attr, value) —

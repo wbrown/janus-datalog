@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
@@ -670,6 +671,48 @@ func (m *PatternMatcher) LookupAttribute(
 		}
 	}
 
+	// The caller is handed an (E, A), not a pattern, so entity and attribute are
+	// the cause this read reports under. The arms below differ in whether they
+	// address a run: the cache picks an index per entry inside resolution and a
+	// hit walks none, while each storage arm walks exactly one and names it.
+	annotating := m.handler != nil
+	var opened time.Time
+	var intake int
+	var run *ScanBound
+	if annotating {
+		opened = time.Now()
+		defer func() {
+			// Values served, derived from what the call actually returned: one
+			// for a scalar or a vector, which is a single value, and the member
+			// count for a set.
+			served := 0
+			if found {
+				served = 1
+				if card == schema.CardinalityMany {
+					if members, ok := value.([]interface{}); ok {
+						served = len(members)
+					}
+				}
+			}
+			data := map[string]interface{}{
+				annotations.KeyEntity:        entity,
+				annotations.KeyAttribute:     attr,
+				annotations.KeyCardinality:   card,
+				annotations.KeyDatomsScanned: intake,
+				annotations.KeyValuesServed:  served,
+			}
+			if run != nil {
+				addBoundFields(data, *run)
+			}
+			m.handler(annotations.Event{
+				Name:    annotations.StorageResolveComplete,
+				Start:   opened,
+				Latency: time.Since(opened),
+				Data:    data,
+			})
+		}()
+	}
+
 	// Try cache first for O(1) access. Concrete AsOf matchers use
 	// transaction-scoped cache keys; History matchers bypass cache entirely.
 	if m.cache != nil && !m.isHistoryMode() {
@@ -678,7 +721,8 @@ func (m *PatternMatcher) LookupAttribute(
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry, _, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler)
+		entry, spent, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler)
+		intake += spent
 		if err != nil {
 			return nil, false, err
 		}
@@ -714,14 +758,22 @@ func (m *PatternMatcher) LookupAttribute(
 	if card == schema.CardinalityOne {
 		// For cardinality-one, use EATV index where Tx comes before V
 		// Tx is encoded descending, so first entry = highest Tx = current value (LWW)
-		iter, err := m.reader.ScanKeysOnly(ScanBound{
+		bound := ScanBound{
 			Index:  EATV,
 			Prefix: []datalog.Value{entity, attr},
-		})
+		}
+		run = &bound
+		iter, err := m.reader.ScanKeysOnly(bound)
 		if err != nil {
 			return nil, false, err
 		}
 		defer func() {
+			// Read before Close, and in this defer rather than at each return:
+			// the emit above was deferred first, so it runs after this one and
+			// sees the count whichever way the arm exits.
+			if annotating {
+				intake += iter.Scanned()
+			}
 			if closeErr := iter.Close(); lookupErr == nil {
 				lookupErr = closeErr
 			}
@@ -757,6 +809,8 @@ func (m *PatternMatcher) LookupAttribute(
 		if err != nil {
 			return nil, false, err
 		}
+		intake += result.Scanned
+		run = &result.Bound
 		if !result.Present {
 			// Never-set: no datoms ever written for this (E, A)
 			return nil, false, nil
@@ -771,6 +825,8 @@ func (m *PatternMatcher) LookupAttribute(
 	if err != nil {
 		return nil, false, err
 	}
+	intake += set.Scanned
+	run = &set.Bound
 	if len(set.Members) == 0 {
 		return nil, false, nil
 	}
@@ -865,7 +921,10 @@ func (m *PatternMatcher) TypeDefault(attr datalog.Keyword, defaultVal interface{
 
 // LookupAllAttributes retrieves all values of a cardinality-many attribute for an entity.
 // Returns all matching values, or empty slice if none found.
-func (m *PatternMatcher) LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error) {
+func (m *PatternMatcher) LookupAllAttributes(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (values []interface{}, lookupErr error) {
 	if entity == nil {
 		return nil, nil
 	}
@@ -873,6 +932,28 @@ func (m *PatternMatcher) LookupAllAttributes(entity datalog.Identity, attr datal
 	// Convert to storage format
 	eBytes := entity.Bytes()
 	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
+
+	// Entity and attribute are the cause: this read is handed an (E, A), not a
+	// pattern. Runs are counted rather than named — see the fallback.
+	var opened time.Time
+	var intake, scansOpened int
+	if m.handler != nil {
+		opened = time.Now()
+		defer func() {
+			m.handler(annotations.Event{
+				Name:    annotations.StorageResolveComplete,
+				Start:   opened,
+				Latency: time.Since(opened),
+				Data: map[string]interface{}{
+					annotations.KeyEntity:        entity,
+					annotations.KeyAttribute:     attr,
+					annotations.KeyDatomsScanned: intake,
+					annotations.KeyValuesServed:  len(values),
+					annotations.KeyScansOpened:   scansOpened,
+				},
+			})
+		}()
+	}
 
 	// Try cache first for O(1) access. Concrete AsOf matchers use
 	// transaction-scoped cache keys; History matchers bypass cache entirely.
@@ -882,7 +963,8 @@ func (m *PatternMatcher) LookupAllAttributes(entity datalog.Identity, attr datal
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry, _, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler)
+		entry, spent, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler)
+		intake += spent
 		if err != nil {
 			return nil, err
 		}
@@ -918,7 +1000,10 @@ func (m *PatternMatcher) LookupAllAttributes(entity datalog.Identity, attr datal
 	// Fallback to storage scan (for as-of queries or when cache is not set).
 	// Infer cardinality from the CRDT ops present in the datoms and resolve
 	// accordingly, rather than returning raw datoms including tombstones.
-	return m.lookupAllAttributesFallback(entity, attr)
+	fallbackValues, fallbackIntake, fallbackScans, err := m.lookupAllAttributesFallback(entity, attr)
+	intake += fallbackIntake
+	scansOpened += fallbackScans
+	return fallbackValues, err
 }
 
 // lookupAllAttributesFallback resolves values for (E, A) without cache by
@@ -926,7 +1011,15 @@ func (m *PatternMatcher) LookupAllAttributes(entity datalog.Identity, attr datal
 //   - OpNone → LWW (cardinality-one): return latest value by ElementID
 //   - OpCRDTAdd/OpCRDTRemove → add-wins set (cardinality-many): resolve membership
 //   - OpRGAInsert/OpRGATombstone → RGA vector (cardinality-vector): reconstruct ordered list
-func (m *PatternMatcher) lookupAllAttributesFallback(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error) {
+//
+// It reports its intake and the number of runs it walked rather than naming
+// one: the peek is always a run of its own, and each arm below adds a second
+// that may be a different one. An index named here would be whichever the arm
+// happened to reach last.
+func (m *PatternMatcher) lookupAllAttributesFallback(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (values []interface{}, intake int, scansOpened int, err error) {
 	// AEVT orders A → E → V → Tx, so (A, E) is its leading prefix.
 	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{attr, entity}}
 
@@ -937,19 +1030,23 @@ func (m *PatternMatcher) lookupAllAttributesFallback(entity datalog.Identity, at
 	// Peek at first datom to determine op type
 	iter, err := m.reader.ScanKeysOnly(bound)
 	if err != nil {
-		return nil, fmt.Errorf("scanning AEVT for LookupAllAttributes: %w", err)
+		return nil, intake, scansOpened, fmt.Errorf("scanning AEVT for LookupAllAttributes: %w", err)
 	}
+	scansOpened++
 
 	if !iter.Next() {
+		intake += iter.Scanned()
 		iter.Close()
-		return nil, nil
+		return nil, intake, scansOpened, nil
 	}
 	firstDatom, err := iter.Datom()
 	if err != nil {
+		intake += iter.Scanned()
 		iter.Close()
-		return nil, fmt.Errorf("decoding first datom for LookupAllAttributes: %w", err)
+		return nil, intake, scansOpened, fmt.Errorf("decoding first datom for LookupAllAttributes: %w", err)
 	}
 	firstOp := firstDatom.Op
+	intake += iter.Scanned()
 	iter.Close()
 
 	switch {
@@ -957,34 +1054,42 @@ func (m *PatternMatcher) lookupAllAttributesFallback(entity datalog.Identity, at
 		// Add-wins set resolution
 		result, err := m.resolveAddWinsSet(eBytes, aStorage[:])
 		if err != nil {
-			return nil, fmt.Errorf("resolving add-wins set: %w", err)
+			return nil, intake, scansOpened, fmt.Errorf("resolving add-wins set: %w", err)
 		}
+		intake += result.Scanned
+		scansOpened++
 		values := make([]interface{}, 0, len(result.Members))
 		for _, v := range result.Members {
 			values = append(values, v)
 		}
-		return values, nil
+		return values, intake, scansOpened, nil
 
 	case firstOp == datalog.OpRGAInsert || firstOp == datalog.OpRGATombstone:
 		// RGA vector resolution
 		result, err := m.resolveVector(eBytes, aStorage[:])
 		if err != nil {
-			return nil, fmt.Errorf("resolving RGA vector: %w", err)
+			return nil, intake, scansOpened, fmt.Errorf("resolving RGA vector: %w", err)
 		}
+		intake += result.Scanned
+		scansOpened++
 		values := make([]interface{}, len(result.Elements))
 		for i, v := range result.Elements {
 			values[i] = v
 		}
-		return values, nil
+		return values, intake, scansOpened, nil
 
 	default:
 		// LWW: return the value with the highest ElementID
 		// Re-scan since we closed the iterator
 		iter2, err := m.reader.ScanKeysOnly(bound)
 		if err != nil {
-			return nil, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
+			return nil, intake, scansOpened, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
 		}
-		defer iter2.Close()
+		scansOpened++
+		defer func() {
+			intake += iter2.Scanned()
+			iter2.Close()
+		}()
 
 		var latestVal interface{}
 		var latestTx datalog.ElementID
@@ -993,7 +1098,7 @@ func (m *PatternMatcher) lookupAllAttributesFallback(entity datalog.Identity, at
 		for iter2.Next() {
 			datom, err := iter2.Datom()
 			if err != nil {
-				return nil, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
+				return nil, intake, scansOpened, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
 			}
 			if m.shouldFilterTx(datom.Tx) {
 				continue
@@ -1006,12 +1111,12 @@ func (m *PatternMatcher) lookupAllAttributesFallback(entity datalog.Identity, at
 		}
 		// A failed scan is not "no value" — surface it.
 		if err := iter2.Error(); err != nil {
-			return nil, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
+			return nil, intake, scansOpened, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
 		}
 
 		if !found {
-			return nil, nil
+			return nil, intake, scansOpened, nil
 		}
-		return []interface{}{latestVal}, nil
+		return []interface{}{latestVal}, intake, scansOpened, nil
 	}
 }

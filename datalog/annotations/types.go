@@ -43,18 +43,33 @@ const (
 	// a property of the scan, so it travels in KeyStrategy — a value to compare,
 	// not a name to know about in advance.
 	//
-	// It replaces pattern/storage-scan, pattern/hash-join-complete,
-	// pattern/merge-join-complete, pattern/per-binding-scan-complete and
-	// unique/lookup-complete, which differed only in the strategy they named.
 	// The prefix is storage/ rather than pattern/ because the scans are not all
 	// a pattern's: get-else, missing?, get-some and pull read on a query's
-	// behalf too, and naming the family for one of its causes is what kept the
-	// others out of it.
+	// behalf too, and naming the family for one of its causes excludes the rest.
 	StorageScanComplete = "storage/scan-complete"
 
-	// Cache-resolved patterns. Carries no index: the cache picks one by
-	// cardinality inside resolution, and a hit reads no index at all.
-	PatternCacheResolveComplete = "pattern/cache-resolve-complete"
+	// StorageResolveComplete is the one completion event for producing the
+	// current values of (E, A) entries, as against StorageScanComplete's walk of
+	// an index run for a pattern. The two shapes are what separate them: a scan
+	// narrows a funnel, intake to resolution's output to what the pattern kept;
+	// a resolve has no middle term to narrow, because a cache hit resolves
+	// nothing — it reads an entry an earlier call built.
+	//
+	// Its producers differ in cause and in mechanism, and the payload carries
+	// both rather than the name:
+	//
+	//   - Cause. KeyPattern for a query's own reads; KeyEntity with
+	//     KeyAttribute for the pattern-less ones — Pull, prefetch, a fused
+	//     attribute fetch, all of which are handed an (E, A) directly.
+	//   - Mechanism. KeyIndex and KeyBound present means the call addressed a
+	//     run and read storage to answer. Absent means the cache answered:
+	//     it picks an index per entry by cardinality inside resolution, so
+	//     there is no single run to name, and a hit walks none at all.
+	//
+	// Output is KeyValuesServed, except where the read populates the cache
+	// rather than answering anyone: prefetch serves no values and reports
+	// KeyEntriesPopulated instead.
+	StorageResolveComplete = "storage/resolve-complete"
 
 	// Storage strategy selection
 	StorageReuseStrategy = "storage/reuse-strategy"
@@ -179,6 +194,17 @@ const (
 	KeyBound       = "bound"
 	KeyCardinality = "cardinality"
 
+	// The subject of a read no pattern names. The Pull API, prefetch, and a
+	// fused attribute fetch are handed an (E, A) directly, so these stand where
+	// KeyPattern stands for a query's own scans, and a consumer rendering a line
+	// reads whichever cause is present.
+	//
+	// Typed like everything else here: an Identity and a Keyword, not their
+	// renderings. Both are interned, so a consumer grouping by either compares
+	// pointers, and the emit costs no allocation.
+	KeyEntity    = "entity"
+	KeyAttribute = "attribute"
+
 	// Which strategy performed the scan, on a StorageScanComplete. This is what
 	// used to be the difference between five event names, moved into the payload
 	// so one name covers the family and a new strategy is a new value rather
@@ -212,15 +238,15 @@ const (
 	// terms it does share — intake and matched — mean there exactly what they
 	// mean everywhere.
 	KeyValuesServed = "values.served"
+
+	// What a read produced when it answered nobody: prefetch and batch pull
+	// resolve entries into the cache for later calls to serve. Its own key
+	// rather than values.served, whose zero means the read found nothing.
+	KeyEntriesPopulated = "entries.populated"
 )
 
 // ScanStrategy names how a scan on a query's behalf was performed. It travels
 // on StorageScanComplete under KeyStrategy.
-//
-// This is the payload form of what used to be five event names. The set below
-// draws exactly the distinctions those names drew, so the collapse loses
-// nothing and asserts nothing new — a finer split would be a claim about the
-// scan paths the previous vocabulary never made, invented while moving it.
 //
 // It lives here rather than in storage because it is reporting vocabulary with
 // no storage behaviour, and the formatter dispatches on it. IndexType stays in
@@ -233,25 +259,28 @@ type ScanStrategy string
 const (
 	// ScanDirect is the matcher scanning the index for a pattern itself, with
 	// no binding relation driving it: the unbound scan and the cardinality
-	// dispatch arms. Was pattern/storage-scan.
+	// dispatch arms.
 	ScanDirect ScanStrategy = "direct"
 
 	// ScanHashJoin builds a hash set from the bindings and probes it against
-	// one scan. Was pattern/hash-join-complete.
+	// one scan.
 	ScanHashJoin ScanStrategy = "hash-join"
 
 	// ScanMergeJoin merges the sorted binding stream against index order.
-	// Was pattern/merge-join-complete.
 	ScanMergeJoin ScanStrategy = "merge-join"
 
 	// ScanPerBinding opens one scan per binding tuple, so it addresses no
-	// single run. Was pattern/per-binding-scan-complete.
+	// single run.
 	ScanPerBinding ScanStrategy = "per-binding"
 
 	// ScanUniqueLookup walks AVET for a unique value's claimant and then the
-	// claimant's own history, so it likewise addresses no single run. Was
-	// unique/lookup-complete.
+	// claimant's own history, so it likewise addresses no single run.
 	ScanUniqueLookup ScanStrategy = "unique-lookup"
+
+	// ScanVValidation finds candidates by V on a V-primary index and validates
+	// each against the EATV winner before emitting, one candidate scan per
+	// binding tuple.
+	ScanVValidation ScanStrategy = "v-validation"
 )
 
 // Event represents a single annotation event during query execution.

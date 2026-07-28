@@ -107,9 +107,38 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 		})
 	}
 
-	// Emit aggregation annotation with find clause details
-	if ctx != nil && ctx.Collector() != nil {
-		data := ctx.Collector().GetDataMap()
+	// Timed across the aggregation rather than around the decision to perform
+	// one. On the batch path the fold runs here, so the latency is the fold's.
+	// On the streaming path this call only builds the relation and the fold
+	// happens when it is consumed, which aggregation/materialized reports —
+	// so a near-zero latency there is the true cost of what this call did,
+	// and aggregation_mode is what tells the two apart.
+	var start time.Time
+	if collector != nil {
+		start = time.Now()
+	}
+
+	var result Relation
+	switch {
+	case useStreaming:
+		// If no group-by variables, pass empty slice (single global group)
+		streamed := NewStreamingAggregateRelation(rel, groupByVars, aggregates)
+		streamed.options.Collector = collector
+		result = streamed
+	case len(groupByVars) == 0:
+		// Batch aggregation with no group-by is a single aggregation.
+		result = executeSingleAggregation(rel, aggregates)
+	default:
+		// Otherwise, group by the variables and aggregate within groups
+		result = executeGroupedAggregation(rel, groupByVars, aggregates)
+	}
+
+	// Emit aggregation annotation with find clause details. Reported to the
+	// same collector the strategy event above went to, rather than only to the
+	// context's: an options-supplied collector receives the decision either way,
+	// and would otherwise never see what the decision led to.
+	if collector != nil {
+		data := collector.GetDataMap()
 		data["aggregate_count"] = len(aggregates)
 		data["groupby_count"] = len(groupByVars)
 		data["groupby_vars"] = groupByVars
@@ -128,25 +157,10 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 			data["aggregation_mode"] = "batch"
 		}
 
-		ctx.Collector().AddTiming(annotations.AggregationExecuted, time.Now(), data)
+		collector.AddTiming(annotations.AggregationExecuted, start, data)
 	}
 
-	// If streaming is enabled and beneficial, use it
-	if useStreaming {
-		// If no group-by variables, pass empty slice (single global group)
-		result := NewStreamingAggregateRelation(rel, groupByVars, aggregates)
-		result.options.Collector = collector
-		return result
-	}
-
-	// Otherwise, use batch aggregation (current implementation)
-	// If no group-by variables, it's a single aggregation
-	if len(groupByVars) == 0 {
-		return executeSingleAggregation(rel, aggregates)
-	}
-
-	// Otherwise, group by the variables and aggregate within groups
-	return executeGroupedAggregation(rel, groupByVars, aggregates)
+	return result
 }
 
 // aggregateResultSymbols is the output schema of an aggregation: the group-by

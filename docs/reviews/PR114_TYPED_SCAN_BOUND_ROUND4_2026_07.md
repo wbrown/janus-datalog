@@ -189,15 +189,110 @@ never assigned, one written at `:834` and read by nothing, `Close`
 set-once attribute the deepest read in the query. Round 3's T1 contradicts
 itself two lines apart (`ROUND3:92` against `:94`).
 
-**2b. Three more arms open scans and report no funnel.** *Unverified.*
+**Verified and fixed 2026-07-28.** The arm reports through
+`storage/scan-complete` as `ScanVValidation`, pinned by
+`TestVValidationReportsWhatItsScansCost` over both branches it emits from.
+Three corrections to the report, each found by implementing it:
+
+- **The field written at `:834` is not dead.** It is
+  `it.datomsScanned += funnel.scanned` in `tryEmitUniqueWinner`, accumulating
+  the claimant walk's intake from `resolveAVLWW`'s funnel. It read to nobody
+  only because the emit that would have read it was never written — it was the
+  one half of the accounting somebody built. `funnel.resolved` now travels back
+  the same way.
+- **The unique short-circuit emits without touching the candidate loop.**
+  `Next` returns at the `emitted` branch, so a `datomsMatched++` in the loop
+  below counts nothing for a unique attribute. Both points increment now. The
+  arm also needed a fourth field: the funnel has three terms and only two had
+  counters.
+- **Intake must be harvested where the scan is released, not at Close.** Each
+  binding's candidate scan is dropped before the next opens, so `Close` sees
+  only the last. This is what the field comment meant by the counts having to
+  accumulate as it goes, and it is the one line the fix turns on.
+
+**The first emit guard was this family's own defect, in the fix.** Gating on
+`scansOpened > 0` as shorthand for "did this arm do work" silenced the unique
+branch, which does its deepest reading through a walk without opening a
+candidate scan. The arm now reports whenever it ran, with `scanStart` taken at
+construction. Only the two-branch pin caught it; the review records the unique
+branch as unexercised by the suite, so a counter added to it would have stayed
+wrong indefinitely.
+
+**Two reachability facts, both established by the pin after being guessed wrong
+twice.** The arm is selected only when the *binding relation supplies V* —
+`analyzeReuseStrategy` reaches it at `case 2: // V is bound`
+(`matcher_strategy.go:120`), so a binding over the entity takes a join strategy
+instead. And with the cache on it is not reached at all:
+`matchWithBindingsFromCache` answers first. Reaching it in a test means
+`DisableCache: true`, which is not the test being contrived — it is 2b, since
+the arm that answers by default reports nothing either.
+
+`datomsScanned` still does not cover the validation lookup `validateCandidate`
+opens per candidate: that returns `(ok, error)` and its intake reaches nobody.
+That is the nested-read gap the scan scope is for, and the field comment says so
+rather than claiming coverage the iterator cannot see.
+
+Not to be confused with 2e, which is a different unique branch —
+`uniqueMode`/`processUniqueEntry` in `CRDTResolvingIterator`, still unexercised.
+
+**2b. Three more arms open scans and report no funnel.** *Verified and fixed
+2026-07-28.*
 `matchWithBindingsFromCache` (discard `:1425`), the attribute-fetch fusion path
 (`matcher.go:641`, discard `:671`, default-on), `LookupAllAttributes` (`:850`,
 discard `:866`), `PrefetchEntities` (`prefetch.go:51`),
 `matchVectorWithBindings` (discard `:1704`).
 
+**`matchWithBindingsFromCache` confirmed silent, by accident.** Driving a
+binding-driven V-bound query with the cache on for 2a's pin produced **zero**
+scan completions of any strategy — the arm answered the whole query and
+reported nothing. It is also the default: with the cache on it intercepts before
+`analyzeReuseStrategy` is consulted, so it is what runs for this query shape in
+production while the arms that do report are the ones a test has to disable the
+cache to reach.
+
+That inverts how 2b reads. These are not peripheral arms that forgot; the one
+verified so far is the common path, and the reporting arms are the exception.
+
+**The five paths do not share one shape, and the fix is a field contract rather
+than five events.** They split three ways by what names their subject and what
+they produce, and the payload carries both:
+
+| path | cause | run | output |
+|---|---|---|---|
+| `matchWithBindingsFromCache` | pattern | none — resolves many entries | served / matched, `binding.size` |
+| `LookupAttribute` | entity + attribute | named — one run per arm | served |
+| `LookupAllAttributes` | entity + attribute | none — peek plus resolve is two | served, `scans.opened` |
+| `PrefetchEntities` | none — an entity set | none — one run per entity | `entries.populated` |
+| `ResolveAllAttributesMany` | none — an entity set | named — one shared EATV traversal | served |
+
+A run is named exactly when the call addressed one, which is the rule
+`ScanPerBinding` and `ScanVValidation` already follow. Its presence is also what
+separates the mechanisms: the cache picks an index per entry inside resolution
+and a hit walks none, so no run means the cache answered.
+
+`pattern/cache-resolve-complete` became `storage/resolve-complete`. It named one
+cause and one mechanism, and three of the five paths above have neither — two
+carry no pattern, and their fallback arms never touch the cache. The rename is
+the same collapse R3's event family took: one name, the distinguishing facts in
+the payload. `entries.populated` is the one new key, for a read that answers
+nobody — `values.served` and `datoms.matched` would both be zero for a prefetch
+that filled a thousand entries, and zero on those keys means "found nothing".
+
+Pinned by `TestPatternLessReadsReportUnderEntityAndAttribute` and
+`TestBulkReadsReportUnderNoSingleSubject`. `Database.Analyze` reports the family
+and its total intake alongside the scan family.
+
+**An absent (E, A) costs no intake, and the event is its only trace.** Absence
+is resolved and deliberately not cached, so it is re-established on every call —
+but its prefix names an empty run, so the seek reads zero datoms. Nothing about
+the counts distinguishes it from a call that never ran; `binding.size` is what
+says it happened.
+
 **2c. `GetOrResolve`'s intake is read at one of eleven call sites.**
-*Unverified.* With prefetch on, `pattern/cache-resolve-complete` correctly
-reports zero intake while the reads that produced it are reported nowhere.
+*Partially fixed 2026-07-28 — four of eleven.* `matchFromCache` already read it;
+`matchWithBindingsFromCache`, `LookupAttribute` and `LookupAllAttributes` now do.
+With prefetch on, `storage/resolve-complete` correctly reports zero intake while
+the reads that produced it are reported nowhere.
 
 **2d. Resolvers hand intake back on a result struct, so error paths carry
 none.** *Verified — but the report joins two defects that are not the same one,
@@ -257,7 +352,7 @@ elements and `resolved` counting datoms are both `int`.
 **Instances.**
 
 **3a. The cache event's funnel is inverted.** *Verified; **fixed** under R3.*
-`pattern/cache-resolve-complete` no longer carries a funnel. It reports
+`storage/resolve-complete` no longer carries a funnel. It reports
 `values.served` and `datoms.matched`, with `datoms.scanned` beside them as its
 own fact — intake and matched keep the meanings they have everywhere, and only
 the middle term, which a hit does not have, is replaced.
@@ -789,7 +884,7 @@ only.
 number — on a hit the call really does take all the entry's values. The funnel
 models three stages, index intake → resolution → pattern, and a hit skips the
 first two, so `scanned ≥ resolved` fails not because a count is wrong but
-because the relationship does not exist for a hit. `pattern/cache-resolve-complete`
+because the relationship does not exist for a hit. `storage/resolve-complete`
 therefore reports values served and values matched, with intake as a separate
 fact, and does not carry the three-term funnel.
 
@@ -902,9 +997,9 @@ which is the same reading problem one step removed.
 report a *selection*, and the bound does not exist yet at those points — it is
 built inside the strategy each one dispatches to. Their index is the whole datum.
 
-`pattern/cache-resolve-complete` and `pattern/per-binding-scan-complete` carry
-neither, also correctly: the first addresses no run, and the second runs
-`chooseIndex` again per binding tuple.
+`storage/resolve-complete` and the `per-binding` strategy carry neither, also
+correctly: the first addresses no run, and the second runs `chooseIndex` again
+per binding tuple.
 
 **Formatter.** `PatternHashJoinComplete`/`PatternMergeJoinComplete` rendered the
 index alone; both now render `bound:` the way the unbound scan line does. It
@@ -943,17 +1038,82 @@ cardinality-vector attribute matches an empty-vector literal through the cache
 and not without it. Reproduced, red in the tree, needs an owner ruling on which
 of the two answers is correct before it can be fixed.
 
+## Found while implementing — the existence guard placed where it gates nothing
+
+Not a review instance. Surfaced by the owner while reviewing 2b, and the class
+is wider than the code 2b touched.
+
+The rule is that the handler-existence guard lives at the **call site**, because
+it must gate the caller's argument preparation and not only the emit. The shape
+in the tree was the guard wrapped around the emit with the clock read left
+outside it:
+
+```go
+opened := time.Now()          // unconditional
+if m.handler != nil { ... }   // guard starts here
+```
+
+`time.Now()` is not free, and its only consumer is the event. **21 sites** paid
+it whether or not anything was listening: the eight cardinality dispatch arms,
+three iterator constructors (`unboundIterator`, `nonReusingIterator`,
+`validatingVBoundIterator`), `hashJoinIterator` and the merge-join scan,
+`matchFromCache`, `matchWithBindingsFromCache`, both `Lookup*` functions,
+prefetch, batch pull, the unique-value lookup in `database.go`, the phase loop
+in `executor.go`, and two in `executeOrClause`/`executeOrClauseUnion`.
+
+Several of those sites already had the guard *one line below* the clock read.
+`database.go`'s unique lookup carries a comment describing itself as the
+dominant read in an upsert loop.
+
+The paths where this costs most are the ones that can return having touched no
+storage: a cache hit, an absent (E, A), a fused attribute fetch per row. There
+is no scan to amortize against on those, and the memory backend has no disk to
+amortize against on any of them.
+
+`context.go`, `pull_context.go`, `annotated_matcher.go`, `or_fallback_relation.go`
+and `reflect/context.go` were checked and are correct by construction — either
+decorator types whose `Base*` counterparts are no-ops, or already inside the
+guard. `planner/cache.go`'s clock is cache expiry, not annotation.
+
+**A second defect in the same sweep: `aggregation/executed` fired before the
+aggregation.** `AddTiming(name, time.Now(), data)` took its start at the emit,
+and the emit sat ahead of the fold, so the event named for the execution
+reported a duration that could not contain it. Start is now taken before the
+work and the three return paths converge on one emit after it. The streaming
+path builds a relation and folds at consumption, which `aggregation/materialized`
+already reports, so a near-zero latency there is now a true statement about what
+the call did rather than an artifact of every path; `aggregation_mode`
+distinguishes them. The same block read `ctx.Collector()` directly while the
+strategy event two blocks above used the `opts.Collector` fallback, so an
+options-supplied collector saw the decision and never what it led to.
+
+Pinned by `TestAggregationExecutedTimesTheAggregation`. The pin took two
+attempts, both instructive: `require.Positive` on the latency passes against the
+defect, because `AddTiming` computes `end.Sub(start)` and a start taken at the
+emit still yields a few hundred nanoseconds. Calibrating against a separately
+measured fold then failed under wasm, where the cold first run and the warm
+second differ six-fold — more than the effect. It now compares against the same
+call's own wall time, which the reported duration is a sub-interval of.
+
+`join/build.copy` had the same shape and worse: two consecutive clock reads and
+no `Latency` field at all, so the duration was exactly zero while `End - Start`
+was a few nanoseconds. Its interval is the build drain, which is where the
+copies it counts are made, and it ends at the loop rather than at the emit —
+grouping runs in between and the copy statistics do not describe it. Pinned by
+`TestJoinBuildCopyReportsTheIntervalItsCountsWereMadeIn`, whose load-bearing
+assertion is that `Latency` agrees with the event's own `Start` and `End`: a
+disagreement is not a fast build, it is timing that was never taken.
+
 ## Gate
 
 `make test` was green at head through the producer sweep — native
 (`go test -count=1 ./...`, 20 packages) and the js/wasm leg.
 
-It is now **red by one test**, deliberately:
-`TestCacheMatrix_NeverSetVectorAgainstEmptyVectorLiteral`, the reproducer for
-the bug above. A red reproducer is not held out of the tree to keep a gate
-green; whether it stays red, or is ruled out of scope and moved into the bug
-document the way `BUG_IMPORT_LEAVES_STALE_CACHE_ENTRIES` was, is the owner's
-call.
+It was red by one test for the duration of that bug —
+`TestCacheMatrix_NeverSetVectorAgainstEmptyVectorLiteral`, held in the tree
+rather than out of it while the ruling was pending. `BUG_CACHE_EMPTY_VECTOR_NEVER_SET`
+is now resolved and the gate is green again, native and wasm, through 2a, 2b,
+the guard sweep and the aggregation timing fix.
 
 The review's own run reported `go build`, `go vet` and `go test -count=1
 ./datalog/... ./tests/...` green — 17 packages, zero failures, zero skips, 272s —
