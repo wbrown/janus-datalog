@@ -314,6 +314,28 @@ and three in `executor`. `scan_bound.go:106` is the durable half: it flattens
 and justifies it at `:117-120` with the rule `d41d3fa` replaced, so it reads as
 house style for the next producer.
 
+**3e-consumers. A third shape, found 2026-07-28 by collapsing the scan
+completion names: literals in *consumers*.** *Verified — all four were live.*
+
+The derivation below enumerates producers. Consumers spell names too, and when
+they spell them as literals a constant rename cannot find them: the code
+compiles, matches nothing, and reports zero forever.
+
+- `Database.Analyze` listed three of the five completion names as string
+  literals (`database.go:906-908`) while reading a fourth through its constant.
+  Deleting the constants did not break it. It would have compiled clean and
+  reported zero binding-driven scans, and it never counted unique lookups at
+  all.
+- Three test captures matched `"pattern/storage-scan"` or
+  `"pattern/hash-join-complete"` as literals — `history_index_order_limit_test.go`,
+  `index_order_limit_test.go`, `aevt_matcher_bug_test.go`. Each compiled and
+  silently captured nothing; only the behaviour change surfaced them, as index
+  assertions comparing against `""`.
+
+All four are converted. The lesson for the rest of 3e: sweeping producers is
+half the family, and the consumer half cannot be found by searching for the
+constants, because a literal consumer is exactly the one that does not use them.
+
 **3e. Eleven event names are still literals, in two shapes the round-3
 verification could not see.** *Unverified.* Seven pass the name as
 `RewriteSink.Record`'s positional string parameter; four assign it to a local
@@ -740,6 +762,28 @@ still pass a bound and a funnel, because those are what every scan actually has.
 
 `pull_batch` and `PrefetchEntities` are in the family under the widened
 invariant. They read on a query's behalf and their silence under-reports it.
+
+**Collapse done 2026-07-28.** `pattern/storage-scan`,
+`pattern/hash-join-complete`, `pattern/merge-join-complete`,
+`pattern/per-binding-scan-complete` and `unique/lookup-complete` are one
+`storage/scan-complete`, with `annotations.ScanStrategy` under
+`annotations.KeyStrategy` carrying what the names used to. The strategy set
+draws exactly the distinctions the five names drew, so the collapse asserts
+nothing new. The formatter's four arms are one, dispatching on the strategy,
+with an explicit `ScanDirect` case and a `default` that names an unrecognised
+strategy rather than rendering it as a direct scan.
+
+Two things the implementation found that the argument for it had understated.
+`Database.Analyze` was not merely enumerating names — it was enumerating three
+of them as string literals, so it would have silently reported zero rather than
+failing to compile; see 3e-consumers above. And
+`scan_funnel_reporting_test.go` lost its `completions []string` column outright:
+the field existed only because the name varied by strategy, and every arm now
+reports through the same one.
+
+`VValidationOpenScan` and `VValidationScanOpened` are untouched. They are
+announcements, not completions, and the collapse is over the completion family
+only.
 
 **R3. The cache event reports what it did.** `entry.valueCount()` is not a wrong
 number — on a hit the call really does take all the entry's values. The funnel

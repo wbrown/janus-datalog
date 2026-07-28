@@ -872,18 +872,61 @@ func (ar *AnalyzeResult) String() string {
 	// Group events by type for summary
 	eventCounts := make(map[string]int)
 	eventTimes := make(map[string]time.Duration)
+	// Scans are one event name, so the per-strategy breakdown comes from the
+	// payload. Tallied in this pass rather than by walking the events twice.
+	scanCounts := make(map[annotations.ScanStrategy]int)
+	scanTimes := make(map[annotations.ScanStrategy]time.Duration)
 	for _, e := range ar.Events {
 		eventCounts[e.Name]++
 		eventTimes[e.Name] += e.Latency
+		if e.Name == annotations.StorageScanComplete {
+			strategy, _ := e.Data[annotations.KeyStrategy].(annotations.ScanStrategy)
+			scanCounts[strategy]++
+			scanTimes[strategy] += e.Latency
+		}
 	}
 
 	if len(eventCounts) > 0 {
 		sb.WriteString("\nEvent Summary:\n")
 
-		// Pattern matching events
-		if t, ok := eventTimes[annotations.PatternStorageScan]; ok {
+		// Every scan the query performed, whatever strategy performed it and
+		// whatever asked for it. One line because one event name covers the
+		// family: this total cannot miss a scan performed by a strategy added
+		// after this code was written, which is what the previous shape did —
+		// it summed one name here and listed three more below by string
+		// literal, so a fourth strategy was invisible and unique lookups were
+		// never counted at all.
+		if t, ok := eventTimes[annotations.StorageScanComplete]; ok {
 			sb.WriteString(fmt.Sprintf("  Storage scans: %d (%.2fms total)\n",
-				eventCounts[annotations.PatternStorageScan], float64(t.Microseconds())/1000))
+				eventCounts[annotations.StorageScanComplete], float64(t.Microseconds())/1000))
+
+			// Broken down by strategy, in a declared order so the report is
+			// stable. Merge join earns its line: it is selected for the largest
+			// binding sets, so omitting it omits the biggest scans.
+			order := []annotations.ScanStrategy{
+				annotations.ScanDirect,
+				annotations.ScanHashJoin,
+				annotations.ScanMergeJoin,
+				annotations.ScanPerBinding,
+				annotations.ScanUniqueLookup,
+			}
+			listed := make(map[annotations.ScanStrategy]bool, len(order))
+			for _, s := range order {
+				listed[s] = true
+				if c := scanCounts[s]; c > 0 {
+					sb.WriteString(fmt.Sprintf("    %s: %d (%.2fms)\n",
+						s, c, float64(scanTimes[s].Microseconds())/1000))
+				}
+			}
+			// A strategy this list has not been taught still reached the total
+			// above, and printing it here keeps the breakdown summing to that
+			// total instead of quietly falling short of it.
+			for s, c := range scanCounts {
+				if !listed[s] {
+					sb.WriteString(fmt.Sprintf("    %s (unlisted strategy): %d (%.2fms)\n",
+						s, c, float64(scanTimes[s].Microseconds())/1000))
+				}
+			}
 		}
 
 		// Relational joins. The executor performs hash joins only, so this line
@@ -894,26 +937,6 @@ func (ar *AnalyzeResult) String() string {
 			if t := eventTimes[annotations.JoinHash]; t > 0 {
 				sb.WriteString(fmt.Sprintf("    Hash join time: %.2fms\n", float64(t.Microseconds())/1000))
 			}
-		}
-
-		// Binding-driven scans, by the strategy chooseJoinStrategy picked. All
-		// three are listed because merge join is selected for the largest
-		// binding sets: omitting it omits the biggest scans in the report.
-		bindingScans := []struct {
-			label string
-			event string
-		}{
-			{"hash-join scan", "pattern/hash-join-complete"},
-			{"merge-join scan", "pattern/merge-join-complete"},
-			{"per-binding scan", "pattern/per-binding-scan-complete"},
-		}
-		for _, scan := range bindingScans {
-			count := eventCounts[scan.event]
-			if count == 0 {
-				continue
-			}
-			sb.WriteString(fmt.Sprintf("  %ss: %d (%.2fms total)\n",
-				scan.label, count, float64(eventTimes[scan.event].Microseconds())/1000))
 		}
 
 		// Phase events
@@ -2710,9 +2733,12 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 				query.Constant{Value: value},
 			},
 		}
-		emitScanCompletion(d.AnnotationHandler, annotations.UniqueLookupComplete,
+		emitScanCompletion(d.AnnotationHandler, annotations.StorageScanComplete,
 			start, funnel,
-			map[string]interface{}{annotations.KeyPattern: pattern})
+			map[string]interface{}{
+				annotations.KeyPattern:  pattern,
+				annotations.KeyStrategy: annotations.ScanUniqueLookup,
+			})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("LookupByUnique: resolution failed: %w", err)

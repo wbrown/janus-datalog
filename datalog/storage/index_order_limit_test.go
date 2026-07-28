@@ -22,7 +22,7 @@ func TestIndexOrderedLimitStopsSatisfiedScan(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			var scanned atomic.Int64
 			handler := func(event annotations.Event) {
-				if event.Name != "pattern/storage-scan" {
+				if event.Name != annotations.StorageScanComplete {
 					return
 				}
 				// Intake, not resolution's output: "stopped after the requested

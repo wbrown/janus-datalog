@@ -88,39 +88,44 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 			// binding-driven strategies instead. Those report the same funnel
 			// on a different event, and this table covers both rather than
 			// aiming only where the constant arms live.
+			// No completions column. Every arm reports through
+			// annotations.StorageScanComplete — the one completion event — so a
+			// per-arm list of names would restate the same constant eight times.
+			// It used to be a column because the name varied by strategy; the
+			// strategy is a payload field now, and this table does not care
+			// which one an arm picked, only that it reported.
 			for _, tc := range []struct {
 				arm         string
 				query       string
 				inputEntity bool      // supply E as an :in parameter
 				index       IndexType // the run the arm must announce
 				noRun       bool      // set instead when the arm addresses none
-				completions []string  // any one of these carries the funnel
 			}{
 				{arm: "matchCardinalityManyAsRelation",
 					query: `[:find ?v :where [#id "funnel:alice" :person/tag ?v]]`,
-					index: EAVT, completions: []string{annotations.PatternStorageScan}},
+					index: EAVT},
 				{arm: "matchCardinalityVectorAsRelation",
 					query: `[:find ?v :where [#id "funnel:alice" :person/skill ?v]]`,
-					index: EATV, completions: []string{annotations.PatternStorageScan}},
+					index: EATV},
 				{arm: "matchCardinalityManyMembership",
 					query: `[:find ?tx :where [#id "funnel:alice" :person/tag "dev" ?tx]]`,
-					index: EAVT, completions: []string{annotations.PatternStorageScan}},
+					index: EAVT},
 				{arm: "matchCardinalityManyScanAllEntities",
 					query: `[:find ?e ?v :where [?e :person/tag ?v]]`,
-					index: AEVT, completions: []string{annotations.PatternStorageScan}},
+					index: AEVT},
 				{arm: "matchCardinalityManyFindEntitiesWithValue",
 					query: `[:find ?e :where [?e :person/tag "dev"]]`,
-					index: AVET, completions: []string{annotations.PatternStorageScan}},
+					index: AVET},
 				{arm: "matchVectorScanAllEntities",
 					query: `[:find ?e ?v :where [?e :person/skill ?v]]`,
-					index: AEVT, completions: []string{annotations.PatternStorageScan}},
+					index: AEVT},
 
 				// The general arm — no cardinality dispatch, E unbound — is the
 				// one the other six are exceptions to, so a table of exceptions
 				// that omitted it would leave the common path pinned nowhere.
 				{arm: "unbound scan, general arm",
 					query: `[:find ?e ?n :where [?e :person/name ?n]]`,
-					index: AETV, completions: []string{annotations.PatternStorageScan}},
+					index: AETV},
 
 				// A binding relation over the same cardinality-many attribute.
 				// Which strategy chooseJoinStrategy picks is its own business
@@ -128,12 +133,7 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 				// what this case asserts is that whichever it picks reports.
 				{arm: "binding-driven, E from :in",
 					query: `[:find ?v :in $ ?e :where [?e :person/tag ?v]]`, inputEntity: true,
-					noRun: true,
-					completions: []string{
-						annotations.PatternHashJoinComplete,
-						annotations.PatternMergeJoinComplete,
-						annotations.PatternPerBindingScanComplete,
-					}},
+					noRun: true},
 			} {
 				t.Run(tc.arm, func(t *testing.T) {
 					var events []annotations.Event
@@ -175,20 +175,21 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 						require.Equal(t, tc.index, selection.Data[annotations.KeyIndex])
 					}
 
-					var completion *annotations.Event
-					for _, name := range tc.completions {
-						found := lastEventNamed(events, name)
-						if found == nil {
-							continue
+					// One scan, one report. With one completion event name this
+					// is a count rather than a search across names: an arm that
+					// reported twice is as wrong as one that reported never,
+					// and the previous shape could only catch the two-names
+					// case.
+					var completions []annotations.Event
+					for _, ev := range events {
+						if ev.Name == annotations.StorageScanComplete {
+							completions = append(completions, ev)
 						}
-						require.Nil(t, completion,
-							"%s reported through more than one completion event; "+
-								"one scan, one report", tc.arm)
-						completion = found
 					}
-					require.NotNil(t, completion,
-						"%s opened a scan and must report what it cost; expected one of %v",
-						tc.arm, tc.completions)
+					require.Len(t, completions, 1,
+						"%s opened one scan and owes exactly one report of what it cost",
+						tc.arm)
+					completion := &completions[0]
 
 					scanned, ok := completion.Data[annotations.KeyDatomsScanned].(int)
 					require.True(t, ok, "the completion event must carry intake")
@@ -351,7 +352,7 @@ func TestMemoryBackendReportsIntakeNatively(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tuples, 1, "last write wins")
 
-	scan := lastEventNamed(events, annotations.PatternStorageScan)
+	scan := lastScanComplete(events, annotations.ScanDirect)
 	require.NotNil(t, scan)
 	require.Equal(t, 3, scan.Data[annotations.KeyDatomsScanned],
 		"three writes are three datoms under this attribute, and the memory store read them all")

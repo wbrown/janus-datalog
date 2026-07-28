@@ -54,12 +54,9 @@ func TestScanReportsIntakeAndResolution(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, tuples, 1, "last write wins, so one tuple survives")
 
-			var scan *annotations.Event
-			for i := range events {
-				if events[i].Name == annotations.PatternStorageScan {
-					scan = &events[i]
-				}
-			}
+			// By strategy, not by name: one event name covers every scan, so
+			// naming alone would take whichever scan the query finished last.
+			scan := lastScanComplete(events, annotations.ScanDirect)
 			require.NotNil(t, scan, "the unbound scan path must report its statistics")
 
 			resolved, ok := scan.Data[annotations.KeyDatomsResolved].(int)
@@ -124,12 +121,9 @@ func TestScanStatisticsCarryTheirDuration(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, tuples, 3)
 
-			var scan *annotations.Event
-			for i := range events {
-				if events[i].Name == annotations.PatternStorageScan {
-					scan = &events[i]
-				}
-			}
+			// By strategy, not by name: one event name covers every scan, so
+			// naming alone would take whichever scan the query finished last.
+			scan := lastScanComplete(events, annotations.ScanDirect)
 			require.NotNil(t, scan, "the unbound scan path must report its statistics")
 			require.Positive(t, scan.Latency,
 				"a scan that returned tuples took measurable time; a zero latency is an unset field, not a fast scan")

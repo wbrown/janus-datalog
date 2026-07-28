@@ -1550,9 +1550,12 @@ func (m *PatternMatcher) matchCardinalityManyAsRelation(
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, result.Bound)
 		defer func() {
-			run := map[string]interface{}{annotations.KeyPattern: pattern}
+			run := map[string]interface{}{
+				annotations.KeyPattern:  pattern,
+				annotations.KeyStrategy: annotations.ScanDirect,
+			}
 			addBoundFields(run, result.Bound)
-			emitScanCompletion(m.handler, annotations.PatternStorageScan,
+			emitScanCompletion(m.handler, annotations.StorageScanComplete,
 				opened,
 				scanFunnel{
 					scanned:  result.Scanned,
@@ -1629,9 +1632,12 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, result.Bound)
 		defer func() {
-			run := map[string]interface{}{annotations.KeyPattern: pattern}
+			run := map[string]interface{}{
+				annotations.KeyPattern:  pattern,
+				annotations.KeyStrategy: annotations.ScanDirect,
+			}
 			addBoundFields(run, result.Bound)
-			emitScanCompletion(m.handler, annotations.PatternStorageScan,
+			emitScanCompletion(m.handler, annotations.StorageScanComplete,
 				opened,
 				scanFunnel{
 					scanned:  result.Scanned,
@@ -1847,9 +1853,12 @@ func (m *PatternMatcher) matchCardinalityManyMembership(
 		if isMember {
 			resolved = 1
 		}
-		run := map[string]interface{}{annotations.KeyPattern: pattern}
+		run := map[string]interface{}{
+			annotations.KeyPattern:  pattern,
+			annotations.KeyStrategy: annotations.ScanDirect,
+		}
 		addBoundFields(run, bound)
-		emitScanCompletion(m.handler, annotations.PatternStorageScan,
+		emitScanCompletion(m.handler, annotations.StorageScanComplete,
 			opened,
 			scanFunnel{scanned: scanned, resolved: resolved, matched: resolved},
 			run)
@@ -2014,9 +2023,12 @@ func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
-		run := map[string]interface{}{annotations.KeyPattern: it.pattern}
+		run := map[string]interface{}{
+			annotations.KeyPattern:  it.pattern,
+			annotations.KeyStrategy: annotations.ScanDirect,
+		}
 		addBoundFields(run, it.bound)
-		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
+		emitScanCompletion(it.matcher.handler, annotations.StorageScanComplete,
 			it.opened,
 			scanFunnel{
 				scanned:  it.storageIter.Scanned() + it.nestedScanned,
@@ -2184,9 +2196,12 @@ func (it *vectorScanAllEntitiesIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
-		run := map[string]interface{}{annotations.KeyPattern: it.pattern}
+		run := map[string]interface{}{
+			annotations.KeyPattern:  it.pattern,
+			annotations.KeyStrategy: annotations.ScanDirect,
+		}
 		addBoundFields(run, it.bound)
-		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
+		emitScanCompletion(it.matcher.handler, annotations.StorageScanComplete,
 			it.opened,
 			scanFunnel{
 				scanned:  it.storageIter.Scanned() + it.nestedScanned,
@@ -2416,9 +2431,12 @@ func (it *cardinalityManyAVETValueIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
-		run := map[string]interface{}{annotations.KeyPattern: it.pattern}
+		run := map[string]interface{}{
+			annotations.KeyPattern:  it.pattern,
+			annotations.KeyStrategy: annotations.ScanDirect,
+		}
 		addBoundFields(run, it.bound)
-		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
+		emitScanCompletion(it.matcher.handler, annotations.StorageScanComplete,
 			it.opened,
 			scanFunnel{
 				scanned:  it.storageIter.Scanned(),

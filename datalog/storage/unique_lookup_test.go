@@ -172,7 +172,7 @@ func TestUniqueLookupReportsItsFunnel(t *testing.T) {
 				require.True(t, owner.Equal(tc.owner))
 			}
 
-			complete := lastEventNamed(events, annotations.UniqueLookupComplete)
+			complete := lastScanComplete(events, annotations.ScanUniqueLookup)
 			require.NotNil(t, complete, "the lookup opened scans and must report what they cost")
 			require.Equal(t, tc.resolved, complete.Data[annotations.KeyDatomsResolved])
 			require.Equal(t, tc.matched, complete.Data[annotations.KeyDatomsMatched])

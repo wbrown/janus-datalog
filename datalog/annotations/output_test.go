@@ -60,10 +60,11 @@ func TestUniqueLookupLineReportsItsFunnel(t *testing.T) {
 	f := NewPlainTextFormatter(&out)
 
 	line := f.Format(Event{
-		Name:    UniqueLookupComplete,
+		Name:    StorageScanComplete,
 		Latency: 3 * time.Millisecond,
 		Data: map[string]interface{}{
 			KeyPattern:        producerValue("[?e :user/email \"a@example.com\"]"),
+			KeyStrategy:       ScanUniqueLookup,
 			KeyDatomsScanned:  12,
 			KeyDatomsResolved: 1,
 			KeyDatomsMatched:  0,
@@ -97,10 +98,13 @@ func TestScanLineRendersFromItsOwnEvent(t *testing.T) {
 	f := NewPlainTextFormatter(&out)
 
 	line := f.Format(Event{
-		Name:    PatternStorageScan,
+		Name:    StorageScanComplete,
 		Latency: 2 * time.Millisecond,
 		Data: map[string]interface{}{
-			KeyPattern:        producerValue("[?e :task/scenario ?s]"),
+			KeyPattern: producerValue("[?e :task/scenario ?s]"),
+			// The line shape dispatches on the strategy now, not on the event
+			// name. ScanDirect is what pattern/storage-scan used to mean.
+			KeyStrategy:       ScanDirect,
 			KeyIndex:          producerValue("AVET"),
 			KeyBound:          []string{"A", "V"},
 			"bound.values":    []string{":task/scenario", "scenario-alpha"},
@@ -130,10 +134,11 @@ func TestScanLineShowsIntakeWhenItExceedsOutput(t *testing.T) {
 	f := NewPlainTextFormatter(&out)
 
 	line := f.Format(Event{
-		Name:    PatternStorageScan,
+		Name:    StorageScanComplete,
 		Latency: time.Millisecond,
 		Data: map[string]interface{}{
 			KeyPattern:        producerValue("[?e :person/name ?n]"),
+			KeyStrategy:       ScanDirect,
 			KeyDatomsScanned:  10,
 			KeyDatomsResolved: 1,
 		},
@@ -155,9 +160,10 @@ func TestScanLineWholeIndexBoundIsNotUnknown(t *testing.T) {
 	var wholeIndex bytes.Buffer
 	f := NewPlainTextFormatter(&wholeIndex)
 	require.Contains(t, f.Format(Event{
-		Name: PatternStorageScan,
+		Name: StorageScanComplete,
 		Data: map[string]interface{}{
 			KeyPattern:        producerValue("[?e ?a ?v]"),
+			KeyStrategy:       ScanDirect,
 			KeyIndex:          producerValue("EATV"),
 			KeyBound:          []string(nil),
 			"bound.values":    []string(nil),
@@ -168,9 +174,10 @@ func TestScanLineWholeIndexBoundIsNotUnknown(t *testing.T) {
 	var unreported bytes.Buffer
 	bare := NewPlainTextFormatter(&unreported)
 	require.Contains(t, bare.Format(Event{
-		Name: PatternStorageScan,
+		Name: StorageScanComplete,
 		Data: map[string]interface{}{
 			KeyPattern:        producerValue("[?e ?a ?v]"),
+			KeyStrategy:       ScanDirect,
 			KeyDatomsResolved: 500,
 		},
 	}), "?, bound: ?")
@@ -199,9 +206,10 @@ func TestFormatterHandleWritesScanLine(t *testing.T) {
 	require.Empty(t, out.String(), "the announcement is not a line of its own")
 
 	f.Handle(Event{
-		Name: PatternStorageScan,
+		Name: StorageScanComplete,
 		Data: map[string]interface{}{
 			KeyPattern:        producerValue("[?e :person/name ?n]"),
+			KeyStrategy:       ScanDirect,
 			KeyIndex:          producerValue("AETV"),
 			KeyBound:          []string{"A"},
 			KeyDatomsResolved: 3,

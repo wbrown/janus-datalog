@@ -196,15 +196,77 @@ func (f *OutputFormatter) Format(event Event) string {
 		// cost — so printing it here would double every scan in the trace.
 		return ""
 
-	case PatternStorageScan:
-		// Format as Scan([pattern], index, bound) → X datoms. The scan's
-		// duration is the line's latency prefix, carried on the event like
-		// every other timed event's; there is no separate duration field.
+	case StorageScanComplete:
+		// One event for every scan performed on a query's behalf. Which
+		// strategy performed it is a payload field, so the shapes below
+		// dispatch on that rather than on the event name — the same four lines
+		// five event names used to produce.
 		//
-		// Comma-ok rather than assertions, on the same grounds as
+		// Comma-ok rather than assertions throughout, on the same grounds as
 		// renderScanFunnel below: this event has more producers than any other,
 		// and a producer that omits a key should cost the reader one wrong line
 		// rather than panic the formatter in the middle of a trace.
+		switch strategy, _ := event.Data[KeyStrategy].(ScanStrategy); strategy {
+		case ScanHashJoin, ScanMergeJoin:
+			// One scan of the index probed against a binding set. Same three
+			// counts as the direct scan line, but all three always shown: on
+			// these paths the gap between what was read and what came out is
+			// the reason the event exists, so it is not conditional the way the
+			// direct line's amplification suffix is.
+			//
+			// The run is named the same way as on the direct line, and it
+			// matters more here: neither path announces a pattern/index-selection
+			// beforehand, so this is the only line in the trace saying what was
+			// walked.
+			index := renderPayloadValue(event.Data[KeyIndex])
+			if index == "" {
+				index = "?"
+			}
+			bound := renderBoundPositions(event.Data[KeyBound])
+			if bound == "" {
+				bound = "?"
+			}
+			return fmt.Sprintf("%s %s([%v], %s, bound: %s, %v bindings) → %s",
+				latency, strategy,
+				event.Data[KeyPattern], index, bound, event.Data[KeyBindingSize],
+				renderScanFunnel(event.Data))
+
+		case ScanPerBinding:
+			// One scan per binding, reported once. No index: chooseIndex runs
+			// per binding and can pick a different one each time, so a single
+			// index here would name whichever happened to be last. The count of
+			// scans is the datum this path owes its reader.
+			return fmt.Sprintf("%s %s([%v], %v scans over %v bindings) → %s",
+				latency, strategy,
+				event.Data[KeyPattern], event.Data[KeyScansOpened], event.Data[KeyBindingSize],
+				renderScanFunnel(event.Data))
+
+		case ScanUniqueLookup:
+			// Resolution walks AVET for the claimant and then the claimant's
+			// own history, so no single run is the one this call addressed and
+			// there is no index to name. The funnel is what it owes its reader:
+			// resolved above matched is an index entry whose claimant has since
+			// replaced the value.
+			return fmt.Sprintf("%s %s([%v]) → %s",
+				latency, strategy, event.Data[KeyPattern], renderScanFunnel(event.Data))
+
+		case ScanDirect:
+			// Falls through to the shared body below.
+
+		default:
+			// An unrecognised strategy is a producer this formatter has not
+			// been taught, and rendering it as a direct scan would file it
+			// silently under the wrong shape. Naming it costs one odd line and
+			// says which producer to go look at; panicking mid-trace costs the
+			// whole trace.
+			return fmt.Sprintf("%s Scan([%v], strategy: %v) → %s",
+				latency, event.Data[KeyPattern], event.Data[KeyStrategy],
+				renderScanFunnel(event.Data))
+		}
+
+		// ScanDirect. Format as Scan([pattern], index, bound) → X datoms. The
+		// scan's duration is the line's latency prefix, carried on the event
+		// like every other timed event's; there is no separate duration field.
 		pattern := renderPayloadValue(event.Data[KeyPattern])
 		datoms, _ := event.Data[KeyDatomsResolved].(int)
 
@@ -258,53 +320,6 @@ func (f *OutputFormatter) Format(event Event) string {
 		}
 
 		return fmt.Sprintf("%s %s → %d datoms%s", latency, scanStr, datoms, amplification)
-
-	case PatternHashJoinComplete, PatternMergeJoinComplete:
-		// One scan of the index probed against a binding set. Same three counts
-		// as the unbound scan line, but all three always shown: on these paths
-		// the gap between what was read and what came out is the reason the
-		// event exists, so it is not conditional the way the unbound line's
-		// amplification suffix is.
-		//
-		// The run is named the same way as on the unbound scan line, and it
-		// matters more here: neither path announces a pattern/index-selection
-		// beforehand, so this is the only line in the trace that says what was
-		// walked.
-		strategy := "HashJoinScan"
-		if event.Name == PatternMergeJoinComplete {
-			strategy = "MergeJoin"
-		}
-		index := renderPayloadValue(event.Data[KeyIndex])
-		if index == "" {
-			index = "?"
-		}
-		bound := renderBoundPositions(event.Data[KeyBound])
-		if bound == "" {
-			bound = "?"
-		}
-		return fmt.Sprintf("%s %s([%v], %s, bound: %s, %v bindings) → %s",
-			latency, strategy,
-			event.Data[KeyPattern], index, bound, event.Data[KeyBindingSize],
-			renderScanFunnel(event.Data))
-
-	case PatternPerBindingScanComplete:
-		// One scan per binding, reported once. No index: chooseIndex runs per
-		// binding and can pick a different one each time, so a single index
-		// here would name whichever happened to be last. The count of scans is
-		// the datum this path owes its reader.
-		return fmt.Sprintf("%s PerBindingScan([%v], %v scans over %v bindings) → %s",
-			latency,
-			event.Data[KeyPattern], event.Data[KeyScansOpened], event.Data[KeyBindingSize],
-			renderScanFunnel(event.Data))
-
-	case UniqueLookupComplete:
-		// Named like the cache arm and for the same reason: resolution walks
-		// AVET for the claimant and then the claimant's own history, so no
-		// single run is the one this call addressed and there is no index to
-		// name. The funnel is what it owes its reader — resolved above matched
-		// is an index entry whose claimant has since replaced the value.
-		return fmt.Sprintf("%s UniqueLookup([%v]) → %s",
-			latency, event.Data[KeyPattern], renderScanFunnel(event.Data))
 
 	case PatternCacheResolveComplete:
 		// No index and no bound: the cache picks one by cardinality inside

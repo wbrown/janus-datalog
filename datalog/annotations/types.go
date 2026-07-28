@@ -32,16 +32,29 @@ const (
 
 	// Detailed pattern matching timing
 	PatternIndexSelection = "pattern/index-selection"
-	PatternStorageScan    = "pattern/storage-scan"
+
+	// StorageScanComplete is the one completion event for a scan performed on a
+	// query's behalf, whatever strategy performed it and whatever asked for it.
+	//
+	// One name, because the consumer decides this. Database.Analyze sums latency
+	// per event name, so anything asking what a query spent on index reads must
+	// find every scan; a name per strategy makes that an enumeration that
+	// silently under-reports the day a strategy is added. Which strategy ran is
+	// a property of the scan, so it travels in KeyStrategy — a value to compare,
+	// not a name to know about in advance.
+	//
+	// It replaces pattern/storage-scan, pattern/hash-join-complete,
+	// pattern/merge-join-complete, pattern/per-binding-scan-complete and
+	// unique/lookup-complete, which differed only in the strategy they named.
+	// The prefix is storage/ rather than pattern/ because the scans are not all
+	// a pattern's: get-else, missing?, get-some and pull read on a query's
+	// behalf too, and naming the family for one of its causes is what kept the
+	// others out of it.
+	StorageScanComplete = "storage/scan-complete"
 
 	// Cache-resolved patterns. Carries no index: the cache picks one by
 	// cardinality inside resolution, and a hit reads no index at all.
 	PatternCacheResolveComplete = "pattern/cache-resolve-complete"
-
-	// Binding-driven scan completion, one per strategy chooseJoinStrategy picks
-	PatternHashJoinComplete       = "pattern/hash-join-complete"
-	PatternMergeJoinComplete      = "pattern/merge-join-complete"
-	PatternPerBindingScanComplete = "pattern/per-binding-scan-complete"
 
 	// Storage strategy selection
 	StorageReuseStrategy = "storage/reuse-strategy"
@@ -108,9 +121,6 @@ const (
 	// Result ordering
 	SortConstantKeysDropped = "sort/constant-keys-dropped"
 
-	// Unique-attribute ownership lookup
-	UniqueLookupComplete = "unique/lookup-complete"
-
 	// Prefetch
 	PrefetchTrigger = "prefetch/trigger"
 
@@ -169,6 +179,17 @@ const (
 	KeyBound       = "bound"
 	KeyCardinality = "cardinality"
 
+	// Which strategy performed the scan, on a StorageScanComplete. This is what
+	// used to be the difference between five event names, moved into the payload
+	// so one name covers the family and a new strategy is a new value rather
+	// than a name every consumer must learn.
+	//
+	// Distinct from the "join_strategy" the selection events carry, which
+	// answers a narrower question — which of the two join strategies
+	// chooseJoinStrategy picked — and carries a different type. One key, one
+	// meaning, one type.
+	KeyStrategy = "strategy"
+
 	// What a binding-driven scan was driven by.
 	KeyBindingSize = "binding.size"
 	KeyScansOpened = "scans.opened"
@@ -191,6 +212,46 @@ const (
 	// terms it does share — intake and matched — mean there exactly what they
 	// mean everywhere.
 	KeyValuesServed = "values.served"
+)
+
+// ScanStrategy names how a scan on a query's behalf was performed. It travels
+// on StorageScanComplete under KeyStrategy.
+//
+// This is the payload form of what used to be five event names. The set below
+// draws exactly the distinctions those names drew, so the collapse loses
+// nothing and asserts nothing new — a finer split would be a claim about the
+// scan paths the previous vocabulary never made, invented while moving it.
+//
+// It lives here rather than in storage because it is reporting vocabulary with
+// no storage behaviour, and the formatter dispatches on it. IndexType stays in
+// storage for the opposite reason: it names a physical ordering the store acts
+// on, so the formatter reads it through fmt.Stringer. A strategy declared in
+// storage would have to be re-spelled as string literals here, which is one
+// vocabulary with two homes — the drift the key constants above exist to end.
+type ScanStrategy string
+
+const (
+	// ScanDirect is the matcher scanning the index for a pattern itself, with
+	// no binding relation driving it: the unbound scan and the cardinality
+	// dispatch arms. Was pattern/storage-scan.
+	ScanDirect ScanStrategy = "direct"
+
+	// ScanHashJoin builds a hash set from the bindings and probes it against
+	// one scan. Was pattern/hash-join-complete.
+	ScanHashJoin ScanStrategy = "hash-join"
+
+	// ScanMergeJoin merges the sorted binding stream against index order.
+	// Was pattern/merge-join-complete.
+	ScanMergeJoin ScanStrategy = "merge-join"
+
+	// ScanPerBinding opens one scan per binding tuple, so it addresses no
+	// single run. Was pattern/per-binding-scan-complete.
+	ScanPerBinding ScanStrategy = "per-binding"
+
+	// ScanUniqueLookup walks AVET for a unique value's claimant and then the
+	// claimant's own history, so it likewise addresses no single run. Was
+	// unique/lookup-complete.
+	ScanUniqueLookup ScanStrategy = "unique-lookup"
 )
 
 // Event represents a single annotation event during query execution.

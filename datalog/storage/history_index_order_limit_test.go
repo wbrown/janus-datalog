@@ -29,7 +29,7 @@ type historyOrderScanCapture struct {
 }
 
 func (c *historyOrderScanCapture) handler(event annotations.Event) {
-	if event.Name != "pattern/storage-scan" {
+	if event.Name != annotations.StorageScanComplete {
 		return
 	}
 	c.mu.Lock()

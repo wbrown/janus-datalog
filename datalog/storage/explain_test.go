@@ -182,7 +182,7 @@ func TestAnalyze(t *testing.T) {
 				// Look for storage scan events
 				foundScan := false
 				for _, e := range result.Events {
-					if e.Name == annotations.PatternStorageScan {
+					if e.Name == annotations.StorageScanComplete {
 						foundScan = true
 						break
 					}
@@ -284,7 +284,7 @@ func TestAnalyze_ConsumesStreamingResults(t *testing.T) {
 			// so its event is present without the caller iterating the result.
 			foundScan := false
 			for _, e := range result.Events {
-				if e.Name == annotations.PatternStorageScan {
+				if e.Name == annotations.StorageScanComplete {
 					foundScan = true
 					break
 				}

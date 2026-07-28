@@ -122,8 +122,7 @@ func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
 	)
 
 	for _, tc := range []struct {
-		strategy string
-		event    string
+		strategy annotations.ScanStrategy
 		// namesRun distinguishes the two strategies that open one scan from the
 		// one that opens a scan per binding. Hash join and merge join each build
 		// a single ScanBound from the pattern's constant A, so each names AETV
@@ -134,23 +133,23 @@ func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
 		match    func(m *PatternMatcher, pattern *query.DataPattern,
 			bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error)
 	}{
-		{strategy: "HashJoinScan", event: annotations.PatternHashJoinComplete, namesRun: true,
+		{strategy: annotations.ScanHashJoin, namesRun: true,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithHashJoin(pattern, bindingRel, symbols, 0, AETV, nil)
 			}},
-		{strategy: "MergeJoin", event: annotations.PatternMergeJoinComplete, namesRun: true,
+		{strategy: annotations.ScanMergeJoin, namesRun: true,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithMergeJoin(pattern, bindingRel, symbols, 0, AETV, nil)
 			}},
-		{strategy: "NoReuse", event: annotations.PatternPerBindingScanComplete,
+		{strategy: annotations.ScanPerBinding,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, nil)
 			}},
 	} {
-		t.Run(tc.strategy, func(t *testing.T) {
+		t.Run(string(tc.strategy), func(t *testing.T) {
 			db, pattern, bindingRel, symbols := bindingDrivenFixture(t)
 
 			var events []annotations.Event
@@ -161,7 +160,7 @@ func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
 			require.Equal(t, entities, drainRelation(t, rel),
 				"last write wins, so each entity contributes one tuple")
 
-			complete := lastEventNamed(events, tc.event)
+			complete := lastScanComplete(events, tc.strategy)
 			require.NotNil(t, complete, "%s must report what its scan cost", tc.strategy)
 
 			require.Equal(t, wantScanned, complete.Data[annotations.KeyDatomsScanned],
@@ -219,28 +218,27 @@ func TestBindingSizeCountsTuplesNotDistinctKeys(t *testing.T) {
 	const wantTuples = len(bindingDrivenPeople) * slotsPerEntity
 
 	for _, tc := range []struct {
-		strategy string
-		event    string
+		strategy annotations.ScanStrategy
 		match    func(m *PatternMatcher, pattern *query.DataPattern,
 			bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error)
 	}{
-		{strategy: "HashJoinScan", event: annotations.PatternHashJoinComplete,
+		{strategy: annotations.ScanHashJoin,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithHashJoin(pattern, bindingRel, symbols, 0, AETV, nil)
 			}},
-		{strategy: "MergeJoin", event: annotations.PatternMergeJoinComplete,
+		{strategy: annotations.ScanMergeJoin,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithMergeJoin(pattern, bindingRel, symbols, 0, AETV, nil)
 			}},
-		{strategy: "NoReuse", event: annotations.PatternPerBindingScanComplete,
+		{strategy: annotations.ScanPerBinding,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, nil)
 			}},
 	} {
-		t.Run(tc.strategy, func(t *testing.T) {
+		t.Run(string(tc.strategy), func(t *testing.T) {
 			db, pattern, _, symbols := bindingDrivenFixture(t)
 
 			// The entity stays at tuple position 0, which is where all three
@@ -265,7 +263,7 @@ func TestBindingSizeCountsTuplesNotDistinctKeys(t *testing.T) {
 			require.NoError(t, err)
 			drainRelation(t, rel)
 
-			complete := lastEventNamed(events, tc.event)
+			complete := lastScanComplete(events, tc.strategy)
 			require.NotNil(t, complete, "%s must report what its scan cost", tc.strategy)
 			require.Equal(t, wantTuples, complete.Data[annotations.KeyBindingSize],
 				"%s reports binding.size in distinct join keys (%d) rather than binding "+
@@ -273,6 +271,24 @@ func TestBindingSizeCountsTuplesNotDistinctKeys(t *testing.T) {
 					"cannot be compared", tc.strategy, len(bindingDrivenPeople), wantTuples)
 		})
 	}
+}
+
+// lastScanComplete finds the completion event a given strategy emitted.
+//
+// Scans are one event name, so a test meaning "the merge join's completion"
+// has to say so by strategy: the discriminator moved into the payload when the
+// five completion names collapsed, and matching on the name alone would now
+// return whichever scan happened to finish last.
+func lastScanComplete(events []annotations.Event, strategy annotations.ScanStrategy) *annotations.Event {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Name != annotations.StorageScanComplete {
+			continue
+		}
+		if s, _ := events[i].Data[annotations.KeyStrategy].(annotations.ScanStrategy); s == strategy {
+			return &events[i]
+		}
+	}
+	return nil
 }
 
 // TestPerBindingScanReportsOneCountedEvent pins the reporting shape for the
@@ -301,7 +317,10 @@ func TestPerBindingScanReportsOneCountedEvent(t *testing.T) {
 
 	var complete []annotations.Event
 	for _, e := range events {
-		if e.Name == annotations.PatternPerBindingScanComplete {
+		if e.Name != annotations.StorageScanComplete {
+			continue
+		}
+		if s, _ := e.Data[annotations.KeyStrategy].(annotations.ScanStrategy); s == annotations.ScanPerBinding {
 			complete = append(complete, e)
 		}
 	}

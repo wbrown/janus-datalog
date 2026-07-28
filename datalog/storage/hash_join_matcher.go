@@ -716,10 +716,11 @@ func (it *hashJoinIterator) Close() error {
 	if it.matcher.handler != nil {
 		run := map[string]interface{}{
 			annotations.KeyPattern:     it.pattern,
+			annotations.KeyStrategy:    annotations.ScanHashJoin,
 			annotations.KeyBindingSize: it.bindingTupleCount,
 		}
 		addBoundFields(run, it.bound)
-		emitScanCompletion(it.matcher.handler, annotations.PatternHashJoinComplete,
+		emitScanCompletion(it.matcher.handler, annotations.StorageScanComplete,
 			it.scanStart,
 			scanFunnel{
 				scanned:  it.iter.Scanned(),
@@ -862,10 +863,11 @@ func (it *mergeJoinIterator) Close() error {
 	if it.matcher.handler != nil {
 		run := map[string]interface{}{
 			annotations.KeyPattern:     it.pattern,
+			annotations.KeyStrategy:    annotations.ScanMergeJoin,
 			annotations.KeyBindingSize: len(it.sortedTuples),
 		}
 		addBoundFields(run, it.bound)
-		emitScanCompletion(it.matcher.handler, annotations.PatternMergeJoinComplete,
+		emitScanCompletion(it.matcher.handler, annotations.StorageScanComplete,
 			it.scanStart,
 			scanFunnel{
 				scanned:  it.iter.Scanned(),

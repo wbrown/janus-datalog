@@ -114,14 +114,19 @@ func TestAEVTMatcherBug(t *testing.T) {
 	for i, event := range events {
 		t.Logf("Event %d: %s - %+v", i, event.Name, event.Data)
 
-		// pattern/hash-join-complete is the only completion event a binding-driven
-		// scan produces; it carries the scan statistics this test reads.
+		// The hash join's completion carries the scan statistics this test
+		// reads. Matched by strategy, not by name: one event name covers every
+		// scan, so the name alone would also take the direct scans the query
+		// performs around this one.
 		//
 		// datoms.scanned, not datoms.resolved: the assertion below is about how
 		// much of the index the scan read, and resolution's output is a lower
 		// number by the history depth. They coincide here only because the
 		// fixture writes each entity once.
-		if event.Name == "pattern/hash-join-complete" {
+		if event.Name != annotations.StorageScanComplete {
+			continue
+		}
+		if s, _ := event.Data[annotations.KeyStrategy].(annotations.ScanStrategy); s == annotations.ScanHashJoin {
 			if scanned, ok := event.Data[annotations.KeyDatomsScanned].(int); ok {
 				datomsScanned = scanned
 			}

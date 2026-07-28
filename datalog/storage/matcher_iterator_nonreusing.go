@@ -136,7 +136,7 @@ func (it *nonReusingIterator) Close() error {
 		// No index: chooseIndex runs per binding tuple, so this run addressed as
 		// many as it opened scans and naming one would name whichever happened
 		// to be last. scans.opened is what stands in its place.
-		emitScanCompletion(it.matcher.handler, annotations.PatternPerBindingScanComplete,
+		emitScanCompletion(it.matcher.handler, annotations.StorageScanComplete,
 			it.scanStart,
 			scanFunnel{
 				scanned:  it.totalScanned,
@@ -145,6 +145,7 @@ func (it *nonReusingIterator) Close() error {
 			},
 			map[string]interface{}{
 				annotations.KeyPattern:     it.pattern,
+				annotations.KeyStrategy:    annotations.ScanPerBinding,
 				annotations.KeyBindingSize: len(it.bindingTuples),
 				annotations.KeyScansOpened: it.scansOpened,
 			})
