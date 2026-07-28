@@ -203,8 +203,8 @@ func TestBuilderWithUnique(t *testing.T) {
 // this test that check is unpinned, and deleting it leaves the suite green
 // while a definition silently carries :db.cardinality/one as its value type.
 //
-// The last row is the control: a builder that rejected everything would pass
-// every row above it.
+// The last case is the control: a builder that rejected everything would pass
+// every case above it.
 func TestBuilderRejectsKeywordFromTheWrongVocabulary(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -252,6 +252,82 @@ func TestBuilderRejectsKeywordFromTheWrongVocabulary(t *testing.T) {
 		require.NotNil(t, def)
 		assert.Equal(t, TypeString, def.ValueType)
 		assert.Equal(t, UniqueValue, def.Unique)
+	})
+}
+
+// TestSchemaAddPanicsOnKeywordFromTheWrongVocabulary pins the third entry
+// point. ParseSchema and the builder check membership; Add did not, and it is
+// the one every definition passes through — it holds the only write into
+// s.attributes, so parser and builder both reach the map through it.
+//
+// It panics rather than returning an error, on the registration convention:
+// sql.Register and http.Handle panic with no Must prefix and no error sibling,
+// because they declare something during initialization from source literals,
+// where a failure is a programmer's mistake and there is no recovery a caller
+// could perform. Add declares an attribute and keeps its chaining signature.
+// The parsing convention — regexp.MustCompile paired with regexp.Compile — does
+// not apply, because Add converts no input.
+//
+// What reaches the dispatch if this check is absent is not a bad definition
+// sitting inert: crdt_resolving_iterator's cardinality switch has no arm for a
+// wrong-vocabulary keyword, so every datom in the group is skipped and the
+// query returns no tuples with a nil error.
+//
+// nil is absence and stays legal for ValueType and Unique — a definition that
+// has not said which it is. Cardinality's nil is filled with CardinalityOne, as
+// it was before.
+func TestSchemaAddPanicsOnKeywordFromTheWrongVocabulary(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		def  *AttributeDefinition
+		want string
+	}{
+		{"cardinality as a value type",
+			&AttributeDefinition{Ident: kw(":person/x"), ValueType: CardinalityOne},
+			"attribute :person/x: :db.cardinality/one is not a value type"},
+		{"unique as a value type",
+			&AttributeDefinition{Ident: kw(":person/x"), ValueType: UniqueValue},
+			"attribute :person/x: :db.unique/value is not a value type"},
+		{"value type as a cardinality",
+			&AttributeDefinition{Ident: kw(":person/x"), Cardinality: TypeString},
+			"attribute :person/x: :db.type/string is not a cardinality"},
+		{"unknown as a declared cardinality",
+			&AttributeDefinition{Ident: kw(":person/x"), Cardinality: CardinalityUnknown},
+			"attribute :person/x: :db.cardinality/unknown is not a cardinality"},
+		{"value type as a uniqueness constraint",
+			&AttributeDefinition{Ident: kw(":person/x"), Unique: TypeString},
+			"attribute :person/x: :db.type/string is not a uniqueness constraint"},
+		{"an unrelated keyword as a cardinality",
+			&AttributeDefinition{Ident: kw(":person/x"), Cardinality: datalog.NewKeyword(":not/a-cardinality")},
+			"attribute :person/x: :not/a-cardinality is not a cardinality"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.PanicsWithError(t, tc.want, func() {
+				NewSchema().Add(tc.def)
+			})
+		})
+	}
+
+	// Controls. A schema that panicked on everything would pass every case above.
+	t.Run("a well-formed definition is stored", func(t *testing.T) {
+		s := NewSchema().Add(&AttributeDefinition{
+			Ident:       kw(":person/x"),
+			ValueType:   TypeString,
+			Cardinality: CardinalityMany,
+			Unique:      UniqueValue,
+		})
+		def := s.GetAttribute(kw(":person/x"))
+		require.NotNil(t, def)
+		assert.Equal(t, CardinalityMany, def.Cardinality)
+	})
+
+	t.Run("absence is legal and cardinality still defaults", func(t *testing.T) {
+		s := NewSchema().Add(&AttributeDefinition{Ident: kw(":person/x")})
+		def := s.GetAttribute(kw(":person/x"))
+		require.NotNil(t, def)
+		assert.Nil(t, def.ValueType, "a definition may decline to name a value type")
+		assert.Nil(t, def.Unique, "absence of a uniqueness constraint is written as nil")
+		assert.Equal(t, CardinalityOne, def.Cardinality)
 	})
 }
 

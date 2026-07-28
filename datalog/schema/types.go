@@ -1,6 +1,8 @@
 package schema
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
@@ -226,8 +228,22 @@ func NewSchema() *Schema {
 	}
 }
 
-// Add adds an attribute definition to the schema
-// Returns the schema for chaining
+// Add adds an attribute definition to the schema, and is the only write into
+// s.attributes — ParseSchema and the builder both reach the map through here.
+// Returns the schema for chaining.
+//
+// It panics on a keyword from the wrong vocabulary. The three vocabularies are
+// one Go type, so `Cardinality: TypeString` compiles, and what consumes the
+// field is a switch with an arm per cardinality: an unrecognized keyword
+// matches none of them and every datom in the group is silently skipped.
+//
+// A panic rather than an error, on the registration convention. sql.Register
+// and http.Handle panic with no Must prefix and no error sibling, because they
+// declare something during initialization from source literals, where a failure
+// is the caller's own mistake and there is nothing to recover from. The parsing
+// convention — regexp.Compile paired with regexp.MustCompile — governs calls
+// that convert an input, which this is not. Callers reading genuinely untrusted
+// schema text use ParseSchema, which returns errors.
 func (s *Schema) Add(def *AttributeDefinition) *Schema {
 	if def == nil {
 		return s
@@ -236,8 +252,29 @@ func (s *Schema) Add(def *AttributeDefinition) *Schema {
 	if def.Cardinality == nil {
 		def.Cardinality = CardinalityOne
 	}
+	// After the default, so a definition that named no cardinality is checked
+	// against the value it will actually carry.
+	mustBelong(def.Ident, def.ValueType, valueTypes, "a value type")
+	mustBelong(def.Ident, def.Cardinality, cardinalities, "a cardinality")
+	mustBelong(def.Ident, def.Unique, uniques, "a uniqueness constraint")
 	s.attributes[def.Ident] = def
 	return s
+}
+
+// mustBelong panics unless kw is absent or drawn from set. A nil keyword is
+// absence — a definition that has not said which value type or uniqueness
+// constraint it carries — and is left alone; Add has already replaced an absent
+// cardinality with its default before this runs.
+//
+// noun names the vocabulary in the message, worded as the builder words it, so
+// a definition rejected here and one rejected there read alike.
+func mustBelong(ident, kw datalog.Keyword, set map[datalog.Keyword]struct{}, noun string) {
+	if kw == nil {
+		return
+	}
+	if _, ok := set[kw]; !ok {
+		panic(fmt.Errorf("attribute %s: %s is not %s", ident, kw, noun))
+	}
 }
 
 // GetAttribute returns the definition for an attribute, or nil if unknown

@@ -76,10 +76,17 @@ type scanFunnel struct {
 }
 
 // emitScanCompletion emits the event a scan owes its reader when it finishes:
-// what it was scanning for, and what it cost. Every scan-completion event in
-// the engine goes through here — the unbound and cardinality-dispatch scans,
-// the three binding-driven strategies, and cache resolution — so the funnel
-// keys and the event envelope have one definition rather than one per producer.
+// what it was scanning for, and what it cost. Every event reporting a scan's
+// funnel goes through here — the unbound and cardinality-dispatch scans, the
+// three binding-driven strategies, the unique lookup — so the funnel keys and
+// the event envelope have one definition rather than one per producer.
+//
+// The funnel is a required parameter, not an optional field, and that is what
+// keeps this function's subject singular. A producer with no funnel to report
+// does not pass an empty one: cache resolution reads an entry rather than an
+// index, so it emits its own event directly (see matchFromCache) rather than
+// borrowing an envelope whose payload would then have to be made optional for
+// everyone.
 //
 // opened is when the scan was opened, so the event's Latency is the scan's
 // lifetime through Close. That span includes time the consumer spent between
@@ -88,12 +95,12 @@ type scanFunnel struct {
 // output formatter renders it as the line's prefix and Database.Analyze sums it
 // per event name, so a scan that omitted it would report as 0 ms in both.
 //
-// The index is not a parameter. Two of the producers address no single run:
-// cache resolution picks an index by cardinality inside resolution and reads
-// none at all on a hit, and the per-binding path runs chooseIndex once per
-// binding tuple. A producer that walked one index names it in extraData under
-// annotations.KeyIndex; the rest say nothing rather than naming a run that did
-// not happen.
+// The run is not a parameter. Two producers address no single run: the
+// per-binding path runs chooseIndex once per binding tuple, and the unique
+// lookup walks AVET for the claimant and then the claimant's own history. A
+// producer that walked one run reports it into extraData with addBoundFields;
+// the rest say nothing rather than naming a run that did not happen. Half a run
+// — an index without the components bound under it — is not one of the options.
 //
 // Values go in typed — the pattern, and whatever the producer adds. Rendering
 // belongs to the formatter, and flattening here would spend an allocation per

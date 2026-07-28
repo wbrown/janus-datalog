@@ -144,6 +144,42 @@ func TestWarmCacheEmptyAttribute(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestWarmCacheOnCacheDisabledDatabase pins the one caller in database.go that
+// reaches d.cache without asking whether there is one.
+//
+// DisableCache leaves d.cache nil, and six siblings in the same file test for
+// that before touching it — the cache is an optimization, so each resolves from
+// storage instead. WarmCache had no such test and called GetOrResolve straight
+// through, which dereferences c.slots on the nil receiver.
+//
+// Warming has no storage fallback to take: with no cache there is nothing to
+// warm, so the call succeeds having done nothing. That is the honest answer for
+// an optimization the caller has switched off, and it keeps WarmCache callable
+// from setup code that does not know how the database was opened.
+func TestWarmCacheOnCacheDisabledDatabase(t *testing.T) {
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:         t.TempDir(),
+		DisableCache: true,
+	})
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("person:alice")
+	name := datalog.NewKeyword(":person/name")
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Set(alice, name, "Alice"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	require.NoError(t, db.WarmCache([]datalog.Keyword{name}),
+		"warming a database that has no cache is a no-op, not a failure")
+
+	// The data is still readable — warming was skipped, not the read path.
+	resolved, err := db.ResolveEntityAttributes(alice, []datalog.Keyword{name})
+	require.NoError(t, err)
+	assert.Equal(t, "Alice", resolved[name])
+}
+
 func TestWarmCacheIdempotent(t *testing.T) {
 	db, cleanup := createWarmupTestDatabase(t)
 	defer cleanup()

@@ -82,19 +82,19 @@ func bindingDrivenFixture(t *testing.T) (*Database, *query.DataPattern, executor
 	return db, pattern, bindingRel, symbols
 }
 
-// drainRelation iterates a relation to exhaustion and returns the row count.
+// drainRelation iterates a relation to exhaustion and returns the tuple count.
 // The completion events these tests read are emitted on Close, so a strategy
 // left un-drained reports nothing at all.
 func drainRelation(t *testing.T, rel executor.Relation) int {
 	t.Helper()
 	iter := rel.Iterator()
-	rows := 0
+	tuples := 0
 	for iter.Next() {
-		rows++
+		tuples++
 	}
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
-	return rows
+	return tuples
 }
 
 // TestBindingDrivenStrategiesReportTheirFunnel pins all three intake counters
@@ -124,6 +124,103 @@ func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
 	for _, tc := range []struct {
 		strategy string
 		event    string
+		// namesRun distinguishes the two strategies that open one scan from the
+		// one that opens a scan per binding. Hash join and merge join each build
+		// a single ScanBound from the pattern's constant A, so each names AETV
+		// bound at A; the per-binding path runs chooseIndex again for every
+		// binding tuple, so naming one run would mean naming whichever came
+		// last.
+		namesRun bool
+		match    func(m *PatternMatcher, pattern *query.DataPattern,
+			bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error)
+	}{
+		{strategy: "HashJoinScan", event: annotations.PatternHashJoinComplete, namesRun: true,
+			match: func(m *PatternMatcher, pattern *query.DataPattern,
+				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
+				return m.matchWithHashJoin(pattern, bindingRel, symbols, 0, AETV, nil)
+			}},
+		{strategy: "MergeJoin", event: annotations.PatternMergeJoinComplete, namesRun: true,
+			match: func(m *PatternMatcher, pattern *query.DataPattern,
+				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
+				return m.matchWithMergeJoin(pattern, bindingRel, symbols, 0, AETV, nil)
+			}},
+		{strategy: "NoReuse", event: annotations.PatternPerBindingScanComplete,
+			match: func(m *PatternMatcher, pattern *query.DataPattern,
+				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
+				return m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, nil)
+			}},
+	} {
+		t.Run(tc.strategy, func(t *testing.T) {
+			db, pattern, bindingRel, symbols := bindingDrivenFixture(t)
+
+			var events []annotations.Event
+			db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
+
+			rel, err := tc.match(db.Matcher().(*PatternMatcher), pattern, bindingRel, symbols)
+			require.NoError(t, err)
+			require.Equal(t, entities, drainRelation(t, rel),
+				"last write wins, so each entity contributes one tuple")
+
+			complete := lastEventNamed(events, tc.event)
+			require.NotNil(t, complete, "%s must report what its scan cost", tc.strategy)
+
+			require.Equal(t, wantScanned, complete.Data[annotations.KeyDatomsScanned],
+				"%s read every write in each group; reporting %d would be reporting resolution's output",
+				tc.strategy, entities)
+			require.Equal(t, entities, complete.Data[annotations.KeyDatomsResolved])
+			require.Equal(t, entities, complete.Data[annotations.KeyDatomsMatched])
+			require.Equal(t, entities, complete.Data[annotations.KeyBindingSize])
+			require.Positive(t, complete.Latency,
+				"a completion event without a duration reports as 0 ms in Analyze")
+
+			// The run, on the event that prices it. These paths emit no
+			// pattern/index-selection — they are reached through
+			// analyzeReuseStrategy rather than the announcing dispatch — so the
+			// completion is the only event that can name what was walked, and an
+			// index without its bound leaves that unanswerable.
+			if !tc.namesRun {
+				require.NotContains(t, complete.Data, annotations.KeyIndex,
+					"%s runs chooseIndex per binding; one index here would name whichever was last",
+					tc.strategy)
+				require.NotContains(t, complete.Data, annotations.KeyBound)
+				return
+			}
+			require.Equal(t, AETV, complete.Data[annotations.KeyIndex])
+			require.Equal(t, []string{"A"}, complete.Data[annotations.KeyBound],
+				"%s scanned under the pattern's constant A", tc.strategy)
+			require.Equal(t, []string{":person/name"}, complete.Data["bound.values"])
+		})
+	}
+}
+
+// TestBindingSizeCountsTuplesNotDistinctKeys pins the unit of binding.size
+// across the three strategies that report it.
+//
+// One key, one unit. Hash join tracked distinct join keys because it needs that
+// count for its own reason — exactly one key lets a bound value narrow the scan
+// — and reported the same number as its binding size, where merge join and the
+// per-binding path report tuples. The unit matters to a reader comparing two
+// traces and to the number chooseJoinStrategy actually selects on, which is
+// bindingRel.Size(): tuples.
+//
+// TestBindingDrivenStrategiesReportTheirFunnel cannot see this. Its bindings
+// carry one symbol, and a Relation is a set, so tuples and distinct keys are
+// necessarily the same number there — the assertion passes against either unit.
+// Separating them takes a second symbol, which is what this fixture adds: the
+// same three entities, each appearing under two slots.
+//
+// Tuple counts are deliberately not asserted. The strategies legitimately differ
+// on repeated keys — hash join emits once per datom, merge join once per
+// (datom, binding tuple) pair, both correct because the output tuple is built
+// from the datom alone and the matcher's single exit restores set semantics.
+// Pinning tuple counts here would pin that difference rather than the unit.
+func TestBindingSizeCountsTuplesNotDistinctKeys(t *testing.T) {
+	const slotsPerEntity = 2
+	const wantTuples = len(bindingDrivenPeople) * slotsPerEntity
+
+	for _, tc := range []struct {
+		strategy string
+		event    string
 		match    func(m *PatternMatcher, pattern *query.DataPattern,
 			bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error)
 	}{
@@ -144,27 +241,36 @@ func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
 			}},
 	} {
 		t.Run(tc.strategy, func(t *testing.T) {
-			db, pattern, bindingRel, symbols := bindingDrivenFixture(t)
+			db, pattern, _, symbols := bindingDrivenFixture(t)
+
+			// The entity stays at tuple position 0, which is where all three
+			// strategies read the join key from; the second symbol only
+			// multiplies the tuples behind each key.
+			entity := datalog.NewSymbol("?e")
+			slot := datalog.NewSymbol("?slot")
+			tuples := make([]executor.Tuple, 0, wantTuples)
+			for _, seed := range bindingDrivenPeople {
+				who := datalog.NewIdentity(seed)
+				for s := 0; s < slotsPerEntity; s++ {
+					tuples = append(tuples, executor.Tuple{who, int64(s)})
+				}
+			}
+			bindingRel := executor.NewMaterializedRelation(
+				[]query.Symbol{entity, slot}, tuples)
 
 			var events []annotations.Event
 			db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
 
 			rel, err := tc.match(db.Matcher().(*PatternMatcher), pattern, bindingRel, symbols)
 			require.NoError(t, err)
-			require.Equal(t, entities, drainRelation(t, rel),
-				"last write wins, so each entity contributes one row")
+			drainRelation(t, rel)
 
 			complete := lastEventNamed(events, tc.event)
 			require.NotNil(t, complete, "%s must report what its scan cost", tc.strategy)
-
-			require.Equal(t, wantScanned, complete.Data[annotations.KeyDatomsScanned],
-				"%s read every write in each group; reporting %d would be reporting resolution's output",
-				tc.strategy, entities)
-			require.Equal(t, entities, complete.Data[annotations.KeyDatomsResolved])
-			require.Equal(t, entities, complete.Data[annotations.KeyDatomsMatched])
-			require.Equal(t, entities, complete.Data[annotations.KeyBindingSize])
-			require.Positive(t, complete.Latency,
-				"a completion event without a duration reports as 0 ms in Analyze")
+			require.Equal(t, wantTuples, complete.Data[annotations.KeyBindingSize],
+				"%s reports binding.size in distinct join keys (%d) rather than binding "+
+					"tuples (%d); two strategies reporting different units under one key "+
+					"cannot be compared", tc.strategy, len(bindingDrivenPeople), wantTuples)
 		})
 	}
 }

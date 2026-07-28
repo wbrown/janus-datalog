@@ -114,14 +114,22 @@ func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
 	}
 }
 
-// TestCacheEntryValueCountsWhatResolutionProduced pins the middle term of the
-// funnel a cache-resolved pattern reports — what resolution emitted, between
-// the index intake that built the entry and the tuples the pattern matched.
+// TestCacheEntryValueCountsWhatResolutionProduced pins what a cache-resolved
+// pattern reports as values.served: the values this entry hands the pattern,
+// counted in the unit the pattern binds.
 //
 // The absent cardinality-one case is the one worth pinning: a never-set (E, A)
 // and one whose highest-Tx entry is a tombstone both resolve to no value, and
 // counting either as one would make a tombstoned attribute read in the stream
 // exactly like a present one.
+//
+// The vector cases are the other. A cardinality-vector entry serves **one**
+// value however many elements the vector holds — the pattern binds V to the
+// whole vector and matches once — so a three-element vector reporting three
+// served against one matched would render as two values filtered out by a
+// pattern that filtered nothing. Elements are the vector's contents, not
+// separate values; if a reader wants that count it is a different key, and
+// nothing asks for it.
 func TestCacheEntryValueCountsWhatResolutionProduced(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -134,9 +142,10 @@ func TestCacheEntryValueCountsWhatResolutionProduced(t *testing.T) {
 			manySet: map[any]any{"dev": "dev", "ops": "ops"}}, 2},
 		{"many empty", &CacheEntry{cardinality: schema.CardinalityMany,
 			manySet: map[any]any{}}, 0},
-		{"vector", &CacheEntry{cardinality: schema.CardinalityVector,
-			vectorList: []any{"x", "y", "z"}}, 3},
-		{"vector empty", &CacheEntry{cardinality: schema.CardinalityVector,
+		{"vector serves one value, not its element count",
+			&CacheEntry{cardinality: schema.CardinalityVector,
+				vectorList: []any{"x", "y", "z"}}, 1},
+		{"vector empty serves nothing", &CacheEntry{cardinality: schema.CardinalityVector,
 			vectorList: []any{}}, 0},
 		{"schemaless resolves last-write-wins", &CacheEntry{
 			cardinality: schema.CardinalityUnknown, oneValue: int64(7)}, 1},

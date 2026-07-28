@@ -63,15 +63,16 @@ type Database struct {
 	// method to do: one home, read directly by everything that emits, assigned
 	// directly by anyone who wants tracing.
 	//
-	// The engine emits from parallel workers, so a handler that is not itself
-	// safe for concurrent calls must be wrapped by whoever installs it:
+	// The engine emits from parallel workers and does not serialize what it is
+	// given. Wrapping at one assignment path and not another would give this
+	// field two concurrency contracts depending on how it was populated, and it
+	// puts a process-wide lock on every event on the hot path.
 	//
-	//	d.AnnotationHandler = annotations.Synchronized(myHandler)
-	//
-	// The engine does not wrap on your behalf. Wrapping at one assignment path
-	// and not another would give this field two concurrency contracts depending
-	// on how it was populated, and it puts a process-wide lock on every event
-	// on the hot path whether or not the handler needs one.
+	// A handler does not need locking to render. Every event carries what its
+	// output reports, so a handler that keeps nothing between events is safe by
+	// construction — and one that keeps something is reading whichever worker
+	// wrote last, which no lock corrects. A handler accumulating for its own
+	// reasons, counting or batching, owns its synchronization.
 	AnnotationHandler annotations.Handler
 
 	// onCommitWindow, if set, is invoked inside Commit after the storage commit
@@ -301,7 +302,16 @@ func (d *Database) Cache() *Cache {
 //
 // This is O(n) where n = total datoms for the specified attributes.
 // Call during application startup, not on the hot path.
+//
+// With DisableCache there is no cache to warm and the call does nothing. Every
+// other reader of d.cache in this file resolves from storage instead, because
+// the cache is an optimization rather than a correctness requirement; warming
+// has no such fallback, since warming is the whole of what it does.
 func (d *Database) WarmCache(attributes []datalog.Keyword) error {
+	if d.cache == nil {
+		return nil
+	}
+
 	matcher := NewPatternMatcher(d.store)
 	matcher.SetSchema(d.schema)
 
@@ -379,9 +389,6 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	if err != nil {
 		return nil, err
 	}
-	if entry == nil {
-		return nil, nil
-	}
 
 	if entry.Cardinality() != schema.CardinalityVector {
 		return nil, fmt.Errorf("attribute %s is not a vector", a.String())
@@ -422,9 +429,6 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	}
 	if err != nil {
 		return 0, err
-	}
-	if entry == nil {
-		return 0, nil
 	}
 
 	if entry.Cardinality() != schema.CardinalityVector {
@@ -2468,13 +2472,14 @@ func inputSpecSymbols(spec query.InputSpec) interface{} {
 	return spec
 }
 
-// reflectRow copies a reflected slice's elements into one value row.
-func reflectRow(slice reflect.Value) []interface{} {
-	row := make([]interface{}, slice.Len())
+// reflectValues copies a reflected slice's elements into one value sequence,
+// positionally, for conversion into a tuple against a symbol list.
+func reflectValues(slice reflect.Value) []interface{} {
+	values := make([]interface{}, slice.Len())
 	for i := 0; i < slice.Len(); i++ {
-		row[i] = slice.Index(i).Interface()
+		values[i] = slice.Index(i).Interface()
 	}
-	return row
+	return values
 }
 
 // containsNaN reports whether v is NaN or a slice containing one. NaN is not
@@ -2528,17 +2533,17 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 		}
 		input := inputs[inputIdx]
 
-		// Every input form binds a set of rows over a symbol list; the switch
-		// below only reads each form's shape. A scalar is one row of one
-		// column, a collection is n rows of one column, a tuple is one row of
-		// n columns, and a relation is n rows of n columns.
+		// Every input form binds a set of tuples over a symbol list; the switch
+		// below only reads each form's shape. A scalar is one tuple over one
+		// symbol, a collection is n tuples over one symbol, a tuple input is
+		// one tuple over n symbols, and a relation is n tuples over n symbols.
 		var symbols []query.Symbol
-		var rows [][]interface{}
+		var bound [][]interface{}
 
 		switch spec := inputSpec.(type) {
 		case query.ScalarInput:
 			symbols = []query.Symbol{spec.Symbol}
-			rows = [][]interface{}{{input}}
+			bound = [][]interface{}{{input}}
 
 		case query.CollectionInput:
 			slice := reflect.ValueOf(input)
@@ -2546,9 +2551,9 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 				return nil, fmt.Errorf("expected slice or array for collection input %s, got %T", spec.Symbol, input)
 			}
 			symbols = []query.Symbol{spec.Symbol}
-			rows = make([][]interface{}, slice.Len())
+			bound = make([][]interface{}, slice.Len())
 			for i := 0; i < slice.Len(); i++ {
-				rows[i] = []interface{}{slice.Index(i).Interface()}
+				bound[i] = []interface{}{slice.Index(i).Interface()}
 			}
 
 		case query.TupleInput:
@@ -2557,7 +2562,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 				return nil, fmt.Errorf("expected slice or array for tuple input, got %T", input)
 			}
 			symbols = spec.Symbols
-			rows = [][]interface{}{reflectRow(slice)}
+			bound = [][]interface{}{reflectValues(slice)}
 
 		case query.RelationInput:
 			outerSlice := reflect.ValueOf(input)
@@ -2565,13 +2570,13 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 				return nil, fmt.Errorf("expected slice of slices for relation input, got %T", input)
 			}
 			symbols = spec.Symbols
-			rows = make([][]interface{}, outerSlice.Len())
+			bound = make([][]interface{}, outerSlice.Len())
 			for i := 0; i < outerSlice.Len(); i++ {
 				innerSlice := outerSlice.Index(i)
 				// Indexing a []interface{} yields Kind Interface even when
 				// the element holds a slice — the shape every EDN-parsed
 				// input and any []any caller produces. Unwrap before the
-				// kind check; a genuinely non-slice row still fails below,
+				// kind check; a genuinely non-slice element still fails below,
 				// and a nil element stays wrapped so the error path never
 				// calls Interface() on the zero Value.
 				if innerSlice.Kind() == reflect.Interface && !innerSlice.IsNil() {
@@ -2580,23 +2585,23 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 				if innerSlice.Kind() != reflect.Slice && innerSlice.Kind() != reflect.Array {
 					return nil, fmt.Errorf("expected slice for relation tuple %d, got %T", i, innerSlice.Interface())
 				}
-				rows[i] = reflectRow(innerSlice)
+				bound[i] = reflectValues(innerSlice)
 			}
 
 		default:
 			return nil, fmt.Errorf("unsupported input spec %T", inputSpec)
 		}
 
-		// One conversion path for every form: row width against the symbol
-		// list, then per-value position typing and normalization through
+		// One conversion path for every form: arity against the symbol list,
+		// then per-value position typing and normalization through
 		// convertInputValue.
-		tuples := make([]executor.Tuple, len(rows))
-		for i, row := range rows {
-			if len(row) != len(symbols) {
-				return nil, fmt.Errorf("input row %d for %v: expected %d values, got %d", i, symbols, len(symbols), len(row))
+		tuples := make([]executor.Tuple, len(bound))
+		for i, values := range bound {
+			if len(values) != len(symbols) {
+				return nil, fmt.Errorf("input tuple %d for %v: expected %d values, got %d", i, symbols, len(symbols), len(values))
 			}
-			tuple := make(executor.Tuple, len(row))
-			for j, val := range row {
+			tuple := make(executor.Tuple, len(values))
+			for j, val := range values {
 				v, err := convertInputValue(entityBound, attrBound, symbols[j], val)
 				if err != nil {
 					return nil, err

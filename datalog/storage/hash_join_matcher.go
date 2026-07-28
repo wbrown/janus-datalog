@@ -70,7 +70,7 @@ func (m *PatternMatcher) chooseJoinStrategy(
 	// for E-position keys — probe datoms arrive in hash-byte order, which is
 	// exactly Identity's CompareValues order, and every binding key is an
 	// interned Identity (the typed-position filter drops the rest), so cmp==0
-	// coincides with ValuesEqual. Multi-column bindings may repeat a key;
+	// coincides with ValuesEqual. Multi-symbol bindings may repeat a key;
 	// mergeJoinIterator pairs each datom with its whole key group. Value-position
 	// scan order is the on-disk type-tag order, which deliberately differs from
 	// CompareValues' rank order (see datalog/compare.go), so those joins use the
@@ -143,20 +143,22 @@ func (m *PatternMatcher) matchWithHashJoin(
 	}
 
 	// Build hash set using symbol index (not datom position)
-	hashSet, keyCount, boundValue, err := m.buildHashSet(
+	hashSet, counts, boundValue, err := m.buildHashSet(
 		bindingRel, symbolIndex, typedPositionBindingCheck(pattern, bindingRel.Symbols()))
 	if err != nil {
 		return nil, fmt.Errorf("hash join bindings failed: %w", err)
 	}
 
-	if keyCount == 0 {
+	if counts.tuples == 0 {
 		// No bindings - return empty result
 		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
 	}
 
 	// PHASE 2: Determine scan range for the pattern
-	// For single bindings, use the bound value to narrow the scan range
-	if keyCount != 1 {
+	// One key means every binding tuple carries the same value at this
+	// position, so that value is a constant for the scan and narrows it. More
+	// than one, and no single value bounds the run.
+	if counts.keys != 1 {
 		boundValue = nil
 	}
 	bound := m.patternScanBoundWithBinding(pattern, index, position, boundValue)
@@ -177,19 +179,19 @@ func (m *PatternMatcher) matchWithHashJoin(
 
 	// PHASE 4: Create streaming hash join iterator
 	iter := &hashJoinIterator{
-		matcher:         m,
-		pattern:         pattern,
-		matchPlan:       compileBindingMatchPlan(pattern, bindingRel.Symbols()),
-		symbols:         symbols,
-		position:        position,
-		index:           index,
-		constraints:     constraints,
-		hashSet:         hashSet,
-		bindingKeyCount: keyCount,
-		iter:            resolvedIter,
-		workspace:       make(executor.Tuple, len(symbols)),
-		tupleBuilder:    m.getTupleBuilder(pattern, symbols),
-		scanStart:       time.Now(),
+		matcher:           m,
+		pattern:           pattern,
+		matchPlan:         compileBindingMatchPlan(pattern, bindingRel.Symbols()),
+		symbols:           symbols,
+		position:          position,
+		bound:             bound,
+		constraints:       constraints,
+		hashSet:           hashSet,
+		bindingTupleCount: counts.tuples,
+		iter:              resolvedIter,
+		workspace:         make(executor.Tuple, len(symbols)),
+		tupleBuilder:      m.getTupleBuilder(pattern, symbols),
+		scanStart:         time.Now(),
 	}
 
 	// Return streaming relation
@@ -329,24 +331,42 @@ func (m *PatternMatcher) scanBoundForValues(index IndexType, e, a, v, tx interfa
 	return ScanBound{Index: index, Prefix: prefix}
 }
 
+// bindingCounts is what a binding relation put into a hash set, counted two
+// ways because the two answer different questions. keys decides whether one
+// bound value can narrow the storage scan — that is a property of the key
+// space, and it is exactly one only when every tuple carries the same key.
+// tuples is the size of the binding set, which is what binding.size reports and
+// what chooseJoinStrategy selects on.
+//
+// A struct rather than two adjacent ints: same-typed neighbouring returns are the
+// shape where a transposition compiles and then reports a binding set smaller
+// than it was, for the same reason scanFunnel is a struct.
+type bindingCounts struct {
+	keys   int
+	tuples int
+}
+
 // buildHashSet creates a typed hash set from the binding relation. It returns
-// all tuples per key plus the distinct-key count and sole key value, when one
-// exists, so a single binding can narrow the storage scan. Tuples failing the
-// typed-position check (non-Identity entity, non-Keyword attribute — see
+// all tuples per key, the counts above, and the sole key value when exactly one
+// key exists, so a single binding can narrow the storage scan. Tuples failing
+// the typed-position check (non-Identity entity, non-Keyword attribute — see
 // filterTypedPositionBindings) are dropped here: they are typed non-matches,
 // and dropping them at construction keeps them away from the probe's
-// full-tuple verification.
+// full-tuple verification. They are dropped from both counts with it — a tuple
+// that joins no tuples by construction is not part of the binding set the scan
+// was driven by, and merge join's filterTypedPositionBindings drops them before
+// its own count for the same reason.
 func (m *PatternMatcher) buildHashSet(
 	bindingRel executor.Relation,
 	position int,
 	typed func(executor.Tuple) bool,
-) (*executor.TupleKeyMap, int, interface{}, error) {
+) (*executor.TupleKeyMap, bindingCounts, interface{}, error) {
 	capacity := bindingRel.Size()
 	if capacity < 0 {
 		capacity = 0
 	}
 	hashSet := executor.NewTupleKeyMapWithCapacity(capacity)
-	keyCount := 0
+	var counts bindingCounts
 	var soleValue interface{}
 
 	iter := bindingRel.Iterator()
@@ -357,12 +377,13 @@ func (m *PatternMatcher) buildHashSet(
 		}
 		if typed != nil && !typed(tuple) {
 			// Typed non-match: this tuple's entity/attribute-position value
-			// names nothing, so it joins zero rows by definition. Dropping it
+			// names nothing, so it joins no tuples by definition. Dropping it
 			// here is the same result the probe would compute, without ever
 			// presenting a mistyped binding to matchesDatom.
 			continue
 		}
 
+		counts.tuples++
 		value := tuple[position]
 		if existing, found := hashSet.GetValue(value); found {
 			hashSet.PutValue(value, append(existing.([]executor.Tuple), tuple))
@@ -371,7 +392,7 @@ func (m *PatternMatcher) buildHashSet(
 			// (materializeRelationsForPattern), and sliceIterator returns
 			// distinct slice references without reusing storage.
 			hashSet.PutValue(value, []executor.Tuple{tuple})
-			keyCount++
+			counts.keys++
 			soleValue = value
 		}
 	}
@@ -380,9 +401,9 @@ func (m *PatternMatcher) buildHashSet(
 		iterErr = closeErr
 	}
 	if iterErr != nil {
-		return nil, 0, nil, iterErr
+		return nil, bindingCounts{}, nil, iterErr
 	}
-	return hashSet, keyCount, soleValue, nil
+	return hashSet, counts, soleValue, nil
 }
 
 // extractProbeKey extracts the value from datom at the specified position.
@@ -537,7 +558,7 @@ func (m *PatternMatcher) matchWithMergeJoin(
 	if err != nil {
 		return nil, err
 	}
-	// Typed non-matches join zero rows by definition; drop them before
+	// Typed non-matches join no tuples by definition; drop them before
 	// merging, exactly as the seek paths do. Filtering preserves the sorted
 	// order.
 	sortedTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), sortedTuples)
@@ -572,7 +593,7 @@ func (m *PatternMatcher) matchWithMergeJoin(
 		bindingRel:   bindingRel,
 		symbols:      symbols,
 		position:     position,
-		index:        index,
+		bound:        bound,
 		constraints:  constraints,
 		sortedTuples: sortedTuples,
 		bindingIdx:   0,
@@ -600,22 +621,30 @@ type hashJoinIterator struct {
 	// The pattern, not a rendering of it: String() is annotation argument
 	// preparation, so it belongs inside the handler guard at Close. A rendered
 	// form held here would be built by every hash join, handler or not.
-	pattern         *query.DataPattern
-	matchPlan       bindingMatchPlan
-	symbols         []query.Symbol
-	position        int
-	index           IndexType
-	constraints     []executor.StorageConstraint
-	hashSet         *executor.TupleKeyMap // Built upfront - maps key to all matching tuples
-	bindingKeyCount int
-	iter            Iterator // Storage iterator
-	tupleBuilder    *query.InternedTupleBuilder
-	current         executor.Tuple
-	workspace       executor.Tuple // Reusable workspace for tuple building
-	datomsResolved  int            // Datoms the inner iterator produced
-	matchesFound    int            // Rows this join emitted
-	scanStart       time.Time      // When the scan opened; the completion event's duration
-	err             error          // First error from storage operations
+	pattern   *query.DataPattern
+	matchPlan bindingMatchPlan
+	symbols   []query.Symbol
+	position  int
+	// The run this join probes against, kept whole rather than as its index
+	// alone. These paths announce nothing before scanning — they are reached
+	// through analyzeReuseStrategy, not the announcing dispatch — so Close is
+	// the only place the run is ever named.
+	bound       ScanBound
+	constraints []executor.StorageConstraint
+	hashSet     *executor.TupleKeyMap // Built upfront - maps key to all matching tuples
+	// The binding tuples behind the hash set, not its distinct keys. The keys
+	// were what this path happened to have counted, and reporting them under
+	// binding.size gave that key one unit here and another on the two sibling
+	// strategies.
+	bindingTupleCount int
+	iter              Iterator // Storage iterator
+	tupleBuilder      *query.InternedTupleBuilder
+	current           executor.Tuple
+	workspace         executor.Tuple // Reusable workspace for tuple building
+	datomsResolved    int            // Datoms the inner iterator produced
+	matchesFound      int            // Tuples this join emitted
+	scanStart         time.Time      // When the scan opened; the completion event's duration
+	err               error          // First error from storage operations
 }
 
 func (it *hashJoinIterator) Next() bool {
@@ -685,6 +714,8 @@ func (it *hashJoinIterator) Close() error {
 	// the scan reports a large datoms.scanned against zero resolved. A fully
 	// tombstoned cardinality-many group reaches it the same way.
 	if it.matcher.handler != nil {
+		run := map[string]interface{}{annotations.KeyBindingSize: it.bindingTupleCount}
+		addBoundFields(run, it.bound)
 		emitScanCompletion(it.matcher.handler, annotations.PatternHashJoinComplete,
 			it.pattern, it.scanStart,
 			scanFunnel{
@@ -692,10 +723,7 @@ func (it *hashJoinIterator) Close() error {
 				resolved: it.datomsResolved,
 				matched:  it.matchesFound,
 			},
-			map[string]interface{}{
-				annotations.KeyIndex:       it.index,
-				annotations.KeyBindingSize: it.bindingKeyCount,
-			})
+			run)
 	}
 
 	if it.iter != nil {
@@ -708,12 +736,15 @@ func (it *hashJoinIterator) Error() error { return it.err }
 
 // mergeJoinIterator performs lazy merge join iteration
 type mergeJoinIterator struct {
-	matcher        *PatternMatcher
-	pattern        *query.DataPattern
-	bindingRel     executor.Relation
-	symbols        []query.Symbol
-	position       int
-	index          IndexType
+	matcher    *PatternMatcher
+	pattern    *query.DataPattern
+	bindingRel executor.Relation
+	symbols    []query.Symbol
+	position   int
+	// The run this merge walks, kept whole rather than as its index alone, for
+	// the reason hashJoinIterator.bound gives: Close is the only event either
+	// path emits, so it is the only place the run can be named.
+	bound          ScanBound
 	constraints    []executor.StorageConstraint
 	sortedTuples   []executor.Tuple // Sorted binding tuples
 	bindingIdx     int              // Start of the current key group in sortedTuples
@@ -724,17 +755,17 @@ type mergeJoinIterator struct {
 	current        executor.Tuple
 	workspace      executor.Tuple // Reusable workspace for tuple building
 	datomsResolved int            // Datoms the inner iterator produced
-	datomsMatched  int            // Rows this join emitted
+	datomsMatched  int            // Tuples this join emitted
 	scanStart      time.Time      // When the scan opened; the completion event's duration
 	err            error          // First error from storage operations
 }
 
-// Next advances to the next joined row. Binding tuples are sorted by join
+// Next advances to the next joined tuple. Binding tuples are sorted by join
 // key, so tuples sharing a key form a consecutive group, and every datom is
 // paired with each tuple of its key group — checking only the group's first
-// tuple loses rows (it can fail full-pattern verification while a later
+// tuple loses matches (it can fail full-pattern verification while a later
 // tuple passes, and distinct datoms sharing a key can each match different
-// tuples). Group state persists across Next() calls so rows are emitted one
+// tuples). Group state persists across Next() calls so tuples are emitted one
 // at a time; groupDatom stays valid between calls because the storage
 // iterator only advances after the group is exhausted (see the Iterator
 // workspace contract in store.go).
@@ -826,6 +857,8 @@ func (it *mergeJoinIterator) Close() error {
 	// Merge join is the strategy chosen for the largest binding sets, so it is
 	// the one whose scan volume most needs reporting.
 	if it.matcher.handler != nil {
+		run := map[string]interface{}{annotations.KeyBindingSize: len(it.sortedTuples)}
+		addBoundFields(run, it.bound)
 		emitScanCompletion(it.matcher.handler, annotations.PatternMergeJoinComplete,
 			it.pattern, it.scanStart,
 			scanFunnel{
@@ -833,10 +866,7 @@ func (it *mergeJoinIterator) Close() error {
 				resolved: it.datomsResolved,
 				matched:  it.datomsMatched,
 			},
-			map[string]interface{}{
-				annotations.KeyIndex:       it.index,
-				annotations.KeyBindingSize: len(it.sortedTuples),
-			})
+			run)
 	}
 
 	if it.iter != nil {

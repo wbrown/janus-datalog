@@ -69,7 +69,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 	// iteration.
 	if bindingRel.Size() == 0 {
 		// An errored relation that materialized empty is not an empty
-		// binding: its zero rows mean the upstream scan failed. Falling
+		// binding: its zero tuples mean the upstream scan failed. Falling
 		// back to an unbound scan here would launder that failure into
 		// a silent result.
 		if err := executor.EmptyRelationError(bindingRel); err != nil {
@@ -493,7 +493,7 @@ func (m *PatternMatcher) matchUnboundScan(
 	// current/as-of mode, or raw scan in history mode.
 	regularIter := &unboundIterator{
 		matcher:         m,
-		index:           bound.Index,
+		bound:           bound,
 		opened:          time.Now(),
 		pattern:         pattern,
 		symbols:         symbols,
@@ -1094,13 +1094,18 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher)
 
 	if it.matcher.handler != nil {
+		// The same run the event above announced, restated rather than left to
+		// be carried across from it. Two events thirty lines apart are two
+		// events to a handler, which sees them interleaved with whatever the
+		// other workers emitted in between; an index alone here would name a
+		// component order whose components live on a line the reader has to go
+		// find.
+		opened := map[string]any{"crdt_wrapped": true}
+		addBoundFields(opened, bound)
 		it.matcher.handler(annotations.Event{
 			Name:  annotations.VValidationScanOpened,
 			Start: time.Now(),
-			Data: map[string]any{
-				annotations.KeyIndex: it.candidateIndex,
-				"crdt_wrapped":       true,
-			},
+			Data:  opened,
 		})
 	}
 
@@ -1160,9 +1165,6 @@ func (m *PatternMatcher) matchFromCache(
 	if err != nil {
 		return nil, false, err
 	}
-	if entry == nil {
-		return nil, false, nil // Fallback to storage
-	}
 
 	// This arm is the default for every E-and-A-bound pattern, which makes it
 	// the most common shape in the engine and the one a trace can least afford
@@ -1178,17 +1180,30 @@ func (m *PatternMatcher) matchFromCache(
 	// is the entry's build cost forever: reporting that on a hit would make a
 	// trace of a thousand hits claim a thousand index reads that never
 	// happened, and the key means this operation's intake everywhere else.
+	// Emitted directly rather than through emitScanCompletion, because this arm
+	// makes no funnel and that function's whole subject is one. A funnel is
+	// three stages of a single scan, each narrowing the last; a hit performs
+	// neither of the first two. Passing a scanFunnel here to get the shared
+	// envelope would put back the inversion — one value served under zero
+	// intake — in exchange for four lines.
+	//
+	// Intake and matched keep their meanings from the funnel; only the middle
+	// term has none here, and values.served is what stands in its place.
 	matched := 0
 	if m.handler != nil {
 		defer func() {
-			emitScanCompletion(m.handler, annotations.PatternCacheResolveComplete,
-				pattern, opened,
-				scanFunnel{
-					scanned:  spent,
-					resolved: entry.valueCount(),
-					matched:  matched,
+			m.handler(annotations.Event{
+				Name:    annotations.PatternCacheResolveComplete,
+				Start:   opened,
+				Latency: time.Since(opened),
+				Data: map[string]interface{}{
+					annotations.KeyPattern:       pattern,
+					annotations.KeyCardinality:   card,
+					annotations.KeyDatomsScanned: spent,
+					annotations.KeyValuesServed:  entry.valueCount(),
+					annotations.KeyDatomsMatched: matched,
 				},
-				map[string]interface{}{annotations.KeyCardinality: card})
+			})
 		}()
 	}
 
@@ -1386,9 +1401,9 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		}
 
 		// Determine A and cardinality for this tuple
-		var rowCard datalog.Keyword
-		var rowValueType datalog.Keyword
-		var rowAAttr Attribute
+		var tupleCard datalog.Keyword
+		var tupleValueType datalog.Keyword
+		var tupleAAttr Attribute
 		if aSymIdx >= 0 {
 			// Per-tuple A: extract from binding tuple
 			if aSymIdx >= len(tuple) {
@@ -1398,25 +1413,25 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			if !ok {
 				continue
 			}
-			rowCard = schema.CardinalityOne
+			tupleCard = schema.CardinalityOne
 			if m.schema != nil {
 				if def := m.schema.GetAttribute(aKw); def != nil {
-					rowCard = def.Cardinality
-					rowValueType = def.ValueType
+					tupleCard = def.Cardinality
+					tupleValueType = def.ValueType
 				}
 			}
 			aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
-			copy(rowAAttr[:], aStorage[:])
+			copy(tupleAAttr[:], aStorage[:])
 			datomBuf.A = aKw
 		} else {
-			rowCard = fixedCard
-			rowValueType = fixedValueType
-			rowAAttr = fixedAAttr
+			tupleCard = fixedCard
+			tupleValueType = fixedValueType
+			tupleAAttr = fixedAAttr
 		}
 
 		// Build cache key
 		eBytes := Entity(eIdent.Hash())
-		key, ok := m.cacheKey(eBytes, rowAAttr)
+		key, ok := m.cacheKey(eBytes, tupleAAttr)
 		if !ok {
 			return nil, false, nil
 		}
@@ -1426,13 +1441,9 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		if err != nil {
 			return nil, false, err
 		}
-		if entry == nil {
-			// Cache miss - fallback to storage for entire query
-			return nil, false, nil
-		}
 
 		// Process based on cardinality
-		switch rowCard {
+		switch tupleCard {
 		case schema.CardinalityOne:
 			val := entry.OneValue()
 			if val == nil {
@@ -1473,7 +1484,7 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 				// Can't efficiently check vector membership
 				return nil, false, nil
 			}
-			resultTuples = append(resultTuples, buildTuple(eIdent, typedVector(list, rowValueType), entry.Version()))
+			resultTuples = append(resultTuples, buildTuple(eIdent, typedVector(list, tupleValueType), entry.Version()))
 		}
 	}
 	// A failed bindings scan is not an exhausted one — surface it rather
@@ -1518,6 +1529,8 @@ func (m *PatternMatcher) matchCardinalityManyAsRelation(
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, result.Bound)
 		defer func() {
+			run := map[string]interface{}{}
+			addBoundFields(run, result.Bound)
 			emitScanCompletion(m.handler, annotations.PatternStorageScan,
 				pattern, opened,
 				scanFunnel{
@@ -1525,7 +1538,7 @@ func (m *PatternMatcher) matchCardinalityManyAsRelation(
 					resolved: len(result.Members),
 					matched:  len(result.Members),
 				},
-				map[string]interface{}{annotations.KeyIndex: result.Bound.Index})
+				run)
 		}()
 	}
 
@@ -1595,6 +1608,8 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, result.Bound)
 		defer func() {
+			run := map[string]interface{}{}
+			addBoundFields(run, result.Bound)
 			emitScanCompletion(m.handler, annotations.PatternStorageScan,
 				pattern, opened,
 				scanFunnel{
@@ -1602,7 +1617,7 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 					resolved: len(result.Elements),
 					matched:  matched,
 				},
-				map[string]interface{}{annotations.KeyIndex: result.Bound.Index})
+				run)
 		}()
 	}
 
@@ -1811,10 +1826,12 @@ func (m *PatternMatcher) matchCardinalityManyMembership(
 		if isMember {
 			resolved = 1
 		}
+		run := map[string]interface{}{}
+		addBoundFields(run, bound)
 		emitScanCompletion(m.handler, annotations.PatternStorageScan,
 			pattern, opened,
 			scanFunnel{scanned: scanned, resolved: resolved, matched: resolved},
-			map[string]interface{}{annotations.KeyIndex: bound.Index})
+			run)
 	}
 
 	// If not a member, return empty relation
@@ -1857,11 +1874,15 @@ type cardinalityManyScanAllEntitiesIterator struct {
 	storageIter  Iterator
 	seenEntities map[[20]byte]bool
 
+	// The run this scan walks, kept whole rather than as its index alone: Close
+	// reports it, and an index without the components bound under it is half a
+	// run.
+	bound ScanBound
+
 	// Statistics tracking, reported on Close. nestedScanned is the intake of
 	// the per-entity add-wins resolutions this iterator drives; the outer AEVT
 	// scan finds the entities and every set beneath it is a scan of its own,
 	// so the outer count alone would report a fraction of the reads.
-	index          IndexType
 	opened         time.Time
 	nestedScanned  int
 	datomsResolved int
@@ -1972,6 +1993,8 @@ func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
+		run := map[string]interface{}{}
+		addBoundFields(run, it.bound)
 		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
 			it.pattern, it.opened,
 			scanFunnel{
@@ -1979,7 +2002,7 @@ func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
 				resolved: it.datomsResolved,
 				matched:  it.datomsMatched,
 			},
-			map[string]interface{}{annotations.KeyIndex: it.index})
+			run)
 	}
 	return it.storageIter.Close()
 }
@@ -2022,7 +2045,7 @@ func (m *PatternMatcher) matchVectorScanAllEntities(
 		valueType:    valueType,
 		storageIter:  storageIter,
 		seenEntities: make(map[[20]byte]bool),
-		index:        bound.Index,
+		bound:        bound,
 		opened:       opened,
 	}
 
@@ -2041,11 +2064,15 @@ type vectorScanAllEntitiesIterator struct {
 	storageIter  Iterator
 	seenEntities map[[20]byte]bool
 
+	// The run this scan walks, kept whole rather than as its index alone: Close
+	// reports it, and an index without the components bound under it is half a
+	// run.
+	bound ScanBound
+
 	// Statistics tracking, reported on Close. nestedScanned is the intake of
 	// the per-entity RGA reconstructions this iterator drives; an RGA group is
 	// every insert and tombstone ever written for its (E, A), so the nested
 	// reads dominate the outer scan that only finds the entities.
-	index          IndexType
 	opened         time.Time
 	nestedScanned  int
 	datomsResolved int
@@ -2136,6 +2163,8 @@ func (it *vectorScanAllEntitiesIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
+		run := map[string]interface{}{}
+		addBoundFields(run, it.bound)
 		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
 			it.pattern, it.opened,
 			scanFunnel{
@@ -2143,7 +2172,7 @@ func (it *vectorScanAllEntitiesIterator) Close() error {
 				resolved: it.datomsResolved,
 				matched:  it.datomsMatched,
 			},
-			map[string]interface{}{annotations.KeyIndex: it.index})
+			run)
 	}
 	return it.storageIter.Close()
 }
@@ -2183,7 +2212,7 @@ func (m *PatternMatcher) matchCardinalityManyScanAllEntities(
 		aBytes:       aBytes,
 		storageIter:  storageIter,
 		seenEntities: make(map[[20]byte]bool),
-		index:        bound.Index,
+		bound:        bound,
 		opened:       opened,
 	}
 
@@ -2207,11 +2236,16 @@ type cardinalityManyAVETValueIterator struct {
 	aBytes      [32]byte
 	storageIter Iterator
 
+	// The run this scan walks, kept whole rather than as its index alone. Here
+	// the difference is the whole reading: this scan binds V, and it is the
+	// bound V that makes the run inexact, so an event naming AVET without
+	// saying what it bound reports the amplification below without its cause.
+	bound ScanBound
+
 	// Statistics tracking, reported on Close. Add-wins is resolved inline here
 	// rather than by a nested scan, so intake is the AVET scan's alone — and
 	// with a string or bytes V that run is inexact, which is exactly when
 	// intake exceeds what the loop sees.
-	index          IndexType
 	opened         time.Time
 	datomsResolved int
 	datomsMatched  int
@@ -2361,6 +2395,8 @@ func (it *cardinalityManyAVETValueIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
+		run := map[string]interface{}{}
+		addBoundFields(run, it.bound)
 		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
 			it.pattern, it.opened,
 			scanFunnel{
@@ -2368,7 +2404,7 @@ func (it *cardinalityManyAVETValueIterator) Close() error {
 				resolved: it.datomsResolved,
 				matched:  it.datomsMatched,
 			},
-			map[string]interface{}{annotations.KeyIndex: it.index})
+			run)
 	}
 	return it.storageIter.Close()
 }
@@ -2442,7 +2478,7 @@ func (m *PatternMatcher) matchCardinalityManyFindEntitiesWithValue(
 		v:           v,
 		aBytes:      aBytes,
 		storageIter: storageIter,
-		index:       bound.Index,
+		bound:       bound,
 		opened:      opened,
 	}
 

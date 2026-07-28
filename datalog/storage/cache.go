@@ -49,16 +49,38 @@ func (e *CacheEntry) Version() datalog.ElementID {
 	return e.version
 }
 
-// valueCount is how many values this entry's resolution produced, across
-// whichever view its cardinality populated. It is the middle term of the funnel
-// a cache-resolved pattern reports: what resolution emitted, between the index
-// intake that built the entry and the tuples the pattern went on to match.
+// valueCount is how many values this entry hands a pattern that reads it,
+// across whichever view its cardinality populated. It is what a cache-resolved
+// pattern reports as values.served, against the tuples it went on to match.
+//
+// Counted in the unit the pattern binds, which is why the vector arm does not
+// return its length: a cardinality-vector entry holds one value — the vector —
+// and V binds to the whole of it. Reporting three served against one matched
+// for a three-element vector would render as a pattern discarding two values it
+// never saw separately.
 func (e *CacheEntry) valueCount() int {
 	switch e.cardinality {
 	case schema.CardinalityMany:
 		return len(e.manySet)
 	case schema.CardinalityVector:
-		return len(e.vectorList)
+		if len(e.vectorList) == 0 {
+			// Zero for the same reason a nil oneValue is zero: an entry holding
+			// nothing the pattern can bind served nothing. An empty vectorList
+			// is both "never set" and "every element tombstoned" — the entry
+			// keeps no TotalElements, so it cannot separate them the way the
+			// streaming arm does — and matchFromCache's unbound-V branch treats
+			// that single state as absence.
+			//
+			// Its bound-V branch does not: V bound to an empty vector matches,
+			// and that call reports one matched against zero served. The
+			// disagreement is the arm's, between its own two branches, and it
+			// is a real behavioural divergence from the streaming path rather
+			// than a counting choice — see BUG_CACHE_EMPTY_VECTOR_NEVER_SET.
+			// Reporting one here would hide it behind a plausible line while
+			// making every never-set vector lookup claim a value.
+			return 0
+		}
+		return 1
 	default:
 		// CardinalityOne and schemaless. A never-set (E, A), and one whose
 		// highest-Tx entry is a tombstone, both resolve to no value — zero,

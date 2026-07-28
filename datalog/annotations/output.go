@@ -12,13 +12,17 @@ import (
 )
 
 // OutputFormatter formats events for human-readable display.
+//
+// It holds no state between events, and must not: the engine emits from
+// parallel workers through one handler, so anything remembered from the last
+// event is whoever wrote last rather than this line's own run. Every line is
+// rendered from the event that produced it, which is why a scan event carries
+// the bound its reporter held at scan time instead of relying on the
+// announcement that preceded it.
 type OutputFormatter struct {
 	useColor bool
 	writer   io.Writer
 	renderer *RelationRenderer
-	// Temporary storage for combining events
-	lastIndex string
-	lastBound string
 }
 
 // NewOutputFormatter creates a formatter with color support detection.
@@ -187,9 +191,9 @@ func (f *OutputFormatter) Format(event Event) string {
 		return fmt.Sprintf("%s %s → %s", latency, patternStr, relationStr)
 
 	case PatternIndexSelection:
-		// Store index and bound for the scan event that follows.
-		f.lastIndex = renderPayloadValue(event.Data[KeyIndex])
-		f.lastBound = renderBoundPositions(event.Data[KeyBound])
+		// The announcement is not a line. It says which run a scan is about to
+		// walk, and the scan's own event repeats that alongside what the run
+		// cost — so printing it here would double every scan in the trace.
 		return ""
 
 	case PatternStorageScan:
@@ -198,7 +202,7 @@ func (f *OutputFormatter) Format(event Event) string {
 		// every other timed event's; there is no separate duration field.
 		//
 		// Comma-ok rather than assertions, on the same grounds as
-		// renderScanFunnel below: this is the one event with seven producers,
+		// renderScanFunnel below: this event has more producers than any other,
 		// and a producer that omits a key should cost the reader one wrong line
 		// rather than panic the formatter in the middle of a trace.
 		pattern := renderPayloadValue(event.Data[KeyPattern])
@@ -214,15 +218,19 @@ func (f *OutputFormatter) Format(event Event) string {
 			amplification = fmt.Sprintf(" (%d scanned)", scanned)
 		}
 
-		// Use stored index info if available. An empty bound means no
-		// index-selection event preceded this scan, which is different from a
-		// selection that bound nothing — renderBoundPositions reports the
-		// latter as "none".
-		index := f.lastIndex
-		bound := f.lastBound
+		// Both come from this event. The reporter holds the bound at scan time
+		// and puts it here; a formatter that remembered the last one it saw
+		// would render another worker's run on this line, since the engine
+		// emits from parallel workers through one handler.
+		//
+		// "?" is a producer that named no run, which is different from a run
+		// that bound nothing — renderBoundPositions reports the latter as
+		// "none".
+		index := renderPayloadValue(event.Data[KeyIndex])
 		if index == "" {
 			index = "?"
 		}
+		bound := renderBoundPositions(event.Data[KeyBound])
 		if bound == "" {
 			bound = "?"
 		}
@@ -257,13 +265,26 @@ func (f *OutputFormatter) Format(event Event) string {
 		// the gap between what was read and what came out is the reason the
 		// event exists, so it is not conditional the way the unbound line's
 		// amplification suffix is.
+		//
+		// The run is named the same way as on the unbound scan line, and it
+		// matters more here: neither path announces a pattern/index-selection
+		// beforehand, so this is the only line in the trace that says what was
+		// walked.
 		strategy := "HashJoinScan"
 		if event.Name == PatternMergeJoinComplete {
 			strategy = "MergeJoin"
 		}
-		return fmt.Sprintf("%s %s([%v], %v, %v bindings) → %s",
+		index := renderPayloadValue(event.Data[KeyIndex])
+		if index == "" {
+			index = "?"
+		}
+		bound := renderBoundPositions(event.Data[KeyBound])
+		if bound == "" {
+			bound = "?"
+		}
+		return fmt.Sprintf("%s %s([%v], %s, bound: %s, %v bindings) → %s",
 			latency, strategy,
-			event.Data[KeyPattern], event.Data[KeyIndex], event.Data[KeyBindingSize],
+			event.Data[KeyPattern], index, bound, event.Data[KeyBindingSize],
 			renderScanFunnel(event.Data))
 
 	case PatternPerBindingScanComplete:
@@ -288,10 +309,19 @@ func (f *OutputFormatter) Format(event Event) string {
 	case PatternCacheResolveComplete:
 		// No index and no bound: the cache picks one by cardinality inside
 		// resolution, and a hit reads no index at all. Zero scanned is a hit.
-		return fmt.Sprintf("%s CacheResolve([%v], %v) → %s",
+		//
+		// Not renderScanFunnel. The three terms narrow, and printing this arm's
+		// two counts in that frame reads a hit as resolution producing a value
+		// out of an intake of zero — which is what a reader would then go
+		// looking for a bug in. Served and matched, with intake named as its
+		// own number.
+		served, _ := event.Data[KeyValuesServed].(int)
+		matched, _ := event.Data[KeyDatomsMatched].(int)
+		scanned, _ := event.Data[KeyDatomsScanned].(int)
+		return fmt.Sprintf("%s CacheResolve([%v], %v) → %d matched of %d served (%d scanned to build)",
 			latency,
 			event.Data[KeyPattern], event.Data[KeyCardinality],
-			renderScanFunnel(event.Data))
+			matched, served, scanned)
 
 	default:
 		// Generic format for unknown events
@@ -299,9 +329,13 @@ func (f *OutputFormatter) Format(event Event) string {
 	}
 }
 
-// renderScanFunnel renders the three counts every completion event carries, in
-// the order the query pays them: intake from the index, what CRDT resolution
+// renderScanFunnel renders the three counts a scan's completion event carries,
+// in the order the query pays them: intake from the index, what CRDT resolution
 // produced from it, what survived the pattern and its constraints.
+//
+// Not every completion event — the cache arm resolves nothing and has its own
+// arm above. Rendering its two counts in this frame is what made a hit read as
+// resolution producing a value out of an intake of zero.
 //
 // Comma-ok reads rather than assertions: an event that omits one of the three
 // should render a zero, not panic the formatter mid-trace.
@@ -328,15 +362,26 @@ func renderPayloadValue(v interface{}) string {
 	return fmt.Sprint(v)
 }
 
-// renderBoundPositions renders a pattern/index-selection event's "bound" field
-// — the positions the scan's run binds, in the index's component order — as the
-// compact form the scan line carries (E, A, V, Tx concatenated, matching the
-// index-name idiom on the same line).
+// renderBoundPositions renders a scan event's "bound" field — the positions the
+// run binds, in the index's component order — as the compact form the scan line
+// carries (E, A, V, Tx concatenated, matching the index-name idiom on the same
+// line).
 //
-// A selection that bound no positions is a whole-index scan and renders
-// "none"; the scan line distinguishes that from "?", which means no selection
-// event preceded the scan at all.
+// Three answers, and the middle one is why the field is read rather than
+// assumed. A run binding no positions is a whole-index scan and renders "none".
+// An absent field is a producer that reported no run, which the caller renders
+// as "?" — a scan the trace cannot account for, not a scan over everything.
+// Those two must not collapse: one is a full index read, the other is missing
+// instrumentation, and they look the same in a trace that renders both the same
+// way.
+//
+// The distinction survives because an absent map key yields a nil interface
+// while a present empty slice does not, so the type assertion below is reached
+// only when something was written.
 func renderBoundPositions(field interface{}) string {
+	if field == nil {
+		return ""
+	}
 	positions, ok := field.([]string)
 	if !ok || len(positions) == 0 {
 		return "none"

@@ -10,6 +10,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/planner"
+	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -48,6 +49,42 @@ func createCacheTestDB(t *testing.T, disableCache bool, popts *planner.PlannerOp
 	})
 	require.NoError(t, err)
 	return db, func() { db.Close() }
+}
+
+// assertCacheModesAgree is the second of the two shapes a cache test can take,
+// and the stronger one. cacheTestModes above loops so each mode must satisfy
+// the same written-down expectation; this builds both and requires them to
+// agree with each other, so it needs no expectation at all and cannot be
+// weakened by writing one that both modes happen to meet.
+//
+// That difference is not academic. An expectation is authored against whichever
+// mode the author ran, and the mode that reaches a given code path is decided
+// by query shape rather than by the loop — a constant-E pattern reaches
+// matchFromCache, an :in-bound one does not — so a loop can run twice through
+// one implementation and read as covering two.
+//
+// build populates the database; probe reads it and returns whatever the
+// comparison is over. Both run against each database in turn, so probe may
+// consume relations, hold iterators, or write — it gets a database of its own.
+func assertCacheModesAgree(
+	t *testing.T,
+	build func(t *testing.T, db *Database),
+	probe func(t *testing.T, db *Database) interface{},
+) {
+	t.Helper()
+
+	results := map[bool]interface{}{}
+	for _, mode := range cacheTestModes {
+		db, cleanup := createCacheTestDB(t, mode.disableCache, nil)
+		build(t, db)
+		results[mode.disableCache] = probe(t, db)
+		cleanup()
+	}
+
+	require.Equal(t, results[true], results[false],
+		"the EA cache is an optimization, not a correctness input: "+
+			"cache-disabled gave %v, cache-enabled gave %v",
+		results[true], results[false])
 }
 
 // =============================================================================
@@ -1364,6 +1401,75 @@ func TestCacheMatrix_CardinalityVector(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCacheMatrix_NeverSetVectorAgainstEmptyVectorLiteral pins that a
+// cardinality-vector attribute an entity never had answers a V-bound-to-empty
+// pattern the same way with the cache on and off.
+//
+// The two arms disagree on what an absent vector is. The streaming arm
+// (matchCardinalityVectorAsRelation) reads Stats.TotalElements and returns no
+// tuple when the (E, A) has no datoms at all, before it ever compares V — a
+// never-set attribute is absent, and absent is not the empty vector. The cache
+// arm has no such reading available: CacheEntry keeps only vectorList, so
+// "never written" and "written and wholly tombstoned" are one state to it, and
+// its V-bound branch compares an empty resolved vector against the pattern's
+// and matches.
+//
+// So the same query returns one tuple through the cache and none without it,
+// which contradicts this file's premise that the cache is an optimization and
+// not a correctness input.
+//
+// Driven through the matcher rather than db.Query: the V position needs an
+// empty-vector constant, and going through the parser would make the case
+// depend on how it renders `[]` in that position — a separate question from
+// whether the two arms agree once they have one.
+//
+// See BUG_CACHE_EMPTY_VECTOR_NEVER_SET.
+func TestCacheMatrix_NeverSetVectorAgainstEmptyVectorLiteral(t *testing.T) {
+	tuplesPerMode := map[string]int{}
+
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createCacheTestDB(t, mode.disableCache, nil)
+			defer cleanup()
+
+			skill := datalog.NewKeyword(":person/skill")
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       skill,
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityVector,
+			})
+			db.SetSchema(s)
+
+			// One entity, written under a different attribute, so the entity
+			// exists and :person/skill genuinely never was.
+			who := datalog.NewIdentity("person:alice")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(who, datalog.NewKeyword(":person/name"), "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: who},
+					query.Constant{Value: skill},
+					query.Constant{Value: []interface{}{}},
+				},
+			}
+
+			m := db.Matcher().(*PatternMatcher)
+			rel, err := m.matchUnboundAsRelation(nil, pattern, nil, nil)
+			require.NoError(t, err)
+			tuplesPerMode[mode.name] = drainRelation(t, rel)
+		})
+	}
+
+	require.Equal(t, tuplesPerMode["cache_disabled"], tuplesPerMode["cache_enabled"],
+		"the cache is an optimization: a never-set vector attribute cannot match an "+
+			"empty-vector literal through one path and not the other (disabled=%d, enabled=%d)",
+		tuplesPerMode["cache_disabled"], tuplesPerMode["cache_enabled"])
 }
 
 // TestCacheMatrix_ABoundViaSubquery tests when A is bound via a subquery result

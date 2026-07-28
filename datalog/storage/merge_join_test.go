@@ -580,8 +580,8 @@ func TestMergeJoinKeyComparison(t *testing.T) {
 }
 
 // TestMergeJoinDuplicateKeyBindings pins the merge join's key-group semantics
-// for multi-column bindings: a binding relation may hold several tuples with
-// the same join key, and every (datom × passing tuple) pair produces a row —
+// for multi-symbol bindings: a binding relation may hold several tuples with
+// the same join key, and every (datom × passing tuple) pair produces a tuple —
 // the same output the hash join computes on identical inputs. One tuple per
 // datom is not enough: the first tuple of a key group can fail full-pattern
 // verification while a later one passes, and distinct datoms sharing a key
@@ -607,18 +607,18 @@ func TestMergeJoinDuplicateKeyBindings(t *testing.T) {
 
 	matcher := NewPatternMatcher(db.Store())
 
-	collectRows := func(t *testing.T, rel executor.Relation, err error) []string {
+	collectStringTuples := func(t *testing.T, rel executor.Relation, err error) []string {
 		t.Helper()
 		tuples, err := executor.CollectTuples(rel, err)
 		if err != nil {
 			t.Fatalf("join must not error: %v", err)
 		}
-		rows := make([]string, len(tuples))
+		rendered := make([]string, len(tuples))
 		for i, tuple := range tuples {
-			rows[i] = fmt.Sprintf("%v", tuple)
+			rendered[i] = fmt.Sprintf("%v", tuple)
 		}
-		sort.Strings(rows)
-		return rows
+		sort.Strings(rendered)
+		return rendered
 	}
 
 	t.Run("later same-key tuple matches", func(t *testing.T) {
@@ -632,7 +632,7 @@ func TestMergeJoinDuplicateKeyBindings(t *testing.T) {
 		symbols := []query.Symbol{entity, name}
 		// {alice "Aaa"} sorts first within the alice key group and matches no
 		// datom; {alice "Alice"} matches. Checking only the group's first
-		// tuple loses alice's row.
+		// tuple loses alice's match.
 		bindings := func() executor.Relation {
 			return executor.NewMaterializedRelation(
 				[]query.Symbol{entity, name},
@@ -646,14 +646,14 @@ func TestMergeJoinDuplicateKeyBindings(t *testing.T) {
 
 		hashRel, hashErr := matcher.matchWithHashJoin(pattern, bindings(), symbols, 0, EAVT, nil)
 		mergeRel, mergeErr := matcher.matchWithMergeJoin(pattern, bindings(), symbols, 0, EAVT, nil)
-		hashRows := collectRows(t, hashRel, hashErr)
-		mergeRows := collectRows(t, mergeRel, mergeErr)
+		hashTuples := collectStringTuples(t, hashRel, hashErr)
+		mergeTuples := collectStringTuples(t, mergeRel, mergeErr)
 
-		if len(hashRows) != 2 {
-			t.Fatalf("hash join reference should produce 2 rows, got %d: %v", len(hashRows), hashRows)
+		if len(hashTuples) != 2 {
+			t.Fatalf("hash join reference should produce 2 tuples, got %d: %v", len(hashTuples), hashTuples)
 		}
-		if !reflect.DeepEqual(hashRows, mergeRows) {
-			t.Errorf("merge join must agree with hash join:\n  hash:  %v\n  merge: %v", hashRows, mergeRows)
+		if !reflect.DeepEqual(hashTuples, mergeTuples) {
+			t.Errorf("merge join must agree with hash join:\n  hash:  %v\n  merge: %v", hashTuples, mergeTuples)
 		}
 	})
 
@@ -680,14 +680,14 @@ func TestMergeJoinDuplicateKeyBindings(t *testing.T) {
 
 		hashRel, hashErr := matcher.matchWithHashJoin(pattern, bindings(), symbols, 0, EATV, nil)
 		mergeRel, mergeErr := matcher.matchWithMergeJoin(pattern, bindings(), symbols, 0, EATV, nil)
-		hashRows := collectRows(t, hashRel, hashErr)
-		mergeRows := collectRows(t, mergeRel, mergeErr)
+		hashTuples := collectStringTuples(t, hashRel, hashErr)
+		mergeTuples := collectStringTuples(t, mergeRel, mergeErr)
 
-		if len(hashRows) != 2 {
-			t.Fatalf("hash join reference should produce 2 rows, got %d: %v", len(hashRows), hashRows)
+		if len(hashTuples) != 2 {
+			t.Fatalf("hash join reference should produce 2 tuples, got %d: %v", len(hashTuples), hashTuples)
 		}
-		if !reflect.DeepEqual(hashRows, mergeRows) {
-			t.Errorf("merge join must agree with hash join:\n  hash:  %v\n  merge: %v", hashRows, mergeRows)
+		if !reflect.DeepEqual(hashTuples, mergeTuples) {
+			t.Errorf("merge join must agree with hash join:\n  hash:  %v\n  merge: %v", hashTuples, mergeTuples)
 		}
 	})
 }
@@ -729,7 +729,7 @@ func TestMergeJoinPropagatesDeferredScanError(t *testing.T) {
 		bindingRel:   bindingRel,
 		symbols:      symbols,
 		position:     0,
-		index:        EAVT,
+		bound:        ScanBound{Index: EAVT, Prefix: []datalog.Value{alice}},
 		sortedTuples: []executor.Tuple{{alice}},
 		iter:         &deferredErrorIterator{err: scanErr},
 		workspace:    make(executor.Tuple, len(symbols)),

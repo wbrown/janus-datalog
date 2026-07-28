@@ -62,10 +62,17 @@ func funnelFixture(t *testing.T, db *Database) datalog.Identity {
 
 // TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel holds every dispatch
 // arm to the same two obligations: announce the run it addressed, and report
-// what that run cost. Each case aims a query at one arm.
+// what that run cost — on one event each, both naming the same run.
 //
-// One row per arm, rather than one query asserting "some arm reported": delete
-// either emit from any arm and exactly that arm's row reds. A test that only
+// The completion carrying the run, and not merely its index, is what lets a
+// scan line be rendered from that event alone. The engine emits from parallel
+// workers through one handler, so a consumer that held the announcement to
+// annotate the completion would be pairing one worker's run with another's
+// cost. An arm holds its bound; the obligation is to report it, not to leave
+// the reader to join two events.
+//
+// One case per arm, rather than one query asserting "some arm reported": delete
+// either emit from any arm and exactly that arm's case reds. A test that only
 // showed a query producing events stays green while several arms scan silently.
 //
 // The cache is disabled for the E-and-A-bound arms because matchFromCache
@@ -108,10 +115,17 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 					query: `[:find ?e ?v :where [?e :person/skill ?v]]`,
 					index: AEVT, completions: []string{annotations.PatternStorageScan}},
 
+				// The general arm — no cardinality dispatch, E unbound — is the
+				// one the other six are exceptions to, so a table of exceptions
+				// that omitted it would leave the common path pinned nowhere.
+				{arm: "unbound scan, general arm",
+					query: `[:find ?e ?n :where [?e :person/name ?n]]`,
+					index: AETV, completions: []string{annotations.PatternStorageScan}},
+
 				// A binding relation over the same cardinality-many attribute.
 				// Which strategy chooseJoinStrategy picks is its own business
 				// and pinning it here would couple this test to that choice —
-				// what this row asserts is that whichever it picks reports.
+				// what this case asserts is that whichever it picks reports.
 				{arm: "binding-driven, E from :in",
 					query: `[:find ?v :in $ ?e :where [?e :person/tag ?v]]`, inputEntity: true,
 					noRun: true,
@@ -182,6 +196,44 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 						"the arm read the index to answer; zero intake would mean it did not")
 					require.Contains(t, completion.Data, annotations.KeyDatomsResolved)
 					require.Contains(t, completion.Data, annotations.KeyDatomsMatched)
+
+					// Intake bounds resolution. A scan cannot produce more than
+					// it read, so this is the one ordering the three terms
+					// always satisfy — `resolved >= matched` is not an
+					// invariant, because merge join emits a tuple per (datom,
+					// binding tuple) pair and can match more than it resolved.
+					//
+					// Transposing any arm's two counters reds exactly that arm.
+					resolved, _ := completion.Data[annotations.KeyDatomsResolved].(int)
+					require.GreaterOrEqual(t, scanned, resolved,
+						"%s reports resolving %d from an intake of %d; resolution cannot "+
+							"produce datoms the scan never read", tc.arm, resolved, scanned)
+
+					// An arm that priced a run says which run, whole. The index
+					// alone is half a run: it names the component order without
+					// the components, so "AETV" cannot be told from "AETV under
+					// :person/name" and the amplification the funnel reports
+					// cannot be attributed to a bound.
+					if _, named := completion.Data[annotations.KeyIndex]; named {
+						require.Contains(t, completion.Data, annotations.KeyBound,
+							"%s named the index it walked; the positions it bound belong on the "+
+								"same event, not on one a parallel worker may have interleaved", tc.arm)
+					}
+
+					// Announced and priced are the same run. Two events built
+					// from one ScanBound cannot disagree; two built from an
+					// index and a separately-derived bound can, and that drift
+					// is invisible in a trace because both lines read plausibly.
+					if !tc.noRun {
+						require.Equal(t, selection.Data[annotations.KeyIndex],
+							completion.Data[annotations.KeyIndex],
+							"%s priced a different index than it announced", tc.arm)
+						require.Equal(t, selection.Data[annotations.KeyBound],
+							completion.Data[annotations.KeyBound],
+							"%s priced a different run than it announced", tc.arm)
+						require.Equal(t, selection.Data["bound.values"],
+							completion.Data["bound.values"])
+					}
 				})
 			}
 		})
@@ -189,13 +241,23 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 }
 
 // TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun pins the one dispatch
-// arm that deliberately does not announce a bound.
+// arm that deliberately does not announce a bound, and the one that does not
+// report a funnel.
 //
 // matchFromCache addresses no run: the cache chooses an index by cardinality
 // inside resolution, and a hit reads no index at all, so a bound announced here
 // would name a run this call did not choose. What it owes its reader is the
 // cost, and the second query pins the part that makes the number meaningful —
 // a hit reports zero, which is a real answer rather than a missing one.
+//
+// It also owes that cost in a shape that is true. The funnel models three
+// stages of one scan, narrowing — intake, then what resolution made of it, then
+// what the pattern kept. A hit performs none of the first two: it reads no
+// index and runs no resolution, it reads an entry some earlier call built. So
+// the values it serves are not "resolved" and do not sit below an intake of
+// zero; asserting they do inverts the one ordering the funnel guarantees. This
+// arm reports values served and values matched, with intake beside them as its
+// own fact.
 func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -232,6 +294,10 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 			require.Positive(t, miss.Data[annotations.KeyDatomsScanned],
 				"a miss resolved from storage and read the index to do it")
 			require.Equal(t, 1, miss.Data[annotations.KeyDatomsMatched])
+			require.Equal(t, 1, miss.Data[annotations.KeyValuesServed],
+				"the entry holds the one current value of a cardinality-one attribute")
+			require.NotContains(t, miss.Data, annotations.KeyDatomsResolved,
+				"this arm reports no funnel; a middle term here would be read as one")
 
 			// Second read of the same (E, A): a hit, which reads no index.
 			events = nil
@@ -245,6 +311,11 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 			require.Equal(t, 0, hit.Data[annotations.KeyDatomsScanned],
 				"a hit reads no index, and zero is the answer rather than an absent field")
 			require.Equal(t, 1, hit.Data[annotations.KeyDatomsMatched])
+			require.Equal(t, 1, hit.Data[annotations.KeyValuesServed],
+				"a hit serves the entry's values without reading anything to do it")
+			require.NotContains(t, hit.Data, annotations.KeyDatomsResolved,
+				"the hit is where the funnel reading fails hardest: one value served "+
+					"against zero intake renders as resolution producing what no scan read")
 		})
 	}
 }
@@ -276,9 +347,9 @@ func TestMemoryBackendReportsIntakeNatively(t *testing.T) {
 	events = nil
 	result, err := db.Query(`[:find ?e ?n :where [?e :person/name ?n]]`)
 	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
+	tuples, err := executor.CollectTuples(result, nil)
 	require.NoError(t, err)
-	require.Len(t, rows, 1, "last write wins")
+	require.Len(t, tuples, 1, "last write wins")
 
 	scan := lastEventNamed(events, annotations.PatternStorageScan)
 	require.NotNil(t, scan)

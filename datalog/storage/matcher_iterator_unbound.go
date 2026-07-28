@@ -10,8 +10,13 @@ import (
 
 // unboundIterator streams results for patterns without bindings
 type unboundIterator struct {
-	matcher     *PatternMatcher
-	index       IndexType // reported in the scan statistics on Close
+	matcher *PatternMatcher
+	// bound is the run this scan walks, kept whole rather than as its index
+	// alone: Close reports it, and a scan line that named only the index would
+	// leave the reader to find the bound on a different event — which is the
+	// state the formatter used to carry and could not carry correctly once the
+	// engine emitted from parallel workers.
+	bound       ScanBound
 	opened      time.Time // scan open; Close reports the lifetime as the event's latency
 	pattern     *query.DataPattern
 	symbols     []query.Symbol
@@ -88,6 +93,11 @@ func (it *unboundIterator) Close() error {
 		if it.storageIter != nil {
 			scanned = it.storageIter.Scanned()
 		}
+		// The run travels with the cost. addBoundFields writes the index, the
+		// positions the run binds and their values, which is everything the
+		// scan line needs — so the line is rendered from this event alone.
+		run := map[string]interface{}{}
+		addBoundFields(run, it.bound)
 		emitScanCompletion(
 			it.matcher.handler,
 			annotations.PatternStorageScan,
@@ -98,7 +108,7 @@ func (it *unboundIterator) Close() error {
 				resolved: it.datomsResolved,
 				matched:  it.datomsMatched,
 			},
-			map[string]interface{}{annotations.KeyIndex: it.index},
+			run,
 		)
 	}
 

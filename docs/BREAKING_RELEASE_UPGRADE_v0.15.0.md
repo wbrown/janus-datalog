@@ -159,20 +159,28 @@ matcher, and an assignment cannot fan out to duplicates. The copies are gone —
 nothing left for a setter to keep in step, and the mutex that guarded the field
 against the setter is gone with it.
 
-**The engine no longer wraps installed handlers in `annotations.Synchronized`.**
-It emits from parallel workers, so a handler that is not safe for concurrent
-calls must now be wrapped by whoever installs it:
+**The engine no longer wraps installed handlers, and `annotations.Synchronized`
+is removed.** It emits from parallel workers, so a handler is called
+concurrently.
 
-```go
-db.AnnotationHandler = annotations.Synchronized(myHandler)
-```
+Wrapping was dropped rather than moved because applying it at one assignment
+path and not another would give one field two concurrency contracts depending on
+how it was populated; it also put a process-wide lock on every event on the hot
+path, whether or not the handler needed one.
 
-`annotations.Synchronized` is unchanged and still exported. Wrapping was dropped
-rather than moved because applying it at one assignment path and not another
-would give one field two concurrency contracts depending on how it was
-populated; it also put a process-wide lock on every event on the hot path,
-whether or not the handler needed one. A handler that only appends under its own
-mutex, writes to a channel, or is already safe now pays nothing.
+`Synchronized` went with it, and its removal is the substantive half. **A
+handler that only renders needs no lock**: every event carries what its output
+reports, so a handler holding nothing between events is safe by construction.
+One that *does* hold something is reading whichever worker wrote last, and a
+mutex does not correct that — it serializes the writes and leaves the reading
+wrong. Keeping the wrapper around made "serialize the consumer" look like the
+answer to a consumer that should not have had the state.
+
+Migration, if a handler of yours keeps cross-event state: move that state to
+whatever produces the events, or have the handler derive its output from the
+event alone. If it accumulates for its own reasons — counting, batching, writing
+to a file — it owns its synchronization, and a two-line mutex wrapper at the
+install site is the whole of it.
 
 ## Browser persistence
 

@@ -22,11 +22,13 @@ func TestRenderBoundPositionsCompactsComponentOrder(t *testing.T) {
 		{"one position", []string{"E"}, "E"},
 		{"multi-character position", []string{"A", "Tx"}, "ATx"},
 		{"all four", []string{"E", "A", "V", "Tx"}, "EAVTx"},
-		// A whole-index scan binds nothing. It is a real answer, distinct from
-		// "no selection event was seen" — which the scan line renders "?".
+		// A whole-index scan binds nothing. That is a real answer and it is
+		// distinct from the producer reporting no run at all, which the scan
+		// line renders "?" — one is a full index read, the other is missing
+		// instrumentation, and a trace that renders them alike hides the first.
 		{"whole index, nil slice", []string(nil), "none"},
 		{"whole index, empty slice", []string{}, "none"},
-		{"field absent", nil, "none"},
+		{"field absent", nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, renderBoundPositions(tc.field))
@@ -76,32 +78,32 @@ func TestUniqueLookupLineReportsItsFunnel(t *testing.T) {
 		"an arm renders; falling through to the default dumps the payload")
 }
 
-// TestScanLineReportsBoundFromIndexSelection is the pairing pin: the scan line's
-// index and bound come from the preceding pattern/index-selection event, so the
-// two events must agree on the payload's shape.
+// TestScanLineRendersFromItsOwnEvent pins that a scan line needs no memory of
+// the event before it.
 //
-// Nothing else checks that agreement. A formatter reading a key no emitter
-// writes still compiles, still runs, and renders "bound: ?" on every line —
-// a wrong answer that looks like missing instrumentation.
-func TestScanLineReportsBoundFromIndexSelection(t *testing.T) {
+// The formatter used to carry lastIndex and lastBound between calls, filled by
+// the preceding index-selection event. That is the reporter's state living in
+// the consumer, and it cannot survive concurrency: the engine emits from
+// parallel workers through one handler, so a worker's scan line could render
+// the index another worker had just selected. Serializing the handler would
+// have hidden the race and kept the wrong pairing, because the leftovers are
+// still whoever wrote last.
+//
+// The matcher holds the bound at scan time — it hands the same ScanBound to
+// emitIndexSelection and to the reader — so the scan event carries it, and this
+// formats one with no preceding event at all.
+func TestScanLineRendersFromItsOwnEvent(t *testing.T) {
 	var out bytes.Buffer
 	f := NewPlainTextFormatter(&out)
-
-	require.Empty(t, f.Format(Event{
-		Name: PatternIndexSelection,
-		Data: map[string]interface{}{
-			KeyPattern:     producerValue("[?e :task/scenario ?s]"),
-			KeyIndex:       producerValue("AVET"),
-			KeyBound:       []string{"A", "V"},
-			"bound.values": []string{":task/scenario", "scenario-alpha"},
-		},
-	}), "index selection is folded into the following scan line, not printed itself")
 
 	line := f.Format(Event{
 		Name:    PatternStorageScan,
 		Latency: 2 * time.Millisecond,
 		Data: map[string]interface{}{
 			KeyPattern:        producerValue("[?e :task/scenario ?s]"),
+			KeyIndex:          producerValue("AVET"),
+			KeyBound:          []string{"A", "V"},
+			"bound.values":    []string{":task/scenario", "scenario-alpha"},
 			KeyDatomsScanned:  10,
 			KeyDatomsResolved: 10,
 			"scan.duration":   2 * time.Millisecond,
@@ -142,40 +144,46 @@ func TestScanLineShowsIntakeWhenItExceedsOutput(t *testing.T) {
 }
 
 // TestScanLineWholeIndexBoundIsNotUnknown separates the two ways a scan line can
-// fail to name a bound: a selection that bound nothing (a whole-index scan) is
-// "none", while no selection event at all is "?". Collapsing them would hide a
+// fail to name a bound: a run that bound nothing (a whole-index scan) is "none",
+// while a producer that named no run at all is "?". Collapsing them would hide a
 // full scan behind the same rendering as missing instrumentation.
+//
+// Both now turn on what the scan event carries, not on whether an earlier event
+// arrived — an absent KeyBound is a producer that reported none, and a present
+// but empty one is a run over the whole index.
 func TestScanLineWholeIndexBoundIsNotUnknown(t *testing.T) {
-	scan := Event{
+	var wholeIndex bytes.Buffer
+	f := NewPlainTextFormatter(&wholeIndex)
+	require.Contains(t, f.Format(Event{
+		Name: PatternStorageScan,
+		Data: map[string]interface{}{
+			KeyPattern:        producerValue("[?e ?a ?v]"),
+			KeyIndex:          producerValue("EATV"),
+			KeyBound:          []string(nil),
+			"bound.values":    []string(nil),
+			KeyDatomsResolved: 500,
+		},
+	}), "EATV, bound: none")
+
+	var unreported bytes.Buffer
+	bare := NewPlainTextFormatter(&unreported)
+	require.Contains(t, bare.Format(Event{
 		Name: PatternStorageScan,
 		Data: map[string]interface{}{
 			KeyPattern:        producerValue("[?e ?a ?v]"),
 			KeyDatomsResolved: 500,
-			"scan.duration":   time.Millisecond,
 		},
-	}
-
-	var withSelection bytes.Buffer
-	f := NewPlainTextFormatter(&withSelection)
-	f.Format(Event{
-		Name: PatternIndexSelection,
-		Data: map[string]interface{}{
-			KeyPattern:     producerValue("[?e ?a ?v]"),
-			KeyIndex:       producerValue("EATV"),
-			KeyBound:       []string(nil),
-			"bound.values": []string(nil),
-		},
-	})
-	require.Contains(t, f.Format(scan), "EATV, bound: none")
-
-	var noSelection bytes.Buffer
-	bare := NewPlainTextFormatter(&noSelection)
-	require.Contains(t, bare.Format(scan), "?, bound: ?")
+	}), "?, bound: ?")
 }
 
-// TestFormatterHandleWritesScanLine pins that the paired events reach the
-// writer through Handle, not only through Format: the index-selection event
-// must write nothing while still setting up the scan line that follows.
+// TestFormatterHandleWritesScanLine pins that a scan line reaches the writer
+// through Handle, not only through Format, and that the index-selection event
+// still writes nothing of its own.
+//
+// It no longer sets anything up for the line that follows. Handle is where a
+// formatter carrying state between events would have been fed, so this is the
+// path that has to stay stateless: the two events are formatted in order and
+// only the scan produces output, from its own payload.
 func TestFormatterHandleWritesScanLine(t *testing.T) {
 	var out bytes.Buffer
 	f := NewPlainTextFormatter(&out)
@@ -188,14 +196,15 @@ func TestFormatterHandleWritesScanLine(t *testing.T) {
 			KeyBound:   []string{"A"},
 		},
 	})
-	require.Empty(t, out.String())
+	require.Empty(t, out.String(), "the announcement is not a line of its own")
 
 	f.Handle(Event{
 		Name: PatternStorageScan,
 		Data: map[string]interface{}{
 			KeyPattern:        producerValue("[?e :person/name ?n]"),
+			KeyIndex:          producerValue("AETV"),
+			KeyBound:          []string{"A"},
 			KeyDatomsResolved: 3,
-			"scan.duration":   time.Millisecond,
 		},
 	})
 	require.Equal(t, 1, strings.Count(out.String(), "\n"))
