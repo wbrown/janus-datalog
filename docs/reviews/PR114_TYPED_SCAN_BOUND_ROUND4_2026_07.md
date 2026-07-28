@@ -146,9 +146,19 @@ See the migration family below (Family 5, instance 5d).
 
 ## Family 2 — An obligation was placed on a set of paths without deriving the set
 
-**Invariant.** Every path that opens a scan on a pattern's behalf announces the
-run it addressed and reports what that run cost. A path that reports nothing is
-indistinguishable from one that scanned nothing.
+**Invariant.** ~~Every path that opens a scan on a pattern's behalf~~ announces
+the run it addressed and reports what that run cost. A path that reports nothing
+is indistinguishable from one that scanned nothing.
+
+**Widened 2026-07-28: every path that opens a scan _for a query_.** "On a
+pattern's behalf" licensed the omission it was written to forbid.
+`LookupAttribute`, `LookupAllAttributes`, the attribute-fetch fusion path,
+`pull_batch` and `PrefetchEntities` serve `get-else`, `missing?`, `get-some` and
+pull — clauses and find elements, not data patterns — and each reads real index
+ranges while reporting nothing. A trace of a pull-heavy query under-reports by
+whatever they spent, which is the failure the invariant names. What the trace
+exists to account for is a *query's* index cost, and a data pattern is one cause
+of that cost among several.
 
 **The generator.** T1/T2 named some arms; round 3 converted those and wrote
 "every dispatch arm". The enumeration came from the review, never from the
@@ -587,6 +597,149 @@ configuration nobody runs.
 
 **Open within R2**: the seam does not currently have the pattern context the
 event carries. Resolving that is part of the work, not a separate decision.
+
+**R2 amended (2026-07-28), after deriving the instance set.** The derivation the
+ruling asked for was run, and it falsifies the ruling's premise twice. Both
+findings are from reading; the amended mechanism below is **proposed, not
+ruled**.
+
+*The instance set.* Twenty-eight production call sites open a scan — twelve
+through `Scan`, sixteen through `ScanKeysOnly`. They partition by whether a
+pattern exists above them:
+
+- **A — no pattern; must not report** (9). `cmd/datalog/stats.go:90`,
+  `export.go:49`, `export_bin.go:80`, `database.go:325` (WarmCache),
+  `database.go:1682` (RGA write path), `cardinality_inference.go:78` (schema
+  reconstruction at open), `read_session.go:44`/`:58` (MaxElementID,
+  MaxTxForEntity), `memory_store.go:157`/`:169`/`:190`.
+- **B — a pattern's scan; must report** (16). `matcher_relations.go:510`,
+  `:911`, `:1076`, `:2054`, `:2222`, `:2487`; `matcher.go:717`, `:938`, `:983`;
+  `matcher_iterator_nonreusing.go:99`; `hash_join_matcher.go:167`, `:576`;
+  `pull_batch.go:77`; `database.go:3041`, `:3084`; `prefetch.go:51`.
+- **C — nested inside resolution; must not emit, must hand intake back** (7).
+  `cache_resolver.go:79`; `set_resolution.go:78`, `:299`;
+  `vector_resolution.go:104`; `unique_resolve.go:115`, `:164`, `:241`.
+
+*First premise failure.* "The call sites **are** the obligated set. This is
+mechanical and complete" — they are a superset. A third of them must stay
+silent, and group C's silence is deliberate: round 3 recorded that one event per
+nested read buries the query the stream exists to describe.
+
+*Second, and the one that decides the mechanism.* The seam holds **one of the
+funnel's three terms**. `scanned` comes from `Iterator.Scanned`; `resolved` is
+what CRDT resolution produced and `matched` is what survived the pattern, both
+of which happen in the consumer, after the iterator. `Scan` could never emit a
+funnel because it has no access to two thirds of one. Reporting cannot move into
+the seam. The pattern-context problem recorded above was the symptom of trying
+to make it.
+
+*Family 2 is two failures with different causes, which the ruling conflates.*
+
+- **Forgetting.** The arm never emits. `validatingVBoundIterator.Close` closes
+  two iterators and returns nil. Its four reporting fields carry a comment
+  explaining why they must accumulate rather than be read at the end, so the
+  design was reasoned through and the emit was simply never written. 2a and 2b.
+- **Plumbing.** Intake reaches the arm through a dozen bespoke channels — a
+  `Scanned` field on `SetResolutionResult`, another on
+  `VectorResolutionResult`, a return value from each `CacheResolver` method, an
+  int from `GetOrResolve`, `Iterator.Scanned` — and each consumer decides
+  whether to look. 2c and 2d.
+
+Every prior round converted arms, which addresses forgetting one instance at a
+time and never touches the plumbing. That is the generator this family has been
+regenerating from.
+
+*Mechanism, first form. Part 1 superseded by the verification below; part 2
+stands.*
+
+1. ~~**Intake accrues at the seam into the active scope.** `scanned` is the one
+   term the seam owns, so let the scan accrue it rather than hand it back.~~
+2. **Emission rides on the iterator, not on the arm's memory.** An arm that
+   obtains a pattern-scanning iterator gets one that emits on Close, fed
+   `resolved` and `matched` as the arm filters. Forgetting stops being possible
+   because the emit lives in what produced the iterator rather than in a block
+   the arm has to remember to write.
+
+*Verifications, run 2026-07-28. Both adverse to part 1 as written.* An "active
+scope" needs a container whose lifetime is one pattern's execution. Neither
+candidate is one.
+
+- **`ReadSession` is per-query, not per-pattern.** `sessionMatcher`
+  (`convenience.go:77-87`) mints one session per query and attaches it to one
+  matcher — `AttachReadSession` (`matcher.go:110-113`) sets `m.reader =
+  session` — and the session-bound result closes it. A scope there accrues the
+  whole query into one number, where the funnel's entire content is per-pattern
+  attribution. It is also concurrently shared: the matcher is not cloned when
+  the Context forks, and `badgerReadSession` carries a `mu` and an `openIters`
+  set, which is what a type built for concurrent use looks like.
+- **`Context` is forked per worker.** `forkContext` (`executor/context.go:61-79`)
+  hands each parallel worker its own Context precisely because per-query mutable
+  state is not concurrency-safe; only the collector is shared. A scope there
+  splits one pattern's intake across four containers and the emitting arm reads
+  whichever one it holds — the shape Family 5c records for `OutputFormatter`,
+  where a mutex would serialize the writes and leave every line wrong.
+
+There is no ambient per-pattern container in the design. Inventing one is a
+larger change than this family needs, and it would be hidden state besides.
+
+*Mechanism, amended. Ruled 2026-07-28.*
+
+1. **A scan scope threaded as a required parameter at the resolver boundary** —
+   `resolveVector(eBytes, aBytes, scope)` and its siblings. Accrual happens at
+   scan time, so an error path keeps the intake it spent rather than losing it
+   with the result struct that never gets built (2d). One inward parameter
+   replaces four outward channels — the `Scanned` fields on
+   `SetResolutionResult` and `VectorResolutionResult`, the `scanned` return on
+   all three `CacheResolver` methods, the int from `GetOrResolve` — so a
+   consumer cannot decline to look (2c). It cannot be forgotten because it is a
+   parameter rather than a value the caller must remember to read, and the nine
+   group-A callers pass a discarding scope, which makes "this scan is nobody's
+   pattern" a statement rather than an omission.
+
+   **The seam is untouched.** Intake still comes from `Iterator.Scanned`; the
+   resolver accrues it. `StoreReader` does not change, so this is not a fourth
+   public interface break on this branch.
+
+2. **Emission rides on the iterator**, unchanged from the first form above.
+
+The two halves address the two failures separately, which is the point: prior
+rounds converted arms, which treats forgetting one instance at a time and never
+touches the plumbing.
+
+*Group B splits once more, and it decides the event vocabulary. Ruled
+2026-07-28.* `emitScanCompletion` takes `pattern *query.DataPattern` as a
+required parameter, and half of group B has none: `LookupAttribute`,
+`LookupAllAttributes`, the fusion path, `pull_batch`, `PrefetchEntities`. They
+did not forget to emit — they have no envelope to emit into. That is why 2b
+reads as a list of arms that lapsed.
+
+**One event family. The bound and the funnel are mandatory; the cause is
+optional.** Not one event name per kind of cause.
+
+The reason is the consumer. `Database.Analyze` sums latency per event name, and
+anything asking "what did this query spend on index reads" must find every scan.
+Split them across `pattern/storage-scan`, `lookup/storage-scan` and
+`pull/storage-scan` and every cost consumer has to enumerate that set, then
+silently under-reports the day a fourth appears. That is the silent-default
+failure relocated from a `switch` to a consumer's list of names. One name means a
+scan cannot escape a cost query by being a new kind of scan.
+
+**Why R3's precedent does not transfer, though it looks like it should.** R3 kept
+the cache event off `emitScanCompletion` because it has no funnel, and an empty
+one renders `0 scanned, 0 resolved, 0 matched` — an assertion that a scan
+happened and found nothing, which is false data. A missing *pattern* key is not
+that: the line simply names no cause. Omitting a key that has no value is not the
+same act as supplying a zero-valued structure that reads as a measurement. So the
+funnel stays required and the pattern does not.
+
+Concretely, `emitScanCompletion` loses its `pattern` parameter. Pattern-bearing
+arms pass `KeyPattern` through `extraData` beside `addBoundFields`; pattern-less
+ones pass what does name their cause — for `LookupAttribute` the entity and
+attribute it was asked for, which is more specific than a pattern would be. Both
+still pass a bound and a funnel, because those are what every scan actually has.
+
+`pull_batch` and `PrefetchEntities` are in the family under the widened
+invariant. They read on a query's behalf and their silence under-reports it.
 
 **R3. The cache event reports what it did.** `entry.valueCount()` is not a wrong
 number — on a hit the call really does take all the entry's values. The funnel

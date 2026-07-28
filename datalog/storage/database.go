@@ -2711,7 +2711,8 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 			},
 		}
 		emitScanCompletion(d.AnnotationHandler, annotations.UniqueLookupComplete,
-			pattern, start, funnel, nil)
+			start, funnel,
+			map[string]interface{}{annotations.KeyPattern: pattern})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("LookupByUnique: resolution failed: %w", err)

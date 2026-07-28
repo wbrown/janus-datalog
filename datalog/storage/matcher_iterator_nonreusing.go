@@ -137,13 +137,14 @@ func (it *nonReusingIterator) Close() error {
 		// many as it opened scans and naming one would name whichever happened
 		// to be last. scans.opened is what stands in its place.
 		emitScanCompletion(it.matcher.handler, annotations.PatternPerBindingScanComplete,
-			it.pattern, it.scanStart,
+			it.scanStart,
 			scanFunnel{
 				scanned:  it.totalScanned,
 				resolved: it.totalResolved,
 				matched:  it.totalMatched,
 			},
 			map[string]interface{}{
+				annotations.KeyPattern:     it.pattern,
 				annotations.KeyBindingSize: len(it.bindingTuples),
 				annotations.KeyScansOpened: it.scansOpened,
 			})

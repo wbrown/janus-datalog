@@ -1550,10 +1550,10 @@ func (m *PatternMatcher) matchCardinalityManyAsRelation(
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, result.Bound)
 		defer func() {
-			run := map[string]interface{}{}
+			run := map[string]interface{}{annotations.KeyPattern: pattern}
 			addBoundFields(run, result.Bound)
 			emitScanCompletion(m.handler, annotations.PatternStorageScan,
-				pattern, opened,
+				opened,
 				scanFunnel{
 					scanned:  result.Scanned,
 					resolved: len(result.Members),
@@ -1629,10 +1629,10 @@ func (m *PatternMatcher) matchCardinalityVectorAsRelation(
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, result.Bound)
 		defer func() {
-			run := map[string]interface{}{}
+			run := map[string]interface{}{annotations.KeyPattern: pattern}
 			addBoundFields(run, result.Bound)
 			emitScanCompletion(m.handler, annotations.PatternStorageScan,
-				pattern, opened,
+				opened,
 				scanFunnel{
 					scanned:  result.Scanned,
 					resolved: len(result.Elements),
@@ -1847,10 +1847,10 @@ func (m *PatternMatcher) matchCardinalityManyMembership(
 		if isMember {
 			resolved = 1
 		}
-		run := map[string]interface{}{}
+		run := map[string]interface{}{annotations.KeyPattern: pattern}
 		addBoundFields(run, bound)
 		emitScanCompletion(m.handler, annotations.PatternStorageScan,
-			pattern, opened,
+			opened,
 			scanFunnel{scanned: scanned, resolved: resolved, matched: resolved},
 			run)
 	}
@@ -2014,10 +2014,10 @@ func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
-		run := map[string]interface{}{}
+		run := map[string]interface{}{annotations.KeyPattern: it.pattern}
 		addBoundFields(run, it.bound)
 		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
-			it.pattern, it.opened,
+			it.opened,
 			scanFunnel{
 				scanned:  it.storageIter.Scanned() + it.nestedScanned,
 				resolved: it.datomsResolved,
@@ -2184,10 +2184,10 @@ func (it *vectorScanAllEntitiesIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
-		run := map[string]interface{}{}
+		run := map[string]interface{}{annotations.KeyPattern: it.pattern}
 		addBoundFields(run, it.bound)
 		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
-			it.pattern, it.opened,
+			it.opened,
 			scanFunnel{
 				scanned:  it.storageIter.Scanned() + it.nestedScanned,
 				resolved: it.datomsResolved,
@@ -2416,10 +2416,10 @@ func (it *cardinalityManyAVETValueIterator) Close() error {
 		return nil
 	}
 	if it.matcher.handler != nil {
-		run := map[string]interface{}{}
+		run := map[string]interface{}{annotations.KeyPattern: it.pattern}
 		addBoundFields(run, it.bound)
 		emitScanCompletion(it.matcher.handler, annotations.PatternStorageScan,
-			it.pattern, it.opened,
+			it.opened,
 			scanFunnel{
 				scanned:  it.storageIter.Scanned(),
 				resolved: it.datomsResolved,

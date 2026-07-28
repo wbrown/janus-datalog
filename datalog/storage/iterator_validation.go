@@ -6,7 +6,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // Iterator validation and statistics functions shared across iterator implementations.
@@ -95,16 +94,44 @@ type scanFunnel struct {
 // output formatter renders it as the line's prefix and Database.Analyze sums it
 // per event name, so a scan that omitted it would report as 0 ms in both.
 //
-// The run is not a parameter. Two producers address no single run: the
-// per-binding path runs chooseIndex once per binding tuple, and the unique
-// lookup walks AVET for the claimant and then the claimant's own history. A
-// producer that walked one run reports it into extraData with addBoundFields;
-// the rest say nothing rather than naming a run that did not happen. Half a run
-// — an index without the components bound under it — is not one of the options.
+// Neither the run nor the cause is a parameter, for the same reason: not every
+// scan has one, and a parameter would force the ones that don't to supply
+// something.
 //
-// Values go in typed — the pattern, and whatever the producer adds. Rendering
-// belongs to the formatter, and flattening here would spend an allocation per
-// emit to hand the consumer a string to parse.
+// Two producers address no single run — the per-binding path runs chooseIndex
+// once per binding tuple, and the unique lookup walks AVET for the claimant and
+// then the claimant's own history. A producer that walked one run reports it
+// into extraData with addBoundFields; the rest say nothing rather than naming a
+// run that did not happen. Half a run — an index without the components bound
+// under it — is not one of the options.
+//
+// The cause is what asked for the scan, and it is not always a data pattern.
+// LookupAttribute, LookupAllAttributes, the attribute-fetch fusion path,
+// pull_batch and PrefetchEntities read on behalf of get-else, missing?,
+// get-some and pull. They are scans a query paid for and they belong in this
+// event family — a trace that omits them under-reports the query — but they
+// have no *query.DataPattern, and a required pattern parameter is exactly what
+// kept them out of the envelope and reading as arms that forgot to emit. A
+// pattern-bearing producer writes annotations.KeyPattern into extraData; the
+// rest name their own cause. The key is a constant, so searching it finds every
+// producer that claims a pattern — the same audit a sole-writer function would
+// give, without a function whose body is one assignment.
+//
+// Note the asymmetry with the funnel, which stays required. An absent funnel
+// would have to be passed as an empty one and would render "0 scanned, 0
+// resolved, 0 matched" — an assertion that a scan ran and found nothing, which
+// is false. An absent cause renders as a line that names no cause. Omitting a
+// key that has no value is not the same act as supplying a zero-valued
+// structure that reads as a measurement.
+//
+// One event family, not one name per kind of cause: Database.Analyze sums per
+// event name, so anything asking what a query spent on index reads would
+// otherwise have to enumerate the names and would silently miss the next one
+// added.
+//
+// Values go in typed — whatever the producer adds. Rendering belongs to the
+// formatter, and flattening here would spend an allocation per emit to hand the
+// consumer a string to parse.
 //
 // Called once per scan, so the map construction is not on any hot path.
 //
@@ -117,13 +144,11 @@ type scanFunnel struct {
 func emitScanCompletion(
 	handler func(annotations.Event),
 	eventName string,
-	pattern *query.DataPattern,
 	opened time.Time,
 	funnel scanFunnel,
 	extraData map[string]interface{},
 ) {
 	data := map[string]interface{}{
-		annotations.KeyPattern:        pattern,
 		annotations.KeyDatomsScanned:  funnel.scanned,
 		annotations.KeyDatomsResolved: funnel.resolved,
 		annotations.KeyDatomsMatched:  funnel.matched,

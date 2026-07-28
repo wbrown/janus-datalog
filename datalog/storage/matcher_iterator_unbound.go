@@ -96,12 +96,11 @@ func (it *unboundIterator) Close() error {
 		// The run travels with the cost. addBoundFields writes the index, the
 		// positions the run binds and their values, which is everything the
 		// scan line needs — so the line is rendered from this event alone.
-		run := map[string]interface{}{}
+		run := map[string]interface{}{annotations.KeyPattern: it.pattern}
 		addBoundFields(run, it.bound)
 		emitScanCompletion(
 			it.matcher.handler,
 			annotations.PatternStorageScan,
-			it.pattern,
 			it.opened,
 			scanFunnel{
 				scanned:  scanned,

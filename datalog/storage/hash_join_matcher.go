@@ -714,10 +714,13 @@ func (it *hashJoinIterator) Close() error {
 	// the scan reports a large datoms.scanned against zero resolved. A fully
 	// tombstoned cardinality-many group reaches it the same way.
 	if it.matcher.handler != nil {
-		run := map[string]interface{}{annotations.KeyBindingSize: it.bindingTupleCount}
+		run := map[string]interface{}{
+			annotations.KeyPattern:     it.pattern,
+			annotations.KeyBindingSize: it.bindingTupleCount,
+		}
 		addBoundFields(run, it.bound)
 		emitScanCompletion(it.matcher.handler, annotations.PatternHashJoinComplete,
-			it.pattern, it.scanStart,
+			it.scanStart,
 			scanFunnel{
 				scanned:  it.iter.Scanned(),
 				resolved: it.datomsResolved,
@@ -857,10 +860,13 @@ func (it *mergeJoinIterator) Close() error {
 	// Merge join is the strategy chosen for the largest binding sets, so it is
 	// the one whose scan volume most needs reporting.
 	if it.matcher.handler != nil {
-		run := map[string]interface{}{annotations.KeyBindingSize: len(it.sortedTuples)}
+		run := map[string]interface{}{
+			annotations.KeyPattern:     it.pattern,
+			annotations.KeyBindingSize: len(it.sortedTuples),
+		}
 		addBoundFields(run, it.bound)
 		emitScanCompletion(it.matcher.handler, annotations.PatternMergeJoinComplete,
-			it.pattern, it.scanStart,
+			it.scanStart,
 			scanFunnel{
 				scanned:  it.iter.Scanned(),
 				resolved: it.datomsResolved,
