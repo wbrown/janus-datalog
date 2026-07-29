@@ -65,7 +65,7 @@ func TestQueryPathUsesCache(t *testing.T) {
 	key := CacheKey{E: eBytes, A: aBytes}
 
 	// The cache should now have an entry for this (E, A) pair
-	entry, _, err := db.Cache().GetOrResolve(key, bm, nil, nil)
+	entry, err := db.Cache().GetOrResolve(key, bm, nil, nil, DiscardIntake)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, "Alice", entry.OneValue())
@@ -317,21 +317,23 @@ func TestCacheResolverInterface(t *testing.T) {
 	assert.Equal(t, schema.CardinalityMany, matcher.GetCardinality(tagsAttr))
 
 	// Test ResolveLWW
-	val, maxID, lwwScanned, present, err := matcher.ResolveLWW(eBytes, nameAttr)
+	lww := &scanReport{}
+	val, maxID, present, err := matcher.ResolveLWW(eBytes, nameAttr, lww)
 	require.NoError(t, err)
 	assert.True(t, present, "the (E, A) carries datoms, so it is present")
 	assert.Equal(t, "Alice", val)
 	assert.NotZero(t, maxID.Lamport)
-	assert.Positive(t, lwwScanned, "resolution read the index and must report it")
+	assert.Positive(t, lww.scanned, "resolution read the index and must report it")
 
 	// Test ResolveAddWins
-	set, maxID, addWinsScanned, present, err := matcher.ResolveAddWins(eBytes, tagsAttr)
+	addWins := &scanReport{}
+	set, maxID, present, err := matcher.ResolveAddWins(eBytes, tagsAttr, addWins)
 	require.NoError(t, err)
 	assert.True(t, present, "the (E, A) carries datoms, so it is present")
 	_, hasDev := set["dev"]
 	assert.True(t, hasDev)
 	assert.NotZero(t, maxID.Lamport)
-	assert.Positive(t, addWinsScanned, "resolution read the index and must report it")
+	assert.Positive(t, addWins.scanned, "resolution read the index and must report it")
 }
 
 // TestQueryExecutionUsesCache verifies that actual Datalog queries
@@ -375,7 +377,7 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 			key := CacheKey{E: eBytes, A: nameAttr}
 
 			// The cache should now have an entry from the query execution
-			entry, _, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil)
+			entry, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after query execution")
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -436,7 +438,7 @@ func TestJoinQueryUsesCache(t *testing.T) {
 			copy(cityAttr[:], ":person/city")
 			key := CacheKey{E: e1Bytes, A: cityAttr}
 
-			entry, _, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil)
+			entry, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after join query")
 			assert.Equal(t, "NYC", entry.OneValue())
@@ -493,7 +495,7 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 			copy(tagsAttr[:], ":person/tags")
 			key := CacheKey{E: eBytes, A: tagsAttr}
 
-			entry, _, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil)
+			entry, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after cardinality-many query")
 			_, hasDeveloper := entry.ManySet()["developer"]
@@ -535,7 +537,7 @@ func TestCacheConcurrency(t *testing.T) {
 	key := CacheKey{E: eBytes, A: nameAttr}
 
 	// Populate initial entry
-	_, _, err = cache.GetOrResolve(key, matcher, nil, nil)
+	_, err = cache.GetOrResolve(key, matcher, nil, nil, DiscardIntake)
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
@@ -545,7 +547,7 @@ func TestCacheConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			entry, _, err := cache.GetOrResolve(key, matcher, nil, nil)
+			entry, err := cache.GetOrResolve(key, matcher, nil, nil, DiscardIntake)
 			assert.NoError(t, err)
 			assert.NotNil(t, entry)
 		}()

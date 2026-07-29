@@ -62,11 +62,12 @@ func TestSessionBoundedCacheRead(t *testing.T) {
 	copy(eBytes[:], e.Bytes())
 	var aBytes Attribute
 	copy(aBytes[:], attr.String())
-	raw, _, scanned, present, err := sessioned.ResolveLWW(eBytes, aBytes)
+	report := &scanReport{}
+	raw, _, present, err := sessioned.ResolveLWW(eBytes, aBytes, report)
 	require.NoError(t, err)
 	require.True(t, present, "a datom exists within the session's bound")
 	require.Equal(t, int64(1), raw, "storage path defines the snapshot answer")
-	require.Positive(t, scanned,
+	require.Positive(t, report.scanned,
 		"the storage path read the index to answer; an intake of zero would mean it did not")
 
 	// The latest reader is unaffected by the session's bound.

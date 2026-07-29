@@ -78,7 +78,7 @@ func (m *AnnotatedMatcher) Match(q *query.Query, bindings Relations) (Relation, 
 	data := m.collector.GetDataMap()
 	data[annotations.KeyPattern] = pattern
 	data["match.count"] = 0
-	data["success"] = err == nil
+	data[annotations.KeySuccess] = err == nil
 
 	// Add binding information if it was present
 	if len(bindingSymbols) > 0 {
@@ -145,7 +145,7 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 		data[annotations.KeyPattern] = pattern
 		data["constraint.count"] = len(constraints)
 		data["match.count"] = 0
-		data["success"] = err == nil
+		data[annotations.KeySuccess] = err == nil
 
 		// Add binding information if it was present
 		if len(bindingSymbols) > 0 {

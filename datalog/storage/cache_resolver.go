@@ -45,7 +45,7 @@ func (m *PatternMatcher) GetCardinality(a Attribute) datalog.Keyword {
 // single raw datom. ResolveLWW in history mode returns the first-entry
 // (highest-Tx raw Set), matching the pre-redesign behavior for
 // non-unique attributes in the same mode.
-func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementID, int, bool, error) {
+func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (any, datalog.ElementID, bool, error) {
 	// Unique-attribute walk path (applies only when schema declares
 	// the attribute unique AND the matcher is not in history mode;
 	// otherwise falls through to the simple first-entry path below).
@@ -53,9 +53,12 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.Element
 		kw := decodeAttribute(a)
 		if kw != "" {
 			if m.schema.GetAttribute(datalog.NewKeyword(kw)).HasUniqueConstraint() {
-				v, tx, found, present, scanned, err := m.walkUniqueEntityValue(e, a)
+				// The walk acquires through report, so its intake — the
+				// deepest read on this path — reaches the arm whether or not
+				// the walk goes on to fail.
+				v, tx, found, present, err := m.walkUniqueEntityValue(e, a, report)
 				if err != nil {
-					return nil, datalog.ElementID{}, scanned, false, err
+					return nil, datalog.ElementID{}, false, err
 				}
 				if !found {
 					// No value survived the unique rule, which is not the same
@@ -65,9 +68,9 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.Element
 					// entry, and a caller finding none falls through to the
 					// plain EATV first-entry scan — which never applies the
 					// unique rule and hands back the superseded value.
-					return nil, datalog.ElementID{}, scanned, present, nil
+					return nil, datalog.ElementID{}, present, nil
 				}
-				return v, tx, scanned, true, nil
+				return v, tx, true, nil
 			}
 		}
 	}
@@ -76,19 +79,21 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.Element
 	// non-filtered Tx due to descending sort). The caller holds the storage
 	// projections, so the bound's components are re-interned from them; both
 	// constructors return the canonical pointer for an already-interned value.
-	iter, err := m.reader.Scan(ScanBound{
+	// The scan accrues into the report as it closes, so the failures below keep the
+	// intake they spent.
+	iter, err := OpenScan(m.reader, report, ScanBound{
 		Index:  EATV,
 		Prefix: []datalog.Value{datalog.NewIdentityFromHash(e), datalog.InternKeywordFromBytes(a)},
 	})
 	if err != nil {
-		return nil, datalog.ElementID{}, 0, false, err
+		return nil, datalog.ElementID{}, false, err
 	}
 	defer iter.Close()
 
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return nil, datalog.ElementID{}, iter.Scanned(), false, err
+			return nil, datalog.ElementID{}, false, err
 		}
 		if m.shouldFilterTx(datom.Tx) {
 			continue
@@ -98,36 +103,38 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.Element
 		// The (E, A) is still present — a tombstone is a datom, and the entry it
 		// produces holds no value rather than standing for no attribute.
 		if datom.Op == datalog.OpCRDTRemove {
-			return nil, datom.Tx, iter.Scanned(), true, nil
+			return nil, datom.Tx, true, nil
 		}
-		return datom.V, datom.Tx, iter.Scanned(), true, nil
+		return datom.V, datom.Tx, true, nil
 	}
 	if err := iter.Error(); err != nil {
-		return nil, datalog.ElementID{}, iter.Scanned(), false, err
+		return nil, datalog.ElementID{}, false, err
 	}
 
 	// No datom survived the temporal bound: the attribute does not exist here.
-	return nil, datalog.ElementID{}, iter.Scanned(), false, nil
+	return nil, datalog.ElementID{}, false, nil
 }
 
 // ResolveAddWins returns the current set members for cardinality-many
 // Uses the existing resolveAddWinsSet method and converts to map
-func (m *PatternMatcher) ResolveAddWins(e Entity, a Attribute) (map[any]any, datalog.ElementID, int, bool, error) {
-	result, err := m.resolveAddWinsSet(e[:], a[:])
+func (m *PatternMatcher) ResolveAddWins(e Entity, a Attribute, report *scanReport) (map[any]any, datalog.ElementID, bool, error) {
+	result, err := m.resolveAddWinsSet(e[:], a[:], report)
 	if err != nil {
-		return nil, datalog.ElementID{}, 0, false, err
+		// The scan read the index before it failed, and the report kept that
+		// where the result struct it never built could not.
+		return nil, datalog.ElementID{}, false, err
 	}
-	return result.Members, result.MaxElementID, result.Scanned, result.Present, nil
+	return result.Members, result.MaxElementID, result.Present, nil
 }
 
 // ResolveRGA returns the ordered vector for cardinality-vector
-// Returns (values, positionToElementID, maxElementID, datomsScanned, present, error)
-func (m *PatternMatcher) ResolveRGA(e Entity, a Attribute) ([]any, []datalog.ElementID, datalog.ElementID, int, bool, error) {
+// Returns (values, positionToElementID, maxElementID, present, error)
+func (m *PatternMatcher) ResolveRGA(e Entity, a Attribute, report *scanReport) ([]any, []datalog.ElementID, datalog.ElementID, bool, error) {
 	// Load raw RGA elements. The bound is the resolver's own; a cache rebuild
 	// has no pattern arm above it to announce one.
-	elements, _, scanned, err := m.loadRGAElements(e[:], a[:])
+	elements, _, err := m.loadRGAElements(e[:], a[:], report)
 	if err != nil {
-		return nil, nil, datalog.ElementID{}, scanned, false, err
+		return nil, nil, datalog.ElementID{}, false, err
 	}
 
 	if len(elements) == 0 {
@@ -137,7 +144,7 @@ func (m *PatternMatcher) ResolveRGA(e Entity, a Attribute) ([]any, []datalog.Ele
 		//
 		// The scan still happened: an (E, A) with no RGA entries is a read that
 		// returned nothing, not a read that did not occur.
-		return nil, nil, datalog.ElementID{}, scanned, false, nil
+		return nil, nil, datalog.ElementID{}, false, nil
 	}
 
 	// Reconstruct with IDs preserved
@@ -157,7 +164,7 @@ func (m *PatternMatcher) ResolveRGA(e Entity, a Attribute) ([]any, []datalog.Ele
 	// Elements exist, so the attribute does — whether or not any survived
 	// tombstoning. An all-tombstoned vector resolves to the empty vector, which
 	// is a value and not an absence.
-	return values, positions, maxID, scanned, true, nil
+	return values, positions, maxID, true, nil
 }
 
 // decodeAttribute converts Attribute bytes to a string (keyword representation)

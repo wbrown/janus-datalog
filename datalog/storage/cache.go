@@ -233,14 +233,17 @@ func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
 // Freshness is the slot's own version bookkeeping, updated atomically on
 // every write. This provides O(1) freshness checks without storage seeks.
 // False negatives (returning stale data) are NOT acceptable.
-// The returned int is the index intake *this call* spent: the entry's build
-// cost when this call built it, and zero when the entry came from cache. It is
+// The report accrues the index intake *this call* spends: the entry's build cost
+// when this call built it, and nothing when the entry came from cache. It is
 // not entry.scanned, which is the entry's build cost forever. The distinction
 // is the difference between "what this read cost" and "what this (E, A) cost to
 // resolve once, some time ago", and datoms.scanned means the first everywhere
 // else in the engine — a trace of a thousand hits must not report a thousand
 // index reads that did not happen.
-func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalog.ElementID, handler annotations.Handler) (*CacheEntry, int, error) {
+//
+// Accrual happens inside the resolvers, so a rebuild that fails keeps what it
+// read; the callers that report nothing pass DiscardIntake and say so.
+func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalog.ElementID, handler annotations.Handler, report *scanReport) (*CacheEntry, error) {
 	// Fast path: one trie walk yields the entry and its freshness bound.
 	slot, ok := c.slots.Load(key)
 	if ok && slot.entry != nil {
@@ -251,11 +254,11 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 			if handler != nil {
 				annotateRebuild(handler, key, "in-flight", slot)
 			}
-			entry, scanned, err := resolveEntryWithIntake(key, resolver)
+			entry, err := ResolveEntry(key, resolver, report)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
-			return entry, scanned, nil
+			return entry, nil
 		}
 
 		// Fresh iff the entry's version matches the slot's high-water mark —
@@ -263,8 +266,9 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 		// which makes the fresh entry identical to the session's resolution.
 		if slot.entry.version == slot.version {
 			if bound == nil || slot.version.Compare(*bound) <= 0 {
-				// Fresh - cache hit. No index was read to answer this call.
-				return slot.entry, 0, nil
+				// Fresh - cache hit. No index was read to answer this call, so
+				// the report accrues nothing.
+				return slot.entry, nil
 			}
 			// Fresh but past the caller's snapshot — resolve through the
 			// caller's session instead of serving the future.
@@ -284,12 +288,14 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 	// Slow path: rebuild and store
 	// Note: Two goroutines might both rebuild for the same key.
 	// That's fine - CRDT resolution is deterministic, both compute same result.
-	entry, scanned, err := resolveEntryWithIntake(key, resolver)
+	entry, err := ResolveEntry(key, resolver, report)
 	if err != nil {
 		// A failed resolution is not an absent value, and it is emphatically
 		// not something to cache: storing it would make one failed scan the
-		// answer every later reader of this (E, A) receives.
-		return nil, 0, err
+		// answer every later reader of this (E, A) receives. What it read is
+		// already in the report, which is the difference between a failed read
+		// and one that never happened.
+		return nil, err
 	}
 	if entry == nil {
 		// The (E, A) has no datoms. Absence is not cached, deliberately: entry
@@ -298,7 +304,7 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 		// conflation the resolvers were changed to remove — a never-written
 		// attribute would again be indistinguishable from an emptied one. The
 		// cost is that the next read of the same absent (E, A) scans again.
-		return nil, scanned, nil
+		return nil, nil
 	}
 	// storeIfNotInFlight refuses to overwrite an in-flight sentinel, so a
 	// rebuild that raced a commit doesn't re-cache the pre-commit value.
@@ -307,7 +313,7 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 		// Track that we've cached this attribute for this entity
 		c.TrackEntityAttr(key.E, key.A)
 	}
-	return entry, scanned, nil
+	return entry, nil
 }
 
 // UpdateMaxVersion updates the max ElementID for a (E,A) pair.
@@ -488,7 +494,7 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card datalog.Keyword, datoms []
 	}
 }
 
-// rebuild resolves the current value for (E, A) based on cardinality.
+// ResolveEntry resolves the current value for (E, A) based on cardinality.
 //
 // It returns three outcomes, and they are three: an error, a non-nil entry, or
 // a nil entry with a nil error meaning **this (E, A) has no datoms**. Absence
@@ -496,97 +502,129 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card datalog.Keyword, datoms []
 // cached — so downstream, the existence of an entry *is* the existence of the
 // attribute, and nothing has to reconstruct that from a count or a nil slice.
 //
-// The intake is returned alongside rather than read off the entry, because the
-// absent case has no entry to read it from and the scan that established
-// absence still cost a read.
+// Intake accrues into the report rather than travelling back, because the absent
+// case has no entry to carry it and a failure has no return value at all, while
+// both of them read the index to establish what they established.
+//
+// The two numbers are different — the caller's report spans however many entries
+// it resolves, and the entry's is its own build cost — so the arms take the
+// entry's as a delta across the resolver call rather than measuring into a
+// second report. A report per rebuild would be a heap allocation on every cache
+// miss to populate a field that exists to be reported; with a discarding report
+// the delta is zero, which is the same statement the report itself makes.
 //
 // It takes no receiver: resolution reads storage through the resolver and
-// touches no cache state, and ResolveEntry — which used to carry a duplicate of
-// this switch, arm for arm — now delegates here rather than growing a second
-// copy of the presence rule.
-func resolveEntryWithIntake(key CacheKey, resolver CacheResolver) (*CacheEntry, int, error) {
+// touches no cache state. GetOrResolve is this plus the freshness check and the
+// store; the cache-disabled read path calls it directly.
+func ResolveEntry(key CacheKey, resolver CacheResolver, report *scanReport) (*CacheEntry, error) {
 	card := resolver.GetCardinality(key.A)
 
 	switch card {
 	case schema.CardinalityOne:
-		return rebuildOne(key, resolver)
+		return rebuildOne(key, resolver, report)
 
 	case schema.CardinalityMany:
-		return rebuildMany(key, resolver)
+		return rebuildMany(key, resolver, report)
 
 	case schema.CardinalityVector:
-		return rebuildVector(key, resolver)
+		return rebuildVector(key, resolver, report)
 
 	default:
 		// Default to cardinality-one for schemaless
-		return rebuildOne(key, resolver)
+		return rebuildOne(key, resolver, report)
 	}
 }
 
 // rebuildOne resolves cardinality-one using LWW semantics
 // Scans EATV with descending ElementID, first entry is current
-func rebuildOne(key CacheKey, resolver CacheResolver) (*CacheEntry, int, error) {
-	value, maxID, scanned, present, err := resolver.ResolveLWW(key.E, key.A)
+func rebuildOne(key CacheKey, resolver CacheResolver, report *scanReport) (*CacheEntry, error) {
+	var before int
+	if report != nil {
+		before = report.scanned
+	}
+	value, maxID, present, err := resolver.ResolveLWW(key.E, key.A, report)
 	if err != nil {
-		return nil, scanned, fmt.Errorf("resolve LWW value: %w", err)
+		return nil, fmt.Errorf("resolve LWW value: %w", err)
 	}
 	if !present {
-		return nil, scanned, nil
+		return nil, nil
 	}
 
-	return &CacheEntry{
+	entry := &CacheEntry{
 		version:     maxID,
 		cardinality: schema.CardinalityOne,
 		oneValue:    value,
-		scanned:     scanned,
-	}, scanned, nil
+	}
+	if report != nil {
+		entry.scanned = report.scanned - before
+	}
+	return entry, nil
 }
 
 // rebuildMany resolves cardinality-many using add-wins semantics
-func rebuildMany(key CacheKey, resolver CacheResolver) (*CacheEntry, int, error) {
-	members, maxID, scanned, present, err := resolver.ResolveAddWins(key.E, key.A)
+func rebuildMany(key CacheKey, resolver CacheResolver, report *scanReport) (*CacheEntry, error) {
+	var before int
+	if report != nil {
+		before = report.scanned
+	}
+	members, maxID, present, err := resolver.ResolveAddWins(key.E, key.A, report)
 	if err != nil {
-		return nil, scanned, fmt.Errorf("resolve add-wins set: %w", err)
+		return nil, fmt.Errorf("resolve add-wins set: %w", err)
 	}
 	if !present {
-		return nil, scanned, nil
+		return nil, nil
 	}
 
-	return &CacheEntry{
+	entry := &CacheEntry{
 		version:     maxID,
 		cardinality: schema.CardinalityMany,
 		manySet:     members,
-		scanned:     scanned,
-	}, scanned, nil
+	}
+	if report != nil {
+		entry.scanned = report.scanned - before
+	}
+	return entry, nil
 }
 
 // rebuildVector resolves cardinality-vector using RGA reconstruction
-func rebuildVector(key CacheKey, resolver CacheResolver) (*CacheEntry, int, error) {
-	elements, positions, maxID, scanned, present, err := resolver.ResolveRGA(key.E, key.A)
+func rebuildVector(key CacheKey, resolver CacheResolver, report *scanReport) (*CacheEntry, error) {
+	var before int
+	if report != nil {
+		before = report.scanned
+	}
+	elements, positions, maxID, present, err := resolver.ResolveRGA(key.E, key.A, report)
 	if err != nil {
-		return nil, scanned, fmt.Errorf("resolve RGA vector: %w", err)
+		return nil, fmt.Errorf("resolve RGA vector: %w", err)
 	}
 	if !present {
-		return nil, scanned, nil
+		return nil, nil
 	}
 
-	return &CacheEntry{
+	entry := &CacheEntry{
 		version:     maxID,
 		cardinality: schema.CardinalityVector,
 		vectorList:  elements,
 		vectorIndex: positions,
-		scanned:     scanned,
-	}, scanned, nil
+	}
+	if report != nil {
+		entry.scanned = report.scanned - before
+	}
+	return entry, nil
 }
 
 // CacheResolver provides methods to resolve CRDT values from storage
 // This interface decouples the cache from specific storage implementation
 //
-// Every resolve method reports the index intake it spent alongside its result.
-// Resolution reads the index on a pattern's behalf and emits no annotation of
-// its own — one event per nested read would bury the query the stream exists to
-// describe — so the count travels back with the value, and the cache stores it
-// on the CacheEntry, which is what the read bought.
+// Every resolve method accrues the index intake it spends into the report it is
+// handed. Resolution reads the index on a pattern's behalf and emits no
+// annotation of its own — one event per nested read would bury the query the
+// stream exists to describe — so the count reaches its reporter through the
+// report, and the cache stores the entry's own share on the CacheEntry, which is
+// what the read bought.
+//
+// Inward rather than outward: a report passed in is accrued at scan time, so a
+// resolution that fails keeps what it read, where a count returned alongside a
+// result is lost with the result a failure never produces.
 type CacheResolver interface {
 	// GetCardinality returns the cardinality for an attribute
 	GetCardinality(a Attribute) datalog.Keyword
@@ -603,29 +641,15 @@ type CacheResolver interface {
 	// both states.
 
 	// ResolveLWW returns the current value for cardinality-one (highest ElementID wins)
-	// Returns (value, maxElementID, datomsScanned, present, error)
-	ResolveLWW(e Entity, a Attribute) (any, datalog.ElementID, int, bool, error)
+	// Returns (value, maxElementID, present, error); intake accrues into the report.
+	ResolveLWW(e Entity, a Attribute, report *scanReport) (any, datalog.ElementID, bool, error)
 
 	// ResolveAddWins returns the current set members for cardinality-many
-	// Returns (members, maxElementID, datomsScanned, present, error)
-	ResolveAddWins(e Entity, a Attribute) (map[any]any, datalog.ElementID, int, bool, error)
+	// Returns (members, maxElementID, present, error); intake accrues into the report.
+	ResolveAddWins(e Entity, a Attribute, report *scanReport) (map[any]any, datalog.ElementID, bool, error)
 
 	// ResolveRGA returns the ordered vector for cardinality-vector
-	// Returns (elements, positionIndex, maxElementID, datomsScanned, present, error)
-	ResolveRGA(e Entity, a Attribute) ([]any, []datalog.ElementID, datalog.ElementID, int, bool, error)
-}
-
-// ResolveEntry resolves (E, A) from storage into a CacheEntry, without caching.
-// It is the resolution step on its own: GetOrResolve is this plus the freshness
-// check and the store, and the cache-disabled read path calls it directly.
-//
-// Three outcomes, and they are three. An error is a failed read. A non-nil
-// entry is the resolved state. A nil entry with a nil error means this (E, A)
-// carries no datoms — absence, which is an answer and not a failure. A caller
-// that collapses the first and third hands its reader a wrong answer with no
-// signal, which is the shape the storage rules forbid materialization from
-// producing.
-func ResolveEntry(key CacheKey, resolver CacheResolver) (*CacheEntry, error) {
-	entry, _, err := resolveEntryWithIntake(key, resolver)
-	return entry, err
+	// Returns (elements, positionIndex, maxElementID, present, error); intake
+	// accrues into the report.
+	ResolveRGA(e Entity, a Attribute, report *scanReport) ([]any, []datalog.ElementID, datalog.ElementID, bool, error)
 }

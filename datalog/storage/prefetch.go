@@ -30,17 +30,19 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 
 	// One scan per entity, so no single run to name.
 	var opened time.Time
-	var intake, scansOpened, populated int
+	var populated int
+	report := DiscardIntake
 	if m.handler != nil {
 		opened = time.Now()
+		report = &scanReport{}
 		defer func() {
 			m.handler(annotations.Event{
 				Name:    annotations.StorageResolveComplete,
 				Start:   opened,
 				Latency: time.Since(opened),
 				Data: map[string]interface{}{
-					annotations.KeyDatomsScanned:    intake,
-					annotations.KeyScansOpened:      scansOpened,
+					annotations.KeyDatomsScanned:    report.scanned,
+					annotations.KeyScansOpened:      report.peers,
 					annotations.KeyEntriesPopulated: populated,
 				},
 			})
@@ -69,14 +71,16 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		// Bind E on EATV. The dedup above works in the storage projection, so
 		// the identity is re-interned here; the constructor returns the
 		// canonical pointer for an already-interned hash.
-		iter, err := m.reader.Scan(ScanBound{
+		iter, err := OpenScan(m.reader, report, ScanBound{
 			Index:  EATV,
 			Prefix: []datalog.Value{datalog.NewIdentityFromHash(e)},
 		})
 		if err != nil {
 			return err
 		}
-		scansOpened++
+		if report != nil {
+			report.peers++
+		}
 
 		// Single-pass: iterate EATV, accumulate datoms per (E, A) group,
 		// dispatch to cache at each attribute boundary.
@@ -87,7 +91,6 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		for iter.Next() {
 			d, err := iter.Datom()
 			if err != nil {
-				intake += iter.Scanned()
 				_ = iter.Close()
 				return err
 			}
@@ -113,7 +116,6 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 			hasGroup = true
 		}
 		if err := iter.Error(); err != nil {
-			intake += iter.Scanned()
 			_ = iter.Close()
 			return err
 		}
@@ -125,7 +127,6 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 				populated++
 			}
 		}
-		intake += iter.Scanned()
 		if err := iter.Close(); err != nil {
 			return err
 		}

@@ -77,19 +77,17 @@ func (d *Database) ResolveAllAttributesMany(
 	declaredAttrs := d.declaredWildcardAttributes()
 	var uniqueLookups []wildcardUniqueLookup
 	bound := ScanBound{Index: EATV}
-	iterator, err := d.store.ScanKeysOnly(bound)
-	if err != nil {
-		return nil, fmt.Errorf("batch wildcard scan failed: %w", err)
-	}
 
 	// The unique walks below are their own reads and report themselves.
 	var opened time.Time
-	var intake, served int
+	var served int
+	report := DiscardIntake
 	if d.AnnotationHandler != nil {
 		opened = time.Now()
+		report = &scanReport{}
 		defer func() {
 			data := map[string]interface{}{
-				annotations.KeyDatomsScanned: intake,
+				annotations.KeyDatomsScanned: report.scanned,
 				annotations.KeyValuesServed:  served,
 				annotations.KeyScansOpened:   1,
 			}
@@ -103,6 +101,11 @@ func (d *Database) ResolveAllAttributesMany(
 		}()
 	}
 
+	iterator, err := OpenKeyScan(d.store, report, bound)
+	if err != nil {
+		return nil, fmt.Errorf("batch wildcard scan failed: %w", err)
+	}
+
 	for _, entity := range sortedEntities {
 		entityResult, pending, err := d.resolveWildcardEntity(
 			matcher,
@@ -111,7 +114,6 @@ func (d *Database) ResolveAllAttributesMany(
 			declaredAttrs,
 		)
 		if err != nil {
-			intake += iterator.Scanned()
 			_ = iterator.Close()
 			return nil, err
 		}
@@ -120,7 +122,6 @@ func (d *Database) ResolveAllAttributesMany(
 		uniqueLookups = append(uniqueLookups, pending...)
 	}
 	iterErr := iterator.Error()
-	intake += iterator.Scanned()
 	closeErr := iterator.Close()
 	if iterErr != nil {
 		return nil, fmt.Errorf("batch wildcard scan failed: %w", iterErr)

@@ -1599,8 +1599,8 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 	if collector != nil {
 		end := time.Now()
 		data := map[string]interface{}{
-			"semantics": semantics,
-			"success":   err == nil,
+			"semantics":            semantics,
+			annotations.KeySuccess: err == nil,
 		}
 		if err != nil {
 			data["error"] = err.Error()

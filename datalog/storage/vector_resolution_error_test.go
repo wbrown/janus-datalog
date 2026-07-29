@@ -45,6 +45,15 @@ func TestLoadRGAElementsPropagatesDatomDecodeError(t *testing.T) {
 	require.NoError(t, iter.Close())
 
 	matcher := NewPatternMatcher(store)
-	_, _, _, err = matcher.loadRGAElements(entityBytes[:], attributeBytes[:])
+	report := &scanReport{}
+	_, _, err = matcher.loadRGAElements(entityBytes[:], attributeBytes[:], report)
 	require.Error(t, err)
+
+	// The failing resolution still read the index to discover the malformed
+	// key, and the report is what keeps that. Intake used to travel out on the
+	// result struct, which an error never builds, so every failed resolution
+	// reported its reads as zero — the reads a trace most needs to see, since
+	// they are the ones that bought nothing.
+	require.Positive(t, report.scanned,
+		"the scan positioned on an entry before decode failed, so it read one")
 }

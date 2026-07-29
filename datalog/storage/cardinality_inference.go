@@ -75,7 +75,7 @@ func valueTypeFromValue(v interface{}) datalog.Keyword {
 // defaults to one. Returns a non-nil (possibly empty) schema.
 func inferSchemaFromStore(store Store) (*schema.Schema, error) {
 	s := schema.NewSchema()
-	iter, err := store.ScanKeysOnly(ScanBound{Index: ATEV})
+	iter, err := OpenKeyScan(store, DiscardIntake, ScanBound{Index: ATEV})
 	if err != nil {
 		return nil, err
 	}

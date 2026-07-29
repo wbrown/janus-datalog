@@ -166,6 +166,77 @@ dispatch. T7's pins then covered the converted arms, so the unconverted ones are
 invisible to the gate as well as to the trace. This is the same family as round
 2's N2 and round 3's T1 — three rounds, same generator.
 
+**Status 2026-07-29: closed, generator included.**
+
+The *plumbing* failure is ended: intake reaches its reporter through one inward
+parameter instead of a channel per resolver. `walkUniqueEntityValue`,
+`resolveMaxOtherTxForValue`, `resolveAVLWW`, `checkSetMembership` and
+`lookupAllAttributesFallback` no longer return counts for a caller to add up.
+
+The *forgetting* failure is ended: every acquisition in the package goes through
+`openScan`/`openKeyScan`, which attach the accounting to acquiring the scan. Part
+2 as ruled was falsified and amended — see the mechanism below — and the amended
+form is what landed.
+
+**The generator is closed by `TestScanAcquisitionGoesThroughAReport`.** It parses
+**the whole module** on every run, finds every one-argument
+`Scan`/`ScanKeysOnly`, and attributes each to its enclosing function. Anything
+not on an exemption list reds the gate; a stale exemption reds it too.
+
+`OpenScan`, `OpenKeyScan` and `DiscardIntake` are exported for exactly that
+reach. Go visibility is not API surface — half this package's exported names are
+already internal seams — and an opener only `storage` could call would leave a
+query path added in `db`, `executor` or a command with the store as its shortest
+route, invisible to the gate: the generator relocated one package over. The
+report type stays unexported, so an outside caller can say "nothing accounts for
+this" and cannot fabricate an accounting; the day a real out-of-package query
+path exists, the check reds and that decision gets made deliberately.
+
+Detection is by call shape, not receiver name. The first version whitelisted
+`reader`/`store` receivers and would have missed `db.Store().Scan(bound)`, whose
+receiver is a call — arity separates a storage acquisition from
+`bufio.Scanner.Scan`, which takes none.
+
+**The exemption list holds five functions, and no read a query causes.** They are
+the seam implementing itself: `MemoryStore`'s `MaxElementID`, `MaxTxForEntity`
+and `DatomsAfter`, plus the shared `maxElementIDByScan`/`maxTxForEntityByScan`
+derivations behind the first two. These sit below the layer a report lives at —
+routing them through an opener would be a store calling a module-level function
+to call itself, and there is no arm on whose behalf they read. A sixth reds the
+gate.
+
+The check earned itself three times over. Of the twenty-two sites enumerated by
+hand for this section, six names did not exist and seven real acquisitions were
+missing — wrong in thirteen ways, written minutes earlier. Widening it to the
+module surfaced the five seam-internal reads that no receiver-name detector would
+have found. And a wildcard-pull bug had already slipped past the conversion:
+`ResolveAllAttributes` announced EATV while its history branch walked EAVT,
+which is the announce-versus-price defect on a path with no pin. An enumeration
+is not a derivation, including this one.
+
+**What the check does not do.** It enforces that an event exists, not that its
+payload is right — which is exactly how the EATV/EAVT mismatch survived. The
+per-arm pins cover the dispatch arms;
+`prefetch`, `pull_batch` and `ResolveAllAttributes` have none.
+
+**Two arms still hand-write their completion**, holding a report as an intake
+sink and calling `emitScanCompletion` themselves rather than `report.close()`:
+`matchCardinalityVectorAsRelation` and `matchVectorWithBindings`. Both report,
+so neither is a Family 2 instance; the cost is two idioms for one thing, which
+is what invites the next divergence. Converting them wants `resolveVector` to
+declare the run it walks when the report has none, which is what
+`resolveAddWinsSet` already does — the asymmetry between the two resolvers is
+the actual outstanding item.
+
+**An arm declares its run; it is not inferred.** `scanReport.run` is set by arms
+that address a single bound, and `peers` is counted by arms that do not — the
+per-binding iterator, v-validation, prefetch — standing in the bound's place.
+Counting acquisitions cannot make that distinction: an arm that drives resolvers
+acquires many scans and still has exactly one run, and the earlier `opens == 1`
+inference dropped the bound precisely where an arm had announced an index it then
+had to be seen to price. Subordinate reads are neither run nor peer; they are
+cost, carried by `scanned`.
+
 **Deriving the instance set.**
 
 - Every caller of `reader.Scan` / `ScanKeysOnly` — the seam is the definition of
@@ -289,10 +360,32 @@ the counts distinguishes it from a call that never ran; `binding.size` is what
 says it happened.
 
 **2c. `GetOrResolve`'s intake is read at one of eleven call sites.**
-*Partially fixed 2026-07-28 — four of eleven.* `matchFromCache` already read it;
-`matchWithBindingsFromCache`, `LookupAttribute` and `LookupAllAttributes` now do.
-With prefetch on, `storage/resolve-complete` correctly reports zero intake while
-the reads that produced it are reported nowhere.
+*Fixed 2026-07-28, by the ruled inward carrier rather than by converting
+consumers.* Twelve call sites, not eleven. The count no longer travels outward
+for any of them: the carrier goes in as a required parameter and the four
+channels the ruling named are deleted — the `Scanned` fields on
+`SetResolutionResult` and `VectorResolutionResult`, the `scanned` return on all
+three `CacheResolver` methods, and the int from `GetOrResolve`.
+
+It was `scanScope` when this entry was written and is `scanReport` now; the
+amendment below records why the two collapsed into one.
+
+A caller that reports nothing now passes `discardIntake`, which is the ruling's
+point: the eight sites that discarded with `_` were mostly group A and correct
+to, but nothing distinguished them from the one that was a defect — the
+v-validation arm's cache read, which discarded in a path that reports. It
+accrues into that iterator's own report now and appears in its funnel.
+
+The carrier has no nil-safe methods and no accessors. Accrual is written where
+the number is, under `if report != nil`, so a discarding read costs neither the
+call nor `iter.Scanned()` in its argument. A nil-safe method called
+unconditionally gates neither, which is the same defect as an emit guarded
+inside the emitter while the caller builds its payload regardless.
+
+`entry.scanned` survives and is measured as a delta across the resolver call:
+the caller's carrier spans however many entries it resolves, the entry's is its
+own build cost. Under `discardIntake` the delta is zero, which is the same
+statement the nil carrier makes.
 
 **2d. Resolvers hand intake back on a result struct, so error paths carry
 none.** *Verified — but the report joins two defects that are not the same one,
@@ -323,14 +416,45 @@ below. `LookupByUnique` (`database.go:2681-2703`) already answers the second
 question one way, emitting before its error check, so the tree currently holds
 both answers.
 
-**2e. The unique streaming branch is never executed in the suite.**
-*Unverified.* Reported: across the whole suite `uniqueMode` is true 0 times and
-`processUniqueEntry` is entered 0 times, so T4's fix and its counter are
-unexercised. Deleting the accumulation (`crdt_resolving_iterator.go:544`) reds
-nothing.
+**Both fixed 2026-07-28.** The first by the scan scope: intake accrues at scan
+time in a defer before Close, so a resolution that fails keeps what it read.
+The two iterator comments reading "accounting comes after the error check: a
+failed resolution returns no result to read a count from" are gone, because the
+constraint they described is gone.
 
-**2f. The comment recording the arm count miscounts again.** *Unverified.*
-`matcher_relations.go:2385-2386`.
+The second by D1, ruled below. `emitScanCompletion` takes the outcome as a
+required parameter and writes `annotations.KeySuccess`, so every scan completion
+states whether its funnel is a total or as far as it got. Required for the
+funnel's reason: a producer that cannot abort passes true, which is a claim,
+where a default would make "finished" the answer for producers that never
+considered the question.
+
+Deferred emits read a named error return, so the outcome follows whatever the
+function returns rather than a comment asserting today's control flow. Inline
+emits past an error check pass the literal, because a named return read there is
+`nil == nil` — a constant wearing a disguise.
+
+Pinned by `TestAbortedScanReportsThatItDidNotFinish` over both failure shapes,
+with `TestCompletedScanSaysSo` as its other half: without it an arm could
+hardcode the aborted answer and the first would still pass.
+
+**2e. The unique streaming branch is never executed in the suite.**
+*Verified and fixed 2026-07-28.* `uniqueMode` needs an attribute that is
+CardinalityOne *and* unique, scanned with E unbound — a bound E goes to the
+cache and a bound V to the claimant lookup, so neither shape a unique attribute
+is usually queried by reaches it, which is why the suite never did.
+
+`TestUniqueAttributeWalkReportsItsOwnScans` enters it. Measured rather than
+asserted: 24 source datoms against 32 reported, the walk adding one supersession
+read per group, so the assertion is a floor of source + groups rather than a
+bare inequality.
+
+**2f. The comment recording the arm count miscounts again.** *Verified and fixed
+2026-07-28.* Seven `emitIndexSelection` call sites against the comment's six,
+and its other claim — that `matchFromCache` is the *one* dispatch arm that does
+not emit — went stale when `matchWithBindingsFromCache` joined it. Both counts
+removed rather than corrected, per the rule already recorded beside the event
+names: a number in prose is a claim about the tree that nothing rechecks.
 
 ---
 
@@ -823,6 +947,62 @@ The two halves address the two failures separately, which is the point: prior
 rounds converted arms, which treats forgetting one instance at a time and never
 touches the plumbing.
 
+*Part 2 falsified and amended, 2026-07-28, by deriving it against the arms that
+actually forgot.* Riding on the iterator reaches an arm that holds one. Of the
+six silent paths, one does:
+
+| path | scanning iterator to ride on |
+|---|---|
+| `matchWithBindingsFromCache` | none — resolves per binding through the cache |
+| `matchVectorWithBindings` | none — one resolver call per binding |
+| `PrefetchEntities` | one per entity, not one |
+| `ResolveAllAttributesMany` | one shared, but the arm is a Database method |
+| `LookupAllAttributes` | two or three, by arm |
+| `LookupAttribute` | one, in the cardinality-one arm only |
+
+Having no natural place to hang an emit is *why* they forgot, so a mechanism
+keyed to that place covers the arms that never needed it.
+
+**Amended: bind the obligation to acquisition.** What all six share is going
+through `Scan`/`ScanKeysOnly` for a query. `PatternMatcher` acquires through
+`openScan`/`openKeyScan`, which take the report that accounts for the scan and
+return the iterator with the accounting attached. Acquisition also subsumes part
+1: the report *is* the intake carrier, which is why `scanScope` no longer exists
+— an arm's report could not name a run its resolver acquired while the two were
+separate types.
+
+An arm cannot open a scan on the query path without naming what it is for. What
+it can still get wrong is feeding `resolved` and `matched`, which shows as zeros
+under a positive intake rather than as silence.
+
+**No constructor, no accessors, no nil-safe methods.** The arm builds the report,
+its cause map, the clock read and the deferred close inside one
+`if m.handler != nil`. A constructor that tested the handler itself would be
+handed a cause map the caller had already allocated, which is the same defect as
+an emit guarded inside the emitter while its caller builds the payload anyway.
+
+**Acquisition-binding forced a contract change in `CRDTResolvingIterator`, and
+that change is load-bearing.** `Scanned()` used to return
+`source.Scanned() + uniqueScanned` — the unique walk's AVET supersession reads
+folded into the wrapper's own total. Once the source is acquired through a
+report, a report attached beneath the wrapper sees only the source, so the walk's
+reads vanish: an under-report of the deepest read on the path, introduced by the
+fix for under-reporting, and one the gate would not have caught because
+`TestUniqueAttributeWalkReportsItsOwnScans` asserts on the event, which would
+still exist and still look plausible.
+
+The walk is a nested read and now accrues into the arm's report where it
+happens. `Scanned()` returns the source's intake and only that. The two other
+shapes both fail: attaching the report after the wrapping means the arm must
+remember a second call, and reading the outermost `Scanned()` at close
+double-counts against the wrapper's accrual.
+
+Arms not yet converted carry the walk's intake in a `nested *scanReport` added to
+the funnel they already build. That invariant — `nested` allocated iff
+`handler != nil` — is maintained by hand at three construction sites, and one of
+the three was missed on the first pass; `TestBindingDrivenStrategiesReportTheirFunnel`
+panicked on the nil. The gate is what enforces it until those arms convert.
+
 *Group B splits once more, and it decides the event vocabulary. Ruled
 2026-07-28.* `emitScanCompletion` takes `pattern *query.DataPattern` as a
 required parameter, and half of group B has none: `LookupAttribute`,
@@ -934,18 +1114,31 @@ Recorded so the next round does not re-raise them as choices.
 
 ## Open decisions
 
-Two, both surfaced by derivation rather than by the review.
+Two, both surfaced by derivation rather than by the review. D1 is ruled; D2 is
+open.
 
-**D1. Does a `*-complete` event fire for a scan that aborted?** From 2d. Both
-answers are in the tree today: `cardinalityManyScanAllEntitiesIterator.Close`
-and `vectorScanAllEntitiesIterator.Close` emit on the handler check alone,
-reporting a funnel for a scan that ended in `it.err`; `LookupByUnique` emits
-before its error check, deliberately, so the reads a failed lookup performed are
-still accounted. The question is what the name asserts — whether `-complete`
-means "this scan finished" or "this scan is over, here is what it cost." The
-second reading makes the aborted case reportable and is what a reader tracing a
-failing query most needs; the first makes the event's absence the signal. Either
-is coherent; the tree holding both is not.
+**D1. Does a `*-complete` event fire for a scan that aborted?** From 2d.
+*Ruled 2026-07-28: it fires, and says which.*
+
+Both answers were in the tree: `cardinalityManyScanAllEntitiesIterator.Close`
+and `vectorScanAllEntitiesIterator.Close` emitted on the handler check alone,
+reporting a funnel for a scan that ended in `it.err`; `LookupByUnique` emitted
+before its error check, deliberately, so the reads a failed lookup performed
+were still accounted. The question was what the name asserts — "this scan
+finished" or "this scan is over, here is what it cost."
+
+The wider tree already answered it. Eleven producers across `executor`,
+`reflect` and `annotations` fire their completion unconditionally and carry
+`success: err == nil`, including `annotated_matcher.go` — the matcher decorator,
+the closest analogue to a scan completion. The review surveyed three scan sites
+and found two answers; the convention outside them is one.
+
+So `-complete` means "this operation is over, here is what it cost", and the
+outcome travels in the payload. `success` was a bare string literal at all
+eleven producers, which is Family 3's defect in a key the formatter reads; it is
+now `annotations.KeySuccess`, declared once and written by every producer
+including the scan family. `renderScanFunnel` marks an aborted funnel, since
+read without that its counts are a total.
 
 **D2. The fourth-cardinality guard.** From Family 1, proposed and not ruled: pin
 the contents of the `cardinalities` set, so `defineCardinality` gaining a fourth

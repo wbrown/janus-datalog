@@ -1,9 +1,6 @@
 package storage
 
 import (
-	"time"
-
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -11,13 +8,10 @@ import (
 // unboundIterator streams results for patterns without bindings
 type unboundIterator struct {
 	matcher *PatternMatcher
-	// bound is the run this scan walks, kept whole rather than as its index
-	// alone: Close reports it, and a scan line that named only the index would
-	// leave the reader to find the bound on a different event — which is the
-	// state the formatter used to carry and could not carry correctly once the
-	// engine emitted from parallel workers.
-	bound       ScanBound
-	opened      time.Time // scan open; Close reports the lifetime as the event's latency
+	// report accounts for the scan this iterator reads. It was acquired through
+	// the report, so the run, the clock and the intake are already in it; the
+	// arm adds what it made of what it read and closes it.
+	report      *scanReport
 	pattern     *query.DataPattern
 	symbols     []query.Symbol
 	e, a, v, tx interface{}
@@ -26,10 +20,6 @@ type unboundIterator struct {
 	storageIter  Iterator
 	currentTuple executor.Tuple
 	workspace    executor.Tuple // Reusable workspace for tuple building
-
-	// Statistics tracking
-	datomsResolved int
-	datomsMatched  int
 
 	// Optimized tuple builder
 	tupleBuilder *query.InternedTupleBuilder
@@ -54,7 +44,9 @@ func (it *unboundIterator) Next() bool {
 			return false
 		}
 
-		it.datomsResolved++
+		if it.report != nil {
+			it.report.resolved++
+		}
 
 		// Check if datom matches pattern
 		if it.matcher.matchesDatom(datom, it.e, it.a, it.v, it.tx) {
@@ -62,7 +54,9 @@ func (it *unboundIterator) Next() bool {
 			if validateDatomWithConstraints(datom, it.matcher.txID, it.constraints) {
 				it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
 				it.currentTuple = it.workspace
-				it.datomsMatched++
+				if it.report != nil {
+					it.report.matched++
+				}
 				it.foundFirst = true
 				return true
 			}
@@ -86,36 +80,14 @@ func (it *unboundIterator) Tuple() executor.Tuple {
 func (it *unboundIterator) Error() error { return it.err }
 
 func (it *unboundIterator) Close() error {
-	if it.matcher.handler != nil {
-		// storageIter is assigned after the literal, so match the nil stance
-		// the Close below already takes rather than assume it is always set.
-		scanned := 0
-		if it.storageIter != nil {
-			scanned = it.storageIter.Scanned()
-		}
-		// The run travels with the cost. addBoundFields writes the index, the
-		// positions the run binds and their values, which is everything the
-		// scan line needs — so the line is rendered from this event alone.
-		run := map[string]interface{}{
-			annotations.KeyPattern:  it.pattern,
-			annotations.KeyStrategy: annotations.ScanDirect,
-		}
-		addBoundFields(run, it.bound)
-		emitScanCompletion(
-			it.matcher.handler,
-			annotations.StorageScanComplete,
-			it.opened,
-			scanFunnel{
-				scanned:  scanned,
-				resolved: it.datomsResolved,
-				matched:  it.datomsMatched,
-			},
-			run,
-		)
-	}
-
+	// The storage close comes first: the scan accrues its intake as it closes,
+	// and the report is what reads that.
+	var closeErr error
 	if it.storageIter != nil {
-		return it.storageIter.Close()
+		closeErr = it.storageIter.Close()
 	}
-	return nil
+	if it.report != nil {
+		it.report.close(it.err == nil)
+	}
+	return closeErr
 }

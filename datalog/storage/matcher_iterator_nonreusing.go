@@ -1,10 +1,7 @@
 package storage
 
 import (
-	"time"
-
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -23,16 +20,14 @@ type nonReusingIterator struct {
 	currentScan  Iterator
 	currentTuple executor.Tuple
 	workspace    executor.Tuple // Reusable workspace for tuple building
-	// totalScanned accumulates each per-binding scan's intake before that scan
-	// is discarded. This path opens and drops one scan per binding, so unlike
-	// the single-scan iterators it cannot ask its source at Close — by then
-	// every scan but the last is gone.
-	totalScanned  int
-	totalResolved int
-	totalMatched  int
-	scansOpened   int       // One scan per binding tuple reached; reported as a count, not an event each
-	scanStart     time.Time // Set at construction; the completion event's duration
-	err           error     // First error from storage operations
+
+	// report accounts for this arm. Its run is nil: this path opens and drops
+	// one scan per binding, peers with no one of them describing the whole, so
+	// their count stands in a bound's place. The unique walk.s AVET supersession scans, which the
+	// per-binding sources know nothing about, acquire through it too.
+	report *scanReport
+
+	err error // First error from storage operations
 
 	// Pattern extraction utility
 	patternExtractor *query.PatternExtractor
@@ -51,7 +46,9 @@ func (it *nonReusingIterator) Next() bool {
 				return false
 			}
 
-			it.totalResolved++
+			if it.report != nil {
+				it.report.resolved++
+			}
 
 			// Check if datom matches pattern with current binding
 			if it.matchesWithBinding(datom, it.bindingTuples[it.currentIdx]) {
@@ -59,7 +56,9 @@ func (it *nonReusingIterator) Next() bool {
 				if validateDatomWithConstraints(datom, it.matcher.txID, it.constraints) {
 					it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
 					it.currentTuple = it.workspace
-					it.totalMatched++
+					if it.report != nil {
+						it.report.matched++
+					}
 					return true
 				}
 			}
@@ -75,7 +74,6 @@ func (it *nonReusingIterator) Next() bool {
 		if scanErr := it.currentScan.Error(); scanErr != nil && it.err == nil {
 			it.err = scanErr
 		}
-		it.totalScanned += it.currentScan.Scanned()
 		if closeErr := it.currentScan.Close(); closeErr != nil && it.err == nil {
 			it.err = closeErr
 		}
@@ -96,18 +94,20 @@ func (it *nonReusingIterator) Next() bool {
 	e, a, v, tx := it.extractBoundValues(bindingTuple)
 
 	// Choose index and create scan
-	rawIter, err := it.matcher.reader.ScanKeysOnly(it.matcher.chooseIndex(e, a, v, tx))
+	rawIter, err := OpenKeyScan(it.matcher.reader, it.report, it.matcher.chooseIndex(e, a, v, tx))
 	if err != nil {
 		it.err = err
 		return false
 	}
-	it.scansOpened++
+	if it.report != nil {
+		it.report.peers++
+	}
 
 	// Wrap with CRDT resolution unless in history mode
 	if it.matcher.isHistoryMode() {
 		it.currentScan = rawIter
 	} else {
-		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher)
+		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher, it.report)
 	}
 
 	// Try to find first match
@@ -121,34 +121,17 @@ func (it *nonReusingIterator) Tuple() executor.Tuple {
 func (it *nonReusingIterator) Close() error {
 	var err error
 	if it.currentScan != nil {
-		// The final scan is still open when a consumer stops early; take its
-		// intake before it goes the way of the others.
-		it.totalScanned += it.currentScan.Scanned()
+		// The final scan is still open when a consumer stops early.
 		err = it.currentScan.Close()
 		it.currentScan = nil
 	}
 
-	// One completion event for the whole run, never one per binding. This path
-	// opens a scan per binding tuple, so an event each would bury the query's
-	// shape under its own instrumentation — a reader tracing a query needs the
-	// count, not the enumeration.
-	if it.matcher.handler != nil && it.scansOpened > 0 {
-		// No index: chooseIndex runs per binding tuple, so this run addressed as
-		// many as it opened scans and naming one would name whichever happened
-		// to be last. scans.opened is what stands in its place.
-		emitScanCompletion(it.matcher.handler, annotations.StorageScanComplete,
-			it.scanStart,
-			scanFunnel{
-				scanned:  it.totalScanned,
-				resolved: it.totalResolved,
-				matched:  it.totalMatched,
-			},
-			map[string]interface{}{
-				annotations.KeyPattern:     it.pattern,
-				annotations.KeyStrategy:    annotations.ScanPerBinding,
-				annotations.KeyBindingSize: len(it.bindingTuples),
-				annotations.KeyScansOpened: it.scansOpened,
-			})
+	// One completion for the whole run, never one per binding. This path opens
+	// a scan per binding tuple, so an event each would bury the query's shape
+	// under its own instrumentation — a reader tracing a query needs the count,
+	// not the enumeration.
+	if it.report != nil {
+		it.report.close(it.err == nil)
 	}
 	return err
 }

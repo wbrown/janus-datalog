@@ -70,8 +70,8 @@ func (c *AnnotatedReflectContext) ReadComplete(structName string, err error) {
 		End:     end,
 		Latency: end.Sub(c.start),
 		Data: map[string]interface{}{
-			"struct_type": structName,
-			"success":     err == nil,
+			"struct_type":          structName,
+			annotations.KeySuccess: err == nil,
 		},
 	})
 }
@@ -97,10 +97,10 @@ func (c *AnnotatedReflectContext) WriteComplete(entity, structName string, field
 		End:     end,
 		Latency: end.Sub(c.start),
 		Data: map[string]interface{}{
-			"entity":         entity,
-			"struct_type":    structName,
-			"fields_written": fieldsWritten,
-			"success":        err == nil,
+			"entity":               entity,
+			"struct_type":          structName,
+			"fields_written":       fieldsWritten,
+			annotations.KeySuccess: err == nil,
 		},
 	})
 }
@@ -127,11 +127,11 @@ func (c *AnnotatedReflectContext) UpdateComplete(entity, structName string, fiel
 		End:     end,
 		Latency: end.Sub(c.start),
 		Data: map[string]interface{}{
-			"entity":           entity,
-			"struct_type":      structName,
-			"fields_processed": fieldsProcessed,
-			"mode":             mode,
-			"success":          err == nil,
+			"entity":               entity,
+			"struct_type":          structName,
+			"fields_processed":     fieldsProcessed,
+			"mode":                 mode,
+			annotations.KeySuccess: err == nil,
 		},
 	})
 }

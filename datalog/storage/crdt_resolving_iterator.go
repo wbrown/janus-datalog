@@ -51,11 +51,17 @@ type CRDTResolvingIterator struct {
 	uniqueRetracted map[string]datalog.ElementID
 	uniqueEmitted   bool
 
-	// uniqueScanned accumulates the intake of the AVET supersession scans the
-	// unique walk opens, one per Set entry it considers. Those are index reads
-	// this iterator causes and the source knows nothing about, so without this
-	// the reported intake would omit the largest read on the unique path.
-	uniqueScanned int
+	// report accounts for the AVET supersession scans the unique walk opens,
+	// one per Set entry it considers. Those are index reads this iterator
+	// causes and the source knows nothing about, so without them the reported
+	// intake would omit the largest read on the unique path.
+	//
+	// They accrue into the arm's report rather than into a count of this
+	// iterator's own, because the arm's report is also what the source scan
+	// accrues into — and a wrapper that added its nested reads to Scanned()
+	// would be invisible to a report attached beneath it, which is where the
+	// scan was acquired.
+	report *scanReport
 
 	// CardinalityVector: TODO - placeholder for discussion
 	rgaElements []rgaElement
@@ -98,12 +104,17 @@ type rgaElement struct {
 // emitted, with supersession determined by an AVET sub-scan for
 // max-other-Tx per candidate V. When matcher is nil, all CardinalityOne
 // groups use first-entry semantics (the Unique field is ignored).
-func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, txID datalog.ElementID, matcher *PatternMatcher) *CRDTResolvingIterator {
+//
+// report is the arm's, and is where the unique walk's own scans accrue. It is
+// nil when nothing is listening, and nil is also correct for a caller whose
+// scan no report accounts for.
+func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, txID datalog.ElementID, matcher *PatternMatcher, report *scanReport) *CRDTResolvingIterator {
 	return &CRDTResolvingIterator{
 		source:        source,
 		schema:        schema,
 		txID:          txID,
 		uniqueMatcher: matcher,
+		report:        report,
 	}
 }
 
@@ -497,16 +508,20 @@ func (it *CRDTResolvingIterator) Seek(bound ScanBound) {
 	it.source.Seek(bound)
 }
 
-// Scanned reports the source's intake plus the unique walk's own.
+// Scanned reports the source's intake, and only that.
 //
-// Resolution normally reads no index of its own and the count is just the
-// source's, the gap between it and what resolution emitted being the history
-// depth the index made the query pay for. Unique CardinalityOne is the
-// exception: processUniqueEntry opens an AVET supersession scan per Set entry,
-// so those reads are added here. Reporting only the source hides the largest
-// read on that path behind the smallest.
+// Resolution reads no index of its own on most paths, and the gap between this
+// and what resolution emitted is the history depth the index made the query pay
+// for. Unique CardinalityOne is the exception — processUniqueEntry opens an
+// AVET supersession scan per Set entry — and those reads accrue into the arm's
+// report at the point they happen, not here.
+//
+// They cannot be added here. The scan this iterator wraps was acquired through
+// the arm's report, so the source already accrues into it; folding the walk's
+// reads into this total as well would either double-count them or, for an arm
+// reading the report rather than this method, lose them entirely.
 func (it *CRDTResolvingIterator) Scanned() int {
-	return it.source.Scanned() + it.uniqueScanned
+	return it.source.Scanned()
 }
 
 // ElementID returns the transaction ElementID of the current entry.
@@ -540,8 +555,9 @@ func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool,
 	eBytes := Entity(datom.E.Hash())
 
 	state := &uniqueWalkState{retracted: it.uniqueRetracted}
-	decision, scanned, err := it.uniqueMatcher.walkApplyEntry(state, datom, eBytes, aBytes)
-	it.uniqueScanned += scanned
+	// Accrues whether or not the check fails: a failed supersession check
+	// still read the index to fail.
+	decision, err := it.uniqueMatcher.walkApplyEntry(state, datom, eBytes, aBytes, it.report)
 	if err != nil {
 		return false, err
 	}

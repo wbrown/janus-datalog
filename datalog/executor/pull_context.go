@@ -96,10 +96,10 @@ func (c *AnnotatedPullContext) PullComplete(entity datalog.Identity, attrCount i
 		End:     end,
 		Latency: end.Sub(c.pullStart),
 		Data: map[string]interface{}{
-			"entity":     entity,
-			"attr_count": attrCount,
-			"resolved":   resolved,
-			"success":    err == nil,
+			"entity":               entity,
+			"attr_count":           attrCount,
+			"resolved":             resolved,
+			annotations.KeySuccess: err == nil,
 		},
 	})
 }
@@ -125,10 +125,10 @@ func (c *AnnotatedPullContext) PullBatchComplete(entityCount, attrCount int, res
 		End:     end,
 		Latency: end.Sub(c.batchStart),
 		Data: map[string]interface{}{
-			"entity_count": entityCount,
-			"attr_count":   attrCount,
-			"resolved":     resolved,
-			"success":      err == nil,
+			"entity_count":         entityCount,
+			"attr_count":           attrCount,
+			"resolved":             resolved,
+			annotations.KeySuccess: err == nil,
 		},
 	})
 }
@@ -238,12 +238,12 @@ func (c *AnnotatedPullContext) NestedComplete(parentEntity datalog.Identity, att
 	c.handler(annotations.Event{
 		Name: annotations.PullNestedComplete,
 		Data: map[string]interface{}{
-			"parent_entity": parentEntity,
-			"attr":          attr,
-			"ref_entity":    refEntity,
-			"depth":         depth,
-			"attr_count":    attrCount,
-			"success":       err == nil,
+			"parent_entity":        parentEntity,
+			"attr":                 attr,
+			"ref_entity":           refEntity,
+			"depth":                depth,
+			"attr_count":           attrCount,
+			annotations.KeySuccess: err == nil,
 		},
 	})
 }

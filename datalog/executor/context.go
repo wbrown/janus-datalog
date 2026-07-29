@@ -144,9 +144,9 @@ func (c *AnnotatedContext) QueryPlanCreated(plan string) {
 
 func (c *AnnotatedContext) QueryComplete(relationCount, tupleCount int, err error) {
 	data := map[string]interface{}{
-		"relations.count": relationCount,
-		"tuples.count":    tupleCount,
-		"success":         err == nil,
+		"relations.count":      relationCount,
+		"tuples.count":         tupleCount,
+		annotations.KeySuccess: err == nil,
 	}
 
 	if err != nil {

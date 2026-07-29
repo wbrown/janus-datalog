@@ -535,7 +535,7 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
-	val, _, _, present, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, _, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
 	require.NoError(t, err)
 	assert.True(t, present, "precondition: the (E, A) carries datoms")
 	assert.Equal(t, "Alice", val, "precondition: ResolveLWW should return value")
@@ -547,7 +547,7 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 	require.NoError(t, err)
 
 	// ResolveLWW should return nil after Remove
-	val, _, _, present, err = matcher.ResolveLWW(eStorage, aStorage)
+	val, _, present, err = matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
 	require.NoError(t, err)
 	assert.True(t, present,
 		"a tombstone is a datom: the (E, A) stays present and holds no value")
@@ -587,7 +587,7 @@ func TestCacheRemove_CacheRebuild(t *testing.T) {
 
 	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	entry, _, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
 	require.NoError(t, err)
 
 	// Entry should either be nil or have nil OneValue
@@ -759,7 +759,7 @@ func TestCacheRemove_ResolveLWW_SetThenRemove(t *testing.T) {
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
-	val, _, _, present, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, _, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
 	require.NoError(t, err)
 	assert.True(t, present,
 		"a tombstone is a datom: the (E, A) stays present and holds no value")
@@ -879,7 +879,7 @@ func TestCacheRemove_ResolveLWW_ReturnsElementID(t *testing.T) {
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
-	val, elemID, _, present, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, elemID, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
 	require.NoError(t, err, "ResolveLWW should not error after Remove")
 	assert.True(t, present,
 		"a tombstone is a datom: the (E, A) stays present and holds no value")
@@ -1094,7 +1094,7 @@ func resolveLWW(t *testing.T, db *Database, e datalog.Identity, a datalog.Keywor
 	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
-	val, eid, _, present, err := matcher.ResolveLWW(eStorage, aStorage)
+	val, eid, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
 	require.NoError(t, err)
 	require.True(t, present,
 		"(e, a) was written before this read, so it is present whether or not a value survived")
@@ -1235,7 +1235,7 @@ func cacheRebuildOneValue(t *testing.T, db *Database, e datalog.Identity, a data
 	key := CacheKey{E: eStorage, A: aStorage}
 	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	entry, _, err := db.Cache().GetOrResolve(key, matcher, nil, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
 	require.NoError(t, err)
 	if entry == nil {
 		return nil

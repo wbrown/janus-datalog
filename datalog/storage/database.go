@@ -322,7 +322,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 		copy(aBytes[:], attr.String())
 
 		// Scan AEVT for all entities with this attribute
-		iter, err := d.store.Scan(ScanBound{Index: AEVT, Prefix: []datalog.Value{attr}})
+		iter, err := OpenScan(d.store, DiscardIntake, ScanBound{Index: AEVT, Prefix: []datalog.Value{attr}})
 		if err != nil {
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
@@ -343,7 +343,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 			if !seenEntities[eBytes] {
 				seenEntities[eBytes] = true
 				key := CacheKey{E: eBytes, A: aBytes}
-				if _, _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler); err != nil {
+				if _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler, DiscardIntake); err != nil {
 					iter.Close()
 					return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 				}
@@ -382,9 +382,9 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	var entry *CacheEntry
 	var err error
 	if d.cache != nil {
-		entry, _, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
+		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler, DiscardIntake)
 	} else {
-		entry, err = ResolveEntry(key, matcher)
+		entry, err = ResolveEntry(key, matcher, DiscardIntake)
 	}
 	if err != nil {
 		return nil, err
@@ -428,9 +428,9 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	var entry *CacheEntry
 	var err error
 	if d.cache != nil {
-		entry, _, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
+		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler, DiscardIntake)
 	} else {
-		entry, err = ResolveEntry(key, matcher)
+		entry, err = ResolveEntry(key, matcher, DiscardIntake)
 	}
 	if err != nil {
 		return 0, err
@@ -1713,7 +1713,7 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 		// Bind [E][A][V] on EAVT for an O(k) scan of this element's writes.
 		// EAVT orders Tx descending after V, so the highest Tx comes first and
 		// a tombstone is seen before the insert it deletes.
-		iter, err := t.db.store.Scan(ScanBound{
+		iter, err := OpenScan(t.db.store, DiscardIntake, ScanBound{
 			Index:  EAVT,
 			Prefix: []datalog.Value{e, a, v},
 		})
@@ -1908,7 +1908,9 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		eBytes := e.Hash()
 		var aBytes [32]byte
 		copy(aBytes[:], a.String())
-		currentResult, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+		// DiscardIntake: this read is the write path's, not a pattern's, so
+		// nothing reports what it cost.
+		currentResult, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
 		if err != nil {
 			return fmt.Errorf("failed to read current set membership: %w", err)
 		}
@@ -2029,10 +2031,10 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		var entry *CacheEntry
 		var err error
 		if t.db.cache != nil {
-			entry, _, err = t.db.cache.GetOrResolve(key, matcher, matcher.cacheBound(), t.db.AnnotationHandler)
+			entry, err = t.db.cache.GetOrResolve(key, matcher, matcher.cacheBound(), t.db.AnnotationHandler, DiscardIntake)
 		} else {
 			// Cache disabled - resolve directly from storage
-			entry, err = ResolveEntry(key, matcher)
+			entry, err = ResolveEntry(key, matcher, DiscardIntake)
 		}
 		if err != nil {
 			// The prior vector is what the RGA diff below is computed against.
@@ -2139,9 +2141,9 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 	var entry *CacheEntry
 	var err error
 	if t.db.cache != nil {
-		entry, _, err = t.db.cache.GetOrResolve(cacheKey, matcher, matcher.cacheBound(), t.db.AnnotationHandler)
+		entry, err = t.db.cache.GetOrResolve(cacheKey, matcher, matcher.cacheBound(), t.db.AnnotationHandler, DiscardIntake)
 	} else {
-		entry, err = ResolveEntry(cacheKey, matcher)
+		entry, err = ResolveEntry(cacheKey, matcher, DiscardIntake)
 	}
 	if err != nil {
 		return false, fmt.Errorf("resolve current vector for %s: %w", a.String(), err)
@@ -2726,11 +2728,7 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 	// history with a supersession scan per Set entry. Called in a loop — which
 	// is how application-layer upsert uses it — it is the dominant read in a
 	// program, so a trace that omitted it would omit the program's largest cost.
-	var start time.Time
-	if d.AnnotationHandler != nil {
-		start = time.Now()
-	}
-	owner, _, funnel, err := matcher.resolveAVLWW(aBytes, value)
+	report := DiscardIntake
 	if d.AnnotationHandler != nil {
 		// The pattern this call resolves — which entity holds (attr, value) —
 		// named the way every other scan event names its subject. The Go
@@ -2738,8 +2736,8 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 		// A-bound, V-bound, E-unbound scan, and the query path reaches the same
 		// resolver from that pattern spelled out.
 		//
-		// No index: resolution walks AVET for the claimant and then the
-		// claimant's EATV history, so no single run is the one this addressed.
+		// No run: resolution walks AVET for the claimant and then the
+		// claimant's EATV history, so no single one is the one this addressed.
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
 				query.Variable{Name: datalog.NewSymbol("?e")},
@@ -2747,12 +2745,16 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 				query.Constant{Value: value},
 			},
 		}
-		emitScanCompletion(d.AnnotationHandler, annotations.StorageScanComplete,
-			start, funnel,
-			map[string]interface{}{
-				annotations.KeyPattern:  pattern,
-				annotations.KeyStrategy: annotations.ScanUniqueLookup,
-			})
+		report = &scanReport{
+			handler:  d.AnnotationHandler,
+			opened:   time.Now(),
+			strategy: annotations.ScanUniqueLookup,
+			cause:    map[string]interface{}{annotations.KeyPattern: pattern},
+		}
+	}
+	owner, _, err := matcher.resolveAVLWW(aBytes, value, report)
+	if report != nil {
+		report.close(err == nil)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("LookupByUnique: resolution failed: %w", err)
@@ -2877,7 +2879,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 			if !ok {
 				continue
 			}
-			entry, _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
+			entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler, DiscardIntake)
 			if err != nil {
 				return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 			}
@@ -2904,7 +2906,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		if !ok {
 			continue
 		}
-		entry, _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler)
+		entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler, DiscardIntake)
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 		}
@@ -3072,6 +3074,29 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 
 	matcher := d.Matcher().(*PatternMatcher)
 
+	var opened time.Time
+	var served int
+	bound := ScanBound{Index: EATV, Prefix: []datalog.Value{entity}}
+	report := DiscardIntake
+	if d.AnnotationHandler != nil {
+		opened = time.Now()
+		report = &scanReport{}
+		defer func() {
+			data := map[string]interface{}{
+				annotations.KeyDatomsScanned: report.scanned,
+				annotations.KeyValuesServed:  served,
+				annotations.KeyScansOpened:   1,
+			}
+			addBoundFields(data, bound)
+			d.AnnotationHandler(annotations.Event{
+				Name:    annotations.StorageResolveComplete,
+				Start:   opened,
+				Latency: time.Since(opened),
+				Data:    data,
+			})
+		}()
+	}
+
 	// History mode: the entity walk below applies CRDT resolution, so raw
 	// reads keep the discovery-then-resolve path. Discovery reads only the
 	// attribute span of each key — values stay undecoded and Tier-3 blobs
@@ -3079,7 +3104,8 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	if matcher.isHistoryMode() {
 		encoder := d.encoder
 
-		iter, err := d.store.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}})
+		bound = ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}}
+		iter, err := OpenKeyScan(d.store, report, bound)
 		if err != nil {
 			return nil, fmt.Errorf("EAVT scan failed: %w", err)
 		}
@@ -3115,6 +3141,9 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 		for _, kw := range seenAttrs {
 			keywords = append(keywords, kw)
 		}
+		// What this branch's own scan served: the attributes it discovered. The
+		// per-attribute resolution below is its own read and reports itself.
+		served = len(keywords)
 		return d.ResolveEntityAttributes(entity, keywords)
 	}
 
@@ -3122,7 +3151,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	// discovering and resolving every attribute from the same scan — one
 	// store read session instead of a discovery scan plus one lookup per
 	// attribute. This is the batch wildcard walk applied to one entity.
-	iterator, err := d.store.ScanKeysOnly(ScanBound{Index: EATV, Prefix: []datalog.Value{entity}})
+	iterator, err := OpenKeyScan(d.store, report, bound)
 	if err != nil {
 		return nil, fmt.Errorf("EATV scan failed: %w", err)
 	}
@@ -3131,6 +3160,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 		_ = iterator.Close()
 		return nil, err
 	}
+	served = len(result)
 	iterErr := iterator.Error()
 	closeErr := iterator.Close()
 	if iterErr != nil {

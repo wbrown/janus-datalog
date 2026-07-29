@@ -26,11 +26,6 @@ type VectorResolutionResult struct {
 
 	// MaxElementID is the highest ElementID seen (for cache versioning)
 	MaxElementID datalog.ElementID
-	// Scanned is the index intake this resolution spent. Resolution reads the
-	// index on the pattern's behalf and emits no event of its own, so the only
-	// way the pattern can report what it cost is for the resolver to hand the
-	// number back with the result.
-	Scanned int
 
 	// Bound is the run this resolution walked. The pattern arm announces it,
 	// and it travels back rather than being rebuilt there so the announced run
@@ -46,9 +41,9 @@ type VectorResolutionResult struct {
 // The Tx (ElementID) is the element's ID.
 //
 // After loading all elements, RGA reconstruction builds the final ordered list.
-func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolutionResult, error) {
+func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte, report *scanReport) (*VectorResolutionResult, error) {
 	// Use loadRGAElements which handles deduplication
-	elements, bound, scanned, err := m.loadRGAElements(eBytes, aBytes)
+	elements, bound, err := m.loadRGAElements(eBytes, aBytes, report)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +57,6 @@ func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolution
 		// elements, so their presence is the attribute's.
 		Present:      len(elements) > 0,
 		MaxElementID: FindMaxElementID(elements),
-		Scanned:      scanned,
 		Bound:        bound,
 	}, nil
 }
@@ -79,13 +73,13 @@ func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolution
 // versions (e.g., original + tombstoned), the tombstoned version takes precedence.
 // This supports Set() which writes a tombstone record for the element being deleted.
 //
-// Returns the run it walked and the scan's index intake alongside the elements.
-// An RGA group is every insert and tombstone ever written for the (E, A), so
-// this is the resolution whose intake most exceeds what it produces, and the
-// pattern above it has no other way to learn the difference. The bound travels
-// back rather than being rebuilt by the caller that announces it, so the
-// announced run and the walked run are the same value.
-func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, ScanBound, int, error) {
+// Returns the run it walked alongside the elements, and accrues the scan's
+// index intake into the report. An RGA group is every insert and tombstone ever
+// written for the (E, A), so this is the resolution whose intake most exceeds
+// what it produces, and the pattern above it has no other way to learn the
+// difference. The bound travels back rather than being rebuilt by the caller
+// that announces it, so the announced run and the walked run are the same value.
+func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte, report *scanReport) ([]RGAElement, ScanBound, error) {
 	// The caller holds storage projections; both constructors return the
 	// canonical interned pointer for an already-interned value.
 	var e Entity
@@ -101,9 +95,11 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, S
 			datalog.InternKeywordFromBytes(a),
 		},
 	}
-	iter, err := m.reader.Scan(bound)
+	// The scan accrues into the report as it closes, so a decode failure keeps the
+	// intake it spent instead of losing it with the result it never returns.
+	iter, err := OpenScan(m.reader, report, bound)
 	if err != nil {
-		return nil, bound, 0, err
+		return nil, bound, err
 	}
 	defer iter.Close()
 
@@ -115,7 +111,7 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, S
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return nil, bound, iter.Scanned(), fmt.Errorf("decode RGA element: %w", err)
+			return nil, bound, fmt.Errorf("decode RGA element: %w", err)
 		}
 
 		// Only process RGA operations
@@ -178,7 +174,7 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, S
 		}
 	}
 	if err := iter.Error(); err != nil {
-		return nil, bound, iter.Scanned(), fmt.Errorf("decode RGA element: %w", err)
+		return nil, bound, fmt.Errorf("decode RGA element: %w", err)
 	}
 
 	// Convert map to slice
@@ -187,5 +183,5 @@ func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, S
 		elements = append(elements, elem)
 	}
 
-	return elements, bound, iter.Scanned(), nil
+	return elements, bound, nil
 }

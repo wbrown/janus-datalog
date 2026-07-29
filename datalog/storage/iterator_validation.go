@@ -124,6 +124,11 @@ type scanFunnel struct {
 // key that has no value is not the same act as supplying a zero-valued
 // structure that reads as a measurement.
 //
+// completed is required for the funnel's reason: it says whether the counts are
+// a total or as far as the scan got. A producer that cannot abort passes true,
+// which is a claim; leaving it to a default would make "finished" the answer for
+// producers that never considered the question.
+//
 // One event family, not one name per kind of cause: Database.Analyze sums per
 // event name, so anything asking what a query spent on index reads would
 // otherwise have to enumerate the names and would silently miss the next one
@@ -146,12 +151,14 @@ func emitScanCompletion(
 	eventName string,
 	opened time.Time,
 	funnel scanFunnel,
+	completed bool,
 	extraData map[string]interface{},
 ) {
 	data := map[string]interface{}{
 		annotations.KeyDatomsScanned:  funnel.scanned,
 		annotations.KeyDatomsResolved: funnel.resolved,
 		annotations.KeyDatomsMatched:  funnel.matched,
+		annotations.KeySuccess:        completed,
 	}
 
 	// Merge in extra data

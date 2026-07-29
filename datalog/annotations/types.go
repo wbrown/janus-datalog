@@ -220,6 +220,16 @@ const (
 	KeyBindingSize = "binding.size"
 	KeyScansOpened = "scans.opened"
 
+	// Whether the operation this event completes ran to the end. A scan that
+	// aborted mid-iteration reports its funnel as far as it got, and this is
+	// what says the funnel is a truncation rather than a total.
+	//
+	// A *-complete event fires either way. The alternative — absence as the
+	// signal — makes a failed operation indistinguishable from one that never
+	// ran, and the reads it performed unaccounted. QueryComplete, PullComplete,
+	// the reflect contexts and the annotated matcher already answer it this way.
+	KeySuccess = "success"
+
 	// The funnel, narrowest last: intake from the index, what CRDT resolution
 	// produced from it, what survived the pattern and its constraints.
 	//

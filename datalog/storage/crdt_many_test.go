@@ -202,7 +202,7 @@ func TestResolveAddWinsSetDirect(t *testing.T) {
 	copy(eBytes[:], entityID.Bytes())
 	copy(aBytes[:], attr.String())
 
-	result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+	result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
 	if err != nil {
 		t.Fatalf("resolveAddWinsSet failed: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestResolveAddWinsSameLamport(t *testing.T) {
 	copy(eBytes[:], entityID.Bytes())
 	copy(aBytes[:], attr.String())
 
-	result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+	result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
 	if err != nil {
 		t.Fatalf("resolveAddWinsSet failed: %v", err)
 	}
@@ -332,21 +332,23 @@ func TestCheckSetMembershipDirect(t *testing.T) {
 		}
 	}
 
-	// Check membership for "present" (should be true)
-	isMember, scanned, err := matcher.checkSetMembership(membershipBound("present"))
+	// Check membership for "present" (should be true). The intake reaches the
+	// report the scan was acquired through, so that is where it is read.
+	report := &scanReport{}
+	isMember, err := matcher.checkSetMembership(membershipBound("present"), report)
 	if err != nil {
 		t.Fatalf("checkSetMembership failed: %v", err)
 	}
-	t.Logf("Membership of 'present': %v (%d datoms read)", isMember, scanned)
+	t.Logf("Membership of 'present': %v (%d datoms read)", isMember, report.scanned)
 	if !isMember {
 		t.Error("Expected 'present' to be a member")
 	}
-	if scanned <= 0 {
+	if report.scanned <= 0 {
 		t.Error("a membership check that found the value must report the index reads that found it")
 	}
 
 	// Check membership for "absent" (should be false)
-	isMember2, _, err := matcher.checkSetMembership(membershipBound("absent"))
+	isMember2, err := matcher.checkSetMembership(membershipBound("absent"), DiscardIntake)
 	if err != nil {
 		t.Fatalf("checkSetMembership failed: %v", err)
 	}
@@ -1180,7 +1182,7 @@ func TestCardinalityManyReplaceSet(t *testing.T) {
 	copy(eBytes[:], entityID.Bytes())
 	copy(aBytes[:], attr.String())
 
-	result1, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+	result1, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
 	if err != nil {
 		t.Fatalf("resolveAddWinsSet failed: %v", err)
 	}
@@ -1205,7 +1207,7 @@ func TestCardinalityManyReplaceSet(t *testing.T) {
 	}
 
 	// Step 3: Verify the set now contains only the new values
-	result2, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+	result2, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
 	if err != nil {
 		t.Fatalf("resolveAddWinsSet failed: %v", err)
 	}

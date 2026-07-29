@@ -29,12 +29,6 @@ type SetResolutionResult struct {
 	// Used for cache freshness tracking
 	MaxElementID datalog.ElementID
 
-	// Scanned is the index intake this resolution spent. Resolution reads the
-	// index on the pattern's behalf and emits no event of its own, so the only
-	// way the pattern can report what it cost is for the resolver to hand the
-	// number back with the result.
-	Scanned int
-
 	// Bound is the run this resolution walked. The pattern arm announces it,
 	// and it travels back rather than being rebuilt there so the announced run
 	// and the walked run are the same value and cannot drift.
@@ -59,7 +53,7 @@ type SetResolutionResult struct {
 // NOTE: ReplicaID is NOT used for add-wins comparison. It's only used for
 // LWW (cardinality-one). For add-wins, "concurrent" means same Lamport,
 // and add always wins at concurrent operations regardless of ReplicaID.
-func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutionResult, error) {
+func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte, report *scanReport) (*SetResolutionResult, error) {
 	// The caller holds storage projections; both constructors return the
 	// canonical interned pointer for an already-interned value.
 	var e Entity
@@ -75,7 +69,16 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutio
 			datalog.InternKeywordFromBytes(a),
 		},
 	}
-	iter, err := m.reader.ScanKeysOnly(bound)
+	// Names the run for an arm that delegates its whole scan here, and so has
+	// none of its own to declare. An arm that already declared one keeps it:
+	// these reads are subordinate to it.
+	if report != nil && report.run == nil {
+		report.run = &bound
+	}
+	// The scan accrues into the report as it closes, so the arms below that return
+	// nil on a decode or blob failure keep the intake they spent instead of
+	// losing it with the result struct that never gets built.
+	iter, err := OpenKeyScan(m.reader, report, bound)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +101,7 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutio
 		if err := it.Error(); err != nil {
 			return nil, err
 		}
-		return finishWithIntake(acc, it.blobs, iter, bound)
+		return finishWithBound(acc, it.blobs, bound)
 	}
 	if blobs, ok, err := scanAddWinsBadger(m.encoder, iter, acc); ok {
 		if err != nil {
@@ -107,7 +110,7 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutio
 		if err := iter.Error(); err != nil {
 			return nil, err
 		}
-		return finishWithIntake(acc, blobs, iter, bound)
+		return finishWithBound(acc, blobs, bound)
 	}
 
 	for iter.Next() {
@@ -120,19 +123,19 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolutio
 	if err := iter.Error(); err != nil {
 		return nil, err
 	}
-	return finishWithIntake(acc, nil, iter, bound)
+	return finishWithBound(acc, nil, bound)
 }
 
-// finishWithIntake completes an add-wins resolution and records what its scan
-// read. Every arm of resolveAddWinsSet goes through here so the intake cannot
-// be attached on one path and forgotten on another; the count has to be taken
-// before the deferred Close.
-func finishWithIntake(acc *addWinsAccumulator, blobs BlobReader, iter Iterator, bound ScanBound) (*SetResolutionResult, error) {
+// finishWithBound completes an add-wins resolution and records the run it
+// walked. Every arm of resolveAddWinsSet goes through here so the bound cannot
+// be attached on one path and forgotten on another. Intake is no longer among
+// its business: the report accrues that at scan time, which is what lets the
+// arms that return before reaching here keep what they spent.
+func finishWithBound(acc *addWinsAccumulator, blobs BlobReader, bound ScanBound) (*SetResolutionResult, error) {
 	result, err := acc.finish(blobs)
 	if err != nil {
 		return nil, err
 	}
-	result.Scanned = iter.Scanned()
 	result.Bound = bound
 	return result, nil
 }
@@ -291,14 +294,13 @@ func scanAddWinsMemory(encoder *BinaryKeyEncoder, it *memoryIterator, acc *addWi
 // annotation and to the reader is what keeps the announced run and the walked
 // run from drifting.
 //
-// Returns the scan's index intake alongside the answer. A variable-width V
-// leaves this run inexact, so the store steps over the keys the byte range
-// over-covers and the intake exceeds what the loop below sees — which is
-// precisely the amplification the caller has to be able to report.
-func (m *PatternMatcher) checkSetMembership(bound ScanBound) (bool, int, error) {
-	iter, err := m.reader.Scan(bound)
+// A variable-width V leaves this run inexact, so the store steps over the
+// keys the byte range over-covers and the intake exceeds what the loop below
+// sees — precisely the amplification the caller has to be able to report.
+func (m *PatternMatcher) checkSetMembership(bound ScanBound, report *scanReport) (bool, error) {
+	iter, err := OpenScan(m.reader, report, bound)
 	if err != nil {
-		return false, 0, err
+		return false, err
 	}
 	defer iter.Close()
 
@@ -309,7 +311,7 @@ func (m *PatternMatcher) checkSetMembership(bound ScanBound) (bool, int, error) 
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return false, iter.Scanned(), err
+			return false, err
 		}
 
 		elemID := datom.Tx
@@ -329,20 +331,18 @@ func (m *PatternMatcher) checkSetMembership(bound ScanBound) (bool, int, error) 
 		}
 	}
 	if err := iter.Error(); err != nil {
-		return false, iter.Scanned(), err
+		return false, err
 	}
-	scanned := iter.Scanned()
-
 	// Determine membership using add-wins semantics
 	// CRITICAL: Compare only Lamport values for add-wins.
 	if !hasAdd {
-		return false, scanned, nil // No adds ever - not in set
+		return false, nil // No adds ever - not in set
 	}
 	if !hasRemove {
-		return true, scanned, nil // Only adds - in set
+		return true, nil // Only adds - in set
 	}
 
 	// Both exist - compare Lamport timestamps only
 	// At same Lamport (concurrent operations), add wins
-	return highestAddTx.Lamport >= highestRemoveTx.Lamport, scanned, nil
+	return highestAddTx.Lamport >= highestRemoveTx.Lamport, nil
 }

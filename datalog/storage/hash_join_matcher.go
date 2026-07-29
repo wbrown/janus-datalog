@@ -163,8 +163,22 @@ func (m *PatternMatcher) matchWithHashJoin(
 	}
 	bound := m.patternScanBoundWithBinding(pattern, index, position, boundValue)
 
+	report := DiscardIntake
+	if m.handler != nil {
+		report = &scanReport{
+			handler:  m.handler,
+			opened:   time.Now(),
+			strategy: annotations.ScanHashJoin,
+			cause: map[string]interface{}{
+				annotations.KeyPattern:     pattern,
+				annotations.KeyBindingSize: counts.tuples,
+			},
+			run: &bound,
+		}
+	}
+
 	// PHASE 3: Create storage iterator
-	storageIter, err := m.reader.ScanKeysOnly(bound)
+	storageIter, err := OpenKeyScan(m.reader, report, bound)
 	if err != nil {
 		return nil, fmt.Errorf("hash join scan failed: %w", err)
 	}
@@ -174,29 +188,22 @@ func (m *PatternMatcher) matchWithHashJoin(
 	if m.isHistoryMode() {
 		resolvedIter = storageIter
 	} else {
-		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m)
-	}
-
-	var scanStart time.Time
-	if m.handler != nil {
-		scanStart = time.Now()
+		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m, report)
 	}
 
 	// PHASE 4: Create streaming hash join iterator
 	iter := &hashJoinIterator{
-		matcher:           m,
-		pattern:           pattern,
-		matchPlan:         compileBindingMatchPlan(pattern, bindingRel.Symbols()),
-		symbols:           symbols,
-		position:          position,
-		bound:             bound,
-		constraints:       constraints,
-		hashSet:           hashSet,
-		bindingTupleCount: counts.tuples,
-		iter:              resolvedIter,
-		workspace:         make(executor.Tuple, len(symbols)),
-		tupleBuilder:      m.getTupleBuilder(pattern, symbols),
-		scanStart:         scanStart,
+		matcher:      m,
+		pattern:      pattern,
+		matchPlan:    compileBindingMatchPlan(pattern, bindingRel.Symbols()),
+		symbols:      symbols,
+		position:     position,
+		constraints:  constraints,
+		hashSet:      hashSet,
+		iter:         resolvedIter,
+		workspace:    make(executor.Tuple, len(symbols)),
+		tupleBuilder: m.getTupleBuilder(pattern, symbols),
+		report:       report,
 	}
 
 	// Return streaming relation
@@ -577,11 +584,20 @@ func (m *PatternMatcher) matchWithMergeJoin(
 	bound := m.patternScanBound(pattern, index)
 
 	// PHASE 3: Create storage iterator
-	var scanStart time.Time
+	report := DiscardIntake
 	if m.handler != nil {
-		scanStart = time.Now()
+		report = &scanReport{
+			handler:  m.handler,
+			opened:   time.Now(),
+			strategy: annotations.ScanMergeJoin,
+			cause: map[string]interface{}{
+				annotations.KeyPattern:     pattern,
+				annotations.KeyBindingSize: len(sortedTuples),
+			},
+			run: &bound,
+		}
 	}
-	storageIter, err := m.reader.ScanKeysOnly(bound)
+	storageIter, err := OpenKeyScan(m.reader, report, bound)
 	if err != nil {
 		return nil, fmt.Errorf("merge join scan failed: %w", err)
 	}
@@ -591,7 +607,7 @@ func (m *PatternMatcher) matchWithMergeJoin(
 	if m.isHistoryMode() {
 		resolvedIterMerge = storageIter
 	} else {
-		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m)
+		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m, report)
 	}
 
 	// PHASE 4: Create streaming merge join iterator
@@ -601,14 +617,13 @@ func (m *PatternMatcher) matchWithMergeJoin(
 		bindingRel:   bindingRel,
 		symbols:      symbols,
 		position:     position,
-		bound:        bound,
 		constraints:  constraints,
 		sortedTuples: sortedTuples,
 		bindingIdx:   0,
 		iter:         resolvedIterMerge,
 		workspace:    make(executor.Tuple, len(symbols)),
 		tupleBuilder: m.getTupleBuilder(pattern, symbols),
-		scanStart:    scanStart,
+		report:       report,
 	}
 
 	// Return streaming relation
@@ -629,30 +644,26 @@ type hashJoinIterator struct {
 	// The pattern, not a rendering of it: String() is annotation argument
 	// preparation, so it belongs inside the handler guard at Close. A rendered
 	// form held here would be built by every hash join, handler or not.
-	pattern   *query.DataPattern
-	matchPlan bindingMatchPlan
-	symbols   []query.Symbol
-	position  int
-	// The run this join probes against, kept whole rather than as its index
-	// alone. These paths announce nothing before scanning — they are reached
-	// through analyzeReuseStrategy, not the announcing dispatch — so Close is
-	// the only place the run is ever named.
-	bound       ScanBound
-	constraints []executor.StorageConstraint
-	hashSet     *executor.TupleKeyMap // Built upfront - maps key to all matching tuples
-	// The binding tuples behind the hash set, not its distinct keys. The keys
-	// were what this path happened to have counted, and reporting them under
-	// binding.size gave that key one unit here and another on the two sibling
-	// strategies.
-	bindingTupleCount int
-	iter              Iterator // Storage iterator
-	tupleBuilder      *query.InternedTupleBuilder
-	current           executor.Tuple
-	workspace         executor.Tuple // Reusable workspace for tuple building
-	datomsResolved    int            // Datoms the inner iterator produced
-	matchesFound      int            // Tuples this join emitted
-	scanStart         time.Time      // When the scan opened; the completion event's duration
-	err               error          // First error from storage operations
+	pattern      *query.DataPattern
+	matchPlan    bindingMatchPlan
+	symbols      []query.Symbol
+	position     int
+	constraints  []executor.StorageConstraint
+	hashSet      *executor.TupleKeyMap // Built upfront - maps key to all matching tuples
+	iter         Iterator              // Storage iterator
+	tupleBuilder *query.InternedTupleBuilder
+	current      executor.Tuple
+	workspace    executor.Tuple // Reusable workspace for tuple building
+
+	// report accounts for this arm and carries the run it probes against, kept
+	// whole rather than as its index alone. This path announces nothing before
+	// scanning — it is reached through analyzeReuseStrategy, not the announcing
+	// dispatch — so the completion is the only place the run is ever named. The
+	// AVET reads the unique walk opens inside CRDT resolution, which the source
+	// scan cannot see, acquire through the same report.
+	report *scanReport
+
+	err error // First error from storage operations
 }
 
 func (it *hashJoinIterator) Next() bool {
@@ -663,8 +674,11 @@ func (it *hashJoinIterator) Next() bool {
 			return false
 		}
 
-		// Count every datom scanned for performance monitoring
-		it.datomsResolved++
+		// What resolution produced, counted under the same condition that
+		// decides whether Close will ever read it.
+		if it.report != nil {
+			it.report.resolved++
+		}
 
 		// Check transaction validity
 		if it.matcher.shouldFilterTx(datom.Tx) {
@@ -694,7 +708,9 @@ func (it *hashJoinIterator) Next() bool {
 					if satisfiesAll {
 						it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
 						it.current = it.workspace
-						it.matchesFound++
+						if it.report != nil {
+							it.report.matched++
+						}
 						return true
 					}
 				}
@@ -715,61 +731,50 @@ func (it *hashJoinIterator) Tuple() executor.Tuple {
 }
 
 func (it *hashJoinIterator) Close() error {
-	// No guard on the counts. Suppressing the event when resolution produced
-	// nothing hides exactly the case the intake counter exists for: a
+	var err error
+	if it.iter != nil {
+		err = it.iter.Close()
+	}
+
+	// Not gated on the counts. Suppressing the completion when resolution
+	// produced nothing hides exactly the case the intake counter exists for: a
 	// variable-width V leaves the run inexact, every key the range over-covers
 	// is counted into intake and stepped over before the wrapper sees it, and
 	// the scan reports a large datoms.scanned against zero resolved. A fully
 	// tombstoned cardinality-many group reaches it the same way.
-	if it.matcher.handler != nil {
-		run := map[string]interface{}{
-			annotations.KeyPattern:     it.pattern,
-			annotations.KeyStrategy:    annotations.ScanHashJoin,
-			annotations.KeyBindingSize: it.bindingTupleCount,
-		}
-		addBoundFields(run, it.bound)
-		emitScanCompletion(it.matcher.handler, annotations.StorageScanComplete,
-			it.scanStart,
-			scanFunnel{
-				scanned:  it.iter.Scanned(),
-				resolved: it.datomsResolved,
-				matched:  it.matchesFound,
-			},
-			run)
+	if it.report != nil {
+		it.report.close(it.err == nil)
 	}
-
-	if it.iter != nil {
-		return it.iter.Close()
-	}
-	return nil
+	return err
 }
 
 func (it *hashJoinIterator) Error() error { return it.err }
 
 // mergeJoinIterator performs lazy merge join iteration
 type mergeJoinIterator struct {
-	matcher    *PatternMatcher
-	pattern    *query.DataPattern
-	bindingRel executor.Relation
-	symbols    []query.Symbol
-	position   int
-	// The run this merge walks, kept whole rather than as its index alone, for
-	// the reason hashJoinIterator.bound gives: Close is the only event either
-	// path emits, so it is the only place the run can be named.
-	bound          ScanBound
-	constraints    []executor.StorageConstraint
-	sortedTuples   []executor.Tuple // Sorted binding tuples
-	bindingIdx     int              // Start of the current key group in sortedTuples
-	groupDatom     *datalog.Datom   // Datom being paired with its key group; nil = pull the next datom
-	groupOffset    int              // Next tuple within the key group to try against groupDatom
-	iter           Iterator         // Storage iterator
-	tupleBuilder   *query.InternedTupleBuilder
-	current        executor.Tuple
-	workspace      executor.Tuple // Reusable workspace for tuple building
-	datomsResolved int            // Datoms the inner iterator produced
-	datomsMatched  int            // Tuples this join emitted
-	scanStart      time.Time      // When the scan opened; the completion event's duration
-	err            error          // First error from storage operations
+	matcher      *PatternMatcher
+	pattern      *query.DataPattern
+	bindingRel   executor.Relation
+	symbols      []query.Symbol
+	position     int
+	constraints  []executor.StorageConstraint
+	sortedTuples []executor.Tuple // Sorted binding tuples
+	bindingIdx   int              // Start of the current key group in sortedTuples
+	groupDatom   *datalog.Datom   // Datom being paired with its key group; nil = pull the next datom
+	groupOffset  int              // Next tuple within the key group to try against groupDatom
+	iter         Iterator         // Storage iterator
+	tupleBuilder *query.InternedTupleBuilder
+	current      executor.Tuple
+	workspace    executor.Tuple // Reusable workspace for tuple building
+
+	// report accounts for this arm and carries the run it merges against, for
+	// the reason the hash join's does: the completion is the only event either
+	// path emits, so it is the only place the run can be named. The AVET reads
+	// the unique walk opens inside CRDT resolution, which the source scan
+	// cannot see, acquire through the same report.
+	report *scanReport
+
+	err error // First error from storage operations
 }
 
 // Next advances to the next joined tuple. Binding tuples are sorted by join
@@ -795,7 +800,9 @@ func (it *mergeJoinIterator) Next() bool {
 				if it.matcher.matchesWithBindingTuple(it.groupDatom, it.pattern, it.bindingRel, tuple) {
 					it.tupleBuilder.BuildTupleInternedInto(it.groupDatom, it.workspace)
 					it.current = it.workspace
-					it.datomsMatched++
+					if it.report != nil {
+						it.report.matched++
+					}
 					return true
 				}
 			}
@@ -816,8 +823,11 @@ func (it *mergeJoinIterator) Next() bool {
 
 		// Count what resolution produced, before the join narrows it — the
 		// same point hashJoinIterator counts, so the two strategies' funnels
-		// are comparable.
-		it.datomsResolved++
+		// are comparable. Under the handler check for the same reason it is:
+		// nothing reads this when nobody is listening.
+		if it.report != nil {
+			it.report.resolved++
+		}
 
 		// Check transaction validity
 		if it.matcher.shouldFilterTx(datom.Tx) {
@@ -866,29 +876,17 @@ func (it *mergeJoinIterator) Tuple() executor.Tuple {
 }
 
 func (it *mergeJoinIterator) Close() error {
-	// Merge join is the strategy chosen for the largest binding sets, so it is
-	// the one whose scan volume most needs reporting.
-	if it.matcher.handler != nil {
-		run := map[string]interface{}{
-			annotations.KeyPattern:     it.pattern,
-			annotations.KeyStrategy:    annotations.ScanMergeJoin,
-			annotations.KeyBindingSize: len(it.sortedTuples),
-		}
-		addBoundFields(run, it.bound)
-		emitScanCompletion(it.matcher.handler, annotations.StorageScanComplete,
-			it.scanStart,
-			scanFunnel{
-				scanned:  it.iter.Scanned(),
-				resolved: it.datomsResolved,
-				matched:  it.datomsMatched,
-			},
-			run)
+	var err error
+	if it.iter != nil {
+		err = it.iter.Close()
 	}
 
-	if it.iter != nil {
-		return it.iter.Close()
+	// Merge join is the strategy chosen for the largest binding sets, so it is
+	// the one whose scan volume most needs reporting.
+	if it.report != nil {
+		it.report.close(it.err == nil)
 	}
-	return nil
+	return err
 }
 
 func (it *mergeJoinIterator) Error() error { return it.err }

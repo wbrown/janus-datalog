@@ -87,7 +87,8 @@ func newDBStats() *dbStats {
 // datom in the database, including full CRDT history (removes, RGA ops).
 func collectStats(db *storage.Database) (*dbStats, error) {
 	// Scan the entire EAVT index, same bound as Database.Export.
-	iter, err := db.Store().Scan(storage.ScanBound{Index: storage.EAVT})
+	iter, err := storage.OpenScan(db.Store(), storage.DiscardIntake,
+		storage.ScanBound{Index: storage.EAVT})
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan database: %w", err)
 	}

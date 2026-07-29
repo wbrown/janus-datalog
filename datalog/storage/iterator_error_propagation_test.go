@@ -116,7 +116,7 @@ func TestCRDTResolvingIterator_SourceDatomErrorPropagates(t *testing.T) {
 	}
 
 	// schema=nil and matcher=nil → plain first-entry semantics, not unique walk
-	it := NewCRDTResolvingIterator(source, nil, datalog.ElementID{}, nil)
+	it := NewCRDTResolvingIterator(source, nil, datalog.ElementID{}, nil, DiscardIntake)
 
 	// Consume until exhausted.
 	for it.Next() {
@@ -146,7 +146,7 @@ func TestCRDTResolvingIterator_UniqueWalkErrorIsDeferred(t *testing.T) {
 	// Seed a CRDTResolvingIterator directly and simulate the failure
 	// path: Next() records the error and returns false.
 	source := &failingIterator{} // empty source; source.Next() is false
-	it := NewCRDTResolvingIterator(source, nil, datalog.ElementID{}, nil)
+	it := NewCRDTResolvingIterator(source, nil, datalog.ElementID{}, nil, DiscardIntake)
 	it.err = sentinel // simulate as if processUniqueEntry recorded it
 
 	// Exhaust (source is empty so Next() returns false immediately).

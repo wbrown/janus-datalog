@@ -729,7 +729,6 @@ func TestMergeJoinPropagatesDeferredScanError(t *testing.T) {
 		bindingRel:   bindingRel,
 		symbols:      symbols,
 		position:     0,
-		bound:        ScanBound{Index: EAVT, Prefix: []datalog.Value{alice}},
 		sortedTuples: []executor.Tuple{{alice}},
 		iter:         &deferredErrorIterator{err: scanErr},
 		workspace:    make(executor.Tuple, len(symbols)),

@@ -76,7 +76,7 @@ func (f *OutputFormatter) Format(event Event) string {
 		return fmt.Sprintf("\n%s\n", event.Data["plan"].(string))
 
 	case QueryComplete:
-		success := event.Data["success"].(bool)
+		success := event.Data[KeySuccess].(bool)
 		if !success {
 			return fmt.Sprintf("%s %s Query failed: %v",
 				latency,
@@ -384,11 +384,19 @@ func (f *OutputFormatter) Format(event Event) string {
 //
 // Comma-ok reads rather than assertions: an event that omits one of the three
 // should render a zero, not panic the formatter mid-trace.
+//
+// An aborted scan says so. Its three counts are as far as it got, and read
+// without that they are a total — the reading that makes a truncated scan
+// indistinguishable from a small one.
 func renderScanFunnel(data map[string]interface{}) string {
 	matched, _ := data[KeyDatomsMatched].(int)
 	resolved, _ := data[KeyDatomsResolved].(int)
 	scanned, _ := data[KeyDatomsScanned].(int)
-	return fmt.Sprintf("%d matched, %d resolved, %d scanned", matched, resolved, scanned)
+	line := fmt.Sprintf("%d matched, %d resolved, %d scanned", matched, resolved, scanned)
+	if completed, ok := data[KeySuccess].(bool); ok && !completed {
+		line += " (aborted)"
+	}
+	return line
 }
 
 // renderPayloadValue renders a value a producer left typed — an IndexType as

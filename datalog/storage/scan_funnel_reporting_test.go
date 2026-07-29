@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -598,6 +599,79 @@ func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
 		require.Equal(t, 3, ev.Data[annotations.KeyValuesServed])
 		require.Positive(t, ev.Data[annotations.KeyDatomsScanned])
 	})
+}
+
+// TestUniqueAttributeWalkReportsItsOwnScans enters the branch the suite never
+// did: CRDTResolvingIterator's unique CardinalityOne mode, where resolution
+// stops being free. Every other cardinality resolves out of the source's own
+// ordering, so intake is the source's alone; this one opens an AVET supersession
+// scan per entry, and Scanned() adds them to what the source read.
+//
+// The review found uniqueMode true zero times across the whole suite, so the
+// accumulation could be deleted and nothing would red. Reaching it needs an
+// attribute that is CardinalityOne *and* unique, scanned with E unbound — a
+// bound E goes to the cache, and a bound V goes to the claimant lookup, so
+// neither of the shapes a unique attribute is usually queried by comes here.
+//
+// The assertion is a strict inequality against the fixture's own datom count,
+// which is what the source reads. No other cardinality can satisfy it: intake
+// above the source is the walk's, and only this branch opens those scans.
+func TestUniqueAttributeWalkReportsItsOwnScans(t *testing.T) {
+	const (
+		entities        = 8
+		writesPerEntity = 3
+	)
+	email := datalog.NewKeyword(":person/email")
+
+	s, err := schema.NewBuilder().
+		Attribute(":person/email").Type(schema.TypeString).One().
+		Unique(schema.UniqueValue).Add().
+		Build()
+	require.NoError(t, err)
+
+	var events []annotations.Event
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), Schema: s})
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Rewritten rather than written once, so each entity's group has entries
+	// behind the winner for the walk to step over.
+	for i := 0; i < entities; i++ {
+		e := datalog.NewIdentity(fmt.Sprintf("unique:person-%d", i))
+		for w := 0; w < writesPerEntity; w++ {
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, email, fmt.Sprintf("p%d-v%d@example.com", i, w)))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+		}
+	}
+
+	db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
+
+	result, err := db.Query(`[:find ?e ?v :where [?e :person/email ?v]]`)
+	require.NoError(t, err)
+	tuples, err := executor.CollectTuples(result, nil)
+	require.NoError(t, err)
+	require.Len(t, tuples, entities,
+		"the walk resolves one current value per entity")
+	for _, tuple := range tuples {
+		require.Contains(t, tuple[1], "-v2@example.com",
+			"the last write is the one that survives the walk")
+	}
+
+	scan := lastScanComplete(events, annotations.ScanDirect)
+	require.NotNil(t, scan)
+	// The source reads every datom under the attribute; the walk then checks
+	// supersession once per group it emits from. One per entity is the floor,
+	// not the observed number, so a walk that reads more per check still passes
+	// and a walk whose reads stop being counted does not.
+	sourceIntake := entities * writesPerEntity
+	scanned, ok := scan.Data[annotations.KeyDatomsScanned].(int)
+	require.True(t, ok)
+	require.GreaterOrEqual(t, scanned, sourceIntake+entities,
+		"the source holds %d datoms and the walk checks %d groups, so intake "+
+			"is at least %d; %d means the walk's reads reached no one",
+		sourceIntake, entities, sourceIntake+entities, scanned)
 }
 
 // TestMemoryBackendReportsIntakeNatively closes the gap that left

@@ -77,7 +77,7 @@ func (d *Database) ExportBinary(w io.WriteSeeker, opts ...BinaryExportOptions) e
 		return err
 	}
 
-	iter, err := d.store.Scan(ScanBound{Index: EAVT})
+	iter, err := OpenScan(d.store, DiscardIntake, ScanBound{Index: EAVT})
 	if err != nil {
 		return fmt.Errorf("binary export scan: %w", err)
 	}
