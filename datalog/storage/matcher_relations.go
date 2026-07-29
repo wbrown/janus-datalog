@@ -940,10 +940,13 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 			return false, err
 		}
 		if entry != nil && entry.Cardinality() == schema.CardinalityOne {
-			// oneValue is nil for a tombstoned or never-set (E, A); ValuesEqual
-			// against the (always non-nil) bound V yields false, matching the
-			// scan path's tombstone and no-winner handling exactly.
-			matches := datalog.ValuesEqual(entry.OneValue(), it.currentBoundV)
+			// A tombstoned or never-set (E, A) holds no value, so it matches no
+			// bound V. Absence is tested for, not compared: it is not a value, so
+			// handing it to ValuesEqual would put a non-member through the domain
+			// door. This matches the scan path's tombstone and no-winner handling
+			// exactly, and the other cache readers of OneValue.
+			cachedV := entry.OneValue()
+			matches := cachedV != nil && datalog.ValuesEqual(cachedV, it.currentBoundV)
 			if it.matcher.handler != nil {
 				it.matcher.handler(annotations.Event{
 					Name:  annotations.VValidationCacheResolved,
@@ -952,7 +955,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 						"e":        e.String(),
 						"a":        a.String(),
 						"bound_v":  fmt.Sprintf("%v", it.currentBoundV),
-						"cached_v": fmt.Sprintf("%v", entry.OneValue()),
+						"cached_v": fmt.Sprintf("%v", cachedV),
 						"matches":  matches,
 					},
 				})
@@ -1013,7 +1016,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 					"winner_op":                fmt.Sprintf("%d", winner.Op),
 					"matches":                  matches,
 					"will_emit":                matches,
-					annotations.KeyCardinality: it.getCardinality(a),
+					annotations.KeyCardinality: it.getCardinalityEnum(a),
 				},
 			})
 		}
@@ -1038,27 +1041,6 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 		})
 	}
 	return false, nil
-}
-
-// getCardinality looks up the cardinality for an attribute (for annotations)
-func (it *validatingVBoundIterator) getCardinality(a datalog.Keyword) string {
-	if it.matcher.schema == nil {
-		return "unknown"
-	}
-	def := it.matcher.schema.GetAttribute(a)
-	if def == nil {
-		return "unknown"
-	}
-	switch def.Cardinality {
-	case schema.CardinalityOne:
-		return "one"
-	case schema.CardinalityMany:
-		return "many"
-	case schema.CardinalityVector:
-		return "vector"
-	default:
-		return "unknown"
-	}
 }
 
 // attrIsUnique reports whether attribute a is declared unique in the schema.

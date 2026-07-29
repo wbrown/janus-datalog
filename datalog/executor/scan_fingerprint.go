@@ -3,6 +3,7 @@ package executor
 import (
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -44,8 +45,27 @@ func ScanFingerprint(pattern *query.DataPattern) string {
 			)
 		case query.Blank:
 			writeFingerprintText(&b, "blank", "")
+		case query.VectorConstant:
+			// Elements carry their own type tag and bytes, as Constant does. The
+			// rendered form is not injective: FormatValueEDN prints int64(1) and
+			// float64(1) both as "1", and ValuesEqual holds those distinct, so [1]
+			// and [1.0] shared one key. The count is part of the fingerprint
+			// because a vector contributes a variable number of entries, so
+			// without it the boundary to the element after it is not recoverable.
+			writeFingerprintText(&b, "vector", strconv.Itoa(len(e.Values)))
+			for _, value := range e.Values {
+				writeFingerprintText(
+					&b,
+					fmt.Sprintf("element-%d", datalog.Type(value)),
+					hex.EncodeToString(datalog.ValueBytes(value)),
+				)
+			}
 		default:
-			writeFingerprintText(&b, fmt.Sprintf("%T", e), fmt.Sprint(e))
+			// PatternElement has four implementations and all are handled above. A
+			// new one must be fingerprinted from its values rather than rendered:
+			// this string is ScanSharingMatcher's cache key, so two patterns that
+			// collide here are served each other's tuples.
+			panic(fmt.Sprintf("ScanFingerprint: unhandled pattern element %T", elem))
 		}
 	}
 
@@ -68,21 +88,23 @@ func ScanQueryFingerprint(q *query.Query, pattern *query.DataPattern) string {
 			positions[variable.Name] = i
 		}
 	}
-	b.WriteString("|order:")
+	// Length-delimited like the pattern components, not raw text. An external
+	// sort key writes a symbol's name, and datalog.NewSymbol accepts any string —
+	// so relying on a lexed symbol being unable to contain the separator would
+	// make injectivity a property of the parser rather than of this encoding.
+	writeFingerprintText(&b, "order", strconv.Itoa(len(q.OrderBy)))
 	for _, clause := range q.OrderBy {
-		position, ok := positions[clause.Variable]
-		if !ok {
-			fmt.Fprintf(&b, "external:%s", clause.Variable)
+		if position, ok := positions[clause.Variable]; ok {
+			writeFingerprintText(&b, "order-var", strconv.Itoa(position))
 		} else {
-			fmt.Fprintf(&b, "var%d", position)
+			writeFingerprintText(&b, "order-external", clause.Variable.String())
 		}
-		fmt.Fprintf(&b, ":%t;", clause.Descending)
+		writeFingerprintText(&b, "order-descending", strconv.FormatBool(clause.Descending))
 	}
-	b.WriteString("|limit:")
 	if q.Limit == nil {
-		b.WriteString("none")
+		writeFingerprintText(&b, "limit", "none")
 	} else {
-		fmt.Fprintf(&b, "%d", *q.Limit)
+		writeFingerprintText(&b, "limit", strconv.Itoa(*q.Limit))
 	}
 	return b.String()
 }

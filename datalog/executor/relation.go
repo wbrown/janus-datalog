@@ -490,6 +490,11 @@ func deduplicateTuples(tuples []Tuple) []Tuple {
 	if len(tuples) == 0 {
 		return tuples
 	}
+	if len(tuples) == 1 {
+		// One tuple cannot duplicate itself. Its own slice, because callers get a
+		// slice the relation owns.
+		return []Tuple{tuples[0]}
+	}
 
 	// Pre-size seen map based on input size
 	seen := NewTupleKeyMapWithCapacity(len(tuples))

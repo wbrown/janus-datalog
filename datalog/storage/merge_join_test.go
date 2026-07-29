@@ -508,9 +508,6 @@ func TestMergeJoinKeyComparison(t *testing.T) {
 		b        interface{}
 		expected int
 	}{
-		{"nil vs nil", nil, nil, 0},
-		{"nil vs value", nil, int64(5), -1},
-		{"value vs nil", int64(5), nil, 1},
 		{"equal int64", int64(5), int64(5), 0},
 		{"less int64", int64(3), int64(5), -1},
 		{"greater int64", int64(7), int64(5), 1},

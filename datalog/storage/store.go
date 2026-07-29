@@ -73,7 +73,7 @@ type Store interface {
 	// is unique per operation.
 	//
 	// CountKeys is likewise not on Store — it remains *BadgerStore-only
-	// (debug/test); see docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md.
+	// (debug/test).
 	//
 	// A scan yields EXACTLY the datoms whose bound components equal the
 	// ScanBound's values, and narrowing to them is the implementation's

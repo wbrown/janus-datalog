@@ -66,16 +66,7 @@ func NormalizeValue(v Value) Value {
 
 func Type(v Value) ValueType {
 	v = NormalizeValue(v) // int/int8/int16/int32 -> canonical int64
-	// Handle pointers by checking what they point to
 	switch val := v.(type) {
-	case *Identity:
-		return TypeReference
-	case *Keyword:
-		return TypeKeyword
-	case *Symbol:
-		return TypeSymbol
-	case *uint64:
-		return TypeInt
 	case string:
 		return TypeString
 	case int64:
@@ -184,10 +175,6 @@ func ValueBytes(v Value) []byte {
 		return []byte(ptr.String())
 	case Symbol:
 		return []byte(ptr.String())
-	case *uint64:
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, *ptr)
-		return buf
 	}
 
 	// Handle values

@@ -379,10 +379,17 @@ func TestElementIDPointerValueCrossComparison(t *testing.T) {
 		t.Error("ValuesEqual(&a, &c) should be false")
 	}
 
-	// ValuesEqual: nil pointer vs value
-	if ValuesEqual((*ElementID)(nil), a) {
-		t.Error("ValuesEqual(nil *ElementID, a) should be false")
-	}
+	// ValuesEqual: a nil *ElementID carries no ElementID, so it is absence rather
+	// than a value, and the domain check rejects it. Reporting it merely unequal
+	// would make nil a value that compares distinct from every ElementID.
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("ValuesEqual(nil *ElementID, a) should panic: nil is not a value")
+			}
+		}()
+		ValuesEqual((*ElementID)(nil), a)
+	}()
 }
 
 // TestValuesEqualSlices tests ValuesEqual with slice types.

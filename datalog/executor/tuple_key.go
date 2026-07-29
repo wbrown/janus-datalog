@@ -96,14 +96,9 @@ func hashValue(v interface{}) uint64 {
 			return 0
 		}
 		return uint64(uintptr(unsafe.Pointer(ptr)))
-	case *uint64:
-		if ptr == nil {
-			return 0
-		}
-		return *ptr
 	}
 
-	// Remaining value types (Identity/Keyword/Symbol/*uint64 handled above).
+	// Remaining value types (Identity/Keyword/Symbol handled above).
 	switch val := v.(type) {
 	case string:
 		return hashString(val)
@@ -164,8 +159,11 @@ func hashValue(v interface{}) uint64 {
 		return val.Lamport ^ (val.ReplicaID * 1099511628211)
 
 	case *datalog.ElementID:
+		// A pointer representation carries a value only when non-nil. Reported as
+		// nil rather than as an unknown type: the type is in the domain, so naming
+		// the type would state something false.
 		if val == nil {
-			return 0
+			panic(fmt.Sprintf("hashValue: %T is nil; nil is not a datalog value", v))
 		}
 		return val.Lamport ^ (val.ReplicaID * 1099511628211)
 
@@ -177,7 +175,11 @@ func hashValue(v interface{}) uint64 {
 		return hashValues(val)
 
 	case nil:
-		return 0
+		// Absence is not a member of the domain and has no hash. All three doors
+		// of the domain — this one, datalog.ValuesEqual and datalog.CompareValues
+		// — reject it alike, so nothing reaches a bucket that equality then
+		// refuses to compare.
+		panic("hashValue: nil is not a datalog value")
 
 	default:
 		// Typed slices (e.g. []string, produced by the storage

@@ -53,6 +53,15 @@ cardinality". The same collapse then repeated one layer out, in the annotation
 payload, where `KeyCardinality` is declared to carry a `datalog.Keyword` and one
 producer sends a hand-rolled string.
 
+**Status 2026-07-29: closed.** 1a resolved at the admission point (2026-07-27),
+which dissolved 1b — `Add` is the only write into `s.attributes`, so a non-nil
+`Unique` is a member and `HasUniqueConstraint`'s presence test is correct rather
+than paranoid. 1c and 1e are fixed and pinned; 1d is pinned on the half a test
+can reach, with the other half recorded as not test-detectable. 1f is struck: the
+surface it called breaking is `datalog/storage`'s cross-package plumbing, not
+anything a consumer imports. The fourth-cardinality case raised in 1a's section is
+**D2**, ruled and pinned 2026-07-29.
+
 **Deriving the instance set.**
 
 - Every function that stores into `Schema.attributes` or constructs an
@@ -101,14 +110,16 @@ stored data, so it was the candidate for a panic on a user's database. It cannot
 reach one — `cardFromOp` returns only the three cardinality constants and
 `valueTypeFromValue` is a total type switch with a `TypeString` fallback.
 
-**Still open: the fourth-cardinality case.** Twenty-two three-arm switches would
-each mishandle a cardinality added later. Twenty-two unreachable `default` arms
-guard that poorly, and under R1's read-path half would mean threading an error
-return through `valueCount() int` and `getCardinality() string` for a case that
-cannot occur. **Proposed, not ruled**: pin the contents of the `cardinalities`
-set. `defineCardinality` is the single registration point, so a test asserting
-exactly these three reds the moment a fourth is added — at the moment it is
-added, with a message naming the sweep required.
+**The fourth-cardinality case is D2, ruled and pinned 2026-07-29.** Twenty-two
+three-arm switches would each mishandle a cardinality added later. Twenty-two
+unreachable `default` arms guard that poorly, and under R1's read-path half would
+mean threading an error return through `valueCount() int` and
+`getCardinality() string` for a case that cannot occur. The ruling pins the
+vocabulary instead: `TestCardinalitySetIsClosedAtThree` asserts `cardinalities`
+holds exactly `CardinalityOne`, `CardinalityMany` and `CardinalityVector`, with
+`CardinalityUnknown` outside it. `defineCardinality` is the single registration
+point, so the test reds at the moment a fourth is added, and its message directs
+the author to give every cardinality switch an arm first.
 
 **1b. `HasUniqueConstraint` tests non-nil, not membership.** *Verified as
 reported; dissolved by R1a — no change.* `types.go:143`, gating `LookupByUnique`
@@ -116,31 +127,66 @@ reported; dissolved by R1a — no change.* `types.go:143`, gating `LookupByUniqu
 the predicate runs per (E, A) group, so a membership lookup there would be
 per-group paranoia against an impossibility.
 
-**1c. `annotations.KeyCardinality` carries two types.** *Verified.* `d41d3fa`.
-Declared as a `datalog.Keyword` (`annotations/types.go:156`).
-`matcher_relations.go:1191` sends the Keyword; `:962` sends
-`getCardinality(a)`, returning `"one"/"many"/"vector"/"unknown"` (`:990-1008`).
-`getCardinalityEnum` (`:1023`) is the same lookup returning the Keyword. `:962`
-was a literal before `d41d3fa`, so centralising the key created the collision —
-in the same commit that added `TestIndexAnnotationKeyCarriesOnlyAnIndexType` for
-this exact defect on `KeyIndex`.
+**1c. `annotations.KeyCardinality` carries two types.** *Verified; **fixed
+2026-07-29**.* `d41d3fa`. Declared as a `datalog.Keyword`. Four producers write
+it; three sent the Keyword and the v-validation arm sent
+`getCardinality(a)`, returning `"one"/"many"/"vector"/"unknown"` from a second
+lookup that existed only to render one. Under the formatter's `%v` that arm
+printed `one` where the others printed `:db.cardinality/one`, so one event family
+spelled cardinality differently from the rest. The call site now uses
+`getCardinalityEnum`, the same lookup returning the Keyword, and
+`getCardinality` is deleted — that call was its only caller. The collision was
+created by `d41d3fa`, which centralised the key, in the same commit that added
+`TestIndexAnnotationKeyCarriesOnlyAnIndexType` for this defect on `KeyIndex`;
+`TestCardinalityAnnotationKeyCarriesOnlyAKeyword` is its sibling. It asserts the
+type on every producer in the trace **and** that the v-validation result is among
+them carrying one — two independent flags would go green with a different event
+satisfying the type check while the arm that was wrong satisfied only presence.
 
-**1d. The pointer-identity mechanism is unpinned.** *Unverified.* `ee6500b`.
-Reported: replacing all nine `WellKnownKeyword` calls with `NewKeyword` leaves
-four packages green, and replacing `def.Cardinality == CardinalityMany` in
-`Schema.IsMany` with a rendered-string comparison reds nothing. The closed sets
-are keyed by interned pointer and every dispatch is `==` against a package
-variable, so an orphaned vocabulary after `ClearInterns` produces 1a's failure
-mode. `TestClearInternsPreservesWellKnownIdentity` pins the `datalog` side only.
+**1d. The pointer-identity mechanism is unpinned.** *Verified in part; **pinned
+2026-07-29**.* `ee6500b`. The three closed sets are `map[datalog.Keyword]struct{}`
+keyed by the pointers the `define*` functions captured at init, so an orphaned
+vocabulary after `ClearInterns` produces 1a's failure mode.
+`TestClearInternsPreservesWellKnownIdentity` pinned the `datalog` side; what it
+could not see was this consumer. `TestVocabularyMembershipSurvivesClearInterns`
+(schema) closes that: after a clear, a definition whose vocabulary keywords are
+interned *fresh from text* — the way a parsed schema's arrive — must still be
+admitted, and each package variable must still be the pointer a fresh intern
+returns. `require.Same`, not `require.Equal`: `Equal` reflect-compares the
+pointed-to structs and so passes for two distinct pointers carrying one string,
+which is exactly the orphan case. Under the reported mutation of the nine
+`WellKnownKeyword` calls to `NewKeyword`, the variables orphan, the fresh intern
+differs, and both halves fail.
+
+**Not test-detectable, and recorded as such rather than left on the list.** The
+second reported mutation — `def.Cardinality == CardinalityMany` in
+`Schema.IsMany` replaced by a rendered comparison — returns identical answers for
+every input. No behaviour test can distinguish it, because there is no behaviour
+to distinguish; it is a model violation whose only cost is the allocation and the
+lost enforcement. The defence is the rule and review, not a pin, and writing one
+would mean asserting on the implementation's text.
 
 **1e. `inferSchemaFromStore` compares interned keywords by rendered string.**
-*Unverified.* `cardinality_inference.go:108`, under a comment declining to rely
-on Keyword equality, where `curA` three lines above already holds the pointer.
-Routes around the `Keyword.Equal` panic that exists to catch interning failure —
-at the site that reconstructs cardinality for every attribute in the database.
+*Verified; **fixed 2026-07-29**.* `cardinality_inference.go:108` rendered both
+keywords to detect the ATEV attribute boundary, under a comment that declined to
+rely on Keyword equality without giving a reason, while `curA` three lines above
+already held the pointer. Keywords are interned, so the boundary is `d.A != curA`
+— `datom_decoder.go:38` interns every decoded `A`, and
+`CRDTResolvingIterator:187` already detects the same boundary the same way. The
+`curStr` field and the `aStr` local are gone, along with one string allocation
+per datom across a full ATEV scan, which runs at open on any schemaless database.
+`==` is the comparison, not `Equal`: interning makes pointer equality exact, and
+`Equal`'s panic branch requires the compared pair to be the orphan and its
+replacement, which two attributes from one scan through one decoder cannot be.
 
-**1f. The breaking changes are absent from the upgrade guide.** *Unverified.*
-See the migration family below (Family 5, instance 5d).
+**1f. Struck 2026-07-29.** It reported the schema vocabulary's change as a
+breaking API change needing a migration note. It is not one: `Cardinality`,
+`ValueType` and `Unique` are `datalog.Keyword` fields on `datalog/schema` types
+that `datalog/db` never names, and `CacheResolver` is an interface `storage`
+exports so `db` and `executor` can reach it. Go's export marker is how a module's
+packages compose; it is not a versioning contract, and writing an internal
+signature into a consumer-facing document would create the obligation rather than
+report it.
 
 ---
 
@@ -655,9 +701,7 @@ interface does not state.** *Partly verified.* `0c30a7a`.
 over the whole EATV index is handed to it (`:77`) and each entity reached by
 `Seek`. That `0c30a7a` deleted both the `key[1:21]` check and the decoded
 `datom.E` check is certain, from its own commit message. Unverified: that
-`store.go:141-143` documents only repositioning, and that the upgrade guide's
-*Custom backends* list gained the membership obligation and `Scanned()` this
-round but not this one. Review reports by mutation that a `Seek` implementing
+`store.go:141-143` documents only repositioning. Review reports by mutation that a `Seek` implementing
 exactly the documented contract reds five Badger tests, and the wrong attributes
 are then written into the EA cache under the requested entity's key
 (`pull_batch.go:196-201`), outliving the call. `storeContractCases` and
@@ -681,14 +725,18 @@ removed promise (`annotations/types.go:194-196`, `executor/context.go:65`) —
 *unverified*. Reported tree-wide: 40 handlers installed, 27 mutating captured
 state unlocked.
 
-**5d. `ee6500b`'s API changes are absent from the upgrade guide,** which this
-round extended by 49 lines for two other breaks. *Unverified.* Four exported
-names gone; twelve signatures changed, including all three `CacheResolver`
-methods, so an external implementation fails to compile. The vocabulary
-constants' string values gained a leading colon, so a consumer comparing against
-`"db.cardinality/many"` silently mismatches rather than failing to build. The
-guide contains no occurrence of "schema", "Cardinality", "ValueType" or
-"Keyword". `CRDT_UNIQUE_SEMANTICS.md:403` still gives `def.Unique != ""`.
+**5d. Struck 2026-07-29,** together with the guides it was measured against.
+Its counts were of Go-visible symbols, not of consumer-visible breaks: the four
+names and twelve signatures are `datalog/storage` and `datalog/schema` internals,
+and `CacheResolver` is exported so `db` and `executor` can reach it. Recording
+them in a consumer-facing document would have declared that surface to be API,
+manufacturing the compatibility obligation the instance claimed to report — and
+binding every later refactor of it to a migration note.
+
+One part of 5d survives as its own item, unrelated to any guide:
+`CRDT_UNIQUE_SEMANTICS.md:403` gives `def.Unique != ""`, which no longer compiles
+now that `Unique` is a `datalog.Keyword`. That is a reference document showing
+code that cannot build — plain staleness, **open**.
 
 ---
 
@@ -1114,8 +1162,8 @@ Recorded so the next round does not re-raise them as choices.
 
 ## Open decisions
 
-Two, both surfaced by derivation rather than by the review. D1 is ruled; D2 is
-open.
+Two, both surfaced by derivation rather than by the review. Both are now ruled,
+so nothing in this document awaits a decision.
 
 **D1. Does a `*-complete` event fire for a scan that aborted?** From 2d.
 *Ruled 2026-07-28: it fires, and says which.*
@@ -1140,11 +1188,25 @@ now `annotations.KeySuccess`, declared once and written by every producer
 including the scan family. `renderScanFunnel` marks an aborted funnel, since
 read without that its counts are a total.
 
-**D2. The fourth-cardinality guard.** From Family 1, proposed and not ruled: pin
-the contents of the `cardinalities` set, so `defineCardinality` gaining a fourth
-member reds a test naming the sweep required. R1a rules out the runtime
-alternative — twenty-two per-datom defaults guarding an impossibility — but does
-not by itself select the pin.
+**D2. The fourth-cardinality guard.** From Family 1.
+*Ruled 2026-07-29: pin the set.*
+
+`TestCardinalitySetIsClosedAtThree` (schema) asserts `cardinalities` holds
+exactly `CardinalityOne`, `CardinalityMany` and `CardinalityVector`, and that
+`CardinalityUnknown` — which marks an attribute with no definition — stays
+outside it.
+
+R1a had already ruled out the runtime alternative: twenty-two unreachable
+`default` arms guarding an impossibility, which on the read paths would mean
+threading an error return through signatures like `valueCount() int` for a value
+admission makes unreachable. What remained was the exposure R1a does not cover —
+not a bad value arriving, but the set growing while the switches do not.
+
+The set rather than the switches, because `defineCardinality` is the single
+registration point: a test enumerating the twenty-two dispatch sites is a list
+that rots, while this one cannot be satisfied except by noticing. The failure
+message directs the author to give every cardinality switch an arm first, since a
+member with no arm is skipped silently — zero rows, nil error.
 
 ---
 

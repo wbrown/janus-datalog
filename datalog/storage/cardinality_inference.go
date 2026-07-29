@@ -82,7 +82,6 @@ func inferSchemaFromStore(store Store) (*schema.Schema, error) {
 	defer iter.Close()
 
 	var curA datalog.Keyword
-	var curStr string
 	haveA := false
 	decided := false
 	card := schema.CardinalityOne
@@ -103,12 +102,11 @@ func inferSchemaFromStore(store Store) (*schema.Schema, error) {
 		if derr != nil {
 			return nil, derr
 		}
-		// Compare by string form rather than relying on Keyword equality
-		// semantics; ATEV groups all entries for an attribute contiguously.
-		if aStr := d.A.String(); !haveA || aStr != curStr {
+		// ATEV groups all entries for an attribute contiguously, so the
+		// boundary is a comparison against the current attribute alone.
+		if !haveA || d.A != curA {
 			flush()
 			curA = d.A
-			curStr = aStr
 			haveA = true
 			decided = false
 			card = schema.CardinalityOne // default if only removes appear

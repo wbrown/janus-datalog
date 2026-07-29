@@ -1,11 +1,31 @@
 # The value domain is enforced at one of its three doors
 
-**Status**: Open. Discovered 2026-07-26 by reading, while auditing the benchmark
-that disabled the iterator-reuse join strategy — that benchmark put a
-`**datalog.identity` in a binding tuple's E position and, in October 2025, all
-three of hashing, equality and ordering accepted it. Two defects are recorded
-here because they are one class: the closed value domain is *defined* by three
-functions and *enforced* by one. No scope ruling yet.
+**Status**: Ruled and fixed 2026-07-29, all four parts. Discovered 2026-07-26 by
+reading, while auditing the benchmark that disabled the iterator-reuse join
+strategy — that benchmark put a `**datalog.identity` in a binding tuple's E
+position and, in October 2025, all three of hashing, equality and ordering
+accepted it. Two defects are recorded here because they are one class: the closed
+value domain is *defined* by three functions and *enforced* by one.
+
+**Ruled 2026-07-29.** `typeRank` enumerates the domain and its default panics;
+vectors compare element-wise through `CompareValues`; vectors rank **last**, after
+`ElementID`; and `ValuesEqual`'s panic becomes a domain check rather than a
+comparability check.
+
+The rank position was chosen on the composite-versus-scalar asymmetry — a vector
+is the domain's only type that contains domain values, so it has no natural place
+among the scalars. It was explicitly *not* chosen to preserve today's cross-type
+order: vectors sort last now only because the silent default put them there, so
+that behaviour is an artifact of the defect rather than a baseline.
+
+The fourth part was first presented as a choice between enforcing and correcting
+the documents. It is not one. The second branch would document that equality
+accepts out-of-domain comparables and compares them by address, which is what
+Pillar 2 names as worse than a panic — "a silent fallback (hash-by-address, blind
+`==`) … corrupts joins and dedup invisibly." Enforcement is the only branch that
+does not require rewriting the discipline to permit the defect. Deferring it also
+leaves the recorded class — defined by three, enforced by one — merely advanced to
+enforced by two, with three doors then behaving three different ways.
 
 ## Summary
 
@@ -156,14 +176,29 @@ it already fails for scalars within the numeric rank (`compare.go:129-133`).
 
 **Where vectors sit in the rank ladder is a user-visible decision**, not an
 implementation detail: it fixes how a heterogeneous `:order-by` interleaves
-vectors with scalars. It should be chosen and recorded rather than fallen into.
+vectors with scalars. *Ruled 2026-07-29: last, after `ElementID`.* A consequence
+to know: element-wise recursion means a heterogeneous vector's position follows
+its first element's rank, so vectors with mixed element types interleave with
+each other by that element rather than clustering.
 
-**Equality enforces the domain, or the documents stop saying it does.** Prefer
-the former: the invariant `ValuesEqual(a,b) ⇒ hash(a) == hash(b)` is only as
-strong as the weaker of the two enforcements, and today equality is the weaker.
-If it stays a comparability check, then `CLAUDE.md`'s Pillar 2 and the Core
-Model's "Both panic (mirroring `datalog.Type()`)" both need correcting — they
-describe `hashValue` accurately and `ValuesEqual` only in part.
+**Equality enforces the domain.** *Ruled 2026-07-29.* The invariant
+`ValuesEqual(a,b) ⇒ hash(a) == hash(b)` is only as strong as the weaker of the two
+enforcements, and today equality is the weaker. The alternative — leaving it a
+comparability check and correcting `CLAUDE.md`'s Pillar 2 and the Core Model's
+"Both panic (mirroring `datalog.Type()`)" — would document address comparison of
+out-of-domain values as intended, which is the fallback Pillar 2 names as worse
+than a panic. Every domain type is already handled by an explicit arm before the
+trailing `a == b`, so what reaches it is nil and out-of-domain values, and both
+panic naming what was rejected.
+
+*Amended 2026-07-29: nil gets no arm.* An earlier draft of this part gave the nil
+pair one, on the reasoning that `a == b` already answered true for it. That
+codified an accidental side effect of the fallback being deleted. nil is absence,
+not a member of the domain, so all three doors reject it — including
+`hashValue`, whose `case nil: return 0` and nil-`*ElementID` branch made hashing
+the *permissive* door once the other two rejected. A permissive hash feeding a
+strict equality is worse than either alone: nil-bearing tuples share a bucket and
+equality then panics inside the map lookup that was resolving the collision.
 
 **Expect the panic to detonate on first full-suite contact.** That is what
 happened when `hashValue`'s address fallback was replaced: the panic immediately
@@ -173,9 +208,29 @@ fix, not as regressions to suppress.
 
 ## Reproducer
 
-None written. Not committed rather than committed-red, because nothing has been
-authorized here yet and the branch under review already carries reds of its own.
-The assertions a reproducer would make, in the order they should be written:
+*Written 2026-07-29, all four, green.*
+
+1. **Ordering direction** — `TestCompareValues_KnownPairs` gains the vector rows:
+   `[10]` vs `[2]` is `+1` (it was `-1`), the reverse, the shorter-first prefix
+   tie, cross-representation equality, and vectors ranking above numerics and
+   `ElementID`. The direction is what the antisymmetry and transitivity laws
+   cannot pin, which is why it belongs in the concrete table.
+2. **Cross-layer invariant** — obtained by extending `mixedTypeValues()` rather
+   than adding a test: the fixture now carries vectors including `[]int64{2}`
+   against `[]interface{}{int64(2)}`, so `_ZeroIsEquality` exercises
+   `cmp == 0 ⇒ ValuesEqual` across representations, and `_Antisymmetric`,
+   `_Transitive` and `_SortStable` cover the new rank for free.
+3. **Taxonomy completeness** — `TestValuesEqualRejectsNonValueTypes` and
+   `TestCompareValuesRejectsNonValueTypes`, both doors, **both operand
+   positions**.
+4. **End-to-end** — `TestVectorOrderingIsElementWiseEndToEnd`
+   (`datalog/storage/vector_ordering_test.go`): a cardinality-vector attribute
+   holding `[2]` and `[10]`, where ascending `:order-by` returns `[2]` first and
+   `(min ?v)` is `[2]`. One-element vectors are the sharpest case because text
+   order and element order disagree, so a comparator cannot pass by accident.
+
+The assertions as originally specified, retained because the order they were
+written in mattered:
 
 1. **Unit, ordering.** `CompareValues([]interface{}{int64(10)}, []interface{}{int64(2)})`
    must be positive. It is currently `-1`.
@@ -191,3 +246,64 @@ The assertions a reproducer would make, in the order they should be written:
 
 Assertion 4 is the one that demonstrates the defect is user-visible rather than
 internal, and it should be the first one read.
+
+## What implementing it surfaced
+
+Four things the analysis above did not contain. The first is a second defect of
+the same class; the rest are consequences.
+
+**Equality enforced the domain on the left operand only.** Not nil-specific — the
+class is general. Every arm of `ValuesEqual` dispatches on `a` and then
+*assertion-tests* `b`, and a failed assertion is indistinguishable from a
+legitimate type mismatch, so `ValuesEqual("x", map[string]interface{}{...})`
+returned `false` while the operands reversed panicked. This part's premise —
+"every domain type is already handled by an explicit arm" — is a statement about
+`a`; the right operand was never contemplated in it. Ordering never had the bug
+because `compareByRank` ranks *both* sides. Fixed by classifying `b` through
+`typeRank` at entry: the domain stays enumerated once, and equality gets the
+symmetry ordering already had.
+
+**Four pointer-wrapper types were in the domain and shouldn't have been.**
+`*uint64` was a Tx representation predating the Lamport `ElementID` — the tell is
+`matchesDatom` dereferencing `tx.(*uint64)` immediately before
+`tx.(*datalog.ElementID)`, and `ValueBytes` encoding it as raw big-endian while
+`int64` gets `orderedInt64`, i.e. a monotonic counter's encoding, not a user
+integer's. `Type()` also carried `*Identity`/`*Keyword`/`*Symbol`, which are
+*double* pointers given interning, and which nothing constructs. All four removed;
+`uint64` itself stays.
+
+**One live production site passed a nil into a door.**
+`matcher_relations.go` V-validation handed `entry.OneValue()` — nil for a
+tombstoned or never-set (E, A) — straight to `ValuesEqual`, with a comment relying
+on nil-vs-value answering false. Five sibling readers of `OneValue()` all guard it;
+this one did not. Fixed by testing for absence instead of comparing it. Note the
+coverage shape: it needs cache path + CardinalityOne + tombstone + V-bound, and
+every Remove test binds E via `:in`, which is the streaming path — the same gap
+that produced `BUG_CACHE_CARDINALIY_ONE_TOMBSTONE`.
+
+**Relation construction hashed placeholders.** `perTupleInputBuilder.Session`
+pre-wires a relation around `make(Tuple, 1)` and writes the value per iteration,
+so `deduplicateTuples` was hashing a slot holding nothing. The nil was never data.
+Deduplicating a single tuple is identity — one tuple cannot duplicate itself — so
+that case now returns without hashing, which also stops every 1-tuple relation in
+the engine from building a `TupleKeyMap` to remove duplicates that cannot exist.
+The rejection therefore happens when a tuple is *hashed*, not at construction.
+
+## Adjacent, unverified
+
+`executor.ScanFingerprint` has no `VectorConstant` case, so a vector literal in a
+pattern falls to its `default:` and is fingerprinted through `fmt.Sprint` — while
+that function's own comment states human formatting is not injective, which is why
+every other component is tagged and length-delimited. Two patterns differing only
+inside a vector literal may fingerprint identically. What the fingerprint gates has
+not been established, so this is recorded rather than claimed.
+
+This is also the correction to a false lead: the vector case was first thought to
+be *needed* by `Type()`/`ValueBytes` via `ScanFingerprint`, on the assumption that
+a vector literal arrives as a `query.Constant`. It does not — the parser builds
+`query.VectorConstant`, a distinct element type. `Type()` and `ValueBytes` are the
+database serialization path (Badger key encoding, `EncodeRGAElement`, JDZL export),
+and their `default: panic` is what proves a whole vector never reaches storage.
+Teaching them a vector encoding would write bytes `ValueFromBytes` cannot decode
+and would not be order-preserving in AVET/VAET keys — silent corruption in place of
+a loud guard.

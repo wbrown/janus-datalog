@@ -31,6 +31,55 @@ func TestScanFingerprint_SamePatternDifferentVars(t *testing.T) {
 		"[?t :task/root ?s] and [?x :task/root ?y] should have same fingerprint")
 }
 
+// TestScanFingerprint_VectorElementTypes pins that a vector literal is
+// fingerprinted from its elements' type tags and bytes, not from its rendered
+// form. FormatValueEDN prints int64(1) and float64(1) both as "1" — FormatFloat
+// drops a zero fraction — while ValuesEqual holds the two distinct, so the
+// rendered form gave [1] and [1.0] one fingerprint. This string is
+// ScanSharingMatcher's GetOrCreate key, so that collision served one pattern the
+// other pattern's tuples.
+func TestScanFingerprint_VectorElementTypes(t *testing.T) {
+	vectorPattern := func(values ...interface{}) *query.DataPattern {
+		return &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: datalog.NewSymbol("?e")},
+				query.Constant{Value: datalog.NewKeyword(":m/samples")},
+				query.VectorConstant{Values: values},
+			},
+		}
+	}
+	scalarPattern := func(value interface{}) *query.DataPattern {
+		return &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: datalog.NewSymbol("?e")},
+				query.Constant{Value: datalog.NewKeyword(":m/samples")},
+				query.Constant{Value: value},
+			},
+		}
+	}
+
+	assert.NotEqual(t,
+		ScanFingerprint(vectorPattern(int64(1))),
+		ScanFingerprint(vectorPattern(float64(1))),
+		"[1] and [1.0] are distinct values and must not share a scan")
+	assert.NotEqual(t,
+		ScanFingerprint(vectorPattern(int64(1), int64(2))),
+		ScanFingerprint(vectorPattern(int64(1))),
+		"vectors of different length must not share a scan")
+	assert.NotEqual(t,
+		ScanFingerprint(vectorPattern(int64(12))),
+		ScanFingerprint(vectorPattern(int64(1), int64(2))),
+		"[12] and [1 2] must not share a scan")
+	assert.NotEqual(t,
+		ScanFingerprint(vectorPattern(int64(1))),
+		ScanFingerprint(scalarPattern(int64(1))),
+		"a one-element vector and the bare element must not share a scan")
+	assert.Equal(t,
+		ScanFingerprint(vectorPattern(int64(1), "a")),
+		ScanFingerprint(vectorPattern(int64(1), "a")),
+		"identical vector literals must share a scan")
+}
+
 // TestScanFingerprint_DifferentAttribute verifies that patterns with
 // different attribute constants produce different fingerprints.
 func TestScanFingerprint_DifferentAttribute(t *testing.T) {

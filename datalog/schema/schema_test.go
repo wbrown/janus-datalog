@@ -331,6 +331,63 @@ func TestSchemaAddPanicsOnKeywordFromTheWrongVocabulary(t *testing.T) {
 	})
 }
 
+// TestVocabularyMembershipSurvivesClearInterns pins vocabulary membership across
+// ClearInterns.
+//
+// The three closed sets are map[datalog.Keyword]struct{}, keyed by the pointers
+// the define* functions captured at init. Orphan those and the maps still hold
+// them while every keyword minted afterwards is a different pointer, so
+// membership misses and Add rejects a valid definition.
+//
+// The keywords are interned fresh from text, the way a parsed schema's arrive.
+// Taking them from the package variables would pass on identity alone even with
+// fresh interns diverging, which is the case that breaks.
+func TestVocabularyMembershipSurvivesClearInterns(t *testing.T) {
+	datalog.ClearInterns()
+
+	require.NotPanics(t, func() {
+		NewSchema().Add(&AttributeDefinition{
+			Ident:       datalog.NewKeyword(":person/tag"),
+			ValueType:   datalog.NewKeyword(":db.type/string"),
+			Cardinality: datalog.NewKeyword(":db.cardinality/many"),
+			Unique:      datalog.NewKeyword(":db.unique/value"),
+		})
+	}, "the closed sets are keyed by the well-known pointers, so an orphaned "+
+		"registry rejects every valid schema")
+
+	// require.Same, not require.Equal: Equal reflect-compares the pointed-to
+	// structs and so passes for two distinct pointers carrying one string, which
+	// is the orphan case.
+	for _, v := range []struct {
+		held datalog.Keyword
+		name string
+	}{
+		{CardinalityMany, ":db.cardinality/many"},
+		{TypeString, ":db.type/string"},
+		{UniqueValue, ":db.unique/value"},
+	} {
+		require.Same(t, v.held, datalog.NewKeyword(v.name),
+			"%s must be the instance its closed set is keyed by", v.name)
+	}
+}
+
+// TestCardinalitySetIsClosedAtThree reds when defineCardinality gains a member.
+// It pins the set rather than the switches that dispatch on it, because
+// defineCardinality is the single registration point.
+func TestCardinalitySetIsClosedAtThree(t *testing.T) {
+	const sweep = "give every switch that dispatches on cardinality an arm for " +
+		"the new member first: one with no arm is skipped silently, and the query " +
+		"returns zero rows with a nil error."
+
+	require.Len(t, cardinalities, 3, sweep)
+	for _, c := range []datalog.Keyword{CardinalityOne, CardinalityMany, CardinalityVector} {
+		require.Contains(t, cardinalities, c, sweep)
+	}
+	require.NotContains(t, cardinalities, CardinalityUnknown,
+		"CardinalityUnknown marks an attribute with no definition; it is not "+
+			"declarable and must stay outside the parseable set")
+}
+
 func TestBuilderWithDoc(t *testing.T) {
 	schema, err := NewBuilder().
 		Attribute(":person/name").Type(TypeString).Doc("The person's full name").Add().

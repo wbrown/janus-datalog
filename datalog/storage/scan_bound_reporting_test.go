@@ -490,3 +490,78 @@ func TestIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T) {
 	require.True(t, sawSubqueryInput,
 		"the subquery family must be in the trace, or this pins nothing")
 }
+
+// TestCardinalityAnnotationKeyCarriesOnlyAKeyword is the sibling pin on
+// KeyCardinality: four producers write it, and the key is declared to carry a
+// datalog.Keyword. A rendering filed there prints `one` where the rest of the
+// trace prints `:db.cardinality/one`.
+//
+// This query reaches the v-validation arm. DisableCache is load-bearing: with
+// the cache on, matchWithBindingsFromCache answers a binding-driven pattern
+// before analyzeReuseStrategy is consulted and the arm never runs.
+func TestCardinalityAnnotationKeyCarriesOnlyAKeyword(t *testing.T) {
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:         t.TempDir(),
+		DisableCache: true,
+	})
+	require.NoError(t, err)
+	defer db.Close()
+
+	s, err := schema.NewBuilder().
+		Attribute(":person/name").Type(schema.TypeString).One().Add().
+		Build()
+	require.NoError(t, err)
+	db.SetSchema(s)
+
+	name := datalog.NewKeyword(":person/name")
+	alice := datalog.NewIdentity("cardkey:alice")
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Set(alice, name, "Alice"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	var events []annotations.Event
+	db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
+
+	// V arrives through the binding relation, which is what selects the
+	// candidate-then-validate arm.
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: name},
+			query.Variable{Name: datalog.NewSymbol("?v")},
+		},
+	}
+	bindings := executor.NewMaterializedRelation(
+		[]query.Symbol{datalog.NewSymbol("?v")},
+		[]executor.Tuple{{"Alice"}},
+	)
+
+	m := db.Matcher().(*PatternMatcher)
+	rel, err := m.MatchWithConstraints(
+		query.PatternQuery(pattern), executor.Relations{bindings}, nil)
+	require.NoError(t, err)
+	_, err = executor.CollectTuples(rel, nil)
+	require.NoError(t, err)
+
+	// One flag, not two: separate "some event typed right" and "v-validation
+	// present" checks both pass when a different event carries the type and the
+	// v-validation event carries nothing.
+	var sawVValidationCardinality bool
+	for _, e := range events {
+		raw, ok := e.Data[annotations.KeyCardinality]
+		if !ok {
+			continue
+		}
+		require.IsType(t, datalog.NewKeyword(":x"), raw,
+			"event %s carries %T under the cardinality key; that key names a "+
+				"cardinality from the schema's closed vocabulary, not its rendering",
+			e.Name, raw)
+		if e.Name == annotations.VValidationResult {
+			sawVValidationCardinality = true
+		}
+	}
+	require.True(t, sawVValidationCardinality,
+		"the v-validation result must be in the trace carrying a cardinality, or "+
+			"this pins nothing")
+}

@@ -547,11 +547,8 @@ func filterTypedPositionBindings(pattern *query.DataPattern, symbols []query.Sym
 
 // matchesDatom checks if a datom matches the pattern constraints
 func (m *PatternMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface{}) bool {
-	// Note: Identity is always a pointer type now, no dereferencing needed
-	// Note: Do NOT dereference *Keyword - they must stay as interned pointers
-	if ptr, ok := tx.(*uint64); ok {
-		tx = *ptr
-	}
+	// Tx is the one position with a pointer form: a bound Tx arrives as either an
+	// ElementID or a *ElementID, so it is compared by value below.
 	if ptr, ok := tx.(*datalog.ElementID); ok {
 		tx = *ptr
 	}

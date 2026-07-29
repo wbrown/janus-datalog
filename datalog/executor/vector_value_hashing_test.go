@@ -200,7 +200,6 @@ func runEqualValueHashLaw(t *testing.T, seed int64) {
 		{elementID, &elementID},
 		{datalog.NewKeyword(":same/value"), datalog.NewKeyword(":same/value")},
 		{datalog.NewSymbol("same-value"), datalog.NewSymbol("same-value")},
-		{nil, nil},
 		{[]int64{1, 2, 3}, []interface{}{int64(1), int64(2), int64(3)}},
 	}
 	for caseIndex, pair := range deterministic {

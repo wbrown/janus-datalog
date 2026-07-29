@@ -1,6 +1,6 @@
 # Vector values compare by their rendered string, not elementwise
 
-**Status**: Open. Found by reading `datalog/compare.go` and every non-test caller of `CompareValues`; no reproducer written yet. Sibling of the resolved `BUG_VECTOR_VALUES_DEGENERATE_HASHING` — same defect class, the other half of the value domain's contract.
+**Status**: Ruled and fixed 2026-07-29, with reproducers at both the unit and query level — `TestCompareValues_KnownPairs`' vector rows and `TestVectorOrderingIsElementWiseEndToEnd`. Found by reading `datalog/compare.go` and every non-test caller of `CompareValues`. Sibling of the resolved `BUG_VECTOR_VALUES_DEGENERATE_HASHING` — same defect class, the other half of the value domain's contract. The scope ruling lives in `BUG_VALUE_DOMAIN_UNENFORCED_IN_COMPARISON`, whose fourth part (equality enforcing the domain) is also fixed, on both operand positions.
 
 ## Summary
 
@@ -60,13 +60,13 @@ So the blast radius is ordering, not join correctness — but only because a sep
 
 ## Fix shape
 
-Vectors need a rank of their own and an elementwise comparison that recurses through `CompareValues`. Three sub-decisions:
+Vectors need a rank of their own and an elementwise comparison that recurses through `CompareValues`. Three sub-decisions, all ruled 2026-07-29:
 
-- **Where in the rank order.** Vectors are the domain's only composite; ranking them above every scalar leaves the scalar order untouched.
+- **Where in the rank order.** Last, after `ElementID` — vectors are the domain's only composite, so they have no natural place among the scalars.
 - **Unequal lengths.** Lexicographic — compare elementwise to the shorter length, then the shorter vector sorts first.
 - **Nested vectors.** Recursion handles them once the element comparison is `CompareValues` itself.
 
-A separate design question this exposes: `typeRank`'s `default: 10` and `stringValue`'s `default: %v` absorb *anything* outside the enumerated domain and return a plausible answer. `ValuesEqual` panics in the same situation, naming the type. Had the comparator adopted that convention when `typeRank` was introduced, the vector gap would have failed loudly on first use instead of surviving the fix that was written to eliminate it.
+A separate design question this exposed, *closed by the same fix*: `typeRank`'s `default: 10` and `stringValue`'s `default: %v` absorbed *anything* outside the enumerated domain and returned a plausible answer, where `ValuesEqual` panicked naming the type. `typeRank` now enumerates and panics, so the unknown arm has no legitimate traffic and `stringValue`'s `%v` default is no longer reachable from `compareByRank`. Had the comparator adopted that convention when `typeRank` was introduced, the vector gap would have failed loudly on first use instead of surviving the fix that was written to eliminate it.
 
 ## Relationship to canonical set ordering
 

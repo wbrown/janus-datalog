@@ -400,7 +400,7 @@ The only practical difference today is documentation intent: `UniqueIdentity` si
 - Reverse index `(A, V) → [E]` — precise invalidation but adds persistent state to the cache, complicates cache construction/teardown, and provides diminishing returns if unique-attribute writes are rare (the typical case: set email once on signup).
 - Per-`(E, A)` only (current behavior) — incorrect: a write to `(bob, email, x)` can silently stale `(alice, email)`'s cached value if alice had been the prior canonical owner.
 
-The conservative strategy is a single line of code in `Transaction.Commit`: if `def.Unique != ""`, iterate the cache's existing entries for that `A` and invalidate each. It produces correct results and imposes no memory overhead.
+The conservative strategy is a single line of code in `Transaction.Commit`: if `def.HasUniqueConstraint()`, iterate the cache's existing entries for that `A` and invalidate each. It produces correct results and imposes no memory overhead.
 
 If profiling later shows that unique writes churn the cache meaningfully, the upgrade to a reverse index is self-contained — both strategies satisfy the same correctness contract.
 

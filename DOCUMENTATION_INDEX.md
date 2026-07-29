@@ -5,8 +5,6 @@
 ### Getting Started
 - **[README.md](README.md)** - Project overview, features, and quick start
 - **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Feature compatibility matrix with Datomic
-- **[v0.14.0 Upgrade Guide](docs/BREAKING_RELEASE_UPGRADE_v0.14.0.md)** - Required API and legacy physical-storage migrations
-- **[v0.15.0 Upgrade Guide](docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md)** - Injectable `storage.Store`, `OpenMemory`, and WASM memory backend
 
 ### Architecture & Implementation
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture overview
