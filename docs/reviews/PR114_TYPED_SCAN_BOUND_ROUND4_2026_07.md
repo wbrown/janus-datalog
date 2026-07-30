@@ -570,14 +570,30 @@ cardinality-vector entry serves one value however many elements it holds. Now 1,
 or 0 when the list is empty.
 
 That last case surfaced a correctness divergence between the cache and streaming
-arms on a never-set vector attribute — reproduced, red in the tree, and out of
-this document's scope: see `BUG_CACHE_EMPTY_VECTOR_NEVER_SET`.
+arms on a never-set vector attribute, out of this document's scope:
+`BUG_CACHE_EMPTY_VECTOR_NEVER_SET`, **fixed 2026-07-28** and resolved. This
+paragraph read "reproduced, red in the tree" until 2026-07-29 — written the day
+before the fix and stale from then on, which is this document's own Family 7:
+a status claim the tree contradicts.
 
-**3d. Thirteen producers still flatten typed values.** *Unverified.* Ten on the
-v-validation path in the file that took +342/-117 this round, plus `cache.go:135`
-and three in `executor`. `scan_bound.go:106` is the durable half: it flattens
-and justifies it at `:117-120` with the rule `d41d3fa` replaced, so it reads as
-house style for the next producer.
+**3d. Producers still flatten typed values.** *Class verified 2026-07-29; the
+counts and one citation do not hold.*
+
+- **The durable half is real.** `describeRun` renders every bound value with
+  `fmt.Sprintf("%v", v)`, and its doc comment justifies it — "an event's Data is a
+  display surface… a consumer that needs the typed value has the query" — which is
+  the rule `d41d3fa` replaced, so it reads as house style for the next producer.
+  It is the shared seam helper, so every arm reporting a bound inherits it. The
+  `KeyIndex` assignment beside it is correctly typed.
+- Its sibling defect: `"bound.values"` is a bare literal key, not a declared
+  constant, which is this family's other half.
+- **The counts are wrong.** `matcher_relations.go` carries five emit sites and
+  fifteen flattened fields in the v-validation region, not ten; `executor` has
+  nine, not three.
+- **The `cache.go` citation is wrong.** `annotateRebuild` is already correct: it
+  carries the attribute as a `Keyword` under a comment stating that interning
+  already produced the canonical pointer and `String()` would spend an allocation
+  per rebuild.
 
 **3e-consumers. A third shape, found 2026-07-28 by collapsing the scan
 completion names: literals in *consumers*.** *Verified — all four were live.*
@@ -602,12 +618,18 @@ half the family, and the consumer half cannot be found by searching for the
 constants, because a literal consumer is exactly the one that does not use them.
 
 **3e. Eleven event names are still literals, in two shapes the round-3
-verification could not see.** *Unverified.* Seven pass the name as
-`RewriteSink.Record`'s positional string parameter; four assign it to a local
-and pass `Name: eventName`. Neither matches `Name:`, `AddTiming(`, `emit(` or
-`.Emit(` — the four tokens round 3 verified against. `Database.Analyze`
-(`database.go:892-894`) additionally spells three constant-backed names as
-literals while using constants for others in the same function.
+verification could not see.** *Verified 2026-07-29, exactly eleven, none declared
+in `annotations/types.go`.* Neither shape matches `Name:`, `AddTiming(`, `emit(`
+or `.Emit(` — the four tokens round 3 verified against.
+
+- Seven pass the name as `RewriteSink.Record`'s positional string parameter:
+  `algebra_bridge.go` (join-project skip/apply), `rewrite_decorrelate.go`
+  (decorrelate check/skip/apply), `rewrite_getelse.go` (getelse-scan skip/apply).
+- Four assign it to a local: `query_executor.go` (`pattern/fused-fetch`,
+  `pattern/fused-constraint`), `scan_sharing_matcher.go`
+  (`scan-sharing/cache-miss`, `cache-hit`).
+- `Database.Analyze` additionally spells three constant-backed names as literals
+  while using constants for others in the same function.
 
 ---
 
@@ -630,47 +652,56 @@ Both are mechanical and neither has been done for the touched files.
 
 **Instances.**
 
-**4a. `WarmCache` panics on a cache-disabled database.** *Verified.* Predates
-this branch. `cache` is nil under `DisableCache` (`database.go:220-223`);
-`WarmCache` calls `d.cache.GetOrResolve` at `:336` with no guard where six
-siblings guard; `GetOrResolve` dereferences `c.slots` (`cache.go:232`). The
-inverse of the family — a missing guard whose claim is true.
+**4a. `WarmCache` panics on a cache-disabled database.** *Was verified; **already
+fixed in the tree**, found 2026-07-29.* `WarmCache` returns nil at
+`database.go:311-313` when `d.cache == nil`, under a doc comment stating that with
+`DisableCache` there is nothing to warm and that warming has no storage fallback
+because warming is the whole of what it does. The instance's own text was accurate
+when written and stale by the time it was read.
 
-**4b. Unreachable `entry == nil` tests after ruling 8.** *Verified; count
-corrected from eleven to **four**.* `matcher_relations.go:1163`, `:1429`,
-`database.go:382`, `:426`.
+**4b. Withdrawn 2026-07-29: the four `entry == nil` tests are reachable and
+load-bearing.** The premise — that `rebuild` and `ResolveEntry` return either
+`(nil, err)` or a non-nil entry on every arm — is false. `rebuildOne`,
+`rebuildMany` and `rebuildVector` each return `(nil, nil)` when the resolver
+reports the (E, A) absent (`cache.go:550`, `:575`, `:600`), and `GetOrResolve`
+returns `(nil, nil)` itself at `:300-307`, under a comment stating that absence is
+deliberately not cached because **entry existence is what every reader downstream
+reads as the attribute's existence**. Those readers are these four guards.
 
-Unreachable because `rebuild` and `ResolveEntry` return either `(nil, err)` or a
-non-nil entry on every arm, including the schemaless `default` that routes to
-`rebuildOne`. `GetOrResolve`'s three success returns are `entry, entry.scanned,
-nil` twice and `slot.entry, 0, nil` once, the last behind a `slot.entry != nil`
-guard. There is no path to a nil entry with a nil error.
+The sites are `matcher_relations.go:1272`, `:1557`, `database.go:392`, `:438` —
+each roughly ten lines below the cited numbers, which is instance N12's disease in
+this document's own work list. `matcher_relations.go:1272` returns an empty
+relation under a comment reading "the cache answering, not declining: absence is a
+resolved state," not a storage fallback.
 
-A fifth match, `cache.go:324`, is **not** an instance: `slot.entry == nil` tests
-whether a trie slot holds an entry, which is reachable — invalidation clears the
-entry and keeps the version in one swap.
+Deleting them would turn a missing attribute into a nil dereference. The
+enumeration of `GetOrResolve`'s returns as `entry, entry.scanned, nil` dates the
+claim: that signature predates Family 2's plumbing change, so the instance was
+derived against a shape the tree no longer had.
 
-Two of the four are worse than dead. `matcher_relations.go:1163` returns
-`nil, false, nil` under the comment "Fallback to storage", so a reader concludes
-a storage fallback exists on that path. It does not; `GetOrResolve` cannot
-produce the state the guard tests for. The guard documents a path that is not
-there, which is the failure `feedback_guards_encode_claims` names.
+**4c. `Collector.enabled` is always true.** *Verified 2026-07-29.* Set from
+`handler != nil` at construction and read only by `Add`/`AddTiming`. All four
+production construction sites guarantee non-nil: `executor/context.go` returns a
+`BaseContext` on nil, `storage/matcher.go` guards with `handler != nil`,
+`executor/annotated_matcher.go` returns the unwrapped matcher on nil, and
+`storage/database.go` passes a literal closure. The field encodes a claim three
+explicit upstream checks already make.
 
-Mechanical: delete the four, and the two comments with them.
+**4d. Struck 2026-07-29: the subject is gone.** It cited both join iterators
+reading `it.iter.Scanned()` then nil-checking the same field. `Scanned` no longer
+appears anywhere in `hash_join_matcher.go` — Family 2's inward `*scanReport`
+replaced those outward reads. The only remaining `Scanned()` reads are the two
+backend implementations, `CRDTResolvingIterator`'s delegation, and the reported
+iterator's own accrual.
 
-**4c. `Collector.enabled` is always true.** *Unverified.* Set from
-`handler != nil` at construction, read nowhere else, with all four non-test call
-sites passing non-nil under their own guard — and it is the guard every executor
-emit site passes through.
-
-**4d. Both join iterators read `it.iter.Scanned()` then nil-check the same field
-two lines later.** *Unverified.* `hash_join_matcher.go:691`/`:701`,
-`:832`/`:842`, where the sibling written the same round takes the opposite
-stance and documents it (`matcher_iterator_unbound.go:85-90`).
-
-**4e. `RewriteSink.Record`'s nil-receiver test is unreachable from all eight
-call sites,** kept alive by one test, with a comment claiming callers rely on it.
-*Unverified.* `algebra/provenance.go:64`, `:47`.
+**4e. `RewriteSink.Record`'s nil-receiver test is unreachable.** *Verified
+2026-07-29, with the count corrected from eight to **five**.* Every production
+call site — three in `rewrite_decorrelate.go`, two in `rewrite_getelse.go` — sits
+behind `observing := sink != nil && (sink.Collect || sink.Handler != nil)`, so
+`if s == nil` cannot be reached. The doc comment claims the opposite ("a nil sink
+is valid and does nothing, so passes call it unconditionally"); the passes
+deliberately compute `observing` first, precisely so they do not prepare the
+payload arguments.
 
 **4f. Four V-validation fields with no writers.** See 2a.
 
@@ -700,15 +731,28 @@ interface does not state.** *Partly verified.* `0c30a7a`.
 `resolveWildcardEntity` (`pull_batch.go:163-181`) opens no scan — one iterator
 over the whole EATV index is handed to it (`:77`) and each entity reached by
 `Seek`. That `0c30a7a` deleted both the `key[1:21]` check and the decoded
-`datom.E` check is certain, from its own commit message. Unverified: that
-`store.go:141-143` documents only repositioning. Review reports by mutation that a `Seek` implementing
+`datom.E` check is certain, from its own commit message. **Verified 2026-07-29:**
+the `Seek` doc comment on the interface states repositioning at or after the
+bound's start, plus the sticky-error rule for an unencodable bound, and nothing
+about `end` or the membership rule — both of which `Seek` sets and which
+`positioned()` enforces. Review reports by mutation that a `Seek` implementing
 exactly the documented contract reds five Badger tests, and the wrong attributes
-are then written into the EA cache under the requested entity's key
-(`pull_batch.go:196-201`), outliving the call. `storeContractCases` and
-`TestSeekHonoursTheRunItNames` are package-internal, so an external implementer
-has nothing to run against the real obligation.
+are then written into the EA cache under the requested entity's key, outliving the
+call.
 
-**5b. `memoryIterator.ElementID` does not consult `end`.** *Verified.*
+`storeContractCases` and `TestSeekHonoursTheRunItNames` are in `_test.go` files,
+so an external implementer has nothing to run against the real obligation. Whether
+that is a defect depends on the open owner question of whether the injectable
+backend contract is a declared extension point.
+
+**5b. `memoryIterator.ElementID` does not consult `end`.** *Verified; **fixed
+2026-07-29**.* It now returns the zero value unless `positioned()` holds — the
+same predicate `Key()` and `Datom()` use, covering `closed`, the position bounds,
+`end` and the membership rule, rather than duplicating the first half of it.
+`TestSeekHonoursTheRunItNames` gained the assertion, across both backends: an
+exhausted run positions nothing. The pin discriminates on any entity but the last,
+where `Next()` stops because the key at the cursor lies past `end` and so leaves a
+valid index on the next entity's first key.
 `0c30a7a`. `positioned()`, `Key()` and `Datom()` all test it;
 `ElementID()` (`memory_store.go:618-623`) tests only `closed` and the position
 bounds. `Scan(wide)` → `Seek(narrower)` → `ElementID()` returns a Tx from
@@ -720,10 +764,31 @@ zero callers.** *Verified.* `253df0f` (ruling 9). `db/options.go:73-80` and
 `:84-91` each close over one `*OutputFormatter`, stateful across calls
 (`lastIndex`/`lastBound`). `Collector.Add` calls the handler outside its mutex
 by design; `forkContext` shares one collector across four workers.
-`db.Open(path, db.WithVerbose())` is a race. Two documents still state the
-removed promise (`annotations/types.go:194-196`, `executor/context.go:65`) —
-*unverified*. Reported tree-wide: 40 handlers installed, 27 mutating captured
-state unlocked.
+`db.Open(path, db.WithVerbose())` is a race. Reported tree-wide: 40 handlers
+installed, 27 mutating captured state unlocked.
+
+**Closed 2026-07-29: the race premise is stale.** It rests on the installers
+closing over a formatter "stateful across calls (`lastIndex`/`lastBound`)". Those
+fields no longer exist — they survive only in the comment on
+`TestScanLineRendersFromItsOwnEvent`, which pins that a scan line needs no memory
+of the event before it, the matcher having been made to carry the bound on the scan
+event. `OutputFormatter` holds `useColor`, `writer` and `renderer`;
+`RelationRenderer` holds `useColor`. All are set at construction and never
+mutated, so a formatter shared across workers has no cross-call state to race on.
+What remains is that concurrent `Fprintln` calls can interleave whole lines on
+stdout — output ordering, not shared state.
+
+`Synchronized` likewise has zero occurrences: it went with `253df0f`, before this
+instance was read.
+
+One clause was live. Of the two documents said to state the removed promise, one
+did not — `annotations/types.go`'s Handler text is the *post*-removal statement,
+and it is the authority the other now cites. The other did:
+`executor/context.go:65` said the shared collector "is internally synchronized,"
+while `Collector.Add` unlocks at `:365` and calls the handler at `:369`, so the
+mutex covers accumulation only and a shared collector enters the handler
+concurrently. Corrected — which matters for the next handler someone writes, since
+that sentence read as license to keep state in one.
 
 **5d. Struck 2026-07-29,** together with the guides it was measured against.
 Its counts were of Go-visible symbols, not of consumer-visible breaks: the four
@@ -756,27 +821,30 @@ survived; the rest of the round's pins have not been mutation-checked.
 
 **Instances.**
 
-**6a. `require.Contains` on `KeyDatomsResolved`/`KeyDatomsMatched`
-(`scan_funnel_reporting_test.go:183-184`) tests the emitter.** *Unverified.*
-Hardcoding `resolved: 0, matched: 0` in any of the seven arms leaves every row
-green; no other test asserts those two values for arms 2 through 7.
+**6a. `require.Contains` on `KeyDatomsResolved`/`KeyDatomsMatched` tests the
+emitter.** *Verified 2026-07-29 by reading the assertions.* `scanned` is asserted
+in value — `require.Positive`, plus the `scanned >= resolved` ordering. `resolved`
+appears **only** in that inequality, which `0` satisfies, and `matched` is never
+value-asserted at all. Hardcoding either to `0` in any arm leaves every row green.
 
-**6b. The cache arm's intake is unpinned in value.** *Unverified.* Replacing
-`iter.Scanned()` with a constant `1` at all three non-error returns of
-`ResolveLWW` leaves the package green — the non-unique arm returns at the first
-accepted `Next`, so intake is always 1 in latest mode, and the miss row asserts
-only `require.Positive`. The separating input is a concrete `AsOf` handle, which
-no test drives through the cache arm.
+**6b. The cache arm's intake is unpinned in value.** *Verified 2026-07-29.* The
+cache path's two assertions are `require.Positive` on the cold row and
+`require.Equal(0, …)` on the warm one, both satisfied by a constant intake. The
+two exact intake assertions in the package are on `ScanDirect`, not
+`resolve-complete`, so neither covers `ResolveLWW`. The separating input is a
+concrete `AsOf` handle, which no test drives through the cache arm.
 
 **6c. `TestSilentSinkBuildsNoProvenance` pins the guard, not the removal.**
-*Unverified.* Restoring one deleted rendering unconditionally takes the silent
-path from 217 to 240 allocations and the test still passes, because
-`require.Less(silent, observing)` holds for any amount of unconditional silent
-work.
+*Verified 2026-07-29.* The assertion is `require.Less(silent, observing)` — purely
+relative, so it holds for any amount of unconditional silent work as long as the
+collecting path stays higher. Restoring one deleted rendering takes the silent path
+from 217 to 240 allocations and the test still passes. An absolute ceiling would
+catch it.
 
-**6d. Coverage the gate does not reach.** *Unverified.* The six constant-E arms
-are asserted only with `DisableCache: true`, so with the cache on — the default —
-they are unreachable and their replacement is asserted for cardinality-one only.
+**6d. Coverage the gate does not reach.** *First clause verified 2026-07-29:* the
+arm table sets `DisableCache: true` for every case, so with the cache on — the
+default — the six constant-E arms are unreachable in this test, and their
+replacement is asserted for cardinality-one only.
 `ResolveAddWins`, `ResolveRGA` and `ResolveLWW`'s unique branch are unexercised
 through the cache arm. `CacheEntry.scanned`'s documented reader
 (`cache.go:40-44`) does not exist and `PopulateFromDatoms` leaves it zero.

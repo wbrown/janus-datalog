@@ -616,7 +616,7 @@ func (i *memoryIterator) Seek(bound ScanBound) {
 }
 
 func (i *memoryIterator) ElementID() datalog.ElementID {
-	if i.closed || i.position < 0 || i.position >= len(i.keys) {
+	if !i.positioned() {
 		return datalog.ElementID{}
 	}
 	return extractElementIDFromKey(i.index, i.keys[i.position])

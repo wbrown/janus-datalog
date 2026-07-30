@@ -82,6 +82,13 @@ func TestSeekHonoursTheRunItNames(t *testing.T) {
 				require.NoError(t, iterator.Error())
 				require.Len(t, seen, len(attrs),
 					"the sought run holds this entity's datoms and stops")
+
+				// The run is exhausted, so nothing is positioned. Datom() answers
+				// that way already; ElementID() must agree rather than reading
+				// whichever key the cursor stopped on, which lies past the run's
+				// end — the next entity's first key, not off the end of the index.
+				require.Equal(t, datalog.ElementID{}, iterator.ElementID(),
+					"an exhausted run positions nothing")
 			}
 		})
 	}
