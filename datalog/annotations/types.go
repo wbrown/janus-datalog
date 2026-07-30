@@ -32,6 +32,15 @@ const (
 	// Detailed pattern matching timing
 	PatternIndexSelection = "pattern/index-selection"
 
+	// A same-entity fetch fused into a per-tuple attribute lookup, in place of
+	// a match plus hash join.
+	PatternFusedFetch      = "pattern/fused-fetch"
+	PatternFusedConstraint = "pattern/fused-constraint"
+
+	// An unbound scan answered from, or added to, the per-query scan registry.
+	ScanSharingCacheHit  = "scan-sharing/cache-hit"
+	ScanSharingCacheMiss = "scan-sharing/cache-miss"
+
 	// StorageScanComplete is the one completion event for a scan performed on a
 	// query's behalf, whatever strategy performed it and whatever asked for it.
 	//
@@ -123,6 +132,17 @@ const (
 	AlgebraDecompileError            = "algebra/decompile-error"
 	AlgebraDecorrelateInnerOptimized = "algebra/decorrelate-inner-optimized"
 
+	// Per-pass rewrite provenance, reported through RewriteSink.Record. Each
+	// pass names what it considered, what it declined and why, and what it
+	// applied.
+	AlgebraDecorrelateCheck = "algebra/decorrelate-check"
+	AlgebraDecorrelateSkip  = "algebra/decorrelate-skip"
+	AlgebraDecorrelateApply = "algebra/decorrelate-apply"
+	AlgebraGetElseScanSkip  = "algebra/getelse-scan-skip"
+	AlgebraGetElseScanApply = "algebra/getelse-scan-apply"
+	AlgebraJoinProjectSkip  = "algebra/join-project-skip"
+	AlgebraJoinProjectApply = "algebra/join-project-apply"
+
 	// Aggregation operations
 	AggregationExecuted     = "aggregation/executed"
 	AggregationStrategy     = "aggregation/strategy.selected"
@@ -187,10 +207,13 @@ const (
 // something to compare. The storage types are not nameable here (storage imports
 // this package), so consumers read them through fmt.Stringer.
 const (
-	// The scan's subject and the run it addressed.
+	// The scan's subject and the run it addressed. KeyBound names the positions
+	// the run binds in the index's component order; KeyBoundValues carries the
+	// values bound to them, position for position.
 	KeyPattern     = "pattern"
 	KeyIndex       = "index"
 	KeyBound       = "bound"
+	KeyBoundValues = "bound.values"
 	KeyCardinality = "cardinality"
 
 	// The subject of a read no pattern names. The Pull API, prefetch, and a

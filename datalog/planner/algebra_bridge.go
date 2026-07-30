@@ -110,7 +110,7 @@ func optimizeViaAlgebra(
 					Action:  algebra.RewriteDeclined,
 					Reason:  "query has value inputs",
 					Subject: terminalSymbols(q),
-				}, "algebra/join-project-skip", map[string]interface{}{
+				}, annotations.AlgebraJoinProjectSkip, map[string]interface{}{
 					"reason": "query has value inputs",
 				})
 			}
@@ -128,7 +128,7 @@ func optimizeViaAlgebra(
 					Pass:    joinProjectPassName,
 					Action:  algebra.RewriteApplied,
 					Subject: terminals,
-				}, "algebra/join-project-apply", map[string]interface{}{
+				}, annotations.AlgebraJoinProjectApply, map[string]interface{}{
 					"terminal_symbols": terminals,
 				})
 			}

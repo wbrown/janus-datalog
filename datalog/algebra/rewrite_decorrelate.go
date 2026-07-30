@@ -81,7 +81,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 			Pass:    decorrelationPassName,
 			Action:  RewriteConsidered,
 			Subject: lj.InnerQuery,
-		}, "algebra/decorrelate-check", map[string]interface{}{
+		}, annotations.AlgebraDecorrelateCheck, map[string]interface{}{
 			"correlation_vars": lj.CorrelationVars,
 			"has_aggregates":   hasAggregates(lj.InnerQuery),
 			"has_defaults":     len(lj.DefaultValues) > 0,
@@ -99,7 +99,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 			Action:  RewriteDeclined,
 			Reason:  reason,
 			Subject: lj.InnerQuery,
-		}, "algebra/decorrelate-skip", map[string]interface{}{
+		}, annotations.AlgebraDecorrelateSkip, map[string]interface{}{
 			"reason": reason,
 		})
 	}
@@ -135,7 +135,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 			Pass:    decorrelationPassName,
 			Action:  RewriteApplied,
 			Subject: lj.InnerQuery,
-		}, "algebra/decorrelate-apply", map[string]interface{}{
+		}, annotations.AlgebraDecorrelateApply, map[string]interface{}{
 			"correlation_vars": lj.CorrelationVars,
 			"inner_params":     innerParams,
 			"has_aggregates":   hasAggregates(lj.InnerQuery),

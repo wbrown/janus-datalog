@@ -36,14 +36,14 @@ func indexForAttrPattern(events []annotations.Event, attrFragment string) (index
 // when the scan binds nothing.
 func renderBoundForTest(e annotations.Event) string {
 	positions, _ := e.Data[annotations.KeyBound].([]string)
-	values, _ := e.Data["bound.values"].([]string)
+	values, _ := e.Data[annotations.KeyBoundValues].([]datalog.Value)
 	if len(positions) == 0 {
 		return "whole index"
 	}
 	parts := make([]string, 0, len(positions))
 	for i, position := range positions {
 		if i < len(values) {
-			parts = append(parts, position+"="+values[i])
+			parts = append(parts, fmt.Sprintf("%s=%v", position, values[i]))
 			continue
 		}
 		parts = append(parts, position)

@@ -750,10 +750,23 @@ exactly the documented contract reds five Badger tests, and the wrong attributes
 are then written into the EA cache under the requested entity's key, outliving the
 call.
 
-`storeContractCases` and `TestSeekHonoursTheRunItNames` are in `_test.go` files,
-so an external implementer has nothing to run against the real obligation. Whether
-that is a defect depends on the open owner question of whether the injectable
-backend contract is a declared extension point.
+**The instance is two things, and only one of them waits on anything — split
+2026-07-30.** Filing both under the extension-point question is what kept the
+free half open.
+
+- **Stating the obligation is a defect outright, and needs no ruling.** `Seek`
+  sets three things from one `EncodedRun` — the start, the run's `end`, and the
+  membership rule — and the interface comment names the first. Writing the other
+  two in describes code that already behaves that way. It is owed to the two
+  in-tree implementations before any hypothetical third: **5b is this defect
+  landing**, `memoryIterator.ElementID` having dropped `end` and membership
+  because nothing on the contract said to consult them.
+- **Publishing a runnable contract is the decision.** `storeContractCases` and
+  `TestSeekHonoursTheRunItNames` are in `_test.go` files, so nothing outside the
+  package can execute the real obligation. Exporting a conformance suite is API
+  surface, and 5d's ruling governs it: recording internal surface in a
+  consumer-facing form manufactures the compatibility obligation rather than
+  reporting it. Open, and it is the only part that is.
 
 **5b. `memoryIterator.ElementID` does not consult `end`.** *Verified; **fixed
 2026-07-29**.* It now returns the zero value unless `positioned()` holds — the
@@ -865,11 +878,35 @@ catch it.
 arm table sets `DisableCache: true` for every case, so with the cache on — the
 default — the six constant-E arms are unreachable in this test, and their
 replacement is asserted for cardinality-one only.
+
+**The resolver clause is narrower than written — derived 2026-07-30.** It said
 `ResolveAddWins`, `ResolveRGA` and `ResolveLWW`'s unique branch are unexercised
-through the cache arm. `CacheEntry.scanned`'s documented reader
-(`cache.go:40-44`) does not exist and `PopulateFromDatoms` leaves it zero.
-Everything under `examples/` is `//go:build example` with no Makefile target, so
-this round's `examples/schema.go` edit is covered by no gate.
+through the cache arm. All four are exercised: `ResolveLWW` and `ResolveAddWins`
+directly in `cache_integration_test.go`, `ResolveRGA` in `cache_vector_test.go`,
+`ResolveLWW`'s tombstone arms across `crdt_one_remove_cache_test.go`, and its
+unique branch — the `walkUniqueEntityValue` path gated on schema, uniqueness and
+non-history mode — by `TestPullInto_UniqueFallback`, which pulls a superseded
+unique attribute through the cache. What is unexercised is their **funnel
+reporting**: `TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun` queries
+`:person/name`, `One()` in `funnelSchema`, so the cache arm's report is pinned for
+cardinality-one and for neither of the other two. That is 6b narrowed by
+cardinality, not uncovered resolution — the resolvers' answers are tested, what
+they say they cost is not.
+
+**The `CacheEntry.scanned` clause does not hold either — derived 2026-07-30.**
+Its reader exists: `cache_test.go:116` asserts `entry.scanned` against the build
+cost, and that test is the pin for the very distinction the field's comment
+states — build cost forever, against the per-call `datoms.scanned` a hit reports
+as zero. `matcher_relations.go:1743` and `:1852` write it besides the three
+rebuild arms. And `PopulateFromDatoms` leaving it zero is correct rather than
+missed: it resolves through `ResolveLWWFromDatoms`/`AddWins`/`RGA` over datoms
+already in hand and opens no scan, and both its callers — `prefetch.go` and
+`pull_batch.go` — opened and reported their own scan, so charging those reads to
+each entry as well would count them twice.
+
+What survives of 6d is the coverage clause it opened with, now addressed, and the
+gate hole: everything under `examples/` is `//go:build example` with no Makefile
+target, so this round's `examples/schema.go` edit is covered by no gate.
 
 ---
 

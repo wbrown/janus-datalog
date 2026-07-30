@@ -130,7 +130,7 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 								Name: annotations.PrefetchTrigger,
 								Data: map[string]interface{}{
 									"entity_count": len(entities),
-									"symbols":      fmt.Sprintf("%v", g.Symbols()),
+									"symbols":      g.Symbols(),
 								},
 							})
 						}
@@ -784,14 +784,14 @@ fetchLoop:
 
 	if e.options.Handler != nil {
 		for i, fetch := range fetches {
-			eventName := "pattern/fused-fetch"
+			eventName := annotations.PatternFusedFetch
 			if fetch.isConstraint {
-				eventName = "pattern/fused-constraint"
+				eventName = annotations.PatternFusedConstraint
 			}
 			e.options.Handler(annotations.Event{
 				Name: eventName,
 				Data: map[string]interface{}{
-					"attr": fetch.attr.String(),
+					"attr": fetch.attr,
 					"in":   inputCounts[i],
 					"out":  outputCounts[i],
 				},
@@ -1230,7 +1230,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.Subquer
 			Name: annotations.SubqueryExecutorPath,
 			Data: map[string]interface{}{
 				"path":         "Per-combination QueryExecutor",
-				"query":        subq.Query.String(),
+				"query":        subq.Query,
 				"input_count":  len(subq.Inputs),
 				"groups_count": len(groups),
 			},

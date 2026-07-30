@@ -192,7 +192,8 @@ func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
 			require.Equal(t, AETV, complete.Data[annotations.KeyIndex])
 			require.Equal(t, []string{"A"}, complete.Data[annotations.KeyBound],
 				"%s scanned under the pattern's constant A", tc.strategy)
-			require.Equal(t, []string{":person/name"}, complete.Data["bound.values"])
+			require.Equal(t, []datalog.Value{datalog.NewKeyword(":person/name")},
+				complete.Data[annotations.KeyBoundValues])
 		})
 	}
 }

@@ -20,6 +20,13 @@ import (
 //
 // Start with Match() and MatchWithConstraints() in this file.
 
+const (
+	keyBoundV   = "bound_v"
+	keyBoundA   = "bound_a"
+	keyPosition = "position"
+	keyMatches  = "matches"
+)
+
 // Ensure PatternMatcher implements PatternMatcher
 var _ executor.PatternMatcher = (*PatternMatcher)(nil)
 
@@ -116,7 +123,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 			Name: annotations.CacheCheck,
 			Data: map[string]interface{}{
 				annotations.KeyPattern: pattern,
-				"a_resolved":           fmt.Sprintf("%v (%T)", aResolved, aResolved),
+				"a_resolved":           aResolved,
 				"cache_nil":            m.cache == nil,
 				"txID_nil":             m.txID == nil,
 				"has_bindings":         bindings != nil && len(bindings) > 0,
@@ -197,9 +204,9 @@ func (m *PatternMatcher) MatchWithConstraints(
 				annotations.KeyPattern: pattern,
 				annotations.KeyIndex:   strategy.Index,
 				"strategy_type":        strategy.Type,
-				"position":             strategy.Position,
+				keyPosition:            strategy.Position,
 				"needs_validation":     strategy.NeedsValidation,
-				"bound_a":              fmt.Sprintf("%v", strategy.BoundA),
+				keyBoundA:              strategy.BoundA,
 			},
 		})
 	}
@@ -230,7 +237,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 					annotations.KeyPattern: pattern,
 					annotations.KeyIndex:   strategy.Index,
 					"join_strategy":        joinStrategy,
-					"position":             strategy.Position,
+					keyPosition:            strategy.Position,
 				},
 			})
 		}
@@ -621,7 +628,7 @@ func (m *PatternMatcher) matchWithVValidation(
 			Data: map[string]any{
 				annotations.KeyPattern: pattern,
 				annotations.KeyIndex:   strategy.Index,
-				"bound_a":              fmt.Sprintf("%v", strategy.BoundA),
+				keyBoundA:              strategy.BoundA,
 				"binding_rel":          bindingRel.Symbols(),
 			},
 		})
@@ -749,12 +756,12 @@ func (it *validatingVBoundIterator) Next() bool {
 						Name:  annotations.VValidationCandidate,
 						Start: time.Now(),
 						Data: map[string]any{
-							"e":       datom.E.String(),
-							"a":       datom.A.String(),
-							"v":       fmt.Sprintf("%v", datom.V),
-							"tx":      datom.Tx.String(),
-							"op":      fmt.Sprintf("%d", datom.Op),
-							"bound_v": fmt.Sprintf("%v", it.currentBoundV),
+							annotations.KeyEntity:    datom.E,
+							annotations.KeyAttribute: datom.A,
+							"v":                      datom.V,
+							"tx":                     datom.Tx,
+							"op":                     datom.Op,
+							keyBoundV:                it.currentBoundV,
 						},
 					})
 				}
@@ -952,11 +959,11 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 					Name:  annotations.VValidationCacheResolved,
 					Start: time.Now(),
 					Data: map[string]any{
-						"e":        e.String(),
-						"a":        a.String(),
-						"bound_v":  fmt.Sprintf("%v", it.currentBoundV),
-						"cached_v": fmt.Sprintf("%v", cachedV),
-						"matches":  matches,
+						annotations.KeyEntity:    e,
+						annotations.KeyAttribute: a,
+						keyBoundV:                it.currentBoundV,
+						"cached_v":               cachedV,
+						keyMatches:               matches,
 					},
 				})
 			}
@@ -1008,13 +1015,13 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 				Name:  annotations.VValidationResult,
 				Start: time.Now(),
 				Data: map[string]any{
-					"e":                        e.String(),
-					"a":                        a.String(),
-					"bound_v":                  fmt.Sprintf("%v", it.currentBoundV),
-					"winner_v":                 fmt.Sprintf("%v", winner.V),
-					"winner_tx":                winner.Tx.String(),
-					"winner_op":                fmt.Sprintf("%d", winner.Op),
-					"matches":                  matches,
+					annotations.KeyEntity:      e,
+					annotations.KeyAttribute:   a,
+					keyBoundV:                  it.currentBoundV,
+					"winner_v":                 winner.V,
+					"winner_tx":                winner.Tx,
+					"winner_op":                winner.Op,
+					keyMatches:                 matches,
 					"will_emit":                matches,
 					annotations.KeyCardinality: it.getCardinalityEnum(a),
 				},
@@ -1034,9 +1041,9 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 			Name:  annotations.VValidationNoWinner,
 			Start: time.Now(),
 			Data: map[string]any{
-				"e":       e.String(),
-				"a":       a.String(),
-				"bound_v": fmt.Sprintf("%v", it.currentBoundV),
+				annotations.KeyEntity:    e,
+				annotations.KeyAttribute: a,
+				keyBoundV:                it.currentBoundV,
 			},
 		})
 	}
@@ -1097,8 +1104,8 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	// this backend's encoder can interpret, which is not what a run is.
 	if it.matcher.handler != nil {
 		data := map[string]any{
-			"bound_v": fmt.Sprintf("%v", it.currentBoundV),
-			"bound_a": fmt.Sprintf("%v", it.boundA),
+			keyBoundV: it.currentBoundV,
+			keyBoundA: it.boundA,
 		}
 		addBoundFields(data, bound)
 		it.matcher.handler(annotations.Event{

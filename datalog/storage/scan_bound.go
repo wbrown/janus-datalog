@@ -100,40 +100,33 @@ type ScanBound struct {
 // bound, uninterpretable by a consumer that does not hold the encoder, and
 // absent entirely for a backend that compares typed components directly.
 func addBoundFields(data map[string]interface{}, bound ScanBound) {
-	positions, values := describeRun(bound.Index, bound.Prefix)
 	data[annotations.KeyIndex] = bound.Index
-	data[annotations.KeyBound] = positions
-	data["bound.values"] = values
+	data[annotations.KeyBound] = describeRun(bound.Index, bound.Prefix)
+	data[annotations.KeyBoundValues] = bound.Prefix
 }
 
-// describeRun names the positions one endpoint of a bound binds, in index's
-// component order, alongside the rendered values bound to them. The slices are
-// parallel — position k carries value k — which is the run's own structure: an
-// ordered sequence of components, each fixed to a value. Both are empty for a
-// whole-index run.
+// describeRun names the positions a bound binds, in index's component order.
+// It runs parallel to the values themselves, which travel as they are — position
+// k names the component holding value k. Empty for a whole-index run.
 //
 // Positions are named rather than implied so a consumer never needs the index
-// layout to read the bound. Values are rendered to strings because an event's
-// Data is a display surface, matching every neighbouring storage event; a
-// consumer that needs the typed value has the query, not the annotation.
+// layout to read the bound.
 //
-// An index outside the taxonomy renders its positions as "?": the scan itself
-// fails loudly at encode time, so a renderer that refused here would replace a
-// readable event with no event at all.
-func describeRun(index IndexType, values []datalog.Value) (positions, rendered []string) {
+// An index outside the taxonomy names its positions "?": the scan itself fails
+// loudly at encode time, so refusing here would replace a readable event with no
+// event at all.
+func describeRun(index IndexType, values []datalog.Value) []string {
 	if len(values) == 0 {
-		return nil, nil
+		return nil
 	}
 	order, err := componentOrder(index)
-	positions = make([]string, 0, len(values))
-	rendered = make([]string, 0, len(values))
-	for i, v := range values {
+	positions := make([]string, 0, len(values))
+	for i := range values {
 		if err != nil || i >= len(order) {
 			positions = append(positions, "?")
 		} else {
 			positions = append(positions, order[i].String())
 		}
-		rendered = append(rendered, fmt.Sprintf("%v", v))
 	}
-	return positions, rendered
+	return positions
 }

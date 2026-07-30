@@ -477,7 +477,7 @@ func (e *Executor) executeRealizedPlan(ctx *Context, plan *planner.RealizedPlan,
 					"phase":        phaseIndex + 1,
 					"input_groups": len(currentGroups),
 					"keep":         phase.Keep,
-					"query":        phase.Query.String(),
+					"query":        phase.Query,
 				},
 			})
 		}

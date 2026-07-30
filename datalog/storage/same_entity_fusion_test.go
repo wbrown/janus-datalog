@@ -312,7 +312,7 @@ func TestFusionConstantConstraintCoverage(t *testing.T) {
 					:where [?e :place/code "R1"]
 					       [?e :place/type "room"]]`)
 				require.Len(t, tuples, 1)
-				require.Equal(t, 1, cap.get("pattern/fused-constraint"))
+				require.Equal(t, 1, cap.get(annotations.PatternFusedConstraint))
 			})
 
 			t.Run("cardinality many constraint does not fire", func(t *testing.T) {
@@ -328,7 +328,7 @@ func TestFusionConstantConstraintCoverage(t *testing.T) {
 					:where [?e :place/code ?c]
 					       [?e :place/tags "selected"]]`)
 				require.Len(t, tuples, 1)
-				require.Zero(t, cap.get("pattern/fused-constraint"))
+				require.Zero(t, cap.get(annotations.PatternFusedConstraint))
 			})
 		})
 	}
@@ -376,7 +376,7 @@ func TestFusion_CoverageFires(t *testing.T) {
 				require.NoError(t, err)
 
 				_ = fusionTuples(t, db, fusionCodeQuery)
-				assert.Positive(t, cap.get("pattern/fused-fetch"),
+				assert.Positive(t, cap.get(annotations.PatternFusedFetch),
 					"CardinalityOne fetch must take the fused path")
 			})
 
@@ -391,7 +391,7 @@ func TestFusion_CoverageFires(t *testing.T) {
 				require.NoError(t, err)
 
 				_ = fusionTuples(t, db, `[:find ?e ?tag :where [?e :place/type "room"] [?e :place/tags ?tag]]`)
-				assert.Zero(t, cap.get("pattern/fused-fetch"),
+				assert.Zero(t, cap.get(annotations.PatternFusedFetch),
 					"CardinalityMany fetch must NOT be fused")
 			})
 		})

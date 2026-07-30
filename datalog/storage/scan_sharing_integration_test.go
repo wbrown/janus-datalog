@@ -82,7 +82,7 @@ func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
 	sharingOpts.EnableAlgebraOptimizer = true
 	sharingOpts.EnableScanSharing = true
 	sharingOpts.Handler = func(e annotations.Event) {
-		if e.Name == "scan-sharing/cache-hit" || e.Name == "scan-sharing/cache-miss" {
+		if e.Name == annotations.ScanSharingCacheHit || e.Name == annotations.ScanSharingCacheMiss {
 			sharingEvents = append(sharingEvents, e)
 		}
 	}
@@ -167,7 +167,7 @@ func TestScanSharing_DisabledByDefault(t *testing.T) {
 	opts.EnableAlgebraOptimizer = true
 	opts.EnableScanSharing = false
 	opts.Handler = func(e annotations.Event) {
-		if e.Name == "scan-sharing/cache-hit" || e.Name == "scan-sharing/cache-miss" {
+		if e.Name == annotations.ScanSharingCacheHit || e.Name == annotations.ScanSharingCacheMiss {
 			sharingEvents++
 		}
 	}

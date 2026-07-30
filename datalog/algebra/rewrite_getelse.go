@@ -2,6 +2,7 @@ package algebra
 
 import (
 	"github.com/wbrown/ebnf/parse"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -68,7 +69,7 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 			Action:  RewriteDeclined,
 			Reason:  reason,
 			Subject: mapData.Expression,
-		}, "algebra/getelse-scan-skip", map[string]interface{}{
+		}, annotations.AlgebraGetElseScanSkip, map[string]interface{}{
 			"reason":     reason,
 			"expression": mapData.Expression,
 		})
@@ -129,7 +130,7 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 			Pass:    getElsePassName,
 			Action:  RewriteApplied,
 			Subject: mapData.Expression,
-		}, "algebra/getelse-scan-apply", map[string]interface{}{
+		}, annotations.AlgebraGetElseScanApply, map[string]interface{}{
 			"expression": mapData.Expression,
 			"scan":       scanPattern,
 			"entity_var": entityVar.Symbol,

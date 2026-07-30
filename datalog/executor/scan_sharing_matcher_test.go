@@ -243,8 +243,8 @@ func TestScanSharingMatcher_AnnotationEvents(t *testing.T) {
 	_, _ = matcher.Match(query.PatternQuery(pattern), nil)
 	_, _ = matcher.Match(query.PatternQuery(pattern), nil)
 
-	assert.Contains(t, events, "scan-sharing/cache-miss")
-	assert.Contains(t, events, "scan-sharing/cache-hit")
+	assert.Contains(t, events, annotations.ScanSharingCacheMiss)
+	assert.Contains(t, events, annotations.ScanSharingCacheHit)
 }
 
 func TestScanSharingMatcherSeparatesPhysicalRequirements(t *testing.T) {

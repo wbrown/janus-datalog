@@ -95,38 +95,46 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 			// per-arm list of names would restate the same constant eight times.
 			// Which strategy an arm picked is not what this table asserts, only
 			// that it reported.
+			// wantResolved is what CRDT resolution produces for the (E, A) groups
+			// the arm reads, per funnelFixture: one surviving value for
+			// `:person/name` (three writes, last wins) and for `:person/tag` (dev
+			// added, ops added then removed), two for `:person/skill` (both RGA
+			// elements live). On the vector arms it differs from matched, which
+			// counts tuples — the vector binds as one value however many elements
+			// it holds.
 			for _, tc := range []struct {
-				arm         string
-				query       string
-				inputEntity bool      // supply E as an :in parameter
-				index       IndexType // the run the arm must announce
-				noRun       bool      // set instead when the arm addresses none
+				arm          string
+				query        string
+				inputEntity  bool      // supply E as an :in parameter
+				index        IndexType // the run the arm must announce
+				noRun        bool      // set instead when the arm addresses none
+				wantResolved int
 			}{
 				{arm: "matchCardinalityManyAsRelation",
 					query: `[:find ?v :where [#id "funnel:alice" :person/tag ?v]]`,
-					index: EAVT},
+					index: EAVT, wantResolved: 1},
 				{arm: "matchCardinalityVectorAsRelation",
 					query: `[:find ?v :where [#id "funnel:alice" :person/skill ?v]]`,
-					index: EATV},
+					index: EATV, wantResolved: 2},
 				{arm: "matchCardinalityManyMembership",
 					query: `[:find ?tx :where [#id "funnel:alice" :person/tag "dev" ?tx]]`,
-					index: EAVT},
+					index: EAVT, wantResolved: 1},
 				{arm: "matchCardinalityManyScanAllEntities",
 					query: `[:find ?e ?v :where [?e :person/tag ?v]]`,
-					index: AEVT},
+					index: AEVT, wantResolved: 1},
 				{arm: "matchCardinalityManyFindEntitiesWithValue",
 					query: `[:find ?e :where [?e :person/tag "dev"]]`,
-					index: AVET},
+					index: AVET, wantResolved: 1},
 				{arm: "matchVectorScanAllEntities",
 					query: `[:find ?e ?v :where [?e :person/skill ?v]]`,
-					index: AEVT},
+					index: AEVT, wantResolved: 2},
 
 				// The general arm — no cardinality dispatch, E unbound — is the
 				// one the other six are exceptions to, so a table of exceptions
 				// that omitted it would leave the common path pinned nowhere.
 				{arm: "unbound scan, general arm",
 					query: `[:find ?e ?n :where [?e :person/name ?n]]`,
-					index: AETV},
+					index: AETV, wantResolved: 1},
 
 				// A binding relation over the same cardinality-many attribute.
 				// Which strategy chooseJoinStrategy picks is its own business
@@ -134,7 +142,7 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 				// what this case asserts is that whichever it picks reports.
 				{arm: "binding-driven, E from :in",
 					query: `[:find ?v :in $ ?e :where [?e :person/tag ?v]]`, inputEntity: true,
-					noRun: true},
+					noRun: true, wantResolved: 1},
 			} {
 				t.Run(tc.arm, func(t *testing.T) {
 					// Registered before the open, since everything the database
@@ -168,7 +176,7 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 						result, err = db.Query(tc.query)
 					}
 					require.NoError(t, err)
-					_, err = executor.CollectTuples(result, nil)
+					tuples, err := executor.CollectTuples(result, nil)
 					require.NoError(t, err)
 
 					selection := lastEventNamed(events, annotations.PatternIndexSelection)
@@ -204,8 +212,15 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 					require.True(t, ok, "the completion event must carry intake")
 					require.Positive(t, scanned,
 						"the arm read the index to answer; zero intake would mean it did not")
-					require.Contains(t, completion.Data, annotations.KeyDatomsResolved)
-					require.Contains(t, completion.Data, annotations.KeyDatomsMatched)
+					// Every case is a single pattern, so what the arm kept is what
+					// came back.
+					require.Equal(t, len(tuples),
+						completion.Data[annotations.KeyDatomsMatched],
+						"%s kept %d tuples and must report that many matched",
+						tc.arm, len(tuples))
+					require.Equal(t, tc.wantResolved,
+						completion.Data[annotations.KeyDatomsResolved],
+						"%s resolves %d value(s) for the groups it read", tc.arm, tc.wantResolved)
 
 					// Intake bounds resolution. A scan cannot produce more than
 					// it read, so this is the one ordering the three terms
@@ -241,8 +256,8 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 						require.Equal(t, selection.Data[annotations.KeyBound],
 							completion.Data[annotations.KeyBound],
 							"%s priced a different run than it announced", tc.arm)
-						require.Equal(t, selection.Data["bound.values"],
-							completion.Data["bound.values"])
+						require.Equal(t, selection.Data[annotations.KeyBoundValues],
+							completion.Data[annotations.KeyBoundValues])
 					}
 				})
 			}
@@ -268,73 +283,102 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 // zero; asserting they do inverts the one ordering the funnel guarantees. This
 // arm reports values served and values matched, with intake beside them as its
 // own fact.
+// One case per cardinality, because the arm reaches a different resolver for
+// each and intake is what separates them: LWW stops at the winner, add-wins and
+// RGA read the whole (E, A) group.
 func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// The recording flag scopes collection to the queries below; the
-			// handler is registered before the open because everything the
-			// database builds is constructed with it.
-			var events []annotations.Event
-			recording := false
-			opts := mode.plannerOptions()
-			opts.Handler = func(ev annotations.Event) {
-				if recording {
-					events = append(events, ev)
-				}
+			for _, tc := range []struct {
+				card datalog.Keyword
+				// A literal E: an :in parameter routes elsewhere.
+				query string
+				// wantIntake is what the resolver must read on a miss.
+				// funnelFixture writes three `:person/name` datoms, of which LWW
+				// reads only the first; three `:person/tag` datoms, all of which
+				// add-wins needs to decide membership; and two `:person/skill`
+				// RGA inserts, both of which the vector resolver needs to order.
+				wantIntake int
+				// wantServed is what the entry binds. A vector serves one value
+				// however many elements it holds.
+				wantServed int
+			}{
+				{card: schema.CardinalityOne,
+					query:      `[:find ?v :where [#id "funnel:alice" :person/name ?v]]`,
+					wantIntake: 1, wantServed: 1},
+				{card: schema.CardinalityMany,
+					query:      `[:find ?v :where [#id "funnel:alice" :person/tag ?v]]`,
+					wantIntake: 3, wantServed: 1},
+				{card: schema.CardinalityVector,
+					query:      `[:find ?v :where [#id "funnel:alice" :person/skill ?v]]`,
+					wantIntake: 2, wantServed: 1},
+			} {
+				t.Run(tc.card.String(), func(t *testing.T) {
+					// The recording flag scopes collection to the queries below;
+					// the handler is registered before the open because
+					// everything the database builds is constructed with it.
+					var events []annotations.Event
+					recording := false
+					opts := mode.plannerOptions()
+					opts.Handler = func(ev annotations.Event) {
+						if recording {
+							events = append(events, ev)
+						}
+					}
+					db, err := NewDatabaseWithOptions(DatabaseOptions{
+						Path:           t.TempDir(),
+						Schema:         funnelSchema(t),
+						PlannerOptions: &opts,
+					})
+					require.NoError(t, err)
+					defer db.Close()
+
+					funnelFixture(t, db)
+					recording = true
+
+					read := func() (*annotations.Event, int) {
+						t.Helper()
+						result, err := db.Query(tc.query)
+						require.NoError(t, err)
+						tuples, err := executor.CollectTuples(result, nil)
+						require.NoError(t, err)
+						ev := lastEventNamed(events, annotations.StorageResolveComplete)
+						require.NotNil(t, ev, "the cache arm must report what it cost")
+						return ev, len(tuples)
+					}
+
+					// First read: a miss, so resolution scans and the entry
+					// records it.
+					miss, tuples := read()
+					require.Nil(t, lastEventNamed(events, annotations.PatternIndexSelection),
+						"the cache arm addresses no run and must not announce one")
+					// The keyword, not a rendering of it. Flattening at the
+					// producer would cost an allocation per emit and hand the
+					// consumer a string to parse instead of a value to compare
+					// by pointer.
+					require.Equal(t, tc.card, miss.Data[annotations.KeyCardinality])
+					require.Equal(t, tc.wantIntake, miss.Data[annotations.KeyDatomsScanned],
+						"a miss resolves from storage, and this resolver reads %d datom(s) to do it",
+						tc.wantIntake)
+					require.Equal(t, tuples, miss.Data[annotations.KeyDatomsMatched])
+					require.Equal(t, tc.wantServed, miss.Data[annotations.KeyValuesServed])
+					require.NotContains(t, miss.Data, annotations.KeyDatomsResolved,
+						"this arm reports no funnel; a middle term here would be read as one")
+
+					// Second read of the same (E, A): a hit, which reads no index.
+					events = nil
+					hit, hitTuples := read()
+					require.Equal(t, tuples, hitTuples, "a hit answers what the miss did")
+					require.Equal(t, 0, hit.Data[annotations.KeyDatomsScanned],
+						"a hit reads no index, and zero is the answer rather than an absent field")
+					require.Equal(t, hitTuples, hit.Data[annotations.KeyDatomsMatched])
+					require.Equal(t, tc.wantServed, hit.Data[annotations.KeyValuesServed],
+						"a hit serves the entry's values without reading anything to do it")
+					require.NotContains(t, hit.Data, annotations.KeyDatomsResolved,
+						"the hit is where the funnel reading fails hardest: one value served "+
+							"against zero intake renders as resolution producing what no scan read")
+				})
 			}
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         funnelSchema(t),
-				PlannerOptions: &opts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
-
-			funnelFixture(t, db)
-			// A literal E, as above: an :in parameter routes elsewhere.
-			const q = `[:find ?v :where [#id "funnel:alice" :person/name ?v]]`
-
-			recording = true
-
-			// First read: a miss, so resolution scans and the entry records it.
-			result, err := db.Query(q)
-			require.NoError(t, err)
-			_, err = executor.CollectTuples(result, nil)
-			require.NoError(t, err)
-
-			miss := lastEventNamed(events, annotations.StorageResolveComplete)
-			require.NotNil(t, miss, "the cache arm must report what it cost")
-			require.Nil(t, lastEventNamed(events, annotations.PatternIndexSelection),
-				"the cache arm addresses no run and must not announce one")
-			// The keyword, not a rendering of it. Flattening at the producer
-			// would cost an allocation per emit and hand the consumer a string
-			// to parse instead of a value to compare by pointer.
-			require.Equal(t, schema.CardinalityOne, miss.Data[annotations.KeyCardinality])
-			require.Positive(t, miss.Data[annotations.KeyDatomsScanned],
-				"a miss resolved from storage and read the index to do it")
-			require.Equal(t, 1, miss.Data[annotations.KeyDatomsMatched])
-			require.Equal(t, 1, miss.Data[annotations.KeyValuesServed],
-				"the entry holds the one current value of a cardinality-one attribute")
-			require.NotContains(t, miss.Data, annotations.KeyDatomsResolved,
-				"this arm reports no funnel; a middle term here would be read as one")
-
-			// Second read of the same (E, A): a hit, which reads no index.
-			events = nil
-			result, err = db.Query(q)
-			require.NoError(t, err)
-			_, err = executor.CollectTuples(result, nil)
-			require.NoError(t, err)
-
-			hit := lastEventNamed(events, annotations.StorageResolveComplete)
-			require.NotNil(t, hit)
-			require.Equal(t, 0, hit.Data[annotations.KeyDatomsScanned],
-				"a hit reads no index, and zero is the answer rather than an absent field")
-			require.Equal(t, 1, hit.Data[annotations.KeyDatomsMatched])
-			require.Equal(t, 1, hit.Data[annotations.KeyValuesServed],
-				"a hit serves the entry's values without reading anything to do it")
-			require.NotContains(t, hit.Data, annotations.KeyDatomsResolved,
-				"the hit is where the funnel reading fails hardest: one value served "+
-					"against zero intake renders as resolution producing what no scan read")
 		})
 	}
 }
@@ -523,8 +567,11 @@ func TestPatternLessReadsReportUnderEntityAndAttribute(t *testing.T) {
 		require.Equal(t, EATV, ev.Data[annotations.KeyIndex],
 			"the storage arm walked one run and owes its name")
 		require.Equal(t, 1, ev.Data[annotations.KeyValuesServed])
-		require.Positive(t, ev.Data[annotations.KeyDatomsScanned],
-			"three writes are three datoms, and the arm read past the winner's history")
+		// One datom, though three were written: EATV encodes Tx descending, so
+		// the first entry under (E, A) is the LWW winner and the arm returns
+		// there without reading the history behind it.
+		require.Equal(t, 1, ev.Data[annotations.KeyDatomsScanned],
+			"the winner is the first entry, and the arm stops there")
 		require.NotContains(t, ev.Data, annotations.KeyDatomsMatched,
 			"matching is a pattern's business; a zero here would read as no result")
 	})
@@ -565,8 +612,13 @@ func TestPatternLessReadsReportUnderEntityAndAttribute(t *testing.T) {
 			"the peek and the resolution are two runs, and neither speaks for the other")
 		require.Equal(t, 2, ev.Data[annotations.KeyScansOpened])
 		require.Equal(t, 1, ev.Data[annotations.KeyValuesServed])
-		require.Positive(t, ev.Data[annotations.KeyDatomsScanned],
-			"the set's history is deeper than its membership, and intake is what shows it")
+		// The peek advances once to read the first datom's Op and closes; add-wins
+		// resolution then reads the whole (E, A) group, since membership is not
+		// decidable from a prefix of the adds and removes. funnelFixture writes
+		// three tag datoms, so 1 + 3.
+		require.Equal(t, 4, ev.Data[annotations.KeyDatomsScanned],
+			"one peek plus the set's three datoms; the history is deeper than the "+
+				"membership and intake is what shows it")
 	})
 }
 

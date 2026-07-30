@@ -62,9 +62,9 @@ func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation
 	remapped := remapSymbols(shared.Symbols, pattern)
 	properties := remapRelationProperties(shared.Properties, shared.Symbols, remapped)
 	if m.handler != nil {
-		eventName := "scan-sharing/cache-miss"
+		eventName := annotations.ScanSharingCacheMiss
 		if hit {
-			eventName = "scan-sharing/cache-hit"
+			eventName = annotations.ScanSharingCacheHit
 		}
 		m.handler(annotations.Event{
 			Name: eventName,

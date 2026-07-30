@@ -43,8 +43,8 @@ type RewriteRecord struct {
 
 // RewriteSink is where a pass's rewrite decisions go. Each recorded decision
 // appends a typed RewriteRecord when Collect is set and emits its event form
-// through Handler when one is present. Both destinations are optional; a nil
-// sink is valid and does nothing, so passes call it unconditionally.
+// through Handler when one is present. Both destinations are optional, and a nil
+// sink is valid and does nothing.
 type RewriteSink struct {
 	// Handler receives each decision's annotation-event form, plus any
 	// diagnostic events that accompany a decision (Emit).

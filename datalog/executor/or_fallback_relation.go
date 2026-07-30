@@ -472,7 +472,7 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 			Start: time.Now(),
 			Data: map[string]interface{}{
 				"iterator_count": r.iteratorCount,
-				"outer_symbols":  fmt.Sprintf("%v", outer.Symbols()),
+				"outer_symbols":  outer.Symbols(),
 				"outer_type":     fmt.Sprintf("%T", outer),
 			},
 		})
@@ -1493,8 +1493,8 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 								Name: annotations.OrFallbackCacheBuild,
 								Data: map[string]interface{}{
 									"branch":      branchIdx,
-									"branch_syms": fmt.Sprintf("%v", branchResult.Symbols()),
-									"outer_syms":  fmt.Sprintf("%v", it.outerSyms),
+									"branch_syms": branchResult.Symbols(),
+									"outer_syms":  it.outerSyms,
 									"branch_size": branchResult.Size(),
 								},
 							})
@@ -1535,7 +1535,7 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 							Start: time.Now(),
 							Data: map[string]interface{}{
 								"branch_index": branchIdx,
-								"branch_syms":  fmt.Sprintf("%v", branchResult.Symbols()),
+								"branch_syms":  branchResult.Symbols(),
 								"first_tuple":  fmt.Sprintf("%v", branchIter.Tuple()),
 							},
 						})
@@ -1695,7 +1695,7 @@ func (it *OrFallbackIterator) emitCachedMatches(branchIdx int, cb *cachedBranch,
 			Start: time.Now(),
 			Data: map[string]interface{}{
 				"branch_index": branchIdx,
-				"branch_syms":  fmt.Sprintf("%v", cb.branchSyms),
+				"branch_syms":  cb.branchSyms,
 				"first_tuple":  fmt.Sprintf("%v", matches[0]),
 			},
 		})

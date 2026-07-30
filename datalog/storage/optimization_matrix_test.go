@@ -345,7 +345,7 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 				subqueryExecutions.Add(1)
 			case "or-fallback/cache-build":
 				fallbackCacheBuilds.Add(1)
-			case "pattern/fused-constraint":
+			case annotations.PatternFusedConstraint:
 				fusedConstraints.Add(1)
 			case annotations.JoinStrategy:
 				if unique, _ := event.Data["build_key_unique"].(bool); unique {

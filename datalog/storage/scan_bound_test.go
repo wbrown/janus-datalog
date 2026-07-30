@@ -232,15 +232,15 @@ func TestIndexSelectionEventReportsBound(t *testing.T) {
 			// Every scan-reporting event must describe its run the same way, so
 			// the assertions below are shared: no encoded range, and parallel
 			// position and value slices naming what the run binds.
-			requireBound := func(t *testing.T, e annotations.Event, index IndexType, positions, values []string) {
+			requireBound := func(t *testing.T, e annotations.Event, index IndexType, positions []string, values []datalog.Value) {
 				t.Helper()
-				// The IndexType, not a rendering of it: the producer carries the
-				// value and the formatter renders, so an emitter that went back
-				// to flattening fails here rather than passing on a string that
-				// happens to read the same.
+				// The IndexType and the bound values themselves, not renderings of
+				// them: the producer carries values and the formatter renders, so
+				// an emitter that went back to flattening fails here rather than
+				// passing on strings that happen to read the same.
 				require.Equal(t, index, e.Data[annotations.KeyIndex])
 				require.Equal(t, positions, e.Data[annotations.KeyBound])
-				require.Equal(t, values, e.Data["bound.values"])
+				require.Equal(t, values, e.Data[annotations.KeyBoundValues])
 				for _, byteField := range []string{"scan.start", "scan.end", "start", "end", "value_bytes"} {
 					require.NotContains(t, e.Data, byteField,
 						"an encoded key range is one backend's projection, not an annotation")
@@ -249,20 +249,21 @@ func TestIndexSelectionEventReportsBound(t *testing.T) {
 
 			t.Run("A bound, unbound scan path", func(t *testing.T) {
 				e := eventFor(t, "pattern/index-selection", `[:find ?e ?n :where [?e :person/name ?n]]`)
-				requireBound(t, e, AETV, []string{"A"}, []string{":person/name"})
+				requireBound(t, e, AETV, []string{"A"},
+					[]datalog.Value{datalog.NewKeyword(":person/name")})
 			})
 
 			t.Run("A and V bound, V-validation path", func(t *testing.T) {
 				e := eventFor(t, "v-validation/open-scan", `[:find ?e :where [?e :person/name "Alice"]]`)
-				requireBound(t, e, AVET,
-					[]string{"A", "V"}, []string{":person/name", "Alice"})
+				requireBound(t, e, AVET, []string{"A", "V"},
+					[]datalog.Value{datalog.NewKeyword(":person/name"), "Alice"})
 			})
 
 			t.Run("nothing bound", func(t *testing.T) {
 				e := eventFor(t, "pattern/index-selection", `[:find ?e ?a ?v :where [?e ?a ?v]]`)
 				require.Empty(t, e.Data[annotations.KeyBound],
 					"a whole-index scan binds no component, and says so rather than omitting the field")
-				require.Empty(t, e.Data["bound.values"])
+				require.Empty(t, e.Data[annotations.KeyBoundValues])
 				require.Contains(t, e.Data, annotations.KeyBound,
 					"the field is present even when the run binds nothing")
 			})

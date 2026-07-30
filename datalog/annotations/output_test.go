@@ -107,7 +107,7 @@ func TestScanLineRendersFromItsOwnEvent(t *testing.T) {
 			KeyStrategy:       ScanDirect,
 			KeyIndex:          producerValue("AVET"),
 			KeyBound:          []string{"A", "V"},
-			"bound.values":    []string{":task/scenario", "scenario-alpha"},
+			KeyBoundValues:    []string{":task/scenario", "scenario-alpha"},
 			KeyDatomsScanned:  10,
 			KeyDatomsResolved: 10,
 			"scan.duration":   2 * time.Millisecond,
@@ -166,7 +166,7 @@ func TestScanLineWholeIndexBoundIsNotUnknown(t *testing.T) {
 			KeyStrategy:       ScanDirect,
 			KeyIndex:          producerValue("EATV"),
 			KeyBound:          []string(nil),
-			"bound.values":    []string(nil),
+			KeyBoundValues:    []string(nil),
 			KeyDatomsResolved: 500,
 		},
 	}), "EATV, bound: none")

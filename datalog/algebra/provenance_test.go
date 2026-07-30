@@ -40,10 +40,8 @@ func TestRewriteSinkDestinations(t *testing.T) {
 // On the normal query path — no handler, no explanation — nothing consumes any
 // of it.
 //
-// The assertion is relative rather than a fixed count. What must hold is that a
-// silent sink does strictly less work than an observing one; move the guards
-// back inside the sink and the two converge, which is the regression itself. A
-// fixed number would instead break on every unrelated allocation change.
+// A nil sink cannot build provenance at all, so it is the floor a silent sink
+// must match.
 func TestSilentSinkBuildsNoProvenance(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?s ?mx
 	  :where
@@ -61,12 +59,15 @@ func TestSilentSinkBuildsNoProvenance(t *testing.T) {
 		})
 	}
 
+	noSink := optimizeWith(nil)
 	silent := optimizeWith(&RewriteSink{})
 	observing := optimizeWith(&RewriteSink{Collect: true})
-	t.Logf("allocations per optimize: silent %v, observing %v", silent, observing)
+	t.Logf("allocations per optimize: no sink %v, silent %v, observing %v",
+		noSink, silent, observing)
+	require.Equal(t, noSink, silent,
+		"the pass builds records or payloads for a silent sink")
 	require.Less(t, silent, observing,
-		"a silent sink allocated as much as a collecting one (%v vs %v): the pass is "+
-			"building records and payloads nothing consumes", silent, observing)
+		"a collecting sink allocated no more than a silent one")
 }
 
 // TestDecorrelationPassRecords pins the typed provenance of the decorrelation
@@ -151,7 +152,7 @@ func TestGetElsePassRecords(t *testing.T) {
 
 	var sawApplyEvent bool
 	for _, e := range events {
-		if e.Name == "algebra/getelse-scan-apply" {
+		if e.Name == annotations.AlgebraGetElseScanApply {
 			sawApplyEvent = true
 		}
 	}
