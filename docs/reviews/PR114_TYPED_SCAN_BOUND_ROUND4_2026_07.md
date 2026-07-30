@@ -679,13 +679,23 @@ enumeration of `GetOrResolve`'s returns as `entry, entry.scanned, nil` dates the
 claim: that signature predates Family 2's plumbing change, so the instance was
 derived against a shape the tree no longer had.
 
-**4c. `Collector.enabled` is always true.** *Verified 2026-07-29.* Set from
-`handler != nil` at construction and read only by `Add`/`AddTiming`. All four
-production construction sites guarantee non-nil: `executor/context.go` returns a
-`BaseContext` on nil, `storage/matcher.go` guards with `handler != nil`,
-`executor/annotated_matcher.go` returns the unwrapped matcher on nil, and
-`storage/database.go` passes a literal closure. The field encodes a claim three
-explicit upstream checks already make.
+**4c. `Collector.enabled` is always true.** *Verified 2026-07-29; **resolved
+2026-07-29 by removing the subject**, ledger item 36 — `annotations.Collector` is
+deleted, and with it the field, the event slice nothing read, and the pooled data
+maps.* As reported: set from `handler != nil` at construction and read only by
+`Add`/`AddTiming`, with all four production construction sites guaranteeing
+non-nil — `executor/context.go` returning a `BaseContext` on nil,
+`storage/matcher.go` guarding with `handler != nil`,
+`executor/annotated_matcher.go` returning the unwrapped matcher on nil, and
+`storage/database.go` passing a literal closure. The field encoded a claim three
+explicit upstream checks already made.
+
+Three of those four constructions are gone with the type: `executor/context.go`'s
+`BaseContext` arm and `storage/matcher.go`'s `SetHandler` are deleted, and
+`storage/database.go`'s closure is now registered on the options directly.
+`WrapMatcher`'s nil check remains, and still means what it meant — a nil handler
+returns the matcher unwrapped, for zero overhead — but it no longer constructs
+anything.
 
 **4d. Struck 2026-07-29: the subject is gone.** It cited both join iterators
 reading `it.iter.Scanned()` then nil-checking the same field. `Scanned` no longer
@@ -753,11 +763,13 @@ same predicate `Key()` and `Datom()` use, covering `closed`, the position bounds
 exhausted run positions nothing. The pin discriminates on any entity but the last,
 where `Next()` stops because the key at the cursor lies past `end` and so leaves a
 valid index on the next entity's first key.
-`0c30a7a`. `positioned()`, `Key()` and `Datom()` all test it;
-`ElementID()` (`memory_store.go:618-623`) tests only `closed` and the position
-bounds. `Scan(wide)` → `Seek(narrower)` → `ElementID()` returns a Tx from
-outside the run on memory, the zero value on Badger
-(`badger_store.go:525-534`), and `store.go:145-148` documents the Badger answer.
+
+As reported, against `0c30a7a`: `positioned()`, `Key()` and `Datom()` all test
+`end`; `ElementID()` (`memory_store.go:618-623`) tested only `closed` and the
+position bounds. `Scan(wide)` → `Seek(narrower)` → `ElementID()` returned a Tx
+from outside the run on memory, the zero value on Badger
+(`badger_store.go:525-534`), and `store.go:145-148` documents the Badger answer —
+which is the one the memory backend now gives.
 
 **5c. The engine's own verbose installers do not wrap, and `Synchronized` has
 zero callers.** *Verified.* `253df0f` (ruling 9). `db/options.go:73-80` and
@@ -789,6 +801,14 @@ while `Collector.Add` unlocks at `:365` and calls the handler at `:369`, so the
 mutex covers accumulation only and a shared collector enters the handler
 concurrently. Corrected — which matters for the next handler someone writes, since
 that sentence read as license to keep state in one.
+
+**And then resolved by removing its subject, 2026-07-29** (ledger item 36). The
+corrected sentence is gone with the collector it described: `Context` carries
+`scanRegistry` and `env` only, and `annotations.Collector` is deleted. Ruling 9's
+mechanism — wrap a handler at the installer — goes with it. There is no wrapping
+step for an installer to forget, because a handler is registered on the options
+every executor, matcher and relation is constructed with, and `WrapMatcher` now
+times the `Match()` boundary and claims nothing about what happens inside it.
 
 **5d. Struck 2026-07-29,** together with the guides it was measured against.
 Its counts were of Go-visible symbols, not of consumer-visible breaks: the four
@@ -1410,6 +1430,11 @@ distinguishes them. The same block read `ctx.Collector()` directly while the
 strategy event two blocks above used the `opts.Collector` fallback, so an
 options-supplied collector saw the decision and never what it led to.
 
+**That last clause is now structurally impossible** (ledger item 36): there is one
+observer, `opts.Handler`, and `ExecuteAggregationsWithContext` — the arm that
+supplied the second — is deleted. A producer cannot pick between two sources for
+one handler when the options are the only source.
+
 Pinned by `TestAggregationExecutedTimesTheAggregation`. The pin took two
 attempts, both instructive: `require.Positive` on the latency passes against the
 defect, because `AddTiming` computes `end.Sub(start)` and a start taken at the
@@ -1437,6 +1462,9 @@ It was red by one test for the duration of that bug —
 rather than out of it while the ruling was pending. `BUG_CACHE_EMPTY_VECTOR_NEVER_SET`
 is now resolved and the gate is green again, native and wasm, through 2a, 2b,
 the guard sweep and the aggregation timing fix.
+
+Green again 2026-07-29 through 5b and the handler registration of ledger item 36
+— native (20 packages) and the js/wasm leg.
 
 The review's own run reported `go build`, `go vet` and `go test -count=1
 ./datalog/... ./tests/...` green — 17 packages, zero failures, zero skips, 272s —
