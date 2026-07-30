@@ -1449,7 +1449,7 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 
 				// Try EA-cache-based branch build for DataPattern-only or-join branches.
 				// Only use when the EA cache is warm (prefetch has run for these entities).
-				// The prefetch triggers at executeOrJoinClauseFallback for entities
+				// The prefetch runs in DefaultQueryExecutor.Execute for entities
 				// in the outer relation. For inner subquery or-joins, the prefetch
 				// hasn't run yet, so fall back to the storage scan path.
 				if isCacheable && isOrJoin && !isCacheableBranch(branch, false) && it.prefetched {

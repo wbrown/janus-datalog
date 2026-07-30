@@ -69,15 +69,6 @@ func ReconstructRGA(elements []RGAElement) []any {
 	// chain and recursion depth ≈ vector length. Go grows goroutine stacks
 	// dynamically (8KB → ~1GB cap), so this is safe until a SINGLE vector holds
 	// on the order of millions of live elements.
-	//
-	// Why not "just use an explicit stack": that doesn't remove the cost, it
-	// relocates it. The result slice below is already O(n) in live elements and
-	// dominates memory; an explicit stack would also be O(depth) ≈ O(n) on the
-	// heap. So the iterative form buys only a higher cliff (heap OOM instead of
-	// the ~1GB stack cap), not a lower asymptotic footprint — for a vector that
-	// large you have bigger problems than stack depth. Convert only if such a
-	// workload actually materializes; until then recursion is simpler and
-	// equivalent in the regime that matters.
 	var result []any
 	var walk func(id datalog.ElementID)
 	walk = func(id datalog.ElementID) {

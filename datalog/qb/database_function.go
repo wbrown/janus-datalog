@@ -104,7 +104,7 @@ func GetSome(entity *Var, attrs ...Attr) *GetSomeBuilder {
 
 // As binds the result of get-some to a variable.
 // Note: get-some actually returns a [attr value] pair in Datomic,
-// but for simplicity we just bind the value.
+// but we just bind the value.
 func (g *GetSomeBuilder) As(result *Var) *Expression {
 	keywords := make([]datalog.Keyword, len(g.attrs))
 	for i, attr := range g.attrs {

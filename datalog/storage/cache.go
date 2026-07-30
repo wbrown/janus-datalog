@@ -132,14 +132,6 @@ func NewCache() *Cache {
 
 // annotateRebuild reports one cache rebuild and why it happened. Callers
 // check handler != nil before calling; the emission itself never guards.
-//
-// The handler arrives per call rather than being stored on the Cache. A stored
-// copy would be a second home for a value the Database already owns, and an
-// assignment to that one cannot reach this one — keeping them in step needs a
-// method where a field would do. Every emission site here is inside
-// GetOrResolve, which is handed the handler along with the resolver and the
-// snapshot bound: per-call context, not retained state, so there is nothing to
-// go stale.
 func annotateRebuild(handler annotations.Handler, key CacheKey, reason string, slot cacheSlot) {
 	data := map[string]interface{}{
 		// The keyword, not its rendering. Interning already produced the
@@ -190,8 +182,7 @@ func (c *Cache) BeginInFlight(keys []CacheKey) {
 // otherwise clobber a sentinel that BeginInFlight set in the meantime: if the
 // slot turned into (or already holds) a sentinel, the store is abandoned.
 // storeIfNotInFlight also advances the slot's max-version high-water mark to
-// the entry's version, folding what the two-map layout did in a separate
-// UpdateMaxVersion call into the same atomic slot swap.
+// the entry's version.
 func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
 	for {
 		slot, ok := c.slots.Load(key)
@@ -300,10 +291,7 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 	if entry == nil {
 		// The (E, A) has no datoms. Absence is not cached, deliberately: entry
 		// existence is what every reader downstream reads as the attribute's
-		// existence, and a placeholder entry here would put back the very
-		// conflation the resolvers were changed to remove — a never-written
-		// attribute would again be indistinguishable from an emptied one. The
-		// cost is that the next read of the same absent (E, A) scans again.
+		// existence. The cost is that the next read of the same absent (E, A) scans again.
 		return nil, nil
 	}
 	// storeIfNotInFlight refuses to overwrite an in-flight sentinel, so a
@@ -502,17 +490,6 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card datalog.Keyword, datoms []
 // cached — so downstream, the existence of an entry *is* the existence of the
 // attribute, and nothing has to reconstruct that from a count or a nil slice.
 //
-// Intake accrues into the report rather than travelling back, because the absent
-// case has no entry to carry it and a failure has no return value at all, while
-// both of them read the index to establish what they established.
-//
-// The two numbers are different — the caller's report spans however many entries
-// it resolves, and the entry's is its own build cost — so the arms take the
-// entry's as a delta across the resolver call rather than measuring into a
-// second report. A report per rebuild would be a heap allocation on every cache
-// miss to populate a field that exists to be reported; with a discarding report
-// the delta is zero, which is the same statement the report itself makes.
-//
 // It takes no receiver: resolution reads storage through the resolver and
 // touches no cache state. GetOrResolve is this plus the freshness check and the
 // store; the cache-disabled read path calls it directly.
@@ -621,10 +598,6 @@ func rebuildVector(key CacheKey, resolver CacheResolver, report *scanReport) (*C
 // stream exists to describe — so the count reaches its reporter through the
 // report, and the cache stores the entry's own share on the CacheEntry, which is
 // what the read bought.
-//
-// Inward rather than outward: a report passed in is accrued at scan time, so a
-// resolution that fails keeps what it read, where a count returned alongside a
-// result is lost with the result a failure never produces.
 type CacheResolver interface {
 	// GetCardinality returns the cardinality for an attribute
 	GetCardinality(a Attribute) datalog.Keyword

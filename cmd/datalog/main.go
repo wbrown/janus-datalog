@@ -506,7 +506,6 @@ func runImportBin(dbPath, importPath string) {
 	fmt.Printf("Imported %s into database %s\n", importPath, dbPath)
 }
 
-// runSingleQuery executes a single query and exits
 // runPlanOnly plans the query without executing it and prints the full
 // algebra explanation: the compiled tree, every rewrite decision the passes
 // made, the optimized tree, the rewritten Datalog, and the physical plan.

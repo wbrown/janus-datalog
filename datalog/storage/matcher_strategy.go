@@ -41,14 +41,6 @@ type ReuseStrategy struct {
 // Returns the strategy and the (possibly materialized) binding relation.
 // For multi-position cases, the relation may be materialized to allow cardinality counting.
 func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relation) (ReuseStrategy, executor.Relation) {
-	// TESTING: Re-enable to verify performance with sorted keys
-	// Previous benchmarks showed 2x slower, but that may have been due to:
-	// 1. Not sorting the binding relation properly
-	// 2. Opening too wide an iterator range
-	// 3. Complex boundary checking overhead
-	// return ReuseStrategy{Type: NoReuse} // ENABLED for testing to force buggy code path
-
-	// Original logic preserved below but bypassed:
 	if bindingRel == nil {
 		return ReuseStrategy{Type: NoReuse}, bindingRel
 	}
@@ -179,14 +171,17 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 }
 
 // chooseBestMultiPositionStrategy handles the case where multiple positions are bound
-// from the binding relation. It chooses the most selective position for iterator reuse.
+// from the binding relation. It chooses the seek dimension for iterator reuse.
 //
-// Key insight: When both E and V are bound, choose the position with FEWER distinct
-// values as the grouping dimension. The other position will use hash-based filtering.
+// Key insight: When both E and V are bound, choose the position with MORE distinct
+// values as the seek dimension. Seeking between values inside one open iterator is
+// what reuse buys; the position with the most distinct values is the one that would
+// otherwise force an iterator open per binding tuple. The other position will use
+// hash-based filtering.
 //
 // Example: Pattern [?e :entity/code ?code] with 81 entities and 1 code value:
-// - V has 1 distinct value (more selective)
-// - Use AVET index with A+V prefix to scan, filter by E hash set
+// - E has 81 distinct values
+// - Seek E in one E-primary iterator, filter by the code value: 1 open, not 81
 // Returns the strategy and the (possibly materialized) binding relation.
 func chooseBestMultiPositionStrategy(
 	pattern *query.DataPattern,
@@ -198,7 +193,6 @@ func chooseBestMultiPositionStrategy(
 	// This function iterates the relation to count cardinalities, and later code
 	// (matchWithHashJoin) needs to iterate again.
 	// StreamingRelation panics if Iterator() is called twice without Materialize().
-	// See: TestMultiPositionWithStreamingBinding
 	if streamRel, isStreaming := bindingRel.(*executor.StreamingRelation); isStreaming {
 		bindingRel = streamRel.Materialize()
 	}

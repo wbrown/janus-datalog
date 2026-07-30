@@ -1,7 +1,6 @@
 package query
 
 // TupleIndexer computes and stores the mapping from pattern variables to tuple positions.
-// This logic was duplicated across TupleBuilder, InternedTupleBuilder, and OptimizedTupleBuilder.
 type TupleIndexer struct {
 	// Pre-computed indexes for each position (-1 means not captured)
 	EIndex int
@@ -17,7 +16,6 @@ type TupleIndexer struct {
 }
 
 // NewTupleIndexer computes the index mapping for a pattern and symbols.
-// This consolidates the constructor logic that was duplicated ~240 lines across three builders.
 func NewTupleIndexer(pattern *DataPattern, symbols []Symbol) *TupleIndexer {
 	indexer := &TupleIndexer{
 		EIndex:   -1,

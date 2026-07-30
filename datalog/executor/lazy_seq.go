@@ -44,7 +44,7 @@ func (s *tupleSeqState) close() error {
 
 // LazySeq is a cons cell with deferred realization. The thunk is called
 // at most once; subsequent accesses return cached first/rest values.
-// Thread-safe via sync.Mutex.
+// Thread-safe via sync.Once.
 type LazySeq struct {
 	once     sync.Once
 	hasElems bool         // true when the seq has at least one element

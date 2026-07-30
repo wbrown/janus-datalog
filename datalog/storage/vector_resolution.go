@@ -19,9 +19,7 @@ type VectorResolutionResult struct {
 	// only the presence of datoms can, and the two are different states — the
 	// first has no value, the second has the empty vector. This is resolved
 	// alongside the value rather than counted afterwards: a statistic describes
-	// a resolution, it does not constitute one, and every reader that reached
-	// for RGAStats.TotalElements to answer this was borrowing a debugging
-	// number for a semantic question.
+	// a resolution, it does not constitute one.
 	Present bool
 
 	// MaxElementID is the highest ElementID seen (for cache versioning)
@@ -64,8 +62,7 @@ func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte, report *scanReport
 // loadRGAElements loads all RGA elements for (E, A) without reconstruction.
 // Used when you need access to the raw elements (e.g., for building position index).
 //
-// With the new key format:
-// - V is the raw value (not encoded RGAElement)
+// - V is the raw value
 // - Op is OpRGAInsert (3) or OpRGATombstone (4)
 // - AfterRef is the position reference for inserts, or the target element ID for tombstones
 //

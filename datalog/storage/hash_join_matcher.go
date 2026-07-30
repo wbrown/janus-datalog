@@ -349,10 +349,6 @@ func (m *PatternMatcher) scanBoundForValues(index IndexType, e, a, v, tx interfa
 // space, and it is exactly one only when every tuple carries the same key.
 // tuples is the size of the binding set, which is what binding.size reports and
 // what chooseJoinStrategy selects on.
-//
-// A struct rather than two adjacent ints: same-typed neighbouring returns are the
-// shape where a transposition compiles and then reports a binding set smaller
-// than it was, for the same reason scanFunnel is a struct.
 type bindingCounts struct {
 	keys   int
 	tuples int

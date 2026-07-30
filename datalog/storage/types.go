@@ -25,7 +25,6 @@ var _ [datalog.MaxAttributeBytes]byte = Attribute{}
 
 // Tx represents a transaction/CRDT identifier (16 bytes = ElementID)
 // Layout: Lamport (8 bytes big-endian) + ReplicaID (8 bytes big-endian)
-// This replaces the old 20-byte SHA1-based transaction ID.
 type Tx [16]byte
 
 // StorageDatom is the internal storage representation

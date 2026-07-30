@@ -103,8 +103,7 @@ func (i *KeyOnlyIterator) Datom() (*datalog.Datom, error) {
 
 // positioned reports whether the cursor is on a key this scan may expose: in
 // the byte range, and one the bound's membership rule holds. Next, Key and
-// Datom all consult it, so there is one notion of "current" rather than a range
-// check in three places and a membership check in one.
+// Datom all consult it, so there is one notion of "current".
 func (i *KeyOnlyIterator) positioned() bool {
 	if !i.BadgerIterator.valid || i.it == nil || !i.it.Valid() {
 		return false

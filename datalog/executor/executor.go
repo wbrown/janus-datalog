@@ -590,14 +590,14 @@ func (e *Executor) executeRealizedWithRelationInputIteration(ctx *Context, plan 
 // iterationIndex), which is replaced by one single-value relation per
 // RelationInput symbol drawn from the tuple. Forwarding the non-iteration
 // inputs (scalars, collections) in place keeps them aligned with
-// executeRealizedNonIterating's in-place :in rewrite; without it they are
+// executeRealizedPlan's in-place :in rewrite; without it they are
 // dropped and BindQueryInputs binds the wrong values
 // (see docs/bugs/resolved/BUG_SCALAR_PLUS_RELATION_INPUT_DROPS_OTHER_INPUTS.md).
 //
 // Use Session() to obtain a workspace-reusable handle for repeated per-tuple
 // builds — that's the path used by both the parallel (per worker) and
 // sequential paths, and it allocates the scratch relations once instead of
-// per-tuple. Direct Build() exists only for one-shot use.
+// per-tuple.
 type perTupleInputBuilder struct {
 	prefix   []Relation     // inputRelations[:iterationIndex]
 	suffix   []Relation     // inputRelations[iterationIndex+1:]
@@ -639,7 +639,7 @@ func newPerTupleInputBuilder(inputRelations []Relation, iterationIndex int, rela
 //     yields on its next iteration.
 //
 // Safety contract: callers must not retain the returned Input slice or the
-// scratch relations within it across Update calls. executeRealizedNonIterating
+// scratch relations within it across Update calls. executeRealizedPlan
 // satisfies this — it calls BindQueryInputs eagerly, which iterates each
 // input relation once and copies the value out via Tuple{tuple[0]}.
 //
@@ -660,7 +660,7 @@ func (b *perTupleInputBuilder) Session() *perTupleInputSession {
 		// per tuple. Wrapping it in a MaterializedRelation means the
 		// relation's tuples[0] IS valueSlots[i] (deduplicateTuples on a
 		// 1-tuple input returns a fresh outer slice whose element shares
-		// the inner Tuple — confirmed by reading deduplicateTuples).
+		// the inner Tuple).
 		valueSlots[i] = make(Tuple, 1)
 		scratchRels[i] = NewMaterializedRelation([]query.Symbol{sym}, []Tuple{valueSlots[i]})
 	}
@@ -687,7 +687,7 @@ func (s *perTupleInputSession) Update(tuple Tuple) {
 
 // Input returns the session's pre-wired input-relation list. The returned
 // slice (and the scratch relations within it) MUST be fully consumed before
-// the next Update call; executeRealizedNonIterating via BindQueryInputs
+// the next Update call; executeRealizedPlan via BindQueryInputs
 // satisfies that.
 func (s *perTupleInputSession) Input() []Relation {
 	return s.inputList
@@ -768,17 +768,8 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 // goroutine) streams tuples directly from iterationRelation's iterator
 // into the jobs channel; a fixed pool of numWorkers worker goroutines
 // drains jobs, runs per-tuple queries, and appends results into its own
-// slot in workerResults — no cross-worker synchronization on output.
-//
-// Earlier shape: spawn len(tuples) goroutines (one per input tuple),
-// each acquiring a slot of a numWorkers-slot semaphore. That paid a
-// goroutine creation + two channel sends + a done-channel send per
-// tuple. At hundreds of input tuples the scheduler primitives
-// (runtime.lock2, runtime.usleep, pthread_cond_*) dominated profiles
-// — see docs/perf/README.md for the baseline. The current shape
-// uses numWorkers goroutines regardless of input size, one channel
-// (jobs), and no inter-worker synchronization on output: each worker
-// appends to workerResults[wIdx], a slot only that worker writes.
+// slot in workerResults[wIdx] — a slot only that worker writes, so there is
+// no cross-worker synchronization on output.
 func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	ctx *Context,
 	plan *planner.RealizedPlan,
@@ -921,13 +912,13 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 //	}
 //
 // Owned state, all pre-allocated once at prepare time:
-//   - queryExecutor: the DefaultQueryExecutor (C1 hoist)
+//   - queryExecutor: the DefaultQueryExecutor
 //   - modifiedQuery: plan.Query rewritten with RelationInput replaced by
-//     N ScalarInputs (C1 hoist)
+//     N ScalarInputs
 //   - Fast path (canMutateBindings == true): boundRelation +
 //     boundTuple + iterationSlots — the bound relation is pre-built with
 //     constant values baked in; per-tuple Run mutates iteration-derived
-//     slots in boundTuple, then runs the phases (C2 workspace reuse)
+//     slots in boundTuple, then runs the phases
 //   - Fallback path (canMutateBindings == false, used when the query's
 //     :in contains shapes the fast path can't handle, e.g. CollectionInput):
 //     fallbackSession — a perTupleInputSession that Run feeds and passes
@@ -1052,7 +1043,7 @@ func (p *preparedIteration) buildBoundRelation(relationInput query.RelationInput
 	// (RelationInput at iterationIndex, scalars/collections around it).
 	// We need to look up scalar/tuple values from inputRelations using
 	// the original layout, not the rewritten modifiedQuery.In.
-	// originalInIndex walks plan.Query.In; relationIndex walks the
+	// The loop below walks plan.Query.In; relationIndex walks the
 	// (DatabaseInput-skipped) inputRelations slice.
 	var boundSymbols []query.Symbol
 	var boundTuple Tuple

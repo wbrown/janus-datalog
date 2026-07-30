@@ -9,9 +9,7 @@ import (
 // (Scan, Join, LateralJoin, etc.) and rewrites them.
 //
 // Observability rides the passes, not the optimizer: pass constructors take a
-// *RewriteSink, so every pass reports its decisions the same way and a new
-// pass cannot silently lose its provenance the way the former by-name handler
-// rebuild could.
+// *RewriteSink, so every pass reports its decisions the same way.
 type Optimizer struct {
 	passes []Pass
 }

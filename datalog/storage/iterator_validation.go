@@ -21,16 +21,10 @@ import (
 // See iterator_refactoring_bench_test.go for benchmark details.
 
 // validateDatomWithConstraints checks if a datom passes transaction and constraint validation.
-// This consolidates logic that was duplicated across nonReusingIterator and
-// unboundIterator.
 //
 // Returns true if the datom:
 //  1. Passes transaction time filtering (txID check)
 //  2. Satisfies all storage constraints
-//
-// This function is called in the hot path (once per datom scanned) and introduces
-// ~0.2ns overhead per call due to function call costs and inability to inline
-// (the constraint loop makes it too complex for the Go compiler's inliner).
 func validateDatomWithConstraints(
 	datom *datalog.Datom,
 	txID *datalog.ElementID,

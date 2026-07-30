@@ -610,7 +610,7 @@ func (sw *StructWriter) WriteAuto(tx TransactionAdder, v interface{}) (datalog.I
 	if sw.info.IDField != nil {
 		idField := structVal.Field(sw.info.IDField.Index)
 
-		// Identity is always a pointer type now
+		// Identity is always a pointer type
 		entity = idField.Interface().(datalog.Identity)
 
 		// Check if ID is nil or zero (all zeros in the hash)
@@ -659,7 +659,7 @@ func (sw *StructWriter) UpdateAuto(tx TransactionUpdater, lookup EntityLookup, v
 	if sw.info.IDField != nil {
 		idField := structVal.Field(sw.info.IDField.Index)
 
-		// Identity is always a pointer type now
+		// Identity is always a pointer type
 		entity = idField.Interface().(datalog.Identity)
 
 		// Check if ID is nil or zero (all zeros in the hash)

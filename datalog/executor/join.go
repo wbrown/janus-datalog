@@ -8,8 +8,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Note: Join settings are now managed by ExecutorOptions in options.go
-
 // hashJoinIterator implements streaming hash join execution
 //
 // CONCURRENCY: This iterator is NOT thread-safe. It maintains mutable state
@@ -362,7 +360,7 @@ func HashJoinWithOptions(
 
 	// copyCount/passthruCount feed the JoinBuildCopy annotation below; only
 	// track them when a handler will read them. Inlined into the build loop
-	// (no closure) to avoid a per-join heap allocation.
+	// to avoid a per-join heap allocation.
 	trackCopy := opts.Handler != nil
 	var copyCount, passthruCount int
 	// The interval the copies were made in: draining the build relation. It ends
@@ -490,7 +488,7 @@ func HashJoinWithOptions(
 		return NewStreamingRelationWithProperties(outputSyms, iter, opts, resultProperties)
 	}
 
-	// Materialized mode (original implementation)
+	// Materialized mode
 	// Use efficient TupleKeyMap for deduplication
 	var seen *TupleKeyMap
 	if len(resultProperties.Keys) == 0 {
@@ -731,9 +729,7 @@ func isStreaming(rel Relation) bool {
 // The projection plan (secondNonJoinIndices, resultWidth) is invariant
 // for the lifetime of a hash join — it depends only on the join's
 // symbols, not on any tuple — so it is computed once in
-// HashJoinWithOptions and reused for every matched tuple. This replaces the
-// previous combineTuples which allocated a joinSet map and walked
-// rightSyms twice on every call.
+// HashJoinWithOptions and reused for every matched tuple.
 func combineTuplesIndexed(first, second Tuple, secondNonJoinIndices []int, resultWidth int) Tuple {
 	result := make(Tuple, resultWidth)
 	copy(result, first)

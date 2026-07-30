@@ -210,8 +210,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	// already stored on disk so vector/many attributes resolve correctly instead
 	// of collapsing to a single LWW value (e.g. the `datalog` CLI opening an
 	// existing database). A supplied schema is authoritative and wins entirely —
-	// no inference. On an empty store this yields an empty schema, equivalent to
-	// the previous nil behavior.
+	// no inference. On an empty store this yields an empty schema.
 	effectiveSchema := opts.Schema
 	if effectiveSchema == nil {
 		inferred, ierr := inferSchemaFromStore(store)
@@ -224,9 +223,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		}
 	}
 
-	// The planner options are materialized here rather than left nil, so the
-	// database has exactly one home for its handler and effectivePlannerOptions
-	// is a read rather than a projection. AnnotationHandler is the documented
+	// AnnotationHandler is the documented
 	// input and wins when set; a Handler supplied directly on PlannerOptions
 	// stands otherwise. Fixed at construction: nothing attaches an observer to a
 	// running database, because everything built from these options — executors,
@@ -873,7 +870,7 @@ func (ar *AnalyzeResult) String() string {
 	eventCounts := make(map[string]int)
 	eventTimes := make(map[string]time.Duration)
 	// Scans are one event name, so the per-strategy breakdown comes from the
-	// payload. Tallied in this pass rather than by walking the events twice.
+	// payload.
 	scanCounts := make(map[annotations.ScanStrategy]int)
 	scanTimes := make(map[annotations.ScanStrategy]time.Duration)
 	resolveIntake := 0
@@ -1038,8 +1035,7 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 	exec := d.NewExecutorWithOptions(opts)
 
 	// Get the query plan from the executor's planner. The handler above captures
-	// execution annotations; planning here is not annotated (matching prior
-	// behavior).
+	// execution annotations; planning here is not annotated.
 	queryPlanner := exec.GetPlanner()
 	plan, err := queryPlanner.PlanQuery(q, nil)
 	if err != nil {
@@ -1564,7 +1560,6 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			})
 		case schema.CardinalityVector:
 			// RGA append semantics - chain elements within transaction.
-			// Bug #5 fix: Store raw value in V, AfterRef in datom.AfterRef field.
 			//
 			// IMPORTANT: Add() does NOT read from storage. AfterRef is set to the last
 			// element added in THIS transaction, or HEAD (zero) if this is the first.
@@ -1942,7 +1937,6 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 			k := memberKey(datom.V)
 			pendingValues[k] = datom.V
-			// NEW FORMAT: Op is a field on Datom, V is the raw value
 			if datom.Op == datalog.OpCRDTAdd {
 				pendingAdds[k] = datom.Tx
 			} else if datom.Op == datalog.OpCRDTRemove {
@@ -1976,7 +1970,6 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		for k, member := range effectiveSet {
 			if _, ok := newSet[k]; !ok {
 				elemID := t.db.clock.Next()
-				// NEW FORMAT: Op is a field on Datom, V is the raw value
 				t.datoms = append(t.datoms, datalog.Datom{
 					E:  e,
 					A:  a,
@@ -1992,7 +1985,6 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		for k, val := range newSet {
 			if _, ok := effectiveSet[k]; !ok {
 				elemID := t.db.clock.Next()
-				// NEW FORMAT: Op is a field on Datom, V is the raw value
 				t.datoms = append(t.datoms, datalog.Datom{
 					E:  e,
 					A:  a,
@@ -2322,7 +2314,7 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 			}
 		}
 		// Transaction metadata is part of the same atomic commit; failure
-		// rolls back the entire transaction (no more best-effort metadata).
+		// rolls back the entire transaction.
 		if err := stx.Assert(txMetadata); err != nil {
 			return fmt.Errorf("failed to write transaction metadata: %w", err)
 		}

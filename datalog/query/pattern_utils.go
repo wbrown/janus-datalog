@@ -1,7 +1,6 @@
 package query
 
 // PatternExtractor provides utilities for extracting bound values from patterns.
-// This consolidates logic that was previously duplicated across multiple iterators.
 type PatternExtractor struct {
 	pattern *DataPattern
 	symbols []Symbol

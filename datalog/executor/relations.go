@@ -256,7 +256,7 @@ func (rs Relations) Collapse(handler annotations.Handler) Relations {
 	}
 
 	if len(rs) == 1 {
-		// BUGFIX: Return a new slice, not the same slice
+		// Return a new slice, not the same slice
 		// This prevents iterator reuse issues
 		return Relations{rs[0]}
 	}

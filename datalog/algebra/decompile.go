@@ -153,8 +153,7 @@ func decompileJoin(n *Node) ([]query.Clause, error) {
 // non-matching tuples get defaults.
 //
 // LeftOuterJoin ALWAYS has defaults (the decorrelation transform produces
-// InnerJoin when there are no defaults). If defaults are missing, fall
-// back to emitting both sides as an OR clause.
+// InnerJoin when there are no defaults).
 func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 	join := n.Data.(*Join)
 	if len(n.Children) < 2 {

@@ -4,8 +4,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Note: EnableSymmetricHashJoin is now managed by ExecutorOptions
-
 // SymmetricHashJoin performs a symmetric hash join between two potentially streaming relations.
 // Unlike standard hash join which builds one side completely then probes with the other,
 // symmetric hash join processes tuples from both sides incrementally, maintaining hash tables
@@ -164,7 +162,7 @@ func (it *symmetricHashJoinIterator) processLeftBatch() {
 	for processed < it.batchSize && it.leftIt.Next() {
 		leftTuple := it.leftIt.Tuple()
 
-		// BUG FIX: Copy tuple since iterator might reuse buffer
+		// Copy tuple since iterator might reuse buffer
 		// Without this, all tuples in hash table point to same reused buffer
 		leftTupleCopy := make(Tuple, len(leftTuple))
 		copy(leftTupleCopy, leftTuple)
@@ -210,7 +208,7 @@ func (it *symmetricHashJoinIterator) processRightBatch() {
 	for processed < it.batchSize && it.rightIt.Next() {
 		rightTuple := it.rightIt.Tuple()
 
-		// BUG FIX: Copy tuple since iterator might reuse buffer
+		// Copy tuple since iterator might reuse buffer
 		// Without this, all tuples in hash table point to same reused buffer
 		rightTupleCopy := make(Tuple, len(rightTuple))
 		copy(rightTupleCopy, rightTuple)

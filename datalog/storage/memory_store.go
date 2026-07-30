@@ -32,7 +32,7 @@ const memoryKeyTreeDegree = 32
 // so retract and scan can Seek/prefix-iterate in O(log N + range) instead of
 // scanning the whole map (Badger's Seek/ValidForPrefix analogue). Insert and
 // delete are O(log N) per key, so Import/batched Assert stay O(M log N) in the
-// key index (not O(M²) from mid-slice shifts on a sorted []string).
+// key index.
 type MemoryStore struct {
 	mu      sync.RWMutex
 	encoder *BinaryKeyEncoder

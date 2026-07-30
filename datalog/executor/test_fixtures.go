@@ -17,7 +17,7 @@ type MockPatternMatcher struct {
 	options ExecutorOptions
 }
 
-// Match implements the new PatternMatcher interface
+// Match implements the PatternMatcher interface
 func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
 	pattern, err := q.SingleDataPattern()
 	if err != nil {
@@ -85,7 +85,7 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 	return datomsToRelationWithOptions(filteredDatoms, pattern, pattern.Symbols(), m.options), nil
 }
 
-// matchesDatomPattern checks if a datom matches a pattern with bound values
+// matchesBoundPattern checks if a datom matches a pattern with bound values
 func matchesBoundPattern(d datalog.Datom, pattern *query.DataPattern, boundValues map[query.Symbol]interface{}) bool {
 	// Check E position
 	if v, ok := pattern.GetE().(query.Variable); ok {

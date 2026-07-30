@@ -218,8 +218,7 @@ func (it *FunctionEvaluatorIterator) Next() bool {
 		}
 
 		// Absence (get-some found no attribute) is a soft no-match: skip the
-		// tuple, not the error-as-signal misuse the swallowing loop existed
-		// to absorb.
+		// tuple.
 		value, found, admitErr := admitExpressionResult(it.function, result)
 		if admitErr != nil {
 			it.err = admitErr

@@ -7,9 +7,8 @@ import (
 // SetResolutionResult contains the resolved set membership and metadata
 type SetResolutionResult struct {
 	// Members maps hashable keys to original Go values in the set.
-	// Keys are produced by setKey(). For most types the key equals the value.
+	// For most types the key equals the value.
 	// For []byte, the key is string(bytes) but the value is the original []byte.
-	// Point lookup: _, ok := Members[setKey(v)]
 	// Iteration: for _, v := range Members
 	Members map[interface{}]interface{}
 
@@ -89,8 +88,7 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte, report *scanRe
 	// The scan prefix fixes E and A of every entry; only the value span,
 	// Tx, and Op vary. The in-tree iterators expose their raw keys, so
 	// those spans are read directly and values decode only for members
-	// that survive resolution — a full datom decode per historical entry
-	// was 78% of the Set path's allocations. Concrete iterator types keep
+	// that survive resolution. Concrete iterator types keep
 	// the per-entry calls direct and inlinable; iterators from external
 	// Store implementations resolve through Datom() with identical
 	// semantics.
@@ -128,9 +126,7 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte, report *scanRe
 
 // finishWithBound completes an add-wins resolution and records the run it
 // walked. Every arm of resolveAddWinsSet goes through here so the bound cannot
-// be attached on one path and forgotten on another. Intake is no longer among
-// its business: the report accrues that at scan time, which is what lets the
-// arms that return before reaching here keep what they spent.
+// be attached on one path and forgotten on another.
 func finishWithBound(acc *addWinsAccumulator, blobs BlobReader, bound ScanBound) (*SetResolutionResult, error) {
 	result, err := acc.finish(blobs)
 	if err != nil {
@@ -317,7 +313,6 @@ func (m *PatternMatcher) checkSetMembership(bound ScanBound, report *scanReport)
 		elemID := datom.Tx
 
 		// Track highest Tx for each operation type
-		// Op is now directly on the datom
 		if datom.Op == datalog.OpCRDTAdd {
 			if !hasAdd || elemID.Compare(highestAddTx) > 0 {
 				highestAddTx = elemID

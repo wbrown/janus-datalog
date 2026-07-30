@@ -225,8 +225,7 @@ func tuplePosition(symbols []query.Symbol, element query.PatternElement) int8 {
 
 // tupleBuilderCache shares structurally-keyed InternedTupleBuilders across
 // every matcher a Database mints and their temporal-handle copies. A typed
-// map under RWMutex keeps the warm lookup allocation-free (a sync.Map key
-// would box per call).
+// map under RWMutex keeps the warm lookup allocation-free.
 type tupleBuilderCache struct {
 	mu       sync.RWMutex
 	builders map[tupleBuilderKey]*query.InternedTupleBuilder
@@ -278,8 +277,6 @@ func (m *PatternMatcher) getTupleBuilder(pattern *query.DataPattern, symbols []q
 func (m *PatternMatcher) ForceJoinStrategy(strategy *JoinStrategy) {
 	m.forceJoinStrategy = strategy
 }
-
-// Deprecated functions removed - use Match() which returns executor.Relation
 
 // bindPattern creates a new pattern with variables replaced by tuple values
 func (m *PatternMatcher) bindPattern(pattern *query.DataPattern, tuple executor.Tuple, rel executor.Relation) *query.DataPattern {

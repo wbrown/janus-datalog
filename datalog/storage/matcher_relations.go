@@ -533,8 +533,7 @@ func (m *PatternMatcher) matchUnboundScan(
 	}
 
 	// Return streaming relation with lazy materialization
-	// The iterator will be consumed and cached on first call to Iterator(),
-	// eliminating the 6.3 GB of upfront allocations while maintaining correctness
+	// The iterator will be consumed and cached on first call to Iterator()
 	rel := executor.NewStreamingRelationWithProperties(
 		symbols,
 		regularIter,
@@ -932,7 +931,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	//   - txID == nil: latest mode. The scan below reads the absolute-latest
 	//     entry with NO shouldFilterTx, so it equals ResolveLWW only when no
 	//     as-of/history filter applies. Concrete-AsOf and history keep the scan
-	//     path untouched — this change is a strict no-op in those modes.
+	//     path untouched.
 	//   - non-unique: ResolveLWW walks for unique attributes (CRDT-unique
 	//     fallback), which differs from this scan's naive first-entry. Unique
 	//     attributes already short-circuit before validation via
@@ -984,7 +983,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	// Resolve the (E, A) winner visible in this matcher's mode: the highest-Tx
 	// entry not filtered out by the as-of target (EATV sorts Tx descending). In
 	// latest and history mode shouldFilterTx is always false, so this is the
-	// first entry — identical to the prior behavior. In concrete as-of mode it
+	// first entry. In concrete as-of mode it
 	// skips entries newer than the snapshot, mirroring ResolveLWW, so a V-bound
 	// query as-of T validates against the value as of T rather than
 	// absolute-latest. Without this skip, a value overwritten or tombstoned
@@ -1137,8 +1136,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	// respects the snapshot. In latest and history mode this is the zero
 	// ElementID (no filter); in concrete as-of mode it skips post-snapshot
 	// entries, so a value tombstoned or overwritten after T does not drop or
-	// alter a candidate that existed as of T. Every other CRDTResolvingIterator
-	// call site already threads crdtTxID(); this one previously hardcoded zero.
+	// alter a candidate that existed as of T.
 	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher, it.report)
 
 	if it.matcher.handler != nil {
@@ -2568,8 +2566,7 @@ func (it *cardinalityManyAVETValueIterator) Error() error { return it.err }
 //
 // Every path that opens a scan for a pattern emits this: the general arm, and
 // each cardinality arm that returns before reaching it. Deliberately no count —
-// one was written here and had gone stale within the round, which is the same
-// rot centralising the event names ended. A number in prose is a claim about
+// a number in prose is a claim about
 // the tree that nothing rechecks.
 //
 // A bound only narrows observably if the scan says what it narrowed to: where

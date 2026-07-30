@@ -94,10 +94,9 @@ type identityInternCache struct {
 // Global identity intern instance
 var identityIntern = &identityInternCache{}
 
-// InternIdentity returns an interned identity instance.
-// Since all Identity constructors now intern automatically, this is effectively
-// an identity function kept for backward compatibility.
-// It will still intern if somehow given an uninterned identity.
+// InternIdentity returns an interned identity instance. Constructors intern,
+// so this is the identity function for anything they produced; it interns if
+// given an uninterned identity.
 func InternIdentity(id Identity) Identity {
 	if id == nil {
 		return nil
@@ -115,7 +114,6 @@ func InternIdentity(id Identity) Identity {
 }
 
 // InternIdentityFromHash returns an interned identity from a hash.
-// Since Identity is now a pointer type alias (*identity), we return Identity directly.
 func InternIdentityFromHash(hash [20]byte) Identity {
 	// Fast path: load existing (lock-free)
 	if val, ok := identityIntern.cache.Load(hash); ok {

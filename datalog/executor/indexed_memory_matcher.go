@@ -9,7 +9,7 @@ import (
 )
 
 // IndexedMemoryMatcher is an optimized in-memory pattern matcher that uses hash indices
-// for O(1) lookups instead of O(N) linear scans. This provides 5-10× speedup for typical queries.
+// for O(1) lookups instead of O(N) linear scans.
 type IndexedMemoryMatcher struct {
 	datoms []datalog.Datom
 

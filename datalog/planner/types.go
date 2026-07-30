@@ -14,8 +14,7 @@ import (
 // integer values are independent of storage's and must not be
 // cross-cast. selectIndexForMask does not yet emit EATV or AETV — they
 // are included here so the set of reportable indices stays aligned
-// with what storage actually maintains (seven indices since the
-// CRDT-Tx migration).
+// with what storage actually maintains.
 type IndexType uint8
 
 const (

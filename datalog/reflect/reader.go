@@ -461,7 +461,7 @@ func (sr *StructReader) setNestedStructID(fieldVal reflect.Value, fieldType refl
 	}
 	if nestedInfo.IDField != nil {
 		idField := fieldVal.Field(nestedInfo.IDField.Index)
-		// Identity is always a pointer type now, set it directly
+		// Identity is always a pointer type, set it directly
 		idField.Set(reflect.ValueOf(id))
 	}
 	return nil
@@ -506,7 +506,7 @@ func (sr *StructReader) SetIDField(v interface{}, entityID datalog.Identity) err
 	}
 
 	idField := structVal.Field(sr.info.IDField.Index)
-	// Identity is always a pointer type now, set it directly
+	// Identity is always a pointer type, set it directly
 	idField.Set(reflect.ValueOf(entityID))
 	return nil
 }

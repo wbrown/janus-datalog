@@ -192,9 +192,8 @@ const (
 // and to any other producer that must spell it the same way, so neither "who
 // writes this?" nor "who reads this?" is answerable from either side alone.
 //
-// Deliberately no count of the producers. One was written here and had gone
-// stale within the round, which is the same rot the event names were centralised
-// to end — a number in prose is a claim about the tree that nothing rechecks.
+// Deliberately no count of the producers: a number in prose is a claim about
+// the tree that nothing rechecks.
 //
 // Only shared keys belong here, where shared includes the formatter: a key one
 // producer writes and nothing else reads is that producer's business, and
@@ -202,9 +201,7 @@ const (
 //
 // Values travel typed: KeyIndex carries an IndexType, KeyPattern a
 // *query.DataPattern, KeyCardinality a datalog.Keyword. The formatter renders —
-// it is the renderer, and a producer that flattens a value to a string spends an
-// allocation on every emit to hand its consumer something to parse instead of
-// something to compare. The storage types are not nameable here (storage imports
+// it is the renderer. The storage types are not nameable here (storage imports
 // this package), so consumers read them through fmt.Stringer.
 const (
 	// The scan's subject and the run it addressed. KeyBound names the positions
@@ -227,10 +224,9 @@ const (
 	KeyEntity    = "entity"
 	KeyAttribute = "attribute"
 
-	// Which strategy performed the scan, on a StorageScanComplete. This is what
-	// used to be the difference between five event names, moved into the payload
-	// so one name covers the family and a new strategy is a new value rather
-	// than a name every consumer must learn.
+	// Which strategy performed the scan, on a StorageScanComplete. One name
+	// covers the family, so a new strategy is a new value rather than a name
+	// every consumer must learn.
 	//
 	// Distinct from the "join_strategy" the selection events carry, which
 	// answers a narrower question — which of the two join strategies
@@ -280,12 +276,11 @@ const (
 // ScanStrategy names how a scan on a query's behalf was performed. It travels
 // on StorageScanComplete under KeyStrategy.
 //
-// It lives here rather than in storage because it is reporting vocabulary with
-// no storage behaviour, and the formatter dispatches on it. IndexType stays in
-// storage for the opposite reason: it names a physical ordering the store acts
-// on, so the formatter reads it through fmt.Stringer. A strategy declared in
-// storage would have to be re-spelled as string literals here, which is one
-// vocabulary with two homes — the drift the key constants above exist to end.
+// It lives here rather than in storage because storage imports this package, so
+// a strategy declared there could reach the formatter only as string literals
+// re-spelled on this side — one vocabulary with two homes. IndexType goes the
+// other way: it names a physical ordering the store acts on, so it stays in
+// storage and the formatter reads it through fmt.Stringer.
 type ScanStrategy string
 
 const (
@@ -334,10 +329,6 @@ type Handler func(event Event)
 // another's leftovers — and a mutex does not repair that, it only hides the
 // race while the pairing stays wrong. An event therefore carries everything its
 // line reports, and state lives where the facts are produced.
-//
-// A wrapper existed here and was removed once nothing called it. Its presence
-// was the problem: it made "serialize the consumer" look like the answer to a
-// consumer holding state it should never have had.
 
 // TimedEvent closes an event that began at start, computing End and Latency from
 // one clock read. A producer holding a start time builds its event here and emits

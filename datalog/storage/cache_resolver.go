@@ -43,8 +43,7 @@ func (m *PatternMatcher) GetCardinality(a Attribute) datalog.Keyword {
 // mode exposes raw assertions without CRDT resolution; applying the
 // walk would produce fallback values that don't correspond to any
 // single raw datom. ResolveLWW in history mode returns the first-entry
-// (highest-Tx raw Set), matching the pre-redesign behavior for
-// non-unique attributes in the same mode.
+// (highest-Tx raw Set).
 func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (any, datalog.ElementID, bool, error) {
 	// Unique-attribute walk path (applies only when schema declares
 	// the attribute unique AND the matcher is not in history mode;

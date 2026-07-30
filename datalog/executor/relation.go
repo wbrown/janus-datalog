@@ -1128,7 +1128,7 @@ func (r *StreamingRelation) Size() int {
 		return r.size
 	}
 
-	// If materialized (old path), return materialized size
+	// If materialized, return materialized size
 	if r.materialized != nil {
 		return r.materialized.Size()
 	}
@@ -1316,14 +1316,13 @@ func (r *StreamingRelation) Project(symbols []query.Symbol) (Relation, error) {
 		return nil, fmt.Errorf("cannot project empty symbol list - invalid query")
 	}
 
-	// Streaming is now the default behavior
 	// Validate symbols exist
 	for _, sym := range symbols {
 		if !query.ContainsSymbol(r.symbols, sym) {
 			return nil, fmt.Errorf("cannot project: symbol %s not found in relation", sym)
 		}
 	}
-	// CRITICAL FIX: Pass the relation itself to ProjectIterator, not the raw iterator
+	// Pass the relation itself to ProjectIterator, not the raw iterator
 	// This allows ProjectIterator to call r.Iterator(), which respects caching/materialization
 	// When r.shouldCache=true, the first Iterator() call builds the cache, and both the
 	// original relation and the projection can iterate from cached data
@@ -1336,7 +1335,7 @@ func (r *StreamingRelation) Project(symbols []query.Symbol) (Relation, error) {
 		// a fresh tuple per Next, so the seen-keys need no copy.
 		resultIterator = NewDedupIterator(projIter, 0, false)
 	}
-	// BUGFIX: Preserve options (especially EnableTrueStreaming) to prevent re-scanning
+	// Preserve options (especially EnableTrueStreaming) to prevent re-scanning
 	return NewStreamingRelationWithProperties(
 		symbols,
 		resultIterator,
@@ -1355,7 +1354,7 @@ func (r *StreamingRelation) Materialize() Relation {
 		return r
 	}
 
-	// If already materialized (old path), return that
+	// If already materialized, return that
 	if r.materialized != nil {
 		return r.materialized
 	}

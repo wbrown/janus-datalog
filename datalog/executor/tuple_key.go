@@ -128,8 +128,7 @@ func hashValue(v interface{}) uint64 {
 	case int8:
 		// Integer widths hash by int64 magnitude so they collide with the
 		// canonical int64 in a TupleKeyMap, matching datalog.ValuesEqual, which
-		// treats integer widths as equal by magnitude. Listed after int/int64
-		// so the common widths keep their original position in the switch.
+		// treats integer widths as equal by magnitude.
 		return uint64(int64(val))
 
 	case int16:
@@ -359,8 +358,7 @@ func (m *TupleKeyMap) PutValue(keyValue, value interface{}) {
 
 // PutIfAbsent inserts key with the given value only if the key is not
 // already present, and reports whether it already existed. It walks the
-// hash's entries exactly once, where a separate Exists+Put pair would walk
-// them twice (running tupleValuesEqual against every entry both times).
+// hash's entries exactly once.
 // This is the hot path for join deduplication, where every matched tuple
 // probes the seen set.
 func (m *TupleKeyMap) PutIfAbsent(key TupleKey, value interface{}) (existed bool) {

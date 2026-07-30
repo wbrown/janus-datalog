@@ -11,8 +11,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Note: Streaming aggregation settings are now managed by ExecutorOptions
-
 // StreamingAggregationThreshold is the minimum relation size to use streaming
 // For small relations, batch aggregation is faster due to lower overhead
 const StreamingAggregationThreshold = 100
@@ -57,9 +55,7 @@ func ExecuteAggregations(rel Relation, findElements []query.FindElement) Relatio
 	}
 
 	// Aggregate argument and predicate symbols must be present, exactly like
-	// group-by symbols. Before this validation the three aggregation paths
-	// diverged silently on an absent argument (collect nothing / read tuple
-	// position 0 / skip).
+	// group-by symbols.
 	for _, agg := range aggregates {
 		if SymbolIndex(rel, agg.Arg) < 0 {
 			result := NewMaterializedRelationWithOptions(
@@ -339,7 +335,7 @@ func executeGroupedAggregation(
 	}
 
 	// Create symbol mapping. Group-by and aggregate symbols are validated
-	// present by ExecuteAggregationsWithContext, so no table entry is -1.
+	// present, so no table entry is -1.
 	symbols := rel.Symbols()
 	groupIndices := query.SymbolIndexTable(symbols, groupByVars)
 

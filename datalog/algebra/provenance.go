@@ -37,7 +37,7 @@ type RewriteRecord struct {
 	//
 	// `any` because the three subjects are three types (*query.Query, an
 	// expression, []query.Symbol) with no interface between them beyond being
-	// printable — the same reason the event payload beside it is a map of any.
+	// printable.
 	Subject any
 }
 

@@ -199,8 +199,7 @@ func (f *OutputFormatter) Format(event Event) string {
 	case StorageScanComplete:
 		// One event for every scan performed on a query's behalf. Which
 		// strategy performed it is a payload field, so the shapes below
-		// dispatch on that rather than on the event name — the same four lines
-		// five event names used to produce.
+		// dispatch on that rather than on the event name.
 		//
 		// Comma-ok rather than assertions throughout, on the same grounds as
 		// renderScanFunnel below: this event has more producers than any other,

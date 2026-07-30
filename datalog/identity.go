@@ -72,10 +72,10 @@ func (i Identity) L85() string {
 	if i == nil {
 		return ""
 	}
-	// Pure function of the immutable hash, computed on demand. Not cached: L85 is
-	// no longer used on hot paths (joins, dedup, and the in-memory indices key on
-	// the interned identity/keyword pointers), so a cache would only add memory
-	// and a field to race on.
+	// Pure function of the immutable hash, computed on demand. Not cached:
+	// every caller is rendering — String, export, the CLI — or parse-time.
+	// Joins, dedup, and the in-memory indices key on the interned pointer, so a
+	// cache would serve no hot path and would add memory and a field to race on.
 	return codec.EncodeL85(i.value[:])
 }
 

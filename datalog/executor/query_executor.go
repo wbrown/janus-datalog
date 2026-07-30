@@ -410,7 +410,6 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 			}
 
 			// :find symbols span multiple groups - need Cartesian product
-			// This is the case for our test: [?e, ?name] and [?max-age] are disjoint
 			needsProduct = true
 
 			if needsProduct {

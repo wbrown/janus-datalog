@@ -8,8 +8,7 @@ import (
 )
 
 // NewMemoryPatternMatcher creates a pattern matcher for in-memory datoms.
-// Returns an IndexedMemoryMatcher, which indexes datoms by (E, A, V) for
-// 5-5000× speedups over linear scans depending on query shape.
+// Returns an IndexedMemoryMatcher, which indexes datoms by (E, A, V).
 func NewMemoryPatternMatcher(datoms []datalog.Datom) PatternMatcher {
 	return NewIndexedMemoryMatcher(datoms)
 }
