@@ -32,9 +32,44 @@ func TestRewriteSinkDestinations(t *testing.T) {
 	require.Equal(t, "r", collecting.Records()[0].Reason)
 }
 
+// TestSinkPredicatesAnswerTwoDifferentQuestions pins Recording and Emitting as
+// the sink's two consumption questions, and that they are not the same question.
+// A collect-only sink records and does not emit, which is what lets a site whose
+// payload is event-only gate on the narrower one.
+//
+// Both are nil-safe: a nil sink consumes nothing, so a caller holding one need
+// not know whether it is nil before asking.
+func TestSinkPredicatesAnswerTwoDifferentQuestions(t *testing.T) {
+	handler := func(annotations.Event) {}
+
+	for _, tc := range []struct {
+		name      string
+		sink      *RewriteSink
+		recording bool
+		emitting  bool
+	}{
+		{"nil sink", nil, false, false},
+		{"zero sink", &RewriteSink{}, false, false},
+		{"collect only", &RewriteSink{Collect: true}, true, false},
+		{"handler only", &RewriteSink{Handler: handler}, true, true},
+		{"both", &RewriteSink{Collect: true, Handler: handler}, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.recording, tc.sink.Recording())
+			require.Equal(t, tc.emitting, tc.sink.Emitting())
+		})
+	}
+
+	// The asymmetry is the point: Emitting implies Recording, never the reverse.
+	// A test asserting only that both are false on a silent sink would pass with
+	// the two predicates collapsed into one.
+	collectOnly := &RewriteSink{Collect: true}
+	require.True(t, collectOnly.Recording())
+	require.False(t, collectOnly.Emitting())
+}
+
 // TestSilentSinkBuildsNoProvenance pins the cost the call-site guards exist for,
-// which
-// no assertion on records or events can reach: a pass renders its subject and
+// which no assertion on records or events can reach: a pass renders its subject and
 // builds a payload map for every node it looks at, and the guards inside Record
 // and Emit cannot prevent that, because Go evaluates arguments before the call.
 // On the normal query path — no handler, no explanation — nothing consumes any

@@ -57,9 +57,8 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 	// Ask before building the payload map, which is paid once per get-else this
 	// pass visits; a guard inside Record cannot prevent it, because Go evaluates
 	// arguments before the call. The subject is carried rather than rendered, so
-	// it costs nothing either way. The sink may be nil: several callers build
-	// this pass with GetElseScanRewritePass(nil).
-	observing := sink != nil && (sink.Collect || sink.Handler != nil)
+	// it costs nothing either way.
+	observing := sink.Recording()
 	decline := func(reason string) {
 		if !observing {
 			return

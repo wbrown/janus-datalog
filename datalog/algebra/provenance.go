@@ -45,6 +45,13 @@ type RewriteRecord struct {
 // appends a typed RewriteRecord when Collect is set and emits its event form
 // through Handler when one is present. Both destinations are optional, and a nil
 // sink is valid and does nothing.
+//
+// Nil-tolerance at the entry points is not enough on its own, and callers still
+// gate. Go evaluates arguments before the call, so a guard inside Record cannot
+// prevent the payload map, the subject render, or a tree walk like hasAggregates
+// that a caller performs to build them. Recording and Emitting are that gate,
+// and they are the reason the entry guards are unreached from inside this
+// module: a caller preparing anything expensive asks first.
 type RewriteSink struct {
 	// Handler receives each decision's annotation-event form, plus any
 	// diagnostic events that accompany a decision (Emit).
@@ -56,6 +63,20 @@ type RewriteSink struct {
 	Collect bool
 
 	records []RewriteRecord
+}
+
+// Recording reports whether a decision handed to Record reaches a destination —
+// accumulated as a record, emitted as an event, or both. Gate the preparation of
+// a decision's payload on it.
+func (s *RewriteSink) Recording() bool {
+	return s != nil && (s.Collect || s.Handler != nil)
+}
+
+// Emitting reports whether an event reaches a handler. Narrower than Recording:
+// a collect-only sink discards an event's payload, so a site whose detail is
+// event-only — no record accompanies it — gates on this one instead.
+func (s *RewriteSink) Emitting() bool {
+	return s != nil && s.Handler != nil
 }
 
 // Record appends the typed decision (when collecting) and emits its event
@@ -73,7 +94,7 @@ func (s *RewriteSink) Record(rec RewriteRecord, event string, data map[string]in
 // Emit forwards a diagnostic event that accompanies a recorded decision —
 // detail beyond the record's fields — to the handler, if any.
 func (s *RewriteSink) Emit(event string, data map[string]interface{}) {
-	if s == nil || s.Handler == nil {
+	if !s.Emitting() {
 		return
 	}
 	s.Handler(annotations.Event{Name: event, Data: data})

@@ -98,9 +98,7 @@ func optimizeViaAlgebra(
 				break
 			}
 		}
-		// sink is the composite literal above, so no nil check: a guard must
-		// encode a claim that can be false.
-		observing := sink.Collect || sink.Handler != nil
+		observing := sink.Recording()
 		if hasValueInput {
 			// terminalSymbols walks the query, and on this branch nothing else
 			// needs the answer.
