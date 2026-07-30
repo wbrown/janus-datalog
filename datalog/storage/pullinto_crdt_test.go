@@ -402,7 +402,7 @@ func TestPullInto_AnyField(t *testing.T) {
 // TestPullInto_NilEntity_NoPanic verifies that PullInto with a nil entity ID
 // returns an error instead of panicking.
 //
-// See: docs/bugs/BUG_PULLINTO_NIL_ENTITY_PANIC.md
+// See: BUG_PULLINTO_NIL_ENTITY_PANIC.md
 func TestPullInto_NilEntity_NoPanic(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
-// Integration reproduction for docs/bugs/BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md.
+// Integration reproduction for BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md.
 //
 // A Tier-3 value stores its compressed bytes in the blob store with a content
 // hash in the index key. If the blob is missing, decoding the value fails — and

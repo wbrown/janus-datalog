@@ -52,7 +52,7 @@ func renderBoundForTest(e annotations.Event) string {
 }
 
 // TestGetElseBoundEntityScanNotNarrowed reproduces the performance bug in
-// docs/bugs/BUG_GETELSE_SCAN_REWRITE_NOT_NARROWED_BY_BOUND_CHILD.md.
+// BUG_GETELSE_SCAN_REWRITE_NOT_NARROWED_BY_BOUND_CHILD.md.
 //
 // get-else on a single bound entity is rewritten to LeftOuterJoin + Scan, and
 // the produced Scan([?e :repro/note ?note]) is driven with ?e FREE — so it

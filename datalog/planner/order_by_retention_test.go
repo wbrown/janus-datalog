@@ -8,7 +8,7 @@ import (
 )
 
 // These tests pin the planner half of the order-by fix from
-// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md:
+// BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md:
 // effective :order-by symbols not already projected by :find must survive
 // phasing — threaded through Keep and appended to the last phase's find
 // clause — so the executor can sort the assembled result before stripping

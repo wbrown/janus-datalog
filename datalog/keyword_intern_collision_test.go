@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Reproduction for docs/bugs/BUG_ATTRIBUTE_KEY_TRUNCATION_COLLISION.md
+// Reproduction for BUG_ATTRIBUTE_KEY_TRUNCATION_COLLISION.md
 //
 // InternKeyword keys the intern cache by a [32]byte buffer filled with
 // copy(key[:], s), which silently truncates strings longer than 32 bytes.

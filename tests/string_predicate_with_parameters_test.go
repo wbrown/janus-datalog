@@ -13,7 +13,7 @@ import (
 )
 
 // TestStringPredicateWithParameter verifies that string predicates can use input parameters
-// Reproduces bug: https://github.com/wbrown/janus-datalog/docs/bugs/BUG_STRING_PREDICATES_CANT_USE_PARAMETERS.md
+// Reproduces bug: BUG_STRING_PREDICATES_CANT_USE_PARAMETERS.md
 func TestStringPredicateWithParameter(t *testing.T) {
 	// Create temp directory for database
 	dir, err := os.MkdirTemp("", "string-pred-test-*")

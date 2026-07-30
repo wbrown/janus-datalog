@@ -1,5 +1,5 @@
 // Regression tests for the correctness bugs flagged in
-// docs/bugs/EXTERNAL_REVIEW_2026_04.md items 1, 2, 3 and 5. Item 4 concerns a
+// EXTERNAL_REVIEW_2026_04.md items 1, 2, 3 and 5. Item 4 concerns a
 // component the engine no longer has, so nothing here covers it.
 //
 // Each test is written against the not-yet-fixed code and must fail

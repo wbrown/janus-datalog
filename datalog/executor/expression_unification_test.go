@@ -24,9 +24,9 @@ import (
 // function-level case stay red until the executor defect itself is fixed.
 // (The pattern-provided query case is enforced by pattern deferral today and
 // pins that adjacent behavior.) See
-// docs/bugs/BUG_EXPRESSION_BINDING_OVERWRITES_BOUND_VARIABLE.md and its
+// BUG_EXPRESSION_BINDING_OVERWRITES_BOUND_VARIABLE.md and its
 // planner sibling
-// docs/bugs/BUG_UNCORRELATED_SUBQUERY_SCHEDULES_BEFORE_BINDING_PROVIDERS.md.
+// BUG_UNCORRELATED_SUBQUERY_SCHEDULES_BEFORE_BINDING_PROVIDERS.md.
 
 // TestExpressionOntoBoundVariableUnifies pins the query-level contract under
 // both planner modes: an expression targeting a bound ?y keeps exactly the

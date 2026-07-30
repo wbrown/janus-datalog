@@ -231,7 +231,7 @@ func TestSubqueryWithMultipleOuterTuples(t *testing.T) {
 // for "multiple inputs not supported"; the defect was in this fixture — the
 // date constant was a bare EDN string matched against time.Time datoms, which
 // type-strict matching correctly rejects, so the totals read 0. See
-// docs/bugs/resolved/BUG_SUBQUERY_MULTIPLE_INPUTS.md.
+// BUG_SUBQUERY_MULTIPLE_INPUTS.md.
 func TestSubqueryWithTwoInputs(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
@@ -472,7 +472,7 @@ func TestSubqueryErrorHandling(t *testing.T) {
 			// binding arity is a static property of the clause text, so
 			// both planner modes reject it identically at the executor
 			// entry, before planning. See
-			// docs/bugs/BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md.
+			// BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md.
 			wantErr: "subquery relation binding declares 3 symbol(s), but the inner :find has 1 element(s)",
 		},
 	}

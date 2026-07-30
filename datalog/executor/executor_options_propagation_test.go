@@ -1,4 +1,4 @@
-// Reproduction for docs/bugs/BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.md
+// Reproduction for BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.md
 // (executor half).
 //
 // PlannerOptions -> ExecutorOptions is a hand-written field-by-field copy, and

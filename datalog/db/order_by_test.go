@@ -12,7 +12,7 @@ import (
 // fix end-to-end against real BadgerDB storage (planner retention through
 // the storage PatternMatcher path, executor sort-strip finalization), not a synthetic
 // in-memory matcher. See
-// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md.
+// BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md.
 func TestOrderByNonProjectedThroughStorage(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

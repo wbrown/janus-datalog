@@ -10,7 +10,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// Reproductions for docs/bugs/BUG_CARDINALITY_MANY_SET_BYTES_PANIC.md
+// Reproductions for BUG_CARDINALITY_MANY_SET_BYTES_PANIC.md
 //
 // Transaction.Set for cardinality-many builds map[interface{}]bool keyed
 // directly by set members (newSet[val], pendingAdds[v], pendingRemoves[v]).

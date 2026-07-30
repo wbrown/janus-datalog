@@ -23,7 +23,7 @@ func generateUUID() string {
 // a specific Identity value, the query returns entities whose :attr value is
 // NOT equal to the input Identity.
 //
-// See: docs/bugs/active/IDENTITY_INPUT_MATCHING_BUG.md
+// See: IDENTITY_INPUT_MATCHING_BUG.md
 func TestIdentityInputMatchingBug(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

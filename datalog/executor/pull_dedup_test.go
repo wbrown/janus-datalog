@@ -8,7 +8,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Pull + deduplication composition (docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md).
+// Pull + deduplication composition (BUG_PULL_WITH_ORDER_BY_PANICS.md).
 // Pulled values are result presentation, not datalog values: pulls render at
 // the result boundary after sort/strip/limit, so relational operations
 // (dedup, union, limit) only ever see Identity in the entity binding.

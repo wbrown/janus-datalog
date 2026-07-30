@@ -28,7 +28,7 @@ import (
 // tombstone has the highest Tx and is the first EATV entry, but ResolveLWW
 // returns its V without checking Op. The attribute appears to still exist.
 //
-// See: docs/bugs/BUG_CACHE_CARDINALIY_ONE_TOMBSTONE.md
+// See: BUG_CACHE_CARDINALIY_ONE_TOMBSTONE.md
 // =============================================================================
 
 // struct for PullInto tests — uses pointer so nil means "attribute absent"

@@ -13,7 +13,7 @@ import (
 // observable, and structurally for the whole field set, so a new Database
 // field cannot silently ship unclassified (the constructor-drops-new-fields
 // class produced BUG_TEMPORAL_DATABASE_HANDLES_ARE_SHALLOW (resolved) and
-// then regenerated as docs/bugs/BUG_TEMPORAL_HANDLES_DROP_PLANNER_OPTIONS.md
+// then regenerated as BUG_TEMPORAL_HANDLES_DROP_PLANNER_OPTIONS.md
 // — plannerOptions was named in the first entry and still fell through).
 
 // TestTemporalHandlesInheritPlannerOptions pins the options-threading

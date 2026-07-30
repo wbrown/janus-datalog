@@ -1543,8 +1543,6 @@ func TestPullInto_CardinalityManyStrings_MultipleValues(t *testing.T) {
 // returns ALL datoms — both Add and Remove ops — without performing add-wins
 // CRDT resolution. The diff logic in updateSliceField then sees tombstoned
 // values as still present and skips the re-add.
-//
-// See docs/bugs/BUG-CRDT-READD-SAVESTRUCT.md for full analysis.
 func TestCRDTTombstoneReAdd(t *testing.T) {
 	schema, err := dlreflect.SchemaFromStruct(PersonWithTags{})
 	if err != nil {

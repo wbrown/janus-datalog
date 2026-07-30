@@ -9,7 +9,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Reproductions for docs/bugs/BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md
+// Reproductions for BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md
 //
 // The Iterator contract requires callers to check Error() after Next() returns
 // false. CollectTuples (and the QueryInto/QueryOneInto storage boundaries) don't,
@@ -110,7 +110,7 @@ func TestCollectTuples_ReturnsIteratorErrorAfterPartialResults(t *testing.T) {
 }
 
 // The pins below guard the 2026-07 error-swallow sweep fixes
-// (docs/bugs/BUG_ERROR_SWALLOW_SWEEP_2026_07.md): each transform must carry a
+// (BUG_ERROR_SWALLOW_SWEEP_2026_07.md): each transform must carry a
 // failed scan as its result's deferred error (or return it), never present it
 // as a clean result.
 

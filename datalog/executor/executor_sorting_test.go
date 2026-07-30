@@ -224,7 +224,7 @@ func TestSortingEdgeCases(t *testing.T) {
 }
 
 // Reproduction tests for
-// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md.
+// BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md.
 // They pin the contract: ordering by any variable bound in :where, whether
 // or not it is projected in :find.
 
@@ -996,7 +996,7 @@ func TestSortRelationUnresolvableKeyIsDeferredError(t *testing.T) {
 // Pull + order-by with TIED sort keys: tuples that tie on every comparable
 // symbol must sort and render correctly. Pulls run at the result boundary
 // after sort/strip/limit, so relational operations only ever see Identity
-// in the entity binding. See docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
+// in the entity binding. See BUG_PULL_WITH_ORDER_BY_PANICS.md.
 func TestOrderByPullWithTiedSortKeys(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 	ageAttr := datalog.NewKeyword(":user/age")
@@ -1040,7 +1040,7 @@ func TestOrderByPullWithTiedSortKeys(t *testing.T) {
 }
 
 // Maps are not datalog values: pull output is result presentation, rendered
-// at the result boundary after sorting (docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md).
+// at the result boundary after sorting (BUG_PULL_WITH_ORDER_BY_PANICS.md).
 // A relation containing maps is therefore a value-domain violation, and the
 // hash layer enforces the domain loudly: sorting such a relation panics
 // naming the violation — never hashing by address or comparing wrongly.

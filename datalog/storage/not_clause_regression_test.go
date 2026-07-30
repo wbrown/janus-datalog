@@ -226,7 +226,7 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 			// Pin the aggregate positions exactly, as int64 — nil here means an
 			// aggregate silently skipped its inputs, and a bare Go int means a
 			// builder constant bypassed boundary normalization
-			// (docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md).
+			// (BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md).
 			// Find positions: 9 itemCount, 10 totalCost, 11 totalWeight,
 			// 12 totalVolume, 13 totalUnits, 14 ready.
 			byName := make(map[string]executor.Tuple, len(tuples))

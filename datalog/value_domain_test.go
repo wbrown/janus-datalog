@@ -10,7 +10,7 @@ import (
 // Symbol, ElementID, and vectors ([]interface{}). A type outside it reaching
 // the equality layer is a layering violation — e.g. a pulled
 // map[string]interface{}, which is result presentation, never a relational
-// value (docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md). ValuesEqual must fail
+// value (BUG_PULL_WITH_ORDER_BY_PANICS.md). ValuesEqual must fail
 // loudly naming the type, mirroring Type()'s panic convention — not crash
 // with Go's cryptic "comparing uncomparable type" nor, worse, compare
 // wrongly.

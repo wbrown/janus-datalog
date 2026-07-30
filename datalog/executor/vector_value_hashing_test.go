@@ -16,7 +16,7 @@ import (
 // polymorphic slice comparison) are datalog values: cardinality-vector reads
 // bind them. These tests pin content-based hashing — equal vectors must
 // deduplicate, join, and hash identically, regardless of representation.
-// See docs/bugs/resolved/BUG_VECTOR_VALUES_DEGENERATE_HASHING.md.
+// See BUG_VECTOR_VALUES_DEGENERATE_HASHING.md.
 
 // Two tuples whose only difference is the identity (not content) of their
 // vector values must collapse under set semantics.

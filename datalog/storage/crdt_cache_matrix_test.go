@@ -24,7 +24,7 @@ import (
 // - The code MUST work correctly with DisableCache: true
 // - If a test passes only with cache enabled, the fix is incomplete
 //
-// See: docs/bugs/BUG_CRDT_QUERY_RESOLUTION_NOT_APPLIED.md
+// See: BUG_CRDT_QUERY_RESOLUTION_NOT_APPLIED.md
 // =============================================================================
 
 // cacheTestMode represents whether tests run with cache enabled or disabled

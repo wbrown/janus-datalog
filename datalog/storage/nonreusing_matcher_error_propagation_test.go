@@ -1,4 +1,4 @@
-// Reproductions for docs/bugs/BUG_NONREUSING_MATCHER_DROPS_ITERATOR_ERRORS.md
+// Reproductions for BUG_NONREUSING_MATCHER_DROPS_ITERATOR_ERRORS.md
 //
 // The non-reusing matcher path (NoReuse strategy) has two iterator-consuming
 // loops that, per the storage.Iterator contract, must check Error() after

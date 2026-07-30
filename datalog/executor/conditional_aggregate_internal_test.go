@@ -185,7 +185,7 @@ func TestConditionalAggregateRewriteAnnotationUsesDatalogFindClause(t *testing.T
 // are dropped per TestConditionalAggregateEmptyResult; a fully-absent
 // combination is an or-default fallback's job. The nil-in-tuple middle
 // ground silently corrupted results downstream —
-// docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md.)
+// BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md.)
 func TestConditionalAggregateEmptyBesideNonEmptyIsError(t *testing.T) {
 	filter := datalog.NewSymbol("?filter")
 	value := datalog.NewSymbol("?value")

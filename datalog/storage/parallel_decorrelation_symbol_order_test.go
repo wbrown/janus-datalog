@@ -18,7 +18,7 @@ import (
 // inconsistent transaction snapshots across goroutines; it now also runs the
 // optimizer mode matrix, whose algebra leg exercises the equality-bound
 // decorrelation translation end-to-end on storage-backed relations. See
-// docs/bugs/resolved/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
+// BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
 func TestParallelDecorrelationSymbolOrderBadger(t *testing.T) {
 	// Create temporary BadgerDB
 	tmpDir, err := os.MkdirTemp("", "badger-symbol-order-test-*")

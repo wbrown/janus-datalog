@@ -1758,7 +1758,7 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 
 // TestOrCorrelatedUnionWithIdentityBranch reproduces the bug where OR clauses
 // drop expression-only branches due to fallback short-circuiting.
-// See docs/bugs/BUG-OR-FALLBACK-DROPS-EXPRESSION-BRANCHES.md
+// See BUG-OR-FALLBACK-DROPS-EXPRESSION-BRANCHES.md
 //
 // The OR has a data pattern branch (finds rooms in an area) and an identity
 // expression branch (binds the area entity itself). Both branches should
@@ -1955,7 +1955,7 @@ func TestOrUnionIncludesAllBranches(t *testing.T) {
 // TestClauseOrderIndependenceForNot pins the language contract that clause
 // order must not change whether a query works, and the optimizer-transparency
 // invariant that the optimizer must never change it either. Two shapes from
-// docs/bugs/resolved/BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER.md: a NOT
+// BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER.md: a NOT
 // written before the clause that binds its correlate, and a NOT written after
 // a prefix that does not bind its correlate. The baseline path plans both by
 // canonical clause scope; the algebra bridge orders clauses by the same
@@ -2186,7 +2186,7 @@ func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 // MemoryPatternMatcher implements no LookupAttribute, so [(missing? $ ?e
 // :attr)] cannot be answered here; the required behavior is a loud error.
 // Both execution contexts are pinned independently — they fail through
-// different defects (docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md):
+// different defects (BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md):
 // bare, the predicate's Eval error is deferred and was laundered by
 // emptiness-branching consumers (0 tuples, err=nil); annotated, the collector
 // wrapper fabricated "attribute absent" for every lookup (wrong tuples,

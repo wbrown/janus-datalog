@@ -2315,7 +2315,7 @@ func TestVectorClearedVsNeverSet(t *testing.T) {
 // =============================================================================
 //
 // Bug: [?e :attr []] treated as wildcard instead of "match empty vector".
-// See docs/bugs/BUG_EMPTY_VECTOR_LITERAL_MATCHES_NONEMPTY.md
+// See BUG_EMPTY_VECTOR_LITERAL_MATCHES_NONEMPTY.md
 
 // TestVectorLiteralMatch verifies that vector literals in data patterns match
 // by exact equality, not as wildcards.

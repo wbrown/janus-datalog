@@ -73,7 +73,7 @@ func TestCompileDecompileRoundTrip(t *testing.T) {
 // the outer schema and decompile back to the or-join itself. Union
 // semantics have no fallback encoding — decompiling to an or-default form
 // re-executes the clause as first-match-wins and drops tuples (see
-// docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_TUPLES.md).
+// BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_TUPLES.md).
 func TestRoundTrip_CorrelatedOrJoinPreservesClauseType(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?v
 	  :where

@@ -22,7 +22,7 @@ func (erroringFunction) Eval(map[query.Symbol]interface{}) (interface{}, error) 
 }
 func (erroringFunction) ReturnType() string { return "any" }
 
-// Reproductions for docs/bugs/BUG_RELATION_TRANSFORMS_DROP_ITERATOR_ERRORS.md
+// Reproductions for BUG_RELATION_TRANSFORMS_DROP_ITERATOR_ERRORS.md
 //
 // filterWithPredicateAndLookup, evaluateExpressionWithLookup, and
 // projectToSymbols in relation_ops.go consume their source iterator via a
@@ -259,7 +259,7 @@ func TestMaterializedRelation_FilterWithPredicate_CarriesSourceError(t *testing.
 // zero tuples plus the taint) is not an empty binding. Match's emptiness
 // fallback must surface the error instead of discarding the binding and
 // scanning unbound — the laundering half of
-// docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md.
+// BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md.
 func TestMatchTreatsErroredEmptyBindingAsError(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	valAttr := datalog.NewKeyword(":item/val")

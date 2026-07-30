@@ -20,7 +20,7 @@ import (
 // results with cache enabled AND disabled, and that the cache path is used
 // when available.
 //
-// See: docs/bugs/BUG_EA_CACHE_BYPASS_VARIABLE_ATTRIBUTE.md
+// See: BUG_EA_CACHE_BYPASS_VARIABLE_ATTRIBUTE.md
 // =============================================================================
 
 // hasReuseStrategyEvent checks if any "storage/reuse-strategy" annotation was emitted.

@@ -1,4 +1,4 @@
-// Reproductions for docs/bugs/BUG_SEQUENTIAL_RELATION_INPUT_DROPS_ITERATOR_ERROR.md
+// Reproductions for BUG_SEQUENTIAL_RELATION_INPUT_DROPS_ITERATOR_ERROR.md
 //
 // The sequential RelationInput path drives the iteration relation directly:
 //

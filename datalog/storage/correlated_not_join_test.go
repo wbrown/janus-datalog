@@ -227,7 +227,7 @@ func TestCorrelatedNotJoinRequiresOuterInputsInHeader(t *testing.T) {
 			// enforced by NotJoinClause.Validate at the user boundaries —
 			// both planner modes reject with the same message, before
 			// planning. (Previously algebra-only; divergence resolved:
-			// docs/bugs/BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md.)
+			// BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md.)
 			require.Contains(t, err.Error(), "not-join header")
 		})
 	}

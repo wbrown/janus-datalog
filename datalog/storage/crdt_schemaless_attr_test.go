@@ -22,7 +22,7 @@ import (
 // schemaless datoms have Op=0 (zero value), and processAddWins only handles
 // OpCRDTAdd (1) and OpCRDTRemove (2), silently dropping Op=0 datoms.
 //
-// See: docs/bugs/BUG_SCHEMALESS_ATTR_BOUND_QUERY.md
+// See: BUG_SCHEMALESS_ATTR_BOUND_QUERY.md
 // =============================================================================
 
 // TestSchemalessAttrBoundQuery_BugRepro reproduces the exact bug from the doc:
@@ -199,7 +199,7 @@ func TestSchemalessAttrMultipleWrites(t *testing.T) {
 // Schemaless = no schema on the attribute (either no schema at all, or schema
 // exists but the attribute is not registered).
 //
-// See: docs/bugs/BUG_SCHEMALESS_ATTR_BOUND_QUERY.md (tests 7-10)
+// See: BUG_SCHEMALESS_ATTR_BOUND_QUERY.md (tests 7-10)
 // =============================================================================
 
 // Test 8: Schemaless remove — tx.Add() then tx.Remove() → attribute doesn't exist
@@ -395,7 +395,7 @@ func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 // This exercises the code path where CRDTResolvingIterator runs with nil schema
 // and must default to CardinalityOne for all attributes.
 //
-// See: docs/bugs/BUG_SCHEMALESS_ATTR_BOUND_QUERY.md (test 14)
+// See: BUG_SCHEMALESS_ATTR_BOUND_QUERY.md (test 14)
 // =============================================================================
 
 // Test 14: Nil-schema matcher can read data written with schema

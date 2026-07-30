@@ -112,7 +112,7 @@ func TestUncorrelatedSubqueryKeepsDataSourceScheduling(t *testing.T) {
 //
 // This is the planner half of the OHLC decorrelation failure — structural,
 // independent of executor expression semantics. See
-// docs/bugs/BUG_UNCORRELATED_SUBQUERY_SCHEDULES_BEFORE_BINDING_PROVIDERS.md
+// BUG_UNCORRELATED_SUBQUERY_SCHEDULES_BEFORE_BINDING_PROVIDERS.md
 // and its executor sibling BUG_EXPRESSION_BINDING_OVERWRITES_BOUND_VARIABLE.md.
 func TestUncorrelatedSubqueryDefersBehindPendingBindingProviders(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?year ?high

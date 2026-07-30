@@ -502,7 +502,7 @@ func TestDecorrelation_PureDataPatternSkipped(t *testing.T) {
 // condition, and the binding positionally renames it to the outer name.
 // Subqueries with extra non-correlation consumption (?smod/?emod
 // inequalities) decline and stay correlated. See
-// docs/bugs/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
+// BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
 func TestDecorrelation_EqualityBoundTranslation(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?datetime ?open-price ?hour-high ?hour-low
 	 :where

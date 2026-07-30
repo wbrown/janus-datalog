@@ -18,7 +18,7 @@ import (
 // match ALL attributes instead of just the collection keywords, turning a
 // microsecond query into a multi-second full-DB scan.
 //
-// See docs/bugs/BUG-CORRELATED-UNION-PARTIAL-OUTER-RELATION.md
+// See BUG-CORRELATED-UNION-PARTIAL-OUTER-RELATION.md
 func TestOrCorrelatedUnionPartialOuterRelation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

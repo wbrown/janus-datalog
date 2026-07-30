@@ -26,7 +26,7 @@ import (
 //   - OpNone → emit (current value)
 //   - OpCRDTRemove → attribute doesn't exist, skip group
 //
-// See: docs/bugs/BUG_SCHEMALESS_ATTR_BOUND_QUERY.md
+// See: BUG_SCHEMALESS_ATTR_BOUND_QUERY.md
 // =============================================================================
 
 // createRemoveTestDB creates a database with a CardinalityOne schema.

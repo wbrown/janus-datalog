@@ -49,7 +49,7 @@ func TestProductPreservesDisjointSymbols(t *testing.T) {
 // TestProductMaterializeSurfacesSourceError verifies that materializing a
 // Product() of disjoint relations surfaces a constituent relation's deferred
 // iterator error rather than laundering it into an empty result. This is the
-// "product path" of docs/bugs/BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md;
+// "product path" of BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md;
 // it is reached in production where a subquery's input groups are disjoint and
 // the combined relation is materialized (query_executor.go input combination).
 func TestProductMaterializeSurfacesSourceError(t *testing.T) {

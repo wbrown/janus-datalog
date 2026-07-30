@@ -15,7 +15,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// Reproductions for docs/bugs/BUG_VBOUND_BYTES_VALIDATION_PANIC.md
+// Reproductions for BUG_VBOUND_BYTES_VALIDATION_PANIC.md
 //
 // V-bound queries on a cardinality-one attribute route through
 // validatingVBoundIterator.validateCandidate, which compares the EATV winner
