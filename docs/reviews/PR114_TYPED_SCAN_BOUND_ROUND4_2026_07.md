@@ -762,13 +762,26 @@ check was deleted; the obligation went into the two implementations, not the
 interface an external backend reads. `memoryIterator` gained an `end` field;
 three of its four position-consulting methods were updated.
 
-**Status 2026-07-30: closed but for one residue.** 5a's free half is fixed — the
-`Iterator` contract now states the run's end and membership rule alongside its
-start — and its decision half (publishing a runnable conformance suite) is governed
-by 5d's ruling. 5b is fixed; 5c is superseded by R4, with its one live clause
-corrected; 5d is struck. **Open**: `CRDT_UNIQUE_SEMANTICS.md:403` shows
-`def.Unique != ""`, which no longer compiles now that `Unique` is a
-`datalog.Keyword` — a reference document displaying code that cannot build.
+**Status 2026-07-30: closed.** 5a's free half is fixed — the `Iterator` contract
+now states the run's end and membership rule alongside its start — and its decision
+half (publishing a runnable conformance suite) is governed by 5d's ruling. 5b is
+fixed; 5c is superseded by R4, with its one live clause corrected; 5d is struck.
+
+**5d's surviving residue is itself false — derived 2026-07-30.** It claimed
+`CRDT_UNIQUE_SEMANTICS.md:403` shows `def.Unique != ""`, a reference document
+displaying code that cannot build. That line reads `if def.HasUniqueConstraint()`,
+which compiles: the method exists as `schema.AttributeDefinition.HasUniqueConstraint`.
+The string `def.Unique != ""` occurs nowhere in that document — its only two
+occurrences in the repository are this file's own claim and the status line that
+repeated it. Third round-4 instance to fall on derivation, after 4d and 6c.
+
+The search that settled it did find three genuinely stale snippets, none of them
+5d's subject and none a status claim: `BUG_UNIQUENESS_VALIDATION_TOCTOU.md` (in
+`resolved/`, showing `def.Unique == ""` as the code was when the bug was written),
+and `CRDT_COMPOSABLE_TOOLKIT.md` and `SCHEMA_SELECTIVITY_HINTS.md`, which use
+`def.Unique` as a bool in proposed code. A resolved bug document quoting the code
+of its own era is a record, not a false claim; the two proposals describe code that
+does not exist yet and would need rewriting whenever they are taken up.
 
 **Deriving the instance set.** For each moved obligation: every implementation
 of the interface, every installer/caller in the repository including the
