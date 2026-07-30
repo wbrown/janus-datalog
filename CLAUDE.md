@@ -4,13 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Test Commands
 
-**The standard gate is `make test`.** It runs the native suite (`go test -count=1 ./...`) and the js/wasm contracts (`make test-wasm`). Do not treat bare `go test ./...` as a full green — that skips wasm.
+**The standard gate is `make test`.** It runs the native suite (`go test -count=1 ./...`), the `examples/` compile check (`make test-examples`), and the js/wasm contracts (`make test-wasm`). Do not treat bare `go test ./...` as a full green — that skips both of the others.
 
 ```bash
-make test                        # Full gate: native + wasm (required)
+make test                        # Full gate: native + examples + wasm (required)
+make test-examples               # Compile-check examples/ under //go:build example
 make test-wasm                   # js/wasm contracts only (needs node)
 go test -v ./package -run Test   # Focused native iteration only
 ```
+
+Every `examples/` file is its own `package main` behind `//go:build example`, so
+`go vet ./examples/` reports `main redeclared` and no ordinary build reaches
+them. `test-examples` vets each file separately; without it nothing compiles
+them at all.
 
 **Do NOT add `-timeout` to `go test` commands, or use `-timeout 0`.** Use the default timeout. No exceptions.
 
