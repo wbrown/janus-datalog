@@ -132,8 +132,13 @@ Live consumers of `CompareValues`, all production:
 - binding sort — `executor/relation.go:698`, `:1279` (`Sorted`)
 - comparison predicates `<`, `<=`, `>`, `>=` — `query/predicate.go:113-119`,
   `:188-194`
-- merge join advance and key equality — `storage/hash_join_matcher.go:732`,
-  `:766`, `:774` (three `CompareValues` calls in `mergeJoinIterator`)
+- merge join advance and key equality — three `CompareValues` calls in
+  `mergeJoinIterator.Next` (`storage/hash_join_matcher.go`): pairing a datom
+  with its key group, advancing past binding groups below the datom's key, and
+  the key-equality test that opens a group. Cited by function: these three were
+  given as line numbers in round 2, re-derived to different numbers in round 4,
+  and had moved again by 2026-07-30 — all three drifts within one unchanged
+  function.
 
 ## What was not established
 
@@ -148,7 +153,7 @@ Live consumers of `CompareValues`, all production:
   instance and it predates the hash door's panic.
 - **Whether the merge-join sites are affected.** They compare E-position
   Identities, which are in the domain and have a rank.
-  `hash_join_matcher.go:65-79` restricts merge join to position 0 precisely
+  `chooseJoinStrategy` restricts merge join to position 0 precisely
   because that is where `CompareValues` order and scan order provably agree.
   Noted as adjacent rather than implicated: those sites also use
   `CompareValues(...) == 0` as an *equality* test, and `compare.go:129-133`
