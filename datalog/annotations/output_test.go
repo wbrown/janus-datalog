@@ -82,13 +82,12 @@ func TestUniqueLookupLineReportsItsFunnel(t *testing.T) {
 // TestScanLineRendersFromItsOwnEvent pins that a scan line needs no memory of
 // the event before it.
 //
-// The formatter used to carry lastIndex and lastBound between calls, filled by
-// the preceding index-selection event. That is the reporter's state living in
-// the consumer, and it cannot survive concurrency: the engine emits from
+// A formatter that carries lastIndex and lastBound between calls, filled by
+// the preceding index-selection event, holds the reporter's state in the
+// consumer, and that cannot survive concurrency: the engine emits from
 // parallel workers through one handler, so a worker's scan line could render
-// the index another worker had just selected. Serializing the handler would
-// have hidden the race and kept the wrong pairing, because the leftovers are
-// still whoever wrote last.
+// the index another worker had just selected. A mutex only hides the race and
+// keeps the wrong pairing, because the leftovers are still whoever wrote last.
 //
 // The matcher holds the bound at scan time — it hands the same ScanBound to
 // emitIndexSelection and to the reader — so the scan event carries it, and this
@@ -102,8 +101,8 @@ func TestScanLineRendersFromItsOwnEvent(t *testing.T) {
 		Latency: 2 * time.Millisecond,
 		Data: map[string]interface{}{
 			KeyPattern: producerValue("[?e :task/scenario ?s]"),
-			// The line shape dispatches on the strategy now, not on the event
-			// name. ScanDirect is what pattern/storage-scan used to mean.
+			// The line shape dispatches on the strategy, not on the event
+			// name.
 			KeyStrategy:       ScanDirect,
 			KeyIndex:          producerValue("AVET"),
 			KeyBound:          []string{"A", "V"},
@@ -153,7 +152,7 @@ func TestScanLineShowsIntakeWhenItExceedsOutput(t *testing.T) {
 // while a producer that named no run at all is "?". Collapsing them would hide a
 // full scan behind the same rendering as missing instrumentation.
 //
-// Both now turn on what the scan event carries, not on whether an earlier event
+// Both turn on what the scan event carries, not on whether an earlier event
 // arrived — an absent KeyBound is a producer that reported none, and a present
 // but empty one is a run over the whole index.
 func TestScanLineWholeIndexBoundIsNotUnknown(t *testing.T) {
@@ -187,10 +186,10 @@ func TestScanLineWholeIndexBoundIsNotUnknown(t *testing.T) {
 // through Handle, not only through Format, and that the index-selection event
 // still writes nothing of its own.
 //
-// It no longer sets anything up for the line that follows. Handle is where a
-// formatter carrying state between events would have been fed, so this is the
-// path that has to stay stateless: the two events are formatted in order and
-// only the scan produces output, from its own payload.
+// The index-selection event sets up nothing for the line that follows. Handle
+// is where a formatter carrying state between events would be fed, so this is
+// the path that has to stay stateless: the two events are formatted in order
+// and only the scan produces output, from its own payload.
 func TestFormatterHandleWritesScanLine(t *testing.T) {
 	var out bytes.Buffer
 	f := NewPlainTextFormatter(&out)

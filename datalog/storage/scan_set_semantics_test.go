@@ -15,9 +15,8 @@ import (
 // set semantics at birth (restoreScanSetSemantics). The candidate key is
 // {E, A} for effective cardinality-one and vector resolution, {E, A, V} for
 // declared cardinality-many or non-constant A, and {Tx} in history mode
-// (every datom carries its own ElementID). Historically these duplicates were
-// laundered by the find projection's unconditional dedup; projections that
-// provably preserve set-ness no longer dedup, so the scan must be a set.
+// (every datom carries its own ElementID). Projections that provably preserve
+// set-ness do not dedup, so the scan must be a set.
 
 func TestScanProjectionPreservesSet(t *testing.T) {
 	eVar := query.Variable{Name: datalog.NewSymbol("?e")}

@@ -9,9 +9,8 @@ import (
 )
 
 // TestDatomFromKeyValueSemantics verifies that DatomFromKey returns
-// correct values and that successive calls return independent values.
-// Before Phase 4: returns independent *Datom pointers (each call allocates)
-// After Phase 4: returns independent Datom values (no allocation per call)
+// correct values and that successive calls return independent Datom
+// values, with no allocation per call.
 func TestDatomFromKeyValueSemantics(t *testing.T) {
 	encoder := &BinaryKeyEncoder{}
 
@@ -54,8 +53,8 @@ func TestDatomFromKeyValueSemantics(t *testing.T) {
 		t.Errorf("d1.A = %v, expected %v", d1.A, originalDatom.A)
 	}
 
-	// Note: After Phase 4, d1 and d2 will be value types, not pointers.
-	// The test verifies correctness regardless of the return type.
+	// d1 and d2 are independent Datom values, not pointers; the test
+	// verifies correctness regardless of the return type.
 }
 
 func TestDatomFromBorrowedKeyClonesByteValue(t *testing.T) {
@@ -131,11 +130,9 @@ func TestDatomFromKeyAllIndexTypes(t *testing.T) {
 	}
 }
 
-// TestIteratorDatomStability verifies the behavior of iterator's Datom() method.
-// Before Phase 4: each Next() returns a NEW *Datom (different address each time)
-// After Phase 4: each Next() overwrites the SAME field (same address, different value)
-//
-// This test documents the expected behavior change and ensures both behaviors work correctly.
+// TestIteratorDatomStability verifies the behavior of iterator's Datom()
+// method: each Next() overwrites the same field (same address, different
+// value) rather than allocating a new *Datom per call.
 func TestIteratorDatomStability(t *testing.T) {
 	db, err := NewDatabase(t.TempDir())
 	if err != nil {
@@ -176,7 +173,7 @@ func TestIteratorDatomStability(t *testing.T) {
 		t.Fatalf("Expected at least 2 datoms, got %d", len(addresses))
 	}
 
-	// Check if addresses are the same (Phase 4 behavior) or different (current behavior)
+	// Check whether all Datom() calls returned the same address (workspace reuse) or different addresses
 	allSameAddress := true
 	for i := 1; i < len(addresses); i++ {
 		if addresses[i] != addresses[0] {
@@ -188,8 +185,8 @@ func TestIteratorDatomStability(t *testing.T) {
 	// Log the behavior for visibility
 	if allSameAddress {
 		t.Logf("Phase 4 behavior: All %d Datom() calls returned same address (workspace reuse)", len(addresses))
-		// After Phase 4, the values array captures each value at call time
-		// but all addresses point to the same location
+		// The values array captures each value at call time, even
+		// though all addresses point to the same location.
 	} else {
 		t.Logf("Current behavior: %d Datom() calls returned different addresses", len(addresses))
 	}
@@ -198,9 +195,8 @@ func TestIteratorDatomStability(t *testing.T) {
 	t.Logf("Iterated %d datoms with values: %v", len(values), values)
 }
 
-// TestBadgerIteratorKeyBufferReuse verifies that the key buffer reuse optimization
-// in BadgerIterator.Datom() produces correct results. This tests the fix for the
-// ~2.6% regression in SimpleQuery caused by KeyCopy(nil) allocating on each call.
+// TestBadgerIteratorKeyBufferReuse verifies that the key buffer reuse
+// optimization in BadgerIterator.Datom() produces correct results.
 func TestBadgerIteratorKeyBufferReuse(t *testing.T) {
 	db, err := NewDatabase(t.TempDir())
 	if err != nil {

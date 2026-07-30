@@ -17,8 +17,7 @@ func schedulingPattern(e, attr, v query.PatternElement) *query.DataPattern {
 // subquery on ?e are simultaneously executable, and dependency ordering
 // cannot separate them. A correlated subquery executes once per input
 // combination, so it must schedule after every clause that can narrow its
-// input — behind the NOT. Derived 2026-07 on
-// BenchmarkSubqueryDeferralScheduling: deferral is ~8× on this shape.
+// input — behind the NOT.
 func TestCorrelatedSubqueryDefersBehindSimultaneouslyReadySiblings(t *testing.T) {
 	e := datalog.NewSymbol("?e")
 	total := datalog.NewSymbol("?total")

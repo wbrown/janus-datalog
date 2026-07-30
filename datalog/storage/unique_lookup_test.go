@@ -2,17 +2,11 @@
 //   - Database.LookupByUnique public API
 //   - V-view query behavior when multiple entities claim the same unique value
 //
-// These tests exist against the contract for Commit 2 of the CRDT-unique
-// redesign (see docs/proposals/CRDT_UNIQUE_SEMANTICS.md). Commit 1 deleted
-// the write-time gate, so multi-claimant scenarios are now constructible
-// via normal transactions. Commit 2 (this commit) adds the read-time
-// resolution that picks the canonical owner under (A, V)-LWW.
-//
-// Test-first discipline: these tests are written before the implementation
-// and must fail with meaningful errors (missing LookupByUnique API for the
-// API tests, wrong result counts for the V-view tests) before the
-// implementation is written. Once the implementation lands, all tests
-// pass together.
+// These tests exist against the contract in
+// docs/proposals/CRDT_UNIQUE_SEMANTICS.md. There is no write-time
+// uniqueness gate, so multi-claimant scenarios are constructible via
+// normal transactions; read-time resolution then picks the canonical
+// owner under (A, V)-LWW.
 
 package storage
 
@@ -196,7 +190,7 @@ func TestUniqueLookupReportsItsFunnel(t *testing.T) {
 			// The formatter's arm is pinned in its own package against a
 			// hand-built event; here the two meet. Separate pins can agree on a
 			// payload shape neither side produces, and this is the event whose
-			// producer was rewritten to feed that arm.
+			// producer feeds that arm.
 			var rendered bytes.Buffer
 			formatter := annotations.NewPlainTextFormatter(&rendered)
 			for _, e := range events {

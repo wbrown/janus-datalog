@@ -24,9 +24,7 @@ import (
 // Both branches are covered because they count in different places. The
 // candidate loop increments as it validates; the unique short-circuit returns a
 // tuple without going near that loop, so an increment only there would report
-// every unique-attribute binding as matching nothing. The review records the
-// unique branch as unexercised by the suite, which is how a counter added to it
-// would have stayed wrong.
+// every unique-attribute binding as matching nothing.
 func TestVValidationReportsWhatItsScansCost(t *testing.T) {
 	name := datalog.NewKeyword(":person/name")
 	email := datalog.NewKeyword(":person/email")
@@ -58,7 +56,7 @@ func TestVValidationReportsWhatItsScansCost(t *testing.T) {
 			// DisableCache, and not incidentally: a binding-driven pattern is
 			// answered by matchWithBindingsFromCache before analyzeReuseStrategy
 			// is consulted, so with the cache on this arm is not reached at all.
-			// That arm reports nothing either — instance 2b — so reaching the
+			// That arm reports nothing either, so reaching the
 			// code under test means going around it.
 			var events []annotations.Event
 			db, err := NewDatabaseWithOptions(DatabaseOptions{

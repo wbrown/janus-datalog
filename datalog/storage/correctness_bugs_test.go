@@ -1,11 +1,9 @@
 // Regression tests for the correctness bugs flagged in
 // EXTERNAL_REVIEW_2026_04.md items 1, 2, 3 and 5. Item 4 concerns a
-// component the engine no longer has, so nothing here covers it.
+// component the engine does not have, so nothing here covers it.
 //
-// Each test is written against the not-yet-fixed code and must fail
-// (for the expected reason) before the corresponding implementation
-// change lands. Together they form the red baseline for the
-// correctness-cluster fix pass.
+// Each section below names the defect it pins and asserts the corrected
+// behaviour, so a failure here is that defect returning.
 
 package storage
 

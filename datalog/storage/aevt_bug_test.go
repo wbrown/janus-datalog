@@ -52,7 +52,7 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 	}
 
 	// Query: Find :person/age for bound entities
-	// Use RelationInput to reproduce the exact gopher-street pattern
+	// Use RelationInput to reproduce the reported pattern exactly.
 	// [[?e] ...] means "collection of tuples, each with one variable ?e"
 	queryStr := `[:find ?e ?age
 	              :in $ [[?e] ...]
@@ -150,7 +150,7 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 
 // TestEATVPrefixRangeDebug inspects the actual prefix range generated
 // NOTE: With CRDT semantics, schemaless queries (or cardinality-one) use EATV
-// to get the current value (first entry has highest Tx). AEVT was used historically.
+// to get the current value (first entry has highest Tx).
 func TestEATVPrefixRangeDebug(t *testing.T) {
 	// Create temporary database
 	dir, err := os.MkdirTemp("", "aevt-prefix-test-*")
@@ -179,7 +179,7 @@ func TestEATVPrefixRangeDebug(t *testing.T) {
 	// Get the matcher and inspect prefix range for AEVT
 	matcher := NewPatternMatcher(db.Store())
 
-	// Call chooseIndex with both E and A bound (the bug scenario)
+	// Call chooseIndex with both E and A bound
 	bound := matcher.chooseIndex(entityID, attrKw, nil, nil)
 	index := bound.Index
 	// The assertions below are about the byte range the bound addresses, so

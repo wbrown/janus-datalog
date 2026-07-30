@@ -251,8 +251,6 @@ func TestFormatQueryRoundTrip(t *testing.T) {
 				t.Errorf("Where clauses differ in length: %d vs %d", len(parsed.Where), len(reparsed.Where))
 			}
 
-			// Note: Deep comparison of patterns would be more complex
-			// For now, we'll just check the string representation
 			for i := range parsed.Where {
 				if parsed.Where[i].String() != reparsed.Where[i].String() {
 					t.Errorf("Where pattern %d differs:\n%v\nvs\n%v",

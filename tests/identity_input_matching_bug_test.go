@@ -94,8 +94,9 @@ func TestIdentityInputMatchingBug(t *testing.T) {
 				t.Fatalf("Result is not an Identity: %T", tuples[0][0])
 			}
 
-			// IMPORTANT: Use .Equal() to compare Identities by hash, not struct equality!
-			// Identity structs from storage have different l85/str fields than the originals
+			// Compare with .Equal(): identities are interned, so it is pointer
+			// comparison that panics on a same-hash/different-pointer pair. An
+			// interning break is then loud here instead of a silent false.
 			if !foundID.Equal(child1) {
 				t.Errorf("Wrong child returned:\n  expected hash: %x\n  got hash:      %x\n  expected L85: %v\n  got L85:      %v",
 					child1.Hash(), foundID.Hash(), child1.L85(), foundID.L85())
@@ -181,7 +182,8 @@ func TestIdentityInputMatchingWithMultipleConstraints(t *testing.T) {
 
 			t.Logf("Found ID (L85): %v", foundID.L85())
 
-			// IMPORTANT: Use .Equal() to compare Identities by hash, not struct equality!
+			// Compare with .Equal(), as above: pointer comparison that makes an
+			// interning break loud rather than a silent false.
 			if !foundID.Equal(dungeonID) {
 				t.Errorf("Wrong entity returned:\n  expected hash: %x\n  got hash:      %x", dungeonID.Hash(), foundID.Hash())
 

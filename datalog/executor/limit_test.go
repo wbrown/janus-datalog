@@ -255,7 +255,7 @@ func TestQueryLimitWithRelationInputIsGlobal(t *testing.T) {
 
 // TestOrderByAndLimitWithRelationInputIsGlobal verifies finalization runs over
 // the UNION of per-tuple executions: :order-by sorts the whole result and
-// :limit takes a global top-N. The old per-tuple-sort-then-concatenate behavior
+// :limit takes a global top-N. A per-tuple-sort-then-concatenate approach
 // would return an order-dependent (wrong) slice here.
 func TestOrderByAndLimitWithRelationInputIsGlobal(t *testing.T) {
 	// keyA -> vals {1,2,3}, keyB -> vals {4,5,6,7}. Global top-3 desc = 7,6,5.

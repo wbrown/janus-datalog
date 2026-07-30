@@ -194,9 +194,7 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 
 					// One scan, one report. With one completion event name this
 					// is a count rather than a search across names: an arm that
-					// reported twice is as wrong as one that reported never,
-					// and the previous shape could only catch the two-names
-					// case.
+					// reported twice is as wrong as one that reported never.
 					var completions []annotations.Event
 					for _, ev := range events {
 						if ev.Name == annotations.StorageScanComplete {
@@ -704,11 +702,10 @@ func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
 // ordering, so intake is the source's alone; this one opens an AVET supersession
 // scan per entry, and Scanned() adds them to what the source read.
 //
-// The review found uniqueMode true zero times across the whole suite, so the
-// accumulation could be deleted and nothing would red. Reaching it needs an
-// attribute that is CardinalityOne *and* unique, scanned with E unbound — a
-// bound E goes to the cache, and a bound V goes to the claimant lookup, so
-// neither of the shapes a unique attribute is usually queried by comes here.
+// Reaching it needs an attribute that is CardinalityOne *and* unique,
+// scanned with E unbound — a bound E goes to the cache, and a bound V goes
+// to the claimant lookup, so neither of the shapes a unique attribute is
+// usually queried by comes here.
 //
 // The assertion is a strict inequality against the fixture's own datom count,
 // which is what the source reads. No other cardinality can satisfy it: intake

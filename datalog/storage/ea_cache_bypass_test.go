@@ -618,9 +618,8 @@ func TestEACacheBypass_PerTupleA_UsesCache(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, results, 2, "Should get 2 results (one per entity)")
 
-			// Check that storage/reuse-strategy is NOT used for pattern 2
-			// Before Phase 2 fix: FAILS — reuse-strategy IS present (cache bypassed)
-			// After Phase 2 fix: passes — per-tuple A uses cache
+			// Check that storage/reuse-strategy is NOT used for pattern 2: per-tuple
+			// A from a join must use the cache, not fall back to reuse-strategy scans.
 			assert.False(t, hasReuseStrategyEvent(events),
 				"Per-tuple A from join should use cache path, not storage/reuse-strategy scans")
 		})

@@ -391,9 +391,9 @@ type goldenTest struct {
 
 // Golden tests: frozen compressed outputs. If ANY of these change, the codec
 // determinism guarantee is broken and the change MUST be rejected.
-// expectedHex re-recorded 2026-05-30 from CompressionVersion 0x02 (uint32 counts).
-// v1Hex retains the original 2026-03-28 0x01 (uint16 counts) blobs as real
-// captured fixtures proving Decompress still reads legacy v1 data.
+// expectedHex holds the CompressionVersion 0x02 (uint32 counts) golden output.
+// v1Hex holds real captured v1 (0x01, uint16 counts) blobs, proving
+// Decompress still reads legacy v1 data.
 var goldenTests = []goldenTest{
 	{
 		name:        "paragraph_500",

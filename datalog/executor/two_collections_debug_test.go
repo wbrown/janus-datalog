@@ -10,7 +10,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// TestTwoCollections_PlanAndBind traces through the execution to find the issue.
+// TestTwoCollections_PlanAndBind verifies that two collection inputs plan and bind to their cross-product.
 func TestTwoCollections_PlanAndBind(t *testing.T) {
 	// Parse query with two collection inputs
 	q, err := parser.ParseQuery(`[:find ?e ?a ?v :in $ [?e ...] [?a ...] :where [?e ?a ?v]]`)

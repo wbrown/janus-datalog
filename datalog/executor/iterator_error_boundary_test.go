@@ -12,8 +12,9 @@ import (
 // Reproductions for BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md
 //
 // The Iterator contract requires callers to check Error() after Next() returns
-// false. CollectTuples (and the QueryInto/QueryOneInto storage boundaries) don't,
-// so an iterator failure is reported as an empty or truncated success.
+// false. CollectTuples and the QueryInto/QueryOneInto storage boundaries do, and
+// must keep doing so: a dropped iterator error surfaces as an empty or truncated
+// success, which is a wrong answer with no signal.
 
 var errInjectedIterator = errors.New("injected iterator failure")
 

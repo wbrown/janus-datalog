@@ -578,13 +578,6 @@ func TestNotJoinClause(t *testing.T) {
 				t.Fatalf("execution failed: %v", err)
 			}
 
-			// Alice is archived AND deleted (inner clauses join), Bob is only deleted (doesn't match both)
-			// Actually, looking at NOT-JOIN semantics: inner clauses must ALL match for exclusion
-			// Alice: has archived but NOT deleted -> doesn't match both -> kept
-			// Bob: has deleted but NOT archived -> doesn't match both -> kept
-			// Charlie: has neither -> kept
-			// Wait, let me re-read the semantics...
-
 			// The NOT-JOIN inner clauses are like an AND - both must match for the entity to be excluded.
 			// Since no entity has BOTH archived AND deleted, all should be kept.
 
@@ -778,7 +771,7 @@ func TestOrJoinClause(t *testing.T) {
 // =============================================================================
 
 func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
-	// Directly test the query executor to isolate the issue
+	// Directly test the query executor
 	matcher := NewMemoryPatternMatcher(nil)
 
 	for _, mode := range optimizerModes {
@@ -2117,7 +2110,6 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 // correlate is bound by :in: the input relation IS the relation being
 // filtered. The baseline executes it — of the input entities, those the
 // negation keeps — so the bridge must too; "no generator" is not "invalid".
-// Third re-review finding at 00fc6e4 (pre-existing: reproduces on base main).
 func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 	e1 := datalog.NewIdentity("entity:1")
 	e2 := datalog.NewIdentity("entity:2")

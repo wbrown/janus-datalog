@@ -537,9 +537,7 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 }
 
 // TestGetElseComplex_ParsedOr tests with parsed (or ...) — union semantics.
-// Both branches contribute tuples when both match. Verified empirically:
-// base executor without algebra bridge also produces 9 tuples
-// (TestGetElseComplex_OrSemantics). This is correct union behavior, not a bug.
+// Both branches contribute tuples when both match. This is correct union behavior, not a bug.
 // Use (or-default ...) for fallback semantics (2 tuples).
 func TestGetElseComplex_ParsedOr(t *testing.T) {
 	for _, mode := range optimizerModes {
@@ -596,8 +594,7 @@ func TestGetElseComplex_QBOrDefault(t *testing.T) {
 }
 
 // TestGetElseComplex_StructuralComparison compares the clause types produced
-// by qb.OrDefault() vs parsed (or-default ...) to find why one passes and
-// the other fails.
+// by qb.OrDefault() vs parsed (or-default ...).
 func TestGetElseComplex_StructuralComparison(t *testing.T) {
 	// QB path
 	qbQuery := buildComplexQuery_OrDefaultClause(t)

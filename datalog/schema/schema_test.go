@@ -274,8 +274,7 @@ func TestBuilderRejectsKeywordFromTheWrongVocabulary(t *testing.T) {
 // query returns no tuples with a nil error.
 //
 // nil is absence and stays legal for ValueType and Unique — a definition that
-// has not said which it is. Cardinality's nil is filled with CardinalityOne, as
-// it was before.
+// has not said which it is. Cardinality's nil is filled with CardinalityOne.
 func TestSchemaAddPanicsOnKeywordFromTheWrongVocabulary(t *testing.T) {
 	for _, tc := range []struct {
 		name string

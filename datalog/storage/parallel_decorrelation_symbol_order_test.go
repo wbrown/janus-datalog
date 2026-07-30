@@ -13,12 +13,11 @@ import (
 // TestParallelDecorrelationSymbolOrderBadger pins OHLC subquery execution
 // against PatternMatcher: four correlated aggregate subqueries whose
 // correlation parameters are consumed only by equality predicates, verified
-// slot-by-slot so a symbol-order scramble or a decorrelation regression
-// fails loudly. Originally reproduced a symbol-order scramble from
-// inconsistent transaction snapshots across goroutines; it now also runs the
-// optimizer mode matrix, whose algebra leg exercises the equality-bound
-// decorrelation translation end-to-end on storage-backed relations. See
-// BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
+// slot-by-slot so a symbol-order scramble from inconsistent transaction
+// snapshots across goroutines, or a decorrelation regression, fails loudly.
+// It runs the optimizer mode matrix, whose algebra leg exercises the
+// equality-bound decorrelation translation end-to-end on storage-backed
+// relations. See BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
 func TestParallelDecorrelationSymbolOrderBadger(t *testing.T) {
 	// Create temporary BadgerDB
 	tmpDir, err := os.MkdirTemp("", "badger-symbol-order-test-*")

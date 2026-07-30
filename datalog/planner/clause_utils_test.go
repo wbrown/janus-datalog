@@ -196,8 +196,9 @@ func TestExtractSubqueryPatternSymbols(t *testing.T) {
 }
 
 func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
-	// Test that pattern-only OR uses intersection semantics
-	// and OR with expressions uses union semantics
+	// Every branch form provides the INTERSECTION of its branches' symbols: a
+	// symbol only one branch binds is absent from the clause's output. Union
+	// semantics describe which tuples an OR yields, not which symbols it binds.
 
 	t.Run("Pattern-only OR uses intersection", func(t *testing.T) {
 		// Branch 1 provides: ?e, ?x
@@ -240,7 +241,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 	t.Run("OR with expression uses intersection", func(t *testing.T) {
 		// Branch 1 (pattern) provides: ?e, ?x
 		// Branch 2 (expression) provides: ?x
-		// OrClause always uses intersection now (all branches execute in union mode)
+		// OrClause uses intersection semantics because all branches execute in union mode
 		orClause := &query.OrClause{
 			Branches: [][]query.Clause{
 				{
@@ -363,9 +364,8 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 
 func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 	// This test verifies that OR clauses with correlated subqueries
-	// correctly report their required input symbols.
-	// This was the root cause of the v0.5.1 regression where OR clauses
-	// were scheduled before the patterns that provide their inputs.
+	// correctly report their required input symbols — without that, OR
+	// clauses schedule before the patterns that provide their inputs.
 
 	t.Run("SubqueryPattern with variable input requires that variable", func(t *testing.T) {
 		orClause := &query.OrClause{

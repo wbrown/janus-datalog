@@ -18,8 +18,8 @@ import (
 // validation is an O(1) cache lookup;
 // with DisableCache, each is an EATV point seek (Badger ConcatIterator
 // open/close + IncrRef/DecrRef). Both modes pay the AVET candidate enumeration,
-// so the cache-vs-nocache delta isolates the validation cost — the share the
-// downstream profile attributed to validatingVBoundIterator.validateCandidate.
+// so the cache-vs-nocache delta isolates the validation cost of
+// validatingVBoundIterator.validateCandidate.
 //
 // Run:
 //   go test ./datalog/storage/ -run '^$' -bench 'BenchmarkVBoundValidation' -benchmem

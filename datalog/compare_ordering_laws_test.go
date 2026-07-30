@@ -13,11 +13,11 @@ import (
 // and CompareValues(b,a) < 0 could be true — non-antisymmetric, which violates
 // the strict-weak-ordering contract sort.Slice/min/max/order-by depend on.
 //
-// The fix gives CompareValues a custom type-rank total ordering: numeric
-// (int/float together) < bool < time < string < bytes < keyword < symbol <
-// identity < elementID < vector; same-rank values compare by value,
-// different-rank by rank. These tests pin the comparator laws (antisymmetry,
-// sort-safety, predicate consistency) rather than any single direction outcome.
+// CompareValues uses a custom type-rank total ordering: numeric (int/float
+// together) < bool < time < string < bytes < keyword < symbol < identity <
+// elementID < vector; same-rank values compare by value, different-rank by
+// rank. These tests pin the comparator laws (antisymmetry, sort-safety,
+// predicate consistency) rather than any single direction outcome.
 
 // mixedTypeValues spans every rank class, for the antisymmetry matrix. The
 // numeric rank deliberately includes all three representations — int64,

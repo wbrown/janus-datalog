@@ -123,8 +123,8 @@ func TestDecorrelationPassRecords(t *testing.T) {
 		"records=%v", sink.Records())
 }
 
-// TestGetElsePassRecords pins the typed provenance the formerly-silent
-// get-else pass now produces, and its event forms: an applied record when the
+// TestGetElsePassRecords pins the typed provenance the get-else pass
+// produces, and its event forms: an applied record when the
 // rewrite fires, a declined record with the failed precondition when the
 // entity is an input parameter the child relation does not provide.
 func TestGetElsePassRecords(t *testing.T) {

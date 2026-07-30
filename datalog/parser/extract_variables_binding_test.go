@@ -8,9 +8,9 @@ import (
 )
 
 // TestExtractVariablesCoversEveryBindingForm pins that a subquery's bound
-// variables are extracted for all four binding forms. The hand-written switch
-// this replaces was missing ScalarBinding, so a scalar-bound subquery variable
-// was silently invisible to variable extraction.
+// variables are extracted for all four binding forms. A dispatch that omits
+// ScalarBinding leaves a scalar-bound subquery variable silently invisible to
+// variable extraction.
 func TestExtractVariablesCoversEveryBindingForm(t *testing.T) {
 	out := datalog.NewSymbol("?out")
 

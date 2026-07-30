@@ -8,9 +8,9 @@ import (
 // These unit tests pin the integer-width policy directly, below the API
 // boundary: NormalizeValue coerces to int64; ValuesEqual and CompareValues agree
 // on integer widths (int(5) == int64(5)) while keeping int-vs-float strict; and
-// Type/ValueBytes no longer panic on a bare Go int. The boundary tests in the
-// storage package prove the user-facing behavior; these prove the machinery the
-// boundary relies on (and the defense-in-depth for any path that bypasses it).
+// Type/ValueBytes accept a bare Go int without panicking. The boundary tests in
+// the storage package prove the user-facing behavior; these prove the machinery
+// the boundary relies on (and the defense-in-depth for any path that bypasses it).
 
 func TestNormalizeValue_CoercesIntegerWidths(t *testing.T) {
 	cases := []struct {
@@ -83,8 +83,8 @@ func TestValuesEqual_IntVsFloatStaysStrict(t *testing.T) {
 }
 
 func TestType_And_ValueBytes_GoIntEncodeAsInt64(t *testing.T) {
-	// Facet 2: Type/ValueBytes previously panicked on a bare int. They must now
-	// coerce to the canonical int64 encoding.
+	// Facet 2: Type/ValueBytes coerce a bare Go int to the canonical int64
+	// encoding rather than panicking.
 	wantBytes := ValueBytes(int64(5))
 	for _, v := range []Value{int(5), int8(5), int16(5), int32(5)} {
 		if got := Type(v); got != TypeInt {

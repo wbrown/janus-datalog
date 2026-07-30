@@ -402,7 +402,7 @@ func writeValidThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions) *Dat
 }
 
 // TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults: QueryInto consumes a
-// scan that yields one valid datom then fails (Failure Mode 3, truncation). The
+// scan that yields one valid datom then fails (truncation). The
 // error must surface AND the destination must not be populated with the partial
 // prefix. If the ForEach error check were missing, out would hold the valid "ok"
 // entry and err would be nil.
@@ -422,7 +422,7 @@ func TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults(t *testing.T) {
 }
 
 // TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext: QueryOneInto reads a
-// valid first tuple, then the second Next() fails (Verification Plan #4). The error
+// valid first tuple, then the second Next() fails. The error
 // must surface as found=false. If the second-Next() Error() check were missing,
 // the first tuple would be mapped and the call would return found=true, nil.
 func TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext(t *testing.T) {

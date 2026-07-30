@@ -40,8 +40,7 @@ func aggregationFindElements() []query.FindElement {
 // The latency assertion is what pins the ordering. An event emitted before the
 // fold cannot report a duration containing it, so a start taken at the emit
 // reads as zero however much work follows — and zero is indistinguishable from
-// an aggregation that was genuinely instantaneous, which is why the defect
-// survived being visible in every trace.
+// an aggregation that was genuinely instantaneous.
 //
 // The batch path is where the assertion has teeth: it folds inline, so the
 // duration is the fold's. The streaming path builds a relation and defers the
@@ -78,10 +77,7 @@ func TestAggregationExecutedTimesTheAggregation(t *testing.T) {
 			"receive what the decision led to")
 	require.Equal(t, "batch", executed.Data["aggregation_mode"])
 	// The reported duration is a sub-interval of the call, so it cannot exceed
-	// the wall time; containing the fold makes it nearly all of it. An emit
-	// placed before the fold reports only the few hundred nanoseconds it takes
-	// to reach the emit, which is why "positive" does not separate the two
-	// shapes and a proportion has to.
+	// the wall time; containing the fold makes it nearly all of it.
 	require.Greater(t, executed.Latency, callWall/2,
 		"the call took %s and the fold is nearly all of it, but the event "+
 			"reported %s", callWall, executed.Latency)

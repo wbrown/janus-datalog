@@ -8,8 +8,8 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
-// TestOHLCSymbolOrderBug reproduces the gopher-street symbol ordering bug
-// with a realistic OHLC query pattern
+// TestOHLCSymbolOrderBug reproduces the reported symbol ordering bug with a
+// realistic OHLC query pattern
 func TestOHLCSymbolOrderBug(t *testing.T) {
 	// Create realistic OHLC data: 3 bars for one day
 	sym1 := datalog.NewIdentity("sym1")
@@ -52,8 +52,8 @@ func TestOHLCSymbolOrderBug(t *testing.T) {
 		{E: bar3, A: datalog.NewKeyword(":price/volume"), V: int64(1100000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	// OHLC query: date, open, high, low, close, volume
-	// This matches the gopher-street pattern exactly
+	// OHLC query: date, open, high, low, close, volume — the reported shape,
+	// four correlated subqueries anchored on one morning bar.
 	queryStr := `
 	[:find ?date ?open-price ?daily-high ?daily-low ?close-price ?total-volume
 	 :where

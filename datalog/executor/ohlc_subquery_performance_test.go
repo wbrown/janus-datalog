@@ -10,8 +10,8 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// TestOHLCSubqueryPerformance reproduces the Gopher Street performance issue
-// where multiple subqueries accessing the same data execute independently
+// TestOHLCSubqueryPerformance reproduces the reported performance issue where
+// multiple subqueries accessing the same data execute independently
 func TestOHLCSubqueryPerformance(t *testing.T) {
 	// Create test data: a symbol with price bars for multiple days
 	datoms := []datalog.Datom{}

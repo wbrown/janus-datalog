@@ -12,10 +12,9 @@ var (
 	getResolveErrSink error
 )
 
-// BenchmarkGetOrResolve_FreshHit measures the cache-hit hot path — the path the
-// in-flight stale-read fix added a field read to (entry.inFlight). The resolver
-// is never invoked on a fresh hit, so a nil resolver is safe. Alloc-free; a
-// before/after benchstat shows whether the sentinel check costs anything.
+// BenchmarkGetOrResolve_FreshHit measures the cache-hit hot path, including the
+// entry.inFlight sentinel check. The resolver is never invoked on a fresh hit,
+// so a nil resolver is safe. Alloc-free.
 func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
 	c := NewCache()
 	var e Entity

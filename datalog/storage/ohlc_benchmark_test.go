@@ -114,7 +114,7 @@ func BenchmarkOHLCQuery(b *testing.B) {
 				b.Fatalf("Query failed: %v", err)
 			}
 
-			// Should get 390 bars for day 20
+			// Should get 390 bars for day 5
 			if result.Size() != 390 {
 				b.Errorf("Expected 390 results, got %d", result.Size())
 			}
@@ -133,7 +133,7 @@ func BenchmarkOHLCQuery(b *testing.B) {
 				b.Fatalf("Query failed: %v", err)
 			}
 
-			// Should get 390 bars for day 20
+			// Should get 390 bars for day 5
 			if result.Size() != 390 {
 				b.Errorf("Expected 390 results, got %d", result.Size())
 			}
@@ -152,8 +152,9 @@ func BenchmarkOHLCQueryLargeDataset(b *testing.B) {
 	}
 	defer db.Close()
 
-	// Generate test data - 90 days of OHLC data for 50 symbols
-	// 390 bars per day per symbol = 1,755,000 bars total
+	// Generate test data - 90 days for 50 symbols. CRWV carries every day at 390
+	// bars; the other 49 are sampled every 10th day, so the set holds ~207k bars
+	// rather than the 1.76M a dense 50x90x390 grid would.
 	numSymbols := 50
 	numDays := 90
 
@@ -259,7 +260,7 @@ func BenchmarkOHLCQueryLargeDataset(b *testing.B) {
 				b.Fatalf("Query failed: %v", err)
 			}
 
-			// Should get 390 bars for day 20 (3 occurrences in 90 days)
+			// Should get 390 bars for day 5 (3 occurrences in 90 days)
 			if result.Size() != 390*3 {
 				b.Errorf("Expected %d results, got %d", 390*3, result.Size())
 			}
@@ -277,7 +278,7 @@ func BenchmarkOHLCQueryLargeDataset(b *testing.B) {
 				b.Fatalf("Query failed: %v", err)
 			}
 
-			// Should get 390 bars for day 20 (3 occurrences in 90 days)
+			// Should get 390 bars for day 5 (3 occurrences in 90 days)
 			if result.Size() != 390*3 {
 				b.Errorf("Expected %d results, got %d", 390*3, result.Size())
 			}

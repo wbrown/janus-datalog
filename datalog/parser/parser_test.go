@@ -396,7 +396,7 @@ func TestParseSubqueryPatterns(t *testing.T) {
 					return fmt.Errorf("expected SubqueryPattern")
 				}
 
-				// Check scalar binding (was previously collection binding, but ?var means scalar in Datomic)
+				// Check scalar binding: ?var means scalar in Datomic
 				binding, ok := subq.Binding.(query.ScalarBinding)
 				if !ok {
 					return fmt.Errorf("expected ScalarBinding, got %T", subq.Binding)

@@ -87,7 +87,7 @@ func TestMultiPositionBindingCorrectness(t *testing.T) {
 	// Use L85() for comparison since storage-returned entities don't have original strings
 	resultEntities := make(map[string]bool)
 	for _, tuple := range results {
-		// Identity is now always a pointer type
+		// Identity is always a pointer type
 		if id, ok := tuple[0].(datalog.Identity); ok {
 			resultEntities[id.L85()] = true
 		}
@@ -494,8 +494,8 @@ func TestMultiPositionPerformance(t *testing.T) {
 	avgDuration := totalDuration / iterations
 	t.Logf("Average query time: %v (total: %v over %d iterations)", avgDuration, totalDuration, iterations)
 
-	// Performance threshold: should be under 5ms with the fix
-	// Before fix: ~40ms, After fix: ~650µs
+	// A ceiling well above the expected time, so this catches a return to
+	// per-binding scanning rather than ordinary machine-to-machine variance.
 	maxAllowed := 5 * time.Millisecond
 	if avgDuration > maxAllowed {
 		t.Errorf("Query too slow: %v average (expected <%v)", avgDuration, maxAllowed)
@@ -579,9 +579,9 @@ func collectEntityIDs(result executor.Relation) []string {
 	for it.Next() {
 		tuple := it.Tuple()
 		if len(tuple) > 0 {
-			// Handle both pointer and value types
-			// Use L85() for consistent comparison since storage-returned
-			// entities don't have original strings
+			// Identity is always a pointer type; a single assertion covers
+			// every case. Use L85() for consistent comparison since storage-
+			// returned entities don't have original strings.
 			if id, ok := tuple[0].(datalog.Identity); ok {
 				ids = append(ids, id.L85())
 			}

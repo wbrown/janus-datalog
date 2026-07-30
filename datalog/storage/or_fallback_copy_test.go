@@ -41,7 +41,7 @@ func createOrTestDB(t *testing.T, popts *planner.PlannerOptions) (*Database, fun
 
 // TestOrClauseTupleStability verifies that tuples from OR clause execution
 // are stable (not corrupted by workspace reuse).
-// Uses ExecuteQueryRelation to get streaming results without materialization.
+// Uses db.Query to get streaming results without materialization.
 func TestOrClauseTupleStability(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -119,7 +119,7 @@ func TestOrClauseTupleStability(t *testing.T) {
 }
 
 // TestOrClauseMultipleBranches verifies tuple stability with multiple OR branches.
-// Uses ExecuteQueryRelation for streaming without materialization.
+// Uses db.Query for streaming without materialization.
 func TestOrClauseMultipleBranches(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

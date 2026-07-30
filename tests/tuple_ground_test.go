@@ -247,7 +247,8 @@ func TestTupleGroundOrFallback(t *testing.T) {
 	}
 }
 
-// TestTupleGroundBackwardCompatibility verifies scalar ground still works
+// TestTupleGroundBackwardCompatibility verifies the scalar ground syntax
+// remains supported
 func TestTupleGroundBackwardCompatibility(t *testing.T) {
 	dir, err := os.MkdirTemp("", "tuple-ground-compat-*")
 	if err != nil {
@@ -270,7 +271,7 @@ func TestTupleGroundBackwardCompatibility(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	// Query with scalar ground (original syntax)
+	// Query with scalar ground
 	queryStr := `[:find ?x
 	              :where [_ :test/name _]
 	                     [(ground 42) ?x]]`

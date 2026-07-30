@@ -26,8 +26,7 @@ import (
 // executeRealizedWithRelationInputIterationParallel and its four default
 // workers — but whether db.Query plans this relation as an iteration or as a
 // join is not established here, so overlapping emission is not demonstrated.
-// What it does establish is that the public verbose path runs clean, which is
-// the claim that would have gone unchecked when the wrapper was deleted.
+// What it does establish is that the public verbose path runs clean.
 //
 // The callback deliberately does nothing. The state at issue is the formatter
 // inside the option, not anything the caller supplies — a test whose callback

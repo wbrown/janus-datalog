@@ -243,7 +243,7 @@ func TestMultiTupleRelationBinding(t *testing.T) {
 }
 
 func TestRelationBasedPatternMatching(t *testing.T) {
-	// Test that the new interface properly handles empty bindings
+	// Test that Match properly handles empty bindings
 	datoms := []datalog.Datom{
 		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword(":foo"), V: "bar", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword(":foo"), V: "baz", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},

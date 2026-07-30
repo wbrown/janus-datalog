@@ -30,7 +30,7 @@ func TestEmptyDataSubqueryBug(t *testing.T) {
 			_, err = tx.Commit()
 			assert.NoError(t, err)
 
-			// Query with subquery - simplified version of gopher-street OHLC query
+			// Query with subquery - simplified version of the OHLC query
 			// This should return empty results gracefully, not fail with projection error
 			query := `[:find ?date ?open-price
 	 :in $ ?symbol
@@ -64,8 +64,9 @@ func TestEmptyDataSubqueryBug(t *testing.T) {
 	}
 }
 
-// TestEmptyDataSubqueryBug_FullGopherStreetQuery tests with the EXACT gopher-street query
-func TestEmptyDataSubqueryBug_FullGopherStreetQuery(t *testing.T) {
+// TestEmptyDataSubqueryBug_FullOHLCQuery tests the full reported query, not a
+// reduction of it.
+func TestEmptyDataSubqueryBug_FullOHLCQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create temporary database
@@ -84,7 +85,7 @@ func TestEmptyDataSubqueryBug_FullGopherStreetQuery(t *testing.T) {
 			_, err = tx.Commit()
 			assert.NoError(t, err)
 
-			// EXACT gopher-street query with 4 subqueries
+			// The full query, with all 4 subqueries
 			query := `[:find ?date ?open-price ?daily-high ?daily-low ?close-price ?total-volume
 	 :in $ ?symbol
 	 :where
@@ -171,7 +172,7 @@ func TestEmptyDataSubqueryBug_FullGopherStreetQuery(t *testing.T) {
 			}
 
 			assert.Len(t, results, 0, "Should return empty results when no data matches")
-			t.Logf("SUCCESS: Full gopher-street query returned %d results (empty as expected)", len(results))
+			t.Logf("SUCCESS: full OHLC query returned %d results (empty as expected)", len(results))
 		})
 	}
 }

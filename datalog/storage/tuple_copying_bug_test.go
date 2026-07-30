@@ -13,10 +13,9 @@ import (
 // TestMatcherRelationsTupleCopyingBug tests that matcher_relations.go:241
 // properly copies tuples when collecting bindings.
 //
-// This test should FAIL until the bug is fixed, demonstrating that:
-// 1. Multi-pattern queries trigger the buggy code path
-// 2. The bug causes incorrect results (0 tuples instead of expected count)
-// 3. Fixing the bug makes the test pass
+// This guards against a tuple-copying bug: multi-pattern queries trigger the
+// buggy code path, and the bug causes incorrect results (0 tuples instead of
+// the expected count).
 func TestMatcherRelationsTupleCopyingBug(t *testing.T) {
 	tempDir := t.TempDir()
 	db, err := NewDatabase(tempDir)

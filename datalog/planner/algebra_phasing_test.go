@@ -10,7 +10,7 @@ import (
 )
 
 // TestPhaserSymbolExtraction checks what symbols the phaser extracts
-// for the specific failing query.
+// for the specific query.
 func TestPhaserSymbolExtraction(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?count
 	       :where [?e :entity/type :entity.type/scenario]

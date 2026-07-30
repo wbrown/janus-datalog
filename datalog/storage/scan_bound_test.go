@@ -364,8 +364,7 @@ func TestScanBoundUnknownIndexRejected(t *testing.T) {
 // own membership records which one produced them. In the other direction a
 // behavioural test needs a fixture whose value is a byte prefix of another
 // stored value, which is a property of the fixture rather than of the
-// classification — which is why the compressed parity case stayed green with
-// both compressed types moved to the fixed arm.
+// classification.
 func TestScanBoundMembershipFollowsThePayloadClassification(t *testing.T) {
 	const threshold = 32
 	encoder := &BinaryKeyEncoder{CompressionThreshold: threshold}

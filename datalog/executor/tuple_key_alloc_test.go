@@ -8,8 +8,6 @@ import (
 
 // TestTupleKeyMapAllocations pins the allocation cost of the tuple-key
 // machinery that every join build, dedup set, and group table rides on.
-// The complex checkpoint spends ~40% of its allocations here: one values
-// slice per NewTupleKey and one bucket backing array per stored key.
 //
 // Pinned costs:
 //   - storing a NEW key: 1 allocation (the key's owned values slice; the

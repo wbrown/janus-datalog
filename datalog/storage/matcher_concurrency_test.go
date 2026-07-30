@@ -11,7 +11,7 @@ import (
 )
 
 // TestTupleBuilderCacheConcurrency tests that the tuple builder cache is thread-safe
-// This reproduces the concurrent map access bug reported by gopher-street team
+// This reproduces a concurrent map access bug.
 func TestTupleBuilderCacheConcurrency(t *testing.T) {
 	db := createTestDB(t)
 	defer db.Close()
@@ -186,8 +186,6 @@ func createTestDB(t *testing.T) *Database {
 
 // TestIteratorWorkspaceIsolation verifies that two iterators on the same
 // pattern have independent tuple storage (workspace reuse doesn't cross iterators).
-// This test ensures that after Phase 2 (workspace reuse), each iterator
-// maintains its own workspace and doesn't corrupt other iterators' tuples.
 func TestIteratorWorkspaceIsolation(t *testing.T) {
 	db := createTestDB(t)
 	defer db.Close()

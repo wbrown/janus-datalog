@@ -303,7 +303,7 @@ func TestWorkspaceRegression_Projection(t *testing.T) {
 	}
 }
 
-// Test 5: Filter + projection (the failing case)
+// Test 5: Filter + projection
 func TestWorkspaceRegression_FilterThenProject(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

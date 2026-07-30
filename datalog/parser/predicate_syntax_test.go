@@ -8,7 +8,6 @@ import (
 )
 
 // TestPredicateSyntaxCoverage ensures all predicate operators parse to correct types
-// This test would have caught the not= bug
 func TestPredicateSyntaxCoverage(t *testing.T) {
 	tests := []struct {
 		name         string

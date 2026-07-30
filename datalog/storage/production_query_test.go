@@ -13,12 +13,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// TestProductionQueryPattern reproduces the exact pattern from gopher-street
-// that led to fetching 7088 bars when only ~200 were needed
+// TestProductionQueryPattern demonstrates a query pattern that fetches every
+// bar for a symbol instead of filtering by date at the storage layer, so
+// each per-day lookup pulls the whole dataset and filters in memory.
 func TestProductionQueryPattern(t *testing.T) {
-	// This test is about query patterns, not streaming optimization
-	// No need to manipulate global state - just test the functionality
-
 	// Create test database
 	dbPath := "/tmp/test-production-query"
 	os.RemoveAll(dbPath)
@@ -186,9 +184,6 @@ func TestProductionQueryPattern(t *testing.T) {
 	t.Run("Step4_CheckIteratorReuse", func(t *testing.T) {
 		// Check if iterator reuse would help
 		// The pattern is: [?bar :price/minute-of-day ?mod] with ?mod bound to different values
-
-		// Test with matcher_v2 which has iterator reuse logic
-		// matcher := NewPatternMatcher(store) // Not used in this test
 
 		// Pattern with minute-of-day that will be bound
 		pattern := &query.DataPattern{
@@ -383,8 +378,8 @@ func TestPlannerPredicatePushdownIntegration(t *testing.T) {
 				}
 				it.Close()
 
-				// Without pushdown, we fetch all days then filter
-				// Result should still be correct (390 bars for day 20)
+				// Without pushdown, we fetch all days then filter. The result is
+				// still correct: one day's worth, barsPerDay bars.
 				if barCount != barsPerDay {
 					t.Errorf("Expected %d bars, got %d", barsPerDay, barCount)
 				}

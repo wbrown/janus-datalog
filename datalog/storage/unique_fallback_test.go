@@ -1,6 +1,6 @@
 // Tests for entity-view fallback and walk-based (A, V)-LWW symmetry.
 //
-// Commit 3 of the CRDT-unique redesign. Walk-based resolution:
+// Walk-based resolution:
 //
 //   For entity E's current value of unique attribute A, walk E's EATV
 //   history in descending Tx order. For each entry (V_i, T_i, op):
@@ -14,10 +14,6 @@
 //   across all entities; verify that entity's walk actually emits V. The
 //   two views are symmetric by construction — V-view returns the entity
 //   whose walk emits V.
-//
-// These tests describe the contract and are written before the
-// implementation. They must fail in meaningful ways against the
-// pre-Commit-3 code (no fallback + Commit 2's EATV-LWW-based V-view).
 
 package storage
 

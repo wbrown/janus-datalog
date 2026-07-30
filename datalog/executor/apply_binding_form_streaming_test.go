@@ -1,9 +1,8 @@
 // Tests for applyBindingForm that exercise the streaming path.
 //
-// Prior to the streaming rewrite, applyBindingForm called result.Size()
-// and result.Get(i) directly. Those APIs only work on materialized
-// relations — on a StreamingRelation, Size() returns -1 regardless of
-// the actual tuple count, which broke two invariants:
+// applyBindingForm must not rely on result.Size() or result.Get(i): those
+// APIs only work on materialized relations. On a StreamingRelation, Size()
+// returns -1 regardless of the actual tuple count. Two invariants matter:
 //
 //  1. Empty streaming subquery result → datalog semantics say "pattern
 //     fails to match, return empty relation", but the code returned an
@@ -11,7 +10,7 @@
 //  2. Non-1 streaming subquery result with TupleBinding/ScalarBinding →
 //     the error message reported "got -1" instead of the real count.
 //
-// The rewrite iterates the input relation directly, enforcing
+// applyBindingForm iterates the input relation directly, enforcing
 // cardinality (TupleBinding/ScalarBinding) or wrapping the iterator in
 // a streaming output (RelationBinding) so end-to-end streaming is
 // preserved through the subquery → union boundary.
@@ -90,8 +89,7 @@ func TestApplyBindingForm_TupleBinding_StreamingSingle(t *testing.T) {
 }
 
 // More than 1 streaming result → error mentioning "expects 1 result".
-// Error count must be accurate (not -1), but we only require "at least 2"
-// because the implementation may short-circuit after the second tuple.
+// Error count must be accurate (not -1).
 func TestApplyBindingForm_TupleBinding_StreamingMultiple(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
 	inputValues := Tuple{"e1"}

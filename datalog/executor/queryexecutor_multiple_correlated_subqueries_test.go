@@ -8,10 +8,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
-// TestQueryExecutorMultipleCorrelatedSubqueries tests the pattern from gopher-street
-// where multiple correlated subqueries are used in sequence to build up result symbols
+// TestQueryExecutorMultipleCorrelatedSubqueries tests the reported pattern where
+// multiple correlated subqueries are used in sequence to build up result symbols
 func TestQueryExecutorMultipleCorrelatedSubqueries(t *testing.T) {
-	// Create test data similar to gopher-street OHLC pattern
+	// Create test data in the OHLC shape
 	day1 := datalog.NewIdentity("day1")
 	day2 := datalog.NewIdentity("day2")
 
@@ -86,8 +86,8 @@ func TestQueryExecutorMultipleCorrelatedSubqueries(t *testing.T) {
 		{E: bar4, A: lowKw, V: 204.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	// Query similar to gopher-street pattern:
-	// Get date, then use multiple correlated subqueries to get open, high, low, close
+	// The reported shape: get the date, then use multiple correlated subqueries
+	// to get open, high, low, close.
 	queryStr := `[:find ?date ?open-price ?daily-high ?daily-low ?close-price
 	              :where [?d :day/date ?date]
 	                     [?d :day/year ?year]
@@ -133,7 +133,6 @@ func TestQueryExecutorMultipleCorrelatedSubqueries(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	// Test with QueryExecutor (Stage B)
 	matcher := NewIndexedMemoryMatcher(datoms) // Shared read-only matcher across modes
 
 	for _, mode := range optimizerModes {

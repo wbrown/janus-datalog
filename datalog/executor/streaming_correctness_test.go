@@ -23,9 +23,8 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		}
 		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
-		// Materialized side: the same pipeline over a MaterializedRelation —
-		// the materialized filter implementation, not a streaming relation in
-		// a legacy mode.
+		// Materialized side: the same pipeline through MaterializedRelation's
+		// own filter and project implementation.
 		matRel := NewMaterializedRelation(symbols, tuples)
 
 		// Filter to 1% (every 100th tuple)

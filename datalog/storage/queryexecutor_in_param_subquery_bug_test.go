@@ -10,8 +10,8 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
-// TestQueryExecutorInParamWithCorrelatedSubquery reproduces the gopher-street bug:
-// Top-level :in parameter combined with correlated subqueries fails with
+// TestQueryExecutorInParamWithCorrelatedSubquery guards against a bug where a
+// top-level :in parameter combined with correlated subqueries fails with
 // "cannot project: symbol ?open-price not found in relation"
 func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 	// Create temporary database
@@ -62,22 +62,22 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 	_, err = tx.Commit()
 	assert.NoError(t, err)
 
-	// Query matching gopher-street EXACTLY - RelationBinding with MULTIPLE symbols
-	// THIS IS THE KEY: [[?daily-high ?daily-low]] returns TWO symbols in one binding
+	// The key shape: a RelationBinding with MULTIPLE symbols in one binding —
+	// [[?daily-high ?daily-low]] returns two symbols from a single subquery.
 	queryStr := `[:find ?date ?daily-high ?daily-low ?open-price
 	              :in $ ?ticker
 	              :where [?s :symbol/ticker ?ticker]
 
-	                     ; Use anchor bar to get date (like gopher-street uses morning-bar)
+	                     ; Use an anchor bar to get the date, as the reported query did
 	                     [?anchor-bar :bar/symbol ?s]
 	                     [?anchor-bar :bar/year ?year]
 	                     [?anchor-bar :bar/month ?month]
 	                     [?anchor-bar :bar/day ?day]
 
-	                     ; Expression to create date string (like gopher-street)
+	                     ; Expression to create date string
 	                     [(str ?year "-" ?month "-" ?day) ?date]
 
-	                     ; First subquery - HIGH AND LOW in ONE binding (like gopher-street!)
+	                     ; First subquery - HIGH AND LOW in ONE binding
 	                     [(q [:find (max ?h) (min ?l)
 	                          :in $ ?sym ?y ?m ?d
 	                          :where [?bar :bar/symbol ?sym]
@@ -108,11 +108,10 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 			inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
 			assert.NoError(t, err)
 
-			// Execute with GOPHER-STREET options
-			gopherStreetOpts := mode.plannerOptions()
+			popts := mode.plannerOptions()
 
 			// Execute (like ExecuteQueryWithInputs but with custom options)
-			exec := db.NewExecutorWithOptions(gopherStreetOpts)
+			exec := db.NewExecutorWithOptions(popts)
 			result, err := exec.ExecuteWithRelations(executor.NewContext(), q, inputRels)
 
 			if err != nil {

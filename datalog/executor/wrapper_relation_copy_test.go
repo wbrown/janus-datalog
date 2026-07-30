@@ -273,8 +273,8 @@ func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
 	}
 	unsafeBranch := newMockUnsafeRelation(branchSymbols, unsafeBranchData)
 
-	// Test projectedIterator - this is what OrFallbackIterator wraps the branch with
-	// The fix is in projectedIterator.Tuple() which should copy when source.RequiresCopy() = true
+	// Test projectedIterator - this is what OrFallbackIterator wraps the branch with.
+	// projectedIterator.Tuple() must copy when source.RequiresCopy() = true.
 	branchIt := unsafeBranch.Iterator()
 	projIt := &projectedIterator{
 		inner:          branchIt,

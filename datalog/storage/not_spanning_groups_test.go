@@ -211,10 +211,11 @@ func TestNotBodyPredicateConsumesInBoundParameter(t *testing.T) {
 	}
 }
 
-// TestNotJoinOmittedHeaderBodyProvidesInBoundParameter pins shape 3, green
-// before the ruling and required to stay green: the header omits the
-// :in-bound symbol, the body pattern provides it, and the executor's
-// environment bridging correlates it.
+// TestNotJoinOmittedHeaderBodyProvidesInBoundParameter pins shape 3: the
+// header omits the :in-bound symbol, the body pattern provides it, and the
+// executor's environment bridging correlates it. This shape is unaffected
+// by the header-env-binding ruling — a header may omit a symbol the body
+// itself binds.
 func TestNotJoinOmittedHeaderBodyProvidesInBoundParameter(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -290,9 +291,8 @@ func TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors(t *testing.T) {
 }
 
 // TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors pins the same rule for a
-// WHERE-bound header symbol — the sibling shape, which diverged before the
-// environment widening: the algebra compiler rejected it while the executor
-// keyed the anti-join on it vacuously.
+// WHERE-bound header symbol — the sibling shape: both modes must reject it,
+// not let the executor key the anti-join on the unused symbol vacuously.
 func TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

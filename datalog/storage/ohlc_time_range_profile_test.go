@@ -176,7 +176,8 @@ func BenchmarkOHLCBadgerDBTimeRanges(b *testing.B) {
 	}
 }
 
-// BenchmarkSimpleTimeQuery tests time-based queries with and without optimization
+// BenchmarkSimpleTimeQuery measures an unbound scan of :price/time across 2,600
+// bars: the whole-attribute read, with no predicate narrowing it.
 func BenchmarkSimpleTimeQuery(b *testing.B) {
 	// Create database with 260 hours of data
 	tempDir := b.TempDir()

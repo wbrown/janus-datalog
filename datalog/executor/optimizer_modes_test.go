@@ -17,10 +17,10 @@ import (
 // Plan of record: docs/wip/OPTIMIZER_MODE_MATRIX.md.
 //
 // This package cannot import storage (import cycle), so it carries its own
-// copy of the axis. Two base-option profiles are in live use here and the
-// migration preserves each test's existing profile, adding only the algebra
-// axis: NewExecutor's default profile via plannerOptions(), and the bare
-// planner.PlannerOptions{} zero-value profile via zeroPlannerOptions().
+// copy of the axis. Two base-option profiles are in live use here, each
+// varying only the algebra axis from its base: NewExecutor's default profile
+// via plannerOptions(), and the bare planner.PlannerOptions{} zero-value
+// profile via zeroPlannerOptions().
 type optimizerMode struct {
 	name    string
 	algebra bool

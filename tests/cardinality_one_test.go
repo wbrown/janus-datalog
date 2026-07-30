@@ -23,7 +23,7 @@ type EntityWithLore struct {
 // when using tx.Add vs SaveStruct for updates.
 //
 // Key findings (CRDT implementation):
-//  1. tx.Add IS NOW schema-aware - for cardinality-one, it uses LWW semantics
+//  1. tx.Add is schema-aware - for cardinality-one, it uses LWW semantics
 //     (Last-Writer-Wins), so only the most recent value is returned by queries
 //  2. SaveStruct properly handles cardinality-one upserts (uses LWW internally)
 //  3. If an entity is created with SaveStruct and has empty string fields,

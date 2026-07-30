@@ -227,8 +227,7 @@ func TestSubqueryWithMultipleOuterTuples(t *testing.T) {
 
 // TestSubqueryWithTwoInputs pins multi-input subquery forwarding: the call
 // site passes a correlated variable and a typed constant (#inst) after $, and
-// both must bind in the nested :in. A long-lived skip here blamed the engine
-// for "multiple inputs not supported"; the defect was in this fixture — the
+// both must bind in the nested :in. The defect was in this fixture — the
 // date constant was a bare EDN string matched against time.Time datoms, which
 // type-strict matching correctly rejects, so the totals read 0. See
 // BUG_SUBQUERY_MULTIPLE_INPUTS.md.
@@ -333,7 +332,7 @@ func TestSubqueryWithNoInput(t *testing.T) {
 	}
 
 	// Find products cheaper than max configured price
-	// NOTE: Changed order - subquery must come before its result is used
+	// NOTE: the subquery must come before its result is used
 	queryStr := `[:find ?name ?price
 	             :where
 	             [(q [:find ?max

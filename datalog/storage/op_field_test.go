@@ -3,14 +3,13 @@ package storage
 // op_field_test.go - Tests for Op field implementation
 //
 // CRITICAL: These tests verify that the Op field on Datom works correctly
-// for CRDT cardinality-many semantics. The Op field replaced the old
-// SetEntry wrapper approach.
+// for CRDT cardinality-many semantics.
 //
-// Key changes tested:
+// Invariants tested:
 // 1. Op field is always the last byte of every key
-// 2. V stores raw values (not SetEntry bytes) - enables AVET lookups
-// 3. Add-wins resolution reads Op from datom.Op, not from SetEntry
-// 4. AVET index can now match raw value types for cardinality-many
+// 2. V stores raw values, enabling AVET lookups
+// 3. Add-wins resolution reads Op from datom.Op
+// 4. AVET index matches raw value types for cardinality-many
 
 import (
 	"os"
@@ -244,8 +243,9 @@ func TestRemoveMethodUsesOpField(t *testing.T) {
 	}
 }
 
-// TestAVETLookupWithOpField verifies AVET index works with raw values
-// This was broken with the old SetEntry approach (TypeBytes pollution)
+// TestAVETLookupWithOpField verifies AVET index works with raw values: a
+// cardinality-many value tagged as generic bytes instead of its own type
+// would fail this lookup.
 func TestAVETLookupWithOpField(t *testing.T) {
 	dir, err := os.MkdirTemp("", "op-field-avet-*")
 	if err != nil {

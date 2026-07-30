@@ -14,9 +14,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-// Note: We use db.Query() directly instead of NewExecutor() + Execute()
-// because Database provides a simpler API that handles parsing internally.
-
 // buildCLI builds the CLI binary for testing
 func buildCLI(t *testing.T) string {
 	t.Helper()
@@ -766,7 +763,6 @@ func TestCLI_ImportNonexistentFile(t *testing.T) {
 
 // TestCLI_BareInvocationDoesNotWrite is the regression test for demo-mode
 // removal: invoking the CLI with no mode flags must never commit data.
-// (Demo mode used to auto-populate an empty database with sample datoms.)
 func TestCLI_BareInvocationDoesNotWrite(t *testing.T) {
 	binPath := buildCLI(t)
 

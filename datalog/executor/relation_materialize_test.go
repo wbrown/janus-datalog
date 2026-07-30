@@ -268,8 +268,7 @@ func TestSizeBlocksWhileCaching(t *testing.T) {
 
 	// Handshake: once the source has been entered, Iterator() has set
 	// cachingInProgress and the build is parked, so it cannot complete. From
-	// here Size() can never observe the not-started state -- the state that
-	// returned -1 in the flaky (sleep-based) version.
+	// here Size() can never observe the not-started state.
 	<-src.started
 
 	// Call Size() while caching is held open. cacheReady is false (the source

@@ -15,7 +15,7 @@ import (
 // Bug: QueryExecutor fails to preserve subquery result symbol names, causing
 // projection to fail with "cannot project: symbol ?xxx not found in relation"
 //
-// This reproduces the gopher-street bug:
+// The reported instance:
 // "cannot project: symbol ?open-price not found in relation"
 func TestQueryExecutorSubqueryProjection(t *testing.T) {
 	// Create test data
@@ -122,8 +122,8 @@ func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 		{E: bar3, A: priceLow, V: 101.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	// Query with multiple subqueries contributing to projection
-	// Simulates gopher-street's OHLC query pattern
+	// Query with multiple subqueries contributing to projection: the OHLC shape,
+	// where every find symbol past ?symbol comes from its own subquery.
 	queryStr := `[:find ?symbol ?first-open ?last-close ?max-high ?min-low
 	              :where [?s :symbol/ticker ?symbol]
 	                     ; Get first open price
@@ -154,7 +154,6 @@ func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	// Test with QueryExecutor (Stage B) - this is the bug
 	matcher := NewIndexedMemoryMatcher(datoms) // Shared read-only matcher across modes
 
 	for _, mode := range optimizerModes {

@@ -16,7 +16,7 @@ import (
 // buildComplexNotQuery builds a complex query that exercises the interaction
 // between NOT clauses, multiple get-else expressions, correlated OR-with-subquery
 // branches, comparison bindings, and order-by. This is the minimal structure
-// that triggers the NOT clause scheduling bug (GitHub #58).
+// that triggers the NOT clause scheduling bug.
 //
 // Data model: projects have items. Items may be deleted or completed.
 // Query: find non-deleted projects with aggregated item stats, optional
@@ -137,9 +137,10 @@ func buildComplexNotQuery() *query.Query {
 		).OrderBy(qb.Desc(lastUpdatedAt)).MustBuild()
 }
 
-// TestNotClauseComplexQuery_E2E reproduces GitHub issue #58: NOT clause fails
-// with "NOT clause variables not found in input relation" in a complex query
-// with multiple get-else, OR-with-subquery, comparison, and order-by clauses.
+// TestNotClauseComplexQuery_E2E reproduces a NOT-clause scheduling bug: NOT
+// clause fails with "NOT clause variables not found in input relation" in a
+// complex query with multiple get-else, OR-with-subquery, comparison, and
+// order-by clauses.
 func TestNotClauseComplexQuery_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -253,9 +254,10 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 }
 
 // TestNotClauseWithUnboundInnerVar_E2E tests NOT where the inner pattern
-// introduces a new variable not in the outer scope.
-// This is the pattern most affected by extractNotClauseSymbols treating
-// inner Provides as Requires.
+// introduces a new variable not in the outer scope. This is the pattern
+// that breaks if a plain NOT's inner-only free variables are ever required
+// from the enclosing query instead of treated as existential — the
+// classification query.ScopeOf assigns via ClauseScope.CorrelatesOptional.
 func TestNotClauseWithUnboundInnerVar_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

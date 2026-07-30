@@ -31,9 +31,7 @@ const bindingDrivenWrites = 3
 // writes the fixture, and returns the pattern, the binding relation over E and
 // the output symbols the three strategies share.
 //
-// The annotation handler is installed by the caller after the writes, so the
-// transactions' own events stay out of the assertion.
-// handler is registered at open, since the matchers and relations this database
+// Handler is registered at open, since the matchers and relations this database
 // builds are all constructed with it; nil is annotations-off.
 func bindingDrivenFixture(
 	t *testing.T,
@@ -281,9 +279,9 @@ func TestBindingSizeCountsTuplesNotDistinctKeys(t *testing.T) {
 // lastScanComplete finds the completion event a given strategy emitted.
 //
 // Scans are one event name, so a test meaning "the merge join's completion"
-// has to say so by strategy: the discriminator moved into the payload when the
-// five completion names collapsed, and matching on the name alone would now
-// return whichever scan happened to finish last.
+// has to say so by strategy: the discriminator lives in the payload, and
+// matching on the name alone would return whichever scan happened to finish
+// last.
 func lastScanComplete(events []annotations.Event, strategy annotations.ScanStrategy) *annotations.Event {
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i].Name != annotations.StorageScanComplete {
@@ -501,9 +499,9 @@ func TestIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T) {
 }
 
 // TestCardinalityAnnotationKeyCarriesOnlyAKeyword is the sibling pin on
-// KeyCardinality: four producers write it, and the key is declared to carry a
-// datalog.Keyword. A rendering filed there prints `one` where the rest of the
-// trace prints `:db.cardinality/one`.
+// KeyCardinality: the key is declared to carry a datalog.Keyword. A rendering
+// filed there prints `one` where the rest of the trace prints
+// `:db.cardinality/one`.
 //
 // This query reaches the v-validation arm. DisableCache is load-bearing: with
 // the cache on, matchWithBindingsFromCache answers a binding-driven pattern

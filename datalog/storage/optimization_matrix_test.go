@@ -377,9 +377,8 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 
 // TestComplexQueryCheckpointCacheSteadyState observes the EA cache's rebuild
 // traffic on the complex checkpoint after warmup, via cache/rebuild events.
-// A warm read-only steady state is expected to rebuild nothing; the
-// allocation profile attributed ~190 storage scans per execution to cache
-// rebuilds, and this reports that population by attribute and reason.
+// A warm read-only steady state is expected to rebuild nothing; this reports
+// any rebuild population by attribute and reason.
 func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
 	const (
 		numScenarios     = 75

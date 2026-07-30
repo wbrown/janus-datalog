@@ -2,10 +2,10 @@ package datalog
 
 import "testing"
 
-// Allocation-free microbenchmarks for the comparison hot path touched by the
-// integer-width unification. These isolate ValuesEqual/CompareValues from the
-// GC- and thermal-dominated macro hash-join benchmarks, so a before/after
-// benchstat reflects the function change rather than machine noise.
+// Allocation-free microbenchmarks for the comparison hot path. These isolate
+// ValuesEqual/CompareValues from the GC- and thermal-dominated macro hash-join
+// benchmarks, so a benchstat comparison reflects a change to the function
+// rather than machine noise.
 
 var (
 	cmpEqualSink bool

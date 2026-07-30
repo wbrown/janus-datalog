@@ -53,9 +53,7 @@ func TestPredicateFilterIteratorPropagatesEvaluationError(t *testing.T) {
 
 // StreamingRelation's relational operations have one implementation:
 // composed iterators. They behave identically under zero-value options —
-// there is no eager mode. (The former EnableIteratorComposition false arm
-// delegated to itself through Materialize, which returns the receiver, and
-// recursed without bound.)
+// there is no eager mode.
 func TestStreamingOpsStreamUnderZeroOptions(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	open := func() *StreamingRelation {

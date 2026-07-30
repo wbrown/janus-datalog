@@ -15,14 +15,13 @@ import (
 // membership rule that narrows it — and Seek takes a ScanBound. Honouring the
 // start and the membership rule while discarding the end leaves the caller
 // holding an iterator that walks off the end of the run it asked for, with no
-// way to say where it stops. The caller then re-derives the end itself, and the
-// only material it has is the encoded key: that is how key[1:21] came to be
-// sliced in pull_batch.go, above the seam whose purpose is that callers never
-// hold a key layout.
+// way to say where it stops. The caller then has to re-derive the end itself,
+// and the only material it has is the encoded key.
 //
-// The shape under test is the one that path uses and the one the shared-scan
-// optimisation depends on: open a scan wide, seek within it repeatedly, and get
-// each sought run and nothing else. The second seek is not decoration — an
+// The shape under test is the one pull_batch.go's ResolveAllAttributesMany
+// uses, and the one the shared-scan optimisation depends on: open a scan wide,
+// seek within it repeatedly, and get each sought run and nothing else. The
+// second seek is not decoration — an
 // iterator that stopped by exhausting itself could pass the first assertion and
 // fail every caller that reuses it.
 func TestSeekHonoursTheRunItNames(t *testing.T) {

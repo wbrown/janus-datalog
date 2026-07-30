@@ -569,9 +569,9 @@ func TestPullExecutor_AnnotationsEmitted(t *testing.T) {
 // The `found` field was a parameter of PullContext.AttributeLookup, taken by
 // value at the call site — before the closure that performs the lookup and
 // assigns it has run. Every event in every trace therefore reported false,
-// including for attributes that were present, and no assertion anywhere read
-// the field to notice. The interface now returns the outcome through the
-// closure, which is the shape AllAttributes three lines above it already uses.
+// including for attributes that were present. The interface returns the
+// outcome through the closure, which is the shape AllAttributes three lines
+// above it already uses.
 //
 // Both tuples matter: an event hard-wired to false passes a present-attribute
 // assertion only if that assertion is missing, and one hard-wired to true would

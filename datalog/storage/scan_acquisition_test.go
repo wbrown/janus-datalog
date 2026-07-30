@@ -41,10 +41,9 @@ var acquisitionsOutsideTheOpeners = map[string]string{
 // TestScanAcquisitionGoesThroughAReport is the check that closes Family 2.
 //
 // The family's generator is that the obligated set came from a review's
-// enumeration rather than from the code: each round converted the arms it was
-// handed, the pins covered those arms, and the next arm written was invisible
-// to both the trace and the gate. Three rounds, same shape. This derives the set
-// from the source on every run, which is the property the enumeration lacked.
+// enumeration rather than from the code: the next arm written was invisible
+// to both the trace and the gate. This derives the set from the source on
+// every run, which is the property the enumeration lacked.
 //
 // It walks the whole module, not this package. The openers are exported for
 // exactly that reason — a query path added in db, executor or a command would

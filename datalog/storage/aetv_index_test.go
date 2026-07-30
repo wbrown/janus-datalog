@@ -446,7 +446,6 @@ func TestAETVCRDTResolutionSingleEntity(t *testing.T) {
 }
 
 // TestAETVCRDTResolutionMultipleEntities verifies LWW resolution for batch lookup.
-// This is THE critical test case that was broken before AETV.
 func TestAETVCRDTResolutionMultipleEntities(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

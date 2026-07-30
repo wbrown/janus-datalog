@@ -37,9 +37,9 @@ func TestStrStartsWithPredicate(t *testing.T) {
 	}
 }
 
-// FunctionPredicate is the placeholder for user-defined predicate functions,
-// which are not yet wired to a registration mechanism; evaluation errors
-// loudly instead of silently filtering.
+// FunctionPredicate is the invocation form for user-defined predicate
+// functions; an unregistered name errors loudly at evaluation instead of
+// silently filtering.
 func TestFunctionPredicateUnknownNameErrors(t *testing.T) {
 	pred := FunctionPredicate{Fn: "my/custom?"}
 	if _, err := pred.Eval(nil); err == nil {

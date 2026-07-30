@@ -106,8 +106,8 @@ func TestExplainAlgebraNotJoinEnvironmentHeader(t *testing.T) {
 	}
 }
 
-// TestExplainAlgebraGetElse pins the provenance of the formerly-silent
-// get-else rewrite through the public surface.
+// TestExplainAlgebraGetElse pins the provenance of the get-else rewrite
+// through the public surface.
 func TestExplainAlgebraGetElse(t *testing.T) {
 	db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true}, nil)
 

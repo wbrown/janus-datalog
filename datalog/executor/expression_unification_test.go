@@ -13,15 +13,15 @@ import (
 // equals the existing value and is dropped otherwise; the existing value is
 // never replaced. The executor's ground-constants path already implements
 // exactly this ("filter (unify) instead of extending", executeExpression);
-// these tests pin the same contract for the per-tuple path, which today
-// overwrites the bound value instead. Overwriting silently corrupts tuples:
+// these tests pin the same contract for the per-tuple path, which must not
+// overwrite the bound value. Overwriting silently corrupts tuples:
 // the OHLC decorrelation failure produced tuples whose ?datetime came from the
 // outer bar while the aggregates belonged to a different group, because the
 // hour expressions overwrote the join keys instead of filtering.
 //
 // These pins involve no subquery, so the planner's subquery scheduling
 // cannot affect them: the expression-provided query case and every
-// function-level case stay red until the executor defect itself is fixed.
+// function-level case are the direct reproducers of the executor defect.
 // (The pattern-provided query case is enforced by pattern deferral today and
 // pins that adjacent behavior.) See
 // BUG_EXPRESSION_BINDING_OVERWRITES_BOUND_VARIABLE.md and its

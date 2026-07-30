@@ -17,18 +17,15 @@ import (
 
 // Regression guards for executeRealizedWithRelationInputIterationParallel.
 //
-// Per-tuple goroutine spawning in this function was the source of
-// pthread_cond_* / runtime.lock2 / runtime.usleep dominance in profiles
-// when relation inputs have hundreds of tuples — every input tuple paid
-// goroutine-creation overhead and competed for a semaphore. The
-// remediation is a fixed worker pool + tuple channel pattern
-// (numWorkers goroutines instead of len(tuples)). See docs/perf/README.md
-// for the baseline measurement.
+// The function runs a fixed pool of numWorkers worker goroutines against a
+// channel of input tuples, rather than spawning one goroutine per tuple, to
+// avoid goroutine-creation and semaphore contention on relation inputs with
+// hundreds of tuples.
 //
-// These tests pin the observable behavior of the function so the refactor
-// can swap implementation without changing semantics. The existing
+// These tests pin the observable behavior of the function so its
+// implementation can change without changing semantics. The existing
 // relation_input_test.go covers basic correctness; this file covers the
-// invariants the refactor must preserve:
+// invariants that must be preserved:
 //
 //   1. Multiset equality with sequential (count-preserving, not just set)
 //   2. Error propagation when a worker's per-tuple query errors
@@ -266,8 +263,7 @@ func TestRelationInputParallel_PropagatesMatcherError(t *testing.T) {
 
 // TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple covers the
 // case where the first few tuples succeed and a later one fails. The
-// pre-fix behavior would have been a truncated success; the contract is
-// that error propagates regardless of position.
+// contract is that error propagates regardless of position.
 func TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple(t *testing.T) {
 	// Shared read-only delegate; the stateful failingMatcher wrapper (call
 	// counter) is rebuilt fresh per mode below so each mode's execution sees
@@ -368,11 +364,10 @@ func TestRelationInputParallel_PropagatesDeferredIteratorError(t *testing.T) {
 
 // TestRelationInputParallel_NoGoroutineLeak verifies that repeated parallel
 // iteration does not leak goroutines. Catches forgotten wg.Wait(),
-// abandoned worker pool goroutines after refactor, or unclosed channels.
+// abandoned worker pool goroutines, or unclosed channels.
 //
-// The current implementation spawns len(tuples) per-tuple goroutines per
-// call; a worker-pool refactor will spawn numWorkers long-lived goroutines
-// per call. Either way, count must return to baseline after the call.
+// The worker pool spawns numWorkers long-lived goroutines per call; count
+// must return to baseline after the call.
 func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(buildPeopleDatoms())
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
@@ -504,9 +499,9 @@ func (it *reusingWorkspaceIterator) Error() error { return nil }
 // `go test -race` reports it as a data race on the workspace's backing
 // array.
 //
-// This was the blind spot in the first five gap-fillers: every one used
-// MaterializedRelation as the iteration input (RequiresCopy() == false,
-// stable tuples), so the workspace-reuse race never surfaced.
+// The tests above use MaterializedRelation as the iteration input
+// (RequiresCopy() == false, stable tuples), which does not trigger this
+// race; this test uses a streaming input instead so the race surfaces.
 //
 // Design notes:
 //   - Each input tuple matches exactly ONE entity in the dataset, so each
