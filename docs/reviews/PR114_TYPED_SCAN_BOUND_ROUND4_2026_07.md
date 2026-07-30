@@ -646,6 +646,17 @@ re-checking the nil test sitting on the line below. Ruling 9 and the guard sweep
 moved guards to call sites without checking whether the moved guard could fire.
 Nothing sweeps for guards whose claim has become false.
 
+**Status 2026-07-30: closed.** 4a was already fixed before it was read; 4b is
+withdrawn (its premise false — the guards it called dead are what every reader
+downstream treats as the attribute's absence); 4c resolved by removing its subject;
+4d struck, its subject gone. 4e is fixed, and its framing inverted on derivation:
+the unreachable guard is contract, and the defect was the five-spelling predicate
+around it. 4f belongs to 2a.
+
+Two of this family's six instances turned out to be about code that had already
+changed, and a third was false. That ratio is the family's own generator applied to
+the review: a guard's claim goes unchecked, and so does an instance's.
+
 **Deriving the instance set.** For each guard, name the claim and find the code
 that could make it true. For each struct field, find its writers and readers.
 Both are mechanical and neither has been done for the touched files.
@@ -713,6 +724,27 @@ is valid and does nothing, so passes call it unconditionally"); the passes
 deliberately compute `observing` first, precisely so they do not prepare the
 payload arguments.
 
+**Reframed and fixed 2026-07-30** (ledger item 37). The guard is not the defect:
+nil sinks are live — `DecorrelationPass(nil)`, `GetElseScanRewritePass(nil)` — and
+the guard is what makes "a nil sink is valid" true. The defect is the predicate
+around it. Two questions, "will a record be consumed" and "will an event be
+consumed", had five spellings across four sites (the `planner` site dropping the
+nil check under a comment explaining why it could), because the nil test was copied
+rather than derived. `Recording()` and `Emitting()` are now each question's single
+home, both nil-safe, and `Emit`'s guard *is* `!s.Emitting()`.
+
+The unreachability stands and is now documented as the division of labour it is:
+nil is valid at the entry points **and** callers still gate, because Go evaluates
+arguments eagerly and no guard inside `Record` can prevent a payload map or a
+`hasAggregates` walk. That is why the entry guards go unreached from inside the
+module — the fact 4e read as the defect, missing only its reason.
+
+Verified free before landing, at owner instruction: `-gcflags=-m` reports `can
+inline` for both predicates and `inlining call to` at every site, cross-package
+included. Unchecked, the change would have placed a real call on the decorrelation
+pass's per-`LateralJoin` path — the accessor-wrapper shape, introduced while
+claiming to remove duplication.
+
 **4f. Four V-validation fields with no writers.** See 2a.
 
 ---
@@ -729,6 +761,14 @@ installers were not converted. `Seek` gained the run's end and the caller-side
 check was deleted; the obligation went into the two implementations, not the
 interface an external backend reads. `memoryIterator` gained an `end` field;
 three of its four position-consulting methods were updated.
+
+**Status 2026-07-30: closed but for one residue.** 5a's free half is fixed — the
+`Iterator` contract now states the run's end and membership rule alongside its
+start — and its decision half (publishing a runnable conformance suite) is governed
+by 5d's ruling. 5b is fixed; 5c is superseded by R4, with its one live clause
+corrected; 5d is struck. **Open**: `CRDT_UNIQUE_SEMANTICS.md:403` shows
+`def.Unique != ""`, which no longer compiles now that `Unique` is a
+`datalog.Keyword` — a reference document displaying code that cannot build.
 
 **Deriving the instance set.** For each moved obligation: every implementation
 of the interface, every installer/caller in the repository including the
@@ -761,6 +801,16 @@ free half open.
   in-tree implementations before any hypothetical third: **5b is this defect
   landing**, `memoryIterator.ElementID` having dropped `end` and membership
   because nothing on the contract said to consult them.
+
+  **Fixed 2026-07-30** (ledger item 37). The contract states all three, and states
+  what follows from taking only the start: the iterator walks past the sought bound
+  into whatever the scan's wider range still holds, and the caller is left deriving
+  its own run's end from the encoded key — which is the `pull_batch.go` arithmetic
+  `0c30a7a` deleted, re-arriving from above the seam. `memoryIterator.Seek` and
+  `KeyOnlyIterator.Seek` already carried that reasoning in their bodies; the
+  interface an external backend reads did not, which is this family's invariant
+  exactly. `TestSeekHonoursTheRunItNames` already pinned the behaviour, so no test
+  changed.
 - **Publishing a runnable contract is the decision.** `storeContractCases` and
   `TestSeekHonoursTheRunItNames` are in `_test.go` files, so nothing outside the
   package can execute the real obligation. Exporting a conformance suite is API
@@ -848,6 +898,13 @@ emitter, so any assertion on key *presence* tests the emitter. The tests were
 written alongside the emitter, so they inherited its guarantees as their
 subject. Same shape as T7 one round earlier, on the other two terms.
 
+**Status 2026-07-30: closed.** 6a and 6b are fixed — every funnel term is asserted
+in value, and the cache arm's table covers all three cardinalities rather than
+cardinality-one alone. 6c is **struck as false**: the absolute floor it asked for
+was already the line above the one it read. 6d's coverage clause is addressed, its
+two later clauses were derived away, and its surviving gate hole is closed by
+`make test-examples`.
+
 **Deriving the instance set.** For each new assertion, name the mutation it is
 supposed to catch and apply it. The review did this and three assertions
 survived; the rest of the round's pins have not been mutation-checked.
@@ -867,12 +924,19 @@ two exact intake assertions in the package are on `ScanDirect`, not
 `resolve-complete`, so neither covers `ResolveLWW`. The separating input is a
 concrete `AsOf` handle, which no test drives through the cache arm.
 
-**6c. `TestSilentSinkBuildsNoProvenance` pins the guard, not the removal.**
-*Verified 2026-07-29.* The assertion is `require.Less(silent, observing)` — purely
-relative, so it holds for any amount of unconditional silent work as long as the
-collecting path stays higher. Restoring one deleted rendering takes the silent path
-from 217 to 240 allocations and the test still passes. An absolute ceiling would
-catch it.
+**6c. Struck as false — derived 2026-07-30.** The instance read one assertion and
+missed the one above it. `require.Less(silent, observing)` is indeed relative, but
+the preceding line is `require.Equal(t, noSink, silent)` — a silent sink must
+allocate *exactly* what a **nil** sink does, and a nil sink cannot build provenance
+at all. That is the absolute floor the instance asks for, already present. `Less` is
+the discrimination check keeping `Equal` from passing vacuously if the pass built
+nothing in all three cases.
+
+The cited counterexample refutes itself: restoring a deleted rendering takes the
+silent path from 217 allocations to 240, which is exactly what `Equal` reds on. The
+"verified 2026-07-29" marker recorded reading `Less`, not the assertion pair.
+
+Second instance to fall on derivation, after 4d. Both were *Verified*.
 
 **6d. Coverage the gate does not reach.** *First clause verified 2026-07-29:* the
 arm table sets `DisableCache: true` for every case, so with the cache on — the
@@ -904,9 +968,18 @@ already in hand and opens no scan, and both its callers — `prefetch.go` and
 `pull_batch.go` — opened and reported their own scan, so charging those reads to
 each entry as well would count them twice.
 
-What survives of 6d is the coverage clause it opened with, now addressed, and the
+What survived of 6d was the coverage clause it opened with, now addressed, and the
 gate hole: everything under `examples/` is `//go:build example` with no Makefile
-target, so this round's `examples/schema.go` edit is covered by no gate.
+target, so this round's `examples/schema.go` edit was covered by no gate.
+
+**Closed 2026-07-30.** `make test-examples` vets each file separately and is part
+of `make test`. Separately because `go vet ./examples/` reports `main redeclared`
+— every example is its own `package main`, which is why sixteen files had no gate
+rather than an oversight. The file list is an overridable variable, which is how
+the gate was shown able to red at all: `make test-examples
+EXAMPLE_FILES=examples/does_not_exist.go` exits Error 1. A gate with no
+demonstrated failure path is 6a/6b's defect one layer out — an assertion
+satisfied by a constant.
 
 ---
 
