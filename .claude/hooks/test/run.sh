@@ -1,8 +1,11 @@
 #!/bin/bash
 # run.sh — run the .claude/hooks test harness.
 #
-#   Tier 1 (review_common_test.sh): deterministic tests of the verdict channel
-#           in lib/review_common.sh. No LLM; fast and hermetic.
+#   Tier 1: deterministic tests of the sourceable libs. No LLM; fast and
+#           hermetic.
+#             review_common_test.sh — the verdict channel in lib/review_common.sh
+#             edit_evidence_test.sh — the evidence computations that feed the
+#                                     review prompt, in lib/edit_evidence.sh
 #   Tier 2 (verdict_quality_test.sh): end-to-end tests that run the real review
 #           hooks against the claude CLI to check verdict quality (block/allow).
 #
@@ -17,6 +20,9 @@ rc=0
 
 printf '=== Tier 1: verdict channel (deterministic, no LLM) ===\n'
 bash "$SCRIPT_DIR/review_common_test.sh" || rc=1
+
+printf '\n=== Tier 1: edit evidence (deterministic, no LLM) ===\n'
+bash "$SCRIPT_DIR/edit_evidence_test.sh" || rc=1
 
 printf '\n=== Tier 2: verdict quality (real claude CLI) ===\n'
 bash "$SCRIPT_DIR/verdict_quality_test.sh" || rc=1

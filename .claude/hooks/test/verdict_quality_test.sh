@@ -93,6 +93,44 @@ DEC_C=$(run_hook "$HOOKS_DIR/review-edit.sh" "$TR_C" "/tmp/hooktest_parser.go" \
     'return 5')
 assert_decision "review-edit blocks editing a library to satisfy a consumer test" "deny" "$DEC_C"
 
+# --- Case D: review-edit BLOCKS a sweep that deletes a contract -------------
+# Rule 9's reciprocal. The sweep itself is authorized and the deleted text opens
+# with a "rather than" contrast, so it is shaped like a Group B defense — but it
+# states where the next declaration of this kind must live, which is a contract.
+TR_D="$TMP/sweepcontract.jsonl"
+make_transcript "$TR_D" \
+    "Sweep the diff-narration comments out of the annotations package." \
+    "This comment contrasts the code with an alternative — 'lives here rather than in storage' — which is the Group B shape, a defense of a choice. Removing it along with the rest of the sweep." \
+    "Removing the diff-narration comment from ScanStrategy."
+DEC_D=$(run_hook "$HOOKS_DIR/review-edit.sh" "$TR_D" "/tmp/hooktest_types.go" \
+'// ScanStrategy names how a scan was performed. It travels under KeyStrategy.
+//
+// It lives here rather than in storage because storage imports this package, so
+// a strategy declared there could reach the formatter only as string literals
+// re-spelled on this side.
+type ScanStrategy string' \
+'// ScanStrategy names how a scan was performed. It travels under KeyStrategy.
+type ScanStrategy string')
+assert_decision "review-edit blocks a sweep deleting a placement contract" "deny" "$DEC_D"
+
+# --- Case E: review-edit ALLOWS a sweep that deletes real history -----------
+# The complement of Case D, and it carries as much weight: the reciprocal exists
+# so the sweep can run at all. A reviewer that blocks this has failed closed on
+# the operation Rule 9 was written to enable.
+TR_E="$TMP/sweephistory.jsonl"
+make_transcript "$TR_E" \
+    "Sweep the diff-narration comments out of the executor package." \
+    "'(original implementation)' describes what this branch used to be called, which is readable only against a previous version of the file. Nothing in the current file needs it." \
+    "Removing the prior-state marker from the materialized branch."
+DEC_E=$(run_hook "$HOOKS_DIR/review-edit.sh" "$TR_E" "/tmp/hooktest_join.go" \
+'	// Materialized mode (original implementation)
+	// Use efficient TupleKeyMap for deduplication
+	var seen *TupleKeyMap' \
+'	// Materialized mode
+	// Use efficient TupleKeyMap for deduplication
+	var seen *TupleKeyMap')
+assert_decision "review-edit allows a sweep deleting a prior-state marker" "allow" "$DEC_E"
+
 # --- summary ---------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
