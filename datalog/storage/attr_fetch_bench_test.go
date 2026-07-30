@@ -23,7 +23,7 @@ import (
 //             — anchor produces N entities; Pull fetches all K attributes per
 //               entity in one go (no inter-attribute join).
 //
-// Both produce N rows carrying the same K attribute values; the anchor is
+// Both produce N tuples carrying the same K attribute values; the anchor is
 // identical, so the patterns-minus-pull delta is the per-attribute join cost —
 // the prize available to a same-entity attribute-fusion optimization.
 //
@@ -120,14 +120,14 @@ func benchmarkAttrFetch(b *testing.B, n, k int, mode string, fusion bool) {
 
 	// Warm caches so the measured loop is steady-state.
 	if got := countVBoundQuery(b, db, query); got != n {
-		b.Fatalf("warmup: got %d rows, want %d", got, n)
+		b.Fatalf("warmup: got %d tuples, want %d", got, n)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if got := countVBoundQuery(b, db, query); got != n {
-			b.Fatalf("got %d rows, want %d", got, n)
+			b.Fatalf("got %d tuples, want %d", got, n)
 		}
 	}
 }

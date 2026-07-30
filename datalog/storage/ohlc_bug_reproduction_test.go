@@ -11,8 +11,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
-// TestOHLCQueryBug reproduces the exact bug from gopher-street TEST 2
-// This test should FAIL (hang or return wrong results) until the tuple copying bug is fixed
+// TestOHLCQueryBug guards against a tuple-copying bug in a time-grouped OHLC
+// aggregate query: it must return a nonzero grouped result rather than hang
+// or return an empty relation.
 func TestOHLCQueryBug(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping slow bug reproduction test")
@@ -23,7 +24,7 @@ func TestOHLCQueryBug(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	// Insert realistic OHLC data matching gopher-street schema
+	// Insert realistic OHLC price-bar data
 	tx := db.NewTransaction()
 
 	// Symbol
@@ -51,7 +52,7 @@ func TestOHLCQueryBug(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	// The exact query from gopher-street TEST 2 that hangs
+	// The time-grouped OHLC aggregate query that triggers the bug
 	queryStr := `[:find ?year ?month ?day (min ?open) (max ?high) (min ?low) (max ?close) (sum ?volume)
 	              :where [?s :symbol/ticker "CRWV"]
 	                     [?e :price/symbol ?s]
@@ -73,7 +74,7 @@ func TestOHLCQueryBug(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 			popts := mode.plannerOptions()
 			exec := executor.NewExecutorWithOptions(matcher, db, popts)
 

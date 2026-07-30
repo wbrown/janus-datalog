@@ -18,7 +18,7 @@ import (
 // setupAlgebraTestDB creates a database with representative data for
 // testing all clause types through the full pipeline. popts sets the
 // database-level planner options (nil = default); tests that pass options
-// per-query via queryWithPlannerOptions are unaffected by it.
+// per-query via queryUnderPlannerOptions are unaffected by it.
 func setupAlgebraTestDB(t testing.TB, popts *planner.PlannerOptions) (*Database, func()) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "algebra-integration-*")
@@ -76,17 +76,21 @@ func setupAlgebraTestDB(t testing.TB, popts *planner.PlannerOptions) (*Database,
 }
 
 // queryWithAlgebra runs a query with the algebra optimizer enabled.
+//
+// Derived from the database's own options so the algebra flag is the only thing
+// that differs; building from DefaultPlannerOptions would discard whatever the
+// database was opened with, its handler included.
 func queryWithAlgebra(db *Database, queryStr string) (executor.Relation, error) {
-	opts := DefaultPlannerOptions()
+	opts := db.effectivePlannerOptions()
 	opts.EnableAlgebraOptimizer = true
-	return queryWithPlannerOptions(db, queryStr, opts)
+	return db.queryUnderPlannerOptions(opts, queryStr)
 }
 
 // queryWithoutAlgebra runs a query with the algebra optimizer disabled.
 func queryWithoutAlgebra(db *Database, queryStr string) (executor.Relation, error) {
-	opts := DefaultPlannerOptions()
+	opts := db.effectivePlannerOptions()
 	opts.EnableAlgebraOptimizer = false
-	return queryWithPlannerOptions(db, queryStr, opts)
+	return db.queryUnderPlannerOptions(opts, queryStr)
 }
 
 // TestAlgebraIntegration_SimplePatterns tests that simple data patterns
@@ -348,7 +352,7 @@ func TestAlgebraIntegration_PrefetchInDecorrelatedSubquery(t *testing.T) {
 
 	opts := DefaultPlannerOptions()
 	opts.EnableAlgebraOptimizer = true
-	rel, err := queryWithPlannerOptions(db, q, opts)
+	rel, err := db.queryUnderPlannerOptions(opts, q)
 	require.NoError(t, err)
 	results, err := executor.CollectTuples(rel, nil)
 	require.NoError(t, err)
@@ -362,7 +366,7 @@ func TestAlgebraIntegration_PrefetchInDecorrelatedSubquery(t *testing.T) {
 	// Log match events to trace cache vs storage usage
 	t.Logf("Total matches->relations events: %d", len(matchEvents))
 	for _, e := range matchEvents {
-		pattern := e.Data["pattern"]
+		pattern := e.Data[annotations.KeyPattern]
 		count := e.Data["match.count"]
 		t.Logf("  [%v] %v matches (latency: %v)", pattern, count, e.Latency)
 	}

@@ -26,7 +26,7 @@ import (
 //   - OpNone → emit (current value)
 //   - OpCRDTRemove → attribute doesn't exist, skip group
 //
-// See: docs/bugs/BUG_SCHEMALESS_ATTR_BOUND_QUERY.md
+// See: BUG_SCHEMALESS_ATTR_BOUND_QUERY.md
 // =============================================================================
 
 // createRemoveTestDB creates a database with a CardinalityOne schema.
@@ -79,9 +79,9 @@ func queryUnboundForEA(t *testing.T, db *Database, e datalog.Identity, a datalog
 	var filtered [][]interface{}
 	for _, tuple := range results {
 		if len(tuple) >= 3 {
-			if rowE, ok := tuple[0].(datalog.Identity); ok {
-				if rowA, ok := tuple[1].(datalog.Keyword); ok {
-					if rowE.Hash() == e.Hash() && rowA == a {
+			if boundE, ok := tuple[0].(datalog.Identity); ok {
+				if boundA, ok := tuple[1].(datalog.Keyword); ok {
+					if boundE.Hash() == e.Hash() && boundA == a {
 						filtered = append(filtered, tuple)
 					}
 				}
@@ -363,7 +363,7 @@ func TestCardinalityOneRemove_VBoundQuery(t *testing.T) {
 	require.NoError(t, err)
 
 	// V-bound query: find entities where :person/name = "Alice"
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 
 	pattern := &query.DataPattern{
@@ -634,7 +634,7 @@ func TestCardinalityOneRemove_Unbound_SetThenRemove(t *testing.T) {
 // countVBoundMatches counts V-bound pattern matches for a given attribute and value
 func vBoundMatchCount(t *testing.T, db *Database, a datalog.Keyword, v interface{}) int {
 	t.Helper()
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 
 	pattern := &query.DataPattern{

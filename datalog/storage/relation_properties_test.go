@@ -50,11 +50,11 @@ func TestAETVCardinalityOneRelationProperties(t *testing.T) {
 		Keys: [][]query.Symbol{{entity}},
 	}, rel.Properties())
 
-	rows, err := executor.CollectTuples(rel, nil)
+	tuples, err := executor.CollectTuples(rel, nil)
 	require.NoError(t, err)
-	for i := 1; i < len(rows); i++ {
-		previous := rows[i-1][0].(datalog.Identity)
-		current := rows[i][0].(datalog.Identity)
+	for i := 1; i < len(tuples); i++ {
+		previous := tuples[i-1][0].(datalog.Identity)
+		current := tuples[i][0].(datalog.Identity)
 		require.LessOrEqual(t, previous.Compare(current), 0,
 			"reported entity ordering must match emitted tuples")
 	}

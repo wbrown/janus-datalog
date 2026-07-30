@@ -12,10 +12,11 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
-// TestOHLCRealisticQueries tests the exact query patterns used in gopher-street
-// This reproduces the queries from test_ohlc_performance.sh
+// TestOHLCRealisticQueries exercises realistic OHLC query shapes against a
+// day of 5-minute bars: whole-database counts, calendar-grouped aggregation,
+// per-window subqueries, and unfiltered bar scans.
 func TestOHLCRealisticQueries(t *testing.T) {
-	// Create test database with realistic OHLC data matching gopher-street schema
+	// Create test database with realistic OHLC data
 	tempDir := t.TempDir()
 	db, err := NewDatabase(tempDir)
 	if err != nil {
@@ -23,7 +24,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Schema matches gopher-street:
+	// Fixture schema:
 	// - :symbol/ticker - string ticker symbol
 	// - :price/symbol - reference to symbol entity
 	// - :price/time - timestamp
@@ -86,7 +87,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create executor
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 			exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
 				EnableAlgebraOptimizer: mode.algebra,
 			})

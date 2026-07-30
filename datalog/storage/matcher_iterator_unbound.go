@@ -7,9 +7,11 @@ import (
 
 // unboundIterator streams results for patterns without bindings
 type unboundIterator struct {
-	matcher     *BadgerMatcher
-	index       IndexType
-	start, end  []byte
+	matcher *PatternMatcher
+	// report accounts for the scan this iterator reads. It was acquired through
+	// the report, so the run, the clock and the intake are already in it; the
+	// arm adds what it made of what it read and closes it.
+	report      *scanReport
 	pattern     *query.DataPattern
 	symbols     []query.Symbol
 	e, a, v, tx interface{}
@@ -18,10 +20,6 @@ type unboundIterator struct {
 	storageIter  Iterator
 	currentTuple executor.Tuple
 	workspace    executor.Tuple // Reusable workspace for tuple building
-
-	// Statistics tracking
-	datomsScanned int
-	datomsMatched int
 
 	// Optimized tuple builder
 	tupleBuilder *query.InternedTupleBuilder
@@ -46,7 +44,9 @@ func (it *unboundIterator) Next() bool {
 			return false
 		}
 
-		it.datomsScanned++
+		if it.report != nil {
+			it.report.resolved++
+		}
 
 		// Check if datom matches pattern
 		if it.matcher.matchesDatom(datom, it.e, it.a, it.v, it.tx) {
@@ -54,7 +54,9 @@ func (it *unboundIterator) Next() bool {
 			if validateDatomWithConstraints(datom, it.matcher.txID, it.constraints) {
 				it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
 				it.currentTuple = it.workspace
-				it.datomsMatched++
+				if it.report != nil {
+					it.report.matched++
+				}
 				it.foundFirst = true
 				return true
 			}
@@ -78,19 +80,14 @@ func (it *unboundIterator) Tuple() executor.Tuple {
 func (it *unboundIterator) Error() error { return it.err }
 
 func (it *unboundIterator) Close() error {
-	// Emit scan statistics if handler is available
-	emitIteratorStatistics(
-		it.matcher.handler,
-		"pattern/storage-scan",
-		it.pattern,
-		it.index,
-		it.datomsScanned,
-		it.datomsMatched,
-		nil, // no extra data
-	)
-
+	// The storage close comes first: the scan accrues its intake as it closes,
+	// and the report is what reads that.
+	var closeErr error
 	if it.storageIter != nil {
-		return it.storageIter.Close()
+		closeErr = it.storageIter.Close()
 	}
-	return nil
+	if it.report != nil {
+		it.report.close(it.err == nil)
+	}
+	return closeErr
 }

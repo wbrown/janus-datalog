@@ -29,7 +29,7 @@ func TestSessionBoundedCacheRead(t *testing.T) {
 	matcher, session, err := d.sessionMatcher(d.effectivePlannerOptions())
 	require.NoError(t, err)
 	defer session.Close()
-	sessioned := matcher.(*BadgerMatcher)
+	sessioned := matcher.(*PatternMatcher)
 
 	// First read through the session establishes X.
 	v, found, err := sessioned.LookupAttribute(e, attr)
@@ -44,7 +44,7 @@ func TestSessionBoundedCacheRead(t *testing.T) {
 	require.NoError(t, err)
 
 	// ...and another latest reader warms the cache slot to Y.
-	latest := d.Matcher().(*BadgerMatcher)
+	latest := d.Matcher().(*PatternMatcher)
 	v, found, err = latest.LookupAttribute(e, attr)
 	require.NoError(t, err)
 	require.True(t, found)
@@ -62,9 +62,13 @@ func TestSessionBoundedCacheRead(t *testing.T) {
 	copy(eBytes[:], e.Bytes())
 	var aBytes Attribute
 	copy(aBytes[:], attr.String())
-	raw, _, err := sessioned.ResolveLWW(eBytes, aBytes)
+	report := &scanReport{}
+	raw, _, present, err := sessioned.ResolveLWW(eBytes, aBytes, report)
 	require.NoError(t, err)
+	require.True(t, present, "a datom exists within the session's bound")
 	require.Equal(t, int64(1), raw, "storage path defines the snapshot answer")
+	require.Positive(t, report.scanned,
+		"the storage path read the index to answer; an intake of zero would mean it did not")
 
 	// The latest reader is unaffected by the session's bound.
 	v, found, err = latest.LookupAttribute(e, attr)

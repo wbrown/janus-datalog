@@ -1,15 +1,13 @@
-// Regression tests for five correctness bugs flagged in
-// docs/bugs/EXTERNAL_REVIEW_2026_04.md items 1-5.
+// Regression tests for the correctness bugs flagged in
+// EXTERNAL_REVIEW_2026_04.md items 1, 2, 3 and 5. Item 4 concerns a
+// component the engine does not have, so nothing here covers it.
 //
-// Each test is written against the not-yet-fixed code and must fail
-// (for the expected reason) before the corresponding implementation
-// change lands. Together they form the red baseline for the
-// correctness-cluster fix pass.
+// Each section below names the defect it pins and asserts the corrected
+// behaviour, so a failure here is that defect returning.
 
 package storage
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -90,7 +88,7 @@ func TestLookupAttribute_StorageFallback_Tombstone(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	v, ok := requireAttributeLookup(t, matcher, alice, name)
 
 	assert.False(t, ok, "tombstoned attribute must not report as present")
@@ -122,11 +120,11 @@ func TestExtractElementIDFromKey_TailIndices(t *testing.T) {
 	}
 
 	for _, idx := range []IndexType{EAVT, AEVT, AVET, VAET} {
-		t.Run(indexName(idx), func(t *testing.T) {
+		t.Run(idx.String(), func(t *testing.T) {
 			key := encoder.EncodeKey(idx, &datom)
 			got := extractElementIDFromKey(idx, key)
 			assert.Equal(t, expectedTx, got,
-				"extractElementIDFromKey must decode the Tx correctly for %s keys; got %+v", indexName(idx), got)
+				"extractElementIDFromKey must decode the Tx correctly for %s keys; got %+v", idx.String(), got)
 		})
 	}
 }
@@ -154,161 +152,15 @@ func TestExtractElementIDFromKey_TailIndicesWithAfterRef(t *testing.T) {
 	// Tail-Tx indices: EAVT/AEVT/AVET/VAET. Verify each decodes
 	// expectedTx (not afterRef, not garbage).
 	for _, idx := range []IndexType{EAVT, AEVT, AVET, VAET} {
-		t.Run(indexName(idx), func(t *testing.T) {
+		t.Run(idx.String(), func(t *testing.T) {
 			key := encoder.EncodeKey(idx, &datom)
 			got := extractElementIDFromKey(idx, key)
 			assert.Equal(t, expectedTx, got,
-				"extractElementIDFromKey must decode Tx correctly even when AfterRef is present (%s)", indexName(idx))
+				"extractElementIDFromKey must decode Tx correctly even when AfterRef is present (%s)", idx.String())
 			assert.NotEqual(t, afterRef, got,
 				"must not return AfterRef as Tx")
 		})
 	}
-}
-
-// ================================================================
-// Item 4: simpleBatchScanner.buildKey uses pre-expansion enum
-// ================================================================
-
-// TestSimpleBatchScanner_BuildKey_AETV verifies that buildKey
-// produces a valid AETV prefix when invoked with AETV as s.index.
-// The current code path routes through "case 3" which is
-// labeled (incorrectly) as VAET — so buildKey with AETV builds a
-// VAET-shaped key that cannot hit real data.
-//
-// Pre-fix: test fails because buildKey returns a VAET-shaped prefix
-// (or wrong bytes) when s.index == AETV.
-func TestSimpleBatchScanner_BuildKey_AETV(t *testing.T) {
-	dir := t.TempDir()
-	s, err := schema.NewBuilder().
-		Attribute(":user/name").Type(schema.TypeString).One().Add().
-		Build()
-	require.NoError(t, err)
-
-	db, err := NewDatabaseWithSchema(dir, s)
-	require.NoError(t, err)
-	defer db.Close()
-
-	matcher := db.Matcher().(*BadgerMatcher)
-	scanner := &simpleBatchScanner{
-		matcher:  matcher,
-		index:    AETV,
-		position: 0, // E bound, A constant
-	}
-
-	alice := datalog.NewIdentity("alice")
-	name := datalog.NewKeyword(":user/name")
-	var aBytes Attribute
-	copy(aBytes[:], name.String())
-
-	got := scanner.buildKey(alice, aBytes[:], nil)
-	require.NotNil(t, got, "buildKey must not return nil for AETV with E-bound + A-constant")
-
-	// The expected prefix for AETV with E+A bound is [prefix][A][E].
-	encoder := matcher.store.Encoder()
-	expected := encoder.EncodePrefix(AETV, aBytes[:], alice.Bytes())
-	assert.True(t, bytes.Equal(got, expected),
-		"buildKey on AETV must produce [prefix][A][E]; got %x, expected %x", got, expected)
-}
-
-// TestSimpleBatchScanner_BuildKey_AllIndices verifies buildKey
-// handles every index it's likely to see. Indices EATV and AVET are
-// not in the current switch at all — buildKey returns nil for them,
-// which silently degrades callers.
-func TestSimpleBatchScanner_BuildKey_AllIndices(t *testing.T) {
-	dir := t.TempDir()
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	defer db.Close()
-
-	matcher := db.Matcher().(*BadgerMatcher)
-	alice := datalog.NewIdentity("alice")
-	name := datalog.NewKeyword(":user/name")
-	var aBytes Attribute
-	copy(aBytes[:], name.String())
-
-	// Batch scanning's Position field names the binding component
-	// (0=E, 1=A, 2=V). buildKey must handle every (index, position)
-	// combination its signature admits — silent nil returns cause
-	// silent zero-result scans, the exact failure mode the external
-	// review flagged for this function.
-	// Tx constant used by the ATEV case below; the value chosen doesn't
-	// matter so long as it encodes to a non-empty constT.
-	constTBytes := matcher.store.Encoder().EncodeTxForPrefix(
-		NewTxFromElementID(datalog.ElementID{Lamport: 1, ReplicaID: 1}),
-	)
-	for _, tc := range []struct {
-		name     string
-		index    IndexType
-		position int
-		value    interface{}
-		constA   []byte
-		constT   []byte
-	}{
-		{"EAVT_Ebound", EAVT, 0, alice, aBytes[:], nil},
-		{"EATV_Ebound", EATV, 0, alice, aBytes[:], nil},
-		{"AEVT_Ebound", AEVT, 0, alice, aBytes[:], nil},
-		{"AETV_Ebound", AETV, 0, alice, aBytes[:], nil},
-		{"ATEV_Ebound", ATEV, 0, alice, aBytes[:], constTBytes},
-		{"AVET_Abound", AVET, 1, name, nil, nil},
-		{"VAET_Vbound", VAET, 0, "some-value", nil, nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			scanner := &simpleBatchScanner{
-				matcher:  matcher,
-				index:    tc.index,
-				position: tc.position,
-			}
-			got := scanner.buildKey(tc.value, tc.constA, tc.constT)
-			require.NotNil(t, got,
-				"buildKey returned nil for index %s, position %d — scanner would silently produce no results",
-				indexName(tc.index), tc.position)
-			// Weaker check: at minimum, the first byte must be the correct index prefix.
-			require.Greater(t, len(got), 0)
-			assert.Equal(t, byte(tc.index), got[0],
-				"first byte of buildKey result must be the index prefix %d for %s",
-				byte(tc.index), indexName(tc.index))
-		})
-	}
-}
-
-// TestSimpleBatchScanner_BuildKey_AVET_PositionSemantics isolates AVET
-// position handling to distinguish "type assertion failed" from "branch
-// not entered" when the broader BuildKey_AllIndices test flags AVET.
-// Asserts the concrete prefix bytes against the encoder's direct output.
-func TestSimpleBatchScanner_BuildKey_AVET_PositionSemantics(t *testing.T) {
-	dir := t.TempDir()
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	defer db.Close()
-
-	matcher := db.Matcher().(*BadgerMatcher)
-	emailKw := datalog.NewKeyword(":user/email")
-	var aBytes Attribute
-	copy(aBytes[:], emailKw.String())
-
-	// Case 1: A varies across bindings (position=1, value is a Keyword).
-	// Scan range: [A] prefix over AVET.
-	scanner := &simpleBatchScanner{matcher: matcher, index: AVET, position: 1}
-	got := scanner.buildKey(emailKw, nil, nil)
-
-	expected := matcher.store.Encoder().EncodePrefix(AVET, aBytes[:])
-	require.NotNil(t, got,
-		"AVET position=1 with Keyword value: buildKey returned nil. "+
-			"Type of value in test: %T", emailKw)
-	assert.True(t, bytes.Equal(got, expected),
-		"AVET position=1: expected [A] prefix %x, got %x", expected, got)
-
-	// Case 2: E varies across bindings (position=0, value is an Identity,
-	// constA carries the attribute). Scan range: [A][V?][E] — but with
-	// only E from bindings, the realistic prefix is [A][... V comes
-	// from elsewhere]. buildKey cannot produce a narrower-than-[A]
-	// prefix here because V isn't known; it should still emit a useful
-	// key range rather than nil.
-	alice := datalog.NewIdentity("alice")
-	scanner = &simpleBatchScanner{matcher: matcher, index: AVET, position: 0}
-	got = scanner.buildKey(alice, aBytes[:], nil)
-	require.NotNil(t, got,
-		"AVET position=0 with Identity value: buildKey returned nil")
 }
 
 // ================================================================

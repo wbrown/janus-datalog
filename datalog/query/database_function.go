@@ -159,9 +159,7 @@ type GetSomeFunction struct {
 
 // GetSomeResult holds the result of a get-some evaluation.
 // Found=false signals "no attribute matched" and is the canonical way for
-// consumers to drop the tuple — get-some no longer uses error-as-signal
-// for this (which conflated soft "no match" with real eval failures and
-// forced upstream loops to swallow every eval error to make it work).
+// consumers to drop the tuple.
 type GetSomeResult struct {
 	Attr  datalog.Keyword
 	Value interface{}

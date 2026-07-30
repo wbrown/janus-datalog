@@ -13,7 +13,7 @@ import (
 )
 
 // TestStringPredicateWithParameter verifies that string predicates can use input parameters
-// Reproduces bug: https://github.com/wbrown/janus-datalog/docs/bugs/BUG_STRING_PREDICATES_CANT_USE_PARAMETERS.md
+// Reproduces bug: BUG_STRING_PREDICATES_CANT_USE_PARAMETERS.md
 func TestStringPredicateWithParameter(t *testing.T) {
 	// Create temp directory for database
 	dir, err := os.MkdirTemp("", "string-pred-test-*")
@@ -83,7 +83,7 @@ func TestStringPredicateWithParameter(t *testing.T) {
 					[]executor.Tuple{{"CRWV"}},
 				)
 
-				ctx := executor.NewContext(nil)
+				ctx := executor.NewContext()
 				result, err := exec.ExecuteWithRelations(ctx, q, []executor.Relation{symbolInput})
 				if err != nil {
 					t.Fatalf("Query with constant failed: %v", err)
@@ -138,7 +138,7 @@ func TestStringPredicateWithParameter(t *testing.T) {
 					),
 				}
 
-				ctx := executor.NewContext(nil)
+				ctx := executor.NewContext()
 				result, err := exec.ExecuteWithRelations(ctx, q, inputs)
 				if err != nil {
 					t.Fatalf("Query with parameter failed: %v", err)
@@ -193,7 +193,7 @@ func TestStringPredicateWithParameter(t *testing.T) {
 					),
 				}
 
-				ctx := executor.NewContext(nil)
+				ctx := executor.NewContext()
 				result, err := exec.ExecuteWithRelations(ctx, q, inputs)
 				if err != nil {
 					t.Fatalf("Query with parameter failed: %v", err)

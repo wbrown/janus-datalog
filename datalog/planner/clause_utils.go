@@ -206,9 +206,7 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 	// dominance constant for ready predicates. Uncorrelated subqueries are
 	// exempt: they execute exactly once wherever placed, so deferral cannot
 	// reduce their cost and would only withhold their bindings from earlier
-	// joins. Derived 2026-07 on BenchmarkSubqueryDeferralScheduling (~8×
-	// time and allocations on the tie-break shape; plan-neutral across the
-	// existing benchmark corpus).
+	// joins.
 	if sp, ok := clause.(*query.SubqueryPattern); ok {
 		for _, input := range sp.Inputs {
 			if _, isVar := input.(query.Variable); isVar {

@@ -20,8 +20,8 @@ The pointer optimization is valid (16-byte struct boxing matters at scale) and s
 | `datalog/value_encoding.go` | Add `*ElementID` to `Type()` (line 56) and `ValueBytes()` (line 108) | Critical |
 | `datalog/storage/matcher.go` | `chooseIndex` (line 662): handle ElementID; `matchesDatom` (line 683): deref `*ElementID` | Critical |
 | `datalog/storage/hash_join_matcher.go` | `valueToHashKey` (line 452): add ElementID; `chooseIndexForValues` TAEV (line 394): fill in; `compareJoinKeys` (line 669): add ElementID | Critical |
-| `datalog/storage/matcher_iterator_reusing.go` | `calculateSeekKey` (line 281): extract T; "moved past" (line 178): handle `*ElementID` | Medium |
-| `datalog/storage/simple_batch_scanner.go` | `valueToKey` (line 106) and `buildKey` TAEV (line 249): add ElementID | Medium |
+| ~~`datalog/storage/matcher_iterator_reusing.go`~~ | **Moot (2026-07-26)** — file deleted in v0.15.0 with the iterator-reuse strategy | — |
+| ~~`datalog/storage/simple_batch_scanner.go`~~ | **Moot (2026-07-26)** — file deleted in v0.15.0 | — |
 | `datalog/executor/join.go` | Tx detection (line 339) and extraction (lines 367, 390): add ElementID types | Medium |
 | `datalog/executor/constraints_impl.go` | `equalityConstraint` (line 51): use `DerefElementID` | Medium |
 | `datalog/query/history.go` | `TxRangePredicate.Eval` (line 121): add ElementID cases, remove broken duck-type | Low |

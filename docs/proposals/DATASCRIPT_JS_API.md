@@ -11,8 +11,6 @@
   pinned to an explicit basis
 - [../reference/BINARY_EXPORT.md](../reference/BINARY_EXPORT.md) — compact
   JDZL persistence boundary
-- [../BREAKING_RELEASE_UPGRADE_v0.15.0.md](../BREAKING_RELEASE_UPGRADE_v0.15.0.md)
-  — injectable Store and the current js/wasm memory backend
 
 ---
 

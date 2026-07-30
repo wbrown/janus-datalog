@@ -1,4 +1,4 @@
-// Reproductions for docs/bugs/BUG_SEQUENTIAL_RELATION_INPUT_DROPS_ITERATOR_ERROR.md
+// Reproductions for BUG_SEQUENTIAL_RELATION_INPUT_DROPS_ITERATOR_ERROR.md
 //
 // The sequential RelationInput path drives the iteration relation directly:
 //
@@ -57,7 +57,7 @@ func TestRelationInputSequential_PropagatesDeferredInputIteratorError(t *testing
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			exec.DisableParallelSubqueries()
 
-			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err,
 				"deferred input-iterator error must propagate, not be laundered into clean partial results")
 			require.True(t, errors.Is(err, errInjectedIterator),
@@ -94,7 +94,7 @@ func TestRelationInputSequential_PropagatesInputCloseError(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			exec.DisableParallelSubqueries()
 
-			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err,
 				"input Close() error must propagate, not be discarded by a deferred Close()")
 			require.True(t, errors.Is(err, closeErr),

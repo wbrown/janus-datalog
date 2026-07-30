@@ -138,8 +138,8 @@ func TestSubqueryWithRelationBinding(t *testing.T) {
 	}
 }
 
-// TestSubqueryWithMultipleOuterRows tests subquery executed for multiple outer tuples
-func TestSubqueryWithMultipleOuterRows(t *testing.T) {
+// TestSubqueryWithMultipleOuterTuples tests subquery executed for multiple outer tuples
+func TestSubqueryWithMultipleOuterTuples(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			"[:department/name _]": {
@@ -227,11 +227,10 @@ func TestSubqueryWithMultipleOuterRows(t *testing.T) {
 
 // TestSubqueryWithTwoInputs pins multi-input subquery forwarding: the call
 // site passes a correlated variable and a typed constant (#inst) after $, and
-// both must bind in the nested :in. A long-lived skip here blamed the engine
-// for "multiple inputs not supported"; the defect was in this fixture — the
+// both must bind in the nested :in. The defect was in this fixture — the
 // date constant was a bare EDN string matched against time.Time datoms, which
 // type-strict matching correctly rejects, so the totals read 0. See
-// docs/bugs/resolved/BUG_SUBQUERY_MULTIPLE_INPUTS.md.
+// BUG_SUBQUERY_MULTIPLE_INPUTS.md.
 func TestSubqueryWithTwoInputs(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
@@ -333,7 +332,7 @@ func TestSubqueryWithNoInput(t *testing.T) {
 	}
 
 	// Find products cheaper than max configured price
-	// NOTE: Changed order - subquery must come before its result is used
+	// NOTE: the subquery must come before its result is used
 	queryStr := `[:find ?name ?price
 	             :where
 	             [(q [:find ?max
@@ -472,7 +471,7 @@ func TestSubqueryErrorHandling(t *testing.T) {
 			// binding arity is a static property of the clause text, so
 			// both planner modes reject it identically at the executor
 			// entry, before planning. See
-			// docs/bugs/BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md.
+			// BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md.
 			wantErr: "subquery relation binding declares 3 symbol(s), but the inner :find has 1 element(s)",
 		},
 	}

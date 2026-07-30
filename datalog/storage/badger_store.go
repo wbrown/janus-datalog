@@ -271,35 +271,12 @@ func (s *BadgerStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 // Scan returns a workspace-decoded iterator for a range of keys.
 // Scan and ScanKeysOnly share the same KeyOnlyIterator contract: Datom()
 // returns the iterator's current workspace until Next, Seek, or Close.
-func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error) {
-	return NewKeyOnlyIterator(s, index, start, end)
-}
-
-// Get retrieves a single datom by key
-// Values are not stored - all datom information is decoded from the key
-func (s *BadgerStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
-	var result *datalog.Datom
-
-	err := s.db.View(func(txn *badger.Txn) error {
-		_, err := txn.Get(key)
-		if err != nil {
-			return err
-		}
-
-		// Decode datom from key - values are not stored
-		datom, err := DatomFromKey(index, key, s.encoder, badgerTxnBlobReader{txn: txn})
-		if err != nil {
-			return err
-		}
-		result = &datom
-		return nil
-	})
-
-	if err == badger.ErrKeyNotFound {
-		return nil, nil
+func (s *BadgerStore) Scan(bound ScanBound) (Iterator, error) {
+	run, err := s.encoder.EncodeScanBound(bound)
+	if err != nil {
+		return nil, err
 	}
-
-	return result, err
+	return NewKeyOnlyIterator(s, bound.Index, run)
 }
 
 // MaxElementID returns the highest ElementID in the store by scanning TAEV index.
@@ -339,66 +316,6 @@ func (s *BadgerStore) MaxElementID() (datalog.ElementID, error) {
 	})
 
 	return maxID, err
-}
-
-// MaxElementIDForAttribute returns the highest ElementID for any (E, A) with this attribute.
-// Used for fast cache freshness checks on A-bound queries.
-//
-// O(1): single forward seek on the ATEV index. ATEV orders A → Tx↓ → E → V, so the
-// first entry under prefix [A] has the global maximum Tx for the attribute (Tx is
-// encoded with bitwise NOT for descending sort within (A) groups).
-//
-// Returns zero ElementID if no ATEV data exists for this attribute.
-func (s *BadgerStore) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
-	var maxID datalog.ElementID
-
-	err := s.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false // Keys only
-
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		// Build ATEV prefix for this attribute: [prefix:1][A:32]
-		atevPrefix := make([]byte, 1+32)
-		atevPrefix[0] = byte(ATEV)
-		copy(atevPrefix[1:33], a)
-
-		it.Seek(atevPrefix)
-		if !it.Valid() {
-			return nil
-		}
-
-		// Seek may land past the attribute's ATEV range (different index or
-		// different attribute) when no ATEV entries exist for this attribute.
-		key := it.Item().Key()
-		if key[0] != byte(ATEV) || !bytesEqual(key[1:33], atevPrefix[1:33]) {
-			return nil
-		}
-
-		// First entry under [ATEV][A] holds the global max Tx for the attribute.
-		_, _, _, tx, _, _, decodeErr := s.encoder.DecodeKey(ATEV, key)
-		if decodeErr != nil {
-			return decodeErr
-		}
-		maxID = Tx(tx).ToElementID()
-		return nil
-	})
-
-	return maxID, err
-}
-
-// bytesEqual compares two byte slices for equality
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // BeginTx starts a new transaction
@@ -466,8 +383,12 @@ func (s *BadgerStore) SetMetadataUint64(key string, value uint64) error {
 
 // ScanKeysOnly returns an iterator that decodes datoms from keys without fetching values
 // This is much faster than regular scanning as it avoids the redundant value fetch
-func (s *BadgerStore) ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error) {
-	return NewKeyOnlyIterator(s, index, start, end)
+func (s *BadgerStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	run, err := s.encoder.EncodeScanBound(bound)
+	if err != nil {
+		return nil, err
+	}
+	return NewKeyOnlyIterator(s, bound.Index, run)
 }
 
 // CountKeys counts keys in a range without fetching values (fast counting)
@@ -510,6 +431,11 @@ type BadgerIterator struct {
 	// instead of discarding the transaction: session-owned iterators share
 	// the session's transaction, which outlives any one scan.
 	release func()
+	// scanned counts keys taken from the index inside the byte range. The
+	// key one past the range is examined but not counted — it is not part of
+	// the run. KeyOnlyIterator's membership test runs above this, so keys it
+	// rejects are counted here, which is the point.
+	scanned int
 }
 
 // Next advances the iterator
@@ -537,8 +463,12 @@ func (i *BadgerIterator) Next() bool {
 		}
 	}
 
+	i.scanned++
 	return true
 }
+
+// Scanned reports keys taken from the index inside this iterator's range.
+func (i *BadgerIterator) Scanned() int { return i.scanned }
 
 // Key returns the current index key without decoding the datom or resolving blobs.
 // Valid after Next returns true until the next Next, Seek, or Close.

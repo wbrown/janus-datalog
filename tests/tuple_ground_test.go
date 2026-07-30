@@ -49,7 +49,7 @@ func TestTupleGroundBasic(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
+			exec := executor.NewExecutorWithOptions(storage.NewPatternMatcher(db.Store()), nil, mode.plannerOptions())
 
 			result, err := exec.Execute(q)
 			if err != nil {
@@ -61,21 +61,21 @@ func TestTupleGroundBasic(t *testing.T) {
 			iter := result.Iterator()
 			for iter.Next() {
 				tuple := iter.Tuple()
-				row := make([]interface{}, len(tuple))
-				copy(row, tuple)
-				tuples = append(tuples, row)
+				copied := make([]interface{}, len(tuple))
+				copy(copied, tuple)
+				tuples = append(tuples, copied)
 			}
 			iter.Close()
 
-			// Should have 1 row with values [1, 2, 3]
+			// Should have 1 tuple with values [1, 2, 3]
 			if len(tuples) != 1 {
-				t.Errorf("Expected 1 row, got %d", len(tuples))
+				t.Errorf("Expected 1 tuple, got %d", len(tuples))
 			}
 
 			if len(tuples) > 0 {
-				row := tuples[0]
-				if row[0] != int64(1) || row[1] != int64(2) || row[2] != int64(3) {
-					t.Errorf("Expected [1 2 3], got %v", row)
+				first := tuples[0]
+				if first[0] != int64(1) || first[1] != int64(2) || first[2] != int64(3) {
+					t.Errorf("Expected [1 2 3], got %v", first)
 				}
 			}
 		})
@@ -164,15 +164,16 @@ func TestTupleGroundOrFallback(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			matcher := storage.NewBadgerMatcher(db.Store())
-			matcher.SetSchema(s)
-			exec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-
-			ctx := executor.NewContext(func(event annotations.Event) {
+			opts := mode.plannerOptions()
+			opts.Handler = func(event annotations.Event) {
 				t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
-			})
+			}
+			matcher := storage.NewPatternMatcherWithOptions(
+				db.Store(), executor.ExecutorOptionsFromPlanner(opts))
+			matcher.SetSchema(s)
+			exec := executor.NewExecutorWithOptions(matcher, nil, opts)
 
-			result, err := exec.ExecuteWithContext(ctx, q)
+			result, err := exec.Execute(q)
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}
@@ -182,17 +183,17 @@ func TestTupleGroundOrFallback(t *testing.T) {
 			iter := result.Iterator()
 			for iter.Next() {
 				tuple := iter.Tuple()
-				row := make([]interface{}, len(tuple))
-				copy(row, tuple)
-				tuples = append(tuples, row)
+				copied := make([]interface{}, len(tuple))
+				copy(copied, tuple)
+				tuples = append(tuples, copied)
 			}
 			iter.Close()
 
 			t.Logf("Result count: %d", len(tuples))
 
-			// Should have 3 rows
+			// Should have 3 tuples
 			if len(tuples) != 3 {
-				t.Errorf("Expected 3 rows, got %d", len(tuples))
+				t.Errorf("Expected 3 tuples, got %d", len(tuples))
 			}
 
 			// Build result map (sum returns float64, count returns int64)
@@ -216,7 +217,7 @@ func TestTupleGroundOrFallback(t *testing.T) {
 					taskCount  int64
 					totalValue float64
 				}{taskCount, totalValue}
-				t.Logf("Row: name=%s, taskCount=%d, totalValue=%v", name, taskCount, totalValue)
+				t.Logf("Tuple: name=%s, taskCount=%d, totalValue=%v", name, taskCount, totalValue)
 			}
 
 			// Scenario One: 2 tasks, total value 30 (10 + 20)
@@ -246,7 +247,8 @@ func TestTupleGroundOrFallback(t *testing.T) {
 	}
 }
 
-// TestTupleGroundBackwardCompatibility verifies scalar ground still works
+// TestTupleGroundBackwardCompatibility verifies the scalar ground syntax
+// remains supported
 func TestTupleGroundBackwardCompatibility(t *testing.T) {
 	dir, err := os.MkdirTemp("", "tuple-ground-compat-*")
 	if err != nil {
@@ -269,7 +271,7 @@ func TestTupleGroundBackwardCompatibility(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	// Query with scalar ground (original syntax)
+	// Query with scalar ground
 	queryStr := `[:find ?x
 	              :where [_ :test/name _]
 	                     [(ground 42) ?x]]`
@@ -281,7 +283,7 @@ func TestTupleGroundBackwardCompatibility(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
+			exec := executor.NewExecutorWithOptions(storage.NewPatternMatcher(db.Store()), nil, mode.plannerOptions())
 
 			result, err := exec.Execute(q)
 			if err != nil {
@@ -293,15 +295,15 @@ func TestTupleGroundBackwardCompatibility(t *testing.T) {
 			iter := result.Iterator()
 			for iter.Next() {
 				tuple := iter.Tuple()
-				row := make([]interface{}, len(tuple))
-				copy(row, tuple)
-				tuples = append(tuples, row)
+				copied := make([]interface{}, len(tuple))
+				copy(copied, tuple)
+				tuples = append(tuples, copied)
 			}
 			iter.Close()
 
-			// Should have 1 row with value 42
+			// Should have 1 tuple with value 42
 			if len(tuples) != 1 {
-				t.Errorf("Expected 1 row, got %d", len(tuples))
+				t.Errorf("Expected 1 tuple, got %d", len(tuples))
 			}
 
 			if len(tuples) > 0 && tuples[0][0] != int64(42) {
@@ -349,7 +351,7 @@ func TestTupleGroundQB(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
+			exec := executor.NewExecutorWithOptions(storage.NewPatternMatcher(db.Store()), nil, mode.plannerOptions())
 
 			result, err := exec.Execute(q)
 			if err != nil {
@@ -361,26 +363,26 @@ func TestTupleGroundQB(t *testing.T) {
 			iter := result.Iterator()
 			for iter.Next() {
 				tuple := iter.Tuple()
-				row := make([]interface{}, len(tuple))
-				copy(row, tuple)
-				tuples = append(tuples, row)
+				copied := make([]interface{}, len(tuple))
+				copy(copied, tuple)
+				tuples = append(tuples, copied)
 			}
 			iter.Close()
 
 			t.Logf("Result count: %d", len(tuples))
 			for _, tuple := range tuples {
-				t.Logf("Row: %v", tuple)
+				t.Logf("Tuple: %v", tuple)
 			}
 
-			// Should have 1 row with [1, 2, 3]
+			// Should have 1 tuple with [1, 2, 3]
 			if len(tuples) != 1 {
-				t.Errorf("Expected 1 row, got %d", len(tuples))
+				t.Errorf("Expected 1 tuple, got %d", len(tuples))
 			}
 
 			if len(tuples) > 0 {
-				row := tuples[0]
-				if row[0] != int64(1) || row[1] != int64(2) || row[2] != int64(3) {
-					t.Errorf("Expected [1 2 3], got %v", row)
+				first := tuples[0]
+				if first[0] != int64(1) || first[1] != int64(2) || first[2] != int64(3) {
+					t.Errorf("Expected [1 2 3], got %v", first)
 				}
 			}
 		})
@@ -455,7 +457,7 @@ func TestTupleGroundQBInOr(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
+			exec := executor.NewExecutorWithOptions(storage.NewPatternMatcher(db.Store()), nil, mode.plannerOptions())
 
 			result, err := exec.Execute(q)
 			if err != nil {
@@ -467,22 +469,22 @@ func TestTupleGroundQBInOr(t *testing.T) {
 			iter := result.Iterator()
 			for iter.Next() {
 				tuple := iter.Tuple()
-				row := make([]interface{}, len(tuple))
-				copy(row, tuple)
-				tuples = append(tuples, row)
+				copied := make([]interface{}, len(tuple))
+				copy(copied, tuple)
+				tuples = append(tuples, copied)
 			}
 			iter.Close()
 
 			t.Logf("Result count: %d", len(tuples))
 			for _, tuple := range tuples {
-				t.Logf("Row: %v", tuple)
+				t.Logf("Tuple: %v", tuple)
 			}
 
 			// OR fallback correctly triggers for each scenario:
 			// - Scenario One: has tasks, pattern branch matches with count 5
 			// - Scenario Two: no tasks, fallback branch triggers with count 0
 			if len(tuples) != 2 {
-				t.Errorf("Expected 2 rows (both scenarios), got %d", len(tuples))
+				t.Errorf("Expected 2 tuples (both scenarios), got %d", len(tuples))
 			}
 
 			// Build expected results map (order may vary)

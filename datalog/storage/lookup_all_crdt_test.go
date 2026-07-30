@@ -30,7 +30,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_LWW_LatestValue(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	vals, err := matcher.LookupAllAttributes(entity, attr)
 	if err != nil {
 		t.Fatalf("LookupAllAttributes: %v", err)
@@ -58,7 +58,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_LWW_SingleValue(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	vals, err := matcher.LookupAllAttributes(entity, attr)
 	if err != nil {
 		t.Fatalf("LookupAllAttributes: %v", err)
@@ -89,7 +89,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_Basic(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	vals, err := matcher.LookupAllAttributes(entity, attr)
 	if err != nil {
 		t.Fatalf("LookupAllAttributes: %v", err)
@@ -119,7 +119,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_AfterRemoval(t *testing.T) 
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	vals, err := matcher.LookupAllAttributes(entity, attr)
 	if err != nil {
 		t.Fatalf("LookupAllAttributes: %v", err)
@@ -152,7 +152,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_ReAdd(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	vals, err := matcher.LookupAllAttributes(entity, attr)
 	if err != nil {
 		t.Fatalf("LookupAllAttributes: %v", err)
@@ -180,7 +180,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_ConcurrentAddWins(t *testin
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	vals, err := matcher.LookupAllAttributes(entity, attr)
 	if err != nil {
 		t.Fatalf("LookupAllAttributes: %v", err)
@@ -205,7 +205,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_OnlyRemoves(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	vals, err := matcher.LookupAllAttributes(entity, attr)
 	if err != nil {
 		t.Fatalf("LookupAllAttributes: %v", err)
@@ -239,7 +239,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_RGA_Basic(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	vals, err := matcher.LookupAllAttributes(entity, attr)
 	if err != nil {
 		t.Fatalf("LookupAllAttributes: %v", err)
@@ -273,7 +273,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_RGA_WithTombstone(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	vals, err := matcher.LookupAllAttributes(entity, attr)
 	if err != nil {
 		t.Fatalf("LookupAllAttributes: %v", err)
@@ -303,7 +303,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_RGA_ConcurrentInserts(t *testing.T)
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	vals, err := matcher.LookupAllAttributes(entity, attr)
 	if err != nil {
 		t.Fatalf("LookupAllAttributes: %v", err)

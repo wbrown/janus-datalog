@@ -64,7 +64,7 @@ func TestMultiPositionBindingCorrectness(t *testing.T) {
 	)
 
 	// Create matcher and execute
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	require.NoError(t, err)
 
@@ -87,7 +87,7 @@ func TestMultiPositionBindingCorrectness(t *testing.T) {
 	// Use L85() for comparison since storage-returned entities don't have original strings
 	resultEntities := make(map[string]bool)
 	for _, tuple := range results {
-		// Identity is now always a pointer type
+		// Identity is always a pointer type
 		if id, ok := tuple[0].(datalog.Identity); ok {
 			resultEntities[id.L85()] = true
 		}
@@ -129,7 +129,7 @@ func TestMultiPositionAllCombinations(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	t.Run("E_and_V_bound", func(t *testing.T) {
 		// Pattern: [?e :attr/name ?name] with ?e and ?name bound
@@ -259,7 +259,7 @@ func TestMultiPositionAsymmetricCardinality(t *testing.T) {
 		bindingTuples,
 	)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	require.NoError(t, err)
 
@@ -301,7 +301,7 @@ func TestMultiPositionNoMatches(t *testing.T) {
 		},
 	)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	require.NoError(t, err)
 
@@ -340,7 +340,7 @@ func TestMultiPositionSingleBinding(t *testing.T) {
 		},
 	)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	require.NoError(t, err)
 
@@ -377,7 +377,7 @@ func TestMultiPositionResultOrdering(t *testing.T) {
 		},
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	// Run with bindings in order 0,1,2,3,4
 	bindingTuples1 := make([]executor.Tuple, 5)
@@ -461,7 +461,7 @@ func TestMultiPositionPerformance(t *testing.T) {
 		bindingTuples,
 	)
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	// Warm up
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
@@ -494,8 +494,8 @@ func TestMultiPositionPerformance(t *testing.T) {
 	avgDuration := totalDuration / iterations
 	t.Logf("Average query time: %v (total: %v over %d iterations)", avgDuration, totalDuration, iterations)
 
-	// Performance threshold: should be under 5ms with the fix
-	// Before fix: ~40ms, After fix: ~650µs
+	// A ceiling well above the expected time, so this catches a return to
+	// per-binding scanning rather than ordinary machine-to-machine variance.
 	maxAllowed := 5 * time.Millisecond
 	if avgDuration > maxAllowed {
 		t.Errorf("Query too slow: %v average (expected <%v)", avgDuration, maxAllowed)
@@ -543,7 +543,7 @@ func BenchmarkMultiPositionBinding(b *testing.B) {
 		bindingTuples[i] = executor.Tuple{entities[i], "target"}
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -579,9 +579,9 @@ func collectEntityIDs(result executor.Relation) []string {
 	for it.Next() {
 		tuple := it.Tuple()
 		if len(tuple) > 0 {
-			// Handle both pointer and value types
-			// Use L85() for consistent comparison since storage-returned
-			// entities don't have original strings
+			// Identity is always a pointer type; a single assertion covers
+			// every case. Use L85() for consistent comparison since storage-
+			// returned entities don't have original strings.
 			if id, ok := tuple[0].(datalog.Identity); ok {
 				ids = append(ids, id.L85())
 			}
@@ -592,8 +592,8 @@ func collectEntityIDs(result executor.Relation) []string {
 
 // TestMultiPositionWithStreamingBinding verifies that streaming relations work correctly
 // as binding inputs with multi-position binding. This tests the potential panic issue
-// where chooseBestMultiPositionStrategy iterates the relation, then matchWithIteratorReuse
-// tries to call Sorted() which needs Materialize().
+// where chooseBestMultiPositionStrategy iterates the relation, then the binding-driven
+// scan iterates it again — which a StreamingRelation refuses without Materialize().
 func TestMultiPositionWithStreamingBinding(t *testing.T) {
 	tempDir := t.TempDir()
 	db, err := NewDatabase(tempDir)
@@ -643,7 +643,7 @@ func TestMultiPositionWithStreamingBinding(t *testing.T) {
 	)
 
 	// Create matcher and execute - this should NOT panic
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{streamingBindingRel})
 	require.NoError(t, err, "Match should not error with streaming binding relation")
 
@@ -718,7 +718,7 @@ func TestMultiPositionWithBytesValue(t *testing.T) {
 		},
 	)
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 
 	// This should not panic
 	results, err := executor.CollectTuples(matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel}))

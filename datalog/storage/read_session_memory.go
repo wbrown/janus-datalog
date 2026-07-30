@@ -33,17 +33,21 @@ func (s *MemoryStore) NewReadSession() (ReadSession, error) {
 	return &memoryReadSession{store: s, keys: s.keys.Clone()}, nil
 }
 
-func (s *memoryReadSession) Encoder() *BinaryKeyEncoder { return s.store.encoder }
-
-func (s *memoryReadSession) Scan(index IndexType, start, end []byte) (Iterator, error) {
-	return s.scan(index, start, end)
+func (s *memoryReadSession) Scan(bound ScanBound) (Iterator, error) {
+	return s.scan(bound)
 }
 
-func (s *memoryReadSession) ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error) {
-	return s.scan(index, start, end)
+func (s *memoryReadSession) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	return s.scan(bound)
 }
 
-func (s *memoryReadSession) scan(index IndexType, start, end []byte) (Iterator, error) {
+func (s *memoryReadSession) scan(bound ScanBound) (Iterator, error) {
+	run, err := s.store.encoder.EncodeScanBound(bound)
+	if err != nil {
+		return nil, err
+	}
+	index := bound.Index
+
 	s.mu.Lock()
 	keysTree := s.keys
 	closed := s.closed
@@ -51,15 +55,9 @@ func (s *memoryReadSession) scan(index IndexType, start, end []byte) (Iterator, 
 	if closed || keysTree == nil {
 		return nil, errReadSessionClosed
 	}
-	if start == nil {
-		start = []byte{byte(index)}
-	}
-	if end == nil {
-		end = []byte{byte(index) + 1}
-	}
 	// The cloned tree is never written, so the walk needs no store lock.
 	keys := make([][]byte, 0)
-	keysTree.AscendRange(string(start), string(end), func(encoded string) bool {
+	keysTree.AscendRange(string(run.Start), string(run.End), func(encoded string) bool {
 		key := []byte(encoded)
 		if len(key) == 21 && key[0] == blobKeyPrefix {
 			return true
@@ -68,38 +66,17 @@ func (s *memoryReadSession) scan(index IndexType, start, end []byte) (Iterator, 
 		return true
 	})
 	return &memoryIterator{
-		index:    index,
-		keys:     keys,
-		position: -1,
-		encoder:  s.store.encoder,
-		blobs:    memoryBlobReader{store: s.store},
+		index:      index,
+		keys:       keys,
+		position:   -1,
+		membership: run.Membership,
+		encoder:    s.store.encoder,
+		blobs:      memoryBlobReader{store: s.store},
 	}, nil
-}
-
-func (s *memoryReadSession) Get(index IndexType, key []byte) (*datalog.Datom, error) {
-	s.mu.Lock()
-	keysTree := s.keys
-	closed := s.closed
-	s.mu.Unlock()
-	if closed || keysTree == nil {
-		return nil, errReadSessionClosed
-	}
-	if _, ok := keysTree.Get(string(key)); !ok {
-		return nil, nil
-	}
-	datom, err := decodeDatomFromKey(index, key, s.store.encoder, memoryBlobReader{store: s.store})
-	if err != nil {
-		return nil, err
-	}
-	return &datom, nil
 }
 
 func (s *memoryReadSession) MaxElementID() (datalog.ElementID, error) {
 	return maxElementIDByScan(s)
-}
-
-func (s *memoryReadSession) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
-	return maxElementIDForAttributeByScan(s, a)
 }
 
 func (s *memoryReadSession) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {

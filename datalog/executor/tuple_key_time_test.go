@@ -36,7 +36,7 @@ func TestHashValue_TimeIsDeterministic(t *testing.T) {
 // tuple containing a time.Time can find that tuple again when the lookup key is
 // built from a separately-constructed equal time at a different stack depth —
 // the pattern a hash join exercises (build vs probe). With the bug the lookup
-// misses and the row is silently dropped from the join.
+// misses and the tuple is silently dropped from the join.
 func TestTupleKeyMap_TimeValuedTuplesRoundTrip(t *testing.T) {
 	id := datalog.NewIdentity("e1")
 	tm := time.Date(2026, 5, 24, 9, 30, 0, 0, time.UTC)

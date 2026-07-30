@@ -56,15 +56,14 @@ func BenchmarkKeyOnlyScanning(b *testing.B) {
 						b.Fatal(err)
 					}
 
-					attrHash := ToStorageDatom(datoms[0]).A
-					start, end := encoder.EncodePrefixRange(AEVT, attrHash[:])
+					bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{datoms[0].A}}
 
 					b.ResetTimer()
 					b.ReportAllocs()
 
 					for i := 0; i < b.N; i++ {
 						// Use ScanKeysOnly which decodes from keys
-						it, err := store.ScanKeysOnly(AEVT, start, end)
+						it, err := store.ScanKeysOnly(bound)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -178,13 +177,12 @@ func BenchmarkValueDeserializationVsKeyDecoding(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	attrHash := ToStorageDatom(datoms[0]).A
-	start, end := encoder.EncodePrefixRange(AEVT, attrHash[:])
+	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{datoms[0].A}}
 
 	b.Run("ValueDeserialization", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			it, _ := store.Scan(AEVT, start, end)
+			it, _ := store.Scan(bound)
 			count := 0
 			for it.Next() {
 				d, _ := it.Datom()
@@ -198,7 +196,7 @@ func BenchmarkValueDeserializationVsKeyDecoding(b *testing.B) {
 	b.Run("KeyDecoding", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			it, _ := store.ScanKeysOnly(AEVT, start, end)
+			it, _ := store.ScanKeysOnly(bound)
 			count := 0
 			for it.Next() {
 				d, _ := it.Datom()

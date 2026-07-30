@@ -28,7 +28,7 @@ func cacheKeyFor(e datalog.Identity, a datalog.Keyword) CacheKey {
 func TestTruncateToInvalidatesCache(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			snapTestAddName(t, d, "alice", "Alice")
 			_, err := d.Snapshot("cp1")
@@ -73,7 +73,7 @@ func TestTruncateToInvalidatesCache(t *testing.T) {
 func TestTruncateToDropsWritesStartedDuringRollback(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			snapTestAddName(t, d, "alice", "Alice")
 			_, err := d.Snapshot("cp1")
@@ -120,7 +120,7 @@ func TestTruncateToDropsWritesStartedDuringRollback(t *testing.T) {
 func TestTruncateToConcurrentWritersNoCollision(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			snapTestAddName(t, d, "seed", "Seed")
 			_, err := d.Snapshot("cp1")

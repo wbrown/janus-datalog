@@ -547,8 +547,8 @@ func compileOrUnionWithJoinVars(branches [][]query.Clause, joinVars []query.Symb
 // never inferred from the placeholder-inflated children, which would leak
 // outer symbols into the header. The fallback machinery is not a valid
 // target here: fallback short-circuits per group, union does not, and
-// encoding union through it drops rows (see
-// docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_ROWS.md).
+// encoding union through it drops tuples (see
+// docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_TUPLES.md).
 // Correlated union has no semantics-preserving rewrite, so the node
 // decompiles back to the original clause and execution uses the executor's
 // or/or-join path.

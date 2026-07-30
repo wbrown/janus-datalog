@@ -94,10 +94,9 @@ type identityInternCache struct {
 // Global identity intern instance
 var identityIntern = &identityInternCache{}
 
-// InternIdentity returns an interned identity instance.
-// Since all Identity constructors now intern automatically, this is effectively
-// an identity function kept for backward compatibility.
-// It will still intern if somehow given an uninterned identity.
+// InternIdentity returns an interned identity instance. Constructors intern,
+// so this is the identity function for anything they produced; it interns if
+// given an uninterned identity.
 func InternIdentity(id Identity) Identity {
 	if id == nil {
 		return nil
@@ -115,7 +114,6 @@ func InternIdentity(id Identity) Identity {
 }
 
 // InternIdentityFromHash returns an interned identity from a hash.
-// Since Identity is now a pointer type alias (*identity), we return Identity directly.
 func InternIdentityFromHash(hash [20]byte) Identity {
 	// Fast path: load existing (lock-free)
 	if val, ok := identityIntern.cache.Load(hash); ok {
@@ -152,53 +150,127 @@ func internSymbol(s string) Symbol {
 	return actual.(Symbol)
 }
 
+// wellKnown holds the interned instances that package-level variables — here
+// and in packages built on this one — bind at init and compare by pointer
+// forever after.
+//
+// ClearInterns replaces the intern tables, which orphans every pointer they
+// held. For an ordinary value that is the intent. For a value a package
+// variable already points at it is a defect with teeth: Keyword.Equal and
+// Compare panic when two pointers carry one string, so the orphaned variable
+// does not merely stop matching, it detonates against the next fresh intern of
+// the same text.
+//
+// So the well-known set is re-seeded into the new tables with the *original*
+// pointers rather than re-interned into new ones. Re-interning would also
+// leave every variable holding a copy — a schema's AttributeDefinition, an
+// AST node — pointing at the orphan. Preserving identity is the only form of
+// restoration that reaches values this package cannot name.
+var wellKnown struct {
+	mu       sync.Mutex
+	keywords []Keyword
+	symbols  []Symbol
+}
+
+// WellKnownKeyword interns s and registers the result as well-known: its
+// pointer identity survives ClearInterns, so a package-level variable may bind
+// it at init and compare against it by pointer for the life of the process.
+//
+// Use it for a keyword a variable holds. An ordinary keyword must not be
+// registered — the set is walked on every clear, and a value nothing holds
+// across a clear has nothing to restore.
+func WellKnownKeyword(s string) Keyword {
+	kw := NewKeyword(s)
+	wellKnown.mu.Lock()
+	wellKnown.keywords = append(wellKnown.keywords, kw)
+	wellKnown.mu.Unlock()
+	return kw
+}
+
+// wellKnownSymbol is WellKnownKeyword for symbols. Unexported because the
+// symbols below are the whole set: symbols name query-language operators, and
+// the vocabulary is closed by the parser rather than extended by callers.
+func wellKnownSymbol(s string) Symbol {
+	sym := internSymbol(s)
+	wellKnown.mu.Lock()
+	wellKnown.symbols = append(wellKnown.symbols, sym)
+	wellKnown.mu.Unlock()
+	return sym
+}
+
+// reseedWellKnown re-adopts the well-known instances into freshly created
+// intern tables. Store rather than intern: the point is that the pointer does
+// not change, so the table is told which instance is canonical rather than
+// asked to mint one.
+func reseedWellKnown() {
+	wellKnown.mu.Lock()
+	defer wellKnown.mu.Unlock()
+	for _, kw := range wellKnown.keywords {
+		keywordIntern.cache.Store(kw.String(), kw)
+	}
+	for _, sym := range wellKnown.symbols {
+		symbolIntern.cache.Store(sym.String(), sym)
+	}
+}
+
 // Pre-interned common symbols for hot paths
-var SymDollar = internSymbol("$")
+var SymDollar = wellKnownSymbol("$")
 
 // Pre-interned aggregate function symbols. FindAggregate.Function carries one
 // of these; resolution is pointer equality against them.
 var (
-	SymCount = internSymbol("count")
-	SymSum   = internSymbol("sum")
-	SymAvg   = internSymbol("avg")
-	SymMin   = internSymbol("min")
-	SymMax   = internSymbol("max")
+	SymCount = wellKnownSymbol("count")
+	SymSum   = wellKnownSymbol("sum")
+	SymAvg   = wellKnownSymbol("avg")
+	SymMin   = wellKnownSymbol("min")
+	SymMax   = wellKnownSymbol("max")
 )
 
 // Pre-interned comparison operator symbols. Comparison.Op and
 // ChainedComparison.Op carry one of these; dispatch is pointer equality
 // against them.
 var (
-	SymEQ  = internSymbol("=")
-	SymNE  = internSymbol("!=")
-	SymLT  = internSymbol("<")
-	SymLTE = internSymbol("<=")
-	SymGT  = internSymbol(">")
-	SymGTE = internSymbol(">=")
+	SymEQ  = wellKnownSymbol("=")
+	SymNE  = wellKnownSymbol("!=")
+	SymLT  = wellKnownSymbol("<")
+	SymLTE = wellKnownSymbol("<=")
+	SymGT  = wellKnownSymbol(">")
+	SymGTE = wellKnownSymbol(">=")
 )
 
 // Pre-interned arithmetic operator symbols. ArithmeticFunction.Op carries
 // one of these; dispatch is pointer equality against them.
 var (
-	SymAdd      = internSymbol("+")
-	SymSubtract = internSymbol("-")
-	SymMultiply = internSymbol("*")
-	SymDivide   = internSymbol("/")
+	SymAdd      = wellKnownSymbol("+")
+	SymSubtract = wellKnownSymbol("-")
+	SymMultiply = wellKnownSymbol("*")
+	SymDivide   = wellKnownSymbol("/")
 )
 
 // Pre-interned time-extraction field symbols. TimeExtractionFunction.Field
 // carries one of these; dispatch is pointer equality against them.
 var (
-	SymYear   = internSymbol("year")
-	SymMonth  = internSymbol("month")
-	SymDay    = internSymbol("day")
-	SymHour   = internSymbol("hour")
-	SymMinute = internSymbol("minute")
-	SymSecond = internSymbol("second")
+	SymYear   = wellKnownSymbol("year")
+	SymMonth  = wellKnownSymbol("month")
+	SymDay    = wellKnownSymbol("day")
+	SymHour   = wellKnownSymbol("hour")
+	SymMinute = wellKnownSymbol("minute")
+	SymSecond = wellKnownSymbol("second")
 )
 
-// ClearInterns clears keyword, identity, and symbol intern caches
-// Useful for testing or when memory needs to be reclaimed
+// ClearInterns clears the keyword, identity and symbol intern tables.
+//
+// For tests only. It is not a way to reclaim memory: interned instances are
+// canonical by pointer, so emptying the tables orphans every value the process
+// still holds, and Keyword.Equal and Compare *panic* when two pointers carry
+// one string. A live database whose schema, cached entries and parsed queries
+// are full of pre-clear keywords does not degrade after this call, it crashes
+// on the next comparison. Use it where the whole world is about to be rebuilt.
+//
+// Values registered as well-known keep their pointer identity across the
+// clear: the new tables are told those instances are canonical rather than
+// asked to mint replacements. That is what lets a package-level variable —
+// including one in a package this one cannot name — stay valid.
 func ClearInterns() {
 	keywordIntern = &keywordInternCache{}
 	identityIntern = &identityInternCache{}
@@ -207,27 +279,5 @@ func ClearInterns() {
 	// clearing the authority without it would serve stale pre-clear pointers
 	// that panic against fresh interns in Keyword.Equal/Compare.
 	keywordBytes = &keywordByteCache{m: make(map[[32]byte]Keyword)}
-	// Re-intern pre-interned symbols so they remain valid
-	SymDollar = internSymbol("$")
-	SymCount = internSymbol("count")
-	SymSum = internSymbol("sum")
-	SymAvg = internSymbol("avg")
-	SymMin = internSymbol("min")
-	SymMax = internSymbol("max")
-	SymEQ = internSymbol("=")
-	SymNE = internSymbol("!=")
-	SymLT = internSymbol("<")
-	SymLTE = internSymbol("<=")
-	SymGT = internSymbol(">")
-	SymGTE = internSymbol(">=")
-	SymAdd = internSymbol("+")
-	SymSubtract = internSymbol("-")
-	SymMultiply = internSymbol("*")
-	SymDivide = internSymbol("/")
-	SymYear = internSymbol("year")
-	SymMonth = internSymbol("month")
-	SymDay = internSymbol("day")
-	SymHour = internSymbol("hour")
-	SymMinute = internSymbol("minute")
-	SymSecond = internSymbol("second")
+	reseedWellKnown()
 }

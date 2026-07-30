@@ -10,9 +10,9 @@ import (
 
 // TestOrderByNonProjectedThroughStorage exercises the non-projected sort-key
 // fix end-to-end against real BadgerDB storage (planner retention through
-// the BadgerMatcher path, executor sort-strip finalization), not a synthetic
+// the storage PatternMatcher path, executor sort-strip finalization), not a synthetic
 // in-memory matcher. See
-// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md.
+// BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md.
 func TestOrderByNonProjectedThroughStorage(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -53,7 +53,7 @@ func TestOrderByNonProjectedThroughStorage(t *testing.T) {
 				require.Len(t, rel.Symbols(), 1)
 			})
 
-			t.Run("highest-priority row via non-projected key and limit 1", func(t *testing.T) {
+			t.Run("highest-priority tuple via non-projected key and limit 1", func(t *testing.T) {
 				rel, err := d.Query(`[:find ?name
 				                      :where [?t :task/name ?name]
 				                             [?t :task/priority ?p]

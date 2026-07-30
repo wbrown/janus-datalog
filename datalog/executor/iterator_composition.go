@@ -136,7 +136,7 @@ func (it *PredicateFilterIterator) Error() error {
 
 // admitExpressionResult resolves a function result entering relational flow.
 // It consumes the get-some absence sentinel — found=false means the function
-// produced no binding, and the caller drops the affected rows per its own
+// produced no binding, and the caller drops the affected tuples per its own
 // semantics; the sentinel itself never escapes this boundary — and validates
 // the resolved value against the datalog domain. Expression evaluation is
 // the one producer of NaN inside the engine — arithmetic over Inf operands
@@ -218,8 +218,7 @@ func (it *FunctionEvaluatorIterator) Next() bool {
 		}
 
 		// Absence (get-some found no attribute) is a soft no-match: skip the
-		// tuple, not the error-as-signal misuse the swallowing loop existed
-		// to absorb.
+		// tuple.
 		value, found, admitErr := admitExpressionResult(it.function, result)
 		if admitErr != nil {
 			it.err = admitErr

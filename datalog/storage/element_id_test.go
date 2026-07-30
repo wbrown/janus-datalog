@@ -404,9 +404,7 @@ func TestElementIDKeyEncodingWithBadgerDB(t *testing.T) {
 
 	// Scan TAEV index (Tx first) - should return entries in descending Tx order
 	// because of bitwise NOT encoding
-	start := []byte{byte(TAEV)}
-	end := []byte{byte(TAEV) + 1}
-	iter, err := db.store.Scan(TAEV, start, end)
+	iter, err := db.store.Scan(ScanBound{Index: TAEV})
 	require.NoError(t, err)
 	defer iter.Close()
 

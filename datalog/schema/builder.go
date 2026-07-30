@@ -63,8 +63,18 @@ type AttributeBuilder struct {
 	def    *AttributeDefinition
 }
 
-// Type sets the value type for the attribute
-func (ab *AttributeBuilder) Type(t ValueType) *AttributeBuilder {
+// Type sets the value type for the attribute.
+//
+// t must be one of the package's value-type keywords. Nothing in the Go type
+// system distinguishes those from the cardinality or unique keywords — all
+// three vocabularies are datalog.Keyword — so a keyword from the wrong one is
+// recorded as an error for Build to return rather than stored.
+func (ab *AttributeBuilder) Type(t datalog.Keyword) *AttributeBuilder {
+	if _, ok := valueTypes[t]; !ok {
+		ab.parent.errors = append(ab.parent.errors,
+			fmt.Errorf("attribute %s: %s is not a value type", ab.def.Ident, t))
+		return ab
+	}
 	ab.def.ValueType = t
 	return ab
 }
@@ -103,8 +113,17 @@ func (ab *AttributeBuilder) UniqueElements(unique bool) *AttributeBuilder {
 	return ab
 }
 
-// Unique sets the uniqueness constraint (db.unique/identity or db.unique/value)
-func (ab *AttributeBuilder) Unique(u Unique) *AttributeBuilder {
+// Unique sets the uniqueness constraint: UniqueValue or UniqueIdentity.
+//
+// There is no keyword for "not unique" — omitting this call is how a schema
+// says it. A keyword from another vocabulary is recorded as an error for Build
+// to return, on the same grounds as Type.
+func (ab *AttributeBuilder) Unique(u datalog.Keyword) *AttributeBuilder {
+	if _, ok := uniques[u]; !ok {
+		ab.parent.errors = append(ab.parent.errors,
+			fmt.Errorf("attribute %s: %s is not a uniqueness constraint", ab.def.Ident, u))
+		return ab
+	}
 	ab.def.Unique = u
 	return ab
 }

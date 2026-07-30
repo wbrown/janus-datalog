@@ -136,7 +136,9 @@
 //	db.QueryInto(&results, query)
 //
 // q.Find(&f.Field) adds to Find clause, q.V(&f.Field) references only.
-// Rename a struct field -> compile error. Typo in tag -> caught by QueryInto tests.
+// Rename a struct field -> compile error. Tag missing or not a ?variable ->
+// panic when the query is built. Tag naming a symbol the query does not
+// produce -> error from QueryInto.
 //
 // See docs/reference/QUERY_BUILDER.md for complete documentation.
 package qb

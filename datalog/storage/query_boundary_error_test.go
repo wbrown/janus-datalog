@@ -11,12 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
-	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Integration reproduction for docs/bugs/BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md.
+// Integration reproduction for BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md.
 //
 // A Tier-3 value stores its compressed bytes in the blob store with a content
 // hash in the index key. If the blob is missing, decoding the value fails — and
@@ -102,10 +100,10 @@ func TestKeyOnlyIteratorRetainsBlobErrorAfterRepeatedNext(t *testing.T) {
 	db, entity, attr := writeTier3ValueThenCorruptBlob(t, nil)
 	defer db.Close()
 
-	entityBytes := entity.Bytes()
-	attrBytes := ToStorageDatom(datalog.Datom{A: attr}).A
-	start, end := db.store.Encoder().EncodePrefixRange(EATV, entityBytes[:], attrBytes[:])
-	iter, err := db.store.ScanKeysOnly(EATV, start, end)
+	iter, err := db.store.ScanKeysOnly(ScanBound{
+		Index:  EATV,
+		Prefix: []datalog.Value{entity, attr},
+	})
 	require.NoError(t, err)
 	defer iter.Close()
 
@@ -139,8 +137,7 @@ func TestKeyOnlyIterator_DatomRejectsEndBoundSuccessor(t *testing.T) {
 	require.NoError(t, err)
 
 	firstBytes := first.Bytes()
-	start, end := db.store.Encoder().EncodePrefixRange(EAVT, firstBytes[:])
-	iter, err := db.store.ScanKeysOnly(EAVT, start, end)
+	iter, err := db.store.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{first}})
 	require.NoError(t, err)
 	defer iter.Close()
 
@@ -251,30 +248,6 @@ func TestQueryNot_SurfacesBlobDecodeError(t *testing.T) {
 	}
 }
 
-// TestIndexNestedLoop_SurfacesBlobDecodeError: the index-nested-loop strategy
-// (reusingIterator) is not reachable via db.Query (the matcher hardcodes
-// HashJoinScan), so this drives it directly with IndexNestedLoopThreshold high.
-// The reusingIterator must surface the inner scan's deferred error on exhaustion.
-func TestIndexNestedLoop_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t, nil)
-	defer db.Close()
-
-	q, err := parser.ParseQuery(`[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`)
-	require.NoError(t, err)
-	pattern := q.Where[0].(*query.DataPattern)
-
-	matcher := NewBadgerMatcherWithOptions(db.store, executor.ExecutorOptions{IndexNestedLoopThreshold: 999999})
-	bindingRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, []executor.Tuple{{e}})
-
-	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
-	require.NoError(t, err)
-	it := result.Iterator()
-	for it.Next() {
-	}
-	require.ErrorContains(t, it.Error(), "blob", "index-nested-loop scan must surface the blob decode error")
-	it.Close()
-}
-
 // TestQueryGroupedAggregate_SurfacesBlobDecodeError: a grouped aggregation
 // (group-by var in :find) routes through the grouped path; the failing scan's
 // error must survive.
@@ -365,7 +338,7 @@ func TestQueryMultiPhase_SurfacesBlobDecodeError(t *testing.T) {
 }
 
 // writeValidThenCorruptBlob writes two :doc/blob datoms so an unbound scan yields
-// a VALID row first and a FAILING row second. The attr-bound, E/V-unbound scan is
+// a VALID datom first and a FAILING one second. The attr-bound, E/V-unbound scan is
 // E-primary (AETV for cardinality-one, AEVT for cardinality-many), and the raw
 // identity hash is the E key component, so the entity with the lower hash is
 // scanned first. That entity gets a small inline value (always decodes);
@@ -429,10 +402,10 @@ func writeValidThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions) *Dat
 }
 
 // TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults: QueryInto consumes a
-// scan that yields one valid row then fails (Failure Mode 3, truncation). The
+// scan that yields one valid datom then fails (truncation). The
 // error must surface AND the destination must not be populated with the partial
 // prefix. If the ForEach error check were missing, out would hold the valid "ok"
-// row and err would be nil.
+// entry and err would be nil.
 func TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -449,9 +422,9 @@ func TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults(t *testing.T) {
 }
 
 // TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext: QueryOneInto reads a
-// valid first row, then the second Next() fails (Verification Plan #4). The error
+// valid first tuple, then the second Next() fails. The error
 // must surface as found=false. If the second-Next() Error() check were missing,
-// the first row would be mapped and the call would return found=true, nil.
+// the first tuple would be mapped and the call would return found=true, nil.
 func TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -467,12 +440,12 @@ func TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext(t *testing.T) {
 	}
 }
 
-// TestScan_YieldsValidRowThenFails asserts the precondition the two tests above
-// rely on: the scan yields exactly one valid row and THEN fails. This is what
+// TestScan_YieldsValidDatomThenFails asserts the precondition the two tests above
+// rely on: the scan yields exactly one valid datom and THEN fails. This is what
 // makes them exercise the truncation / second-Next() branches rather than the
 // already-covered first-Next() path. If the scan order ever changes, this fails
 // and flags the coverage regression directly.
-func TestScan_YieldsValidRowThenFails(t *testing.T) {
+func TestScan_YieldsValidDatomThenFails(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
@@ -489,7 +462,7 @@ func TestScan_YieldsValidRowThenFails(t *testing.T) {
 				yielded++
 			}
 			require.ErrorContains(t, it.Error(), "blob")
-			require.Equal(t, 1, yielded, "exactly one valid row must precede the failing row (truncation precondition)")
+			require.Equal(t, 1, yielded, "exactly one valid datom must precede the failing one (truncation precondition)")
 		})
 	}
 }

@@ -5,12 +5,11 @@ import (
 	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // IndexedMemoryMatcher is an optimized in-memory pattern matcher that uses hash indices
-// for O(1) lookups instead of O(N) linear scans. This provides 5-10× speedup for typical queries.
+// for O(1) lookups instead of O(N) linear scans.
 type IndexedMemoryMatcher struct {
 	datoms []datalog.Datom
 
@@ -20,10 +19,6 @@ type IndexedMemoryMatcher struct {
 	attributeIndex map[datalog.Keyword][]int  // A (interned pointer) → datom positions
 	valueIndex     map[uint64][]int           // hash(V) → datom positions (NOTE: values are interface{}, indexed by hash; collisions filtered by exact match)
 	eavIndex       map[eaIndexKey][]int       // (E, A) interned pointers → datom positions (all, for cardinality-many)
-
-	// Optional collector for annotations (protected by collectorMutex for concurrent access)
-	collectorMutex sync.RWMutex
-	collector      *annotations.Collector
 
 	// ExecutorOptions for configuring relation behavior (protected by optionsMutex)
 	optionsMutex sync.RWMutex
@@ -140,15 +135,6 @@ func hashDatomValue(v interface{}) uint64 {
 	return hashValue(v)
 }
 
-// WithCollector sets the annotation collector and returns self for chaining
-// Thread-safe for concurrent use by parallel subqueries
-func (m *IndexedMemoryMatcher) WithCollector(collector *annotations.Collector) CollectorAware {
-	m.collectorMutex.Lock()
-	m.collector = collector
-	m.collectorMutex.Unlock()
-	return m
-}
-
 // WithOptions sets the executor options and returns self for chaining
 func (m *IndexedMemoryMatcher) WithOptions(opts ExecutorOptions) *IndexedMemoryMatcher {
 	m.optionsMutex.Lock()
@@ -207,7 +193,7 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	}
 	if bindingRel.Size() == 0 {
 		// An errored relation that materialized empty is not an empty
-		// binding: its zero rows mean the upstream scan failed. Falling
+		// binding: its zero tuples mean the upstream scan failed. Falling
 		// back to an unbound scan here laundered that failure into a
 		// silent empty result.
 		if err := EmptyRelationError(bindingRel); err != nil {
@@ -217,17 +203,17 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
 	}
 
-	// Project the binding relation onto the pattern's symbols: binding rows
+	// Project the binding relation onto the pattern's symbols: binding tuples
 	// differing only in passenger symbols would rebind the identical pattern
 	// and emit the same datoms again. Projection's set semantics makes the
-	// binding rows unique on the values that actually bind the pattern (the
+	// binding tuples unique on the values that actually bind the pattern (the
 	// storage matcher projects identically before its binding-driven paths).
 	bindingRel = bindingRel.ProjectFromPattern(pattern)
 
 	// Match with bindings - use streaming iterator for lazy evaluation
 	// Prefer binding relation's options over matcher's options
 	relOpts := bindingRel.Options()
-	if relOpts == (ExecutorOptions{}) {
+	if !relOpts.populated() {
 		relOpts = opts
 	}
 

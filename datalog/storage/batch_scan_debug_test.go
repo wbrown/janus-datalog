@@ -42,7 +42,7 @@ func TestBatchScanDebug(t *testing.T) {
 		},
 	}
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 
 	// First get all entities without constraint
 	t.Run("WithoutConstraint", func(t *testing.T) {

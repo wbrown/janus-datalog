@@ -14,9 +14,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-// Note: We use db.Query() directly instead of NewExecutor() + Execute()
-// because Database provides a simpler API that handles parsing internally.
-
 // buildCLI builds the CLI binary for testing
 func buildCLI(t *testing.T) string {
 	t.Helper()
@@ -634,9 +631,9 @@ func TestCLI_QueryWithIDLiteralInput(t *testing.T) {
 }
 
 // TestCLI_QueryWithRelationInput pins relation-shaped EDN through -in: a
-// vector of tuple vectors binds as relation rows
+// vector of tuple vectors binds as relation tuples
 // (BUG_CLI_RELATION_INPUT_EDN_REJECTED — the engine's relation-input
-// admission rejected interface-wrapped rows, the only shape EDN parsing
+// admission rejected interface-wrapped tuples, the only shape EDN parsing
 // produces).
 func TestCLI_QueryWithRelationInput(t *testing.T) {
 	binPath := buildCLI(t)
@@ -644,7 +641,7 @@ func TestCLI_QueryWithRelationInput(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Alice's row matches her stored age; Bob's row carries a wrong
+			// Alice's tuple matches her stored age; Bob's carries a wrong
 			// age, so the relation join keeps Alice only.
 			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
 				"-query", `[:find ?name :in $ [[?name ?age] ...] :where [?p :person/name ?name] [?p :person/age ?age]]`,
@@ -656,7 +653,7 @@ func TestCLI_QueryWithRelationInput(t *testing.T) {
 
 			output := string(out)
 			if !strings.Contains(output, "Alice") {
-				t.Errorf("Expected Alice (matching row), got: %s", output)
+				t.Errorf("Expected Alice (matching tuple), got: %s", output)
 			}
 			if strings.Contains(output, "Bob") {
 				t.Errorf("Should not contain Bob (age mismatch), got: %s", output)
@@ -766,7 +763,6 @@ func TestCLI_ImportNonexistentFile(t *testing.T) {
 
 // TestCLI_BareInvocationDoesNotWrite is the regression test for demo-mode
 // removal: invoking the CLI with no mode flags must never commit data.
-// (Demo mode used to auto-populate an empty database with sample datoms.)
 func TestCLI_BareInvocationDoesNotWrite(t *testing.T) {
 	binPath := buildCLI(t)
 

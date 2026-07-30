@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -119,16 +118,6 @@ func (sr *SourceRouter) TypeDefault(attr datalog.Keyword, defaultVal interface{}
 		return td.TypeDefault(attr, defaultVal)
 	}
 	return defaultVal
-}
-
-// SetHandler propagates the annotation handler to all underlying matchers that support it.
-// This is called by WrapMatcher when annotations are enabled.
-func (sr *SourceRouter) SetHandler(handler annotations.Handler) {
-	for _, source := range sr.sources {
-		if sh, ok := source.(interface{ SetHandler(annotations.Handler) }); ok {
-			sh.SetHandler(handler)
-		}
-	}
 }
 
 // Compile-time verification that SourceRouter implements all matcher interfaces

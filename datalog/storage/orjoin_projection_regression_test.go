@@ -13,7 +13,7 @@ import (
 )
 
 // TestOrJoinProjectionInheritsOuterBindings reproduces the bug documented in
-// docs/bugs/active/ORJOIN_PROJECTION_REQUIRES_REBINDING.md
+// ORJOIN_PROJECTION_REQUIRES_REBINDING.md
 //
 // When or-join projection variables are already bound by outer clauses,
 // Datomic makes those bindings available inside each branch. Janus Datalog

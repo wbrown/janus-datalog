@@ -115,8 +115,8 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 				require.Len(t, results, 3, "should return all 3 parents")
 
 				byName := make(map[string]int)
-				for _, row := range results {
-					byName[row[0].(string)] = int(row[1].(int64))
+				for _, tuple := range results {
+					byName[tuple[0].(string)] = int(tuple[1].(int64))
 				}
 				assert.Equal(t, 3, byName["Alice"])
 				assert.Equal(t, 1, byName["Bob"])
@@ -124,7 +124,7 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 			})
 
 			// Test 2: OR-union with NOT branch for left join semantics
-			// Uses RelationBinding [[?p ?count] ...] for multi-row subquery
+			// Uses RelationBinding [[?p ?count] ...] for multi-tuple subquery
 			t.Run("or_union_with_not", func(t *testing.T) {
 				results, err := executor.CollectTuples(db.Query(`
 			[:find ?name ?count
@@ -145,8 +145,8 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 				require.Len(t, results, 3, "should return all 3 parents")
 
 				byName := make(map[string]int)
-				for _, row := range results {
-					byName[row[0].(string)] = int(row[1].(int64))
+				for _, tuple := range results {
+					byName[tuple[0].(string)] = int(tuple[1].(int64))
 				}
 				assert.Equal(t, 3, byName["Alice"])
 				assert.Equal(t, 1, byName["Bob"])
@@ -172,8 +172,8 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 				require.Len(t, results, 2, "inner join should return only parents with children")
 
 				byName := make(map[string]int)
-				for _, row := range results {
-					byName[row[0].(string)] = int(row[1].(int64))
+				for _, tuple := range results {
+					byName[tuple[0].(string)] = int(tuple[1].(int64))
 				}
 				assert.Equal(t, 3, byName["Alice"])
 				assert.Equal(t, 1, byName["Bob"])
@@ -181,7 +181,7 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 
 			// Test 4: Decorrelated subquery with TupleBinding.
 			// TupleBinding [[?a ?b]] binds a single tuple. A decorrelated subquery
-			// returns multiple rows, so this should use RelationBinding [[?a ?b] ...]
+			// returns multiple tuples, so this should use RelationBinding [[?a ?b] ...]
 			// instead. This test documents the current behavior.
 			t.Run("decorrelated_tuple_binding", func(t *testing.T) {
 				results, err := executor.CollectTuples(db.Query(`
@@ -193,9 +193,9 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 			             :where [?c :child/parent ?p]]
 			            $) [[?p ?count]]]]`))
 				if err != nil {
-					t.Logf("TupleBinding with multi-row result: %v", err)
-					t.Log("Use RelationBinding [[?p ?count] ...] for multi-row subquery results")
-					t.Skip("TupleBinding only handles single-row results per Datomic spec")
+					t.Logf("TupleBinding with multi-tuple result: %v", err)
+					t.Log("Use RelationBinding [[?p ?count] ...] for multi-tuple subquery results")
+					t.Skip("TupleBinding only handles single-tuple results per Datomic spec")
 				}
 				t.Logf("Tuple binding results: %v", results)
 			})

@@ -16,7 +16,7 @@ func TestOrDefaultJoinReplacesConsumedOuterWithoutRedundantJoin(t *testing.T) {
 	unrelated := datalog.NewSymbol("?unrelated")
 	var replacementEvents int
 	var joinEvents int
-	ctx := NewContext(func(event annotations.Event) {
+	handler := func(event annotations.Event) {
 		switch event.Name {
 		case "or/outer-replaced":
 			replacementEvents++
@@ -25,8 +25,9 @@ func TestOrDefaultJoinReplacesConsumedOuterWithoutRedundantJoin(t *testing.T) {
 		case annotations.JoinStrategy:
 			joinEvents++
 		}
-	})
-	options := ExecutorOptions{Collector: ctx.Collector()}
+	}
+	ctx := NewContext()
+	options := ExecutorOptions{Handler: handler}
 	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
 	outer := NewMaterializedRelationWithProperties(
 		[]query.Symbol{entity, name},
@@ -65,12 +66,12 @@ func TestOrDefaultJoinReplacesConsumedOuterWithoutRedundantJoin(t *testing.T) {
 		}
 	}
 	require.NotNil(t, expanded)
-	rows, err := CollectTuples(expanded, nil)
+	tuples, err := CollectTuples(expanded, nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, [][]interface{}{
 		{int64(1), "one", "selected"},
 		{int64(2), "two", "selected"},
-	}, rows)
+	}, tuples)
 	require.True(t, containsSymbolSet(expanded.Properties().Keys, []query.Symbol{entity}))
 	require.Equal(t, 1, replacementEvents)
 	require.Zero(t, joinEvents)
@@ -81,12 +82,13 @@ func TestOrDefaultReplacesEveryConsumedOuterGroup(t *testing.T) {
 	y := datalog.NewSymbol("?y")
 	sum := datalog.NewSymbol("?sum")
 	var consumed int
-	ctx := NewContext(func(event annotations.Event) {
+	handler := func(event annotations.Event) {
 		if event.Name == "or/outer-replaced" {
 			consumed, _ = event.Data["consumed_groups"].(int)
 		}
-	})
-	options := ExecutorOptions{Collector: ctx.Collector()}
+	}
+	ctx := NewContext()
+	options := ExecutorOptions{Handler: handler}
 	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
 	left := NewMaterializedRelationWithOptions(
 		[]query.Symbol{x},
@@ -120,9 +122,9 @@ func TestOrDefaultReplacesEveryConsumedOuterGroup(t *testing.T) {
 	groups, err := exec.Execute(ctx, q, []Relation{left, right})
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
-	rows, err := CollectTuples(groups[0], nil)
+	tuples, err := CollectTuples(groups[0], nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(2), int64(3), int64(5)}}, rows)
+	require.Equal(t, [][]interface{}{{int64(2), int64(3), int64(5)}}, tuples)
 	require.Equal(t, 2, consumed)
 }
 
@@ -158,7 +160,7 @@ func TestOrOuterReplacementPreservesDeferredOuterError(t *testing.T) {
 		},
 	}}}
 
-	groups, err := exec.Execute(NewContext(nil), q, []Relation{outer})
+	groups, err := exec.Execute(NewContext(), q, []Relation{outer})
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
 	require.ErrorIs(t, driveErr(groups[0]), errInjectedIterator)
@@ -193,7 +195,7 @@ func TestOrFallbackDoesNotTreatBranchErrorAsNoMatch(t *testing.T) {
 	}
 	relation := NewOrFallbackRelation(
 		exec,
-		NewContext(nil),
+		NewContext(),
 		branches,
 		outer,
 		ExecutorOptions{},

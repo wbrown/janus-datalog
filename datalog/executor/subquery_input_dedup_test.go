@@ -18,7 +18,7 @@ import (
 //
 // Unique input combinations ARE the outer relation projected onto the data
 // input symbols: Project's set semantics is the dedup, backed by the same
-// TupleKeyMap typed-value-identity machinery the deleted per-tuple scan used.
+// TupleKeyMap typed-value-identity machinery.
 func TestSubqueryInputProjection_NoStringKeyCollisions(t *testing.T) {
 	syms := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")}
 

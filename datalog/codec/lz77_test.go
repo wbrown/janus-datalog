@@ -90,9 +90,7 @@ func TestLZ77_ExactMinMatch(t *testing.T) {
 	assert.True(t, bytes.Equal(input, reconstructed))
 }
 
-func TestLZ77_WindowBoundary(t *testing.T) {
-	// Create input where a pattern repeats beyond the window
-	// Use a small window for testing
+func TestLZ77_RoundTripRepeatAfterGap(t *testing.T) {
 	pattern := []byte("PATTERN!")
 	gap := make([]byte, 200)
 	for i := range gap {
@@ -105,10 +103,65 @@ func TestLZ77_WindowBoundary(t *testing.T) {
 	input = append(input, gap...)
 	input = append(input, pattern...)
 
-	// With default window (1MB), match should be found
+	// 208 back is well inside the 1MB window, so the second occurrence encodes as
+	// a back-reference and the round trip covers a match, not only literals.
 	sb := FindMatches(input)
 	reconstructed := Reconstruct(sb)
 	assert.True(t, bytes.Equal(input, reconstructed))
+}
+
+// TestLZ77_MatchAtWindowBoundary pins the two offsets on either side of the
+// match window. findBestMatch admits a candidate when cpos >= pos-window, so an
+// offset of exactly lz77WindowSize is the last one that matches and
+// lz77WindowSize+1 is the first that does not.
+//
+// Round-tripping cannot see this on its own: a repeat the encoder declines to
+// match still reconstructs correctly, as literals. The assertions are therefore
+// on the emitted offsets.
+func TestLZ77_MatchAtWindowBoundary(t *testing.T) {
+	pattern := []byte("LZ77-WINDOW-BOUNDARY-SENTINEL!!!")
+
+	// The filler is one repeated byte absent from the pattern, which keeps every
+	// interior 4-byte window in a single hash bucket. The pattern's own bucket
+	// then holds just its two occurrences, so the lz77MaxChain walk reaches the
+	// far one instead of being crowded out by collisions.
+	repeatAtOffset := func(offset int) []byte {
+		input := make([]byte, 0, offset+len(pattern))
+		input = append(input, pattern...)
+		for len(input) < offset {
+			input = append(input, 'q')
+		}
+		return append(input, pattern...)
+	}
+
+	t.Run("offset equal to the window matches", func(t *testing.T) {
+		input := repeatAtOffset(lz77WindowSize)
+		sb := FindMatches(input)
+
+		var found bool
+		for _, seq := range sb.Sequences {
+			if seq.Offset == lz77WindowSize {
+				found = true
+				require.GreaterOrEqual(t, seq.MatchLen, len(pattern),
+					"the boundary match must cover the whole repeated pattern")
+			}
+		}
+		require.True(t, found,
+			"a repeat exactly lz77WindowSize back is inside the window and must be matched")
+		assert.True(t, bytes.Equal(input, Reconstruct(sb)))
+	})
+
+	t.Run("offset one past the window does not match", func(t *testing.T) {
+		input := repeatAtOffset(lz77WindowSize + 1)
+		sb := FindMatches(input)
+
+		for _, seq := range sb.Sequences {
+			require.LessOrEqual(t, seq.Offset, lz77WindowSize,
+				"no back-reference may reach further than lz77WindowSize")
+		}
+		assert.True(t, bytes.Equal(input, Reconstruct(sb)),
+			"the declined repeat still reconstructs, as literals")
+	})
 }
 
 func TestLZ77_LazyMatch(t *testing.T) {

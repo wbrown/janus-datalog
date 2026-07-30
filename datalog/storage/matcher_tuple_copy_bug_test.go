@@ -24,7 +24,7 @@ func TestMatcherTupleCopyBug(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	// Create data matching gopher-street pattern:
+	// Create data shaped to trigger the bug:
 	// - 10 symbols (MORE binding tuples to trigger bug)
 	// - Many price bars per symbol (to ensure we hit the bug)
 	tx := db.NewTransaction()
@@ -64,7 +64,7 @@ func TestMatcherTupleCopyBug(t *testing.T) {
 			opts := executor.ExecutorOptions{
 				EnableTrueStreaming: true,
 			}
-			matcher := NewBadgerMatcherWithOptions(db.store, opts)
+			matcher := NewPatternMatcherWithOptions(db.store, opts)
 			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
 			result, err := exec.Execute(q)
@@ -79,15 +79,14 @@ func TestMatcherTupleCopyBug(t *testing.T) {
 				count++
 			}
 
-			// Expected: 1000 results (10 symbols × 100 bars each)
-			// With bug: 0 results or incorrect count (bindingTuples all point to same garbage memory)
-			//
-			// This assertion will FAIL until matcher_relations.go:241 is fixed
+			// Expected: 1000 results (10 symbols × 100 bars each). Without the
+			// copy at matcher_relations.go:241 every bindingTuple points at one
+			// reused buffer, and the count comes back 0 or wrong.
 			require.Equal(t, 1000, count,
-				"Expected 2000 results but got %d. "+
-					"Bug: matcher_relations.go:241 doesn't copy tuples, "+
-					"causing all bindingTuples to point to same reused buffer. "+
-					"Scan finds datoms but relation shows 0 tuples.", count)
+				"Expected 1000 results but got %d. "+
+					"matcher_relations.go:241 is not copying tuples, "+
+					"so all bindingTuples point at the same reused buffer: "+
+					"the scan finds datoms but the relation shows 0 tuples.", count)
 		})
 	}
 }

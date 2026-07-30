@@ -48,17 +48,25 @@ func setAndCommit(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyw
 
 // resolveOne reads (e, a) through exactly the cache path the bug lives in
 // (Cache.GetOrResolve), returning the resolved CardinalityOne value.
-func resolveOne(db *Database, e datalog.Identity, a datalog.Keyword) any {
+//
+// The resolution error is returned rather than folded into a nil value. A
+// failed read and an absent attribute are different answers, and the concurrent
+// reader below treats nil as "not written yet, try again" — so collapsing them
+// would leave it spinning on an error it could not see.
+func resolveOne(db *Database, e datalog.Identity, a datalog.Keyword) (any, error) {
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
 	key := CacheKey{E: Entity(e.Hash()), A: aBytes}
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(db.schema)
-	entry := db.cache.GetOrResolve(key, matcher, nil)
-	if entry == nil {
-		return nil
+	entry, err := db.cache.GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+	if err != nil {
+		return nil, err
 	}
-	return entry.OneValue()
+	if entry == nil {
+		return nil, nil
+	}
+	return entry.OneValue(), nil
 }
 
 // TestCommit_NoStaleCachedReadAfterCommitReturns is the core regression. It warms
@@ -73,18 +81,24 @@ func TestCommit_NoStaleCachedReadAfterCommitReturns(t *testing.T) {
 	k := datalog.NewKeyword(":counter/value")
 
 	setAndCommit(t, db, e, k, int64(1))
-	require.Equal(t, int64(1), resolveOne(db, e, k), "cache should be warmed at v1")
+	warmed, err := resolveOne(db, e, k)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), warmed, "cache should be warmed at v1")
 
 	var windowValue any
-	db.onCommitWindow = func() { windowValue = resolveOne(db, e, k) }
+	var windowErr error
+	db.onCommitWindow = func() { windowValue, windowErr = resolveOne(db, e, k) }
 	setAndCommit(t, db, e, k, int64(2))
 	db.onCommitWindow = nil
+	require.NoError(t, windowErr, "the post-commit window read must succeed, not merely return no value")
 
 	assert.Equal(t, int64(2), windowValue,
 		"a cache read in the post-commit window must see the committed value, not the stale entry")
 
 	// And the cache serves v2 normally afterward.
-	assert.Equal(t, int64(2), resolveOne(db, e, k))
+	after, err := resolveOne(db, e, k)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), after)
 }
 
 // TestCommit_ConcurrentReadersSeeCommittedValue hammers the in-flight machinery:
@@ -98,7 +112,8 @@ func TestCommit_ConcurrentReadersSeeCommittedValue(t *testing.T) {
 	k := datalog.NewKeyword(":counter/value")
 
 	setAndCommit(t, db, e, k, int64(0))
-	resolveOne(db, e, k) // warm
+	_, err := resolveOne(db, e, k) // warm
+	require.NoError(t, err)
 
 	const readers = 8
 	stop := make(chan struct{})
@@ -115,7 +130,11 @@ func TestCommit_ConcurrentReadersSeeCommittedValue(t *testing.T) {
 					return
 				default:
 				}
-				v := resolveOne(db, e, k)
+				v, err := resolveOne(db, e, k)
+				if err != nil {
+					errCh <- fmt.Errorf("reader resolve failed: %w", err)
+					return
+				}
 				if v == nil {
 					continue
 				}
@@ -155,7 +174,9 @@ func TestCommit_RollbackPathDoesNotPoisonCache(t *testing.T) {
 	k := datalog.NewKeyword(":counter/value")
 
 	setAndCommit(t, db, e, k, int64(7))
-	require.Equal(t, int64(7), resolveOne(db, e, k), "cache warmed at v7")
+	warmed, err := resolveOne(db, e, k)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), warmed, "cache warmed at v7")
 
 	var aBytes Attribute
 	copy(aBytes[:], k.String())
@@ -168,9 +189,13 @@ func TestCommit_RollbackPathDoesNotPoisonCache(t *testing.T) {
 
 	// Storage still holds v7, and maxVersions was never bumped, so the cache must
 	// rebuild and serve v7 — no stale value, no permanent bypass.
-	assert.Equal(t, int64(7), resolveOne(db, e, k), "rollback must leave the pre-commit value")
+	rolledBack, err := resolveOne(db, e, k)
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), rolledBack, "rollback must leave the pre-commit value")
 
 	// A subsequent real commit still takes effect (no lingering poison).
 	setAndCommit(t, db, e, k, int64(8))
-	assert.Equal(t, int64(8), resolveOne(db, e, k))
+	recommitted, err := resolveOne(db, e, k)
+	require.NoError(t, err)
+	assert.Equal(t, int64(8), recommitted)
 }

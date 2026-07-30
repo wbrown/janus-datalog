@@ -38,17 +38,21 @@ func (s *BadgerStore) NewReadSession() (ReadSession, error) {
 	return session, nil
 }
 
-func (s *badgerReadSession) Encoder() *BinaryKeyEncoder { return s.store.encoder }
-
-func (s *badgerReadSession) Scan(index IndexType, start, end []byte) (Iterator, error) {
-	return s.newIterator(index, start, end)
+func (s *badgerReadSession) Scan(bound ScanBound) (Iterator, error) {
+	return s.newIterator(bound)
 }
 
-func (s *badgerReadSession) ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error) {
-	return s.newIterator(index, start, end)
+func (s *badgerReadSession) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	return s.newIterator(bound)
 }
 
-func (s *badgerReadSession) newIterator(index IndexType, start, end []byte) (Iterator, error) {
+func (s *badgerReadSession) newIterator(bound ScanBound) (Iterator, error) {
+	run, err := s.store.encoder.EncodeScanBound(bound)
+	if err != nil {
+		return nil, err
+	}
+	index := bound.Index
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -62,8 +66,8 @@ func (s *badgerReadSession) newIterator(index IndexType, start, end []byte) (Ite
 	badgerIterator := &BadgerIterator{
 		txn:     s.txn,
 		it:      iterator,
-		start:   start,
-		end:     end,
+		start:   run.Start,
+		end:     run.End,
 		index:   index,
 		release: func() { s.releaseIterator(iterator) },
 	}
@@ -73,6 +77,7 @@ func (s *badgerReadSession) newIterator(index IndexType, start, end []byte) (Ite
 		BadgerIterator: badgerIterator,
 		encoder:        s.store.encoder,
 		blobs:          badgerTxnBlobReader{txn: s.txn},
+		membership:     run.Membership,
 	}, nil
 }
 
@@ -82,32 +87,8 @@ func (s *badgerReadSession) releaseIterator(it *badger.Iterator) {
 	delete(s.openIters, it)
 }
 
-func (s *badgerReadSession) Get(index IndexType, key []byte) (*datalog.Datom, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, errReadSessionClosed
-	}
-	_, err := s.txn.Get(key)
-	if err == badger.ErrKeyNotFound {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	datom, err := DatomFromKey(index, key, s.store.encoder, badgerTxnBlobReader{txn: s.txn})
-	if err != nil {
-		return nil, err
-	}
-	return &datom, nil
-}
-
 func (s *badgerReadSession) MaxElementID() (datalog.ElementID, error) {
 	return maxElementIDByScan(s)
-}
-
-func (s *badgerReadSession) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
-	return maxElementIDForAttributeByScan(s, a)
 }
 
 func (s *badgerReadSession) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {

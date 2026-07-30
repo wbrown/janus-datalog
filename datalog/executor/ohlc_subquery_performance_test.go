@@ -10,8 +10,8 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// TestOHLCSubqueryPerformance reproduces the Gopher Street performance issue
-// where multiple subqueries accessing the same data execute independently
+// TestOHLCSubqueryPerformance reproduces the reported performance issue where
+// multiple subqueries accessing the same data execute independently
 func TestOHLCSubqueryPerformance(t *testing.T) {
 	// Create test data: a symbol with price bars for multiple days
 	datoms := []datalog.Datom{}
@@ -391,7 +391,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := seqExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := seqExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -404,7 +404,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := parExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -417,7 +417,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := parExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -430,7 +430,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := parExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -443,7 +443,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := parExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -456,7 +456,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := parExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				b.Fatal(err)
 			}

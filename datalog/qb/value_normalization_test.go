@@ -14,7 +14,7 @@ import (
 // survives into execution diverges from stored int64 data — joins and
 // comparisons may still normalize internally, but aggregation folds skip
 // non-int64 values, which is how a qb-built get-else default of 0 became a
-// nil sum (docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md).
+// nil sum (BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md).
 func TestRawConstantsNormalizeToInt64(t *testing.T) {
 	e := NewVar("e")
 	x := NewVar("x")

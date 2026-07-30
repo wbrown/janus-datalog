@@ -23,7 +23,7 @@ func TestExecuteRealizedRejectsInvalidPhysicalPhaseMetadata(t *testing.T) {
 	}
 
 	executor := NewExecutor(NewMemoryPatternMatcher(nil), nil)
-	_, err := executor.ExecuteRealized(NewContext(nil), plan, nil)
+	_, err := executor.ExecuteRealized(NewContext(), plan, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid realized plan")
 	require.Contains(t, err.Error(), "provides schema")

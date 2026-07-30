@@ -100,8 +100,8 @@ func TestResolveAggregateUnknownSymbolErrors(t *testing.T) {
 
 // The fold enforces the value domain: silently skipping a non-domain input
 // manufactures a nil aggregate beside healthy siblings — how a qb-built
-// get-else default of int(0) became a nil sum in a 2-row group
-// (docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md). count keeps
+// get-else default of int(0) became a nil sum in a 2-tuple group
+// (BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md). count keeps
 // its documented SQL semantics (counts non-nil) and is not part of this pin.
 func TestAggregateFoldRejectsNonDomainValues(t *testing.T) {
 	for _, fn := range []datalog.Symbol{datalog.SymSum, datalog.SymAvg} {

@@ -4,13 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Test Commands
 
-**The standard gate is `make test`.** It runs the native suite (`go test -count=1 ./...`) and the js/wasm contracts (`make test-wasm`). Do not treat bare `go test ./...` as a full green — that skips wasm.
+**The standard gate is `make test`.** It runs the native suite (`go test -count=1 ./...`), the `examples/` compile check (`make test-examples`), and the js/wasm contracts (`make test-wasm`). Do not treat bare `go test ./...` as a full green — that skips both of the others.
 
 ```bash
-make test                        # Full gate: native + wasm (required)
+make test                        # Full gate: native + examples + wasm (required)
+make test-examples               # Compile-check examples/ under //go:build example
 make test-wasm                   # js/wasm contracts only (needs node)
 go test -v ./package -run Test   # Focused native iteration only
 ```
+
+Every `examples/` file is its own `package main` behind `//go:build example`, so
+`go vet ./examples/` reports `main redeclared` and no ordinary build reaches
+them. `test-examples` vets each file separately; without it nothing compiles
+them at all.
 
 **Do NOT add `-timeout` to `go test` commands, or use `-timeout 0`.** Use the default timeout. No exceptions.
 
@@ -216,7 +222,7 @@ This is **standard database query optimization** (similar to Selinger's algorith
 - **Fixed 69-byte keys**: E(20) + A(32) + Tx(16) + Op(1) for efficient indexing
 - **Unbounded values**: Stored last with 2-byte size prefix and 1-byte type
 - **Binary physical encoding**: Raw fixed-width E/A/Tx components preserve byte order without text expansion
-- **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV for different access patterns and cardinalities. ATEV's `[A][Tx↓][E][V]` layout gives O(1) attribute high-water mark for cache freshness and direct AsOf-by-attribute scans.
+- **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV for different access patterns and cardinalities. ATEV's `[A][Tx↓][E][V]` layout puts Tx↓ ahead of E, so an A-bound, Tx-bound, V-unbound pattern seeks straight to the transaction: direct AsOf-by-attribute scans.
 - **CRDT semantics**: LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector
 - **Keyword interning**: Keywords hashed once and reused
 - **RefValues**: Entity references are stored as raw 20-byte identity hashes
@@ -316,7 +322,7 @@ This separation ensures the query engine remains simple and focused on logic, wh
 The storage layer connects the query engine to BadgerDB:
 - **Database API**: High-level interface for creating transactions and querying
 - **Transaction API**: Write datoms with automatic indexing across all 8 indices
-- **BadgerMatcher**: Implements PatternMatcher interface for the executor
+- **storage.PatternMatcher**: Implements the `executor.PatternMatcher` interface for the executor
   - Chooses optimal index based on bound values in patterns
   - Converts between user types (Identity, Keyword) and storage types ([20]byte for E/Tx, [32]byte for A)
   - Builds binary index prefixes with the same encoding used for writes
@@ -383,6 +389,9 @@ The storage layer connects the query engine to BadgerDB:
    - SimpleBatchScanner for large binding sets (>100 tuples)
    - Threshold-based activation in matcher_relations.go
    - Modest performance impact, cleaner code structure
+   - **Removed in v0.15.0**: the scanner had no caller. Binding-driven scans
+     go through `hash_join_matcher.go` (HashJoinScan, or MergeJoin for large
+     high-selectivity entity-position sets).
 3. **Predicate Infrastructure** - Classification and constraints
    - PredicateClassifier for analyzing pushdown candidates
    - StorageConstraint infrastructure in place
@@ -398,7 +407,7 @@ The storage layer connects the query engine to BadgerDB:
 7. **Expression clauses** - Arithmetic (`+`, `-`, `*`, `/`), string operations (`str`), ground values, identity binding
 8. **Variadic comparators** - Clojure-style chained comparisons (e.g., `[(< 0 ?x 100)]`)
 9. **Query executor** - Full pattern matching and query execution with joins
-10. **Storage integration** - Database and Transaction API, BadgerMatcher for pattern matching
+10. **Storage integration** - Database and Transaction API, `storage.PatternMatcher` for pattern matching
 11. **Value encoding** - Proper serialization for all value types including entity references
 12. **Aggregation functions** - `sum`, `count`, `avg`, `min`, `max` with grouping support (with proper time.Time support)
 13. **Temporal queries** - ElementID-based AsOf/History queries for time-travel
@@ -626,7 +635,7 @@ d, _ := db.Open("path/to/db", db.WithAnnotationHandler(handler))
 // All queries through d.Query() will emit annotation events
 
 // Internal equivalent (for advanced usage):
-// baseMatcher := storage.NewBadgerMatcher(database.Store())
+// baseMatcher := storage.NewPatternMatcher(database.Store())
 // matcher := executor.WrapMatcher(baseMatcher, handler)
 // exec := executor.NewExecutor(matcher, database)
 ```
@@ -634,14 +643,16 @@ d, _ := db.Open("path/to/db", db.WithAnnotationHandler(handler))
 **Key Design Principles**:
 - **Decorator pattern**: `WrapMatcher()` wraps any `PatternMatcher` with annotation support
 - **Handler injection**: Storage layer receives handler via `SetHandler()` for detailed events
-- **Zero overhead when disabled**: Pass `nil` handler for production deployments
+- **Zero overhead when disabled**: Pass `nil` handler for production deployments. The existence guard lives at the **call site**, never inside the emitting function, because it must also gate the caller's argument preparation — a guard inside the emitter still evaluates everything passed to it. `Database.AnnotationHandler` is a plain field read, not an accessor, so asking whether annotations are on costs nothing.
+- **A handler renders; it does not remember.** The engine emits from parallel workers through one handler and does not serialize it. That is safe because every event carries what its output reports — so a handler holding nothing between events needs no lock. A handler that *does* hold something is reading whichever worker wrote last, and a mutex only hides that: it serializes the writes and leaves the pairing wrong. **State belongs in the reporter, not the consumer.** `annotations` deliberately ships no serializing wrapper; one existed, went unused after the engine stopped applying it, and its mere presence made "serialize the consumer" look like the fix for a consumer that should never have carried the state. A handler accumulating for its own reasons — counting, batching — owns its synchronization.
 - **Type transparency**: Wrapped matcher implements same interface as base matcher
 
-**Event Types**:
-- **Pattern Matching**: Index selection, storage scan, filtering, and relation conversion
-- **Join Operations**: Type (hash/nested/merge), sizes, and reduction ratios
-- **Expression Evaluation**: Input/output sizes and computation time
-- **Phase Execution**: Overall timing and tuple counts
+**Event Types**. `datalog/annotations/types.go` is the authority — every event the engine emits is named there and every producer emits through one of those constants rather than writing the string. Do not add an event by writing a literal; the two halves have to stay together or a sweep for dead names can only see one of them. The same applies to a payload key more than one producer writes: it is declared beside the names, and one key carries one meaning (`index` is one of the eight physical orderings, never an ordinal). Values go into the payload **typed** — an `IndexType`, a `*query.DataPattern`, a `Keyword` — because the formatter is the renderer; flattening at the producer spends an allocation per emit to hand the consumer a string to parse. The families:
+- **Pattern matching**: index selection, and the scan funnel — `datoms.scanned` (intake from the index, counted before any narrowing), `datoms.resolved` (what CRDT resolution produced), `datoms.matched` (what survived the pattern and its constraints)
+- **Binding-driven scans**: one completion event per strategy `chooseJoinStrategy` picks — hash-join, merge-join, per-binding, each carrying the same funnel
+- **Joins**: hash-join timing and sizes, build/probe completion, strategy selection
+- **Phase execution**: begin and complete, with the phase's duration and tuple count (`-1` where a streaming group declines to size itself rather than be consumed for the number)
+- **V-bound validation, OR and fallback branches, subqueries, algebra rewrites, pull, reflection, cache rebuilds, unique-attribute lookups**
 
 ### Critical Performance Insights
 1. **Avoid Intermediate Materialization**: Use streaming iterators wherever possible
@@ -1150,7 +1161,9 @@ bugs just as easily as a missing note hides real ones.
    - Batch scanning implemented with threshold-based activation (>100 tuples)
    - SimpleBatchScanner used for large binding sets
    - Benchmarks show code clarity benefits, modest performance impact
-   - See `PERFORMANCE_STATUS.md` for current state
+   - **Both removed in v0.15.0**: neither had a live caller, and the
+     iterator-reuse strategy had been default-off since 2025-10 on a benchmark
+     that does not survive inspection. See `PERFORMANCE_STATUS.md`.
 
 **Pattern**: When existing abstractions can't handle new requirements, replace them entirely rather than patching.
 

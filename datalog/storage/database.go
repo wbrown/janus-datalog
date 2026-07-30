@@ -43,21 +43,20 @@ func (d *Database) resolveQuery(q interface{}) (*query.Query, error) {
 
 // Database provides the main API for reading and writing datoms
 type Database struct {
-	store             Store
-	encoder           *BinaryKeyEncoder
-	txCounter         atomic.Uint64
-	mu                sync.RWMutex
-	activeTx          map[*Transaction]bool
-	planCache         *planner.PlanCache      // Shared query plan cache
-	parseCache        *ParseCache             // Shared query parse cache
-	schema            schema.SchemaProvider   // Optional schema for validation
-	annotationHandler annotations.Handler     // Optional handler for query tracing
-	plannerOptions    *planner.PlannerOptions // Optional planner options override
-	clock             *LamportClock           // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
-	replicaID         uint64                  // CRDT: This database's replica identifier
-	cache             *Cache                  // CRDT: Unified cache for resolved CRDT views
-	builderCache      *tupleBuilderCache      // Shared tuple-builder population for every matcher this database mints
-	temporalTxID      *datalog.ElementID      // nil = current; set = temporal mode (AsOf/History)
+	store          Store
+	encoder        *BinaryKeyEncoder
+	txCounter      atomic.Uint64
+	mu             sync.RWMutex
+	activeTx       map[*Transaction]bool
+	planCache      *planner.PlanCache      // Shared query plan cache
+	parseCache     *ParseCache             // Shared query parse cache
+	schema         schema.SchemaProvider   // Optional schema for validation
+	plannerOptions *planner.PlannerOptions // Optional planner options override
+	clock          *LamportClock           // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
+	replicaID      uint64                  // CRDT: This database's replica identifier
+	cache          *Cache                  // CRDT: Unified cache for resolved CRDT views
+	builderCache   *tupleBuilderCache      // Shared tuple-builder population for every matcher this database mints
+	temporalTxID   *datalog.ElementID      // nil = current; set = temporal mode (AsOf/History)
 
 	// onCommitWindow, if set, is invoked inside Commit after the storage commit
 	// returns but before the cache is updated — the window where a stale cached
@@ -202,23 +201,16 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		clock.Restore(maxElementID)
 	}
 
-	// One Synchronized wrapper serves every emitter — collectors, the storage
-	// matcher, and the cache — so handler authors see a single serialization
-	// domain across all annotation sources.
-	annotationHandler := annotations.Synchronized(opts.AnnotationHandler)
-
 	var cache *Cache
 	if !opts.DisableCache {
 		cache = NewCache()
-		cache.SetHandler(annotationHandler)
 	}
 
 	// When the caller supplies no schema, reconstruct one from the CRDT ops
 	// already stored on disk so vector/many attributes resolve correctly instead
 	// of collapsing to a single LWW value (e.g. the `datalog` CLI opening an
 	// existing database). A supplied schema is authoritative and wins entirely —
-	// no inference. On an empty store this yields an empty schema, equivalent to
-	// the previous nil behavior.
+	// no inference. On an empty store this yields an empty schema.
 	effectiveSchema := opts.Schema
 	if effectiveSchema == nil {
 		inferred, ierr := inferSchemaFromStore(store)
@@ -231,19 +223,31 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		}
 	}
 
+	// AnnotationHandler is the documented
+	// input and wins when set; a Handler supplied directly on PlannerOptions
+	// stands otherwise. Fixed at construction: nothing attaches an observer to a
+	// running database, because everything built from these options — executors,
+	// matchers, relations — is built with it already in place.
+	plannerOptions := DefaultPlannerOptions()
+	if opts.PlannerOptions != nil {
+		plannerOptions = *opts.PlannerOptions
+	}
+	if opts.AnnotationHandler != nil {
+		plannerOptions.Handler = opts.AnnotationHandler
+	}
+
 	d := &Database{
-		store:             store,
-		encoder:           encoder,
-		activeTx:          make(map[*Transaction]bool),
-		planCache:         planner.NewPlanCache(1000, 0),
-		parseCache:        NewParseCache(1000),
-		schema:            effectiveSchema,
-		annotationHandler: annotationHandler,
-		plannerOptions:    opts.PlannerOptions,
-		clock:             clock,
-		replicaID:         replicaID,
-		cache:             cache,
-		builderCache:      newTupleBuilderCache(),
+		store:          store,
+		encoder:        encoder,
+		activeTx:       make(map[*Transaction]bool),
+		planCache:      planner.NewPlanCache(1000, 0),
+		parseCache:     NewParseCache(1000),
+		schema:         effectiveSchema,
+		plannerOptions: &plannerOptions,
+		clock:          clock,
+		replicaID:      replicaID,
+		cache:          cache,
+		builderCache:   newTupleBuilderCache(),
 	}
 	d.drainCond = sync.NewCond(&d.mu)
 	return d, nil
@@ -287,32 +291,36 @@ func (d *Database) Cache() *Cache {
 // Use this after process restart for attributes with high query frequency
 // to avoid cold-start latency on first access.
 //
-// For each attribute, this scans all entities and populates:
-// - Per-(E,A) cache entries with resolved CRDT values
-// - Attribute-level version tracking for freshness checks
+// For each attribute, this scans all entities and populates per-(E,A) cache
+// entries with resolved CRDT values.
 //
 // This is O(n) where n = total datoms for the specified attributes.
 // Call during application startup, not on the hot path.
+//
+// With DisableCache there is no cache to warm and the call does nothing. Every
+// other reader of d.cache in this file resolves from storage instead, because
+// the cache is an optimization rather than a correctness requirement; warming
+// has no such fallback, since warming is the whole of what it does.
 func (d *Database) WarmCache(attributes []datalog.Keyword) error {
-	matcher := NewBadgerMatcher(d.store)
+	if d.cache == nil {
+		return nil
+	}
+
+	matcher := NewPatternMatcher(d.store)
 	matcher.SetSchema(d.schema)
 
 	for _, attr := range attributes {
+		// Cache keys carry the storage projection of the attribute, so it is
+		// rendered once here and reused for every entity the scan turns up.
 		var aBytes Attribute
 		copy(aBytes[:], attr.String())
 
-		// Build prefix for this attribute on AEVT index
-		prefix := make([]byte, 1+32) // prefix byte + A
-		prefix[0] = byte(AEVT)
-		copy(prefix[1:33], aBytes[:])
-
 		// Scan AEVT for all entities with this attribute
-		iter, err := d.store.Scan(AEVT, prefix, prefixEnd(prefix))
+		iter, err := OpenScan(d.store, DiscardIntake, ScanBound{Index: AEVT, Prefix: []datalog.Value{attr}})
 		if err != nil {
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
 
-		var maxAttrVersion datalog.ElementID
 		seenEntities := make(map[Entity]bool)
 
 		for iter.Next() {
@@ -322,11 +330,6 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 				return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 			}
 
-			// Track max version for attribute-level freshness
-			if datom.Tx.Compare(maxAttrVersion) > 0 {
-				maxAttrVersion = datom.Tx
-			}
-
 			// Get entity bytes
 			eBytes := Entity(datom.E.Hash())
 
@@ -334,7 +337,10 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 			if !seenEntities[eBytes] {
 				seenEntities[eBytes] = true
 				key := CacheKey{E: eBytes, A: aBytes}
-				d.cache.GetOrResolve(key, matcher, matcher.cacheBound())
+				if _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake); err != nil {
+					iter.Close()
+					return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
+				}
 			}
 		}
 		if err := iter.Error(); err != nil {
@@ -344,9 +350,6 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 		if err := iter.Close(); err != nil {
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
-
-		// Update attribute-level version
-		d.cache.UpdateAttributeVersion(aBytes, maxAttrVersion)
 	}
 
 	return nil
@@ -363,7 +366,7 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	matcher := NewBadgerMatcher(d.store)
+	matcher := NewPatternMatcher(d.store)
 	matcher.SetSchema(d.schema)
 
 	// Cache is an optimization, not a correctness requirement: when DisableCache
@@ -371,12 +374,18 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	// ResolveEntry, which produces the same *CacheEntry shape and determines
 	// cardinality the same way (GetCardinality over d.schema).
 	var entry *CacheEntry
+	var err error
 	if d.cache != nil {
-		entry = d.cache.GetOrResolve(key, matcher, matcher.cacheBound())
+		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 	} else {
-		entry = ResolveEntry(key, matcher)
+		entry, err = ResolveEntry(key, matcher, DiscardIntake)
+	}
+	if err != nil {
+		return nil, err
 	}
 	if entry == nil {
+		// No datoms for this (E, A): the attribute does not exist, which is the
+		// nil the doc comment above already promises.
 		return nil, nil
 	}
 
@@ -403,7 +412,7 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	matcher := NewBadgerMatcher(d.store)
+	matcher := NewPatternMatcher(d.store)
 	matcher.SetSchema(d.schema)
 
 	// Cache is an optimization, not a correctness requirement: when DisableCache
@@ -411,12 +420,18 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	// ResolveEntry, which produces the same *CacheEntry shape and determines
 	// cardinality the same way (GetCardinality over d.schema).
 	var entry *CacheEntry
+	var err error
 	if d.cache != nil {
-		entry = d.cache.GetOrResolve(key, matcher, matcher.cacheBound())
+		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 	} else {
-		entry = ResolveEntry(key, matcher)
+		entry, err = ResolveEntry(key, matcher, DiscardIntake)
+	}
+	if err != nil {
+		return 0, err
 	}
 	if entry == nil {
+		// No datoms for this (E, A): "doesn't exist" in the doc comment above,
+		// which it gives as 0.
 		return 0, nil
 	}
 
@@ -425,33 +440,6 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	}
 
 	return int64(len(entry.VectorList())), nil
-}
-
-// AnnotationHandler returns the current annotation handler (may be nil)
-func (d *Database) AnnotationHandler() annotations.Handler {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.annotationHandler
-}
-
-// SetAnnotationHandler sets a handler for query tracing and performance observability.
-// When set, all queries executed via Query will emit annotation events.
-// Pass nil to disable annotations.
-//
-// Example:
-//
-//	db.SetAnnotationHandler(func(event annotations.Event) {
-//	    fmt.Printf("%s: %v (latency: %v)\n", event.Name, event.Data, event.Latency)
-//	})
-func (d *Database) SetAnnotationHandler(handler annotations.Handler) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	// Serialize: the engine emits annotations from parallel workers, so the
-	// handler must be safe to call concurrently.
-	d.annotationHandler = annotations.Synchronized(handler)
-	if d.cache != nil {
-		d.cache.SetHandler(d.annotationHandler)
-	}
 }
 
 // NewTransaction starts a new write transaction.
@@ -490,18 +478,17 @@ func (d *Database) NewTransactionAt(t time.Time) *Transaction {
 	return tx
 }
 
-// Matcher returns a PatternMatcher for the current database state
-// effectivePlannerOptions returns the database's planner options: the
-// caller-supplied override (DatabaseOptions.PlannerOptions) when set, otherwise
-// DefaultPlannerOptions(). Every query-construction path (Query, NewExecutor,
-// Matcher) funnels through this accessor so the executor and the default-source
-// matcher always agree on the effective options. See
+// effectivePlannerOptions returns a copy of the database's planner options,
+// materialized at construction from DatabaseOptions and carrying its registered
+// Handler. Every query-construction path (Query, NewExecutor, Matcher) funnels
+// through this accessor so the executor and the default-source matcher always
+// agree on the effective options. See
 // BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.
+//
+// A caller wanting a per-query handler overrides Handler on the copy it receives
+// and builds its own executor; the database's own options are never mutated.
 func (d *Database) effectivePlannerOptions() planner.PlannerOptions {
-	if d.plannerOptions != nil {
-		return *d.plannerOptions
-	}
-	return DefaultPlannerOptions()
+	return *d.plannerOptions
 }
 
 // Matcher returns the default-source pattern matcher, configured from the
@@ -538,20 +525,18 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 	// pinned by TestTemporalHandleFieldClassification — a new Database field
 	// must be classified there before it can ship.
 	handle := &Database{
-		store:             d.store,
-		encoder:           d.encoder,
-		schema:            d.schema,
-		annotationHandler: d.annotationHandler,
-		planCache:         d.planCache,
-		parseCache:        d.parseCache,
-		plannerOptions:    d.plannerOptions,
-		cache:             NewCache(),
-		builderCache:      d.builderCache,
-		clock:             d.clock,
-		replicaID:         d.replicaID,
-		temporalTxID:      &txID,
+		store:          d.store,
+		encoder:        d.encoder,
+		schema:         d.schema,
+		planCache:      d.planCache,
+		parseCache:     d.parseCache,
+		plannerOptions: d.plannerOptions,
+		cache:          NewCache(),
+		builderCache:   d.builderCache,
+		clock:          d.clock,
+		replicaID:      d.replicaID,
+		temporalTxID:   &txID,
 	}
-	handle.cache.SetHandler(d.annotationHandler)
 	return handle
 }
 
@@ -567,18 +552,17 @@ func (d *Database) History() *Database {
 	// TestTemporalHandleFieldClassification (see AsOf above).
 	empty := datalog.ElementID{}
 	return &Database{
-		store:             d.store,
-		encoder:           d.encoder,
-		schema:            d.schema,
-		annotationHandler: d.annotationHandler,
-		planCache:         d.planCache,
-		parseCache:        d.parseCache,
-		plannerOptions:    d.plannerOptions,
-		cache:             d.cache,
-		builderCache:      d.builderCache,
-		clock:             d.clock,
-		replicaID:         d.replicaID,
-		temporalTxID:      &empty,
+		store:          d.store,
+		encoder:        d.encoder,
+		schema:         d.schema,
+		planCache:      d.planCache,
+		parseCache:     d.parseCache,
+		plannerOptions: d.plannerOptions,
+		cache:          d.cache,
+		builderCache:   d.builderCache,
+		clock:          d.clock,
+		replicaID:      d.replicaID,
+		temporalTxID:   &empty,
 	}
 }
 
@@ -606,14 +590,11 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		// Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple
 		// LookupAttribute binding instead of match + hash join.
 		EnableAttributeFetchFusion: true,
-
-		// Storage join strategy
-		IndexNestedLoopThreshold: 0, // Default to HashJoinScan for all binding sizes
-
 	}
 }
 
 // NewExecutor creates a new query executor that uses the database's plan cache
+// and the database's registered annotation handler.
 func (d *Database) NewExecutor() *executor.Executor {
 	opts := d.effectivePlannerOptions()
 	opts.Cache = d.planCache // Use database's cache
@@ -625,23 +606,28 @@ func (d *Database) NewExecutor() *executor.Executor {
 //
 // Builds the pattern matcher from the same custom options via
 // matcherWithExecOptions, so the executor and the matcher's relations agree on
-// the effective options, and schema, cache, annotation handler, and temporal
-// mode (AsOf/History) are all applied.
+// the effective options — including opts.Handler, which reaches every relation
+// either constructs — and schema, cache, and temporal mode (AsOf/History) are
+// all applied.
 func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor.Executor {
 	opts.Cache = d.planCache
 	matcher := d.matcherWithExecOptions(opts)
 	return executor.NewExecutorWithOptions(matcher, d, opts)
 }
 
-// matcherWithExecOptions builds a fully-configured BadgerMatcher using the
+// matcherWithExecOptions builds a fully-configured PatternMatcher using the
 // given planner options (converted through executor.ExecutorOptionsFromPlanner,
 // the single source of truth shared with the executor) while applying all
-// database-level state: schema, cache, annotation handler, temporal mode.
-// Matcher() funnels through here with the database's effective options.
+// database-level state: schema, cache, temporal mode.
+//
+// The handler rides in with opts and is applied at construction, because the
+// relations this matcher builds inherit its options and a matcher built without
+// an observer can never acquire one afterwards. Callers wanting a per-query
+// handler — Analyze collecting into its own closure, the CLI rendering to its own
+// formatter — set opts.Handler before calling.
 func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.PatternMatcher {
-	matcher := NewBadgerMatcherWithOptions(d.store, executor.ExecutorOptionsFromPlanner(opts))
+	matcher := NewPatternMatcherWithOptions(d.store, executor.ExecutorOptionsFromPlanner(opts))
 	matcher.builderCache = d.builderCache
-	matcher.SetHandler(d.annotationHandler)
 	if d.schema != nil {
 		matcher.SetSchema(d.schema)
 	}
@@ -883,27 +869,79 @@ func (ar *AnalyzeResult) String() string {
 	// Group events by type for summary
 	eventCounts := make(map[string]int)
 	eventTimes := make(map[string]time.Duration)
+	// Scans are one event name, so the per-strategy breakdown comes from the
+	// payload.
+	scanCounts := make(map[annotations.ScanStrategy]int)
+	scanTimes := make(map[annotations.ScanStrategy]time.Duration)
+	resolveIntake := 0
 	for _, e := range ar.Events {
 		eventCounts[e.Name]++
 		eventTimes[e.Name] += e.Latency
+		switch e.Name {
+		case annotations.StorageScanComplete:
+			strategy, _ := e.Data[annotations.KeyStrategy].(annotations.ScanStrategy)
+			scanCounts[strategy]++
+			scanTimes[strategy] += e.Latency
+		case annotations.StorageResolveComplete:
+			scanned, _ := e.Data[annotations.KeyDatomsScanned].(int)
+			resolveIntake += scanned
+		}
 	}
 
 	if len(eventCounts) > 0 {
 		sb.WriteString("\nEvent Summary:\n")
 
-		// Pattern matching events
-		if t, ok := eventTimes[annotations.PatternStorageScan]; ok {
+		// Every scan the query performed, whatever strategy performed it and
+		// whatever asked for it. One line because one event name covers the
+		// family, so the total cannot miss a scan performed by a strategy added
+		// after this code was written.
+		if t, ok := eventTimes[annotations.StorageScanComplete]; ok {
 			sb.WriteString(fmt.Sprintf("  Storage scans: %d (%.2fms total)\n",
-				eventCounts[annotations.PatternStorageScan], float64(t.Microseconds())/1000))
+				eventCounts[annotations.StorageScanComplete], float64(t.Microseconds())/1000))
+
+			// Broken down by strategy, in a declared order so the report is
+			// stable. Merge join earns its line: it is selected for the largest
+			// binding sets, so omitting it omits the biggest scans.
+			order := []annotations.ScanStrategy{
+				annotations.ScanDirect,
+				annotations.ScanHashJoin,
+				annotations.ScanMergeJoin,
+				annotations.ScanPerBinding,
+				annotations.ScanUniqueLookup,
+			}
+			listed := make(map[annotations.ScanStrategy]bool, len(order))
+			for _, s := range order {
+				listed[s] = true
+				if c := scanCounts[s]; c > 0 {
+					sb.WriteString(fmt.Sprintf("    %s: %d (%.2fms)\n",
+						s, c, float64(scanTimes[s].Microseconds())/1000))
+				}
+			}
+			// A strategy this list has not been taught still reached the total
+			// above, and printing it here keeps the breakdown summing to that
+			// total instead of quietly falling short of it.
+			for s, c := range scanCounts {
+				if !listed[s] {
+					sb.WriteString(fmt.Sprintf("    %s (unlisted strategy): %d (%.2fms)\n",
+						s, c, float64(scanTimes[s].Microseconds())/1000))
+				}
+			}
 		}
 
-		// Join events
-		hashJoins := eventCounts[annotations.JoinHash]
-		nestedJoins := eventCounts[annotations.JoinNested]
-		mergeJoins := eventCounts[annotations.JoinMerge]
-		if hashJoins+nestedJoins+mergeJoins > 0 {
-			sb.WriteString(fmt.Sprintf("  Joins: hash=%d, nested=%d, merge=%d\n",
-				hashJoins, nestedJoins, mergeJoins))
+		// Every read that produced current values for (E, A) entries, whatever
+		// asked for it and whether the cache or storage answered. Intake is the
+		// term that separates those two: a hit reads no index.
+		if t, ok := eventTimes[annotations.StorageResolveComplete]; ok {
+			sb.WriteString(fmt.Sprintf("  Entry resolves: %d (%.2fms total, %d datoms read)\n",
+				eventCounts[annotations.StorageResolveComplete],
+				float64(t.Microseconds())/1000, resolveIntake))
+		}
+
+		// Relational joins. The executor performs hash joins only, so this line
+		// names that one operation: a count for an operation the executor does
+		// not have would read zero forever and tell a reader nothing.
+		if hashJoins := eventCounts[annotations.JoinHash]; hashJoins > 0 {
+			sb.WriteString(fmt.Sprintf("  Joins: hash=%d\n", hashJoins))
 			if t := eventTimes[annotations.JoinHash]; t > 0 {
 				sb.WriteString(fmt.Sprintf("    Hash join time: %.2fms\n", float64(t.Microseconds())/1000))
 			}
@@ -931,7 +969,7 @@ func (ar *AnalyzeResult) String() string {
 			if outputSize, ok := e.Data["output_size"]; ok {
 				sb.WriteString(fmt.Sprintf(" (output=%v)", outputSize))
 			}
-			if index, ok := e.Data["index"]; ok {
+			if index, ok := e.Data[annotations.KeyIndex]; ok {
 				sb.WriteString(fmt.Sprintf(" (index=%v)", index))
 			}
 		}
@@ -972,26 +1010,40 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 		return nil, err
 	}
 
-	// Create executor (this also creates the planner with proper options)
-	exec := d.NewExecutor()
+	// Accumulate every event: AnalyzeResult.Events is what this method returns,
+	// so here the accumulation is the product rather than a way to look one event
+	// up. Parallel subquery workers share this handler, so it holds a lock — a
+	// handler that accumulates owns its own synchronization, since the engine does
+	// not serialize handlers.
+	//
+	// Declared before the options because the executor and its matcher are
+	// constructed with the handler registered on them.
+	var eventsMu sync.Mutex
+	var events []annotations.Event
 
-	// Get the query plan from the executor's planner. The Analyze collector below
-	// captures execution annotations; planning here is not annotated (matching
-	// prior behavior).
+	// Registered on this call's options, overriding the database's open-time
+	// handler: these events belong to the returned AnalyzeResult, not to whoever
+	// opened the database.
+	opts := d.effectivePlannerOptions()
+	opts.Handler = func(e annotations.Event) {
+		eventsMu.Lock()
+		events = append(events, e)
+		eventsMu.Unlock()
+	}
+
+	// Create executor (this also creates the planner with proper options)
+	exec := d.NewExecutorWithOptions(opts)
+
+	// Get the query plan from the executor's planner. The handler above captures
+	// execution annotations; planning here is not annotated.
 	queryPlanner := exec.GetPlanner()
 	plan, err := queryPlanner.PlanQuery(q, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to plan query: %w", err)
 	}
 
-	// Create a collector to capture all events
-	var events []annotations.Event
-	collector := annotations.NewCollector(func(e annotations.Event) {
-		events = append(events, e)
-	})
-
 	// Execute with annotation collection
-	result, err := exec.ExecuteWithRelations(executor.NewContext(collector.Handler()), q, inputRelations)
+	result, err := exec.ExecuteWithRelations(executor.NewContext(), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
 	}
@@ -1400,12 +1452,6 @@ func setScalarValue(dest reflect.Value, val interface{}) error {
 	return fmt.Errorf("cannot convert %T to %s", val, destType)
 }
 
-// GetExecutor returns a new query executor
-// This provides direct access to the executor for advanced use cases
-func (d *Database) GetExecutor() *executor.Executor {
-	return d.NewExecutor()
-}
-
 // entityAttrKey is used to track per-(E, A) state within a transaction.
 // Used for vector appends to chain elements correctly.
 type entityAttrKey struct {
@@ -1477,7 +1523,7 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 	}
 
 	// Check cardinality for CRDT semantics
-	var card schema.Cardinality
+	var card datalog.Keyword
 	var def *schema.AttributeDefinition
 	hasSchema := false
 	if s := t.db.Schema(); s != nil {
@@ -1514,7 +1560,6 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			})
 		case schema.CardinalityVector:
 			// RGA append semantics - chain elements within transaction.
-			// Bug #5 fix: Store raw value in V, AfterRef in datom.AfterRef field.
 			//
 			// IMPORTANT: Add() does NOT read from storage. AfterRef is set to the last
 			// element added in THIS transaction, or HEAD (zero) if this is the first.
@@ -1535,7 +1580,11 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 			// OrderedSet uniqueness check: if UniqueElements is true, check if value already exists
 			if def.UniqueElements {
-				if t.vectorContainsValue(e, a, v) {
+				contains, err := t.vectorContainsValue(e, a, v)
+				if err != nil {
+					return err
+				}
+				if contains {
 					// Value already exists in ordered set - no-op
 					return nil
 				}
@@ -1615,7 +1664,7 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 	}
 
 	// Determine cardinality: schemaless/undefined defaults to CardinalityOne
-	var card schema.Cardinality
+	var card datalog.Keyword
 	if def != nil {
 		card = def.Cardinality
 	} else {
@@ -1665,23 +1714,13 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 			}
 		}
 
-		// Build EAVT prefix: [prefix][E][A][V] for O(k) scan
-		// EAVT key order: [E][A][V][Tx↓][Op][AfterRef?]
-		// Tx descending means highest Tx (most recent) comes first
-		eBytes := e.Hash()
-		var aBytes [32]byte
-		copy(aBytes[:], a.String())
-		vType := byte(datalog.Type(v))
-		vData := datalog.ValueBytes(v)
-		vBytes := append([]byte{vType}, vData...)
-
-		prefix := make([]byte, 1+20+32+len(vBytes))
-		prefix[0] = byte(EAVT)
-		copy(prefix[1:21], eBytes[:])
-		copy(prefix[21:53], aBytes[:])
-		copy(prefix[53:], vBytes)
-
-		iter, err := t.db.store.Scan(EAVT, prefix, prefixEnd(prefix))
+		// Bind [E][A][V] on EAVT for an O(k) scan of this element's writes.
+		// EAVT orders Tx descending after V, so the highest Tx comes first and
+		// a tombstone is seen before the insert it deletes.
+		iter, err := OpenScan(t.db.store, DiscardIntake, ScanBound{
+			Index:  EAVT,
+			Prefix: []datalog.Value{e, a, v},
+		})
 		if err != nil {
 			return fmt.Errorf("EAVT scan for vector Remove failed: %w", err)
 		}
@@ -1869,11 +1908,13 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		}
 
 		// Get current set membership from committed state
-		matcher := NewBadgerMatcher(t.db.store)
+		matcher := NewPatternMatcher(t.db.store)
 		eBytes := e.Hash()
 		var aBytes [32]byte
 		copy(aBytes[:], a.String())
-		currentResult, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+		// DiscardIntake: this read is the write path's, not a pattern's, so
+		// nothing reports what it cost.
+		currentResult, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
 		if err != nil {
 			return fmt.Errorf("failed to read current set membership: %w", err)
 		}
@@ -1896,7 +1937,6 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 			k := memberKey(datom.V)
 			pendingValues[k] = datom.V
-			// NEW FORMAT: Op is a field on Datom, V is the raw value
 			if datom.Op == datalog.OpCRDTAdd {
 				pendingAdds[k] = datom.Tx
 			} else if datom.Op == datalog.OpCRDTRemove {
@@ -1930,7 +1970,6 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		for k, member := range effectiveSet {
 			if _, ok := newSet[k]; !ok {
 				elemID := t.db.clock.Next()
-				// NEW FORMAT: Op is a field on Datom, V is the raw value
 				t.datoms = append(t.datoms, datalog.Datom{
 					E:  e,
 					A:  a,
@@ -1946,7 +1985,6 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		for k, val := range newSet {
 			if _, ok := effectiveSet[k]; !ok {
 				elemID := t.db.clock.Next()
-				// NEW FORMAT: Op is a field on Datom, V is the raw value
 				t.datoms = append(t.datoms, datalog.Datom{
 					E:  e,
 					A:  a,
@@ -1988,15 +2026,22 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		copy(aBytes[:], a.String())
 		key := CacheKey{E: Entity(eBytes), A: aBytes}
 
-		matcher := NewBadgerMatcher(t.db.store)
+		matcher := NewPatternMatcher(t.db.store)
 		matcher.SetSchema(t.db.schema)
 
 		var entry *CacheEntry
+		var err error
 		if t.db.cache != nil {
-			entry = t.db.cache.GetOrResolve(key, matcher, matcher.cacheBound())
+			entry, err = t.db.cache.GetOrResolve(key, matcher, matcher.cacheBound(), t.db.plannerOptions.Handler, DiscardIntake)
 		} else {
 			// Cache disabled - resolve directly from storage
-			entry = ResolveEntry(key, matcher)
+			entry, err = ResolveEntry(key, matcher, DiscardIntake)
+		}
+		if err != nil {
+			// The prior vector is what the RGA diff below is computed against.
+			// A failed read of it would silently rewrite the whole vector as if
+			// it had been empty.
+			return fmt.Errorf("resolve current vector for %s: %w", a.String(), err)
 		}
 
 		var oldList []any
@@ -2068,13 +2113,19 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 // vectorContainsValue checks if a value already exists in an ordered set (vector with unique elements).
 // It checks both committed data (via cache) and pending datoms in this transaction.
-func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword, v interface{}) bool {
+//
+// The error is not an addition of scope: this reads the committed vector through
+// GetOrResolve, so once that reports failure instead of returning nil, the only
+// alternative to returning it here is to answer false — which would insert a
+// duplicate into a set the schema declares unique, on a read that never
+// succeeded. There is no non-swallowing signature that stays a bare bool.
+func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword, v interface{}) (bool, error) {
 	// Check pending datoms in this transaction first
 	eHash := e.Hash()
 	for _, d := range t.datoms {
 		if d.A == a && d.E.Hash() == eHash && d.Op == datalog.OpRGAInsert {
 			if datalog.ValuesEqual(d.V, v) {
-				return true
+				return true, nil
 			}
 		}
 	}
@@ -2085,25 +2136,29 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 	copy(aBytes[:], a.String())
 	cacheKey := CacheKey{E: Entity(eBytes), A: aBytes}
 
-	matcher := NewBadgerMatcher(t.db.store)
+	matcher := NewPatternMatcher(t.db.store)
 	matcher.SetSchema(t.db.schema)
 
 	var entry *CacheEntry
+	var err error
 	if t.db.cache != nil {
-		entry = t.db.cache.GetOrResolve(cacheKey, matcher, matcher.cacheBound())
+		entry, err = t.db.cache.GetOrResolve(cacheKey, matcher, matcher.cacheBound(), t.db.plannerOptions.Handler, DiscardIntake)
 	} else {
-		entry = ResolveEntry(cacheKey, matcher)
+		entry, err = ResolveEntry(cacheKey, matcher, DiscardIntake)
+	}
+	if err != nil {
+		return false, fmt.Errorf("resolve current vector for %s: %w", a.String(), err)
 	}
 
 	if entry != nil && entry.Cardinality() == schema.CardinalityVector {
 		for _, existing := range entry.VectorList() {
 			if datalog.ValuesEqual(existing, v) {
-				return true
+				return true, nil
 			}
 		}
 	}
 
-	return false
+	return false, nil
 }
 
 // Retract removes a datom
@@ -2191,7 +2246,7 @@ func (t *Transaction) AddMap(attrs map[string]interface{}) (datalog.Identity, er
 //	person.Name = "Alice Smith"
 //	id, err = tx.SaveStruct(&person)  // Updates name, age unchanged
 func (t *Transaction) SaveStruct(v interface{}) (datalog.Identity, error) {
-	matcher := t.db.Matcher().(*BadgerMatcher)
+	matcher := t.db.Matcher().(*PatternMatcher)
 	return dlreflect.SaveStruct(t, matcher, v, t.db.Schema())
 }
 
@@ -2259,7 +2314,7 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 			}
 		}
 		// Transaction metadata is part of the same atomic commit; failure
-		// rolls back the entire transaction (no more best-effort metadata).
+		// rolls back the entire transaction.
 		if err := stx.Assert(txMetadata); err != nil {
 			return fmt.Errorf("failed to write transaction metadata: %w", err)
 		}
@@ -2309,7 +2364,7 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 			if sch == nil || !sch.HasSchema() {
 				return
 			}
-			if def := sch.GetAttribute(a); def != nil && def.Unique != "" {
+			if sch.GetAttribute(a).HasUniqueConstraint() {
 				uniqueAttrsWritten[aBytes] = true
 			}
 		}
@@ -2464,13 +2519,14 @@ func inputSpecSymbols(spec query.InputSpec) interface{} {
 	return spec
 }
 
-// reflectRow copies a reflected slice's elements into one value row.
-func reflectRow(slice reflect.Value) []interface{} {
-	row := make([]interface{}, slice.Len())
+// reflectValues copies a reflected slice's elements into one value sequence,
+// positionally, for conversion into a tuple against a symbol list.
+func reflectValues(slice reflect.Value) []interface{} {
+	values := make([]interface{}, slice.Len())
 	for i := 0; i < slice.Len(); i++ {
-		row[i] = slice.Index(i).Interface()
+		values[i] = slice.Index(i).Interface()
 	}
-	return row
+	return values
 }
 
 // containsNaN reports whether v is NaN or a slice containing one. NaN is not
@@ -2524,17 +2580,17 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 		}
 		input := inputs[inputIdx]
 
-		// Every input form binds a set of rows over a symbol list; the switch
-		// below only reads each form's shape. A scalar is one row of one
-		// column, a collection is n rows of one column, a tuple is one row of
-		// n columns, and a relation is n rows of n columns.
+		// Every input form binds a set of tuples over a symbol list; the switch
+		// below only reads each form's shape. A scalar is one tuple over one
+		// symbol, a collection is n tuples over one symbol, a tuple input is
+		// one tuple over n symbols, and a relation is n tuples over n symbols.
 		var symbols []query.Symbol
-		var rows [][]interface{}
+		var bound [][]interface{}
 
 		switch spec := inputSpec.(type) {
 		case query.ScalarInput:
 			symbols = []query.Symbol{spec.Symbol}
-			rows = [][]interface{}{{input}}
+			bound = [][]interface{}{{input}}
 
 		case query.CollectionInput:
 			slice := reflect.ValueOf(input)
@@ -2542,9 +2598,9 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 				return nil, fmt.Errorf("expected slice or array for collection input %s, got %T", spec.Symbol, input)
 			}
 			symbols = []query.Symbol{spec.Symbol}
-			rows = make([][]interface{}, slice.Len())
+			bound = make([][]interface{}, slice.Len())
 			for i := 0; i < slice.Len(); i++ {
-				rows[i] = []interface{}{slice.Index(i).Interface()}
+				bound[i] = []interface{}{slice.Index(i).Interface()}
 			}
 
 		case query.TupleInput:
@@ -2553,7 +2609,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 				return nil, fmt.Errorf("expected slice or array for tuple input, got %T", input)
 			}
 			symbols = spec.Symbols
-			rows = [][]interface{}{reflectRow(slice)}
+			bound = [][]interface{}{reflectValues(slice)}
 
 		case query.RelationInput:
 			outerSlice := reflect.ValueOf(input)
@@ -2561,13 +2617,13 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 				return nil, fmt.Errorf("expected slice of slices for relation input, got %T", input)
 			}
 			symbols = spec.Symbols
-			rows = make([][]interface{}, outerSlice.Len())
+			bound = make([][]interface{}, outerSlice.Len())
 			for i := 0; i < outerSlice.Len(); i++ {
 				innerSlice := outerSlice.Index(i)
 				// Indexing a []interface{} yields Kind Interface even when
 				// the element holds a slice — the shape every EDN-parsed
 				// input and any []any caller produces. Unwrap before the
-				// kind check; a genuinely non-slice row still fails below,
+				// kind check; a genuinely non-slice element still fails below,
 				// and a nil element stays wrapped so the error path never
 				// calls Interface() on the zero Value.
 				if innerSlice.Kind() == reflect.Interface && !innerSlice.IsNil() {
@@ -2576,23 +2632,23 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 				if innerSlice.Kind() != reflect.Slice && innerSlice.Kind() != reflect.Array {
 					return nil, fmt.Errorf("expected slice for relation tuple %d, got %T", i, innerSlice.Interface())
 				}
-				rows[i] = reflectRow(innerSlice)
+				bound[i] = reflectValues(innerSlice)
 			}
 
 		default:
 			return nil, fmt.Errorf("unsupported input spec %T", inputSpec)
 		}
 
-		// One conversion path for every form: row width against the symbol
-		// list, then per-value position typing and normalization through
+		// One conversion path for every form: arity against the symbol list,
+		// then per-value position typing and normalization through
 		// convertInputValue.
-		tuples := make([]executor.Tuple, len(rows))
-		for i, row := range rows {
-			if len(row) != len(symbols) {
-				return nil, fmt.Errorf("input row %d for %v: expected %d values, got %d", i, symbols, len(symbols), len(row))
+		tuples := make([]executor.Tuple, len(bound))
+		for i, values := range bound {
+			if len(values) != len(symbols) {
+				return nil, fmt.Errorf("input tuple %d for %v: expected %d values, got %d", i, symbols, len(symbols), len(values))
 			}
-			tuple := make(executor.Tuple, len(row))
-			for j, val := range row {
+			tuple := make(executor.Tuple, len(values))
+			for j, val := range values {
 				v, err := convertInputValue(entityBound, attrBound, symbols[j], val)
 				if err != nil {
 					return nil, err
@@ -2656,20 +2712,51 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 	if def == nil {
 		return nil, fmt.Errorf("LookupByUnique: attribute %s not found in schema", attr.String())
 	}
-	if def.Unique == "" {
+	if !def.HasUniqueConstraint() {
 		return nil, fmt.Errorf("LookupByUnique: attribute %s is not unique", attr.String())
 	}
 
-	matcher, ok := d.Matcher().(*BadgerMatcher)
+	matcher, ok := d.Matcher().(*PatternMatcher)
 	if !ok {
 		return nil, fmt.Errorf("LookupByUnique: unsupported matcher type %T", d.Matcher())
 	}
 
 	var aBytes Attribute
 	copy(aBytes[:], attr.String())
-	vBytes := encodeValueForSearch(value, d.encoder)
 
-	owner, _, err := matcher.resolveAVLWW(aBytes, vBytes, value)
+	// This is a scan-opening path like any other, and it reports as one:
+	// resolveAVLWW walks AVET for the value, then walks the claimant's EATV
+	// history with a supersession scan per Set entry. Called in a loop — which
+	// is how application-layer upsert uses it — it is the dominant read in a
+	// program, so a trace that omitted it would omit the program's largest cost.
+	report := DiscardIntake
+	if d.plannerOptions.Handler != nil {
+		// The pattern this call resolves — which entity holds (attr, value) —
+		// named the way every other scan event names its subject. The Go
+		// signature is what hides the pattern here; the operation is the
+		// A-bound, V-bound, E-unbound scan, and the query path reaches the same
+		// resolver from that pattern spelled out.
+		//
+		// No run: resolution walks AVET for the claimant and then the
+		// claimant's EATV history, so no single one is the one this addressed.
+		pattern := &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: datalog.NewSymbol("?e")},
+				query.Constant{Value: attr},
+				query.Constant{Value: value},
+			},
+		}
+		report = &scanReport{
+			handler:  d.plannerOptions.Handler,
+			opened:   time.Now(),
+			strategy: annotations.ScanUniqueLookup,
+			cause:    map[string]interface{}{annotations.KeyPattern: pattern},
+		}
+	}
+	owner, _, err := matcher.resolveAVLWW(aBytes, value, report)
+	if report != nil {
+		report.close(err == nil)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("LookupByUnique: resolution failed: %w", err)
 	}
@@ -2738,11 +2825,11 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		return make(map[datalog.Keyword]interface{}), nil
 	}
 
-	matcher := d.Matcher().(*BadgerMatcher)
+	matcher := d.Matcher().(*PatternMatcher)
 	result := make(map[datalog.Keyword]interface{})
 
 	// getValueType returns the schema value type for a keyword
-	getValueType := func(kw datalog.Keyword) schema.ValueType {
+	getValueType := func(kw datalog.Keyword) datalog.Keyword {
 		if d.schema != nil {
 			if s, ok := d.schema.(*schema.Schema); ok {
 				if def := s.GetAttribute(kw); def != nil {
@@ -2750,7 +2837,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 				}
 			}
 		}
-		return ""
+		return nil
 	}
 
 	// Cache-less path: the cache is an optimization, not a correctness
@@ -2793,7 +2880,11 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 			if !ok {
 				continue
 			}
-			if entry := d.cache.GetOrResolve(key, matcher, matcher.cacheBound()); entry != nil {
+			entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
+			}
+			if entry != nil {
 				if val := entryToValue(entry, getValueType(kw)); val != nil {
 					result[kw] = val
 				}
@@ -2816,7 +2907,11 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		if !ok {
 			continue
 		}
-		if entry := d.cache.GetOrResolve(key, matcher, matcher.cacheBound()); entry != nil {
+		entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
+		}
+		if entry != nil {
 			if val := entryToValue(entry, getValueType(kw)); val != nil {
 				result[kw] = val
 			}
@@ -2832,7 +2927,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 // RGA for vector) go through LookupAttribute's direct index scans;
 // history-mode reads fall through to Match for raw datoms. Returns nil if
 // the entity has no current value for the attribute.
-func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr datalog.Keyword, matcher *BadgerMatcher, card schema.Cardinality, valueType schema.ValueType) (interface{}, error) {
+func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr datalog.Keyword, matcher *PatternMatcher, card datalog.Keyword, valueType datalog.Keyword) (interface{}, error) {
 	// LookupAttribute applies the same CRDT resolution a matched pattern
 	// would, without the relational Match machinery (pattern construction,
 	// streaming relation, tuple builders). History mode falls through to
@@ -2887,7 +2982,7 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 			tuple := iter.Tuple()
 			if len(tuple) > 0 && tuple[0] != nil {
 				if vec, ok := tuple[0].([]interface{}); ok {
-					if valueType != "" {
+					if valueType != nil {
 						return typedVector(vec, valueType), nil
 					}
 					return vec, nil
@@ -2921,7 +3016,7 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 
 // entryToValue converts a CacheEntry to its appropriate value representation.
 // For vector entries, valueType is used to return typed slices (e.g. []string).
-func entryToValue(entry *CacheEntry, valueType schema.ValueType) interface{} {
+func entryToValue(entry *CacheEntry, valueType datalog.Keyword) interface{} {
 	switch entry.Cardinality() {
 	case schema.CardinalityOne:
 		return entry.OneValue()
@@ -2978,18 +3073,40 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 		}
 	}
 
-	matcher := d.Matcher().(*BadgerMatcher)
+	matcher := d.Matcher().(*PatternMatcher)
+
+	var opened time.Time
+	var served int
+	bound := ScanBound{Index: EATV, Prefix: []datalog.Value{entity}}
+	report := DiscardIntake
+	if d.plannerOptions.Handler != nil {
+		opened = time.Now()
+		report = &scanReport{}
+		defer func() {
+			data := map[string]interface{}{
+				annotations.KeyDatomsScanned: report.scanned,
+				annotations.KeyValuesServed:  served,
+				annotations.KeyScansOpened:   1,
+			}
+			addBoundFields(data, bound)
+			d.plannerOptions.Handler(annotations.Event{
+				Name:    annotations.StorageResolveComplete,
+				Start:   opened,
+				Latency: time.Since(opened),
+				Data:    data,
+			})
+		}()
+	}
 
 	// History mode: the entity walk below applies CRDT resolution, so raw
 	// reads keep the discovery-then-resolve path. Discovery reads only the
 	// attribute span of each key — values stay undecoded and Tier-3 blobs
 	// are never dereferenced.
 	if matcher.isHistoryMode() {
-		eBytes := entity.Bytes()
 		encoder := d.encoder
-		start, end := encoder.EncodePrefixRange(EAVT, eBytes[:])
 
-		iter, err := d.store.ScanKeysOnly(EAVT, start, end)
+		bound = ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}}
+		iter, err := OpenKeyScan(d.store, report, bound)
 		if err != nil {
 			return nil, fmt.Errorf("EAVT scan failed: %w", err)
 		}
@@ -3025,6 +3142,9 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 		for _, kw := range seenAttrs {
 			keywords = append(keywords, kw)
 		}
+		// What this branch's own scan served: the attributes it discovered. The
+		// per-attribute resolution below is its own read and reports itself.
+		served = len(keywords)
 		return d.ResolveEntityAttributes(entity, keywords)
 	}
 
@@ -3032,9 +3152,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	// discovering and resolving every attribute from the same scan — one
 	// store read session instead of a discovery scan plus one lookup per
 	// attribute. This is the batch wildcard walk applied to one entity.
-	eBytes := entity.Bytes()
-	start, end := d.encoder.EncodePrefixRange(EATV, eBytes[:])
-	iterator, err := d.store.ScanKeysOnly(EATV, start, end)
+	iterator, err := OpenKeyScan(d.store, report, bound)
 	if err != nil {
 		return nil, fmt.Errorf("EATV scan failed: %w", err)
 	}
@@ -3043,6 +3161,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 		_ = iterator.Close()
 		return nil, err
 	}
+	served = len(result)
 	iterErr := iterator.Error()
 	closeErr := iterator.Close()
 	if iterErr != nil {

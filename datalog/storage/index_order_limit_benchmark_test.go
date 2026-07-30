@@ -37,7 +37,9 @@ func benchmarkIndexOrderedLimit(b *testing.B, countScans bool) {
 			if event.Name != "pattern/storage-scan" {
 				return
 			}
-			if count, ok := event.Data["datoms.scanned"].(int); ok {
+			// Intake: what the benchmark reports is scan volume, not the
+			// tuple count the query returned.
+			if count, ok := event.Data[annotations.KeyDatomsScanned].(int); ok {
 				scanned.Add(int64(count))
 			}
 		}
@@ -80,12 +82,12 @@ func benchmarkIndexOrderedLimit(b *testing.B, countScans bool) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				warmRows, err := executor.CollectTuples(warm, nil)
+				warmTuples, err := executor.CollectTuples(warm, nil)
 				if err != nil {
 					b.Fatal(err)
 				}
-				if len(warmRows) != limit {
-					b.Fatalf("warmup got %d rows, want %d", len(warmRows), limit)
+				if len(warmTuples) != limit {
+					b.Fatalf("warmup got %d tuples, want %d", len(warmTuples), limit)
 				}
 
 				scanned.Store(0)
@@ -97,12 +99,12 @@ func benchmarkIndexOrderedLimit(b *testing.B, countScans bool) {
 					if err != nil {
 						b.Fatal(err)
 					}
-					rows, err := executor.CollectTuples(result, nil)
+					tuples, err := executor.CollectTuples(result, nil)
 					if err != nil {
 						b.Fatal(err)
 					}
-					if len(rows) != limit {
-						b.Fatalf("got %d rows, want %d", len(rows), limit)
+					if len(tuples) != limit {
+						b.Fatalf("got %d tuples, want %d", len(tuples), limit)
 					}
 					operations++
 				}

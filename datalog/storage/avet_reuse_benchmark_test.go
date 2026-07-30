@@ -74,7 +74,7 @@ func BenchmarkAVETReuse(b *testing.B) {
 		symbolTuples,
 	)
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 
 	b.ResetTimer()
 
@@ -163,7 +163,7 @@ func BenchmarkAVETNoReuse(b *testing.B) {
 
 	// Create a custom matcher that forces no reuse
 	// We'll need to temporarily hack the strategy selection
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 
 	b.ResetTimer()
 

@@ -52,7 +52,7 @@ func TestEntityJoinBug(t *testing.T) {
 			// Verify individual patterns work
 			highQuery := `[:find ?bar :where [?bar :price/high ?h]]`
 			hq, _ := parser.ParseQuery(highQuery)
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 			exec := executor.NewExecutorWithOptions(matcher, nil, popts)
 			hresult, _ := exec.Execute(hq)
 
@@ -133,16 +133,17 @@ func TestEntityJoinBug(t *testing.T) {
 			jq, _ := parser.ParseQuery(joinQuery)
 
 			var joinEvents []annotations.Event
-			ctx := executor.NewContext(func(event annotations.Event) {
+			annotatedPopts := popts
+			annotatedPopts.Handler = func(event annotations.Event) {
 				if event.Name == annotations.JoinStrategy {
 					joinEvents = append(joinEvents, event)
 				}
-			})
-			annotatedOpts := executor.ExecutorOptions{Collector: ctx.Collector()}
-			annotatedMatcher := storage.NewBadgerMatcherWithOptions(db.Store(), annotatedOpts)
-			annotatedExec := executor.NewExecutorWithOptions(annotatedMatcher, nil, popts)
+			}
+			annotatedMatcher := storage.NewPatternMatcherWithOptions(
+				db.Store(), executor.ExecutorOptionsFromPlanner(annotatedPopts))
+			annotatedExec := executor.NewExecutorWithOptions(annotatedMatcher, nil, annotatedPopts)
 
-			jresult, _ := annotatedExec.ExecuteWithContext(ctx, jq)
+			jresult, _ := annotatedExec.Execute(jq)
 
 			// Collect results by iterating
 			var jtuples []executor.Tuple

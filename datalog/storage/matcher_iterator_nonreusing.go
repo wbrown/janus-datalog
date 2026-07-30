@@ -8,7 +8,7 @@ import (
 
 // nonReusingIterator opens a new scan for each binding tuple
 type nonReusingIterator struct {
-	matcher       *BadgerMatcher
+	matcher       *PatternMatcher
 	pattern       *query.DataPattern
 	bindingRel    executor.Relation
 	bindingTuples []executor.Tuple
@@ -20,9 +20,14 @@ type nonReusingIterator struct {
 	currentScan  Iterator
 	currentTuple executor.Tuple
 	workspace    executor.Tuple // Reusable workspace for tuple building
-	totalScanned int
-	totalMatched int
-	err          error // First error from storage operations
+
+	// report accounts for this arm. Its run is nil: this path opens and drops
+	// one scan per binding, peers with no one of them describing the whole, so
+	// their count stands in a bound's place. The unique walk.s AVET supersession scans, which the
+	// per-binding sources know nothing about, acquire through it too.
+	report *scanReport
+
+	err error // First error from storage operations
 
 	// Pattern extraction utility
 	patternExtractor *query.PatternExtractor
@@ -41,7 +46,9 @@ func (it *nonReusingIterator) Next() bool {
 				return false
 			}
 
-			it.totalScanned++
+			if it.report != nil {
+				it.report.resolved++
+			}
 
 			// Check if datom matches pattern with current binding
 			if it.matchesWithBinding(datom, it.bindingTuples[it.currentIdx]) {
@@ -49,7 +56,9 @@ func (it *nonReusingIterator) Next() bool {
 				if validateDatomWithConstraints(datom, it.matcher.txID, it.constraints) {
 					it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
 					it.currentTuple = it.workspace
-					it.totalMatched++
+					if it.report != nil {
+						it.report.matched++
+					}
 					return true
 				}
 			}
@@ -85,19 +94,20 @@ func (it *nonReusingIterator) Next() bool {
 	e, a, v, tx := it.extractBoundValues(bindingTuple)
 
 	// Choose index and create scan
-	index, start, end := it.matcher.chooseIndex(e, a, v, tx)
-
-	rawIter, err := it.matcher.reader.ScanKeysOnly(index, start, end)
+	rawIter, err := OpenKeyScan(it.matcher.reader, it.report, it.matcher.chooseIndex(e, a, v, tx))
 	if err != nil {
 		it.err = err
 		return false
+	}
+	if it.report != nil {
+		it.report.peers++
 	}
 
 	// Wrap with CRDT resolution unless in history mode
 	if it.matcher.isHistoryMode() {
 		it.currentScan = rawIter
 	} else {
-		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher)
+		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher, it.report)
 	}
 
 	// Try to find first match
@@ -109,10 +119,21 @@ func (it *nonReusingIterator) Tuple() executor.Tuple {
 }
 
 func (it *nonReusingIterator) Close() error {
+	var err error
 	if it.currentScan != nil {
-		return it.currentScan.Close()
+		// The final scan is still open when a consumer stops early.
+		err = it.currentScan.Close()
+		it.currentScan = nil
 	}
-	return nil
+
+	// One completion for the whole run, never one per binding. This path opens
+	// a scan per binding tuple, so an event each would bury the query's shape
+	// under its own instrumentation — a reader tracing a query needs the count,
+	// not the enumeration.
+	if it.report != nil {
+		it.report.close(it.err == nil)
+	}
+	return err
 }
 
 func (it *nonReusingIterator) Error() error { return it.err }

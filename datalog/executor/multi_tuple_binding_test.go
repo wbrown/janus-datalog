@@ -32,13 +32,13 @@ func TestJoin_NoSharedSymbols_CrossProduct(t *testing.T) {
 		count++
 	}
 	it.Close()
-	assert.Equal(t, 1, count, "no-shared-symbol Join must cross-product (1×1 = 1 row)")
+	assert.Equal(t, 1, count, "no-shared-symbol Join must cross-product (1×1 = 1 tuple)")
 	assert.ElementsMatch(t,
 		[]query.Symbol{datalog.NewSymbol("?grp"), datalog.NewSymbol("?name"), datalog.NewSymbol("?owner")},
 		result.Symbols())
 }
 
-func TestMultiRowRelationBinding(t *testing.T) {
+func TestMultiTupleRelationBinding(t *testing.T) {
 	// Create test data: multiple entities with ages
 	alice := datalog.NewIdentity("user:alice")
 	bob := datalog.NewIdentity("user:bob")
@@ -243,7 +243,7 @@ func TestMultiRowRelationBinding(t *testing.T) {
 }
 
 func TestRelationBasedPatternMatching(t *testing.T) {
-	// Test that the new interface properly handles empty bindings
+	// Test that Match properly handles empty bindings
 	datoms := []datalog.Datom{
 		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword(":foo"), V: "bar", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword(":foo"), V: "baz", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},

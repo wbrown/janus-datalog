@@ -100,15 +100,6 @@ func TestSchemaUnknownAttribute(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// The three Datomic-strict uniqueness tests (TestSchemaUniquenessValue,
-// TestSchemaUniquenessWithinTransaction, TestSchemaUniquenessIdempotent)
-// were deleted in the CRDT-uniqueness redesign. They asserted that the
-// second commit of a duplicate unique value fails with "uniqueness
-// violation" — the old write-time gate contract. The new model (see
-// docs/proposals/CRDT_UNIQUE_SEMANTICS.md) resolves uniqueness at read
-// time via (A, V)-LWW; all writes succeed. Tests for the new contract
-// are added in subsequent commits (Commits 2–5 of that redesign).
-
 func TestNoSchemaNoValidation(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "db-no-schema-test")
 	require.NoError(t, err)

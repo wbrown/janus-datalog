@@ -244,18 +244,15 @@ func tuplesEqual(a, b []Tuple) bool {
 }
 
 func TestJoinBuildCopyAnnotation(t *testing.T) {
-	// Test that the copy tracking annotation is emitted when a collector is provided
+	// Test that the copy tracking annotation is emitted when a handler is provided
 
-	// Create a collector to capture events
-	var events []annotations.Event
-	handler := func(e annotations.Event) {
-		events = append(events, e)
-	}
-	collector := annotations.NewCollector(handler)
-
-	// Create relations with options that include the collector
+	var copyEvent *annotations.Event
 	opts := ExecutorOptions{
-		Collector: collector,
+		Handler: func(e annotations.Event) {
+			if e.Name == annotations.JoinBuildCopy {
+				copyEvent = &e
+			}
+		},
 	}
 
 	// MaterializedRelation doesn't require copying (RequiresCopy() = false)
@@ -282,27 +279,12 @@ func TestJoinBuildCopyAnnotation(t *testing.T) {
 	_ = collectTuples(joined)
 
 	// Check that we got the copy tracking annotation
-	var foundCopyAnnotation bool
-	var copyCount, skipCount int
-	var requiresCopy bool
-	for _, e := range events {
-		if e.Name == annotations.JoinBuildCopy {
-			foundCopyAnnotation = true
-			if c, ok := e.Data["copied"].(int); ok {
-				copyCount = c
-			}
-			if s, ok := e.Data["passthru"].(int); ok {
-				skipCount = s
-			}
-			if rc, ok := e.Data["requires_copy"].(bool); ok {
-				requiresCopy = rc
-			}
-		}
+	if copyEvent == nil {
+		t.Fatal("expected JoinBuildCopy annotation to be emitted")
 	}
-
-	if !foundCopyAnnotation {
-		t.Error("expected JoinBuildCopy annotation to be emitted")
-	}
+	copyCount, _ := copyEvent.Data["copied"].(int)
+	skipCount, _ := copyEvent.Data["passthru"].(int)
+	requiresCopy, _ := copyEvent.Data["requires_copy"].(bool)
 
 	// MaterializedRelation doesn't require copying, so we should see passthru > 0, copied = 0
 	if requiresCopy {
@@ -319,11 +301,18 @@ func TestJoinBuildCopyAnnotation(t *testing.T) {
 }
 
 func TestHashJoinEmitsStructuredStrategyBuildAndProbeAnnotations(t *testing.T) {
-	var events []annotations.Event
-	collector := annotations.NewCollector(func(event annotations.Event) {
-		events = append(events, event)
-	})
-	opts := ExecutorOptions{Collector: collector}
+	// One capture per event under test.
+	var strategy, build, probe *annotations.Event
+	opts := ExecutorOptions{Handler: func(event annotations.Event) {
+		switch event.Name {
+		case annotations.JoinStrategy:
+			strategy = &event
+		case annotations.JoinBuild:
+			build = &event
+		case annotations.JoinProbe:
+			probe = &event
+		}
+	}}
 	joinSymbol := datalog.NewSymbol("?id")
 	left := NewMaterializedRelationWithOptions(
 		[]query.Symbol{joinSymbol, datalog.NewSymbol("?left")},
@@ -339,31 +328,24 @@ func TestHashJoinEmitsStructuredStrategyBuildAndProbeAnnotations(t *testing.T) {
 	result := HashJoinWithOptions(left, right, []query.Symbol{joinSymbol}, opts)
 	require.Len(t, collectTuples(result), 2)
 
-	byName := make(map[string]annotations.Event)
-	for _, event := range events {
-		byName[event.Name] = event
-	}
-	strategy, ok := byName[annotations.JoinStrategy]
-	require.True(t, ok)
+	require.NotNil(t, strategy)
 	require.Equal(t, "materialized", strategy.Data["mode"])
 	require.Equal(t, "right", strategy.Data["build_side"])
 
-	build, ok := byName[annotations.JoinBuild]
-	require.True(t, ok)
+	require.NotNil(t, build)
 	require.Equal(t, 3, build.Data["tuple_count"])
 	require.Equal(t, false, build.Data["join_key_unique"])
 
-	probe, ok := byName[annotations.JoinProbe]
-	require.True(t, ok)
+	require.NotNil(t, probe)
 	require.Equal(t, 3, probe.Data["tuple_count"])
 	require.Equal(t, 2, probe.Data["result_count"])
 }
 
 func TestJoinStrategyAnnotationDoesNotConsumeStreamingRelation(t *testing.T) {
 	var events []annotations.Event
-	collector := annotations.NewCollector(func(event annotations.Event) {
+	handler := func(event annotations.Event) {
 		events = append(events, event)
-	})
+	}
 	joinSymbol := datalog.NewSymbol("?id")
 	base := NewMaterializedRelationFromSet(
 		[]query.Symbol{joinSymbol},
@@ -373,11 +355,11 @@ func TestJoinStrategyAnnotationDoesNotConsumeStreamingRelation(t *testing.T) {
 	stream := NewStreamingRelationWithOptions(
 		base.Symbols(),
 		base.Iterator(),
-		ExecutorOptions{Collector: collector},
+		ExecutorOptions{Handler: handler},
 	)
 
 	emitJoinStrategyAnnotation(
-		ExecutorOptions{Collector: collector},
+		handler,
 		stream,
 		base,
 		[]query.Symbol{joinSymbol},
@@ -397,13 +379,13 @@ func TestStreamingJoinProbeAnnotationLifecycle(t *testing.T) {
 	join := datalog.NewSymbol("?join")
 	leftValue := datalog.NewSymbol("?left")
 	rightValue := datalog.NewSymbol("?right")
-	open := func(collector *annotations.Collector, probe Relation) Relation {
+	open := func(handler annotations.Handler, probe Relation) Relation {
 		left := NewMaterializedRelation(
 			[]query.Symbol{join, leftValue},
 			[]Tuple{{int64(1), "left"}},
 		)
 		return HashJoinWithOptions(left, probe, []query.Symbol{join}, ExecutorOptions{
-			Collector:            collector,
+			Handler:              handler,
 			EnableStreamingJoins: true,
 		})
 	}
@@ -416,12 +398,12 @@ func TestStreamingJoinProbeAnnotationLifecycle(t *testing.T) {
 
 	t.Run("partial close emits exactly once", func(t *testing.T) {
 		var events []annotations.Event
-		collector := annotations.NewCollector(func(event annotations.Event) {
+		handler := func(event annotations.Event) {
 			if event.Name == annotations.JoinProbe {
 				events = append(events, event)
 			}
-		})
-		it := open(collector, probe()).Iterator()
+		}
+		it := open(handler, probe()).Iterator()
 		require.True(t, it.Next())
 		require.NoError(t, it.Close())
 		require.NoError(t, it.Close())
@@ -435,12 +417,12 @@ func TestStreamingJoinProbeAnnotationLifecycle(t *testing.T) {
 
 	t.Run("exhaustion then close emits exactly once", func(t *testing.T) {
 		var events []annotations.Event
-		collector := annotations.NewCollector(func(event annotations.Event) {
+		handler := func(event annotations.Event) {
 			if event.Name == annotations.JoinProbe {
 				events = append(events, event)
 			}
-		})
-		it := open(collector, probe()).Iterator()
+		}
+		it := open(handler, probe()).Iterator()
 		for it.Next() {
 		}
 		require.NoError(t, it.Error())
@@ -451,16 +433,16 @@ func TestStreamingJoinProbeAnnotationLifecycle(t *testing.T) {
 
 	t.Run("probe failure is emitted once", func(t *testing.T) {
 		var events []annotations.Event
-		collector := annotations.NewCollector(func(event annotations.Event) {
+		handler := func(event annotations.Event) {
 			if event.Name == annotations.JoinProbe {
 				events = append(events, event)
 			}
-		})
+		}
 		failingProbe := failingRelation{
 			Relation:  probe(),
 			failAfter: 1,
 		}
-		it := open(collector, failingProbe).Iterator()
+		it := open(handler, failingProbe).Iterator()
 		for it.Next() {
 		}
 		require.ErrorIs(t, it.Error(), errInjectedIterator)
@@ -474,7 +456,10 @@ func TestConcurrentStructuredJoinAnnotations(t *testing.T) {
 	var eventCount atomic.Int64
 	var fieldMu sync.Mutex
 	var malformed bool
-	collector := annotations.NewCollector(func(event annotations.Event) {
+	// Twenty workers emit through this one handler concurrently, and the engine
+	// does not serialize handlers — so the counting and the flag carry their own
+	// synchronization here, in the handler that holds them.
+	handler := func(event annotations.Event) {
 		if event.Name != annotations.JoinStrategy &&
 			event.Name != annotations.JoinBuild &&
 			event.Name != annotations.JoinProbe {
@@ -486,7 +471,7 @@ func TestConcurrentStructuredJoinAnnotations(t *testing.T) {
 		if event.Data == nil {
 			malformed = true
 		}
-	})
+	}
 	join := datalog.NewSymbol("?join")
 
 	var wait sync.WaitGroup
@@ -503,7 +488,7 @@ func TestConcurrentStructuredJoinAnnotations(t *testing.T) {
 				[]Tuple{{int64(worker)}},
 			)
 			result := HashJoinWithOptions(left, right, []query.Symbol{join}, ExecutorOptions{
-				Collector: collector,
+				Handler: handler,
 			})
 			_, err := collectTypedTuples(result)
 			require.NoError(t, err)

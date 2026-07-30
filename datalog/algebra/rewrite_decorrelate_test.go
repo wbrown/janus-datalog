@@ -498,11 +498,11 @@ func TestDecorrelation_PureDataPatternSkipped(t *testing.T) {
 // TestDecorrelation_EqualityBoundTranslation pins the equality-bound
 // correlation translation on the OHLC flagship shape: correlation parameters
 // consumed only by [(= ?inner ?param)] predicates are translated — the inner
-// side becomes the group-by column, the predicate is consumed as the join
+// side becomes the group-by symbol, the predicate is consumed as the join
 // condition, and the binding positionally renames it to the outer name.
 // Subqueries with extra non-correlation consumption (?smod/?emod
 // inequalities) decline and stay correlated. See
-// docs/bugs/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
+// BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
 func TestDecorrelation_EqualityBoundTranslation(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?datetime ?open-price ?hour-high ?hour-low
 	 :where
@@ -599,7 +599,7 @@ func TestDecorrelation_EqualityBoundTranslation(t *testing.T) {
 
 	grouped := uncorrelated[0]
 
-	// Group-by keys are the inner columns, in parameter order, followed by
+	// Group-by keys are the inner symbols, in parameter order, followed by
 	// the original aggregates.
 	wantFind := []query.Symbol{
 		datalog.NewSymbol("?sym"),
@@ -618,7 +618,7 @@ func TestDecorrelation_EqualityBoundTranslation(t *testing.T) {
 			aggCount++
 		}
 	}
-	assert.Equal(t, wantFind, gotFindVars, "group-by columns are the inner equality sides in parameter order")
+	assert.Equal(t, wantFind, gotFindVars, "group-by symbols are the inner equality sides in parameter order")
 	assert.Equal(t, 2, aggCount, "both aggregates preserved")
 
 	// The correlation parameters are gone from :in, and the consumed
@@ -634,7 +634,7 @@ func TestDecorrelation_EqualityBoundTranslation(t *testing.T) {
 		}
 	}
 
-	// The binding positionally renames group columns to the outer
+	// The binding positionally renames group symbols to the outer
 	// correlation names, then the aggregate outputs.
 	rb, ok := grouped.Binding.(query.RelationBinding)
 	require.True(t, ok, "grouped subquery binds as a relation")
@@ -649,7 +649,7 @@ func TestDecorrelation_EqualityBoundTranslation(t *testing.T) {
 			datalog.NewSymbol("?hour-low"),
 		},
 		rb.Variables,
-		"binding renames group columns to outer names positionally")
+		"binding renames group symbols to outer names positionally")
 
 	// The declined subquery keeps its full input list — all seven variables.
 	assert.Len(t, correlated[0].Inputs, 8, "declined subquery keeps $ plus its seven variable inputs")

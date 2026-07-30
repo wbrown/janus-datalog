@@ -199,7 +199,7 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 						DefaultHashTableSize:    256,
 					}
 
-					matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+					matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 					exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
 					// Execute through full pipeline
@@ -315,7 +315,7 @@ func TestStorageBackedJoinLimitE2E(t *testing.T) {
 						DefaultHashTableSize:    256,
 					}
 
-					matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+					matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 					exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
 					result, err := exec.Execute(q)

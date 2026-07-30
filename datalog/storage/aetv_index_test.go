@@ -327,11 +327,7 @@ func TestAETVStorageScan(t *testing.T) {
 	require.NoError(t, err)
 
 	// Scan AETV for :person/name attribute
-	var attrBytes Attribute
-	copy(attrBytes[:], attr.String())
-
-	start, end := db.Store().Encoder().EncodePrefixRange(AETV, attrBytes[:])
-	iter, err := db.Store().ScanKeysOnly(AETV, start, end)
+	iter, err := db.Store().ScanKeysOnly(ScanBound{Index: AETV, Prefix: []datalog.Value{attr}})
 	require.NoError(t, err)
 	defer iter.Close()
 
@@ -368,12 +364,10 @@ func TestAETVStorageScanTxDescendingOrder(t *testing.T) {
 	}
 
 	// Scan AETV for this (A, E) pair
-	var attrBytes Attribute
-	copy(attrBytes[:], attr.String())
-	eBytes := entity.Hash()
-
-	start, end := db.Store().Encoder().EncodePrefixRange(AETV, attrBytes[:], eBytes[:])
-	iter, err := db.Store().ScanKeysOnly(AETV, start, end)
+	iter, err := db.Store().ScanKeysOnly(ScanBound{
+		Index:  AETV,
+		Prefix: []datalog.Value{attr, entity},
+	})
 	require.NoError(t, err)
 	defer iter.Close()
 
@@ -452,7 +446,6 @@ func TestAETVCRDTResolutionSingleEntity(t *testing.T) {
 }
 
 // TestAETVCRDTResolutionMultipleEntities verifies LWW resolution for batch lookup.
-// This is THE critical test case that was broken before AETV.
 func TestAETVCRDTResolutionMultipleEntities(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

@@ -10,8 +10,8 @@ var (
 	_ func(storage.IndexType, []byte, *storage.BinaryKeyEncoder, storage.BlobReader) (datalog.Datom, error) = storage.DatomFromKey
 
 	_ executor.PatternMatcher        = (*storage.Database)(nil)
-	_ executor.PatternMatcher        = (*storage.BadgerMatcher)(nil)
-	_ executor.PredicateAwareMatcher = (*storage.BadgerMatcher)(nil)
-	_ executor.EntityLookupMatcher   = (*storage.BadgerMatcher)(nil)
+	_ executor.PatternMatcher        = (*storage.PatternMatcher)(nil)
+	_ executor.PredicateAwareMatcher = (*storage.PatternMatcher)(nil)
+	_ executor.EntityLookupMatcher   = (*storage.PatternMatcher)(nil)
 	_ storage.Store                  = (*storage.MemoryStore)(nil)
 )

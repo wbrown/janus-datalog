@@ -1,11 +1,14 @@
-// Reproduction for docs/bugs/BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.md
+// Reproduction for BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.md
 // (executor half).
 //
-// The PlannerOptions -> ExecutorOptions conversion dropped
-// IndexNestedLoopThreshold, so even a custom threshold never reached the
-// executor's effective options. This is the field-set drift the bug report
-// flags: the storage-side and executor-side conversions copied different
-// subsets, and IndexNestedLoopThreshold was absent here.
+// PlannerOptions -> ExecutorOptions is a hand-written field-by-field copy, and
+// so is the storage-side conversion. A field either converter omits compiles,
+// runs, and silently leaves the caller's value at the zero default; nothing but
+// a test that sets one and reads it back downstream can tell.
+//
+// MaxSubqueryWorkers is the probe because it is numeric: an omitted bool is
+// caught only when the custom value differs from the default, while a numeric
+// read back as zero is caught outright.
 
 package executor
 
@@ -16,18 +19,18 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
-// TestNewExecutorWithOptions_HonorsIndexNestedLoopThreshold pins that a custom
-// IndexNestedLoopThreshold survives the PlannerOptions -> ExecutorOptions
-// conversion into the executor's effective options.
-func TestNewExecutorWithOptions_HonorsIndexNestedLoopThreshold(t *testing.T) {
+// TestNewExecutorWithOptions_HonorsNumericOption pins that a custom non-boolean
+// option survives the PlannerOptions -> ExecutorOptions conversion into the
+// executor's effective options.
+func TestNewExecutorWithOptions_HonorsNumericOption(t *testing.T) {
 	opts := planner.PlannerOptions{
-		IndexNestedLoopThreshold: 12345,
-		EnableScanSharing:        true,
+		MaxSubqueryWorkers: 12345,
+		EnableScanSharing:  true,
 	}
 	exec := NewExecutorWithOptions(nil, nil, opts)
 
-	require.Equal(t, 12345, exec.options.IndexNestedLoopThreshold,
-		"custom IndexNestedLoopThreshold must reach the executor's effective options")
+	require.Equal(t, 12345, exec.options.MaxSubqueryWorkers,
+		"custom MaxSubqueryWorkers must reach the executor's effective options")
 	require.True(t, exec.options.EnableScanSharing,
 		"sanity: a field the converter already copied must still be honored")
 }

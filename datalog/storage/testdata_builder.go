@@ -28,7 +28,7 @@ func DefaultOHLCConfig() TestDataConfig {
 		NumSymbols:      10, // 10 stock symbols
 		NumDays:         30, // 30 days of data
 		BarsPerDay:      24, // Hourly bars
-		OutputPath:      "testdata/ohlc_benchmark.db",
+		OutputPath:      BenchmarkDatabasePath,
 		AttributePrefix: "price/",
 		StartDate:       time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
 	}
@@ -41,7 +41,7 @@ func MediumOHLCConfig() TestDataConfig {
 		NumSymbols:      50, // 50 stock symbols
 		NumDays:         30, // 30 days of data
 		BarsPerDay:      24, // Hourly bars
-		OutputPath:      "testdata/ohlc_medium.db",
+		OutputPath:      "datalog/storage/testdata/ohlc_medium.db",
 		AttributePrefix: "price/",
 		StartDate:       time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
 	}
@@ -53,14 +53,23 @@ func LargeOHLCConfig() TestDataConfig {
 		NumSymbols:      500, // 500 stock symbols
 		NumDays:         365, // 1 year of data
 		BarsPerDay:      390, // Minute bars (6.5 hour trading day)
-		OutputPath:      "testdata/ohlc_large.db",
+		OutputPath:      "datalog/storage/testdata/ohlc_large.db",
 		AttributePrefix: "price/",
 		StartDate:       time.Date(2024, 1, 1, 9, 30, 0, 0, time.UTC),
 	}
 }
 
-// BuildTestDatabase creates a pre-populated BadgerDB for benchmarking
+// BuildTestDatabase creates a pre-populated BadgerDB for benchmarking.
+// config.OutputPath is named from the module root (see BenchmarkDatabasePath),
+// so the database lands where its readers look no matter which directory the
+// builder was started in.
 func BuildTestDatabase(config TestDataConfig) (*Database, error) {
+	outputPath, err := resolveTestDataPath(config.OutputPath)
+	if err != nil {
+		return nil, err
+	}
+	config.OutputPath = outputPath
+
 	// Remove existing database
 	if err := os.RemoveAll(config.OutputPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("failed to remove existing db: %w", err)
@@ -223,8 +232,15 @@ func generateOHLCData(config TestDataConfig) []datalog.Datom {
 	return datoms
 }
 
-// OpenTestDatabase opens a pre-built test database
+// OpenTestDatabase opens a pre-built test database. The path is named from the
+// module root (see BenchmarkDatabasePath), so a reader names the same file the
+// builder wrote regardless of which directory either was started in.
 func OpenTestDatabase(path string) (*Database, error) {
+	path, err := resolveTestDataPath(path)
+	if err != nil {
+		return nil, err
+	}
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("test database not found: %s (run BuildTestDatabase first)", path)
 	}

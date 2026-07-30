@@ -22,7 +22,7 @@ import (
 // schemaless datoms have Op=0 (zero value), and processAddWins only handles
 // OpCRDTAdd (1) and OpCRDTRemove (2), silently dropping Op=0 datoms.
 //
-// See: docs/bugs/BUG_SCHEMALESS_ATTR_BOUND_QUERY.md
+// See: BUG_SCHEMALESS_ATTR_BOUND_QUERY.md
 // =============================================================================
 
 // TestSchemalessAttrBoundQuery_BugRepro reproduces the exact bug from the doc:
@@ -199,7 +199,7 @@ func TestSchemalessAttrMultipleWrites(t *testing.T) {
 // Schemaless = no schema on the attribute (either no schema at all, or schema
 // exists but the attribute is not registered).
 //
-// See: docs/bugs/BUG_SCHEMALESS_ATTR_BOUND_QUERY.md (tests 7-10)
+// See: BUG_SCHEMALESS_ATTR_BOUND_QUERY.md (tests 7-10)
 // =============================================================================
 
 // Test 8: Schemaless remove — tx.Add() then tx.Remove() → attribute doesn't exist
@@ -390,12 +390,12 @@ func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 // =============================================================================
 //
 // Test 14: Data written with schema (tx.Set, OpNone), queried through a
-// BadgerMatcher created without schema → CardinalityOne default works.
+// PatternMatcher created without schema → CardinalityOne default works.
 //
 // This exercises the code path where CRDTResolvingIterator runs with nil schema
 // and must default to CardinalityOne for all attributes.
 //
-// See: docs/bugs/BUG_SCHEMALESS_ATTR_BOUND_QUERY.md (test 14)
+// See: BUG_SCHEMALESS_ATTR_BOUND_QUERY.md (test 14)
 // =============================================================================
 
 // Test 14: Nil-schema matcher can read data written with schema
@@ -426,7 +426,7 @@ func TestNilSchemaMatcher_ReadsSchemaData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create matcher WITHOUT schema
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	// Deliberately NOT calling matcher.SetSchema()
 
 	// Query through nil-schema matcher using a DataPattern

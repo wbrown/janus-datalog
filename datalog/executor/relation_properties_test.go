@@ -274,9 +274,9 @@ func TestStreamingProjectionSkipsDedupOnPermutation(t *testing.T) {
 	_, dedups := reordered.(*StreamingRelation).iterator.(*DedupIterator)
 	require.False(t, dedups,
 		"a permutation of the full symbol set is injective on tuples — no dedup pass")
-	rows, err := CollectTuples(reordered, nil)
+	tuples, err := CollectTuples(reordered, nil)
 	require.NoError(t, err)
-	require.ElementsMatch(t, [][]interface{}{{"x", int64(1)}, {"y", int64(2)}}, rows)
+	require.ElementsMatch(t, [][]interface{}{{"x", int64(1)}, {"y", int64(2)}}, tuples)
 }
 
 func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
@@ -309,9 +309,9 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 	require.Equal(t, RelationProperties{Keys: [][]query.Symbol{{id}}}, joined.Properties())
 	joinIterator := joined.(*StreamingRelation).iterator.(*hashJoinIterator)
 	require.True(t, joinIterator.buildIndex.keysUnique(),
-		"the candidate-key proof must hold in the grouped build rows")
+		"the candidate-key proof must hold in the grouped build tuples")
 	require.Len(t, joinIterator.buildIndex.probe(Tuple{int64(1)}), 1,
-		"a unique build key groups exactly one row")
+		"a unique build key groups exactly one tuple")
 	require.Nil(t, joinIterator.seen,
 		"a proven result key makes internal full-tuple join deduplication redundant")
 
@@ -319,7 +319,7 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 	require.NoError(t, err)
 	_, deduplicates := projected.(*StreamingRelation).iterator.(*DedupIterator)
 	require.False(t, deduplicates,
-		"a join against a unique right side cannot duplicate keyed left rows")
+		"a join against a unique right side cannot duplicate keyed left tuples")
 }
 
 func TestHashJoinPanicsWhenCandidateKeyClaimIsViolated(t *testing.T) {
@@ -335,7 +335,7 @@ func TestHashJoinPanicsWhenCandidateKeyClaimIsViolated(t *testing.T) {
 		RelationProperties{},
 	)
 	// The build side claims ?id as a candidate key but carries duplicate ?id
-	// rows — a false proof the grouped build must detect, not trust.
+	// tuples — a false proof the grouped build must detect, not trust.
 	right := NewMaterializedRelationWithProperties(
 		[]query.Symbol{id, rightValue},
 		[]Tuple{{int64(1), "right-1"}, {int64(1), "right-2"}},
@@ -377,7 +377,7 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 	require.Empty(t, joined.Properties().Keys)
 	joinIterator := joined.(*StreamingRelation).iterator.(*hashJoinIterator)
 	require.False(t, joinIterator.buildIndex.keysUnique(),
-		"a fanout key must be visible in the grouped build rows")
+		"a fanout key must be visible in the grouped build tuples")
 	require.Len(t, joinIterator.buildIndex.probe(Tuple{int64(1)}), 2,
 		"a non-unique build key must retain every fanout tuple")
 	require.NotNil(t, joinIterator.seen,
@@ -387,11 +387,11 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 	require.NoError(t, err)
 	_, deduplicates := projected.(*StreamingRelation).iterator.(*DedupIterator)
 	require.True(t, deduplicates,
-		"a non-unique right side can duplicate left rows and projection must restore set semantics")
+		"a non-unique right side can duplicate left tuples and projection must restore set semantics")
 
-	rows, err := CollectTuples(projected, nil)
+	tuples, err := CollectTuples(projected, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(1), "left-1"}}, rows)
+	require.Equal(t, [][]interface{}{{int64(1), "left-1"}}, tuples)
 }
 
 func TestHashJoinPreservesRightKeyWhenLeftJoinSymbolsAreKey(t *testing.T) {
@@ -430,7 +430,7 @@ func TestHashJoinPreservesRightKeyWhenLeftJoinSymbolsAreKey(t *testing.T) {
 	require.NoError(t, err)
 	_, deduplicates := projected.(*StreamingRelation).iterator.(*DedupIterator)
 	require.False(t, deduplicates,
-		"a join against a unique left side cannot duplicate keyed right rows")
+		"a join against a unique left side cannot duplicate keyed right tuples")
 }
 
 func TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys(t *testing.T) {
@@ -494,15 +494,15 @@ func TestSemiAndAntiJoinsPreserveLeftProperties(t *testing.T) {
 
 	semi := SemiJoin(left, right, []query.Symbol{id})
 	require.Equal(t, properties, semi.Properties())
-	semiRows, err := CollectTuples(semi, nil)
+	semiTuples, err := CollectTuples(semi, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(1), "one"}, {int64(3), "three"}}, semiRows)
+	require.Equal(t, [][]interface{}{{int64(1), "one"}, {int64(3), "three"}}, semiTuples)
 
 	anti := AntiJoin(left, right, []query.Symbol{id})
 	require.Equal(t, properties, anti.Properties())
-	antiRows, err := CollectTuples(anti, nil)
+	antiTuples, err := CollectTuples(anti, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(2), "two"}}, antiRows)
+	require.Equal(t, [][]interface{}{{int64(2), "two"}}, antiTuples)
 }
 
 func TestSemiAndAntiJoinsDeduplicateUnkeyedLeftInput(t *testing.T) {
@@ -543,7 +543,7 @@ func TestExpandingExpressionDoesNotPreserveOuterKey(t *testing.T) {
 	require.NoError(t, err)
 
 	require.False(t, containsSymbolSet(expanded.Properties().Keys, []query.Symbol{entity}),
-		"one entity expands to multiple rows, so the outer key is no longer unique")
+		"one entity expands to multiple tuples, so the outer key is no longer unique")
 	require.True(t, containsSymbolSet(
 		expanded.Properties().Keys,
 		[]query.Symbol{entity, index, value},
@@ -551,12 +551,12 @@ func TestExpandingExpressionDoesNotPreserveOuterKey(t *testing.T) {
 
 	projected, err := expanded.Project([]query.Symbol{entity, value})
 	require.NoError(t, err)
-	rows, err := CollectTuples(projected, nil)
+	tuples, err := CollectTuples(projected, nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, [][]interface{}{
 		{int64(1), "same"},
 		{int64(1), "other"},
-	}, rows)
+	}, tuples)
 }
 
 func TestSemiAndAntiJoinsCopyWorkspaceReusingLeftInput(t *testing.T) {
@@ -600,19 +600,16 @@ func TestSemiAndAntiJoinsCopyWorkspaceReusingLeftInput(t *testing.T) {
 				}
 				right := NewMaterializedRelation([]query.Symbol{id}, testCase.rightIDs)
 				result := testCase.run(left, right, []query.Symbol{id})
-				rows, err := CollectTuples(result, nil)
+				got, err := CollectTuples(result, nil)
 				require.NoError(t, err)
-				require.Equal(t, testCase.want, rows)
+				require.Equal(t, testCase.want, got)
 			})
 		}
 	}
 }
 
 func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
-	var events []annotations.Event
-	collector := annotations.NewCollector(func(event annotations.Event) {
-		events = append(events, event)
-	})
+	var cacheEnabled *annotations.Event
 	symbol := datalog.NewSymbol("?value")
 	base := NewMaterializedRelationFromSet(
 		[]query.Symbol{symbol},
@@ -622,7 +619,11 @@ func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
 	stream := NewStreamingRelationWithOptions(
 		base.Symbols(),
 		base.Iterator(),
-		ExecutorOptions{Collector: collector},
+		ExecutorOptions{Handler: func(event annotations.Event) {
+			if event.Name == annotations.RelationCacheEnabled {
+				cacheEnabled = &event
+			}
+		}},
 	)
 
 	stream.Materialize()
@@ -632,13 +633,6 @@ func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
 	require.NoError(t, it.Error())
 	require.NoError(t, it.Close())
 
-	found := false
-	for _, event := range events {
-		if event.Name == annotations.RelationCacheEnabled {
-			found = true
-			require.Equal(t, 1, event.Data["symbol_count"])
-			break
-		}
-	}
-	require.True(t, found, "relation cache annotation was not emitted")
+	require.NotNil(t, cacheEnabled, "relation cache annotation was not emitted")
+	require.Equal(t, 1, cacheEnabled.Data["symbol_count"])
 }

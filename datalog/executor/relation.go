@@ -119,7 +119,6 @@ type Relation interface {
 	// Size returns the number of tuples (may be expensive for iterators)
 	Size() int
 
-
 	// Get returns a specific tuple by index (may be expensive for streaming relations)
 	Get(i int) Tuple
 
@@ -491,6 +490,11 @@ func deduplicateTuples(tuples []Tuple) []Tuple {
 	if len(tuples) == 0 {
 		return tuples
 	}
+	if len(tuples) == 1 {
+		// One tuple cannot duplicate itself. Its own slice, because callers get a
+		// slice the relation owns.
+		return []Tuple{tuples[0]}
+	}
 
 	// Pre-size seen map based on input size
 	seen := NewTupleKeyMapWithCapacity(len(tuples))
@@ -537,7 +541,7 @@ func (r *MaterializedRelation) carryErr(derived Relation) Relation {
 
 // EmptyRelationError returns the deferred (taint) error of a relation that
 // reports zero tuples. An errored relation that materialized empty is not an
-// empty relation — its zero rows mean "the scan failed", not "no data" — so
+// empty relation — its zero tuples mean "the scan failed", not "no data" — so
 // every consumer that branches on emptiness must consult this before
 // treating absence of tuples as absence of data. Laundering the distinction
 // turned a mandated loud failure into a silent empty
@@ -1055,12 +1059,12 @@ func (r *StreamingRelation) Iterator() Iterator {
 	r.iteratorCalled = true
 
 	// If Materialize() was called, enable caching
-	var cacheCollector *annotations.Collector
+	var cacheHandler annotations.Handler
 	var cacheEvent annotations.Event
 	if r.shouldCache {
 		r.cachingInProgress = true
-		if r.options.Collector != nil {
-			cacheCollector = r.options.Collector
+		if r.options.Handler != nil {
+			cacheHandler = r.options.Handler
 			cacheEvent = annotations.Event{
 				Name: annotations.RelationCacheEnabled,
 				Data: map[string]interface{}{
@@ -1073,8 +1077,8 @@ func (r *StreamingRelation) Iterator() Iterator {
 	}
 
 	r.mu.Unlock()
-	if cacheCollector != nil {
-		cacheCollector.Add(cacheEvent)
+	if cacheHandler != nil {
+		cacheHandler(cacheEvent)
 	}
 
 	// Create base iterator
@@ -1124,7 +1128,7 @@ func (r *StreamingRelation) Size() int {
 		return r.size
 	}
 
-	// If materialized (old path), return materialized size
+	// If materialized, return materialized size
 	if r.materialized != nil {
 		return r.materialized.Size()
 	}
@@ -1312,14 +1316,13 @@ func (r *StreamingRelation) Project(symbols []query.Symbol) (Relation, error) {
 		return nil, fmt.Errorf("cannot project empty symbol list - invalid query")
 	}
 
-	// Streaming is now the default behavior
 	// Validate symbols exist
 	for _, sym := range symbols {
 		if !query.ContainsSymbol(r.symbols, sym) {
 			return nil, fmt.Errorf("cannot project: symbol %s not found in relation", sym)
 		}
 	}
-	// CRITICAL FIX: Pass the relation itself to ProjectIterator, not the raw iterator
+	// Pass the relation itself to ProjectIterator, not the raw iterator
 	// This allows ProjectIterator to call r.Iterator(), which respects caching/materialization
 	// When r.shouldCache=true, the first Iterator() call builds the cache, and both the
 	// original relation and the projection can iterate from cached data
@@ -1332,7 +1335,7 @@ func (r *StreamingRelation) Project(symbols []query.Symbol) (Relation, error) {
 		// a fresh tuple per Next, so the seen-keys need no copy.
 		resultIterator = NewDedupIterator(projIter, 0, false)
 	}
-	// BUGFIX: Preserve options (especially EnableTrueStreaming) to prevent re-scanning
+	// Preserve options (especially EnableTrueStreaming) to prevent re-scanning
 	return NewStreamingRelationWithProperties(
 		symbols,
 		resultIterator,
@@ -1351,7 +1354,7 @@ func (r *StreamingRelation) Materialize() Relation {
 		return r
 	}
 
-	// If already materialized (old path), return that
+	// If already materialized, return that
 	if r.materialized != nil {
 		return r.materialized
 	}

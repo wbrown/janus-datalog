@@ -21,7 +21,7 @@ import (
 func TestOrClauseBug(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create three tasks with different types
 			task1 := datalog.NewIdentity("task-1")
@@ -91,7 +91,7 @@ func TestOrClauseBug(t *testing.T) {
 func TestOrClauseBugTraced(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create three tasks with different types
 			task1 := datalog.NewIdentity("task-1")
@@ -121,7 +121,7 @@ func TestOrClauseBugTraced(t *testing.T) {
 			}
 
 			// Create executor with tracing - use same options as the mode's database
-			baseMatcher := NewBadgerMatcher(db.Store())
+			baseMatcher := NewPatternMatcher(db.Store())
 			wrappedMatcher := executor.WrapMatcher(baseMatcher, handler)
 			opts := mode.plannerOptions()
 			exec := executor.NewExecutorWithOptions(wrappedMatcher, db, opts)

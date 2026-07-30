@@ -87,7 +87,7 @@ func TestStoreBackendOrderedScanAndSeek(t *testing.T) {
 			}))
 
 			for _, index := range Indices {
-				iter, err := store.ScanKeysOnly(index, []byte{byte(index)}, []byte{byte(index) + 1})
+				iter, err := store.ScanKeysOnly(ScanBound{Index: index})
 				require.NoError(t, err, "index %v", index)
 				var keys [][]byte
 				require.True(t, iter.Next(), "index %v", index)
@@ -103,7 +103,7 @@ func TestStoreBackendOrderedScanAndSeek(t *testing.T) {
 				if index != EAVT {
 					continue
 				}
-				iter, err = store.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+				iter, err = store.ScanKeysOnly(ScanBound{Index: EAVT})
 				require.NoError(t, err)
 				require.True(t, iter.Next())
 				datom, err := iter.Datom()
@@ -113,8 +113,12 @@ func TestStoreBackendOrderedScanAndSeek(t *testing.T) {
 				require.True(t, iter.Next())
 				secondDatom, err := iter.Datom()
 				require.NoError(t, err)
-				secondKey := store.Encoder().EncodeKey(EAVT, secondDatom)
-				iter.Seek(secondKey)
+				// Binding all four orderable components names a run holding
+				// exactly this datom, which is how a bound reaches one key.
+				iter.Seek(ScanBound{
+					Index:  EAVT,
+					Prefix: []datalog.Value{secondDatom.E, secondDatom.A, secondDatom.V, secondDatom.Tx},
+				})
 				require.True(t, iter.Next())
 				afterSeek, err := iter.Datom()
 				require.NoError(t, err)
@@ -142,7 +146,7 @@ func TestScanAndScanKeysOnlyShareWorkspaceContract(t *testing.T) {
 			keysOnly := collectIndexDatoms(t, store, false)
 			require.Equal(t, scan, keysOnly)
 
-			iter, err := store.Scan(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			iter, err := store.Scan(ScanBound{Index: EAVT})
 			require.NoError(t, err)
 			defer iter.Close()
 			require.True(t, iter.Next())
@@ -179,8 +183,8 @@ func TestStoreBackendsRetainByteValuesAndStickyBlobErrors(t *testing.T) {
 				{E: entity, A: blobAttr, V: payload, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 			}))
 
-			start, end := encoder.EncodePrefixRange(EAVT, entity.Bytes())
-			iter, err := store.ScanKeysOnly(EAVT, start, end)
+			entityBound := ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}}
+			iter, err := store.ScanKeysOnly(entityBound)
 			require.NoError(t, err)
 			var retained [][]byte
 			for iter.Next() {
@@ -202,7 +206,7 @@ func TestStoreBackendsRetainByteValuesAndStickyBlobErrors(t *testing.T) {
 
 			require.Greater(t, deleteStoreBlobs(t, store), 0)
 
-			iter, err = store.ScanKeysOnly(EAVT, start, end)
+			iter, err = store.ScanKeysOnly(entityBound)
 			require.NoError(t, err)
 			defer iter.Close()
 			seenInline := 0
@@ -217,7 +221,7 @@ func TestStoreBackendsRetainByteValuesAndStickyBlobErrors(t *testing.T) {
 					seenInline++
 				}
 			}
-			require.Equal(t, 2, seenInline, "valid rows before a corrupt blob must remain visible")
+			require.Equal(t, 2, seenInline, "valid datoms before a corrupt blob must remain visible")
 			if firstErr == nil {
 				firstErr = iter.Error()
 			}
@@ -314,11 +318,11 @@ func TestDatabaseBackendsPublicSemantics(t *testing.T) {
 					require.NoError(t, database.Export(&dump))
 					imported := openContractDatabase(t, testCase, DatabaseOptions{PlannerOptions: &popts})
 					require.NoError(t, imported.Import(bytes.NewReader(dump.Bytes())))
-					importedRows, err := executor.CollectTuples(imported.Query(
+					importedTuples, err := executor.CollectTuples(imported.Query(
 						`[:find ?name :where [?entity :item/name ?name]]`,
 					))
 					require.NoError(t, err)
-					require.Equal(t, latest, importedRows)
+					require.Equal(t, latest, importedTuples)
 
 					require.NoError(t, database.TruncateTo("base"))
 					afterTruncate, err := executor.CollectTuples(database.Query(
@@ -391,7 +395,7 @@ func TestStoreBackendTransactionOrderedScan(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tx.Assert(datoms))
 			require.NoError(t, tx.Rollback())
-			iter, err := store.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			iter, err := store.ScanKeysOnly(ScanBound{Index: EAVT})
 			require.NoError(t, err)
 			require.False(t, iter.Next())
 			require.NoError(t, iter.Close())
@@ -400,7 +404,7 @@ func TestStoreBackendTransactionOrderedScan(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tx.Assert(datoms))
 			require.NoError(t, tx.Commit())
-			iter, err = store.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			iter, err = store.ScanKeysOnly(ScanBound{Index: EAVT})
 			require.NoError(t, err)
 			var got []datalog.Datom
 			for iter.Next() {
@@ -425,7 +429,7 @@ func TestStoreBackendTransactionOrderedScan(t *testing.T) {
 				})
 			}
 			require.NoError(t, store.Assert(extra))
-			iter, err = store.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			iter, err = store.ScanKeysOnly(ScanBound{Index: EAVT})
 			require.NoError(t, err)
 			var keys [][]byte
 			for iter.Next() {
@@ -445,6 +449,198 @@ func TestStoreBackendTransactionOrderedScan(t *testing.T) {
 	}
 }
 
+// TestStoreBackendVBoundRunExcludesValueExtensions is the backend-parity pin
+// the typed bound owed. A V payload carries no length, so a byte range whose
+// last bound component is a variable-length V is a prefix range: the keys for
+// "abcd" sort inside the range for "abc", interleaved with them, and no range
+// can separate the two. Narrowing the range to the run the bound names is the
+// store's job, and both stores must do it the same way.
+//
+// Op is load-bearing here: an RGA datom's key carries an AfterRef ahead of Op
+// and is 16 bytes longer for the same value, so a store that measures a key
+// without reading Op drops every RGA datom from a V-bound scan.
+func TestStoreBackendVBoundRunExcludesValueExtensions(t *testing.T) {
+	for _, testCase := range storeContractCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := testCase.open(t, &BinaryKeyEncoder{})
+			defer store.Close()
+
+			attr := datalog.NewKeyword(":run/tag")
+			other := datalog.NewKeyword(":run/other")
+			short := datalog.NewIdentity("run:short")
+			long := datalog.NewIdentity("run:long")
+			empty := datalog.NewIdentity("run:empty")
+			rga := datalog.NewIdentity("run:rga")
+			rgaLong := datalog.NewIdentity("run:rga-long")
+			raw := datalog.NewIdentity("run:raw")
+			rawLong := datalog.NewIdentity("run:raw-long")
+			// Keyword and Symbol are variable-width too — PayloadIsFixedWidth
+			// classifies both false, and their payload is []byte(String()), so
+			// :status/act is a byte prefix of :status/active exactly as "abc"
+			// is of "abcd".
+			kw := datalog.NewIdentity("run:kw")
+			kwLong := datalog.NewIdentity("run:kw-long")
+			sym := datalog.NewIdentity("run:sym")
+			symLong := datalog.NewIdentity("run:sym-long")
+
+			tx := func(l uint64) datalog.ElementID {
+				return datalog.ElementID{Lamport: l, ReplicaID: 1}
+			}
+			after := datalog.ElementID{Lamport: 99, ReplicaID: 1}
+
+			require.NoError(t, store.Assert([]datalog.Datom{
+				{E: short, A: attr, V: "abc", Tx: tx(1)},
+				{E: long, A: attr, V: "abcd", Tx: tx(2)},
+				{E: empty, A: attr, V: "", Tx: tx(3)},
+				{E: rga, A: attr, V: "abc", Tx: tx(4),
+					Op: datalog.OpRGAInsert, AfterRef: after},
+				{E: rgaLong, A: attr, V: "abcd", Tx: tx(5),
+					Op: datalog.OpRGAInsert, AfterRef: after},
+				{E: raw, A: other, V: []byte("xy"), Tx: tx(6)},
+				{E: rawLong, A: other, V: []byte("xyz"), Tx: tx(7)},
+				{E: kw, A: attr, V: datalog.NewKeyword(":status/act"), Tx: tx(8)},
+				{E: kwLong, A: attr, V: datalog.NewKeyword(":status/active"), Tx: tx(9)},
+				{E: sym, A: attr, V: datalog.NewSymbol("run"), Tx: tx(10)},
+				{E: symLong, A: attr, V: datalog.NewSymbol("running"), Tx: tx(11)},
+			}))
+
+			for _, run := range []struct {
+				name  string
+				bound ScanBound
+				want  []datalog.Identity
+			}{
+				{"AVET/string", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{attr, "abc"}},
+					[]datalog.Identity{short, rga}},
+				{"AVET/empty-string", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{attr, ""}},
+					[]datalog.Identity{empty}},
+				{"AVET/bytes", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{other, []byte("xy")}},
+					[]datalog.Identity{raw}},
+				{"VAET/value-first", ScanBound{Index: VAET,
+					Prefix: []datalog.Value{"abc"}},
+					[]datalog.Identity{short, rga}},
+				{"EAVT/value-last", ScanBound{Index: EAVT,
+					Prefix: []datalog.Value{short, attr, "abc"}},
+					[]datalog.Identity{short}},
+				{"EAVT/value-belongs-to-another-entity", ScanBound{Index: EAVT,
+					Prefix: []datalog.Value{long, attr, "abc"}},
+					nil},
+				{"AVET/keyword", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{attr, datalog.NewKeyword(":status/act")}},
+					[]datalog.Identity{kw}},
+				{"AVET/symbol", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{attr, datalog.NewSymbol("run")}},
+					[]datalog.Identity{sym}},
+			} {
+				t.Run(run.name, func(t *testing.T) {
+					iter, err := store.ScanKeysOnly(run.bound)
+					require.NoError(t, err)
+					defer iter.Close()
+
+					var got []datalog.Identity
+					for iter.Next() {
+						datom, err := iter.Datom()
+						require.NoError(t, err)
+						got = append(got, datom.E)
+					}
+					require.NoError(t, iter.Error())
+					require.ElementsMatch(t, run.want, got,
+						"the run must hold exactly the datoms carrying the bound value")
+				})
+			}
+		})
+	}
+}
+
+// TestStoreBackendCompressedVBoundRun covers the two variable-width value types
+// the plain V-bound parity test cannot reach. TypeCompressedString and
+// TypeCompressedBytes exist only when the encoder carries a compression
+// threshold, and that test opens its store with the zero-threshold encoder, so
+// its strings and bytes stay uncompressed.
+//
+// PayloadIsFixedWidth classifies both compressed types false, so both take the
+// inexact arm and rest on the same key-length arithmetic. Getting that
+// arithmetic wrong for a compressed value fails closed — every key is excluded
+// and the scan returns nothing — which is what these assertions catch.
+func TestStoreBackendCompressedVBoundRun(t *testing.T) {
+	for _, testCase := range storeContractCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			const threshold = 32
+			store := testCase.open(t, &BinaryKeyEncoder{CompressionThreshold: threshold})
+			defer store.Close()
+
+			text := string(bytes.Repeat([]byte("compressible-"), 8))
+			otherText := string(bytes.Repeat([]byte("distinct-value-"), 8))
+			raw := bytes.Repeat([]byte("0123456789"), 8)
+			otherRaw := bytes.Repeat([]byte("abcdefghij"), 8)
+
+			// Tier 2 is where these values have to land for the test to mean
+			// anything: below the threshold they stay plain, above the key-size
+			// ceiling they move out of line and become fixed-width hashes.
+			// Assert it rather than skip, so a fixture that stops exercising
+			// the tier says so.
+			for _, v := range []datalog.Value{text, otherText} {
+				vType, _, blob := datalog.EncodeValue(v, threshold)
+				require.Equal(t, datalog.TypeCompressedString, vType,
+					"fixture must reach Tier 2 compressed-string, got %v", vType)
+				require.Nil(t, blob, "Tier 2 stays in the key")
+			}
+			for _, v := range []datalog.Value{raw, otherRaw} {
+				vType, _, blob := datalog.EncodeValue(v, threshold)
+				require.Equal(t, datalog.TypeCompressedBytes, vType,
+					"fixture must reach Tier 2 compressed-bytes, got %v", vType)
+				require.Nil(t, blob, "Tier 2 stays in the key")
+			}
+
+			strAttr := datalog.NewKeyword(":zip/text")
+			bytesAttr := datalog.NewKeyword(":zip/raw")
+			wantText := datalog.NewIdentity("zip:text")
+			otherTextE := datalog.NewIdentity("zip:text-other")
+			wantRaw := datalog.NewIdentity("zip:raw")
+			otherRawE := datalog.NewIdentity("zip:raw-other")
+
+			tx := func(l uint64) datalog.ElementID {
+				return datalog.ElementID{Lamport: l, ReplicaID: 1}
+			}
+			require.NoError(t, store.Assert([]datalog.Datom{
+				{E: wantText, A: strAttr, V: text, Tx: tx(1)},
+				{E: otherTextE, A: strAttr, V: otherText, Tx: tx(2)},
+				{E: wantRaw, A: bytesAttr, V: raw, Tx: tx(3)},
+				{E: otherRawE, A: bytesAttr, V: otherRaw, Tx: tx(4)},
+			}))
+
+			for _, run := range []struct {
+				name  string
+				bound ScanBound
+				want  datalog.Identity
+			}{
+				{"AVET/compressed-string", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{strAttr, text}}, wantText},
+				{"AVET/compressed-bytes", ScanBound{Index: AVET,
+					Prefix: []datalog.Value{bytesAttr, raw}}, wantRaw},
+			} {
+				t.Run(run.name, func(t *testing.T) {
+					iter, err := store.ScanKeysOnly(run.bound)
+					require.NoError(t, err)
+					defer iter.Close()
+
+					var got []datalog.Identity
+					for iter.Next() {
+						datom, err := iter.Datom()
+						require.NoError(t, err)
+						got = append(got, datom.E)
+					}
+					require.NoError(t, iter.Error())
+					require.Equal(t, []datalog.Identity{run.want}, got,
+						"the run must hold exactly the datom carrying the bound value")
+				})
+			}
+		})
+	}
+}
+
 func collectIndexDatoms(t *testing.T, store Store, useScan bool) []datalog.Datom {
 	t.Helper()
 	var (
@@ -452,9 +648,9 @@ func collectIndexDatoms(t *testing.T, store Store, useScan bool) []datalog.Datom
 		err  error
 	)
 	if useScan {
-		iter, err = store.Scan(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+		iter, err = store.Scan(ScanBound{Index: EAVT})
 	} else {
-		iter, err = store.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+		iter, err = store.ScanKeysOnly(ScanBound{Index: EAVT})
 	}
 	require.NoError(t, err)
 	defer iter.Close()
@@ -474,7 +670,7 @@ func collectIndexDatoms(t *testing.T, store Store, useScan bool) []datalog.Datom
 
 func countStoreIndex(t *testing.T, store Store, index IndexType) int {
 	t.Helper()
-	iterator, err := store.ScanKeysOnly(index, []byte{byte(index)}, []byte{byte(index) + 1})
+	iterator, err := store.ScanKeysOnly(ScanBound{Index: index})
 	require.NoError(t, err)
 	defer iterator.Close()
 	count := 0

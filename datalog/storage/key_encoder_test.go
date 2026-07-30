@@ -187,8 +187,6 @@ func TestKeyEncoderSortOrder(t *testing.T) {
 
 // BenchmarkTxToDescending benchmarks the txToDescending function which is called
 // on every key encode (6x per datom write) and every key decode.
-// This isolates the allocation regression identified in the CRDT implementation.
-// Expected: Currently allocates 16 bytes per call. After fix should be 0 allocs.
 func BenchmarkTxToDescending(b *testing.B) {
 	tx := [16]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x23, 0x45,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}

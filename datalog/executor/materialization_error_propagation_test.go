@@ -18,7 +18,7 @@ import (
 // at the next public boundary via Iterator().Error()).
 
 // TestSortRelation_PropagatesIteratorError: SortRelation collects then sorts; a
-// source failure must survive materialization rather than yield clean sorted rows.
+// source failure must survive materialization rather than yield clean sorted tuples.
 func TestSortRelation_PropagatesIteratorError(t *testing.T) {
 	src := newFailingStream(1, Tuple{int64(3)}, Tuple{int64(1)}, Tuple{int64(2)})
 	rel := SortRelation(src, []query.OrderByClause{{Variable: datalog.NewSymbol("?x")}})

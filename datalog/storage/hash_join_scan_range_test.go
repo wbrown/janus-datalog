@@ -23,7 +23,7 @@ import (
 // - Result: Scans ALL :price/symbol datoms (10,000+) instead of just 78
 //
 // With production dataset (28,040 datoms), this causes a 10+ second hang.
-// With IndexNestedLoop disabled (threshold=0), this becomes the default path.
+// This is the default path for binding-driven scans.
 func TestHashJoinScanRangeBug(t *testing.T) {
 	tempDir := t.TempDir()
 	db, err := NewDatabase(tempDir)
@@ -111,8 +111,7 @@ func TestHashJoinScanRangeBug(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Force HashJoinScan (our default now) and use same options as datalog-cli
-			// NOTE: db.NewExecutorWithOptions creates matcher with IndexNestedLoopThreshold: 0 by default
+			// Same options as datalog-cli; binding-driven scans use HashJoinScan.
 			exec := db.NewExecutorWithOptions(mode.plannerOptions())
 
 			// Time the query - should be <100ms but currently can be 10+ seconds
@@ -208,39 +207,17 @@ func BenchmarkHashJoinScanRangeComparison(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	b.Run("HashJoinScan_Current", func(b *testing.B) {
-		matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
-			IndexNestedLoopThreshold: 0, // Force HashJoinScan
-		})
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
+	matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
+	exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			result, err := exec.Execute(q)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if result.Size() != 1000 {
-				b.Fatalf("Expected 1000 results, got %d", result.Size())
-			}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result, err := exec.Execute(q)
+		if err != nil {
+			b.Fatal(err)
 		}
-	})
-
-	b.Run("IndexNestedLoop_Baseline", func(b *testing.B) {
-		matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
-			IndexNestedLoopThreshold: 999999, // Force IndexNestedLoop
-		})
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			result, err := exec.Execute(q)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if result.Size() != 1000 {
-				b.Fatalf("Expected 1000 results, got %d", result.Size())
-			}
+		if result.Size() != 1000 {
+			b.Fatalf("Expected 1000 results, got %d", result.Size())
 		}
-	})
+	}
 }

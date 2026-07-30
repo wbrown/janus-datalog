@@ -33,7 +33,7 @@ func assertResultNoDuplicates(t *testing.T, name string, results [][]interface{}
 func TestSetSemantics_StorageQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create multiple entities with the SAME attribute value
 			// This is the core bug scenario
@@ -87,7 +87,7 @@ func TestSetSemantics_StorageQuery(t *testing.T) {
 func TestSetSemantics_StorageQuery_MultipleAttributes(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create data with overlapping values across different attributes
 			tx := db.NewTransaction()
@@ -150,7 +150,7 @@ func TestSetSemantics_StorageQuery_MultipleAttributes(t *testing.T) {
 func TestSetSemantics_StorageQuery_WithPredicates(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			age := datalog.NewKeyword(":person/age")
@@ -190,7 +190,7 @@ func TestSetSemantics_StorageQuery_WithPredicates(t *testing.T) {
 func TestSetSemantics_StorageQuery_Aggregation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			dept := datalog.NewKeyword(":employee/dept")
@@ -242,7 +242,7 @@ func TestSetSemantics_StorageQuery_Aggregation(t *testing.T) {
 func TestSetSemantics_StorageQuery_NotClause(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			status := datalog.NewKeyword(":user/status")
@@ -287,7 +287,7 @@ func TestSetSemantics_StorageQuery_NotClause(t *testing.T) {
 func TestSetSemantics_StorageQuery_OrClause(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			status := datalog.NewKeyword(":item/status")

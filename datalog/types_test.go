@@ -77,8 +77,8 @@ func TestKeyword(t *testing.T) {
 		t.Errorf("expected :user/name, got %s", kw.String())
 	}
 
-	// Keyword is just a string type, so we don't have separate namespace/name methods
-	// but we can verify the string format
+	// Namespace() and Name() are covered in keyword_test.go; here the concern is
+	// the rendered form, which must carry the leading colon.
 	if !strings.HasPrefix(kw.String(), ":") {
 		t.Error("keyword should start with :")
 	}
@@ -147,7 +147,7 @@ func TestIdentityStorageRoundTrip(t *testing.T) {
 	hash := id1.Hash()
 
 	// Create another identity from the same hash (simulates storage round-trip)
-	// Since all constructors now intern, this returns the SAME pointer
+	// Since all constructors intern, this returns the SAME pointer
 	id2 := NewIdentityFromHash(hash)
 
 	// Test 1: Pointer equality - they are the SAME interned pointer
@@ -160,7 +160,7 @@ func TestIdentityStorageRoundTrip(t *testing.T) {
 		t.Error("identities with same hash should be equal (value comparison)")
 	}
 
-	// Test 3: InternIdentity is now effectively an identity function
+	// Test 3: InternIdentity is effectively an identity function
 	ptr1 := InternIdentity(id1)
 	ptr2 := InternIdentityFromHash(hash)
 	if ptr1 != ptr2 {

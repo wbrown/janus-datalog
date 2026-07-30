@@ -17,18 +17,15 @@ import (
 
 // Regression guards for executeRealizedWithRelationInputIterationParallel.
 //
-// Per-tuple goroutine spawning in this function was the source of
-// pthread_cond_* / runtime.lock2 / runtime.usleep dominance in profiles
-// when relation inputs have hundreds of tuples — every input tuple paid
-// goroutine-creation overhead and competed for a semaphore. The
-// remediation is a fixed worker pool + tuple channel pattern
-// (numWorkers goroutines instead of len(tuples)). See docs/perf/README.md
-// for the baseline measurement.
+// The function runs a fixed pool of numWorkers worker goroutines against a
+// channel of input tuples, rather than spawning one goroutine per tuple, to
+// avoid goroutine-creation and semaphore contention on relation inputs with
+// hundreds of tuples.
 //
-// These tests pin the observable behavior of the function so the refactor
-// can swap implementation without changing semantics. The existing
+// These tests pin the observable behavior of the function so its
+// implementation can change without changing semantics. The existing
 // relation_input_test.go covers basic correctness; this file covers the
-// invariants the refactor must preserve:
+// invariants that must be preserved:
 //
 //   1. Multiset equality with sequential (count-preserving, not just set)
 //   2. Error propagation when a worker's per-tuple query errors
@@ -125,7 +122,7 @@ func buildPeopleDatoms() []datalog.Datom {
 }
 
 // peopleQueryNoAgg is `[:find ?n ?y ?age :in $ [[?n ?y] ...] :where ...]`.
-// Returns one row per matching entity, so duplicates in the input relation
+// Returns one tuple per matching entity, so duplicates in the input relation
 // flow through to duplicates in the output — which is what gap (1) exercises.
 const peopleQueryNoAgg = `[:find ?n ?y ?age
  :in $ [[?n ?y] ...]
@@ -195,12 +192,12 @@ func TestRelationInputParallel_MultisetMatchesSequential(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			seqExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			seqExec.DisableParallelSubqueries()
-			seqResult, err := seqExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			seqResult, err := seqExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 
 			parExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			parExec.EnableParallelSubqueries(4)
-			parResult, err := parExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			parResult, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 
 			seqTuples := sortedTupleStrings(t, seqResult)
@@ -256,7 +253,7 @@ func TestRelationInputParallel_PropagatesMatcherError(t *testing.T) {
 			exec := NewExecutorWithOptions(fm, nil, mode.plannerOptions())
 			exec.EnableParallelSubqueries(4)
 
-			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err, "matcher error must not be silently dropped")
 			require.True(t, errors.Is(err, errInjectedMatcher),
 				"error must unwrap to the injected sentinel; got %v", err)
@@ -266,8 +263,7 @@ func TestRelationInputParallel_PropagatesMatcherError(t *testing.T) {
 
 // TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple covers the
 // case where the first few tuples succeed and a later one fails. The
-// pre-fix behavior would have been a truncated success; the contract is
-// that error propagates regardless of position.
+// contract is that error propagates regardless of position.
 func TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple(t *testing.T) {
 	// Shared read-only delegate; the stateful failingMatcher wrapper (call
 	// counter) is rebuilt fresh per mode below so each mode's execution sees
@@ -307,7 +303,7 @@ func TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple(t *testing.T) 
 			exec := NewExecutorWithOptions(fm, nil, mode.plannerOptions())
 			exec.EnableParallelSubqueries(4)
 
-			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err, "matcher error after partial success must not be silently dropped")
 			require.True(t, errors.Is(err, errInjectedMatcher),
 				"error must unwrap to the injected sentinel; got %v", err)
@@ -354,7 +350,7 @@ func TestRelationInputParallel_PropagatesDeferredIteratorError(t *testing.T) {
 			exec := NewExecutorWithOptions(dm, nil, mode.plannerOptions())
 			exec.EnableParallelSubqueries(4)
 
-			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err, "deferred iterator error must propagate, not be laundered into a clean result")
 			require.True(t, errors.Is(err, errInjectedIterator),
 				"error must unwrap to errInjectedIterator (from failingIterator); got %v", err)
@@ -368,11 +364,10 @@ func TestRelationInputParallel_PropagatesDeferredIteratorError(t *testing.T) {
 
 // TestRelationInputParallel_NoGoroutineLeak verifies that repeated parallel
 // iteration does not leak goroutines. Catches forgotten wg.Wait(),
-// abandoned worker pool goroutines after refactor, or unclosed channels.
+// abandoned worker pool goroutines, or unclosed channels.
 //
-// The current implementation spawns len(tuples) per-tuple goroutines per
-// call; a worker-pool refactor will spawn numWorkers long-lived goroutines
-// per call. Either way, count must return to baseline after the call.
+// The worker pool spawns numWorkers long-lived goroutines per call; count
+// must return to baseline after the call.
 func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(buildPeopleDatoms())
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
@@ -397,7 +392,7 @@ func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 			// Warm up: first run amortizes one-time initializations that may park
 			// goroutines (intern caches, etc.). Without this, "before" can be lower
 			// than "after" purely because of first-call setup, not a leak.
-			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 
 			// Let any test-framework or first-call goroutines settle.
@@ -408,7 +403,7 @@ func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 
 			const iterations = 50
 			for i := 0; i < iterations; i++ {
-				_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+				_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 				require.NoError(t, err)
 			}
 
@@ -437,8 +432,8 @@ func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 
 // reusingWorkspaceIterator yields tuples by mutating a single shared
 // workspace slice — the standard storage-iterator pattern used in
-// matcher_iterator_reusing.go, matcher_iterator_nonreusing.go, and
-// hash_join_matcher.go (search for `BuildTupleInternedInto(datom, it.workspace)`).
+// matcher_iterator_nonreusing.go and hash_join_matcher.go (search for
+// `BuildTupleInternedInto(datom, it.workspace)`).
 // Callers that retain the result of Tuple() across Next() calls without
 // copying will see whatever values the most recent Next() wrote.
 //
@@ -498,25 +493,25 @@ func (it *reusingWorkspaceIterator) Error() error { return nil }
 // TestRelationInputParallel_HandlesWorkspaceReuseIterator: a streaming input
 // relation whose iterator reuses a single workspace slice across Next() calls
 // (the production-default storage-iterator pattern, used by
-// matcher_iterator_reusing.go and hash_join_matcher.go) must produce the
+// matcher_iterator_nonreusing.go and hash_join_matcher.go) must produce the
 // same multiset of results as a materialized input. Without a producer-side
 // copy, workers race against the producer's workspace overwrites — and
 // `go test -race` reports it as a data race on the workspace's backing
 // array.
 //
-// This was the blind spot in the first five gap-fillers: every one used
-// MaterializedRelation as the iteration input (RequiresCopy() == false,
-// stable tuples), so the workspace-reuse race never surfaced.
+// The tests above use MaterializedRelation as the iteration input
+// (RequiresCopy() == false, stable tuples), which does not trigger this
+// race; this test uses a streaming input instead so the race surfaces.
 //
 // Design notes:
 //   - Each input tuple matches exactly ONE entity in the dataset, so each
-//     iteration produces exactly one unique result row. Any workspace
+//     iteration produces exactly one unique result tuple. Any workspace
 //     corruption that causes a worker to see a different input's values
-//     will silently drop an expected row (the wrong entity is found, or
+//     will silently drop an expected tuple (the wrong entity is found, or
 //     no match at all).
 //   - We use 100 distinct inputs so even a small per-tuple corruption rate
 //     produces visible misses. With set-semantic output, the test asserts
-//     that all 100 expected rows are present — any miss fails the test.
+//     that all 100 expected tuples are present — any miss fails the test.
 //   - runtime.Gosched in the iterator's Next() widens the race window so
 //     workers reliably interleave with producer writes; without it the
 //     producer can finish all sends before any worker reads its tuple,
@@ -530,10 +525,10 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 	const entityCount = 100
 
 	// Build entityCount distinct entities — each input tuple matches one,
-	// so corruption to ANY tuple drops exactly one expected output row.
+	// so corruption to ANY tuple drops exactly one expected output tuple.
 	var datoms []datalog.Datom
 	var inputTuples []Tuple
-	expectedRows := make(map[string]bool, entityCount)
+	expectedTuples := make(map[string]bool, entityCount)
 	for i := 0; i < entityCount; i++ {
 		name := fmt.Sprintf("P%03d", i)
 		year := int64(2000 + i)
@@ -545,7 +540,7 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 			datalog.Datom{E: datalog.NewIdentity(eid), A: ageAttr, V: age, Tx: datalog.ElementID{Lamport: uint64(i*3 + 3), ReplicaID: 1}},
 		)
 		inputTuples = append(inputTuples, Tuple{name, year})
-		expectedRows[fmt.Sprintf("[%s %d %d]", name, year, age)] = false
+		expectedTuples[fmt.Sprintf("[%s %d %d]", name, year, age)] = false
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -565,11 +560,11 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			exec.EnableParallelSubqueries(4)
 
-			result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 
-			seen := make(map[string]bool, len(expectedRows))
-			for key := range expectedRows {
+			seen := make(map[string]bool, len(expectedTuples))
+			for key := range expectedTuples {
 				seen[key] = false
 			}
 
@@ -591,7 +586,7 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 			}
 			sort.Strings(missing)
 			require.Emptyf(t, missing,
-				"%d of %d expected rows missing from result; the workspace-reuse "+
+				"%d of %d expected tuples missing from result; the workspace-reuse "+
 					"race let workers read stale workspace values. Run with -race "+
 					"to see the data race directly. Missing (first few): %v",
 				len(missing), entityCount, missing[:min(len(missing), 5)])
@@ -628,7 +623,7 @@ func TestRelationInputParallel_ConcurrentInvocationCorrectness(t *testing.T) {
 			// Compute the expected multiset once, sequentially.
 			seqExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			seqExec.DisableParallelSubqueries()
-			expected, err := seqExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			expected, err := seqExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 			expectedTuples := sortedTupleStrings(t, expected)
 
@@ -651,7 +646,7 @@ func TestRelationInputParallel_ConcurrentInvocationCorrectness(t *testing.T) {
 					exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 					exec.EnableParallelSubqueries(4)
 					for i := 0; i < itersPerGoroutine; i++ {
-						rel, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+						rel, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 						if err != nil {
 							results <- runResult{err: err}
 							continue

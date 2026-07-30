@@ -24,7 +24,7 @@ import (
 //	go tool pprof -http=:8080 cpu.prof
 func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 	// Open pre-built database (read-only, no setup overhead!)
-	db, err := OpenTestDatabase("testdata/ohlc_benchmark.db")
+	db, err := OpenTestDatabase(BenchmarkDatabasePath)
 	if err != nil {
 		b.Skipf("Test database not found: %v\nRun: go test -run=^$ -bench=^BenchmarkBuildTestDatabase$ ./datalog/storage -benchtime=1x", err)
 		return
@@ -104,7 +104,7 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 
 	for _, tc := range testCases {
 		b.Run(tc.name, func(b *testing.B) {
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 
 			// Setup bindings if provided
 			var bindings executor.Relations
@@ -141,7 +141,7 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 // BenchmarkPrebuiltDatabase_FullQuery profiles complete query execution
 func BenchmarkPrebuiltDatabase_FullQuery(b *testing.B) {
 	// Open pre-built database
-	db, err := OpenTestDatabase("testdata/ohlc_benchmark.db")
+	db, err := OpenTestDatabase(BenchmarkDatabasePath)
 	if err != nil {
 		b.Skipf("Test database not found: %v", err)
 		return
@@ -151,7 +151,7 @@ func BenchmarkPrebuiltDatabase_FullQuery(b *testing.B) {
 	// Simulate a realistic OHLC aggregation query
 	// This would be executed by the query engine, but we'll benchmark the storage layer
 	b.Run("DailyOHLC_30Days", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 
 		// Pattern: [?bar :price/symbol ?symbol]
 		symbolPattern := &query.DataPattern{

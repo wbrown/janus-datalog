@@ -41,26 +41,26 @@ func TestSymbolValueRoundTripAndQuery(t *testing.T) {
 				entity,
 			)
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{state}}, rows)
+			require.Equal(t, [][]interface{}{{state}}, tuples)
 
 			result, err = db.Query(
 				`[:find ?entity :in $ ?state :where [?entity :workflow/state ?state]]`,
 				state,
 			)
 			require.NoError(t, err)
-			rows, err = executor.CollectTuples(result, nil)
+			tuples, err = executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{entity}}, rows)
+			require.Equal(t, [][]interface{}{{entity}}, tuples)
 
 			result, err = db.Query(
 				`[:find ?entity :where [?entity :workflow/state workflow/active]]`,
 			)
 			require.NoError(t, err)
-			rows, err = executor.CollectTuples(result, nil)
+			tuples, err = executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{entity}}, rows)
+			require.Equal(t, [][]interface{}{{entity}}, tuples)
 
 			node := ValueNode(state)
 			decoded, err := ParseValueNode(&node)

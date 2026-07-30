@@ -10,7 +10,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// Reproductions for docs/bugs/BUG_CARDINALITY_MANY_SET_BYTES_PANIC.md
+// Reproductions for BUG_CARDINALITY_MANY_SET_BYTES_PANIC.md
 //
 // Transaction.Set for cardinality-many builds map[interface{}]bool keyed
 // directly by set members (newSet[val], pendingAdds[v], pendingRemoves[v]).
@@ -37,12 +37,12 @@ func newBytesManyDB(t *testing.T, popts *planner.PlannerOptions) (*Database, dat
 
 func collectByteSet(t *testing.T, db *Database, e datalog.Identity) [][]byte {
 	t.Helper()
-	rows, err := executor.CollectTuples(db.Query(`[:find ?v :in $ ?e :where [?e :file/chunks ?v]]`, e))
+	tuples, err := executor.CollectTuples(db.Query(`[:find ?v :in $ ?e :where [?e :file/chunks ?v]]`, e))
 	require.NoError(t, err)
-	out := make([][]byte, 0, len(rows))
-	for _, row := range rows {
-		b, ok := row[0].([]byte)
-		require.Truef(t, ok, "expected []byte member, got %T", row[0])
+	out := make([][]byte, 0, len(tuples))
+	for _, tuple := range tuples {
+		b, ok := tuple[0].([]byte)
+		require.Truef(t, ok, "expected []byte member, got %T", tuple[0])
 		out = append(out, b)
 	}
 	return out

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
@@ -13,31 +14,26 @@ import (
 type JoinStrategy int
 
 const (
-	// IndexNestedLoop uses Seek() per binding value (good for small sets or high selectivity)
-	IndexNestedLoop JoinStrategy = iota
-
 	// HashJoinScan builds hash set and does single scan (good for medium selectivity 1-50%)
-	HashJoinScan
+	HashJoinScan JoinStrategy = iota
 
-	// MergeJoin merges sorted streams (future: good for large sets >50% selectivity)
+	// MergeJoin merges sorted streams (good for large sets >50% selectivity)
 	MergeJoin
 )
 
 func (js JoinStrategy) String() string {
 	switch js {
-	case IndexNestedLoop:
-		return "index-nested-loop"
 	case HashJoinScan:
 		return "hash-join-scan"
 	case MergeJoin:
 		return "merge-join"
 	default:
-		return "unknown"
+		return fmt.Sprintf("JoinStrategy(%d)", int(js))
 	}
 }
 
 // chooseJoinStrategy selects the optimal join strategy based on selectivity
-func (m *BadgerMatcher) chooseJoinStrategy(
+func (m *PatternMatcher) chooseJoinStrategy(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	position int,
@@ -54,31 +50,6 @@ func (m *BadgerMatcher) chooseJoinStrategy(
 
 	// Calculate selectivity: what % of pattern matches are in the binding set?
 	selectivity := float64(bindingSize) / float64(patternCard)
-
-	// Strategy selection based on selectivity and absolute size
-	//
-	// NOTE: IndexNestedLoop was originally thought to be better for small binding sets,
-	// but comprehensive benchmarking revealed that the Sorted() call in matchWithIteratorReuse()
-	// (which materializes AND sorts) adds so much overhead that HashJoinScan is faster
-	// even for single bindings:
-	//
-	//   Size 1:  IndexNestedLoop 821µs vs HashJoinScan 204µs (4.0× speedup)
-	//   Size 2:  IndexNestedLoop 1522µs vs HashJoinScan 203µs (7.5× speedup)
-	//   Size 3:  IndexNestedLoop 2298µs vs HashJoinScan 203µs (11.3× speedup)
-	//   Size 10: IndexNestedLoop 7660µs vs HashJoinScan 206µs (37× speedup)
-	//
-	// The sorting overhead dominates seek cost at all tested binding sizes.
-	// See: datalog/storage/join_strategy_threshold_bench_test.go
-
-	// Check if IndexNestedLoop is preferred for small binding sets (configurable via options)
-	threshold := m.options.IndexNestedLoopThreshold
-
-	// CRITICAL: Size() returns -1 for streaming relations with unknown size
-	// Don't use IndexNestedLoop for unknown sizes (-1 <= 0 would be true!)
-	// Default to HashJoinScan for streaming relations
-	if bindingSize >= 0 && bindingSize <= threshold {
-		return IndexNestedLoop
-	}
 
 	// For small to medium-sized binding sets (1-1000), use hash join
 	if bindingSize <= 1000 {
@@ -99,7 +70,7 @@ func (m *BadgerMatcher) chooseJoinStrategy(
 	// for E-position keys — probe datoms arrive in hash-byte order, which is
 	// exactly Identity's CompareValues order, and every binding key is an
 	// interned Identity (the typed-position filter drops the rest), so cmp==0
-	// coincides with ValuesEqual. Multi-column bindings may repeat a key;
+	// coincides with ValuesEqual. Multi-symbol bindings may repeat a key;
 	// mergeJoinIterator pairs each datom with its whole key group. Value-position
 	// scan order is the on-disk type-tag order, which deliberately differs from
 	// CompareValues' rank order (see datalog/compare.go), so those joins use the
@@ -111,7 +82,7 @@ func (m *BadgerMatcher) chooseJoinStrategy(
 }
 
 // estimatePatternCardinality estimates total datoms matching pattern's constant parts
-func (m *BadgerMatcher) estimatePatternCardinality(pattern *query.DataPattern) int {
+func (m *PatternMatcher) estimatePatternCardinality(pattern *query.DataPattern) int {
 	// TODO: Implement proper cardinality estimation using statistics
 	// For now, use simple heuristics based on what's bound
 
@@ -131,7 +102,7 @@ func (m *BadgerMatcher) estimatePatternCardinality(pattern *query.DataPattern) i
 }
 
 // matchWithHashJoin performs a hash join between binding relation and pattern
-func (m *BadgerMatcher) matchWithHashJoin(
+func (m *PatternMatcher) matchWithHashJoin(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
@@ -172,26 +143,42 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	}
 
 	// Build hash set using symbol index (not datom position)
-	hashSet, keyCount, boundValue, err := m.buildHashSet(
+	hashSet, counts, boundValue, err := m.buildHashSet(
 		bindingRel, symbolIndex, typedPositionBindingCheck(pattern, bindingRel.Symbols()))
 	if err != nil {
 		return nil, fmt.Errorf("hash join bindings failed: %w", err)
 	}
 
-	if keyCount == 0 {
+	if counts.tuples == 0 {
 		// No bindings - return empty result
 		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
 	}
 
 	// PHASE 2: Determine scan range for the pattern
-	// For single bindings, use the bound value to narrow the scan range
-	if keyCount != 1 {
+	// One key means every binding tuple carries the same value at this
+	// position, so that value is a constant for the scan and narrows it. More
+	// than one, and no single value bounds the run.
+	if counts.keys != 1 {
 		boundValue = nil
 	}
-	scanRange := m.calculatePatternScanRangeWithBinding(pattern, index, position, boundValue)
+	bound := m.patternScanBoundWithBinding(pattern, index, position, boundValue)
+
+	report := DiscardIntake
+	if m.handler != nil {
+		report = &scanReport{
+			handler:  m.handler,
+			opened:   time.Now(),
+			strategy: annotations.ScanHashJoin,
+			cause: map[string]interface{}{
+				annotations.KeyPattern:     pattern,
+				annotations.KeyBindingSize: counts.tuples,
+			},
+			run: &bound,
+		}
+	}
 
 	// PHASE 3: Create storage iterator
-	storageIter, err := m.reader.ScanKeysOnly(index, scanRange.start, scanRange.end)
+	storageIter, err := OpenKeyScan(m.reader, report, bound)
 	if err != nil {
 		return nil, fmt.Errorf("hash join scan failed: %w", err)
 	}
@@ -201,48 +188,41 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	if m.isHistoryMode() {
 		resolvedIter = storageIter
 	} else {
-		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m)
+		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m, report)
 	}
 
 	// PHASE 4: Create streaming hash join iterator
 	iter := &hashJoinIterator{
-		matcher:         m,
-		patternString:   pattern.String(),
-		matchPlan:       compileBindingMatchPlan(pattern, bindingRel.Symbols()),
-		symbols:         symbols,
-		position:        position,
-		index:           index,
-		constraints:     constraints,
-		hashSet:         hashSet,
-		bindingKeyCount: keyCount,
-		iter:            resolvedIter,
-		workspace:       make(executor.Tuple, len(symbols)),
-		tupleBuilder:    m.getTupleBuilder(pattern, symbols),
+		matcher:      m,
+		pattern:      pattern,
+		matchPlan:    compileBindingMatchPlan(pattern, bindingRel.Symbols()),
+		symbols:      symbols,
+		position:     position,
+		constraints:  constraints,
+		hashSet:      hashSet,
+		iter:         resolvedIter,
+		workspace:    make(executor.Tuple, len(symbols)),
+		tupleBuilder: m.getTupleBuilder(pattern, symbols),
+		report:       report,
 	}
 
 	// Return streaming relation
 	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
 }
 
-// scanRange holds start and end keys for a storage scan
-type scanRange struct {
-	start []byte
-	end   []byte
+// patternScanBound determines the scan bound for a pattern
+func (m *PatternMatcher) patternScanBound(pattern *query.DataPattern, index IndexType) ScanBound {
+	return m.patternScanBoundWithBinding(pattern, index, -1, nil)
 }
 
-// calculatePatternScanRange determines the scan range for a pattern
-func (m *BadgerMatcher) calculatePatternScanRange(pattern *query.DataPattern, index IndexType) scanRange {
-	return m.calculatePatternScanRangeWithBinding(pattern, index, -1, nil)
-}
-
-// calculatePatternScanRangeWithBinding determines the scan range for a pattern,
-// optionally using a bound value for a specific position to narrow the range
-func (m *BadgerMatcher) calculatePatternScanRangeWithBinding(
+// patternScanBoundWithBinding determines the scan bound for a pattern,
+// optionally using a bound value for a specific position to narrow it
+func (m *PatternMatcher) patternScanBoundWithBinding(
 	pattern *query.DataPattern,
 	index IndexType,
 	boundPosition int, // -1 means no bound position, 0=E, 1=A, 2=V, 3=T
 	boundValue interface{}, // The bound value for that position (nil if no bound)
-) scanRange {
+) ScanBound {
 	// Extract constant parts of pattern
 	var e, a, v, tx interface{}
 
@@ -281,73 +261,33 @@ func (m *BadgerMatcher) calculatePatternScanRangeWithBinding(
 		}
 	}
 
-	// Use existing chooseIndex logic to determine range
-	// But we already know which index to use, so just compute the range
-	_, start, end := m.chooseIndexForValues(index, e, a, v, tx)
-
-	return scanRange{start: start, end: end}
+	return m.scanBoundForValues(index, e, a, v, tx)
 }
 
-// chooseIndexForValues computes scan range for a specific index
-func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interface{}) (IndexType, []byte, []byte) {
-	// Use the provided index and compute range based on bound values
-	var startParts, endParts [][]byte
-
-	encoder := m.encoder
+// scanBoundForValues binds a pattern's constants to the leading components of
+// an index the caller has already picked. Unlike chooseIndex it does not select
+// the index, only how much of it the scan covers: each position is bound while
+// the pattern supplies it and the position ahead of it is bound, and the first
+// gap ends the prefix.
+func (m *PatternMatcher) scanBoundForValues(index IndexType, e, a, v, tx interface{}) ScanBound {
+	var prefix []datalog.Value
 
 	switch index {
 	case EAVT, EATV: // E-primary indices: E first, then A
-		if e != nil {
+		if entity, ok := e.(datalog.Identity); ok {
+			prefix = append(prefix, entity)
+
+			if kw, ok := a.(datalog.Keyword); ok {
+				prefix = append(prefix, kw)
+			}
+		}
+
+	case AEVT, AETV: // A-primary indices: A first, then E
+		if kw, ok := a.(datalog.Keyword); ok {
+			prefix = append(prefix, kw)
+
 			if entity, ok := e.(datalog.Identity); ok {
-				hash := entity.Hash()
-				startParts = append(startParts, hash[:])
-				endParts = append(endParts, hash[:])
-
-				if a != nil {
-					if kw, ok := a.(datalog.Keyword); ok {
-						var attr Attribute
-						copy(attr[:], kw.String())
-						startParts = append(startParts, attr[:])
-						endParts = append(endParts, attr[:])
-					}
-				}
-			}
-		}
-
-	case AEVT:
-		if a != nil {
-			if kw, ok := a.(datalog.Keyword); ok {
-				var attr Attribute
-				copy(attr[:], kw.String())
-				startParts = append(startParts, attr[:])
-				endParts = append(endParts, attr[:])
-
-				if e != nil {
-					if entity, ok := e.(datalog.Identity); ok {
-						hash := entity.Hash()
-						startParts = append(startParts, hash[:])
-						endParts = append(endParts, hash[:])
-					}
-				}
-			}
-		}
-
-	case AETV: // A-primary CRDT index (A → E → Tx↓ → V)
-		// Same prefix structure as AEVT: A first, then E
-		if a != nil {
-			if kw, ok := a.(datalog.Keyword); ok {
-				var attr Attribute
-				copy(attr[:], kw.String())
-				startParts = append(startParts, attr[:])
-				endParts = append(endParts, attr[:])
-
-				if e != nil {
-					if entity, ok := e.(datalog.Identity); ok {
-						hash := entity.Hash()
-						startParts = append(startParts, hash[:])
-						endParts = append(endParts, hash[:])
-					}
-				}
+				prefix = append(prefix, entity)
 			}
 		}
 
@@ -355,113 +295,86 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 		// are bound. Contract: a is a Keyword, tx is an ElementID,
 		// e (if set) is an Identity. Type assertions surface a planner bug
 		// loudly rather than degrading to a full scan.
-		var attr Attribute
-		copy(attr[:], a.(datalog.Keyword).String())
-		startParts = append(startParts, attr[:])
-		endParts = append(endParts, attr[:])
+		prefix = append(prefix, a.(datalog.Keyword))
 
 		eid, ok := datalog.DerefElementID(tx)
 		if !ok {
 			panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
 		}
-		encTx := encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
-		startParts = append(startParts, encTx)
-		endParts = append(endParts, encTx)
+		prefix = append(prefix, eid)
 
 		if e != nil {
-			hash := e.(datalog.Identity).Hash()
-			startParts = append(startParts, hash[:])
-			endParts = append(endParts, hash[:])
+			prefix = append(prefix, e.(datalog.Identity))
 		}
 
 	case AVET:
-		if a != nil {
-			if kw, ok := a.(datalog.Keyword); ok {
-				var attr Attribute
-				copy(attr[:], kw.String())
-				startParts = append(startParts, attr[:])
-				endParts = append(endParts, attr[:])
+		if kw, ok := a.(datalog.Keyword); ok {
+			prefix = append(prefix, kw)
 
-				if v != nil {
-					// Encode value for the prefix
-					// Values in AVET keys are encoded as: [type byte][value data]
-					// For Identity/Reference values: [TypeReference][20-byte hash]
-					if entity, ok := v.(datalog.Identity); ok && entity != nil {
-						hash := entity.Hash()
-						vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
-						startParts = append(startParts, vBytes)
-						endParts = append(endParts, vBytes)
-					}
-					// For other value types, we could add similar handling
-					// but fall back to attribute-only prefix for now
-				}
+			// Only reference values narrow the scan here; every other value
+			// type falls back to the attribute-only prefix, which is wider but
+			// still correct. chooseIndex binds V of any type.
+			if entity, ok := v.(datalog.Identity); ok && entity != nil {
+				prefix = append(prefix, entity)
 			}
 		}
 
-	case VAET:
-		// VAET: Value-Attribute-Entity-Transaction
-		// Key format: [index][V][A][E][Op][Tx] (Op before Tx, not between V and A)
-		// Values in VAET are encoded with type prefix
-		if v != nil {
-			// For Identity/Reference values
-			if entity, ok := v.(datalog.Identity); ok && entity != nil {
-				hash := entity.Hash()
-				vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
-				startParts = append(startParts, vBytes)
-				endParts = append(endParts, vBytes)
+	case VAET: // V → A → E → Tx, the reverse-reference index
+		if entity, ok := v.(datalog.Identity); ok && entity != nil {
+			prefix = append(prefix, entity)
 
-				if a != nil {
-					if kw, ok := a.(datalog.Keyword); ok {
-						var attr Attribute
-						copy(attr[:], kw.String())
-						startParts = append(startParts, attr[:])
-						endParts = append(endParts, attr[:])
-					}
-				}
+			if kw, ok := a.(datalog.Keyword); ok {
+				prefix = append(prefix, kw)
 			}
 		}
 
 	case TAEV:
 		// TAEV: Transaction-Attribute-Entity-Value.
-		// Tx is always an ElementID by contract; encode with bitwise-NOT for
-		// descending sort order.
+		// Tx is always an ElementID by contract.
 		if tx != nil {
 			eid, ok := datalog.DerefElementID(tx)
 			if !ok {
 				panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
 			}
-			encTx := encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
-			startParts = append(startParts, encTx)
-			endParts = append(endParts, encTx)
+			prefix = append(prefix, eid)
 		}
 	}
 
-	start := encoder.EncodePrefix(index, startParts...)
-	// Use incrementLastByte for proper prefix range scan
-	// This creates an exclusive upper bound that includes all suffixes
-	end := incrementLastByte(start)
+	return ScanBound{Index: index, Prefix: prefix}
+}
 
-	return index, start, end
+// bindingCounts is what a binding relation put into a hash set, counted two
+// ways because the two answer different questions. keys decides whether one
+// bound value can narrow the storage scan — that is a property of the key
+// space, and it is exactly one only when every tuple carries the same key.
+// tuples is the size of the binding set, which is what binding.size reports and
+// what chooseJoinStrategy selects on.
+type bindingCounts struct {
+	keys   int
+	tuples int
 }
 
 // buildHashSet creates a typed hash set from the binding relation. It returns
-// all tuples per key plus the distinct-key count and sole key value, when one
-// exists, so a single binding can narrow the storage scan. Tuples failing the
-// typed-position check (non-Identity entity, non-Keyword attribute — see
+// all tuples per key, the counts above, and the sole key value when exactly one
+// key exists, so a single binding can narrow the storage scan. Tuples failing
+// the typed-position check (non-Identity entity, non-Keyword attribute — see
 // filterTypedPositionBindings) are dropped here: they are typed non-matches,
 // and dropping them at construction keeps them away from the probe's
-// full-tuple verification.
-func (m *BadgerMatcher) buildHashSet(
+// full-tuple verification. They are dropped from both counts with it — a tuple
+// that joins no tuples by construction is not part of the binding set the scan
+// was driven by, and merge join's filterTypedPositionBindings drops them before
+// its own count for the same reason.
+func (m *PatternMatcher) buildHashSet(
 	bindingRel executor.Relation,
 	position int,
 	typed func(executor.Tuple) bool,
-) (*executor.TupleKeyMap, int, interface{}, error) {
+) (*executor.TupleKeyMap, bindingCounts, interface{}, error) {
 	capacity := bindingRel.Size()
 	if capacity < 0 {
 		capacity = 0
 	}
 	hashSet := executor.NewTupleKeyMapWithCapacity(capacity)
-	keyCount := 0
+	var counts bindingCounts
 	var soleValue interface{}
 
 	iter := bindingRel.Iterator()
@@ -472,12 +385,13 @@ func (m *BadgerMatcher) buildHashSet(
 		}
 		if typed != nil && !typed(tuple) {
 			// Typed non-match: this tuple's entity/attribute-position value
-			// names nothing, so it joins zero rows by definition. Dropping it
+			// names nothing, so it joins no tuples by definition. Dropping it
 			// here is the same result the probe would compute, without ever
 			// presenting a mistyped binding to matchesDatom.
 			continue
 		}
 
+		counts.tuples++
 		value := tuple[position]
 		if existing, found := hashSet.GetValue(value); found {
 			hashSet.PutValue(value, append(existing.([]executor.Tuple), tuple))
@@ -486,7 +400,7 @@ func (m *BadgerMatcher) buildHashSet(
 			// (materializeRelationsForPattern), and sliceIterator returns
 			// distinct slice references without reusing storage.
 			hashSet.PutValue(value, []executor.Tuple{tuple})
-			keyCount++
+			counts.keys++
 			soleValue = value
 		}
 	}
@@ -495,9 +409,9 @@ func (m *BadgerMatcher) buildHashSet(
 		iterErr = closeErr
 	}
 	if iterErr != nil {
-		return nil, 0, nil, iterErr
+		return nil, bindingCounts{}, nil, iterErr
 	}
-	return hashSet, keyCount, soleValue, nil
+	return hashSet, counts, soleValue, nil
 }
 
 // extractProbeKey extracts the value from datom at the specified position.
@@ -561,7 +475,7 @@ func compileBindingMatchPlan(
 }
 
 func (p bindingMatchPlan) matches(
-	matcher *BadgerMatcher,
+	matcher *PatternMatcher,
 	datom *datalog.Datom,
 	bindingTuple executor.Tuple,
 ) bool {
@@ -577,7 +491,7 @@ func (p bindingMatchPlan) matches(
 }
 
 // matchesWithBindingTuple checks if datom matches pattern with the given binding tuple
-func (m *BadgerMatcher) matchesWithBindingTuple(
+func (m *PatternMatcher) matchesWithBindingTuple(
 	datom *datalog.Datom,
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
@@ -638,7 +552,7 @@ func (m *BadgerMatcher) matchesWithBindingTuple(
 // matchWithMergeJoin performs a merge join between sorted binding relation and sorted scan
 // This is optimal for high selectivity (>50%) with large binding sets (>1000 entities)
 // Complexity: O(n + m) where n = binding size, m = datoms scanned
-func (m *BadgerMatcher) matchWithMergeJoin(
+func (m *PatternMatcher) matchWithMergeJoin(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
@@ -652,7 +566,7 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 	if err != nil {
 		return nil, err
 	}
-	// Typed non-matches join zero rows by definition; drop them before
+	// Typed non-matches join no tuples by definition; drop them before
 	// merging, exactly as the seek paths do. Filtering preserves the sorted
 	// order.
 	sortedTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), sortedTuples)
@@ -663,10 +577,23 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 	}
 
 	// PHASE 2: Determine scan range for the pattern
-	scanRange := m.calculatePatternScanRange(pattern, index)
+	bound := m.patternScanBound(pattern, index)
 
 	// PHASE 3: Create storage iterator
-	storageIter, err := m.reader.ScanKeysOnly(index, scanRange.start, scanRange.end)
+	report := DiscardIntake
+	if m.handler != nil {
+		report = &scanReport{
+			handler:  m.handler,
+			opened:   time.Now(),
+			strategy: annotations.ScanMergeJoin,
+			cause: map[string]interface{}{
+				annotations.KeyPattern:     pattern,
+				annotations.KeyBindingSize: len(sortedTuples),
+			},
+			run: &bound,
+		}
+	}
+	storageIter, err := OpenKeyScan(m.reader, report, bound)
 	if err != nil {
 		return nil, fmt.Errorf("merge join scan failed: %w", err)
 	}
@@ -676,7 +603,7 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 	if m.isHistoryMode() {
 		resolvedIterMerge = storageIter
 	} else {
-		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m)
+		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m, report)
 	}
 
 	// PHASE 4: Create streaming merge join iterator
@@ -686,13 +613,13 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 		bindingRel:   bindingRel,
 		symbols:      symbols,
 		position:     position,
-		index:        index,
 		constraints:  constraints,
 		sortedTuples: sortedTuples,
 		bindingIdx:   0,
 		iter:         resolvedIterMerge,
 		workspace:    make(executor.Tuple, len(symbols)),
 		tupleBuilder: m.getTupleBuilder(pattern, symbols),
+		report:       report,
 	}
 
 	// Return streaming relation
@@ -709,22 +636,30 @@ func extractBindingKey(tuple executor.Tuple, position int) interface{} {
 
 // hashJoinIterator performs lazy hash join iteration
 type hashJoinIterator struct {
-	matcher         *BadgerMatcher
-	patternString   string
-	matchPlan       bindingMatchPlan
-	symbols         []query.Symbol
-	position        int
-	index           IndexType
-	constraints     []executor.StorageConstraint
-	hashSet         *executor.TupleKeyMap // Built upfront - maps key to all matching tuples
-	bindingKeyCount int
-	iter            Iterator // Storage iterator
-	tupleBuilder    *query.InternedTupleBuilder
-	current         executor.Tuple
-	workspace       executor.Tuple // Reusable workspace for tuple building
-	datomsScanned   int            // Track number of datoms scanned for event reporting
-	matchesFound    int            // Track number of matches for event reporting
-	err             error          // First error from storage operations
+	matcher *PatternMatcher
+	// The pattern, not a rendering of it: String() is annotation argument
+	// preparation, so it belongs inside the handler guard at Close. A rendered
+	// form held here would be built by every hash join, handler or not.
+	pattern      *query.DataPattern
+	matchPlan    bindingMatchPlan
+	symbols      []query.Symbol
+	position     int
+	constraints  []executor.StorageConstraint
+	hashSet      *executor.TupleKeyMap // Built upfront - maps key to all matching tuples
+	iter         Iterator              // Storage iterator
+	tupleBuilder *query.InternedTupleBuilder
+	current      executor.Tuple
+	workspace    executor.Tuple // Reusable workspace for tuple building
+
+	// report accounts for this arm and carries the run it probes against, kept
+	// whole rather than as its index alone. This path announces nothing before
+	// scanning — it is reached through analyzeReuseStrategy, not the announcing
+	// dispatch — so the completion is the only place the run is ever named. The
+	// AVET reads the unique walk opens inside CRDT resolution, which the source
+	// scan cannot see, acquire through the same report.
+	report *scanReport
+
+	err error // First error from storage operations
 }
 
 func (it *hashJoinIterator) Next() bool {
@@ -735,8 +670,11 @@ func (it *hashJoinIterator) Next() bool {
 			return false
 		}
 
-		// Count every datom scanned for performance monitoring
-		it.datomsScanned++
+		// What resolution produced, counted under the same condition that
+		// decides whether Close will ever read it.
+		if it.report != nil {
+			it.report.resolved++
+		}
 
 		// Check transaction validity
 		if it.matcher.shouldFilterTx(datom.Tx) {
@@ -766,7 +704,9 @@ func (it *hashJoinIterator) Next() bool {
 					if satisfiesAll {
 						it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
 						it.current = it.workspace
-						it.matchesFound++
+						if it.report != nil {
+							it.report.matched++
+						}
 						return true
 					}
 				}
@@ -787,37 +727,32 @@ func (it *hashJoinIterator) Tuple() executor.Tuple {
 }
 
 func (it *hashJoinIterator) Close() error {
-	// Emit event with scan statistics for performance monitoring
-	// ONLY emit if we actually scanned datoms (avoid emitting on unused iterators)
-	if it.matcher.handler != nil && it.datomsScanned > 0 {
-		it.matcher.handler(annotations.Event{
-			Name: "pattern/hash-join-complete",
-			Data: map[string]interface{}{
-				"pattern":        it.patternString,
-				"index":          indexName(it.index),
-				"binding.size":   it.bindingKeyCount,
-				"datoms.scanned": it.datomsScanned,
-				"matches.found":  it.matchesFound,
-			},
-		})
+	var err error
+	if it.iter != nil {
+		err = it.iter.Close()
 	}
 
-	if it.iter != nil {
-		return it.iter.Close()
+	// Not gated on the counts. Suppressing the completion when resolution
+	// produced nothing hides exactly the case the intake counter exists for: a
+	// variable-width V leaves the run inexact, every key the range over-covers
+	// is counted into intake and stepped over before the wrapper sees it, and
+	// the scan reports a large datoms.scanned against zero resolved. A fully
+	// tombstoned cardinality-many group reaches it the same way.
+	if it.report != nil {
+		it.report.close(it.err == nil)
 	}
-	return nil
+	return err
 }
 
 func (it *hashJoinIterator) Error() error { return it.err }
 
 // mergeJoinIterator performs lazy merge join iteration
 type mergeJoinIterator struct {
-	matcher      *BadgerMatcher
+	matcher      *PatternMatcher
 	pattern      *query.DataPattern
 	bindingRel   executor.Relation
 	symbols      []query.Symbol
 	position     int
-	index        IndexType
 	constraints  []executor.StorageConstraint
 	sortedTuples []executor.Tuple // Sorted binding tuples
 	bindingIdx   int              // Start of the current key group in sortedTuples
@@ -827,15 +762,23 @@ type mergeJoinIterator struct {
 	tupleBuilder *query.InternedTupleBuilder
 	current      executor.Tuple
 	workspace    executor.Tuple // Reusable workspace for tuple building
-	err          error          // First error from storage operations
+
+	// report accounts for this arm and carries the run it merges against, for
+	// the reason the hash join's does: the completion is the only event either
+	// path emits, so it is the only place the run can be named. The AVET reads
+	// the unique walk opens inside CRDT resolution, which the source scan
+	// cannot see, acquire through the same report.
+	report *scanReport
+
+	err error // First error from storage operations
 }
 
-// Next advances to the next joined row. Binding tuples are sorted by join
+// Next advances to the next joined tuple. Binding tuples are sorted by join
 // key, so tuples sharing a key form a consecutive group, and every datom is
 // paired with each tuple of its key group — checking only the group's first
-// tuple loses rows (it can fail full-pattern verification while a later
+// tuple loses matches (it can fail full-pattern verification while a later
 // tuple passes, and distinct datoms sharing a key can each match different
-// tuples). Group state persists across Next() calls so rows are emitted one
+// tuples). Group state persists across Next() calls so tuples are emitted one
 // at a time; groupDatom stays valid between calls because the storage
 // iterator only advances after the group is exhausted (see the Iterator
 // workspace contract in store.go).
@@ -853,6 +796,9 @@ func (it *mergeJoinIterator) Next() bool {
 				if it.matcher.matchesWithBindingTuple(it.groupDatom, it.pattern, it.bindingRel, tuple) {
 					it.tupleBuilder.BuildTupleInternedInto(it.groupDatom, it.workspace)
 					it.current = it.workspace
+					if it.report != nil {
+						it.report.matched++
+					}
 					return true
 				}
 			}
@@ -869,6 +815,14 @@ func (it *mergeJoinIterator) Next() bool {
 		if err != nil {
 			it.err = err
 			return false
+		}
+
+		// Count what resolution produced, before the join narrows it — the
+		// same point hashJoinIterator counts, so the two strategies' funnels
+		// are comparable. Under the handler check for the same reason it is:
+		// nothing reads this when nobody is listening.
+		if it.report != nil {
+			it.report.resolved++
 		}
 
 		// Check transaction validity
@@ -918,10 +872,17 @@ func (it *mergeJoinIterator) Tuple() executor.Tuple {
 }
 
 func (it *mergeJoinIterator) Close() error {
+	var err error
 	if it.iter != nil {
-		return it.iter.Close()
+		err = it.iter.Close()
 	}
-	return nil
+
+	// Merge join is the strategy chosen for the largest binding sets, so it is
+	// the one whose scan volume most needs reporting.
+	if it.report != nil {
+		it.report.close(it.err == nil)
+	}
+	return err
 }
 
 func (it *mergeJoinIterator) Error() error { return it.err }

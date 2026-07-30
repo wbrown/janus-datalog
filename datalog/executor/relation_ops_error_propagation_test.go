@@ -22,7 +22,7 @@ func (erroringFunction) Eval(map[query.Symbol]interface{}) (interface{}, error) 
 }
 func (erroringFunction) ReturnType() string { return "any" }
 
-// Reproductions for docs/bugs/BUG_RELATION_TRANSFORMS_DROP_ITERATOR_ERRORS.md
+// Reproductions for BUG_RELATION_TRANSFORMS_DROP_ITERATOR_ERRORS.md
 //
 // filterWithPredicateAndLookup, evaluateExpressionWithLookup, and
 // projectToSymbols in relation_ops.go consume their source iterator via a
@@ -30,8 +30,8 @@ func (erroringFunction) ReturnType() string { return "any" }
 // without checking iter.Error() or capturing the Close() error. Same class as
 // the collectTuplesInto sites fixed in BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES
 // and the SemiJoin/AntiJoin sites fixed in BUG_ITERATOR_ERRORS_DROPPED_IN_MATERIALIZATION_PATHS.
-// These three slipped past both sweeps because they are manual loops, not
-// collectTuplesInto calls (the static guard) and not join helpers.
+// These three are manual loops, not collectTuplesInto calls (the static
+// guard) and not join helpers.
 //
 // The failing-iterator helpers (failingIterator, newFailingStream, driveErr,
 // errInjectedIterator) live in iterator_error_boundary_test.go.
@@ -191,12 +191,12 @@ func TestUniqueCombinationExtractionPropagatesIteratorAndCloseErrors(t *testing.
 	_, err := getUniqueCombinations(failing, []query.Symbol{x})
 	require.ErrorIs(t, err, errInjectedIterator)
 
-	// getUniqueInputCombinations was deleted: unique-combination extraction is
-	// now filterSourceSymbols + Relation.Project consumed through the
-	// projection's iterator (executeSubquery drains comboIter, then checks
-	// Error() and its deferred Close()). The extraction is streaming, so an
-	// injected failure surfaces as the projection's deferred error, not a
-	// synchronous return — pinned through the same drain-then-check shape.
+	// Unique-combination extraction is filterSourceSymbols + Relation.Project
+	// consumed through the projection's iterator (executeSubquery drains
+	// comboIter, then checks Error() and its deferred Close()). The
+	// extraction is streaming, so an injected failure surfaces as the
+	// projection's deferred error, not a synchronous return — pinned through
+	// the same drain-then-check shape.
 	// failingRelation is invisible to MaterializedRelation.Project (which
 	// reads tuples directly); the streaming sources below present the failing
 	// iterator to the path Project actually consumes.
@@ -259,7 +259,7 @@ func TestMaterializedRelation_FilterWithPredicate_CarriesSourceError(t *testing.
 // zero tuples plus the taint) is not an empty binding. Match's emptiness
 // fallback must surface the error instead of discarding the binding and
 // scanning unbound — the laundering half of
-// docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md.
+// BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md.
 func TestMatchTreatsErroredEmptyBindingAsError(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	valAttr := datalog.NewKeyword(":item/val")
@@ -281,7 +281,7 @@ func TestMatchTreatsErroredEmptyBindingAsError(t *testing.T) {
 }
 
 // TestHashJoinSurfacesErroredEmptySide: joining against an errored-empty
-// relation must not present the zero-row join as a clean result.
+// relation must not present the empty join as a clean result.
 func TestHashJoinSurfacesErroredEmptySide(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	y := datalog.NewSymbol("?y")

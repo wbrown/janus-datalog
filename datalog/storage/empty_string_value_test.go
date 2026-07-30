@@ -21,7 +21,7 @@ import (
 func TestEmptyStringValueIsLiteralNotWildcard(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			a := datalog.NewKeyword(":person/nickname")
 			eEmpty := datalog.NewIdentity("e-empty")
@@ -56,7 +56,7 @@ func TestEmptyStringValueIsLiteralNotWildcard(t *testing.T) {
 func TestNonEmptyValueIsExactNotPrefix(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			a := datalog.NewKeyword(":person/nickname")
 			eBob := datalog.NewIdentity("e-bob")
@@ -82,7 +82,7 @@ func TestNonEmptyValueIsExactNotPrefix(t *testing.T) {
 func TestEmptyStringValueBoundEntity_IsLiteralNotWildcard(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			a := datalog.NewKeyword(":person/nickname")
 			eEmpty := datalog.NewIdentity("e-empty")
@@ -112,7 +112,7 @@ func TestEmptyStringValueBoundEntity_IsLiteralNotWildcard(t *testing.T) {
 func TestEmptyStringValueJoinBoundEntity_IsLiteralNotWildcard(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			nick := datalog.NewKeyword(":person/nickname")
 			dept := datalog.NewKeyword(":person/dept")

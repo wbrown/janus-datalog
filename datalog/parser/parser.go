@@ -185,7 +185,7 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 // (a well-defined identity sort, dropped at execution). Variables bound
 // nowhere violate the safety condition; relation/collection input symbols
 // not bound by :where are not attributes of any relation the sort could see;
-// and aggregate queries collapse rows, so only their group keys can order
+// and aggregate queries collapse tuples, so only their group keys can order
 // them.
 func validateOrderByClauses(q *query.Query) error {
 	if len(q.OrderBy) == 0 {
@@ -220,7 +220,7 @@ func validateOrderByClauses(q *query.Query) error {
 		}
 		if hasAggregates {
 			if !findVars[v] {
-				return fmt.Errorf("order-by variable %s is not a group key: aggregation collapses rows, so only :find variables can order an aggregate query", v)
+				return fmt.Errorf("order-by variable %s is not a group key: aggregation collapses tuples, so only :find variables can order an aggregate query", v)
 			}
 			continue
 		}
@@ -610,7 +610,7 @@ func parseSubqueryPattern(list *edn.Node, bindingNode *edn.Node) (*query.Subquer
 	// prevents silently-ignored caps (wrong results). Tracked in
 	// docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md.
 	if nestedQuery.Limit != nil {
-		return nil, fmt.Errorf(":limit is not supported inside a subquery; cap rows in the enclosing query, or use the (max ?x)/(min ?x) aggregate idiom for top-1-per-group")
+		return nil, fmt.Errorf(":limit is not supported inside a subquery; cap tuples in the enclosing query, or use the (max ?x)/(min ?x) aggregate idiom for top-1-per-group")
 	}
 
 	// Pull output is result presentation (maps), not a datalog value. A

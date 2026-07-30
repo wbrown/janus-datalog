@@ -19,10 +19,10 @@ func BenchmarkKeyPreservingJoinProjection(b *testing.B) {
 		EnableStreamingJoins: true,
 	}
 
-	for _, rowCount := range []int{10_000, 100_000} {
-		leftTuples := make([]Tuple, rowCount)
-		rightTuples := make([]Tuple, rowCount)
-		for i := range rowCount {
+	for _, tupleCount := range []int{10_000, 100_000} {
+		leftTuples := make([]Tuple, tupleCount)
+		rightTuples := make([]Tuple, tupleCount)
+		for i := range tupleCount {
 			leftTuples[i] = Tuple{int64(i), int64(i * 2)}
 			rightTuples[i] = Tuple{int64(i), int64(i * 3)}
 		}
@@ -33,7 +33,7 @@ func BenchmarkKeyPreservingJoinProjection(b *testing.B) {
 			RelationProperties{Keys: [][]query.Symbol{{id}}},
 		)
 
-		b.Run(fmt.Sprintf("rows_%d", rowCount), func(b *testing.B) {
+		b.Run(fmt.Sprintf("tuples_%d", tupleCount), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				leftBase := NewMaterializedRelationFromSet(leftSymbols, leftTuples, ExecutorOptions{})
@@ -60,8 +60,8 @@ func BenchmarkKeyPreservingJoinProjection(b *testing.B) {
 				if err := it.Close(); err != nil {
 					b.Fatal(err)
 				}
-				if count != rowCount {
-					b.Fatalf("got %d rows, want %d", count, rowCount)
+				if count != tupleCount {
+					b.Fatalf("got %d tuples, want %d", count, tupleCount)
 				}
 			}
 		})
@@ -78,10 +78,10 @@ func BenchmarkSemiAntiJoinPropertyPropagation(b *testing.B) {
 		Keys:     [][]query.Symbol{{id}},
 	}
 
-	for _, rowCount := range []int{10_000, 100_000} {
-		leftTuples := make([]Tuple, rowCount)
-		rightTuples := make([]Tuple, 0, rowCount/2)
-		for i := range rowCount {
+	for _, tupleCount := range []int{10_000, 100_000} {
+		leftTuples := make([]Tuple, tupleCount)
+		rightTuples := make([]Tuple, 0, tupleCount/2)
+		for i := range tupleCount {
 			leftTuples[i] = Tuple{int64(i), int64(i * 2)}
 			if i%2 == 0 {
 				rightTuples = append(rightTuples, Tuple{int64(i)})
@@ -94,24 +94,24 @@ func BenchmarkSemiAntiJoinPropertyPropagation(b *testing.B) {
 			properties,
 		)
 		right := NewMaterializedRelation(rightSymbols, rightTuples)
-		expectedRows := rowCount / 2
+		expectedTuples := tupleCount / 2
 
-		b.Run(fmt.Sprintf("semi/rows_%d", rowCount), func(b *testing.B) {
+		b.Run(fmt.Sprintf("semi/tuples_%d", tupleCount), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				result := SemiJoin(left, right, []query.Symbol{id})
-				if result.Size() != expectedRows {
-					b.Fatalf("got %d rows, want %d", result.Size(), expectedRows)
+				if result.Size() != expectedTuples {
+					b.Fatalf("got %d tuples, want %d", result.Size(), expectedTuples)
 				}
 			}
 		})
 
-		b.Run(fmt.Sprintf("anti/rows_%d", rowCount), func(b *testing.B) {
+		b.Run(fmt.Sprintf("anti/tuples_%d", tupleCount), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				result := AntiJoin(left, right, []query.Symbol{id})
-				if result.Size() != expectedRows {
-					b.Fatalf("got %d rows, want %d", result.Size(), expectedRows)
+				if result.Size() != expectedTuples {
+					b.Fatalf("got %d tuples, want %d", result.Size(), expectedTuples)
 				}
 			}
 		})

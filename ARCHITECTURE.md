@@ -319,7 +319,7 @@ structurally safe. This keeps the matcher contract Datalog-in/Datalog-out:
 storage may use those requirements to choose an order-satisfying index, while
 custom sources may ignore them and return no ordering guarantee.
 
-**Implementors**: `BadgerMatcher` (storage), `SourceRouter` (multi-source routing), `SliceSource[T]` (Go slices), `MemoryPatternMatcher` (in-memory datoms), `IndexedMemoryMatcher` (optimized in-memory)
+**Implementors**: `storage.PatternMatcher` (storage), `SourceRouter` (multi-source routing), `SliceSource[T]` (Go slices), `MemoryPatternMatcher` (in-memory datoms), `IndexedMemoryMatcher` (optimized in-memory)
 
 **Extended variants**:
 - `PredicateAwareMatcher` adds `MatchWithConstraints()` — predicate pushdown into storage
@@ -414,15 +414,42 @@ Universal interface: query fragment + input relations → output relations. Used
 
 ```go
 type Store interface {
+    Encoder() *BinaryKeyEncoder
+
+    // Write operations
     Assert(datoms []datalog.Datom) error
     Retract(datoms []datalog.Datom) error
-    Scan(index IndexType, start, end []byte) (Iterator, error)
-    Get(index IndexType, key []byte) (*datalog.Datom, error)
+    DeleteDatoms(datoms []datalog.Datom) (int, error)
+
+    // Read operations. There is no point lookup: a complete index key names
+    // one (E, A, V, Tx), but Tx is what CRDT resolution determines, so a
+    // reader that already knew it would have nothing left to ask. Every read
+    // is a prefix scan.
+    Scan(bound ScanBound) (Iterator, error)
+    ScanKeysOnly(bound ScanBound) (Iterator, error)
+    DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error)
+    MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error)
+    GetMetadataUint64(key string) (uint64, bool, error)
+    SetMetadataUint64(key string, value uint64) error
+
+    // High-water mark, derived from index ordering
+    MaxElementID() (datalog.ElementID, error)
+
+    // Consistent read view
+    NewReadSession() (ReadSession, error)
+
+    BeginTx() (StoreTx, error)
     Close() error
 }
 ```
 
-Raw datom storage with 8 indices. Currently only `BadgerStore` (BadgerDB). The `BadgerMatcher` bridges this to the executor by implementing `PatternMatcher` — it chooses the optimal index based on which pattern components are bound, scans BadgerDB, and wraps results as `StreamingRelation`.
+A scan names a **`ScanBound`**: an index, plus the leading components of that index's component order bound to datalog values. The k-th element binds the k-th component, so `ScanBound{Index: AVET, Prefix: []datalog.Value{attr, value}}` is "every datom with this attribute and this value." It is typed, not a byte range — a backend that keys on bytes projects the bound at its own boundary, and one that compares typed components directly never encodes at all.
+
+Raw datom storage with 8 indices. Two implementations: `BadgerStore` (BadgerDB, on-disk) and `MemoryStore` (in-process, persisting the same binary keys and all eight indices). Backend selection is by build tag — `openDefaultStore` returns a `BadgerStore` on native targets and a `MemoryStore` under `js && wasm`, where `MemoryStore` is the only backend.
+
+`storage.PatternMatcher` bridges the store to the executor by implementing `executor.PatternMatcher` — it chooses the optimal index based on which pattern components are bound, scans the store, and wraps results as `StreamingRelation`.
+
+`NewReadSession` opens a consistent read view: every read through the session observes one snapshot regardless of writes committed after it opened, so a query can never straddle two database states mid-execution. `StoreReader` is the read subset shared by a `Store` (each call opens its own storage transaction) and a `ReadSession` (all calls share one snapshot), so read paths are written once against `StoreReader` and run identically in either mode. A query executes all its storage reads through one session, released when its result relation is exhausted or closed.
 
 ### EntityResolver — CRDT Resolution
 
@@ -450,7 +477,7 @@ Returns all attributes for an entity with CRDT conflict resolution applied. Used
 | EATV  | Entity lookups, LWW resolution (cardinality-one/vector) |
 | AEVT  | Attribute scans across entities |
 | AETV  | Attribute scans with temporal ordering |
-| ATEV  | O(1) attribute high-water mark; AsOf-by-attribute access |
+| ATEV  | AsOf-by-attribute access (A-bound + Tx-bound + V-unbound) |
 | AVET  | Value-based lookups (uniqueness, reverse lookup) |
 | VAET  | Reverse reference traversal |
 | TAEV  | Transaction-based queries, history |

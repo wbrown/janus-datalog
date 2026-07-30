@@ -1,4 +1,4 @@
-// Reproductions for docs/bugs/BUG_NONREUSING_MATCHER_DROPS_ITERATOR_ERRORS.md
+// Reproductions for BUG_NONREUSING_MATCHER_DROPS_ITERATOR_ERRORS.md
 //
 // The non-reusing matcher path (NoReuse strategy) has two iterator-consuming
 // loops that, per the storage.Iterator contract, must check Error() after
@@ -31,6 +31,7 @@ import (
 // the loss site is specifically the deferred Error() channel.
 type deferredErrorScan struct {
 	remaining int
+	scanned   int
 	err       error
 	closed    bool
 }
@@ -38,15 +39,19 @@ type deferredErrorScan struct {
 func (it *deferredErrorScan) Next() bool {
 	if it.remaining > 0 {
 		it.remaining--
+		it.scanned++
 		return true
 	}
 	return false
 }
 func (it *deferredErrorScan) Datom() (*datalog.Datom, error) { return &datalog.Datom{}, nil }
 func (it *deferredErrorScan) Close() error                   { it.closed = true; return nil }
-func (it *deferredErrorScan) Seek(key []byte)                {}
-func (it *deferredErrorScan) ElementID() datalog.ElementID   { return datalog.ElementID{} }
-func (it *deferredErrorScan) Error() error                   { return it.err }
+func (it *deferredErrorScan) Seek(bound ScanBound) {
+	panic("deferredErrorScan has no index to seek within")
+}
+func (it *deferredErrorScan) ElementID() datalog.ElementID { return datalog.ElementID{} }
+func (it *deferredErrorScan) Error() error                 { return it.err }
+func (it *deferredErrorScan) Scanned() int                 { return it.scanned }
 
 var _ Iterator = (*deferredErrorScan)(nil)
 
@@ -124,7 +129,7 @@ func TestMatchWithoutIteratorReuse_SurfacesDeferredBindingError(t *testing.T) {
 	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), ReplicaID: 1})
 	require.NoError(t, err)
 	defer db.Close()
-	m := db.Matcher().(*BadgerMatcher)
+	m := db.Matcher().(*PatternMatcher)
 
 	sentinel := errors.New("deferred binding-relation scan failure")
 	eSym := datalog.NewSymbol("?e")

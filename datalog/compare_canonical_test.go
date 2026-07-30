@@ -5,10 +5,8 @@ import (
 	"time"
 )
 
-// These pins moved from the executor's constraint implementations (deleted by
-// owner ruling — docs/reviews/ANTIPATTERN_AUDIT_2026_07.md C6) to the home of
-// the semantics they pin: one total order (CompareValues), one equality
-// (ValuesEqual), defined where the value domain is defined.
+// This file pins the value domain's semantics where the domain itself is
+// defined: one total order (CompareValues), one equality (ValuesEqual).
 
 // TestCompareValuesInt64Precision pins that int64 comparison is exact. The
 // old range comparator coerced all numerics to float64, which erases

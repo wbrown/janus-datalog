@@ -24,7 +24,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **CRDT allocation optimization**: **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main branch while adding full CRDT semantics (verified 2026-02-02)
 - ✅ **AETV index & value elimination**: **5% faster**, **19% less memory**, **17% fewer allocations** (geomean); complex queries see **35% memory reduction** (verified 2026-02-06)
 - ✅ **LZ77+FSE compression codec**: **2.1-2.4 GB/s decompression** (7 allocs), **3.6x on prose**, **10-13x on structured/repetitive** data (verified 2026-03-28)
-- ✅ **ATEV index & attribute high-water mark**: `MaxElementIDForAttribute` and every `Cache.IsAttributeFresh` call become **O(1) (~1 µs)** instead of O(datoms-for-A); **2.2× → 555× faster** at 10–10,000 datoms-per-attribute (verified 2026-05-25). Costs ~14% more write work per commit (1 of 8 indices).
+- ✅ **ATEV index**: `[A][Tx↓][E][V]` places Tx↓ ahead of E, so an A-bound, Tx-bound, V-unbound pattern seeks straight to the transaction instead of scanning every entity (AETV) or every value (AEVT). The same layout makes the first key under `[A]` the attribute's max-Tx datom, so an attribute high-water mark is one constant-time seek away (measured 2.2× → 555× against the prior AEVT scan). Costs ~14% more write work per commit (1 of 8 indices). *Amended 2026-07-25*: the cache gate that consumed the high-water mark — `Cache.IsAttributeFresh` — was removed along with `Store.MaxElementIDForAttribute`, `attrVersions`, and their benchmark. It had never been wired to a production caller, so it was never exercised. The index property is unaffected and the gate can be rebuilt on it; AsOf-by-attribute is the purpose currently in use.
 - ✅ **Relation-input parallel iteration**: worker pool + workspace reuse for `:in $ [[?x ?y] ...]`-shape queries. **10–25% wall-time improvement** uniformly across worker counts that fit in P-cores; **1.4% fewer allocations** per query. Eliminates per-tuple goroutine spawn (`len(tuples)` goroutines → `numWorkers`), per-call `QueryExecutor`/`modifiedQuery` rebuild, and per-call `BindQueryInputs` machinery. Fixes an iterator-workspace-reuse race on streaming inputs (verified 2026-05-26).
 - ✅ **Hash-join hot-path optimizations**: **~25% faster Identity-keyed joins** (entity references — the dominant real-world shape), **~14% faster int64-keyed**, **~4.4% fewer allocations** (n=10 geomean) from six targeted inner-loop findings. Biggest wins: pointer-hashing interned Identity/Keyword instead of their SHA1 content (−12.7% Identity) and hoisting the `combineTuples` projection plan out of the inner loop (−8.8%) (verified 2026-05-29, M3 Ultra).
 - ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` binding attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne latest-state queries only; history, as-of, and CardinalityMany stay on the ordinary path. On by default (verified 2026-05-29, M5).
@@ -115,11 +115,13 @@ exec := executor.NewExecutorWithOptions(matcher, opts)
 **Location**: `datalog/planner/cache.go`, `datalog/storage/database.go:34`
 **Performance**: ~3× speedup for repeated queries (measured)
 
-### 2. Batch Scanning with Iterator Reuse (ACTIVE)
-**Status**: ✅ Implemented, used for large binding sets
-**Location**: `datalog/storage/matcher_relations.go:122-128`
-**Threshold**: Activated when `bindingRel.Size() > 100`
-**Result**: Code clarity improvement, minimal performance impact
+### 2. Binding-Driven Scan Strategy (ACTIVE)
+**Status**: ✅ Implemented, chosen per pattern with a binding relation
+**Location**: `chooseJoinStrategy` in `datalog/storage/hash_join_matcher.go`
+**Threshold**: `HashJoinScan` at or below 1000 bindings, and above it whenever selectivity is under 50% or the join key is not the entity position; `MergeJoin` only for high-selectivity entity-position sets, where scan order and `CompareValues` order provably agree
+**Result**: One scan plus a hash probe, rather than one seek per binding
+
+*(This entry described "Batch Scanning with Iterator Reuse" until 2026-07-26. Both mechanisms were removed in v0.15.0 — `simple_batch_scanner.go` and `matcher_iterator_reusing.go` each had no live caller — and the 100-binding threshold it cited no longer exists. What occupies that decision point is the strategy choice above.)*
 
 ### 3. Predicate Classification (ACTIVE)
 **Status**: ✅ Infrastructure in place, used by executor
@@ -155,7 +157,7 @@ exec := executor.NewExecutorWithOptions(matcher, opts)
 **What We Built Earlier** (Oct 2025):
 - ✅ **Iterator composition** - Filter/Project/Transform operations stay lazy
 - ✅ **Options propagation** - ExecutorOptions flow through entire pipeline
-- ✅ **BadgerMatcher streaming** - Returns StreamingRelation instead of materializing
+- ✅ **`storage.PatternMatcher` streaming** - Returns StreamingRelation instead of materializing
 - ✅ **Symmetric hash join** - Streaming-to-streaming joins without materialization
 
 **Current Performance Results** (verified 2025-10-25):
@@ -682,7 +684,7 @@ algebra optimizer (`EnableAlgebraOptimizer: true`); there is no
 **Status**: ✅ In-memory indices and entity-dedup sets key on interned pointers; the `Identity.l85` cache was removed
 
 **What changed**:
-- The in-memory matcher's entity/EA indices and the BadgerMatcher entity-dedup set
+- The in-memory matcher's entity/EA indices and the storage `PatternMatcher` entity-dedup set
   keyed on `Identity.L85()` strings (`E.L85()`, `E.L85()+"|"+A.String()`). Since
   identities and keywords are interned (pointer equality ⟺ value equality), these
   now key on the interned pointers directly — `map[datalog.Identity][]int` and
@@ -708,9 +710,19 @@ counting the removed race and the per-identity L85 string.
 
 **Details**: See `docs/bugs/resolved/BUG_IDENTITY_L85_LAZY_RACE.md`
 
-### 16. ATEV Index — O(1) Attribute High-Water Mark (COMPLETE - May 2026)
-**Status**: ✅ New `[A][Tx↓][E][V]` index; `MaxElementIDForAttribute` and every
-`Cache.IsAttributeFresh` call are now a single forward seek
+### 16. ATEV Index — AsOf-by-Attribute and O(1) Attribute High-Water Mark (COMPLETE - May 2026)
+**Status**: ✅ New `[A][Tx↓][E][V]` index. An A-bound, Tx-bound, V-unbound
+pattern seeks straight to its transaction, and the first key under `[A]` is that
+attribute's max-Tx datom.
+
+**Amended 2026-07-25.** The *consumer* of the high-water mark — the cache gate
+`Cache.IsAttributeFresh`, with `MaxElementIDForAttribute`, `Cache.attrVersions`,
+and the benchmark that measured them — has been removed. It had never been wired
+to a production caller, so it was never exercised. **What was removed is an
+implementation, not the capability**: the index layout below still yields the
+mark in one seek, and a working gate can be built on it. The measurements are
+retained as the record of why the index was added, and remain valid for the seek
+itself; only the caching layer above them is gone.
 
 **What changed**:
 - Added an 8th index, **ATEV** (`[prefix][A][Tx↓][E][type][V][AfterRef?][Op]`),
@@ -725,13 +737,17 @@ counting the removed race and the per-identity L85 string.
   against `attrVersions`, so every A-bound cached query path (the gate in front
   of attribute-resolved CRDT lookups) is now constant-time, not linear in the
   attribute's datom count.
-- `BadgerMatcher.chooseIndex` routes A-bound + Tx-bound + V-unbound patterns to
-  ATEV. `hash_join_matcher.chooseIndexForValues` and `simple_batch_scanner.buildKey`
-  both learned the ATEV layout so joined/batched scans through ATEV produce a
-  tight `[A][Tx↓][E]` prefix instead of degrading to a full-attribute scan.
+- `PatternMatcher.chooseIndex` routes A-bound + Tx-bound + V-unbound patterns to
+  ATEV. The join and batch scan-bound builders learned the ATEV layout too, so
+  those scans produce a tight `[A][Tx↓][E]` prefix instead of degrading to a
+  full-attribute scan. (Of those two, `scanBoundForValues` is the survivor; the
+  batch scanner was removed in 2026-07 as unreachable.)
 
-**Read-side measurement** (`atev_index_bench_test.go`,
-`BenchmarkMaxElementIDForAttribute_ATEVSeek_vs_AEVTScan`, Apple M5, Badger v4):
+**Read-side measurement**, May 2026 (`atev_index_bench_test.go`,
+`BenchmarkMaxElementIDForAttribute_ATEVSeek_vs_AEVTScan`, Apple M5, Badger v4).
+The benchmark and the `MaxElementIDForAttribute` wrapper it drove were removed in
+2026-07; the seek they measured is a property of the ATEV layout and still costs
+what it cost:
 
 | N (datoms-for-A) | ATEV seek | AEVT scan | Speedup |
 |------------------|-----------|-----------|---------|
@@ -762,13 +778,11 @@ once per datom across all indices via `EncodeKeyWithValueBytes`).
 **Crossover** (writes to amortize one saved freshness check at N=10K): saved
 ~621 µs ÷ added ~0.8 µs/datom ≈ 775 datoms. Any commit smaller than that into a
 10K-cardinality attribute is "paid for" by a single subsequent freshness check
-that would have scanned. Read-mostly workloads (the narrative-generators shape)
-win convincingly; bulk-import-then-never-query workloads pay the ~14% tax with
-no read recovery.
+that would have scanned. This is the trade a rebuilt gate would recover; with no
+gate wired today, ATEV's ~14% write cost currently buys AsOf-by-attribute alone,
+and no read-side measurement of *that* path has been taken.
 
-**Migration**: None required. ATEV is populated by every commit; the freshness
-seek finds nothing (zero ElementID, treated as "no data") on attributes that have
-no writes since the index was added.
+**Migration**: None required. ATEV is populated by every commit.
 
 **Defensive-code cleanup that came with it**: `extractElementIDFromKey` now
 panics on an unknown index type (it previously returned `ElementID{}` silently,
@@ -1432,7 +1446,69 @@ exercises:
 - Multi-key ordering and bounded `:limit 25`
 - Public query, parse-cache, plan-cache, and result-collection boundaries
 
-**Checkpoint** (`benchtime=1s`, `count=10`, darwin/arm64):
+### Current (2026-07-30, PR #114 branch HEAD `e5e92cc`)
+
+| Metric | Result |
+|--------|-------:|
+| Time | **17.84 ms/op ±4%** |
+| Memory | **27.74 MiB/op** |
+| Allocations | **124.5k/op** |
+
+Paired same-session A/B against the merge-base with main (`88dadaa`, the fork
+point), the base side run from a `git worktree`: sec/op is a wash (p=0.247),
+B/op **−0.79%** and allocs/op **−1.26%**, both p=0.000 at ±0% spread. Artifacts:
+`docs/perf/typed_scan_bound_campaign_{baseline,after,benchstat}_2026-07-30.txt`
+(n=10, Apple M5, go1.26.3 darwin/arm64).
+
+This measures the whole 38-commit branch, and it exists because the 2026-07-27
+checkpoint below sat 23 commits behind HEAD — including the value-domain
+enforcement arc, which added domain checks to `ValuesEqual`/`hashValue`/
+`CompareValues`, and the arc that moved V out of the scan prefix. Neither is
+visible here. The benchmark uses no cardinality-vector attribute, so the
+element-wise comparison that arc introduced is the one cost this shape cannot
+see.
+
+### Superseded current (2026-07-27, `0c30a7a`)
+
+| Metric | Result |
+|--------|-------:|
+| Time | **17.98 ms/op ±2%** |
+| Memory | **27.95 MiB/op** |
+| Allocations | **126.1k/op** |
+
+Against `docs/perf/scan_set_semantics_after_2026-07-22.txt`: time and bytes are
+washes (p=0.089, p=0.684), allocations +0.01% — twelve per operation, constant
+rather than per-key. The typed read-seam conversion is not visible in this
+benchmark. Artifacts:
+`docs/perf/typed_scan_bound_checkpoint_{,benchstat_}2026-07-27.txt` (n=10, Apple
+M5, go1.26.3 darwin/arm64). The comparison is cross-session, which matters for
+the wall-time row only; B/op and allocs/op are deterministic counts.
+
+The figures below are the checkpoint's history, kept as dated records. Read them
+as a chain rather than as competing current claims — the benchmark's cost fell
+roughly 2.7× in time and 8.9× in allocations across July 2026:
+
+| Date | Time | Memory | Allocations | Artifact |
+|------|-----:|-------:|------------:|----------|
+| July 2026 (below) | 47.88 ms | 87.57 MiB | 1.118M | — |
+| 2026-07-13 | 46.89 ms | 84.04 MiB | 1.043M | — |
+| 2026-07-21, allocation round | 33.5 ms | 46.79 MB | 550.4k | `round_checkpoint_after_2026-07-21.txt` |
+| 2026-07-21, four further rounds the same day | 22.15 → 17.78 ms | 43.27 → 29.79 MiB | 399.1k → 141.0k | `tuplekey_positional`, `branchcache_spans`, `orfallback_direct_emit`, `joinbuild_grouped` (all `_2026-07-21.txt`) |
+| 2026-07-22, baseline | 17.8 ms | 31.2 MB | 141.1k | `scan_set_semantics_baseline_2026-07-22.txt` |
+| 2026-07-22, after | 17.6 ms | 29.3 MB | 126.1k | `scan_set_semantics_after_2026-07-22.txt` |
+| 2026-07-27 | 17.98 ms | 27.95 MiB | 126.1k | `typed_scan_bound_checkpoint_2026-07-27.txt` |
+| 2026-07-30, fork point `88dadaa` | 18.21 ms | 27.96 MiB | 126.1k | `typed_scan_bound_campaign_baseline_2026-07-30.txt` |
+| 2026-07-30, branch HEAD `e5e92cc` | 17.84 ms | 27.74 MiB | 124.5k | `typed_scan_bound_campaign_after_2026-07-30.txt` |
+
+The four 2026-07-21 rounds each have their own bullet in the status list at the
+top of this file; the 550.4k row is that day's *starting* point, not where it
+ended. `scan_set_semantics_baseline_2026-07-22.txt` picks up exactly where
+`joinbuild_grouped` left off.
+
+**Checkpoint** (`benchtime=1s`, `count=10`, darwin/arm64) — **superseded; see the
+table above.** The profile findings under it were taken against this state and
+its ~1.1M allocations, so their percentages describe that tree, not the current
+one:
 
 | Metric | Result |
 |--------|-------:|
@@ -1517,7 +1593,7 @@ projection without adding this physical cost.
 **Key Finding**: Pattern matching dominates CPU time in-memory queries. Optimizations targeting pattern matching (in-memory indexing) made hash indices the default path throughout the codebase.
 
 ### Storage-Backed Execution Path
-**Profiled**: BadgerMatcher with OHLC queries
+**Profiled**: `storage.PatternMatcher` with OHLC queries
 **Query Time**: 56ms for 260 hours (measured)
 
 **Key Finding**: Storage-backed queries already fast enough for production use. Focus has been on correctness and architectural improvements rather than micro-optimizations.
@@ -2266,7 +2342,7 @@ Each relation type has fundamentally different storage and iteration logic. The 
 
 **Storage Iterator Consolidation (REJECTED)**
 
-Problem statement: Four iterator implementations (`matcher_iterator_reusing.go`, `matcher_iterator_nonreusing.go`, `matcher_iterator_unbound.go`) with ~573 lines total. Initial estimate: 200-300 lines savings.
+Problem statement: Four iterator implementations (`matcher_iterator_reusing.go`, `matcher_iterator_nonreusing.go`, `matcher_iterator_unbound.go`) with ~573 lines total. Initial estimate: 200-300 lines savings. *(As written: the count says four and the list names three. Superseded 2026-07-26 — `matcher_iterator_reusing.go` was deleted in v0.15.0, so the consolidation question is moot for the two that remain.)*
 
 Analysis revealed these are **different iteration strategies**, not duplicated code:
 - `unboundIterator`: Simple scan, no bindings

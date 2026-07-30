@@ -180,7 +180,7 @@ func TestOrderByFormatting(t *testing.T) {
 }
 
 // TestOrderByValidation pins the sort-key binding rules from
-// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md
+// BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md
 // (Design Decision section): a sort key must be bound by :where or be a
 // scalar/tuple :in constant; unbound variables, relation/collection input
 // symbols not bound by :where, and non-group-key variables in aggregate

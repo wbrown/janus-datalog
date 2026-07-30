@@ -18,7 +18,7 @@ import (
 func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Insert test data
 			tx := db.NewTransaction()
@@ -85,7 +85,7 @@ func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
 func TestScenarioSummaryQuery_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Insert minimal test data
 			tx := db.NewTransaction()
@@ -196,7 +196,7 @@ const scenarioSummaryQueryFull = `
 func TestNestedSubqueryInOr_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			scenario1 := datalog.NewIdentity("scenario:1")
@@ -255,7 +255,7 @@ func TestNestedSubqueryInOr_E2E(t *testing.T) {
 func TestProductionQueryStructure_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			scenario1 := datalog.NewIdentity("scenario:1")
@@ -323,7 +323,7 @@ func TestProductionQueryStructure_E2E(t *testing.T) {
 func TestGetElseBeforeOrClause_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			scenario1 := datalog.NewIdentity("scenario:1")
@@ -371,7 +371,7 @@ func TestGetElseBeforeOrClause_E2E(t *testing.T) {
 func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			scenario1 := datalog.NewIdentity("scenario:1")
@@ -425,7 +425,7 @@ func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
 func TestOrWithGetElseInsideSubquery_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			scenario1 := datalog.NewIdentity("scenario:1")
@@ -471,7 +471,7 @@ func TestOrWithGetElseInsideSubquery_E2E(t *testing.T) {
 func TestOrWithMultipleAggregations_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			scenario1 := datalog.NewIdentity("scenario:1")
@@ -518,7 +518,7 @@ func TestOrWithMultipleAggregations_E2E(t *testing.T) {
 func TestFullScenarioSummaryQuery_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Insert test data
 			tx := db.NewTransaction()

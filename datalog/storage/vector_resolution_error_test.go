@@ -35,9 +35,7 @@ func TestLoadRGAElementsPropagatesDatomDecodeError(t *testing.T) {
 
 	entityBytes := entity.Bytes()
 	attributeBytes := ToStorageDatom(datalog.Datom{A: attribute}).A
-	prefix := append([]byte{byte(EATV)}, entityBytes[:]...)
-	prefix = append(prefix, attributeBytes[:]...)
-	iter, err := store.Scan(EATV, prefix, prefixEnd(prefix))
+	iter, err := store.Scan(ScanBound{Index: EATV, Prefix: []datalog.Value{entity, attribute}})
 	require.NoError(t, err)
 	require.True(t, iter.Next(), "malformed key is still a positioned scan entry")
 	_, err = iter.Datom()
@@ -46,7 +44,16 @@ func TestLoadRGAElementsPropagatesDatomDecodeError(t *testing.T) {
 	require.Error(t, iter.Error())
 	require.NoError(t, iter.Close())
 
-	matcher := NewBadgerMatcher(store)
-	_, err = matcher.loadRGAElements(entityBytes[:], attributeBytes[:])
+	matcher := NewPatternMatcher(store)
+	report := &scanReport{}
+	_, _, err = matcher.loadRGAElements(entityBytes[:], attributeBytes[:], report)
 	require.Error(t, err)
+
+	// The failing resolution still read the index to discover the malformed
+	// key, and the report is what keeps that: it is populated independent of
+	// whether resolution errors, so a failed resolution still reports the
+	// reads it made instead of reporting zero — the reads a trace most needs
+	// to see, since they are the ones that bought nothing.
+	require.Positive(t, report.scanned,
+		"the scan positioned on an entry before decode failed, so it read one")
 }

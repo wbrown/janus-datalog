@@ -1,7 +1,7 @@
-// Reproduction for docs/bugs/BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.md
+// Reproduction for BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.md
 //
 // Database.Query builds the executor from the database's effective
-// PlannerOptions, but Database.Matcher() built its BadgerMatcher from
+// PlannerOptions, but Database.Matcher() built its PatternMatcher from
 // DefaultPlannerOptions(). Because a matcher stamps its ExecutorOptions onto
 // every StreamingRelation/MaterializedRelation it returns, a custom-options
 // query ran with the executor seeing the custom options while every
@@ -33,15 +33,17 @@ func getDefaultExecutorOptions() executor.ExecutorOptions {
 // TestDatabaseMatcher_HonorsCustomPlannerOptions asserts that relations
 // produced by the default-source matcher carry the database's effective
 // options, not DefaultPlannerOptions(). It exercises both drift directions:
-// fields Matcher() copied but from the wrong source (EnableTrueStreaming,
-// IndexNestedLoopThreshold) and fields Matcher() dropped entirely
-// (EnableScanSharing, EnableEntityPrefetch).
+// a field Matcher() copied but from the wrong source (EnableTrueStreaming) and
+// fields Matcher() dropped entirely (EnableScanSharing, EnableEntityPrefetch).
 func TestDatabaseMatcher_HonorsCustomPlannerOptions(t *testing.T) {
 	custom := DefaultPlannerOptions()
-	custom.EnableTrueStreaming = false       // default true
-	custom.EnableScanSharing = true          // default false; dropped by Matcher() pre-fix
-	custom.EnableEntityPrefetch = true       // default false; dropped by Matcher() pre-fix
-	custom.IndexNestedLoopThreshold = 999999 // default 0; built from defaults pre-fix
+	custom.EnableTrueStreaming = false // default true
+	custom.EnableScanSharing = true    // default false; dropped by Matcher() pre-fix
+	custom.EnableEntityPrefetch = true // default false; dropped by Matcher() pre-fix
+	// A numeric field as well as booleans: a dropped bool is caught only when
+	// the custom value differs from the default, while a numeric read back as
+	// zero is caught outright.
+	custom.MaxSubqueryWorkers = 7 // default 0, meaning 4
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:           t.TempDir(),
@@ -51,7 +53,7 @@ func TestDatabaseMatcher_HonorsCustomPlannerOptions(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	m := db.Matcher().(*BadgerMatcher)
+	m := db.Matcher().(*PatternMatcher)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -69,6 +71,6 @@ func TestDatabaseMatcher_HonorsCustomPlannerOptions(t *testing.T) {
 		"custom EnableScanSharing=true must reach matcher-produced relations")
 	require.True(t, opts.EnableEntityPrefetch,
 		"custom EnableEntityPrefetch=true must reach matcher-produced relations")
-	require.Equal(t, 999999, opts.IndexNestedLoopThreshold,
-		"custom IndexNestedLoopThreshold must reach matcher-produced relations")
+	require.Equal(t, 7, opts.MaxSubqueryWorkers,
+		"a custom numeric option must reach matcher-produced relations with its value intact")
 }

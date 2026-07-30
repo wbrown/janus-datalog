@@ -51,7 +51,7 @@ func TestWritesRejectNaN(t *testing.T) {
 func TestInputsRejectNaN(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			e := datalog.NewIdentity("m:1")
 			attr := datalog.NewKeyword(":m/value")
@@ -78,7 +78,7 @@ func TestInputsRejectNaN(t *testing.T) {
 func TestExpressionProducingNaNIsError(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Division by zero already errors in the expression layer (a stricter,
 			// pre-existing contract than IEEE), so the NaN-producing shape that can
@@ -109,7 +109,7 @@ func TestExpressionProducingNaNIsError(t *testing.T) {
 				t.Fatalf("+Inf must flow through expressions: %v", err)
 			}
 			if len(tuples) != 1 {
-				t.Fatalf("expected 1 row, got %d", len(tuples))
+				t.Fatalf("expected 1 tuple, got %d", len(tuples))
 			}
 			if r, ok := tuples[0][0].(float64); !ok || !math.IsInf(r, 1) {
 				t.Errorf("expected +Inf, got %v", tuples[0][0])
@@ -128,7 +128,7 @@ func TestExpressionProducingNaNIsError(t *testing.T) {
 func TestConstantExpressionProducingNaNIsError(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			e := datalog.NewIdentity("m:1")
 			attr := datalog.NewKeyword(":m/value")

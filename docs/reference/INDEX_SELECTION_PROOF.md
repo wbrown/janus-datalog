@@ -146,7 +146,7 @@ Since Tx↓ sorts by the full 16-byte ElementID, ties are impossible. ∎
 | EATV  | E → A → Tx↓ → V   | ✓ Yes          | ✓ Yes           | Tx↓ after (E, A) — Thm 1(a)           |
 | AEVT  | A → E → V → Tx↓   | ✗ No           | ✓ Yes           | V before Tx breaks card-one           |
 | AETV  | A → E → Tx↓ → V   | ✓ Yes          | ✓ Yes           | Tx↓ after (A, E) — Thm 1(a)           |
-| ATEV  | A → Tx↓ → E → V   | T-or-A only    | T-or-A only     | Tx↓ before E breaks (E, A) grouping for plain A-scans; CRDT-correct when T is bound (Thm 1(b)) or when used for AsOf-bounded A-scans where the Tx↓ prefix gates entries before (E, A) grouping. Primary use is the O(1) attribute high-water-mark seek (first entry under `[A]` is the global max-Tx datom for A). |
+| ATEV  | A → Tx↓ → E → V   | T-or-A only    | T-or-A only     | Tx↓ before E breaks (E, A) grouping for plain A-scans; CRDT-correct when T is bound (Thm 1(b)) or when used for AsOf-bounded A-scans where the Tx↓ prefix gates entries before (E, A) grouping. That is its use: AsOf-by-attribute. The layout also makes the first entry under `[A]` the global max-Tx datom for A, but nothing consumes that. |
 | AVET  | A → V → E → Tx↓   | ✗ No           | ✓ Yes           | V-bound hides other V (card-one only) |
 | VAET  | V → A → E → Tx↓   | ✗ No           | ✓ Yes           | V-bound hides other V (card-one only) |
 | TAEV  | Tx↓ → A → E → V   | T-bound only   | T-bound only    | Tx↓ primary — Thm 1(b)                |
@@ -320,7 +320,7 @@ All 8 indices serve a purpose:
 |--------|------------------------------------------------------------------------------------|
 | EATV   | E-primary CRDT resolution, validation lookups                                      |
 | AETV   | A-primary CRDT resolution                                                          |
-| ATEV   | O(1) attribute high-water mark (first entry under `[A]` is global max-Tx for A); AsOf-by-attribute scans |
+| ATEV   | AsOf-by-attribute scans (A-bound + Tx-bound + V-unbound) |
 | TAEV   | T-primary queries (time-travel, single transaction)                                |
 | AVET   | V-bound with A constant: card-many/vector resolution, card-one candidate discovery |
 | VAET   | V-bound with A variable: per-datom cardinality resolution                          |

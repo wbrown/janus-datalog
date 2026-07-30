@@ -6,9 +6,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// Allocation-free microbenchmarks for the TupleKey hash path touched by the
-// integer-width change (hashValue gained int8/int16/int32 cases). These isolate
-// the hash computation from the GC-dominated macro hash-join benchmarks.
+// Allocation-free microbenchmarks for the TupleKey hash path, including the
+// int8/int16/int32 cases in hashValue. These isolate the hash computation
+// from the GC-dominated macro hash-join benchmarks.
 
 var tupleKeySink TupleKey
 

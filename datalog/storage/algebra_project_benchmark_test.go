@@ -54,7 +54,7 @@ func BenchmarkJoinProjectInsertion(b *testing.B) {
 			router := executor.NewSourceRouter(buildSourceMap(nil, db.Matcher()))
 			exec := executor.NewExecutorWithOptions(router, db, options)
 
-			warm, err := exec.ExecuteWithRelations(executor.NewContext(nil), query, nil)
+			warm, err := exec.ExecuteWithRelations(executor.NewContext(), query, nil)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -65,16 +65,16 @@ func BenchmarkJoinProjectInsertion(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				result, err := exec.ExecuteWithRelations(executor.NewContext(nil), query, nil)
+				result, err := exec.ExecuteWithRelations(executor.NewContext(), query, nil)
 				if err != nil {
 					b.Fatal(err)
 				}
-				rows, err := executor.CollectTuples(result, nil)
+				tuples, err := executor.CollectTuples(result, nil)
 				if err != nil {
 					b.Fatal(err)
 				}
-				if len(rows) != 980 {
-					b.Fatalf("got %d rows, want 980", len(rows))
+				if len(tuples) != 980 {
+					b.Fatalf("got %d tuples, want 980", len(tuples))
 				}
 			}
 		})

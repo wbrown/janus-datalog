@@ -187,17 +187,11 @@ func TestAfterRefHeuristicBug_Integration(t *testing.T) {
 
 	// Read back via EATV scan (used by LookupAttribute / ResolveLWW)
 	store := db.Store()
-	encoder := store.Encoder()
-
-	// Build EATV prefix for entity + refAttr
-	eBytes := entity.Hash()
-	aStr := refAttr.String()
-	var aBytes [32]byte
-	copy(aBytes[:], []byte(aStr))
-
-	prefix := encoder.EncodePrefix(EATV, eBytes[:], aBytes[:])
-	end := incrementLastByte(prefix)
-	it, err := store.ScanKeysOnly(EATV, prefix, end)
+	// Bind entity + refAttr on EATV
+	it, err := store.ScanKeysOnly(ScanBound{
+		Index:  EATV,
+		Prefix: []datalog.Value{entity, refAttr},
+	})
 	require.NoError(t, err)
 	defer it.Close()
 
@@ -218,10 +212,10 @@ func TestAfterRefHeuristicBug_Integration(t *testing.T) {
 	}
 
 	// Same for the safe entity — should always be found
-	eBytes2 := entity2.Hash()
-	prefix2 := encoder.EncodePrefix(EATV, eBytes2[:], aBytes[:])
-	end2 := incrementLastByte(prefix2)
-	it2, err := store.ScanKeysOnly(EATV, prefix2, end2)
+	it2, err := store.ScanKeysOnly(ScanBound{
+		Index:  EATV,
+		Prefix: []datalog.Value{entity2, refAttr},
+	})
 	require.NoError(t, err)
 	defer it2.Close()
 
@@ -370,7 +364,7 @@ func TestAfterRefHeuristicBug_FullDBRoundTrip(t *testing.T) {
 	}
 
 	// Read back using LookupAttribute (same path as PullInto)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	fieldLosses := 0

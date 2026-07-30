@@ -1,5 +1,5 @@
-// Test for EXTERNAL_REVIEW_2026_04.md item 7: SubqueryWorkerCount
-// global eliminated; worker count flows through ExecutorOptions.
+// Test for EXTERNAL_REVIEW_2026_04.md item 7: worker count flows
+// through ExecutorOptions.
 //
 // The contract asserted: parallel subquery execution uses
 // ExecutorOptions.MaxSubqueryWorkers to size its worker pool, and the
@@ -46,10 +46,7 @@ func TestSubqueryWorkerCount_NotAGlobal(t *testing.T) {
 //
 // If this test fails above some threshold (e.g. at 10 — the parallel
 // subquery threshold), that identifies the code path responsible for
-// the regression. Written as part of investigating why
-// TestMaxSubqueryWorkers_ProducesConsistentResults reports "tuple
-// binding expects exactly 1 result, got more than 1" for a query
-// shape that should produce exactly 1 tuple per invocation.
+// the regression.
 func TestSubqueryTupleBinding_ScalesWithInputSize(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":person/name")
 	ageAttr := datalog.NewKeyword(":person/age")
@@ -110,7 +107,7 @@ func TestSubqueryTupleBinding_ScalesWithInputSize(t *testing.T) {
 				t.Run(mode.name, func(t *testing.T) {
 					got := runExecuteWithWorkers(t, datoms, buildQuery(), runtime.NumCPU(), mode.algebra)
 					assert.Len(t, got, numPeople,
-						"each per-?e subquery returns exactly 1 tuple; outer produces %d rows, expected %d results",
+						"each per-?e subquery returns exactly 1 tuple; outer produces %d tuples, expected %d results",
 						numPeople, numPeople)
 				})
 			}

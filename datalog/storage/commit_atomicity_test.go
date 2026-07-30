@@ -8,8 +8,8 @@
 // it is part of the same atomic write.
 //
 // The original bug report covered both atomicity and uniqueness TOCTOU:
-// see docs/bugs/BUG_TRANSACTION_COMMIT_SPLIT_BADGER_TX.md and
-// docs/bugs/BUG_UNIQUENESS_VALIDATION_TOCTOU.md. Uniqueness work is
+// see BUG_TRANSACTION_COMMIT_SPLIT_BADGER_TX.md and
+// BUG_UNIQUENESS_VALIDATION_TOCTOU.md. Uniqueness work is
 // deferred — the CRDT-aligned redesign lives in
 // docs/proposals/CRDT_UNIQUE_SEMANTICS.md.
 
@@ -53,7 +53,7 @@ func TestCommitWritesTxInstantOnSuccess(t *testing.T) {
 	// ElementID, which is what Commit() returns.
 	txEntity := datalog.NewIdentity(fmt.Sprintf("tx:%d", txID.Lamport))
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: txEntity},

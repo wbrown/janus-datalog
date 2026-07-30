@@ -131,7 +131,7 @@ func TestQueryLimitNoOrderBy(t *testing.T) {
 						t.Fatalf("execute: %v", err)
 					}
 					if result.Size() != tc.want {
-						t.Errorf("expected %d rows, got %d", tc.want, result.Size())
+						t.Errorf("expected %d tuples, got %d", tc.want, result.Size())
 					}
 				})
 			}
@@ -160,13 +160,13 @@ func TestQueryLimitWithOrderByTopN(t *testing.T) {
 				t.Fatalf("execute: %v", err)
 			}
 			if result.Size() != 2 {
-				t.Fatalf("expected 2 rows, got %d", result.Size())
+				t.Fatalf("expected 2 tuples, got %d", result.Size())
 			}
 			want := []int64{50, 40}
 			for i := 0; i < result.Size(); i++ {
 				got := result.Get(i)[0].(int64)
 				if got != want[i] {
-					t.Errorf("row %d: expected %d, got %d", i, want[i], got)
+					t.Errorf("tuple %d: expected %d, got %d", i, want[i], got)
 				}
 			}
 		})
@@ -174,7 +174,7 @@ func TestQueryLimitWithOrderByTopN(t *testing.T) {
 }
 
 func TestQueryLimitAfterAggregationCapsGroups(t *testing.T) {
-	// Four cities; limit 2 must cap the number of grouped rows to 2.
+	// Four cities; limit 2 must cap the number of grouped tuples to 2.
 	datoms := []datalog.Datom{
 		{E: datalog.NewIdentity("p1"), A: datalog.NewKeyword(":person/city"), V: "NYC", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		{E: datalog.NewIdentity("p2"), A: datalog.NewKeyword(":person/city"), V: "LA", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
@@ -198,7 +198,7 @@ func TestQueryLimitAfterAggregationCapsGroups(t *testing.T) {
 				t.Fatalf("execute: %v", err)
 			}
 			if result.Size() != 2 {
-				t.Errorf("expected 2 grouped rows, got %d", result.Size())
+				t.Errorf("expected 2 grouped tuples, got %d", result.Size())
 			}
 		})
 	}
@@ -207,7 +207,7 @@ func TestQueryLimitAfterAggregationCapsGroups(t *testing.T) {
 // TestQueryLimitWithRelationInputIsGlobal verifies the cap is applied to the
 // combined output across all RelationInput tuples, not per input tuple.
 func TestQueryLimitWithRelationInputIsGlobal(t *testing.T) {
-	// Two keys, each with 3 values: 6 rows total without a limit.
+	// Two keys, each with 3 values: 6 tuples total without a limit.
 	datoms := []datalog.Datom{}
 	add := func(seed, key string, val int64) {
 		e := datalog.NewIdentity(seed)
@@ -241,13 +241,13 @@ func TestQueryLimitWithRelationInputIsGlobal(t *testing.T) {
 			keySym := datalog.NewSymbol("?k")
 			inputRel := NewMaterializedRelation([]query.Symbol{keySym}, []Tuple{{"k1"}, {"k2"}})
 
-			result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				t.Fatalf("execute: %v", err)
 			}
 			// Global cap of 2; a per-tuple cap would yield up to 4 (2 per key).
 			if result.Size() != 2 {
-				t.Errorf("expected global limit of 2 rows, got %d", result.Size())
+				t.Errorf("expected global limit of 2 tuples, got %d", result.Size())
 			}
 		})
 	}
@@ -255,7 +255,7 @@ func TestQueryLimitWithRelationInputIsGlobal(t *testing.T) {
 
 // TestOrderByAndLimitWithRelationInputIsGlobal verifies finalization runs over
 // the UNION of per-tuple executions: :order-by sorts the whole result and
-// :limit takes a global top-N. The old per-tuple-sort-then-concatenate behavior
+// :limit takes a global top-N. A per-tuple-sort-then-concatenate approach
 // would return an order-dependent (wrong) slice here.
 func TestOrderByAndLimitWithRelationInputIsGlobal(t *testing.T) {
 	// keyA -> vals {1,2,3}, keyB -> vals {4,5,6,7}. Global top-3 desc = 7,6,5.
@@ -294,18 +294,18 @@ func TestOrderByAndLimitWithRelationInputIsGlobal(t *testing.T) {
 			keySym := datalog.NewSymbol("?k")
 			inputRel := NewMaterializedRelation([]query.Symbol{keySym}, []Tuple{{"A"}, {"B"}})
 
-			result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				t.Fatalf("execute: %v", err)
 			}
 			if result.Size() != 3 {
-				t.Fatalf("expected 3 rows, got %d", result.Size())
+				t.Fatalf("expected 3 tuples, got %d", result.Size())
 			}
 			want := []int64{7, 6, 5}
 			for i := 0; i < 3; i++ {
 				got := result.Get(i)[0].(int64)
 				if got != want[i] {
-					t.Errorf("row %d: expected %d, got %d (global top-3 desc)", i, want[i], got)
+					t.Errorf("tuple %d: expected %d, got %d (global top-3 desc)", i, want[i], got)
 				}
 			}
 		})

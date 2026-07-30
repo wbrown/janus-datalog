@@ -103,19 +103,11 @@ func TestSetEntryStorageRoundTrip(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	// Build scan prefix for EAVT
-	var eBytes [20]byte
-	var aBytes [32]byte
-	copy(eBytes[:], entityID.Bytes())
-	copy(aBytes[:], attr.String())
-
-	prefix := make([]byte, 1+20+32)
-	prefix[0] = byte(EAVT)
-	copy(prefix[1:21], eBytes[:])
-	copy(prefix[21:53], aBytes[:])
-
 	// Scan EAVT to retrieve the datom
-	iter, err := db.Store().Scan(EAVT, prefix, prefixEnd(prefix))
+	iter, err := db.Store().Scan(ScanBound{
+		Index:  EAVT,
+		Prefix: []datalog.Value{entityID, attr},
+	})
 	if err != nil {
 		t.Fatalf("Scan failed: %v", err)
 	}
@@ -202,7 +194,7 @@ func TestResolveAddWinsSetDirect(t *testing.T) {
 	}
 
 	// Create matcher and call resolveAddWinsSet directly
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	var eBytes [20]byte
@@ -210,7 +202,7 @@ func TestResolveAddWinsSetDirect(t *testing.T) {
 	copy(eBytes[:], entityID.Bytes())
 	copy(aBytes[:], attr.String())
 
-	result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+	result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
 	if err != nil {
 		t.Fatalf("resolveAddWinsSet failed: %v", err)
 	}
@@ -261,7 +253,7 @@ func TestResolveAddWinsSameLamport(t *testing.T) {
 	}
 
 	// Create matcher and call resolveAddWinsSet directly
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	var eBytes [20]byte
@@ -269,7 +261,7 @@ func TestResolveAddWinsSameLamport(t *testing.T) {
 	copy(eBytes[:], entityID.Bytes())
 	copy(aBytes[:], attr.String())
 
-	result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+	result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
 	if err != nil {
 		t.Fatalf("resolveAddWinsSet failed: %v", err)
 	}
@@ -318,7 +310,7 @@ func TestCheckSetMembershipDirect(t *testing.T) {
 	}
 
 	// Create matcher
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	var eBytes [20]byte
@@ -326,18 +318,37 @@ func TestCheckSetMembershipDirect(t *testing.T) {
 	copy(eBytes[:], entityID.Bytes())
 	copy(aBytes[:], attr.String())
 
-	// Check membership for "present" (should be true)
-	isMember, err := matcher.checkSetMembership(eBytes[:], aBytes[:], "present")
+	// The bound is the caller's: checkSetMembership is handed the same
+	// ScanBound the pattern arm announces, so the run it walks and the run
+	// reported to a handler cannot differ.
+	membershipBound := func(v datalog.Value) ScanBound {
+		return ScanBound{
+			Index: EAVT,
+			Prefix: []datalog.Value{
+				datalog.NewIdentityFromHash(Entity(eBytes)),
+				datalog.InternKeywordFromBytes(Attribute(aBytes)),
+				v,
+			},
+		}
+	}
+
+	// Check membership for "present" (should be true). The intake reaches the
+	// report the scan was acquired through, so that is where it is read.
+	report := &scanReport{}
+	isMember, err := matcher.checkSetMembership(membershipBound("present"), report)
 	if err != nil {
 		t.Fatalf("checkSetMembership failed: %v", err)
 	}
-	t.Logf("Membership of 'present': %v", isMember)
+	t.Logf("Membership of 'present': %v (%d datoms read)", isMember, report.scanned)
 	if !isMember {
 		t.Error("Expected 'present' to be a member")
 	}
+	if report.scanned <= 0 {
+		t.Error("a membership check that found the value must report the index reads that found it")
+	}
 
 	// Check membership for "absent" (should be false)
-	isMember2, err := matcher.checkSetMembership(eBytes[:], aBytes[:], "absent")
+	isMember2, err := matcher.checkSetMembership(membershipBound("absent"), DiscardIntake)
 	if err != nil {
 		t.Fatalf("checkSetMembership failed: %v", err)
 	}
@@ -389,7 +400,7 @@ func TestCardinalityManyAddRemove(t *testing.T) {
 	}
 
 	// Query should return both values
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -522,7 +533,7 @@ func TestCardinalityManyAddWins(t *testing.T) {
 	}
 
 	// Query should return the value (add-wins at same Lamport)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -612,7 +623,7 @@ func TestCardinalityManyReplicaIDTiebreaker(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -692,7 +703,7 @@ func TestCardinalityManyAddThenRemove(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -767,7 +778,7 @@ func TestCardinalityManyRemoveThenAdd(t *testing.T) {
 		t.Fatalf("Assert failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -848,7 +859,7 @@ func TestCardinalityManyMultipleValues(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -929,7 +940,7 @@ func TestCardinalityManyEmptySet(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -1006,7 +1017,7 @@ func TestCardinalityManyHistory(t *testing.T) {
 
 	// Use a history-mode match to get all operations. Bind ?tx so the add
 	// and the remove of the same value stay distinct tuples in the relation.
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -1069,7 +1080,7 @@ func TestCardinalityManyMembership(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	// Query for specific value that IS in the set
@@ -1165,13 +1176,13 @@ func TestCardinalityManyReplaceSet(t *testing.T) {
 	}
 
 	// Verify initial state
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	var eBytes [20]byte
 	var aBytes [32]byte
 	copy(eBytes[:], entityID.Bytes())
 	copy(aBytes[:], attr.String())
 
-	result1, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+	result1, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
 	if err != nil {
 		t.Fatalf("resolveAddWinsSet failed: %v", err)
 	}
@@ -1196,7 +1207,7 @@ func TestCardinalityManyReplaceSet(t *testing.T) {
 	}
 
 	// Step 3: Verify the set now contains only the new values
-	result2, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+	result2, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
 	if err != nil {
 		t.Fatalf("resolveAddWinsSet failed: %v", err)
 	}
@@ -1285,7 +1296,7 @@ func TestAddSchemaAware(t *testing.T) {
 	}
 
 	// Query should return the latest value (LWW)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(
 		t,
@@ -1388,7 +1399,7 @@ func TestCardinalityManySetSeesPendingOps(t *testing.T) {
 	}
 
 	// Query to verify result
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -1485,7 +1496,7 @@ func TestCardinalityManySetSeesCommittedAndPending(t *testing.T) {
 	}
 
 	// Query to verify result
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -1571,7 +1582,7 @@ func TestCardinalityManyUnboundEWithValue(t *testing.T) {
 	}
 
 	// Query: [?e :person/tags "warrior"] - should find entity1 and entity2
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -1652,7 +1663,7 @@ func TestCardinalityManyUnboundEUnboundV(t *testing.T) {
 	}
 
 	// Query: [?e :person/tags ?v] - should return all entity/tag pairs
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -1744,7 +1755,7 @@ func TestCardinalityManySetWithDuplicates(t *testing.T) {
 	}
 
 	// Query to verify - should have exactly {a, b, c}
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -1826,7 +1837,7 @@ func TestCardinalityManyUnboundEWithRemovedValue(t *testing.T) {
 	}
 
 	// Query: [?e :person/tags "warrior"] - should only find entity1
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -1908,7 +1919,7 @@ func TestAVETOptimizationForCardinalityMany(t *testing.T) {
 	}
 
 	// Query: [?e :person/tags "warrior"] - should find exactly 10 entities
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -2013,7 +2024,7 @@ func TestAVETAddWinsResolution(t *testing.T) {
 	_, _ = tx5.Commit()
 
 	// Query: [?e :person/tags "warrior"]
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -2221,7 +2232,7 @@ func TestLookupAttributeManyBytesMembers(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	value, found := requireAttributeLookup(t, matcher, entityID, attr)
 	if !found {

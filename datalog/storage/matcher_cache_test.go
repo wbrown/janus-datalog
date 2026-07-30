@@ -45,7 +45,7 @@ func TestMatcherCacheCardinalityOne(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use matcher with cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	// Verify cache returns correct LWW value
@@ -54,7 +54,8 @@ func TestMatcherCacheCardinalityOne(t *testing.T) {
 	copy(aBytes[:], ":person/name")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, schema.CardinalityOne, entry.Cardinality())
 	assert.Equal(t, "Alice", entry.OneValue())
@@ -85,7 +86,7 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use matcher with cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	// Verify cache returns correct set
@@ -94,7 +95,8 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 	copy(aBytes[:], ":person/tags")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, schema.CardinalityMany, entry.Cardinality())
 	_, hasWarrior := entry.ManySet()["warrior"]
@@ -128,7 +130,7 @@ func TestMatcherCacheCardinalityVector(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use matcher with cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	// Verify cache returns correct vector
@@ -137,7 +139,8 @@ func TestMatcherCacheCardinalityVector(t *testing.T) {
 	copy(aBytes[:], ":character/skills")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, schema.CardinalityVector, entry.Cardinality())
 	assert.Equal(t, []any{"stealth", "archery"}, entry.VectorList())
@@ -163,14 +166,15 @@ func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get value via cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	eBytes := Entity(e.Hash())
 	var aBytes Attribute
 	copy(aBytes[:], ":person/name")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+	require.NoError(t, err)
 	cachedValue := entry.OneValue()
 
 	// Get value via direct lookup (LookupAttribute)
@@ -206,14 +210,15 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify initial value via cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	eBytes := Entity(e.Hash())
 	var aBytes Attribute
 	copy(aBytes[:], ":person/name")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry1 := db.Cache().GetOrResolve(key, matcher, nil)
+	entry1, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+	require.NoError(t, err)
 	assert.Equal(t, "Alice", entry1.OneValue())
 
 	// Update data
@@ -224,7 +229,8 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	// Cache should be invalidated, next resolve should see new value
-	entry2 := db.Cache().GetOrResolve(key, matcher, nil)
+	entry2, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+	require.NoError(t, err)
 	assert.Equal(t, "Bob", entry2.OneValue())
 }
 
@@ -244,14 +250,15 @@ func TestMatcherCacheWithSchemalessAttribute(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use matcher without schema
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	eBytes := Entity(e.Hash())
 	var aBytes Attribute
 	copy(aBytes[:], ":unknown/attr")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	// Should default to cardinality-one
 	assert.Equal(t, schema.CardinalityOne, entry.Cardinality())
@@ -290,14 +297,15 @@ func TestMatcherCacheLWWResolution(t *testing.T) {
 	require.NoError(t, err)
 
 	// Cache should resolve to "Third" (highest ElementID)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	eBytes := Entity(e.Hash())
 	var aBytes Attribute
 	copy(aBytes[:], ":person/name")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, "Third", entry.OneValue())
 }
@@ -337,14 +345,15 @@ func TestMatcherCacheAddWinsResolution(t *testing.T) {
 	require.NoError(t, err)
 
 	// Cache should resolve to "warrior" being in set (add-wins with latest add)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	eBytes := Entity(e.Hash())
 	var aBytes Attribute
 	copy(aBytes[:], ":person/tags")
 	key := CacheKey{E: eBytes, A: aBytes}
 
-	entry := db.Cache().GetOrResolve(key, matcher, nil)
+	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	_, hasWarrior2 := entry.ManySet()["warrior"]
 	assert.True(t, hasWarrior2, "warrior should be in set after add-remove-add")
@@ -380,7 +389,7 @@ func BenchmarkCachePathTupleBuilding(b *testing.B) {
 	}
 
 	// Warm cache
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	matcher.SetCache(db.Cache())
 
@@ -416,7 +425,7 @@ func BenchmarkCacheResolutionOverhead(b *testing.B) {
 	tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
 	tx.Commit()
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	eBytes := Entity(e.Hash())
@@ -427,7 +436,10 @@ func BenchmarkCacheResolutionOverhead(b *testing.B) {
 	b.Run("CacheGetOrResolve", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			entry := db.Cache().GetOrResolve(key, matcher, nil)
+			entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			if err != nil {
+				b.Fatal(err)
+			}
 			if entry == nil {
 				b.Fatal("cache miss")
 			}
@@ -500,7 +512,7 @@ func BenchmarkCachePathWithBindings(b *testing.B) {
 	})
 
 	// Direct matcher.Match call to isolate the cache path more precisely
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	matcher.SetCache(db.Cache())
 

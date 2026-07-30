@@ -141,23 +141,24 @@ func main() {
 		return
 	}
 
-	// Open database (BadgerDB directory, or .edn/.jdzl dump). The optimizer
-	// mode rides the database's planner options, so every query path — Query
-	// with inputs, NewExecutor, interactive — runs on the selected mode.
+	// Open database (BadgerDB directory, or .edn/.jdzl dump). The optimizer mode
+	// and the -verbose handler both ride the database's planner options, so every
+	// query path — Query with inputs, NewExecutor, interactive — runs on the
+	// selected mode and reports through the handler. The handler is registered
+	// before the open because everything the database builds is constructed with
+	// it, including the storage matcher, whose scan events happen inside Match()
+	// where no wrapper can see them.
 	plannerOpts := storage.DefaultPlannerOptions()
 	plannerOpts.EnableAlgebraOptimizer = optimize
+	if verbose {
+		formatter := annotations.NewOutputFormatter(os.Stderr)
+		plannerOpts.Handler = annotations.Handler(formatter.Handle)
+	}
 	db, cleanup, err := openDatabaseOrEDN(dbPath, &plannerOpts)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
 	defer cleanup()
-
-	// Create annotation handler if verbose mode
-	var handler annotations.Handler
-	if verbose {
-		formatter := annotations.NewOutputFormatter(os.Stderr)
-		handler = annotations.Handler(formatter.Handle)
-	}
 
 	if planOnly && queryStr == "" {
 		log.Fatalf("-plan-only requires -query")
@@ -168,16 +169,16 @@ func main() {
 			runPlanOnly(db, queryStr, inputValues)
 		} else {
 			// Run single query mode
-			runSingleQuery(db, handler, queryStr, enableDecorrelation, inputValues)
+			runSingleQuery(db, queryStr, enableDecorrelation, inputValues)
 		}
 	} else if interactive {
-		runInteractive(db, handler, enableDecorrelation)
+		runInteractive(db, enableDecorrelation)
 	} else {
 		fmt.Println("Use -i for interactive mode or -query to run a query.")
 	}
 }
 
-func runInteractive(db *storage.Database, handler annotations.Handler, enableDecorrelation bool) {
+func runInteractive(db *storage.Database, enableDecorrelation bool) {
 	fmt.Println("=== Janus Datalog Interactive Mode ===")
 	fmt.Println("Commands:")
 	fmt.Println("  .help    - Show help")
@@ -187,8 +188,9 @@ func runInteractive(db *storage.Database, handler annotations.Handler, enableDec
 	fmt.Println()
 
 	scanner := bufio.NewScanner(os.Stdin)
-	// The database's planner options carry the -optimize mode; NewExecutor
-	// inherits them (plus the plan cache) instead of rebuilding defaults here.
+	// The database's planner options carry the -optimize mode, and its registered
+	// handler; NewExecutor inherits both (plus the plan cache) instead of
+	// rebuilding defaults here.
 	exec := db.NewExecutor()
 
 	for {
@@ -229,12 +231,7 @@ func runInteractive(db *storage.Database, handler annotations.Handler, enableDec
 			}
 
 			var result executor.Relation
-			if handler != nil {
-				ctx := executor.NewContext(handler)
-				result, err = exec.ExecuteWithContext(ctx, q)
-			} else {
-				result, err = exec.Execute(q)
-			}
+			result, err = exec.Execute(q)
 			if err != nil {
 				fmt.Printf("Execution error: %v\n", err)
 				continue
@@ -509,7 +506,6 @@ func runImportBin(dbPath, importPath string) {
 	fmt.Printf("Imported %s into database %s\n", importPath, dbPath)
 }
 
-// runSingleQuery executes a single query and exits
 // runPlanOnly plans the query without executing it and prints the full
 // algebra explanation: the compiled tree, every rewrite decision the passes
 // made, the optimized tree, the rewritten Datalog, and the physical plan.
@@ -530,7 +526,7 @@ func runPlanOnly(db *storage.Database, queryStr string, inputs []string) {
 	fmt.Print(expl.String())
 }
 
-func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr string, enableDecorrelation bool, inputs []string) {
+func runSingleQuery(db *storage.Database, queryStr string, enableDecorrelation bool, inputs []string) {
 	// Parse query
 	q, err := parser.ParseQuery(queryStr)
 	if err != nil {
@@ -554,15 +550,10 @@ func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr 
 	if len(goInputs) > 0 {
 		result, err = db.Query(q, goInputs...)
 	} else {
-		// The database's planner options carry the -optimize mode; NewExecutor
-		// inherits them (plus the plan cache), matching the db.Query path.
-		exec := db.NewExecutor()
-		if handler != nil {
-			ctx := executor.NewContext(handler)
-			result, err = exec.ExecuteWithContext(ctx, q)
-		} else {
-			result, err = exec.Execute(q)
-		}
+		// The database's planner options carry the -optimize mode, and its
+		// registered handler; NewExecutor inherits both (plus the plan cache),
+		// matching the db.Query path.
+		result, err = db.NewExecutor().Execute(q)
 	}
 	elapsed := time.Since(start)
 

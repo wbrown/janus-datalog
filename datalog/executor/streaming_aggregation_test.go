@@ -132,7 +132,7 @@ func TestStreamingAggregationCorrectness(t *testing.T) {
 	streamingRel := NewStreamingRelationWithOptions(symbols, baseRel.Iterator(), streamingOpts)
 	streamingResult := ExecuteAggregations(streamingRel, findElements)
 
-	// Run with batch (old implementation)
+	// Run with batch
 	batchOpts := ExecutorOptions{EnableStreamingAggregation: false}
 	batchRel := NewStreamingRelationWithOptions(symbols, baseRel.Iterator(), batchOpts)
 	batchResult := ExecuteAggregations(batchRel, findElements)

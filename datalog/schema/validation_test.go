@@ -76,10 +76,10 @@ func TestValidateValueSymbol(t *testing.T) {
 }
 
 func TestValidateValueEmptyType(t *testing.T) {
-	// Empty type means no constraint
-	assert.NoError(t, ValidateValue("anything", ""))
-	assert.NoError(t, ValidateValue(123, ""))
-	assert.NoError(t, ValidateValue(nil, ""))
+	// A nil value type is a definition that declared none: no constraint.
+	assert.NoError(t, ValidateValue("anything", nil))
+	assert.NoError(t, ValidateValue(123, nil))
+	assert.NoError(t, ValidateValue(nil, nil))
 }
 
 func TestValidateDatom(t *testing.T) {
@@ -98,11 +98,11 @@ func TestValidateDatom(t *testing.T) {
 	// Invalid values
 	err = ValidateDatom(schema, kw(":person/name"), 123)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected db.type/string")
+	assert.Contains(t, err.Error(), "expected :db.type/string")
 
 	err = ValidateDatom(schema, kw(":person/age"), "thirty")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected db.type/long")
+	assert.Contains(t, err.Error(), "expected :db.type/long")
 
 	// Unknown attribute - should pass (additive schema)
 	assert.NoError(t, ValidateDatom(schema, kw(":person/unknown"), "anything"))

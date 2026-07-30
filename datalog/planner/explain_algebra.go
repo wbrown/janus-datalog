@@ -69,10 +69,12 @@ func (e *AlgebraExplanation) String() string {
 		sb.WriteString(fmt.Sprintf("Rewrites (%d):\n", len(e.Rewrites)))
 		for _, r := range e.Rewrites {
 			switch r.Action {
+			// %v on Subject: the record carries the node the decision was made
+			// on, and this is where it is rendered.
 			case algebra.RewriteDeclined:
-				sb.WriteString(fmt.Sprintf("  [%s] %s: %s — %s\n", r.Pass, r.Action, r.Reason, r.Subject))
+				sb.WriteString(fmt.Sprintf("  [%s] %s: %s — %v\n", r.Pass, r.Action, r.Reason, r.Subject))
 			default:
-				sb.WriteString(fmt.Sprintf("  [%s] %s: %s\n", r.Pass, r.Action, r.Subject))
+				sb.WriteString(fmt.Sprintf("  [%s] %s: %v\n", r.Pass, r.Action, r.Subject))
 			}
 		}
 		if e.Optimized != nil {

@@ -252,11 +252,6 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, initialBindings ma
 	}, nil
 }
 
-// Note: Semantic rewriting is now implemented as pure clause transformation.
-// Decorrelation (conditional aggregate rewriting) is deferred - the implementation
-// was buggy and has been moved to experimental/. The key architectural innovation
-// is the greedy phasing algorithm and optimize-first flow.
-
 // buildFindClause constructs the :find clause for a phase
 func buildFindClause(provides []query.Symbol, originalFind []query.FindElement, isLastPhase bool, retainedSort []query.Symbol) []query.FindElement {
 	if isLastPhase {

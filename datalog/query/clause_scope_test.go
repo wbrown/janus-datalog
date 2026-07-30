@@ -267,8 +267,8 @@ func TestOrDefaultJoinValidate(t *testing.T) {
 	})
 
 	t.Run("old correlation-key header errors loudly", func(t *testing.T) {
-		// The migration case: a flat header whose var was a correlation key
-		// is now an output declaration the ground branch cannot satisfy.
+		// A flat header declares outputs only; the ground branch here
+		// does not bind ?e, so validation must reject it.
 		clause := &OrDefaultJoinClause{
 			OutputVars: []Symbol{datalog.NewSymbol("?e")},
 			Branches: [][]Clause{

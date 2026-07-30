@@ -100,7 +100,7 @@ builder.Attribute(":character/prefs").Type(schema.TypeString).Vector().UniqueEle
 
 | Unique | Description | Constant |
 |--------|-------------|----------|
-| (none) | No uniqueness constraint | `""` |
+| (none) | No uniqueness constraint | none — omit `:db/unique`; the field is nil |
 | `:db.unique/value` | Value is canonical for one entity | `schema.UniqueValue` |
 | `:db.unique/identity` | `UniqueValue` + eligible for `LookupByUnique` lookup-refs | `schema.UniqueIdentity` |
 
@@ -345,8 +345,11 @@ Schema validation impacts **writes only**. Reads are completely unaffected.
 | Operation | Overhead | When |
 |-----------|----------|------|
 | Type validation | <0.2% | `Add()` time |
-| Uniqueness checking | ~6% | `Commit()` time |
 | Schema resolution | 225ns | Once per Pull pattern |
+
+Uniqueness costs nothing at write time — it is a read-time resolution rule, so
+it is paid by the read that asks: the AVET walk behind `LookupByUnique` and
+behind unique-attribute resolution.
 
 **Recommendation**: Enable schema validation freely. The write overhead is minimal and provides valuable type safety and data integrity.
 
@@ -368,10 +371,20 @@ Current limitations compared to Datomic:
 ```go
 import "github.com/wbrown/janus-datalog/datalog/schema"
 
-// Types
-schema.ValueType      // string, long, double, boolean, instant, bytes, ref, keyword
-schema.Cardinality    // one, many
-schema.Unique         // value, identity
+// Vocabulary. Each is a datalog.Keyword — there is no ValueType, Cardinality
+// or Unique type. An AttributeDefinition's three keyword fields are all
+// datalog.Keyword, and each draws from one of these closed sets; ParseSchema
+// and the builder reject a keyword from the wrong one.
+schema.TypeString  schema.TypeLong    schema.TypeDouble  schema.TypeBoolean
+schema.TypeInstant schema.TypeBytes   schema.TypeRef     schema.TypeKeyword
+schema.TypeSymbol  schema.TypeTx
+
+schema.CardinalityOne  schema.CardinalityMany  schema.CardinalityVector
+schema.CardinalityUnknown  // no schema definition; not declarable
+
+schema.UniqueValue  schema.UniqueIdentity
+// Absence of a uniqueness constraint is a nil Unique field, written by
+// omitting :db/unique — there is no keyword for it and no constant naming it.
 
 // Functions
 schema.NewBuilder()                    // Start building a schema

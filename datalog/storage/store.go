@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
@@ -17,7 +19,7 @@ const (
 	EATV                  // Entity-Attribute-Tx-Value (for cardinality-one: first = current)
 	AEVT                  // Attribute-Entity-Value-Tx
 	AETV                  // Attribute-Entity-Tx-Value (for A-primary CRDT: first = current)
-	ATEV                  // Attribute-Tx-Entity-Value (for O(1) attribute high-water mark + AsOf-by-attribute)
+	ATEV                  // Attribute-Tx-Entity-Value (for AsOf-by-attribute: A-bound + Tx-bound scans seek straight to the transaction)
 	AVET                  // Attribute-Value-Entity-Tx
 	VAET                  // Value-Attribute-Entity-Tx
 	TAEV                  // Tx-Attribute-Entity-Value (for clock recovery, audit log)
@@ -25,6 +27,32 @@ const (
 
 // Indices lists all indices used for queries
 var Indices = []IndexType{EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV}
+
+// String names the index. It is the one rendering of an IndexType, so %v in an
+// error or an annotation reads "AVET" rather than "5" — the numbering is an
+// implementation detail of the key prefix and means nothing to a reader.
+func (i IndexType) String() string {
+	switch i {
+	case EAVT:
+		return "EAVT"
+	case EATV:
+		return "EATV"
+	case AEVT:
+		return "AEVT"
+	case AETV:
+		return "AETV"
+	case ATEV:
+		return "ATEV"
+	case AVET:
+		return "AVET"
+	case VAET:
+		return "VAET"
+	case TAEV:
+		return "TAEV"
+	default:
+		return fmt.Sprintf("IndexType(%d)", uint8(i))
+	}
+}
 
 // Store is the interface for datom storage
 type Store interface {
@@ -36,12 +64,28 @@ type Store interface {
 	DeleteDatoms(datoms []datalog.Datom) (int, error)
 
 	// Read operations
-	Scan(index IndexType, start, end []byte) (Iterator, error)
-	ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error)
-	// Get retrieves a single datom by full index key. Missing keys return (nil, nil).
-	// CountKeys is not on Store — it remains *BadgerStore-only (debug/test);
-	// see docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md.
-	Get(index IndexType, key []byte) (*datalog.Datom, error)
+	//
+	// There is no point lookup. A complete index key names one (E, A, V, Tx),
+	// but Tx is what CRDT resolution determines — first entry of the ordered
+	// group wins — so a reader that already knew it would have nothing left to
+	// ask. Every read is a prefix scan; a scan whose range binds all four
+	// components is the point lookup, and returns at most one datom because Tx
+	// is unique per operation.
+	//
+	// CountKeys is likewise not on Store — it remains *BadgerStore-only
+	// (debug/test).
+	//
+	// A scan yields EXACTLY the datoms whose bound components equal the
+	// ScanBound's values, and narrowing to them is the implementation's
+	// obligation. It is not free for a backend that projects the bound onto
+	// byte keys: a V payload carries no length, so the keys for "abcd" sort
+	// inside the range for "abc" interleaved with them and no endpoints
+	// separate the two — the in-tree stores narrow by key length (EncodedRun,
+	// runMembership). A backend comparing typed components directly has no such
+	// gap. Returning everything inside a range returns datoms the caller did not
+	// ask for, and no test above this seam will say so.
+	Scan(bound ScanBound) (Iterator, error)
+	ScanKeysOnly(bound ScanBound) (Iterator, error)
 	DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error)
 	MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error)
 	GetMetadataUint64(key string) (uint64, bool, error)
@@ -51,13 +95,6 @@ type Store interface {
 	// Used to restore the Lamport clock on database open.
 	// Returns zero ElementID if store is empty.
 	MaxElementID() (datalog.ElementID, error)
-
-	// MaxElementIDForAttribute returns the highest ElementID for any (E, A) with this attribute.
-	// Used for fast cache freshness checks on A-bound queries.
-	// Performs an O(1) forward seek on the ATEV index — first entry under [A]
-	// is the global max-Tx datom because ATEV orders A → Tx↓ → E → V.
-	// Returns zero ElementID if no data exists for this attribute.
-	MaxElementIDForAttribute(a []byte) (datalog.ElementID, error)
 
 	// NewReadSession opens a consistent read view at the store's current
 	// state: every read through the session observes one snapshot,
@@ -99,7 +136,19 @@ type Iterator interface {
 	Next() bool
 	Datom() (*datalog.Datom, error)
 	Close() error
-	Seek(key []byte) // Position iterator at or after the given key
+
+	// Seek narrows iteration to the run the bound names, and to all of it: the
+	// bound repositions the cursor at or after its start, and the same bound
+	// supplies where the run ends and the membership rule governing what lies
+	// between. An implementation adopting only the start walks past the sought
+	// bound into whatever the scan's wider range still holds, and leaves the
+	// caller to work out where its own run ended from the encoded key — which is
+	// how key-layout arithmetic gets back above this seam.
+	//
+	// A bound that cannot be encoded is recorded as the iterator's sticky error
+	// rather than dropped: Seek has no return, so Error() is where the failure
+	// surfaces.
+	Seek(bound ScanBound)
 
 	// ElementID returns the transaction ElementID of the current entry.
 	// This is more efficient than Datom() when only the ElementID is needed
@@ -112,6 +161,21 @@ type Iterator interface {
 	// propagate from their inner iterator (return the first non-nil
 	// between the outer's own error and inner.Error()).
 	Error() error
+
+	// Scanned reports how many datoms this iterator has taken in from the
+	// index so far — intake, before any narrowing this iterator performs.
+	// A key the bound's membership rule rejects is counted: the range covered
+	// it and the scan paid to look at it.
+	//
+	// This is what makes narrowing auditable. Against the consumer's own count
+	// of what survived, the ratio is the amplification the index charged, and
+	// it is the only way to see whether a bound narrowed anything. Required
+	// rather than optional for that reason: an absent count is indistinguishable
+	// from a scan that read nothing and from instrumentation that was never
+	// wired, which is the failure this seam's annotations exist to prevent.
+	//
+	// Wrapping iterators delegate — a wrapper reads no index of its own.
+	Scanned() int
 }
 
 // StoreTx represents a storage transaction

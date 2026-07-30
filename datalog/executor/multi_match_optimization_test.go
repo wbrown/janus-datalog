@@ -199,7 +199,7 @@ func TestMultiMatchOptimization(t *testing.T) {
 		}
 	})
 
-	t.Run("NewApproach_MultiRowRelation", func(t *testing.T) {
+	t.Run("NewApproach_MultiTupleRelation", func(t *testing.T) {
 		matcher := &MockPatternMatcherWithStats{datoms: datoms}
 
 		// Create 100 entity bindings

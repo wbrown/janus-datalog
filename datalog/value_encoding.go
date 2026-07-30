@@ -66,16 +66,7 @@ func NormalizeValue(v Value) Value {
 
 func Type(v Value) ValueType {
 	v = NormalizeValue(v) // int/int8/int16/int32 -> canonical int64
-	// Handle pointers by checking what they point to
 	switch val := v.(type) {
-	case *Identity:
-		return TypeReference
-	case *Keyword:
-		return TypeKeyword
-	case *Symbol:
-		return TypeSymbol
-	case *uint64:
-		return TypeInt
 	case string:
 		return TypeString
 	case int64:
@@ -151,6 +142,28 @@ func decodeOrderedFloat64(data []byte) float64 {
 	return math.Float64frombits(bits)
 }
 
+// PayloadIsFixedWidth reports whether a value type's payload length follows
+// from the tag alone. It does not, for the string-shaped and compressed types,
+// whose payload is as long as the value is — which is why a byte range whose
+// last bound component is such a V is a prefix range rather than an exact one,
+// and why a scan narrows it by key length (see storage.EncodedRun's membership
+// rule).
+//
+// Panics on an unclassified tag: a value type added without a decision here
+// would otherwise silently pick a width and mis-measure every key holding it.
+func PayloadIsFixedWidth(vType ValueType) bool {
+	switch vType {
+	case TypeInt, TypeFloat, TypeBool, TypeTime, TypeReference, TypeElementID,
+		TypeHashedString, TypeHashedBytes:
+		return true
+	case TypeString, TypeBytes, TypeKeyword, TypeSymbol,
+		TypeCompressedString, TypeCompressedBytes:
+		return false
+	default:
+		panic(fmt.Sprintf("value type %d is not classified as fixed- or variable-width", vType))
+	}
+}
+
 // Bytes serializes a value to bytes
 func ValueBytes(v Value) []byte {
 	v = NormalizeValue(v) // int/int8/int16/int32 -> canonical int64
@@ -162,10 +175,6 @@ func ValueBytes(v Value) []byte {
 		return []byte(ptr.String())
 	case Symbol:
 		return []byte(ptr.String())
-	case *uint64:
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, *ptr)
-		return buf
 	}
 
 	// Handle values

@@ -46,19 +46,19 @@ func openIntNormDB(t *testing.T, popts *planner.PlannerOptions) *Database {
 	return db
 }
 
-func queryRows(t *testing.T, db *Database, q string, args ...interface{}) []string {
+func queryTuples(t *testing.T, db *Database, q string, args ...interface{}) []string {
 	t.Helper()
 	rel, err := db.Query(q, args...)
 	require.NoError(t, err)
-	var rows []string
+	var tuples []string
 	it := rel.Iterator()
 	for it.Next() {
-		rows = append(rows, fmt.Sprintf("%v", it.Tuple()))
+		tuples = append(tuples, fmt.Sprintf("%v", it.Tuple()))
 	}
 	require.NoError(t, it.Error())
 	it.Close()
-	sort.Strings(rows)
-	return rows
+	sort.Strings(tuples)
+	return tuples
 }
 
 // TestWrite_GoIntValueDoesNotPanic writes an untyped Go int (the natural
@@ -91,7 +91,7 @@ func TestWrite_GoIntValueDoesNotPanic(t *testing.T) {
 }
 
 // TestQuery_IntInputMatchesInt64StoredValue is the core facet-1 regression: a
-// parameterized query returns the same rows whether the argument is a Go int or
+// parameterized query returns the same tuples whether the argument is a Go int or
 // the equivalent int64. Before the fix the int argument matched nothing because
 // the input relation's int value never joined the stored int64 (ValuesEqual was
 // type-strict).
@@ -109,12 +109,12 @@ func TestQuery_IntInputMatchesInt64StoredValue(t *testing.T) {
 			require.NoError(t, err)
 
 			const q = `[:find ?e :in $ ?age :where [?e :person/age ?age]]`
-			rowsInt64 := queryRows(t, db, q, int64(30))
-			rowsInt := queryRows(t, db, q, int(30))
+			tuplesInt64 := queryTuples(t, db, q, int64(30))
+			tuplesInt := queryTuples(t, db, q, int(30))
 
-			require.Len(t, rowsInt64, 1, "int64 argument should match exactly alice")
-			assert.Equal(t, rowsInt64, rowsInt,
-				"int argument must return the same rows as int64 argument")
+			require.Len(t, tuplesInt64, 1, "int64 argument should match exactly alice")
+			assert.Equal(t, tuplesInt64, tuplesInt,
+				"int argument must return the same tuples as int64 argument")
 		})
 	}
 }
@@ -136,16 +136,16 @@ func TestPredicateAndJoinAgreeOnIntInt64(t *testing.T) {
 			require.NoError(t, err)
 
 			// Join path: the int input binds ?age and joins the stored int64 directly.
-			joinRows := queryRows(t, db,
+			joinTuples := queryTuples(t, db,
 				`[:find ?e :in $ ?age :where [?e :person/age ?age]]`, int(30))
 
 			// Predicate path: bind ?a from storage, compare it to the int input via (=).
-			predRows := queryRows(t, db,
+			predTuples := queryTuples(t, db,
 				`[:find ?e :in $ ?age :where [?e :person/age ?a] [(= ?a ?age)]]`, int(30))
 
-			assert.Equal(t, joinRows, predRows,
+			assert.Equal(t, joinTuples, predTuples,
 				"join and predicate must agree for an int parameter")
-			require.Len(t, joinRows, 1, "both paths should match alice")
+			require.Len(t, joinTuples, 1, "both paths should match alice")
 		})
 	}
 }
@@ -186,9 +186,9 @@ func TestRetract_GoIntValueMatchesStoredInt64(t *testing.T) {
 			_, err = tx.Commit()
 			require.NoError(t, err, "retracting a Go int value must not panic or error")
 
-			rows := queryRows(t, db,
+			tuples := queryTuples(t, db,
 				`[:find ?n :in $ ?e :where [?e :person/lucky-numbers ?n]]`, e)
-			require.Equal(t, []string{"[7]"}, rows,
+			require.Equal(t, []string{"[7]"}, tuples,
 				"retract with a Go int must remove the stored int64 value")
 		})
 	}

@@ -12,7 +12,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/algebra"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -151,7 +150,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 			results, err := executor.CollectTuples(db.Query(queryStr))
 			elapsed := time.Since(start)
 			require.NoError(t, err)
-			require.Len(t, results, numScenarios, "should return one row per scenario")
+			require.Len(t, results, numScenarios, "should return one tuple per scenario")
 			t.Logf("Query returned %d results in %s", len(results), elapsed)
 
 			// Verify correctness of first result (ordered by lastUpdatedAt desc, so last scenario)
@@ -160,12 +159,12 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 				last[0], last[1], last[3], last[4], last[6], last[7])
 
 			// Every scenario has 100 completed tasks
-			for i, row := range results {
-				taskCount := row[3]
+			for i, tuple := range results {
+				taskCount := tuple[3]
 				if tc, ok := taskCount.(int); ok {
 					require.Equal(t, tasksPerScenario, tc, "scenario %d should have %d tasks", i, tasksPerScenario)
 				}
-				complete := row[6]
+				complete := tuple[6]
 				require.Equal(t, true, complete, "scenario %d should be complete (has opening task)", i)
 			}
 
@@ -279,23 +278,6 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 	}
 }
 
-// queryWithPlannerOptions runs a query with custom planner options.
-// Used to test with/without the algebra optimizer.
-func queryWithPlannerOptions(db *Database, queryStr string, opts planner.PlannerOptions) (executor.Relation, error) {
-	q, err := db.resolveQuery(queryStr)
-	if err != nil {
-		return nil, err
-	}
-	router := executor.NewSourceRouter(buildSourceMap(nil, db.Matcher()))
-	inputs, err := db.convertInputsToRelations(q, nil)
-	if err != nil {
-		return nil, err
-	}
-	opts.Cache = db.planCache
-	exec := executor.NewExecutorWithOptions(router, db, opts)
-	return exec.ExecuteWithRelations(executor.NewContext(db.AnnotationHandler()), q, inputs)
-}
-
 // TestCorrelatedSubqueryAlgebraOptimizer compares baseline (no algebra optimizer)
 // against optimized (algebra optimizer with decorrelation) on the same data
 // and query as TestCorrelatedSubqueryPerformance.
@@ -394,7 +376,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -402,16 +384,16 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 		require.Len(t, results, numScenarios)
 		t.Logf("Baseline: %d results in %s", len(results), elapsed)
 
-		for i, row := range results {
-			if tc, ok := row[3].(int); ok {
+		for i, tuple := range results {
+			if tc, ok := tuple[3].(int); ok {
 				require.Equal(t, tasksPerScenario, tc, "scenario %d task count", i)
 			}
-			require.Equal(t, true, row[6], "scenario %d complete", i)
+			require.Equal(t, true, tuple[6], "scenario %d complete", i)
 		}
 	})
 
 	t.Run("algebra_optimizer", func(t *testing.T) {
-		t.Logf("annotation handler nil: %v", db.AnnotationHandler() == nil)
+		t.Logf("annotation handler nil: %v", db.plannerOptions.Handler == nil)
 		opts := DefaultPlannerOptions()
 		opts.EnableAlgebraOptimizer = true
 		db.ClearPlanCache()
@@ -429,7 +411,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 
 		db.ClearPlanCache()
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		if err != nil {
 			t.Fatalf("query error: %v", err)
 		}
@@ -441,11 +423,11 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 		}
 		t.Logf("Optimized: %d results in %s", len(results), elapsed)
 
-		for i, row := range results {
-			if tc, ok := row[3].(int); ok {
+		for i, tuple := range results {
+			if tc, ok := tuple[3].(int); ok {
 				require.Equal(t, tasksPerScenario, tc, "scenario %d task count", i)
 			}
-			require.Equal(t, true, row[6], "scenario %d complete", i)
+			require.Equal(t, true, tuple[6], "scenario %d complete", i)
 		}
 	})
 }
@@ -552,7 +534,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -563,9 +545,9 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 		// Verify: scenarios with tasks have counts > 0, those without have 0
 		withTasks := 0
 		withoutTasks := 0
-		for _, row := range results {
+		for _, tuple := range results {
 			tc := int64(0)
-			switch v := row[3].(type) {
+			switch v := tuple[3].(type) {
 			case int64:
 				tc = v
 			case int:
@@ -588,7 +570,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -603,9 +585,9 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 		// Same verification as baseline
 		withTasks := 0
 		withoutTasks := 0
-		for _, row := range results {
+		for _, tuple := range results {
 			tc := int64(0)
-			switch v := row[3].(type) {
+			switch v := tuple[3].(type) {
 			case int64:
 				tc = v
 			case int:
@@ -650,7 +632,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 			if e.Name == "or-fallback/cache-build" || e.Name == "or-fallback/branch.success" {
 				t.Logf("[%s] %v", e.Name, e.Data)
 			}
-			if e.Name == "scan-sharing/cache-hit" || e.Name == "scan-sharing/cache-miss" {
+			if e.Name == annotations.ScanSharingCacheHit || e.Name == annotations.ScanSharingCacheMiss {
 				t.Logf("[SCAN-SHARING] [%s] %v", e.Name, e.Data)
 			}
 		},
@@ -752,7 +734,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -760,9 +742,9 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 		require.Len(t, results, numProjects, "baseline must return ALL projects")
 		t.Logf("Baseline: %d results in %s", len(results), elapsed)
 
-		for _, row := range results {
+		for _, tuple := range results {
 			ic := int64(0)
-			switch v := row[8].(type) {
+			switch v := tuple[8].(type) {
 			case int64:
 				ic = v
 			case int:
@@ -778,7 +760,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err, "algebra optimizer must not crash on production-structure query")
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -787,9 +769,9 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 			"algebra optimizer must return ALL projects with production-structure query")
 		t.Logf("Optimized: %d results in %s", len(results), elapsed)
 
-		for _, row := range results {
+		for _, tuple := range results {
 			ic := int64(0)
-			switch v := row[8].(type) {
+			switch v := tuple[8].(type) {
 			case int64:
 				ic = v
 			case int:

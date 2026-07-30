@@ -58,8 +58,8 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 
 // filterWithPredicateAndLookup filters a relation using a predicate with optional database lookup.
 // env is the query scope's environment relation (single-valued :in
-// parameters); its one tuple binds into every row's evaluation — the join of
-// the environment into the operator, with the per-row bindings map as
+// parameters); its one tuple binds into every tuple's evaluation — the join of
+// the environment into the operator, with the per-tuple bindings map as
 // operator-internal scratch.
 //
 // Eager: the scan completes before returning, so every error — predicate
@@ -72,7 +72,7 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, env Relation) (result Relation, resultErr error) {
 	symbols := rel.Symbols()
 	needsCopy := rel.RequiresCopy()
-	envSymbols, envRow := environmentRow(env)
+	envSymbols, envTuple := environmentTuple(env)
 
 	// Pre-allocate filtered only for materialized relations to avoid forcing materialization
 	var filtered []Tuple
@@ -108,7 +108,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		// Pre-populate from the environment's tuple (a relation symbol of
 		// the same name overwrites below — relation data wins locally)
 		for i := range envSymbols {
-			bindings[envSymbols[i]] = envRow[i]
+			bindings[envSymbols[i]] = envTuple[i]
 		}
 		bindTuple(bindings, symbols, tuple)
 
@@ -146,12 +146,12 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 // If lookup is non-nil and the expression is a DatabaseFunction, it uses EvalWithLookup.
 // Otherwise, it falls back to the standard Eval method.
 // env is the query scope's environment relation (single-valued :in
-// parameters); its one tuple binds into every row's evaluation. The
-// environmentRow locals are references into the relation, never copies —
+// parameters); its one tuple binds into every tuple's evaluation. The
+// environmentTuple locals are references into the relation, never copies —
 // the relation stays the single holder of its content.
 func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, env Relation) (result Relation, resultErr error) {
 	symbols := rel.Symbols()
-	envSymbols, envRow := environmentRow(env)
+	envSymbols, envTuple := environmentTuple(env)
 
 	// Determine binding symbols and whether they already exist
 	var bindingSymbols []query.Symbol
@@ -209,7 +209,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		// Pre-populate from the environment's tuple (a relation symbol of
 		// the same name overwrites below — relation data wins locally)
 		for i := range envSymbols {
-			bindings[envSymbols[i]] = envRow[i]
+			bindings[envSymbols[i]] = envTuple[i]
 		}
 		bindTuple(bindings, symbols, tuple)
 
@@ -242,10 +242,10 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		evalResult = value
 
 		// Handle multi-tuple expansion (e.g., enumerate returns [][]interface{})
-		if multiRows, ok := evalResult.([][]interface{}); ok {
+		if multiTuples, ok := evalResult.([][]interface{}); ok {
 			if tb, ok := expr.Binding.(query.TupleBinding); ok {
 				expanded = true
-				for _, subTuple := range multiRows {
+				for _, subTuple := range multiTuples {
 					if len(subTuple) != len(tb.Variables) {
 						iterErr = fmt.Errorf("tuple mismatch: %d values, %d variables",
 							len(subTuple), len(tb.Variables))

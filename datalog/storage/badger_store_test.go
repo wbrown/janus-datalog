@@ -69,10 +69,7 @@ func TestBadgerStore(t *testing.T) {
 
 	// Test EAVT scan (get all facts about Alice)
 	t.Run("EAVT Scan", func(t *testing.T) {
-		aliceHash := alice.Hash()
-		start, end := encoder.EncodePrefixRange(EAVT, aliceHash[:])
-
-		it, err := store.Scan(EAVT, start, end)
+		it, err := store.Scan(ScanBound{Index: EAVT, Prefix: []datalog.Value{alice}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -100,11 +97,10 @@ func TestBadgerStore(t *testing.T) {
 
 	// Test AVET scan (find all users by name attribute)
 	t.Run("AVET Scan", func(t *testing.T) {
-		var nameAttr Attribute
-		copy(nameAttr[:], ":user/name")
-		start, end := encoder.EncodePrefixRange(AVET, nameAttr[:])
-
-		it, err := store.Scan(AVET, start, end)
+		it, err := store.Scan(ScanBound{
+			Index:  AVET,
+			Prefix: []datalog.Value{datalog.NewKeyword(":user/name")},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -154,12 +150,10 @@ func TestBadgerStore(t *testing.T) {
 		}
 
 		// Verify it was added
-		var emailAttr Attribute
-		copy(emailAttr[:], ":user/email")
-		bobHash := bob.Hash()
-		start, end := encoder.EncodePrefixRange(EAVT, bobHash[:], emailAttr[:])
-
-		it, err := store.Scan(EAVT, start, end)
+		it, err := store.Scan(ScanBound{
+			Index:  EAVT,
+			Prefix: []datalog.Value{bob, datalog.NewKeyword(":user/email")},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -186,12 +180,10 @@ func TestBadgerStore(t *testing.T) {
 		}
 
 		// Verify it's gone
-		var nameAttr Attribute
-		copy(nameAttr[:], ":user/name")
-		bobHash := bob.Hash()
-		start, end := encoder.EncodePrefixRange(EAVT, bobHash[:], nameAttr[:])
-
-		it, err := store.Scan(EAVT, start, end)
+		it, err := store.Scan(ScanBound{
+			Index:  EAVT,
+			Prefix: []datalog.Value{bob, datalog.NewKeyword(":user/name")},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -255,11 +247,8 @@ func TestRetractWithDifferentTx(t *testing.T) {
 	}
 
 	// Verify it was stored
-	aliceHash := alice.Hash()
-	var attr Attribute
-	copy(attr[:], ":person/name")
-	start, end := encoder.EncodePrefixRange(EAVT, aliceHash[:], attr[:])
-	it, err := store.Scan(EAVT, start, end)
+	bound := ScanBound{Index: EAVT, Prefix: []datalog.Value{alice, nameAttr}}
+	it, err := store.Scan(bound)
 	if err != nil {
 		t.Fatalf("Scan failed: %v", err)
 	}
@@ -279,7 +268,7 @@ func TestRetractWithDifferentTx(t *testing.T) {
 	}
 
 	// Verify the datom was actually retracted
-	it, err = store.Scan(EAVT, start, end)
+	it, err = store.Scan(bound)
 	if err != nil {
 		t.Fatalf("Scan after retract failed: %v", err)
 	}
@@ -333,10 +322,8 @@ func TestKeyOnlyScanning(t *testing.T) {
 
 	// Test counting with regular scan (fetches values)
 	t.Run("Regular Scan Count", func(t *testing.T) {
-		start, end := encoder.EncodePrefixRange(EAVT)
-
 		startTime := time.Now()
-		it, err := store.Scan(EAVT, start, end)
+		it, err := store.Scan(ScanBound{Index: EAVT})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -362,10 +349,8 @@ func TestKeyOnlyScanning(t *testing.T) {
 
 	// Test counting with key-only scan (no values fetched)
 	t.Run("Key-Only Scan Count", func(t *testing.T) {
-		start, end := encoder.EncodePrefixRange(EAVT)
-
 		startTime := time.Now()
-		it, err := store.ScanKeysOnly(EAVT, start, end)
+		it, err := store.ScanKeysOnly(ScanBound{Index: EAVT})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -411,11 +396,10 @@ func TestKeyOnlyScanning(t *testing.T) {
 	t.Run("Key-Only Correctness", func(t *testing.T) {
 		// Get first entity's datoms
 		entity := datalog.NewIdentity("entity:0")
-		entityHash := entity.Hash()
-		start, end := encoder.EncodePrefixRange(EAVT, entityHash[:])
+		entityBound := ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}}
 
 		// Get datoms with regular scan
-		regularIt, err := store.Scan(EAVT, start, end)
+		regularIt, err := store.Scan(entityBound)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -431,7 +415,7 @@ func TestKeyOnlyScanning(t *testing.T) {
 		}
 
 		// Get datoms with key-only scan
-		keyOnlyIt, err := store.ScanKeysOnly(EAVT, start, end)
+		keyOnlyIt, err := store.ScanKeysOnly(entityBound)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -537,9 +521,9 @@ func TestKeyOnlyScanningAllTypes(t *testing.T) {
 	for _, idx := range indices {
 		t.Run(idx.name, func(t *testing.T) {
 			// Get all datoms with regular scan
-			start, end := encoder.EncodePrefixRange(idx.index)
+			wholeIndex := ScanBound{Index: idx.index}
 
-			regularIt, err := store.Scan(idx.index, start, end)
+			regularIt, err := store.Scan(wholeIndex)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -555,7 +539,7 @@ func TestKeyOnlyScanningAllTypes(t *testing.T) {
 			}
 
 			// Get all datoms with key-only scan
-			keyOnlyIt, err := store.ScanKeysOnly(idx.index, start, end)
+			keyOnlyIt, err := store.ScanKeysOnly(wholeIndex)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -636,247 +620,5 @@ func TestKeyOnlyScanningAllTypes(t *testing.T) {
 
 			t.Logf("%s: Successfully decoded %d datoms with key-only scanning", idx.name, len(keyOnlyDatoms))
 		})
-	}
-}
-
-func TestTimeBasedQueries(t *testing.T) {
-	// Create temporary directory
-	dir, err := os.MkdirTemp("", "badger-time-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	encoder := &BinaryKeyEncoder{}
-	store, err := NewBadgerStore(dir, encoder)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	// Create entity with facts at different times
-	entity := datalog.NewIdentity("sensor:temp-001")
-	attr := datalog.NewKeyword(":sensor/reading")
-
-	// Add readings at different times
-	times := []time.Time{
-		time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC),
-		time.Date(2024, 1, 1, 11, 0, 0, 0, time.UTC),
-		time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
-	}
-
-	datoms := make([]datalog.Datom, len(times))
-	for i, t := range times {
-		datoms[i] = datalog.Datom{
-			E:  entity,
-			A:  attr,
-			V:  20.0 + float64(i),
-			Tx: datalog.ElementID{Lamport: uint64(t.UnixNano())},
-		}
-	}
-
-	err = store.Assert(datoms)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Query using TAEV index for time range
-	t.Run("Time Range Query", func(t *testing.T) {
-		// Find readings between 10:30 and 11:30
-		startTime := time.Date(2024, 1, 1, 10, 30, 0, 0, time.UTC)
-		endTime := time.Date(2024, 1, 1, 11, 30, 0, 0, time.UTC)
-
-		startTx := NewTxFromElementID(datalog.ElementID{Lamport: uint64(startTime.UnixNano())})
-		endTx := NewTxFromElementID(datalog.ElementID{Lamport: uint64(endTime.UnixNano())})
-
-		// With bitwise NOT encoding, higher Tx encodes to lower bytes
-		// So for range [startTime, endTime], scan from encoded(endTime) to encoded(startTime)
-		encodedStart := encoder.EncodeTxForPrefix(endTx)
-		encodedEnd := encoder.EncodeTxForPrefix(startTx)
-
-		start := encoder.EncodePrefix(TAEV, encodedStart)
-		end := encoder.EncodePrefix(TAEV, encodedEnd)
-
-		it, err := store.Scan(TAEV, start, end)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer it.Close()
-
-		count := 0
-		for it.Next() {
-			d, err := it.Datom()
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			// Only count our sensor readings
-			if d.E.Equal(entity) && d.A == attr {
-				t.Logf("Found reading at tx %d: %v", d.Tx, d.V)
-				count++
-			}
-		}
-
-		// Should only find the 11:00 reading
-		if count != 1 {
-			t.Errorf("expected 1 reading in time range, got %d", count)
-		}
-	})
-}
-
-func TestMaxElementIDForAttribute(t *testing.T) {
-	// Create temporary directory
-	dir, err := os.MkdirTemp("", "badger-maxattr-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	encoder := &BinaryKeyEncoder{}
-	store, err := NewBadgerStore(dir, encoder)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	// Create entities and attribute
-	alice := datalog.NewIdentity("user:alice")
-	bob := datalog.NewIdentity("user:bob")
-	nameAttr := datalog.NewKeyword(":user/name")
-	emailAttr := datalog.NewKeyword(":user/email")
-
-	// Assert datoms with different ElementIDs
-	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1}},
-		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 200, ReplicaID: 1}},
-		{E: alice, A: emailAttr, V: "alice@example.com", Tx: datalog.ElementID{Lamport: 150, ReplicaID: 1}},
-	}
-
-	err = store.Assert(datoms)
-	if err != nil {
-		t.Fatalf("Assert failed: %v", err)
-	}
-
-	// Test MaxElementIDForAttribute for :user/name
-	t.Run("Returns highest ElementID for attribute", func(t *testing.T) {
-		var attr Attribute
-		copy(attr[:], ":user/name")
-
-		maxID, err := store.MaxElementIDForAttribute(attr[:])
-		if err != nil {
-			t.Fatalf("MaxElementIDForAttribute failed: %v", err)
-		}
-
-		// Bob's entry at Lamport 200 should be highest for :user/name
-		expected := datalog.ElementID{Lamport: 200, ReplicaID: 1}
-		if maxID != expected {
-			t.Errorf("expected %v, got %v", expected, maxID)
-		}
-	})
-
-	// Test with different attribute
-	t.Run("Returns correct max for different attribute", func(t *testing.T) {
-		var attr Attribute
-		copy(attr[:], ":user/email")
-
-		maxID, err := store.MaxElementIDForAttribute(attr[:])
-		if err != nil {
-			t.Fatalf("MaxElementIDForAttribute failed: %v", err)
-		}
-
-		// Only one entry at Lamport 150 for :user/email
-		expected := datalog.ElementID{Lamport: 150, ReplicaID: 1}
-		if maxID != expected {
-			t.Errorf("expected %v, got %v", expected, maxID)
-		}
-	})
-}
-
-func TestMaxElementIDForAttributeEmpty(t *testing.T) {
-	// Create temporary directory
-	dir, err := os.MkdirTemp("", "badger-maxattr-empty-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	encoder := &BinaryKeyEncoder{}
-	store, err := NewBadgerStore(dir, encoder)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	// Don't add any data - test empty case
-	t.Run("Returns zero ElementID for nonexistent attribute", func(t *testing.T) {
-		var attr Attribute
-		copy(attr[:], ":nonexistent/attr")
-
-		maxID, err := store.MaxElementIDForAttribute(attr[:])
-		if err != nil {
-			t.Fatalf("MaxElementIDForAttribute failed: %v", err)
-		}
-
-		// Should return zero ElementID
-		expected := datalog.ElementID{}
-		if maxID != expected {
-			t.Errorf("expected zero ElementID, got %v", maxID)
-		}
-	})
-}
-
-func TestMaxElementIDForAttributeAfterWrites(t *testing.T) {
-	// Create temporary directory
-	dir, err := os.MkdirTemp("", "badger-maxattr-writes-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	encoder := &BinaryKeyEncoder{}
-	store, err := NewBadgerStore(dir, encoder)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	alice := datalog.NewIdentity("user:alice")
-	nameAttr := datalog.NewKeyword(":user/name")
-
-	// Initial write
-	err = store.Assert([]datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice v1", Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1}},
-	})
-	if err != nil {
-		t.Fatalf("Assert failed: %v", err)
-	}
-
-	// Check initial max
-	var attr Attribute
-	copy(attr[:], ":user/name")
-
-	maxID, err := store.MaxElementIDForAttribute(attr[:])
-	if err != nil {
-		t.Fatalf("MaxElementIDForAttribute failed: %v", err)
-	}
-	if maxID.Lamport != 100 {
-		t.Errorf("expected Lamport 100, got %d", maxID.Lamport)
-	}
-
-	// Write with higher ElementID
-	err = store.Assert([]datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice v2", Tx: datalog.ElementID{Lamport: 300, ReplicaID: 1}},
-	})
-	if err != nil {
-		t.Fatalf("Assert failed: %v", err)
-	}
-
-	// Check updated max
-	maxID, err = store.MaxElementIDForAttribute(attr[:])
-	if err != nil {
-		t.Fatalf("MaxElementIDForAttribute failed: %v", err)
-	}
-	if maxID.Lamport != 300 {
-		t.Errorf("expected Lamport 300 after update, got %d", maxID.Lamport)
 	}
 }

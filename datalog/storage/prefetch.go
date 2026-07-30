@@ -3,8 +3,10 @@ package storage
 import (
 	"bytes"
 	"sort"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 )
 
 // PrefetchEntities loads all attributes for a set of entities into the EA cache
@@ -21,9 +23,30 @@ import (
 // from the store means the store is broken, and callers fail the query —
 // prefetch being an optimization does not make store failures ignorable.
 // Groups cached before the failure hold valid data.
-func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) error {
+func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 	if m.cache == nil || len(entities) == 0 || m.isHistoryMode() {
 		return nil
+	}
+
+	// One scan per entity, so no single run to name.
+	var opened time.Time
+	var populated int
+	report := DiscardIntake
+	if m.handler != nil {
+		opened = time.Now()
+		report = &scanReport{}
+		defer func() {
+			m.handler(annotations.Event{
+				Name:    annotations.StorageResolveComplete,
+				Start:   opened,
+				Latency: time.Since(opened),
+				Data: map[string]interface{}{
+					annotations.KeyDatomsScanned:    report.scanned,
+					annotations.KeyScansOpened:      report.peers,
+					annotations.KeyEntriesPopulated: populated,
+				},
+			})
+		}()
 	}
 
 	// Sort entities by their 20-byte hash (= disk order)
@@ -44,15 +67,19 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		prev = e
 	}
 
-	encoder := m.encoder
-
 	for _, e := range deduped {
-		// Build prefix range for this entity on EATV: prefix(1) + E(20)
-		start, end := encoder.EncodePrefixRange(EATV, e[:])
-
-		iter, err := m.reader.Scan(EATV, start, end)
+		// Bind E on EATV. The dedup above works in the storage projection, so
+		// the identity is re-interned here; the constructor returns the
+		// canonical pointer for an already-interned hash.
+		iter, err := OpenScan(m.reader, report, ScanBound{
+			Index:  EATV,
+			Prefix: []datalog.Value{datalog.NewIdentityFromHash(e)},
+		})
 		if err != nil {
 			return err
+		}
+		if report != nil {
+			report.peers++
 		}
 
 		// Single-pass: iterate EATV, accumulate datoms per (E, A) group,
@@ -79,6 +106,7 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) error {
 				card := m.GetCardinality(currentAttr)
 				if key, ok := m.cacheKey(e, currentAttr); ok {
 					m.cache.PopulateFromDatoms(key, card, currentDatoms)
+					populated++
 				}
 				currentDatoms = currentDatoms[:0]
 			}
@@ -96,6 +124,7 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) error {
 			card := m.GetCardinality(currentAttr)
 			if key, ok := m.cacheKey(e, currentAttr); ok {
 				m.cache.PopulateFromDatoms(key, card, currentDatoms)
+				populated++
 			}
 		}
 		if err := iter.Close(); err != nil {

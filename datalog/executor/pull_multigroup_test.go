@@ -41,7 +41,7 @@ func TestPullWithDisjointFindGroups(t *testing.T) {
 					t.Fatalf("execute: %v", err)
 				}
 				if result.Size() != 1 {
-					t.Fatalf("expected 1 row, got %d", result.Size())
+					t.Fatalf("expected 1 tuple, got %d", result.Size())
 				}
 				pulled, ok := result.Get(0)[0].(map[string]interface{})
 				if !ok {
@@ -69,7 +69,7 @@ func TestPullWithDisjointFindGroups(t *testing.T) {
 					t.Fatalf("execute: %v", err)
 				}
 				if result.Size() != 1 {
-					t.Fatalf("expected 1 row, got %d", result.Size())
+					t.Fatalf("expected 1 tuple, got %d", result.Size())
 				}
 				pulled, ok := result.Get(0)[0].(map[string]interface{})
 				if !ok {

@@ -13,7 +13,7 @@ import (
 func TestExecuteQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -64,11 +64,11 @@ func TestExecuteQuery(t *testing.T) {
 // KEYWORD value — vs the canonical string/int64 symbols. A scalar binding of the same
 // values matches (control), so a relation miss here pins exactly which value type the
 // multi-symbol relation join fails to compare. Repro for a narrative-generators batch
-// content query returning 0 rows on [[?key ?subject] ...].
+// content query returning 0 tuples on [[?key ?subject] ...].
 func TestRelationInput_RefAndKeywordSymbols(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			a := datalog.NewIdentity("a")
 			b := datalog.NewIdentity("b")
@@ -170,11 +170,11 @@ func TestRelationInput_RefAndKeywordSymbols(t *testing.T) {
 // no data pattern). Such a predicate is decided by the environment alone: it
 // must be evaluated exactly once, and its verdict applies uniformly — pass
 // leaves the result untouched, fail empties it. Skipping it silently returns
-// unfiltered rows: a wrong answer, not an optimization.
+// unfiltered tuples: a wrong answer, not an optimization.
 func TestConstantOnlyPredicateFiltersUniformly(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			alice := datalog.NewIdentity("alice")
@@ -196,7 +196,7 @@ func TestConstantOnlyPredicateFiltersUniformly(t *testing.T) {
 				}
 			}
 
-			// Over generated rows: the constant verdict gates the whole result.
+			// Over generated tuples: the constant verdict gates the whole result.
 			check("generator + passing constant predicate",
 				`[:find ?name :in $ ?min :where [?p :person/name ?name] [(> ?min 5)]]`,
 				2, int64(10))
@@ -205,8 +205,8 @@ func TestConstantOnlyPredicateFiltersUniformly(t *testing.T) {
 				0, int64(3))
 
 			// Consumer-only WHERE: the predicate is the entire clause list and
-			// its input is also the :find. Pass yields the one input row with
-			// the constant rendered; fail yields zero rows.
+			// its input is also the :find. Pass yields the one input tuple with
+			// the constant rendered; fail yields zero tuples.
 			results, err := executor.CollectTuples(db.Query(
 				`[:find ?min :in $ ?min :where [(> ?min 5)]]`, int64(10)))
 			if err != nil {
@@ -225,12 +225,12 @@ func TestConstantOnlyPredicateFiltersUniformly(t *testing.T) {
 // TestConstantInputRenderedInFind pins :in scalars that are resolved as
 // constants (no data pattern consumes them) but appear in :find. Constants
 // are environment, not data — :find membership is the one place environment
-// becomes result data, so the value must render into every returned row,
+// becomes result data, so the value must render into every returned tuple,
 // including as an aggregate argument.
 func TestConstantInputRenderedInFind(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Expression output alone in :find (control: no rendering needed).
 			results, err := executor.CollectTuples(db.Query(
@@ -252,7 +252,7 @@ func TestConstantInputRenderedInFind(t *testing.T) {
 				t.Fatalf("constant + expression find: expected [[10 11]], got %v", results)
 			}
 
-			// Constant as an aggregate argument: the surviving unit row carries
+			// Constant as an aggregate argument: the surviving unit tuple carries
 			// the rendered constant, so the count is 1.
 			results, err = executor.CollectTuples(db.Query(
 				`[:find (count ?min) :in $ ?min :where [(> ?min 5)]]`, int64(10)))
@@ -270,7 +270,7 @@ func TestConstantInputRenderedInFind(t *testing.T) {
 func TestExecuteQueryWithScalarInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -317,7 +317,7 @@ func TestExecuteQueryWithScalarInput(t *testing.T) {
 func TestExecuteQueryWithMultipleScalarInputs(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -370,7 +370,7 @@ func TestExecuteQueryWithMultipleScalarInputs(t *testing.T) {
 func TestExecuteQueryWithCollectionInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// :person/likes is CardinalityMany — multiple values per entity
 			s := schema.NewSchema()
@@ -427,7 +427,7 @@ func TestExecuteQueryWithCollectionInput(t *testing.T) {
 func TestExecuteQueryWithTupleInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -468,7 +468,7 @@ func TestExecuteQueryWithTupleInput(t *testing.T) {
 func TestExecuteQueryWithRelationInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -510,16 +510,16 @@ func TestExecuteQueryWithRelationInput(t *testing.T) {
 	}
 }
 
-// TestRelationInputAcceptsInterfaceWrappedRows pins the relation-input
-// admission for rows whose static element type is interface{} — the only
+// TestRelationInputAcceptsInterfaceWrappedTuples pins the relation-input
+// admission for tuples whose static element type is interface{} — the only
 // shape EDN parsing produces ([]interface{} at every nesting level), and an
 // ordinary shape for Go callers using []any. Reflection on a []interface{}
 // element yields Kind Interface, not Slice; the admission must unwrap it
 // (BUG_CLI_RELATION_INPUT_EDN_REJECTED).
-func TestRelationInputAcceptsInterfaceWrappedRows(t *testing.T) {
+func TestRelationInputAcceptsInterfaceWrappedTuples(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			alice := datalog.NewIdentity("wrapped-alice")
@@ -532,8 +532,8 @@ func TestRelationInputAcceptsInterfaceWrappedRows(t *testing.T) {
 				t.Fatalf("Failed to commit: %v", err)
 			}
 
-			// Rows wrapped as []interface{} elements — Bob's row carries a
-			// wrong age, so only Alice's row joins.
+			// Tuples wrapped as []interface{} elements — Bob's tuple carries a
+			// wrong age, so only Alice's tuple joins.
 			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e
 		  :in $ [[?name ?target-age] ...]
@@ -545,7 +545,7 @@ func TestRelationInputAcceptsInterfaceWrappedRows(t *testing.T) {
 				},
 			))
 			if err != nil {
-				t.Fatalf("Query with interface-wrapped rows failed: %v", err)
+				t.Fatalf("Query with interface-wrapped tuples failed: %v", err)
 			}
 			if len(results) != 1 {
 				t.Fatalf("Expected 1 result (Alice), got %d: %v", len(results), results)
@@ -565,7 +565,7 @@ func TestRelationInputAcceptsInterfaceWrappedRows(t *testing.T) {
 func TestExecuteQueryWithTimeInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add price data
 			tx := db.NewTransaction()
@@ -634,7 +634,7 @@ func TestExecuteQueryWithTimeInput(t *testing.T) {
 func TestExecuteQueryInputErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tests := []struct {
 				name    string

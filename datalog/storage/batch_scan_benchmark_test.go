@@ -10,7 +10,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// BenchmarkBatchScanning compares regular iterator reuse vs batch scanning
+// BenchmarkBatchScanning measures the binding-driven scan of an attribute over
+// 2,500 bindings. PERFORMANCE_STATUS.md cites it by full name as
+// BatchScanning/NoConstraints, so the name is load-bearing.
 func BenchmarkBatchScanning(b *testing.B) {
 	// Create test database
 	tempDir := b.TempDir()
@@ -65,78 +67,8 @@ func BenchmarkBatchScanning(b *testing.B) {
 		},
 	}
 
-	// Test with day=3 constraint
-	constraint := &timeExtractionConstraint{
-		position:  2,
-		extractFn: "day",
-		expected:  int64(3),
-	}
-
-	// Benchmark regular iterator reuse (force by temporarily lowering threshold)
-	b.Run("RegularIteratorReuse", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			// Get all 2,500 bars
-			symbolRel, _ := matcher.Match(query.PatternQuery(symbolPattern), nil)
-
-			// Force regular iterator reuse by modifying the matcher temporarily
-			// This simulates the old behavior
-			oldThreshold := 10000 // Set high threshold to force regular reuse
-			_ = oldThreshold      // Use it to avoid compiler warning
-
-			timeRel, _ := matcher.MatchWithConstraints(
-				query.PatternQuery(timePattern),
-				executor.Relations{symbolRel},
-				[]executor.StorageConstraint{constraint},
-			)
-
-			// Count results
-			count := 0
-			it := timeRel.Iterator()
-			for it.Next() {
-				count++
-			}
-
-			if count != 500 {
-				b.Errorf("Expected 500, got %d", count)
-			}
-		}
-	})
-
-	// Benchmark batch scanning (should use it automatically for 2,500 bindings)
-	b.Run("BatchScanning", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			// Get all 2,500 bars
-			symbolRel, _ := matcher.Match(query.PatternQuery(symbolPattern), nil)
-
-			// Should automatically use batch scanning (threshold is 100)
-			timeRel, _ := matcher.MatchWithConstraints(
-				query.PatternQuery(timePattern),
-				executor.Relations{symbolRel},
-				[]executor.StorageConstraint{constraint},
-			)
-
-			// Count results
-			count := 0
-			it := timeRel.Iterator()
-			for it.Next() {
-				count++
-			}
-
-			if count != 500 {
-				b.Errorf("Expected 500, got %d", count)
-			}
-		}
-	})
-
-	// Also test without constraints to see the overhead
 	b.Run("NoConstraints", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -156,7 +88,10 @@ func BenchmarkBatchScanning(b *testing.B) {
 	})
 }
 
-// BenchmarkBatchScanScaling tests how batch scanning scales with different binding counts
+// BenchmarkBatchScanScaling measures how binding-driven scans scale with binding
+// count. The sizes span chooseJoinStrategy's 1000-binding boundary, so the series
+// covers both HashJoinScan and MergeJoin. The name says "batch scan" because
+// archived benchmark records cite it by that name; renaming it orphans them.
 func BenchmarkBatchScanScaling(b *testing.B) {
 	tempDir := b.TempDir()
 	db, err := NewDatabase(tempDir)
@@ -195,7 +130,7 @@ func BenchmarkBatchScanScaling(b *testing.B) {
 		}
 
 		b.Run(fmt.Sprintf("Size-%d", size), func(b *testing.B) {
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {

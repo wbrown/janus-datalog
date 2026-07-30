@@ -47,7 +47,7 @@ func TestCardinalityMany_ByteValues(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query — should return both without panicking
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -108,7 +108,7 @@ func TestCardinalityMany_ByteValues_Retract(t *testing.T) {
 	require.NoError(t, err)
 
 	// Only v1 should remain
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{

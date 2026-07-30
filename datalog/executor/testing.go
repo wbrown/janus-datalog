@@ -16,8 +16,9 @@ type TestExecutorVariant struct {
 	Opts planner.PlannerOptions
 }
 
-// DualTestExecutorVariants returns executor variants for testing.
-// Now returns only the QueryExecutor variant since the legacy path was removed.
+// DualTestExecutorVariants returns the executor configurations a test runs its
+// assertions against, one subtest per variant. Callers range over the result
+// rather than naming a configuration, so the count is not part of the contract.
 // Exported for use by external test packages.
 func DualTestExecutorVariants() []TestExecutorVariant {
 	return []TestExecutorVariant{
@@ -28,8 +29,8 @@ func DualTestExecutorVariants() []TestExecutorVariant {
 	}
 }
 
-// DualTestExecutorVariantsWithBase returns variants with additional base options applied.
-// Now returns only the QueryExecutor variant since the legacy path was removed.
+// DualTestExecutorVariantsWithBase returns the same variants with base as the
+// starting options for each.
 // Exported for use by external test packages.
 func DualTestExecutorVariantsWithBase(base planner.PlannerOptions) []TestExecutorVariant {
 	return []TestExecutorVariant{

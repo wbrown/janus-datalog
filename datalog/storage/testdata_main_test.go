@@ -10,8 +10,14 @@ import (
 
 // TestMain runs before all tests and ensures test database exists
 func TestMain(m *testing.M) {
-	// Check if test database exists
-	dbPath := "testdata/ohlc_benchmark.db"
+	// Check if test database exists. The path is resolved the same way the
+	// builder resolves it, so this cannot check one location while the build
+	// step below fills another.
+	dbPath, err := resolveTestDataPath(BenchmarkDatabasePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Failed to locate the test database: %v\n", err)
+		os.Exit(1)
+	}
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		// Database doesn't exist - build it automatically
 		fmt.Println("📦 Test database not found, building it now...")

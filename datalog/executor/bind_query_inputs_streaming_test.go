@@ -25,10 +25,10 @@ func TestBindQueryInputsAcceptsUnknownSizeStreams(t *testing.T) {
 			).Iterator(),
 		)
 		bound := BindQueryInputs(q, []Relation{input})
-		rows, err := CollectTuples(bound, nil)
+		tuples, err := CollectTuples(bound, nil)
 		require.NoError(t, err)
 		require.Equal(t, []query.Symbol{x}, bound.Symbols())
-		require.Equal(t, [][]interface{}{{int64(7)}}, rows)
+		require.Equal(t, [][]interface{}{{int64(7)}}, tuples)
 	})
 
 	t.Run("tuple", func(t *testing.T) {
@@ -44,10 +44,10 @@ func TestBindQueryInputsAcceptsUnknownSizeStreams(t *testing.T) {
 			).Iterator(),
 		)
 		bound := BindQueryInputs(q, []Relation{input})
-		rows, err := CollectTuples(bound, nil)
+		tuples, err := CollectTuples(bound, nil)
 		require.NoError(t, err)
 		require.Equal(t, []query.Symbol{x, y}, bound.Symbols())
-		require.Equal(t, [][]interface{}{{int64(7), int64(8)}}, rows)
+		require.Equal(t, [][]interface{}{{int64(7), int64(8)}}, tuples)
 	})
 
 	t.Run("relation", func(t *testing.T) {
@@ -63,12 +63,12 @@ func TestBindQueryInputsAcceptsUnknownSizeStreams(t *testing.T) {
 			).Iterator(),
 		)
 		bound := BindQueryInputs(q, []Relation{input})
-		rows, err := CollectTuples(bound, nil)
+		tuples, err := CollectTuples(bound, nil)
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{
 			{int64(1), int64(2)},
 			{int64(3), int64(4)},
-		}, rows)
+		}, tuples)
 	})
 
 	t.Run("collection", func(t *testing.T) {
@@ -87,9 +87,9 @@ func TestBindQueryInputsAcceptsUnknownSizeStreams(t *testing.T) {
 		require.NotPanics(t, func() {
 			bound = BindQueryInputs(q, []Relation{input})
 		})
-		rows, err := CollectTuples(bound, nil)
+		tuples, err := CollectTuples(bound, nil)
 		require.NoError(t, err)
-		require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}}, rows)
+		require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}}, tuples)
 	})
 }
 

@@ -46,12 +46,12 @@ func BenchmarkReadyPredicateScheduling(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	warmRows, err := executor.CollectTuples(warm, nil)
+	warmTuples, err := executor.CollectTuples(warm, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
-	if len(warmRows) != 99 {
-		b.Fatalf("warmup got %d rows, want 99", len(warmRows))
+	if len(warmTuples) != 99 {
+		b.Fatalf("warmup got %d tuples, want 99", len(warmTuples))
 	}
 
 	b.ReportAllocs()
@@ -61,12 +61,12 @@ func BenchmarkReadyPredicateScheduling(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		rows, err := executor.CollectTuples(result, nil)
+		tuples, err := executor.CollectTuples(result, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
-		if len(rows) != 99 {
-			b.Fatalf("got %d rows, want 99", len(rows))
+		if len(tuples) != 99 {
+			b.Fatalf("got %d tuples, want 99", len(tuples))
 		}
 	}
 }

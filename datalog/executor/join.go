@@ -8,8 +8,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Note: Join settings are now managed by ExecutorOptions in options.go
-
 // hashJoinIterator implements streaming hash join execution
 //
 // CONCURRENCY: This iterator is NOT thread-safe. It maintains mutable state
@@ -17,7 +15,7 @@ import (
 // by concurrent access. Each goroutine must create its own iterator by calling
 // Relation.Iterator(), which returns independent iterator instances.
 type hashJoinIterator struct {
-	buildIndex  *groupedRowIndex
+	buildIndex  *groupedTupleIndex
 	probeIt     Iterator
 	buildErr    error // deferred error captured from the (eagerly consumed) build relation
 	seen        *TupleKeyMap
@@ -92,7 +90,11 @@ func (it *hashJoinIterator) Next() bool {
 
 		// Need next probe tuple
 		if !it.probeIt.Next() {
-			it.emitProbeAnnotation()
+			// metrics is allocated only when a collector exists, so its
+			// presence is the existence guard on this path.
+			if it.metrics != nil {
+				it.emitProbeAnnotation()
+			}
 			return false
 		}
 
@@ -103,7 +105,7 @@ func (it *hashJoinIterator) Next() bool {
 
 		// Only copy when the probe iterator reuses its tuple workspace. A
 		// materialized probe returns stable tuples (RequiresCopy()==false), so
-		// the copy is skipped — saving one alloc per probe row. Values read
+		// the copy is skipped — saving one alloc per probe tuple. Values read
 		// from currentProbeTuple are consumed before the next probeIt.Next()
 		// (combineTuplesIndexed copies them into fresh result slices), so a
 		// reused buffer only needs copying when the iterator says so.
@@ -113,7 +115,7 @@ func (it *hashJoinIterator) Next() bool {
 			it.currentProbeTuple = tupleCopy
 		}
 
-		// Look up matches in the grouped build rows — a positional probe, so
+		// Look up matches in the grouped build tuples — a positional probe, so
 		// no key materializes, and a hit is a subslice of the shared backing.
 		if matches := it.buildIndex.probe(it.currentProbeTuple); len(matches) > 0 {
 			it.matches = matches
@@ -135,7 +137,9 @@ func (it *hashJoinIterator) Tuple() Tuple {
 func (it *hashJoinIterator) Close() error {
 	if !it.closed {
 		it.closed = true
-		it.emitProbeAnnotation()
+		if it.metrics != nil {
+			it.emitProbeAnnotation()
+		}
 		if it.probeIt != nil {
 			return it.probeIt.Close()
 		}
@@ -153,12 +157,17 @@ func (it *hashJoinIterator) Error() error {
 	return nil
 }
 
+// emitProbeAnnotation reports the probe's counters. Its callers guard on
+// metrics, which is allocated only when a handler exists (see the construction
+// below), so its presence is what "annotations are on" means on this path. What
+// remains here is the once-only latch: exhaustion and Close both reach this, and
+// the counters belong to whichever arrives first.
 func (it *hashJoinIterator) emitProbeAnnotation() {
-	if it.metrics == nil || it.metrics.emitted || it.options.Collector == nil {
+	if it.metrics.emitted {
 		return
 	}
 	it.metrics.emitted = true
-	it.options.Collector.Add(annotations.Event{
+	it.options.Handler(annotations.Event{
 		Name: annotations.JoinProbe,
 		Data: map[string]interface{}{
 			"tuple_count":   it.metrics.probeCount,
@@ -169,17 +178,20 @@ func (it *hashJoinIterator) emitProbeAnnotation() {
 	})
 }
 
+// emitJoinStrategyAnnotation reports which join shape was chosen and what it
+// was chosen over. Callers guard on the handler being non-nil.
+//
+// left and right are rendered by type, not by value: the datum is which
+// Relation implementation each side is, and a Relation is a live stream that
+// must not be spent to describe itself.
 func emitJoinStrategyAnnotation(
-	opts ExecutorOptions,
+	handler annotations.Handler,
 	left, right Relation,
 	joinSymbols []query.Symbol,
 	mode, buildSide string,
 	buildKeyUnique bool,
 ) {
-	if opts.Collector == nil {
-		return
-	}
-	opts.Collector.Add(annotations.Event{
+	handler(annotations.Event{
 		Name: annotations.JoinStrategy,
 		Data: map[string]interface{}{
 			"mode":             mode,
@@ -199,14 +211,19 @@ func emitJoinStrategyAnnotation(
 func HashJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 	// Try to get options from either relation
 	opts := left.Options()
-	if opts == (ExecutorOptions{}) {
+	if !opts.populated() {
 		opts = right.Options()
 	}
 	return HashJoinWithOptions(left, right, joinSyms, opts)
 }
 
-// HashJoinWithOptions performs a hash join with explicit options
-func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts ExecutorOptions) Relation {
+// HashJoinWithOptions performs a hash join with explicit options, reporting its
+// strategy and probe counters through opts.Handler when one is set.
+func HashJoinWithOptions(
+	left, right Relation,
+	joinSyms []query.Symbol,
+	opts ExecutorOptions,
+) Relation {
 	// Default capacity for unknown sizes (-1)
 	const defaultCapacity = 1000
 
@@ -227,7 +244,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		if leftIndices[i] < 0 || rightIndices[i] < 0 {
 			// Join symbol not found - return empty relation with options
 			opts := left.Options()
-			if opts == (ExecutorOptions{}) {
+			if !opts.populated() {
 				opts = right.Options()
 			}
 			return NewMaterializedRelationWithOptions(nil, nil, opts)
@@ -236,9 +253,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 
 	// Determine output symbols and the right-side projection plan in a
 	// single pass: positions in right.Symbols() that are not join symbols
-	// both append to outputSyms (the result schema) and to
+	// both append to outputSyms (the result relation's symbols) and to
 	// rightNonJoinIndices (the gather indices used by combineTuplesIndexed
-	// on every matched row). Precomputing these here turns the per-row
+	// on every matched tuple). Precomputing these here turns the per-tuple
 	// inner loop into a pure indexed copy.
 	leftSyms := left.Symbols()
 	outputSyms := append([]query.Symbol{}, leftSyms...)
@@ -305,11 +322,13 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	if buildIsLeft {
 		buildSide = "left"
 	}
-	emitJoinStrategyAnnotation(opts, left, right, joinSyms, mode, buildSide, buildKeysUnique)
+	if opts.Handler != nil {
+		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, mode, buildSide, buildKeysUnique)
+	}
 
-	// Build phase - collect the build rows once, then group them by join-key
-	// hash into contiguous spans of one shared backing (groupedRowIndex).
-	// This is a pure relational join: every build row is preserved. CRDT/temporal
+	// Build phase - collect the build tuples once, then group them by join-key
+	// hash into contiguous spans of one shared backing (groupedTupleIndex).
+	// This is a pure relational join: every build tuple is preserved. CRDT/temporal
 	// resolution is the storage layer's responsibility (EATV ordering), never
 	// inferred here from a symbol's name.
 	// Pre-size based on build relation size to avoid slice growth
@@ -323,7 +342,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			collectCap = 256 // Default if not configured
 		}
 	}
-	buildRows := make([]Tuple, 0, collectCap)
+	buildTuples := make([]Tuple, 0, collectCap)
 
 	// CRITICAL: Check if build relation was already consumed
 	// This should never happen - it indicates a bug in the executor
@@ -339,6 +358,19 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		}
 	}
 
+	// copyCount/passthruCount feed the JoinBuildCopy annotation below; only
+	// track them when a handler will read them. Inlined into the build loop
+	// to avoid a per-join heap allocation.
+	trackCopy := opts.Handler != nil
+	var copyCount, passthruCount int
+	// The interval the copies were made in: draining the build relation. It ends
+	// at the loop rather than at the emit, which happens after grouping — a cost
+	// the copy statistics do not describe.
+	var buildStart, buildEnd time.Time
+	if trackCopy {
+		buildStart = time.Now()
+	}
+
 	// Create build iterator - single iteration only
 	// Close explicitly after build loop, not deferred. The build relation may share
 	// underlying iterators with the probe relation (e.g., OrFallbackRelation wraps the
@@ -348,11 +380,6 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// Check if we need to copy tuples from the build relation
 	// This avoids unnecessary copies when the source guarantees stable tuples
 	needsCopy := buildRel.RequiresCopy()
-	// copyCount/passthruCount feed the JoinBuildCopy annotation below; only
-	// track them when a collector will read them. Inlined into the build loop
-	// (no closure) to avoid a per-join heap allocation.
-	trackCopy := opts.Collector != nil
-	var copyCount, passthruCount int
 
 	for buildIt.Next() {
 		tuple := buildIt.Tuple()
@@ -366,9 +393,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		} else if trackCopy {
 			passthruCount++
 		}
-		buildRows = append(buildRows, tuple)
+		buildTuples = append(buildTuples, tuple)
 	}
-	buildCount := len(buildRows)
+	buildCount := len(buildTuples)
 
 	// Capture any deferred error from the build scan before closing it, so a
 	// build-side failure isn't lost (it propagates onto the join result).
@@ -381,21 +408,25 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	if closeErr := buildIt.Close(); buildErr == nil {
 		buildErr = closeErr
 	}
+	if trackCopy {
+		buildEnd = time.Now()
+	}
 
-	// Group the build rows by join-key hash. The rows carry their own key
-	// values, so no key materializes per row and fanout needs no per-key
-	// slices — probes verify against the rows in place.
-	buildIndex := groupRows(buildRows, probeIndices, buildIndices)
+	// Group the build tuples by join-key hash. The tuples carry their own key
+	// values, so no key materializes per tuple and fanout needs no per-key
+	// slices — probes verify against the tuples in place.
+	buildIndex := groupTuples(buildTuples, probeIndices, buildIndices)
 	if buildKeysUnique && !buildIndex.keysUnique() {
 		panic("hash join build relation violated its candidate-key guarantee")
 	}
 
-	// Emit annotation for copy statistics if collector is available
-	if opts.Collector != nil && (copyCount > 0 || passthruCount > 0) {
-		opts.Collector.Add(annotations.Event{
-			Name:  annotations.JoinBuildCopy,
-			Start: time.Now(),
-			End:   time.Now(),
+	// Emit annotation for copy statistics if a handler is available
+	if opts.Handler != nil && (copyCount > 0 || passthruCount > 0) {
+		opts.Handler(annotations.Event{
+			Name:    annotations.JoinBuildCopy,
+			Start:   buildStart,
+			End:     buildEnd,
+			Latency: buildEnd.Sub(buildStart),
 			Data: map[string]interface{}{
 				"copied":        copyCount,
 				"passthru":      passthruCount,
@@ -403,8 +434,8 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			},
 		})
 	}
-	if opts.Collector != nil {
-		opts.Collector.Add(annotations.Event{
+	if opts.Handler != nil {
+		opts.Handler(annotations.Event{
 			Name: annotations.JoinBuild,
 			Data: map[string]interface{}{
 				"tuple_count":     buildCount,
@@ -447,7 +478,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			options:             opts,
 			matchIdx:            0,
 		}
-		if opts.Collector != nil {
+		if opts.Handler != nil {
 			iter.metrics = &hashJoinMetrics{}
 		}
 
@@ -457,7 +488,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		return NewStreamingRelationWithProperties(outputSyms, iter, opts, resultProperties)
 	}
 
-	// Materialized mode (original implementation)
+	// Materialized mode
 	// Use efficient TupleKeyMap for deduplication
 	var seen *TupleKeyMap
 	if len(resultProperties.Keys) == 0 {
@@ -497,7 +528,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		probeTuple := probeIt.Tuple()
 		probeCount++
 
-		// Positional probe against the grouped build rows — no key
+		// Positional probe against the grouped build tuples — no key
 		// materializes, and the hit is a subslice of the shared backing.
 		matches := buildIndex.probe(probeTuple)
 		if len(matches) == 0 {
@@ -524,8 +555,8 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	if closeErr := probeIt.Close(); probeErr == nil {
 		probeErr = closeErr
 	}
-	if opts.Collector != nil {
-		opts.Collector.Add(annotations.Event{
+	if opts.Handler != nil {
+		opts.Handler(annotations.Event{
 			Name: annotations.JoinProbe,
 			Data: map[string]interface{}{
 				"tuple_count":   probeCount,
@@ -560,14 +591,14 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 
 	// Extract options from left relation
 	opts := left.Options()
-	if opts == (ExecutorOptions{}) {
+	if !opts.populated() {
 		opts = right.Options()
 	}
 
 	// Build set of keys from right relation using efficient TupleKeyMap.
 	// If the right side fails, the key set is incomplete — every filter decision
 	// becomes untrustworthy (semi-join would drop real matches), so surface the
-	// error and trust no result rows.
+	// error and trust no result tuples.
 	rightKeys := NewTupleKeyMapWithCapacity(right.Size())
 	rightIt := right.Iterator()
 	for rightIt.Next() {
@@ -621,15 +652,15 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 
 	// Extract options from left relation
 	opts := left.Options()
-	if opts == (ExecutorOptions{}) {
+	if !opts.populated() {
 		opts = right.Options()
 	}
 
 	// Build set of keys from right relation using efficient TupleKeyMap.
 	// If the right side fails, the key set is incomplete — an anti-join would then
-	// report false "no match" rows (a missing key from a decode failure is
+	// report false "no match" tuples (a missing key from a decode failure is
 	// indistinguishable from a real absence), so surface the error and trust no
-	// result rows.
+	// result tuples.
 	rightKeys := NewTupleKeyMapWithCapacity(right.Size())
 	rightIt := right.Iterator()
 	for rightIt.Next() {
@@ -698,9 +729,7 @@ func isStreaming(rel Relation) bool {
 // The projection plan (secondNonJoinIndices, resultWidth) is invariant
 // for the lifetime of a hash join — it depends only on the join's
 // symbols, not on any tuple — so it is computed once in
-// HashJoinWithOptions and reused for every matched row. This replaces the
-// previous combineTuples which allocated a joinSet map and walked
-// rightSyms twice on every call.
+// HashJoinWithOptions and reused for every matched tuple.
 func combineTuplesIndexed(first, second Tuple, secondNonJoinIndices []int, resultWidth int) Tuple {
 	result := make(Tuple, resultWidth)
 	copy(result, first)
@@ -715,7 +744,7 @@ func crossProduct(left, right Relation) Relation {
 	// Warning: This can be very expensive!
 	// Extract options from left relation
 	opts := left.Options()
-	if opts == (ExecutorOptions{}) {
+	if !opts.populated() {
 		opts = right.Options()
 	}
 

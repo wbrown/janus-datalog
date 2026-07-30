@@ -45,7 +45,7 @@ func notSpanningFixture(t *testing.T, d *Database) (flagged, unflagged, otherFla
 func TestNotSpanningDisjointGroups(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -71,7 +71,7 @@ func TestNotSpanningDisjointGroups(t *testing.T) {
 func TestNotJoinSpanningDisjointGroups(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -93,12 +93,12 @@ func TestNotJoinSpanningDisjointGroups(t *testing.T) {
 
 // TestNotBodyConsumesInBoundParameter pins the environment leg of the class:
 // the correlate reaches the query through :in. Pattern-consumed, it rides
-// the bound-input relation as a column in its own group; the NOT's bridging
+// the bound-input relation as a symbol in its own group; the NOT's bridging
 // must pull that group in exactly as for a WHERE-bound correlate.
 func TestNotBodyConsumesInBoundParameter(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -138,11 +138,11 @@ func notSpanningExpected(unflagged, otherFlag datalog.Identity) map[string]bool 
 // TestNotJoinDeclaredEnvHeaderPatternProvided pins shape 1: the header
 // declares the :in-bound symbol and the body pattern provides it. Plainly
 // valid Datomic; the declaration matches trivially against the environment's
-// single row.
+// single tuple.
 func TestNotJoinDeclaredEnvHeaderPatternProvided(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -167,7 +167,7 @@ func TestNotJoinDeclaredEnvHeaderPatternProvided(t *testing.T) {
 func TestNotJoinDeclaredEnvHeaderPredicateConsumed(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -193,7 +193,7 @@ func TestNotJoinDeclaredEnvHeaderPredicateConsumed(t *testing.T) {
 func TestNotBodyPredicateConsumesInBoundParameter(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -211,14 +211,15 @@ func TestNotBodyPredicateConsumesInBoundParameter(t *testing.T) {
 	}
 }
 
-// TestNotJoinOmittedHeaderBodyProvidesInBoundParameter pins shape 3, green
-// before the ruling and required to stay green: the header omits the
-// :in-bound symbol, the body pattern provides it, and the executor's
-// environment bridging correlates it.
+// TestNotJoinOmittedHeaderBodyProvidesInBoundParameter pins shape 3: the
+// header omits the :in-bound symbol, the body pattern provides it, and the
+// executor's environment bridging correlates it. This shape is unaffected
+// by the header-env-binding ruling — a header may omit a symbol the body
+// itself binds.
 func TestNotJoinOmittedHeaderBodyProvidesInBoundParameter(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -244,7 +245,7 @@ func TestNotJoinOmittedHeaderBodyProvidesInBoundParameter(t *testing.T) {
 func TestNotJoinOmittedHeaderPredicateConsumptionRejected(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			notSpanningFixture(t, d)
 
 			_, err := d.Query(`[:find ?e
@@ -272,7 +273,7 @@ func TestNotJoinOmittedHeaderPredicateConsumptionRejected(t *testing.T) {
 func TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			notSpanningFixture(t, d)
 
 			_, err := d.Query(`[:find ?e
@@ -290,13 +291,12 @@ func TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors(t *testing.T) {
 }
 
 // TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors pins the same rule for a
-// WHERE-bound header symbol — the sibling shape, which diverged before the
-// environment widening: the algebra compiler rejected it while the executor
-// keyed the anti-join on it vacuously.
+// WHERE-bound header symbol — the sibling shape: both modes must reject it,
+// not let the executor key the anti-join on the unused symbol vacuously.
 func TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			notSpanningFixture(t, d)
 
 			_, err := d.Query(`[:find ?e
@@ -318,7 +318,7 @@ func TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors(t *testing.T) {
 func TestNotJoinHeaderSymbolBoundNowhereErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			notSpanningFixture(t, d)
 
 			_, err := d.Query(`[:find ?e
@@ -341,7 +341,7 @@ func TestNotJoinHeaderSymbolBoundNowhereErrors(t *testing.T) {
 func TestNotBodyPredicateConsumesUnboundSymbolErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			notSpanningFixture(t, d)
 
 			_, err := d.Query(`[:find ?e
@@ -356,7 +356,7 @@ func TestNotBodyPredicateConsumesUnboundSymbolErrors(t *testing.T) {
 	}
 }
 
-// collectEntityFlagResults collects two-column (?e ?flag) rows into a set
+// collectEntityFlagResults collects two-symbol (?e ?flag) tuples into a set
 // keyed "identity|flag".
 func collectEntityFlagResults(t *testing.T, rel executor.Relation) map[string]bool {
 	t.Helper()
@@ -364,12 +364,12 @@ func collectEntityFlagResults(t *testing.T, rel executor.Relation) map[string]bo
 	iter := rel.Iterator()
 	defer iter.Close()
 	for iter.Next() {
-		row := iter.Tuple()
-		require.Len(t, row, 2)
-		id, ok := row[0].(datalog.Identity)
-		require.True(t, ok, "?e must be an Identity, got %T", row[0])
-		flag, ok := row[1].(string)
-		require.True(t, ok, "?flag must be a string, got %T", row[1])
+		tuple := iter.Tuple()
+		require.Len(t, tuple, 2)
+		id, ok := tuple[0].(datalog.Identity)
+		require.True(t, ok, "?e must be an Identity, got %T", tuple[0])
+		flag, ok := tuple[1].(string)
+		require.True(t, ok, "?flag must be a string, got %T", tuple[1])
 		got[id.String()+"|"+flag] = true
 	}
 	require.NoError(t, iter.Error())
@@ -379,11 +379,11 @@ func collectEntityFlagResults(t *testing.T, rel executor.Relation) map[string]bo
 // TestNotJoinDeclaredEnvHeaderCollectionInput pins the iterated-input leg of
 // shape 1: ?flag arrives as a collection input, which binds as a data
 // relation. The result must be the union of per-value anti-joins — a fix
-// that only works for a single scalar fails the cold-value rows.
+// that only works for a single scalar fails the cold-value tuples.
 func TestNotJoinDeclaredEnvHeaderCollectionInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			flagged, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e ?flag
@@ -414,7 +414,7 @@ func TestNotJoinDeclaredEnvHeaderCollectionInput(t *testing.T) {
 func TestNotJoinScalarEnvWithCollectionDataInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -435,11 +435,11 @@ func TestNotJoinScalarEnvWithCollectionDataInput(t *testing.T) {
 // TestNotJoinScalarEnvWithRelationInputIteration pins the per-Run
 // environment path: a relation input iterates the query per tuple, and each
 // Run's environment carries the scalar ?flag alongside the Run's ?kind. The
-// "other" Run matches nothing; the union is the "thing" Run's rows.
+// "other" Run matches nothing; the union is the "thing" Run's tuples.
 func TestNotJoinScalarEnvWithRelationInputIteration(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e

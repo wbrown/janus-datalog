@@ -40,6 +40,81 @@ go tool pprof -top -cum -nodecount=40 /tmp/exec.test <prof>.prof
 
 ## Current baselines
 
+### Typed scan-bound campaign A/B (`typed_scan_bound_campaign_*_2026-07-30.txt`)
+
+Same-session A/B over the whole of PR #114 (38 commits): `baseline` = the merge-base
+with main (`88dadaa`, the fork point), `after` = branch HEAD (`e5e92cc`), the base
+side run from a `git worktree` so nothing was stashed or switched. Sequential and
+non-contending — the baseline finished before the after side started.
+
+Machine: Apple M5, go1.26.3 darwin/arm64, n=10, `benchtime` default.
+
+| Stem | What | n |
+|------|------|---|
+| `typed_scan_bound_campaign_{baseline,after,benchstat}_2026-07-30.txt` | complex checkpoint, fork point vs branch HEAD | 10 |
+
+| Metric | `88dadaa` | `e5e92cc` | |
+|--------|----------:|----------:|---|
+| sec/op | 18.21m ± 3% | 17.84m ± 4% | ~ (p=0.247) |
+| B/op | 27.96Mi ± 0% | 27.74Mi ± 0% | **−0.79%** (p=0.000) |
+| allocs/op | 126.1k ± 0% | 124.5k ± 0% | **−1.26%** (p=0.000) |
+
+**No regression; a small real improvement in the deterministic columns.** Wall time
+is a wash and is not claimed. Bytes and allocations carry the result — ±0% spread,
+p=0.000, about 1,600 allocations per operation gone. The most likely source is the
+annotation-clock sweep, which pulled 21 unconditional `time.Now()` calls out of
+paths that can return having touched no storage.
+
+This measurement exists because the 2026-07-27 checkpoint was 23 commits behind
+HEAD, and two of those commits were first-order risks: the value-domain enforcement
+arc, which added a panicking `typeRank` default and two-sided domain checks to
+`ValuesEqual`/`hashValue`/`CompareValues` — called per tuple, per join, per dedup,
+per sort — and the arc that moved V out of the scan prefix, which changes read
+volume. Neither shows up here.
+
+**What this does not measure.** One query shape over one fixture. It exercises
+phase planning, joins, same-entity bundles, correlated and nested subqueries,
+conditional aggregation, get-else, or-default, expressions, ordering and bounded
+Top-N — but it uses no cardinality-vector attribute, which is exactly where the
+value-domain arc's element-wise recursive comparison lives. A vector-heavy shape is
+the one place a cost could still hide. And by construction this compares within the
+correctness-equivalence class: several of the campaign's changes fixed wrong
+answers, and the speed of a wrong answer is not a baseline.
+
+Independently, the baseline numbers here reproduce the recorded 2026-07-27
+checkpoint (17.98m / 27.95Mi / 126.1k) almost exactly, which cross-validates that
+artifact and its stated conclusion that the read-seam conversion is invisible to
+this benchmark.
+
+### Typed scan-bound checkpoint (`typed_scan_bound_checkpoint_*_2026-07-27.txt`)
+
+`BenchmarkComplexQueryCheckpoint` on PR #114's branch HEAD (`0c30a7a`, the typed
+read-seam conversion), against `scan_set_semantics_after_2026-07-22.txt` as the
+baseline rather than a fresh paired run.
+
+Machine: Apple M5, go1.26.3 darwin/arm64, n=10, `benchtime` default.
+
+| Stem | What | n |
+|------|------|---|
+| `typed_scan_bound_checkpoint_2026-07-27.txt` | complex checkpoint at branch HEAD | 10 |
+| `typed_scan_bound_checkpoint_benchstat_2026-07-27.txt` | vs the 2026-07-22 baseline | 10 |
+
+| Metric | 2026-07-22 baseline | 2026-07-27 HEAD | |
+|--------|--------------------:|----------------:|---|
+| sec/op | 17.62m ± 5% | 17.98m ± 2% | ~ (p=0.089) |
+| B/op | 27.95Mi ± 0% | 27.95Mi ± 0% | ~ (p=0.684) |
+| allocs/op | 126.1k ± 0% | 126.1k ± 0% | +0.01% (p=0.000) |
+
+**This is a cross-session comparison, which the M3 Ultra rerun note below says to
+distrust — for wall time.** It does not weaken the conclusion here, because the
+two metrics that carry it are deterministic counts rather than timings: B/op and
+allocs/op are byte-identical and +12/op respectively, and neither depends on
+thermal state or machine load. The +12 allocations are a constant, not per-key,
+and reach p=0.000 only because the run-to-run variance on that counter is nil.
+The wall-time row is the one to re-measure paired if it ever matters; it reads
+marginally *slower* here, which is the direction a cross-session artifact would
+produce anyway.
+
 ### Correctness-campaign A/B (`*_correctness_campaign_*_2026-07-20.txt`)
 
 Same-session A/B measuring the fix/identity-hash-only correctness campaign (PR #112, 27 commits): `baseline` = the branch merge-base (`9bd60a4`, main at fork), `after` = branch HEAD (`d6d4721`), run back to back on the same machine so cross-session thermal artifacts (see the M3 Ultra rerun note below) cancel. Both sides carry the May–June perf findings identically, so the delta is attributable to the campaign alone.

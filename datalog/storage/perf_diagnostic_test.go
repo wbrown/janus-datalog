@@ -69,7 +69,7 @@ func BenchmarkHashJoinIteration(b *testing.B) {
 	// Warm up
 	_, _ = executor.CollectTuples(db.Query(`[:find ?e :where [?e :task/scenario ?s]]`))
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -119,7 +119,7 @@ func BenchmarkIteratorTupleAllocation(b *testing.B) {
 			}
 			_, _ = tx.Commit()
 
-			matcher := db.Matcher().(*BadgerMatcher)
+			matcher := db.Matcher().(*PatternMatcher)
 			pattern := &query.DataPattern{
 				Elements: []query.PatternElement{
 					query.Variable{Name: datalog.NewSymbol("?e")},

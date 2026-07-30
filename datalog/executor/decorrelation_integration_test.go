@@ -205,19 +205,19 @@ func TestHourlyOHLCDecorrelation(t *testing.T) {
 
 			// Verify each tuple matches
 			for i := 0; i < resultWithDecor.Size(); i++ {
-				rowDecor := resultWithDecor.Get(i)
-				rowNoDecor := resultNoDecor.Get(i)
+				tupleDecor := resultWithDecor.Get(i)
+				tupleNoDecor := resultNoDecor.Get(i)
 
-				if len(rowDecor) != len(rowNoDecor) {
+				if len(tupleDecor) != len(tupleNoDecor) {
 					t.Errorf("Tuple %d symbol count mismatch: decorrelated=%d, sequential=%d",
-						i, len(rowDecor), len(rowNoDecor))
+						i, len(tupleDecor), len(tupleNoDecor))
 					continue
 				}
 
-				for j := range rowDecor {
-					if rowDecor[j] != rowNoDecor[j] {
+				for j := range tupleDecor {
+					if tupleDecor[j] != tupleNoDecor[j] {
 						t.Errorf("Tuple %d, position %d mismatch: decorrelated=%v, sequential=%v",
-							i, j, rowDecor[j], rowNoDecor[j])
+							i, j, tupleDecor[j], tupleNoDecor[j])
 					}
 				}
 			}

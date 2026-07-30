@@ -16,6 +16,8 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/review_common.sh
 source "$SCRIPT_DIR/lib/review_common.sh"
+# shellcheck source=lib/edit_evidence.sh
+source "$SCRIPT_DIR/lib/edit_evidence.sh"
 
 INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name')
@@ -29,92 +31,6 @@ case "$FILE_PATH" in
         ;;
 esac
 
-# extract_func_names: read Go source on stdin, print one top-level func/method
-# name per line ("func Name(" and "func (recv Type) Name(" both reduce to
-# "Name"). Plain awk — portable to bash 3.2 / BSD awk, no gawk extensions.
-extract_func_names() {
-    awk '/^func / {
-        line = $0
-        sub(/^func /, "", line)
-        if (line ~ /^\(/) {
-            sub(/^\([^)]*\) /, "", line)
-        }
-        sub(/\(.*/, "", line)
-        if (line != "") print line
-    }'
-}
-
-# compute_test_evidence: deterministic ground truth for Rule 6/7 ("write
-# tests first"), replacing a blind spot where the reviewer could only see
-# whether a test was written recently by scanning a BOUNDED tail of the
-# conversation transcript — a long session pushes an earlier test-writing
-# turn out of that window, producing a false "no test written" verdict for
-# otherwise-correct test-first work (observed and corrected 2026-07-01).
-#
-# Instead of asking the reviewer to remember, check the one thing that's
-# always complete and current regardless of session length: the actual
-# sibling *_test.go files on disk. Diff old vs new content for newly-added
-# top-level func/method names, then grep the file's own directory for each.
-# This is purely additive to the existing transcript-based signal — it never
-# suppresses a real violation, it only hands the reviewer verified evidence
-# for cases the transcript window would otherwise miss.
-compute_test_evidence() {
-    local file_path="$1" old_content="$2" new_content="$3"
-
-    case "$file_path" in
-        *_test.go)
-            return 0
-            ;;
-        *.go)
-            ;;
-        *)
-            return 0
-            ;;
-    esac
-
-    local new_funcs old_funcs added_funcs
-    new_funcs=$(printf '%s\n' "$new_content" | extract_func_names | sort -u)
-    old_funcs=$(printf '%s\n' "$old_content" | extract_func_names | sort -u)
-    added_funcs=$(comm -23 <(printf '%s\n' "$new_funcs") <(printf '%s\n' "$old_funcs"))
-
-    if [ -z "$added_funcs" ]; then
-        return 0
-    fi
-
-    local dir found missing hit tf fn
-    dir=$(dirname "$file_path")
-    found=""
-    missing=""
-    while IFS= read -r fn; do
-        if [ -z "$fn" ]; then
-            continue
-        fi
-        hit=0
-        for tf in "$dir"/*_test.go; do
-            if [ -f "$tf" ]; then
-                if grep -q -- "$fn" "$tf" 2>/dev/null; then
-                    hit=1
-                    break
-                fi
-            fi
-        done
-        if [ "$hit" = "1" ]; then
-            found="$found $fn"
-        else
-            missing="$missing $fn"
-        fi
-    done <<< "$added_funcs"
-
-    if [ -n "$found" ]; then
-        printf 'DETERMINISTIC TEST-EXISTENCE CHECK (verified against the actual %s/*_test.go files on disk right now, not conversation memory): these newly-added symbols are already referenced by a sibling test file:%s. Treat Rule 6/7 as satisfied for them regardless of whether their test-writing turn is visible in the reasoning context below.\n' "$dir" "$found"
-    fi
-    if [ -n "$missing" ]; then
-        printf 'DETERMINISTIC TEST-EXISTENCE CHECK found NO sibling test-file reference for these newly-added symbols:%s -- Rule 6 applies to them on its own merits.\n' "$missing"
-    fi
-
-    return 0
-}
-
 # Build change description based on tool type.
 if [ "$TOOL_NAME" = "Edit" ]; then
     OLD_STRING=$(echo "$INPUT" | jq -r '.tool_input.old_string // empty')
@@ -126,6 +42,8 @@ $OLD_STRING
 NEW CODE:
 $NEW_STRING"
     TEST_EVIDENCE=$(compute_test_evidence "$FILE_PATH" "$OLD_STRING" "$NEW_STRING" 2>/dev/null) || TEST_EVIDENCE=""
+    COMMENT_EVIDENCE=$(compute_comment_evidence "$OLD_STRING" "$NEW_STRING" 2>/dev/null) || COMMENT_EVIDENCE=""
+    COMMENT_DELETION_EVIDENCE=$(compute_deleted_comment_evidence "$OLD_STRING" "$NEW_STRING" 2>/dev/null) || COMMENT_DELETION_EVIDENCE=""
 elif [ "$TOOL_NAME" = "Write" ]; then
     CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // empty')
     # A Write to a NEW file has no prior contents; don't let cat's failure abort
@@ -138,6 +56,8 @@ $OLD_CONTENTS
 CONTENT:
 $CONTENT"
     TEST_EVIDENCE=$(compute_test_evidence "$FILE_PATH" "$OLD_CONTENTS" "$CONTENT" 2>/dev/null) || TEST_EVIDENCE=""
+    COMMENT_EVIDENCE=$(compute_comment_evidence "$OLD_CONTENTS" "$CONTENT" 2>/dev/null) || COMMENT_EVIDENCE=""
+    COMMENT_DELETION_EVIDENCE=$(compute_deleted_comment_evidence "$OLD_CONTENTS" "$CONTENT" 2>/dev/null) || COMMENT_DELETION_EVIDENCE=""
 else
     exit 0
 fi
@@ -180,6 +100,22 @@ if [ -n "$TEST_EVIDENCE" ]; then
 ---
 
 $TEST_EVIDENCE"
+fi
+
+if [ -n "$COMMENT_EVIDENCE" ]; then
+    REVIEW_PROMPT="$REVIEW_PROMPT
+
+---
+
+$COMMENT_EVIDENCE"
+fi
+
+if [ -n "$COMMENT_DELETION_EVIDENCE" ]; then
+    REVIEW_PROMPT="$REVIEW_PROMPT
+
+---
+
+$COMMENT_DELETION_EVIDENCE"
 fi
 
 if [ -n "$RECENT_CONTEXT" ]; then

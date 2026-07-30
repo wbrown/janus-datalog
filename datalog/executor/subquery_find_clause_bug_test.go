@@ -148,7 +148,8 @@ func TestSubqueryFindClauseBugWithAnnotations(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var aggregationEvents []annotations.Event
-			handler := func(event annotations.Event) {
+			opts := mode.plannerOptions()
+			opts.Handler = func(event annotations.Event) {
 				if event.Name == annotations.AggregationExecuted {
 					aggregationEvents = append(aggregationEvents, event)
 				}
@@ -157,12 +158,14 @@ func TestSubqueryFindClauseBugWithAnnotations(t *testing.T) {
 				}
 			}
 
-			annotatedMatcher := WrapMatcher(matcher, handler)
-			exec := NewExecutorWithOptions(annotatedMatcher, nil, mode.plannerOptions())
+			// The matcher is built with the same options, so the relations it
+			// produces carry the handler to the operators that consume them —
+			// which is how the aggregation below reports. Execute wraps the
+			// matcher for its own Match() timing; that is not what delivers this.
+			matcher.options = ExecutorOptionsFromPlanner(opts)
+			exec := NewExecutorWithOptions(matcher, nil, opts)
 
-			ctx := NewContext(handler)
-
-			_, err := exec.ExecuteWithContext(ctx, q)
+			_, err := exec.Execute(q)
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
 			}

@@ -20,9 +20,9 @@ import (
 //	[:find ?e :where [?e :attr <literal>]]                      // pattern V
 //	[:find ?e :where [?e :attr ?v] [(= ?v <literal>)]]          // predicate
 //
-// A version-skew bug observed in the wild surfaced as the literal-pattern
-// form returning empty for keyword values while the predicate form found
-// the entity. Semantic equivalence of these two shapes is load-bearing
+// A version-skew bug surfaced as the literal-pattern form returning empty
+// for keyword values while the predicate form found the entity. Semantic
+// equivalence of these two shapes is load-bearing
 // for query authoring, and the asymmetry can hide in any value type
 // where the EDN parser's literal-handling diverges from the path taken
 // by values bound via `:in` parameters.
@@ -42,7 +42,7 @@ func TestLiteralValueMatchesPredicateForm(t *testing.T) {
 
 	cases := []struct {
 		name       string
-		schemaType schema.ValueType
+		schemaType datalog.Keyword
 		match      interface{}
 		other      interface{}
 		literal    string // EDN text for the matching value in pattern V position

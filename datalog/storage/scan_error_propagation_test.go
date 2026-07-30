@@ -17,9 +17,12 @@ type deferredErrorIterator struct {
 func (it *deferredErrorIterator) Next() bool                     { return false }
 func (it *deferredErrorIterator) Datom() (*datalog.Datom, error) { return nil, nil }
 func (it *deferredErrorIterator) Close() error                   { return nil }
-func (it *deferredErrorIterator) Seek(key []byte)                {}
-func (it *deferredErrorIterator) ElementID() datalog.ElementID   { return datalog.ElementID{} }
-func (it *deferredErrorIterator) Error() error                   { return it.err }
+func (it *deferredErrorIterator) Seek(bound ScanBound) {
+	panic("deferredErrorIterator has no index to seek within")
+}
+func (it *deferredErrorIterator) ElementID() datalog.ElementID { return datalog.ElementID{} }
+func (it *deferredErrorIterator) Error() error                 { return it.err }
+func (it *deferredErrorIterator) Scanned() int                 { return 0 }
 
 // indexScanOverrideStore delegates to a real store but substitutes the
 // iterator returned by ScanKeysOnly for one index — models a failing scan on
@@ -30,18 +33,18 @@ type indexScanOverrideStore struct {
 	iter  Iterator
 }
 
-func (s *indexScanOverrideStore) ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error) {
-	if index == s.index {
+func (s *indexScanOverrideStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	if bound.Index == s.index {
 		return s.iter, nil
 	}
-	return s.Store.ScanKeysOnly(index, start, end)
+	return s.Store.ScanKeysOnly(bound)
 }
 
-func (s *indexScanOverrideStore) Scan(index IndexType, start, end []byte) (Iterator, error) {
-	if index == s.index {
+func (s *indexScanOverrideStore) Scan(bound ScanBound) (Iterator, error) {
+	if bound.Index == s.index {
 		return s.iter, nil
 	}
-	return s.Store.Scan(index, start, end)
+	return s.Store.Scan(bound)
 }
 
 // datomErrorIterator models a scan whose entry decode fails: Next() yields
@@ -60,9 +63,20 @@ func (it *datomErrorIterator) Next() bool {
 }
 func (it *datomErrorIterator) Datom() (*datalog.Datom, error) { return nil, it.err }
 func (it *datomErrorIterator) Close() error                   { return nil }
-func (it *datomErrorIterator) Seek(key []byte)                {}
-func (it *datomErrorIterator) ElementID() datalog.ElementID   { return datalog.ElementID{} }
-func (it *datomErrorIterator) Error() error                   { return nil }
+func (it *datomErrorIterator) Seek(bound ScanBound) {
+	panic("datomErrorIterator has no index to seek within")
+}
+func (it *datomErrorIterator) ElementID() datalog.ElementID { return datalog.ElementID{} }
+func (it *datomErrorIterator) Error() error                 { return nil }
+
+// Scanned reports the one position Next yields, so the fake's intake matches
+// what it actually handed out rather than reporting a flat zero.
+func (it *datomErrorIterator) Scanned() int {
+	if it.stepped {
+		return 1
+	}
+	return 0
+}
 
 // scanFailureShapes returns the two failure shapes every scan loop must
 // surface: a sticky deferred error (failed scan presenting as exhausted) and
@@ -123,7 +137,7 @@ func TestResolveMaxOtherTxForValueSurfacesScanErrors(t *testing.T) {
 	injected := fmt.Errorf("simulated AVET scan failure")
 	for name, iter := range scanFailureShapes(injected) {
 		t.Run(name, func(t *testing.T) {
-			matcher := NewBadgerMatcher(&indexScanOverrideStore{
+			matcher := NewPatternMatcher(&indexScanOverrideStore{
 				Store: store,
 				index: AVET,
 				iter:  iter,
@@ -133,7 +147,7 @@ func TestResolveMaxOtherTxForValueSurfacesScanErrors(t *testing.T) {
 			copy(aStorage[:], datalog.NewKeyword(":user/email").String())
 			except := Entity(datalog.NewIdentity("user:alice").Hash())
 
-			_, err := matcher.resolveMaxOtherTxForValue(aStorage, "a@example.com", except)
+			_, err := matcher.resolveMaxOtherTxForValue(aStorage, "a@example.com", except, DiscardIntake)
 			if err == nil {
 				t.Fatal("expected the scan failure to surface, got nil error")
 			}
@@ -151,7 +165,7 @@ func TestResolveAVLWWSurfacesScanErrors(t *testing.T) {
 	injected := fmt.Errorf("simulated AVET scan failure")
 	for name, iter := range scanFailureShapes(injected) {
 		t.Run(name, func(t *testing.T) {
-			matcher := NewBadgerMatcher(&indexScanOverrideStore{
+			matcher := NewPatternMatcher(&indexScanOverrideStore{
 				Store: store,
 				index: AVET,
 				iter:  iter,
@@ -159,10 +173,8 @@ func TestResolveAVLWWSurfacesScanErrors(t *testing.T) {
 
 			var aStorage Attribute
 			copy(aStorage[:], datalog.NewKeyword(":user/email").String())
-			v := "a@example.com"
-			vBytes := encodeValueForSearch(v, matcher.encoder)
 
-			_, _, err := matcher.resolveAVLWW(aStorage, vBytes, v)
+			_, _, err := matcher.resolveAVLWW(aStorage, "a@example.com", DiscardIntake)
 			if err == nil {
 				t.Fatal("expected the scan failure to surface, got nil error")
 			}
@@ -181,7 +193,7 @@ func TestPrefetchEntitiesSurfacesScanErrors(t *testing.T) {
 	injected := fmt.Errorf("simulated EATV scan failure")
 	for name, iter := range scanFailureShapes(injected) {
 		t.Run(name, func(t *testing.T) {
-			matcher := NewBadgerMatcher(&indexScanOverrideStore{
+			matcher := NewPatternMatcher(&indexScanOverrideStore{
 				Store: store,
 				index: EATV,
 				iter:  iter,
@@ -208,12 +220,12 @@ func TestValidateCandidateSurfacesScanErrors(t *testing.T) {
 	injected := fmt.Errorf("simulated EATV scan failure")
 	for name, iter := range scanFailureShapes(injected) {
 		t.Run(name, func(t *testing.T) {
-			matcher := NewBadgerMatcher(&indexScanOverrideStore{
+			matcher := NewPatternMatcher(&indexScanOverrideStore{
 				Store: store,
 				index: EATV,
 				iter:  iter,
 			})
-			// NewBadgerMatcher attaches no cache, so validation takes the
+			// NewPatternMatcher attaches no cache, so validation takes the
 			// EATV point-scan branch.
 			it := &validatingVBoundIterator{
 				matcher:         matcher,

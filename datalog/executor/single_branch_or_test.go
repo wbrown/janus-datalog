@@ -10,9 +10,9 @@ import (
 // A single-branch or/or-join is a legal degenerate form: it is exactly its
 // branch, restricted to the header's declared interface. The algebra bridge
 // previously rejected it as an invalid union
-// (docs/bugs/BUG_ALGEBRA_NOT_REJECTS_SINGLE_BRANCH_ORJOIN.md); the NOT-inner
+// (BUG_ALGEBRA_NOT_REJECTS_SINGLE_BRANCH_ORJOIN.md); the NOT-inner
 // case is pinned by TestNotClauseWithOrJoinBody, and this pins the plain
-// positional case on both planner modes with exact rows.
+// positional case on both planner modes with exact tuples.
 func TestSingleBranchOrJoinExecutesAsItsBranch(t *testing.T) {
 	valAttr := datalog.NewKeyword(":item/val")
 	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
@@ -64,7 +64,7 @@ func TestSingleBranchOrJoinExecutesAsItsBranch(t *testing.T) {
 						got[tuple[0].(int64)] = true
 					}
 					if len(got) != 2 || !got[1] || !got[2] {
-						t.Fatalf("single-branch %s must produce exactly its branch's rows {1 2}, got %v", shapeName, tuples)
+						t.Fatalf("single-branch %s must produce exactly its branch's tuples {1 2}, got %v", shapeName, tuples)
 					}
 				})
 			}

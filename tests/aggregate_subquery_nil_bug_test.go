@@ -96,7 +96,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			if verifyErr != nil {
 				t.Fatalf("Failed to parse verify query: %v", verifyErr)
 			}
-			verifyMatcher := storage.NewBadgerMatcher(db.Store())
+			verifyMatcher := storage.NewPatternMatcher(db.Store())
 			verifyExec := executor.NewExecutorWithOptions(verifyMatcher, nil, popts)
 			vresult, verifyErr := verifyExec.Execute(vq)
 			if verifyErr != nil {
@@ -114,7 +114,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			if symbolErr != nil {
 				t.Fatalf("Failed to parse symbol query: %v", symbolErr)
 			}
-			symbolMatcher := storage.NewBadgerMatcher(db.Store())
+			symbolMatcher := storage.NewPatternMatcher(db.Store())
 			symbolExec := executor.NewExecutorWithOptions(symbolMatcher, nil, popts)
 			sresult, symbolErr := symbolExec.Execute(sq)
 			if symbolErr != nil {
@@ -132,7 +132,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			if morningErr != nil {
 				t.Fatalf("Failed to parse morning query: %v", morningErr)
 			}
-			morningMatcher := storage.NewBadgerMatcher(db.Store())
+			morningMatcher := storage.NewPatternMatcher(db.Store())
 			morningExec := executor.NewExecutorWithOptions(morningMatcher, nil, popts)
 			mresult, morningErr := morningExec.Execute(mq)
 			if morningErr != nil {
@@ -150,7 +150,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			if checkErr != nil {
 				t.Fatalf("Failed to parse check minute query: %v", checkErr)
 			}
-			checkMatcher := storage.NewBadgerMatcher(db.Store())
+			checkMatcher := storage.NewPatternMatcher(db.Store())
 			checkExec := executor.NewExecutorWithOptions(checkMatcher, nil, popts)
 			checkResult, checkErr := checkExec.Execute(cmq)
 			if checkErr != nil {
@@ -169,7 +169,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			if chErr != nil {
 				t.Fatalf("Failed to parse check high query: %v", chErr)
 			}
-			chMatcher := storage.NewBadgerMatcher(db.Store())
+			chMatcher := storage.NewPatternMatcher(db.Store())
 			chExec := executor.NewExecutorWithOptions(chMatcher, nil, popts)
 			chResult, chErr := chExec.Execute(chq)
 			if chErr != nil {
@@ -183,7 +183,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			if clErr != nil {
 				t.Fatalf("Failed to parse check low query: %v", clErr)
 			}
-			clMatcher := storage.NewBadgerMatcher(db.Store())
+			clMatcher := storage.NewPatternMatcher(db.Store())
 			clExec := executor.NewExecutorWithOptions(clMatcher, nil, popts)
 			clResult, clErr := clExec.Execute(clq)
 			if clErr != nil {
@@ -201,7 +201,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			if sbErr != nil {
 				t.Fatalf("Failed to parse simple bound query: %v", sbErr)
 			}
-			sbMatcher := storage.NewBadgerMatcher(db.Store())
+			sbMatcher := storage.NewPatternMatcher(db.Store())
 			sbExec := executor.NewExecutorWithOptions(sbMatcher, nil, popts)
 			sbResult, sbErr := sbExec.Execute(sbq)
 			if sbErr != nil {
@@ -219,7 +219,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			if bjErr != nil {
 				t.Fatalf("Failed to parse bar join query: %v", bjErr)
 			}
-			bjMatcher := storage.NewBadgerMatcher(db.Store())
+			bjMatcher := storage.NewPatternMatcher(db.Store())
 			bjExec := executor.NewExecutorWithOptions(bjMatcher, nil, popts)
 			bjResult, bjErr := bjExec.Execute(bjq)
 			if bjErr != nil {
@@ -240,7 +240,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			if bmErr != nil {
 				t.Fatalf("Failed to parse bar-minute query: %v", bmErr)
 			}
-			bmMatcher := storage.NewBadgerMatcher(db.Store())
+			bmMatcher := storage.NewPatternMatcher(db.Store())
 			bmExec := executor.NewExecutorWithOptions(bmMatcher, nil, popts)
 			bmResult, bmErr := bmExec.Execute(bmq)
 			if bmErr != nil {
@@ -261,7 +261,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			if minuteErr != nil {
 				t.Fatalf("Failed to parse minute query: %v", minuteErr)
 			}
-			minuteMatcher := storage.NewBadgerMatcher(db.Store())
+			minuteMatcher := storage.NewPatternMatcher(db.Store())
 			minuteExec := executor.NewExecutorWithOptions(minuteMatcher, nil, popts)
 			minresult, minuteErr := minuteExec.Execute(minq)
 			if minuteErr != nil {
@@ -287,7 +287,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 				t.Fatalf("Failed to parse main query: %v", parseErr)
 			}
 
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 			exec := executor.NewExecutorWithOptions(matcher, nil, popts)
 			result, execErr := exec.Execute(q)
 			if execErr != nil {
@@ -295,10 +295,10 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			}
 
 			resultTuples := collectTuples(result)
-			t.Logf("Main query result: %d rows", len(resultTuples))
+			t.Logf("Main query result: %d tuples", len(resultTuples))
 
 			if len(resultTuples) != 1 {
-				t.Fatalf("Expected 1 result row, got %d", len(resultTuples))
+				t.Fatalf("Expected 1 result tuple, got %d", len(resultTuples))
 			}
 
 			tuple := resultTuples[0]

@@ -20,40 +20,51 @@ const joinProjectPassName = "join-project-insertion"
 // would reject valid queries. Both trees return so provenance consumers can
 // hold the before and after.
 func optimizeAlgebra(q *query.Query, handler annotations.Handler, sink *algebra.RewriteSink) (compiled *algebra.Node, optimized *algebra.Node, err error) {
+	// The guard is the caller's, never the emitter's: `tree` is a whole-tree
+	// walk through algebra.formatNode, and Go evaluates it before the call, so a
+	// check inside emit would render both trees and discard them on every plan.
 	emit := func(name string, data map[string]interface{}) {
-		if handler != nil {
-			handler(annotations.Event{Name: name, Data: data})
-		}
+		handler(annotations.Event{Name: name, Data: data})
 	}
 
-	emit("algebra/bridge-begin", map[string]interface{}{
-		"clause_count": len(q.Where),
-	})
+	if handler != nil {
+		emit(annotations.AlgebraBridgeBegin, map[string]interface{}{
+			"clause_count": len(q.Where),
+		})
+	}
 
 	compiled, err = algebra.Compile(q)
 	if err != nil {
-		emit("algebra/compile-error", map[string]interface{}{
-			"error": err.Error(),
-		})
+		if handler != nil {
+			emit(annotations.AlgebraCompileError, map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
 		return nil, nil, fmt.Errorf("algebra compile: %w", err)
 	}
 
-	emit("algebra/compiled", map[string]interface{}{
-		"tree": compiled.String(),
-	})
+	if handler != nil {
+		emit(annotations.AlgebraCompiled, map[string]interface{}{
+			"tree": compiled,
+		})
+	}
 
 	optimizer := algebra.NewOptimizer(algebra.DefaultPasses(sink)...)
 	optimized, err = optimizer.Optimize(compiled)
 	if err != nil {
-		emit("algebra/optimize-error", map[string]interface{}{
-			"error": err.Error(),
-		})
+		if handler != nil {
+			emit(annotations.AlgebraOptimizeError, map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
 		return nil, nil, fmt.Errorf("algebra optimize: %w", err)
 	}
 
-	emit("algebra/optimized", map[string]interface{}{
-		"tree": optimized.String(),
-	})
+	if handler != nil {
+		emit(annotations.AlgebraOptimized, map[string]interface{}{
+			"tree": optimized,
+		})
+	}
 	return compiled, optimized, nil
 }
 
@@ -87,34 +98,45 @@ func optimizeViaAlgebra(
 				break
 			}
 		}
+		observing := sink.Recording()
 		if hasValueInput {
-			sink.Record(algebra.RewriteRecord{
-				Pass:    joinProjectPassName,
-				Action:  algebra.RewriteDeclined,
-				Reason:  "query has value inputs",
-				Subject: fmt.Sprintf("%v", terminalSymbols(q)),
-			}, "algebra/join-project-skip", map[string]interface{}{
-				"reason": "query has value inputs",
-			})
+			// terminalSymbols walks the query, and on this branch nothing else
+			// needs the answer.
+			if observing {
+				sink.Record(algebra.RewriteRecord{
+					Pass:    joinProjectPassName,
+					Action:  algebra.RewriteDeclined,
+					Reason:  "query has value inputs",
+					Subject: terminalSymbols(q),
+				}, annotations.AlgebraJoinProjectSkip, map[string]interface{}{
+					"reason": "query has value inputs",
+				})
+			}
 		} else {
-			optimized, err = algebra.InsertJoinProjects(optimized, terminalSymbols(q))
+			// One walk for the transform and its record, so the record names
+			// the symbols actually inserted rather than a second computation of
+			// them.
+			terminals := terminalSymbols(q)
+			optimized, err = algebra.InsertJoinProjects(optimized, terminals)
 			if err != nil {
 				return nil, fmt.Errorf("algebra project insertion: %w", err)
 			}
-			sink.Record(algebra.RewriteRecord{
-				Pass:    joinProjectPassName,
-				Action:  algebra.RewriteApplied,
-				Subject: fmt.Sprintf("%v", terminalSymbols(q)),
-			}, "algebra/join-project-apply", map[string]interface{}{
-				"terminal_symbols": fmt.Sprintf("%v", terminalSymbols(q)),
-			})
+			if observing {
+				sink.Record(algebra.RewriteRecord{
+					Pass:    joinProjectPassName,
+					Action:  algebra.RewriteApplied,
+					Subject: terminals,
+				}, annotations.AlgebraJoinProjectApply, map[string]interface{}{
+					"terminal_symbols": terminals,
+				})
+			}
 		}
 	}
 	clauses, err := algebra.Decompile(optimized)
 	if err != nil {
 		if handler != nil {
 			handler(annotations.Event{
-				Name: "algebra/decompile-error",
+				Name: annotations.AlgebraDecompileError,
 				Data: map[string]interface{}{"error": err.Error()},
 			})
 		}
@@ -124,7 +146,7 @@ func optimizeViaAlgebra(
 	rewritten.Where = clauses
 	if handler != nil {
 		handler(annotations.Event{
-			Name: "algebra/bridge-complete",
+			Name: annotations.AlgebraBridgeComplete,
 			Data: map[string]interface{}{
 				"input_clause_count":  len(q.Where),
 				"output_clause_count": len(clauses),

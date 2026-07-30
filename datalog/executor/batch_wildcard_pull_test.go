@@ -45,13 +45,12 @@ func TestApplyFindPullsBatchesWildcardEntities(t *testing.T) {
 	first := datalog.NewIdentity("batch-pull-first")
 	second := datalog.NewIdentity("batch-pull-second")
 	var events []annotations.Event
-	collector := annotations.NewCollector(func(event annotations.Event) {
-		events = append(events, event)
-	})
 	input := NewMaterializedRelationWithOptions(
 		[]query.Symbol{entitySymbol, indexSymbol},
 		[]Tuple{{first, int64(0)}, {second, int64(1)}, {first, int64(2)}},
-		ExecutorOptions{Collector: collector},
+		ExecutorOptions{Handler: func(event annotations.Event) {
+			events = append(events, event)
+		}},
 	)
 	resolver := &recordingBatchEntityResolver{
 		values: map[[20]byte]map[datalog.Keyword]interface{}{
@@ -71,15 +70,15 @@ func TestApplyFindPullsBatchesWildcardEntities(t *testing.T) {
 	require.Equal(t, 1, resolver.batchCalls)
 	require.Zero(t, resolver.singleCalls)
 
-	rows, err := CollectTuples(result, nil)
+	tuples, err := CollectTuples(result, nil)
 	require.NoError(t, err)
-	require.Len(t, rows, 3)
-	require.Equal(t, "First", rows[0][0].(map[string]interface{})["entity/name"])
-	require.Equal(t, first, rows[0][0].(map[string]interface{})[query.DBIDKey])
-	require.Equal(t, "Second", rows[1][0].(map[string]interface{})["entity/name"])
-	require.Equal(t, second, rows[1][0].(map[string]interface{})[query.DBIDKey])
-	require.Equal(t, "First", rows[2][0].(map[string]interface{})["entity/name"])
-	require.Equal(t, first, rows[2][0].(map[string]interface{})[query.DBIDKey])
+	require.Len(t, tuples, 3)
+	require.Equal(t, "First", tuples[0][0].(map[string]interface{})["entity/name"])
+	require.Equal(t, first, tuples[0][0].(map[string]interface{})[query.DBIDKey])
+	require.Equal(t, "Second", tuples[1][0].(map[string]interface{})["entity/name"])
+	require.Equal(t, second, tuples[1][0].(map[string]interface{})[query.DBIDKey])
+	require.Equal(t, "First", tuples[2][0].(map[string]interface{})["entity/name"])
+	require.Equal(t, first, tuples[2][0].(map[string]interface{})[query.DBIDKey])
 	require.Len(t, events, 2)
 	require.Equal(t, annotations.PullBatchBegin, events[0].Name)
 	require.Equal(t, 3, events[0].Data["entity_count"])

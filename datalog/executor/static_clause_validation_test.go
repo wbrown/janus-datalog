@@ -58,7 +58,7 @@ func TestNotJoinAcceptsNestedExistentialNot(t *testing.T) {
 				for i := 0; i < result.Size(); i++ {
 					t.Logf("tuple %d: %v", i, result.Get(i))
 				}
-				t.Fatalf("expected only the event-less goal to survive, got %d rows", result.Size())
+				t.Fatalf("expected only the event-less goal to survive, got %d tuples", result.Size())
 			}
 			if !datalog.ValuesEqual(result.Get(0)[0], "b") {
 				t.Fatalf("expected goal b to survive, got %v", result.Get(0))
@@ -72,8 +72,8 @@ func TestNotJoinAcceptsNestedExistentialNot(t *testing.T) {
 // construction), and the executor entry (hand-built ASTs). This pins the
 // executor door: a hand-built statically-invalid query is rejected before
 // planning, identically under both planner modes. See
-// docs/bugs/BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md and
-// docs/bugs/BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md.
+// BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md and
+// BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md.
 func TestExecutorEntryRejectsStaticallyInvalidClauses(t *testing.T) {
 	valAttr := datalog.NewKeyword(":item/val")
 	matcher := NewMemoryPatternMatcher([]datalog.Datom{

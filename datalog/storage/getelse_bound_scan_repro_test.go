@@ -14,26 +14,45 @@ import (
 )
 
 // indexForAttrPattern returns the index chosen for the pattern/index-selection
-// event whose pattern mentions attrFragment, plus the scan range. Empty index
+// event whose pattern mentions attrFragment, plus the run that scan addresses:
+// the positions its bound binds and the values bound to them. Empty index
 // means no scan was issued for that attribute (e.g. a fused per-entity lookup).
-func indexForAttrPattern(events []annotations.Event, attrFragment string) (index, scanStart, scanEnd string) {
+func indexForAttrPattern(events []annotations.Event, attrFragment string) (index, bound string) {
 	for _, e := range events {
 		if e.Name != "pattern/index-selection" {
 			continue
 		}
-		p, _ := e.Data["pattern"].(string)
-		if !strings.Contains(p, attrFragment) {
+		if !strings.Contains(fmt.Sprint(e.Data[annotations.KeyPattern]), attrFragment) {
 			continue
 		}
-		index = fmt.Sprint(e.Data["index"])
-		scanStart = fmt.Sprint(e.Data["scan.start"])
-		scanEnd = fmt.Sprint(e.Data["scan.end"])
+		index = fmt.Sprint(e.Data[annotations.KeyIndex])
+		bound = renderBoundForTest(e)
 	}
-	return index, scanStart, scanEnd
+	return index, bound
+}
+
+// renderBoundForTest pairs an index-selection event's bound positions with
+// their values for a diagnostic log line: "A=:repro/note", or "whole index"
+// when the scan binds nothing.
+func renderBoundForTest(e annotations.Event) string {
+	positions, _ := e.Data[annotations.KeyBound].([]string)
+	values, _ := e.Data[annotations.KeyBoundValues].([]datalog.Value)
+	if len(positions) == 0 {
+		return "whole index"
+	}
+	parts := make([]string, 0, len(positions))
+	for i, position := range positions {
+		if i < len(values) {
+			parts = append(parts, fmt.Sprintf("%s=%v", position, values[i]))
+			continue
+		}
+		parts = append(parts, position)
+	}
+	return strings.Join(parts, " ")
 }
 
 // TestGetElseBoundEntityScanNotNarrowed reproduces the performance bug in
-// docs/bugs/BUG_GETELSE_SCAN_REWRITE_NOT_NARROWED_BY_BOUND_CHILD.md.
+// BUG_GETELSE_SCAN_REWRITE_NOT_NARROWED_BY_BOUND_CHILD.md.
 //
 // get-else on a single bound entity is rewritten to LeftOuterJoin + Scan, and
 // the produced Scan([?e :repro/note ?note]) is driven with ?e FREE — so it
@@ -49,7 +68,12 @@ func indexForAttrPattern(events []annotations.Event, attrFragment string) (index
 func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			// Registered at open. captureQuery below clears this between calls so
+			// each call returns its own query's events; the handler is never
+			// replaced.
+			var collected []annotations.Event
 			popts := mode.plannerOptions()
+			popts.Handler = func(e annotations.Event) { collected = append(collected, e) }
 			db, err := NewDatabaseWithOptions(DatabaseOptions{
 				Path:           t.TempDir(),
 				PlannerOptions: &popts,
@@ -86,17 +110,14 @@ func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 			}
 
 			captureQuery := func(q string, args ...interface{}) (results [][]interface{}, dur time.Duration, events []annotations.Event) {
-				db.SetAnnotationHandler(func(e annotations.Event) {
-					events = append(events, e)
-				})
+				collected = nil
 				start := time.Now()
 				results, err := executor.CollectTuples(db.Query(q, args...))
 				dur = time.Since(start)
-				db.SetAnnotationHandler(nil)
 				if err != nil {
 					t.Fatalf("query failed: %v\nquery: %s", err, q)
 				}
-				return results, dur, events
+				return results, dur, collected
 			}
 
 			// Baseline: plain pattern read of the same optional field on the same bound
@@ -112,7 +133,7 @@ func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 			if len(plainResults) != 1 || plainResults[0][0] != "note-0" {
 				t.Fatalf("plain: expected [[note-0]], got %v", plainResults)
 			}
-			plainIdx, _, _ := indexForAttrPattern(plainEvents, ":repro/note")
+			plainIdx, _ := indexForAttrPattern(plainEvents, ":repro/note")
 			t.Logf("plain    [?e :repro/note ?note]: index=%s  wall=%s  results=%d",
 				plainIdx, plainDur, len(plainResults))
 
@@ -127,10 +148,10 @@ func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 			if len(geResults) != 1 || geResults[0][0] != "note-0" {
 				t.Fatalf("get-else: expected [[note-0]], got %v", geResults)
 			}
-			geIdx, geStart, geEnd := indexForAttrPattern(geEvents, ":repro/note")
+			geIdx, geBound := indexForAttrPattern(geEvents, ":repro/note")
 			t.Logf("get-else (get-else $ ?e :repro/note): index=%s  wall=%s  results=%d",
 				geIdx, geDur, len(geResults))
-			t.Logf(":repro/note extent=%d datoms; get-else scan range [%s, %s)", extent, geStart, geEnd)
+			t.Logf(":repro/note extent=%d datoms; get-else scan bound: %s", extent, geBound)
 			if plainDur > 0 {
 				t.Logf("get-else / plain wall-time ratio: %.1fx", float64(geDur)/float64(plainDur))
 			}
@@ -231,8 +252,8 @@ func setupGetElseNarrowingDB(t *testing.T, popts *planner.PlannerOptions) (db *D
 	return db, want, cleanup
 }
 
-// TestGetElseMultiEntityStoredOrDefault pins get-else row semantics over
-// several pattern-bound entities in both optimizer modes: one row per
+// TestGetElseMultiEntityStoredOrDefault pins get-else tuple semantics over
+// several pattern-bound entities in both optimizer modes: one tuple per
 // kind-bearing entity, carrying its stored note or the default, with the
 // filler extent excluded. The scan-narrowing structure of the same query is
 // pinned separately in TestGetElseMultiEntityScanNarrowed (algebra path only).
@@ -253,19 +274,19 @@ func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 			}
 
 			got := make(map[datalog.Identity]string, len(results))
-			for _, row := range results {
-				e, ok := row[0].(datalog.Identity)
+			for _, tuple := range results {
+				e, ok := tuple[0].(datalog.Identity)
 				if !ok {
-					t.Fatalf("expected Identity in ?e, got %T", row[0])
+					t.Fatalf("expected Identity in ?e, got %T", tuple[0])
 				}
-				n, ok := row[1].(string)
+				n, ok := tuple[1].(string)
 				if !ok {
-					t.Fatalf("expected string in ?note, got %T", row[1])
+					t.Fatalf("expected string in ?note, got %T", tuple[1])
 				}
 				got[e] = n
 			}
 			if len(got) != len(want) {
-				t.Fatalf("expected %d rows, got %d: %v", len(want), len(got), results)
+				t.Fatalf("expected %d tuples, got %d: %v", len(want), len(got), results)
 			}
 			for e, w := range want {
 				if got[e] != w {
@@ -282,42 +303,43 @@ func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 // attribute extent. It pins the algebra path's plan structure — the
 // or-fallback branch lowering that emits or-fallback/branch.narrowed exists
 // only there — so per docs/wip/OPTIMIZER_MODE_MATRIX.md it declares its mode
-// explicitly. Row semantics for the same query run on both modes in
-// TestGetElseMultiEntityStoredOrDefault, and cross-mode row equivalence in
+// explicitly. Tuple semantics for the same query run on both modes in
+// TestGetElseMultiEntityStoredOrDefault, and cross-mode tuple equivalence in
 // TestGetElseScanNarrowing_SemanticPreservation.
 func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
+	// Registered at open; the fixture's own events precede the query's and the
+	// assertion below looks for a specific narrowing event's presence.
+	var events []annotations.Event
 	popts := DefaultPlannerOptions()
 	popts.EnableAlgebraOptimizer = true
+	popts.Handler = func(e annotations.Event) { events = append(events, e) }
 	db, want, cleanup := setupGetElseNarrowingDB(t, &popts)
 	defer cleanup()
 
-	var events []annotations.Event
-	db.SetAnnotationHandler(func(e annotations.Event) { events = append(events, e) })
 	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?note
 		  :where [?e :repro/kind _]
 		         [(get-else $ ?e :repro/note "MISSING") ?note]]`,
 	))
-	db.SetAnnotationHandler(nil)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
 
-	// One row per kind-bearing entity, each with its stored note or the default.
+	// One tuple per kind-bearing entity, each with its stored note or the default.
 	got := make(map[datalog.Identity]string, len(results))
-	for _, row := range results {
-		e, ok := row[0].(datalog.Identity)
+	for _, tuple := range results {
+		e, ok := tuple[0].(datalog.Identity)
 		if !ok {
-			t.Fatalf("expected Identity in ?e, got %T", row[0])
+			t.Fatalf("expected Identity in ?e, got %T", tuple[0])
 		}
-		n, ok := row[1].(string)
+		n, ok := tuple[1].(string)
 		if !ok {
-			t.Fatalf("expected string in ?note, got %T", row[1])
+			t.Fatalf("expected string in ?note, got %T", tuple[1])
 		}
 		got[e] = n
 	}
 	if len(got) != len(want) {
-		t.Fatalf("expected %d rows, got %d: %v", len(want), len(got), results)
+		t.Fatalf("expected %d tuples, got %d: %v", len(want), len(got), results)
 	}
 	for e, w := range want {
 		if got[e] != w {
@@ -325,10 +347,13 @@ func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
 		}
 	}
 
-	// Bound matcher paths emit storage/reuse-strategy or cache events, never the
-	// unbound pattern/index-selection (emitted only by matchUnboundAsRelation —
-	// the full attribute scan). So an attribute-primary index-selection on
-	// :repro/note means the scan was not narrowed to the bound entities.
+	// Bound matcher paths emit storage/reuse-strategy or cache events. Several
+	// arms now emit pattern/index-selection, but none that a bound E reaches:
+	// the cardinality-many and -vector arms need those cardinalities, and
+	// matchFromCache announces no run at all because it addresses none. So an
+	// attribute-primary index-selection on :repro/note still means the scan
+	// was not narrowed to the bound entities — it means matchUnboundAsRelation
+	// ran, which is the full attribute scan.
 	// Primary, direct assertion: the or-fallback branch reports it narrowed the
 	// scan to the bound join keys (one per kind-bearing entity), rather than
 	// silently falling back to a full attribute scan.
@@ -344,9 +369,10 @@ func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
 	}
 
 	// Defense in depth: a narrowed branch takes the bound matcher path (cache /
-	// reuse strategy), which never emits the unbound pattern/index-selection that
-	// matchUnboundAsRelation (the full attribute scan) emits.
-	idx, _, _ := indexForAttrPattern(events, ":repro/note")
+	// reuse strategy), which does not reach the attribute-primary
+	// pattern/index-selection that matchUnboundAsRelation (the full attribute
+	// scan) emits.
+	idx, _ := indexForAttrPattern(events, ":repro/note")
 	attrPrimary := map[string]bool{"AETV": true, "AEVT": true, "AVET": true, "ATEV": true}
 	if attrPrimary[idx] {
 		t.Fatalf("get-else over %d bound entities scanned :repro/note via attribute-primary "+
@@ -370,7 +396,7 @@ func narrowingEvent(events []annotations.Event) *annotations.Event {
 // TestGetElseScanNarrowing_SemanticPreservation is the differential / structural
 // test the project's optimization-testing guidance calls for: the rewrite +
 // narrowing (algebra optimizer ON) must return exactly the same (?e, ?note)
-// rows — defaults included — as the un-rewritten, per-tuple get-else (algebra
+// tuples — defaults included — as the un-rewritten, per-tuple get-else (algebra
 // optimizer OFF).
 func TestGetElseScanNarrowing_SemanticPreservation(t *testing.T) {
 	db, _, cleanup := setupGetElseNarrowingDB(t, nil)
@@ -400,16 +426,16 @@ func TestGetElseScanNarrowing_SemanticPreservation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	norm := func(rows [][]interface{}) map[datalog.Identity]string {
-		m := make(map[datalog.Identity]string, len(rows))
-		for _, r := range rows {
+	norm := func(tuples [][]interface{}) map[datalog.Identity]string {
+		m := make(map[datalog.Identity]string, len(tuples))
+		for _, r := range tuples {
 			m[r[0].(datalog.Identity)] = r[1].(string)
 		}
 		return m
 	}
 	baseMap, optMap := norm(baseline), norm(optimized)
 	if len(baseMap) != len(optMap) {
-		t.Fatalf("row count differs: optimizer-off=%d optimizer-on=%d", len(baseMap), len(optMap))
+		t.Fatalf("tuple count differs: optimizer-off=%d optimizer-on=%d", len(baseMap), len(optMap))
 	}
 	for e, bv := range baseMap {
 		if ov, ok := optMap[e]; !ok || ov != bv {

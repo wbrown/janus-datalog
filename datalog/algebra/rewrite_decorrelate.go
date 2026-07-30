@@ -5,6 +5,7 @@ import (
 
 	"github.com/wbrown/ebnf/parse"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -65,26 +66,38 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		return rebuildWithChildren(node, children)
 	}
 
-	subject := lj.InnerQuery.String()
-	sink.Record(RewriteRecord{
-		Pass:    decorrelationPassName,
-		Action:  RewriteConsidered,
-		Subject: subject,
-	}, "algebra/decorrelate-check", map[string]interface{}{
-		"correlation_vars": fmt.Sprintf("%v", lj.CorrelationVars),
-		"has_aggregates":   hasAggregates(lj.InnerQuery),
-		"has_defaults":     len(lj.DefaultValues) > 0,
-		"should":           shouldDecorrelate(lj),
-		"inner_query":      subject,
-	})
+	// Ask the sink before building the payload. The subject and the correlation
+	// vars are carried, so they cost nothing, but the map itself and the two
+	// walks of the inner query inside it (hasAggregates, shouldDecorrelate) are
+	// paid per LateralJoin this pass visits, and a guard inside Record cannot
+	// prevent that — Go evaluates arguments before the call. On the normal query
+	// path — no handler, no explanation — nothing consumes any of it.
+	//
+	observing := sink.Recording()
+	if observing {
+		sink.Record(RewriteRecord{
+			Pass:    decorrelationPassName,
+			Action:  RewriteConsidered,
+			Subject: lj.InnerQuery,
+		}, annotations.AlgebraDecorrelateCheck, map[string]interface{}{
+			"correlation_vars": lj.CorrelationVars,
+			"has_aggregates":   hasAggregates(lj.InnerQuery),
+			"has_defaults":     len(lj.DefaultValues) > 0,
+			"should":           shouldDecorrelate(lj),
+			"inner_query":      lj.InnerQuery,
+		})
+	}
 
 	decline := func(reason string) {
+		if !observing {
+			return
+		}
 		sink.Record(RewriteRecord{
 			Pass:    decorrelationPassName,
 			Action:  RewriteDeclined,
 			Reason:  reason,
-			Subject: subject,
-		}, "algebra/decorrelate-skip", map[string]interface{}{
+			Subject: lj.InnerQuery,
+		}, annotations.AlgebraDecorrelateSkip, map[string]interface{}{
 			"reason": reason,
 		})
 	}
@@ -115,18 +128,20 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		return rebuildWithChildren(node, children)
 	}
 
-	sink.Record(RewriteRecord{
-		Pass:    decorrelationPassName,
-		Action:  RewriteApplied,
-		Subject: subject,
-	}, "algebra/decorrelate-apply", map[string]interface{}{
-		"correlation_vars": fmt.Sprintf("%v", lj.CorrelationVars),
-		"inner_params":     fmt.Sprintf("%v", innerParams),
-		"has_aggregates":   hasAggregates(lj.InnerQuery),
-	})
+	if observing {
+		sink.Record(RewriteRecord{
+			Pass:    decorrelationPassName,
+			Action:  RewriteApplied,
+			Subject: lj.InnerQuery,
+		}, annotations.AlgebraDecorrelateApply, map[string]interface{}{
+			"correlation_vars": lj.CorrelationVars,
+			"inner_params":     innerParams,
+			"has_aggregates":   hasAggregates(lj.InnerQuery),
+		})
+	}
 
 	// Decorrelate: remove correlation params from :in, add the classified
-	// group-by columns to :find, consume translated correlation equalities.
+	// group-by symbols to :find, consume translated correlation equalities.
 	decorrelated := decorrelateQuery(lj.InnerQuery, plans)
 	if decorrelated == nil {
 		return node
@@ -198,11 +213,16 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		}
 
 		// Diagnostic detail accompanying the applied rewrite: the optimized
-		// inner WHERE. Event-only — the applied record above is the decision.
-		sink.Emit("algebra/decorrelate-inner-optimized", map[string]interface{}{
-			"clause_count": len(optimizedWhere),
-			"clauses":      fmt.Sprintf("%v", optimizedWhere),
-		})
+		// inner WHERE. Event-only — the applied record above is the decision —
+		// so the guard is Emitting, not Recording: a collect-only sink discards
+		// this payload, and rendering the clause list to build it is the argument
+		// preparation the guard exists to skip.
+		if sink.Emitting() {
+			sink.Emit(annotations.AlgebraDecorrelateInnerOptimized, map[string]interface{}{
+				"clause_count": len(optimizedWhere),
+				"clauses":      optimizedWhere,
+			})
+		}
 
 		// Build the decorrelated query with optimized WHERE
 		optimizedDecorrelated := &query.Query{
@@ -326,13 +346,13 @@ type paramPlan struct {
 	// param is the inner :in parameter this plan covers; it is removed
 	// from the decorrelated query's :in.
 	param query.Symbol
-	// groupCol is the inner column that becomes the group-by key: the
+	// groupSym is the inner symbol that becomes the group-by key: the
 	// parameter itself when a pattern binds it (data-bound), or the
 	// inner-provided side of its single equality predicate
 	// (equality-bound) — the correlation predicate IS the join condition,
-	// so the grouped result joins the outer on that column, positionally
+	// so the grouped result joins the outer on that symbol, positionally
 	// renamed to the outer correlation name by the binding.
-	groupCol query.Symbol
+	groupSym query.Symbol
 	// dropClause is the consumed correlation equality to remove from the
 	// inner :where (nil for data-bound parameters — their patterns stay).
 	dropClause query.Clause
@@ -343,7 +363,7 @@ type paramPlan struct {
 // taxonomy, with a conservative default:
 //
 //   - data-bound: a DataPattern position binds the parameter — the pattern
-//     provides the group-by column when the input is freed (today's rule).
+//     provides the group-by symbol when the input is freed (today's rule).
 //   - equality-bound: the parameter's only consumption is one
 //     [(= ?inner ?param)] comparison whose other side the body provides —
 //     the predicate is the join condition; group by the inner side and
@@ -357,7 +377,7 @@ type paramPlan struct {
 // See docs/bugs/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
 func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]paramPlan, string) {
 	// Extra scalar inputs beyond the correlation parameters (e.g. call-site
-	// constants) have no outer column to join on, and the rewrite discards
+	// constants) have no outer symbol to join on, and the rewrite discards
 	// their bindings; their presence declines the rewrite.
 	scalarInputs := 0
 	for _, in := range q.In {
@@ -370,9 +390,9 @@ func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]pa
 	}
 
 	// The inner-provided symbols — the only candidates for equality-
-	// translated group-by columns. Provides only: a symbol merely consumed
+	// translated group-by symbols. Provides only: a symbol merely consumed
 	// elsewhere (including the parameter itself, which every correlation
-	// equality correlates on) is not a column the grouped result can carry.
+	// equality correlates on) is not a symbol the grouped result can carry.
 	var provided []query.Symbol
 	for _, c := range q.Where {
 		for _, sym := range query.ScopeOf(c).Provides {
@@ -420,9 +440,9 @@ func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]pa
 
 		switch {
 		case dataBound:
-			// The pattern provides the column regardless of other uses;
+			// The pattern provides the symbol regardless of other uses;
 			// remaining predicates stay as ordinary filters.
-			plans = append(plans, paramPlan{param: param, groupCol: param})
+			plans = append(plans, paramPlan{param: param, groupSym: param})
 		case otherUse:
 			return nil, fmt.Sprintf("correlation parameter %s is consumed outside data patterns and single equality predicates", param)
 		case len(equalities) == 1:
@@ -431,7 +451,7 @@ func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]pa
 			if !ok {
 				return nil, fmt.Sprintf("correlation parameter %s equates with a variable the inner body does not provide", param)
 			}
-			plans = append(plans, paramPlan{param: param, groupCol: inner, dropClause: eq})
+			plans = append(plans, paramPlan{param: param, groupSym: inner, dropClause: eq})
 		case len(equalities) > 1:
 			return nil, fmt.Sprintf("correlation parameter %s is consumed by multiple equality predicates", param)
 		default:
@@ -462,7 +482,7 @@ func equalityInnerSide(eq *query.Comparison, param query.Symbol, provided []quer
 
 // decorrelateQuery rewrites a correlated query into a decorrelated one
 // according to the classified plans. Each correlation parameter is removed
-// from :in and its group-by column prepended to :find:
+// from :in and its group-by symbol prepended to :find:
 //
 //	data-bound:     [:find (count ?t) :in $ ?s :where [?t :task/root ?s] ...]
 //	             →  [:find ?s (count ?t) :in $ :where [?t :task/root ?s] ...]
@@ -491,10 +511,10 @@ func decorrelateQuery(q *query.Query, plans []paramPlan) *query.Query {
 		newIn = append(newIn, in)
 	}
 
-	// Build new :find — prepend the group-by columns in parameter order
+	// Build new :find — prepend the group-by symbols in parameter order
 	newFind := make([]query.FindElement, 0, len(plans)+len(q.Find))
 	for _, p := range plans {
-		newFind = append(newFind, query.FindVariable{Symbol: p.groupCol})
+		newFind = append(newFind, query.FindVariable{Symbol: p.groupSym})
 	}
 	newFind = append(newFind, q.Find...)
 

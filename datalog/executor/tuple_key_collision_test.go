@@ -1,12 +1,11 @@
 // Tests for tuple-key collision behavior in NOT/OR/union dedup paths.
 //
-// Background: the retired notOrTupleKey implementation built dedup keys via
-// fmt.Sprintf("%v",...) joined by "|". That stringification was not injective:
-// distinct tuples could map to the same key, silently dropping valid rows or
-// matching the wrong anti-join rows.
+// A dedup key built by joining fmt.Sprintf("%v",...) results with "|" is not
+// injective: distinct tuples can map to the same key, silently dropping valid
+// tuples or matching the wrong anti-join tuples.
 //
-// These tests pin the migrated TupleKey/TupleKeyMap semantics and prevent the
-// string-key collision behavior from returning.
+// These tests pin the TupleKey/TupleKeyMap semantics that avoid this and
+// prevent the string-key collision behavior from returning.
 //
 // Each adversarial pair is constructed so that
 //   fmt.Sprintf("%v", a[0]) + "|" + fmt.Sprintf("%v", a[1])
@@ -102,10 +101,8 @@ func TestUnionRelations_NoCollisionAcrossTupleBoundaries(t *testing.T) {
 }
 
 // TestTupleKeyMap_DistinguishesAdversarialPairs is a baseline test verifying
-// that the existing TupleKey / TupleKeyMap primitive (the migration target)
-// correctly distinguishes the same adversarial pairs that collide under the
-// stringification-based key. This test should PASS today and continue to
-// pass after migration.
+// that TupleKey / TupleKeyMap correctly distinguishes the same adversarial
+// pairs that collide under the stringification-based key.
 //
 // Exercises: tuple_key.go TupleKey, TupleKeyMap
 func TestTupleKeyMap_DistinguishesAdversarialPairs(t *testing.T) {
@@ -141,7 +138,7 @@ func TestTupleKeyMap_DistinguishesAdversarialPairs(t *testing.T) {
 // DIFFERENT buckets and the ValuesEqual fallback — which only resolves collisions
 // WITHIN a bucket — never ran. That made byte-valued joins/dedup miss; it surfaced
 // as resolved/BUG_VBOUND_BYTES_WRONG_RESULTS_UNDER_RACE (a join on a byte key
-// dropped rows, only reliably under -race because the bogus address hash happened
+// dropped tuples, only reliably under -race because the bogus address hash happened
 // to collide otherwise).
 //
 // Exercises: tuple_key.go hashValue/TupleKey/TupleKeyMap with []byte values

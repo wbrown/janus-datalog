@@ -23,10 +23,10 @@ func collectEntityResults(t *testing.T, rel executor.Relation) map[string]bool {
 	iter := rel.Iterator()
 	defer iter.Close()
 	for iter.Next() {
-		row := iter.Tuple()
-		require.Len(t, row, 1)
-		id, ok := row[0].(datalog.Identity)
-		require.True(t, ok, "?e must be an Identity, got %T", row[0])
+		tuple := iter.Tuple()
+		require.Len(t, tuple, 1)
+		id, ok := tuple[0].(datalog.Identity)
+		require.True(t, ok, "?e must be an Identity, got %T", tuple[0])
 		got[id.String()] = true
 	}
 	require.NoError(t, iter.Error())
@@ -39,7 +39,7 @@ func collectEntityResults(t *testing.T, rel executor.Relation) map[string]bool {
 func TestOrJoinInBoundCorrelate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			region := datalog.NewIdentity("region:1")
 			named := datalog.NewIdentity("entity:named")
@@ -79,7 +79,7 @@ func TestOrJoinInBoundCorrelate(t *testing.T) {
 func TestOrJoinInBoundMixedCorrelates(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			site := datalog.NewIdentity("site:this")
 			region := datalog.NewIdentity("region:this")
@@ -124,7 +124,7 @@ func TestOrJoinInBoundMixedCorrelates(t *testing.T) {
 func TestOrJoinClauseBoundCorrelate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			region := datalog.NewIdentity("region:1")
 			probe := datalog.NewIdentity("entity:probe")
@@ -165,7 +165,7 @@ func TestOrJoinClauseBoundCorrelate(t *testing.T) {
 func TestOrJoinInBoundMixedCorrelatesAggregate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			site := datalog.NewIdentity("site:this")
 			region := datalog.NewIdentity("region:this")
@@ -196,7 +196,7 @@ func TestOrJoinInBoundMixedCorrelatesAggregate(t *testing.T) {
 			require.NoError(t, err)
 			iter := rel.Iterator()
 			defer iter.Close()
-			require.True(t, iter.Next(), "aggregate must produce one row")
+			require.True(t, iter.Next(), "aggregate must produce one tuple")
 			require.Equal(t, int64(2), iter.Tuple()[0],
 				"count over the mixed-correlate shape must absorb the residual environment group")
 			require.NoError(t, iter.Error())
@@ -210,7 +210,7 @@ func TestOrJoinInBoundMixedCorrelatesAggregate(t *testing.T) {
 func TestOrJoinTupleInputEnvironment(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			region := datalog.NewIdentity("region:1")
 			named := datalog.NewIdentity("entity:named")
@@ -248,7 +248,7 @@ func TestOrJoinTupleInputEnvironment(t *testing.T) {
 func TestOrJoinBranchPredicateConsumesEnvironment(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			region := datalog.NewIdentity("region:1")
 			named := datalog.NewIdentity("entity:named")
@@ -285,7 +285,7 @@ func TestOrJoinBranchPredicateConsumesEnvironment(t *testing.T) {
 func TestOrDefaultJoinBranchConsumesEnvironment(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			region := datalog.NewIdentity("region:1")
 			named := datalog.NewIdentity("entity:named")
@@ -313,11 +313,11 @@ func TestOrDefaultJoinBranchConsumesEnvironment(t *testing.T) {
 			iter := rel.Iterator()
 			defer iter.Close()
 			for iter.Next() {
-				row := iter.Tuple()
-				require.Len(t, row, 2)
-				id, ok := row[0].(datalog.Identity)
+				tuple := iter.Tuple()
+				require.Len(t, tuple, 2)
+				id, ok := tuple[0].(datalog.Identity)
 				require.True(t, ok)
-				got[id.String()] = row[1].(bool)
+				got[id.String()] = tuple[1].(bool)
 			}
 			require.NoError(t, iter.Error())
 			require.Equal(t, map[string]bool{named.String(): true, otherNamed.String(): false}, got,
@@ -332,7 +332,7 @@ func TestOrDefaultJoinBranchConsumesEnvironment(t *testing.T) {
 func TestOrDefaultJoinCacheableBranchConsumesEnvironment(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			region := datalog.NewIdentity("region:1")
 			named := datalog.NewIdentity("entity:named")
@@ -362,11 +362,11 @@ func TestOrDefaultJoinCacheableBranchConsumesEnvironment(t *testing.T) {
 			iter := rel.Iterator()
 			defer iter.Close()
 			for iter.Next() {
-				row := iter.Tuple()
-				require.Len(t, row, 2)
-				id, ok := row[0].(datalog.Identity)
+				tuple := iter.Tuple()
+				require.Len(t, tuple, 2)
+				id, ok := tuple[0].(datalog.Identity)
 				require.True(t, ok)
-				got[id.String()] = row[1].(string)
+				got[id.String()] = tuple[1].(string)
 			}
 			require.NoError(t, iter.Error())
 			require.Equal(t, map[string]string{named.String(): "code-1", otherNamed.String(): "none"}, got,
@@ -380,7 +380,7 @@ func TestOrDefaultJoinCacheableBranchConsumesEnvironment(t *testing.T) {
 func TestOrJoinWideHeaderInBound(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			region := datalog.NewIdentity("region:1")
 			named := datalog.NewIdentity("entity:named")
@@ -419,7 +419,7 @@ func TestOrJoinWideHeaderInBound(t *testing.T) {
 func TestOrJoinEnvironmentUnderRelationInputIteration(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			regionA := datalog.NewIdentity("region:a")
 			regionB := datalog.NewIdentity("region:b")
@@ -462,7 +462,7 @@ func TestOrJoinEnvironmentUnderRelationInputIteration(t *testing.T) {
 func TestOrJoinBranchNotConsumesWhereBoundExternal(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			probe := datalog.NewIdentity("probe:1")
 			flagged := datalog.NewIdentity("entity:flagged")
@@ -509,7 +509,7 @@ func TestOrJoinBranchNotConsumesWhereBoundExternal(t *testing.T) {
 func TestOrBranchNotConsumesExternalInSeparateGroup(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			probe := datalog.NewIdentity("probe:1")
 			flagged := datalog.NewIdentity("entity:flagged")
@@ -553,7 +553,7 @@ func TestOrBranchNotConsumesExternalInSeparateGroup(t *testing.T) {
 func TestOrJoinInBoundCorrelateInSubquery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			region := datalog.NewIdentity("region:1")
 			named := datalog.NewIdentity("entity:named")

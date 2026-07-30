@@ -14,21 +14,21 @@ func BenchmarkSubqueryInputCombinationExtraction(b *testing.B) {
 	leftIdentity := datalog.NewSymbol("?left-identity")
 	rightIdentity := datalog.NewSymbol("?right-identity")
 	for _, shape := range []struct {
-		leftRows    int
-		rightRows   int
+		leftTuples  int
+		rightTuples int
 		leftValues  int
 		rightValues int
 	}{
-		{leftRows: 100, rightRows: 100, leftValues: 10, rightValues: 10},
-		{leftRows: 1_000, rightRows: 100, leftValues: 100, rightValues: 10},
+		{leftTuples: 100, rightTuples: 100, leftValues: 10, rightValues: 10},
+		{leftTuples: 1_000, rightTuples: 100, leftValues: 100, rightValues: 10},
 	} {
-		name := fmt.Sprintf("product=%d", shape.leftRows*shape.rightRows)
+		name := fmt.Sprintf("product=%d", shape.leftTuples*shape.rightTuples)
 		b.Run(name, func(b *testing.B) {
-			leftTuples := make([]Tuple, shape.leftRows)
+			leftTuples := make([]Tuple, shape.leftTuples)
 			for i := range leftTuples {
 				leftTuples[i] = Tuple{int64(i % shape.leftValues), int64(i)}
 			}
-			rightTuples := make([]Tuple, shape.rightRows)
+			rightTuples := make([]Tuple, shape.rightTuples)
 			for i := range rightTuples {
 				rightTuples[i] = Tuple{int64(i % shape.rightValues), int64(i)}
 			}

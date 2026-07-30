@@ -51,10 +51,26 @@ func (it *failingIterator) Datom() (*datalog.Datom, error) {
 	return &d, nil
 }
 
-func (it *failingIterator) Close() error                 { return nil }
-func (it *failingIterator) Seek(key []byte)              {}
+func (it *failingIterator) Close() error { return nil }
+
+// Seek panics rather than absorbing the call. This fake yields a fixed slice
+// with no index behind it, so it cannot honour a bound's start, end or
+// membership rule; a no-op would let a future caller seek it and get the whole
+// slice, passing for a reason the test did not intend.
+func (it *failingIterator) Seek(bound ScanBound) {
+	panic("failingIterator has no index to seek within")
+}
 func (it *failingIterator) ElementID() datalog.ElementID { return datalog.ElementID{} }
 func (it *failingIterator) Error() error                 { return it.err }
+
+// Scanned reports the positions Next has yielded — index counts advances, and
+// the last one may be past the end, so cap at what the fake actually holds.
+func (it *failingIterator) Scanned() int {
+	if it.index > len(it.datoms) {
+		return len(it.datoms)
+	}
+	return it.index
+}
 
 // TestIterator_ErrorPropagationContract locks in the Iterator interface
 // contract: Error() returns the first error encountered. Implementations
@@ -100,7 +116,7 @@ func TestCRDTResolvingIterator_SourceDatomErrorPropagates(t *testing.T) {
 	}
 
 	// schema=nil and matcher=nil → plain first-entry semantics, not unique walk
-	it := NewCRDTResolvingIterator(source, nil, datalog.ElementID{}, nil)
+	it := NewCRDTResolvingIterator(source, nil, datalog.ElementID{}, nil, DiscardIntake)
 
 	// Consume until exhausted.
 	for it.Next() {
@@ -130,7 +146,7 @@ func TestCRDTResolvingIterator_UniqueWalkErrorIsDeferred(t *testing.T) {
 	// Seed a CRDTResolvingIterator directly and simulate the failure
 	// path: Next() records the error and returns false.
 	source := &failingIterator{} // empty source; source.Next() is false
-	it := NewCRDTResolvingIterator(source, nil, datalog.ElementID{}, nil)
+	it := NewCRDTResolvingIterator(source, nil, datalog.ElementID{}, nil, DiscardIntake)
 	it.err = sentinel // simulate as if processUniqueEntry recorded it
 
 	// Exhaust (source is empty so Next() returns false immediately).

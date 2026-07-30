@@ -16,12 +16,21 @@ import (
 // classes) — the engine's existing, correct numeric cross-comparison. The rank
 // order is internal to in-memory comparison; it is deliberately NOT the on-disk
 // ValueType tag order (which separates int and float and would break numeric
-// cross-compare). Unknown types share the top rank and fall back to string form.
+// cross-compare).
+//
+// The domain is closed, so this enumerates it and panics on the rest, the way
+// Type() and hashValue do. A catch-all rank is what let vectors — the domain's
+// only composite — order by their rendered form: two vectors shared the unknown
+// rank, and compareByRank resolved same-rank pairs through fmt.
+//
+// Vectors rank last. They are the only member that contains domain values, so
+// they have no place among the scalars; every representation the equality layer
+// treats as a vector ([]interface{} and typed slices) takes rankVector, which is
+// why the arm is a reflect check rather than a type case. []byte is a scalar with
+// its own rank and matches its exact case above.
 func typeRank(v interface{}) int {
-	switch v.(type) {
-	case nil:
-		return 0
-	case int, int8, int16, int32, int64, uint64, *uint64, float64:
+	switch t := v.(type) {
+	case int, int8, int16, int32, int64, uint64, float64:
 		return 1
 	case bool:
 		return 2
@@ -37,23 +46,42 @@ func typeRank(v interface{}) int {
 		return 7
 	case Identity:
 		return 8
-	case ElementID, *ElementID:
+	case ElementID:
 		return 9
-	default:
-		return 10
+	case *ElementID:
+		// A pointer representation carries a value only when non-nil. A nil one
+		// is absence, which is not a member of the domain and so has no rank —
+		// ranking it would order a "latest" mode selector among real ElementIDs.
+		// Reported as nil rather than as an unknown type: the type is in the
+		// domain, so naming the type would send a reader to this taxonomy
+		// instead of to whatever produced the nil.
+		if t == nil {
+			panic(fmt.Sprintf("typeRank: %T is nil; nil is not a datalog value", v))
+		}
+		return 9
 	}
+	if isVector(v) {
+		return rankVector
+	}
+	panic(fmt.Sprintf("typeRank: %T is not a datalog value type", v))
 }
 
-// compareByRank orders two values of different types by their type rank. It is
-// only called once same-type comparison has been ruled out; equal ranks at this
-// point mean an unknown/unhandled type pair, which falls back to string form so
-// the result is still deterministic and antisymmetric.
+// rankVector is the ordering class of the domain's composite. Named because it
+// is referenced by the vector arm and by the tests that pin the ladder.
+const rankVector = 10
+
+// compareByRank orders two values of different types by their type rank. Equal
+// ranks cannot reach here: every rank holds one type — save the numeric rank and
+// the ElementID pair, whose same-rank comparisons are handled by CompareValues
+// before it delegates — so an equal-rank pair here is a type CompareValues
+// dispatched past without handling.
 func compareByRank(left, right interface{}) int {
 	lr, rr := typeRank(left), typeRank(right)
-	if lr != rr {
-		return compareInt64s(int64(lr), int64(rr))
+	if lr == rr {
+		panic(fmt.Sprintf("compareByRank: %T and %T share rank %d but neither "+
+			"was compared by value", left, right, lr))
 	}
-	return strings.Compare(stringValue(left), stringValue(right))
+	return compareInt64s(int64(lr), int64(rr))
 }
 
 // CompareValues compares two values and returns:
@@ -68,28 +96,11 @@ func compareByRank(left, right interface{}) int {
 // value types including:
 // - Basic types: int, int64, float64, string, bool, time.Time
 // - Datalog types: Identity, Keyword
-// - Nil values (nil is less than any non-nil value)
 // - Type conversions between numeric types
+//
+// nil is not a value and has no rank: it reaches typeRank's panic, like anything
+// else outside the domain.
 func CompareValues(left, right interface{}) int {
-	// Handle nil
-	if left == nil && right == nil {
-		return 0
-	}
-	if left == nil {
-		return -1
-	}
-	if right == nil {
-		return 1
-	}
-
-	// Handle uint64 pointers by dereferencing
-	if ptr, ok := left.(*uint64); ok {
-		left = *ptr
-	}
-	if ptr, ok := right.(*uint64); ok {
-		right = *ptr
-	}
-
 	// Handle Identity comparison - use the Compare method which handles nil
 	if id1, ok := left.(Identity); ok {
 		if id2, ok := right.(Identity); ok {
@@ -177,9 +188,43 @@ func CompareValues(left, right interface{}) int {
 		return compareByRank(left, right)
 	}
 
-	// Unknown types: order by type rank (falls back to string form for
-	// same-rank unknowns), keeping the comparator total and antisymmetric.
+	// Vectors, the domain's composite. Element-wise so nesting works by
+	// recursion and so ValuesEqual(a,b) ⇒ cmp == 0 holds: this is the traversal
+	// ValuesEqual performs, so two vectors it calls equal — across
+	// representations — compare zero here. A vector against a scalar orders by
+	// rank; []byte is a scalar and left the switch above.
+	if isVector(left) && isVector(right) {
+		return compareVectors(reflect.ValueOf(left), reflect.ValueOf(right))
+	}
+
 	return compareByRank(left, right)
+}
+
+// isVector reports whether v is the domain's composite. []byte is a Go slice but
+// a domain scalar, with its own rank and its own comparison.
+func isVector(v interface{}) bool {
+	if _, ok := v.([]byte); ok {
+		return false
+	}
+	rv := reflect.ValueOf(v)
+	return rv.IsValid() && rv.Kind() == reflect.Slice
+}
+
+// compareVectors orders two vectors lexicographically: element-wise to the
+// shorter length, then the shorter vector first. Length-first would also satisfy
+// the equality implication but would order by a property the elements do not
+// determine — [9] below [1,2].
+func compareVectors(left, right reflect.Value) int {
+	n := left.Len()
+	if right.Len() < n {
+		n = right.Len()
+	}
+	for i := 0; i < n; i++ {
+		if c := CompareValues(left.Index(i).Interface(), right.Index(i).Interface()); c != 0 {
+			return c
+		}
+	}
+	return compareInt64s(int64(left.Len()), int64(right.Len()))
 }
 
 // compareNumeric compares an int64 with another numeric value
@@ -350,6 +395,21 @@ func asInt64(v interface{}) (int64, bool) {
 // already been handled (== panics on two values sharing an uncomparable
 // dynamic type).
 func ValuesEqual(a, b interface{}) bool {
+	// Classifying b against the domain is what validates it: a value outside the
+	// domain has no rank, and typeRank's default panics. Ordering gets this on both
+	// operands for free because compareByRank ranks each side; equality dispatches
+	// on a alone, so b needs it here.
+	//
+	// Only b. a is the dispatch operand, so an out-of-domain a matches no arm and
+	// reaches the domain check at the tail. b is only ever assertion-tested by
+	// whichever arm a selected, and a failed assertion there cannot be told apart
+	// from a legitimate type mismatch — so without this, an out-of-domain b is
+	// reported merely unequal, which would make absence a value that differs from
+	// every member of the domain.
+	//
+	// typeRank rather than a second enumeration: the domain is enumerated once.
+	typeRank(b)
+
 	// []byte/[]uint8 first ([]uint8 is an alias of []byte, so one assertion
 	// covers both). Strings are stored as []uint8 internally, so this is the
 	// most common slice value. Slices aren't comparable with == (would
@@ -357,14 +417,6 @@ func ValuesEqual(a, b interface{}) bool {
 	if ba, ok := a.([]byte); ok {
 		bb, ok := b.([]byte)
 		return ok && bytes.Equal(ba, bb)
-	}
-
-	// Dereference *uint64 so the primitive comparison below sees plain uint64.
-	if ptr, ok := a.(*uint64); ok {
-		a = *ptr
-	}
-	if ptr, ok := b.(*uint64); ok {
-		b = *ptr
 	}
 
 	// Interned pointer types compare via their Equal method (which handles
@@ -436,20 +488,24 @@ func ValuesEqual(a, b interface{}) bool {
 		return true
 	}
 
-	// The value domain is closed: anything still here must be a comparable
-	// scalar (or both-nil). An uncomparable type reaching equality is a
-	// layering violation — e.g. a pulled map[string]interface{}, which is
-	// result presentation, never a relational value — so fail loudly naming
-	// the type (mirroring Type()'s panic convention) instead of letting ==
-	// panic cryptically. Slices were handled above; invalid (nil-interface)
-	// reflect.Values are skipped — a == b handles both-nil.
-	if ra.IsValid() && !ra.Comparable() {
-		panic(fmt.Sprintf("ValuesEqual: %T is not a datalog value type", a))
+	// The value domain is closed and every member of it was handled above, so a
+	// value reaching here is outside the domain — a layering violation, e.g. a
+	// pulled map[string]interface{}, which is result presentation and never a
+	// relational value. Fail loudly naming the type, as Type() and hashValue do.
+	//
+	// This is a domain check, not a comparability check. Testing Comparable()
+	// let any comparable non-domain value through to `a == b`: a pointer then
+	// compared addresses, which is the silent hash-by-address fallback the value
+	// rules name as worse than a panic, and it made equality the weakest of the
+	// domain's three doors.
+	//
+	// A nil pointer is reported as nil rather than as an unknown type. The domain
+	// admits *ElementID, so naming the type would state something false and send a
+	// reader to the taxonomy instead of to whatever produced the nil.
+	if ra.Kind() == reflect.Ptr && ra.IsNil() {
+		panic(fmt.Sprintf("ValuesEqual: %T is nil; nil is not a datalog value", a))
 	}
-	if rb.IsValid() && !rb.Comparable() {
-		panic(fmt.Sprintf("ValuesEqual: %T is not a datalog value type", b))
-	}
-	return a == b
+	panic(fmt.Sprintf("ValuesEqual: %T is not a datalog value type", a))
 }
 
 // stringValue converts any value to a string for comparison

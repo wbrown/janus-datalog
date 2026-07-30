@@ -386,7 +386,7 @@ func TestVectorIndexContainsRealElementIDs(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get the cache entry directly via the resolver interface
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	var eBytes Entity
@@ -394,8 +394,11 @@ func TestVectorIndexContainsRealElementIDs(t *testing.T) {
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
 
-	values, positions, maxID, err := matcher.ResolveRGA(eBytes, aBytes)
+	report := &scanReport{}
+	values, positions, maxID, present, err := matcher.ResolveRGA(eBytes, aBytes, report)
 	require.NoError(t, err)
+	require.True(t, present, "the (E, A) carries RGA datoms, so it is present")
+	require.Positive(t, report.scanned, "RGA reconstruction read the index and must report it")
 
 	// Verify we got 3 elements
 	require.Len(t, values, 3, "should have 3 values")
@@ -453,7 +456,7 @@ func TestVectorIndexUsableForTombstone(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get the ElementID for "archery" (position 1) via cache
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	var eBytes Entity
@@ -461,8 +464,11 @@ func TestVectorIndexUsableForTombstone(t *testing.T) {
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
 
-	_, positions, _, err := matcher.ResolveRGA(eBytes, aBytes)
+	report := &scanReport{}
+	_, positions, _, present, err := matcher.ResolveRGA(eBytes, aBytes, report)
 	require.NoError(t, err)
+	require.True(t, present, "the (E, A) carries RGA datoms, so it is present")
+	require.Positive(t, report.scanned, "RGA reconstruction read the index and must report it")
 	require.Len(t, positions, 3)
 
 	archeryElementID := positions[1]
@@ -483,7 +489,7 @@ func TestVectorIndexUsableForTombstone(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify "archery" is now gone
-	matcher2 := NewBadgerMatcher(db.store)
+	matcher2 := NewPatternMatcher(db.store)
 	matcher2.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher2, e, a)
 	require.True(t, found)

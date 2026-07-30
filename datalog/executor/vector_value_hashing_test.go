@@ -16,7 +16,7 @@ import (
 // polymorphic slice comparison) are datalog values: cardinality-vector reads
 // bind them. These tests pin content-based hashing — equal vectors must
 // deduplicate, join, and hash identically, regardless of representation.
-// See docs/bugs/resolved/BUG_VECTOR_VALUES_DEGENERATE_HASHING.md.
+// See BUG_VECTOR_VALUES_DEGENERATE_HASHING.md.
 
 // Two tuples whose only difference is the identity (not content) of their
 // vector values must collapse under set semantics.
@@ -38,15 +38,15 @@ func TestEqualVectorValuesJoin(t *testing.T) {
 	y := datalog.NewSymbol("?y")
 
 	left := NewMaterializedRelation([]query.Symbol{x, v}, []Tuple{
-		{"left-row", []interface{}{"a", int64(1)}},
+		{"left-tuple", []interface{}{"a", int64(1)}},
 	})
 	right := NewMaterializedRelation([]query.Symbol{v, y}, []Tuple{
-		{[]interface{}{"a", int64(1)}, "right-row"},
+		{[]interface{}{"a", int64(1)}, "right-tuple"},
 	})
 
 	joined := left.HashJoin(right, []query.Symbol{v})
 	if joined.Size() != 1 {
-		t.Fatalf("equal vector join keys must match: expected 1 row, got %d", joined.Size())
+		t.Fatalf("equal vector join keys must match: expected 1 tuple, got %d", joined.Size())
 	}
 }
 
@@ -166,7 +166,7 @@ func TestSignedZeroHashesConsistentlyAcrossSetOperations(t *testing.T) {
 		[]Tuple{{negative, "right"}},
 	)
 	if got := HashJoin(left, right, []query.Symbol{value}).Size(); got != 1 {
-		t.Fatalf("signed-zero join keys must match, got %d rows", got)
+		t.Fatalf("signed-zero join keys must match, got %d tuples", got)
 	}
 
 	grouped := executeGroupedAggregation(
@@ -200,7 +200,6 @@ func runEqualValueHashLaw(t *testing.T, seed int64) {
 		{elementID, &elementID},
 		{datalog.NewKeyword(":same/value"), datalog.NewKeyword(":same/value")},
 		{datalog.NewSymbol("same-value"), datalog.NewSymbol("same-value")},
-		{nil, nil},
 		{[]int64{1, 2, 3}, []interface{}{int64(1), int64(2), int64(3)}},
 	}
 	for caseIndex, pair := range deterministic {

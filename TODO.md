@@ -28,7 +28,7 @@
 - **Database export/import: EDN format for backup and migration**
 - **Conditional aggregate rewriting** (folded into the default algebra optimizer; no separate flag — 7.7× in the original standalone benchmark)
 - **AETV index for A-primary CRDT resolution**
-- **ATEV index for O(1) attribute high-water mark** (cache freshness gate; 555× faster than the prior AEVT scan at 10K datoms-per-attribute)
+- **ATEV index for AsOf-by-attribute and the O(1) attribute high-water mark** (A-bound + Tx-bound + V-unbound patterns seek straight to the transaction; the first key under `[A]` is the attribute's max-Tx datom. The cache gate that consumed the mark was never wired up and its implementation was removed 2026-07-25 — the index property stands and the gate can be rebuilt on it)
 - **Value elimination: ~50% storage reduction (keys-only storage)**
 - **LZ77+FSE compression codec** (3.6× on prose, 10-13× on structured/repetitive; 2.1-2.4 GB/s decompression; deterministic; Tier-3 blob store for large values)
 - **Iterator-error contract enforced across executor + storage**: deferred storage errors (Tier-3 blob decode, etc.) ride through every materialization, join, sort, projection, union, and subquery boundary instead of being laundered into clean partial results
@@ -77,9 +77,9 @@ These items have been completed and are preserved for historical context:
 **Status**: ✅ COMPLETE (v0.11.x + v0.12.0)
 **Result**: Deferred iterator errors (e.g., Tier-3 blob decode failures surfacing via Error() after Next() returns false) propagate through every materialization, join, sort, projection, union, and subquery path. Five PRs (#68, #77, #78, #79, #83) brought every observed path under the contract. Relation.Sorted() signature changed to `([]Tuple, error)`. Static guard test now fails the build if any collectTuplesInto call drops its error.
 
-### ✅ ATEV Index — O(1) Attribute High-Water Mark
+### ✅ ATEV Index — AsOf-by-Attribute and O(1) Attribute High-Water Mark
 **Status**: ✅ COMPLETE (May 2026, v0.12.0)
-**Result**: 8th index added; Cache.IsAttributeFresh and MaxElementIDForAttribute become constant-time. 2.2× → 555× faster than the prior AEVT scan at 10–10,000 datoms-per-attribute. Costs ~14% more write work per commit.
+**Result**: 8th index added; `[A][Tx↓][E][V]` puts Tx↓ ahead of E, so an A-bound, Tx-bound, V-unbound pattern seeks straight to its transaction, and the first key under `[A]` is the attribute's max-Tx datom (measured 2.2× → 555× against the prior AEVT scan). Costs ~14% more write work per commit. *Amended 2026-07-25*: the cache gate that consumed the high-water mark, `Cache.IsAttributeFresh`, was never wired to a production caller; that implementation and its benchmark were removed. The index property is unaffected.
 
 ### ✅ Concurrency Hardening (v0.12.0)
 **Status**: ✅ COMPLETE

@@ -23,13 +23,13 @@ type CRDTResolvingIterator struct {
 	// than simply emitting the EATV first-entry). Nil is permitted and
 	// disables unique-walk resolution (CardinalityOne falls back to the
 	// non-unique first-entry semantic).
-	uniqueMatcher *BadgerMatcher
+	uniqueMatcher *PatternMatcher
 
 	// Current (E, A) group tracking
 	currentE datalog.Identity
 	currentA datalog.Keyword
 	hasGroup bool
-	card     schema.Cardinality
+	card     datalog.Keyword
 
 	// CardinalityMany: streaming state (no buffering!)
 	// Because we iterate Tx descending:
@@ -50,6 +50,18 @@ type CRDTResolvingIterator struct {
 	uniqueMode      bool
 	uniqueRetracted map[string]datalog.ElementID
 	uniqueEmitted   bool
+
+	// report accounts for the AVET supersession scans the unique walk opens,
+	// one per Set entry it considers. Those are index reads this iterator
+	// causes and the source knows nothing about, so without them the reported
+	// intake would omit the largest read on the unique path.
+	//
+	// They accrue into the arm's report rather than into a count of this
+	// iterator's own, because the arm's report is also what the source scan
+	// accrues into — and a wrapper that added its nested reads to Scanned()
+	// would be invisible to a report attached beneath it, which is where the
+	// scan was acquired.
+	report *scanReport
 
 	// CardinalityVector: TODO - placeholder for discussion
 	rgaElements []rgaElement
@@ -92,12 +104,17 @@ type rgaElement struct {
 // emitted, with supersession determined by an AVET sub-scan for
 // max-other-Tx per candidate V. When matcher is nil, all CardinalityOne
 // groups use first-entry semantics (the Unique field is ignored).
-func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, txID datalog.ElementID, matcher *BadgerMatcher) *CRDTResolvingIterator {
+//
+// report is the arm's, and is where the unique walk's own scans accrue. It is
+// nil when nothing is listening, and nil is also correct for a caller whose
+// scan no report accounts for.
+func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, txID datalog.ElementID, matcher *PatternMatcher, report *scanReport) *CRDTResolvingIterator {
 	return &CRDTResolvingIterator{
 		source:        source,
 		schema:        schema,
 		txID:          txID,
 		uniqueMatcher: matcher,
+		report:        report,
 	}
 }
 
@@ -264,7 +281,7 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 			// Unique CardinalityOne attributes use the walk-based
 			// resolution. Other cardinalities ignore Unique (uniqueness
 			// applies only to single-valued attributes).
-			if attr.Cardinality == schema.CardinalityOne && attr.Unique != "" && it.uniqueMatcher != nil {
+			if attr.Cardinality == schema.CardinalityOne && attr.HasUniqueConstraint() && it.uniqueMatcher != nil {
 				it.uniqueMode = true
 			}
 		}
@@ -476,8 +493,9 @@ func (it *CRDTResolvingIterator) Close() error {
 	return nil
 }
 
-// Seek positions the iterator at or after the given key.
-func (it *CRDTResolvingIterator) Seek(key []byte) {
+// Seek positions the iterator at or after the bound's start, discarding the
+// group state accumulated for the run it is leaving.
+func (it *CRDTResolvingIterator) Seek(bound ScanBound) {
 	it.hasGroup = false
 	it.emitted = nil
 	it.tombstones = nil
@@ -487,7 +505,23 @@ func (it *CRDTResolvingIterator) Seek(key []byte) {
 	it.sourceExhausted = false
 	it.pendingDatom = nil
 	it.currentDatom = nil
-	it.source.Seek(key)
+	it.source.Seek(bound)
+}
+
+// Scanned reports the source's intake, and only that.
+//
+// Resolution reads no index of its own on most paths, and the gap between this
+// and what resolution emitted is the history depth the index made the query pay
+// for. Unique CardinalityOne is the exception — processUniqueEntry opens an
+// AVET supersession scan per Set entry — and those reads accrue into the arm's
+// report at the point they happen, not here.
+//
+// They cannot be added here. The scan this iterator wraps was acquired through
+// the arm's report, so the source already accrues into it; folding the walk's
+// reads into this total as well would either double-count them or, for an arm
+// reading the report rather than this method, lose them entirely.
+func (it *CRDTResolvingIterator) Scanned() int {
+	return it.source.Scanned()
 }
 
 // ElementID returns the transaction ElementID of the current entry.
@@ -521,7 +555,9 @@ func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool,
 	eBytes := Entity(datom.E.Hash())
 
 	state := &uniqueWalkState{retracted: it.uniqueRetracted}
-	decision, err := it.uniqueMatcher.walkApplyEntry(state, datom, eBytes, aBytes)
+	// Accrues whether or not the check fails: a failed supersession check
+	// still read the index to fail.
+	decision, err := it.uniqueMatcher.walkApplyEntry(state, datom, eBytes, aBytes, it.report)
 	if err != nil {
 		return false, err
 	}

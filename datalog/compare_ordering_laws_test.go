@@ -13,9 +13,9 @@ import (
 // and CompareValues(b,a) < 0 could be true — non-antisymmetric, which violates
 // the strict-weak-ordering contract sort.Slice/min/max/order-by depend on.
 //
-// The fix gives CompareValues a custom type-rank total ordering: numeric
-// (int/float together) < bool < time < string < bytes < keyword < symbol <
-// identity < elementID; same-rank values compare by value, different-rank by
+// CompareValues uses a custom type-rank total ordering: numeric (int/float
+// together) < bool < time < string < bytes < keyword < symbol < identity <
+// elementID < vector; same-rank values compare by value, different-rank by
 // rank. These tests pin the comparator laws (antisymmetry, sort-safety,
 // predicate consistency) rather than any single direction outcome.
 
@@ -23,9 +23,17 @@ import (
 // numeric rank deliberately includes all three representations — int64,
 // uint64, float64 — with an equal-magnitude trio (42) so cross-representation
 // ties are exercised, and a uint64 above int64's range.
+//
+// The vector entries carry the composite rank's own cases: two single-element
+// vectors whose rendered forms sort opposite to their elements ([10] before [2]
+// as text), a cross-representation duplicate of one of them so the
+// cmp==0 ⇒ ValuesEqual law is exercised across representations, and a longer
+// vector sharing a prefix so prefix ordering is covered.
+//
+// nil is absent because it is not a value: it has no rank, and every door of the
+// domain rejects it.
 func mixedTypeValues() []Value {
 	return []Value{
-		nil,
 		int64(-5),
 		int64(42),
 		uint64(42),
@@ -42,6 +50,10 @@ func mixedTypeValues() []Value {
 		NewSymbol("sym"),
 		NewIdentity("ent-1"),
 		ElementID{Lamport: 1, ReplicaID: 1},
+		[]interface{}{int64(2)},
+		[]interface{}{int64(10)},
+		[]int64{2},
+		[]interface{}{int64(2), int64(1)},
 	}
 }
 
@@ -76,7 +88,7 @@ func TestCompareValues_Antisymmetric(t *testing.T) {
 // class (typeRank 1), where ordering is by magnitude across representations.
 func inNumericRank(v Value) bool {
 	switch v.(type) {
-	case int, int8, int16, int32, int64, uint64, *uint64, float64:
+	case int, int8, int16, int32, int64, uint64, float64:
 		return true
 	}
 	return false
@@ -217,6 +229,20 @@ func TestCompareValues_KnownPairs(t *testing.T) {
 		// Mixed types order by type rank (numeric=1 < bool=2 < string=4).
 		{"string vs int", "test", 123, 1},    // string rank > numeric rank
 		{"bool vs string", true, "test", -1}, // bool rank < string rank
+
+		// Vectors compare element-wise, not by rendered form. This is the
+		// direction the antisymmetry and transitivity laws cannot pin: text
+		// ordering puts "[10]" before "[2]", element ordering does the reverse.
+		{"vector by element, not text", []interface{}{int64(10)}, []interface{}{int64(2)}, 1},
+		{"vector by element, reversed", []interface{}{int64(2)}, []interface{}{int64(10)}, -1},
+		// A prefix tie breaks on length, shorter first.
+		{"vector prefix shorter first", []interface{}{int64(2)}, []interface{}{int64(2), int64(1)}, -1},
+		// Cross-representation vectors of equal elements compare equal.
+		{"vector across representations", []int64{2}, []interface{}{int64(2)}, 0},
+		// Vectors rank last, after every scalar class.
+		{"vector vs numeric by rank", []interface{}{int64(1)}, int64(1), 1},
+		{"vector vs elementID by rank",
+			[]interface{}{int64(1)}, ElementID{Lamport: 1, ReplicaID: 1}, 1},
 	}
 
 	for _, tt := range tests {

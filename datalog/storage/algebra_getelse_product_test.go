@@ -20,12 +20,14 @@ import (
 
 // setupGetElseTestDB creates a database with projects that have optional
 // attributes. Some attributes are present, some are missing (should default).
-func setupGetElseTestDB(t testing.TB) (*Database, func()) {
+// handler is registered at open, since the database's executors, matchers, and
+// relations are all built with it; nil is annotations-off.
+func setupGetElseTestDB(t testing.TB, handler annotations.Handler) (*Database, func()) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "getelse-product-*")
 	require.NoError(t, err)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, AnnotationHandler: handler})
 	require.NoError(t, err)
 
 	tx := db.NewTransaction()
@@ -109,10 +111,10 @@ func setupGetElseWithItemsDB(t testing.TB, popts *planner.PlannerOptions) (*Data
 }
 
 // TestGetElseMultiple_NoCartesianProduct tests that multiple get-else
-// expressions on the same entity produce one row per entity, not a
+// expressions on the same entity produce one tuple per entity, not a
 // Cartesian product.
 func TestGetElseMultiple_NoCartesianProduct(t *testing.T) {
-	db, cleanup := setupGetElseTestDB(t)
+	db, cleanup := setupGetElseTestDB(t, nil)
 	defer cleanup()
 
 	q := `[:find ?p ?name ?a ?b ?c
@@ -127,7 +129,7 @@ func TestGetElseMultiple_NoCartesianProduct(t *testing.T) {
 	require.NoError(t, err)
 	baseline, err := executor.CollectTuples(baselineRel, nil)
 	require.NoError(t, err)
-	require.Len(t, baseline, 3, "baseline: one row per project")
+	require.Len(t, baseline, 3, "baseline: one tuple per project")
 
 	db.ClearPlanCache()
 	optimizedRel, err := queryWithAlgebra(db, q)
@@ -135,14 +137,14 @@ func TestGetElseMultiple_NoCartesianProduct(t *testing.T) {
 	optimized, err := executor.CollectTuples(optimizedRel, nil)
 	require.NoError(t, err)
 	assert.Len(t, optimized, 3,
-		"algebra bridge: must produce one row per project, not a Cartesian product")
+		"algebra bridge: must produce one tuple per project, not a Cartesian product")
 }
 
 // TestGetElseMultiple_CorrectValues verifies that get-else returns the
 // stored value when present and the default when absent, through the
 // algebra bridge path.
 func TestGetElseMultiple_CorrectValues(t *testing.T) {
-	db, cleanup := setupGetElseTestDB(t)
+	db, cleanup := setupGetElseTestDB(t, nil)
 	defer cleanup()
 
 	q := `[:find ?name ?a ?b ?c
@@ -184,7 +186,7 @@ func TestGetElseMultiple_CorrectValues(t *testing.T) {
 		optimizedByName[tuple[0].(string)] = tuple
 	}
 
-	assert.Len(t, optimized, len(baseline), "same row count")
+	assert.Len(t, optimized, len(baseline), "same tuple count")
 	for name, expected := range baselineByName {
 		actual, ok := optimizedByName[name]
 		require.True(t, ok, "missing result for %s", name)
@@ -195,18 +197,9 @@ func TestGetElseMultiple_CorrectValues(t *testing.T) {
 // TestGetElsePipelineInvariant verifies the single-relation pipeline invariant
 // via annotations: after each clause, there should be exactly 1 relation group.
 func TestGetElsePipelineInvariant(t *testing.T) {
-	db, cleanup := setupGetElseTestDB(t)
-	defer cleanup()
-
-	q := `[:find ?p ?name ?a ?b
-	       :where [?p :project/type :type/active]
-	              [(get-else $ ?p :project/name "") ?name]
-	              [(get-else $ ?p :project/opt-a "") ?a]
-	              [(get-else $ ?p :project/opt-b "") ?b]]`
-
 	maxGroups := 0
 	replacements := 0
-	db.SetAnnotationHandler(func(event annotations.Event) {
+	db, cleanup := setupGetElseTestDB(t, func(event annotations.Event) {
 		switch event.Name {
 		case "collapse/success":
 			if after, ok := event.Data["relations.after"]; ok {
@@ -221,7 +214,13 @@ func TestGetElsePipelineInvariant(t *testing.T) {
 			}
 		}
 	})
-	defer db.SetAnnotationHandler(nil)
+	defer cleanup()
+
+	q := `[:find ?p ?name ?a ?b
+	       :where [?p :project/type :type/active]
+	              [(get-else $ ?p :project/name "") ?name]
+	              [(get-else $ ?p :project/opt-a "") ?a]
+	              [(get-else $ ?p :project/opt-b "") ?b]]`
 
 	db.ClearPlanCache()
 	rel, err := queryWithAlgebra(db, q)
@@ -241,7 +240,7 @@ func TestGetElsePipelineInvariant(t *testing.T) {
 //
 // Tests the full complex structure: pattern + 6 get-else + pattern +
 // 3 OR-with-subquery + comparison binding + order-by.
-// Each test expects 2 rows (one per project), not a Cartesian product.
+// Each test expects 2 tuples (one per project), not a Cartesian product.
 // =============================================================================
 
 // buildComplexQuery_OrClause builds the complex query using qb.Or()
@@ -460,7 +459,7 @@ const parsedComplexQuery_OrDefault = `
      [(ground [:none #inst "0001-01-01T00:00:00Z"]) [[?lastTag ?lastUpdatedAt]]])
  :order-by [[?lastUpdatedAt :desc]]]`
 
-func runComplexQueryTest(t *testing.T, db *Database, q interface{}, label string, expectedRows int) {
+func runComplexQueryTest(t *testing.T, db *Database, q interface{}, label string, expectedTuples int) {
 	t.Helper()
 
 	tuples, err := executor.CollectTuples(db.Query(q))
@@ -471,7 +470,7 @@ func runComplexQueryTest(t *testing.T, db *Database, q interface{}, label string
 		t.Logf("  %v", tuple)
 	}
 
-	assert.Len(t, tuples, expectedRows, "%s: expected %d rows", label, expectedRows)
+	assert.Len(t, tuples, expectedTuples, "%s: expected %d tuples", label, expectedTuples)
 }
 
 // TestGetElseComplex_OrSemantics compares the (or ...) query result with and
@@ -510,7 +509,7 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 	opts.EnableAlgebraOptimizer = false
 	router := executor.NewSourceRouter(buildSourceMap(nil, db.Matcher()))
 	exec := executor.NewExecutorWithOptions(router, db, opts)
-	baselineRel, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, nil)
+	baselineRel, err := exec.ExecuteWithRelations(executor.NewContext(), q, nil)
 	require.NoError(t, err, "baseline should not error")
 	baseline, err := executor.CollectTuples(baselineRel, nil)
 	require.NoError(t, err)
@@ -524,7 +523,7 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 	opts2 := DefaultPlannerOptions()
 	opts2.EnableAlgebraOptimizer = true
 	exec2 := executor.NewExecutorWithOptions(router, db, opts2)
-	optimizedRel, err := exec2.ExecuteWithRelations(executor.NewContext(nil), q, nil)
+	optimizedRel, err := exec2.ExecuteWithRelations(executor.NewContext(), q, nil)
 	require.NoError(t, err, "optimized should not error")
 	optimized, err := executor.CollectTuples(optimizedRel, nil)
 	require.NoError(t, err)
@@ -534,14 +533,12 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 	}
 
 	assert.Equal(t, len(baseline), len(optimized),
-		"algebra bridge must produce same row count as base executor")
+		"algebra bridge must produce same tuple count as base executor")
 }
 
 // TestGetElseComplex_ParsedOr tests with parsed (or ...) — union semantics.
-// Both branches contribute rows when both match. Verified empirically:
-// base executor without algebra bridge also produces 9 rows
-// (TestGetElseComplex_OrSemantics). This is correct union behavior, not a bug.
-// Use (or-default ...) for fallback semantics (2 rows).
+// Both branches contribute tuples when both match. This is correct union behavior, not a bug.
+// Use (or-default ...) for fallback semantics (2 tuples).
 func TestGetElseComplex_ParsedOr(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -554,7 +551,7 @@ func TestGetElseComplex_ParsedOr(t *testing.T) {
 }
 
 // TestGetElseComplex_ParsedOrDefault tests with parsed (or-default ...).
-// Fallback semantics: one row per project.
+// Fallback semantics: one tuple per project.
 func TestGetElseComplex_ParsedOrDefault(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -567,7 +564,7 @@ func TestGetElseComplex_ParsedOrDefault(t *testing.T) {
 }
 
 // TestGetElseComplex_QBOr tests with qb.Or() → *query.OrClause.
-// Same union semantics as parsed (or ...): 9 rows.
+// Same union semantics as parsed (or ...): 9 tuples.
 func TestGetElseComplex_QBOr(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -582,7 +579,7 @@ func TestGetElseComplex_QBOr(t *testing.T) {
 }
 
 // TestGetElseComplex_QBOrDefault tests with qb.OrDefault() → *query.OrDefaultClause.
-// Fallback semantics: 2 rows.
+// Fallback semantics: 2 tuples.
 func TestGetElseComplex_QBOrDefault(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -597,8 +594,7 @@ func TestGetElseComplex_QBOrDefault(t *testing.T) {
 }
 
 // TestGetElseComplex_StructuralComparison compares the clause types produced
-// by qb.OrDefault() vs parsed (or-default ...) to find why one passes and
-// the other fails.
+// by qb.OrDefault() vs parsed (or-default ...).
 func TestGetElseComplex_StructuralComparison(t *testing.T) {
 	// QB path
 	qbQuery := buildComplexQuery_OrDefaultClause(t)

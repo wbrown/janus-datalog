@@ -209,7 +209,6 @@ func scorePatternSelectivity(pattern *query.DataPattern, resolved map[query.Symb
 }
 
 // analyzeExprForExplain creates an ExpressionPlan from an Expression
-// Named differently to avoid conflict with existing extractExpressionInputs
 func analyzeExprForExplain(expr *query.Expression, available map[query.Symbol]bool) ExpressionPlan {
 	inputs := extractExprInputs(expr)
 	// Check if this is an equality check (no binding)
@@ -231,7 +230,6 @@ func analyzeExprForExplain(expr *query.Expression, available map[query.Symbol]bo
 }
 
 // extractExprInputs extracts input symbols from an expression
-// Named differently to avoid conflict with existing extractExpressionInputs
 func extractExprInputs(expr *query.Expression) []query.Symbol {
 	var inputs []query.Symbol
 	seen := make(map[query.Symbol]bool)

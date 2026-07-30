@@ -169,7 +169,7 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 //
 // Output shape by binding form:
 //   - TupleBinding, ScalarBinding: 1-tuple MaterializedRelation on match,
-//     empty MaterializedRelation when subquery returns no rows (datalog
+//     empty MaterializedRelation when subquery returns no tuples (datalog
 //     "pattern fails to match" semantics). Cardinality is validated by
 //     reading at most one extra tuple after the first.
 //   - RelationBinding: StreamingRelation that wraps the input iterator
@@ -203,9 +203,9 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputSymbols [
 		copy(outSymbols, inputSymbols)
 		copy(outSymbols[len(inputSymbols):], b.Variables)
 
-		// The input-value prefix is the combination tuple itself — one row
+		// The input-value prefix is the combination tuple itself — one tuple
 		// of the (materialized) projected outer relation, held by reference
-		// and applied to every row of the subquery.
+		// and applied to every tuple of the subquery.
 		wrapped := &prefixingIterator{
 			inner:   result.Iterator(),
 			prefix:  inputValues,

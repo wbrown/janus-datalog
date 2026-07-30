@@ -32,7 +32,7 @@ const memoryKeyTreeDegree = 32
 // so retract and scan can Seek/prefix-iterate in O(log N + range) instead of
 // scanning the whole map (Badger's Seek/ValidForPrefix analogue). Insert and
 // delete are O(log N) per key, so Import/batched Assert stay O(M log N) in the
-// key index (not O(M²) from mid-slice shifts on a sorted []string).
+// key index.
 type MemoryStore struct {
 	mu      sync.RWMutex
 	encoder *BinaryKeyEncoder
@@ -107,45 +107,32 @@ func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	return len(datoms), nil
 }
 
-func (s *MemoryStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
-		return nil, errMemoryStoreClosed
-	}
-	if _, ok := s.entries[string(key)]; !ok {
-		return nil, nil
-	}
-	// Already under RLock; blob reads must not re-enter the mutex.
-	datom, err := decodeDatomFromKey(index, key, s.encoder, memoryEntriesBlobReader{entries: s.entries})
+func (s *MemoryStore) Scan(bound ScanBound) (Iterator, error) {
+	return s.scan(bound)
+}
+
+func (s *MemoryStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	return s.scan(bound)
+}
+
+// scan projects the bound through the binary encoder because MemoryStore keys
+// on the same bytes Badger does. That is this backend's choice, not the seam's:
+// a store comparing typed components directly would satisfy the same interface
+// without encoding anything.
+func (s *MemoryStore) scan(bound ScanBound) (Iterator, error) {
+	run, err := s.encoder.EncodeScanBound(bound)
 	if err != nil {
 		return nil, err
 	}
-	return &datom, nil
-}
 
-func (s *MemoryStore) Scan(index IndexType, start, end []byte) (Iterator, error) {
-	return s.scan(index, start, end)
-}
-
-func (s *MemoryStore) ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error) {
-	return s.scan(index, start, end)
-}
-
-func (s *MemoryStore) scan(index IndexType, start, end []byte) (Iterator, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
 		return nil, errMemoryStoreClosed
 	}
-	if start == nil {
-		start = []byte{byte(index)}
-	}
-	if end == nil {
-		end = []byte{byte(index) + 1}
-	}
-	startKey := string(start)
-	endKey := string(end)
+	index := bound.Index
+	startKey := string(run.Start)
+	endKey := string(run.End)
 	keys := make([][]byte, 0)
 	s.keys.AscendRange(startKey, endKey, func(encoded string) bool {
 		key := []byte(encoded)
@@ -156,29 +143,18 @@ func (s *MemoryStore) scan(index IndexType, start, end []byte) (Iterator, error)
 		return true
 	})
 	return &memoryIterator{
-		index:    index,
-		keys:     keys,
-		position: -1,
-		encoder:  s.encoder,
-		blobs:    memoryBlobReader{store: s},
+		index:      index,
+		keys:       keys,
+		position:   -1,
+		membership: run.Membership,
+		end:        run.End,
+		encoder:    s.encoder,
+		blobs:      memoryBlobReader{store: s},
 	}, nil
 }
 
 func (s *MemoryStore) MaxElementID() (datalog.ElementID, error) {
-	iter, err := s.ScanKeysOnly(TAEV, []byte{byte(TAEV)}, []byte{byte(TAEV) + 1})
-	if err != nil {
-		return datalog.ElementID{}, err
-	}
-	defer iter.Close()
-	if !iter.Next() {
-		return datalog.ElementID{}, iter.Error()
-	}
-	return iter.ElementID(), nil
-}
-
-func (s *MemoryStore) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
-	start, end := s.encoder.EncodePrefixRange(ATEV, a)
-	iter, err := s.ScanKeysOnly(ATEV, start, end)
+	iter, err := s.ScanKeysOnly(ScanBound{Index: TAEV})
 	if err != nil {
 		return datalog.ElementID{}, err
 	}
@@ -190,8 +166,7 @@ func (s *MemoryStore) MaxElementIDForAttribute(a []byte) (datalog.ElementID, err
 }
 
 func (s *MemoryStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {
-	start, end := s.encoder.EncodePrefixRange(EAVT, e.Bytes())
-	iter, err := s.ScanKeysOnly(EAVT, start, end)
+	iter, err := s.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{e}})
 	if err != nil {
 		return datalog.ElementID{}, false, err
 	}
@@ -212,7 +187,7 @@ func (s *MemoryStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, boo
 }
 
 func (s *MemoryStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error) {
-	iter, err := s.ScanKeysOnly(TAEV, []byte{byte(TAEV)}, []byte{byte(TAEV) + 1})
+	iter, err := s.ScanKeysOnly(ScanBound{Index: TAEV})
 	if err != nil {
 		return nil, err
 	}
@@ -511,9 +486,22 @@ func readMemoryBlob(entries map[string][]byte, hash [20]byte, read func([]byte) 
 }
 
 type memoryIterator struct {
-	index        IndexType
-	keys         [][]byte
-	position     int
+	index    IndexType
+	keys     [][]byte
+	position int
+	// scanned counts keys taken from the range, including the ones the
+	// membership rule then rejects — see Scanned.
+	scanned int
+	// membership decides which of the selected keys the current bound names,
+	// dropping the ones the range over-covers when a bound component is a
+	// variable-length V. Seek replaces it alongside end, because a run is its
+	// start, its end and its membership rule together, and adopting a subset of
+	// the three yields a run nobody asked for.
+	membership runMembership
+	// end is the current run's exclusive upper bound. keys already holds only
+	// the scan's own range, so this is what a seek to a narrower run inside it
+	// stops at.
+	end          []byte
 	encoder      *BinaryKeyEncoder
 	blobs        BlobReader
 	currentDatom datalog.Datom
@@ -522,17 +510,52 @@ type memoryIterator struct {
 	closed       bool
 }
 
+// positioned reports whether the cursor is on a key this scan may expose: a key
+// exists at the cursor, and the bound's membership rule holds it. Next, Key and
+// Datom all consult it, so there is one notion of "current".
+func (i *memoryIterator) positioned() bool {
+	if i.closed || i.position < 0 || i.position >= len(i.keys) {
+		return false
+	}
+	if i.end != nil && bytes.Compare(i.keys[i.position], i.end) >= 0 {
+		return false
+	}
+	return i.membership.holds(i.keys[i.position])
+}
+
+// Next advances to the next key the run holds, stepping over the keys its byte
+// range over-covers.
 func (i *memoryIterator) Next() bool {
 	if i.closed || i.err != nil {
 		return false
 	}
 	i.hasDatom = false
-	i.position++
-	return i.position < len(i.keys)
+	for {
+		i.position++
+		if i.position >= len(i.keys) {
+			return false
+		}
+		// Past the run's end ends the iteration; it is not a key to step over.
+		// The membership rule rejects keys *inside* the run, so treating this
+		// one the same way would walk the rest of the scan looking for a member
+		// that cannot be there, and count every key of it as intake.
+		if i.end != nil && bytes.Compare(i.keys[i.position], i.end) >= 0 {
+			return false
+		}
+		// Counted before the membership test, not after: a key the range
+		// covered and the bound rejected is still intake.
+		i.scanned++
+		if i.positioned() {
+			return true
+		}
+	}
 }
 
+// Scanned reports keys taken from the index inside this iterator's range.
+func (i *memoryIterator) Scanned() int { return i.scanned }
+
 func (i *memoryIterator) Key() []byte {
-	if i.closed || i.position < 0 || i.position >= len(i.keys) {
+	if !i.positioned() {
 		return nil
 	}
 	return i.keys[i.position]
@@ -542,7 +565,7 @@ func (i *memoryIterator) Datom() (*datalog.Datom, error) {
 	if i.err != nil {
 		return nil, i.err
 	}
-	if i.closed || i.position < 0 || i.position >= len(i.keys) {
+	if !i.positioned() {
 		return nil, errors.New("no current datom")
 	}
 	if !i.hasDatom {
@@ -568,18 +591,32 @@ func (i *memoryIterator) Close() error {
 	return nil
 }
 
-func (i *memoryIterator) Seek(key []byte) {
+func (i *memoryIterator) Seek(bound ScanBound) {
 	if i.closed || i.err != nil {
 		return
 	}
+	run, err := i.encoder.EncodeScanBound(bound)
+	if err != nil {
+		// Seek cannot return; the failure becomes the iterator's sticky error
+		// rather than a silently unmoved cursor.
+		i.err = err
+		return
+	}
+	// The seek names a new run inside the scan's keys, and it names all of it:
+	// the start repositions the cursor, the end stops it, and the membership
+	// rule governs what lies between. All three come from one EncodedRun, so a
+	// caller gets the run it asked for rather than its start and the scan's
+	// remainder.
+	i.membership = run.Membership
+	i.end = run.End
 	i.position = sort.Search(len(i.keys), func(index int) bool {
-		return bytes.Compare(i.keys[index], key) >= 0
+		return bytes.Compare(i.keys[index], run.Start) >= 0
 	}) - 1
 	i.hasDatom = false
 }
 
 func (i *memoryIterator) ElementID() datalog.ElementID {
-	if i.closed || i.position < 0 || i.position >= len(i.keys) {
+	if !i.positioned() {
 		return datalog.ElementID{}
 	}
 	return extractElementIDFromKey(i.index, i.keys[i.position])

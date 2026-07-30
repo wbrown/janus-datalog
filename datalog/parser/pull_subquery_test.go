@@ -6,7 +6,7 @@ import (
 )
 
 // TestPullRejectedInSubqueryFind pins the value-domain boundary from
-// docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md: pull is result presentation,
+// BUG_PULL_WITH_ORDER_BY_PANICS.md: pull is result presentation,
 // producing map values that are not datalog values. A subquery's result
 // feeds the enclosing query's relational pipeline (joins, dedup), so a pull
 // inside a subquery find would inject non-values into relational flow —

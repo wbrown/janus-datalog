@@ -10,10 +10,25 @@ import (
 type VectorResolutionResult struct {
 	// Elements contains the ordered values after RGA reconstruction
 	Elements []any
+
+	// Present reports whether the (E, A) carries any RGA datom at all, and it
+	// is the resolved answer to whether the attribute exists.
+	//
+	// A vector that was never set and one whose every element was tombstoned
+	// both reconstruct to zero live elements, so Elements cannot separate them;
+	// only the presence of datoms can, and the two are different states — the
+	// first has no value, the second has the empty vector. This is resolved
+	// alongside the value rather than counted afterwards: a statistic describes
+	// a resolution, it does not constitute one.
+	Present bool
+
 	// MaxElementID is the highest ElementID seen (for cache versioning)
 	MaxElementID datalog.ElementID
-	// Stats provides debugging information
-	Stats RGAStats
+
+	// Bound is the run this resolution walked. The pattern arm announces it,
+	// and it travels back rather than being rebuilt there so the announced run
+	// and the walked run are the same value and cannot drift.
+	Bound ScanBound
 }
 
 // resolveVector loads all RGA elements for (E, A) and reconstructs the ordered vector.
@@ -24,9 +39,9 @@ type VectorResolutionResult struct {
 // The Tx (ElementID) is the element's ID.
 //
 // After loading all elements, RGA reconstruction builds the final ordered list.
-func (m *BadgerMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolutionResult, error) {
+func (m *PatternMatcher) resolveVector(eBytes, aBytes []byte, report *scanReport) (*VectorResolutionResult, error) {
 	// Use loadRGAElements which handles deduplication
-	elements, err := m.loadRGAElements(eBytes, aBytes)
+	elements, bound, err := m.loadRGAElements(eBytes, aBytes, report)
 	if err != nil {
 		return nil, err
 	}
@@ -34,38 +49,54 @@ func (m *BadgerMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolutionR
 	// Reconstruct the ordered vector
 	ordered := ReconstructRGA(elements)
 
-	// Compute stats for debugging and cache versioning
-	stats := ComputeRGAStats(elements)
-
 	return &VectorResolutionResult{
-		Elements:     ordered,
-		MaxElementID: stats.MaxID,
-		Stats:        stats,
+		Elements: ordered,
+		// Every insert and tombstone ever written for the (E, A) is in
+		// elements, so their presence is the attribute's.
+		Present:      len(elements) > 0,
+		MaxElementID: FindMaxElementID(elements),
+		Bound:        bound,
 	}, nil
 }
 
 // loadRGAElements loads all RGA elements for (E, A) without reconstruction.
 // Used when you need access to the raw elements (e.g., for building position index).
 //
-// With the new key format:
-// - V is the raw value (not encoded RGAElement)
+// - V is the raw value
 // - Op is OpRGAInsert (3) or OpRGATombstone (4)
 // - AfterRef is the position reference for inserts, or the target element ID for tombstones
 //
 // IMPORTANT: Handles deduplication by element ID. When the same element has multiple
 // versions (e.g., original + tombstoned), the tombstoned version takes precedence.
 // This supports Set() which writes a tombstone record for the element being deleted.
-func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, error) {
-	// Build prefix for E+A on EATV index
-	prefix := make([]byte, 1+20+32) // prefix byte + E + A
-	prefix[0] = byte(EATV)
-	copy(prefix[1:21], eBytes)
-	copy(prefix[21:53], aBytes)
+//
+// Returns the run it walked alongside the elements, and accrues the scan's
+// index intake into the report. An RGA group is every insert and tombstone ever
+// written for the (E, A), so this is the resolution whose intake most exceeds
+// what it produces, and the pattern above it has no other way to learn the
+// difference. The bound travels back rather than being rebuilt by the caller
+// that announces it, so the announced run and the walked run are the same value.
+func (m *PatternMatcher) loadRGAElements(eBytes, aBytes []byte, report *scanReport) ([]RGAElement, ScanBound, error) {
+	// The caller holds storage projections; both constructors return the
+	// canonical interned pointer for an already-interned value.
+	var e Entity
+	copy(e[:], eBytes)
+	var a Attribute
+	copy(a[:], aBytes)
 
 	// Scan EATV for all entries with this E+A
-	iter, err := m.reader.Scan(EATV, prefix, prefixEnd(prefix))
+	bound := ScanBound{
+		Index: EATV,
+		Prefix: []datalog.Value{
+			datalog.NewIdentityFromHash(e),
+			datalog.InternKeywordFromBytes(a),
+		},
+	}
+	// The scan accrues into the report as it closes, so a decode failure keeps the
+	// intake it spent instead of losing it with the result it never returns.
+	iter, err := OpenScan(m.reader, report, bound)
 	if err != nil {
-		return nil, err
+		return nil, bound, err
 	}
 	defer iter.Close()
 
@@ -77,7 +108,7 @@ func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, er
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return nil, fmt.Errorf("decode RGA element: %w", err)
+			return nil, bound, fmt.Errorf("decode RGA element: %w", err)
 		}
 
 		// Only process RGA operations
@@ -140,7 +171,7 @@ func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, er
 		}
 	}
 	if err := iter.Error(); err != nil {
-		return nil, fmt.Errorf("decode RGA element: %w", err)
+		return nil, bound, fmt.Errorf("decode RGA element: %w", err)
 	}
 
 	// Convert map to slice
@@ -149,5 +180,5 @@ func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, er
 		elements = append(elements, elem)
 	}
 
-	return elements, nil
+	return elements, bound, nil
 }

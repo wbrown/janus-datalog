@@ -26,7 +26,7 @@ import (
 // value, so count is 1 either way. These tests inspect the bound value.
 
 // readVectorAsStrings runs `[:find ?v :where [?e <attr> ?v]]` (E bound via :in
-// when bindE), requires exactly one ?v row, and returns the binding normalized
+// when bindE), requires exactly one ?v tuple, and returns the binding normalized
 // to []string. A correctly-resolved vector binds ?v to one ordered list value
 // ([]string or []interface{}); a collapsed read binds ?v to a single scalar,
 // which fails here — that failure IS the bug.
@@ -42,9 +42,9 @@ func readVectorAsStrings(t *testing.T, db *Database, e datalog.Identity, attrPat
 	require.NoError(t, err)
 	it := rel.Iterator()
 	defer it.Close()
-	require.True(t, it.Next(), "expected one ?v row")
+	require.True(t, it.Next(), "expected one ?v tuple")
 	v := it.Tuple()[0]
-	require.False(t, it.Next(), "expected exactly one ?v row")
+	require.False(t, it.Next(), "expected exactly one ?v tuple")
 	require.NoError(t, it.Error())
 	return asStringList(t, v)
 }
@@ -166,7 +166,7 @@ func TestSchemalessLookupAttribute_VectorMatchesSchemaAware(t *testing.T) {
 
 			// Schema-aware truth.
 			schemaDB := c.open(t, DatabaseOptions{Schema: vectorSchema(), ReplicaID: 1})
-			sval, sfound := requireAttributeLookup(t, schemaDB.Matcher().(*BadgerMatcher), e, attr)
+			sval, sfound := requireAttributeLookup(t, schemaDB.Matcher().(*PatternMatcher), e, attr)
 			require.True(t, sfound)
 			require.Equal(t, want, asStringList(t, sval), "schema-aware LookupAttribute must return full vector")
 
@@ -174,7 +174,7 @@ func TestSchemalessLookupAttribute_VectorMatchesSchemaAware(t *testing.T) {
 			// ops, so the production matcher (db.Matcher()) resolves the
 			// vector correctly.
 			db := c.open(t, DatabaseOptions{ReplicaID: 1})
-			val, found := requireAttributeLookup(t, db.Matcher().(*BadgerMatcher), e, attr)
+			val, found := requireAttributeLookup(t, db.Matcher().(*PatternMatcher), e, attr)
 			require.True(t, found)
 			require.Equal(t, want, asStringList(t, val),
 				"schemaless LookupAttribute must reconstruct the vector via the open-time schema, not collapse to the last element")
@@ -310,7 +310,7 @@ func testSchemalessPrefetchVectorNotCollapsed(t *testing.T, c reopenBackendCase)
 
 	db := c.open(t, DatabaseOptions{ReplicaID: 1}) // schemaless, cache enabled
 
-	m := db.Matcher().(*BadgerMatcher)
+	m := db.Matcher().(*PatternMatcher)
 	// Warm the EA cache the way EnableEntityPrefetch does.
 	require.NoError(t, m.PrefetchEntities([]datalog.Identity{e}))
 
@@ -325,7 +325,8 @@ func testSchemalessPrefetchVectorNotCollapsed(t *testing.T, c reopenBackendCase)
 	copy(aAttr[:], aStorage[:])
 	key, ok := m.cacheKey(eEnt, aAttr)
 	require.True(t, ok)
-	entry := db.cache.GetOrResolve(key, m, nil)
+	entry, err := db.cache.GetOrResolve(key, m, nil, nil, DiscardIntake)
+	require.NoError(t, err)
 	require.NotNil(t, entry)
 	require.Equal(t, schema.CardinalityVector, entry.Cardinality(),
 		"prefetch must classify a schemaless vector as Vector, not collapse to One")

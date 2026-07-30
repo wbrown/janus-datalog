@@ -82,12 +82,12 @@ func BenchmarkConstantConstraintFusion(b *testing.B) {
 					if err != nil {
 						b.Fatal(err)
 					}
-					rows, err := executor.CollectTuples(result, nil)
+					tuples, err := executor.CollectTuples(result, nil)
 					if err != nil {
 						b.Fatal(err)
 					}
-					if len(rows) != entities/2 {
-						b.Fatalf("got %d rows, want %d", len(rows), entities/2)
+					if len(tuples) != entities/2 {
+						b.Fatalf("got %d tuples, want %d", len(tuples), entities/2)
 					}
 				}
 			})

@@ -11,12 +11,12 @@ import (
 )
 
 // TestTupleBuilderCacheConcurrency tests that the tuple builder cache is thread-safe
-// This reproduces the concurrent map access bug reported by gopher-street team
+// This reproduces a concurrent map access bug.
 func TestTupleBuilderCacheConcurrency(t *testing.T) {
 	db := createTestDB(t)
 	defer db.Close()
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	// Create test pattern and symbols
 	pattern := &query.DataPattern{
@@ -64,7 +64,7 @@ func TestTupleBuilderCacheSharing(t *testing.T) {
 	db := createTestDB(t)
 	defer db.Close()
 
-	baseMatcher := NewBadgerMatcher(db.Store())
+	baseMatcher := NewPatternMatcher(db.Store())
 	asOfMatcher := baseMatcher.AsOf(datalog.ElementID{Lamport: 100})
 
 	pattern := &query.DataPattern{
@@ -104,15 +104,15 @@ func TestDatabaseMatchersShareTupleBuilders(t *testing.T) {
 	}
 	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
-	first := db.Matcher().(*BadgerMatcher)
-	second := db.Matcher().(*BadgerMatcher)
+	first := db.Matcher().(*PatternMatcher)
+	second := db.Matcher().(*PatternMatcher)
 	builder1 := first.getTupleBuilder(pattern, symbols)
 	builder2 := second.getTupleBuilder(pattern, symbols)
 	if builder1 != builder2 {
 		t.Error("matchers minted by one Database must share tuple builders")
 	}
 
-	histBuilder := db.History().Matcher().(*BadgerMatcher).getTupleBuilder(pattern, symbols)
+	histBuilder := db.History().Matcher().(*PatternMatcher).getTupleBuilder(pattern, symbols)
 	if histBuilder != builder1 {
 		t.Error("temporal-handle matchers must share the parent Database's tuple builders")
 	}
@@ -129,7 +129,7 @@ func TestTupleBuilderCacheKeysOnStructure(t *testing.T) {
 	db := createTestDB(t)
 	defer db.Close()
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	symbols := []query.Symbol{datalog.NewSymbol("?v")}
 
 	patternBoundTo := func(seed string) *query.DataPattern {
@@ -156,7 +156,7 @@ func TestTupleBuilderCacheLookupDoesNotAllocate(t *testing.T) {
 	db := createTestDB(t)
 	defer db.Close()
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: datalog.NewIdentity("alice")},
@@ -186,8 +186,6 @@ func createTestDB(t *testing.T) *Database {
 
 // TestIteratorWorkspaceIsolation verifies that two iterators on the same
 // pattern have independent tuple storage (workspace reuse doesn't cross iterators).
-// This test ensures that after Phase 2 (workspace reuse), each iterator
-// maintains its own workspace and doesn't corrupt other iterators' tuples.
 func TestIteratorWorkspaceIsolation(t *testing.T) {
 	db := createTestDB(t)
 	defer db.Close()
@@ -203,7 +201,7 @@ func TestIteratorWorkspaceIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -282,7 +280,7 @@ func TestIteratorWorkspaceConcurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},

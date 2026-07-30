@@ -19,7 +19,7 @@ func optimizationMatrixSchema() *schema.Schema {
 	s := schema.NewSchema()
 	for _, definition := range []struct {
 		attr      string
-		valueType schema.ValueType
+		valueType datalog.Keyword
 	}{
 		{":entity/type", schema.TypeKeyword},
 		{":scenario/title", schema.TypeString},
@@ -169,7 +169,7 @@ func TestOptimizationMatrix(t *testing.T) {
 			opts.EnableEntityPrefetch = cfg.prefetch
 
 			start := time.Now()
-			rel, err := queryWithPlannerOptions(db, queryStr, opts)
+			rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 			require.NoError(t, err, "config %s failed", cfg.name)
 			results, err := executor.CollectTuples(rel, nil)
 			require.NoError(t, err)
@@ -185,7 +185,7 @@ func TestOptimizationMatrix(t *testing.T) {
 // path's plan structure: the relation keys asserted below come from the
 // optimizer's or-fallback property derivation (or/properties.derived).
 // The baseline path derives no such keys and compensates with conservative
-// deduplication — correct rows, no key metadata — so the assertions cannot
+// deduplication — correct tuples, no key metadata — so the assertions cannot
 // hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its
 // mode explicitly. Cross-mode result equivalence for the same query body
 // is covered by TestOptimizationMatrix.
@@ -284,9 +284,9 @@ func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
 
 	result, err := db.Query(optimizationMatrixQuery(0))
 	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
+	tuples, err := executor.CollectTuples(result, nil)
 	require.NoError(t, err)
-	require.Len(t, rows, 3)
+	require.Len(t, tuples, 3)
 
 	lastKey := datalog.NewSymbol("?lastKey")
 	lastUpdatedAt := datalog.NewSymbol("?lastUpdatedAt")
@@ -305,7 +305,7 @@ func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
 		}
 	}
 	require.True(t, foundComposite,
-		"the multi-row argmax fallback must retain its proven composite key; keys=%v",
+		"the multi-tuple argmax fallback must retain its proven composite key; keys=%v",
 		result.Properties().Keys)
 }
 
@@ -345,7 +345,7 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 				subqueryExecutions.Add(1)
 			case "or-fallback/cache-build":
 				fallbackCacheBuilds.Add(1)
-			case "pattern/fused-constraint":
+			case annotations.PatternFusedConstraint:
 				fusedConstraints.Add(1)
 			case annotations.JoinStrategy:
 				if unique, _ := event.Data["build_key_unique"].(bool); unique {
@@ -364,9 +364,9 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 	populateOptimizationMatrix(t, db, 10, 20)
 	result, err := db.Query(optimizationMatrixQuery(10))
 	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
+	tuples, err := executor.CollectTuples(result, nil)
 	require.NoError(t, err)
-	require.Len(t, rows, 10)
+	require.Len(t, tuples, 10)
 	require.Equal(t, int64(4), subqueryExecutions.Load())
 	require.Equal(t, int64(5), fallbackCacheBuilds.Load())
 	require.Equal(t, int64(5), fusedConstraints.Load())
@@ -377,9 +377,8 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 
 // TestComplexQueryCheckpointCacheSteadyState observes the EA cache's rebuild
 // traffic on the complex checkpoint after warmup, via cache/rebuild events.
-// A warm read-only steady state is expected to rebuild nothing; the
-// allocation profile attributed ~190 storage scans per execution to cache
-// rebuilds, and this reports that population by attribute and reason.
+// A warm read-only steady state is expected to rebuild nothing; this reports
+// any rebuild population by attribute and reason.
 func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
 	const (
 		numScenarios     = 75
@@ -387,7 +386,12 @@ func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
 		resultLimit      = 25
 	)
 	var recording atomic.Bool
-	type rebuildKey struct{ attribute, reason string }
+	// The attribute arrives interned rather than rendered, so grouping by it
+	// compares pointers.
+	type rebuildKey struct {
+		attribute datalog.Keyword
+		reason    string
+	}
 	counts := map[rebuildKey]int{}
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:   t.TempDir(),
@@ -397,7 +401,7 @@ func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
 				return
 			}
 			counts[rebuildKey{
-				attribute: event.Data["attribute"].(string),
+				attribute: event.Data[annotations.KeyAttribute].(datalog.Keyword),
 				reason:    event.Data["reason"].(string),
 			}]++
 		},
@@ -465,12 +469,12 @@ func benchmarkComplexQueryCheckpoint(b *testing.B, options *planner.PlannerOptio
 	// steady-state query execution through the public API.
 	warm, err := db.Query(queryText)
 	require.NoError(b, err)
-	warmRows, err := executor.CollectTuples(warm, nil)
+	warmTuples, err := executor.CollectTuples(warm, nil)
 	require.NoError(b, err)
-	require.Len(b, warmRows, resultLimit)
-	for i := 1; i < len(warmRows); i++ {
-		previous := warmRows[i-1][8].(time.Time)
-		current := warmRows[i][8].(time.Time)
+	require.Len(b, warmTuples, resultLimit)
+	for i := 1; i < len(warmTuples); i++ {
+		previous := warmTuples[i-1][8].(time.Time)
+		current := warmTuples[i][8].(time.Time)
 		require.False(b, previous.Before(current), "results must be ordered by lastUpdatedAt descending")
 	}
 
@@ -481,12 +485,12 @@ func benchmarkComplexQueryCheckpoint(b *testing.B, options *planner.PlannerOptio
 		if err != nil {
 			b.Fatal(err)
 		}
-		rows, err := executor.CollectTuples(result, nil)
+		tuples, err := executor.CollectTuples(result, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
-		if len(rows) != resultLimit {
-			b.Fatalf("got %d rows, want %d", len(rows), resultLimit)
+		if len(tuples) != resultLimit {
+			b.Fatalf("got %d tuples, want %d", len(tuples), resultLimit)
 		}
 	}
 }

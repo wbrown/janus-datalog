@@ -8,8 +8,7 @@ import (
 
 // TestBindingFormBoundVariables pins the symbol extraction for every binding
 // form. BindingForm is sealed (unexported marker method), so these four cases
-// are the complete taxonomy; each consumer that previously hand-wrote this
-// switch relies on exactly these results.
+// are the complete taxonomy; every consumer relies on exactly these results.
 func TestBindingFormBoundVariables(t *testing.T) {
 	a := datalog.NewSymbol("?a")
 	b := datalog.NewSymbol("?b")

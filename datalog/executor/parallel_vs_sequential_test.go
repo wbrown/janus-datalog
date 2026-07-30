@@ -212,19 +212,19 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 
 				// Compare each tuple
 				for i := 0; i < resultSeq.Size(); i++ {
-					rowSeq := resultSeq.Get(i)
-					rowPar := resultPar.Get(i)
+					tupleSeq := resultSeq.Get(i)
+					tuplePar := resultPar.Get(i)
 
-					if len(rowSeq) != len(rowPar) {
+					if len(tupleSeq) != len(tuplePar) {
 						t.Errorf("Tuple %d length mismatch: sequential=%d, parallel=%d",
-							i, len(rowSeq), len(rowPar))
+							i, len(tupleSeq), len(tuplePar))
 						continue
 					}
 
-					for j := range rowSeq {
-						if rowSeq[j] != rowPar[j] {
+					for j := range tupleSeq {
+						if tupleSeq[j] != tuplePar[j] {
 							t.Errorf("Tuple %d, position %d mismatch: sequential=%v, parallel=%v",
-								i, j, rowSeq[j], rowPar[j])
+								i, j, tupleSeq[j], tuplePar[j])
 						}
 					}
 				}

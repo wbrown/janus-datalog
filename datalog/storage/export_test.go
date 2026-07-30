@@ -1336,7 +1336,7 @@ func TestImport_ClockAdvancedAfterImport(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify the value exists
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 	vals, err := matcher.LookupAllAttributes(entity, datalog.NewKeyword(":entity/state"))
 	require.NoError(t, err)
@@ -1350,7 +1350,7 @@ func TestImport_ClockAdvancedAfterImport(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify the value is gone
-	matcher2 := NewBadgerMatcher(db.Store())
+	matcher2 := NewPatternMatcher(db.Store())
 	matcher2.SetSchema(db.Schema())
 	vals, err = matcher2.LookupAllAttributes(entity, datalog.NewKeyword(":entity/state"))
 	require.NoError(t, err)

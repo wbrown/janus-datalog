@@ -13,7 +13,7 @@ import (
 func TestMultiSource_MemorySourceWithDatabase(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add entities to the database
 			alice := datalog.NewIdentity("user:alice")
@@ -75,7 +75,7 @@ func TestMultiSource_MemorySourceWithDatabase(t *testing.T) {
 func TestMultiSource_MemorySourceOnly(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Query only against a memory source, not using the database at all
 			facts := []datalog.Datom{
@@ -117,7 +117,7 @@ func TestMultiSource_MemorySourceOnly(t *testing.T) {
 func TestMultiSource_SliceSourceWithQueryBuilder(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			type Rule struct {
 				Key       string
@@ -175,7 +175,7 @@ func TestMultiSource_SliceSourceWithQueryBuilder(t *testing.T) {
 func TestMultiSource_SliceSourceDependencyQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			type Rule struct {
 				Key       string
@@ -228,7 +228,7 @@ func TestMultiSource_SliceSourceDependencyQuery(t *testing.T) {
 func TestMultiSource_SourceValidation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Query declares $users in :in but doesn't provide it
 			_, err := executor.CollectTuples(db.Query(
@@ -244,7 +244,7 @@ func TestMultiSource_SourceValidation(t *testing.T) {
 func TestMultiSource_DefaultSourceAlwaysAvailable(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add data to the default database
 			entity := datalog.NewIdentity("thing:1")
@@ -272,8 +272,8 @@ func TestMultiSource_DefaultSourceAlwaysAvailable(t *testing.T) {
 func TestMultiSource_CrossDatabaseJoin(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			usersDB := createOptimizerModeDB(t, mode)
-			permsDB := createOptimizerModeDB(t, mode)
+			usersDB := createOptimizerModeDB(t, mode, nil)
+			permsDB := createOptimizerModeDB(t, mode, nil)
 
 			// Populate users database
 			alice := datalog.NewIdentity("user:alice")

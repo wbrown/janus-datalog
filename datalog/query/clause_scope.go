@@ -247,7 +247,7 @@ func (o *OrDefaultJoinClause) Validate() error {
 // the parser, the qb builder, and the executor entry enforce it with one
 // message; the execution paths' deeper checks remain as backstops for
 // internally constructed plans. Result cardinality (tuple/scalar bindings
-// demanding exactly one row) is data-dependent and stays at execution.
+// demanding exactly one tuple) is data-dependent and stays at execution.
 // Nested subqueries inside the inner query are part of this clause's text
 // and validate recursively. See
 // docs/bugs/BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md.

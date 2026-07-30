@@ -50,13 +50,12 @@ func BenchmarkMemoryKeyOnlyScanning(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			attrHash := ToStorageDatom(datoms[0]).A
-			start, end := store.Encoder().EncodePrefixRange(AEVT, attrHash[:])
+			bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{datoms[0].A}}
 
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				it, err := store.ScanKeysOnly(AEVT, start, end)
+				it, err := store.ScanKeysOnly(bound)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -158,7 +157,7 @@ func BenchmarkMemoryStorageHashJoinCompiledMatching(b *testing.B) {
 		query.Variable{Name: groupSymbol},
 	}}
 	resultSymbols := []query.Symbol{entitySymbol, groupSymbol}
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	b.ReportAllocs()
 	b.ResetTimer()

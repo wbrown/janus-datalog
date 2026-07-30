@@ -58,10 +58,13 @@ func TestATEVEncoderRoundTrip(t *testing.T) {
 	}
 }
 
-// TestATEVDescendingTxOrder verifies the key property that makes
-// MaxElementIDForAttribute O(1): within a single attribute prefix, the
-// lowest-byte (lexicographically first) ATEV key is the one with the highest Tx.
-// This is what lets a single forward seek on [ATEV][A] yield the global max Tx.
+// TestATEVDescendingTxOrder verifies the key property two capabilities rest on:
+// within a single attribute prefix, the lexicographically first ATEV key is the
+// one with the highest Tx. That ordering is what lets an A-bound, Tx-bound,
+// V-unbound pattern seek straight to its transaction — chooseIndex binds
+// [A][Tx↓] and lands on the exact Tx, or the nearest below it — and it is what
+// makes an attribute's high-water mark reachable in a single forward seek,
+// which is the property any freshness gate over an attribute would rest on.
 func TestATEVDescendingTxOrder(t *testing.T) {
 	entity := sha1.Sum([]byte("atev-order"))
 	attr := datalog.NewKeyword(":atev/order")
@@ -91,8 +94,8 @@ func TestATEVDescendingTxOrder(t *testing.T) {
 }
 
 // TestATEVIsPopulatedOnCommit catches regressions where the write path stops
-// writing ATEV. If ATEV is not populated, MaxElementIDForAttribute returns zero
-// even though the attribute has data, breaking cache freshness checks.
+// writing ATEV. If ATEV is not populated, an A-bound, Tx-bound pattern scans an
+// empty run and reports no datoms even though the attribute has data.
 func TestATEVIsPopulatedOnCommit(t *testing.T) {
 	dir, err := os.MkdirTemp("", "atev-populate-*")
 	if err != nil {
@@ -118,12 +121,7 @@ func TestATEVIsPopulatedOnCommit(t *testing.T) {
 
 	// Scan the ATEV prefix for this attribute; we should see exactly one key,
 	// and decoding it should yield our Tx.
-	var aStorage [32]byte
-	copy(aStorage[:], a.String())
-	atevPrefix := append([]byte{byte(ATEV)}, aStorage[:]...)
-	atevEnd := incrementLastByte(atevPrefix)
-
-	it, err := store.Scan(ATEV, atevPrefix, atevEnd)
+	it, err := store.Scan(ScanBound{Index: ATEV, Prefix: []datalog.Value{a}})
 	if err != nil {
 		t.Fatalf("scan ATEV: %v", err)
 	}
@@ -145,60 +143,6 @@ func TestATEVIsPopulatedOnCommit(t *testing.T) {
 	}
 }
 
-// TestMaxElementIDForAttributeUsesATEV verifies that MaxElementIDForAttribute
-// returns the maximum Tx after multiple writes to the same attribute on different
-// entities. The contract: highest Tx across all (E, V) for the attribute.
-// Without ATEV (or with a broken ATEV path), this would either return a stale
-// value or scan AEVT linearly.
-func TestMaxElementIDForAttributeUsesATEV(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-maxid-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	a := datalog.NewKeyword(":atev/maxid")
-	var aBytes [32]byte
-	copy(aBytes[:], a.String())
-
-	// Write three entities with increasing Tx values; max should be Tx=300.
-	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("e-low"), A: a, V: "low", Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1}},
-		{E: datalog.NewIdentity("e-mid"), A: a, V: "mid", Tx: datalog.ElementID{Lamport: 200, ReplicaID: 1}},
-		{E: datalog.NewIdentity("e-high"), A: a, V: "high", Tx: datalog.ElementID{Lamport: 300, ReplicaID: 1}},
-	}
-	if err := store.Assert(datoms); err != nil {
-		t.Fatalf("assert: %v", err)
-	}
-
-	maxID, err := store.MaxElementIDForAttribute(aBytes[:])
-	if err != nil {
-		t.Fatalf("MaxElementIDForAttribute: %v", err)
-	}
-	want := datalog.ElementID{Lamport: 300, ReplicaID: 1}
-	if maxID.Lamport != want.Lamport || maxID.ReplicaID != want.ReplicaID {
-		t.Errorf("MaxElementIDForAttribute returned %+v, want %+v", maxID, want)
-	}
-
-	// A non-existent attribute must return zero, not the previous attribute's max.
-	other := datalog.NewKeyword(":atev/never-written")
-	var otherBytes [32]byte
-	copy(otherBytes[:], other.String())
-	emptyID, err := store.MaxElementIDForAttribute(otherBytes[:])
-	if err != nil {
-		t.Fatalf("MaxElementIDForAttribute (empty): %v", err)
-	}
-	if emptyID != (datalog.ElementID{}) {
-		t.Errorf("MaxElementIDForAttribute on empty attribute = %+v, want zero", emptyID)
-	}
-}
-
 // TestChooseIndex_ABoundPlusTxBound_PicksATEV verifies that the matcher
 // selects ATEV when both A and Tx are bound (and V is unbound). Regressions
 // in chooseIndex would silently send these patterns back to AETV/TAEV.
@@ -215,13 +159,21 @@ func TestChooseIndex_ABoundPlusTxBound_PicksATEV(t *testing.T) {
 	}
 	defer store.Close()
 
-	matcher := NewBadgerMatcher(store)
+	matcher := NewPatternMatcher(store)
 	a := datalog.NewKeyword(":atev/matcher")
 	tx := datalog.ElementID{Lamport: 42, ReplicaID: 1}
 
-	idx, start, end := matcher.chooseIndex(nil, a, nil, tx)
-	if idx != ATEV {
-		t.Errorf("chooseIndex(nil, A, nil, Tx) = %v, want ATEV", idx)
+	bound := matcher.chooseIndex(nil, a, nil, tx)
+	if bound.Index != ATEV {
+		t.Errorf("chooseIndex(nil, A, nil, Tx) = %v, want ATEV", bound.Index)
+	}
+	// The assertions below are about the byte range the bound addresses, so
+	// they render it the way this store's keys are encoded.
+	run, err := matcher.encoder.EncodeScanBound(bound)
+	start := run.Start
+	end := run.End
+	if err != nil {
+		t.Fatalf("encode ATEV scan bound: %v", err)
 	}
 	if len(start) == 0 || len(end) == 0 {
 		t.Error("ATEV prefix range start/end should be non-empty")
@@ -251,12 +203,11 @@ func TestChooseIndex_ABoundPlusTxBoundPlusVBound_DoesNotPickATEV(t *testing.T) {
 	}
 	defer store.Close()
 
-	matcher := NewBadgerMatcher(store)
+	matcher := NewPatternMatcher(store)
 	a := datalog.NewKeyword(":atev/routing")
 	tx := datalog.ElementID{Lamport: 5, ReplicaID: 1}
 
-	idx, _, _ := matcher.chooseIndex(nil, a, "hello", tx)
-	if idx == ATEV {
+	if idx := matcher.chooseIndex(nil, a, "hello", tx).Index; idx == ATEV {
 		t.Errorf("chooseIndex with V bound should NOT pick ATEV; got ATEV anyway")
 	}
 }
@@ -300,7 +251,7 @@ func TestEndToEndABoundTxBoundQuery(t *testing.T) {
 
 	// History-mode matcher so the ATEV scan returns raw datoms without
 	// CRDT resolution stripping non-latest entries.
-	matcher := NewBadgerMatcher(store).History()
+	matcher := NewPatternMatcher(store).History()
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -338,188 +289,6 @@ func TestEndToEndABoundTxBoundQuery(t *testing.T) {
 	}
 }
 
-// TestMaxElementIDForAttribute_AfterRetraction documents the actual retract
-// semantics. BadgerStore.Retract deletes the matching (E,A,V) entries from
-// every index using the *stored* Tx and discards the passed-in Tx — no
-// tombstone is written. So an attribute's high-water mark can drop after a
-// retract, all the way to zero when the last entry is removed.
-//
-// Cache freshness still works because IsAttributeFresh compares cachedMax to
-// storeMax for inequality (not direction): any change, even a downward one,
-// stales the cache. This test pins both behaviors.
-func TestMaxElementIDForAttribute_AfterRetraction(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-retract-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	a := datalog.NewKeyword(":atev/retract")
-	var aBytes [32]byte
-	copy(aBytes[:], a.String())
-
-	e1 := datalog.NewIdentity("retract-e1")
-	e2 := datalog.NewIdentity("retract-e2")
-	tx1 := datalog.ElementID{Lamport: 50, ReplicaID: 1}
-	tx2 := datalog.ElementID{Lamport: 100, ReplicaID: 1}
-
-	if err := store.Assert([]datalog.Datom{
-		{E: e1, A: a, V: "v1", Tx: tx1},
-		{E: e2, A: a, V: "v2", Tx: tx2},
-	}); err != nil {
-		t.Fatalf("assert: %v", err)
-	}
-
-	// Pre-retract: max across both entities is tx2.
-	maxID, err := store.MaxElementIDForAttribute(aBytes[:])
-	if err != nil {
-		t.Fatalf("MaxElementIDForAttribute: %v", err)
-	}
-	if maxID.Lamport != tx2.Lamport || maxID.ReplicaID != tx2.ReplicaID {
-		t.Fatalf("pre-retract: got %+v, want %+v", maxID, tx2)
-	}
-
-	// Retract e2 (the higher-Tx datom). The passed-in retract Tx is
-	// irrelevant — Retract finds by (E,A,V) and deletes by stored Tx.
-	if err := store.Retract([]datalog.Datom{
-		{E: e2, A: a, V: "v2", Tx: datalog.ElementID{Lamport: 999, ReplicaID: 9}},
-	}); err != nil {
-		t.Fatalf("retract e2: %v", err)
-	}
-
-	// After retracting the tx2 entry, max drops back to tx1 (e1 remains).
-	maxID, err = store.MaxElementIDForAttribute(aBytes[:])
-	if err != nil {
-		t.Fatalf("MaxElementIDForAttribute after retract: %v", err)
-	}
-	if maxID.Lamport != tx1.Lamport || maxID.ReplicaID != tx1.ReplicaID {
-		t.Errorf("after retracting e2: got %+v, want %+v (e1's Tx)", maxID, tx1)
-	}
-
-	// Retract e1 too — no entries remain, max is zero.
-	if err := store.Retract([]datalog.Datom{
-		{E: e1, A: a, V: "v1", Tx: datalog.ElementID{Lamport: 1000, ReplicaID: 9}},
-	}); err != nil {
-		t.Fatalf("retract e1: %v", err)
-	}
-
-	maxID, err = store.MaxElementIDForAttribute(aBytes[:])
-	if err != nil {
-		t.Fatalf("MaxElementIDForAttribute after all retracted: %v", err)
-	}
-	if maxID != (datalog.ElementID{}) {
-		t.Errorf("after retracting all entries: got %+v, want zero (no remaining datoms)", maxID)
-	}
-}
-
-// TestMaxElementIDForAttribute_MultipleWritesToSameEA verifies that the
-// high-water mark tracks the latest Tx when an attribute is overwritten on
-// the same entity. Without this, freshness checks would lock onto the first
-// write's Tx and miss subsequent overwrites — a real LWW-on-cardinality-one
-// invalidation hazard.
-func TestMaxElementIDForAttribute_MultipleWritesToSameEA(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-overwrite-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	a := datalog.NewKeyword(":atev/overwrite")
-	var aBytes [32]byte
-	copy(aBytes[:], a.String())
-	e := datalog.NewIdentity("overwrite-target")
-
-	if err := store.Assert([]datalog.Datom{
-		{E: e, A: a, V: "v1", Tx: datalog.ElementID{Lamport: 10, ReplicaID: 1}},
-	}); err != nil {
-		t.Fatalf("first assert: %v", err)
-	}
-	if err := store.Assert([]datalog.Datom{
-		{E: e, A: a, V: "v2", Tx: datalog.ElementID{Lamport: 20, ReplicaID: 1}},
-	}); err != nil {
-		t.Fatalf("second assert: %v", err)
-	}
-	if err := store.Assert([]datalog.Datom{
-		{E: e, A: a, V: "v3", Tx: datalog.ElementID{Lamport: 30, ReplicaID: 1}},
-	}); err != nil {
-		t.Fatalf("third assert: %v", err)
-	}
-
-	maxID, err := store.MaxElementIDForAttribute(aBytes[:])
-	if err != nil {
-		t.Fatalf("MaxElementIDForAttribute: %v", err)
-	}
-	want := datalog.ElementID{Lamport: 30, ReplicaID: 1}
-	if maxID.Lamport != want.Lamport || maxID.ReplicaID != want.ReplicaID {
-		t.Errorf("after three writes to same (E,A), MaxElementIDForAttribute = %+v, want %+v",
-			maxID, want)
-	}
-}
-
-// TestCache_IsAttributeFresh_Integration wires Cache.IsAttributeFresh together
-// with a real BadgerStore.MaxElementIDForAttribute (now backed by the ATEV
-// seek) to confirm cache freshness flips correctly after a write. The
-// pre-existing cache_test.go uses a mockStore that bypasses the production
-// MaxElementIDForAttribute path entirely.
-func TestCache_IsAttributeFresh_Integration(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-cache-fresh-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	a := datalog.NewKeyword(":atev/cache-fresh")
-	var aBytes Attribute
-	copy(aBytes[:], a.String())
-	e := datalog.NewIdentity("cache-fresh-e")
-
-	tx1 := datalog.ElementID{Lamport: 7, ReplicaID: 1}
-	if err := store.Assert([]datalog.Datom{
-		{E: e, A: a, V: "first", Tx: tx1},
-	}); err != nil {
-		t.Fatalf("assert: %v", err)
-	}
-
-	cache := NewCache()
-	// Simulate cache warming: snapshot the current max into attrVersions.
-	cache.UpdateAttributeVersion(aBytes, tx1)
-
-	if !cache.IsAttributeFresh(aBytes, store) {
-		t.Error("IsAttributeFresh = false immediately after warming; should be true")
-	}
-
-	// Write a newer datom. The cached attrVersion stays at tx1, but the store
-	// max moves to tx2 — freshness must flip to false.
-	tx2 := datalog.ElementID{Lamport: 17, ReplicaID: 1}
-	if err := store.Assert([]datalog.Datom{
-		{E: e, A: a, V: "second", Tx: tx2},
-	}); err != nil {
-		t.Fatalf("second assert: %v", err)
-	}
-
-	if cache.IsAttributeFresh(aBytes, store) {
-		t.Error("IsAttributeFresh = true after a newer write; should be false")
-	}
-}
-
 // TestChooseIndexForValues_ATEV exercises the hash-join path's prefix builder
 // for ATEV. Without this, the ATEV case in hash_join_matcher.go could be
 // silently wrong and every existing test would still pass — the matcher
@@ -537,7 +306,7 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 	}
 	defer store.Close()
 
-	matcher := NewBadgerMatcher(store)
+	matcher := NewPatternMatcher(store)
 	a := datalog.NewKeyword(":atev/hashjoin")
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
@@ -546,7 +315,8 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 	eHash := e.Hash()
 
 	t.Run("A+Tx_only", func(t *testing.T) {
-		_, start, end := matcher.chooseIndexForValues(ATEV, nil, a, nil, tx)
+		start, end := encodeScanBoundForTest(t, matcher,
+			matcher.scanBoundForValues(ATEV, nil, a, nil, tx))
 		expected := matcher.store.Encoder().EncodePrefix(ATEV, aStorage[:],
 			matcher.store.Encoder().EncodeTxForPrefix(NewTxFromElementID(tx)))
 		if !bytes.HasPrefix(start, expected) {
@@ -558,7 +328,8 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 	})
 
 	t.Run("A+Tx+E", func(t *testing.T) {
-		_, start, end := matcher.chooseIndexForValues(ATEV, e, a, nil, tx)
+		start, end := encodeScanBoundForTest(t, matcher,
+			matcher.scanBoundForValues(ATEV, e, a, nil, tx))
 		expected := matcher.store.Encoder().EncodePrefix(ATEV, aStorage[:],
 			matcher.store.Encoder().EncodeTxForPrefix(NewTxFromElementID(tx)),
 			eHash[:])
@@ -569,49 +340,6 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 			t.Error("range start must sort before end")
 		}
 	})
-}
-
-// TestSimpleBatchScanner_BuildKey_ATEV_VVaries covers buildKey's ATEV branch
-// for position=2 (V varies across bindings, with A and Tx fixed as pattern
-// constants). The position=0 case is already covered by
-// TestSimpleBatchScanner_BuildKey_AllIndices; this fills the other half.
-func TestSimpleBatchScanner_BuildKey_ATEV_VVaries(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-batch-v-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	matcher := NewBadgerMatcher(store)
-	a := datalog.NewKeyword(":atev/batch-v")
-	var aBytes Attribute
-	copy(aBytes[:], a.String())
-	tx := datalog.ElementID{Lamport: 11, ReplicaID: 1}
-	constT := matcher.store.Encoder().EncodeTxForPrefix(NewTxFromElementID(tx))
-
-	scanner := &simpleBatchScanner{
-		matcher:  matcher,
-		index:    ATEV,
-		position: 2, // V varies
-	}
-
-	// V is between Tx and the trailing positions in ATEV [A][Tx][E][V]; with E
-	// unbound, tightening stops at [A][Tx]. Any V value should produce that
-	// same prefix.
-	got := scanner.buildKey("any-value", aBytes[:], constT)
-	if got == nil {
-		t.Fatal("buildKey(ATEV, position=2) returned nil")
-	}
-	expected := matcher.store.Encoder().EncodePrefix(ATEV, aBytes[:], constT)
-	if !bytes.Equal(got, expected) {
-		t.Errorf("ATEV position=2 key mismatch: got %x, want %x", got, expected)
-	}
 }
 
 // TestChooseIndex_TxOnly_TAEV_WithElementID is the regression check for the
@@ -631,13 +359,14 @@ func TestChooseIndex_TxOnly_TAEV_WithElementID(t *testing.T) {
 	}
 	defer store.Close()
 
-	matcher := NewBadgerMatcher(store)
+	matcher := NewPatternMatcher(store)
 	tx := datalog.ElementID{Lamport: 77, ReplicaID: 1}
 
-	idx, start, end := matcher.chooseIndex(nil, nil, nil, tx)
-	if idx != TAEV {
-		t.Errorf("chooseIndex(nil, nil, nil, ElementID) = %v, want TAEV", idx)
+	bound := matcher.chooseIndex(nil, nil, nil, tx)
+	if bound.Index != TAEV {
+		t.Errorf("chooseIndex(nil, nil, nil, ElementID) = %v, want TAEV", bound.Index)
 	}
+	start, end := encodeScanBoundForTest(t, matcher, bound)
 	if len(start) == 0 || len(end) == 0 {
 		t.Error("TAEV prefix range start/end should be non-empty")
 	}
@@ -650,10 +379,11 @@ func TestChooseIndex_TxOnly_TAEV_WithElementID(t *testing.T) {
 
 	// Same Tx passed through *ElementID — DerefElementID handles both, so the
 	// pointer form should produce identical routing.
-	idxPtr, startPtr, _ := matcher.chooseIndex(nil, nil, nil, &tx)
-	if idxPtr != TAEV {
-		t.Errorf("chooseIndex with *ElementID = %v, want TAEV", idxPtr)
+	boundPtr := matcher.chooseIndex(nil, nil, nil, &tx)
+	if boundPtr.Index != TAEV {
+		t.Errorf("chooseIndex with *ElementID = %v, want TAEV", boundPtr.Index)
 	}
+	startPtr, _ := encodeScanBoundForTest(t, matcher, boundPtr)
 	if !bytes.Equal(start, startPtr) {
 		t.Errorf("ElementID and *ElementID should produce identical prefix; got %x vs %x", start, startPtr)
 	}

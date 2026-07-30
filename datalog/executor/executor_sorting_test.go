@@ -224,7 +224,7 @@ func TestSortingEdgeCases(t *testing.T) {
 }
 
 // Reproduction tests for
-// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md.
+// BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md.
 // They pin the contract: ordering by any variable bound in :where, whether
 // or not it is projected in :find.
 
@@ -489,8 +489,8 @@ func statusUserDatoms() []datalog.Datom {
 }
 
 // Case F: a sort key that is a scalar :in constant is a well-defined no-op —
-// every row carries the same value, so the query succeeds and returns all
-// matching rows (in no particular order).
+// every tuple carries the same value, so the query succeeds and returns all
+// matching tuples (in no particular order).
 func TestOrderByScalarInputConstantKeyIsNoOp(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(statusUserDatoms())
 
@@ -510,7 +510,7 @@ func TestOrderByScalarInputConstantKeyIsNoOp(t *testing.T) {
 			statusRel := NewMaterializedRelation(
 				[]query.Symbol{datalog.NewSymbol("?status")}, []Tuple{{"active"}})
 
-			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{statusRel})
+			result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{statusRel})
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
@@ -553,7 +553,7 @@ func TestOrderByScalarConstantKeyThenRealKey(t *testing.T) {
 			statusRel := NewMaterializedRelation(
 				[]query.Symbol{datalog.NewSymbol("?status")}, []Tuple{{"active"}})
 
-			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{statusRel})
+			result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{statusRel})
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
@@ -572,7 +572,7 @@ func TestOrderByScalarConstantKeyThenRealKey(t *testing.T) {
 	}
 }
 
-// Case H: a collection-input variable bound per-row by a :where pattern is a
+// Case H: a collection-input variable bound per-tuple by a :where pattern is a
 // genuine relation symbol and sorts normally, projected or not. Names are
 // chosen so global name order differs from dept-blocked name order.
 func TestOrderByCollectionInputBoundVariable(t *testing.T) {
@@ -619,7 +619,7 @@ func TestOrderByCollectionInputBoundVariable(t *testing.T) {
 			deptRel := NewMaterializedRelation(
 				[]query.Symbol{datalog.NewSymbol("?dept")}, []Tuple{{"ops"}, {"eng"}})
 
-			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{deptRel})
+			result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{deptRel})
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
@@ -638,7 +638,7 @@ func TestOrderByCollectionInputBoundVariable(t *testing.T) {
 	}
 }
 
-// Case I: a relation-input symbol bound per-row by a :where pattern sorts the
+// Case I: a relation-input symbol bound per-tuple by a :where pattern sorts the
 // combined output across all input tuples (the union), not per iteration.
 // Inputs are given in reverse key order so iteration order can't pass by
 // accident.
@@ -681,7 +681,7 @@ func TestOrderByRelationInputSymbolAcrossUnion(t *testing.T) {
 			inputRel := NewMaterializedRelation(
 				[]query.Symbol{datalog.NewSymbol("?k")}, []Tuple{{"B"}, {"A"}})
 
-			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
@@ -750,7 +750,7 @@ func TestOrderByAggregateGroupKey(t *testing.T) {
 }
 
 // Case L: ordering an aggregate query by a :where variable that is not a
-// group key. Aggregation collapses rows — the variable is not an attribute
+// group key. Aggregation collapses tuples — the variable is not an attribute
 // of the post-aggregation relation — so this must be rejected, not silently
 // ignored.
 func TestOrderByAggregateNonFindVariableIsError(t *testing.T) {
@@ -867,7 +867,7 @@ func TestOrderByProjectedKeyWithPull(t *testing.T) {
 // Case N: a (pull ...) find spec combined with a non-projected sort key.
 // The retained sort symbol orders the result, the strip projects back to
 // the find shape (all value bindings — plain deduplicating projection), and
-// the boundary pull renders the surviving rows.
+// the boundary pull renders the surviving tuples.
 func TestOrderByNonProjectedWithPull(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
 
@@ -954,11 +954,11 @@ func TestOrderByProjectedKeyDeduplicates(t *testing.T) {
 			}
 
 			if sortResult.Size() != baseCount {
-				t.Fatalf("order-by changed result membership: %d rows without order-by, %d with", baseCount, sortResult.Size())
+				t.Fatalf("order-by changed result membership: %d tuples without order-by, %d with", baseCount, sortResult.Size())
 			}
 			expected := []string{"Alice", "Bob"}
 			if sortResult.Size() != len(expected) {
-				t.Fatalf("expected %d deduplicated rows, got %d", len(expected), sortResult.Size())
+				t.Fatalf("expected %d deduplicated tuples, got %d", len(expected), sortResult.Size())
 			}
 			for i := 0; i < sortResult.Size(); i++ {
 				if name := sortResult.Get(i)[0].(string); name != expected[i] {
@@ -993,10 +993,10 @@ func TestSortRelationUnresolvableKeyIsDeferredError(t *testing.T) {
 	}
 }
 
-// Pull + order-by with TIED sort keys: rows that tie on every comparable
+// Pull + order-by with TIED sort keys: tuples that tie on every comparable
 // symbol must sort and render correctly. Pulls run at the result boundary
 // after sort/strip/limit, so relational operations only ever see Identity
-// in the entity binding. See docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
+// in the entity binding. See BUG_PULL_WITH_ORDER_BY_PANICS.md.
 func TestOrderByPullWithTiedSortKeys(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 	ageAttr := datalog.NewKeyword(":user/age")
@@ -1030,7 +1030,7 @@ func TestOrderByPullWithTiedSortKeys(t *testing.T) {
 				t.Fatalf("execution failed: %v", err)
 			}
 			if result.Size() != 3 {
-				t.Fatalf("expected 3 rows, got %d", result.Size())
+				t.Fatalf("expected 3 tuples, got %d", result.Size())
 			}
 			if age := result.Get(0)[1].(int64); age != 10 {
 				t.Errorf("expected age 10 first, got %d", age)
@@ -1040,7 +1040,7 @@ func TestOrderByPullWithTiedSortKeys(t *testing.T) {
 }
 
 // Maps are not datalog values: pull output is result presentation, rendered
-// at the result boundary after sorting (docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md).
+// at the result boundary after sorting (BUG_PULL_WITH_ORDER_BY_PANICS.md).
 // A relation containing maps is therefore a value-domain violation, and the
 // hash layer enforces the domain loudly: sorting such a relation panics
 // naming the violation — never hashing by address or comparing wrongly.

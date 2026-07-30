@@ -22,7 +22,7 @@ import (
 // Uses datalog.ValuesEqual for comparison - same semantics as production code
 func assertNoDuplicates(t *testing.T, name string, rel Relation) {
 	t.Helper()
-	var seen []Tuple // Use slice + equality check instead of map with string keys
+	var seen []Tuple
 	iter := rel.Iterator()
 	defer iter.Close()
 
@@ -343,7 +343,6 @@ func TestSetSemantics_Iterators(t *testing.T) {
 	})
 
 	t.Run("ProjectIterator should work with DedupIterator", func(t *testing.T) {
-		// This tests the fix: ProjectIterator output wrapped with DedupIterator
 		symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 		tuples := []Tuple{
 			{"e1", "same"},
@@ -357,7 +356,6 @@ func TestSetSemantics_Iterators(t *testing.T) {
 		// Create project iterator
 		projIter := NewProjectIterator(rel, symbols, []query.Symbol{datalog.NewSymbol("?v")})
 
-		// Wrap with dedup (this is what the fix should do)
 		dedupIter := NewDedupIterator(projIter, 10, false)
 
 		var results []Tuple
@@ -556,18 +554,18 @@ func TestSetSemantics_EdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("Nil values handled correctly", func(t *testing.T) {
-		tuples := []Tuple{
-			{nil, "a"},
-			{nil, "a"}, // duplicate with nil
-			{nil, "b"},
-		}
-		rel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}, tuples)
-
-		if rel.Size() != 2 {
-			t.Errorf("expected 2 unique tuples, got %d", rel.Size())
-		}
-		assertNoDuplicates(t, "Nil values", rel)
+	t.Run("nil in a tuple is rejected", func(t *testing.T) {
+		// nil is not a datalog value and cannot inhabit a tuple. Deduplication
+		// hashes each tuple, and the hash door reports it rather than bucketing it.
+		defer func() {
+			if recover() == nil {
+				t.Error("a tuple holding nil should be rejected: nil is not a value")
+			}
+		}()
+		NewMaterializedRelation(
+			[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
+			[]Tuple{{nil, "a"}, {nil, "b"}},
+		)
 	})
 
 	t.Run("Different types with same string representation", func(t *testing.T) {
@@ -887,7 +885,6 @@ func TestSetSemantics_Contract_IteratorMultiplePassesSameResults(t *testing.T) {
 func TestSetSemantics_StoragePattern(t *testing.T) {
 	t.Run("Pattern match with multiple entities same value", func(t *testing.T) {
 		// Simulate what comes from storage for pattern [_ :attr ?v]
-		// This is the core bug scenario
 
 		// Create datoms as they would come from storage
 		e1 := datalog.NewIdentity("entity:1")

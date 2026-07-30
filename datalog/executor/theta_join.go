@@ -49,7 +49,7 @@ func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, looku
 func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.EntityLookup, env Relation, opts ExecutorOptions) (Relation, error) {
 	outerSyms := outer.Symbols()
 	innerSyms := inner.Symbols()
-	envSymbols, envRow := environmentRow(env)
+	envSymbols, envTuple := environmentTuple(env)
 	combinedSyms := make([]query.Symbol, 0, len(outerSyms)+len(innerSyms))
 	combinedSyms = append(combinedSyms, outerSyms...)
 	combinedSyms = append(combinedSyms, innerSyms...)
@@ -92,7 +92,7 @@ outerLoop:
 					delete(bindings, k)
 				}
 				for i := range envSymbols {
-					bindings[envSymbols[i]] = envRow[i]
+					bindings[envSymbols[i]] = envTuple[i]
 				}
 				bindTuple(bindings, outerSyms, outerTuple)
 				bindTuple(bindings, innerSyms, innerTuple)

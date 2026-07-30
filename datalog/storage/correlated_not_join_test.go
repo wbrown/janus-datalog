@@ -134,7 +134,7 @@ func openCorrelatedOrOutputsDatabase(t *testing.T) *Database {
 // TestCorrelatedOrJoinWithOutputsMatchesUnoptimizedExecution pins the
 // correlated or-join shape that produces values: branches bind ?v from
 // different attributes, and an entity matching both branches contributes a
-// row from each — union semantics, not first-match-wins. The NOT branch
+// tuple from each — union semantics, not first-match-wins. The NOT branch
 // sends the clause down the algebra compiler's correlated route, which must
 // preserve the union.
 func TestCorrelatedOrJoinWithOutputsMatchesUnoptimizedExecution(t *testing.T) {
@@ -150,7 +150,7 @@ func TestCorrelatedOrJoinWithOutputsMatchesUnoptimizedExecution(t *testing.T) {
 	baselineOptions := DefaultPlannerOptions()
 	baselineOptions.EnableAlgebraOptimizer = false
 	baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
-	require.Len(t, baseline, 3, "e1 contributes a row per branch, e2 one, e3 none")
+	require.Len(t, baseline, 3, "e1 contributes a tuple per branch, e2 one, e3 none")
 
 	optimizedOptions := DefaultPlannerOptions()
 	optimizedOptions.EnableAlgebraOptimizer = true
@@ -174,7 +174,7 @@ func TestCorrelatedOrWithOutputsMatchesUnoptimizedExecution(t *testing.T) {
 	baselineOptions := DefaultPlannerOptions()
 	baselineOptions.EnableAlgebraOptimizer = false
 	baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
-	require.Len(t, baseline, 3, "e1 contributes a row per branch, e2 one, e3 none")
+	require.Len(t, baseline, 3, "e1 contributes a tuple per branch, e2 one, e3 none")
 
 	optimizedOptions := DefaultPlannerOptions()
 	optimizedOptions.EnableAlgebraOptimizer = true
@@ -227,7 +227,7 @@ func TestCorrelatedNotJoinRequiresOuterInputsInHeader(t *testing.T) {
 			// enforced by NotJoinClause.Validate at the user boundaries —
 			// both planner modes reject with the same message, before
 			// planning. (Previously algebra-only; divergence resolved:
-			// docs/bugs/BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md.)
+			// BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md.)
 			require.Contains(t, err.Error(), "not-join header")
 		})
 	}

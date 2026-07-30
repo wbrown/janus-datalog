@@ -9,9 +9,9 @@ import (
 // BUG_IDENTITY_L85_LAZY_RACE. Identity values are globally interned and shared
 // across goroutines, so L85()/String() must not mutate the shared identity.
 //
-// Run under -race: before the fix, L85() lazily writes l85/l85Computed on the
-// shared interned object, so concurrent calls race. After the fix the identity is
-// immutable (l85 is computed at construction), so concurrent reads are safe.
+// Run under -race: a lazy write to l85/l85Computed on the shared interned
+// object would race across concurrent L85() calls. The identity is immutable
+// — l85 is computed at construction — so concurrent reads are safe.
 func TestIdentityL85ConcurrentAccess(t *testing.T) {
 	id := NewIdentity("race-target")
 

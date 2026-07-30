@@ -40,7 +40,7 @@ func TestAsOfVectorResolution(t *testing.T) {
 	require.NotEqual(t, datalog.ElementID{}, tx1ID)
 
 	// Verify current content is the original
-	matcher1 := db.Matcher().(*BadgerMatcher)
+	matcher1 := db.Matcher().(*PatternMatcher)
 	val1, found := requireAttributeLookup(t, matcher1, entity, contentAttr)
 	require.True(t, found)
 	require.Equal(t, []string{"Original line one.", "Original line two."}, val1)
@@ -52,7 +52,7 @@ func TestAsOfVectorResolution(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify current content is updated
-	matcher2 := db.Matcher().(*BadgerMatcher)
+	matcher2 := db.Matcher().(*PatternMatcher)
 	val2, found := requireAttributeLookup(t, matcher2, entity, contentAttr)
 	require.True(t, found)
 	require.Len(t, val2, 1, "current content should have 1 element")
@@ -60,7 +60,7 @@ func TestAsOfVectorResolution(t *testing.T) {
 		"current content should be the updated version")
 
 	// AsOf tx1: should see the ORIGINAL content, not the update
-	asOfMatcher := db.AsOf(tx1ID).Matcher().(*BadgerMatcher)
+	asOfMatcher := db.AsOf(tx1ID).Matcher().(*PatternMatcher)
 	asOfVal, found := requireAttributeLookup(t, asOfMatcher, entity, contentAttr)
 	require.True(t, found, "entity should have content as-of tx1")
 	assert.Equal(t, []string{"Original line one.", "Original line two."}, asOfVal,
@@ -103,20 +103,20 @@ func TestAsOfVectorResolution_AddOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	// Current: all four entries
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	val, found := requireAttributeLookup(t, matcher, entity, logAttr)
 	require.True(t, found)
 	assert.Equal(t, []string{"Entry A", "Entry B", "Entry C", "Entry D"}, val)
 
 	// AsOf tx1: only the first two entries
-	asOf1 := db.AsOf(tx1ID).Matcher().(*BadgerMatcher)
+	asOf1 := db.AsOf(tx1ID).Matcher().(*PatternMatcher)
 	val1, found := requireAttributeLookup(t, asOf1, entity, logAttr)
 	require.True(t, found)
 	assert.Equal(t, []string{"Entry A", "Entry B"}, val1,
 		"as-of tx1 should show only entries from tx1")
 
 	// AsOf tx2: first three entries
-	asOf2 := db.AsOf(tx2ID).Matcher().(*BadgerMatcher)
+	asOf2 := db.AsOf(tx2ID).Matcher().(*PatternMatcher)
 	val2, found := requireAttributeLookup(t, asOf2, entity, logAttr)
 	require.True(t, found)
 	assert.Equal(t, []string{"Entry A", "Entry B", "Entry C"}, val2,
@@ -128,7 +128,7 @@ func TestAsOfVectorResolution_AddOnly(t *testing.T) {
 func TestAsOfVectorResolution_PullInto(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			s, err := schema.NewBuilder().
 				Attribute(":doc/content").Type(schema.TypeString).Vector().Add().

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/planner"
@@ -16,10 +17,10 @@ import (
 // Plan of record: docs/wip/OPTIMIZER_MODE_MATRIX.md.
 //
 // This package cannot import storage (import cycle), so it carries its own
-// copy of the axis. Two base-option profiles are in live use here and the
-// migration preserves each test's existing profile, adding only the algebra
-// axis: NewExecutor's default profile via plannerOptions(), and the bare
-// planner.PlannerOptions{} zero-value profile via zeroPlannerOptions().
+// copy of the axis. Two base-option profiles are in live use here, each
+// varying only the algebra axis from its base: NewExecutor's default profile
+// via plannerOptions(), and the bare planner.PlannerOptions{} zero-value
+// profile via zeroPlannerOptions().
 type optimizerMode struct {
 	name    string
 	algebra bool
@@ -56,7 +57,12 @@ func TestOptimizerModeAxisProfiles(t *testing.T) {
 			t.Fatalf("mode %s: plannerOptions algebra = %v", mode.name, fromDefault.EnableAlgebraOptimizer)
 		}
 		fromDefault.EnableAlgebraOptimizer = false
-		if fromDefault != defaultPlannerOptions() {
+		// DeepEqual rather than ==: PlannerOptions carries Handler, a func, and a
+		// struct holding one is not comparable. Neither profile registers a
+		// handler, and DeepEqual holds two nil funcs equal, so this is exact. If a
+		// profile ever did register one, DeepEqual would report the two as
+		// unequal and this fails loudly — the right direction.
+		if !reflect.DeepEqual(fromDefault, defaultPlannerOptions()) {
 			t.Fatalf("mode %s: plannerOptions diverges from defaultPlannerOptions beyond the algebra flag", mode.name)
 		}
 
@@ -65,7 +71,7 @@ func TestOptimizerModeAxisProfiles(t *testing.T) {
 			t.Fatalf("mode %s: zeroPlannerOptions algebra = %v", mode.name, fromZero.EnableAlgebraOptimizer)
 		}
 		fromZero.EnableAlgebraOptimizer = false
-		if fromZero != (planner.PlannerOptions{}) {
+		if !reflect.DeepEqual(fromZero, planner.PlannerOptions{}) {
 			t.Fatalf("mode %s: zeroPlannerOptions diverges from the zero value beyond the algebra flag", mode.name)
 		}
 	}

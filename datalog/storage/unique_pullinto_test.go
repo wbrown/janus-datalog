@@ -1,11 +1,10 @@
 // Test that PullInto honors the walk-based (A, V)-LWW entity-view
 // fallback for unique attributes.
 //
-// Commit 5 of the CRDT-unique redesign. PullInto uses the same
-// PullExecutor → EntityResolver → matcher path as db.Pull; the walk
-// rule applied at ResolveLWW in Commit 3 flows through automatically.
-// This test locks in the contract so the symmetric behavior cannot
-// silently regress when Pull internals change.
+// PullInto uses the same PullExecutor → EntityResolver → matcher path
+// as db.Pull; the walk rule applied at ResolveLWW flows through
+// automatically. This test locks in the contract so the symmetric
+// behavior cannot silently regress when Pull internals change.
 
 package storage
 

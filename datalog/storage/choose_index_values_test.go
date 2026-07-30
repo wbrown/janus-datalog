@@ -11,12 +11,12 @@ import (
 
 // TestChooseIndexForValuesAVET verifies that AVET index scan ranges
 // are correctly narrowed when attribute and value are bound.
-// This was a bug where the AVET case was missing from chooseIndexForValues(),
+// This was a bug where the AVET case was missing from scanBoundForValues(),
 // causing full index scans instead of targeted lookups.
 func TestChooseIndexForValuesAVET(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create test data: tasks belonging to different scenarios
 			scenario1 := datalog.NewIdentity("scenario-alpha")
@@ -47,13 +47,14 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 				t.Fatalf("Failed to commit: %v", err)
 			}
 
-			matcher := db.Matcher().(*BadgerMatcher)
+			matcher := db.Matcher().(*PatternMatcher)
 
 			t.Run("AVET scan range includes value prefix", func(t *testing.T) {
 				attr := datalog.NewKeyword(":task/scenario")
 
 				// Get scan range with attribute + value bound
-				_, start, end := matcher.chooseIndexForValues(AVET, nil, attr, scenario1, 0)
+				bound := matcher.scanBoundForValues(AVET, nil, attr, scenario1, 0)
+				start, _ := encodeScanBoundForTest(t, matcher, bound)
 
 				// Verify scan range is more than just index + attribute
 				// AVET key format: [1 index][32 attr][type + value][20 entity][20 tx]
@@ -65,7 +66,7 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 				}
 
 				// Count datoms in the calculated range
-				iter, err := matcher.store.ScanKeysOnly(AVET, start, end)
+				iter, err := matcher.store.ScanKeysOnly(bound)
 				if err != nil {
 					t.Fatalf("Scan failed: %v", err)
 				}
@@ -83,14 +84,12 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 
 			t.Run("AVET full attribute scan finds all scenarios", func(t *testing.T) {
 				attr := datalog.NewKeyword(":task/scenario")
-				var attrBytes Attribute
-				copy(attrBytes[:], attr.String())
 
 				// Full attribute scan (no value filter)
-				start := matcher.store.Encoder().EncodePrefix(AVET, attrBytes[:])
-				end := append(matcher.store.Encoder().EncodePrefix(AVET, attrBytes[:]), 0xFF, 0xFF, 0xFF, 0xFF)
-
-				iter, err := matcher.store.ScanKeysOnly(AVET, start, end)
+				iter, err := matcher.store.ScanKeysOnly(ScanBound{
+					Index:  AVET,
+					Prefix: []datalog.Value{attr},
+				})
 				if err != nil {
 					t.Fatalf("Scan failed: %v", err)
 				}
@@ -178,7 +177,7 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 func TestChooseIndexForValuesVAET(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create test data with references
 			parent1 := datalog.NewIdentity("parent-1")
@@ -203,13 +202,14 @@ func TestChooseIndexForValuesVAET(t *testing.T) {
 				t.Fatalf("Failed to commit: %v", err)
 			}
 
-			matcher := db.Matcher().(*BadgerMatcher)
+			matcher := db.Matcher().(*PatternMatcher)
 
 			t.Run("VAET scan range includes value prefix", func(t *testing.T) {
 				attr := datalog.NewKeyword(":child/parent")
 
 				// Get scan range with value bound (VAET uses value as first component)
-				_, start, end := matcher.chooseIndexForValues(VAET, nil, attr, parent1, 0)
+				bound := matcher.scanBoundForValues(VAET, nil, attr, parent1, 0)
+				start, _ := encodeScanBoundForTest(t, matcher, bound)
 
 				// VAET key format: [1 index][type + value][32 attr][20 entity][20 tx]
 				// With value: 1 + 1 + 20 = 22 bytes minimum
@@ -220,7 +220,7 @@ func TestChooseIndexForValuesVAET(t *testing.T) {
 				}
 
 				// Count datoms in the calculated range
-				iter, err := matcher.store.ScanKeysOnly(VAET, start, end)
+				iter, err := matcher.store.ScanKeysOnly(bound)
 				if err != nil {
 					t.Fatalf("Scan failed: %v", err)
 				}
@@ -287,13 +287,12 @@ func TestChooseIndexForValuesIdentity(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 	attr := datalog.NewKeyword(":task/scenario")
 
 	t.Run("Identity value", func(t *testing.T) {
-		_, start1, end1 := matcher.chooseIndexForValues(AVET, nil, attr, scenario, 0)
-
-		iter, _ := matcher.store.ScanKeysOnly(AVET, start1, end1)
+		iter, _ := matcher.store.ScanKeysOnly(
+			matcher.scanBoundForValues(AVET, nil, attr, scenario, 0))
 		count := 0
 		for iter.Next() {
 			count++
@@ -331,12 +330,11 @@ func TestChooseIndexForValuesEAVT(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 
 	t.Run("EAVT with entity bound", func(t *testing.T) {
-		_, start, end := matcher.chooseIndexForValues(EAVT, entity, nil, nil, 0)
-
-		iter, _ := matcher.store.ScanKeysOnly(EAVT, start, end)
+		iter, _ := matcher.store.ScanKeysOnly(
+			matcher.scanBoundForValues(EAVT, entity, nil, nil, 0))
 		count := 0
 		for iter.Next() {
 			count++
@@ -350,9 +348,8 @@ func TestChooseIndexForValuesEAVT(t *testing.T) {
 
 	t.Run("EAVT with entity and attribute bound", func(t *testing.T) {
 		attr := datalog.NewKeyword(":entity/name")
-		_, start, end := matcher.chooseIndexForValues(EAVT, entity, attr, nil, 0)
-
-		iter, _ := matcher.store.ScanKeysOnly(EAVT, start, end)
+		iter, _ := matcher.store.ScanKeysOnly(
+			matcher.scanBoundForValues(EAVT, entity, attr, nil, 0))
 		count := 0
 		for iter.Next() {
 			count++
@@ -391,13 +388,12 @@ func TestChooseIndexForValuesAEVT(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 
 	t.Run("AEVT with attribute bound", func(t *testing.T) {
 		attr := datalog.NewKeyword(":entity/name")
-		_, start, end := matcher.chooseIndexForValues(AEVT, nil, attr, nil, 0)
-
-		iter, _ := matcher.store.ScanKeysOnly(AEVT, start, end)
+		iter, _ := matcher.store.ScanKeysOnly(
+			matcher.scanBoundForValues(AEVT, nil, attr, nil, 0))
 		count := 0
 		for iter.Next() {
 			count++
@@ -411,9 +407,8 @@ func TestChooseIndexForValuesAEVT(t *testing.T) {
 
 	t.Run("AEVT with attribute and entity bound", func(t *testing.T) {
 		attr := datalog.NewKeyword(":entity/name")
-		_, start, end := matcher.chooseIndexForValues(AEVT, entity1, attr, nil, 0)
-
-		iter, _ := matcher.store.ScanKeysOnly(AEVT, start, end)
+		iter, _ := matcher.store.ScanKeysOnly(
+			matcher.scanBoundForValues(AEVT, entity1, attr, nil, 0))
 		count := 0
 		for iter.Next() {
 			count++
@@ -429,7 +424,7 @@ func TestChooseIndexForValuesAEVT(t *testing.T) {
 // TestChooseIndexForValuesAETV verifies that AETV index scan ranges
 // are correctly narrowed when attribute and/or entity are bound.
 // AETV is the A-primary CRDT-aware index (A → E → Tx↓ → V).
-// This test ensures chooseIndexForValues handles AETV properly.
+// This test ensures scanBoundForValues handles AETV properly.
 func TestChooseIndexForValuesAETV(t *testing.T) {
 	dir, err := os.MkdirTemp("", "choose-index-aetv-test-*")
 	if err != nil {
@@ -464,14 +459,13 @@ func TestChooseIndexForValuesAETV(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	matcher := db.Matcher().(*BadgerMatcher)
+	matcher := db.Matcher().(*PatternMatcher)
 
 	t.Run("AETV with attribute bound only", func(t *testing.T) {
 		// Scan AETV for :person/name - should get exactly 3 datoms
 		attr := datalog.NewKeyword(":person/name")
-		_, start, end := matcher.chooseIndexForValues(AETV, nil, attr, nil, 0)
-
-		iter, err := matcher.store.ScanKeysOnly(AETV, start, end)
+		iter, err := matcher.store.ScanKeysOnly(
+			matcher.scanBoundForValues(AETV, nil, attr, nil, 0))
 		if err != nil {
 			t.Fatalf("Scan failed: %v", err)
 		}
@@ -491,9 +485,8 @@ func TestChooseIndexForValuesAETV(t *testing.T) {
 	t.Run("AETV with attribute and entity bound", func(t *testing.T) {
 		// Scan AETV for entity1 + :person/name - should get exactly 1 datom
 		attr := datalog.NewKeyword(":person/name")
-		_, start, end := matcher.chooseIndexForValues(AETV, entity1, attr, nil, 0)
-
-		iter, err := matcher.store.ScanKeysOnly(AETV, start, end)
+		iter, err := matcher.store.ScanKeysOnly(
+			matcher.scanBoundForValues(AETV, entity1, attr, nil, 0))
 		if err != nil {
 			t.Fatalf("Scan failed: %v", err)
 		}
@@ -511,12 +504,11 @@ func TestChooseIndexForValuesAETV(t *testing.T) {
 	})
 
 	t.Run("AETV scan should not exceed attribute datom count", func(t *testing.T) {
-		// This test verifies the bug is fixed: without AETV case in chooseIndexForValues,
+		// This test verifies the bug is fixed: without AETV case in scanBoundForValues,
 		// it would scan ALL datoms in the index instead of just the attribute's datoms
 		attr := datalog.NewKeyword(":person/age")
-		_, start, end := matcher.chooseIndexForValues(AETV, nil, attr, nil, 0)
-
-		iter, err := matcher.store.ScanKeysOnly(AETV, start, end)
+		iter, err := matcher.store.ScanKeysOnly(
+			matcher.scanBoundForValues(AETV, nil, attr, nil, 0))
 		if err != nil {
 			t.Fatalf("Scan failed: %v", err)
 		}

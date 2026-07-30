@@ -85,7 +85,7 @@ func NewQueryResultMapper(elemType reflect.Type, findSymbols []string) (*QueryRe
 
 		tag := field.Tag.Get("datalog")
 
-		// Skip fields marked with "-" or starting with "-," (e.g., "-,id" for legacy compat)
+		// Skip fields marked with "-" or starting with "-," (e.g., "-,id")
 		if tag == "-" || strings.HasPrefix(tag, "-,") {
 			continue
 		}
@@ -345,7 +345,7 @@ func setQueryValue(fieldVal reflect.Value, fieldType reflect.Type, value interfa
 	}
 
 	// Handle *Keyword specially BEFORE generic pointer handling
-	// Handle Keyword type - always a pointer now
+	// Handle Keyword type - always a pointer
 	if fieldType == keywordType {
 		switch v := value.(type) {
 		case datalog.Keyword:
@@ -389,7 +389,7 @@ func setQueryValue(fieldVal reflect.Value, fieldType reflect.Type, value interfa
 		return nil
 
 	case identityType:
-		// Identity is now always a pointer type (*identity)
+		// Identity is always a pointer type (*identity)
 		if v, ok := value.(datalog.Identity); ok {
 			fieldVal.Set(reflect.ValueOf(v))
 		} else {

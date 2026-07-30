@@ -11,20 +11,17 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Note: Streaming aggregation settings are now managed by ExecutorOptions
-
 // StreamingAggregationThreshold is the minimum relation size to use streaming
 // For small relations, batch aggregation is faster due to lower overhead
 const StreamingAggregationThreshold = 100
 
-// ExecuteAggregations applies aggregation operations to a relation
-// This is the main entry point for aggregation logic
+// ExecuteAggregations applies aggregation operations to a relation.
+// This is the main entry point for aggregation logic.
 func ExecuteAggregations(rel Relation, findElements []query.FindElement) Relation {
-	return ExecuteAggregationsWithContext(nil, rel, findElements)
-}
+	// Acquired once: Options() is an interface dispatch returning the struct by
+	// value, and every path below — the early error returns included — needs it.
+	opts := rel.Options()
 
-// ExecuteAggregationsWithContext applies aggregation operations with annotation support
-func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []query.FindElement) Relation {
 	// Separate variables and aggregates
 	var groupByVars []query.Symbol
 	var aggregates []query.FindAggregate
@@ -43,7 +40,6 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 		result, err := rel.Project(groupByVars)
 		if err != nil {
 			// Return empty relation on error
-			opts := rel.Options()
 			return NewMaterializedRelationWithOptions(groupByVars, []Tuple{}, opts)
 		}
 		return result
@@ -52,33 +48,28 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 	for _, groupBy := range groupByVars {
 		if SymbolIndex(rel, groupBy) < 0 {
 			result := NewMaterializedRelationWithOptions(
-				aggregateResultSymbols(groupByVars, aggregates), nil, rel.Options())
+				aggregateResultSymbols(groupByVars, aggregates), nil, opts)
 			result.err = fmt.Errorf("group-by symbol %s is not present in source relation", groupBy)
 			return result
 		}
 	}
 
 	// Aggregate argument and predicate symbols must be present, exactly like
-	// group-by symbols. Before this validation the three aggregation paths
-	// diverged silently on an absent argument (collect nothing / read tuple
-	// position 0 / skip).
+	// group-by symbols.
 	for _, agg := range aggregates {
 		if SymbolIndex(rel, agg.Arg) < 0 {
 			result := NewMaterializedRelationWithOptions(
-				aggregateResultSymbols(groupByVars, aggregates), nil, rel.Options())
+				aggregateResultSymbols(groupByVars, aggregates), nil, opts)
 			result.err = fmt.Errorf("aggregate argument symbol %s is not present in source relation", agg.Arg)
 			return result
 		}
 		if agg.IsConditional() && SymbolIndex(rel, agg.Predicate) < 0 {
 			result := NewMaterializedRelationWithOptions(
-				aggregateResultSymbols(groupByVars, aggregates), nil, rel.Options())
+				aggregateResultSymbols(groupByVars, aggregates), nil, opts)
 			result.err = fmt.Errorf("aggregate predicate symbol %s is not present in source relation", agg.Predicate)
 			return result
 		}
 	}
-
-	// Extract options from relation
-	opts := rel.Options()
 
 	// Check if streaming aggregation is applicable and beneficial
 	useStreaming := opts.EnableStreamingAggregation &&
@@ -86,16 +77,13 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 		isStreamingEligible(aggregates) &&
 		shouldUseStreaming(rel)
 
-	collector := opts.Collector
-	if ctx != nil && ctx.Collector() != nil {
-		collector = ctx.Collector()
-	}
-	if collector != nil {
+	handler := opts.Handler
+	if handler != nil {
 		strategy := "batch"
 		if useStreaming {
 			strategy = "streaming"
 		}
-		collector.Add(annotations.Event{
+		handler(annotations.Event{
 			Name: annotations.AggregationStrategy,
 			Data: map[string]interface{}{
 				"strategy":        strategy,
@@ -107,12 +95,42 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 		})
 	}
 
-	// Emit aggregation annotation with find clause details
-	if ctx != nil && ctx.Collector() != nil {
-		data := ctx.Collector().GetDataMap()
-		data["aggregate_count"] = len(aggregates)
-		data["groupby_count"] = len(groupByVars)
-		data["groupby_vars"] = groupByVars
+	// Timed across the aggregation rather than around the decision to perform
+	// one. On the batch path the fold runs here, so the latency is the fold's.
+	// On the streaming path this call only builds the relation and the fold
+	// happens when it is consumed, which aggregation/materialized reports —
+	// so a near-zero latency there is the true cost of what this call did,
+	// and aggregation_mode is what tells the two apart.
+	var start time.Time
+	if handler != nil {
+		start = time.Now()
+	}
+
+	var result Relation
+	switch {
+	case useStreaming:
+		// If no group-by variables, pass empty slice (single global group)
+		// The fold happens when this relation is consumed, after this call
+		// returns; it reports through the options it inherits from rel, which is
+		// where the handler came from here too.
+		result = NewStreamingAggregateRelation(rel, groupByVars, aggregates)
+	case len(groupByVars) == 0:
+		// Batch aggregation with no group-by is a single aggregation.
+		result = executeSingleAggregation(rel, aggregates)
+	default:
+		// Otherwise, group by the variables and aggregate within groups
+		result = executeGroupedAggregation(rel, groupByVars, aggregates)
+	}
+
+	// Emit aggregation annotation with find clause details, through the same
+	// handler the strategy event above went to, so an observer that saw the
+	// decision also sees what it led to.
+	if handler != nil {
+		data := map[string]interface{}{
+			"aggregate_count": len(aggregates),
+			"groupby_count":   len(groupByVars),
+			"groupby_vars":    groupByVars,
+		}
 
 		// Record the find elements for debugging
 		findElemStrs := make([]string, len(findElements))
@@ -128,25 +146,10 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 			data["aggregation_mode"] = "batch"
 		}
 
-		ctx.Collector().AddTiming(annotations.AggregationExecuted, time.Now(), data)
+		handler(annotations.TimedEvent(annotations.AggregationExecuted, start, data))
 	}
 
-	// If streaming is enabled and beneficial, use it
-	if useStreaming {
-		// If no group-by variables, pass empty slice (single global group)
-		result := NewStreamingAggregateRelation(rel, groupByVars, aggregates)
-		result.options.Collector = collector
-		return result
-	}
-
-	// Otherwise, use batch aggregation (current implementation)
-	// If no group-by variables, it's a single aggregation
-	if len(groupByVars) == 0 {
-		return executeSingleAggregation(rel, aggregates)
-	}
-
-	// Otherwise, group by the variables and aggregate within groups
-	return executeGroupedAggregation(rel, groupByVars, aggregates)
+	return result
 }
 
 // aggregateResultSymbols is the output schema of an aggregation: the group-by
@@ -332,7 +335,7 @@ func executeGroupedAggregation(
 	}
 
 	// Create symbol mapping. Group-by and aggregate symbols are validated
-	// present by ExecuteAggregationsWithContext, so no table entry is -1.
+	// present, so no table entry is -1.
 	symbols := rel.Symbols()
 	groupIndices := query.SymbolIndexTable(symbols, groupByVars)
 
@@ -951,8 +954,8 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 		resultTuples = append(resultTuples, resultTuple)
 	}
 
-	if r.options.Collector != nil {
-		r.options.Collector.Add(annotations.Event{
+	if r.options.Handler != nil {
+		r.options.Handler(annotations.Event{
 			Name: annotations.AggregationMaterialized,
 			Data: map[string]interface{}{
 				"input_count":  tupleCount,

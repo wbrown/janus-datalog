@@ -23,7 +23,7 @@ import (
 // cardinality-one tombstone (database.go Remove, CardinalityOne) and a
 // cardinality-many member removal (CardinalityMany), so it cannot classify an
 // attribute by itself — callers skip Remove entries and wait for a decisive op.
-func cardFromOp(op datalog.CRDTOp) (schema.Cardinality, bool) {
+func cardFromOp(op datalog.CRDTOp) (datalog.Keyword, bool) {
 	switch op {
 	case datalog.OpCRDTAdd:
 		return schema.CardinalityMany, true
@@ -40,7 +40,7 @@ func cardFromOp(op datalog.CRDTOp) (schema.Cardinality, bool) {
 // populate an inferred attribute's ValueType from a representative stored value
 // (affects typed-vector formatting, not resolution correctness); falls back to
 // TypeString for anything unrecognized.
-func valueTypeFromValue(v interface{}) schema.ValueType {
+func valueTypeFromValue(v interface{}) datalog.Keyword {
 	switch v.(type) {
 	case string:
 		return schema.TypeString
@@ -75,19 +75,17 @@ func valueTypeFromValue(v interface{}) schema.ValueType {
 // defaults to one. Returns a non-nil (possibly empty) schema.
 func inferSchemaFromStore(store Store) (*schema.Schema, error) {
 	s := schema.NewSchema()
-	start, end := store.Encoder().EncodePrefixRange(ATEV)
-	iter, err := store.ScanKeysOnly(ATEV, start, end)
+	iter, err := OpenKeyScan(store, DiscardIntake, ScanBound{Index: ATEV})
 	if err != nil {
 		return nil, err
 	}
 	defer iter.Close()
 
 	var curA datalog.Keyword
-	var curStr string
 	haveA := false
 	decided := false
 	card := schema.CardinalityOne
-	var vt schema.ValueType
+	var vt datalog.Keyword
 
 	flush := func() {
 		if haveA {
@@ -104,12 +102,11 @@ func inferSchemaFromStore(store Store) (*schema.Schema, error) {
 		if derr != nil {
 			return nil, derr
 		}
-		// Compare by string form rather than relying on Keyword equality
-		// semantics; ATEV groups all entries for an attribute contiguously.
-		if aStr := d.A.String(); !haveA || aStr != curStr {
+		// ATEV groups all entries for an attribute contiguously, so the
+		// boundary is a comparison against the current attribute alone.
+		if !haveA || d.A != curA {
 			flush()
 			curA = d.A
-			curStr = aStr
 			haveA = true
 			decided = false
 			card = schema.CardinalityOne // default if only removes appear

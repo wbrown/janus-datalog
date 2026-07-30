@@ -57,7 +57,7 @@ func BenchmarkSubqueryDeferralScheduling(b *testing.B) {
 		b.Fatalf("parse: %v", err)
 	}
 
-	const wantRows = users / blockedEvery
+	const wantTuples = users / blockedEvery
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -66,8 +66,8 @@ func BenchmarkSubqueryDeferralScheduling(b *testing.B) {
 		if err != nil {
 			b.Fatalf("execute: %v", err)
 		}
-		if result.Size() != wantRows {
-			b.Fatalf("expected %d rows, got %d", wantRows, result.Size())
+		if result.Size() != wantTuples {
+			b.Fatalf("expected %d tuples, got %d", wantTuples, result.Size())
 		}
 	}
 }

@@ -79,11 +79,11 @@ func TestRelationBindingPropertiesEnableUniqueJoinBuild(t *testing.T) {
 
 	var strategy annotations.Event
 	options := ExecutorOptions{
-		Collector: annotations.NewCollector(func(event annotations.Event) {
+		Handler: func(event annotations.Event) {
 			if event.Name == annotations.JoinStrategy {
 				strategy = event
 			}
-		}),
+		},
 	}
 	left := NewMaterializedRelationWithOptions(
 		[]query.Symbol{group, name},
@@ -91,9 +91,9 @@ func TestRelationBindingPropertiesEnableUniqueJoinBuild(t *testing.T) {
 		options,
 	)
 	result := HashJoinWithOptions(left, bound, []query.Symbol{group}, options)
-	rows, err := CollectTuples(result, nil)
+	tuples, err := CollectTuples(result, nil)
 	require.NoError(t, err)
-	require.Len(t, rows, 3)
+	require.Len(t, tuples, 3)
 	require.Equal(t, "right", strategy.Data["build_side"])
 	require.Equal(t, true, strategy.Data["build_key_unique"])
 }

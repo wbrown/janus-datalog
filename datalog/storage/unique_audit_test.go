@@ -1,6 +1,5 @@
-// Regression + investigation tests covering audit items from the
-// CRDT-unique redesign audit (see the audit report in the branch
-// discussion). Each test locks in or investigates one concern:
+// Regression and investigation tests for loose ends in the CRDT-unique
+// redesign. Each test locks in or investigates one concern:
 //
 //   1. Wildcard pull returns fallback value (not superseded latest).
 //   2. d.History() handles: PullInto / Pull should not apply the walk.
@@ -87,10 +86,10 @@ func TestWildcardPull_UniqueFallback(t *testing.T) {
 // the fallback value. That's arguably incorrect — history mode should
 // bypass resolution.
 //
-// If this test fails, it surfaces a pre-existing ambiguity (not a
-// regression from the unique redesign per se — the old ResolveLWW
-// would also return something weird in history mode). Documented as
-// an audit finding; fix or defer based on reviewer preference.
+// If this test fails, it surfaces a pre-existing ambiguity, not a
+// regression: whether ResolveLWW should bypass the walk in history
+// mode is an open question that still needs a decision — fix
+// ResolveLWW, or defer it.
 func TestHistoryHandle_Pull_DoesNotApplyWalk(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -142,9 +141,8 @@ func TestHistoryHandle_Pull_DoesNotApplyWalk(t *testing.T) {
 // so alice's superseded email would be resolved via fallback to v1
 // instead of returning a raw assertion.
 //
-// This exposes the ResolveLWW history-mode inconsistency flagged in
-// the audit. If the test surfaces unexpected walk behavior, we need
-// to add a history-mode guard to ResolveLWW.
+// If the test surfaces unexpected walk behavior, we need to add a
+// history-mode guard to ResolveLWW.
 func TestHistoryHandle_WildcardPull(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -193,18 +191,14 @@ func TestHistoryHandle_WildcardPull(t *testing.T) {
 // ================================================================
 
 // TestValueEncoding_Int64VsString_DoesNotCrossCollide: ensure int64(5)
-// is not conflated with "5" during walk resolution. Under the
-// stringification-collision pattern (notOrTupleKey), this would be a
-// collision. The walk uses encodeValueForSearch which preserves type
-// tags, so the two should be distinct.
+// is not conflated with "5" during walk resolution. A stringification-
+// based key would collide the two. The walk uses encodeValueForSearch
+// which preserves type tags, so the two should be distinct.
 func TestValueEncoding_Int64VsString_DoesNotCrossCollide(t *testing.T) {
 	dir := t.TempDir()
-	// A unique attr accepting any type via TypeRef (bypass type check)?
-	// Simpler: use two separate attrs, one string-unique and one int-unique,
-	// but we want to test cross-type collision within the same (A, V)
-	// comparison. Since the walk uses the encoded-value key, which includes
-	// a type tag, int64(5) and string("5") are distinct under the same V
-	// only if the attr accepts both. Use no type constraint.
+	// The walk uses the encoded-value key, which includes a type tag, so
+	// int64(5) and string("5") are distinct under the same V only if the
+	// attr accepts both. Use no type constraint so both writes succeed.
 	s, err := schema.NewBuilder().
 		Attribute(":thing/id").Unique(schema.UniqueValue).Add().
 		Build()

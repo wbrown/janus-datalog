@@ -1,6 +1,6 @@
 # Janus Datalog - Makefile
 
-.PHONY: test test-fast test-storage test-wasm bench bench-prebuilt profile clean-testdb build-testdb help
+.PHONY: test test-fast test-storage test-wasm test-examples test-hooks bench bench-prebuilt profile clean-testdb build-testdb help
 
 WASM_PATH := $(shell go env GOROOT)/lib/wasm
 
@@ -8,10 +8,12 @@ WASM_PATH := $(shell go env GOROOT)/lib/wasm
 help:
 	@echo "Janus Datalog - Available targets:"
 	@echo ""
-	@echo "  make test           - Native suite + wasm contracts (standard gate)"
+	@echo "  make test           - Native suite + examples + wasm contracts (standard gate)"
 	@echo "  make test-fast      - Run tests with short flag (skips slow tests)"
 	@echo "  make test-storage   - Run storage tests only (native)"
+	@echo "  make test-examples  - Compile-check every examples/ file under its build tag"
 	@echo "  make test-wasm      - Every datalog package's tests under js/wasm (node runner)"
+	@echo "  make test-hooks     - .claude/hooks harness (Tier 2 runs the real claude CLI)"
 	@echo "  make bench          - Run all benchmarks"
 	@echo "  make bench-prebuilt - Run pre-built database benchmarks"
 	@echo "  make profile        - Profile pattern matching with pre-built DB"
@@ -23,6 +25,7 @@ help:
 # Test targets
 test: build-testdb
 	go test -count=1 ./...
+	$(MAKE) test-examples
 	$(MAKE) test-wasm
 
 test-fast:
@@ -40,6 +43,21 @@ test-wasm:
 	@command -v node >/dev/null 2>&1 || { echo "node is required for wasm tests (go_js_wasm_exec)"; exit 1; }
 	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go build ./datalog/...
 	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go test -count=1 ./datalog/...
+
+# Every examples/ file is its own `package main` behind //go:build example, so
+# `go vet ./examples/` reports main redeclared and no ordinary build reaches
+# them. Vet each file on its own, under the tag, or nothing compiles them at all.
+EXAMPLE_FILES := $(wildcard examples/*.go)
+
+test-examples:
+	for f in $(EXAMPLE_FILES); do go vet -tags example "$$f" || exit 1; done
+
+# The .claude/hooks harness. Deliberately outside the `make test` gate: Tier 2
+# drives the real claude CLI, so the project's gate would otherwise depend on a
+# reachable model. run.sh fails loudly when that CLI is absent — the reviewer is
+# the thing under test there, so it must not skip.
+test-hooks:
+	bash .claude/hooks/test/run.sh
 
 # Benchmark targets
 bench: build-testdb

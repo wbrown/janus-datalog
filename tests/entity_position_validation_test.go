@@ -207,7 +207,7 @@ func TestStringInputBoundToAttributePositionIsError(t *testing.T) {
 
 // TestVAJoinOverMixedDataMatchesOnlyKeywords pins the interior shape for the
 // attribute position: a value joined from V position into A position over
-// data holding both keywords and strings keeps keyword-partnered rows and
+// data holding both keywords and strings keeps keyword-partnered tuples and
 // drops the rest; no error.
 func TestVAJoinOverMixedDataMatchesOnlyKeywords(t *testing.T) {
 	for _, mode := range optimizerModes {
@@ -234,7 +234,7 @@ func TestVAJoinOverMixedDataMatchesOnlyKeywords(t *testing.T) {
 				t.Fatalf("mixed V→A join must not error: %v", err)
 			}
 			if len(tuples) != 1 {
-				t.Fatalf("expected 1 row (only the keyword joins), got %d: %v", len(tuples), tuples)
+				t.Fatalf("expected 1 tuple (only the keyword joins), got %d: %v", len(tuples), tuples)
 			}
 			if v, ok := tuples[0][0].(string); !ok || v != "Alice" {
 				t.Errorf("expected \"Alice\", got %v", tuples[0][0])

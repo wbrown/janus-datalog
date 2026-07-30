@@ -11,8 +11,7 @@ import (
 )
 
 // TestAlgebraMatrix_ComparisonBindingOr runs the comparison binding + or
-// subquery query with and without the algebra optimizer to isolate whether
-// the bridge causes the failure.
+// subquery query with and without the algebra optimizer.
 func TestAlgebraMatrix_ComparisonBindingOr(t *testing.T) {
 	dir, err := os.MkdirTemp("", "algebra-matrix-*")
 	if err != nil {
@@ -67,7 +66,7 @@ func TestAlgebraMatrix_ComparisonBindingOr(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			opts := storage.DefaultPlannerOptions()
 			opts.EnableAlgebraOptimizer = algebra
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 			exec := executor.NewExecutorWithOptions(matcher, nil, opts)
 			result, err := exec.Execute(q)
 			if err != nil {
@@ -82,7 +81,7 @@ func TestAlgebraMatrix_ComparisonBindingOr(t *testing.T) {
 				count++
 			}
 			iter.Close()
-			t.Logf("Total: %d rows", count)
+			t.Logf("Total: %d tuples", count)
 		})
 	}
 }

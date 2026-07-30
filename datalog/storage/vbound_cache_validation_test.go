@@ -43,8 +43,9 @@ import (
 //     candidate→outcome trace); the tests merely read them to prove coverage.
 // =============================================================================
 
-// vboundCapture tallies annotation events by name. The database wraps the
-// handler in annotations.Synchronized, so the mutex here is belt-and-suspenders.
+// vboundCapture tallies annotation events by name. The mutex is load-bearing:
+// the engine emits from parallel workers and does not wrap installed handlers,
+// so serializing is the handler's own responsibility.
 type vboundCapture struct {
 	mu     sync.Mutex
 	counts map[string]int
@@ -113,10 +114,10 @@ func queryEntitySet(t *testing.T, db *Database, queryStr string, args ...interfa
 	results, err := executor.CollectTuples(db.Query(queryStr, args...))
 	require.NoError(t, err)
 	set := make(map[string]bool, len(results))
-	for _, row := range results {
-		require.NotEmpty(t, row)
-		id, ok := row[0].(datalog.Identity)
-		require.Truef(t, ok, "expected Identity in ?e position, got %T", row[0])
+	for _, tuple := range results {
+		require.NotEmpty(t, tuple)
+		id, ok := tuple[0].(datalog.Identity)
+		require.Truef(t, ok, "expected Identity in ?e position, got %T", tuple[0])
 		set[id.String()] = true
 	}
 	return set

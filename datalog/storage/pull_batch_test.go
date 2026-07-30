@@ -335,7 +335,7 @@ func TestResolveAllAttributesManyDifferential(t *testing.T) {
 func TestResolveAllAttributesManyHistoryMatchesPerEntity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			entity := datalog.NewIdentity("batch-history")
 			name := datalog.NewKeyword(":person/name")
@@ -393,13 +393,13 @@ func TestWildcardPullQueryUsesOneBatch(t *testing.T) {
 
 			result, queryErr := db.Query(`[:find (pull ?entity [*])
 		:where [?entity :entity/type "scenario"]]`)
-			rows, err := executor.CollectTuples(result, queryErr)
+			tuples, err := executor.CollectTuples(result, queryErr)
 			require.NoError(t, err)
-			require.Len(t, rows, 230)
+			require.Len(t, tuples, 230)
 			require.Equal(t, 1, batchBegins)
 			require.Equal(t, 1, batchCompletes)
-			for _, row := range rows {
-				pulled, ok := row[0].(map[string]interface{})
+			for _, tuple := range tuples {
+				pulled, ok := tuple[0].(map[string]interface{})
 				require.True(t, ok)
 				require.Equal(t, "scenario", pulled["entity/type"])
 				require.NotNil(t, pulled[query.DBIDKey])
@@ -443,11 +443,11 @@ func TestWildcardPullQueryRendersMultiValuedAttributes(t *testing.T) {
 
 			result, queryErr := db.Query(`[:find (pull ?entity [*])
 		:where [?entity :entity/type "multi"]]`)
-			rows, err := executor.CollectTuples(result, queryErr)
+			tuples, err := executor.CollectTuples(result, queryErr)
 			require.NoError(t, err)
-			require.Len(t, rows, 3)
-			for _, row := range rows {
-				pulled := row[0].(map[string]interface{})
+			require.Len(t, tuples, 3)
+			for _, tuple := range tuples {
+				pulled := tuple[0].(map[string]interface{})
 				require.ElementsMatch(t, []interface{}{"one", "two"}, pulled["entity/tags"])
 				require.Equal(t, []string{"first", "second"}, pulled["entity/steps"])
 			}

@@ -51,7 +51,7 @@ func TestCardinalityOneCurrentValue(t *testing.T) {
 	}
 
 	// Query should return only the current (latest) value
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -120,7 +120,7 @@ func TestCardinalityOneHistory(t *testing.T) {
 	}
 
 	// Query with history should return all versions
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	// Bind ?tx so each version is a distinct tuple in the history relation.
 	pattern := &query.DataPattern{
@@ -196,7 +196,7 @@ func TestCardinalityOneAsOf(t *testing.T) {
 		txIDs = append(txIDs, txID)
 	}
 
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -207,7 +207,7 @@ func TestCardinalityOneAsOf(t *testing.T) {
 		},
 	}
 
-	collectNames := func(t *testing.T, m *BadgerMatcher) []string {
+	collectNames := func(t *testing.T, m *PatternMatcher) []string {
 		t.Helper()
 		rel, err := m.Match(query.PatternQuery(pattern), nil)
 		if err != nil {
@@ -289,7 +289,7 @@ func TestCardinalityOneNoRead(t *testing.T) {
 	}
 
 	// All 3 values should be stored (CRDT keeps history)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
 	// Bind ?tx so each appended version is a distinct tuple in the history
 	// relation.
@@ -416,7 +416,7 @@ func TestCardinalityOneConcurrentWrites(t *testing.T) {
 	}
 
 	// Query should return only the value from higher ReplicaID
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(s)
 
 	pattern := &query.DataPattern{
@@ -518,7 +518,7 @@ func TestSchemalessDefaultsToCardinalityOne(t *testing.T) {
 	}
 
 	// Query should return only current value (schemaless defaults to cardinality-one)
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 	// Note: no SetSchema() call - schemaless mode
 
 	pattern := &query.DataPattern{

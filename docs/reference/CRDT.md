@@ -627,7 +627,7 @@ type CacheResolver interface {
 }
 ```
 
-`BadgerMatcher` implements this interface.
+`storage.PatternMatcher` implements this interface.
 
 ---
 
@@ -837,7 +837,7 @@ asOfResult, _ := asOf.Query(
     `[:find ?name :where [?e :person/name ?name]]`)
 ```
 
-**Three database modes** (controlled via `*datalog.ElementID` pointer on `BadgerMatcher.txID`):
+**Three database modes** (controlled via `*datalog.ElementID` pointer on `PatternMatcher.txID`):
 
 | Mode | API | `txID` value | CRDT resolution | Tx filtering |
 |------|-----|-------------|-----------------|--------------|

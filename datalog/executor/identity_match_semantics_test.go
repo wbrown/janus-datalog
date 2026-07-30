@@ -34,7 +34,7 @@ func TestMatchesConstantRejectsStringForIdentity(t *testing.T) {
 // TestBoundStringEntityThroughMemoryMatcherIsNonMatch pins the interior
 // contract for the memory matcher: binding relations are data flow, so a
 // non-Identity value bound into entity position names no entity and
-// contributes zero rows — the typed non-match of the equality join — with no
+// contributes no tuples — the typed non-match of the equality join — with no
 // error. (Loud errors belong to the user boundaries: query-text constants and
 // :in inputs.)
 func TestBoundStringEntityThroughMemoryMatcherIsNonMatch(t *testing.T) {
@@ -70,7 +70,7 @@ func TestBoundStringEntityThroughMemoryMatcherIsNonMatch(t *testing.T) {
 		t.Fatalf("interior mixed bindings must join, not error: %v", err)
 	}
 	if len(tuples) != 1 {
-		t.Fatalf("expected exactly the Identity-bound row, got %d: %v", len(tuples), tuples)
+		t.Fatalf("expected exactly the Identity-bound tuple, got %d: %v", len(tuples), tuples)
 	}
 	if name, ok := tuples[0][1].(string); !ok || name != "Alice" {
 		t.Errorf("expected \"Alice\", got %v", tuples[0][1])

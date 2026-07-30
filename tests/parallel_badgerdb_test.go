@@ -54,8 +54,8 @@ func TestParallelSubqueryWithBadgerDB(t *testing.T) {
 	}
 
 	// Create matcher from database
-	matcher := storage.NewBadgerMatcher(db.Store())
-	ctx := executor.NewContext(nil)
+	matcher := storage.NewPatternMatcher(db.Store())
+	ctx := executor.NewContext()
 
 	// Query to test
 	queryStr := `[:find ?n ?y ?m (max ?age)

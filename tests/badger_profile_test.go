@@ -58,8 +58,8 @@ func TestBadgerParallelProfile(t *testing.T) {
 		t.Fatalf("Failed to commit test data: %v", err)
 	}
 
-	matcher := storage.NewBadgerMatcher(db.Store())
-	ctx := executor.NewContext(nil)
+	matcher := storage.NewPatternMatcher(db.Store())
+	ctx := executor.NewContext()
 
 	queryStr := `[:find ?n ?y ?m (max ?age)
 	              :in $ [[?n ?y ?m] ...]

@@ -43,25 +43,27 @@ type EntityWithKeyword struct {
 }
 
 func TestSchemaFromStruct(t *testing.T) {
-	schema, err := dlreflect.SchemaFromStruct(Person{})
+	// Named sch, not schema: the assertions below name the schema package's
+	// value-type keywords, which a local called schema would shadow.
+	sch, err := dlreflect.SchemaFromStruct(Person{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Check that attributes are defined
-	nameAttr := schema.GetAttribute(datalog.NewKeyword(":person/name"))
+	nameAttr := sch.GetAttribute(datalog.NewKeyword(":person/name"))
 	if nameAttr == nil {
 		t.Fatal("expected :person/name attribute")
 	}
-	if nameAttr.ValueType != "db.type/string" {
+	if nameAttr.ValueType != schema.TypeString {
 		t.Errorf("expected name to be string, got %s", nameAttr.ValueType)
 	}
 
-	ageAttr := schema.GetAttribute(datalog.NewKeyword(":person/age"))
+	ageAttr := sch.GetAttribute(datalog.NewKeyword(":person/age"))
 	if ageAttr == nil {
 		t.Fatal("expected :person/age attribute")
 	}
-	if ageAttr.ValueType != "db.type/long" {
+	if ageAttr.ValueType != schema.TypeLong {
 		t.Errorf("expected age to be long, got %s", ageAttr.ValueType)
 	}
 }
@@ -918,7 +920,7 @@ func TestLookupAttributeWithStructAPI(t *testing.T) {
 			t.Logf("Created entity with ID: %s", id.L85())
 
 			// Test LookupAttribute
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 
 			// Lookup name
 			nameAttr := datalog.NewKeyword(":person/name")
@@ -1535,14 +1537,12 @@ func TestPullInto_CardinalityManyStrings_MultipleValues(t *testing.T) {
 // TestCRDTTombstoneReAdd demonstrates a bug where SaveStruct cannot re-add a
 // value to a cardinality-many field after that value was previously removed.
 //
-// ROOT CAUSE: Transaction.SaveStruct creates a BadgerMatcher via
-// NewBadgerMatcher(t.db.Store()) which does NOT set the cache field. This
+// ROOT CAUSE: Transaction.SaveStruct creates a PatternMatcher via
+// NewPatternMatcher(t.db.Store()) which does NOT set the cache field. This
 // causes LookupAllAttributes to use a fallback code path (raw AEVT scan) that
 // returns ALL datoms — both Add and Remove ops — without performing add-wins
 // CRDT resolution. The diff logic in updateSliceField then sees tombstoned
 // values as still present and skips the re-add.
-//
-// See docs/bugs/BUG-CRDT-READD-SAVESTRUCT.md for full analysis.
 func TestCRDTTombstoneReAdd(t *testing.T) {
 	schema, err := dlreflect.SchemaFromStruct(PersonWithTags{})
 	if err != nil {
@@ -1625,14 +1625,14 @@ func TestCRDTTombstoneReAdd(t *testing.T) {
 			t.Logf("Step 3 - After re-add via SaveStruct: %v", loaded.Tags)
 
 			// Diagnose: show what LookupAllAttributes returns with and without cache
-			matcherNoCache := storage.NewBadgerMatcher(db.Store())
+			matcherNoCache := storage.NewPatternMatcher(db.Store())
 			uncachedVals, err := matcherNoCache.LookupAllAttributes(aliceID, datalog.NewKeyword(":person-with-tags/tags"))
 			if err != nil {
 				t.Fatalf("LookupAllAttributes (no cache): %v", err)
 			}
 			t.Logf("DIAGNOSTIC: LookupAllAttributes WITHOUT cache: %v (%d values)", uncachedVals, len(uncachedVals))
 
-			matcherWithCache := db.Matcher().(*storage.BadgerMatcher)
+			matcherWithCache := db.Matcher().(*storage.PatternMatcher)
 			cachedVals, err := matcherWithCache.LookupAllAttributes(aliceID, datalog.NewKeyword(":person-with-tags/tags"))
 			if err != nil {
 				t.Fatalf("LookupAllAttributes (with cache): %v", err)

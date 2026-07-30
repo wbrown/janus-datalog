@@ -65,7 +65,7 @@ func TestPredicatePushdownDebug(t *testing.T) {
 		},
 	}
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 
 	// First get all bars for symbol
 	symbolRel, err := matcher.Match(query.PatternQuery(symbolPattern), nil)

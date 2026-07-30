@@ -46,9 +46,9 @@ func TestFindOuterRelationCombinesMultipleStreamsReusably(t *testing.T) {
 		Relations{left, right},
 	)
 	require.Equal(t, []int{0, 1}, consumed)
-	rows, err := CollectTuples(selected, nil)
+	tuples, err := CollectTuples(selected, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(2), int64(3)}}, rows)
+	require.Equal(t, [][]interface{}{{int64(2), int64(3)}}, tuples)
 }
 
 func TestOrFallbackAnnotatesDeferredOuterMaterialization(t *testing.T) {
@@ -57,13 +57,14 @@ func TestOrFallbackAnnotatesDeferredOuterMaterialization(t *testing.T) {
 	entity := datalog.NewIdentity("outer-materialization")
 	attr := datalog.NewKeyword(":item/value")
 	var materializations int
-	ctx := NewContext(func(event annotations.Event) {
+	handler := func(event annotations.Event) {
 		if event.Name == "or-fallback/outer.materialized" {
 			materializations++
 			require.Equal(t, "join-key-narrowing", event.Data["reason"])
 		}
-	})
-	options := ExecutorOptions{Collector: ctx.Collector()}
+	}
+	ctx := NewContext()
+	options := ExecutorOptions{Handler: handler}
 	exec := newQueryExecutor(
 		NewMemoryPatternMatcher([]datalog.Datom{{E: entity, A: attr, V: "present"}}),
 		nil,
@@ -91,9 +92,9 @@ func TestOrFallbackAnnotatesDeferredOuterMaterialization(t *testing.T) {
 	)
 	relation.joinSyms = []query.Symbol{entitySymbol}
 
-	rows, err := CollectTuples(relation, nil)
+	tuples, err := CollectTuples(relation, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{entity, "present"}}, rows)
+	require.Equal(t, [][]interface{}{{entity, "present"}}, tuples)
 	require.Equal(t, 1, materializations)
 }
 
@@ -101,12 +102,13 @@ func TestOrFallbackSinglePassBranchKeepsOuterStreaming(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	value := datalog.NewSymbol("?value")
 	var materializations int
-	ctx := NewContext(func(event annotations.Event) {
+	handler := func(event annotations.Event) {
 		if event.Name == "or-fallback/outer.materialized" {
 			materializations++
 		}
-	})
-	options := ExecutorOptions{Collector: ctx.Collector()}
+	}
+	ctx := NewContext()
+	options := ExecutorOptions{Handler: handler}
 	base := NewMaterializedRelation(
 		[]query.Symbol{entity},
 		[]Tuple{{int64(1)}, {int64(2)}},
@@ -124,12 +126,12 @@ func TestOrFallbackSinglePassBranchKeepsOuterStreaming(t *testing.T) {
 		true,
 	)
 
-	rows, err := CollectTuples(relation, nil)
+	tuples, err := CollectTuples(relation, nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, [][]interface{}{
 		{int64(1), "default"},
 		{int64(2), "default"},
-	}, rows)
+	}, tuples)
 	require.Zero(t, materializations)
 }
 
@@ -149,7 +151,7 @@ func TestOuterJoinKeysProducesSetWithJoinKey(t *testing.T) {
 	)
 	relation := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(nil),
+		NewContext(),
 		[][]query.Clause{{&query.DataPattern{Elements: []query.PatternElement{
 			query.Variable{Name: entity},
 			query.Constant{Value: datalog.NewKeyword(":item/value")},
@@ -163,9 +165,9 @@ func TestOuterJoinKeysProducesSetWithJoinKey(t *testing.T) {
 	iterator := relation.Iterator().(*OrFallbackIterator)
 
 	keys := iterator.outerJoinKeys()
-	rows, err := CollectTuples(keys, nil)
+	tuples, err := CollectTuples(keys, nil)
 	require.NoError(t, err)
-	require.ElementsMatch(t, [][]interface{}{{e1}, {e2}}, rows)
+	require.ElementsMatch(t, [][]interface{}{{e1}, {e2}}, tuples)
 	require.Equal(t,
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 		keys.Properties(),
@@ -225,7 +227,7 @@ func TestOuterJoinKeysPreservesOuterIteratorAndCloseErrors(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			relation := NewOrFallbackRelation(
 				newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-				NewContext(nil),
+				NewContext(),
 				[][]query.Clause{{&query.Expression{
 					Function: &query.GroundFunction{Value: "fallback"},
 					Binding:  value,
@@ -282,7 +284,7 @@ func TestBuildBranchFromEACachePreservesOuterIteratorAndCloseErrors(t *testing.T
 		t.Run(testCase.name, func(t *testing.T) {
 			relation := NewOrFallbackRelation(
 				newQueryExecutor(matcher, nil, ExecutorOptions{}),
-				NewContext(nil),
+				NewContext(),
 				[][]query.Clause{branch},
 				testCase.outer,
 				ExecutorOptions{},

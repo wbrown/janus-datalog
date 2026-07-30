@@ -22,10 +22,15 @@ func TestIndexOrderedLimitStopsSatisfiedScan(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			var scanned atomic.Int64
 			handler := func(event annotations.Event) {
-				if event.Name != "pattern/storage-scan" {
+				if event.Name != annotations.StorageScanComplete {
 					return
 				}
-				if count, ok := event.Data["datoms.scanned"].(int); ok {
+				// Intake, not resolution's output: "stopped after the requested
+				// tuples" is a claim about what the scan read. Resolution emits
+				// one tuple per entity however deep the history is, so a scan
+				// that walked the whole index would satisfy a bound on the
+				// resolved count.
+				if count, ok := event.Data[annotations.KeyDatomsScanned].(int); ok {
 					scanned.Add(int64(count))
 				}
 			}
@@ -65,15 +70,15 @@ func TestIndexOrderedLimitStopsSatisfiedScan(t *testing.T) {
 				)
 				result, err := db.Query(queryText)
 				require.NoError(t, err)
-				rows, err := executor.CollectTuples(result, nil)
+				tuples, err := executor.CollectTuples(result, nil)
 				require.NoError(t, err)
-				require.Len(t, rows, limit)
-				return rows, scanned.Load()
+				require.Len(t, tuples, limit)
+				return tuples, scanned.Load()
 			}
 
 			ascending, ascendingScans := run("asc")
 			require.LessOrEqual(t, ascendingScans, int64(limit),
-				"satisfied index order must stop after the requested rows")
+				"satisfied index order must stop after the requested tuples")
 			for i := 1; i < len(ascending); i++ {
 				previous := ascending[i-1][0].(datalog.Identity)
 				current := ascending[i][0].(datalog.Identity)

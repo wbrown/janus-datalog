@@ -51,15 +51,16 @@ func TestSimpleSubquery(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-
 			var executionPath string
-			ctx := NewContext(func(event annotations.Event) {
+			opts := mode.plannerOptions()
+			opts.Handler = func(event annotations.Event) {
 				if event.Name == "subquery/executor-path" {
 					executionPath, _ = event.Data["path"].(string)
 				}
-			})
-			result, err := exec.ExecuteWithContext(ctx, q)
+			}
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+
+			result, err := exec.Execute(q)
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
 			}

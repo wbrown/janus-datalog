@@ -26,12 +26,12 @@ func TestGroupedAggregationPublishesGroupKey(t *testing.T) {
 		RelationProperties{Keys: [][]query.Symbol{{group}}},
 		result.Properties(),
 	)
-	rows, err := CollectTuples(result, nil)
+	tuples, err := CollectTuples(result, nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, [][]interface{}{
 		{"a", int64(3)},
 		{"b", int64(3)},
-	}, rows)
+	}, tuples)
 }
 
 func TestRealizedStreamingAggregationRetainsGroupKey(t *testing.T) {
@@ -58,7 +58,7 @@ func TestRealizedStreamingAggregationRetainsGroupKey(t *testing.T) {
 		RelationProperties{Keys: [][]query.Symbol{{group}}},
 		materialized.Properties(),
 	)
-	rows, err := CollectTuples(materialized, nil)
+	tuples, err := CollectTuples(materialized, nil)
 	require.NoError(t, err)
-	require.Len(t, rows, 2)
+	require.Len(t, tuples, 2)
 }

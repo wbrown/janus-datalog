@@ -29,16 +29,20 @@ type historyOrderScanCapture struct {
 }
 
 func (c *historyOrderScanCapture) handler(event annotations.Event) {
-	if event.Name != "pattern/storage-scan" {
+	if event.Name != annotations.StorageScanComplete {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if scanned, ok := event.Data["datoms.scanned"].(int); ok {
+	// Intake, not resolution's output: the assertions this capture drives are
+	// about how far the scan walked before the limit was satisfied.
+	if scanned, ok := event.Data[annotations.KeyDatomsScanned].(int); ok {
 		c.scanned += scanned
 	}
-	if index, ok := event.Data["index"].(string); ok {
-		c.index = index
+	// The producer carries the IndexType; rendering here keeps "" meaning no
+	// scan was seen, which reset() and the assertions below rely on.
+	if index, ok := event.Data[annotations.KeyIndex].(IndexType); ok {
+		c.index = index.String()
 	}
 }
 
@@ -205,18 +209,18 @@ func TestHistoryOrderedLimitUsesATEV(t *testing.T) {
 			capture.reset()
 			result, err := db.History().Query(historyOrderedLimitQuery(limit))
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, limit)
-			for i := 1; i < len(rows); i++ {
-				previousTx, ok := datalog.DerefElementID(rows[i-1][2])
+			require.Len(t, tuples, limit)
+			for i := 1; i < len(tuples); i++ {
+				previousTx, ok := datalog.DerefElementID(tuples[i-1][2])
 				require.True(t, ok)
-				currentTx, ok := datalog.DerefElementID(rows[i][2])
+				currentTx, ok := datalog.DerefElementID(tuples[i][2])
 				require.True(t, ok)
 				require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
 				if previousTx.Equal(currentTx) {
-					previousEntity := rows[i-1][0].(datalog.Identity)
-					currentEntity := rows[i][0].(datalog.Identity)
+					previousEntity := tuples[i-1][0].(datalog.Identity)
+					currentEntity := tuples[i][0].(datalog.Identity)
 					require.LessOrEqual(t, previousEntity.Compare(currentEntity), 0)
 				}
 			}
@@ -224,7 +228,7 @@ func TestHistoryOrderedLimitUsesATEV(t *testing.T) {
 			scanned, index := capture.snapshot()
 			require.Equal(t, "ATEV", index)
 			require.LessOrEqual(t, scanned, limit,
-				"history ATEV ordering must stop after the requested rows")
+				"history ATEV ordering must stop after the requested tuples")
 		})
 	}
 }
@@ -239,9 +243,9 @@ func TestLatestOrderedLimitDeclinesATEV(t *testing.T) {
 			capture.reset()
 			result, err := db.Query(historyOrderedLimitQuery(10))
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, 10)
+			require.Len(t, tuples, 10)
 
 			_, index := capture.snapshot()
 			require.NotEqual(t, "ATEV", index,
@@ -261,22 +265,22 @@ func TestHistoryTransactionOrderedLimitUsesTAEV(t *testing.T) {
 			capture.reset()
 			result, err := db.History().Query(historyTransactionOrderedLimitQuery(limit))
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, limit)
-			for i := 1; i < len(rows); i++ {
-				previousTx, ok := datalog.DerefElementID(rows[i-1][3])
+			require.Len(t, tuples, limit)
+			for i := 1; i < len(tuples); i++ {
+				previousTx, ok := datalog.DerefElementID(tuples[i-1][3])
 				require.True(t, ok)
-				currentTx, ok := datalog.DerefElementID(rows[i][3])
+				currentTx, ok := datalog.DerefElementID(tuples[i][3])
 				require.True(t, ok)
 				require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
 				if previousTx.Equal(currentTx) {
-					previousAttr := rows[i-1][1].(datalog.Keyword)
-					currentAttr := rows[i][1].(datalog.Keyword)
+					previousAttr := tuples[i-1][1].(datalog.Keyword)
+					currentAttr := tuples[i][1].(datalog.Keyword)
 					require.LessOrEqual(t, previousAttr.Compare(currentAttr), 0)
 					if previousAttr.Compare(currentAttr) == 0 {
-						previousEntity := rows[i-1][0].(datalog.Identity)
-						currentEntity := rows[i][0].(datalog.Identity)
+						previousEntity := tuples[i-1][0].(datalog.Identity)
+						currentEntity := tuples[i][0].(datalog.Identity)
 						require.LessOrEqual(t, previousEntity.Compare(currentEntity), 0)
 					}
 				}
@@ -285,7 +289,7 @@ func TestHistoryTransactionOrderedLimitUsesTAEV(t *testing.T) {
 			scanned, index := capture.snapshot()
 			require.Equal(t, "TAEV", index)
 			require.LessOrEqual(t, scanned, limit,
-				"history TAEV ordering must stop after the requested rows")
+				"history TAEV ordering must stop after the requested tuples")
 		})
 	}
 }
@@ -300,9 +304,9 @@ func TestLatestTransactionOrderedLimitDeclinesTAEV(t *testing.T) {
 			capture.reset()
 			result, err := db.Query(historyTransactionOrderedLimitQuery(10))
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, 10)
+			require.Len(t, tuples, 10)
 
 			_, index := capture.snapshot()
 			require.NotEqual(t, "TAEV", index,
@@ -322,17 +326,17 @@ func TestHistoryEntityOrderedLimitUsesAETV(t *testing.T) {
 			capture.reset()
 			result, err := db.History().Query(historyEntityOrderedLimitQuery(limit))
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, limit)
-			for i := 1; i < len(rows); i++ {
-				previousEntity := rows[i-1][0].(datalog.Identity)
-				currentEntity := rows[i][0].(datalog.Identity)
+			require.Len(t, tuples, limit)
+			for i := 1; i < len(tuples); i++ {
+				previousEntity := tuples[i-1][0].(datalog.Identity)
+				currentEntity := tuples[i][0].(datalog.Identity)
 				require.LessOrEqual(t, previousEntity.Compare(currentEntity), 0)
 				if previousEntity.Equal(currentEntity) {
-					previousTx, ok := datalog.DerefElementID(rows[i-1][2])
+					previousTx, ok := datalog.DerefElementID(tuples[i-1][2])
 					require.True(t, ok)
-					currentTx, ok := datalog.DerefElementID(rows[i][2])
+					currentTx, ok := datalog.DerefElementID(tuples[i][2])
 					require.True(t, ok)
 					require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
 				}
@@ -341,7 +345,7 @@ func TestHistoryEntityOrderedLimitUsesAETV(t *testing.T) {
 			scanned, index := capture.snapshot()
 			require.Equal(t, "AETV", index)
 			require.LessOrEqual(t, scanned, limit,
-				"history AETV ordering must stop after the requested rows")
+				"history AETV ordering must stop after the requested tuples")
 		})
 	}
 }
@@ -357,9 +361,9 @@ func TestLatestEntityOrderedLimitDoesNotUseHistoryAETVProperty(t *testing.T) {
 			capture.reset()
 			result, err := db.Query(historyEntityOrderedLimitQuery(limit))
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, limit)
+			require.Len(t, tuples, limit)
 
 			scanned, index := capture.snapshot()
 			require.Equal(t, "AETV", index)
@@ -380,17 +384,17 @@ func TestHistoryAttributeOrderedLimitUsesEATV(t *testing.T) {
 			capture.reset()
 			result, err := db.History().Query(historyAttributeOrderedLimitQuery(entity, limit))
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, limit)
-			for i := 1; i < len(rows); i++ {
-				previousAttr := rows[i-1][0].(datalog.Keyword)
-				currentAttr := rows[i][0].(datalog.Keyword)
+			require.Len(t, tuples, limit)
+			for i := 1; i < len(tuples); i++ {
+				previousAttr := tuples[i-1][0].(datalog.Keyword)
+				currentAttr := tuples[i][0].(datalog.Keyword)
 				require.LessOrEqual(t, previousAttr.Compare(currentAttr), 0)
 				if previousAttr.Compare(currentAttr) == 0 {
-					previousTx, ok := datalog.DerefElementID(rows[i-1][2])
+					previousTx, ok := datalog.DerefElementID(tuples[i-1][2])
 					require.True(t, ok)
-					currentTx, ok := datalog.DerefElementID(rows[i][2])
+					currentTx, ok := datalog.DerefElementID(tuples[i][2])
 					require.True(t, ok)
 					require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
 				}
@@ -399,7 +403,7 @@ func TestHistoryAttributeOrderedLimitUsesEATV(t *testing.T) {
 			scanned, index := capture.snapshot()
 			require.Equal(t, "EATV", index)
 			require.LessOrEqual(t, scanned, limit,
-				"history EATV ordering must stop after the requested rows")
+				"history EATV ordering must stop after the requested tuples")
 		})
 	}
 }
@@ -415,9 +419,9 @@ func TestLatestAttributeOrderedLimitDoesNotUseHistoryEATVProperty(t *testing.T) 
 			capture.reset()
 			result, err := db.Query(historyAttributeOrderedLimitQuery(entity, limit))
 			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
+			tuples, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			require.Len(t, rows, limit)
+			require.Len(t, tuples, limit)
 
 			scanned, index := capture.snapshot()
 			require.Equal(t, "EATV", index)
@@ -520,15 +524,15 @@ func runHistoryOrderedLimitDifferentialRandomized(t *testing.T, mode optimizerMo
 		t.Run(testShape.name, func(t *testing.T) {
 			reference, err := testShape.database.Query(testShape.fullQuery)
 			require.NoError(t, err)
-			allRows, err := executor.CollectTuples(reference, nil)
+			allTuples, err := executor.CollectTuples(reference, nil)
 			require.NoError(t, err)
-			sort.Slice(allRows, func(i, j int) bool {
-				return testShape.less(allRows[i], allRows[j])
+			sort.Slice(allTuples, func(i, j int) bool {
+				return testShape.less(allTuples[i], allTuples[j])
 			})
 
-			limits := []int{0, 1, 2, 10, 99, 100, len(allRows), len(allRows) + 1}
+			limits := []int{0, 1, 2, 10, 99, 100, len(allTuples), len(allTuples) + 1}
 			for i := 0; i < 20; i++ {
-				limits = append(limits, random.Intn(len(allRows)+2))
+				limits = append(limits, random.Intn(len(allTuples)+2))
 			}
 			for _, limit := range limits {
 				capture.reset()
@@ -537,10 +541,10 @@ func runHistoryOrderedLimitDifferentialRandomized(t *testing.T, mode optimizerMo
 				actual, err := executor.CollectTuples(result, nil)
 				require.NoError(t, err, "limit %d", limit)
 				wantCount := limit
-				if wantCount > len(allRows) {
-					wantCount = len(allRows)
+				if wantCount > len(allTuples) {
+					wantCount = len(allTuples)
 				}
-				requireHistoryRowsEqual(t, allRows[:wantCount], actual, testShape.name, limit)
+				requireHistoryTuplesEqual(t, allTuples[:wantCount], actual, testShape.name, limit)
 				scanned, index := capture.snapshot()
 				if limit == 0 {
 					require.Zero(t, scanned)
@@ -682,7 +686,7 @@ func runHistoryOrderedLimitUsesFullElementIDAcrossReplicas(t *testing.T, mode op
 			require.NoError(t, err)
 			actual, err := executor.CollectTuples(result, nil)
 			require.NoError(t, err)
-			requireHistoryRowsEqual(t, expected, actual, testShape.name, 3)
+			requireHistoryTuplesEqual(t, expected, actual, testShape.name, 3)
 			scanned, index := capture.snapshot()
 			require.Equal(t, testShape.name, index)
 			require.LessOrEqual(t, scanned, 3)
@@ -690,7 +694,7 @@ func runHistoryOrderedLimitUsesFullElementIDAcrossReplicas(t *testing.T, mode op
 	}
 }
 
-func requireHistoryRowsEqual(
+func requireHistoryTuplesEqual(
 	t *testing.T,
 	expected, actual [][]interface{},
 	shape string,
@@ -698,14 +702,14 @@ func requireHistoryRowsEqual(
 ) {
 	t.Helper()
 	require.Len(t, actual, len(expected), "%s limit %d", shape, limit)
-	for rowIndex := range expected {
-		require.Len(t, actual[rowIndex], len(expected[rowIndex]), "%s limit %d row %d", shape, limit, rowIndex)
-		for tuplePosition := range expected[rowIndex] {
+	for tupleIndex := range expected {
+		require.Len(t, actual[tupleIndex], len(expected[tupleIndex]), "%s limit %d tuple %d", shape, limit, tupleIndex)
+		for tuplePosition := range expected[tupleIndex] {
 			require.True(t,
-				datalog.ValuesEqual(expected[rowIndex][tuplePosition], actual[rowIndex][tuplePosition]),
-				"%s limit %d row %d tuple position %d: expected %v, got %v",
-				shape, limit, rowIndex, tuplePosition,
-				expected[rowIndex][tuplePosition], actual[rowIndex][tuplePosition],
+				datalog.ValuesEqual(expected[tupleIndex][tuplePosition], actual[tupleIndex][tuplePosition]),
+				"%s limit %d tuple %d tuple position %d: expected %v, got %v",
+				shape, limit, tupleIndex, tuplePosition,
+				expected[tupleIndex][tuplePosition], actual[tupleIndex][tuplePosition],
 			)
 		}
 	}
@@ -874,7 +878,7 @@ func runAsOfOrderedLimitDifferentialAroundTombstone(t *testing.T, mode optimizer
 				require.NoError(t, err)
 				actual, err := executor.CollectTuples(result, nil)
 				require.NoError(t, err)
-				requireHistoryRowsEqual(t, expected, actual, testShape.name, 1)
+				requireHistoryTuplesEqual(t, expected, actual, testShape.name, 1)
 				scanned, _ := capture.snapshot()
 				require.Greater(t, scanned, 1,
 					"as-of CRDT resolution must decline raw-history early termination")

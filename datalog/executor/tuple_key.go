@@ -96,14 +96,9 @@ func hashValue(v interface{}) uint64 {
 			return 0
 		}
 		return uint64(uintptr(unsafe.Pointer(ptr)))
-	case *uint64:
-		if ptr == nil {
-			return 0
-		}
-		return *ptr
 	}
 
-	// Remaining value types (Identity/Keyword/Symbol/*uint64 handled above).
+	// Remaining value types (Identity/Keyword/Symbol handled above).
 	switch val := v.(type) {
 	case string:
 		return hashString(val)
@@ -133,8 +128,7 @@ func hashValue(v interface{}) uint64 {
 	case int8:
 		// Integer widths hash by int64 magnitude so they collide with the
 		// canonical int64 in a TupleKeyMap, matching datalog.ValuesEqual, which
-		// treats integer widths as equal by magnitude. Listed after int/int64
-		// so the common widths keep their original position in the switch.
+		// treats integer widths as equal by magnitude.
 		return uint64(int64(val))
 
 	case int16:
@@ -164,8 +158,11 @@ func hashValue(v interface{}) uint64 {
 		return val.Lamport ^ (val.ReplicaID * 1099511628211)
 
 	case *datalog.ElementID:
+		// A pointer representation carries a value only when non-nil. Reported as
+		// nil rather than as an unknown type: the type is in the domain, so naming
+		// the type would state something false.
 		if val == nil {
-			return 0
+			panic(fmt.Sprintf("hashValue: %T is nil; nil is not a datalog value", v))
 		}
 		return val.Lamport ^ (val.ReplicaID * 1099511628211)
 
@@ -177,7 +174,11 @@ func hashValue(v interface{}) uint64 {
 		return hashValues(val)
 
 	case nil:
-		return 0
+		// Absence is not a member of the domain and has no hash. All three doors
+		// of the domain — this one, datalog.ValuesEqual and datalog.CompareValues
+		// — reject it alike, so nothing reaches a bucket that equality then
+		// refuses to compare.
+		panic("hashValue: nil is not a datalog value")
 
 	default:
 		// Typed slices (e.g. []string, produced by the storage
@@ -357,9 +358,8 @@ func (m *TupleKeyMap) PutValue(keyValue, value interface{}) {
 
 // PutIfAbsent inserts key with the given value only if the key is not
 // already present, and reports whether it already existed. It walks the
-// hash's entries exactly once, where a separate Exists+Put pair would walk
-// them twice (running tupleValuesEqual against every entry both times).
-// This is the hot path for join deduplication, where every matched row
+// hash's entries exactly once.
+// This is the hot path for join deduplication, where every matched tuple
 // probes the seen set.
 func (m *TupleKeyMap) PutIfAbsent(key TupleKey, value interface{}) (existed bool) {
 	first, ok := m.entries[key.hash]

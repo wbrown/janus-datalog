@@ -334,9 +334,9 @@ func (p *DataPattern) Symbols() []Symbol {
 type Query struct {
 	Find         []FindElement   // Elements to return (variables or aggregates)
 	In           []InputSpec     // Input specifications (database and parameters)
-	Where        []Clause        // Clauses in WHERE (DataPattern, Predicate, Expression, Subquery)
+	Where        []Clause        // Clauses in :where (DataPattern, Predicate, Expression, Subquery)
 	OrderBy      []OrderByClause // Optional ordering of results
-	Limit        *int            // Optional cap on result rows (nil = unbounded); applied after OrderBy and aggregation
+	Limit        *int            // Optional cap on result tuples (nil = unbounded); applied after OrderBy and aggregation
 	ScalarReturn bool            // If true, return scalar value (find spec ends with .)
 }
 

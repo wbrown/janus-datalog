@@ -14,12 +14,13 @@ func TestCorrelatedSubqueryStreamsInputProductIntoCombinationExtraction(t *testi
 	y := datalog.NewSymbol("?y")
 	sum := datalog.NewSymbol("?sum")
 	var combinationEvent annotations.Event
-	ctx := NewContext(func(event annotations.Event) {
+	handler := func(event annotations.Event) {
 		if event.Name == "subquery/input-combinations" {
 			combinationEvent = event
 		}
-	})
-	options := ExecutorOptions{Collector: ctx.Collector()}
+	}
+	ctx := NewContext()
+	options := ExecutorOptions{Handler: handler}
 	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
 	left := NewStreamingRelationWithOptions(
 		[]query.Symbol{x},
@@ -44,14 +45,14 @@ func TestCorrelatedSubqueryStreamsInputProductIntoCombinationExtraction(t *testi
 		[]Relation{left, right},
 	)
 	require.NoError(t, err)
-	rows, err := CollectTuples(result, nil)
+	tuples, err := CollectTuples(result, nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, [][]interface{}{
 		{int64(1), int64(10), int64(11)},
 		{int64(1), int64(20), int64(21)},
 		{int64(2), int64(10), int64(12)},
 		{int64(2), int64(20), int64(22)},
-	}, rows)
+	}, tuples)
 	require.Equal(t, 2, combinationEvent.Data["relation_groups"])
 	require.Equal(t, true, combinationEvent.Data["product"])
 	require.Equal(t, false, combinationEvent.Data["eager_materialized"])
@@ -77,7 +78,7 @@ func TestCorrelatedSubqueryInputProductPropagatesDeferredError(t *testing.T) {
 	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
 
 	_, err := exec.executeSubquery(
-		NewContext(nil),
+		NewContext(),
 		arithmeticSubqueryPattern(x, y, sum),
 		[]Relation{left, right},
 	)

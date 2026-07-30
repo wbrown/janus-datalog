@@ -41,11 +41,16 @@ func createOrTestDB(t *testing.T, popts *planner.PlannerOptions) (*Database, fun
 
 // TestOrClauseTupleStability verifies that tuples from OR clause execution
 // are stable (not corrupted by workspace reuse).
-// Uses ExecuteQueryRelation to get streaming results without materialization.
+// Uses db.Query to get streaming results without materialization.
 func TestOrClauseTupleStability(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			// Tracing only; registered at open because everything the database
+			// builds is constructed with it.
 			popts := mode.plannerOptions()
+			popts.Handler = func(e annotations.Event) {
+				t.Logf("[TRACE] %s: %v", e.Name, e.Data)
+			}
 			db, cleanup := createOrTestDB(t, &popts)
 			defer cleanup()
 
@@ -63,11 +68,6 @@ func TestOrClauseTupleStability(t *testing.T) {
 			if _, err := tx.Commit(); err != nil {
 				t.Fatalf("commit failed: %v", err)
 			}
-
-			// Enable annotations to see what's happening
-			db.SetAnnotationHandler(func(e annotations.Event) {
-				t.Logf("[TRACE] %s: %v", e.Name, e.Data)
-			})
 
 			// Query with OR clause using DATA PATTERNS (not expression predicates)
 			// This exercises the storage-backed StreamingRelation path through OrFallbackRelation
@@ -119,7 +119,7 @@ func TestOrClauseTupleStability(t *testing.T) {
 }
 
 // TestOrClauseMultipleBranches verifies tuple stability with multiple OR branches.
-// Uses ExecuteQueryRelation for streaming without materialization.
+// Uses db.Query for streaming without materialization.
 func TestOrClauseMultipleBranches(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

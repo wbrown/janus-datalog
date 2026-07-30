@@ -11,7 +11,8 @@ import (
 )
 
 func TestBatchScanTrace(t *testing.T) {
-	// Create test with 200 entities (should trigger batch scanning)
+	// 200 entities. At that size chooseJoinStrategy returns HashJoinScan: one
+	// scan of the attribute plus a hash probe, not a seek per binding.
 	tempDir := t.TempDir()
 	db, err := NewDatabase(tempDir)
 	if err != nil {
@@ -57,7 +58,7 @@ func TestBatchScanTrace(t *testing.T) {
 		},
 	}
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 
 	// Get all bars
 	symbolRel, err := matcher.Match(query.PatternQuery(symbolPattern), nil)
@@ -96,8 +97,10 @@ func TestBatchScanTrace(t *testing.T) {
 		expected:  int64(1),
 	}
 
-	// This should trigger batch scanning (200 > 100 threshold)
-	t.Logf("Calling MatchWithConstraints with %d bindings (should use batch scanning)", barCount)
+	// What this exercises is constraint pushdown into the binding-driven scan:
+	// the day-extraction constraint has to be applied by the scan itself, not by
+	// the caller filtering afterwards.
+	t.Logf("Calling MatchWithConstraints with %d bindings", barCount)
 
 	timeRel, err := matcher.MatchWithConstraints(
 		query.PatternQuery(timePattern),
@@ -123,7 +126,7 @@ func TestBatchScanTrace(t *testing.T) {
 	if resultCount != 100 {
 		t.Errorf("Expected 100 results for day 1, got %d", resultCount)
 
-		// Try without batch scanning to compare
+		// Try without the constraint to compare
 		t.Logf("Trying without constraints to debug...")
 		timeRel2, _ := matcher.Match(query.PatternQuery(timePattern), executor.Relations{symbolRel})
 

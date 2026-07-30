@@ -12,6 +12,98 @@ type BinaryKeyEncoder struct {
 	CompressionThreshold int // 0 = disabled; values >= this size are compressed
 }
 
+// Key geometry. Every index key is [index][components in that index's
+// order][AfterRef?][Op]. Every component except V is fixed width, and Op — the
+// last byte — says whether the AfterRef block precedes it. Three readers depend
+// on this arithmetic: DecodeKey recovers a variable-length V from it,
+// extractElementIDFromKey locates Tx from it, and EncodedRun decides from a
+// key's own length whether it belongs to a V-bound run.
+const (
+	prefixSize   = 1
+	entitySize   = 20
+	attrSize     = 32
+	txSize       = 16
+	afterRefSize = 16
+	opSize       = 1
+)
+
+// keyTailSize is the width of what follows the last ordered component of a key:
+// the Op byte, and the AfterRef block when Op announces one. It reads Op from
+// the key's last byte, so it works on a key whose V length is not yet known.
+func keyTailSize(key []byte) int {
+	if len(key) == 0 {
+		return 0
+	}
+	if datalog.CRDTOp(key[len(key)-1]).HasAfterRef() {
+		return afterRefSize + opSize
+	}
+	return opSize
+}
+
+// componentKeySize is the encoded width of a fixed-width key component, and
+// whether the component has one at all. Panics on a component nobody has
+// classified: sharing componentV's "no fixed width" answer would let a later
+// addition read as variable-width and mis-measure every key behind it.
+func componentKeySize(c keyComponent) (int, bool) {
+	switch c {
+	case componentE:
+		return entitySize, true
+	case componentA:
+		return attrSize, true
+	case componentTx:
+		return txSize, true
+	case componentV:
+		// A value is as long as it is, which is the whole reason a V-bound
+		// byte range is a prefix range rather than an exact one.
+		return 0, false
+	default:
+		panic(fmt.Sprintf("key component %v has no declared width", c))
+	}
+}
+
+// runMembership decides which keys inside a scan's byte range belong to the
+// bound that produced it.
+//
+// A range and its membership are the same thing only when every bound component
+// is fixed width. A V payload carries no length, so a range whose components
+// include a variable-length V is a *prefix* range: the keys for "abcd" sort
+// inside the range for "abc", interleaved with them — the byte after the shared
+// prefix is 'd' on one side and the first byte of a hash on the other — so no
+// choice of endpoints separates the two. What separates them is length. Every
+// component behind V is fixed width and Op announces AfterRef, so a key
+// carrying the bound's own value has exactly one length per Op class, and a key
+// whose value merely starts with it is longer by the excess.
+//
+// This is a value, not two fields on the run, because a Seek replaces the
+// membership rule while keeping the scan's range: one assignment, with no way
+// for the two halves to be copied apart.
+type runMembership struct {
+	// exact is true when the byte range already names the run exactly. size is
+	// otherwise the length of a member key excluding its tail, which
+	// keyTailSize reads from the key itself.
+	exact bool
+	size  int
+}
+
+// holds reports whether a key is one the bound names. Total: an absent key is
+// a member of nothing, whichever kind of run is asking.
+func (m runMembership) holds(key []byte) bool {
+	if len(key) == 0 {
+		return false
+	}
+	if m.exact {
+		return true
+	}
+	return len(key) == m.size+keyTailSize(key)
+}
+
+// EncodedRun is a ScanBound projected onto binary keys: the range a scan walks,
+// and the rule deciding which keys inside it the bound actually names.
+type EncodedRun struct {
+	Start, End []byte
+	Membership runMembership
+}
+
 // txToDescending applies bitwise NOT to Tx bytes for descending sort order.
 // This ensures highest ElementID sorts first in forward scans, enabling O(1)
 // current value lookup (first entry = highest Tx = current value).
@@ -44,30 +136,38 @@ func txFromDescending(encoded []byte) [16]byte {
 //	EATV: [prefix][E][A][Tx↓][type][value][AfterRef?][Op]  - first entry is current (E-primary CRDT)
 //	AEVT: [prefix][A][E][type][value][Tx↓][AfterRef?][Op]  - by attribute (V before Tx)
 //	AETV: [prefix][A][E][Tx↓][type][value][AfterRef?][Op]  - first entry is current (A-primary CRDT)
-//	ATEV: [prefix][A][Tx↓][E][type][value][AfterRef?][Op]  - first entry is global max Tx for A (O(1) freshness + AsOf-by-attribute)
+//	ATEV: [prefix][A][Tx↓][E][type][value][AfterRef?][Op]  - Tx↓ ahead of E: AsOf-by-attribute seeks straight to the transaction
 //	AVET: [prefix][A][type][value][E][Tx↓][AfterRef?][Op]  - value lookup
 //	VAET: [prefix][type][value][A][E][Tx↓][AfterRef?][Op]  - reverse refs
 //	TAEV: [prefix][Tx↓][A][E][type][value][AfterRef?][Op]  - transaction log
 //
 // AfterRef? = 16 bytes present only if Op ∈ {OpRGAInsert(3), OpRGATombstone(4)}
-// EncodeValueBytes computes the type+data bytes for a value, applying
-// compression if enabled. Returns the bytes for the key and optional
-// BlobData for Tier 3 values. Call this once per datom, then pass the
-// result to EncodeKeyWithValueBytes for each index.
+// EncodeValueBytes computes the V run a key holds for a value: the type tag
+// followed by the payload. Applies compression if enabled. Returns the bytes
+// for the key and optional BlobData for Tier 3 values. Call this once per
+// datom, then pass the result to EncodeKeyWithValueBytes for each index.
+//
+// The payload carries no length and no terminator. It does not need one: every
+// component behind V in every index layout is fixed width, and Op — the last
+// byte of every key — says whether AfterRef is present, so a key's own length
+// determines where its V ended. DecodeKey recovers V from that arithmetic, and
+// a scan narrows a V-bound prefix range by the same arithmetic (EncodedRun's
+// membership rule). A delimiter would buy exact byte ranges at the cost of the
+// on-disk format.
+//
+// This is the only producer of a V run. A scan bound's V component goes through
+// it as well, so a bound and the keys it addresses cannot drift apart.
 func (e *BinaryKeyEncoder) EncodeValueBytes(v interface{}) (vBytes []byte, blobData *datalog.BlobData) {
-	var vType byte
+	var vType datalog.ValueType
 	var vData []byte
 	if e.CompressionThreshold > 0 {
-		vt, vd, bd := datalog.EncodeValue(v, e.CompressionThreshold)
-		vType = byte(vt)
-		vData = vd
-		blobData = bd
+		vType, vData, blobData = datalog.EncodeValue(v, e.CompressionThreshold)
 	} else {
-		vType = byte(datalog.Type(v))
+		vType = datalog.Type(v)
 		vData = datalog.ValueBytes(v)
 	}
 	vBytes = make([]byte, 1+len(vData))
-	vBytes[0] = vType
+	vBytes[0] = byte(vType)
 	copy(vBytes[1:], vData)
 	return
 }
@@ -178,20 +278,12 @@ func (e *BinaryKeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]by
 	// Skip the 1-byte prefix
 	key = key[1:]
 
-	// Component sizes
-	const entitySize = 20
-	const attrSize = 32
-	const txSize = 16 // ElementID: Lamport (8) + ReplicaID (8)
-	const opSize = 1
-	const afterRefSize = 16
-
 	// Op is always the last byte
 	op = key[len(key)-opSize]
 
 	// Determine tail size: AfterRef (16 bytes) + Op (1 byte), or just Op (1 byte)
-	tailSize := opSize
+	tailSize := keyTailSize(key)
 	if datalog.CRDTOp(op).HasAfterRef() {
-		tailSize = afterRefSize + opSize
 		afterRef = txFromDescending(key[len(key)-opSize-afterRefSize : len(key)-opSize])
 	}
 
@@ -314,10 +406,14 @@ func (e *BinaryKeyEncoder) EncodePrefix(index IndexType, parts ...[]byte) []byte
 	return result
 }
 
-// EncodeTxForPrefix encodes a Tx with bitwise NOT for use in prefix keys.
-// Use this when constructing scan ranges involving Tx (e.g., TAEV time-range queries).
-// Note: With bitwise NOT, higher Tx values encode to lower byte values,
-// so for a time range [low, high], the scan should be from encoded(high) to encoded(low).
+// EncodeTxForPrefix encodes a Tx with bitwise NOT — the form Tx takes inside a
+// key. Higher Tx values encode to lower byte values, so an index that orders Tx
+// yields newest first. encodeBoundComponent renders a bound's Tx component
+// through here, so a bound and the keys it addresses agree on the encoding.
+//
+// A ScanBound binds Tx to a value; it has no second endpoint. A caller wanting
+// a Tx *range* seeks to one end and walks with its own stop condition, as
+// pull_batch.go does.
 func (e *BinaryKeyEncoder) EncodeTxForPrefix(tx Tx) []byte {
 	result := txToDescending(tx)
 	return result[:]
@@ -328,4 +424,123 @@ func (e *BinaryKeyEncoder) EncodePrefixRange(index IndexType, parts ...[]byte) (
 	start = e.EncodePrefix(index, parts...)
 	end = incrementLastByte(start)
 	return start, end
+}
+
+// EncodeScanBound renders a typed ScanBound as the run a binary-key scan walks:
+// the byte range, and the membership test that narrows a prefix range to the
+// value the bound names. This is the Badger-side projection of the bound; a
+// backend that compares typed components directly never calls it.
+func (e *BinaryKeyEncoder) EncodeScanBound(b ScanBound) (EncodedRun, error) {
+	order, err := componentOrder(b.Index)
+	if err != nil {
+		return EncodedRun{}, err
+	}
+
+	start, variableV, err := e.encodeBoundEndpoint(b.Index, order, b.Prefix, "prefix")
+	if err != nil {
+		return EncodedRun{}, err
+	}
+
+	run := EncodedRun{Start: start, End: incrementLastByte(start)}
+	if variableV {
+		run.Membership.size = len(start) + widthBehind(order, len(b.Prefix))
+	} else {
+		run.Membership.exact = true
+	}
+	return run, nil
+}
+
+// encodeBoundEndpoint renders one endpoint of a bound: the leading components
+// of order, each in the storage form its position uses, concatenated behind the
+// index byte. endpoint names which of the two is being rendered, so an error
+// says where the caller's bound went wrong.
+//
+// It also reports whether the endpoint binds a V whose payload is
+// variable-width, which is what decides between a byte range that names the
+// bound exactly and one that is merely its prefix. The answer comes from the
+// type tag this encode produced, so nothing is encoded twice — a compressed
+// value would otherwise be compressed again to ask the same question.
+func (e *BinaryKeyEncoder) encodeBoundEndpoint(
+	index IndexType,
+	order [componentsPerIndex]keyComponent,
+	values []datalog.Value,
+	endpoint string,
+) (encoded []byte, variableV bool, err error) {
+	if len(values) > len(order) {
+		return nil, false, fmt.Errorf(
+			"scan bound on %v: %s binds %d components, index orders %d",
+			index, endpoint, len(values), len(order))
+	}
+
+	parts := make([][]byte, 0, len(values))
+	for i, v := range values {
+		part, err := e.encodeBoundComponent(order[i], v)
+		if err != nil {
+			return nil, false, fmt.Errorf("scan bound on %v: %s at position %d: %w",
+				index, endpoint, i, err)
+		}
+		if order[i] == componentV && !datalog.PayloadIsFixedWidth(datalog.ValueType(part[0])) {
+			variableV = true
+		}
+		parts = append(parts, part)
+	}
+	return e.EncodePrefix(index, parts...), variableV, nil
+}
+
+// widthBehind is the total encoded width of the components an index orders
+// after the first n. Every caller reaches it having bound a V within those
+// first n, and an index orders V once, so nothing behind them is V and all of
+// them are fixed width — a V here would mean the caller's own precondition was
+// violated, which is why this panics rather than returning an error nobody can
+// act on.
+func widthBehind(order [componentsPerIndex]keyComponent, n int) int {
+	total := 0
+	for _, c := range order[n:] {
+		width, fixed := componentKeySize(c)
+		if !fixed {
+			panic(fmt.Sprintf("widthBehind: component %v at position %d has no fixed width", c, n))
+		}
+		total += width
+	}
+	return total
+}
+
+// encodeBoundComponent renders one bound component in the storage form its
+// position uses. Each position is inhabited by exactly one kind of value, so
+// anything else is a caller bug rather than something to coerce. V is the
+// exception only in that its domain is the whole value domain, which
+// datalog.Type enforces.
+func (e *BinaryKeyEncoder) encodeBoundComponent(c keyComponent, v datalog.Value) ([]byte, error) {
+	switch c {
+	case componentE:
+		id, ok := v.(datalog.Identity)
+		if !ok || id == nil {
+			return nil, fmt.Errorf("E must be bound to a non-nil Identity, got %T", v)
+		}
+		var entity Entity
+		copy(entity[:], id.Bytes())
+		return entity[:], nil
+
+	case componentA:
+		kw, ok := v.(datalog.Keyword)
+		if !ok || kw == nil {
+			return nil, fmt.Errorf("A must be bound to a non-nil Keyword, got %T", v)
+		}
+		var attr Attribute
+		copy(attr[:], kw.String())
+		return attr[:], nil
+
+	case componentV:
+		return encodeValueForSearch(v, e), nil
+
+	case componentTx:
+		eid, ok := v.(datalog.ElementID)
+		if !ok {
+			return nil, fmt.Errorf("Tx must be bound to an ElementID, got %T", v)
+		}
+		return e.EncodeTxForPrefix(NewTxFromElementID(eid)), nil
+
+	default:
+		return nil, fmt.Errorf("unknown key component %v", c)
+	}
 }

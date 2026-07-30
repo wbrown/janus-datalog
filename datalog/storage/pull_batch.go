@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -45,7 +47,7 @@ func (d *Database) ResolveAllAttributesMany(
 		return results, nil
 	}
 
-	matcher := d.Matcher().(*BadgerMatcher)
+	matcher := d.Matcher().(*PatternMatcher)
 	if matcher.isHistoryMode() {
 		for i, entity := range entities {
 			result, err := d.ResolveAllAttributes(entity)
@@ -74,11 +76,36 @@ func (d *Database) ResolveAllAttributesMany(
 	resolved := make(map[[20]byte]map[datalog.Keyword]interface{}, len(sortedEntities))
 	declaredAttrs := d.declaredWildcardAttributes()
 	var uniqueLookups []wildcardUniqueLookup
-	scanStart, scanEnd := d.encoder.EncodePrefixRange(EATV)
-	iterator, err := d.store.ScanKeysOnly(EATV, scanStart, scanEnd)
+	bound := ScanBound{Index: EATV}
+
+	// The unique walks below are their own reads and report themselves.
+	var opened time.Time
+	var served int
+	report := DiscardIntake
+	if d.plannerOptions.Handler != nil {
+		opened = time.Now()
+		report = &scanReport{}
+		defer func() {
+			data := map[string]interface{}{
+				annotations.KeyDatomsScanned: report.scanned,
+				annotations.KeyValuesServed:  served,
+				annotations.KeyScansOpened:   1,
+			}
+			addBoundFields(data, bound)
+			d.plannerOptions.Handler(annotations.Event{
+				Name:    annotations.StorageResolveComplete,
+				Start:   opened,
+				Latency: time.Since(opened),
+				Data:    data,
+			})
+		}()
+	}
+
+	iterator, err := OpenKeyScan(d.store, report, bound)
 	if err != nil {
 		return nil, fmt.Errorf("batch wildcard scan failed: %w", err)
 	}
+
 	for _, entity := range sortedEntities {
 		entityResult, pending, err := d.resolveWildcardEntity(
 			matcher,
@@ -90,6 +117,7 @@ func (d *Database) ResolveAllAttributesMany(
 			_ = iterator.Close()
 			return nil, err
 		}
+		served += len(entityResult)
 		resolved[entity.Hash()] = entityResult
 		uniqueLookups = append(uniqueLookups, pending...)
 	}
@@ -125,13 +153,11 @@ func (d *Database) ResolveAllAttributesMany(
 }
 
 func (d *Database) resolveWildcardEntity(
-	matcher *BadgerMatcher,
+	matcher *PatternMatcher,
 	iterator Iterator,
 	entity datalog.Identity,
 	declaredAttrs map[datalog.Keyword]struct{},
 ) (map[datalog.Keyword]interface{}, []wildcardUniqueLookup, error) {
-	entityBytes := entity.Bytes()
-	start, _ := d.encoder.EncodePrefixRange(EATV, entityBytes[:])
 	result := make(map[datalog.Keyword]interface{})
 	var pending []wildcardUniqueLookup
 	var currentAttr datalog.Keyword
@@ -163,22 +189,15 @@ func (d *Database) resolveWildcardEntity(
 		currentDatoms = currentDatoms[:0]
 	}
 
-	iterator.Seek(start)
+	// One scan, one seek per entity: the bound names this entity's run, and the
+	// iterator stops at its end. Nothing here re-checks the entity, and nothing
+	// here reads a key — the run's end is the seam's to enforce, and a caller
+	// that enforced it itself could only do so by slicing the encoded key.
+	iterator.Seek(ScanBound{Index: EATV, Prefix: []datalog.Value{entity}})
 	for iterator.Next() {
-		// Bound the entity before decoding. The shared EATV scan advances one
-		// key into the successor entity; decoding that key would surface
-		// unrequested blob/decode errors and pay an extra Tier-3 read.
-		if key, ok := iteratorCurrentKey(iterator); ok {
-			if len(key) < 21 || !bytes.Equal(key[1:21], entityBytes[:]) {
-				break
-			}
-		}
 		datom, err := iterator.Datom()
 		if err != nil {
 			return nil, nil, err
-		}
-		if !bytes.Equal(datom.E.Bytes(), entityBytes[:]) {
-			break
 		}
 		if matcher.shouldFilterTx(datom.Tx) {
 			continue
@@ -207,7 +226,7 @@ func (d *Database) declaredWildcardAttributes() map[datalog.Keyword]struct{} {
 }
 
 func (d *Database) resolveWildcardDatoms(
-	matcher *BadgerMatcher,
+	matcher *PatternMatcher,
 	entity datalog.Identity,
 	attr datalog.Keyword,
 	datoms []datalog.Datom,
@@ -250,17 +269,16 @@ func (d *Database) isUniqueAttribute(attr datalog.Keyword) bool {
 	if d.schema == nil {
 		return false
 	}
-	definition := d.schema.GetAttribute(attr)
-	return definition != nil && definition.Unique != ""
+	return d.schema.GetAttribute(attr).HasUniqueConstraint()
 }
 
-func (d *Database) attributeValueType(attr datalog.Keyword) schema.ValueType {
+func (d *Database) attributeValueType(attr datalog.Keyword) datalog.Keyword {
 	if d.schema == nil {
-		return ""
+		return nil
 	}
 	definition := d.schema.GetAttribute(attr)
 	if definition == nil {
-		return ""
+		return nil
 	}
 	return definition.ValueType
 }

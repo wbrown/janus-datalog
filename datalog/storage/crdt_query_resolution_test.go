@@ -37,7 +37,7 @@ import (
 func TestExecuteQueryWithInputs_CardinalityOne_ReturnsMultipleValues(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create schema with CardinalityOne
 			s := schema.NewSchema()
@@ -108,7 +108,7 @@ func TestExecuteQueryWithInputs_CardinalityOne_ReturnsMultipleValues(t *testing.
 func TestExecuteQueryWithInputs_CardinalityMany_ReturnsAllHistoricalValues(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create schema with CardinalityMany
 			s := schema.NewSchema()
@@ -186,7 +186,7 @@ func TestExecuteQueryWithInputs_CardinalityMany_ReturnsAllHistoricalValues(t *te
 func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create schema with CardinalityOne
 			s := schema.NewSchema()
@@ -210,7 +210,7 @@ func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 			}
 
 			// Test direct Match (via db.Matcher())
-			matcher := NewBadgerMatcher(db.Store())
+			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 
 			pattern := &query.DataPattern{
@@ -312,7 +312,7 @@ func TestAllQueryMethods_CRDTResolution(t *testing.T) {
 }
 
 func testAllQueryMethodsCRDTResolution(t *testing.T, mode optimizerMode) {
-	db := createOptimizerModeDB(t, mode)
+	db := createOptimizerModeDB(t, mode, nil)
 
 	// Create schema with CardinalityOne
 	s := schema.NewSchema()
@@ -348,7 +348,7 @@ func testAllQueryMethodsCRDTResolution(t *testing.T, mode optimizerMode) {
 
 	// 1. Direct Matcher.Match (control - known working)
 	t.Run("DirectMatch", func(t *testing.T) {
-		matcher := NewBadgerMatcher(db.Store())
+		matcher := NewPatternMatcher(db.Store())
 		matcher.SetSchema(s)
 
 		pattern := &query.DataPattern{

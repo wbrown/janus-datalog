@@ -1,0 +1,37 @@
+📦 Test database not found, building it now...
+   (This is a one-time setup, will be cached)
+
+Writing 50400 datoms to testdata/ohlc_benchmark.db in batches of 5000...
+  Written 5000/50400 datoms (9.9%)
+  Written 10000/50400 datoms (19.8%)
+  Written 15000/50400 datoms (29.8%)
+  Written 20000/50400 datoms (39.7%)
+  Written 25000/50400 datoms (49.6%)
+  Written 30000/50400 datoms (59.5%)
+  Written 35000/50400 datoms (69.4%)
+  Written 40000/50400 datoms (79.4%)
+  Written 45000/50400 datoms (89.3%)
+  Written 50000/50400 datoms (99.2%)
+  Written 50400/50400 datoms (100.0%)
+✅ Database created: testdata/ohlc_benchmark.db
+   Total datoms: 50400
+   Symbols: 10, Days: 30, Bars/day: 24
+
+✅ Test database built successfully!
+
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkComplexQueryCheckpoint-10    	      68	  18167203 ns/op	29341004 B/op	  126090 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      64	  18253699 ns/op	29297005 B/op	  126089 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      66	  18448201 ns/op	29336772 B/op	  126089 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      66	  17926979 ns/op	29312318 B/op	  126088 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      63	  18673264 ns/op	29305473 B/op	  126090 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      68	  20267035 ns/op	29317779 B/op	  126091 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      68	  17661953 ns/op	29332390 B/op	  126089 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      66	  17320444 ns/op	29347576 B/op	  126091 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      67	  17890942 ns/op	29309897 B/op	  126089 allocs/op
+BenchmarkComplexQueryCheckpoint-10    	      69	  18683698 ns/op	29323212 B/op	  126090 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	17.664s

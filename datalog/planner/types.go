@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -13,8 +14,7 @@ import (
 // integer values are independent of storage's and must not be
 // cross-cast. selectIndexForMask does not yet emit EATV or AETV — they
 // are included here so the set of reportable indices stays aligned
-// with what storage actually maintains (seven indices since the
-// CRDT-Tx migration).
+// with what storage actually maintains.
 type IndexType uint8
 
 const (
@@ -134,8 +134,11 @@ type PlannerOptions struct {
 	EnableStreamingJoins       bool // Return StreamingRelation from joins instead of materializing
 	EnableStreamingAggregation bool // Enable streaming aggregation (default: true)
 
-	// Storage join strategy options
-	IndexNestedLoopThreshold int // Threshold for choosing IndexNestedLoop vs HashJoinScan (default: 0)
+	// Handler receives annotation events from planning and execution. Nil is
+	// annotations-off and is the default. Registered here, on the options the
+	// caller already builds, so it reaches the executor and every matcher and
+	// relation constructed under them — there is nothing to attach afterwards.
+	Handler annotations.Handler
 }
 
 func indexName(idx IndexType) string {

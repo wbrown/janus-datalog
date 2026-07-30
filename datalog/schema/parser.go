@@ -8,45 +8,21 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/edn"
 )
 
-// Pre-interned keywords for schema EDN parsing. Using interned
-// Keyword pointers (not stripped strings) lets us compare parse input
-// by pointer equality — the idiomatic comparison in this codebase —
-// and avoids a TrimPrefix allocation per call.
-
-// Attribute definition map keys.
+// Attribute definition map keys, interned so the parse loop compares by
+// pointer. Registered well-known: these are package variables compared by
+// identity, so a ClearInterns that re-interned rather than restored them would
+// leave every parse silently failing to recognise its own map keys.
+//
+// Only the map keys. The value vocabularies — :db.type/string and the rest —
+// are the constants in types.go, and parsing compares against those directly:
+// interning makes the parsed keyword the same instance, so there is nothing to
+// translate and no second copy to keep in step.
 var (
-	kwDBValueType      = datalog.NewKeyword(":db/valueType")
-	kwDBCardinality    = datalog.NewKeyword(":db/cardinality")
-	kwDBUnique         = datalog.NewKeyword(":db/unique")
-	kwDBDoc            = datalog.NewKeyword(":db/doc")
-	kwDBUniqueElements = datalog.NewKeyword(":db/unique-elements")
-)
-
-// Value-type keywords.
-var (
-	kwTypeString  = datalog.NewKeyword(":db.type/string")
-	kwTypeLong    = datalog.NewKeyword(":db.type/long")
-	kwTypeDouble  = datalog.NewKeyword(":db.type/double")
-	kwTypeBoolean = datalog.NewKeyword(":db.type/boolean")
-	kwTypeInstant = datalog.NewKeyword(":db.type/instant")
-	kwTypeBytes   = datalog.NewKeyword(":db.type/bytes")
-	kwTypeRef     = datalog.NewKeyword(":db.type/ref")
-	kwTypeKeyword = datalog.NewKeyword(":db.type/keyword")
-	kwTypeSymbol  = datalog.NewKeyword(":db.type/symbol")
-	kwTypeTx      = datalog.NewKeyword(":db.type/tx")
-)
-
-// Cardinality keywords.
-var (
-	kwCardOne    = datalog.NewKeyword(":db.cardinality/one")
-	kwCardMany   = datalog.NewKeyword(":db.cardinality/many")
-	kwCardVector = datalog.NewKeyword(":db.cardinality/vector")
-)
-
-// Unique-constraint keywords.
-var (
-	kwUniqueValue    = datalog.NewKeyword(":db.unique/value")
-	kwUniqueIdentity = datalog.NewKeyword(":db.unique/identity")
+	kwDBValueType      = datalog.WellKnownKeyword(":db/valueType")
+	kwDBCardinality    = datalog.WellKnownKeyword(":db/cardinality")
+	kwDBUnique         = datalog.WellKnownKeyword(":db/unique")
+	kwDBDoc            = datalog.WellKnownKeyword(":db/doc")
+	kwDBUniqueElements = datalog.WellKnownKeyword(":db/unique-elements")
 )
 
 // ParseSchema parses an EDN schema definition string
@@ -175,74 +151,43 @@ func parseAttributeDefinition(ident string, node *edn.Node) (*AttributeDefinitio
 	return def, nil
 }
 
-// parseValueType parses a :db/valueType keyword via pointer-equality
-// comparison against the pre-interned kwType* constants.
-func parseValueType(node *edn.Node) (ValueType, error) {
+// parseValueType parses a :db/valueType keyword. The parsed keyword is the
+// value — interning makes it the same instance as the TypeString constant —
+// so all this does is admit it or reject it against the declared set.
+func parseValueType(node *edn.Node) (datalog.Keyword, error) {
 	if node.Type != edn.NodeKeyword {
-		return "", fmt.Errorf("must be keyword, got %v", node.Type)
+		return nil, fmt.Errorf("must be keyword, got %v", node.Type)
 	}
-
 	kw := datalog.NewKeyword(node.Value)
-	switch kw {
-	case kwTypeString:
-		return TypeString, nil
-	case kwTypeLong:
-		return TypeLong, nil
-	case kwTypeDouble:
-		return TypeDouble, nil
-	case kwTypeBoolean:
-		return TypeBoolean, nil
-	case kwTypeInstant:
-		return TypeInstant, nil
-	case kwTypeBytes:
-		return TypeBytes, nil
-	case kwTypeRef:
-		return TypeRef, nil
-	case kwTypeKeyword:
-		return TypeKeyword, nil
-	case kwTypeSymbol:
-		return TypeSymbol, nil
-	case kwTypeTx:
-		return TypeTx, nil
-	default:
-		return "", fmt.Errorf("unknown value type: %s", node.Value)
+	if _, ok := valueTypes[kw]; !ok {
+		return nil, fmt.Errorf("unknown value type: %s", node.Value)
 	}
+	return kw, nil
 }
 
-// parseCardinality parses a :db/cardinality keyword via
-// pointer-equality comparison against the pre-interned kwCard* constants.
-func parseCardinality(node *edn.Node) (Cardinality, error) {
+// parseCardinality parses a :db/cardinality keyword. CardinalityUnknown is not
+// in the admitted set: it marks an attribute no schema defines, so a schema
+// declaring it would be declaring that it had declared nothing.
+func parseCardinality(node *edn.Node) (datalog.Keyword, error) {
 	if node.Type != edn.NodeKeyword {
-		return "", fmt.Errorf("must be keyword, got %v", node.Type)
+		return nil, fmt.Errorf("must be keyword, got %v", node.Type)
 	}
-
 	kw := datalog.NewKeyword(node.Value)
-	switch kw {
-	case kwCardOne:
-		return CardinalityOne, nil
-	case kwCardMany:
-		return CardinalityMany, nil
-	case kwCardVector:
-		return CardinalityVector, nil
-	default:
-		return "", fmt.Errorf("unknown cardinality: %s", node.Value)
+	if _, ok := cardinalities[kw]; !ok {
+		return nil, fmt.Errorf("unknown cardinality: %s", node.Value)
 	}
+	return kw, nil
 }
 
-// parseUnique parses a :db/unique keyword via pointer-equality
-// comparison against the pre-interned kwUnique* constants.
-func parseUnique(node *edn.Node) (Unique, error) {
+// parseUnique parses a :db/unique keyword. There is no keyword for "not
+// unique" — omitting :db/unique is how a definition says it.
+func parseUnique(node *edn.Node) (datalog.Keyword, error) {
 	if node.Type != edn.NodeKeyword {
-		return "", fmt.Errorf("must be keyword, got %v", node.Type)
+		return nil, fmt.Errorf("must be keyword, got %v", node.Type)
 	}
-
 	kw := datalog.NewKeyword(node.Value)
-	switch kw {
-	case kwUniqueValue:
-		return UniqueValue, nil
-	case kwUniqueIdentity:
-		return UniqueIdentity, nil
-	default:
-		return "", fmt.Errorf("unknown unique constraint: %s", node.Value)
+	if _, ok := uniques[kw]; !ok {
+		return nil, fmt.Errorf("unknown unique constraint: %s", node.Value)
 	}
+	return kw, nil
 }

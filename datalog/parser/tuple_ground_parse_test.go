@@ -104,12 +104,11 @@ func TestParseTupleGroundBinding(t *testing.T) {
 }
 
 // TestVectorConstantTaggedLiterals verifies that tagged literals (#inst, #db/id)
-// are accepted inside vector constants. The parser currently rejects them with
-// "unsupported type in vector constant" because the vector element switch
-// doesn't handle edn.NodeTagged.
+// are accepted inside vector constants: the vector element switch handles
+// edn.NodeTagged.
 //
-// This blocks round-trippability: FormatValueEDN correctly emits #inst for
-// time.Time values, but the parser can't parse it back inside (ground [...]).
+// Round-trippability depends on it. FormatValueEDN emits #inst for time.Time
+// values, and the parser has to read that back inside (ground [...]).
 func TestVectorConstantTaggedLiterals(t *testing.T) {
 	t.Run("inst in ground vector", func(t *testing.T) {
 		q, err := ParseQuery(`[:find ?tag ?ts

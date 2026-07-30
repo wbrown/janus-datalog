@@ -135,8 +135,8 @@ func (b *QueryBuilder) OrderBy(specs ...interface{}) *QueryBuilder {
 	return b
 }
 
-// Limit caps the number of result rows. The cap is applied after OrderBy (and
-// after aggregation), so OrderBy(Desc(...)) + Limit(1) is the "latest record"
+// Limit caps the number of result tuples. The cap is applied after OrderBy (and
+// after aggregation), so OrderBy(Desc(...)) + Limit(1) is the "latest datom"
 // query. A negative limit is a build error.
 //
 // Example:

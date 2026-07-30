@@ -89,7 +89,7 @@ func TestNotClause(t *testing.T) {
 
 // TestNotClauseWithOrJoinBody pins NOT-over-or-join correlation: an or-join
 // inside a NOT body exposes its JoinVars, and those are anti-join keys
-// between the outer relation and the body. Rows whose ?v matches through the
+// between the outer relation and the body. Tuples whose ?v matches through the
 // or-join are filtered; the rest survive.
 func TestNotClauseWithOrJoinBody(t *testing.T) {
 	valAttr := datalog.NewKeyword(":item/val")
@@ -135,16 +135,16 @@ func TestNotClauseWithOrJoinBody(t *testing.T) {
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
-			rows, err := CollectTuples(result, nil)
+			tuples, err := CollectTuples(result, nil)
 			if err != nil {
 				t.Fatalf("collect failed: %v", err)
 			}
 			got := map[int64]bool{}
-			for _, row := range rows {
-				got[row[0].(int64)] = true
+			for _, tuple := range tuples {
+				got[tuple[0].(int64)] = true
 			}
-			if len(rows) != 2 || !got[1] || !got[3] || got[2] {
-				t.Errorf("expected {1 3} to survive the NOT (2 is seen), got %v", rows)
+			if len(tuples) != 2 || !got[1] || !got[3] || got[2] {
+				t.Errorf("expected {1 3} to survive the NOT (2 is seen), got %v", tuples)
 			}
 		})
 	}
@@ -152,7 +152,7 @@ func TestNotClauseWithOrJoinBody(t *testing.T) {
 
 // TestNotClauseWithExistentialBodyVariable pins the plain-pattern sibling of
 // the or-join reproducer: (not [?d :seen/val ?v]) where ?d is existential
-// (body-local) and ?v correlates with the outer relation. Rows whose ?v has
+// (body-local) and ?v correlates with the outer relation. Tuples whose ?v has
 // any :seen/val match are filtered; ?d must not become a scheduling
 // requirement.
 func TestNotClauseWithExistentialBodyVariable(t *testing.T) {
@@ -194,16 +194,16 @@ func TestNotClauseWithExistentialBodyVariable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
-			rows, err := CollectTuples(result, nil)
+			tuples, err := CollectTuples(result, nil)
 			if err != nil {
 				t.Fatalf("collect failed: %v", err)
 			}
 			got := map[int64]bool{}
-			for _, row := range rows {
-				got[row[0].(int64)] = true
+			for _, tuple := range tuples {
+				got[tuple[0].(int64)] = true
 			}
-			if len(rows) != 2 || !got[1] || !got[3] || got[2] {
-				t.Errorf("expected {1 3} to survive the NOT (2 is seen), got %v", rows)
+			if len(tuples) != 2 || !got[1] || !got[3] || got[2] {
+				t.Errorf("expected {1 3} to survive the NOT (2 is seen), got %v", tuples)
 			}
 		})
 	}
@@ -281,16 +281,16 @@ func TestOrDefaultJoinBranchLocalAlphaEquivalence(t *testing.T) {
 				if err != nil {
 					t.Fatalf("execution failed with branch local %s: %v", local, err)
 				}
-				rows, err := CollectTuples(result, nil)
+				tuples, err := CollectTuples(result, nil)
 				if err != nil {
 					t.Fatalf("collect failed with branch local %s: %v", local, err)
 				}
 				got := map[int64]bool{}
-				for _, row := range rows {
-					got[row[0].(int64)] = row[1].(bool)
+				for _, tuple := range tuples {
+					got[tuple[0].(int64)] = tuple[1].(bool)
 				}
 				if len(got) != 3 {
-					t.Fatalf("expected 3 distinct ?v with branch local %s, got %v", local, rows)
+					t.Fatalf("expected 3 distinct ?v with branch local %s, got %v", local, tuples)
 				}
 				return got
 			}
@@ -368,13 +368,13 @@ func TestOrJoinBranchLocalAlphaEquivalence(t *testing.T) {
 				if err != nil {
 					t.Fatalf("execution failed with branch local %s: %v", local, err)
 				}
-				rows, err := CollectTuples(result, nil)
+				tuples, err := CollectTuples(result, nil)
 				if err != nil {
 					t.Fatalf("collect failed with branch local %s: %v", local, err)
 				}
 				got := map[int64]bool{}
-				for _, row := range rows {
-					got[row[0].(int64)] = true
+				for _, tuple := range tuples {
+					got[tuple[0].(int64)] = true
 				}
 				return got
 			}
@@ -578,13 +578,6 @@ func TestNotJoinClause(t *testing.T) {
 				t.Fatalf("execution failed: %v", err)
 			}
 
-			// Alice is archived AND deleted (inner clauses join), Bob is only deleted (doesn't match both)
-			// Actually, looking at NOT-JOIN semantics: inner clauses must ALL match for exclusion
-			// Alice: has archived but NOT deleted -> doesn't match both -> kept
-			// Bob: has deleted but NOT archived -> doesn't match both -> kept
-			// Charlie: has neither -> kept
-			// Wait, let me re-read the semantics...
-
 			// The NOT-JOIN inner clauses are like an AND - both must match for the entity to be excluded.
 			// Since no entity has BOTH archived AND deleted, all should be kept.
 
@@ -778,7 +771,7 @@ func TestOrJoinClause(t *testing.T) {
 // =============================================================================
 
 func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
-	// Directly test the query executor to isolate the issue
+	// Directly test the query executor
 	matcher := NewMemoryPatternMatcher(nil)
 
 	for _, mode := range optimizerModes {
@@ -1327,16 +1320,15 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			queryExecutor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-
-			// Create annotation handler to debug OR fallback behavior
+			// Register an annotation handler to debug OR fallback behavior
 			var events []annotations.Event
-			handler := func(event annotations.Event) {
+			opts := mode.plannerOptions()
+			opts.Handler = func(event annotations.Event) {
 				if strings.HasPrefix(event.Name, "or-fallback/") {
 					events = append(events, event)
 				}
 			}
-			ctx := NewContext(handler)
+			queryExecutor := NewExecutorWithOptions(matcher, nil, opts)
 
 			// Build the query:
 			// [:find ?scenario ?count
@@ -1411,7 +1403,7 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 				},
 			}
 
-			result, err := queryExecutor.ExecuteWithContext(ctx, q)
+			result, err := queryExecutor.Execute(q)
 			if err != nil {
 				t.Fatalf("query executor failed: %v", err)
 			}
@@ -1464,13 +1456,13 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Add annotation handler to see what's happening
+			// Register an annotation handler to see what's happening
 			var events []annotations.Event
-			handler := func(event annotations.Event) {
+			opts := mode.plannerOptions()
+			opts.Handler = func(event annotations.Event) {
 				events = append(events, event)
 			}
-			ctx := NewContext(handler)
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			executor := NewExecutorWithOptions(matcher, nil, opts)
 
 			// Query:
 			// [:find ?scenario ?name ?taskCount
@@ -1525,7 +1517,7 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 				},
 			}
 
-			result, err := executor.ExecuteWithContext(ctx, q)
+			result, err := executor.Execute(q)
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
@@ -1759,7 +1751,7 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 
 // TestOrCorrelatedUnionWithIdentityBranch reproduces the bug where OR clauses
 // drop expression-only branches due to fallback short-circuiting.
-// See docs/bugs/BUG-OR-FALLBACK-DROPS-EXPRESSION-BRANCHES.md
+// See BUG-OR-FALLBACK-DROPS-EXPRESSION-BRANCHES.md
 //
 // The OR has a data pattern branch (finds rooms in an area) and an identity
 // expression branch (binds the area entity itself). Both branches should
@@ -1956,7 +1948,7 @@ func TestOrUnionIncludesAllBranches(t *testing.T) {
 // TestClauseOrderIndependenceForNot pins the language contract that clause
 // order must not change whether a query works, and the optimizer-transparency
 // invariant that the optimizer must never change it either. Two shapes from
-// docs/bugs/resolved/BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER.md: a NOT
+// BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER.md: a NOT
 // written before the clause that binds its correlate, and a NOT written after
 // a prefix that does not bind its correlate. The baseline path plans both by
 // canonical clause scope; the algebra bridge orders clauses by the same
@@ -2053,7 +2045,7 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 		{E: goalA, A: nameAttr, V: "alpha", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		{E: goalB, A: nameAttr, V: "beta", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// Only goal:a has an event; queries bind ?goal to goal:b, so the
-		// leading negation clause must keep the row.
+		// leading negation clause must keep the tuple.
 		{E: event1, A: eventGoalAttr, V: goalA, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
@@ -2079,7 +2071,7 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 			               [?goal :entity/name ?name]]`,
 		},
 		// The missing? analogue on a capable matcher is pinned in the storage
-		// package (TestLeadingMissingWithInBoundEntity, BadgerMatcher). Its
+		// package (TestLeadingMissingWithInBoundEntity, PatternMatcher). Its
 		// behavior on THIS lookup-less matcher is pinned separately below —
 		// red — by TestMissingOnLookupLessMatcherFailsLoudly.
 	}
@@ -2096,7 +2088,7 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 					executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 					inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
 
-					result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+					result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 					if err != nil {
 						t.Fatalf("execution failed: %v", err)
 					}
@@ -2118,7 +2110,6 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 // correlate is bound by :in: the input relation IS the relation being
 // filtered. The baseline executes it — of the input entities, those the
 // negation keeps — so the bridge must too; "no generator" is not "invalid".
-// Third re-review finding at 00fc6e4 (pre-existing: reproduces on base main).
 func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 	e1 := datalog.NewIdentity("entity:1")
 	e2 := datalog.NewIdentity("entity:2")
@@ -2162,7 +2153,7 @@ func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 					executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 					inputRel := NewMaterializedRelation([]query.Symbol{eSym}, []Tuple{{e1}})
 
-					result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+					result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 					if err != nil {
 						t.Fatalf("execution failed: %v", err)
 					}
@@ -2187,10 +2178,10 @@ func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 // MemoryPatternMatcher implements no LookupAttribute, so [(missing? $ ?e
 // :attr)] cannot be answered here; the required behavior is a loud error.
 // Both execution contexts are pinned independently — they fail through
-// different defects (docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md):
+// different defects (BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md):
 // bare, the predicate's Eval error is deferred and was laundered by
-// emptiness-branching consumers (0 rows, err=nil); annotated, the collector
-// wrapper fabricated "attribute absent" for every lookup (wrong rows,
+// emptiness-branching consumers (0 tuples, err=nil); annotated, the collector
+// wrapper fabricated "attribute absent" for every lookup (wrong tuples,
 // err=nil). Observability must never change results: both contexts must
 // yield the same loud error.
 func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
@@ -2216,23 +2207,27 @@ func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
-	contexts := []struct {
-		name string
-		ctx  func() Context
+	// Both arms must error: registering an observer must not change what a query
+	// answers, and the annotated arm is the one that wraps the matcher.
+	handlers := []struct {
+		name    string
+		handler annotations.Handler
 	}{
-		{"bare", func() Context { return NewContext(nil) }},
-		{"annotated", func() Context { return NewContext(func(annotations.Event) {}) }},
+		{"bare", nil},
+		{"annotated", func(annotations.Event) {}},
 	}
 
 	for _, mode := range optimizerModes {
-		for _, tc := range contexts {
+		for _, tc := range handlers {
 			t.Run(mode.name+"/"+tc.name, func(t *testing.T) {
-				executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				opts := mode.plannerOptions()
+				opts.Handler = tc.handler
+				executor := NewExecutorWithOptions(matcher, nil, opts)
 				inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
 
-				result, err := executor.ExecuteWithRelations(tc.ctx(), q, []Relation{inputRel})
+				result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 				if err == nil {
-					t.Fatalf("missing? on a matcher without entity lookup completed silently (rows=%d); want a loud error", result.Size())
+					t.Fatalf("missing? on a matcher without entity lookup completed silently (tuples=%d); want a loud error", result.Size())
 				}
 			})
 		}

@@ -1,0 +1,37 @@
+benchstat typed_scan_bound_campaign_baseline_2026-07-30.txt \
+          typed_scan_bound_campaign_after_2026-07-30.txt
+
+baseline = 88dadaa (merge-base with main, PR #114 fork point)
+after    = e5e92cc (branch HEAD)
+
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+                          │  baseline   │                after                │
+                          │   sec/op    │   sec/op     vs base                │
+ComplexQueryCheckpoint-10   18.21m ± 3%   17.84m ± 4%  ~ (p=0.247 n=10)
+
+                          │  baseline   │                 after                    │
+                          │    B/op     │     B/op      vs base                    │
+ComplexQueryCheckpoint-10   27.96Mi ± 0%  27.74Mi ± 0%  -0.79% (p=0.000 n=10)
+
+                          │  baseline   │                 after                    │
+                          │  allocs/op  │  allocs/op    vs base                    │
+ComplexQueryCheckpoint-10    126.1k ± 0%   124.5k ± 0%  -1.26% (p=0.000 n=10)
+
+Same session, sequential, non-contending: baseline ran to completion before
+after started, so neither side competed for CPU with the other. That removes
+the cross-session caveat the 2026-07-27 checkpoint had to carry.
+
+The baseline artifact opens with testdata-build output. The worktree at the
+fork point had no testdata/ohlc_benchmark.db, so the first run built one
+(50,400 datoms) before benchmarking. It is outside the timed section, and the
+benchmark builds its own database in b.TempDir() regardless. The file is
+stored as produced rather than trimmed.
+
+The benchmark's measured work is identical on both sides. Its file changed on
+the branch (26 insertions), but every edit inside benchmarkComplexQueryCheckpoint
+is a rows -> tuples rename from the relational-vocabulary migration: same
+constants (75 scenarios x 100 tasks, limit 25), same query, same loop body. The
+remaining edits in that file are to tests, not the benchmark.

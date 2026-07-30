@@ -2,27 +2,24 @@
 //   - Database.LookupByUnique public API
 //   - V-view query behavior when multiple entities claim the same unique value
 //
-// These tests exist against the contract for Commit 2 of the CRDT-unique
-// redesign (see docs/proposals/CRDT_UNIQUE_SEMANTICS.md). Commit 1 deleted
-// the write-time gate, so multi-claimant scenarios are now constructible
-// via normal transactions. Commit 2 (this commit) adds the read-time
-// resolution that picks the canonical owner under (A, V)-LWW.
-//
-// Test-first discipline: these tests are written before the implementation
-// and must fail with meaningful errors (missing LookupByUnique API for the
-// API tests, wrong result counts for the V-view tests) before the
-// implementation is written. Once the implementation lands, all tests
-// pass together.
+// These tests exist against the contract in
+// docs/proposals/CRDT_UNIQUE_SEMANTICS.md. There is no write-time
+// uniqueness gate, so multi-claimant scenarios are constructible via
+// normal transactions; read-time resolution then picks the canonical
+// owner under (A, V)-LWW.
 
 package storage
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -40,10 +37,14 @@ func uniqueTestSchema(t *testing.T) *schema.Schema {
 
 // setupUniqueTestDB creates a database with :user/email (UniqueValue) and
 // :user/name (not unique) attributes.
-func setupUniqueTestDB(t *testing.T) (*Database, func()) {
+// handler is registered at open; nil is annotations-off.
+func setupUniqueTestDB(t *testing.T, handler annotations.Handler) (*Database, func()) {
 	t.Helper()
-	dir := t.TempDir()
-	db, err := NewDatabaseWithSchema(dir, uniqueTestSchema(t))
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:              t.TempDir(),
+		Schema:            uniqueTestSchema(t),
+		AnnotationHandler: handler,
+	})
 	require.NoError(t, err)
 	return db, func() { db.Close() }
 }
@@ -87,7 +88,7 @@ func setupUniqueIdentityTestDB(t *testing.T) (*Database, func()) {
 
 // TestLookupByUnique_NoOwner: nobody has claimed the value.
 func TestLookupByUnique_NoOwner(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	email := datalog.NewKeyword(":user/email")
@@ -98,7 +99,7 @@ func TestLookupByUnique_NoOwner(t *testing.T) {
 
 // TestLookupByUnique_SingleOwner: one entity claims the value.
 func TestLookupByUnique_SingleOwner(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -113,6 +114,93 @@ func TestLookupByUnique_SingleOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, owner)
 	assert.True(t, owner.Equal(alice), "single claimant should be returned")
+}
+
+// TestUniqueLookupReportsItsFunnel pins that LookupByUnique reports the same
+// three-term funnel every other scan-opening path reports, and that the third
+// term carries information the other two cannot.
+//
+// resolved and matched differ exactly where the AVET index holds an entry that
+// resolution rejects: the store is append-only, so a superseded value keeps its
+// AVET entry forever, and looking that value up finds a candidate, walks it, and
+// gets a different value. That is a real read — a scan, a walk, a rejection —
+// and reporting it as "nothing found" makes it indistinguishable from a value
+// nobody ever wrote, which costs nothing at all.
+func TestUniqueLookupReportsItsFunnel(t *testing.T) {
+	// One collector for the whole test: only LookupByUnique emits
+	// ScanUniqueLookup, and each subtest reads the last one, which is its own.
+	var events []annotations.Event
+	db, cleanup := setupUniqueTestDB(t,
+		func(e annotations.Event) { events = append(events, e) })
+	defer cleanup()
+
+	alice := datalog.NewIdentity("alice")
+	email := datalog.NewKeyword(":user/email")
+
+	// Two writes to the same (E, A): the first value keeps its AVET entry.
+	for _, v := range []string{"old@example.com", "new@example.com"} {
+		tx := db.NewTransaction()
+		require.NoError(t, tx.Set(alice, email, v))
+		_, err := tx.Commit()
+		require.NoError(t, err)
+	}
+
+	for _, tc := range []struct {
+		name              string
+		value             string
+		owner             datalog.Identity
+		resolved          int
+		matched           int
+		scannedIsPositive bool
+	}{
+		{name: "current owner", value: "new@example.com", owner: alice,
+			resolved: 1, matched: 1, scannedIsPositive: true},
+		{name: "superseded value still in AVET", value: "old@example.com",
+			resolved: 1, matched: 0, scannedIsPositive: true},
+		{name: "never written", value: "never@example.com",
+			resolved: 0, matched: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			owner, err := db.LookupByUnique(email, tc.value)
+			require.NoError(t, err)
+			if tc.owner == nil {
+				require.Nil(t, owner)
+			} else {
+				require.NotNil(t, owner)
+				require.True(t, owner.Equal(tc.owner))
+			}
+
+			complete := lastScanComplete(events, annotations.ScanUniqueLookup)
+			require.NotNil(t, complete, "the lookup opened scans and must report what they cost")
+			require.Equal(t, tc.resolved, complete.Data[annotations.KeyDatomsResolved])
+			require.Equal(t, tc.matched, complete.Data[annotations.KeyDatomsMatched])
+			if tc.scannedIsPositive {
+				require.Positive(t, complete.Data[annotations.KeyDatomsScanned],
+					"a candidate was found and walked, which reads the index")
+			}
+
+			// The pattern the lookup resolves, carried rather than rendered —
+			// the same subject every other scan event names.
+			pattern, ok := complete.Data[annotations.KeyPattern].(*query.DataPattern)
+			require.True(t, ok, "carries a pattern, not a rendering of one; got %T",
+				complete.Data[annotations.KeyPattern])
+			require.Contains(t, pattern.String(), ":user/email")
+			require.Contains(t, pattern.String(), tc.value)
+
+			// The formatter's arm is pinned in its own package against a
+			// hand-built event; here the two meet. Separate pins can agree on a
+			// payload shape neither side produces, and this is the event whose
+			// producer feeds that arm.
+			var rendered bytes.Buffer
+			formatter := annotations.NewPlainTextFormatter(&rendered)
+			for _, e := range events {
+				formatter.Handle(e)
+			}
+			require.Contains(t, rendered.String(),
+				fmt.Sprintf("%d matched, %d resolved", tc.matched, tc.resolved),
+				"the funnel the matcher emitted must be the funnel the formatter renders")
+		})
+	}
 }
 
 // TestLookupByUnique_UniqueIdentity: UniqueIdentity supports lookup the
@@ -142,7 +230,7 @@ func TestLookupByUnique_UniqueIdentity(t *testing.T) {
 // TestLookupByUnique_MultiClaimant_HighestTxWins: two entities both claim
 // the same value in sequence. The second (higher Tx) wins.
 func TestLookupByUnique_MultiClaimant_HighestTxWins(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -171,7 +259,7 @@ func TestLookupByUnique_MultiClaimant_HighestTxWins(t *testing.T) {
 // TestLookupByUnique_MultiClaimant_ReverseOrder: bob claims first, then
 // alice. Alice should win because she has the higher Tx.
 func TestLookupByUnique_MultiClaimant_ReverseOrder(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -200,7 +288,7 @@ func TestLookupByUnique_MultiClaimant_ReverseOrder(t *testing.T) {
 // TestLookupByUnique_CandidateMovedOn: alice once claimed V, then moved
 // to a different value. She is no longer a claimant for V.
 func TestLookupByUnique_CandidateMovedOn(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -231,7 +319,7 @@ func TestLookupByUnique_CandidateMovedOn(t *testing.T) {
 // TestLookupByUnique_TombstonedClaimant: alice claimed V, then retracted.
 // She is no longer a claimant.
 func TestLookupByUnique_TombstonedClaimant(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -255,7 +343,7 @@ func TestLookupByUnique_TombstonedClaimant(t *testing.T) {
 // TestLookupByUnique_OneMovedOneClaiming: alice moved to V2; bob claims V.
 // V's owner is bob only.
 func TestLookupByUnique_OneMovedOneClaiming(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -293,7 +381,7 @@ func TestLookupByUnique_OneMovedOneClaiming(t *testing.T) {
 // TestLookupByUnique_NonUniqueAttribute: calling on a non-unique attribute
 // is an error.
 func TestLookupByUnique_NonUniqueAttribute(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	// :user/name exists in the schema but is not declared unique.
@@ -305,7 +393,7 @@ func TestLookupByUnique_NonUniqueAttribute(t *testing.T) {
 
 // TestLookupByUnique_UnknownAttribute: attribute not in schema.
 func TestLookupByUnique_UnknownAttribute(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	unknown := datalog.NewKeyword(":user/unknown")

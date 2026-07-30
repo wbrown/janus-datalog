@@ -41,12 +41,19 @@ func TestMemoryStoreTxRetractThenAssertPreservesDatom(t *testing.T) {
 	require.NoError(t, stx.Commit())
 
 	require.Equal(t, 1, countStoreIndex(t, store, EAVT))
-	got, err := store.Get(EAVT, store.Encoder().EncodeKey(EAVT, &datalog.Datom{
-		E: entity, A: attr, V: "X", Tx: tx2,
-	}))
+
+	// Scanning the (E, A) run asserts more than a point lookup would: not that
+	// a tx2 datom exists, but that the one surviving datom is the tx2 one.
+	iter, err := store.Scan(ScanBound{Index: EAVT, Prefix: []datalog.Value{entity, attr}})
 	require.NoError(t, err)
-	require.NotNil(t, got)
+	defer iter.Close()
+
+	require.True(t, iter.Next(), "the surviving datom must be present")
+	got, err := iter.Datom()
+	require.NoError(t, err)
 	require.Equal(t, tx2, got.Tx)
+	require.False(t, iter.Next(), "exactly one datom must survive")
+	require.NoError(t, iter.Error())
 }
 
 func TestMemoryStoreRetractRemovesMatchingDatom(t *testing.T) {
@@ -102,25 +109,6 @@ func TestMemoryStoreMaintainsSortedKeys(t *testing.T) {
 	})
 }
 
-func TestMemoryStoreMaxElementIDForAttribute(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
-	t.Cleanup(func() { _ = store.Close() })
-
-	attr := datalog.NewKeyword(":memory/hwm")
-	low := datalog.ElementID{Lamport: 10, ReplicaID: 1}
-	high := datalog.ElementID{Lamport: 20, ReplicaID: 1}
-	require.NoError(t, store.Assert([]datalog.Datom{
-		{E: datalog.NewIdentity("memory:a"), A: attr, V: "a", Tx: low},
-		{E: datalog.NewIdentity("memory:b"), A: attr, V: "b", Tx: high},
-	}))
-
-	var attrBytes [32]byte
-	copy(attrBytes[:], attr.String())
-	got, err := store.MaxElementIDForAttribute(attrBytes[:])
-	require.NoError(t, err)
-	require.Equal(t, high, got)
-}
-
 func TestMemoryStoreScanOrdersManyKeys(t *testing.T) {
 	store := NewMemoryStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
@@ -138,7 +126,7 @@ func TestMemoryStoreScanOrdersManyKeys(t *testing.T) {
 	}
 	require.NoError(t, store.Assert(datoms))
 
-	iter, err := store.Scan(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+	iter, err := store.Scan(ScanBound{Index: EAVT})
 	require.NoError(t, err)
 	defer iter.Close()
 	var keys [][]byte

@@ -8,11 +8,11 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// TestNegativeAndPre1970ValuesRoundTripThroughStorage writes the value kinds that
-// the old non-order-preserving encoding mis-sorted — negative int, negative
-// float, pre-1970 time — and reads them back through a real query (so the value
-// passes through index keys and the value portion). The order-preserving encoding
-// must still round-trip them exactly.
+// TestNegativeAndPre1970ValuesRoundTripThroughStorage writes negative int,
+// negative float, and pre-1970 time — the value kinds most likely to break an
+// order-preserving encoding — and reads them back through a real query (so the
+// value passes through index keys and the value portion). The encoding must
+// round-trip them exactly.
 func TestNegativeAndPre1970ValuesRoundTripThroughStorage(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

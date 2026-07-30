@@ -56,7 +56,7 @@ func TestPullResolvedCardinalityMany(t *testing.T) {
 			resolved := schema.ResolvePullPattern(pattern, s)
 
 			// Execute pull with resolved pattern
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 			matcher.SetSchema(s) // Required for cardinality-aware resolution
 			puller := executor.NewPullExecutor(matcher, nil)
 			result, err := puller.PullResolved(alice, resolved)
@@ -137,7 +137,7 @@ func TestPullResolvedCardinalityManyRefs(t *testing.T) {
 			resolved := schema.ResolvePullPattern(pattern, s)
 
 			// Execute pull with resolved pattern
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 			matcher.SetSchema(s) // Required for cardinality-aware resolution
 			puller := executor.NewPullExecutor(matcher, nil)
 			result, err := puller.PullResolved(alice, resolved)
@@ -208,7 +208,7 @@ func TestPullResolvedLimit(t *testing.T) {
 			resolved := schema.ResolvePullPattern(pattern, s)
 
 			// Execute pull with resolved pattern
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 			matcher.SetSchema(s) // Required for cardinality-aware resolution
 			puller := executor.NewPullExecutor(matcher, nil)
 			result, err := puller.PullResolved(alice, resolved)
@@ -264,7 +264,7 @@ func TestPullResolvedDefault(t *testing.T) {
 			resolved := schema.ResolvePullPattern(pattern, s)
 
 			// Execute pull with resolved pattern
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 			matcher.SetSchema(s) // Required for cardinality-aware resolution
 			puller := executor.NewPullExecutor(matcher, nil)
 			result, err := puller.PullResolved(alice, resolved)
@@ -310,7 +310,7 @@ func TestPullResolvedWithoutSchema(t *testing.T) {
 			resolved := schema.ResolvePullPattern(pattern, nil)
 
 			// Execute pull with resolved pattern
-			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher := storage.NewPatternMatcher(db.Store())
 			puller := executor.NewPullExecutor(matcher, nil)
 			result, err := puller.PullResolved(alice, resolved)
 			require.NoError(t, err)

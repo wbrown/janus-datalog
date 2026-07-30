@@ -1,10 +1,9 @@
 // Tests for cache invalidation on writes to unique attributes.
 //
-// Commit 4 of the CRDT-unique redesign. Per design decision D3
-// (CRDT_UNIQUE_SEMANTICS.md), on any commit touching a unique attribute,
-// invalidate all cached (E, A) entries for that attribute — not just the
-// writer's own (E, A). Otherwise a write to (bob, email, x) can silently
-// stale alice's cached (email) value.
+// Per design decision D3 (CRDT_UNIQUE_SEMANTICS.md): on any commit
+// touching a unique attribute, invalidate all cached (E, A) entries for
+// that attribute — not just the writer's own (E, A). Otherwise a write
+// to (bob, email, x) can silently stale alice's cached (email) value.
 //
 // The strategy is conservative: one write invalidates every cached entry
 // for the attribute. The alternative (reverse-index (A, V) → [E])

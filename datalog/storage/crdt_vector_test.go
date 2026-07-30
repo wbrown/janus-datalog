@@ -40,7 +40,7 @@ func TestVectorBasicAdd(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify the vector is resolved in order
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
@@ -89,7 +89,7 @@ func TestVectorMultipleTransactions(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify all elements in order
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
@@ -125,7 +125,7 @@ func TestVectorEmpty(t *testing.T) {
 	skills := datalog.NewKeyword(":character/skills")
 
 	// No data added — never-set vector is not found, consistent with other cardinalities
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
@@ -158,7 +158,7 @@ func TestVectorWithDifferentTypes(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	result, found := requireAttributeLookup(t, matcher, game, scores)
@@ -359,7 +359,7 @@ func TestVectorSetReplacesEntireVector(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify initial state
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -373,7 +373,7 @@ func TestVectorSetReplacesEntireVector(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify the vector was replaced
-	matcher2 := NewBadgerMatcher(db.store)
+	matcher2 := NewPatternMatcher(db.store)
 	matcher2.SetSchema(s)
 	result2, found2 := requireAttributeLookup(t, matcher2, alice, skills)
 	require.True(t, found2)
@@ -415,7 +415,7 @@ func TestVectorSetToEmpty(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify vector is empty (but still "found" — empty is a value)
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	assert.True(t, found, "vector attribute always exists (empty is a value)")
@@ -458,7 +458,7 @@ func TestVectorAddNoReadDatabase(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify all three skills exist (stealth from tx1, archery+lockpicking from tx2)
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -570,7 +570,7 @@ func TestVectorQueryWithBoundEntity(t *testing.T) {
 			}
 
 			// Check if LookupAttribute still works
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 			matcher.SetSchema(s)
 			lookupResult, found := requireAttributeLookup(t, matcher, alice, skills)
 			t.Logf("LookupAttribute found=%v, result=%v (type: %T)", found, lookupResult, lookupResult)
@@ -807,7 +807,7 @@ func TestVectorRemoveMostRecent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify initial state: ["stealth", "archery", "stealth"]
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -825,7 +825,7 @@ func TestVectorRemoveMostRecent(t *testing.T) {
 
 	// Verify result: ["stealth", "archery"]
 	// The first "stealth" remains, the second (most recent) is removed
-	matcher2 := NewBadgerMatcher(db.store)
+	matcher2 := NewPatternMatcher(db.store)
 	matcher2.SetSchema(s)
 	result2, found2 := requireAttributeLookup(t, matcher2, alice, skills)
 	require.True(t, found2)
@@ -867,7 +867,7 @@ func TestVectorRemoveNonExistent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify vector unchanged: ["stealth", "archery"]
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -911,7 +911,7 @@ func TestVectorRemoveAllOccurrences(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify result: ["archery"]
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -954,7 +954,7 @@ func TestAddSchemaAwareVector(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify all cardinalities work correctly
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	// Cardinality-one: single value
@@ -1035,7 +1035,7 @@ func TestVectorSetAppend(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify result
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -1078,7 +1078,7 @@ func TestVectorSetAppendMultiple(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify result
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -1122,7 +1122,7 @@ func TestVectorSetChangeEnd(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify result
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -1166,7 +1166,7 @@ func TestVectorSetChangeMiddle(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify result
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -1209,7 +1209,7 @@ func TestVectorSetPrepend(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify result
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -1253,7 +1253,7 @@ func TestVectorSetNoChange(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify result unchanged
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -1291,7 +1291,7 @@ func TestVectorSetFromEmpty(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify result
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -1534,7 +1534,18 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
+			// Join-shape tracing for the steps below, registered at open because
+			// everything the database builds is constructed with it. Filtered to
+			// JoinHash, and diagnostic only — nothing here is asserted on.
 			popts := mode.plannerOptions()
+			popts.Handler = func(event annotations.Event) {
+				if event.Name == annotations.JoinHash {
+					t.Logf("ANNOTATION [%s]: left.attrs=%v right.attrs=%v result.attrs=%v left.size=%v right.size=%v result.size=%v",
+						event.Name,
+						event.Data["left.attrs"], event.Data["right.attrs"], event.Data["result.attrs"],
+						event.Data["left.size"], event.Data["right.size"], event.Data["result.size"])
+				}
+			}
 			db, err := NewDatabaseWithOptions(DatabaseOptions{
 				Path:           tmpDir,
 				Schema:         s,
@@ -1657,15 +1668,6 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 			t.Logf("step2d (enumerate only, both :in params, no color filter): %d tuples: %v", len(r2d), r2d)
 
 			// Step 2e: Without label join — just enumerate + color filter, find ?item entity
-			// Enable annotation tracing for this query
-			db.SetAnnotationHandler(func(event annotations.Event) {
-				if event.Name == annotations.JoinHash {
-					t.Logf("ANNOTATION [%s]: left.attrs=%v right.attrs=%v result.attrs=%v left.size=%v right.size=%v result.size=%v",
-						event.Name,
-						event.Data["left.attrs"], event.Data["right.attrs"], event.Data["result.attrs"],
-						event.Data["left.size"], event.Data["right.size"], event.Data["result.size"])
-				}
-			})
 			r2e, err := executor.CollectTuples(db.Query(
 				`[:find ?folderName ?item ?color
 		  :in $ ?room ?color
@@ -1683,7 +1685,6 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 				t.Logf("step2e tuple[%d]: folderName=%v item=%v color=%v", i, tuple[0], tuple[1], tuple[2])
 			}
 			t.Logf("step2e (enumerate + color filter, find ?item): %d tuples", len(r2e))
-			db.SetAnnotationHandler(nil) // disable after step2e
 
 			// Step 3: Full query with :in room and color
 			r3, err := executor.CollectTuples(db.Query(
@@ -1742,7 +1743,7 @@ func TestVectorSetTruncate(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify result
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
@@ -1915,9 +1916,9 @@ func TestTypedVector_AllBranches(t *testing.T) {
 
 	t.Run("unknown/fallback", func(t *testing.T) {
 		input := []any{"x", "y"}
-		result := typedVector(input, "")
+		result := typedVector(input, nil)
 		vec, ok := result.([]any)
-		require.True(t, ok, "empty ValueType should fall through to []any, got %T", result)
+		require.True(t, ok, "an undeclared value type should fall through to []any, got %T", result)
 		assert.Len(t, vec, 2)
 	})
 
@@ -1972,7 +1973,7 @@ func TestVectorTypeDouble(t *testing.T) {
 			require.NoError(t, err)
 
 			// LookupAttribute path
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 			matcher.SetSchema(s)
 
 			result, found := requireAttributeLookup(t, matcher, sensor, readings)
@@ -2031,7 +2032,7 @@ func TestVectorTypeBoolean(t *testing.T) {
 			require.NoError(t, err)
 
 			// LookupAttribute path
-			matcher := NewBadgerMatcher(db.store)
+			matcher := NewPatternMatcher(db.store)
 			matcher.SetSchema(s)
 
 			result, found := requireAttributeLookup(t, matcher, cfg, flags)
@@ -2130,7 +2131,7 @@ func TestSetWithTypedSlices(t *testing.T) {
 		_, err := tx.Commit()
 		require.NoError(t, err)
 
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		matcher.SetSchema(s)
 		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":character/skills"))
 		require.True(t, found)
@@ -2145,7 +2146,7 @@ func TestSetWithTypedSlices(t *testing.T) {
 		_, err := tx.Commit()
 		require.NoError(t, err)
 
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		matcher.SetSchema(s)
 		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":event/scores"))
 		require.True(t, found)
@@ -2160,7 +2161,7 @@ func TestSetWithTypedSlices(t *testing.T) {
 		_, err := tx.Commit()
 		require.NoError(t, err)
 
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		matcher.SetSchema(s)
 		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":sensor/readings"))
 		require.True(t, found)
@@ -2175,7 +2176,7 @@ func TestSetWithTypedSlices(t *testing.T) {
 		_, err := tx.Commit()
 		require.NoError(t, err)
 
-		matcher := NewBadgerMatcher(db.store)
+		matcher := NewPatternMatcher(db.store)
 		matcher.SetSchema(s)
 		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":person/tags"))
 		require.True(t, found)
@@ -2191,7 +2192,7 @@ func TestSetWithTypedSlices(t *testing.T) {
 	})
 }
 
-// TestTypeDefault verifies BadgerMatcher.TypeDefault converts default values
+// TestTypeDefault verifies PatternMatcher.TypeDefault converts default values
 // to match schema types for vector and many attributes.
 func TestTypeDefault(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "type-default-test")
@@ -2210,7 +2211,7 @@ func TestTypeDefault(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	t.Run("vector string empty", func(t *testing.T) {
@@ -2252,7 +2253,7 @@ func TestTypeDefault(t *testing.T) {
 	})
 
 	t.Run("no schema passthrough", func(t *testing.T) {
-		noSchemaMatcher := NewBadgerMatcher(db.store)
+		noSchemaMatcher := NewPatternMatcher(db.store)
 		// No SetSchema call
 		result := noSchemaMatcher.TypeDefault(datalog.NewKeyword(":entity/skills"), []interface{}{"x"})
 		_, ok := result.([]interface{})
@@ -2295,7 +2296,7 @@ func TestVectorClearedVsNeverSet(t *testing.T) {
 
 	// Bob: never had skills written at all
 
-	matcher := NewBadgerMatcher(db.store)
+	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(s)
 
 	// Alice: explicitly cleared — tombstones exist, returns empty typed slice
@@ -2314,7 +2315,7 @@ func TestVectorClearedVsNeverSet(t *testing.T) {
 // =============================================================================
 //
 // Bug: [?e :attr []] treated as wildcard instead of "match empty vector".
-// See docs/bugs/BUG_EMPTY_VECTOR_LITERAL_MATCHES_NONEMPTY.md
+// See BUG_EMPTY_VECTOR_LITERAL_MATCHES_NONEMPTY.md
 
 // TestVectorLiteralMatch verifies that vector literals in data patterns match
 // by exact equality, not as wildcards.

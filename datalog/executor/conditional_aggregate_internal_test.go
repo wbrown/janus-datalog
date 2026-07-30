@@ -160,16 +160,17 @@ func TestConditionalAggregateRewriteAnnotationUsesDatalogFindClause(t *testing.T
 		{E: entity, A: valueAttr, V: 42.0},
 		{E: entity, A: filterAttr, V: true},
 	})
-	exec := NewExecutor(matcher, nil)
-
 	var rewriteEvent *annotations.Event
-	ctx := NewContext(func(event annotations.Event) {
+	opts := defaultPlannerOptions()
+	opts.Handler = func(event annotations.Event) {
 		if event.Name == "query/rewrite.conditional-aggregates" {
 			captured := event
 			rewriteEvent = &captured
 		}
-	})
-	result, err := exec.ExecuteRealized(ctx, plan, nil)
+	}
+	exec := NewExecutorWithOptions(matcher, nil, opts)
+
+	result, err := exec.ExecuteRealized(NewContext(), plan, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, rewriteEvent)
@@ -184,7 +185,7 @@ func TestConditionalAggregateRewriteAnnotationUsesDatalogFindClause(t *testing.T
 // are dropped per TestConditionalAggregateEmptyResult; a fully-absent
 // combination is an or-default fallback's job. The nil-in-tuple middle
 // ground silently corrupted results downstream —
-// docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md.)
+// BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md.)
 func TestConditionalAggregateEmptyBesideNonEmptyIsError(t *testing.T) {
 	filter := datalog.NewSymbol("?filter")
 	value := datalog.NewSymbol("?value")

@@ -49,14 +49,17 @@ func TestAEVTMatcherBug(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	// Create annotation handler to track datom scans
+	// Register the handler on the matcher's options. The index-selection event
+	// this test asserts on is emitted inside Match(), so it comes from the
+	// matcher's own handler — a decorator around Match() cannot see it.
 	var events []annotations.Event
 	handler := func(event annotations.Event) {
 		events = append(events, event)
 	}
-	// Create matcher with annotation tracking using decorator pattern
-	baseMatcher := NewBadgerMatcher(db.Store())
-	matcher := executor.WrapMatcher(baseMatcher, handler).(executor.PatternMatcher)
+	matcher := executor.WrapMatcher(
+		NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{Handler: handler}),
+		handler,
+	).(executor.PatternMatcher)
 
 	// Create pattern: [?e :person/age ?age]
 	// This is the problematic pattern when ?e is bound
@@ -114,15 +117,24 @@ func TestAEVTMatcherBug(t *testing.T) {
 	for i, event := range events {
 		t.Logf("Event %d: %s - %+v", i, event.Name, event.Data)
 
-		// Check iterator-reuse-complete, multi-match, and hash-join-complete events
-		if event.Name == "pattern/iterator-reuse-complete" ||
-			event.Name == "pattern/multi-match" ||
-			event.Name == "pattern/hash-join-complete" {
-			if scanned, ok := event.Data["datoms.scanned"].(int); ok {
+		// The hash join's completion carries the scan statistics this test
+		// reads. Matched by strategy, not by name: one event name covers every
+		// scan, so the name alone would also take the direct scans the query
+		// performs around this one.
+		//
+		// datoms.scanned, not datoms.resolved: the assertion below is about how
+		// much of the index the scan read, and resolution's output is a lower
+		// number by the history depth. They coincide here only because the
+		// fixture writes each entity once.
+		if event.Name != annotations.StorageScanComplete {
+			continue
+		}
+		if s, _ := event.Data[annotations.KeyStrategy].(annotations.ScanStrategy); s == annotations.ScanHashJoin {
+			if scanned, ok := event.Data[annotations.KeyDatomsScanned].(int); ok {
 				datomsScanned = scanned
 			}
-			if idx, ok := event.Data["index"].(string); ok {
-				indexUsed = idx
+			if idx, ok := event.Data[annotations.KeyIndex].(IndexType); ok {
+				indexUsed = idx.String()
 			}
 		}
 	}
@@ -139,14 +151,9 @@ func TestAEVTMatcherBug(t *testing.T) {
 		t.Errorf("Expected AETV index (CRDT-aware A-primary), got %s", indexUsed)
 	}
 
-	// PERFORMANCE TEST: With HashJoinScan strategy, we scan all :person/age datoms (10)
-	// but probe hash set for matches. This is faster than IndexNestedLoop's 3 seeks
-	// because IndexNestedLoop calls Sorted() which adds massive overhead.
-	//
-	// Benchmarks show:
-	//   - Size 3: IndexNestedLoop 2298µs vs HashJoinScan 203µs (11.3× faster)
-	//
-	// So even though HashJoinScan scans more datoms (10 vs 3), the total time is faster.
+	// With HashJoinScan we scan all :person/age datoms (10) and probe the hash
+	// set for matches, rather than seeking once per binding. The scan count is
+	// therefore the attribute's size, not the binding count.
 	expectedScans := 10 // All :person/age datoms
 	tolerance := 5      // Allow some overhead
 

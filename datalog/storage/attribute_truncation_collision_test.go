@@ -9,7 +9,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// Tests for docs/bugs/BUG_ATTRIBUTE_KEY_TRUNCATION_COLLISION.md (storage side).
+// Tests for BUG_ATTRIBUTE_KEY_TRUNCATION_COLLISION.md (storage side).
 //
 // Policy: reject. The storage Attribute is a fixed [32]byte; rather than
 // truncating (and silently aliasing) longer names, writes and schema

@@ -52,7 +52,7 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 	}
 
 	// Query: Find :person/age for bound entities
-	// Use RelationInput to reproduce the exact gopher-street pattern
+	// Use RelationInput to reproduce the reported pattern exactly.
 	// [[?e] ...] means "collection of tuples, each with one variable ?e"
 	queryStr := `[:find ?e ?age
 	              :in $ [[?e] ...]
@@ -84,18 +84,17 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Create annotation handler to track datom scans
+			// Register an annotation handler to track datom scans. The matcher is
+			// built with the same options, so its own scan events reach the
+			// handler too — those happen inside Match(), where the executor's
+			// wrapper cannot see them.
 			var events []annotations.Event
-			handler := func(event annotations.Event) {
+			opts := mode.plannerOptions()
+			opts.Handler = func(event annotations.Event) {
 				events = append(events, event)
 			}
-
-			// Create context with annotations
-			ctx := executor.NewContext(handler)
-
-			// Create matcher with annotations using decorator pattern
-			baseMatcher := NewBadgerMatcher(db.Store())
-			matcher := executor.WrapMatcher(baseMatcher, handler).(executor.PatternMatcher)
+			matcher := NewPatternMatcherWithOptions(
+				db.Store(), executor.ExecutorOptionsFromPlanner(opts))
 
 			// Bind 3 entities as a RelationInput (this is what triggers the bug)
 			inputRel := executor.NewMaterializedRelation(
@@ -104,9 +103,10 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 			)
 
 			// Execute query without parallel execution (to capture all annotations)
-			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+			exec := executor.NewExecutorWithOptions(matcher, db, opts)
 			exec.DisableParallelSubqueries() // Disable parallel to get all events in our handler
-			result, err := exec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
+			result, err := exec.ExecuteWithRelations(
+				executor.NewContext(), parsed, []executor.Relation{inputRel})
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}
@@ -121,27 +121,20 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 			t.Logf("Total events captured: %d", len(events))
 
 			var indexUsed string
-			var datomsScanned int
-
 			for i, event := range events {
 				t.Logf("Event %d: %s - Data: %+v", i, event.Name, event.Data)
 
-				// Check multiple event types for index and scan info
-				if event.Name == "pattern/iterator-reuse" ||
-					event.Name == "pattern/multi-match" ||
-					event.Name == "pattern/index-selection" ||
-					event.Name == "pattern/match-with-bindings" {
-					if idx, ok := event.Data["index"].(string); ok {
-						indexUsed = idx
-					}
-					if scanned, ok := event.Data["datoms.scanned"].(int); ok {
-						datomsScanned += scanned // Accumulate across multiple events
+				// pattern/index-selection names the index and carries no datom
+				// count; the scan volume this test asserts on comes from
+				// pattern/hash-join-complete instead.
+				if event.Name == "pattern/index-selection" {
+					if idx, ok := event.Data[annotations.KeyIndex].(IndexType); ok {
+						indexUsed = idx.String()
 					}
 				}
 			}
 
 			t.Logf("Index used: %s", indexUsed)
-			t.Logf("Datoms scanned: %d", datomsScanned)
 			t.Logf("Entities bound: 3")
 			t.Logf("Total datoms in DB: 50")
 
@@ -157,7 +150,7 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 
 // TestEATVPrefixRangeDebug inspects the actual prefix range generated
 // NOTE: With CRDT semantics, schemaless queries (or cardinality-one) use EATV
-// to get the current value (first entry has highest Tx). AEVT was used historically.
+// to get the current value (first entry has highest Tx).
 func TestEATVPrefixRangeDebug(t *testing.T) {
 	// Create temporary database
 	dir, err := os.MkdirTemp("", "aevt-prefix-test-*")
@@ -184,12 +177,21 @@ func TestEATVPrefixRangeDebug(t *testing.T) {
 	}
 
 	// Get the matcher and inspect prefix range for AEVT
-	matcher := NewBadgerMatcher(db.Store())
+	matcher := NewPatternMatcher(db.Store())
 
-	// Call chooseIndex with both E and A bound (the bug scenario)
-	index, start, end := matcher.chooseIndex(entityID, attrKw, nil, nil)
+	// Call chooseIndex with both E and A bound
+	bound := matcher.chooseIndex(entityID, attrKw, nil, nil)
+	index := bound.Index
+	// The assertions below are about the byte range the bound addresses, so
+	// they render it the way this store's keys are encoded.
+	run, err := matcher.encoder.EncodeScanBound(bound)
+	start := run.Start
+	end := run.End
+	if err != nil {
+		t.Fatalf("Failed to encode scan bound: %v", err)
+	}
 
-	t.Logf("Index selected: %s", indexName(index))
+	t.Logf("Index selected: %s", index.String())
 	t.Logf("Start key length: %d bytes", len(start))
 	t.Logf("End key length: %d bytes", len(end))
 	t.Logf("Start key (hex): % x", start)
@@ -200,7 +202,7 @@ func TestEATVPrefixRangeDebug(t *testing.T) {
 	expectedPrefixLen := 20 + 32 // E + A
 
 	if index != EATV {
-		t.Errorf("Expected EATV index (for schemaless/cardinality-one), got %s", indexName(index))
+		t.Errorf("Expected EATV index (for schemaless/cardinality-one), got %s", index.String())
 	}
 
 	// Check if start key has proper length for (A, E) prefix

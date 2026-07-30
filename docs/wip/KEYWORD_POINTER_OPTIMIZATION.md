@@ -25,9 +25,10 @@ This eliminates `fmt.Sprintf("%p", val)` overhead.
 
 ### Other potential locations
 
-- `datalog/storage/simple_batch_scanner.go`
 - `datalog/storage/hash_join_matcher.go`
 - `datalog/storage/key_mask_iterator.go`
+
+(`simple_batch_scanner.go` was on this list and was deleted in v0.15.0.)
 
 ## Invariant
 

@@ -16,7 +16,7 @@ import (
 // buildComplexNotQuery builds a complex query that exercises the interaction
 // between NOT clauses, multiple get-else expressions, correlated OR-with-subquery
 // branches, comparison bindings, and order-by. This is the minimal structure
-// that triggers the NOT clause scheduling bug (GitHub #58).
+// that triggers the NOT clause scheduling bug.
 //
 // Data model: projects have items. Items may be deleted or completed.
 // Query: find non-deleted projects with aggregated item stats, optional
@@ -137,13 +137,18 @@ func buildComplexNotQuery() *query.Query {
 		).OrderBy(qb.Desc(lastUpdatedAt)).MustBuild()
 }
 
-// TestNotClauseComplexQuery_E2E reproduces GitHub issue #58: NOT clause fails
-// with "NOT clause variables not found in input relation" in a complex query
-// with multiple get-else, OR-with-subquery, comparison, and order-by clauses.
+// TestNotClauseComplexQuery_E2E reproduces a NOT-clause scheduling bug: NOT
+// clause fails with "NOT clause variables not found in input relation" in a
+// complex query with multiple get-else, OR-with-subquery, comparison, and
+// order-by clauses.
 func TestNotClauseComplexQuery_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			// Tracing only; registered at open because everything the database
+			// builds is constructed with it.
+			db := createOptimizerModeDB(t, mode, func(event annotations.Event) {
+				t.Logf("ANNOTATION: %s %v", event.Name, event.Data)
+			})
 
 			tx := db.NewTransaction()
 
@@ -201,11 +206,6 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 			q := buildComplexNotQuery()
 			t.Logf("Query: %s", q.String())
 
-			db.SetAnnotationHandler(func(event annotations.Event) {
-				t.Logf("ANNOTATION: %s %v", event.Name, event.Data)
-			})
-			defer db.SetAnnotationHandler(nil)
-
 			tuples, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err, "Complex query with NOT clauses should not fail")
 
@@ -224,10 +224,10 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 					"Deleted project should not appear in results")
 			}
 
-			// Pin the aggregate columns exactly, as int64 — nil here means an
+			// Pin the aggregate positions exactly, as int64 — nil here means an
 			// aggregate silently skipped its inputs, and a bare Go int means a
 			// builder constant bypassed boundary normalization
-			// (docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md).
+			// (BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md).
 			// Find positions: 9 itemCount, 10 totalCost, 11 totalWeight,
 			// 12 totalVolume, 13 totalUnits, 14 ready.
 			byName := make(map[string]executor.Tuple, len(tuples))
@@ -254,13 +254,14 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 }
 
 // TestNotClauseWithUnboundInnerVar_E2E tests NOT where the inner pattern
-// introduces a new variable not in the outer scope.
-// This is the pattern most affected by extractNotClauseSymbols treating
-// inner Provides as Requires.
+// introduces a new variable not in the outer scope. This is the pattern
+// that breaks if a plain NOT's inner-only free variables are ever required
+// from the enclosing query instead of treated as existential — the
+// classification query.ScopeOf assigns via ClauseScope.CorrelatesOptional.
 func TestNotClauseWithUnboundInnerVar_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 

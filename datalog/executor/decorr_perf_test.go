@@ -86,11 +86,11 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 			speedup := float64(durNo) / float64(durWith)
 			t.Logf("Speedup: %.2fx", speedup)
 
-			// After decorrelation bug fix: Both subqueries are PURE aggregations
-			// ([:find (max ?p)] and [:find (count ?prod)])
-			// Pure aggregations are no longer decorrelated, so there should be NO speedup.
-			// In fact, the decorrelation flag now has no effect on pure aggregations.
-			// Both versions should perform similarly (within 20% variance due to system load).
+			// Both subqueries are PURE aggregations ([:find (max ?p)] and
+			// [:find (count ?prod)]). Pure aggregations are not decorrelated, so
+			// there should be NO speedup: the decorrelation flag has no effect on
+			// them. Both versions should perform similarly (within 20% variance
+			// due to system load).
 			if speedup < 0.80 || speedup > 1.20 {
 				t.Logf("Note: Speedup %.2fx is within expected range (no decorrelation for pure aggregations)", speedup)
 			}
@@ -138,19 +138,20 @@ func TestDecorrelationAnnotations(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Execute WITH decorrelation and capture annotations
-			execWithDecor := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
-
+			// Execute WITH decorrelation and capture annotations. The handler is
+			// registered on the options the executor is built with.
 			var capturedEvents []annotations.Event
 			var eventsMu sync.Mutex
-			handler := annotations.Handler(func(e annotations.Event) {
+
+			opts := mode.zeroPlannerOptions()
+			opts.Handler = func(e annotations.Event) {
 				eventsMu.Lock()
 				capturedEvents = append(capturedEvents, e)
 				eventsMu.Unlock()
-			})
+			}
+			execWithDecor := NewExecutorWithOptions(matcher, nil, opts)
 
-			ctx := NewContext(handler)
-			result, err := execWithDecor.ExecuteWithContext(ctx, q)
+			result, err := execWithDecor.Execute(q)
 			if err != nil {
 				t.Fatalf("Execution failed: %v", err)
 			}
@@ -198,8 +199,8 @@ func TestDecorrelationAnnotations(t *testing.T) {
 				}
 			}
 
-			// After decorrelation bug fix: These subqueries are PURE aggregations
-			// Pure aggregations should NOT be decorrelated, so we expect NO decorrelation events.
+			// These subqueries are PURE aggregations. Pure aggregations should NOT
+			// be decorrelated, so we expect NO decorrelation events.
 			if foundDecorrBegin {
 				t.Error("Found decorrelated_subqueries/begin annotation for pure aggregations (should not decorrelate)")
 			}

@@ -115,9 +115,10 @@ func TestCompressedKey_AVET_SameValueSamePrefix(t *testing.T) {
 	// Encode the datom key
 	datomKey := enc.EncodeKey(AVET, d)
 
-	// Encode a search prefix for the same value
-	vType, vData, _ := datalog.EncodeValue(longStr, 256)
-	searchBytes := append([]byte{byte(vType)}, vData...)
+	// Encode a search prefix for the same value. It goes through the encoder's
+	// own V-run producer: a second construction of the run here would assert
+	// the test's idea of the key format rather than the format.
+	searchBytes, _ := enc.EncodeValueBytes(longStr)
 	attrBytes := ToStorageDatom(*d).A
 	start, end := enc.EncodePrefixRange(AVET, attrBytes[:], searchBytes)
 
@@ -149,8 +150,7 @@ func TestCompressedKey_AVET_DifferentValues(t *testing.T) {
 	assert.False(t, bytes.Equal(key1, key2), "different values should produce different AVET keys")
 
 	// Search for str1 should not match str2
-	vType1, vData1, _ := datalog.EncodeValue(str1, 256)
-	searchBytes1 := append([]byte{byte(vType1)}, vData1...)
+	searchBytes1, _ := enc.EncodeValueBytes(str1)
 	attrBytes := ToStorageDatom(*d1).A
 	start1, end1 := enc.EncodePrefixRange(AVET, attrBytes[:], searchBytes1)
 
