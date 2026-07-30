@@ -1446,7 +1446,29 @@ exercises:
 - Multi-key ordering and bounded `:limit 25`
 - Public query, parse-cache, plan-cache, and result-collection boundaries
 
-### Current (2026-07-27, PR #114 branch HEAD `0c30a7a`)
+### Current (2026-07-30, PR #114 branch HEAD `e5e92cc`)
+
+| Metric | Result |
+|--------|-------:|
+| Time | **17.84 ms/op ±4%** |
+| Memory | **27.74 MiB/op** |
+| Allocations | **124.5k/op** |
+
+Paired same-session A/B against the merge-base with main (`88dadaa`, the fork
+point), the base side run from a `git worktree`: sec/op is a wash (p=0.247),
+B/op **−0.79%** and allocs/op **−1.26%**, both p=0.000 at ±0% spread. Artifacts:
+`docs/perf/typed_scan_bound_campaign_{baseline,after,benchstat}_2026-07-30.txt`
+(n=10, Apple M5, go1.26.3 darwin/arm64).
+
+This measures the whole 38-commit branch, and it exists because the 2026-07-27
+checkpoint below sat 23 commits behind HEAD — including the value-domain
+enforcement arc, which added domain checks to `ValuesEqual`/`hashValue`/
+`CompareValues`, and the arc that moved V out of the scan prefix. Neither is
+visible here. The benchmark uses no cardinality-vector attribute, so the
+element-wise comparison that arc introduced is the one cost this shape cannot
+see.
+
+### Superseded current (2026-07-27, `0c30a7a`)
 
 | Metric | Result |
 |--------|-------:|
@@ -1475,6 +1497,8 @@ roughly 2.7× in time and 8.9× in allocations across July 2026:
 | 2026-07-22, baseline | 17.8 ms | 31.2 MB | 141.1k | `scan_set_semantics_baseline_2026-07-22.txt` |
 | 2026-07-22, after | 17.6 ms | 29.3 MB | 126.1k | `scan_set_semantics_after_2026-07-22.txt` |
 | 2026-07-27 | 17.98 ms | 27.95 MiB | 126.1k | `typed_scan_bound_checkpoint_2026-07-27.txt` |
+| 2026-07-30, fork point `88dadaa` | 18.21 ms | 27.96 MiB | 126.1k | `typed_scan_bound_campaign_baseline_2026-07-30.txt` |
+| 2026-07-30, branch HEAD `e5e92cc` | 17.84 ms | 27.74 MiB | 124.5k | `typed_scan_bound_campaign_after_2026-07-30.txt` |
 
 The four 2026-07-21 rounds each have their own bullet in the status list at the
 top of this file; the 550.4k row is that day's *starting* point, not where it

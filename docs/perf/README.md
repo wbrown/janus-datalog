@@ -40,6 +40,52 @@ go tool pprof -top -cum -nodecount=40 /tmp/exec.test <prof>.prof
 
 ## Current baselines
 
+### Typed scan-bound campaign A/B (`typed_scan_bound_campaign_*_2026-07-30.txt`)
+
+Same-session A/B over the whole of PR #114 (38 commits): `baseline` = the merge-base
+with main (`88dadaa`, the fork point), `after` = branch HEAD (`e5e92cc`), the base
+side run from a `git worktree` so nothing was stashed or switched. Sequential and
+non-contending — the baseline finished before the after side started.
+
+Machine: Apple M5, go1.26.3 darwin/arm64, n=10, `benchtime` default.
+
+| Stem | What | n |
+|------|------|---|
+| `typed_scan_bound_campaign_{baseline,after,benchstat}_2026-07-30.txt` | complex checkpoint, fork point vs branch HEAD | 10 |
+
+| Metric | `88dadaa` | `e5e92cc` | |
+|--------|----------:|----------:|---|
+| sec/op | 18.21m ± 3% | 17.84m ± 4% | ~ (p=0.247) |
+| B/op | 27.96Mi ± 0% | 27.74Mi ± 0% | **−0.79%** (p=0.000) |
+| allocs/op | 126.1k ± 0% | 124.5k ± 0% | **−1.26%** (p=0.000) |
+
+**No regression; a small real improvement in the deterministic columns.** Wall time
+is a wash and is not claimed. Bytes and allocations carry the result — ±0% spread,
+p=0.000, about 1,600 allocations per operation gone. The most likely source is the
+annotation-clock sweep, which pulled 21 unconditional `time.Now()` calls out of
+paths that can return having touched no storage.
+
+This measurement exists because the 2026-07-27 checkpoint was 23 commits behind
+HEAD, and two of those commits were first-order risks: the value-domain enforcement
+arc, which added a panicking `typeRank` default and two-sided domain checks to
+`ValuesEqual`/`hashValue`/`CompareValues` — called per tuple, per join, per dedup,
+per sort — and the arc that moved V out of the scan prefix, which changes read
+volume. Neither shows up here.
+
+**What this does not measure.** One query shape over one fixture. It exercises
+phase planning, joins, same-entity bundles, correlated and nested subqueries,
+conditional aggregation, get-else, or-default, expressions, ordering and bounded
+Top-N — but it uses no cardinality-vector attribute, which is exactly where the
+value-domain arc's element-wise recursive comparison lives. A vector-heavy shape is
+the one place a cost could still hide. And by construction this compares within the
+correctness-equivalence class: several of the campaign's changes fixed wrong
+answers, and the speed of a wrong answer is not a baseline.
+
+Independently, the baseline numbers here reproduce the recorded 2026-07-27
+checkpoint (17.98m / 27.95Mi / 126.1k) almost exactly, which cross-validates that
+artifact and its stated conclusion that the read-seam conversion is invisible to
+this benchmark.
+
 ### Typed scan-bound checkpoint (`typed_scan_bound_checkpoint_*_2026-07-27.txt`)
 
 `BenchmarkComplexQueryCheckpoint` on PR #114's branch HEAD (`0c30a7a`, the typed
