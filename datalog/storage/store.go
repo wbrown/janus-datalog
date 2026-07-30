@@ -137,9 +137,17 @@ type Iterator interface {
 	Datom() (*datalog.Datom, error)
 	Close() error
 
-	// Seek repositions at or after the bound's start. A bound that cannot be
-	// encoded is recorded as the iterator's sticky error rather than dropped:
-	// Seek has no return, so Error() is where the failure surfaces.
+	// Seek narrows iteration to the run the bound names, and to all of it: the
+	// bound repositions the cursor at or after its start, and the same bound
+	// supplies where the run ends and the membership rule governing what lies
+	// between. An implementation adopting only the start walks past the sought
+	// bound into whatever the scan's wider range still holds, and leaves the
+	// caller to work out where its own run ended from the encoded key — which is
+	// how key-layout arithmetic gets back above this seam.
+	//
+	// A bound that cannot be encoded is recorded as the iterator's sticky error
+	// rather than dropped: Seek has no return, so Error() is where the failure
+	// surfaces.
 	Seek(bound ScanBound)
 
 	// ElementID returns the transaction ElementID of the current entry.
