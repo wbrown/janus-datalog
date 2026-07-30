@@ -49,42 +49,38 @@ func aggregationFindElements() []query.FindElement {
 func TestAggregationExecutedTimesTheAggregation(t *testing.T) {
 	const tupleCount = 20_000
 
-	// A handler, not nil: NewCollector takes nil to mean disabled, and a
-	// disabled collector drops every event including the ones under test.
-	collector := annotations.NewCollector(func(annotations.Event) {})
-	rel := aggregationReportingFixture(tupleCount, ExecutorOptions{Collector: collector})
+	// The handler keeps the one event under test, supplied the only way
+	// aggregation has one: through the source relation's options. A nil handler
+	// means disabled and drops it.
+	var executed *annotations.Event
+	rel := aggregationReportingFixture(tupleCount, ExecutorOptions{
+		Handler: func(e annotations.Event) {
+			if e.Name == annotations.AggregationExecuted {
+				executed = &e
+			}
+		},
+	})
 
-	// Context nil, collector supplied through the relation's options. Both
-	// aggregation events consult one collector; this arm reds if the executed
-	// event goes back to reading the context's directly, because there isn't
-	// one here.
-	//
 	// The call is timed from outside so the assertion calibrates against this
 	// same run. A reference fold measured separately does not work: whichever
 	// runs first pays the warm-up, and under wasm that alone is a six-fold
 	// difference — larger than the effect being measured.
 	callStart := time.Now()
-	result := ExecuteAggregationsWithContext(nil, rel, aggregationFindElements())
+	result := ExecuteAggregations(rel, aggregationFindElements())
 	callWall := time.Since(callStart)
 	require.NotNil(t, result)
 	tuples, err := CollectTuples(result, nil)
 	require.NoError(t, err)
 	require.Len(t, tuples, 8, "eight groups")
 
-	var executed *annotations.Event
-	for i, e := range collector.Events() {
-		if e.Name == annotations.AggregationExecuted {
-			executed = &collector.Events()[i]
-		}
-	}
 	require.NotNil(t, executed,
-		"an options-supplied collector receives the strategy decision and must "+
-			"also receive what the decision led to")
+		"the relation's handler receives the strategy decision and must also "+
+			"receive what the decision led to")
 	require.Equal(t, "batch", executed.Data["aggregation_mode"])
 	// The reported duration is a sub-interval of the call, so it cannot exceed
 	// the wall time; containing the fold makes it nearly all of it. An emit
 	// placed before the fold reports only the few hundred nanoseconds it takes
-	// to reach AddTiming, which is why "positive" does not separate the two
+	// to reach the emit, which is why "positive" does not separate the two
 	// shapes and a proportion has to.
 	require.Greater(t, executed.Latency, callWall/2,
 		"the call took %s and the fold is nearly all of it, but the event "+
@@ -100,39 +96,35 @@ func TestAggregationExecutedTimesTheAggregation(t *testing.T) {
 // and aggregation/materialized covers the fold, and neither stands in for the
 // other.
 func TestStreamingAggregationReportsConstructionAndFoldSeparately(t *testing.T) {
-	// A handler, not nil: NewCollector takes nil to mean disabled, and a
-	// disabled collector drops every event including the ones under test.
-	collector := annotations.NewCollector(func(annotations.Event) {})
+	// One capture per event under test. The nil-ness of folded is itself an
+	// assertion below — it must still be nil after the build and non-nil after
+	// the fold, which is the split this test exists to pin.
+	var built, folded *annotations.Event
 	rel := aggregationReportingFixture(1_000, ExecutorOptions{
-		Collector:                  collector,
+		Handler: func(e annotations.Event) {
+			switch e.Name {
+			case annotations.AggregationExecuted:
+				built = &e
+			case annotations.AggregationMaterialized:
+				folded = &e
+			}
+		},
 		EnableStreamingAggregation: true,
 	})
 
-	result := ExecuteAggregationsWithContext(nil, rel, aggregationFindElements())
+	result := ExecuteAggregations(rel, aggregationFindElements())
 	require.IsType(t, &StreamingAggregateRelation{}, result,
 		"this fixture must reach the streaming path or the split is untested")
 
-	named := func(name string) *annotations.Event {
-		events := collector.Events()
-		for i := len(events) - 1; i >= 0; i-- {
-			if events[i].Name == name {
-				return &events[i]
-			}
-		}
-		return nil
-	}
-
-	built := named(annotations.AggregationExecuted)
 	require.NotNil(t, built, "the build reports even though the fold has not run")
 	require.Equal(t, "streaming", built.Data["aggregation_mode"])
-	require.Nil(t, named(annotations.AggregationMaterialized),
+	require.Nil(t, folded,
 		"nothing has consumed the relation, so no fold has happened to report")
 
 	tuples, err := CollectTuples(result, nil)
 	require.NoError(t, err)
 	require.Len(t, tuples, 8)
 
-	folded := named(annotations.AggregationMaterialized)
 	require.NotNil(t, folded,
 		"consumption is where the streaming fold happens, and it reports there")
 	require.Equal(t, 1_000, folded.Data["input_count"])

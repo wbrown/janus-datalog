@@ -16,7 +16,7 @@ import (
 func TestChooseIndexForValuesAVET(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create test data: tasks belonging to different scenarios
 			scenario1 := datalog.NewIdentity("scenario-alpha")
@@ -177,7 +177,7 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 func TestChooseIndexForValuesVAET(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create test data with references
 			parent1 := datalog.NewIdentity("parent-1")

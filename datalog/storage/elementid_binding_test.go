@@ -31,7 +31,7 @@ func extractElementID(t *testing.T, v interface{}) datalog.ElementID {
 func TestElementIDBinding_ScalarInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -103,7 +103,7 @@ func TestElementIDBinding_ScalarInput(t *testing.T) {
 func TestElementIDBinding_CollectionInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -167,7 +167,7 @@ func TestElementIDBinding_CollectionInput(t *testing.T) {
 func TestElementIDBinding_RelationInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -234,7 +234,7 @@ func TestElementIDBinding_RelationInput(t *testing.T) {
 func TestElementIDBinding_TxJoin(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -308,7 +308,7 @@ func TestElementIDBinding_TxJoin(t *testing.T) {
 func TestElementIDBinding_ComparisonPredicate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -368,7 +368,7 @@ func TestElementIDBinding_ComparisonPredicate(t *testing.T) {
 func TestElementIDBinding_MultipleEntitiesSameTx(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{

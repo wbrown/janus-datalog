@@ -83,7 +83,7 @@ func TestStringPredicateWithParameter(t *testing.T) {
 					[]executor.Tuple{{"CRWV"}},
 				)
 
-				ctx := executor.NewContext(nil)
+				ctx := executor.NewContext()
 				result, err := exec.ExecuteWithRelations(ctx, q, []executor.Relation{symbolInput})
 				if err != nil {
 					t.Fatalf("Query with constant failed: %v", err)
@@ -138,7 +138,7 @@ func TestStringPredicateWithParameter(t *testing.T) {
 					),
 				}
 
-				ctx := executor.NewContext(nil)
+				ctx := executor.NewContext()
 				result, err := exec.ExecuteWithRelations(ctx, q, inputs)
 				if err != nil {
 					t.Fatalf("Query with parameter failed: %v", err)
@@ -193,7 +193,7 @@ func TestStringPredicateWithParameter(t *testing.T) {
 					),
 				}
 
-				ctx := executor.NewContext(nil)
+				ctx := executor.NewContext()
 				result, err := exec.ExecuteWithRelations(ctx, q, inputs)
 				if err != nil {
 					t.Fatalf("Query with parameter failed: %v", err)

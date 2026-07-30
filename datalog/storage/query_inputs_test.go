@@ -13,7 +13,7 @@ import (
 func TestExecuteQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -68,7 +68,7 @@ func TestExecuteQuery(t *testing.T) {
 func TestRelationInput_RefAndKeywordSymbols(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			a := datalog.NewIdentity("a")
 			b := datalog.NewIdentity("b")
@@ -174,7 +174,7 @@ func TestRelationInput_RefAndKeywordSymbols(t *testing.T) {
 func TestConstantOnlyPredicateFiltersUniformly(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			alice := datalog.NewIdentity("alice")
@@ -230,7 +230,7 @@ func TestConstantOnlyPredicateFiltersUniformly(t *testing.T) {
 func TestConstantInputRenderedInFind(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Expression output alone in :find (control: no rendering needed).
 			results, err := executor.CollectTuples(db.Query(
@@ -270,7 +270,7 @@ func TestConstantInputRenderedInFind(t *testing.T) {
 func TestExecuteQueryWithScalarInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -317,7 +317,7 @@ func TestExecuteQueryWithScalarInput(t *testing.T) {
 func TestExecuteQueryWithMultipleScalarInputs(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -370,7 +370,7 @@ func TestExecuteQueryWithMultipleScalarInputs(t *testing.T) {
 func TestExecuteQueryWithCollectionInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// :person/likes is CardinalityMany — multiple values per entity
 			s := schema.NewSchema()
@@ -427,7 +427,7 @@ func TestExecuteQueryWithCollectionInput(t *testing.T) {
 func TestExecuteQueryWithTupleInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -468,7 +468,7 @@ func TestExecuteQueryWithTupleInput(t *testing.T) {
 func TestExecuteQueryWithRelationInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -519,7 +519,7 @@ func TestExecuteQueryWithRelationInput(t *testing.T) {
 func TestRelationInputAcceptsInterfaceWrappedTuples(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			alice := datalog.NewIdentity("wrapped-alice")
@@ -565,7 +565,7 @@ func TestRelationInputAcceptsInterfaceWrappedTuples(t *testing.T) {
 func TestExecuteQueryWithTimeInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add price data
 			tx := db.NewTransaction()
@@ -634,7 +634,7 @@ func TestExecuteQueryWithTimeInput(t *testing.T) {
 func TestExecuteQueryInputErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tests := []struct {
 				name    string

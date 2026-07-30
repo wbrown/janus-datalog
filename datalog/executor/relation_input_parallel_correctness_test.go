@@ -195,12 +195,12 @@ func TestRelationInputParallel_MultisetMatchesSequential(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			seqExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			seqExec.DisableParallelSubqueries()
-			seqResult, err := seqExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			seqResult, err := seqExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 
 			parExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			parExec.EnableParallelSubqueries(4)
-			parResult, err := parExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			parResult, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 
 			seqTuples := sortedTupleStrings(t, seqResult)
@@ -256,7 +256,7 @@ func TestRelationInputParallel_PropagatesMatcherError(t *testing.T) {
 			exec := NewExecutorWithOptions(fm, nil, mode.plannerOptions())
 			exec.EnableParallelSubqueries(4)
 
-			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err, "matcher error must not be silently dropped")
 			require.True(t, errors.Is(err, errInjectedMatcher),
 				"error must unwrap to the injected sentinel; got %v", err)
@@ -307,7 +307,7 @@ func TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple(t *testing.T) 
 			exec := NewExecutorWithOptions(fm, nil, mode.plannerOptions())
 			exec.EnableParallelSubqueries(4)
 
-			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err, "matcher error after partial success must not be silently dropped")
 			require.True(t, errors.Is(err, errInjectedMatcher),
 				"error must unwrap to the injected sentinel; got %v", err)
@@ -354,7 +354,7 @@ func TestRelationInputParallel_PropagatesDeferredIteratorError(t *testing.T) {
 			exec := NewExecutorWithOptions(dm, nil, mode.plannerOptions())
 			exec.EnableParallelSubqueries(4)
 
-			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err, "deferred iterator error must propagate, not be laundered into a clean result")
 			require.True(t, errors.Is(err, errInjectedIterator),
 				"error must unwrap to errInjectedIterator (from failingIterator); got %v", err)
@@ -397,7 +397,7 @@ func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 			// Warm up: first run amortizes one-time initializations that may park
 			// goroutines (intern caches, etc.). Without this, "before" can be lower
 			// than "after" purely because of first-call setup, not a leak.
-			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 
 			// Let any test-framework or first-call goroutines settle.
@@ -408,7 +408,7 @@ func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 
 			const iterations = 50
 			for i := 0; i < iterations; i++ {
-				_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+				_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 				require.NoError(t, err)
 			}
 
@@ -565,7 +565,7 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			exec.EnableParallelSubqueries(4)
 
-			result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 
 			seen := make(map[string]bool, len(expectedTuples))
@@ -628,7 +628,7 @@ func TestRelationInputParallel_ConcurrentInvocationCorrectness(t *testing.T) {
 			// Compute the expected multiset once, sequentially.
 			seqExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			seqExec.DisableParallelSubqueries()
-			expected, err := seqExec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			expected, err := seqExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 			expectedTuples := sortedTupleStrings(t, expected)
 
@@ -651,7 +651,7 @@ func TestRelationInputParallel_ConcurrentInvocationCorrectness(t *testing.T) {
 					exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 					exec.EnableParallelSubqueries(4)
 					for i := 0; i < itersPerGoroutine; i++ {
-						rel, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+						rel, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 						if err != nil {
 							results <- runResult{err: err}
 							continue

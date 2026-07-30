@@ -39,7 +39,7 @@ func TestRelationInputIteration(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			ctx := NewContext(nil)
+			ctx := NewContext()
 
 			t.Run("direct query with RelationInput", func(t *testing.T) {
 				// Query that uses RelationInput directly
@@ -168,7 +168,7 @@ func TestRelationInputIterationParallel(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			exec.EnableParallelSubqueries(4) // Use 4 workers for testing
-			ctx := NewContext(nil)
+			ctx := NewContext()
 
 			t.Run("parallel query with RelationInput", func(t *testing.T) {
 				// Query that uses RelationInput directly
@@ -344,7 +344,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	ctx := NewContext(nil)
+	ctx := NewContext()
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -541,7 +541,7 @@ func TestRelationInputParallelStress(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	ctx := NewContext(nil)
+	ctx := NewContext()
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

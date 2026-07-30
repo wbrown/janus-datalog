@@ -14,8 +14,16 @@ import (
 func TestJoinCopyAnnotationE2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Create database with test data
-			db := createOptimizerModeDB(t, mode)
+			// The recording flag scopes collection to the query below; the
+			// handler is registered at open because everything the database
+			// builds is constructed with it.
+			var events []annotations.Event
+			recording := false
+			db := createOptimizerModeDB(t, mode, func(e annotations.Event) {
+				if recording {
+					events = append(events, e)
+				}
+			})
 
 			// Add some entities with relationships that will require joins
 			tx := db.NewTransaction()
@@ -32,14 +40,7 @@ func TestJoinCopyAnnotationE2E(t *testing.T) {
 				t.Fatalf("failed to commit: %v", err)
 			}
 
-			// Set up annotation collector
-			var events []annotations.Event
-			handler := func(e annotations.Event) {
-				events = append(events, e)
-			}
-
-			// Set annotation handler on database
-			db.AnnotationHandler = handler
+			recording = true
 
 			// Execute a query that requires a join
 			queryStr := `[:find ?name ?dept
@@ -98,15 +99,13 @@ func TestJoinCopyAnnotationE2E(t *testing.T) {
 
 // TestJoinCopyAnnotationMaterialized verifies that MaterializedRelation skips copies
 func TestJoinCopyAnnotationMaterialized(t *testing.T) {
-	// Create collector
-	var events []annotations.Event
-	handler := func(e annotations.Event) {
-		events = append(events, e)
-	}
-	collector := annotations.NewCollector(handler)
-
+	var copyEvent *annotations.Event
 	opts := executor.ExecutorOptions{
-		Collector: collector,
+		Handler: func(e annotations.Event) {
+			if e.Name == annotations.JoinBuildCopy {
+				copyEvent = &e
+			}
+		},
 	}
 
 	// Create two materialized relations (RequiresCopy = false)
@@ -132,25 +131,11 @@ func TestJoinCopyAnnotationMaterialized(t *testing.T) {
 	}
 	it.Close()
 
-	// Check annotation
-	var foundCopyAnnotation bool
-	var copyCount, skipCount int
-
-	for _, e := range events {
-		if e.Name == annotations.JoinBuildCopy {
-			foundCopyAnnotation = true
-			if c, ok := e.Data["copied"].(int); ok {
-				copyCount = c
-			}
-			if s, ok := e.Data["passthru"].(int); ok {
-				skipCount = s
-			}
-		}
-	}
-
-	if !foundCopyAnnotation {
+	if copyEvent == nil {
 		t.Fatal("expected JoinBuildCopy annotation")
 	}
+	copyCount, _ := copyEvent.Data["copied"].(int)
+	skipCount, _ := copyEvent.Data["passthru"].(int)
 
 	// MaterializedRelation doesn't require copying
 	if copyCount != 0 {

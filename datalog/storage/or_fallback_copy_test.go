@@ -45,7 +45,12 @@ func createOrTestDB(t *testing.T, popts *planner.PlannerOptions) (*Database, fun
 func TestOrClauseTupleStability(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			// Tracing only; registered at open because everything the database
+			// builds is constructed with it.
 			popts := mode.plannerOptions()
+			popts.Handler = func(e annotations.Event) {
+				t.Logf("[TRACE] %s: %v", e.Name, e.Data)
+			}
 			db, cleanup := createOrTestDB(t, &popts)
 			defer cleanup()
 
@@ -62,11 +67,6 @@ func TestOrClauseTupleStability(t *testing.T) {
 			}
 			if _, err := tx.Commit(); err != nil {
 				t.Fatalf("commit failed: %v", err)
-			}
-
-			// Enable annotations to see what's happening
-			db.AnnotationHandler = func(e annotations.Event) {
-				t.Logf("[TRACE] %s: %v", e.Name, e.Data)
 			}
 
 			// Query with OR clause using DATA PATTERNS (not expression predicates)

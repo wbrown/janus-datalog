@@ -143,7 +143,11 @@ func buildComplexNotQuery() *query.Query {
 func TestNotClauseComplexQuery_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			// Tracing only; registered at open because everything the database
+			// builds is constructed with it.
+			db := createOptimizerModeDB(t, mode, func(event annotations.Event) {
+				t.Logf("ANNOTATION: %s %v", event.Name, event.Data)
+			})
 
 			tx := db.NewTransaction()
 
@@ -201,11 +205,6 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 			q := buildComplexNotQuery()
 			t.Logf("Query: %s", q.String())
 
-			db.AnnotationHandler = func(event annotations.Event) {
-				t.Logf("ANNOTATION: %s %v", event.Name, event.Data)
-			}
-			defer func() { db.AnnotationHandler = nil }()
-
 			tuples, err := executor.CollectTuples(db.Query(q))
 			require.NoError(t, err, "Complex query with NOT clauses should not fail")
 
@@ -260,7 +259,7 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 func TestNotClauseWithUnboundInnerVar_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 

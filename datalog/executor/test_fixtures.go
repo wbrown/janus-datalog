@@ -5,9 +5,16 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// MockPatternMatcher implements PatternMatcher for testing
+// MockPatternMatcher implements PatternMatcher for testing.
+//
+// It carries options and attaches them to every relation it builds, exactly as
+// the production matchers do. A fixture that discarded them would hand its
+// consumers a relation with no configuration and no handler — nil is a valid
+// handler, but a fixture that silently drops the one it was given makes the
+// engine look like it lost it.
 type MockPatternMatcher struct {
-	data map[string][]datalog.Datom
+	data    map[string][]datalog.Datom
+	options ExecutorOptions
 }
 
 // Match implements the new PatternMatcher interface
@@ -30,13 +37,13 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 
 	// If no bindings, return all matches as a relation
 	if bindings == nil || len(bindings) == 0 {
-		return PatternToRelation(allDatoms, pattern), nil
+		return datomsToRelationWithOptions(allDatoms, pattern, pattern.Symbols(), m.options), nil
 	}
 
 	// Find best binding relation for this pattern
 	bindingRel := bindings.FindBestForPattern(pattern)
 	if bindingRel == nil {
-		return PatternToRelation(allDatoms, pattern), nil
+		return datomsToRelationWithOptions(allDatoms, pattern, pattern.Symbols(), m.options), nil
 	}
 	if bindingRel.Size() == 0 {
 		// An errored relation that materialized empty is not an empty
@@ -45,7 +52,7 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 		if err := EmptyRelationError(bindingRel); err != nil {
 			return nil, err
 		}
-		return PatternToRelation(allDatoms, pattern), nil
+		return datomsToRelationWithOptions(allDatoms, pattern, pattern.Symbols(), m.options), nil
 	}
 
 	// Filter datoms based on bindings
@@ -75,7 +82,7 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 		return nil, scanErr
 	}
 
-	return PatternToRelation(filteredDatoms, pattern), nil
+	return datomsToRelationWithOptions(filteredDatoms, pattern, pattern.Symbols(), m.options), nil
 }
 
 // matchesDatomPattern checks if a datom matches a pattern with bound values

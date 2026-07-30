@@ -241,7 +241,7 @@ func TestQueryLimitWithRelationInputIsGlobal(t *testing.T) {
 			keySym := datalog.NewSymbol("?k")
 			inputRel := NewMaterializedRelation([]query.Symbol{keySym}, []Tuple{{"k1"}, {"k2"}})
 
-			result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				t.Fatalf("execute: %v", err)
 			}
@@ -294,7 +294,7 @@ func TestOrderByAndLimitWithRelationInputIsGlobal(t *testing.T) {
 			keySym := datalog.NewSymbol("?k")
 			inputRel := NewMaterializedRelation([]query.Symbol{keySym}, []Tuple{{"A"}, {"B"}})
 
-			result, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				t.Fatalf("execute: %v", err)
 			}

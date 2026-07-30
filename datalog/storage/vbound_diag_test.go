@@ -8,18 +8,19 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 func vBoundMatchCountWithAnnotations(t *testing.T, db *Database, a datalog.Keyword, v interface{}) int {
 	t.Helper()
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(db.Schema())
-
-	matcher.SetHandler(func(event annotations.Event) {
-		t.Logf("EVENT: %s  data=%v", event.Name, event.Data)
+	matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{
+		Handler: func(event annotations.Event) {
+			t.Logf("EVENT: %s  data=%v", event.Name, event.Data)
+		},
 	})
+	matcher.SetSchema(db.Schema())
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{

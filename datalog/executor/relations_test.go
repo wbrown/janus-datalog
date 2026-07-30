@@ -213,7 +213,7 @@ func TestRelationsCollapse(t *testing.T) {
 		)
 
 		relations := Relations{r1, r2, r3}
-		groups := relations.Collapse(NewContext(nil))
+		groups := relations.Collapse(nil)
 
 		// Should have exactly one group since all relations share symbols
 		assert.Equal(t, 1, len(groups))
@@ -244,7 +244,7 @@ func TestRelationsCollapse(t *testing.T) {
 		)
 
 		relations := Relations{r1, r2, r3}
-		groups := relations.Collapse(NewContext(nil))
+		groups := relations.Collapse(nil)
 
 		// Should have 2 groups: one with r1+r3 joined, one with r2 alone
 		assert.Equal(t, 2, len(groups))
@@ -279,7 +279,7 @@ func TestRelationsCollapse(t *testing.T) {
 		)
 
 		relations := Relations{r1, r2}
-		groups := relations.Collapse(NewContext(nil))
+		groups := relations.Collapse(nil)
 
 		// Should have one group with empty result
 		assert.Equal(t, 1, len(groups))
@@ -288,7 +288,7 @@ func TestRelationsCollapse(t *testing.T) {
 
 	t.Run("handles empty relations", func(t *testing.T) {
 		relations := Relations{}
-		groups := relations.Collapse(NewContext(nil))
+		groups := relations.Collapse(nil)
 		assert.Equal(t, 0, len(groups))
 	})
 
@@ -299,7 +299,7 @@ func TestRelationsCollapse(t *testing.T) {
 		)
 
 		relations := Relations{r1}
-		groups := relations.Collapse(NewContext(nil))
+		groups := relations.Collapse(nil)
 
 		assert.Equal(t, 1, len(groups))
 		assert.Equal(t, r1, groups[0])

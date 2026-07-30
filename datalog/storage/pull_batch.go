@@ -82,7 +82,7 @@ func (d *Database) ResolveAllAttributesMany(
 	var opened time.Time
 	var served int
 	report := DiscardIntake
-	if d.AnnotationHandler != nil {
+	if d.plannerOptions.Handler != nil {
 		opened = time.Now()
 		report = &scanReport{}
 		defer func() {
@@ -92,7 +92,7 @@ func (d *Database) ResolveAllAttributesMany(
 				annotations.KeyScansOpened:   1,
 			}
 			addBoundFields(data, bound)
-			d.AnnotationHandler(annotations.Event{
+			d.plannerOptions.Handler(annotations.Event{
 				Name:    annotations.StorageResolveComplete,
 				Start:   opened,
 				Latency: time.Since(opened),

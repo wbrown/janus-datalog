@@ -68,7 +68,12 @@ func renderBoundForTest(e annotations.Event) string {
 func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			// Registered at open. captureQuery below clears this between calls so
+			// each call returns its own query's events; the handler is never
+			// replaced.
+			var collected []annotations.Event
 			popts := mode.plannerOptions()
+			popts.Handler = func(e annotations.Event) { collected = append(collected, e) }
 			db, err := NewDatabaseWithOptions(DatabaseOptions{
 				Path:           t.TempDir(),
 				PlannerOptions: &popts,
@@ -105,17 +110,14 @@ func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 			}
 
 			captureQuery := func(q string, args ...interface{}) (results [][]interface{}, dur time.Duration, events []annotations.Event) {
-				db.AnnotationHandler = func(e annotations.Event) {
-					events = append(events, e)
-				}
+				collected = nil
 				start := time.Now()
 				results, err := executor.CollectTuples(db.Query(q, args...))
 				dur = time.Since(start)
-				db.AnnotationHandler = nil
 				if err != nil {
 					t.Fatalf("query failed: %v\nquery: %s", err, q)
 				}
-				return results, dur, events
+				return results, dur, collected
 			}
 
 			// Baseline: plain pattern read of the same optional field on the same bound
@@ -305,19 +307,20 @@ func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 // TestGetElseMultiEntityStoredOrDefault, and cross-mode tuple equivalence in
 // TestGetElseScanNarrowing_SemanticPreservation.
 func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
+	// Registered at open; the fixture's own events precede the query's and the
+	// assertion below looks for a specific narrowing event's presence.
+	var events []annotations.Event
 	popts := DefaultPlannerOptions()
 	popts.EnableAlgebraOptimizer = true
+	popts.Handler = func(e annotations.Event) { events = append(events, e) }
 	db, want, cleanup := setupGetElseNarrowingDB(t, &popts)
 	defer cleanup()
 
-	var events []annotations.Event
-	db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
 	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?note
 		  :where [?e :repro/kind _]
 		         [(get-else $ ?e :repro/note "MISSING") ?note]]`,
 	))
-	db.AnnotationHandler = nil
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

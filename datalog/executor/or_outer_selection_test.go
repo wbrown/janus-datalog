@@ -57,13 +57,14 @@ func TestOrFallbackAnnotatesDeferredOuterMaterialization(t *testing.T) {
 	entity := datalog.NewIdentity("outer-materialization")
 	attr := datalog.NewKeyword(":item/value")
 	var materializations int
-	ctx := NewContext(func(event annotations.Event) {
+	handler := func(event annotations.Event) {
 		if event.Name == "or-fallback/outer.materialized" {
 			materializations++
 			require.Equal(t, "join-key-narrowing", event.Data["reason"])
 		}
-	})
-	options := ExecutorOptions{Collector: ctx.Collector()}
+	}
+	ctx := NewContext()
+	options := ExecutorOptions{Handler: handler}
 	exec := newQueryExecutor(
 		NewMemoryPatternMatcher([]datalog.Datom{{E: entity, A: attr, V: "present"}}),
 		nil,
@@ -101,12 +102,13 @@ func TestOrFallbackSinglePassBranchKeepsOuterStreaming(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	value := datalog.NewSymbol("?value")
 	var materializations int
-	ctx := NewContext(func(event annotations.Event) {
+	handler := func(event annotations.Event) {
 		if event.Name == "or-fallback/outer.materialized" {
 			materializations++
 		}
-	})
-	options := ExecutorOptions{Collector: ctx.Collector()}
+	}
+	ctx := NewContext()
+	options := ExecutorOptions{Handler: handler}
 	base := NewMaterializedRelation(
 		[]query.Symbol{entity},
 		[]Tuple{{int64(1)}, {int64(2)}},
@@ -149,7 +151,7 @@ func TestOuterJoinKeysProducesSetWithJoinKey(t *testing.T) {
 	)
 	relation := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(nil),
+		NewContext(),
 		[][]query.Clause{{&query.DataPattern{Elements: []query.PatternElement{
 			query.Variable{Name: entity},
 			query.Constant{Value: datalog.NewKeyword(":item/value")},
@@ -225,7 +227,7 @@ func TestOuterJoinKeysPreservesOuterIteratorAndCloseErrors(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			relation := NewOrFallbackRelation(
 				newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-				NewContext(nil),
+				NewContext(),
 				[][]query.Clause{{&query.Expression{
 					Function: &query.GroundFunction{Value: "fallback"},
 					Binding:  value,
@@ -282,7 +284,7 @@ func TestBuildBranchFromEACachePreservesOuterIteratorAndCloseErrors(t *testing.T
 		t.Run(testCase.name, func(t *testing.T) {
 			relation := NewOrFallbackRelation(
 				newQueryExecutor(matcher, nil, ExecutorOptions{}),
-				NewContext(nil),
+				NewContext(),
 				[][]query.Clause{branch},
 				testCase.outer,
 				ExecutorOptions{},

@@ -1534,7 +1534,18 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
+			// Join-shape tracing for the steps below, registered at open because
+			// everything the database builds is constructed with it. Filtered to
+			// JoinHash, and diagnostic only — nothing here is asserted on.
 			popts := mode.plannerOptions()
+			popts.Handler = func(event annotations.Event) {
+				if event.Name == annotations.JoinHash {
+					t.Logf("ANNOTATION [%s]: left.attrs=%v right.attrs=%v result.attrs=%v left.size=%v right.size=%v result.size=%v",
+						event.Name,
+						event.Data["left.attrs"], event.Data["right.attrs"], event.Data["result.attrs"],
+						event.Data["left.size"], event.Data["right.size"], event.Data["result.size"])
+				}
+			}
 			db, err := NewDatabaseWithOptions(DatabaseOptions{
 				Path:           tmpDir,
 				Schema:         s,
@@ -1657,15 +1668,6 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 			t.Logf("step2d (enumerate only, both :in params, no color filter): %d tuples: %v", len(r2d), r2d)
 
 			// Step 2e: Without label join — just enumerate + color filter, find ?item entity
-			// Enable annotation tracing for this query
-			db.AnnotationHandler = func(event annotations.Event) {
-				if event.Name == annotations.JoinHash {
-					t.Logf("ANNOTATION [%s]: left.attrs=%v right.attrs=%v result.attrs=%v left.size=%v right.size=%v result.size=%v",
-						event.Name,
-						event.Data["left.attrs"], event.Data["right.attrs"], event.Data["result.attrs"],
-						event.Data["left.size"], event.Data["right.size"], event.Data["result.size"])
-				}
-			}
 			r2e, err := executor.CollectTuples(db.Query(
 				`[:find ?folderName ?item ?color
 		  :in $ ?room ?color
@@ -1683,7 +1685,6 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 				t.Logf("step2e tuple[%d]: folderName=%v item=%v color=%v", i, tuple[0], tuple[1], tuple[2])
 			}
 			t.Logf("step2e (enumerate + color filter, find ?item): %d tuples", len(r2e))
-			db.AnnotationHandler = nil // disable after step2e
 
 			// Step 3: Full query with :in room and color
 			r3, err := executor.CollectTuples(db.Query(

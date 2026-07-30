@@ -54,7 +54,7 @@ func BenchmarkJoinProjectInsertion(b *testing.B) {
 			router := executor.NewSourceRouter(buildSourceMap(nil, db.Matcher()))
 			exec := executor.NewExecutorWithOptions(router, db, options)
 
-			warm, err := exec.ExecuteWithRelations(executor.NewContext(nil), query, nil)
+			warm, err := exec.ExecuteWithRelations(executor.NewContext(), query, nil)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -65,7 +65,7 @@ func BenchmarkJoinProjectInsertion(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				result, err := exec.ExecuteWithRelations(executor.NewContext(nil), query, nil)
+				result, err := exec.ExecuteWithRelations(executor.NewContext(), query, nil)
 				if err != nil {
 					b.Fatal(err)
 				}

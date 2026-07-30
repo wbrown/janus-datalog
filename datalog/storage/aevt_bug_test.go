@@ -84,18 +84,17 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Create annotation handler to track datom scans
+			// Register an annotation handler to track datom scans. The matcher is
+			// built with the same options, so its own scan events reach the
+			// handler too — those happen inside Match(), where the executor's
+			// wrapper cannot see them.
 			var events []annotations.Event
-			handler := func(event annotations.Event) {
+			opts := mode.plannerOptions()
+			opts.Handler = func(event annotations.Event) {
 				events = append(events, event)
 			}
-
-			// Create context with annotations
-			ctx := executor.NewContext(handler)
-
-			// Create matcher with annotations using decorator pattern
-			baseMatcher := NewPatternMatcher(db.Store())
-			matcher := executor.WrapMatcher(baseMatcher, handler).(executor.PatternMatcher)
+			matcher := NewPatternMatcherWithOptions(
+				db.Store(), executor.ExecutorOptionsFromPlanner(opts))
 
 			// Bind 3 entities as a RelationInput (this is what triggers the bug)
 			inputRel := executor.NewMaterializedRelation(
@@ -104,9 +103,10 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 			)
 
 			// Execute query without parallel execution (to capture all annotations)
-			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+			exec := executor.NewExecutorWithOptions(matcher, db, opts)
 			exec.DisableParallelSubqueries() // Disable parallel to get all events in our handler
-			result, err := exec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
+			result, err := exec.ExecuteWithRelations(
+				executor.NewContext(), parsed, []executor.Relation{inputRel})
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}

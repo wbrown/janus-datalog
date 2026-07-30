@@ -33,7 +33,12 @@ const bindingDrivenWrites = 3
 //
 // The annotation handler is installed by the caller after the writes, so the
 // transactions' own events stay out of the assertion.
-func bindingDrivenFixture(t *testing.T) (*Database, *query.DataPattern, executor.Relation, []query.Symbol) {
+// handler is registered at open, since the matchers and relations this database
+// builds are all constructed with it; nil is annotations-off.
+func bindingDrivenFixture(
+	t *testing.T,
+	handler annotations.Handler,
+) (*Database, *query.DataPattern, executor.Relation, []query.Symbol) {
 	t.Helper()
 
 	s, err := schema.NewBuilder().
@@ -45,6 +50,7 @@ func bindingDrivenFixture(t *testing.T) (*Database, *query.DataPattern, executor
 	// these tests drive the matcher directly, so the planner — and therefore the
 	// algebra optimizer — is not on their path.
 	opts := optimizerMode{name: "algebra_off", algebra: false}.plannerOptions()
+	opts.Handler = handler
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:           t.TempDir(),
 		Schema:         s,
@@ -150,10 +156,9 @@ func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
 			}},
 	} {
 		t.Run(string(tc.strategy), func(t *testing.T) {
-			db, pattern, bindingRel, symbols := bindingDrivenFixture(t)
-
 			var events []annotations.Event
-			db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
+			db, pattern, bindingRel, symbols := bindingDrivenFixture(t,
+				func(e annotations.Event) { events = append(events, e) })
 
 			rel, err := tc.match(db.Matcher().(*PatternMatcher), pattern, bindingRel, symbols)
 			require.NoError(t, err)
@@ -239,7 +244,9 @@ func TestBindingSizeCountsTuplesNotDistinctKeys(t *testing.T) {
 			}},
 	} {
 		t.Run(string(tc.strategy), func(t *testing.T) {
-			db, pattern, _, symbols := bindingDrivenFixture(t)
+			var events []annotations.Event
+			db, pattern, _, symbols := bindingDrivenFixture(t,
+				func(e annotations.Event) { events = append(events, e) })
 
 			// The entity stays at tuple position 0, which is where all three
 			// strategies read the join key from; the second symbol only
@@ -255,9 +262,6 @@ func TestBindingSizeCountsTuplesNotDistinctKeys(t *testing.T) {
 			}
 			bindingRel := executor.NewMaterializedRelation(
 				[]query.Symbol{entity, slot}, tuples)
-
-			var events []annotations.Event
-			db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
 
 			rel, err := tc.match(db.Matcher().(*PatternMatcher), pattern, bindingRel, symbols)
 			require.NoError(t, err)
@@ -305,10 +309,12 @@ func lastScanComplete(events []annotations.Event, strategy annotations.ScanStrat
 // which shares the fixture; what is left here is the count of events and the
 // scan count only this strategy carries.
 func TestPerBindingScanReportsOneCountedEvent(t *testing.T) {
-	db, pattern, bindingRel, symbols := bindingDrivenFixture(t)
-
+	// Cleared after the fixture: the assertion below counts scan-completions, so
+	// it has to be about the match and not about the fixture's writes.
 	var events []annotations.Event
-	db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
+	db, pattern, bindingRel, symbols := bindingDrivenFixture(t,
+		func(e annotations.Event) { events = append(events, e) })
+	events = nil
 
 	m := db.Matcher().(*PatternMatcher)
 	rel, err := m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, nil)
@@ -451,8 +457,11 @@ func TestBoundAnnotationKeyHasOneType(t *testing.T) {
 // is no collision to pin, and the scan events' own typing is covered in both
 // modes by the tests above.
 func TestIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T) {
+	// Registered at open; the assertions below are presence checks over the
+	// stream, so the fixture's own events are harmless.
 	var events []annotations.Event
 	opts := optimizerMode{name: "algebra_off", algebra: false}.plannerOptions()
+	opts.Handler = func(e annotations.Event) { events = append(events, e) }
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:           t.TempDir(),
 		Schema:         funnelSchema(t),
@@ -462,7 +471,6 @@ func TestIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T) {
 	defer db.Close()
 
 	funnelFixture(t, db)
-	db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
 
 	result, err := db.Query(`[:find ?v ?c
 	     :where [#id "funnel:alice" :person/tag ?v]
@@ -500,9 +508,13 @@ func TestIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T) {
 // the cache on, matchWithBindingsFromCache answers a binding-driven pattern
 // before analyzeReuseStrategy is consulted and the arm never runs.
 func TestCardinalityAnnotationKeyCarriesOnlyAKeyword(t *testing.T) {
+	// Registered at open; the assertion below is a presence check over the
+	// stream, so the fixture's own events are harmless.
+	var events []annotations.Event
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:         t.TempDir(),
-		DisableCache: true,
+		Path:              t.TempDir(),
+		DisableCache:      true,
+		AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -519,9 +531,6 @@ func TestCardinalityAnnotationKeyCarriesOnlyAKeyword(t *testing.T) {
 	require.NoError(t, tx.Set(alice, name, "Alice"))
 	_, err = tx.Commit()
 	require.NoError(t, err)
-
-	var events []annotations.Event
-	db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
 
 	// V arrives through the binding relation, which is what selects the
 	// candidate-then-validate arm.

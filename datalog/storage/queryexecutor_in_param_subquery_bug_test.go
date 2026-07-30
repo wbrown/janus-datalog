@@ -113,7 +113,7 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 
 			// Execute (like ExecuteQueryWithInputs but with custom options)
 			exec := db.NewExecutorWithOptions(gopherStreetOpts)
-			result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRels)
+			result, err := exec.ExecuteWithRelations(executor.NewContext(), q, inputRels)
 
 			if err != nil {
 				t.Logf("BUG REPRODUCED! Error: %v", err)

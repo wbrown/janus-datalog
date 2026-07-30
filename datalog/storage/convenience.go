@@ -23,6 +23,18 @@ var queryGetAttr = func() *query.Query {
 // The caller should iterate via rel.Iterator() and must call iter.Close()
 // when done.
 func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executor.Relation, error) {
+	return d.queryUnderPlannerOptions(d.effectivePlannerOptions(), queryInput, inputs...)
+}
+
+// queryUnderPlannerOptions is Query's body with the planner options supplied
+// rather than read from the database. Query passes the database's own; tests
+// that vary the optimizer profile per query pass theirs. One query path either
+// way — read session, source routing, input conversion, session-bound result.
+func (d *Database) queryUnderPlannerOptions(
+	planOpts planner.PlannerOptions,
+	queryInput interface{},
+	inputs ...interface{},
+) (executor.Relation, error) {
 	// Separate QueryOptions from regular inputs
 	opts, regularInputs := extractQueryOptions(inputs)
 
@@ -34,7 +46,6 @@ func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executo
 	// One read session per query: every storage read — eager during
 	// execution or lazy during result consumption — observes one snapshot.
 	// The session closes when the result is exhausted or closed.
-	planOpts := d.effectivePlannerOptions()
 	matcher, session, err := d.sessionMatcher(planOpts)
 	if err != nil {
 		return nil, err
@@ -61,7 +72,7 @@ func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executo
 	// Execute with the SourceRouter as the PatternMatcher
 	planOpts.Cache = d.planCache
 	exec := executor.NewExecutorWithOptions(router, d, planOpts)
-	result, err := exec.ExecuteWithRelations(executor.NewContext(d.AnnotationHandler), q, inputRelations)
+	result, err := exec.ExecuteWithRelations(executor.NewContext(), q, inputRelations)
 	if err != nil {
 		_ = session.Close()
 		return nil, fmt.Errorf("query execution failed: %w", err)

@@ -221,7 +221,7 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 				assert.NoError(t, err)
 
 				exec := db.NewExecutorWithOptions(opts)
-				result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRels)
+				result, err := exec.ExecuteWithRelations(executor.NewContext(), q, inputRels)
 
 				if err != nil {
 					t.Logf("BUG: %v", err)
@@ -249,7 +249,7 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 				assert.NoError(t, err)
 
 				exec := db.NewExecutorWithOptions(opts)
-				result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRels)
+				result, err := exec.ExecuteWithRelations(executor.NewContext(), q, inputRels)
 
 				assert.NoError(t, err, "Should succeed with empty results")
 

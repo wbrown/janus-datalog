@@ -21,7 +21,7 @@ import (
 func TestCorrelatedSubqueryDistinguishesTypedInputCombinations(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode)
+			d := createOptimizerModeDB(t, mode, nil)
 
 			intInput := datalog.NewIdentity("input:int")
 			strInput := datalog.NewIdentity("input:str")

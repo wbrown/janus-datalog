@@ -4,24 +4,8 @@ import (
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
-
-// CollectorAware is an optional interface for pattern matchers that support annotation collectors
-// DEPRECATED: Use HandlerProvider instead with decorator pattern
-type CollectorAware interface {
-	WithCollector(collector *annotations.Collector) CollectorAware
-}
-
-// HandlerProvider allows storage layer to access annotation handler for detailed events.
-// The decorator pattern wraps at the PatternMatcher level, but storage needs to emit
-// detailed events (hash join stats, scan metrics, etc) that happen deep inside Match().
-// Storage checks if the matcher implements this interface to emit detailed events.
-type HandlerProvider interface {
-	// GetHandler returns the annotation handler if available, nil otherwise
-	GetHandler() annotations.Handler
-}
 
 // NewMemoryPatternMatcher creates a pattern matcher for in-memory datoms.
 // Returns an IndexedMemoryMatcher, which indexes datoms by (E, A, V) for

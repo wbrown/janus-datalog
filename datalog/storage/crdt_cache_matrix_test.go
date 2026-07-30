@@ -303,7 +303,12 @@ func TestCacheMatrix_VOnlyBound(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
+					// Tracing, registered at open because everything the database
+					// builds is constructed with it.
 					popts := omode.plannerOptions()
+					popts.Handler = func(e annotations.Event) {
+						t.Logf("[TRACE] %s: %v", e.Name, e.Data)
+					}
 					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
 					defer cleanup()
 
@@ -338,11 +343,6 @@ func TestCacheMatrix_VOnlyBound(t *testing.T) {
 					tx := db.NewTransaction()
 					tx.Set(proj1, datalog.NewKeyword(":project/lead"), leader)
 					tx.Commit()
-
-					// Enable annotations to trace query execution
-					db.AnnotationHandler = func(e annotations.Event) {
-						t.Logf("[TRACE] %s: %v", e.Name, e.Data)
-					}
 
 					// Pattern: ONLY V bound - "what entities/attributes reference leader?"
 					// This uses VAET index with per-datom cardinality resolution
@@ -447,7 +447,12 @@ func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
+					// Tracing, registered at open because everything the database
+					// builds is constructed with it.
 					popts := omode.plannerOptions()
+					popts.Handler = func(e annotations.Event) {
+						t.Logf("[TRACE] %s: %v", e.Name, e.Data)
+					}
 					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
 					defer cleanup()
 
@@ -488,11 +493,6 @@ func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
 					require.NoError(t, err, "Remove tag 'go' should succeed")
 					_, err = tx.Commit()
 					require.NoError(t, err, "Commit should succeed")
-
-					// Enable annotations to trace query execution
-					db.AnnotationHandler = func(e annotations.Event) {
-						t.Logf("[TRACE] %s: %v", e.Name, e.Data)
-					}
 
 					// Debug: scan EATV index directly to see ALL datoms
 					t.Log("=== Scanning EATV index for all datoms ===")

@@ -18,7 +18,7 @@ import (
 // correlated grouped-aggregate query: every field populated, and the rewrite
 // records carrying the decorrelation decision as a value.
 func TestExplainAlgebraDecorrelation(t *testing.T) {
-	db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true})
+	db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true}, nil)
 
 	expl, err := db.ExplainAlgebra(`[:find ?s ?mx
 	  :where
@@ -86,7 +86,7 @@ func TestExplainAlgebraNotJoinEnvironmentHeader(t *testing.T) {
 
 	for name, queryText := range shapes {
 		t.Run(name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true})
+			db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true}, nil)
 
 			expl, err := db.ExplainAlgebra(queryText, "hot")
 			require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestExplainAlgebraNotJoinEnvironmentHeader(t *testing.T) {
 // TestExplainAlgebraGetElse pins the provenance of the formerly-silent
 // get-else rewrite through the public surface.
 func TestExplainAlgebraGetElse(t *testing.T) {
-	db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true})
+	db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true}, nil)
 
 	expl, err := db.ExplainAlgebra(`[:find ?e ?title
 	  :where
@@ -129,7 +129,7 @@ func TestExplainAlgebraGetElse(t *testing.T) {
 // TestExplainAlgebraDeclineReasons pins that declined rewrites surface the
 // failed precondition as a value.
 func TestExplainAlgebraDeclineReasons(t *testing.T) {
-	db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true})
+	db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true}, nil)
 
 	expl, err := db.ExplainAlgebra(`[:find ?e ?v
 	  :where
@@ -151,7 +151,7 @@ func TestExplainAlgebraDeclineReasons(t *testing.T) {
 // a query is a fact about the query, so the compiled tree is still returned;
 // no passes run, and the plan is exactly what this database would use.
 func TestExplainAlgebraOptimizerDisabled(t *testing.T) {
-	db := createOptimizerModeDB(t, optimizerMode{"algebra_off", false})
+	db := createOptimizerModeDB(t, optimizerMode{"algebra_off", false}, nil)
 
 	expl, err := db.ExplainAlgebra(`[:find ?e ?n :where [?e :scenario/name ?n]]`)
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func TestExplainAlgebraOptimizerDisabled(t *testing.T) {
 // TestExplainAlgebraValidatesInputs mirrors Explain's input validation: a
 // query whose :in demands inputs errors without them.
 func TestExplainAlgebraValidatesInputs(t *testing.T) {
-	db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true})
+	db := createOptimizerModeDB(t, optimizerMode{"algebra_on", true}, nil)
 
 	_, err := db.ExplainAlgebra(`[:find ?e :in $ ?n :where [?e :scenario/name ?n]]`)
 	require.Error(t, err)

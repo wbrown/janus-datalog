@@ -33,7 +33,11 @@ func TestAbortedScanReportsThatItDidNotFinish(t *testing.T) {
 	injected := fmt.Errorf("simulated AEVT scan failure")
 	for name, failing := range scanFailureShapes(injected) {
 		t.Run(name, func(t *testing.T) {
+			// The matcher below is the thing under test and is built with the
+			// handler directly; the database only supplies the store and fixture.
 			var events []annotations.Event
+			handler := func(ev annotations.Event) { events = append(events, ev) }
+
 			db, err := NewDatabaseWithOptions(DatabaseOptions{
 				Path:   t.TempDir(),
 				Schema: s,
@@ -47,18 +51,15 @@ func TestAbortedScanReportsThatItDidNotFinish(t *testing.T) {
 			_, err = tx.Commit()
 			require.NoError(t, err)
 
-			db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
-
 			// The unbound cardinality-many arm scans AEVT to find entities, so
 			// overriding that index aborts it partway through Next rather than
 			// before it opens.
-			matcher := NewPatternMatcher(&indexScanOverrideStore{
+			matcher := NewPatternMatcherWithOptions(&indexScanOverrideStore{
 				Store: db.Store(),
 				index: AEVT,
 				iter:  failing,
-			})
+			}, executor.ExecutorOptions{Handler: handler})
 			matcher.SetSchema(s)
-			matcher.SetHandler(db.AnnotationHandler)
 
 			pattern := &query.DataPattern{
 				Elements: []query.PatternElement{
@@ -89,16 +90,18 @@ func TestAbortedScanReportsThatItDidNotFinish(t *testing.T) {
 // TestCompletedScanSaysSo is the other half: without it, an arm could hardcode
 // the aborted answer and the test above would still pass.
 func TestCompletedScanSaysSo(t *testing.T) {
+	// Registered at open. The assertion takes the last scan-complete event, so
+	// the fixture's own events ahead of the query are harmless.
 	var events []annotations.Event
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
-		Schema: funnelSchema(t),
+		Path:              t.TempDir(),
+		Schema:            funnelSchema(t),
+		AnnotationHandler: func(ev annotations.Event) { events = append(events, ev) },
 	})
 	require.NoError(t, err)
 	defer db.Close()
 
 	funnelFixture(t, db)
-	db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
 
 	result, err := db.Query(`[:find ?e ?v :where [?e :person/tag ?v]]`)
 	require.NoError(t, err)

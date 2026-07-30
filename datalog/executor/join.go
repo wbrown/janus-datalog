@@ -160,16 +160,16 @@ func (it *hashJoinIterator) Error() error {
 }
 
 // emitProbeAnnotation reports the probe's counters. Its callers guard on
-// metrics, which is allocated only when a collector exists (see the
-// construction below), so its presence is what "annotations are on" means on
-// this path. What remains here is the once-only latch: exhaustion and Close
-// both reach this, and the counters belong to whichever arrives first.
+// metrics, which is allocated only when a handler exists (see the construction
+// below), so its presence is what "annotations are on" means on this path. What
+// remains here is the once-only latch: exhaustion and Close both reach this, and
+// the counters belong to whichever arrives first.
 func (it *hashJoinIterator) emitProbeAnnotation() {
 	if it.metrics.emitted {
 		return
 	}
 	it.metrics.emitted = true
-	it.options.Collector.Add(annotations.Event{
+	it.options.Handler(annotations.Event{
 		Name: annotations.JoinProbe,
 		Data: map[string]interface{}{
 			"tuple_count":   it.metrics.probeCount,
@@ -181,19 +181,19 @@ func (it *hashJoinIterator) emitProbeAnnotation() {
 }
 
 // emitJoinStrategyAnnotation reports which join shape was chosen and what it
-// was chosen over. Callers guard on opts.Collector.
+// was chosen over. Callers guard on the handler being non-nil.
 //
 // left and right are rendered by type, not by value: the datum is which
 // Relation implementation each side is, and a Relation is a live stream that
 // must not be spent to describe itself.
 func emitJoinStrategyAnnotation(
-	opts ExecutorOptions,
+	handler annotations.Handler,
 	left, right Relation,
 	joinSymbols []query.Symbol,
 	mode, buildSide string,
 	buildKeyUnique bool,
 ) {
-	opts.Collector.Add(annotations.Event{
+	handler(annotations.Event{
 		Name: annotations.JoinStrategy,
 		Data: map[string]interface{}{
 			"mode":             mode,
@@ -213,14 +213,19 @@ func emitJoinStrategyAnnotation(
 func HashJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 	// Try to get options from either relation
 	opts := left.Options()
-	if opts == (ExecutorOptions{}) {
+	if !opts.populated() {
 		opts = right.Options()
 	}
 	return HashJoinWithOptions(left, right, joinSyms, opts)
 }
 
-// HashJoinWithOptions performs a hash join with explicit options
-func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts ExecutorOptions) Relation {
+// HashJoinWithOptions performs a hash join with explicit options, reporting its
+// strategy and probe counters through opts.Handler when one is set.
+func HashJoinWithOptions(
+	left, right Relation,
+	joinSyms []query.Symbol,
+	opts ExecutorOptions,
+) Relation {
 	// Default capacity for unknown sizes (-1)
 	const defaultCapacity = 1000
 
@@ -241,7 +246,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		if leftIndices[i] < 0 || rightIndices[i] < 0 {
 			// Join symbol not found - return empty relation with options
 			opts := left.Options()
-			if opts == (ExecutorOptions{}) {
+			if !opts.populated() {
 				opts = right.Options()
 			}
 			return NewMaterializedRelationWithOptions(nil, nil, opts)
@@ -319,8 +324,8 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	if buildIsLeft {
 		buildSide = "left"
 	}
-	if opts.Collector != nil {
-		emitJoinStrategyAnnotation(opts, left, right, joinSyms, mode, buildSide, buildKeysUnique)
+	if opts.Handler != nil {
+		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, mode, buildSide, buildKeysUnique)
 	}
 
 	// Build phase - collect the build tuples once, then group them by join-key
@@ -356,9 +361,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	}
 
 	// copyCount/passthruCount feed the JoinBuildCopy annotation below; only
-	// track them when a collector will read them. Inlined into the build loop
+	// track them when a handler will read them. Inlined into the build loop
 	// (no closure) to avoid a per-join heap allocation.
-	trackCopy := opts.Collector != nil
+	trackCopy := opts.Handler != nil
 	var copyCount, passthruCount int
 	// The interval the copies were made in: draining the build relation. It ends
 	// at the loop rather than at the emit, which happens after grouping — a cost
@@ -417,9 +422,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		panic("hash join build relation violated its candidate-key guarantee")
 	}
 
-	// Emit annotation for copy statistics if collector is available
-	if opts.Collector != nil && (copyCount > 0 || passthruCount > 0) {
-		opts.Collector.Add(annotations.Event{
+	// Emit annotation for copy statistics if a handler is available
+	if opts.Handler != nil && (copyCount > 0 || passthruCount > 0) {
+		opts.Handler(annotations.Event{
 			Name:    annotations.JoinBuildCopy,
 			Start:   buildStart,
 			End:     buildEnd,
@@ -431,8 +436,8 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			},
 		})
 	}
-	if opts.Collector != nil {
-		opts.Collector.Add(annotations.Event{
+	if opts.Handler != nil {
+		opts.Handler(annotations.Event{
 			Name: annotations.JoinBuild,
 			Data: map[string]interface{}{
 				"tuple_count":     buildCount,
@@ -475,7 +480,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			options:             opts,
 			matchIdx:            0,
 		}
-		if opts.Collector != nil {
+		if opts.Handler != nil {
 			iter.metrics = &hashJoinMetrics{}
 		}
 
@@ -552,8 +557,8 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	if closeErr := probeIt.Close(); probeErr == nil {
 		probeErr = closeErr
 	}
-	if opts.Collector != nil {
-		opts.Collector.Add(annotations.Event{
+	if opts.Handler != nil {
+		opts.Handler(annotations.Event{
 			Name: annotations.JoinProbe,
 			Data: map[string]interface{}{
 				"tuple_count":   probeCount,
@@ -588,7 +593,7 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 
 	// Extract options from left relation
 	opts := left.Options()
-	if opts == (ExecutorOptions{}) {
+	if !opts.populated() {
 		opts = right.Options()
 	}
 
@@ -649,7 +654,7 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 
 	// Extract options from left relation
 	opts := left.Options()
-	if opts == (ExecutorOptions{}) {
+	if !opts.populated() {
 		opts = right.Options()
 	}
 
@@ -743,7 +748,7 @@ func crossProduct(left, right Relation) Relation {
 	// Warning: This can be very expensive!
 	// Extract options from left relation
 	opts := left.Options()
-	if opts == (ExecutorOptions{}) {
+	if !opts.populated() {
 		opts = right.Options()
 	}
 

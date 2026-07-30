@@ -1059,12 +1059,12 @@ func (r *StreamingRelation) Iterator() Iterator {
 	r.iteratorCalled = true
 
 	// If Materialize() was called, enable caching
-	var cacheCollector *annotations.Collector
+	var cacheHandler annotations.Handler
 	var cacheEvent annotations.Event
 	if r.shouldCache {
 		r.cachingInProgress = true
-		if r.options.Collector != nil {
-			cacheCollector = r.options.Collector
+		if r.options.Handler != nil {
+			cacheHandler = r.options.Handler
 			cacheEvent = annotations.Event{
 				Name: annotations.RelationCacheEnabled,
 				Data: map[string]interface{}{
@@ -1077,8 +1077,8 @@ func (r *StreamingRelation) Iterator() Iterator {
 	}
 
 	r.mu.Unlock()
-	if cacheCollector != nil {
-		cacheCollector.Add(cacheEvent)
+	if cacheHandler != nil {
+		cacheHandler(cacheEvent)
 	}
 
 	// Create base iterator

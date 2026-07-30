@@ -12,7 +12,7 @@ import (
 func TestExplain(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -128,7 +128,7 @@ func TestExplain(t *testing.T) {
 func TestAnalyze(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -264,7 +264,7 @@ func TestAnalyze(t *testing.T) {
 func TestAnalyze_ConsumesStreamingResults(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			tx := db.NewTransaction()
 			for i, name := range []string{"Task A", "Task B", "Task C"} {

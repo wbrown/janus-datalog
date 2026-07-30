@@ -80,7 +80,7 @@ func TestScanProjectionPreservesSet(t *testing.T) {
 func TestScanSetSemantics_DeclaredManyValueWildcard(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
 				Ident:       datalog.NewKeyword(":scan/tags"),
@@ -115,7 +115,7 @@ func TestScanSetSemantics_DeclaredManyValueWildcard(t *testing.T) {
 func TestScanSetSemantics_HistoryReassertedValue(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 			e := datalog.NewIdentity("scan:reasserted")
 			attr := datalog.NewKeyword(":scan/value")
 

@@ -609,10 +609,7 @@ func TestSemiAndAntiJoinsCopyWorkspaceReusingLeftInput(t *testing.T) {
 }
 
 func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
-	var events []annotations.Event
-	collector := annotations.NewCollector(func(event annotations.Event) {
-		events = append(events, event)
-	})
+	var cacheEnabled *annotations.Event
 	symbol := datalog.NewSymbol("?value")
 	base := NewMaterializedRelationFromSet(
 		[]query.Symbol{symbol},
@@ -622,7 +619,11 @@ func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
 	stream := NewStreamingRelationWithOptions(
 		base.Symbols(),
 		base.Iterator(),
-		ExecutorOptions{Collector: collector},
+		ExecutorOptions{Handler: func(event annotations.Event) {
+			if event.Name == annotations.RelationCacheEnabled {
+				cacheEnabled = &event
+			}
+		}},
 	)
 
 	stream.Materialize()
@@ -632,13 +633,6 @@ func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
 	require.NoError(t, it.Error())
 	require.NoError(t, it.Close())
 
-	found := false
-	for _, event := range events {
-		if event.Name == annotations.RelationCacheEnabled {
-			found = true
-			require.Equal(t, 1, event.Data["symbol_count"])
-			break
-		}
-	}
-	require.True(t, found, "relation cache annotation was not emitted")
+	require.NotNil(t, cacheEnabled, "relation cache annotation was not emitted")
+	require.Equal(t, 1, cacheEnabled.Data["symbol_count"])
 }

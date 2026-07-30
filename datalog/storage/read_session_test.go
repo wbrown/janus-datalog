@@ -226,28 +226,22 @@ func TestReadSessionConcurrentScans(t *testing.T) {
 func TestQuerySnapshotConsistency(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			opts := mode.plannerOptions()
-			d, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &opts,
-			})
-			require.NoError(t, err)
-			defer d.Close()
-
 			e1 := datalog.NewIdentity("torn:e1")
 			attrA := datalog.NewKeyword(":snap/a")
 			attrB := datalog.NewKeyword(":snap/b")
-
-			tx := d.NewTransaction()
-			require.NoError(t, tx.Add(e1, attrA, int64(1)))
-			require.NoError(t, tx.Add(e1, attrB, int64(1)))
-			_, err = tx.Commit()
-			require.NoError(t, err)
 
 			// After the first pattern's scan completes, flip both attributes to 2.
 			// Without a session, the second pattern's scan runs against the store
 			// post-write and pairs a=1 with b=2 (or b=1 with a=2) — a state that
 			// never existed. With a per-query session both scans read the snapshot.
+			//
+			// The write must land synchronously between the two scans and against
+			// this same database — a second handle over the same store would give
+			// the writer its own EA cache and change what this test exercises. So
+			// the handler closes over d, which is assigned once below, before the
+			// query that fires any event. A single forward reference, not a target
+			// that moves: the handler reports to the same place for its whole life.
+			var d *Database
 			var once sync.Once
 			handler := func(event annotations.Event) {
 				if !strings.HasPrefix(event.Name, "pattern/") {
@@ -268,7 +262,21 @@ func TestQuerySnapshotConsistency(t *testing.T) {
 					}
 				})
 			}
-			d.AnnotationHandler = handler
+			opts := mode.plannerOptions()
+			opts.Handler = handler
+			var err error
+			d, err = NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				PlannerOptions: &opts,
+			})
+			require.NoError(t, err)
+			defer d.Close()
+
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Add(e1, attrA, int64(1)))
+			require.NoError(t, tx.Add(e1, attrB, int64(1)))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
 			rel, err := d.Query(`[:find ?va ?vb :where [?e :snap/a ?va] [?e :snap/b ?vb]]`)
 			require.NoError(t, err)

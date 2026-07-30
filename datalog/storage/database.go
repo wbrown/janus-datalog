@@ -58,23 +58,6 @@ type Database struct {
 	builderCache   *tupleBuilderCache      // Shared tuple-builder population for every matcher this database mints
 	temporalTxID   *datalog.ElementID      // nil = current; set = temporal mode (AsOf/History)
 
-	// AnnotationHandler receives query-tracing events; nil disables them. It is
-	// a field rather than a getter/setter pair because there is nothing for a
-	// method to do: one home, read directly by everything that emits, assigned
-	// directly by anyone who wants tracing.
-	//
-	// The engine emits from parallel workers and does not serialize what it is
-	// given. Wrapping at one assignment path and not another would give this
-	// field two concurrency contracts depending on how it was populated, and it
-	// puts a process-wide lock on every event on the hot path.
-	//
-	// A handler does not need locking to render. Every event carries what its
-	// output reports, so a handler that keeps nothing between events is safe by
-	// construction — and one that keeps something is reading whichever worker
-	// wrote last, which no lock corrects. A handler accumulating for its own
-	// reasons, counting or batching, owns its synchronization.
-	AnnotationHandler annotations.Handler
-
 	// onCommitWindow, if set, is invoked inside Commit after the storage commit
 	// returns but before the cache is updated — the window where a stale cached
 	// read was once possible. Test-only (nil in production); lets a test run a
@@ -241,19 +224,33 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		}
 	}
 
+	// The planner options are materialized here rather than left nil, so the
+	// database has exactly one home for its handler and effectivePlannerOptions
+	// is a read rather than a projection. AnnotationHandler is the documented
+	// input and wins when set; a Handler supplied directly on PlannerOptions
+	// stands otherwise. Fixed at construction: nothing attaches an observer to a
+	// running database, because everything built from these options — executors,
+	// matchers, relations — is built with it already in place.
+	plannerOptions := DefaultPlannerOptions()
+	if opts.PlannerOptions != nil {
+		plannerOptions = *opts.PlannerOptions
+	}
+	if opts.AnnotationHandler != nil {
+		plannerOptions.Handler = opts.AnnotationHandler
+	}
+
 	d := &Database{
-		store:             store,
-		encoder:           encoder,
-		activeTx:          make(map[*Transaction]bool),
-		planCache:         planner.NewPlanCache(1000, 0),
-		parseCache:        NewParseCache(1000),
-		schema:            effectiveSchema,
-		AnnotationHandler: opts.AnnotationHandler,
-		plannerOptions:    opts.PlannerOptions,
-		clock:             clock,
-		replicaID:         replicaID,
-		cache:             cache,
-		builderCache:      newTupleBuilderCache(),
+		store:          store,
+		encoder:        encoder,
+		activeTx:       make(map[*Transaction]bool),
+		planCache:      planner.NewPlanCache(1000, 0),
+		parseCache:     NewParseCache(1000),
+		schema:         effectiveSchema,
+		plannerOptions: &plannerOptions,
+		clock:          clock,
+		replicaID:      replicaID,
+		cache:          cache,
+		builderCache:   newTupleBuilderCache(),
 	}
 	d.drainCond = sync.NewCond(&d.mu)
 	return d, nil
@@ -343,7 +340,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 			if !seenEntities[eBytes] {
 				seenEntities[eBytes] = true
 				key := CacheKey{E: eBytes, A: aBytes}
-				if _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler, DiscardIntake); err != nil {
+				if _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake); err != nil {
 					iter.Close()
 					return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 				}
@@ -382,7 +379,7 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	var entry *CacheEntry
 	var err error
 	if d.cache != nil {
-		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler, DiscardIntake)
+		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 	} else {
 		entry, err = ResolveEntry(key, matcher, DiscardIntake)
 	}
@@ -428,7 +425,7 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	var entry *CacheEntry
 	var err error
 	if d.cache != nil {
-		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler, DiscardIntake)
+		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 	} else {
 		entry, err = ResolveEntry(key, matcher, DiscardIntake)
 	}
@@ -484,18 +481,17 @@ func (d *Database) NewTransactionAt(t time.Time) *Transaction {
 	return tx
 }
 
-// Matcher returns a PatternMatcher for the current database state
-// effectivePlannerOptions returns the database's planner options: the
-// caller-supplied override (DatabaseOptions.PlannerOptions) when set, otherwise
-// DefaultPlannerOptions(). Every query-construction path (Query, NewExecutor,
-// Matcher) funnels through this accessor so the executor and the default-source
-// matcher always agree on the effective options. See
+// effectivePlannerOptions returns a copy of the database's planner options,
+// materialized at construction from DatabaseOptions and carrying its registered
+// Handler. Every query-construction path (Query, NewExecutor, Matcher) funnels
+// through this accessor so the executor and the default-source matcher always
+// agree on the effective options. See
 // BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.
+//
+// A caller wanting a per-query handler overrides Handler on the copy it receives
+// and builds its own executor; the database's own options are never mutated.
 func (d *Database) effectivePlannerOptions() planner.PlannerOptions {
-	if d.plannerOptions != nil {
-		return *d.plannerOptions
-	}
-	return DefaultPlannerOptions()
+	return *d.plannerOptions
 }
 
 // Matcher returns the default-source pattern matcher, configured from the
@@ -532,18 +528,17 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 	// pinned by TestTemporalHandleFieldClassification — a new Database field
 	// must be classified there before it can ship.
 	handle := &Database{
-		store:             d.store,
-		encoder:           d.encoder,
-		schema:            d.schema,
-		AnnotationHandler: d.AnnotationHandler,
-		planCache:         d.planCache,
-		parseCache:        d.parseCache,
-		plannerOptions:    d.plannerOptions,
-		cache:             NewCache(),
-		builderCache:      d.builderCache,
-		clock:             d.clock,
-		replicaID:         d.replicaID,
-		temporalTxID:      &txID,
+		store:          d.store,
+		encoder:        d.encoder,
+		schema:         d.schema,
+		planCache:      d.planCache,
+		parseCache:     d.parseCache,
+		plannerOptions: d.plannerOptions,
+		cache:          NewCache(),
+		builderCache:   d.builderCache,
+		clock:          d.clock,
+		replicaID:      d.replicaID,
+		temporalTxID:   &txID,
 	}
 	return handle
 }
@@ -560,18 +555,17 @@ func (d *Database) History() *Database {
 	// TestTemporalHandleFieldClassification (see AsOf above).
 	empty := datalog.ElementID{}
 	return &Database{
-		store:             d.store,
-		encoder:           d.encoder,
-		schema:            d.schema,
-		AnnotationHandler: d.AnnotationHandler,
-		planCache:         d.planCache,
-		parseCache:        d.parseCache,
-		plannerOptions:    d.plannerOptions,
-		cache:             d.cache,
-		builderCache:      d.builderCache,
-		clock:             d.clock,
-		replicaID:         d.replicaID,
-		temporalTxID:      &empty,
+		store:          d.store,
+		encoder:        d.encoder,
+		schema:         d.schema,
+		planCache:      d.planCache,
+		parseCache:     d.parseCache,
+		plannerOptions: d.plannerOptions,
+		cache:          d.cache,
+		builderCache:   d.builderCache,
+		clock:          d.clock,
+		replicaID:      d.replicaID,
+		temporalTxID:   &empty,
 	}
 }
 
@@ -603,6 +597,7 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 }
 
 // NewExecutor creates a new query executor that uses the database's plan cache
+// and the database's registered annotation handler.
 func (d *Database) NewExecutor() *executor.Executor {
 	opts := d.effectivePlannerOptions()
 	opts.Cache = d.planCache // Use database's cache
@@ -614,8 +609,9 @@ func (d *Database) NewExecutor() *executor.Executor {
 //
 // Builds the pattern matcher from the same custom options via
 // matcherWithExecOptions, so the executor and the matcher's relations agree on
-// the effective options, and schema, cache, annotation handler, and temporal
-// mode (AsOf/History) are all applied.
+// the effective options — including opts.Handler, which reaches every relation
+// either constructs — and schema, cache, and temporal mode (AsOf/History) are
+// all applied.
 func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor.Executor {
 	opts.Cache = d.planCache
 	matcher := d.matcherWithExecOptions(opts)
@@ -625,12 +621,16 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 // matcherWithExecOptions builds a fully-configured PatternMatcher using the
 // given planner options (converted through executor.ExecutorOptionsFromPlanner,
 // the single source of truth shared with the executor) while applying all
-// database-level state: schema, cache, annotation handler, temporal mode.
-// Matcher() funnels through here with the database's effective options.
+// database-level state: schema, cache, temporal mode.
+//
+// The handler rides in with opts and is applied at construction, because the
+// relations this matcher builds inherit its options and a matcher built without
+// an observer can never acquire one afterwards. Callers wanting a per-query
+// handler — Analyze collecting into its own closure, the CLI rendering to its own
+// formatter — set opts.Handler before calling.
 func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.PatternMatcher {
 	matcher := NewPatternMatcherWithOptions(d.store, executor.ExecutorOptionsFromPlanner(opts))
 	matcher.builderCache = d.builderCache
-	matcher.SetHandler(d.AnnotationHandler)
 	if d.schema != nil {
 		matcher.SetSchema(d.schema)
 	}
@@ -1013,26 +1013,41 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 		return nil, err
 	}
 
-	// Create executor (this also creates the planner with proper options)
-	exec := d.NewExecutor()
+	// Accumulate every event: AnalyzeResult.Events is what this method returns,
+	// so here the accumulation is the product rather than a way to look one event
+	// up. Parallel subquery workers share this handler, so it holds a lock — a
+	// handler that accumulates owns its own synchronization, since the engine does
+	// not serialize handlers.
+	//
+	// Declared before the options because the executor and its matcher are
+	// constructed with the handler registered on them.
+	var eventsMu sync.Mutex
+	var events []annotations.Event
 
-	// Get the query plan from the executor's planner. The Analyze collector below
-	// captures execution annotations; planning here is not annotated (matching
-	// prior behavior).
+	// Registered on this call's options, overriding the database's open-time
+	// handler: these events belong to the returned AnalyzeResult, not to whoever
+	// opened the database.
+	opts := d.effectivePlannerOptions()
+	opts.Handler = func(e annotations.Event) {
+		eventsMu.Lock()
+		events = append(events, e)
+		eventsMu.Unlock()
+	}
+
+	// Create executor (this also creates the planner with proper options)
+	exec := d.NewExecutorWithOptions(opts)
+
+	// Get the query plan from the executor's planner. The handler above captures
+	// execution annotations; planning here is not annotated (matching prior
+	// behavior).
 	queryPlanner := exec.GetPlanner()
 	plan, err := queryPlanner.PlanQuery(q, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to plan query: %w", err)
 	}
 
-	// Create a collector to capture all events
-	var events []annotations.Event
-	collector := annotations.NewCollector(func(e annotations.Event) {
-		events = append(events, e)
-	})
-
 	// Execute with annotation collection
-	result, err := exec.ExecuteWithRelations(executor.NewContext(collector.Handler()), q, inputRelations)
+	result, err := exec.ExecuteWithRelations(executor.NewContext(), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
 	}
@@ -1439,12 +1454,6 @@ func setScalarValue(dest reflect.Value, val interface{}) error {
 	}
 
 	return fmt.Errorf("cannot convert %T to %s", val, destType)
-}
-
-// GetExecutor returns a new query executor
-// This provides direct access to the executor for advanced use cases
-func (d *Database) GetExecutor() *executor.Executor {
-	return d.NewExecutor()
 }
 
 // entityAttrKey is used to track per-(E, A) state within a transaction.
@@ -2031,7 +2040,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		var entry *CacheEntry
 		var err error
 		if t.db.cache != nil {
-			entry, err = t.db.cache.GetOrResolve(key, matcher, matcher.cacheBound(), t.db.AnnotationHandler, DiscardIntake)
+			entry, err = t.db.cache.GetOrResolve(key, matcher, matcher.cacheBound(), t.db.plannerOptions.Handler, DiscardIntake)
 		} else {
 			// Cache disabled - resolve directly from storage
 			entry, err = ResolveEntry(key, matcher, DiscardIntake)
@@ -2141,7 +2150,7 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 	var entry *CacheEntry
 	var err error
 	if t.db.cache != nil {
-		entry, err = t.db.cache.GetOrResolve(cacheKey, matcher, matcher.cacheBound(), t.db.AnnotationHandler, DiscardIntake)
+		entry, err = t.db.cache.GetOrResolve(cacheKey, matcher, matcher.cacheBound(), t.db.plannerOptions.Handler, DiscardIntake)
 	} else {
 		entry, err = ResolveEntry(cacheKey, matcher, DiscardIntake)
 	}
@@ -2729,7 +2738,7 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 	// is how application-layer upsert uses it — it is the dominant read in a
 	// program, so a trace that omitted it would omit the program's largest cost.
 	report := DiscardIntake
-	if d.AnnotationHandler != nil {
+	if d.plannerOptions.Handler != nil {
 		// The pattern this call resolves — which entity holds (attr, value) —
 		// named the way every other scan event names its subject. The Go
 		// signature is what hides the pattern here; the operation is the
@@ -2746,7 +2755,7 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 			},
 		}
 		report = &scanReport{
-			handler:  d.AnnotationHandler,
+			handler:  d.plannerOptions.Handler,
 			opened:   time.Now(),
 			strategy: annotations.ScanUniqueLookup,
 			cause:    map[string]interface{}{annotations.KeyPattern: pattern},
@@ -2879,7 +2888,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 			if !ok {
 				continue
 			}
-			entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler, DiscardIntake)
+			entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 			if err != nil {
 				return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 			}
@@ -2906,7 +2915,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		if !ok {
 			continue
 		}
-		entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.AnnotationHandler, DiscardIntake)
+		entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 		}
@@ -3078,7 +3087,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	var served int
 	bound := ScanBound{Index: EATV, Prefix: []datalog.Value{entity}}
 	report := DiscardIntake
-	if d.AnnotationHandler != nil {
+	if d.plannerOptions.Handler != nil {
 		opened = time.Now()
 		report = &scanReport{}
 		defer func() {
@@ -3088,7 +3097,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 				annotations.KeyScansOpened:   1,
 			}
 			addBoundFields(data, bound)
-			d.AnnotationHandler(annotations.Event{
+			d.plannerOptions.Handler(annotations.Event{
 				Name:    annotations.StorageResolveComplete,
 				Start:   opened,
 				Latency: time.Since(opened),

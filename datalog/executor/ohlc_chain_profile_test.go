@@ -223,7 +223,7 @@ func createOHLCData(numDays, numHours int) []datalog.Datom {
 // BenchmarkScanRegistryAccess measures access to the remaining mutable
 // per-query context state.
 func BenchmarkScanRegistryAccess(b *testing.B) {
-	ctx := NewContext(nil)
+	ctx := NewContext()
 
 	b.ReportAllocs()
 	b.ResetTimer()

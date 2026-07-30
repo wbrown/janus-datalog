@@ -138,19 +138,20 @@ func TestDecorrelationAnnotations(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Execute WITH decorrelation and capture annotations
-			execWithDecor := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
-
+			// Execute WITH decorrelation and capture annotations. The handler is
+			// registered on the options the executor is built with.
 			var capturedEvents []annotations.Event
 			var eventsMu sync.Mutex
-			handler := annotations.Handler(func(e annotations.Event) {
+
+			opts := mode.zeroPlannerOptions()
+			opts.Handler = func(e annotations.Event) {
 				eventsMu.Lock()
 				capturedEvents = append(capturedEvents, e)
 				eventsMu.Unlock()
-			})
+			}
+			execWithDecor := NewExecutorWithOptions(matcher, nil, opts)
 
-			ctx := NewContext(handler)
-			result, err := execWithDecor.ExecuteWithContext(ctx, q)
+			result, err := execWithDecor.Execute(q)
 			if err != nil {
 				t.Fatalf("Execution failed: %v", err)
 			}

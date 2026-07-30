@@ -27,7 +27,12 @@ import (
 // the comparison panics with "comparing uncomparable type []uint8". The fix is
 // to use datalog.ValuesEqual / m.valuesEqual.
 
-func newBytesOneDB(t *testing.T, mode optimizerMode) (*Database, datalog.Identity, datalog.Keyword) {
+// handler is registered at open; nil is annotations-off.
+func newBytesOneDB(
+	t *testing.T,
+	mode optimizerMode,
+	handler annotations.Handler,
+) (*Database, datalog.Identity, datalog.Keyword) {
 	t.Helper()
 	// Cardinality-one, NOT unique: forces the candidate+validate path
 	// (validateCandidate), not the unique (A,V)-LWW short-circuit.
@@ -36,6 +41,7 @@ func newBytesOneDB(t *testing.T, mode optimizerMode) (*Database, datalog.Identit
 		Build()
 	require.NoError(t, err)
 	opts := mode.plannerOptions()
+	opts.Handler = handler
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:           t.TempDir(),
 		Schema:         s,
@@ -63,7 +69,7 @@ func queryByHash(t *testing.T, db *Database, v []byte) []datalog.Identity {
 func TestVBoundCardinalityOneBytes_NoPanic(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, e, a := newBytesOneDB(t, mode)
+			db, e, a := newBytesOneDB(t, mode, nil)
 			defer db.Close()
 
 			v := []byte{0xde, 0xad, 0xbe, 0xef}
@@ -90,7 +96,7 @@ func TestVBoundCardinalityOneBytes_NoPanic(t *testing.T) {
 func TestVBoundCardinalityOneBytes_MatchesByContent(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, e, a := newBytesOneDB(t, mode)
+			db, e, a := newBytesOneDB(t, mode, nil)
 			defer db.Close()
 
 			tx := db.NewTransaction()
@@ -118,7 +124,7 @@ func TestVBoundCardinalityOneBytes_MatchesByContent(t *testing.T) {
 func TestVBoundCardinalityOneBytes_RejectsStaleCandidate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, e, a := newBytesOneDB(t, mode)
+			db, e, a := newBytesOneDB(t, mode, nil)
 			defer db.Close()
 
 			v1 := []byte{0x01, 0x01}
@@ -150,7 +156,7 @@ func TestVBoundCardinalityOneBytes_RejectsStaleCandidate(t *testing.T) {
 func TestVBoundCardinalityOneBytes_AfterOverwrite(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, e, a := newBytesOneDB(t, mode)
+			db, e, a := newBytesOneDB(t, mode, nil)
 			defer db.Close()
 
 			v1 := []byte{0x0a}
@@ -185,7 +191,7 @@ func TestVBoundCardinalityOneBytes_AfterOverwrite(t *testing.T) {
 func TestVBoundCardinalityOneBytes_AfterRemove(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, e, a := newBytesOneDB(t, mode)
+			db, e, a := newBytesOneDB(t, mode, nil)
 			defer db.Close()
 
 			v := []byte{0xfe, 0xed}
@@ -217,12 +223,11 @@ func TestVBoundCardinalityOneBytes_AfterRemove(t *testing.T) {
 func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db, e, a := newBytesOneDB(t, mode)
-			defer db.Close()
-
+			// This handler accumulates, and parallel subquery workers share it,
+			// so it holds its own lock.
 			var mu sync.Mutex
 			var trail []string
-			db.AnnotationHandler = func(ev annotations.Event) {
+			db, e, a := newBytesOneDB(t, mode, func(ev annotations.Event) {
 				if strings.HasPrefix(ev.Name, "v-validation/") ||
 					strings.Contains(ev.Name, "join") ||
 					strings.Contains(ev.Name, "collapse") ||
@@ -232,7 +237,8 @@ func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
 					trail = append(trail, fmt.Sprintf("%s %v", ev.Name, ev.Data))
 					mu.Unlock()
 				}
-			}
+			})
+			defer db.Close()
 
 			v := []byte{0xde, 0xad, 0xbe, 0xef}
 			tx := db.NewTransaction()
@@ -261,7 +267,7 @@ func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
 // It drives the matcher rather than the executor, so the algebra optimizer is
 // not on its path: it pins one mode explicitly instead of looping the axis.
 func TestVBoundCardinalityOneBytes_DirectMatcher(t *testing.T) {
-	db, e, a := newBytesOneDB(t, optimizerMode{name: "algebra_off", algebra: false})
+	db, e, a := newBytesOneDB(t, optimizerMode{name: "algebra_off", algebra: false}, nil)
 	defer db.Close()
 
 	v := []byte{0xde, 0xad, 0xbe, 0xef}

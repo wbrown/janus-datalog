@@ -245,7 +245,13 @@ func TestMissingAsPredicate(t *testing.T) {
 func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			// Collected for the failure dump below and registered at open, since
+			// everything the database builds is constructed with it. Nothing
+			// asserts on the contents, so events from the whole test are welcome
+			// in the dump.
+			var events []annotations.Event
 			popts := mode.plannerOptions()
+			popts.Handler = func(event annotations.Event) { events = append(events, event) }
 			db, err := NewDatabaseWithOptions(DatabaseOptions{
 				Path:           t.TempDir(),
 				PlannerOptions: &popts,
@@ -293,11 +299,8 @@ func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 			// The input relation is the relation; both modes must execute it.
 			// The event stream is logged on failure so the reproducer shows
 			// where the tuple vanishes, not just that it did.
-			var events []annotations.Event
-			db.AnnotationHandler = func(event annotations.Event) { events = append(events, event) }
 			results, err = executor.CollectTuples(db.Query(
 				`[:find ?e :in $ ?e :where [(missing? $ ?e :user/email)]]`, bob))
-			db.AnnotationHandler = nil
 			if err != nil {
 				t.Fatalf("Consumer-only query failed: %v", err)
 			}

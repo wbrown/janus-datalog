@@ -59,7 +59,7 @@ func TestBadgerParallelProfile(t *testing.T) {
 	}
 
 	matcher := storage.NewPatternMatcher(db.Store())
-	ctx := executor.NewContext(nil)
+	ctx := executor.NewContext()
 
 	queryStr := `[:find ?n ?y ?m (max ?age)
 	              :in $ [[?n ?y ?m] ...]

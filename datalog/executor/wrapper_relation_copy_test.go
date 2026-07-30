@@ -167,7 +167,7 @@ func TestOrFallbackIteratorCopiesFromUnsafeOuter(t *testing.T) {
 
 	matcher := NewIndexedMemoryMatcher(datoms)
 	queryExec := newQueryExecutor(matcher, nil, ExecutorOptions{})
-	ctx := NewContext(nil)
+	ctx := NewContext()
 
 	// Create an unsafe outer relation with [?e, ?name]
 	// This simulates what BadgerDB returns - workspace reuse
@@ -335,10 +335,11 @@ func TestOrFallbackIteratorMultipleBranchResultsIntegration(t *testing.T) {
 	}
 
 	matcher := NewIndexedMemoryMatcher(datoms)
-	queryExec := newQueryExecutor(matcher, nil, ExecutorOptions{})
-	ctx := NewContext(func(e annotations.Event) {
+	options := ExecutorOptions{Handler: func(e annotations.Event) {
 		t.Logf("[ANNOTATION] %s: %v", e.Name, e.Data)
-	})
+	}}
+	queryExec := newQueryExecutor(matcher, nil, options)
+	ctx := NewContext()
 
 	// Create an outer relation with 2 entities
 	outerSymbols := []query.Symbol{datalog.NewSymbol("?e")}
@@ -365,7 +366,7 @@ func TestOrFallbackIteratorMultipleBranchResultsIntegration(t *testing.T) {
 	}
 
 	// Create OrFallbackRelation directly
-	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, orClause.Branches, outerRel, ExecutorOptions{}, true)
+	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, orClause.Branches, outerRel, options, true)
 
 	// Iterate and store tuple references WITHOUT copying
 	var storedTuples []Tuple
@@ -428,7 +429,7 @@ func TestOrFallbackIteratorWithFallbackBranch(t *testing.T) {
 
 	matcher := NewIndexedMemoryMatcher(datoms)
 	queryExec := newQueryExecutor(matcher, nil, ExecutorOptions{})
-	ctx := NewContext(nil)
+	ctx := NewContext()
 
 	// Create an unsafe outer relation with 3 items
 	outerSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")}

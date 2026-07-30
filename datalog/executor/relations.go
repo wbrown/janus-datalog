@@ -1,8 +1,124 @@
 package executor
 
 import (
+	"time"
+
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
+
+// reportJoin times fn and reports the join's sizes and symbols through handler.
+// The early return is the whole of the annotations-off path: fn is the work
+// either way, and nothing below it is prepared unless someone will read it.
+func reportJoin(handler annotations.Handler, left, right Relation, fn func() Relation) Relation {
+	if handler == nil {
+		return fn()
+	}
+
+	start := time.Now()
+	leftSize := -1 // Use -1 to indicate unknown size
+	rightSize := -1
+
+	// Don't call Size() on StreamingRelations before the join: Size() can
+	// trigger materialization which may lose tuples if the iterator was
+	// partially consumed. Only ask relations where it is safe.
+	if left != nil {
+		if _, isStreaming := left.(*StreamingRelation); !isStreaming {
+			leftSize = left.Size()
+		}
+	}
+	if right != nil {
+		if _, isStreaming := right.(*StreamingRelation); !isStreaming {
+			rightSize = right.Size()
+		}
+	}
+
+	result := fn()
+
+	resultSize := 0
+	if result != nil {
+		resultSize = result.Size()
+	}
+
+	data := map[string]interface{}{
+		"left.size":   leftSize,
+		"right.size":  rightSize,
+		"result.size": resultSize,
+	}
+
+	if leftSize+rightSize > 0 {
+		data["amplification"] = float64(resultSize) / float64(leftSize+rightSize)
+	}
+
+	if left != nil && right != nil {
+		data["left.symbols"] = left.Symbols()
+		data["right.symbols"] = right.Symbols()
+	}
+
+	if left != nil {
+		leftAttrs := make([]string, len(left.Symbols()))
+		for i, sym := range left.Symbols() {
+			leftAttrs[i] = sym.String()
+		}
+		data["left.attrs"] = leftAttrs
+	}
+	if right != nil {
+		rightAttrs := make([]string, len(right.Symbols()))
+		for i, sym := range right.Symbols() {
+			rightAttrs[i] = sym.String()
+		}
+		data["right.attrs"] = rightAttrs
+	}
+	if result != nil {
+		resultAttrs := make([]string, len(result.Symbols()))
+		for i, sym := range result.Symbols() {
+			resultAttrs[i] = sym.String()
+		}
+		data["result.attrs"] = resultAttrs
+	}
+
+	handler(annotations.TimedEvent(annotations.JoinHash, start, data))
+	return result
+}
+
+// reportCollapse times fn and reports the reduction, when there was one.
+func reportCollapse(handler annotations.Handler, rels []Relation, fn func() []Relation) []Relation {
+	if handler == nil {
+		return fn()
+	}
+
+	start := time.Now()
+
+	inputCount := len(rels)
+	inputTuples := 0
+	for _, rel := range rels {
+		if rel != nil {
+			inputTuples += rel.Size()
+		}
+	}
+
+	result := fn()
+
+	outputCount := len(result)
+	outputTuples := 0
+	for _, rel := range result {
+		if rel != nil {
+			outputTuples += rel.Size()
+		}
+	}
+
+	if outputCount < inputCount || outputTuples < inputTuples {
+		handler(annotations.TimedEvent(annotations.CollapseSuccess, start, map[string]interface{}{
+			"relations.before": inputCount,
+			"relations.after":  outputCount,
+			"tuples.before":    inputTuples,
+			"tuples.after":     outputTuples,
+			"reduction.pct":    (1.0 - float64(outputTuples)/float64(inputTuples)) * 100,
+		}))
+	}
+
+	return result
+}
 
 // Relations represents a collection of relations that can be analyzed together
 // to make optimal query execution decisions
@@ -132,7 +248,9 @@ func (rs Relations) Product() Relation {
 // Collapse joins relations that share symbols and returns all relation groups.
 // Relations that can be joined are combined into single relations.
 // Relations that share no symbols remain separate.
-func (rs Relations) Collapse(ctx Context) Relations {
+//
+// handler receives each join it performs; nil reports nothing.
+func (rs Relations) Collapse(handler annotations.Handler) Relations {
 	if len(rs) == 0 {
 		return Relations{}
 	}
@@ -163,7 +281,7 @@ func (rs Relations) Collapse(ctx Context) Relations {
 				// Check if this relation shares symbols with current group
 				if hasSharedSymbols(currentGroup, remaining[i]) {
 					// Join them
-					currentGroup = ctx.JoinRelations(currentGroup, remaining[i], func() Relation {
+					currentGroup = reportJoin(handler, currentGroup, remaining[i], func() Relation {
 						return currentGroup.Join(remaining[i])
 					})
 

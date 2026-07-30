@@ -33,13 +33,16 @@ func TestTemporalHandlesInheritPlannerOptions(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	// DeepEqual rather than ==: PlannerOptions carries Handler, a func, and a
+	// struct holding one is not comparable. This database registers no handler,
+	// and DeepEqual holds two nil funcs equal, so the comparison is exact.
 	want := db.effectivePlannerOptions()
 	asOf := db.AsOf(datalog.ElementID{Lamport: 1, ReplicaID: 1})
-	if got := asOf.effectivePlannerOptions(); got != want {
+	if got := asOf.effectivePlannerOptions(); !reflect.DeepEqual(got, want) {
 		t.Errorf("AsOf handle dropped the parent's planner options:\n  parent: %+v\n  handle: %+v", want, got)
 	}
 	hist := db.History()
-	if got := hist.effectivePlannerOptions(); got != want {
+	if got := hist.effectivePlannerOptions(); !reflect.DeepEqual(got, want) {
 		t.Errorf("History handle dropped the parent's planner options:\n  parent: %+v\n  handle: %+v", want, got)
 	}
 }
@@ -64,15 +67,14 @@ const (
 // from this table fails TestTemporalHandleFieldClassification: adding a
 // Database field requires deciding, here, what AsOf/History do with it.
 var temporalFieldContract = map[string]temporalFieldClass{
-	"store":             fieldInherited,
-	"encoder":           fieldInherited,
-	"planCache":         fieldInherited,
-	"parseCache":        fieldInherited, // shared parse results are immutable post-parse
-	"schema":            fieldInherited,
-	"AnnotationHandler": fieldInherited, // exported: assigned directly, no setter to fan out
-	"plannerOptions":    fieldInherited, // the regenerated instance of the class bug
-	"clock":             fieldInherited,
-	"replicaID":         fieldInherited,
+	"store":          fieldInherited,
+	"encoder":        fieldInherited,
+	"planCache":      fieldInherited,
+	"parseCache":     fieldInherited, // shared parse results are immutable post-parse
+	"schema":         fieldInherited,
+	"plannerOptions": fieldInherited, // carries the handler; the handle inherits both together
+	"clock":          fieldInherited,
+	"replicaID":      fieldInherited,
 
 	"txCounter":          fieldZeroed, // write path; atomic, non-copyable
 	"mu":                 fieldZeroed, // lock; non-copyable

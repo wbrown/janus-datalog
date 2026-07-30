@@ -76,7 +76,7 @@ func TestPullWithRelationInputUnion(t *testing.T) {
 			inputRel := NewMaterializedRelation(
 				[]query.Symbol{datalog.NewSymbol("?k")}, []Tuple{{"A"}, {"B"}})
 
-			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}

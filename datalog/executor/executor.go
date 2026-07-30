@@ -68,11 +68,11 @@ func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opt
 // and the storage default-source matcher (storage.Database.Matcher) convert
 // through this function so they cannot disagree on which fields cross the
 // boundary — every PlannerOptions field that has an ExecutorOptions counterpart
-// is copied here. Collector is set per-query from the execution context, and
-// DefaultHashTableSize has no PlannerOptions counterpart, so both are left at
-// their zero value.
+// is copied here. DefaultHashTableSize has no PlannerOptions counterpart and is
+// left at its zero value.
 func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
+		Handler:                    opts.Handler,
 		EnableTrueStreaming:        opts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:    opts.EnableSymmetricHashJoin,
 		EnableParallelSubqueries:   opts.EnableParallelSubqueries,
@@ -98,12 +98,11 @@ func (e *Executor) DisableParallelSubqueries() {
 
 // Execute runs a parsed query and returns the results
 func (e *Executor) Execute(q *query.Query) (Relation, error) {
-	// Use a no-op context for backward compatibility
-	return e.ExecuteWithContext(NewContext(nil), q)
+	return e.ExecuteWithContext(NewContext(), q)
 }
 
 // ExecuteWithContext runs a parsed query with annotation support
-func (e *Executor) ExecuteWithContext(ctx Context, q *query.Query) (Relation, error) {
+func (e *Executor) ExecuteWithContext(ctx *Context, q *query.Query) (Relation, error) {
 	// Delegate to ExecuteWithRelations with empty input relations
 	return e.ExecuteWithRelations(ctx, q, []Relation{})
 }
@@ -112,7 +111,7 @@ func (e *Executor) ExecuteWithContext(ctx Context, q *query.Query) (Relation, er
 // This is the unified query execution method that treats regular queries and subqueries the same way.
 // For regular queries, pass an empty slice for inputRelations.
 // For subqueries, pass the relations corresponding to the :in clause variables.
-func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelations []Relation) (Relation, error) {
+func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelations []Relation) (Relation, error) {
 	// Static clause-shape rules are user-boundary contracts: a hand-built
 	// AST entering here gets the same rejection, with the same message, as
 	// parsed text — and before planning, so both planner modes agree on
@@ -121,23 +120,21 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 		return nil, err
 	}
 
-	// Apply decorator pattern: wrap matcher with annotations if context has a handler
+	// Apply decorator pattern: wrap matcher with annotations if one is registered
 	matcher := e.matcher
+
+	// Registered on the options, so every executor, matcher, and relation built
+	// under them already has it. Read once here: it governs the wrapping below
+	// and every emit on this path.
+	handler := e.options.Handler
 
 	// Wrap with scan sharing if enabled — must come before annotation wrapping
 	// so that annotations see the sharing layer's decisions
 	if e.options.EnableScanSharing {
-		reg := ctx.ScanRegistry()
-		var handler annotations.Handler
-		if collector := ctx.Collector(); collector != nil {
-			handler = collector.Handler()
-		}
-		matcher = NewScanSharingMatcher(matcher, reg, handler)
+		matcher = NewScanSharingMatcher(matcher, ctx.ScanRegistry(), handler)
 	}
 
-	if collector := ctx.Collector(); collector != nil {
-		matcher = WrapMatcher(matcher, collector.Handler())
-	}
+	matcher = WrapMatcher(matcher, handler)
 
 	// Create a temporary executor with the wrapped matcher
 	executor := &Executor{
@@ -149,7 +146,17 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 		maxSubqueryWorkers:       e.maxSubqueryWorkers,
 	}
 
-	ctx.QueryBegin(q.String())
+	// q.String() renders the whole query, so the guard is here rather than
+	// inside an emit that would have received it already rendered.
+	var queryStart time.Time
+	if handler != nil {
+		queryStart = time.Now()
+		handler(annotations.Event{
+			Name:  annotations.QueryInvoked,
+			Start: queryStart,
+			Data:  map[string]interface{}{"query": q.String()},
+		})
+	}
 
 	// Build initial bindings from input relations
 	initialBindings := make(map[query.Symbol]bool)
@@ -193,25 +200,36 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 	}
 
 	// Execute using QueryExecutor (Stage B) with RealizedPlan. The annotation
-	// handler is threaded per-query into planning (not stored on the shared
+	// handler is passed per-query into planning (not stored on the shared
 	// planner), so concurrent annotated queries neither race on it nor
 	// cross-route algebra-bridge events.
-	var planHandler annotations.Handler
-	if collector := ctx.Collector(); collector != nil {
-		planHandler = collector.Handler()
-	}
 	var realizedPlan *planner.RealizedPlan
 	var err error
 	if len(initialBindings) == 0 {
-		realizedPlan, err = executor.planner.PlanQuery(q, planHandler)
+		realizedPlan, err = executor.planner.PlanQuery(q, handler)
 	} else {
-		realizedPlan, err = executor.planner.PlanQueryWithBindings(q, initialBindings, planHandler)
+		realizedPlan, err = executor.planner.PlanQueryWithBindings(q, initialBindings, handler)
 	}
 	if err != nil {
-		ctx.QueryComplete(0, 0, err)
+		if handler != nil {
+			handler(annotations.TimedEvent(annotations.QueryComplete, queryStart,
+				map[string]interface{}{
+					"relations.count":      0,
+					"tuples.count":         0,
+					annotations.KeySuccess: false,
+					"error":                err.Error(),
+				}))
+		}
 		return nil, fmt.Errorf("query planning failed: %w", err)
 	}
-	ctx.QueryPlanCreated(realizedPlan.String())
+	// realizedPlan.String() renders the whole plan, so the guard is here.
+	if handler != nil {
+		handler(annotations.Event{
+			Name:  annotations.QueryPlanCreated,
+			Start: time.Now(),
+			Data:  map[string]interface{}{"plan": realizedPlan.String()},
+		})
+	}
 	return executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
 }
 
@@ -229,7 +247,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 // of a RelationInput query is the union of its per-tuple executions, so ordering
 // and capping must run over that whole union — not per iteration. Sorting before
 // limiting yields a correct global top-N.
-func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
+func (e *Executor) ExecuteRealized(ctx *Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
 	if err := plan.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid realized plan: %w", err)
 	}
@@ -243,8 +261,8 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		// sorts — dropped here, observably rather than silently.
 		effective := query.EffectiveOrderBy(plan.Query)
 		if dropped := len(plan.Query.OrderBy) - len(effective); dropped > 0 {
-			if collector := ctx.Collector(); collector != nil {
-				collector.Add(annotations.Event{
+			if handler := e.options.Handler; handler != nil {
+				handler(annotations.Event{
 					Name: annotations.SortConstantKeysDropped,
 					Data: map[string]interface{}{
 						"count": dropped,
@@ -311,19 +329,14 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 
 // executeRealizedPlan runs the phase pipeline and returns the assembled result
 // (un-ordered, un-limited). ExecuteRealized applies :order-by and :limit to it.
-func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
+func (e *Executor) executeRealizedPlan(ctx *Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
 	// Check if we need to iterate over a RelationInput
 	// RelationInput (e.g., :in [[?a ?b]]) requires executing the query once per tuple
 	if hasRelationInput(plan.Query) && len(inputRelations) > 0 {
 		return e.executeRealizedWithRelationInputIteration(ctx, plan, inputRelations)
 	}
 
-	// Create QueryExecutor with collector from context for annotations
-	opts := e.options
-	if collector := ctx.Collector(); collector != nil {
-		opts.Collector = collector
-	}
-	queryExecutor := newQueryExecutor(e.matcher, e.entityResolver, opts)
+	queryExecutor := newQueryExecutor(e.matcher, e.entityResolver, e.options)
 
 	var currentGroups []Relation
 
@@ -435,13 +448,13 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 		}
 	}
 	if condAggCount > 0 {
-		if collector := ctx.Collector(); collector != nil {
-			data := collector.GetDataMap()
-			data["rewritten.subquery.count"] = condAggCount
-			data["optimization"] = "conditional-aggregate-rewriting"
-			collector.Add(annotations.Event{
+		if handler := e.options.Handler; handler != nil {
+			handler(annotations.Event{
 				Name: annotations.QueryRewriteConditionalAggregates,
-				Data: data,
+				Data: map[string]interface{}{
+					"rewritten.subquery.count": condAggCount,
+					"optimization":             "conditional-aggregate-rewriting",
+				},
 			})
 		}
 	}
@@ -451,13 +464,13 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 		phaseIndex := i
 		isLastPhase := (i == len(plan.Phases)-1)
 
-		// One question, asked once: ctx.Collector() is an interface dispatch, and
-		// its answer governs both the clock read and the two emits below.
-		collector := ctx.Collector()
+		// One question, asked once: its answer governs both the clock read and
+		// the two emits below.
+		handler := e.options.Handler
 		var phaseStart time.Time
-		if collector != nil {
+		if handler != nil {
 			phaseStart = time.Now()
-			collector.Add(annotations.Event{
+			handler(annotations.Event{
 				Name:  annotations.PhaseBegin,
 				Start: phaseStart,
 				Data: map[string]interface{}{
@@ -490,13 +503,13 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 		// duration covers the whole of its work and its size is free to ask for
 		// on every phase that materialized. A streaming final phase declines
 		// with -1 rather than being consumed to produce a number.
-		if collector != nil {
-			collector.AddTiming(annotations.PhaseComplete, phaseStart, map[string]interface{}{
+		if handler != nil {
+			handler(annotations.TimedEvent(annotations.PhaseComplete, phaseStart, map[string]interface{}{
 				"phase":       phaseIndex + 1,
 				"groups":      len(groups),
 				"keep":        phase.Keep,
 				"tuple.count": declaredTupleCount(groups),
-			})
+			}))
 		}
 
 		// Early termination on empty
@@ -523,7 +536,7 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 
 // executeRealizedWithRelationInputIteration handles RelationInput iteration for QueryExecutor path
 // This iterates over each tuple in the RelationInput and executes the plan once per tuple.
-func (e *Executor) executeRealizedWithRelationInputIteration(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
+func (e *Executor) executeRealizedWithRelationInputIteration(ctx *Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
 	// Find the RelationInput, its corresponding relation, and that relation's index
 	// within inputRelations. The index lets each per-tuple execution forward the
 	// OTHER input relations (scalars, collections) in their original positions
@@ -682,7 +695,7 @@ func (s *perTupleInputSession) Input() []Relation {
 
 // executeRealizedWithRelationInputIterationSequential executes QueryExecutor path sequentially for RelationInput
 func (e *Executor) executeRealizedWithRelationInputIterationSequential(
-	ctx Context,
+	ctx *Context,
 	plan *planner.RealizedPlan,
 	inputRelations []Relation,
 	relationInput query.RelationInput,
@@ -767,7 +780,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 // (jobs), and no inter-worker synchronization on output: each worker
 // appends to workerResults[wIdx], a slot only that worker writes.
 func (e *Executor) executeRealizedWithRelationInputIterationParallel(
-	ctx Context,
+	ctx *Context,
 	plan *planner.RealizedPlan,
 	inputRelations []Relation,
 	relationInput query.RelationInput,
@@ -1141,7 +1154,7 @@ func (p *preparedIteration) buildBoundRelation(relationInput query.RelationInput
 // internally picks the fast path (mutate pre-built bound relation) or
 // the fallback path (session.Update + BindQueryInputs) based on the
 // flags set at prepare time.
-func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, error) {
+func (p *preparedIteration) Run(ctx *Context, iterationTuple Tuple) (Relation, error) {
 	var currentGroups []Relation
 	var env Relation
 

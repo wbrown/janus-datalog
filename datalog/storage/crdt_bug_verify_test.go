@@ -20,7 +20,7 @@ type TaskEntity struct {
 func TestBugVerification_PullInto_CardinalityOne(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create schema with CardinalityOne (exactly as in bug doc)
 			s, err := schema.NewBuilder().

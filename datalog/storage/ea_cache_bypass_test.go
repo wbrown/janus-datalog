@@ -78,34 +78,41 @@ func createEACacheTestDB(t *testing.T, disableCache bool) (*Database, func()) {
 // =============================================================================
 
 func TestEACacheBypass_Reproduction(t *testing.T) {
+	personID := datalog.NewIdentity("person-1")
+	nameAttr := datalog.NewKeyword(":person/name")
+
+	// Each subtest opens its own database with its own handler. Both assert on
+	// the absence of an event, so each must see only its own query, and a handler
+	// is registered at construction — one database, one observer. The subtest
+	// clears events after the fixture so what it asserts on is its query's.
+	open := func(t *testing.T, omode optimizerMode, events *[]annotations.Event) *Database {
+		t.Helper()
+		popts := omode.plannerOptions()
+		popts.Handler = func(e annotations.Event) { *events = append(*events, e) }
+		db, err := NewDatabaseWithOptions(DatabaseOptions{
+			Path:           t.TempDir(),
+			DisableCache:   false,
+			PlannerOptions: &popts,
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { db.Close() })
+		db.SetSchema(eaCacheBypassSchema())
+
+		for _, name := range []string{"Alice", "Bob", "Charlie"} {
+			tx := db.NewTransaction()
+			tx.Set(personID, nameAttr, name)
+			_, err := tx.Commit()
+			require.NoError(t, err)
+		}
+		return db
+	}
+
 	for _, omode := range optimizerModes {
 		t.Run(omode.name, func(t *testing.T) {
-			popts := omode.plannerOptions()
-			db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				DisableCache:   false,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, dbErr)
-			defer db.Close()
-			db.SetSchema(eaCacheBypassSchema())
-
-			personID := datalog.NewIdentity("person-1")
-			nameAttr := datalog.NewKeyword(":person/name")
-
-			for _, name := range []string{"Alice", "Bob", "Charlie"} {
-				tx := db.NewTransaction()
-				tx.Set(personID, nameAttr, name)
-				_, err := tx.Commit()
-				require.NoError(t, err)
-			}
-
 			t.Run("A_constant_uses_cache", func(t *testing.T) {
 				var events []annotations.Event
-				db.AnnotationHandler = func(e annotations.Event) {
-					events = append(events, e)
-				}
-				defer func() { db.AnnotationHandler = nil }()
+				db := open(t, omode, &events)
+				events = nil
 
 				results, err := executor.CollectTuples(db.Query(
 					`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
@@ -120,10 +127,8 @@ func TestEACacheBypass_Reproduction(t *testing.T) {
 
 			t.Run("A_scalar_input_uses_cache", func(t *testing.T) {
 				var events []annotations.Event
-				db.AnnotationHandler = func(e annotations.Event) {
-					events = append(events, e)
-				}
-				defer func() { db.AnnotationHandler = nil }()
+				db := open(t, omode, &events)
+				events = nil
 
 				results, err := executor.CollectTuples(db.Query(
 					`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
@@ -553,8 +558,12 @@ func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 func TestEACacheBypass_PerTupleA_UsesCache(t *testing.T) {
 	for _, omode := range optimizerModes {
 		t.Run(omode.name, func(t *testing.T) {
+			// Registered at open; events is cleared after the fixture so the
+			// absence assertion below is about this query's events.
+			var events []annotations.Event
 			dir := t.TempDir()
 			popts := omode.plannerOptions()
+			popts.Handler = func(e annotations.Event) { events = append(events, e) }
 			db, err := NewDatabaseWithOptions(DatabaseOptions{
 				Path:           dir,
 				PlannerOptions: &popts,
@@ -597,11 +606,7 @@ func TestEACacheBypass_PerTupleA_UsesCache(t *testing.T) {
 			_, err = tx.Commit()
 			require.NoError(t, err)
 
-			var events []annotations.Event
-			db.AnnotationHandler = func(e annotations.Event) {
-				events = append(events, e)
-			}
-			defer func() { db.AnnotationHandler = nil }()
+			events = nil
 
 			// Query: for each entity in the collection, look up its config/attr to get ?a,
 			// then look up [?e ?a ?v]. After pattern 1, binding has 2 tuples with varying A.
@@ -627,7 +632,11 @@ func TestEACacheBypass_PerTupleVector_RelationInput(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
+					// Registered at open; events feeds the failure dump below and
+					// nothing asserts on its contents.
+					var events []annotations.Event
 					popts := omode.plannerOptions()
+					popts.Handler = func(e annotations.Event) { events = append(events, e) }
 					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
 						Path:           t.TempDir(),
 						DisableCache:   mode.disableCache,
@@ -651,11 +660,6 @@ func TestEACacheBypass_PerTupleVector_RelationInput(t *testing.T) {
 					_, err = tx2.Commit()
 					require.NoError(t, err)
 
-					var events []annotations.Event
-					db.AnnotationHandler = func(e annotations.Event) {
-						events = append(events, e)
-					}
-
 					results, err := executor.CollectTuples(db.Query(
 						`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
 						[][]any{
@@ -663,8 +667,6 @@ func TestEACacheBypass_PerTupleVector_RelationInput(t *testing.T) {
 							{person1, contentAttr},
 						}))
 					require.NoError(t, err)
-
-					db.AnnotationHandler = nil
 
 					if len(results) != 2 {
 						t.Logf("[%s] Got %d results: %v", mode.name, len(results), results)

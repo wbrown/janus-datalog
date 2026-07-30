@@ -12,7 +12,14 @@ import (
 func TestCountRepro_WithVector(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			// Registered at open: everything the database builds is constructed
+			// with it. The loop below filters by event name and only logs, so the
+			// fixture's own events are harmless here.
+			var events []annotations.Event
 			popts := mode.plannerOptions()
+			popts.Handler = func(e annotations.Event) {
+				events = append(events, e)
+			}
 			db, err := NewDatabaseWithOptions(DatabaseOptions{
 				Path:           t.TempDir(),
 				DisableCache:   true, // cache_disabled
@@ -36,11 +43,6 @@ func TestCountRepro_WithVector(t *testing.T) {
 			_, err = tx2.Commit()
 			require.NoError(t, err)
 
-			var events []annotations.Event
-			db.AnnotationHandler = func(e annotations.Event) {
-				events = append(events, e)
-			}
-
 			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
 				[][]any{
@@ -48,8 +50,6 @@ func TestCountRepro_WithVector(t *testing.T) {
 					{person1, contentAttr},
 				}))
 			require.NoError(t, err)
-
-			db.AnnotationHandler = nil
 
 			t.Logf("Got %d results: %v", len(results), results)
 			for _, e := range events {

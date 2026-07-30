@@ -45,13 +45,12 @@ func TestApplyFindPullsBatchesWildcardEntities(t *testing.T) {
 	first := datalog.NewIdentity("batch-pull-first")
 	second := datalog.NewIdentity("batch-pull-second")
 	var events []annotations.Event
-	collector := annotations.NewCollector(func(event annotations.Event) {
-		events = append(events, event)
-	})
 	input := NewMaterializedRelationWithOptions(
 		[]query.Symbol{entitySymbol, indexSymbol},
 		[]Tuple{{first, int64(0)}, {second, int64(1)}, {first, int64(2)}},
-		ExecutorOptions{Collector: collector},
+		ExecutorOptions{Handler: func(event annotations.Event) {
+			events = append(events, event)
+		}},
 	)
 	resolver := &recordingBatchEntityResolver{
 		values: map[[20]byte]map[datalog.Keyword]interface{}{

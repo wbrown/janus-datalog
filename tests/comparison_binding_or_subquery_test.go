@@ -97,17 +97,18 @@ func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Use executor with annotations to trace execution
+			// Register the trace handler on the options the executor and its
+			// matcher are built with.
 			opts := mode.plannerOptions()
-			matcher := storage.NewPatternMatcher(db.Store())
+			opts.Handler = func(event annotations.Event) {
+				t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
+			}
+			matcher := storage.NewPatternMatcherWithOptions(
+				db.Store(), executor.ExecutorOptionsFromPlanner(opts))
 			matcher.SetSchema(s)
 			exec := executor.NewExecutorWithOptions(matcher, nil, opts)
 
-			ctx := executor.NewContext(func(event annotations.Event) {
-				t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
-			})
-
-			result, err := exec.ExecuteWithContext(ctx, q)
+			result, err := exec.Execute(q)
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}

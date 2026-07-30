@@ -69,7 +69,7 @@ func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
 	baselineOpts := DefaultPlannerOptions()
 	baselineOpts.EnableAlgebraOptimizer = true
 	baselineOpts.EnableScanSharing = false
-	baselineRel, err := queryWithPlannerOptions(db, q, baselineOpts)
+	baselineRel, err := db.queryUnderPlannerOptions(baselineOpts, q)
 	require.NoError(t, err)
 	baseline, err := executor.CollectTuples(baselineRel, nil)
 	require.NoError(t, err)
@@ -78,15 +78,15 @@ func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
 	// With scan sharing
 	db.ClearPlanCache()
 	var sharingEvents []annotations.Event
-	db.AnnotationHandler = func(e annotations.Event) {
+	sharingOpts := DefaultPlannerOptions()
+	sharingOpts.EnableAlgebraOptimizer = true
+	sharingOpts.EnableScanSharing = true
+	sharingOpts.Handler = func(e annotations.Event) {
 		if e.Name == "scan-sharing/cache-hit" || e.Name == "scan-sharing/cache-miss" {
 			sharingEvents = append(sharingEvents, e)
 		}
 	}
-	sharingOpts := DefaultPlannerOptions()
-	sharingOpts.EnableAlgebraOptimizer = true
-	sharingOpts.EnableScanSharing = true
-	sharingRel, err := queryWithPlannerOptions(db, q, sharingOpts)
+	sharingRel, err := db.queryUnderPlannerOptions(sharingOpts, q)
 	require.NoError(t, err)
 	sharing, err := executor.CollectTuples(sharingRel, nil)
 	require.NoError(t, err)
@@ -121,7 +121,7 @@ func TestScanSharing_CorrectnessDifferential(t *testing.T) {
 	offOpts := DefaultPlannerOptions()
 	offOpts.EnableAlgebraOptimizer = true
 	offOpts.EnableScanSharing = false
-	offRel, err := queryWithPlannerOptions(db, q, offOpts)
+	offRel, err := db.queryUnderPlannerOptions(offOpts, q)
 	require.NoError(t, err)
 	offResults, err := executor.CollectTuples(offRel, nil)
 	require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestScanSharing_CorrectnessDifferential(t *testing.T) {
 	onOpts := DefaultPlannerOptions()
 	onOpts.EnableAlgebraOptimizer = true
 	onOpts.EnableScanSharing = true
-	onRel, err := queryWithPlannerOptions(db, q, onOpts)
+	onRel, err := db.queryUnderPlannerOptions(onOpts, q)
 	require.NoError(t, err)
 	onResults, err := executor.CollectTuples(onRel, nil)
 	require.NoError(t, err)
@@ -161,17 +161,17 @@ func TestScanSharing_DisabledByDefault(t *testing.T) {
 	                  [(ground 0) ?count])]`
 
 	var sharingEvents int
-	db.AnnotationHandler = func(e annotations.Event) {
-		if e.Name == "scan-sharing/cache-hit" || e.Name == "scan-sharing/cache-miss" {
-			sharingEvents++
-		}
-	}
 
 	db.ClearPlanCache()
 	opts := DefaultPlannerOptions()
 	opts.EnableAlgebraOptimizer = true
 	opts.EnableScanSharing = false
-	rel, err := queryWithPlannerOptions(db, q, opts)
+	opts.Handler = func(e annotations.Event) {
+		if e.Name == "scan-sharing/cache-hit" || e.Name == "scan-sharing/cache-miss" {
+			sharingEvents++
+		}
+	}
+	rel, err := db.queryUnderPlannerOptions(opts, q)
 	require.NoError(t, err)
 	results, err := executor.CollectTuples(rel, nil)
 	require.NoError(t, err)

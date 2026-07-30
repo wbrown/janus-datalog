@@ -23,7 +23,7 @@ type QueryExecutor interface {
 	// q: Parsed Datalog query to execute
 	// inputs: Input relation groups from previous phase (empty for first phase)
 	// Returns: Relation groups (disjoint if they share no symbols)
-	Execute(ctx Context, q *query.Query, inputs []Relation) ([]Relation, error)
+	Execute(ctx *Context, q *query.Query, inputs []Relation) ([]Relation, error)
 }
 
 // DefaultQueryExecutor implements QueryExecutor using the PatternMatcher interface.
@@ -54,12 +54,11 @@ func newQueryExecutor(matcher PatternMatcher, resolver EntityResolver, options E
 
 // Execute implements QueryExecutor interface
 // Executes clauses progressively with collapse after each step
-func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Relation) ([]Relation, error) {
-	ctx.QueryBegin(q.String())
-	defer func(start int64) {
-		ctx.QueryComplete(0, 0, nil) // TODO: Add proper tuple count
-	}(0)
-
+// Every production caller is a phase-loop driver, so this span is reported as
+// phase/begin and phase/complete by the loop that owns it — with the phase index
+// and a real tuple count. It does not also report itself under the query family's
+// names.
+func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Relation) ([]Relation, error) {
 	// Simple path: clause-by-clause execution
 	// Start with input relation groups (may be multiple disjoint groups)
 	groups := Relations(inputs)
@@ -104,8 +103,8 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 					groups = append(groups, newRel)
 				}
 			}
-			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
-				return []Relation(groups.Collapse(ctx))
+			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(e.options.Handler))
 			}))
 
 			// Prefetch entity attributes into EA cache after first DataPattern.
@@ -126,8 +125,8 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 						return nil, fmt.Errorf("prefetch entity extraction failed: %w", err)
 					}
 					if len(entities) > 50 {
-						if collector := ctx.Collector(); collector != nil {
-							collector.Add(annotations.Event{
+						if e.options.Handler != nil {
+							e.options.Handler(annotations.Event{
 								Name: annotations.PrefetchTrigger,
 								Data: map[string]interface{}{
 									"entity_count": len(entities),
@@ -151,8 +150,8 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 			if err != nil {
 				return nil, fmt.Errorf("clause %d (expression) failed: %w", i, err)
 			}
-			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
-				return []Relation(groups.Collapse(ctx))
+			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(e.options.Handler))
 			}))
 
 		case query.Predicate:
@@ -170,8 +169,8 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 			if newRel != nil {
 				groups = append(groups, newRel)
 			}
-			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
-				return []Relation(groups.Collapse(ctx))
+			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(e.options.Handler))
 			}))
 
 		case *query.OrClause:
@@ -181,10 +180,10 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = replaceConsumedOrGroups(ctx, groups, newRel)
+				groups = replaceConsumedOrGroups(groups, newRel)
 			}
-			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
-				return []Relation(groups.Collapse(ctx))
+			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(e.options.Handler))
 			}))
 
 		case *query.OrJoinClause:
@@ -193,10 +192,10 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or-join) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = replaceConsumedOrGroups(ctx, groups, newRel)
+				groups = replaceConsumedOrGroups(groups, newRel)
 			}
-			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
-				return []Relation(groups.Collapse(ctx))
+			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(e.options.Handler))
 			}))
 
 		case *query.OrDefaultClause:
@@ -205,10 +204,10 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or-default) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = replaceConsumedOrGroups(ctx, groups, newRel)
+				groups = replaceConsumedOrGroups(groups, newRel)
 			}
-			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
-				return []Relation(groups.Collapse(ctx))
+			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(e.options.Handler))
 			}))
 
 		case *query.OrDefaultJoinClause:
@@ -217,10 +216,10 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or-default-join) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = replaceConsumedOrGroups(ctx, groups, newRel)
+				groups = replaceConsumedOrGroups(groups, newRel)
 			}
-			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
-				return []Relation(groups.Collapse(ctx))
+			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(e.options.Handler))
 			}))
 
 		case *query.NotClause:
@@ -330,7 +329,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 		}
 
 		// Apply aggregations using existing function
-		result := ExecuteAggregationsWithContext(ctx, groups[0], q.Find)
+		result := ExecuteAggregations(groups[0], q.Find)
 		if materialized, ok := result.(*MaterializedRelation); ok && materialized.err != nil {
 			return nil, materialized.err
 		}
@@ -522,7 +521,7 @@ func (e *DefaultQueryExecutor) renderConstantFindSymbols(env Relation, q *query.
 // executePattern executes a data pattern using the PatternMatcher
 // Patterns produce new relations from storage that get joined with existing groups
 func (e *DefaultQueryExecutor) executePattern(
-	ctx Context,
+	ctx *Context,
 	q *query.Query,
 	pattern *query.DataPattern,
 	groups []Relation,
@@ -549,11 +548,7 @@ type attributeFetchSpec struct {
 	isConstraint bool
 }
 
-func replaceConsumedOrGroups(
-	ctx Context,
-	groups Relations,
-	relation Relation,
-) Relations {
+func replaceConsumedOrGroups(groups Relations, relation Relation) Relations {
 	orRelation, ok := relation.(*OrFallbackRelation)
 	if !ok || len(orRelation.consumedGroups) == 0 {
 		return append(groups, relation)
@@ -561,8 +556,8 @@ func replaceConsumedOrGroups(
 
 	result := replaceGroups(groups, orRelation.consumedGroups, relation)
 
-	if collector := ctx.Collector(); collector != nil {
-		collector.Add(annotations.Event{
+	if orRelation.options.Handler != nil {
+		orRelation.options.Handler(annotations.Event{
 			Name: annotations.OrOuterReplaced,
 			Data: map[string]interface{}{
 				"consumed_groups":  len(orRelation.consumedGroups),
@@ -618,7 +613,7 @@ func replaceGroups(groups Relations, consumed []int, replacement Relation) Relat
 // Returns the replacement groups and number of consumed clauses. A zero count
 // means the first clause does not qualify and must use normal pattern matching.
 func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
-	ctx Context,
+	ctx *Context,
 	clauses []query.Clause,
 	groups []Relation,
 ) ([]Relation, int, error) {
@@ -787,13 +782,13 @@ fetchLoop:
 		return nil, 0, iterErr
 	}
 
-	if collector := ctx.Collector(); collector != nil {
+	if e.options.Handler != nil {
 		for i, fetch := range fetches {
 			eventName := "pattern/fused-fetch"
 			if fetch.isConstraint {
 				eventName = "pattern/fused-constraint"
 			}
-			collector.Add(annotations.Event{
+			e.options.Handler(annotations.Event{
 				Name: eventName,
 				Data: map[string]interface{}{
 					"attr": fetch.attr.String(),
@@ -821,7 +816,7 @@ fetchLoop:
 
 // executeExpression evaluates an expression clause
 // Expressions TRANSFORM groups - may use Product() for multi-relation expressions
-func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expression, groups []Relation) ([]Relation, error) {
+func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expression, groups []Relation) ([]Relation, error) {
 	// Find relations with any required symbols
 	var relevantRels []Relation
 	var otherRels []Relation
@@ -1113,7 +1108,7 @@ func (a entityLookupAdapter) TypeDefault(attr datalog.Keyword, defaultVal interf
 
 // executePredicate filters relations using a predicate
 // Predicates TRANSFORM groups - may use Product() for multi-relation predicates
-func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicate, groups []Relation) ([]Relation, error) {
+func (e *DefaultQueryExecutor) executePredicate(ctx *Context, pred query.Predicate, groups []Relation) ([]Relation, error) {
 	// Find relations with ANY required symbols (same logic as executeExpression)
 	// Exclude symbols resolved as constants — they don't need a relation group
 	var relevantRels []Relation
@@ -1228,10 +1223,10 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 
 // executeSubquery executes a nested subquery
 // Subqueries produce new relations from nested query execution
-func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.SubqueryPattern, groups []Relation) (result Relation, resultErr error) {
+func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.SubqueryPattern, groups []Relation) (result Relation, resultErr error) {
 	// Record the per-input-combination execution path.
-	if collector := ctx.Collector(); collector != nil {
-		collector.Add(annotations.Event{
+	if e.options.Handler != nil {
+		e.options.Handler(annotations.Event{
 			Name: annotations.SubqueryExecutorPath,
 			Data: map[string]interface{}{
 				"path":         "Per-combination QueryExecutor",
@@ -1367,9 +1362,9 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		// IndexType. A second meaning under the same key would reach
 		// Database.Analyze, which prints Data[KeyIndex] for every event it traces
 		// and would render this ordinal as though it named a run.
-		if collector := ctx.Collector(); collector != nil {
+		if e.options.Handler != nil {
 			for i, rel := range inputRelations {
-				collector.Add(annotations.Event{
+				e.options.Handler(annotations.Event{
 					Name: annotations.SubqueryInputRelation,
 					Data: map[string]interface{}{
 						"relation.position": i,
@@ -1412,8 +1407,8 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 	if err := comboIter.Error(); err != nil {
 		return nil, fmt.Errorf("subquery input combinations failed: %w", err)
 	}
-	if collector := ctx.Collector(); collector != nil {
-		collector.Add(annotations.Event{
+	if e.options.Handler != nil {
+		e.options.Handler(annotations.Event{
 			Name: annotations.SubqueryInputCombinations,
 			Data: map[string]interface{}{
 				"relation_groups":    len(materializedGroups),
@@ -1476,7 +1471,12 @@ func hasPulls(find []query.FindElement) bool {
 // Pulled maps are result presentation, not datalog values; the approved
 // design (docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md) runs this only at the
 // result boundary, after sort/strip/limit.
-func applyFindPulls(matcher PatternMatcher, entityResolver EntityResolver, rel Relation, find []query.FindElement) (Relation, error) {
+func applyFindPulls(
+	matcher PatternMatcher,
+	entityResolver EntityResolver,
+	rel Relation,
+	find []query.FindElement,
+) (Relation, error) {
 	symbols := rel.Symbols()
 	type pullRequest struct {
 		symbolIndex int
@@ -1497,10 +1497,9 @@ func applyFindPulls(matcher PatternMatcher, entityResolver EntityResolver, rel R
 		return rel, nil
 	}
 
-	puller := NewPullExecutor(matcher, entityResolver)
-	if collector := rel.Options().Collector; collector != nil {
-		puller = NewPullExecutorWithHandler(matcher, entityResolver, collector.Handler())
-	}
+	// NewPullContext(nil) is BasePullContext, so one construction covers both
+	// the annotated and the annotations-off case.
+	puller := NewPullExecutorWithHandler(matcher, entityResolver, rel.Options().Handler)
 
 	var resultTuples []Tuple
 	it := rel.Iterator()
@@ -1558,10 +1557,10 @@ func applyFindPulls(matcher PatternMatcher, entityResolver EntityResolver, rel R
 // executeOrClause performs union of OR branches.
 // Routes to correlated union (per-tuple, all branches) when branches reference
 // outer symbols, or uncorrelated union (independent execution) otherwise.
-func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
-	collector := ctx.Collector()
+func (e *DefaultQueryExecutor) executeOrClause(ctx *Context, clause *query.OrClause, groups Relations) (Relation, error) {
+	handler := e.options.Handler
 	var start time.Time
-	if collector != nil {
+	if handler != nil {
 		start = time.Now()
 	}
 
@@ -1570,8 +1569,8 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 	}
 
 	// Emit begin event
-	if collector != nil {
-		collector.Add(annotations.Event{
+	if handler != nil {
+		handler(annotations.Event{
 			Name:  annotations.OrClauseBegin,
 			Start: start,
 			Data: map[string]interface{}{
@@ -1596,7 +1595,7 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 	}
 
 	// Emit complete event
-	if collector != nil {
+	if handler != nil {
 		end := time.Now()
 		data := map[string]interface{}{
 			"semantics":            semantics,
@@ -1607,7 +1606,7 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 		} else if result != nil {
 			data["result_size"] = result.Size()
 		}
-		collector.Add(annotations.Event{
+		handler(annotations.Event{
 			Name:    annotations.OrClauseComplete,
 			Start:   start,
 			End:     end,
@@ -1620,7 +1619,7 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 }
 
 // executeOrClauseCorrelatedUnion evaluates all branches per outer tuple and unions results.
-func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx Context, branches [][]query.Clause, groups Relations) (Relation, error) {
+func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx *Context, branches [][]query.Clause, groups Relations) (Relation, error) {
 	// Inference forms unify on every shared free variable (the language
 	// rule), so every branch free variable — including correlates consumed
 	// only by a branch NOT or predicate — selects its binding group into
@@ -1633,7 +1632,7 @@ func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx Context, branc
 
 // executeOrDefaultClause implements fallback semantics for or-default clauses:
 // For each input tuple, try branches in order until one returns a result.
-func (e *DefaultQueryExecutor) executeOrDefaultClause(ctx Context, clause *query.OrDefaultClause, groups Relations) (Relation, error) {
+func (e *DefaultQueryExecutor) executeOrDefaultClause(ctx *Context, clause *query.OrDefaultClause, groups Relations) (Relation, error) {
 	// Inference form: outer-group selection by every branch free variable,
 	// as in executeOrClauseCorrelatedUnion above.
 	outerRel, consumed := e.findOuterRelation(branchFreeVariables(clause.Branches), groups)
@@ -1645,7 +1644,7 @@ func (e *DefaultQueryExecutor) executeOrDefaultClause(ctx Context, clause *query
 // executeOrDefaultJoinClause implements fallback semantics for or-default-join
 // clauses. The declared required vars are the per-group correlation keys and
 // must be bound at entry; with none declared, the fallback decision is global.
-func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx Context, clause *query.OrDefaultJoinClause, groups Relations) (Relation, error) {
+func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx *Context, clause *query.OrDefaultJoinClause, groups Relations) (Relation, error) {
 	if err := clause.Validate(); err != nil {
 		return nil, err
 	}
@@ -1810,12 +1809,12 @@ func findCommonSymbols(relations []Relation) []query.Symbol {
 }
 
 // executeOrClauseUnion implements standard Datalog union semantics
-func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
-	collector := ctx.Collector()
+func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx *Context, clause *query.OrClause, groups Relations) (Relation, error) {
+	handler := e.options.Handler
 
 	// Emit union mode annotation
-	if collector != nil {
-		collector.Add(annotations.Event{
+	if handler != nil {
+		handler(annotations.Event{
 			Name:  annotations.OrClauseUnion,
 			Start: time.Now(),
 			Data: map[string]interface{}{
@@ -1830,7 +1829,7 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.O
 
 	for i, branch := range clause.Branches {
 		var branchStart time.Time
-		if collector != nil {
+		if handler != nil {
 			branchStart = time.Now()
 		}
 		// Execute this branch's clauses against storage (no prior bindings)
@@ -1840,13 +1839,13 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.O
 		}
 
 		// Emit branch complete annotation
-		if collector != nil {
+		if handler != nil {
 			branchEnd := time.Now()
 			resultSize := 0
 			if branchResult != nil {
 				resultSize = branchResult.Size()
 			}
-			collector.Add(annotations.Event{
+			handler(annotations.Event{
 				Name:    annotations.OrClauseBranchComplete,
 				Start:   branchStart,
 				End:     branchEnd,
@@ -1894,7 +1893,7 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.O
 
 // executeOrJoinClause performs union with explicit join variables.
 // Routes to correlated union when branches reference outer symbols.
-func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
+func (e *DefaultQueryExecutor) executeOrJoinClause(ctx *Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
 	if len(clause.Branches) == 0 {
 		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
 	}
@@ -1910,7 +1909,7 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.Or
 
 // executeOrJoinClauseCorrelatedUnion evaluates all branches per outer tuple
 // for or-join clauses where branches reference outer symbols.
-func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
+func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx *Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
 	// The clause's canonical interface (Provides ∪ Correlates — the header
 	// plus branch externals) selects the outer groups it unifies with, so a
 	// correlate consumed only by a branch NOT/predicate pulls its binding
@@ -1981,7 +1980,7 @@ func extractEntityIDs(rel Relation, syms []query.Symbol) ([]datalog.Identity, er
 }
 
 // executeNotClause performs anti-join filtering on groups
-func (e *DefaultQueryExecutor) executeNotClause(ctx Context, clause *query.NotClause, groups Relations) (Relations, error) {
+func (e *DefaultQueryExecutor) executeNotClause(ctx *Context, clause *query.NotClause, groups Relations) (Relations, error) {
 	if len(groups) == 0 {
 		return groups, nil
 	}
@@ -2017,7 +2016,7 @@ func (e *DefaultQueryExecutor) executeNotClause(ctx Context, clause *query.NotCl
 }
 
 // executeNotJoinClause performs anti-join with explicit join variables
-func (e *DefaultQueryExecutor) executeNotJoinClause(ctx Context, clause *query.NotJoinClause, groups Relations) (Relations, error) {
+func (e *DefaultQueryExecutor) executeNotJoinClause(ctx *Context, clause *query.NotJoinClause, groups Relations) (Relations, error) {
 	if len(groups) == 0 {
 		return groups, nil
 	}
@@ -2050,7 +2049,7 @@ func (e *DefaultQueryExecutor) executeNotJoinClause(ctx Context, clause *query.N
 // into its binding at the boundary — as at the top level, subquery entry,
 // and or-branch evaluation. The extension tuple is a reference into the
 // projected environment relation's own tuple, never a copy.
-func notBodyBinding(ctx Context, bodyVars, keys []query.Symbol) ([]query.Symbol, Tuple, error) {
+func notBodyBinding(ctx *Context, bodyVars, keys []query.Symbol) ([]query.Symbol, Tuple, error) {
 	env := ctx.Environment()
 	if env == nil {
 		return keys, nil, nil
@@ -2073,7 +2072,7 @@ func notBodyBinding(ctx Context, bodyVars, keys []query.Symbol) ([]query.Symbol,
 }
 
 // filterWithNotClause applies anti-join filtering to a single relation
-func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.NotClause, input Relation, joinVars []query.Symbol) (Relation, error) {
+func (e *DefaultQueryExecutor) filterWithNotClause(ctx *Context, clause *query.NotClause, input Relation, joinVars []query.Symbol) (Relation, error) {
 	if input == nil {
 		return nil, nil
 	}
@@ -2185,7 +2184,7 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 }
 
 // filterWithNotJoinClause applies anti-join with explicit join vars to a single relation
-func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *query.NotJoinClause, input Relation) (Relation, error) {
+func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx *Context, clause *query.NotJoinClause, input Relation) (Relation, error) {
 	if input == nil {
 		return nil, nil
 	}
@@ -2312,7 +2311,7 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 
 // executeInnerClauses executes a list of clauses and returns the result
 // Used by NOT and OR to execute their inner clauses
-func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.Clause, binding Relation) (Relation, error) {
+func (e *DefaultQueryExecutor) executeInnerClauses(ctx *Context, clauses []query.Clause, binding Relation) (Relation, error) {
 	if len(clauses) == 0 {
 		return binding, nil
 	}
@@ -2333,9 +2332,9 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = replaceConsumedOrGroups(ctx, groups, newRel)
+				groups = replaceConsumedOrGroups(groups, newRel)
 			}
-			groups = groups.Collapse(ctx)
+			groups = groups.Collapse(e.options.Handler)
 
 		case *query.Expression:
 			var err error
@@ -2343,7 +2342,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 			if err != nil {
 				return nil, err
 			}
-			groups = groups.Collapse(ctx)
+			groups = groups.Collapse(e.options.Handler)
 
 		case query.Predicate:
 			var err error
@@ -2360,7 +2359,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 			if newRel != nil {
 				groups = append(groups, newRel)
 			}
-			groups = groups.Collapse(ctx)
+			groups = groups.Collapse(e.options.Handler)
 
 		case *query.NotClause:
 			var err error
@@ -2384,7 +2383,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 			if newRel != nil {
 				groups = append(groups, newRel)
 			}
-			groups = groups.Collapse(ctx)
+			groups = groups.Collapse(e.options.Handler)
 
 		case *query.OrJoinClause:
 			newRel, err := e.executeOrJoinClause(ctx, c, groups)
@@ -2392,9 +2391,9 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = replaceConsumedOrGroups(ctx, groups, newRel)
+				groups = replaceConsumedOrGroups(groups, newRel)
 			}
-			groups = groups.Collapse(ctx)
+			groups = groups.Collapse(e.options.Handler)
 
 		case *query.OrDefaultClause:
 			newRel, err := e.executeOrDefaultClause(ctx, c, groups)
@@ -2402,9 +2401,9 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = replaceConsumedOrGroups(ctx, groups, newRel)
+				groups = replaceConsumedOrGroups(groups, newRel)
 			}
-			groups = groups.Collapse(ctx)
+			groups = groups.Collapse(e.options.Handler)
 
 		case *query.OrDefaultJoinClause:
 			newRel, err := e.executeOrDefaultJoinClause(ctx, c, groups)
@@ -2412,9 +2411,9 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = replaceConsumedOrGroups(ctx, groups, newRel)
+				groups = replaceConsumedOrGroups(groups, newRel)
 			}
-			groups = groups.Collapse(ctx)
+			groups = groups.Collapse(e.options.Handler)
 
 		default:
 			return nil, fmt.Errorf("unsupported inner clause type: %T", clause)

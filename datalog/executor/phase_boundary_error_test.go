@@ -104,7 +104,7 @@ func TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError(t *testing.T) {
 	matcher := &failingScanMatcher{failAttr: aAttr, dataRel: dataRel}
 	exec := NewExecutor(matcher, nil)
 
-	result, err := exec.ExecuteRealized(NewContext(nil), plan, nil)
+	result, err := exec.ExecuteRealized(NewContext(), plan, nil)
 	if err == nil && result != nil {
 		err = driveErr(result)
 	}

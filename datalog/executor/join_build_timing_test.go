@@ -22,8 +22,19 @@ import (
 func TestJoinBuildCopyReportsTheIntervalItsCountsWereMadeIn(t *testing.T) {
 	const buildSize = 20_000
 
-	collector := annotations.NewCollector(func(annotations.Event) {})
-	opts := ExecutorOptions{Collector: collector}
+	// One capture per event under test. build is read rather than assumed: the
+	// join takes the smaller relation as its build side, so a fixture that got
+	// the sizes the wrong way round would time a two-tuple drain and still pass
+	// everything the copy event asserts.
+	var copyEvent, build *annotations.Event
+	opts := ExecutorOptions{Handler: func(e annotations.Event) {
+		switch e.Name {
+		case annotations.JoinBuildCopy:
+			copyEvent = &e
+		case annotations.JoinBuild:
+			build = &e
+		}
+	}}
 
 	k := datalog.NewSymbol("?k")
 	left := datalog.NewSymbol("?l")
@@ -52,13 +63,6 @@ func TestJoinBuildCopyReportsTheIntervalItsCountsWereMadeIn(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tuples, 2)
 
-	var copyEvent *annotations.Event
-	events := collector.Events()
-	for i := range events {
-		if events[i].Name == annotations.JoinBuildCopy {
-			copyEvent = &events[i]
-		}
-	}
 	require.NotNil(t, copyEvent,
 		"draining the build relation is what the counts describe, and it happened")
 
@@ -77,15 +81,6 @@ func TestJoinBuildCopyReportsTheIntervalItsCountsWereMadeIn(t *testing.T) {
 	require.Equal(t, 0, copyEvent.Data["copied"])
 	require.Equal(t, false, copyEvent.Data["requires_copy"])
 
-	// Read rather than assumed: the join takes the smaller relation as its
-	// build side, so a fixture that got the sizes the wrong way round would
-	// time a two-tuple drain and still pass everything above.
-	var build *annotations.Event
-	for i := range events {
-		if events[i].Name == annotations.JoinBuild {
-			build = &events[i]
-		}
-	}
 	require.NotNil(t, build)
 	require.Equal(t, "left", build.Data["build_side"])
 	require.Equal(t, buildSize, build.Data["tuple_count"])

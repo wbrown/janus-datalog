@@ -79,11 +79,11 @@ func TestRelationBindingPropertiesEnableUniqueJoinBuild(t *testing.T) {
 
 	var strategy annotations.Event
 	options := ExecutorOptions{
-		Collector: annotations.NewCollector(func(event annotations.Event) {
+		Handler: func(event annotations.Event) {
 			if event.Name == annotations.JoinStrategy {
 				strategy = event
 			}
-		}),
+		},
 	}
 	left := NewMaterializedRelationWithOptions(
 		[]query.Symbol{group, name},

@@ -128,7 +128,7 @@ func TestAsOfVectorResolution_AddOnly(t *testing.T) {
 func TestAsOfVectorResolution_PullInto(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			s, err := schema.NewBuilder().
 				Attribute(":doc/content").Type(schema.TypeString).Vector().Add().

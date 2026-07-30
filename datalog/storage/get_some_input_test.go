@@ -165,7 +165,7 @@ func getSomeGroupsFixture(t *testing.T, db *Database) (named, bare datalog.Ident
 func TestGetSome_InBoundEntityWithGroups_AllMissing(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 			_, bare := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(
@@ -188,7 +188,7 @@ func TestGetSome_InBoundEntityWithGroups_AllMissing(t *testing.T) {
 func TestGetSome_InBoundEntityWithGroups_AttrPresent(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 			named, _ := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(
@@ -216,7 +216,7 @@ func TestGetSome_InBoundEntityWithGroups_AttrPresent(t *testing.T) {
 func TestGetSome_RelationInputEntities_MixedFound(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 			named, bare := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(
@@ -249,7 +249,7 @@ func TestGetSome_RelationInputEntities_MixedFound(t *testing.T) {
 func TestGetSome_LiteralEntity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 			getSomeGroupsFixture(t, db)
 
 			t.Run("attr-present", func(t *testing.T) {
@@ -286,7 +286,7 @@ func TestGetSome_LiteralEntity(t *testing.T) {
 func TestGetSome_CollectionInputEntities_MixedFound(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 			named, bare := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(

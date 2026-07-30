@@ -341,7 +341,7 @@ func TestCacheResolverInterface(t *testing.T) {
 func TestQueryExecutionUsesCache(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -390,7 +390,7 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 func TestJoinQueryUsesCache(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -451,7 +451,7 @@ func TestJoinQueryUsesCache(t *testing.T) {
 func TestCardinalityManyQueryUsesCache(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			// Create schema with cardinality-many attribute
 			s, err := schema.NewBuilder().

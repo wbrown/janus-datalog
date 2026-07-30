@@ -11,7 +11,7 @@ import (
 func TestQueryRejectsUnboundGroupedFindVariable(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode)
+			db := createOptimizerModeDB(t, mode, nil)
 
 			total := datalog.NewKeyword(":order/total")
 			tx := db.NewTransaction()

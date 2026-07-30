@@ -14,9 +14,9 @@ import (
 
 func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 	var events []annotations.Event
-	ctx := NewContext(func(event annotations.Event) {
+	options := ExecutorOptions{Handler: func(event annotations.Event) {
 		events = append(events, event)
-	})
+	}}
 	entity := datalog.NewSymbol("?entity")
 	name := datalog.NewSymbol("?name")
 	value := datalog.NewSymbol("?value")
@@ -46,11 +46,11 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 	}
 
 	rel := NewOrFallbackRelation(
-		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		ctx,
+		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options),
+		NewContext(),
 		branches,
 		outer,
-		ExecutorOptions{},
+		options,
 		true,
 	)
 
@@ -81,7 +81,7 @@ func TestOrDefaultDecorrelatedAggregatePreservesOuterGroupKey(t *testing.T) {
 	}
 	rel := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(nil),
+		NewContext(),
 		[][]query.Clause{
 			{decorrelated},
 			{&query.Expression{
@@ -117,7 +117,7 @@ func TestOrDefaultRelationBindingWithFreshGroupDoesNotPreserveOuterKey(t *testin
 	}
 	rel := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(nil),
+		NewContext(),
 		[][]query.Clause{
 			{multiTuple},
 			{&query.Expression{
@@ -157,7 +157,7 @@ func TestOrDefaultMultiTupleBranchesDeriveCompositeKey(t *testing.T) {
 
 	rel := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(nil),
+		NewContext(),
 		[][]query.Clause{{pattern(":item/tag")}, {pattern(":item/category")}},
 		outer,
 		ExecutorOptions{},
@@ -186,7 +186,7 @@ func TestCorrelatedUnionDeduplicatesAcrossBranches(t *testing.T) {
 	}
 	rel := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(nil),
+		NewContext(),
 		[][]query.Clause{{ground()}, {ground()}},
 		outer,
 		ExecutorOptions{},
@@ -219,7 +219,7 @@ func TestOrBranchOverwriteInvalidatesOuterProperty(t *testing.T) {
 	}
 	rel := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(nil),
+		NewContext(),
 		[][]query.Clause{{overwrite(10)}, {overwrite(20)}},
 		outer,
 		ExecutorOptions{},
@@ -248,7 +248,7 @@ func TestOrBranchOverwriteRetainsUnaffectedOrderingPrefix(t *testing.T) {
 	)
 	rel := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(nil),
+		NewContext(),
 		[][]query.Clause{{
 			&query.Expression{
 				Function: query.GroundFunction{Value: "replacement"},
@@ -306,7 +306,7 @@ func TestOrFallbackMaterializationPreservesProperties(t *testing.T) {
 	)
 	rel := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(nil),
+		NewContext(),
 		[][]query.Clause{{
 			&query.Expression{
 				Function: query.GroundFunction{Value: int64(0)},
@@ -343,7 +343,7 @@ func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
 	)
 	relation := NewOrFallbackRelation(
 		queryExecutor,
-		NewContext(nil),
+		NewContext(),
 		[][]query.Clause{{nested}, {ground(3)}},
 		outer,
 		ExecutorOptions{},
@@ -362,7 +362,7 @@ func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
 	)
 	empty := NewOrFallbackRelation(
 		queryExecutor,
-		NewContext(nil),
+		NewContext(),
 		[][]query.Clause{{nested}},
 		emptyOuter,
 		ExecutorOptions{},
@@ -483,7 +483,7 @@ func runOrPropertyDifferential(t *testing.T, seed int64) {
 		shortCircuit := random.Intn(2) == 0
 		relation := NewOrFallbackRelation(
 			queryExecutor,
-			NewContext(nil),
+			NewContext(),
 			branches,
 			outer,
 			ExecutorOptions{},
@@ -735,7 +735,7 @@ func BenchmarkOrFallbackPropertyPropagation(b *testing.B) {
 				for b.Loop() {
 					rel := NewOrFallbackRelation(
 						queryExecutor,
-						NewContext(nil),
+						NewContext(),
 						branches,
 						outer,
 						ExecutorOptions{},

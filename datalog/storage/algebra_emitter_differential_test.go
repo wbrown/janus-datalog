@@ -234,7 +234,7 @@ func runPlannerOptions(
 	options.Cache = nil
 	router := executor.NewSourceRouter(buildSourceMap(nil, db.Matcher()))
 	exec := executor.NewExecutorWithOptions(router, db, planner.PlannerOptions(options))
-	result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, relations)
+	result, err := exec.ExecuteWithRelations(executor.NewContext(), q, relations)
 	if err != nil {
 		return nil, err
 	}

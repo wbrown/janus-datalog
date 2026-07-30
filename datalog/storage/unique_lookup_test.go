@@ -43,10 +43,14 @@ func uniqueTestSchema(t *testing.T) *schema.Schema {
 
 // setupUniqueTestDB creates a database with :user/email (UniqueValue) and
 // :user/name (not unique) attributes.
-func setupUniqueTestDB(t *testing.T) (*Database, func()) {
+// handler is registered at open; nil is annotations-off.
+func setupUniqueTestDB(t *testing.T, handler annotations.Handler) (*Database, func()) {
 	t.Helper()
-	dir := t.TempDir()
-	db, err := NewDatabaseWithSchema(dir, uniqueTestSchema(t))
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:              t.TempDir(),
+		Schema:            uniqueTestSchema(t),
+		AnnotationHandler: handler,
+	})
 	require.NoError(t, err)
 	return db, func() { db.Close() }
 }
@@ -90,7 +94,7 @@ func setupUniqueIdentityTestDB(t *testing.T) (*Database, func()) {
 
 // TestLookupByUnique_NoOwner: nobody has claimed the value.
 func TestLookupByUnique_NoOwner(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	email := datalog.NewKeyword(":user/email")
@@ -101,7 +105,7 @@ func TestLookupByUnique_NoOwner(t *testing.T) {
 
 // TestLookupByUnique_SingleOwner: one entity claims the value.
 func TestLookupByUnique_SingleOwner(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -129,7 +133,11 @@ func TestLookupByUnique_SingleOwner(t *testing.T) {
 // and reporting it as "nothing found" makes it indistinguishable from a value
 // nobody ever wrote, which costs nothing at all.
 func TestUniqueLookupReportsItsFunnel(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	// One collector for the whole test: only LookupByUnique emits
+	// ScanUniqueLookup, and each subtest reads the last one, which is its own.
+	var events []annotations.Event
+	db, cleanup := setupUniqueTestDB(t,
+		func(e annotations.Event) { events = append(events, e) })
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -159,10 +167,6 @@ func TestUniqueLookupReportsItsFunnel(t *testing.T) {
 			resolved: 0, matched: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var events []annotations.Event
-			db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
-			defer func() { db.AnnotationHandler = nil }()
-
 			owner, err := db.LookupByUnique(email, tc.value)
 			require.NoError(t, err)
 			if tc.owner == nil {
@@ -232,7 +236,7 @@ func TestLookupByUnique_UniqueIdentity(t *testing.T) {
 // TestLookupByUnique_MultiClaimant_HighestTxWins: two entities both claim
 // the same value in sequence. The second (higher Tx) wins.
 func TestLookupByUnique_MultiClaimant_HighestTxWins(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -261,7 +265,7 @@ func TestLookupByUnique_MultiClaimant_HighestTxWins(t *testing.T) {
 // TestLookupByUnique_MultiClaimant_ReverseOrder: bob claims first, then
 // alice. Alice should win because she has the higher Tx.
 func TestLookupByUnique_MultiClaimant_ReverseOrder(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -290,7 +294,7 @@ func TestLookupByUnique_MultiClaimant_ReverseOrder(t *testing.T) {
 // TestLookupByUnique_CandidateMovedOn: alice once claimed V, then moved
 // to a different value. She is no longer a claimant for V.
 func TestLookupByUnique_CandidateMovedOn(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -321,7 +325,7 @@ func TestLookupByUnique_CandidateMovedOn(t *testing.T) {
 // TestLookupByUnique_TombstonedClaimant: alice claimed V, then retracted.
 // She is no longer a claimant.
 func TestLookupByUnique_TombstonedClaimant(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -345,7 +349,7 @@ func TestLookupByUnique_TombstonedClaimant(t *testing.T) {
 // TestLookupByUnique_OneMovedOneClaiming: alice moved to V2; bob claims V.
 // V's owner is bob only.
 func TestLookupByUnique_OneMovedOneClaiming(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	alice := datalog.NewIdentity("alice")
@@ -383,7 +387,7 @@ func TestLookupByUnique_OneMovedOneClaiming(t *testing.T) {
 // TestLookupByUnique_NonUniqueAttribute: calling on a non-unique attribute
 // is an error.
 func TestLookupByUnique_NonUniqueAttribute(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	// :user/name exists in the schema but is not declared unique.
@@ -395,7 +399,7 @@ func TestLookupByUnique_NonUniqueAttribute(t *testing.T) {
 
 // TestLookupByUnique_UnknownAttribute: attribute not in schema.
 func TestLookupByUnique_UnknownAttribute(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
+	db, cleanup := setupUniqueTestDB(t, nil)
 	defer cleanup()
 
 	unknown := datalog.NewKeyword(":user/unknown")

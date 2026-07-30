@@ -164,15 +164,16 @@ func TestTupleGroundOrFallback(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			matcher := storage.NewPatternMatcher(db.Store())
-			matcher.SetSchema(s)
-			exec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-
-			ctx := executor.NewContext(func(event annotations.Event) {
+			opts := mode.plannerOptions()
+			opts.Handler = func(event annotations.Event) {
 				t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
-			})
+			}
+			matcher := storage.NewPatternMatcherWithOptions(
+				db.Store(), executor.ExecutorOptionsFromPlanner(opts))
+			matcher.SetSchema(s)
+			exec := executor.NewExecutorWithOptions(matcher, nil, opts)
 
-			result, err := exec.ExecuteWithContext(ctx, q)
+			result, err := exec.Execute(q)
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}

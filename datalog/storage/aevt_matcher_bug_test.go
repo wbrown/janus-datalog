@@ -49,14 +49,17 @@ func TestAEVTMatcherBug(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	// Create annotation handler to track datom scans
+	// Register the handler on the matcher's options. The index-selection event
+	// this test asserts on is emitted inside Match(), so it comes from the
+	// matcher's own handler — a decorator around Match() cannot see it.
 	var events []annotations.Event
 	handler := func(event annotations.Event) {
 		events = append(events, event)
 	}
-	// Create matcher with annotation tracking using decorator pattern
-	baseMatcher := NewPatternMatcher(db.Store())
-	matcher := executor.WrapMatcher(baseMatcher, handler).(executor.PatternMatcher)
+	matcher := executor.WrapMatcher(
+		NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{Handler: handler}),
+		handler,
+	).(executor.PatternMatcher)
 
 	// Create pattern: [?e :person/age ?age]
 	// This is the problematic pattern when ?e is bound

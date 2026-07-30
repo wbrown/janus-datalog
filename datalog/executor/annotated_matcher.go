@@ -14,36 +14,28 @@ import (
 // underlying implementation, similar to Clojure's metadata-based approach.
 type AnnotatedMatcher struct {
 	underlying PatternMatcher
-	collector  *annotations.Collector
+	handler    annotations.Handler
 }
 
-// WrapMatcher creates a decorator that adds annotations to any PatternMatcher.
+// WrapMatcher creates a decorator that times Match() on any PatternMatcher.
 // If handler is nil, returns the original matcher unchanged for zero overhead.
 //
-// This provides Clojure-like transparent instrumentation:
+// It only reports what it can see from outside: the Match() boundary. The
+// detailed events from inside a match — index selection, the scan funnel, join
+// strategy — are the underlying matcher's, reported through the handler it was
+// constructed with. Every matcher is built with one, so there is nothing for this
+// decorator to inject.
 //
-//	matcher := storage.NewPatternMatcher(store)
-//	matcher = executor.WrapMatcher(matcher, handler)  // Automatically annotated!
-//
-// All Match() operations on the wrapped matcher will be timed and logged.
+//	matcher := storage.NewPatternMatcherWithOptions(store, opts) // opts.Handler
+//	matcher = executor.WrapMatcher(matcher, handler)
 func WrapMatcher(m PatternMatcher, handler annotations.Handler) PatternMatcher {
 	if handler == nil {
 		return m // Zero overhead when disabled
 	}
-
-	// Create the wrapper
-	wrapper := &AnnotatedMatcher{
+	return &AnnotatedMatcher{
 		underlying: m,
-		collector:  annotations.NewCollector(handler),
+		handler:    handler,
 	}
-
-	// If the underlying matcher has a SetHandler method, configure it for detailed events
-	// This allows storage layer to emit detailed events (hash join stats, etc)
-	if sh, ok := m.(interface{ SetHandler(annotations.Handler) }); ok {
-		sh.SetHandler(handler)
-	}
-
-	return wrapper
 }
 
 // Match implements PatternMatcher with transparent annotation.
@@ -75,10 +67,11 @@ func (m *AnnotatedMatcher) Match(q *query.Query, bindings Relations) (Relation, 
 	result, err := m.underlying.Match(q, bindings)
 
 	// Record completion with grouped metrics
-	data := m.collector.GetDataMap()
-	data[annotations.KeyPattern] = pattern
-	data["match.count"] = 0
-	data[annotations.KeySuccess] = err == nil
+	data := map[string]interface{}{
+		annotations.KeyPattern: pattern,
+		"match.count":          0,
+		annotations.KeySuccess: err == nil,
+	}
 
 	// Add binding information if it was present
 	if len(bindingSymbols) > 0 {
@@ -101,7 +94,7 @@ func (m *AnnotatedMatcher) Match(q *query.Query, bindings Relations) (Relation, 
 		data["error"] = err.Error()
 	}
 
-	m.collector.AddTiming(annotations.MatchesToRelations, start, data)
+	m.handler(annotations.TimedEvent(annotations.MatchesToRelations, start, data))
 
 	return result, err
 }
@@ -141,11 +134,12 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 		result, err := pm.MatchWithConstraints(q, bindings, constraints)
 
 		// Record completion
-		data := m.collector.GetDataMap()
-		data[annotations.KeyPattern] = pattern
-		data["constraint.count"] = len(constraints)
-		data["match.count"] = 0
-		data[annotations.KeySuccess] = err == nil
+		data := map[string]interface{}{
+			annotations.KeyPattern: pattern,
+			"constraint.count":     len(constraints),
+			"match.count":          0,
+			annotations.KeySuccess: err == nil,
+		}
 
 		// Add binding information if it was present
 		if len(bindingSymbols) > 0 {
@@ -167,36 +161,13 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 			data["error"] = err.Error()
 		}
 
-		m.collector.AddTiming(annotations.MatchesToRelations, start, data)
+		m.handler(annotations.TimedEvent(annotations.MatchesToRelations, start, data))
 
 		return result, err
 	}
 
 	// Fall back to regular Match if constraints not supported
 	return m.Match(q, bindings)
-}
-
-// Collector returns the underlying collector for context integration.
-// This allows the executor context to access the collector if needed.
-func (m *AnnotatedMatcher) Collector() *annotations.Collector {
-	return m.collector
-}
-
-// GetHandler implements HandlerProvider interface.
-// This allows storage layer to emit detailed events without breaking decorator pattern.
-func (m *AnnotatedMatcher) GetHandler() annotations.Handler {
-	if m.collector != nil {
-		return m.collector.Handler()
-	}
-	return nil
-}
-
-// WithCollector implements CollectorAware for backward compatibility.
-// Note: This is deprecated - use WrapMatcher at construction time instead.
-func (m *AnnotatedMatcher) WithCollector(collector *annotations.Collector) CollectorAware {
-	// Already wrapped, just update the collector
-	m.collector = collector
-	return m
 }
 
 // LookupAttribute forwards to the underlying matcher so get-else, missing?,

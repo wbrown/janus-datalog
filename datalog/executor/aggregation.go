@@ -17,14 +17,13 @@ import (
 // For small relations, batch aggregation is faster due to lower overhead
 const StreamingAggregationThreshold = 100
 
-// ExecuteAggregations applies aggregation operations to a relation
-// This is the main entry point for aggregation logic
+// ExecuteAggregations applies aggregation operations to a relation.
+// This is the main entry point for aggregation logic.
 func ExecuteAggregations(rel Relation, findElements []query.FindElement) Relation {
-	return ExecuteAggregationsWithContext(nil, rel, findElements)
-}
+	// Acquired once: Options() is an interface dispatch returning the struct by
+	// value, and every path below — the early error returns included — needs it.
+	opts := rel.Options()
 
-// ExecuteAggregationsWithContext applies aggregation operations with annotation support
-func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []query.FindElement) Relation {
 	// Separate variables and aggregates
 	var groupByVars []query.Symbol
 	var aggregates []query.FindAggregate
@@ -43,7 +42,6 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 		result, err := rel.Project(groupByVars)
 		if err != nil {
 			// Return empty relation on error
-			opts := rel.Options()
 			return NewMaterializedRelationWithOptions(groupByVars, []Tuple{}, opts)
 		}
 		return result
@@ -52,7 +50,7 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 	for _, groupBy := range groupByVars {
 		if SymbolIndex(rel, groupBy) < 0 {
 			result := NewMaterializedRelationWithOptions(
-				aggregateResultSymbols(groupByVars, aggregates), nil, rel.Options())
+				aggregateResultSymbols(groupByVars, aggregates), nil, opts)
 			result.err = fmt.Errorf("group-by symbol %s is not present in source relation", groupBy)
 			return result
 		}
@@ -65,20 +63,17 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 	for _, agg := range aggregates {
 		if SymbolIndex(rel, agg.Arg) < 0 {
 			result := NewMaterializedRelationWithOptions(
-				aggregateResultSymbols(groupByVars, aggregates), nil, rel.Options())
+				aggregateResultSymbols(groupByVars, aggregates), nil, opts)
 			result.err = fmt.Errorf("aggregate argument symbol %s is not present in source relation", agg.Arg)
 			return result
 		}
 		if agg.IsConditional() && SymbolIndex(rel, agg.Predicate) < 0 {
 			result := NewMaterializedRelationWithOptions(
-				aggregateResultSymbols(groupByVars, aggregates), nil, rel.Options())
+				aggregateResultSymbols(groupByVars, aggregates), nil, opts)
 			result.err = fmt.Errorf("aggregate predicate symbol %s is not present in source relation", agg.Predicate)
 			return result
 		}
 	}
-
-	// Extract options from relation
-	opts := rel.Options()
 
 	// Check if streaming aggregation is applicable and beneficial
 	useStreaming := opts.EnableStreamingAggregation &&
@@ -86,16 +81,13 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 		isStreamingEligible(aggregates) &&
 		shouldUseStreaming(rel)
 
-	collector := opts.Collector
-	if ctx != nil && ctx.Collector() != nil {
-		collector = ctx.Collector()
-	}
-	if collector != nil {
+	handler := opts.Handler
+	if handler != nil {
 		strategy := "batch"
 		if useStreaming {
 			strategy = "streaming"
 		}
-		collector.Add(annotations.Event{
+		handler(annotations.Event{
 			Name: annotations.AggregationStrategy,
 			Data: map[string]interface{}{
 				"strategy":        strategy,
@@ -114,7 +106,7 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 	// so a near-zero latency there is the true cost of what this call did,
 	// and aggregation_mode is what tells the two apart.
 	var start time.Time
-	if collector != nil {
+	if handler != nil {
 		start = time.Now()
 	}
 
@@ -122,9 +114,10 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 	switch {
 	case useStreaming:
 		// If no group-by variables, pass empty slice (single global group)
-		streamed := NewStreamingAggregateRelation(rel, groupByVars, aggregates)
-		streamed.options.Collector = collector
-		result = streamed
+		// The fold happens when this relation is consumed, after this call
+		// returns; it reports through the options it inherits from rel, which is
+		// where the handler came from here too.
+		result = NewStreamingAggregateRelation(rel, groupByVars, aggregates)
 	case len(groupByVars) == 0:
 		// Batch aggregation with no group-by is a single aggregation.
 		result = executeSingleAggregation(rel, aggregates)
@@ -133,15 +126,15 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 		result = executeGroupedAggregation(rel, groupByVars, aggregates)
 	}
 
-	// Emit aggregation annotation with find clause details. Reported to the
-	// same collector the strategy event above went to, rather than only to the
-	// context's: an options-supplied collector receives the decision either way,
-	// and would otherwise never see what the decision led to.
-	if collector != nil {
-		data := collector.GetDataMap()
-		data["aggregate_count"] = len(aggregates)
-		data["groupby_count"] = len(groupByVars)
-		data["groupby_vars"] = groupByVars
+	// Emit aggregation annotation with find clause details, through the same
+	// handler the strategy event above went to, so an observer that saw the
+	// decision also sees what it led to.
+	if handler != nil {
+		data := map[string]interface{}{
+			"aggregate_count": len(aggregates),
+			"groupby_count":   len(groupByVars),
+			"groupby_vars":    groupByVars,
+		}
 
 		// Record the find elements for debugging
 		findElemStrs := make([]string, len(findElements))
@@ -157,7 +150,7 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 			data["aggregation_mode"] = "batch"
 		}
 
-		collector.AddTiming(annotations.AggregationExecuted, start, data)
+		handler(annotations.TimedEvent(annotations.AggregationExecuted, start, data))
 	}
 
 	return result
@@ -965,8 +958,8 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 		resultTuples = append(resultTuples, resultTuple)
 	}
 
-	if r.options.Collector != nil {
-		r.options.Collector.Add(annotations.Event{
+	if r.options.Handler != nil {
+		r.options.Handler(annotations.Event{
 			Name: annotations.AggregationMaterialized,
 			Data: map[string]interface{}{
 				"input_count":  tupleCount,

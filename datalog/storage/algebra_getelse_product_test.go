@@ -20,12 +20,14 @@ import (
 
 // setupGetElseTestDB creates a database with projects that have optional
 // attributes. Some attributes are present, some are missing (should default).
-func setupGetElseTestDB(t testing.TB) (*Database, func()) {
+// handler is registered at open, since the database's executors, matchers, and
+// relations are all built with it; nil is annotations-off.
+func setupGetElseTestDB(t testing.TB, handler annotations.Handler) (*Database, func()) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "getelse-product-*")
 	require.NoError(t, err)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, AnnotationHandler: handler})
 	require.NoError(t, err)
 
 	tx := db.NewTransaction()
@@ -112,7 +114,7 @@ func setupGetElseWithItemsDB(t testing.TB, popts *planner.PlannerOptions) (*Data
 // expressions on the same entity produce one tuple per entity, not a
 // Cartesian product.
 func TestGetElseMultiple_NoCartesianProduct(t *testing.T) {
-	db, cleanup := setupGetElseTestDB(t)
+	db, cleanup := setupGetElseTestDB(t, nil)
 	defer cleanup()
 
 	q := `[:find ?p ?name ?a ?b ?c
@@ -142,7 +144,7 @@ func TestGetElseMultiple_NoCartesianProduct(t *testing.T) {
 // stored value when present and the default when absent, through the
 // algebra bridge path.
 func TestGetElseMultiple_CorrectValues(t *testing.T) {
-	db, cleanup := setupGetElseTestDB(t)
+	db, cleanup := setupGetElseTestDB(t, nil)
 	defer cleanup()
 
 	q := `[:find ?name ?a ?b ?c
@@ -195,18 +197,9 @@ func TestGetElseMultiple_CorrectValues(t *testing.T) {
 // TestGetElsePipelineInvariant verifies the single-relation pipeline invariant
 // via annotations: after each clause, there should be exactly 1 relation group.
 func TestGetElsePipelineInvariant(t *testing.T) {
-	db, cleanup := setupGetElseTestDB(t)
-	defer cleanup()
-
-	q := `[:find ?p ?name ?a ?b
-	       :where [?p :project/type :type/active]
-	              [(get-else $ ?p :project/name "") ?name]
-	              [(get-else $ ?p :project/opt-a "") ?a]
-	              [(get-else $ ?p :project/opt-b "") ?b]]`
-
 	maxGroups := 0
 	replacements := 0
-	db.AnnotationHandler = func(event annotations.Event) {
+	db, cleanup := setupGetElseTestDB(t, func(event annotations.Event) {
 		switch event.Name {
 		case "collapse/success":
 			if after, ok := event.Data["relations.after"]; ok {
@@ -220,8 +213,14 @@ func TestGetElsePipelineInvariant(t *testing.T) {
 				maxGroups = remaining
 			}
 		}
-	}
-	defer func() { db.AnnotationHandler = nil }()
+	})
+	defer cleanup()
+
+	q := `[:find ?p ?name ?a ?b
+	       :where [?p :project/type :type/active]
+	              [(get-else $ ?p :project/name "") ?name]
+	              [(get-else $ ?p :project/opt-a "") ?a]
+	              [(get-else $ ?p :project/opt-b "") ?b]]`
 
 	db.ClearPlanCache()
 	rel, err := queryWithAlgebra(db, q)
@@ -510,7 +509,7 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 	opts.EnableAlgebraOptimizer = false
 	router := executor.NewSourceRouter(buildSourceMap(nil, db.Matcher()))
 	exec := executor.NewExecutorWithOptions(router, db, opts)
-	baselineRel, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, nil)
+	baselineRel, err := exec.ExecuteWithRelations(executor.NewContext(), q, nil)
 	require.NoError(t, err, "baseline should not error")
 	baseline, err := executor.CollectTuples(baselineRel, nil)
 	require.NoError(t, err)
@@ -524,7 +523,7 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 	opts2 := DefaultPlannerOptions()
 	opts2.EnableAlgebraOptimizer = true
 	exec2 := executor.NewExecutorWithOptions(router, db, opts2)
-	optimizedRel, err := exec2.ExecuteWithRelations(executor.NewContext(nil), q, nil)
+	optimizedRel, err := exec2.ExecuteWithRelations(executor.NewContext(), q, nil)
 	require.NoError(t, err, "optimized should not error")
 	optimized, err := executor.CollectTuples(optimizedRel, nil)
 	require.NoError(t, err)

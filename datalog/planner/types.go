@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -133,6 +134,12 @@ type PlannerOptions struct {
 	// Executor join/aggregation options
 	EnableStreamingJoins       bool // Return StreamingRelation from joins instead of materializing
 	EnableStreamingAggregation bool // Enable streaming aggregation (default: true)
+
+	// Handler receives annotation events from planning and execution. Nil is
+	// annotations-off and is the default. Registered here, on the options the
+	// caller already builds, so it reaches the executor and every matcher and
+	// relation constructed under them — there is nothing to attach afterwards.
+	Handler annotations.Handler
 }
 
 func indexName(idx IndexType) string {

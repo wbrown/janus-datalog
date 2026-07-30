@@ -82,7 +82,7 @@ func TestAttributeFetchBundleTraversesInputOnce(t *testing.T) {
 	}
 
 	groups, consumed, err := exec.tryFuseAttributeFetchBundle(
-		NewContext(nil),
+		NewContext(),
 		clauses,
 		[]Relation{input},
 	)

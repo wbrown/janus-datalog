@@ -3,6 +3,7 @@ package storage
 import (
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
@@ -45,12 +46,15 @@ func (m optimizerMode) plannerOptions() planner.PlannerOptions {
 // createOptimizerModeDB creates a test database whose default planner
 // options carry this mode; queries through db.Query and the pull APIs run
 // on the mode's path without per-call option plumbing.
-func createOptimizerModeDB(t testing.TB, mode optimizerMode) *Database {
+// handler is registered at open, since every executor, matcher, and relation the
+// database builds is constructed with it; nil is annotations-off.
+func createOptimizerModeDB(t testing.TB, mode optimizerMode, handler annotations.Handler) *Database {
 	t.Helper()
 	opts := mode.plannerOptions()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           t.TempDir(),
-		PlannerOptions: &opts,
+		Path:              t.TempDir(),
+		PlannerOptions:    &opts,
+		AnnotationHandler: handler,
 	})
 	if err != nil {
 		t.Fatalf("failed to create %s database: %v", mode.name, err)

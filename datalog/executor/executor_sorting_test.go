@@ -510,7 +510,7 @@ func TestOrderByScalarInputConstantKeyIsNoOp(t *testing.T) {
 			statusRel := NewMaterializedRelation(
 				[]query.Symbol{datalog.NewSymbol("?status")}, []Tuple{{"active"}})
 
-			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{statusRel})
+			result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{statusRel})
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
@@ -553,7 +553,7 @@ func TestOrderByScalarConstantKeyThenRealKey(t *testing.T) {
 			statusRel := NewMaterializedRelation(
 				[]query.Symbol{datalog.NewSymbol("?status")}, []Tuple{{"active"}})
 
-			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{statusRel})
+			result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{statusRel})
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
@@ -619,7 +619,7 @@ func TestOrderByCollectionInputBoundVariable(t *testing.T) {
 			deptRel := NewMaterializedRelation(
 				[]query.Symbol{datalog.NewSymbol("?dept")}, []Tuple{{"ops"}, {"eng"}})
 
-			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{deptRel})
+			result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{deptRel})
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
@@ -681,7 +681,7 @@ func TestOrderByRelationInputSymbolAcrossUnion(t *testing.T) {
 			inputRel := NewMaterializedRelation(
 				[]query.Symbol{datalog.NewSymbol("?k")}, []Tuple{{"B"}, {"A"}})
 
-			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			result, err := executor.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}

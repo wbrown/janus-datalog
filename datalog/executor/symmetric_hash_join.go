@@ -28,14 +28,18 @@ import (
 func SymmetricHashJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 	// Try to get options from either relation
 	opts := left.Options()
-	if opts == (ExecutorOptions{}) {
+	if !opts.populated() {
 		opts = right.Options()
 	}
 	return SymmetricHashJoinWithOptions(left, right, joinSyms, opts)
 }
 
 // SymmetricHashJoinWithOptions performs a streaming symmetric hash join with explicit options
-func SymmetricHashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts ExecutorOptions) Relation {
+func SymmetricHashJoinWithOptions(
+	left, right Relation,
+	joinSyms []query.Symbol,
+	opts ExecutorOptions,
+) Relation {
 	// Build symbol mappings
 	leftIndices := make([]int, len(joinSyms))
 	rightIndices := make([]int, len(joinSyms))
@@ -62,8 +66,8 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinSyms []query.Symbol,
 		}
 	}
 	resultProperties := joinProperties(left.Properties(), right.Properties(), joinSyms)
-	if opts.Collector != nil {
-		emitJoinStrategyAnnotation(opts, left, right, joinSyms, "symmetric", "both", false)
+	if opts.Handler != nil {
+		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, "symmetric", "both", false)
 	}
 
 	// Determine initial hash table size

@@ -60,9 +60,11 @@ func TestVValidationReportsWhatItsScansCost(t *testing.T) {
 			// is consulted, so with the cache on this arm is not reached at all.
 			// That arm reports nothing either — instance 2b — so reaching the
 			// code under test means going around it.
+			var events []annotations.Event
 			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:         t.TempDir(),
-				DisableCache: true,
+				Path:              t.TempDir(),
+				DisableCache:      true,
+				AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 			})
 			require.NoError(t, err)
 			defer db.Close()
@@ -88,9 +90,6 @@ func TestVValidationReportsWhatItsScansCost(t *testing.T) {
 			commit(func(tx *Transaction) error { return tx.Set(alice, email, "alice@example.com") })
 			commit(func(tx *Transaction) error { return tx.Set(carol, name, "Alice") })
 			commit(func(tx *Transaction) error { return tx.Set(carol, name, "Caroline") })
-
-			var events []annotations.Event
-			db.AnnotationHandler = func(e annotations.Event) { events = append(events, e) }
 
 			// The binding relation supplies V, which is what selects this arm:
 			// analyzeReuseStrategy reaches its candidate-then-validate branch at

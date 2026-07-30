@@ -169,7 +169,7 @@ func TestOptimizationMatrix(t *testing.T) {
 			opts.EnableEntityPrefetch = cfg.prefetch
 
 			start := time.Now()
-			rel, err := queryWithPlannerOptions(db, queryStr, opts)
+			rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 			require.NoError(t, err, "config %s failed", cfg.name)
 			results, err := executor.CollectTuples(rel, nil)
 			require.NoError(t, err)

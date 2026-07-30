@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -20,10 +19,6 @@ type IndexedMemoryMatcher struct {
 	attributeIndex map[datalog.Keyword][]int  // A (interned pointer) → datom positions
 	valueIndex     map[uint64][]int           // hash(V) → datom positions (NOTE: values are interface{}, indexed by hash; collisions filtered by exact match)
 	eavIndex       map[eaIndexKey][]int       // (E, A) interned pointers → datom positions (all, for cardinality-many)
-
-	// Optional collector for annotations (protected by collectorMutex for concurrent access)
-	collectorMutex sync.RWMutex
-	collector      *annotations.Collector
 
 	// ExecutorOptions for configuring relation behavior (protected by optionsMutex)
 	optionsMutex sync.RWMutex
@@ -140,15 +135,6 @@ func hashDatomValue(v interface{}) uint64 {
 	return hashValue(v)
 }
 
-// WithCollector sets the annotation collector and returns self for chaining
-// Thread-safe for concurrent use by parallel subqueries
-func (m *IndexedMemoryMatcher) WithCollector(collector *annotations.Collector) CollectorAware {
-	m.collectorMutex.Lock()
-	m.collector = collector
-	m.collectorMutex.Unlock()
-	return m
-}
-
 // WithOptions sets the executor options and returns self for chaining
 func (m *IndexedMemoryMatcher) WithOptions(opts ExecutorOptions) *IndexedMemoryMatcher {
 	m.optionsMutex.Lock()
@@ -227,7 +213,7 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	// Match with bindings - use streaming iterator for lazy evaluation
 	// Prefer binding relation's options over matcher's options
 	relOpts := bindingRel.Options()
-	if relOpts == (ExecutorOptions{}) {
+	if !relOpts.populated() {
 		relOpts = opts
 	}
 

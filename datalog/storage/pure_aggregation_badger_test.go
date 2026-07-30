@@ -112,32 +112,33 @@ func testPureAggregationWithBadgerDB(t *testing.T, db *Database, mode optimizerM
 		q, err := parser.ParseQuery(queryStr)
 		assert.NoError(t, err)
 
-		// Execute with annotation context to verify streaming is used
-		// Create a no-op handler just to enable annotation collection
-		handler := func(event annotations.Event) {}
-		ctx := executor.NewContext(handler)
-		result, err := exec.ExecuteWithContext(ctx, q)
+		// The handler reads the one datum this test asserts on. Registered on the
+		// options this executor and its matcher are built with: the aggregation
+		// reports through the options of the relation it folds, which the matcher
+		// produced.
+		var aggregationMode string
+		annotated := opts
+		annotated.Handler = func(event annotations.Event) {
+			if event.Name == annotations.AggregationExecuted {
+				if mode, ok := event.Data["aggregation_mode"].(string); ok {
+					aggregationMode = mode
+				}
+			}
+		}
+		annotatedExec := executor.NewExecutorWithOptions(
+			NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptionsFromPlanner(annotated)),
+			db, annotated)
+
+		result, err := annotatedExec.Execute(q)
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
 
 		// CRITICAL: Verify streaming aggregation was actually used
 		// If threshold changes and this test stops using streaming, it will fail here
-		if ctx.Collector() != nil {
-			events := ctx.Collector().Events()
-			var aggregationMode string
-			for _, event := range events {
-				if event.Name == "aggregation/executed" {
-					if mode, ok := event.Data["aggregation_mode"].(string); ok {
-						aggregationMode = mode
-						break
-					}
-				}
-			}
-			if aggregationMode != "streaming" {
-				t.Fatalf("TEST CONFIGURATION ERROR: This test must use streaming aggregation to reproduce the bug, but used '%s'. "+
-					"Either increase test data size (currently 500 tuples) or decrease StreamingAggregationThreshold (currently 100).",
-					aggregationMode)
-			}
+		if aggregationMode != "streaming" {
+			t.Fatalf("TEST CONFIGURATION ERROR: This test must use streaming aggregation to reproduce the bug, but used '%s'. "+
+				"Either increase test data size (currently 500 tuples) or decrease StreamingAggregationThreshold (currently 100).",
+				aggregationMode)
 		}
 
 		assert.Equal(t, 1, result.Size(), "Pure aggregation should return 1 tuple")
@@ -158,31 +159,30 @@ func testPureAggregationWithBadgerDB(t *testing.T, db *Database, mode optimizerM
 		q, err := parser.ParseQuery(queryStr)
 		assert.NoError(t, err)
 
-		// Execute with annotation context to verify streaming is used
-		// Create a no-op handler just to enable annotation collection
-		handler := func(event annotations.Event) {}
-		ctx := executor.NewContext(handler)
-		result, err := exec.ExecuteWithContext(ctx, q)
+		// The handler reads the one datum this test asserts on, registered on the
+		// options this executor and its matcher are built with.
+		var aggregationMode string
+		annotated := opts
+		annotated.Handler = func(event annotations.Event) {
+			if event.Name == annotations.AggregationExecuted {
+				if mode, ok := event.Data["aggregation_mode"].(string); ok {
+					aggregationMode = mode
+				}
+			}
+		}
+		annotatedExec := executor.NewExecutorWithOptions(
+			NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptionsFromPlanner(annotated)),
+			db, annotated)
+
+		result, err := annotatedExec.Execute(q)
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
 
 		// CRITICAL: Verify streaming aggregation was actually used
-		if ctx.Collector() != nil {
-			events := ctx.Collector().Events()
-			var aggregationMode string
-			for _, event := range events {
-				if event.Name == "aggregation/executed" {
-					if mode, ok := event.Data["aggregation_mode"].(string); ok {
-						aggregationMode = mode
-						break
-					}
-				}
-			}
-			if aggregationMode != "streaming" {
-				t.Fatalf("TEST CONFIGURATION ERROR: This test must use streaming aggregation to reproduce the bug, but used '%s'. "+
-					"Either increase test data size (currently 500 tuples) or decrease StreamingAggregationThreshold (currently 100).",
-					aggregationMode)
-			}
+		if aggregationMode != "streaming" {
+			t.Fatalf("TEST CONFIGURATION ERROR: This test must use streaming aggregation to reproduce the bug, but used '%s'. "+
+				"Either increase test data size (currently 500 tuples) or decrease StreamingAggregationThreshold (currently 100).",
+				aggregationMode)
 		}
 
 		assert.Equal(t, 1, result.Size(), "Pure aggregation should return 1 tuple")

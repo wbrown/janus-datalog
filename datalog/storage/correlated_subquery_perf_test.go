@@ -12,7 +12,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/algebra"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -279,23 +278,6 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 	}
 }
 
-// queryWithPlannerOptions runs a query with custom planner options.
-// Used to test with/without the algebra optimizer.
-func queryWithPlannerOptions(db *Database, queryStr string, opts planner.PlannerOptions) (executor.Relation, error) {
-	q, err := db.resolveQuery(queryStr)
-	if err != nil {
-		return nil, err
-	}
-	router := executor.NewSourceRouter(buildSourceMap(nil, db.Matcher()))
-	inputs, err := db.convertInputsToRelations(q, nil)
-	if err != nil {
-		return nil, err
-	}
-	opts.Cache = db.planCache
-	exec := executor.NewExecutorWithOptions(router, db, opts)
-	return exec.ExecuteWithRelations(executor.NewContext(db.AnnotationHandler), q, inputs)
-}
-
 // TestCorrelatedSubqueryAlgebraOptimizer compares baseline (no algebra optimizer)
 // against optimized (algebra optimizer with decorrelation) on the same data
 // and query as TestCorrelatedSubqueryPerformance.
@@ -394,7 +376,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -411,7 +393,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 	})
 
 	t.Run("algebra_optimizer", func(t *testing.T) {
-		t.Logf("annotation handler nil: %v", db.AnnotationHandler == nil)
+		t.Logf("annotation handler nil: %v", db.plannerOptions.Handler == nil)
 		opts := DefaultPlannerOptions()
 		opts.EnableAlgebraOptimizer = true
 		db.ClearPlanCache()
@@ -429,7 +411,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 
 		db.ClearPlanCache()
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		if err != nil {
 			t.Fatalf("query error: %v", err)
 		}
@@ -552,7 +534,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -588,7 +570,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -752,7 +734,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -778,7 +760,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err, "algebra optimizer must not crash on production-structure query")
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)

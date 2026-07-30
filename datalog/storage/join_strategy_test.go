@@ -70,16 +70,14 @@ func TestVerifyStrategyUsed(t *testing.T) {
 					EnableStreamingJoins:    true,
 					EnableSymmetricHashJoin: false,
 					DefaultHashTableSize:    256,
+					Handler: func(event annotations.Event) {
+						if event.Name == "storage/join-strategy" {
+							strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
+							strategies = append(strategies, strategy)
+						}
+					},
 				}
 				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
-
-				// Add event handler
-				matcher.SetHandler(func(event annotations.Event) {
-					if event.Name == "storage/join-strategy" {
-						strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
-						strategies = append(strategies, strategy)
-					}
-				})
 
 				exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
@@ -107,20 +105,18 @@ func TestVerifyStrategyUsed(t *testing.T) {
 					EnableStreamingJoins:    true,
 					EnableSymmetricHashJoin: false,
 					DefaultHashTableSize:    256,
+					Handler: func(event annotations.Event) {
+						if event.Name == "storage/join-strategy" {
+							strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
+							strategies = append(strategies, strategy)
+						}
+					},
 				}
 				matcher := NewPatternMatcherWithOptions(db.Store(), opts)
 
 				// Force HashJoinScan
 				hashJoin := HashJoinScan
 				matcher.ForceJoinStrategy(&hashJoin)
-
-				// Add event handler to verify
-				matcher.SetHandler(func(event annotations.Event) {
-					if event.Name == "storage/join-strategy" {
-						strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
-						strategies = append(strategies, strategy)
-					}
-				})
 
 				exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
@@ -217,28 +213,25 @@ func TestMaterializationDetection(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Create matcher with instrumentation
+			// Create matcher with instrumentation registered on its options
+			var events []string
 			opts := executor.ExecutorOptions{
 				EnableStreamingJoins:    true,
 				EnableSymmetricHashJoin: false,
 				DefaultHashTableSize:    256,
+				Handler: func(event annotations.Event) {
+					if event.Name == "storage/join-strategy" {
+						joinStrategy := event.Data["join_strategy"]
+						bindingSize := event.Data["binding_size"]
+						events = append(events, fmt.Sprintf("Join strategy: %v (binding size: %v)", joinStrategy, bindingSize))
+					}
+					if event.Name == "storage/reuse-strategy" {
+						strategyType := event.Data["strategy_type"]
+						events = append(events, fmt.Sprintf("Reuse strategy: %v", strategyType))
+					}
+				},
 			}
 			matcher := NewPatternMatcherWithOptions(db.Store(), opts)
-
-			// Add event handler to track what's happening
-			var events []string
-			handler := func(event annotations.Event) {
-				if event.Name == "storage/join-strategy" {
-					joinStrategy := event.Data["join_strategy"]
-					bindingSize := event.Data["binding_size"]
-					events = append(events, fmt.Sprintf("Join strategy: %v (binding size: %v)", joinStrategy, bindingSize))
-				}
-				if event.Name == "storage/reuse-strategy" {
-					strategyType := event.Data["strategy_type"]
-					events = append(events, fmt.Sprintf("Reuse strategy: %v", strategyType))
-				}
-			}
-			matcher.SetHandler(handler)
 
 			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 

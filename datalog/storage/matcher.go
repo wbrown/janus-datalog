@@ -92,13 +92,19 @@ func NewPatternMatcher(store Store) *PatternMatcher {
 	}
 }
 
-// NewPatternMatcherWithOptions creates a new pattern matcher with specific options
+// NewPatternMatcherWithOptions creates a new pattern matcher with specific options.
+//
+// The handler comes in with the options and is materialized into a field here:
+// the scan paths read it per datom, and the relations this matcher builds carry
+// the options on to whatever consumes them. Both are the same value fixed at
+// construction — a matcher's observer never changes over its life.
 func NewPatternMatcherWithOptions(store Store, opts executor.ExecutorOptions) *PatternMatcher {
 	return &PatternMatcher{
 		store:   store,
 		reader:  store,
 		encoder: store.Encoder(),
 		options: opts,
+		handler: opts.Handler,
 	}
 }
 
@@ -159,16 +165,6 @@ func (m *PatternMatcher) AsOf(txID datalog.ElementID) *PatternMatcher {
 // All historical versions are visible, including retracted values.
 func (m *PatternMatcher) History() *PatternMatcher {
 	return m.AsOf(datalog.ElementID{})
-}
-
-// SetHandler configures the handler for detailed storage events.
-// This is called by WrapMatcher during construction.
-// Also updates options.Collector so relations inherit the collector for join annotations.
-func (m *PatternMatcher) SetHandler(handler annotations.Handler) {
-	m.handler = handler
-	if handler != nil {
-		m.options.Collector = annotations.NewCollector(handler)
-	}
 }
 
 // SetSchema sets the schema for cardinality-aware index selection.

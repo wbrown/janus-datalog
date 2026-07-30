@@ -18,7 +18,7 @@ import (
 // (correlated union), it evaluates ALL branches and unions the results.
 type OrFallbackRelation struct {
 	executor       *DefaultQueryExecutor
-	ctx            Context
+	ctx            *Context
 	branches       [][]query.Clause
 	outerRel       Relation
 	symbols        []query.Symbol // Determined lazily from first result
@@ -46,7 +46,7 @@ type OrFallbackRelation struct {
 // When shortCircuit=false, uses correlated union (all branches contribute).
 func NewOrFallbackRelation(
 	executor *DefaultQueryExecutor,
-	ctx Context,
+	ctx *Context,
 	branches [][]query.Clause,
 	outerRel Relation,
 	options ExecutorOptions,
@@ -81,8 +81,8 @@ func NewOrFallbackRelation(
 		shortCircuit,
 		branchesAtMostOne,
 	)
-	if collector := ctx.Collector(); collector != nil {
-		collector.Add(annotations.Event{
+	if options.Handler != nil {
+		options.Handler(annotations.Event{
 			Name: annotations.OrPropertiesDerived,
 			Data: map[string]interface{}{
 				"short_circuit":           shortCircuit,
@@ -398,8 +398,8 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 			)
 			materialized.err = setupErr
 			outer = materialized
-			if collector := r.ctx.Collector(); collector != nil {
-				collector.Add(annotations.Event{
+			if r.options.Handler != nil {
+				r.options.Handler(annotations.Event{
 					Name: annotations.OrFallbackOuterMaterialized,
 					Data: map[string]interface{}{
 						"reason":      "join-key-narrowing",
@@ -466,8 +466,8 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 
 	// Emit annotation for iterator creation
 	// Note: Don't call outer.Size() - it may block for streaming relations
-	if collector := r.ctx.Collector(); collector != nil {
-		collector.Add(annotations.Event{
+	if r.options.Handler != nil {
+		r.options.Handler(annotations.Event{
 			Name:  annotations.OrFallbackIteratorCreated,
 			Start: time.Now(),
 			Data: map[string]interface{}{
@@ -614,7 +614,7 @@ func (r *OrFallbackRelation) RequiresCopy() bool {
 // OrFallbackIterator lazily evaluates OR branches per outer tuple.
 type OrFallbackIterator struct {
 	executor     *DefaultQueryExecutor
-	ctx          Context
+	ctx          *Context
 	branches     [][]query.Clause
 	shortCircuit bool // true = fallback, false = correlated union
 	outerIter    Iterator
@@ -1344,8 +1344,8 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 				it.err = e
 			}
 			// Emit annotation when outer iterator exhausted
-			if collector := it.ctx.Collector(); collector != nil {
-				collector.Add(annotations.Event{
+			if it.options.Handler != nil {
+				it.options.Handler(annotations.Event{
 					Name:  annotations.OrFallbackOuterExhausted,
 					Start: time.Now(),
 					Data:  map[string]interface{}{},
@@ -1358,8 +1358,8 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 		outerTuple := it.outerIter.Tuple()
 
 		// Emit annotation for each outer tuple being processed
-		if collector := it.ctx.Collector(); collector != nil {
-			collector.Add(annotations.Event{
+		if it.options.Handler != nil {
+			it.options.Handler(annotations.Event{
 				Name:  annotations.OrFallbackOuterTuple,
 				Start: time.Now(),
 				Data: map[string]interface{}{
@@ -1429,7 +1429,7 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 				// from index selection.
 				// See docs/bugs/BUG_GETELSE_SCAN_REWRITE_NOT_NARROWED_BY_BOUND_CHILD.md.
 				if narrowable {
-					if collector := it.ctx.Collector(); collector != nil {
+					if it.options.Handler != nil {
 						data := map[string]interface{}{
 							"branch":   branchIdx,
 							"narrowed": execInput != nil,
@@ -1439,7 +1439,7 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 						} else {
 							data["reason"] = "outer not re-iterable for join-key extraction"
 						}
-						collector.Add(annotations.Event{
+						it.options.Handler(annotations.Event{
 							Name:  annotations.OrFallbackBranchNarrowed,
 							Start: time.Now(),
 							Data:  data,
@@ -1488,8 +1488,8 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 					// outer relation (no join keys) whose pass-through
 					// behavior must be preserved.
 					if isCacheable || execInput == nil {
-						if collector := it.ctx.Collector(); collector != nil {
-							collector.Add(annotations.Event{
+						if it.options.Handler != nil {
+							it.options.Handler(annotations.Event{
 								Name: annotations.OrFallbackCacheBuild,
 								Data: map[string]interface{}{
 									"branch":      branchIdx,
@@ -1529,8 +1529,8 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 			if branchResult != nil {
 				branchIter := branchResult.Iterator()
 				if branchIter.Next() {
-					if collector := it.ctx.Collector(); collector != nil {
-						collector.Add(annotations.Event{
+					if it.options.Handler != nil {
+						it.options.Handler(annotations.Event{
 							Name:  annotations.OrFallbackBranchSuccess,
 							Start: time.Now(),
 							Data: map[string]interface{}{
@@ -1689,8 +1689,8 @@ func (it *OrFallbackIterator) emitCachedMatches(branchIdx int, cb *cachedBranch,
 	if len(matches) == 0 {
 		return false
 	}
-	if collector := it.ctx.Collector(); collector != nil {
-		collector.Add(annotations.Event{
+	if it.options.Handler != nil {
+		it.options.Handler(annotations.Event{
 			Name:  annotations.OrFallbackBranchSuccess,
 			Start: time.Now(),
 			Data: map[string]interface{}{

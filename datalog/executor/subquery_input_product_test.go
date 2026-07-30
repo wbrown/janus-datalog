@@ -14,12 +14,13 @@ func TestCorrelatedSubqueryStreamsInputProductIntoCombinationExtraction(t *testi
 	y := datalog.NewSymbol("?y")
 	sum := datalog.NewSymbol("?sum")
 	var combinationEvent annotations.Event
-	ctx := NewContext(func(event annotations.Event) {
+	handler := func(event annotations.Event) {
 		if event.Name == "subquery/input-combinations" {
 			combinationEvent = event
 		}
-	})
-	options := ExecutorOptions{Collector: ctx.Collector()}
+	}
+	ctx := NewContext()
+	options := ExecutorOptions{Handler: handler}
 	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
 	left := NewStreamingRelationWithOptions(
 		[]query.Symbol{x},
@@ -77,7 +78,7 @@ func TestCorrelatedSubqueryInputProductPropagatesDeferredError(t *testing.T) {
 	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
 
 	_, err := exec.executeSubquery(
-		NewContext(nil),
+		NewContext(),
 		arithmeticSubqueryPattern(x, y, sum),
 		[]Relation{left, right},
 	)

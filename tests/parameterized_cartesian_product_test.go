@@ -159,7 +159,7 @@ func TestParameterizedQueryCartesianProduct(t *testing.T) {
 					[]executor.Tuple{{"AAPL"}},
 				)
 
-				ctx := executor.NewContext(nil)
+				ctx := executor.NewContext()
 				result, err := exec.ExecuteWithRelations(ctx, q, []executor.Relation{symbolInput})
 				if err != nil {
 					t.Fatalf("Query with parameter failed: %v", err)

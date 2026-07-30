@@ -137,8 +137,18 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 					noRun: true},
 			} {
 				t.Run(tc.arm, func(t *testing.T) {
+					// Registered before the open, since everything the database
+					// builds is constructed with it. The recording flag is what
+					// scopes collection to the query: the handler decides what to
+					// report, so the fixture's writes below stay out of events.
 					var events []annotations.Event
+					recording := false
 					opts := mode.plannerOptions()
+					opts.Handler = func(ev annotations.Event) {
+						if recording {
+							events = append(events, ev)
+						}
+					}
 					db, err := NewDatabaseWithOptions(DatabaseOptions{
 						Path:           t.TempDir(),
 						Schema:         funnelSchema(t),
@@ -150,9 +160,7 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 
 					e := funnelFixture(t, db)
 
-					db.AnnotationHandler = func(ev annotations.Event) {
-						events = append(events, ev)
-					}
+					recording = true
 					var result executor.Relation
 					if tc.inputEntity {
 						result, err = db.Query(tc.query, e)
@@ -263,8 +271,17 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			// The recording flag scopes collection to the queries below; the
+			// handler is registered before the open because everything the
+			// database builds is constructed with it.
 			var events []annotations.Event
+			recording := false
 			opts := mode.plannerOptions()
+			opts.Handler = func(ev annotations.Event) {
+				if recording {
+					events = append(events, ev)
+				}
+			}
 			db, err := NewDatabaseWithOptions(DatabaseOptions{
 				Path:           t.TempDir(),
 				Schema:         funnelSchema(t),
@@ -277,7 +294,7 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 			// A literal E, as above: an :in parameter routes elsewhere.
 			const q = `[:find ?v :where [#id "funnel:alice" :person/name ?v]]`
 
-			db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
+			recording = true
 
 			// First read: a miss, so resolution scans and the entry records it.
 			result, err := db.Query(q)
@@ -339,10 +356,18 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 // no entry and contributes no tuple, but establishing that costs a read, and an
 // arm reporting only its matches prices that read at nothing.
 func TestBindingDrivenCacheArmReportsWhatItServed(t *testing.T) {
+	// The recording flag scopes collection to the matches below; the handler is
+	// registered at open because everything the database builds carries it.
 	var events []annotations.Event
+	recording := false
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:   t.TempDir(),
 		Schema: funnelSchema(t),
+		AnnotationHandler: func(ev annotations.Event) {
+			if recording {
+				events = append(events, ev)
+			}
+		},
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -398,7 +423,7 @@ func TestBindingDrivenCacheArmReportsWhatItServed(t *testing.T) {
 		return ev
 	}
 
-	db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
+	recording = true
 
 	cold := match(2, alice, bob, carol)
 	require.Equal(t, 3, cold.Data[annotations.KeyBindingSize],
@@ -451,16 +476,24 @@ func TestPatternLessReadsReportUnderEntityAndAttribute(t *testing.T) {
 
 	open := func(t *testing.T, disableCache bool) (*Database, *[]annotations.Event, datalog.Identity) {
 		t.Helper()
+		// Registered at open; the flag turns collection on after the fixture, so
+		// the fixture's writes stay out of events.
 		var events []annotations.Event
+		recording := false
 		db, err := NewDatabaseWithOptions(DatabaseOptions{
 			Path:         t.TempDir(),
 			Schema:       funnelSchema(t),
 			DisableCache: disableCache,
+			AnnotationHandler: func(ev annotations.Event) {
+				if recording {
+					events = append(events, ev)
+				}
+			},
 		})
 		require.NoError(t, err)
 		t.Cleanup(func() { db.Close() })
 		e := funnelFixture(t, db)
-		db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
+		recording = true
 		return db, &events, e
 	}
 
@@ -544,9 +577,15 @@ func TestPatternLessReadsReportUnderEntityAndAttribute(t *testing.T) {
 func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
 	t.Run("prefetch reports what it filled", func(t *testing.T) {
 		var events []annotations.Event
+		recording := false
 		db, err := NewDatabaseWithOptions(DatabaseOptions{
 			Path:   t.TempDir(),
 			Schema: funnelSchema(t),
+			AnnotationHandler: func(ev annotations.Event) {
+				if recording {
+					events = append(events, ev)
+				}
+			},
 		})
 		require.NoError(t, err)
 		defer db.Close()
@@ -558,7 +597,7 @@ func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
 		_, err = tx.Commit()
 		require.NoError(t, err)
 
-		db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
+		recording = true
 		m := db.Matcher().(*PatternMatcher)
 		require.NoError(t, m.PrefetchEntities([]datalog.Identity{alice, bob}))
 
@@ -576,16 +615,22 @@ func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
 
 	t.Run("batch pull names its shared run", func(t *testing.T) {
 		var events []annotations.Event
+		recording := false
 		db, err := NewDatabaseWithOptions(DatabaseOptions{
 			Path:   t.TempDir(),
 			Schema: funnelSchema(t),
+			AnnotationHandler: func(ev annotations.Event) {
+				if recording {
+					events = append(events, ev)
+				}
+			},
 		})
 		require.NoError(t, err)
 		defer db.Close()
 
 		alice := funnelFixture(t, db)
 
-		db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
+		recording = true
 		results, err := db.ResolveAllAttributesMany([]datalog.Identity{alice})
 		require.NoError(t, err)
 		require.Len(t, results, 1)
@@ -630,7 +675,16 @@ func TestUniqueAttributeWalkReportsItsOwnScans(t *testing.T) {
 	require.NoError(t, err)
 
 	var events []annotations.Event
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), Schema: s})
+	recording := false
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:   t.TempDir(),
+		Schema: s,
+		AnnotationHandler: func(ev annotations.Event) {
+			if recording {
+				events = append(events, ev)
+			}
+		},
+	})
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -646,7 +700,7 @@ func TestUniqueAttributeWalkReportsItsOwnScans(t *testing.T) {
 		}
 	}
 
-	db.AnnotationHandler = func(ev annotations.Event) { events = append(events, ev) }
+	recording = true
 
 	result, err := db.Query(`[:find ?e ?v :where [?e :person/email ?v]]`)
 	require.NoError(t, err)

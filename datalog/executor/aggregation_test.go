@@ -179,34 +179,26 @@ func TestExecuteAggregations(t *testing.T) {
 }
 
 func TestAggregationEmitsStructuredStrategyAnnotation(t *testing.T) {
-	var events []annotations.Event
-	ctx := NewContext(func(event annotations.Event) {
-		events = append(events, event)
-	})
+	var strategy *annotations.Event
 	value := datalog.NewSymbol("?value")
 	rel := NewMaterializedRelationWithOptions(
 		[]query.Symbol{value},
 		[]Tuple{{int64(1)}, {int64(2)}, {int64(3)}},
-		ExecutorOptions{Collector: ctx.Collector()},
+		ExecutorOptions{Handler: func(event annotations.Event) {
+			if event.Name == annotations.AggregationStrategy {
+				strategy = &event
+			}
+		}},
 	)
 
-	result := ExecuteAggregationsWithContext(ctx, rel, []query.FindElement{
+	result := ExecuteAggregations(rel, []query.FindElement{
 		query.FindAggregate{Function: datalog.SymSum, Arg: value},
 	})
 	if result.Size() != 1 {
 		t.Fatalf("aggregation result size = %d, want 1", result.Size())
 	}
 
-	var strategy annotations.Event
-	found := false
-	for _, event := range events {
-		if event.Name == annotations.AggregationStrategy {
-			strategy = event
-			found = true
-			break
-		}
-	}
-	if !found {
+	if strategy == nil {
 		t.Fatal("aggregation strategy annotation was not emitted")
 	}
 	if strategy.Data["strategy"] != "batch" {
@@ -221,10 +213,7 @@ func TestAggregationEmitsStructuredStrategyAnnotation(t *testing.T) {
 }
 
 func TestStreamingAggregationEmitsMaterializedAnnotation(t *testing.T) {
-	var events []annotations.Event
-	ctx := NewContext(func(event annotations.Event) {
-		events = append(events, event)
-	})
+	var strategy, materialized *annotations.Event
 	value := datalog.NewSymbol("?value")
 	tuples := make([]Tuple, StreamingAggregationThreshold+1)
 	for i := range tuples {
@@ -236,10 +225,18 @@ func TestStreamingAggregationEmitsMaterializedAnnotation(t *testing.T) {
 		base.Iterator(),
 		ExecutorOptions{
 			EnableStreamingAggregation: true,
+			Handler: func(event annotations.Event) {
+				switch event.Name {
+				case annotations.AggregationStrategy:
+					strategy = &event
+				case annotations.AggregationMaterialized:
+					materialized = &event
+				}
+			},
 		},
 	)
 
-	result := ExecuteAggregationsWithContext(ctx, stream, []query.FindElement{
+	result := ExecuteAggregations(stream, []query.FindElement{
 		query.FindAggregate{Function: datalog.SymSum, Arg: value},
 	})
 	if stream.iteratorCalled {
@@ -249,31 +246,21 @@ func TestStreamingAggregationEmitsMaterializedAnnotation(t *testing.T) {
 		t.Fatalf("streaming aggregation result size = %d, want 1", result.Size())
 	}
 
-	foundStrategy := false
-	foundMaterialized := false
-	for _, event := range events {
-		if event.Name == annotations.AggregationStrategy {
-			foundStrategy = true
-			if event.Data["input_size"] != -1 {
-				t.Fatalf("streaming input_size = %v, want -1", event.Data["input_size"])
-			}
-		}
-		if event.Name == annotations.AggregationMaterialized {
-			foundMaterialized = true
-			if event.Data["input_count"] != StreamingAggregationThreshold+1 {
-				t.Fatalf("input_count = %v, want %d",
-					event.Data["input_count"], StreamingAggregationThreshold+1)
-			}
-			if event.Data["result_count"] != 1 {
-				t.Fatalf("result_count = %v, want 1", event.Data["result_count"])
-			}
-		}
+	if strategy == nil {
+		t.Fatal("aggregation strategy annotation was not emitted")
 	}
-	if !foundStrategy {
-		t.Error("aggregation strategy annotation was not emitted")
+	if strategy.Data["input_size"] != -1 {
+		t.Fatalf("streaming input_size = %v, want -1", strategy.Data["input_size"])
 	}
-	if !foundMaterialized {
-		t.Error("aggregation materialized annotation was not emitted through the context collector")
+	if materialized == nil {
+		t.Fatal("aggregation materialized annotation was not emitted")
+	}
+	if materialized.Data["input_count"] != StreamingAggregationThreshold+1 {
+		t.Fatalf("input_count = %v, want %d",
+			materialized.Data["input_count"], StreamingAggregationThreshold+1)
+	}
+	if materialized.Data["result_count"] != 1 {
+		t.Fatalf("result_count = %v, want 1", materialized.Data["result_count"])
 	}
 }
 
