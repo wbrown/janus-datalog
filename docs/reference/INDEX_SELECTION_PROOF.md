@@ -102,26 +102,31 @@ With AVET scan on (A, V):
 
 **Important**: "Correct" here means CRDTResolvingIterator on the V-bound scan handles add-wins resolution properly. The iterator is still required to process retractions.
 
-## Theorem 3b: Schemaless Defaults to CardinalityMany (Datascript-Style)
+## Theorem 3b: Schemaless Defaults to CardinalityOne (LWW)
 
-**Statement**: When no schema is defined, or an attribute has no schema definition, V-bound scans apply add-wins (CardinalityMany) semantics.
+**Statement**: When no schema is defined, or an attribute has no schema
+definition, the attribute resolves as **CardinalityOne (LWW)**, and V-bound
+candidates for it **are** post-validated — the Theorem 2 hazard applies to them
+exactly as it does to declared cardinality-one.
 
-**Rationale** (Datascript compatibility):
-- Datascript defaults to set semantics (add-wins) for schemaless attributes
-- `CardinalityUnknown` → treat as CardinalityMany, not CardinalityOne
-- Add-wins is safe: emits if highest-Tx op is assert, skips if retracted
+Consistent at all three layers: `chooseIndex` defaults absent schema to
+`CardinalityOne`, `CRDTResolvingIterator` resolves `CardinalityUnknown` as LWW,
+and `validatingVBoundIterator.Next` gates on
+`card == CardinalityOne || card == CardinalityUnknown`.
 
 **Cardinality hierarchy**:
 
-| Condition                             | Cardinality    | V-Bound Behavior           |
-|---------------------------------------|----------------|----------------------------|
-| Schema defines CardinalityOne         | One            | Post-validate with EATV    |
-| Schema defines CardinalityMany        | Many           | Add-wins via CRDT iterator |
-| Schema defines CardinalityVector      | Vector         | RGA via CRDT iterator      |
-| Schema exists but attribute undefined | Unknown → Many | Add-wins via CRDT iterator |
-| No schema at all                      | Unknown → Many | Add-wins via CRDT iterator |
+| Condition | Cardinality | V-Bound Behavior |
+|---|---|---|
+| Schema defines CardinalityOne | One | Post-validate against the EATV winner |
+| Schema defines CardinalityMany | Many | Add-wins via CRDT iterator |
+| Schema defines CardinalityVector | Vector | RGA via CRDT iterator |
+| Schema exists but attribute undefined | Unknown → **One** | **Post-validate** |
+| No schema at all | Unknown → **One** | **Post-validate** |
 
-**Implementation rule**: Only apply post-validation when cardinality is **explicitly CardinalityOne**. All other cases use CRDTResolvingIterator with add-wins semantics.
+**Implementation rule**: post-validate when cardinality is CardinalityOne **or
+CardinalityUnknown**. Only explicitly-many and explicitly-vector are resolved by
+the CRDT iterator alone.
 
 ## Theorem 4: Tx Ties Are Resolved Deterministically
 
@@ -179,63 +184,87 @@ Since Tx↓ sorts by the full 16-byte ElementID, ties are impossible. ∎
 
 ## The Selection Matrix
 
-| E | A | V | T | Card      | Index | Validation | Justification                    |
-|---|---|---|---|-----------|-------|------------|----------------------------------|
-| - | - | - | - | any       | EATV  | -          | Full scan                        |
-| ✓ | - | - | - | any       | EATV  | -          | E-primary                        |
-| - | ✓ | - | - | any       | AETV  | -          | A-primary                        |
-| ✓ | ✓ | - | - | any       | EATV  | -          | E+A bound                        |
-| - | ✓ | ✓ | - | one       | AVET  | EATV       | Post-validate card-one emissions |
-| - | ✓ | ✓ | - | many      | AVET  | -          | CRDT iterator (add-wins)         |
-| - | ✓ | ✓ | - | vector    | AVET  | -          | CRDT iterator (RGA)              |
-| - | ✓ | ✓ | - | unknown   | AVET  | -          | CRDT iterator (add-wins default) |
-| ✓ | ✓ | ✓ | - | any       | EATV  | -          | Point lookup, filter by V        |
-| - | - | ✓ | - | per-datom | VAET  | EATV       | Per-datom cardinality resolution |
-| * | * | * | ✓ | any       | TAEV  | varies     | T bound always uses TAEV         |
+Selection is by **bound position first, cardinality second**. `*` in the Tx column
+means Tx is not consulted: a run must contain the whole group, since Tx is what
+resolution determines.
+
+| E | A | V | Tx | Card | Index | Prefix | Justification |
+|---|---|---|----|------|-------|--------|---------------|
+| - | - | - | - | any | EATV | — | Full scan; first entry per (E,A) is the LWW winner |
+| ✓ | - | - | * | any | EATV | E | E-primary, whole (E,A) groups |
+| ✓ | ✓ | - | * | many | EAVT | E, A | Values grouped for add-wins |
+| ✓ | ✓ | - | * | one/vector/unknown | EATV | E, A | Tx↓ first, first entry current |
+| ✓ | ✓ | ✓ | * | many | AEVT | A, E, V | V may join the prefix — see below |
+| ✓ | ✓ | ✓ | * | one/vector/unknown | EATV | E, A | V compared downstream, never narrowing |
+| - | ✓ | - | ✓ | any | **ATEV** | A, Tx | Direct AsOf-by-attribute seek |
+| - | ✓ | ✓ | * | any | AVET | A, V | Card-one emissions post-validated |
+| - | ✓ | - | - | many | AEVT | A | Values grouped for add-wins |
+| - | ✓ | - | - | one/vector/unknown | AETV | A | A-primary, Tx↓ first |
+| - | - | ✓ | * | per-datom | VAET | V | Per-datom cardinality resolution |
+| - | - | - | ✓ | any | TAEV | Tx | T-primary, no other position bound |
+
+**A bound V may enter the prefix only for cardinality-many** — its adds and
+removes all carry its own value, so the V-filtered run contains the whole
+resolution decision. Theorems 2 and 3 at selection time.
 
 **Resolution behavior by cardinality**:
-- **CardinalityOne**: Post-validate with EATV point lookup (LWW winner may have different V)
+- **CardinalityOne**: Post-validate with an EATV `(E,A)` run (LWW winner may have a different V)
 - **CardinalityMany**: CRDTResolvingIterator with add-wins (handles same-Tx tiebreaking)
 - **CardinalityVector**: CRDTResolvingIterator with RGA (per-AfterRef resolution)
-- **CardinalityUnknown/schemaless**: CRDTResolvingIterator with add-wins (Datascript-compatible)
+- **CardinalityUnknown/schemaless**: **LWW, and post-validated** — same as CardinalityOne, at every layer. See Theorem 3b.
 
 ## The State Machine
 
+`chooseIndex` returns a **`ScanBound`** — an index plus the leading components of
+that index's order bound to typed values. It performs no encoding, reads the
+schema itself rather than taking a cardinality argument, and returns no validation
+index: post-validation is the V-bound iterator's concern, not the selector's.
+
 ```go
-func chooseIndex(e, a, v, t, card) (IndexType, ValidationIndex) {
-    if t != nil {
-        return TAEV, nil
-    }
-    if e != nil {
-        return EATV, nil  // V can be post-filtered
+// datalog/storage/matcher.go
+func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
+    if e != nil {                                  // E first — not Tx
+        if a != nil {
+            switch m.cardinalityOf(a) {            // absent schema ⇒ CardinalityOne
+            case CardinalityMany:
+                if v != nil {
+                    return ScanBound{AEVT, []Value{a, e, v}}  // V in the prefix
+                }
+                return ScanBound{EAVT, []Value{e, a}}         // grouped by V
+            default:
+                return ScanBound{EATV, []Value{e, a}}         // Tx↓ first
+            }
+        }
+        return ScanBound{EATV, []Value{e}}
     }
     if a != nil {
-        if v != nil {
-            // V is bound with A constant
-            if card == CardinalityOne {
-                return AVET, EATV  // Post-validate card-one emissions
-            }
-            // CardinalityMany, CardinalityVector, CardinalityUnknown: CRDT iterator handles it
-            return AVET, nil
+        if tx != nil && v == nil {
+            return ScanBound{ATEV, []Value{a, tx}}   // AsOf-by-attribute
         }
-        return AETV, nil
+        if v != nil {
+            return ScanBound{AVET, []Value{a, v}}
+        }
+        if m.cardinalityOf(a) == CardinalityMany {
+            return ScanBound{AEVT, []Value{a}}       // grouped by V
+        }
+        return ScanBound{AETV, []Value{a}}
     }
     if v != nil {
-        // V-only bound: VAET scan with per-datom cardinality resolution
-        // CRDTResolvingIterator wraps VAET directly, handles many/vector/unknown.
-        // Post-filter validates card-one emissions with EATV point lookup.
-        // VAET sort order (V → A → E → Tx↓) groups by A first, so schema
-        // lookup is O(1) per distinct A, not per datom.
-        return VAET, EATV  // EATV available for per-datom card-one validation
+        // VAET order (V → A → E → Tx↓) groups by A once V is bound, so the
+        // per-datom schema lookup is O(1) per distinct A, not per datom.
+        return ScanBound{VAET, []Value{v}}
     }
-    return EATV, nil
+    if tx != nil {
+        return ScanBound{TAEV, []Value{tx}}          // reached only here
+    }
+    return ScanBound{Index: EATV}
 }
 ```
 
-**Critical rule**: Only post-validate when cardinality is **explicitly CardinalityOne**.
+**Critical rule**: post-validate when cardinality is **CardinalityOne or CardinalityUnknown**.
 - CardinalityMany: CRDTResolvingIterator applies add-wins
 - CardinalityVector: CRDTResolvingIterator applies RGA
-- CardinalityUnknown/schemaless: CRDTResolvingIterator applies add-wins (Datascript-compatible)
+- CardinalityUnknown/schemaless: resolves as LWW and **is** post-validated (Theorem 3b)
 
 **V-only bound architecture** (CRDTResolvingIterator wraps VAET scan):
 
@@ -252,15 +281,17 @@ Within this scan, (A, E) groups are **contiguous** — all Tx entries for the sa
 3. Post-filter: for each emission, check if `lookupCardinality(A) == CardinalityOne`
 4. If card-one: validate with EATV point lookup, skip if stale
 
+The type is `validatingVBoundIterator` (`datalog/storage/matcher_relations.go`);
+the sketch below is illustrative, not its current field set.
+
 ```go
-type cardinalityAwareVBoundIterator struct {
+type validatingVBoundIterator struct {
     inner  *CRDTResolvingIterator  // wraps VAET scan
     schema schema.SchemaProvider
-    store  *BadgerStore
     boundV any
 }
 
-func (it *cardinalityAwareVBoundIterator) Next() bool {
+func (it *validatingVBoundIterator) Next() bool {
     for it.inner.Next() {
         datom := it.inner.Datom()
 
@@ -296,19 +327,26 @@ CRDTResolvingIterator's `processAddWins` handles this correctly.
 
 ## Implementation
 
+Live form: `validatingVBoundIterator.validateCandidate`. The read seam takes a
+typed `ScanBound`; no caller constructs byte keys.
+
 ```go
 // Semi-join validation for V-bound cardinality-one queries
-func validateVBoundCandidate(store *Store, e, a, boundV interface{}) bool {
-    // Point lookup on EATV: first datom is CRDT winner
-    it := store.PrefixScan(EATV, e, a)
+func validateCandidate(r StoreReader, e datalog.Identity, a datalog.Keyword,
+    boundV datalog.Value) (bool, error) {
+
+    // The (E, A) run on EATV: Tx↓, so the first entry is the CRDT winner.
+    it, err := r.Scan(ScanBound{Index: EATV, Prefix: []datalog.Value{e, a}})
+    if err != nil {
+        return false, err
+    }
     defer it.Close()
 
     if !it.Next() {
-        return false  // No current value
+        return false, it.Error()  // no current value
     }
-
-    winner := it.Datom()
-    return winner.V == boundV
+    // Compare through the value domain, never with ==.
+    return datalog.ValuesEqual(it.Datom().V, boundV), it.Error()
 }
 ```
 

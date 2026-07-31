@@ -2,38 +2,32 @@
 
 Potential optimizations and features under consideration.
 
-## Status Key
-- ✅ **Implemented** - Moved to `docs/archive/completed/`
-- 🎯 **Active consideration** - Under evaluation or planning
-- ⏸️ **Deferred** - Good idea but not priority
-- ❌ **Rejected** - Evaluated and decided against
+## How to tell what is live
 
-## Current Ideas
+**Each document carries its own status, and that status is the authority.** This README does not restate them — a hand-synced index drifts in both directions at once, retaining entries for files that have moved and omitting ones that arrived.
 
-### Performance Optimizations
+Read a document's status header. Where it claims something about the code, verify against the tree — an idea document records what was considered, not what is true.
 
-- **HASH_JOIN_HOT_PATH_OPTIMIZATIONS.md** - 🎯 Five inner-loop inefficiencies in `combineTuples`, `ValuesEqual`, identity hashing, defensive copies, and dedup lookups
-- **REMOVE_HASHJOIN_MATERIALIZATION.md** - 🎯 Remove forced materialization in HashJoin streaming path
-- **iterator-seek-optimization-plan.md** - ✅ **MOVED TO ARCHIVE** - SimpleBatchScanner was implemented (Phase 1) and removed in v0.15.0, having never acquired a caller
-- **LAZY_MATERIALIZATION_IDEAS.md** - ✅ **MOVED TO ARCHIVE** - Realized as streaming architecture (October 2025)
-- **STORAGE_OPTIMIZATION_PLAN.md** - ✅ **MOVED TO ARCHIVE** - Phase 1 implemented, performance goals achieved
+## What belongs here
 
-### Query Optimization
+An idea is a candidate: a measured opportunity, an inventory of cleanup work, or a design sketch not yet ratified. Once it is ratified it becomes a proposal (`docs/proposals/`); once it is in flight it becomes work in progress (`docs/wip/`); once it is implemented or abandoned it goes to the archive.
 
-- **SMART_PREDICATE_PUSHDOWN_PLAN.md** - 🎯 Advanced predicate pushdown (partially implemented, more possible)
-- **planner-improvements.md** - 🎯 Query planner enhancements from Clojure's information flow approach
+`OPTIMIZATION_OPPORTUNITIES.md` is the ranked performance list, and it is the one document here that carries measured evidence per item rather than a judgement — start there for anything performance-shaped.
 
-### Infrastructure
+## Where things go
 
-- **TEST_COVERAGE_PLAN.md** - 🎯 Test coverage improvements (always relevant)
-- **LEGACY_METADATA_AND_DATALOG_IR_GAPS.md** - 🎯 Inventory and staged cleanup plan for opaque metadata, old plan types, parallel subquery paths, and intentional compatibility surfaces
+- `docs/archive/completed/` — implemented
+- `docs/archive/obsolete/` — outdated status files, or a premise that no longer holds
+- `docs/archive/optimization-attempts/` — tried and measured, including the failures
+- `docs/proposals/` — ratified as a direction, not yet scheduled
 
 ## Guidelines
 
 When evaluating ideas:
-1. **Benchmark first** - Profile to confirm bottleneck exists
-2. **Measure impact** - Compare before/after performance
-3. **Consider complexity** - Simple code that's "fast enough" beats complex code that's faster
-4. **Document outcome** - Move to appropriate archive location
+
+1. **Benchmark first** — profile to confirm the bottleneck exists
+2. **Measure impact** — compare before and after
+3. **Consider complexity** — simple code that is fast enough beats complex code that is faster
+4. **Document outcome** — move to the appropriate archive location, with a line saying what was measured
 
 See `PERFORMANCE_STATUS.md` for lessons learned about optimization priorities.

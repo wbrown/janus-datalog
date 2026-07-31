@@ -179,8 +179,9 @@ Pattern match → StreamingRelation (lazy)
    │   → Use materialized as build, stream probe │
    │                                             │
    │ Both streaming?                             │
-   │   → Symmetric hash join (both stay lazy)    │
-   │   → OR materialize smaller one              │
+   │   → materialize one as build (the default)  │
+   │   → Symmetric hash join, both stay lazy,    │
+   │     only under EnableSymmetricHashJoin      │
    │                                             │
    │ Both materialized?                          │
    │   → Use smaller as build                    │
@@ -205,7 +206,7 @@ if r.iteratorCalled && !r.shouldCache {
 
 | Mistake | Consequence |
 |---------|-------------|
-| Probe emptiness by stepping an iterator you don't capture | Spends the first tuple, silently wrong results (the reason `IsEmpty()` no longer exists — `Size()` returns -1 when unknown instead) |
+| Probe emptiness by stepping an iterator you don't capture | Spends the first tuple, silently wrong results. Ask `Size()`, which returns -1 when the count is unknown rather than consuming to find out |
 | Iterate twice without cache | Panic (if caught) or silent data loss |
 | Forget to copy tuple from reused workspace | Data corruption on next iteration |
 

@@ -45,7 +45,8 @@ This covers:
 
 * **Scalar LWW (cardinality-one):** winner is newest write for `(E,A)`.
 * **LWW membership per value (cardinality-many):** membership of `(E,A,V)`
-  determined by newest op for that `(E,A,V)` (Add vs Remove).
+  determined by newest op for that `(E,A,V)` (Add vs Remove) — **with an
+  add-wins bias at equal Lamport**; see below.
 * **RGA liveness per element id (cardinality-vector):** liveness of an
   element id determined by newest op for that element (Insert vs Tombstone).
   Note: RGA liveness satisfies max-T semantics, but RGA **topology
@@ -56,6 +57,27 @@ This covers:
 This is *not* causal add-wins (OR-Set) semantics; causal add-wins needs
 additional metadata (version vectors, observed-remove tags) and does not
 satisfy I3.
+
+> **I3 holds for cardinality-one. Cardinality-many breaks ties by a different
+> rule.** Cardinality-one emits the first entry in `T↓` key order, and the key
+> carries the whole 16-byte ElementID, so a same-Lamport pair is separated by
+> replica id — I3 exactly.
+>
+> Cardinality-many compares only the Lamport component, and at equal Lamport keeps
+> the Add:
+>
+> ```go
+> if datom.Tx.Lamport < tombstoneLamport {
+>     return nil   // remove wins
+> }
+> // equal or higher Lamport: add wins
+> ```
+>
+> The difference is reachable only across replicas — one replica's Lamport clock
+> never issues the same value twice — so it is a property of merge.
+>
+> Nothing below depends on it: the proof concerns Op's *position* and the length
+> arithmetic, not tie-breaking.
 
 **I4. AfterRef presence is a function of Op.** `AfterRef` exists iff
 `Op ∈ {3,4}`.
@@ -330,7 +352,7 @@ eliminates this entire class.
 
 ∎
 
-This class of bug was observed in practice: see `docs/bugs/BUG_SHARED_DB_DATOM_LOSS.md`
+This class of bug was observed in practice: see `BUG_SHARED_DB_DATOM_LOSS`
 for the specific instance where a length-based heuristic caused ~0.78%
 silent datom loss on reference-valued attributes.
 

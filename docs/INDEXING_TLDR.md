@@ -37,7 +37,7 @@ You want to query these efficiently:
 
 **EATV/AETV note**: These indices store Tx with bitwise NOT for descending order, so the first entry is always the newest (LWW winner). They enable O(1) current-value lookup for CRDT resolution.
 
-**ATEV note**: Same Tx↓ trick, but Tx sorts immediately after the attribute. The first key under `[A]` is the global max-Tx datom for that attribute — used for O(1) attribute-level cache freshness checks ("has anyone written to `:health` since the last time I looked?") and AsOf-by-attribute scans bounded to a transaction.
+**ATEV note**: Same Tx↓ trick, but Tx sorts immediately after the attribute, so the first key under `[A]` is that attribute's newest datom anywhere. That makes AsOf-by-attribute a seek: an A-bound, Tx-bound, V-unbound pattern lands on the transaction instead of scanning every entity (AETV) or every value (AEVT).
 
 **Key insight**: This is like having both an octree AND a BVH AND a grid AND a kd-tree. Each structure is optimal for certain queries. You don't traverse all of them—you pick the right one.
 
@@ -45,20 +45,21 @@ You want to query these efficiently:
 
 ## Fixed-Size Keys (Think: Vertex Buffer Stride)
 
-Every index key is **69 bytes fixed** (plus variable-size V and an optional
-16-byte AfterRef for RGA ops), laid out like a vertex buffer:
+Every index key has **70 fixed bytes** — a 1-byte index prefix plus E, A, Tx and
+Op — around a variable-size V and an optional 16-byte AfterRef for RGA ops, laid
+out like a vertex buffer:
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│ E: 20 bytes │ A: 32 bytes │ Tx: 16 bytes │ V: variable │ Op: 1 │ AfRef?  │
-└──────────────────────────────────────────────────────────────────────────┘
-     ↑              ↑              ↑             ↑          ↑       ↑
-  Entity ID     Attribute     Transaction      Value     CRDT op   RGA-only
- (SHA1 hash)    (keyword)   (Lamport+Repl.)  (any type)            (16 bytes
-                                                                    if Op ∈ {3,4})
+┌────────────────────────────────────────────────────────────────────────────┐
+│ ix:1 │ E: 20 bytes │ A: 32 bytes │ Tx: 16 bytes │ V: var │ AfRef? │ Op: 1  │
+└────────────────────────────────────────────────────────────────────────────┘
+   ↑         ↑             ↑              ↑           ↑        ↑        ↑
+ which    Entity ID    Attribute     Transaction    Value   RGA-only   CRDT
+ index   (SHA1 hash)   (keyword)   (Lamport+Repl.) (any)    16 bytes    op
+                                                          if Op ∈ {3,4}
 ```
 
-Component order shown above is logical — actual byte order **varies per index**
+The E/A/Tx/V order shown above is logical — actual byte order **varies per index**
 (EAVT puts V between A and Tx; EATV puts Tx between A and V; ATEV puts Tx
 right after A; etc.). Op is always last so AfterRef presence can be decoded
 without parsing V.

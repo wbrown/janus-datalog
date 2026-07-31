@@ -101,7 +101,7 @@ func combineTuples(left, right Tuple, joinSyms, leftSyms, rightSyms []query.Symb
         joinSet[sym] = true
     }
     rightNonJoinCount := 0
-    for _, sym := range rightSyms {                         // O(rightCols)
+    for _, sym := range rightSyms {                         // O(rightSyms)
         if !joinSet[sym] {
             rightNonJoinCount++
         }
@@ -109,7 +109,7 @@ func combineTuples(left, right Tuple, joinSyms, leftSyms, rightSyms []query.Symb
     result := make(Tuple, len(left)+rightNonJoinCount)
     copy(result, left)
     offset := len(left)
-    for i, sym := range rightSyms {                         // O(rightCols)
+    for i, sym := range rightSyms {                         // O(rightSyms)
         if !joinSet[sym] {
             result[offset] = right[i]
             offset++
@@ -590,7 +590,7 @@ but not the int64 50K profile (cum %):
 | Symbol | Identity | int64 | Finding |
 |--------|---------:|------:|---------|
 | `executor.combineTuples` | 7.21% | 6.92% | #1 |
-| `executor.NewTupleKey` | 6.35% | not in top 40 | secondary (multi-col alloc) |
+| `executor.NewTupleKey` | 6.35% | not in top 40 | secondary (multi-symbol alloc) |
 | `executor.hashValue` | 5.72% | not in top 40 | #3 |
 
 `hashValue` at 5.72% cum is directly the FNV-1a-over-20-bytes loop

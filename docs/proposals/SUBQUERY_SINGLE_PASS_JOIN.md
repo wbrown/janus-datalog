@@ -101,7 +101,7 @@ func (e *Executor) executeSubqueryWithHashTable(
 
     return &SubqueryResult{
         HashTable:  hashTable,
-        SubqResult: NewMaterializedRelation(subqCols, subqResults),
+        SubqResult: NewMaterializedRelation(subqSyms, subqResults),
     }, nil
 }
 ```
@@ -126,7 +126,7 @@ for subqIt.Next() {
     }
 }
 
-result = NewMaterializedRelation(outputCols, joinedTuples)
+result = NewMaterializedRelation(outputSyms, joinedTuples)
 ```
 
 ## Benefits
@@ -166,7 +166,7 @@ result = NewMaterializedRelation(outputCols, joinedTuples)
 
 ## Related Issues
 
-- `docs/bugs/BUG_STREAMING_RELATION_PREMATURE_MATERIALIZATION.md` - Root cause of this investigation
+- `BUG_STREAMING_RELATION_PREMATURE_MATERIALIZATION` - Root cause of this investigation
 - Single-use iterator semantics introduced 2025-10-25
 - **NEW**: `TestSubqueryWithInputParameter` failure (2025-10-25) - Found second instance of double-iteration bug in `query_executor.go:executeSubquery()`, confirming this is a systemic issue requiring architectural fix
 

@@ -44,13 +44,21 @@ Configuration, semantics, and proofs in `docs/reference/`:
 
 ## Current Work in Progress
 
-See `docs/wip/` for active development work:
-- **[PHASE_AS_QUERY_ARCHITECTURE.md](docs/wip/PHASE_AS_QUERY_ARCHITECTURE.md)** - Stage C: AST-oriented planner rewrite (in progress)
+**[docs/wip/](docs/wip/README.md)** - designs with open questions, derivations,
+campaign records and investigations. Each document carries its own status header,
+and that status is the authority; the directory README is deliberately not a
+status list.
 
 ### Development Notes
 
 Implementation notes organized by package in `docs/dev-notes/`:
 - **executor/** - Query execution engine implementation notes
+
+## Design Proposals
+
+**[docs/proposals/](docs/proposals/)** - designs for work not in flight: storage
+and index layouts, distribution and sync, query-language extensions, and API
+surfaces. A proposal states what is being considered, not what the engine does.
 
 ## Package Documentation
 
@@ -89,20 +97,20 @@ Historical documentation organized by type:
 ### Archive Directories
 - **docs/archive/early-design/** - Original design exploration and analysis
 - **docs/archive/2025-10/** - October 2025 optimization sprint (major performance work)
+- **docs/archive/2025-12/** - December 2025 campaign artifacts
+- **docs/archive/2026-07/** - July 2026 campaign artifacts
 - **docs/archive/optimization-attempts/** - Historical optimization attempts and profiling
 - **docs/archive/completed/** - Completed features and implementations
+- **docs/archive/obsolete/** - Documents whose premise no longer holds
 
 Each archive directory contains a README explaining its contents.
 
 ## Bug Documentation
 
-### Resolved Bugs
-- **docs/bugs/resolved/** - Documented bug fixes with analysis
-  - **[DECORRELATION_BUG_FIX.md](docs/bugs/resolved/DECORRELATION_BUG_FIX.md)** - Pure aggregation decorrelation bug (Oct 2025)
-  - See README for complete list
-
-### Active Bugs
-- **docs/bugs/active/** - Currently tracked issues
+Open bugs sit at the top level of **[docs/bugs/](docs/bugs/)**; a fix moves the
+document into **[docs/bugs/resolved/](docs/bugs/resolved/)**, so the directory a
+document is in states whether it is still live. Cite a bug by its `BUG_NAME`
+rather than its path — the path changes when the bug is fixed.
 
 ## Future Ideas
 

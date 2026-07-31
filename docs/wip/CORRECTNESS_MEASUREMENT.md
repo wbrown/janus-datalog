@@ -16,7 +16,7 @@ For every query the language accepts, over any database state:
 2. **Path equivalence**: every execution path (baseline planner, algebra optimizer, and any future path) produces the same result set and the same error/no-error outcome.
 3. **Transformation fidelity**: each optimization performed is the transformation it claims to be, applied only where its preconditions hold.
 
-**Outcome equivalence is defined as**: result sets equal under `datalog.ValuesEqual` (order-insensitive unless `:order-by` is present), or both paths erroring — error *presence* is the contract; message text and detection stage are not (see `docs/bugs/BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md` for where stage divergence is itself a ledgerable defect).
+**Outcome equivalence is defined as**: result sets equal under `datalog.ValuesEqual` (order-insensitive unless `:order-by` is present), or both paths erroring — error *presence* is the contract; message text and detection stage are not (see `BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS` for where stage divergence is itself a defect).
 
 ## The tiers
 

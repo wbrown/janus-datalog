@@ -47,27 +47,40 @@ The `Relation` interface (in `datalog/executor/relation.go`) is the fundamental 
 ```go
 type Relation interface {
     // Core Operations (Relational Algebra)
-    Project(symbols []Symbol) (Relation, error)      // π (projection)
-    Filter(filter Filter) Relation                   // σ (selection)
-    Join(other Relation) Relation                    // ⋈ (natural join)
-    HashJoin(other Relation, joinSymbols []Symbol) Relation // ⋈ (equi-join)
-    SemiJoin(other Relation, joinSymbols []Symbol) Relation // ⋉ (semi-join)
-    AntiJoin(other Relation, joinSymbols []Symbol) Relation // ▷ (anti-join)
-    Aggregate(elements []FindElement) Relation       // γ (grouping/aggregation)
-    Sort(orderBy []OrderByClause) Relation          // τ (sort)
+    Project(symbols []query.Symbol) (Relation, error)        // π (projection)
+    Select(pred func(Tuple) bool) Relation                   // σ (selection)
+    Join(other Relation) Relation                            // ⋈ (natural join)
+    HashJoin(other Relation, joinSyms []query.Symbol) Relation  // ⋈ (equi-join)
+    SemiJoin(other Relation, joinSyms []query.Symbol) Relation  // ⋉ (semi-join)
+    AntiJoin(other Relation, joinSyms []query.Symbol) Relation  // ▷ (anti-join)
+    Aggregate(findElements []query.FindElement) Relation     // γ (grouping/aggregation)
+    Sort(orderBy []query.OrderByClause) Relation             // τ (sort)
 
     // Datalog-Specific Extensions
-    EvaluateFunction(fn Function, output Symbol) Relation
-    FilterWithPredicate(pred Predicate) Relation
+    EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation
+    FilterWithPredicate(pred query.Predicate) Relation
+    ProjectFromPattern(pattern *query.DataPattern) Relation
 
     // Metadata & Access
-    Symbols() []Symbol                    // Schema
+    Symbols() []query.Symbol              // Schema
     Properties() RelationProperties       // Proven ordering and candidate keys
     Iterator() Iterator                   // Streaming access
     Size() int                            // Cardinality (-1 when unknown; never consumes)
-    Materialize() Relation                // Force materialization
+    Get(i int) Tuple                      // By index; expensive on streaming relations
+    Sorted() ([]Tuple, error)             // Sorted by the relation's own symbols
+    Materialize() Relation                // Ensure replayability
+    Options() ExecutorOptions             // Configuration, read by join dispatch
+    RequiresCopy() bool                   // Iterator reuses workspace memory
+
+    // Rendering
+    String() string                       // Compact form, for annotations
+    Table() string                        // Markdown table
 }
 ```
+
+`Select` takes a Go predicate; `FilterWithPredicate` takes a `query.Predicate`.
+Those are the two selection entry points — there is no `Filter` method and no
+`Filter` type.
 
 **Design Principles**:
 - **Immutable**: All operations return NEW relations
@@ -157,6 +170,14 @@ Result: Single relation with 25 tuples
 **What prevents bad performance**: The query planner's selectivity scoring and phase grouping provides good initial ordering. The `Collapse()` method just executes the plan safely.
 
 ## Join Algorithms
+
+> The listings in this section and in *Aggregation System* below are **sketches of
+> the algorithms**, not extracts. They use Go-ish syntax and illustrative helper
+> names (`buildHashTable`, `extractKey`, `computeAggregates`) that are not
+> identifiers in the tree — the real key machinery is `TupleKeyMap`
+> (`datalog/executor/tuple_key.go`), and join dispatch is in
+> `datalog/executor/join.go`. Read them for the shape of each operator; read the
+> code for what it does.
 
 ### 1. Natural Join
 Joins on ALL shared symbols:

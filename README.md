@@ -737,7 +737,10 @@ tx2.Commit()
 
 **Multi-replica scenarios:**
 - Two replicas can accept writes independently (offline-first)
-- Merge via `d.Merge(datomsFromOtherReplica)`
+- Bringing two replicas together today means export/import (`ExportBinary` /
+  `ImportBinary`) — there is no single-call merge, and import is specified for a
+  fresh target database rather than an incremental fold-in. A first-class merge
+  is designed but unbuilt; see `docs/proposals/TRANSACTION_ENVELOPES.md`.
 - Conflicts resolve deterministically - same result on all nodes
 - No coordination required, no conflict resolution callbacks
 
@@ -950,7 +953,7 @@ type Relation interface {
     Properties() executor.RelationProperties
     Iterator() executor.Iterator
     Project(symbols []query.Symbol) (executor.Relation, error)
-    Filter(filter executor.Filter) executor.Relation
+    Select(pred func(executor.Tuple) bool) executor.Relation
     Join(other executor.Relation) executor.Relation
     Materialize() executor.Relation
     // ... sorting, predicates, functions, semi/anti joins, aggregation

@@ -315,9 +315,9 @@ type Relation interface {
     Project(symbols []Symbol) (Relation, error)    // π
     Filter(predicate Predicate) Relation            // σ
     Join(other Relation) Relation                   // ⋈
-    HashJoin(other Relation, cols []Symbol) Relation
-    SemiJoin(other Relation, cols []Symbol) Relation
-    AntiJoin(other Relation, cols []Symbol) Relation
+    HashJoin(other Relation, joinSyms []Symbol) Relation
+    SemiJoin(other Relation, joinSyms []Symbol) Relation
+    AntiJoin(other Relation, joinSyms []Symbol) Relation
     Aggregate(aggs []Aggregate) Relation            // γ
     Sort(orderBy []OrderBy) Relation                // τ
 
@@ -397,16 +397,16 @@ func (it *ProjectIterator) Next() bool {
 
 **Join (Natural Join):**
 ```go
-func HashJoin(left, right Relation, joinCols []Symbol) Relation {
+func HashJoin(left, right Relation, joinSyms []Symbol) Relation {
     // Build hash table from smaller relation
-    hashTable := buildHashTable(smaller, joinCols)
+    hashTable := buildHashTable(smaller, joinSyms)
 
     // Probe with larger relation
     return StreamingRelation{
         iterator: &HashJoinIterator{
             probeSource: larger.Iterator(),
             hashTable:   hashTable,
-            joinCols:    joinCols,
+            joinSyms:    joinSyms,
         },
     }
 }

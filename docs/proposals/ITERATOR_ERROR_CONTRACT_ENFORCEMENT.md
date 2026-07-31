@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-24
 **Status**: Proposal
-**Fixes**: `docs/bugs/BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md`, and the error-drop half of `docs/bugs/BUG_UNION_RELATION_CONCURRENT_ITERATION_AND_ERROR_DROP.md`
+**Fixes**: `BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES`, and the error-drop half of `BUG_UNION_RELATION_CONCURRENT_ITERATION_AND_ERROR_DROP`
 **Out of scope**: changing the `Next()`/`Error()` protocol; the `UnionRelation` concurrent-iteration / cache-build race (tracked separately in its own bug doc)
 
 ## The contract is correct and deliberate

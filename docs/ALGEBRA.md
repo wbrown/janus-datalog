@@ -419,9 +419,16 @@ type cachedBranch struct {
 ```
 
 On first evaluation of branch `i`:
-1. Check `isUncorrelatedBranch(branch)` — inspect the clause structure
-2. If uncorrelated: execute, build index, store in `branchCache[i]`
-3. If correlated: execute, filter with `filterBranchToOuterTuple`, no cache
+1. Check `isCacheableBranch(branch, isOrJoin)` — inspect the clause structure
+2. If cacheable: execute with the join variables free, build the index, store in `branchCache[i]`
+3. Otherwise: execute, filter with `filterBranchToOuterTuple`, no cache
+
+A branch is cacheable in **two** cases, and the second depends on the enclosing
+clause: a `SubqueryPattern` whose inputs are only `$` (an uncorrelated subquery),
+or — **in an or-join** — a DataPattern-only branch whose sole connection to the
+outer context is the join variables. Evaluated with those free, the pattern
+returns every match, and the cache indexes by join variable for an O(1) probe per
+outer tuple.
 
 On subsequent evaluations of branch `i`:
 1. If `branchCache[i]` exists: probe the index, return matching tuples

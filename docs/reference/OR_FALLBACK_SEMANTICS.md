@@ -115,13 +115,20 @@ or-default is non-monotone — which variables the fallback decision is grouped 
 
 | Clause | IR Node | Description |
 |--------|---------|-------------|
-| `(or ...)` / `(or-join ...)` | `Union` | Independent branch evaluation |
+| `(or ...)` / `(or-join ...)` | `Union` | Branch evaluation, correlated or not |
 | `(or-default ...)` / `(or-default-join ...)` | `LateralUnion` | Correlated per-tuple evaluation |
-| `(or-default ...)` with subquery+ground | `LateralJoin` | Correlated subquery with defaults |
+| `(or-default ...)` over a **correlated** subquery + ground | `LateralJoin` carrying `DefaultValues` | |
+| `(or-default ...)` over an **uncorrelated** subquery + ground | `Join{Kind: LeftOuterJoin}` carrying `DefaultValues` | Non-matching outer tuples take the defaults |
 
-When `(or ...)` contains correlated predicates (NOT, missing?) that require
-outer context, the compiler detects this and routes to `LateralUnion` instead
-of `Union`, since independent union branches cannot express anti-joins.
+A union whose branches contain correlated predicates (NOT, `missing?`) still
+compiles to `Union`. What differs is the branch context: branches compile against
+a `Project` schema placeholder so anti-joins see the outer symbols without
+embedding outer scans, and the node's interface comes from the clause's canonical
+scope rather than from the placeholder-inflated children.
+
+The fallback machinery is not a valid target for union. Fallback short-circuits
+per group and union does not, so encoding union through `LateralUnion` drops
+tuples — `BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_TUPLES`.
 
 ## Comparison with Datomic
 

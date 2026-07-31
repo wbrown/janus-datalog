@@ -217,7 +217,7 @@ Set `ExecutorOptions.Collector` to receive events:
 ```go
 collector := annotations.NewCollector(handler)
 opts := ExecutorOptions{Collector: collector}
-joined := HashJoinWithOptions(left, right, joinCols, opts)
+joined := HashJoinWithOptions(left, right, joinSyms, opts)
 ```
 
 ### Current Wiring (Complete)

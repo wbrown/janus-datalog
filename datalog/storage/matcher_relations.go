@@ -768,10 +768,10 @@ func (it *validatingVBoundIterator) Next() bool {
 				// CRDTResolvingIterator already handled:
 				// - CardinalityMany: add-wins with same-Tx tiebreaking
 				// - CardinalityVector: RGA resolution
-				// - CardinalityUnknown: add-wins (same as CardinalityMany)
 				//
-				// Only CardinalityOne needs post-validation because the
-				// LWW winner may have a different V than our bound V.
+				// CardinalityOne and CardinalityUnknown both resolve as LWW, and
+				// both need post-validation: the winner within the V-filtered
+				// run may not be the real winner, which may carry a different V.
 				card := it.getCardinalityEnum(datom.A)
 				// Schemaless attributes are treated as cardinality-one (LWW)
 				// everywhere else in the engine (planner routing, cache OneValue),

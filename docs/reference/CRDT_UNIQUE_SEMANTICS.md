@@ -223,7 +223,7 @@ This proposal was reached through a back-and-forth that's worth preserving becau
 
 ### The original framing (wrong)
 
-The user reported a bug (`docs/bugs/BUG_UNIQUENESS_VALIDATION_TOCTOU.md`) describing two failures of the existing implementation:
+The user reported a bug (`BUG_UNIQUENESS_VALIDATION_TOCTOU`) describing two failures of the existing implementation:
 
 - Concurrent commits can both pass validation and both write the same unique value
 - A transaction that retracts and re-assigns a unique value within itself is incorrectly rejected
@@ -475,24 +475,20 @@ The parser will recognize the tuple form, and the planner will resolve it via `L
 
 ---
 
-## Open items (for implementation, not design)
+## Open items
 
-These are execution-time questions the implementation will answer; they are not design choices.
+1. **AsOf interaction with `(A, V)`-LWW.** `d.AsOf(tx)` should restrict resolution to claims with `Tx ≤ tx`, chaining through the filter in `CRDTResolvingIterator.txID`. No test in the unique suite exercises it.
 
-1. **AVET Tx encoding** (Commit 2): verify whether AVET stores Tx in ascending or descending order. If descending, `resolveAVLWW` is O(1) per candidate (first entry wins). If ascending, O(k) per value with k = number of historical claimants. The key encoder source will answer this immediately; the algorithm is straightforward either way.
+2. **The takeover path is unbenchmarked.** `BenchmarkLookupByUnique_Uncontested` and `BenchmarkLookupByUnique_ColdCache` cover the common cases. The contested path — an entity-view read that walks history until a non-superseded assertion — costs O(history depth) rather than O(1), and it is the one without a guardrail.
 
-2. **AsOf interaction with `(A, V)`-LWW** (Commit 3): `d.AsOf(tx)` should restrict `(A, V)`-LWW resolution to claims with `Tx ≤ tx` — the AsOf filter already in `CRDTResolvingIterator.txID` should chain through naturally, but a dedicated test should verify it produces the snapshot-correct canonical owner at each point in time.
-
-3. **Benchmark regression** (all commits): entity-view reads for unique attributes move from O(1) (first EATV entry) to O(history depth until non-superseded assertion). For attributes with no takeovers, still O(1). For contested attributes, worst case is the length of the entity's history. Common case: negligible. Benchmark the takeover path and add a regression guardrail if it becomes load-bearing.
-
-4. **`Compare`-wise equality on V** (Commit 2): AVET prefix scans compare V by byte-equal storage encoding. Ensure `ValuesEqual` and the encoding agree for edge cases (`[]byte`, `float64` NaN, interned keyword values). This is a verification step, not a new design.
+3. **`ValuesEqual` versus storage encoding on V.** AVET prefix scans compare V by byte-equal storage encoding. `[]byte` is covered by `vbound_bytes_validation_test.go`; `float64` NaN and interned keyword values are not.
 
 ---
 
 ## Related documents
 
-- `docs/bugs/BUG_TRANSACTION_COMMIT_SPLIT_BADGER_TX.md` — atomicity bug, fixed in this commit
-- `docs/bugs/BUG_UNIQUENESS_VALIDATION_TOCTOU.md` — uniqueness bug, framing now superseded by this proposal
+- `BUG_TRANSACTION_COMMIT_SPLIT_BADGER_TX` — atomicity bug, fixed in this commit
+- `BUG_UNIQUENESS_VALIDATION_TOCTOU` — uniqueness bug, framing now superseded by this proposal
 - `docs/reference/CRDT.md` — the CRDT storage architecture this proposal extends
-- `docs/reference/SCHEMA.md` — schema definition; `Unique` field semantics will need updating once the redesign is implemented
+- `docs/reference/SCHEMA.md` — schema definition and `Unique` field semantics
 - `docs/reference/INDEX_SELECTION_PROOF.md` — the candidate-and-validate pattern in `matchWithVValidation` that the new V-bound resolution extends

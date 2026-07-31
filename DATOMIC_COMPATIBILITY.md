@@ -308,7 +308,9 @@ branch output interface, not a list of branch-specific filter inputs:
 
 See [OR_FALLBACK_SEMANTICS.md](docs/reference/OR_FALLBACK_SEMANTICS.md) for details.
 
-**Note:** NOT clauses support data patterns. Predicates and expressions inside NOT are not yet supported.
+**Note:** NOT bodies accept data patterns, predicates, and expressions. A
+`not-join` header must declare every outer variable its body consumes, including
+one used only by a body predicate.
 
 ### 9. Time-Based Queries
 
@@ -384,7 +386,7 @@ results, err := d.PullMany(entityIDs, `[:user/name]`)
 - Wildcard: `[*]` (all attributes)
 - Nested references: `{:user/region [:region/code :region/name]}`
 - Default values: `(default :attr "fallback")`
-- Limit (parsed, cardinality-many not yet implemented): `(limit :attr 10)`
+- Limit on cardinality-many attributes: `(limit :attr 10)`
 
 **Key behaviors:**
 - Result keys omit leading colon: `"user/name"` not `":user/name"`

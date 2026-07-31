@@ -274,7 +274,7 @@ All four findings confirmed against the code:
 
 ### R4. Algebra bridge compiles in source order — NOT before its binder fails only with the optimizer on
 
-**Status**: Open. Ledgered as `docs/bugs/BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER.md`; fix direction pending an owner ruling (pre-order clauses entering Compile by ScopeOf readiness, or defer unplaceable clauses in compileClausesFrom). This finding also produced the owner ruling that every query test must exercise both optimizer modes — plan of record: `docs/wip/OPTIMIZER_MODE_MATRIX.md`.
+**Status**: Resolved (2026-07-20). Direction ruled — pre-order clauses entering Compile by `ScopeOf` readiness, rather than deferring unplaceable clauses in `compileClausesFrom` — and executed; readiness is single-homed as `query.ClauseBlockers`/`query.ClauseReady`. `BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER`. This finding also produced the owner ruling that every query test must exercise both optimizer modes — plan of record: `docs/wip/OPTIMIZER_MODE_MATRIX.md`.
 
 ### R5. Orphaned `antiJoinOnSymbols` doc comment
 

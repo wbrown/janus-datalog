@@ -1,9 +1,9 @@
-laud
+# Distributed Janus Datalog
 
 **Status:** Proposal
 **Author:** wbrown
 **Date:** 2026-01-29
-**Prerequisite:** [VECTOR_AND_HISTORY.md](VECTOR_AND_HISTORY.md) (CRDT-Based Storage Model)
+**Prerequisite:** [CRDT_VECTOR_STORAGE.md](CRDT_VECTOR_STORAGE.md) (CRDT-Based Storage Model)
 
 ---
 
@@ -41,7 +41,7 @@ Building on our CRDT storage model with content-addressed sharding gives us:
 
 ## Foundation: CRDT Storage Model
 
-The CRDT-based storage model (see [VECTOR_AND_HISTORY.md](VECTOR_AND_HISTORY.md)) provides the distributed foundation:
+The CRDT-based storage model (see [CRDT_VECTOR_STORAGE.md](CRDT_VECTOR_STORAGE.md)) provides the distributed foundation:
 
 **ElementID (Lamport, NodeID):**
 - Every write gets a unique `ElementID(Lamport, NodeID)`

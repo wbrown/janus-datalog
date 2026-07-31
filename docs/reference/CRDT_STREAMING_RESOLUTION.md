@@ -163,18 +163,35 @@ At (E, A) boundary, reconstruct datoms:
 
 **No datom pointer storage. No corruption from iterator reuse. Reconstruct at emit.**
 
-## Why Values Work as Map Keys
+## Values as Map Keys — all but one, and the one matters
 
-Values in datoms are typed:
-- `string` - comparable
-- `int64` - comparable
-- `float64` - comparable
-- `bool` - comparable
-- `time.Time` - comparable (struct)
-- `datalog.Keyword` - comparable (string type)
-- `datalog.Identity` - comparable (interface with comparable underlying)
+Most of the closed value domain is directly hashable, so `map[any]` works without a
+`valueKey()` layer:
 
-Use `map[any]bool` directly. **No stringify. No `valueKey()` function. No allocations on hot path.**
+| Value type | Hashable as a Go map key? | Why |
+|---|---|---|
+| `string`, `int64`, `float64`, `bool` | yes | comparable scalars |
+| `time.Time` | yes | comparable struct |
+| `datalog.ElementID` | yes | struct of two `uint64` |
+| `Identity`, `Keyword`, `Symbol` | yes | **interned pointers** — one pointer per content, so pointer equality is exact |
+| `[]byte` | **no** | slices are not hashable; keying one panics with *hash of unhashable type []uint8* |
+| vectors | **no** | same reason — but see below, they cannot reach here |
+
+**`processAddWins` converts `[]byte` to `string` before keying**, and must:
+
+```go
+key := datom.V
+if b, ok := key.([]byte); ok {
+    key = string(b)   // the emitted datom still carries the original []byte
+}
+```
+
+This is not an optimization to remove. A cardinality-many attribute holding byte
+values panics without it — a defect that was found and fixed once already.
+
+**Vectors cannot reach this path.** A whole vector never reaches storage — a
+vector literal is a `query.VectorConstant`, not a `Constant` — and a
+cardinality-vector attribute stores *elements*, which route to `accumulateRGA`.
 
 ## Call Site Conditions
 
@@ -183,13 +200,15 @@ The wrapping condition should be consistent across all call sites:
 ```go
 // Only wrap when E is unbound (scanning multiple entities)
 if m.schema != nil && e == nil {
-    iter = NewCRDTResolvingIterator(rawIter, m.schema, m.txID)
+    iter = NewCRDTResolvingIterator(rawIter, m.schema, m.txID, matcher, report)
 }
 ```
 
-Current state:
-- `matcher_relations.go` - Correct: `e == nil && a != nil`
-- Other call sites - Need audit: some wrap unconditionally
+The constructor takes five arguments, not three. `matcher` enables the unique
+walk — a unique CardinalityOne group resolves by walking the entity rather than
+by first-entry-wins, and passing nil disables that and falls back. `report` is the
+scan accounting the walk's AVET supersession reads accrue into, since those are
+index reads this iterator causes that the source knows nothing about.
 
 ## Summary
 
@@ -201,7 +220,7 @@ Current state:
 
 **Trust the architecture:**
 - Index ordering provides resolution (EATV = Tx descending = first entry wins)
-- Values are comparable map keys (no `valueKey()` stringify!)
+- Values are comparable map keys, with `[]byte` converted to `string` first
 - CardinalityOne/Many: streaming means filter and emit, not buffer and resolve
 - CardinalityVector: mathematically impossible to stream due to DFS ordering requirements
 
@@ -210,7 +229,8 @@ Current state:
 The `CRDTResolvingIterator` in `crdt_resolving_iterator.go` implements all three strategies:
 
 - **CardinalityOne**: Zero state beyond current (E, A). First entry emitted, rest skipped.
-- **CardinalityMany**: `map[any]bool` for emitted values, `map[any]uint64` for tombstones. Emit immediately when qualifying.
+- **CardinalityMany**: `map[any]bool` for emitted values, `map[any]uint64` for tombstones, keyed by the value with `[]byte` converted to `string`. Emit immediately when qualifying.
+- **CardinalityOne + unique**: resolves by walking the entity (`uniqueMode`), not by first-entry-wins, when the schema declares the attribute unique and a matcher is supplied.
 - **CardinalityVector**: `[]rgaElement` accumulates minimal state. Resolve and reconstruct datoms at (E, A) boundary.
 
 All 69 CRDT tests pass (5 CardinalityOne, 17 CardinalityMany, 47 CardinalityVector).

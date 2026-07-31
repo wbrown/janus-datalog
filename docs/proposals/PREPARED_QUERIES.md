@@ -57,7 +57,7 @@ type PreparedQuery struct {
     queryStr string              // Original query string (for debugging)
     query    *query.Query        // Parsed query
     plan     *planner.QueryPlan  // Pre-computed plan
-    findCols []string            // Symbol names for result mapping
+    findSyms []string            // Symbol names for result mapping
     mu       sync.RWMutex        // Protects plan updates (for Replan)
 }
 

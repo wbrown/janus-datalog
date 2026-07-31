@@ -775,28 +775,55 @@ Cache entries are rebuilt on demand. After process restart, first access to each
 
 ### E-Primary Indices (EATV)
 
-| Cardinality | Primary Index | Reason |
-|-------------|---------------|--------|
-| One | EATV | Tx before V: first entry = current value |
-| Many | EAVT | Group by V for add-wins resolution |
-| Vector | EATV | Load all elements, reconstruct in memory |
+| Cardinality | V bound? | Primary Index | Reason |
+|-------------|----------|---------------|--------|
+| One | either | EATV | Tx before V: first entry = current value |
+| Many | no | EAVT | Group by V for add-wins resolution |
+| Many | yes | AEVT | A → E → V is the leading prefix, so the run covers every Tx for that one value |
+| Vector | either | EATV | Load all elements, reconstruct in memory |
+| Unknown / schemaless | either | EATV | Resolves as CardinalityOne (LWW) at every layer |
+
+A bound V joins the scan prefix **only** for cardinality-many. Its adds and
+removes all carry its own value, so the resolution decision for that value is
+contained in the V-filtered run. For cardinality-one the winner may carry a
+*different* V, and for vector the datom holds one element while the pattern's V
+names the whole collection — in both cases V is compared downstream of the scan,
+never used to narrow it.
 
 ### A-Primary Index (AETV)
 
-When E is bound via input (not constant) and A is constant, the query engine uses AETV instead of AEVT:
+When E is bound via input (not constant) and A is constant, the index depends on
+the attribute's cardinality — **AETV for LWW, AEVT for add-wins**:
 
 | Index | Ordering | Use Case |
 |-------|----------|----------|
-| AEVT | A → E → V → Tx | Value lookups, no CRDT resolution |
-| AETV | A → E → Tx↓ → V | A-primary queries with CRDT resolution |
+| AETV | A → E → Tx↓ → V | LWW resolution: cardinality-one, vector, and unknown |
+| AEVT | A → E → V → Tx | **Add-wins resolution**: cardinality-many, where values must group |
 
-**Why AETV?** The CRDTResolvingIterator requires Tx-descending order to apply "first entry wins" logic. AEVT has Tx ascending (oldest first), which breaks LWW resolution. AETV stores Tx with bitwise NOT for descending order.
+**Why AETV for LWW?** `CRDTResolvingIterator` applies "first entry wins", so the
+newest write for an (E, A) must sort first. AETV puts `Tx↓` immediately after
+`[A][E]`, so it does.
+
+**Every index encodes `Tx↓`.** What differs is Tx's *position*. AEVT orders
+`[A][E][V][Tx↓]`, so the first entry under `[A][E]` is the lowest **value**, not the
+newest write — newest-first within each value, which is what add-wins needs and
+what LWW cannot use.
+
+**Why AEVT for add-wins?** Add-wins is decided *per value*, not per (E, A): a value
+is present if its highest add outranks its highest remove. AEVT makes each value's
+datoms contiguous, so the decision is made as the scan passes each one. This is not
+"no CRDT resolution" — it is the layout that add-wins resolution requires.
 
 ### Value Lookups
 
-For value lookups across entities:
-- AVET: Find entities where attribute has specific value
-- Works for all cardinalities (V is raw value, not wrapped metadata)
+For value lookups across entities (A and V bound, E unbound):
+- AVET: find entities where the attribute has a specific value
+- AVET is a **candidate** index for every cardinality, but candidates are not
+  answers. For cardinality-many and vector the CRDT iterator resolves them
+  directly. For **cardinality-one and unknown/schemaless**, each candidate must be
+  post-validated against the current winner on EATV: the LWW winner for that
+  (E, A) may carry a different V, so the winner *within the V-filtered run* is not
+  necessarily the winner at all. See `INDEX_SELECTION_PROOF.md` Theorems 2 and 3b.
 
 ---
 
@@ -811,6 +838,7 @@ When the cache is bypassed (e.g., unbound E scans, `DisableCache: true`), CRDT r
 | One | Emit first datom per (E, A), skip rest |
 | Many | Track emitted values + tombstones, emit immediately |
 | Vector | Accumulate minimal state, reconstruct at (E, A) boundary |
+| Unknown / schemaless | Same as One — LWW, first entry wins |
 
 See [CRDT_STREAMING_RESOLUTION.md](CRDT_STREAMING_RESOLUTION.md) for detailed design.
 

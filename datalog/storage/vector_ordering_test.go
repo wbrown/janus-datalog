@@ -43,9 +43,9 @@ func TestVectorOrderingIsElementWiseEndToEnd(t *testing.T) {
 		it := rel.Iterator()
 		defer it.Close()
 
-		require.True(t, it.Next(), "expected two rows")
+		require.True(t, it.Next(), "expected two tuples")
 		require.Equal(t, int64(2), soleVectorElement(t, it.Tuple()[1]))
-		require.True(t, it.Next(), "expected two rows")
+		require.True(t, it.Next(), "expected two tuples")
 		require.Equal(t, int64(10), soleVectorElement(t, it.Tuple()[1]))
 		require.NoError(t, it.Error())
 	})
@@ -56,7 +56,7 @@ func TestVectorOrderingIsElementWiseEndToEnd(t *testing.T) {
 		it := rel.Iterator()
 		defer it.Close()
 
-		require.True(t, it.Next(), "expected one aggregate row")
+		require.True(t, it.Next(), "expected one aggregate tuple")
 		require.Equal(t, int64(2), soleVectorElement(t, it.Tuple()[0]))
 		require.NoError(t, it.Error())
 	})

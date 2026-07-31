@@ -1,6 +1,6 @@
 # Relation Algebra Reunification — the engine consumes the algebra through Relation
 
-**Status**: Reworked 2026-07-22 against the environment-relation and set-semantics-at-birth arcs; two rulings of 2026-07-22 incorporated — consumption is requested, never queried, and clauses close over the environment relation (ratified, superseding this document's original map-closure sketch). Executes the audit C4 ruling (`docs/reviews/ANTIPATTERN_AUDIT_2026_07.md`) and decision-ledger item 20. Companion context: `resolved/BUG_EXPRESSION_BINDING_OVERWRITES_BOUND_VARIABLE.md` (the drift this design makes structurally impossible), audit E1 (the `Materialize()` convention this design closes), and `docs/TALE_AND_LESSONS_OF_RELATIONS_AS_EXCHANGE.md` (why Relations are the only exchange — the narrative behind every carrier decision below).
+**Status**: Reworked 2026-07-22 against the environment-relation and set-semantics-at-birth arcs; two rulings of 2026-07-22 incorporated — consumption is requested, never queried, and clauses close over the environment relation (ratified, superseding this document's original map-closure sketch). Executes the audit C4 ruling (`docs/reviews/ANTIPATTERN_AUDIT_2026_07.md`); this document owns the arc's open sub-decisions, listed under *Sub-decisions* below. Companion context: `resolved/BUG_EXPRESSION_BINDING_OVERWRITES_BOUND_VARIABLE.md` (the drift this design makes structurally impossible), audit E1 (the `Materialize()` convention this design closes), and `docs/TALE_AND_LESSONS_OF_RELATIONS_AS_EXCHANGE.md` (why Relations are the only exchange — the narrative behind every carrier decision below).
 
 ## The ruling being executed
 
@@ -14,7 +14,7 @@ Each operator gets one generic body that interrogates both operands' declaration
 
 | Declaration | Meaning | Operator use |
 |---|---|---|
-| `Properties().Keys` | candidate keys — proven set-ness on a column set | skip redundant dedup (`materializeFilteredLeft`, `projectionPreservesSet` precedents); unique-build-key dispatch (`buildKeysUnique` precedent) |
+| `Properties().Keys` | candidate keys — proven set-ness on a symbol set | skip redundant dedup (`materializeFilteredLeft`, `projectionPreservesSet` precedents); unique-build-key dispatch (`buildKeysUnique` precedent) |
 | `Properties().Ordering` | sortedness | sort elision, order-aware strategies, TopN |
 | `RequiresCopy()` | iterator reuses workspace memory | copy at operator boundaries only when declared (`DedupIterator`'s copy mode is the precedent: seen-keys copy exactly when the source declares reuse) |
 

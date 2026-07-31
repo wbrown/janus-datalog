@@ -95,7 +95,10 @@ type ElementID struct {
 
 2. **Variable-length V is decodable**: Since V is the *only* variable-length field, its boundaries can be computed by subtracting known sizes:
    ```go
-   // For EAVT: [prefix:1][E:20][A:32][V:?][Tx:16][Op:1][AfterRef?:16]
+   // For EAVT: [prefix:1][E:20][A:32][V:?][Tx:16][AfterRef?:16][Op:1]
+   // Op is ALWAYS the last byte — it announces whether AfterRef precedes it.
+   // See OP_POSITION_PROOF.md; the tail arithmetic depends on reading Op from
+   // the end of the key.
    // V starts at offset 53, ends at len(key) - 16 - 1 - (16 if hasAfterRef)
    vStart := 1 + 20 + 32
    vEnd := len(key) - 16 - 1
@@ -161,7 +164,7 @@ In a traditional database:
 ### Janus Model
 
 ```
-Key: [prefix][E][A][V][Tx][Op][AfterRef?] → Done. That's the data.
+Key: [prefix][E][A][V][Tx][AfterRef?][Op] → Done. That's the data.
 ```
 
 In Janus:
@@ -283,14 +286,14 @@ The position of **V relative to Tx** determines CRDT semantics:
 ### Key Formats (Binary Encoder)
 
 ```
-EAVT: [prefix][E][A][type+value][Tx↓][Op][AfterRef?]  - groups by value for add-wins
-EATV: [prefix][E][A][Tx↓][type+value][Op][AfterRef?]  - first entry is current (LWW), E-primary
-AETV: [prefix][A][E][Tx↓][type+value][Op][AfterRef?]  - first entry is current (LWW), A-primary
-AEVT: [prefix][A][E][type+value][Tx↓][Op][AfterRef?]  - by attribute (Tx ascending)
-ATEV: [prefix][A][Tx↓][E][type+value][Op][AfterRef?]  - first entry under [A] is global max-Tx for A
-AVET: [prefix][A][type+value][E][Tx↓][Op][AfterRef?]  - value lookup
-VAET: [prefix][type+value][A][E][Tx↓][Op][AfterRef?]  - reverse refs (V first!)
-TAEV: [prefix][Tx↓][A][E][type+value][Op][AfterRef?]  - transaction log
+EAVT: [prefix][E][A][type+value][Tx↓][AfterRef?][Op]  - groups by value for add-wins
+EATV: [prefix][E][A][Tx↓][type+value][AfterRef?][Op]  - first entry is current (LWW), E-primary
+AETV: [prefix][A][E][Tx↓][type+value][AfterRef?][Op]  - first entry is current (LWW), A-primary
+AEVT: [prefix][A][E][type+value][Tx↓][AfterRef?][Op]  - by attribute, V before Tx: groups by value for add-wins
+ATEV: [prefix][A][Tx↓][E][type+value][AfterRef?][Op]  - first entry under [A] is global max-Tx for A
+AVET: [prefix][A][type+value][E][Tx↓][AfterRef?][Op]  - value lookup
+VAET: [prefix][type+value][A][E][Tx↓][AfterRef?][Op]  - reverse refs (V first!)
+TAEV: [prefix][Tx↓][A][E][type+value][AfterRef?][Op]  - transaction log
 
 AfterRef? = 16 bytes present only if Op ∈ {OpRGAInsert(3), OpRGATombstone(4)}
 ```
@@ -370,7 +373,7 @@ Single Index Set: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV (8 indices)
 | Datomic | Current + History | 8 (4 per segment) |
 | Janus | Current + History + CRDT Resolution + AsOf-by-attribute + O(1) attribute high-water mark | 8 (unified) |
 
-Janus provides MORE functionality (CRDT semantics, time-travel via TAEV, AsOf-by-attribute and a constant-time attribute high-water mark via ATEV) with the **same** number of index structures Datomic uses across its current+history segments, because the unified design with bitwise NOT eliminates the need for segmentation — and frees up an index slot for ATEV. The high-water mark is a property of ATEV's layout; the cache gate that consumed it was removed in 2026-07 and can be rebuilt.
+Janus provides MORE functionality (CRDT semantics, time-travel via TAEV, AsOf-by-attribute and a constant-time attribute high-water mark via ATEV) with the **same** number of index structures Datomic uses across its current+history segments, because the unified design with bitwise NOT eliminates the need for segmentation — and frees up an index slot for ATEV. The high-water mark is a property of ATEV's layout, available to any caller that wants it.
 
 ---
 
@@ -575,10 +578,9 @@ Freshness is per-(E,A) and write-tracked in memory: a commit advances
 `maxVersions[key]`, and a cached entry serves only while its own version still
 equals it.
 
-A second, coarser granularity once existed — a per-attribute gate that could
-skip every (E,A) under an unchanged attribute in one ATEV seek. It was never
-wired to a production caller and was removed in 2026-07 along with
-`Cache.IsAttributeFresh`, `attrVersions`, and `Store.MaxElementIDForAttribute`.
+Freshness is tracked at that granularity only. ATEV's layout would support a
+coarser per-attribute gate — one seek skips every (E,A) under an unchanged
+attribute — but nothing consumes it.
 
 ### Cache Lifecycle
 

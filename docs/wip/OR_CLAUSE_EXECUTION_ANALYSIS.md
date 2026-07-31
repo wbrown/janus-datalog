@@ -86,7 +86,7 @@ for _, orClause := range phase.OrClauses {
 // executeOrClause (lines 176-223)
 func (e *Executor) executeOrClause(ctx Context, clause *query.OrClause, available Relations) (Relation, error) {
     var branchResults []Relation
-    var commonCols []query.Symbol
+    var commonSyms []query.Symbol
 
     for i, branch := range clause.Branches {
         // CRITICAL: Branches execute with nil binding (not constrained by available)
@@ -94,15 +94,15 @@ func (e *Executor) executeOrClause(ctx Context, clause *query.OrClause, availabl
 
         // Track common symbols across branches
         if i == 0 {
-            commonCols = branchResult.Symbols()
+            commonSyms = branchResult.Symbols()
         } else {
-            commonCols = intersect(commonCols, branchResult.Symbols())
+            commonSyms = intersect(commonSyms, branchResult.Symbols())
         }
         branchResults = append(branchResults, branchResult)
     }
 
     // Union all branch results, projecting to common symbols
-    return unionRelations(branchResults, commonCols, e.options), nil
+    return unionRelations(branchResults, commonSyms, e.options), nil
 }
 ```
 

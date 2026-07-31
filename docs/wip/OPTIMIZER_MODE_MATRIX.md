@@ -17,10 +17,10 @@ Remaining open on the algebra path: `BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER
 
 `tests/`, `db`, and `qb` migrated divergence-free (the qb and tests builder/AST test bulk is no-axis by the plan's own carve-out; one `tests/` case crosses the cache-mode axis for the honest product). The `executor` phase was the high-yield one: bare `NewExecutor`'s default profile leaves `EnableAlgebraOptimizer` false, so that package's ~120 query-planning tests had never run the algebra path. Putting them on the matrix surfaced:
 
-- **Seven more reproducers of `docs/bugs/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md`** (five OHLC-shaped grouped-decorrelation tests, plus a second symptom — `cannot resolve right term` — for subqueries with an extra scalar `:in` input consumed only by predicates).
-- **`docs/bugs/BUG_ALGEBRA_NOT_REJECTS_SINGLE_BRANCH_ORJOIN.md`** (new): the bridge's NOT-inner analysis rejects a legal single-branch or-join as an invalid union.
-- **`docs/bugs/BUG_ALGEBRA_ORDEFAULT_FIRST_CLAUSE_REJECTED.md`** (new): the bridge's or-fallback lowering refuses the uncorrelated global-fallback shape (`or-default` opening the `:where`).
-- **`docs/bugs/BUG_TEMPORAL_HANDLES_DROP_PLANNER_OPTIONS.md`** (new, found twice independently in the `db` and `tests/` phases): `AsOf()`/`History()` construct child handles without the parent's `plannerOptions`, silently reverting temporal queries to defaults and blinding the matrix's `algebra_off` legs on those tests.
+- **Seven more reproducers of `BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS`** (five OHLC-shaped grouped-decorrelation tests, plus a second symptom — `cannot resolve right term` — for subqueries with an extra scalar `:in` input consumed only by predicates).
+- **`BUG_ALGEBRA_NOT_REJECTS_SINGLE_BRANCH_ORJOIN`** (new): the bridge's NOT-inner analysis rejects a legal single-branch or-join as an invalid union.
+- **`BUG_ALGEBRA_ORDEFAULT_FIRST_CLAUSE_REJECTED`** (new): the bridge's or-fallback lowering refuses the uncorrelated global-fallback shape (`or-default` opening the `:where`).
+- **`BUG_TEMPORAL_HANDLES_DROP_PLANNER_OPTIONS`** (new, found twice independently in the `db` and `tests/` phases): `AsOf()`/`History()` construct child handles without the parent's `plannerOptions`, silently reverting temporal queries to defaults and blinding the matrix's `algebra_off` legs on those tests.
 
 Ten test functions stood red on their `algebra_on` legs in-tree as regression guards for the three open algebra-path bugs; every other migrated test passed both modes. **All ten are green as of 2026-07-20 — see the decorrelation-fix outcome below.** Where both modes reject an invalid query but phrase the error differently (planning-time vs execution-time), each mode pins its own message per the `correlated_not_join_test.go` convention. The executor axis lives in `datalog/executor/optimizer_modes_test.go` with two base profiles (NewExecutor's default via `defaultPlannerOptions()` — extracted from the constructor so the axis cannot drift — and the bare zero-value profile), preserved per test rather than normalized.
 
@@ -40,7 +40,7 @@ Benchmarks are outside the ruling's scope (tests were the ruling); they keep the
 
 Every test that executes a query must exercise both the non-optimizer and optimizer paths. The optimizer must never change results, and must never make things work: a query that fails without the algebra optimizer must fail with it, and vice versa. The two paths are observationally equivalent — same result set, same error/no-error outcome — for every query the engine accepts.
 
-Two wrong-results bugs motivated the ruling, both instances of the same gap: the correlated or-join fallback encoding dropped tuples only on the optimizer path (`docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_TUPLES.md`), and a NOT written before its binding clause plans on the baseline path but errors on the optimizer path (`docs/bugs/BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER.md`). The differential net that catches this class existed only where hand-built — a handful of baseline-vs-optimized pins — while the rest of the suite exercised a single path.
+Two wrong-results bugs motivated the ruling, both instances of the same gap: the correlated or-join fallback encoding dropped tuples only on the optimizer path (`BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_TUPLES`), and a NOT written before its binding clause plans on the baseline path but errors on the optimizer path (`BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER`). The differential net that catches this class existed only where hand-built — a handful of baseline-vs-optimized pins — while the rest of the suite exercised a single path.
 
 ## The mechanism — the existing matrix-test convention, nothing new
 

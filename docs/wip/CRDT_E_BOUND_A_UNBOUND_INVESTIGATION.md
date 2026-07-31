@@ -10,7 +10,7 @@
 The investigation identified THREE bugs:
 
 ### Bug 1: Wrong Index for Full Scans in matchUnboundAsRelation (FIXED)
-`matchUnboundAsRelation` used EAVT (Tx ascending) for full scans, but `CRDTResolvingIterator` requires Tx DESCENDING. Fixed by switching to EATV when schema exists in `matcher_relations.go`.
+`matchUnboundAsRelation` used EAVT for full scans, but `CRDTResolvingIterator` needs the newest write for an (E, A) to arrive first. EAVT encodes `Tx↓` like every index — its problem is Tx's *position*: `[E][A][V][Tx↓]` groups by value, so the first entry under `[E][A]` is the lowest value, not the newest write. Fixed by switching to EATV when schema exists in `matcher_relations.go`.
 
 ### Bug 2: Wrong Default for Schemaless Attributes (FIXED)
 `CRDTResolvingIterator` defaulted to `CardinalityOne` for attributes without schema definitions. This silently hid data. Fixed by introducing `CardinalityUnknown` which returns ALL values (Datascript-style default).
@@ -218,7 +218,7 @@ When the cache is enabled and handles the query, resolution happens. When cache 
 - `datalog/storage/matcher_iterator_reusing.go` - Iterator reuse implementation
 - `datalog/storage/matcher_iterator_nonreusing.go` - Non-reusing iterator
 - `datalog/storage/crdt_resolving_iterator.go` - CRDT resolution wrapper
-- `docs/bugs/BUG_CRDT_QUERY_RESOLUTION_NOT_APPLIED.md` - Parent bug document
+- `BUG_CRDT_QUERY_RESOLUTION_NOT_APPLIED` - Parent bug document
 
 ## Resolution Criteria
 

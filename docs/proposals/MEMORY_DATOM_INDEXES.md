@@ -126,7 +126,7 @@ Landed state:
 - `datalog/identity.go:40-54` — `NewIdentity` hashes the seed and discards it.
 - `datalog/identity.go:85-87` — `String()` returns `L85()`.
 - `datalog/executor/pattern_match.go:130-144` — `matchesConstant` matches Identity only against Identity and Keyword only against Keyword; the boundary-construction rule is stated in the code comments.
-- `datalog/executor/constraints_impl.go` — file deleted (`DECISION_LEDGER.md` item 12, 2026-07-20), so its coercion site is gone with it.
+- `datalog/executor/constraints_impl.go` — file deleted (audit finding C6, 2026-07-20), so its coercion site is gone with it.
 - `datalog/storage/matcher.go:582-609` — the E-position `fmt.Sprintf("%v", e)` fallback is replaced by a loud panic naming `validateEntityBinding` as the upstream validator. The attribute position received the same treatment against `validateAttributeBinding`.
 - `datalog/query/types.go:19-20` — `FormatValueEDN` emits `#identity "<L85>"`, closing the round-trip defect the decision identified.
 
@@ -171,7 +171,7 @@ RULED 2026-07-25: persistent (Ruling 2 below). The choice is not open. `Store.Ne
 
 ### Design note: bulk load
 
-v1 sorted slices mean O(N) memmove per insert per index. Bulk JDZL import into a memory database (the wasm path; millions of datoms at production scale) should sort-then-build rather than insert per datom, even in v1.
+v1 sorted slices mean O(N) memmove per insert per index. Bulk JDZL import into a memory database (the wasm path; millions of datoms at production scale) should sort-then-build rather than insert per datom, even in v1. [PRESORTED_INDEX_SECTIONS.md](PRESORTED_INDEX_SECTIONS.md) asks the next question: whether the sorted input can arrive off the wire instead of being sorted at all.
 
 ### Staging (one establishment per PR)
 
@@ -306,7 +306,7 @@ Pointer content is 32 bytes (E, A, V); the non-pointer bulk is 40 (Tx, Op+paddin
 
 Occupancy is a *build* property, not a structural constant, so the projected tree term has a real spread. Random insertion converges on ~69% (ln 2); a sorted build packs near full. Across the plausible configurations the eight slots cost roughly 67 B/datom (high branching, bulk-built) to 114 B/datom (low branching, incrementally inserted). The table below uses **73**, near the bulk-built end because that is what hydration produces; the resting memory of an incrementally-written store is correspondingly higher.
 
-This is an order-of-magnitude projection and the ~9× headline holds across the whole range, so the fill fraction is not worth pinning more precisely than that.
+This is an order-of-magnitude projection, and what holds across the whole range is the conclusion rather than the ratio: every configuration moves the store from ceiling-bound to comfortably resident. The fill fraction is therefore not worth pinning more precisely than that.
 
 | | \|V\|=8 | \|V\|=24 |
 |---|---|---|
@@ -321,7 +321,19 @@ This is an order-of-magnitude projection and the ~9× headline holds across the 
 | **Projected per datom** | **145 B** | **161 B** |
 | **Projected at 3M** | **435 MB** | **483 MB** |
 
-Roughly **9×**. The current side is insensitive to value size because **544 bytes per datom is E + A + Tx re-serialized eight times** (`8 × (20+32+16)`), a fixed term that dominates the key cost at any plausible `|V|`. Note where the current model lands: ~4 GB of *retained* store against a 4 GiB cap, before GC headroom, working set, or import transients, on a heap that never shrinks.
+Roughly **9×** — which is an output of the arithmetic, not a target anyone chose.
+
+**The ratio is not the bar.** The bar is whether the store fits, with headroom, under a ceiling that cannot shrink, and the useful form of that is a permitted datom count:
+
+| | B/datom | datoms before 4 GiB |
+|---|---:|---:|
+| Current | 1,296–1,424 | 3.0–3.3M |
+| Projected, bulk-built | 145–161 | 26.7–29.6M |
+| Projected, incrementally inserted at low branching | 186–202 | 21.3–23.1M |
+
+At 2,708,364 datoms the current representation occupies **82–90% of the ceiling** on a heap that never gives anything back, so the next few hundred thousand datoms end it. Every projected configuration clears the bar identically; a 3× improvement would clear it too. Treating 9× as a threshold would manufacture a way for this project to "fail" while still solving the problem, and it would mislead in two further ways: the ratio is N-dependent and says nothing about the growth trajectory, whereas the permitted datom count is exactly what a capacity plan needs.
+
+The current side is insensitive to value size because **544 bytes per datom is E + A + Tx re-serialized eight times** (`8 × (20+32+16)`), a fixed term that dominates the key cost at any plausible `|V|`. And every figure here is *retained* store, before GC headroom, working set, or import transients — the incident was a hydration peak, so resting size clearing the bar is necessary and not sufficient.
 
 **GC pressure.** Traced pointers per datom: 16 today (8 map string headers + 8 B-tree string headers) against 12 projected (8 tree slots holding `*Datom`, plus the datom's own E, A, and V's two words). Go's wasm collector is single-threaded, so mark time scales with that count. Arena handles would make the eight slots plain integers — 4 traced per datom — which is worth considerably more on wasm than the four bytes per slot they save.
 
@@ -421,8 +433,8 @@ Two things about that port, both of which rule out the obvious translation:
 ### Open after 2026-07-25
 
 - [TRANSACTION_ENVELOPES.md](TRANSACTION_ENVELOPES.md) does not yet reflect Ruling 2's effect on its PR 4: transaction-closed AsOf becomes root retention rather than a per-read Tx comparison.
-- Neither this proposal nor the envelope proposal has an item in `docs/wip/DECISION_LEDGER.md`.
-- Value interning is not itself ruled: which value types participate, and whether the table is weak (`weak.Pointer` + `runtime.AddCleanup`, lifetime follows use) or strong and store-scoped. The weak form is the more correct lifetime and costs a liveness check per lookup plus a cleanup per distinct value; that trade wants measuring rather than asserting.
-- Whether the 32-bit arena/handle representation is in scope. It leaves Go pointer semantics and GC tracking behind, so it is a separate design rather than a variation on typed trees. Slab allocation of datoms is the pointer-preserving middle and is not the same decision.
+- Value interning is not itself ruled: which value types participate, and whether the table is weak (`weak.Pointer` + `runtime.AddCleanup`, lifetime follows use) or strong and store-scoped. The weak form is the more correct lifetime and costs a liveness check per lookup plus a cleanup per distinct value; that trade wants measuring rather than asserting. *Derived 2026-07-31, not ruled:* this decision can foreclose step 3 of the handle ladder below without anyone noticing, because step 3 needs interning that hands out dense stable indices. A weak table clears entries when values die; an arena holds its contents strongly. The two do not compose, and getting both requires generation-tagged handles — pack index and generation into 32 bits and distinct values cap at 16M, or keep 32 bits of index and the handle stops being self-validating. Interning is ruled first, so the coupling belongs on the table when it is.
+- Whether the 32-bit arena/handle representation is in scope. It leaves Go pointer semantics and GC tracking behind, so it is a separate design rather than a variation on typed trees. Slab allocation of datoms is the pointer-preserving middle and is not the same decision. *Derived 2026-07-31, not ruled:* it is a three-step ladder rather than one decision. (1) **Slabs** — three million heap objects become a few hundred, killing the per-object half of mark cost while keeping pointer semantics; already described under *Datom allocation*. (2) **Handles in tree slots** — the eight leaf words per datom stop being pointers, which requires an arena with stable dense indices; the datom itself is still scanned, four traced words each. (3) **A pointer-free `Datom`** — if E, A and V are handles too, the arena allocation is **noscan** and the collector skips the datom population entirely rather than scanning it faster. Step 3 holds both the real number and the real cost: `V` is `interface{}` above storage, so a handle-valued V makes the datom in the tree and the datom handed to the executor different types, with a materialization at the read boundary. That is tractable if the value arena stores the already-boxed interned object, but it is an interface to design, and it is where memory representation stops being local to `storage`.
+- None of the three steps gates PR B. Nothing in the specification, the comparators, the differential tests or the scan semantics references allocation; the projected sizing column has no slab term; and a slab hands out `*datalog.Datom`, which is exactly what the tree already holds, so adopting slabs later changes the allocator and nothing else. Handles change the generated node's own struct, which is the asymmetry that makes them a separate design.
 - Branching factor and bulk-build packing fraction are empirical parameters, not derivations. The reasoning above indicates high branching for a batch-oriented writer; the value settles against the batch-size distribution and against path-copy cost measured on a commit, not on a single insert.
-- **Nothing is measured.** The current-side model above would be confirmed or falsified by `BenchmarkMemoryAssertBulk` with `-benchmem` at known N. The one figure available from outside (a post-GC `HeapAlloc` reading of a hydrated dump) cannot cross-check it, because that reading and the 2,708,364 datom count describe different regenerations of the same dump; the reading falls below even an exclusions-only floor for that count. Any future sizing claim states its N, its host, and the dump commit.
+- **Nothing is measured.** The current-side model above would be confirmed or falsified by `BenchmarkMemoryAssertBulk` with `-benchmem` at known N. Its job is **diagnostic, not target validation**: whether the store representation is where the 4 GiB actually is. Near 1,296 B/datom and the diagnosis holds; a third of that and the ceiling has another cause that typed trees will not move. It does not decide whether the ratio is large enough, because the ratio is not the bar (see *Representation arithmetic*). The one figure available from outside (a post-GC `HeapAlloc` reading of a hydrated dump) cannot cross-check it, because that reading and the 2,708,364 datom count describe different regenerations of the same dump; the reading falls below even an exclusions-only floor for that count. Any future sizing claim states its N, its host, and the dump commit.

@@ -170,6 +170,11 @@ action, stop: you have already lost it. These are the recurring instances:
   no `md5`/`shasum`/`wc -l`/`cat -A` on source files. A failed Edit means your
   `old_string` was wrong or your context is stale — Read the relevant lines and fix
   it. The file is not haunted; hashing it tells you nothing about your mistake.
+  **`go doc` is not a verification instrument mid-session**: it serves stale export
+  data for a package edited in the same session. It once reported a byte-based
+  `Store`, a `MemoryStore.Scan(index, start, end []byte)` and a live
+  `Relation.IsEmpty()` — three symbols the source contradicted, in a confident
+  report that had to be withdrawn. Read the file, or ask `gopls`.
 
 - **One result at a time when actions depend on each other.** Over-parallelizing
   tool calls so you act on step N before reading step N-1's result is how the
@@ -1522,7 +1527,7 @@ fmt.Printf("DEBUG Phase %d: patterns=%d, expressions=%d, " +
     len(collapsed), len(availableRelations))
 
 // Before/after key operations
-fmt.Printf("DEBUG before expression eval: size=%d, cols=%v\n",
+fmt.Printf("DEBUG before expression eval: size=%d, symbols=%v\n",
     group.Size(), group.Symbols())
 ```
 

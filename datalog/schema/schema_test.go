@@ -376,7 +376,7 @@ func TestVocabularyMembershipSurvivesClearInterns(t *testing.T) {
 func TestCardinalitySetIsClosedAtThree(t *testing.T) {
 	const sweep = "give every switch that dispatches on cardinality an arm for " +
 		"the new member first: one with no arm is skipped silently, and the query " +
-		"returns zero rows with a nil error."
+		"returns zero tuples with a nil error."
 
 	require.Len(t, cardinalities, 3, sweep)
 	for _, c := range []datalog.Keyword{CardinalityOne, CardinalityMany, CardinalityVector} {

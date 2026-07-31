@@ -336,7 +336,7 @@ type Relation interface {
     Size() int
     Project(symbols []query.Symbol) (Relation, error)
     Join(other Relation) Relation
-    HashJoin(other Relation, joinCols []query.Symbol) Relation
+    HashJoin(other Relation, joinSyms []query.Symbol) Relation
     // ... filtering, aggregation, materialization
 }
 ```
@@ -397,8 +397,8 @@ and `Relation.Sorted()` returns `([]Tuple, error)` instead of just
 `[]Tuple` so that pre-sort materialization can surface deferred errors.
 The contract exists because partial tuples from a failed stream must
 never be reported as clean success — that pattern is how Tier-3 blob
-decode failures used to silently look like "predicate filtered all the
-rows out."
+decode failures can otherwise look like "the predicate filtered every
+tuple out."
 
 ### QueryExecutor — Phase Execution
 

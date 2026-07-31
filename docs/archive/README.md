@@ -33,6 +33,16 @@ Historical documentation organized by category and time period.
   - In-memory indexing (4,802× speedup)
   - Semantic rewriting and time range optimization
 
+- **2025-12/** - Key-encoder consolidation benchmarks
+
+- **2026-07/** - The July 2026 correctness campaign
+  - The outstanding-decision ledger, and why a hand-maintained cross-cutting
+    status view was retired
+
+### Loose files
+
+- **STREAMING_QUERY_API_PLAN.md** - A superseded API plan, kept at top level
+
 ## Navigation
 
 Each subdirectory contains a README explaining:

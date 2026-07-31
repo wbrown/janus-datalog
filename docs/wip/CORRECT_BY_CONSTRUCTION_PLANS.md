@@ -1,6 +1,6 @@
 # Correct-by-Construction Plans — the topology the planner computes, expressed in Datalog
 
-**Status**: Discussion record for decision-ledger item 25 (raised 2026-07-22), pending ratification and scheduling. The owner's position, verified below rather than assumed: the plan IR remains expressible as Datalog — no separate plan language. Companions: `PHASE_AS_QUERY_ARCHITECTURE.md` (the architecture this completes), `RELATION_ALGEBRA_REUNIFICATION.md` (the operator surface plan fragments consume), `docs/TALE_AND_LESSONS_OF_RELATIONS_AS_EXCHANGE.md` (why the exchange is relational).
+**Status**: Discussion record, raised by the owner 2026-07-22; pending ratification and scheduling. The open questions are in *Open questions for ratification* below — this document owns them. The owner's position, verified below rather than assumed: the plan IR remains expressible as Datalog — no separate plan language. Companions: `PHASE_AS_QUERY_ARCHITECTURE.md` (the architecture this completes), `RELATION_ALGEBRA_REUNIFICATION.md` (the operator surface plan fragments consume), `docs/TALE_AND_LESSONS_OF_RELATIONS_AS_EXCHANGE.md` (why the exchange is relational).
 
 ## The observation
 

@@ -263,7 +263,7 @@ do not appear in the int64 50K profile:
 | Symbol | cum % | Finding |
 |--------|------:|---------|
 | `executor.combineTuples` | 7.21% | #1 |
-| `executor.NewTupleKey` | 6.35% | secondary (multi-col alloc) |
+| `executor.NewTupleKey` | 6.35% | secondary (multi-symbol alloc) |
 | `executor.hashValue` | 5.72% | #3 |
 
 `hashValue` 5.72% is the FNV-1a loop over the 20-byte SHA1 hash for

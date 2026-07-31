@@ -102,7 +102,7 @@ Also verify: the two OTHER `emptyRelationForQuery` early returns reachable in th
 - Storage consumer-only case in `TestLeadingMissingWithInBoundEntity` + annotations import + `SetAnnotationHandler` instrumentation — DONE, **RED both modes** (this is the committed-red-candidate for THIS bug).
 - No bug doc written yet for this baseline defect — write one (mechanism above) when committing, or fix in the same arc.
 - Everything above NOT committed. Prior pushed state: `00fc6e4`.
-- Also uncommitted by standing rulings: `docs/wip/DECISION_LEDGER.md` (update item 7/21 when this resolves), `RELATION_ALGEBRA_REUNIFICATION.md`.
+- Also uncommitted by standing rulings: `RELATION_ALGEBRA_REUNIFICATION.md`.
 
 ## Process notes for the implementer
 

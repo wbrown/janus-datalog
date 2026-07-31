@@ -5,6 +5,11 @@
 **Initial Goal**: Remove BufferedIterator to enable streaming
 **Actual Result**: Found and fixed 10 bugs, including 3 critical data corruption issues
 
+> **Read this for the reasoning, not for the code.** The lessons are why
+> `docs/CORE_MODEL.md` says what it says. The code samples show an older API —
+> `IsEmpty()`, `matcher_strategy.go`, and `Identity`'s `l85` and `str` fields do
+> not exist. Where a sample and CORE_MODEL disagree, CORE_MODEL is current.
+
 ---
 
 ## The Setup: What We Thought We Were Doing
@@ -177,6 +182,15 @@ func ValuesEqual(a, b interface{}) bool {
 
 Or so we thought...
 
+> **`Identity` is `*identity` over `struct { value [20]byte }`** — an interned
+> pointer, one per content hash. Identity lives in the pointer; equality is a word
+> compare. Rendering or hashing a value in order to compare it is the tell of the
+> wrong model. `ValuesEqual` enforces the closed value domain on **both** operands
+> and panics outside it.
+>
+> The durable lesson this scene demonstrates: **a value's identity must not depend
+> on how it was constructed.**
+
 ---
 
 ## Act III: The Silent Killer
@@ -264,7 +278,7 @@ if !bindingRel.IsEmpty() {
 
 **Impact**: CRITICAL - Silent data loss. No error. No warning. Just wrong results.
 
-**The fix**:
+**The fix at the time**:
 ```go
 // matcher_strategy.go - AFTER
 // CRITICAL: Skip IsEmpty() on StreamingRelations
@@ -276,6 +290,12 @@ if _, ok := bindingRel.(*MaterializedRelation); ok {
     }
 }
 ```
+
+> **No `IsEmpty` exists, on any type.** A bool cannot decline the way `Size()`'s
+> `-1` can, so a streaming implementation could only lie or consume. Ask
+> `Size() == 0` where the count is free — which is what the matcher's
+> empty-binding sites do, subsuming the type-guard above — and otherwise consume
+> the stream. `matcher_strategy.go` does not exist either.
 
 ---
 
@@ -648,41 +668,49 @@ func IsEmpty() bool {
 }
 ```
 
-**The Principle**: On single-use iterators, **all operations are destructive**.
+**The Principle**: On a single-use relation, **any operation that opens an
+iterator and advances it without capturing what it produced spends tuples to
+answer.**
+
+> The hazard is **uncaptured iteration**, not the named methods. No `Size()`
+> implementation consumes the caller's tuples — see CORE_MODEL Pillar 3.
 
 **How to apply**:
 
-**Don't:**
+**Don't** — open an iterator and advance it without keeping what it gave you:
 ```go
-if !rel.IsEmpty() {        // Consumes first tuple
-    for it.Next() {        // Iterates remaining tuples
-        // Missing first!
-    }
+it := rel.Iterator()
+if it.Next() {             // Spent a tuple to learn a boolean
+    // ... and the tuple it produced is gone
 }
-
-if rel.Size() > 0 {        // Materializes entire stream
-    for it.Next() {        // Already consumed!
-        // Empty!
-    }
+for it2 := range rel.Iterator() {  // Missing the first
 }
 ```
 
 **Do:**
 ```go
-// Just iterate - empty loop is fine
+// Just iterate — the empty loop is fine, and always correct
 for it.Next() {
-    // Processes all tuples including first
+    // Processes every tuple, including the first
 }
 
-// Or check type, not instance
-if _, ok := rel.(*MaterializedRelation); ok {
-    // Safe to call Size(), IsEmpty() on materialized
+// Or ask Size(), which never spends the caller's tuples.
+// -1 means "declined to say", not "empty" — do not treat it as zero.
+if n := rel.Size(); n == 0 {
+    // definitely empty
 }
 ```
 
+Sizing economics, ruled the same day: **consuming the stream is the default
+optimum.** Realizing a relation to learn its size pays off only when incremental
+processing is expensive, or when the realized relation is itself what you pass
+through afterward — realization is the product and the size its free byproduct. A
+capacity hint must never be the call that forces work, so take a size only where
+it is already free.
+
 **From this branch**:
 - IsEmpty() consumed first tuple → lost data
-- Size() materialized stream → iterator exhausted
+- Peeking at a stream to choose a strategy → iterator exhausted
 - Both caused silent corruption
 
 ---

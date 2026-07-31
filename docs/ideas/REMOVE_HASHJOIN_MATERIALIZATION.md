@@ -28,7 +28,7 @@ for iter.Next() {
 }
 iter.Close()
 
-return NewMaterializedRelationWithOptions(outputCols, results, opts)
+return NewMaterializedRelationWithOptions(outputSyms, results, opts)
 ```
 
 **Why this is wrong:**
@@ -89,9 +89,9 @@ iter := &hashJoinIterator{
     probeIt:      probeRel.Iterator(),
     seen:         NewTupleKeyMapWithCapacity(expectedResults),
     buildIsLeft:  buildIsLeft,
-    joinCols:     joinCols,
-    leftCols:     left.Symbols(),
-    rightCols:    right.Symbols(),
+    joinSyms:     joinSyms,
+    leftSyms:     left.Symbols(),
+    rightSyms:    right.Symbols(),
     probeIndices: probeIndices,
     options:      opts,
     matchIdx:     0,
@@ -99,7 +99,7 @@ iter := &hashJoinIterator{
 
 // Return streaming result
 return &StreamingRelation{
-    symbols:  outputCols,
+    symbols:  outputSyms,
     iterator: iter,
     size:     -1, // unknown size until consumed
     options:  opts,
@@ -313,7 +313,7 @@ iter.Close()
 if opts.EnableDebugLogging {
     fmt.Printf("[HashJoin STREAMING] Produced %d results\n", len(results))
 }
-return NewMaterializedRelationWithOptions(outputCols, results, opts)
+return NewMaterializedRelationWithOptions(outputSyms, results, opts)
 ```
 
 **After** (9 lines):
@@ -322,7 +322,7 @@ return NewMaterializedRelationWithOptions(outputCols, results, opts)
 // StreamingRelation enforces single-use semantics via panic if Iterator() called twice
 // Caller can explicitly call Materialize() if multiple iterations needed
 return &StreamingRelation{
-    symbols:  outputCols,
+    symbols:  outputSyms,
     iterator: iter,
     size:     -1, // unknown size until consumed
     options:  opts,

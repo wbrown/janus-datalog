@@ -138,17 +138,21 @@ The Clojure code calculates these **after reordering** in this sequence:
 (determine-phases-provides)            ; Calculates :provides
 ```
 
-Our Go equivalent:
-```go
-phases = p.reorderPhasesByRelations(phases, inputSymbols)
-phases = updatePhaseSymbols(phases, findSymbols, inputSymbols)  // Recalc Available/Keep
-```
+**The Go side has no counterpart, because it eliminated the step.**
+`createPhasesGreedy` builds phases in dependency order directly: a clause enters a
+phase only when `clauseSelectable` says its blockers are satisfied. The result is
+never out of order, so there is no reorder pass and nothing to recalculate
+afterward. `Available` and `Keep` are computed once, as the phases are
+constructed.
 
-We don't need to recalculate `Provides` because it's intrinsic to the phase's patterns (doesn't change with reordering).
+`Provides` would not need recalculating in either design — it is intrinsic to a
+phase's patterns.
 
 ## References
 
-- Go planner: `datalog/planner/phase_reordering.go`
-  - `updatePhaseSymbols()`: Recalculates Available/Keep after reordering
-- Go executor: `datalog/executor/expressions_and_predicates.go`
-  - Line 236-244: Projects to `phase.Keep` at phase boundaries
+- Go planner: `datalog/planner/clause_phasing.go`
+  - `createPhasesGreedy()`: builds phases in dependency order; `clauseSelectable` is the single definition of when a clause may enter one
+- Go planner: `datalog/planner/phase_contract.go`
+  - Enforces the invariants: `Keep` matches `Provides`, `Keep` matches the next phase's relation input, and the final phase keeps nothing
+- Go executor: `datalog/executor/executor.go`
+  - Projects to `phase.Keep` at phase boundaries for every non-final phase

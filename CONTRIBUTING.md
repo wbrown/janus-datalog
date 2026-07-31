@@ -33,18 +33,23 @@ go build ./...
 ### Run Tests
 
 ```bash
-# Run all tests
-go test ./...
+# The full gate: builds the test database, then runs the native suite,
+# the examples/ compile check, and the js/wasm contracts
+make test
+
+# Run specific package tests (focused iteration only)
+go test ./datalog/executor/
 
 # Run tests with verbose output
-go test -v ./...
-
-# Run specific package tests
-go test ./datalog/executor/
+go test -v ./datalog/executor/
 
 # Run tests with coverage
 go test -cover ./...
 ```
+
+`make test` is the gate. Bare `go test ./...` is not a full green: it skips the
+`examples/` compile check and the js/wasm contracts, and it does not build the
+test database that storage tests read.
 
 ## Development Setup
 
@@ -68,23 +73,20 @@ janus-datalog/
 
 Before making significant changes, please read:
 
-1. **[CLAUDE.md](CLAUDE.md)** - Architectural guidance and design patterns
-2. **[CLAUDE_TESTING.md](CLAUDE_TESTING.md)** - Testing strategy and requirements
-3. **[CLAUDE_BUGS.md](CLAUDE_BUGS.md)** - Historical bugs and patterns to avoid
-4. **[CLAUDE_DEBUGGING.md](CLAUDE_DEBUGGING.md)** - Systematic debugging methodology
-5. **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture overview
-6. **[TODO.md](TODO.md)** - Roadmap and current priorities
+1. **[CLAUDE.md](CLAUDE.md)** - Architectural guidance and design patterns. Its
+   later sections carry the testing strategy, the catalog of historical bugs and
+   the patterns that produced them, and the debugging methodology for query
+   execution.
+2. **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture overview
+3. **[TODO.md](TODO.md)** - Roadmap and current priorities
 
 ## Running Tests
 
 ### Unit Tests
 
 ```bash
-# Run all tests
-go test ./...
-
-# Run with race detector
-go test -race ./...
+# The full gate
+make test
 
 # Run with coverage report
 go test -cover ./... -coverprofile=coverage.out
@@ -165,7 +167,7 @@ From [CLAUDE.md](CLAUDE.md):
 
 ## Testing Requirements
 
-From [CLAUDE_TESTING.md](CLAUDE_TESTING.md):
+From the Testing Strategy section of [CLAUDE.md](CLAUDE.md):
 
 ### When to Write Tests
 
@@ -246,7 +248,7 @@ See [PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md) for:
    ```
 3. **Make your changes** following the guidelines above
 4. **Write tests** for your changes
-5. **Ensure all tests pass**: `go test ./...`
+5. **Ensure all tests pass**: `make test`
 6. **Run code quality checks**:
    ```bash
    go fmt ./...
@@ -296,7 +298,8 @@ go build -tags example examples/getting_started.go
 ```
 
 **Problem:** Import cycle detected
-- Check [CLAUDE_BUGS.md](CLAUDE_BUGS.md) for historical import cycle fixes
+- Check the Bug Fixes and Learnings section of [CLAUDE.md](CLAUDE.md) for
+  historical import cycle fixes
 - Reorganize packages to break the cycle
 
 ### Test Failures
@@ -313,11 +316,11 @@ go build -tags example examples/getting_started.go
 
 ### Performance Issues
 
-See [CLAUDE_DEBUGGING.md](CLAUDE_DEBUGGING.md) for:
-- Systematic debugging approach
-- Profiling with pprof
-- Memory leak detection
-- Query plan analysis
+See the Debugging Query Execution Issues section of [CLAUDE.md](CLAUDE.md) for
+the systematic approach: reading annotations first, examining phase structure,
+tracing data flow between phases, and verifying phase invariants. Profile before
+theorizing — `go test -cpuprofile` plus `go tool pprof`, never a guess about
+what is slow.
 
 ## Getting Help
 

@@ -1,10 +1,10 @@
 # The scan-sharing key is a rendered string, and it is rendered unconditionally
 
 **Status**: Open, recorded 2026-07-29. Found while fixing the vector-literal
-collision in the same function (recorded under item 31's amendment in
-`docs/wip/DECISION_LEDGER.md`). That collision is an *instance* of what this
-records: injectivity bugs are what a rendered key produces, and the rendering is
-paid on every unbound match whether or not anything reads it.
+collision in the same function, during the value-domain enforcement arc
+(`BUG_VALUE_DOMAIN_UNENFORCED_IN_COMPARISON`). That collision is an *instance* of
+what this records: injectivity bugs are what a rendered key produces, and the
+rendering is paid on every unbound match whether or not anything reads it.
 
 Not a wrong-answer bug on its own. It is the shape that produced one, plus a cost
 paid for a consumer that is usually absent.

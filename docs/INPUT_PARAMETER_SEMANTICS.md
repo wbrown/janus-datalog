@@ -198,38 +198,50 @@ for i := range phases {
 ```
 
 ### Selectivity Scoring
-```go
-// Pass available symbols (including input parameters) to scoring
-func estimatePatternSelectivity(pattern *DataPattern, available map[Symbol]bool) int {
-    return scorePattern(pattern, available)
-}
 
-// In scorePattern, treat bound variables as selective as constants
-if available[varName] {
-    score -= 500  // Bound value (including input param) is highly selective
+`scoreClause` takes the available set — which includes input parameters — and
+`countSelectivityFactors` splits a pattern's positions into two kinds:
+
+```go
+// datalog/planner/clause_utils.go
+func countSelectivityFactors(p *query.DataPattern, available map[query.Symbol]bool) (constants, availableVars int) {
+    for _, elem := range p.Elements {
+        switch e := elem.(type) {
+        case query.Constant:
+            constants++              // visible selectivity: filters data
+        case query.Variable:
+            if available[e.Name] {
+                availableVars++      // join hint: connects, does not filter
+            }
+        }
+    }
+    return constants, availableVars
 }
 ```
 
-### Predicate Assignment
+Constants are weighted an order of magnitude above available variables, because a
+constant filters while a variable only enables a join. An input parameter counts
+as an available variable, so a pattern that consumes one scores above the same
+pattern with nothing bound — which is the whole point: an unbound input parameter
+scored as a free variable is what produced the Cartesian product.
+
+### Clause Readiness
+
+Whether a clause can run yet has one definition, in `datalog/query/clause_ready.go`.
+`inputs` is a separate argument from `available` precisely because an input
+parameter is bound everywhere, not provided by some earlier phase:
+
 ```go
-// Use phase's Available which includes input parameters
-for i := range phases {
-    available := make(map[Symbol]bool)
-    for _, sym := range phases[i].Available {
-        available[sym] = true
-    }
-
-    // Add symbols provided by this phase
-    for _, sym := range phases[i].Provides {
-        available[sym] = true
-    }
-
-    // Check if predicate can be evaluated
-    if canEvaluatePredicate(pred, available) {
-        phases[i].Predicates = append(phases[i].Predicates, pred)
-    }
-}
+func ClauseBlockers(clause Clause, available, inputs map[Symbol]bool, providerCount map[Symbol]int) []Symbol
+func ClauseReady(clause Clause, available, inputs map[Symbol]bool, providerCount map[Symbol]int) bool
+func CountProviders(clauses []Clause) map[Symbol]int
 ```
+
+Both the planner's greedy phasing (`clauseSelectable`, `datalog/planner/clause_utils.go`)
+and the algebra bridge's compile ordering consume that one predicate, so the two
+paths cannot disagree about when a predicate becomes evaluable. `ClauseBlockers`
+returns the symbols still missing, which is what turns an unsatisfiable clause into
+an error naming the symbol rather than a silent drop.
 
 ## Architectural Philosophy
 

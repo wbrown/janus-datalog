@@ -122,13 +122,30 @@ Error: `cannot project: symbol ?related not found in relation`
 
 ### 6.1. Why not → not-join works
 
-`NotClause` and `NotJoinClause` go through the same executor logic:
+`NotClause` and `NotJoinClause` go through two separate executor functions built
+from the same pieces:
 
-- `executeNotClause` → `filterWithNotClause(clause, group, collectInnerVars(clause.Clauses))`
-- `executeNotJoinClause` → `filterWithNotJoinClause(clause, group)` using `clause.JoinVars`
+- `executeNotClause` → `filterWithNotClause(ctx, clause, input, joinVars)`, where the join
+  variables come from `query.ScopeOf(clause)`
+- `executeNotJoinClause` → `filterWithNotJoinClause(ctx, clause, input)`, which classifies
+  `clause.JoinVars` itself — subject-carried symbols become the anti-join key,
+  environment-bound ones become a body constraint, and a symbol that is neither is a
+  loud error
 
-Both call the same underlying filter. The only difference is where join vars come
-from (inferred vs declared). The output schema is identical.
+There is no shared filter function. Each calls the same building blocks
+independently — `Materialize`, `notBodyBinding`, `getUniqueCombinations`,
+`TupleKeyMap`, then the anti-join — and the output schema is identical, which is
+what the equivalence argument needs. Three differences are not just provenance:
+
+- **Over-declaration.** `filterWithNotJoinClause` rejects a header symbol the body
+  neither produces nor consumes. Bare `not` has no header, so nothing to reject.
+- **Classification.** not-join sorts each header symbol into subject-carried
+  (becomes the key), environment-bound (deliberately kept *out* of the key, since
+  its contribution would be a constant equal on both sides), or neither (error).
+  Bare `not` intersects with the input's symbols and errors only if the
+  intersection is empty.
+- **The body binding's input differs.** Bare `not` passes `joinVars` to
+  `notBodyBinding`; not-join passes `query.FreeVariables(clause.Clauses)`.
 
 ### 6.2. Why or → or-join does NOT work
 
@@ -138,7 +155,7 @@ from (inferred vs declared). The output schema is identical.
 ```
 branchesNeedCorrelatedExecution?
   → yes: executeOrClauseCorrelatedUnion
-       → collectOrBranchRequiredSymbols(branches)
+       → query.ScopeOf(clause)  // Provides ∪ Correlates
        → findOuterRelation(neededSymbols, groups)
        → NewOrFallbackRelation(branches, outerRel, false)
   → no:  executeOrClauseUnion (independent branch execution)
