@@ -40,6 +40,46 @@ go tool pprof -top -cum -nodecount=40 /tmp/exec.test <prof>.prof
 
 ## Current baselines
 
+### `memory_assert_bulk_2026-07-31.txt`
+
+`BenchmarkMemoryAssertBulk` with `-benchmem`, count=3 — the diagnostic
+[`MEMORY_DATOM_INDEXES.md`](../proposals/MEMORY_DATOM_INDEXES.md) asks for:
+whether the MemoryStore key representation is where the wasm 4 GiB ceiling
+actually goes.
+
+| N | B/op | per datom | allocs/datom | ns/datom |
+|---|---:|---:|---:|---:|
+| 1000 | 5,005,233 | 5,005 B | 18.7 | 2,070 |
+| 4000 | 21,500,030 | 5,375 B | 18.7 | 2,297 |
+
+`B/op` is total allocated for a fresh store plus N asserts, so it counts
+transients — the `memoryEntryUndo` journal, map rehashing, btree splits — as well
+as retained store. It bounds retained from above; it does not measure it. The
+structural model in the proposal projects 1,296 B/datom *retained* at `|V|`=8,
+which sits comfortably inside 5,005 allocated, so the measurement is consistent
+with the model rather than a test of it. What it does settle is direction: the
+per-datom cost is thousands of bytes, not hundreds.
+
+**Against the 2026-07-15 run**
+(`wasm_memory_backend_2026-07-15/memory_assert_retract_native_darwin_arm64_count3.txt`,
+same machine and Go version): 6,300 → 5,005 B/datom and 27.75 → 18.7 allocs/datom
+at N=1000, reductions of 21% and 33%. Allocation counts are deterministic, so that
+half of the comparison is exact rather than host-sensitive. Several things landed
+in the window — the typed `ScanBound` seam, the batch-scanner and iterator-reuse
+deletions, `Store.Get`'s removal — and nothing here attributes the delta to any
+one of them.
+
+**18.7 allocations per datom** is the figure the sizing model does not predict; it
+counts bytes only. On wasm, where every transient is charged to a high-water mark
+that never returns, allocation count bears on the hydration peak at least as
+directly as retained size does.
+
+Scaling is linear — 4× the datoms gives 4.3× the bytes and 4.4× the time — which
+is the N² pathology this benchmark was written to catch.
+
+Shape: `|V|`=8 (int64), one attribute, no vectors or blobs. Machine: Apple M5,
+go1.26.3.
+
 ### Typed scan-bound campaign A/B (`typed_scan_bound_campaign_*_2026-07-30.txt`)
 
 Same-session A/B over the whole of PR #114 (38 commits): `baseline` = the merge-base

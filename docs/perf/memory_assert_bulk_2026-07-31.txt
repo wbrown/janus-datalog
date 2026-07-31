@@ -1,0 +1,12 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkMemoryAssertBulk/Size1000-10         	     541	   2083212 ns/op	 5005423 B/op	   18726 allocs/op
+BenchmarkMemoryAssertBulk/Size1000-10         	     582	   2063142 ns/op	 5005058 B/op	   18726 allocs/op
+BenchmarkMemoryAssertBulk/Size1000-10         	     580	   2062481 ns/op	 5005217 B/op	   18726 allocs/op
+BenchmarkMemoryAssertBulk/Size4000-10         	     129	   9205218 ns/op	21498258 B/op	   74721 allocs/op
+BenchmarkMemoryAssertBulk/Size4000-10         	     130	   9187680 ns/op	21501299 B/op	   74721 allocs/op
+BenchmarkMemoryAssertBulk/Size4000-10         	     129	   9173152 ns/op	21500533 B/op	   74721 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	7.487s
