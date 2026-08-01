@@ -602,61 +602,62 @@ func collectEntityIDs(result executor.Relation) []string {
 // where chooseBestMultiPositionStrategy iterates the relation, then the binding-driven
 // scan iterates it again — which a StreamingRelation refuses without Materialize().
 func TestMultiPositionWithStreamingBinding(t *testing.T) {
-	tempDir := t.TempDir()
-	db, err := NewDatabase(tempDir)
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Setup: 10 entities with codes
-	tx := db.NewTransaction()
-	entities := make([]datalog.Identity, 10)
+			// Setup: 10 entities with codes
+			tx := db.NewTransaction()
+			entities := make([]datalog.Identity, 10)
 
-	for i := 0; i < 10; i++ {
-		entityID := datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
-		entities[i] = entityID
+			for i := 0; i < 10; i++ {
+				entityID := datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
+				entities[i] = entityID
 
-		code := "A"
-		if i >= 5 {
-			code = "B"
-		}
-		tx.Add(entityID, datalog.NewKeyword(":attr/code"), code)
+				code := "A"
+				if i >= 5 {
+					code = "B"
+				}
+				tx.Add(entityID, datalog.NewKeyword(":attr/code"), code)
+			}
+
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			// Create pattern: [?e :attr/code ?code]
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: datalog.NewKeyword(":attr/code")},
+					query.Variable{Name: datalog.NewSymbol("?code")},
+				},
+			}
+
+			// Create binding tuples
+			bindingTuples := []executor.Tuple{
+				{entities[0], "A"},
+				{entities[2], "A"},
+				{entities[4], "A"},
+			}
+
+			// Create a STREAMING relation instead of materialized
+			// This simulates what happens when binding comes from a previous pattern match
+			tupleIter := &sliceTupleIterator{tuples: bindingTuples, idx: -1}
+			streamingBindingRel := executor.NewStreamingRelation(
+				[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
+				tupleIter,
+			)
+
+			// Create matcher and execute - this should NOT panic
+			matcher := NewPatternMatcher(db.Store())
+			result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{streamingBindingRel})
+			require.NoError(t, err, "Match should not error with streaming binding relation")
+
+			// Collect results
+			count := countResults(result)
+			require.Equal(t, 3, count, "Expected 3 results")
+		})
 	}
-
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Create pattern: [?e :attr/code ?code]
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: datalog.NewKeyword(":attr/code")},
-			query.Variable{Name: datalog.NewSymbol("?code")},
-		},
-	}
-
-	// Create binding tuples
-	bindingTuples := []executor.Tuple{
-		{entities[0], "A"},
-		{entities[2], "A"},
-		{entities[4], "A"},
-	}
-
-	// Create a STREAMING relation instead of materialized
-	// This simulates what happens when binding comes from a previous pattern match
-	tupleIter := &sliceTupleIterator{tuples: bindingTuples, idx: -1}
-	streamingBindingRel := executor.NewStreamingRelation(
-		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
-		tupleIter,
-	)
-
-	// Create matcher and execute - this should NOT panic
-	matcher := NewPatternMatcher(db.Store())
-	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{streamingBindingRel})
-	require.NoError(t, err, "Match should not error with streaming binding relation")
-
-	// Collect results
-	count := countResults(result)
-	require.Equal(t, 3, count, "Expected 3 results")
 }
 
 // sliceTupleIterator is a simple iterator over a slice of tuples for testing
@@ -689,46 +690,47 @@ func (it *sliceTupleIterator) Error() error { return it.err }
 // []byte is not comparable in Go and cannot be used as map keys.
 // This reproduces the panic: "hash of unhashable type []uint8"
 func TestMultiPositionWithBytesValue(t *testing.T) {
-	tempDir := t.TempDir()
-	db, err := NewDatabase(tempDir)
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Create entities with []byte values (TypeBytes)
-	e1 := datalog.NewIdentity("entity:1")
-	e2 := datalog.NewIdentity("entity:2")
+			// Create entities with []byte values (TypeBytes)
+			e1 := datalog.NewIdentity("entity:1")
+			e2 := datalog.NewIdentity("entity:2")
 
-	tx := db.NewTransaction()
-	tx.Add(e1, datalog.NewKeyword(":item/data"), []byte{0x01, 0x02, 0x03})
-	tx.Add(e2, datalog.NewKeyword(":item/data"), []byte{0x04, 0x05, 0x06})
-	tx.Add(e1, datalog.NewKeyword(":item/name"), "alpha")
-	tx.Add(e2, datalog.NewKeyword(":item/name"), "beta")
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			tx.Add(e1, datalog.NewKeyword(":item/data"), []byte{0x01, 0x02, 0x03})
+			tx.Add(e2, datalog.NewKeyword(":item/data"), []byte{0x04, 0x05, 0x06})
+			tx.Add(e1, datalog.NewKeyword(":item/name"), "alpha")
+			tx.Add(e2, datalog.NewKeyword(":item/name"), "beta")
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Pattern [?e :item/data ?v] with both E and V bound in the binding relation.
-	// This forces chooseBestMultiPositionStrategy which counts distinct values
-	// using map[interface{}]bool — panics on []byte.
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: datalog.NewKeyword(":item/data")},
-			query.Variable{Name: datalog.NewSymbol("?v")},
-		},
+			// Pattern [?e :item/data ?v] with both E and V bound in the binding relation.
+			// This forces chooseBestMultiPositionStrategy which counts distinct values
+			// using map[interface{}]bool — panics on []byte.
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: datalog.NewKeyword(":item/data")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
+				},
+			}
+
+			bindingRel := executor.NewMaterializedRelation(
+				[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")},
+				[]executor.Tuple{
+					{e1, []byte{0x01, 0x02, 0x03}},
+					{e2, []byte{0x04, 0x05, 0x06}},
+				},
+			)
+
+			matcher := NewPatternMatcher(db.store)
+
+			// This should not panic
+			results, err := executor.CollectTuples(matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel}))
+			require.NoError(t, err)
+			require.Len(t, results, 2, "should match both entities")
+		})
 	}
-
-	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")},
-		[]executor.Tuple{
-			{e1, []byte{0x01, 0x02, 0x03}},
-			{e2, []byte{0x04, 0x05, 0x06}},
-		},
-	)
-
-	matcher := NewPatternMatcher(db.store)
-
-	// This should not panic
-	results, err := executor.CollectTuples(matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel}))
-	require.NoError(t, err)
-	require.Len(t, results, 2, "should match both entities")
 }

@@ -17,34 +17,6 @@ import (
 // buggy code path, and the bug causes incorrect results (0 tuples instead of
 // the expected count).
 func TestMatcherRelationsTupleCopyingBug(t *testing.T) {
-	tempDir := t.TempDir()
-	db, err := NewDatabase(tempDir)
-	require.NoError(t, err)
-	defer db.Close()
-
-	// Insert test data that will trigger matcher_relations.go:241
-	// We need multiple entities to ensure binding tuple collection happens
-	tx := db.NewTransaction()
-
-	symbolKw := datalog.NewKeyword(":symbol/ticker")
-	priceSymbolKw := datalog.NewKeyword(":price/symbol")
-	priceOpenKw := datalog.NewKeyword(":price/open")
-
-	// Create 3 symbols with 10 price bars each
-	symbols := []string{"AAPL", "GOOG", "MSFT"}
-	for _, sym := range symbols {
-		symbolEntity := datalog.NewIdentity(sym)
-		tx.Add(symbolEntity, symbolKw, sym)
-
-		for i := 0; i < 10; i++ {
-			barEntity := datalog.NewIdentity(fmt.Sprintf("%s-bar-%d", sym, i))
-			tx.Add(barEntity, priceSymbolKw, symbolEntity)
-			tx.Add(barEntity, priceOpenKw, float64(100+i))
-		}
-	}
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
 	// Multi-pattern query that forces binding tuple collection
 	// Pattern 1: [?s :symbol/ticker ?ticker] -> 3 results
 	// Pattern 2: [?b :price/symbol ?s]       -> joins with pattern 1
@@ -59,6 +31,31 @@ func TestMatcherRelationsTupleCopyingBug(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Insert test data that will trigger matcher_relations.go:241
+			// We need multiple entities to ensure binding tuple collection happens
+			tx := db.NewTransaction()
+
+			symbolKw := datalog.NewKeyword(":symbol/ticker")
+			priceSymbolKw := datalog.NewKeyword(":price/symbol")
+			priceOpenKw := datalog.NewKeyword(":price/open")
+
+			// Create 3 symbols with 10 price bars each
+			symbols := []string{"AAPL", "GOOG", "MSFT"}
+			for _, sym := range symbols {
+				symbolEntity := datalog.NewIdentity(sym)
+				tx.Add(symbolEntity, symbolKw, sym)
+
+				for i := 0; i < 10; i++ {
+					barEntity := datalog.NewIdentity(fmt.Sprintf("%s-bar-%d", sym, i))
+					tx.Add(barEntity, priceSymbolKw, symbolEntity)
+					tx.Add(barEntity, priceOpenKw, float64(100+i))
+				}
+			}
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
 			matcher := NewPatternMatcher(db.store)
 			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 

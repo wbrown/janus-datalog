@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -1000,70 +999,63 @@ func TestGetElseWithPopulatedVectorDefault(t *testing.T) {
 
 func TestLookupAttributeDirectly(t *testing.T) {
 	// Test the LookupAttribute method directly on PatternMatcher
-	dir, err := os.MkdirTemp("", "lookup-attr-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			tx := db.NewTransaction()
+			alice := datalog.NewIdentity("alice")
 
-	tx := db.NewTransaction()
-	alice := datalog.NewIdentity("alice")
+			tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice Smith")
+			tx.Add(alice, datalog.NewKeyword(":person/age"), int64(30))
+			tx.Add(alice, datalog.NewKeyword(":person/active"), true)
 
-	tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice Smith")
-	tx.Add(alice, datalog.NewKeyword(":person/age"), int64(30))
-	tx.Add(alice, datalog.NewKeyword(":person/active"), true)
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit: %v", err)
+			}
 
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Failed to commit: %v", err)
-	}
+			matcher := db.Matcher()
+			patternMatcher, ok := matcher.(*PatternMatcher)
+			if !ok {
+				t.Fatalf("Expected PatternMatcher, got %T", matcher)
+			}
 
-	matcher := db.Matcher()
-	badgerMatcher, ok := matcher.(*PatternMatcher)
-	if !ok {
-		t.Fatalf("Expected PatternMatcher, got %T", matcher)
-	}
+			// Test string attribute
+			val, found := requireAttributeLookup(t, patternMatcher, alice, datalog.NewKeyword(":person/name"))
+			if !found {
+				t.Error(":person/name should be found")
+			} else if val != "Alice Smith" {
+				t.Errorf("Expected 'Alice Smith', got %v", val)
+			}
 
-	// Test string attribute
-	val, found := requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/name"))
-	if !found {
-		t.Error(":person/name should be found")
-	} else if val != "Alice Smith" {
-		t.Errorf("Expected 'Alice Smith', got %v", val)
-	}
+			// Test int64 attribute
+			val, found = requireAttributeLookup(t, patternMatcher, alice, datalog.NewKeyword(":person/age"))
+			if !found {
+				t.Error(":person/age should be found")
+			} else if val != int64(30) {
+				t.Errorf("Expected 30, got %v", val)
+			}
 
-	// Test int64 attribute
-	val, found = requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/age"))
-	if !found {
-		t.Error(":person/age should be found")
-	} else if val != int64(30) {
-		t.Errorf("Expected 30, got %v", val)
-	}
+			// Test bool attribute
+			val, found = requireAttributeLookup(t, patternMatcher, alice, datalog.NewKeyword(":person/active"))
+			if !found {
+				t.Error(":person/active should be found")
+			} else if val != true {
+				t.Errorf("Expected true, got %v", val)
+			}
 
-	// Test bool attribute
-	val, found = requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/active"))
-	if !found {
-		t.Error(":person/active should be found")
-	} else if val != true {
-		t.Errorf("Expected true, got %v", val)
-	}
+			// Test missing attribute
+			val, found = requireAttributeLookup(t, patternMatcher, alice, datalog.NewKeyword(":person/email"))
+			if found {
+				t.Errorf(":person/email should NOT be found, got %v", val)
+			}
 
-	// Test missing attribute
-	val, found = requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/email"))
-	if found {
-		t.Errorf(":person/email should NOT be found, got %v", val)
-	}
-
-	// Test non-existent entity
-	noone := datalog.NewIdentity("noone")
-	val, found = requireAttributeLookup(t, badgerMatcher, noone, datalog.NewKeyword(":person/name"))
-	if found {
-		t.Errorf("Non-existent entity should return not found, got %v", val)
+			// Test non-existent entity
+			noone := datalog.NewIdentity("noone")
+			val, found = requireAttributeLookup(t, patternMatcher, noone, datalog.NewKeyword(":person/name"))
+			if found {
+				t.Errorf("Non-existent entity should return not found, got %v", val)
+			}
+		})
 	}
 }

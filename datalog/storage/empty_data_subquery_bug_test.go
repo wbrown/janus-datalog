@@ -181,16 +181,13 @@ func TestEmptyDataSubqueryBug_FullOHLCQuery(t *testing.T) {
 func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Create temporary database
-			db, err := NewDatabase(t.TempDir())
-			assert.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Insert ONLY symbol entity, NO price bars
 			tx := db.NewTransaction()
 			aapl := datalog.NewIdentity("AAPL")
 			assert.NoError(t, tx.Add(aapl, datalog.NewKeyword(":symbol/ticker"), "AAPL"))
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			assert.NoError(t, err)
 
 			// Same query as above

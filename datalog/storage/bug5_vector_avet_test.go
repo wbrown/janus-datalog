@@ -8,7 +8,6 @@ package storage
 // See: docs/proposals/CRDT_VECTOR_STORAGE_IMPLEMENTATION_PLAN.md (Bug #5 section)
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,289 +31,279 @@ func attrBytes(kw datalog.Keyword) Attribute {
 //
 // Expected: Query [?e :skills "stealth"] should find entities with that skill.
 func TestVectorAVETLookup(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bug5-avet-lookup")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create schema with vector attribute
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	// Create schema with vector attribute
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	skills := datalog.NewKeyword(":character/skills")
+			// Add skills to alice
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Add skills to alice
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Add skills to bob (bob also has stealth)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(bob, skills, "stealth"))
+			require.NoError(t, tx2.Add(bob, skills, "swordplay"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Add skills to bob (bob also has stealth)
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(bob, skills, "stealth"))
-	require.NoError(t, tx2.Add(bob, skills, "swordplay"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Bind [A][V] on AVET to find all entities with "stealth" skill.
+			// This mimics what a query like [?e :skills "stealth"] would do.
+			iter, err := db.store.Scan(ScanBound{
+				Index:  AVET,
+				Prefix: []datalog.Value{skills, "stealth"},
+			})
+			require.NoError(t, err)
+			defer iter.Close()
 
-	// Bind [A][V] on AVET to find all entities with "stealth" skill.
-	// This mimics what a query like [?e :skills "stealth"] would do.
-	iter, err := db.store.Scan(ScanBound{
-		Index:  AVET,
-		Prefix: []datalog.Value{skills, "stealth"},
-	})
-	require.NoError(t, err)
-	defer iter.Close()
+			// Collect found entities
+			var foundEntities []string
+			for iter.Next() {
+				datom, err := iter.Datom()
+				if err != nil {
+					continue
+				}
+				if datom.E.Hash() == alice.Hash() {
+					foundEntities = append(foundEntities, "alice")
+				} else if datom.E.Hash() == bob.Hash() {
+					foundEntities = append(foundEntities, "bob")
+				}
+			}
 
-	// Collect found entities
-	var foundEntities []string
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			continue
-		}
-		if datom.E.Hash() == alice.Hash() {
-			foundEntities = append(foundEntities, "alice")
-		} else if datom.E.Hash() == bob.Hash() {
-			foundEntities = append(foundEntities, "bob")
-		}
+			// BUG #5: This currently fails - AVET lookup doesn't find vector elements
+			// because V contains RGAElement bytes, not raw "stealth" string
+			assert.Contains(t, foundEntities, "alice", "should find alice with stealth skill")
+			assert.Contains(t, foundEntities, "bob", "should find bob with stealth skill")
+			assert.Len(t, foundEntities, 2, "should find exactly 2 entities with stealth")
+
+			// Also log what we found for debugging
+			t.Logf("Found entities with stealth: %v (expected: [alice bob])", foundEntities)
+
+			// Cross-check: verify the data IS there via LookupAttribute
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+
+			aliceSkills, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found, "alice should have skills")
+			t.Logf("Alice's skills via LookupAttribute: %v", aliceSkills)
+		})
 	}
-
-	// BUG #5: This currently fails - AVET lookup doesn't find vector elements
-	// because V contains RGAElement bytes, not raw "stealth" string
-	assert.Contains(t, foundEntities, "alice", "should find alice with stealth skill")
-	assert.Contains(t, foundEntities, "bob", "should find bob with stealth skill")
-	assert.Len(t, foundEntities, 2, "should find exactly 2 entities with stealth")
-
-	// Also log what we found for debugging
-	t.Logf("Found entities with stealth: %v (expected: [alice bob])", foundEntities)
-
-	// Cross-check: verify the data IS there via LookupAttribute
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-
-	aliceSkills, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found, "alice should have skills")
-	t.Logf("Alice's skills via LookupAttribute: %v", aliceSkills)
 }
 
 // TestVectorAVETMultipleEntities verifies AVET returns all entities with same value.
 func TestVectorAVETMultipleEntities(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bug5-avet-multi")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":person/tags").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":person/tags").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			tags := datalog.NewKeyword(":person/tags")
 
-	tags := datalog.NewKeyword(":person/tags")
+			// Create 5 entities, all with "important" tag
+			entities := []datalog.Identity{
+				datalog.NewIdentity("e1"),
+				datalog.NewIdentity("e2"),
+				datalog.NewIdentity("e3"),
+				datalog.NewIdentity("e4"),
+				datalog.NewIdentity("e5"),
+			}
 
-	// Create 5 entities, all with "important" tag
-	entities := []datalog.Identity{
-		datalog.NewIdentity("e1"),
-		datalog.NewIdentity("e2"),
-		datalog.NewIdentity("e3"),
-		datalog.NewIdentity("e4"),
-		datalog.NewIdentity("e5"),
+			for _, e := range entities {
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Add(e, tags, "important"))
+				require.NoError(t, tx.Add(e, tags, "unique-"+e.String()))
+				_, err = tx.Commit()
+				require.NoError(t, err)
+			}
+
+			// Bind [A][V] on AVET for "important"
+			iter, err := db.store.Scan(ScanBound{
+				Index:  AVET,
+				Prefix: []datalog.Value{tags, "important"},
+			})
+			require.NoError(t, err)
+			defer iter.Close()
+
+			foundCount := 0
+			for iter.Next() {
+				_, err := iter.Datom()
+				if err == nil {
+					foundCount++
+				}
+			}
+
+			// BUG #5: This currently fails - foundCount will be 0
+			assert.Equal(t, 5, foundCount, "should find all 5 entities with 'important' tag")
+			t.Logf("Found %d entities with 'important' tag (expected: 5)", foundCount)
+		})
 	}
-
-	for _, e := range entities {
-		tx := db.NewTransaction()
-		require.NoError(t, tx.Add(e, tags, "important"))
-		require.NoError(t, tx.Add(e, tags, "unique-"+e.String()))
-		_, err = tx.Commit()
-		require.NoError(t, err)
-	}
-
-	// Bind [A][V] on AVET for "important"
-	iter, err := db.store.Scan(ScanBound{
-		Index:  AVET,
-		Prefix: []datalog.Value{tags, "important"},
-	})
-	require.NoError(t, err)
-	defer iter.Close()
-
-	foundCount := 0
-	for iter.Next() {
-		_, err := iter.Datom()
-		if err == nil {
-			foundCount++
-		}
-	}
-
-	// BUG #5: This currently fails - foundCount will be 0
-	assert.Equal(t, 5, foundCount, "should find all 5 entities with 'important' tag")
-	t.Logf("Found %d entities with 'important' tag (expected: 5)", foundCount)
 }
 
 // TestVectorAVETAfterTombstone verifies tombstoned elements handling.
 func TestVectorAVETAfterTombstone(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bug5-avet-tombstone")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Add skills
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Add skills
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Replace vector, removing "stealth"
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, skills, []interface{}{"archery", "lockpicking"}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Replace vector, removing "stealth"
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, skills, []interface{}{"archery", "lockpicking"}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Verify via LookupAttribute that stealth is gone
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	// Verify via LookupAttribute that stealth is gone
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
 
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
+			assert.NotContains(t, vec, "stealth", "stealth should be tombstoned")
+			assert.Contains(t, vec, "archery", "archery should remain")
+			assert.Contains(t, vec, "lockpicking", "lockpicking should be added")
 
-	assert.NotContains(t, vec, "stealth", "stealth should be tombstoned")
-	assert.Contains(t, vec, "archery", "archery should remain")
-	assert.Contains(t, vec, "lockpicking", "lockpicking should be added")
+			t.Logf("Skills after replacement: %v", vec)
 
-	t.Logf("Skills after replacement: %v", vec)
-
-	// Note: AVET tombstone semantics need clarification.
-	// For now, this test documents that LookupAttribute correctly handles tombstones.
-	// Future: AVET query should also respect tombstones.
+			// Note: AVET tombstone semantics need clarification.
+			// For now, this test documents that LookupAttribute correctly handles tombstones.
+			// Future: AVET query should also respect tombstones.
+		})
+	}
 }
 
 // TestVectorVAETReverseLookup verifies VAET index works for entity refs in vectors.
 func TestVectorVAETReverseLookup(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bug5-vaet-lookup")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create schema with vector of refs
+			s, err := schema.NewBuilder().
+				Attribute(":person/friends").Type(schema.TypeRef).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	// Create schema with vector of refs
-	s, err := schema.NewBuilder().
-		Attribute(":person/friends").Type(schema.TypeRef).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			charlie := datalog.NewIdentity("charlie")
+			friends := datalog.NewKeyword(":person/friends")
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	charlie := datalog.NewIdentity("charlie")
-	friends := datalog.NewKeyword(":person/friends")
+			// Alice's friends are bob and charlie
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(alice, friends, bob))
+			require.NoError(t, tx.Add(alice, friends, charlie))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Alice's friends are bob and charlie
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, friends, bob))
-	require.NoError(t, tx.Add(alice, friends, charlie))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// VAET lookup: Who has bob as a friend? Bind [V][A].
+			iter, err := db.store.Scan(ScanBound{
+				Index:  VAET,
+				Prefix: []datalog.Value{datalog.Reference(bob), friends},
+			})
+			require.NoError(t, err)
+			defer iter.Close()
 
-	// VAET lookup: Who has bob as a friend? Bind [V][A].
-	iter, err := db.store.Scan(ScanBound{
-		Index:  VAET,
-		Prefix: []datalog.Value{datalog.Reference(bob), friends},
-	})
-	require.NoError(t, err)
-	defer iter.Close()
+			foundAlice := false
+			for iter.Next() {
+				datom, err := iter.Datom()
+				if err == nil && datom.E.Hash() == alice.Hash() {
+					foundAlice = true
+				}
+			}
 
-	foundAlice := false
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err == nil && datom.E.Hash() == alice.Hash() {
-			foundAlice = true
-		}
+			// BUG #5: This currently fails - VAET lookup doesn't find vector refs
+			assert.True(t, foundAlice, "VAET should find alice as having bob as friend")
+			t.Logf("Found alice via VAET for bob: %v (expected: true)", foundAlice)
+		})
 	}
-
-	// BUG #5: This currently fails - VAET lookup doesn't find vector refs
-	assert.True(t, foundAlice, "VAET should find alice as having bob as friend")
-	t.Logf("Found alice via VAET for bob: %v (expected: true)", foundAlice)
 }
 
 // TestVectorValueTypePreserved verifies V decodes as original type, not []byte.
 func TestVectorValueTypePreserved(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "bug5-type-preserved")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":test/strings").Type(schema.TypeString).Vector().Add().
+				Attribute(":test/ints").Type(schema.TypeLong).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":test/strings").Type(schema.TypeString).Vector().Add().
-		Attribute(":test/ints").Type(schema.TypeLong).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			entity := datalog.NewIdentity("test")
+			strAttr := datalog.NewKeyword(":test/strings")
+			intAttr := datalog.NewKeyword(":test/ints")
 
-	entity := datalog.NewIdentity("test")
-	strAttr := datalog.NewKeyword(":test/strings")
-	intAttr := datalog.NewKeyword(":test/ints")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(entity, strAttr, "hello"))
+			require.NoError(t, tx.Add(entity, intAttr, int64(42)))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(entity, strAttr, "hello"))
-	require.NoError(t, tx.Add(entity, intAttr, int64(42)))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Scan EAVT for this entity and check value types
+			iter, err := db.store.Scan(ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}})
+			require.NoError(t, err)
+			defer iter.Close()
 
-	// Scan EAVT for this entity and check value types
-	iter, err := db.store.Scan(ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}})
-	require.NoError(t, err)
-	defer iter.Close()
+			var foundTypes []string
+			for iter.Next() {
+				datom, err := iter.Datom()
+				if err != nil {
+					continue
+				}
 
-	var foundTypes []string
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			continue
-		}
+				// Check the actual type of the value
+				switch datom.V.(type) {
+				case string:
+					foundTypes = append(foundTypes, "string")
+				case int64:
+					foundTypes = append(foundTypes, "int64")
+				case []byte:
+					foundTypes = append(foundTypes, "[]byte")
+				default:
+					foundTypes = append(foundTypes, "other")
+				}
+			}
 
-		// Check the actual type of the value
-		switch datom.V.(type) {
-		case string:
-			foundTypes = append(foundTypes, "string")
-		case int64:
-			foundTypes = append(foundTypes, "int64")
-		case []byte:
-			foundTypes = append(foundTypes, "[]byte")
-		default:
-			foundTypes = append(foundTypes, "other")
-		}
+			t.Logf("Found value types: %v", foundTypes)
+
+			// BUG #5: Currently values will be []byte (RGAElement wrapper)
+			// After fix, they should be string and int64
+			assert.Contains(t, foundTypes, "string", "string value should decode as string, not []byte")
+			assert.Contains(t, foundTypes, "int64", "int value should decode as int64, not []byte")
+			assert.NotContains(t, foundTypes, "[]byte", "values should not be []byte (RGAElement wrapper)")
+		})
 	}
-
-	t.Logf("Found value types: %v", foundTypes)
-
-	// BUG #5: Currently values will be []byte (RGAElement wrapper)
-	// After fix, they should be string and int64
-	assert.Contains(t, foundTypes, "string", "string value should decode as string, not []byte")
-	assert.Contains(t, foundTypes, "int64", "int value should decode as int64, not []byte")
-	assert.NotContains(t, foundTypes, "[]byte", "values should not be []byte (RGAElement wrapper)")
 }

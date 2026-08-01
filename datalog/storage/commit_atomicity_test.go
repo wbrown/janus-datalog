@@ -17,7 +17,6 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -32,44 +31,42 @@ import (
 // refactor, the metadata write joins the same atomic storage txn as
 // the rest of the commit, so failure rolls back the entire transaction.
 func TestCommitWritesTxInstantOnSuccess(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "db-txinstant-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(tmpDir)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			name := datalog.NewKeyword(":user/name")
+			txInstantAttr := datalog.NewKeyword(":db/txInstant")
 
-	alice := datalog.NewIdentity("alice")
-	name := datalog.NewKeyword(":user/name")
-	txInstantAttr := datalog.NewKeyword(":db/txInstant")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, name, "Alice"))
+			txID, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(alice, name, "Alice"))
-	txID, err := tx.Commit()
-	require.NoError(t, err)
+			// The metadata datom uses entity "tx:<lamport>" of the metadata's own
+			// ElementID, which is what Commit() returns.
+			txEntity := datalog.NewIdentity(fmt.Sprintf("tx:%d", txID.Lamport))
 
-	// The metadata datom uses entity "tx:<lamport>" of the metadata's own
-	// ElementID, which is what Commit() returns.
-	txEntity := datalog.NewIdentity(fmt.Sprintf("tx:%d", txID.Lamport))
+			matcher := NewPatternMatcher(db.Store())
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: txEntity},
+					query.Constant{Value: txInstantAttr},
+					query.Variable{Name: datalog.NewSymbol("?v")},
+					query.Blank{},
+				},
+			}
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			require.NoError(t, err)
 
-	matcher := NewPatternMatcher(db.Store())
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Constant{Value: txEntity},
-			query.Constant{Value: txInstantAttr},
-			query.Variable{Name: datalog.NewSymbol("?v")},
-			query.Blank{},
-		},
-	}
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	require.NoError(t, err)
+			iter := results.Iterator()
+			found := iter.Next()
+			iter.Close()
 
-	iter := results.Iterator()
-	found := iter.Next()
-	iter.Close()
-
-	if !found {
-		t.Errorf("expected :db/txInstant datom for tx %d, none found", txID.Lamport)
+			if !found {
+				t.Errorf("expected :db/txInstant datom for tx %d, none found", txID.Lamport)
+			}
+		})
 	}
 }

@@ -28,35 +28,6 @@ import (
 // - Only appeared when we changed threshold to 0, making HashJoinScan the default
 // - Most benchmarks had patterns where datom position == symbol index
 func TestHashJoinSymbolIndexBug(t *testing.T) {
-	tempDir := t.TempDir()
-	db, err := NewDatabase(tempDir)
-	assert.NoError(t, err)
-	defer db.Close()
-
-	// Create schema-like data: symbol entity referenced by price entities
-	symbolKw := datalog.NewKeyword(":symbol/ticker")
-	priceSymbol := datalog.NewKeyword(":price/symbol")
-	priceValue := datalog.NewKeyword(":price/value")
-
-	tx := db.NewTransaction()
-
-	// Create symbol entity
-	symbolEntity := datalog.NewIdentity("AAPL")
-	err = tx.Add(symbolEntity, symbolKw, "AAPL")
-	assert.NoError(t, err)
-
-	// Create price entities that reference the symbol
-	for i := 0; i < 5; i++ {
-		priceEntity := datalog.NewIdentity("price-" + string(rune('A'+i)))
-		err = tx.Add(priceEntity, priceSymbol, symbolEntity)
-		assert.NoError(t, err)
-		err = tx.Add(priceEntity, priceValue, float64(100+i))
-		assert.NoError(t, err)
-	}
-
-	_, err = tx.Commit()
-	assert.NoError(t, err)
-
 	// Query that triggers the bug:
 	// 1. [?s :symbol/ticker "AAPL"] returns binding with symbols=[?s]
 	// 2. [?e :price/symbol ?s] joins on ?s
@@ -73,6 +44,32 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Create schema-like data: symbol entity referenced by price entities
+			symbolKw := datalog.NewKeyword(":symbol/ticker")
+			priceSymbol := datalog.NewKeyword(":price/symbol")
+			priceValue := datalog.NewKeyword(":price/value")
+
+			tx := db.NewTransaction()
+
+			// Create symbol entity
+			symbolEntity := datalog.NewIdentity("AAPL")
+			err := tx.Add(symbolEntity, symbolKw, "AAPL")
+			assert.NoError(t, err)
+
+			// Create price entities that reference the symbol
+			for i := 0; i < 5; i++ {
+				priceEntity := datalog.NewIdentity("price-" + string(rune('A'+i)))
+				err = tx.Add(priceEntity, priceSymbol, symbolEntity)
+				assert.NoError(t, err)
+				err = tx.Add(priceEntity, priceValue, float64(100+i))
+				assert.NoError(t, err)
+			}
+
+			_, err = tx.Commit()
+			assert.NoError(t, err)
+
 			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
@@ -112,30 +109,6 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 // TestHashJoinSymbolIndexMultiSymbol tests the fix works with multiple symbols
 // where the join variable is not the first symbol.
 func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
-	tempDir := t.TempDir()
-	db, err := NewDatabase(tempDir)
-	assert.NoError(t, err)
-	defer db.Close()
-
-	// Create data
-	attr1 := datalog.NewKeyword(":attr1")
-	attr2 := datalog.NewKeyword(":attr2")
-	attr3 := datalog.NewKeyword(":attr3")
-
-	tx := db.NewTransaction()
-
-	// Entity A with attr1=X and attr2=Y
-	entityA := datalog.NewIdentity("A")
-	tx.Add(entityA, attr1, "X")
-	tx.Add(entityA, attr2, "Y")
-
-	// Entity B references Y via attr3
-	entityB := datalog.NewIdentity("B")
-	tx.Add(entityB, attr3, "Y")
-
-	_, err = tx.Commit()
-	assert.NoError(t, err)
-
 	// Query where join variable is the second symbol:
 	// 1. [?e1 :attr1 ?x] [?e1 :attr2 ?y] returns symbols=[?e1, ?x, ?y]
 	//    (assuming phases separate these, second might be symbols=[?y])
@@ -152,6 +125,27 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Create data
+			attr1 := datalog.NewKeyword(":attr1")
+			attr2 := datalog.NewKeyword(":attr2")
+			attr3 := datalog.NewKeyword(":attr3")
+
+			tx := db.NewTransaction()
+
+			// Entity A with attr1=X and attr2=Y
+			entityA := datalog.NewIdentity("A")
+			tx.Add(entityA, attr1, "X")
+			tx.Add(entityA, attr2, "Y")
+
+			// Entity B references Y via attr3
+			entityB := datalog.NewIdentity("B")
+			tx.Add(entityB, attr3, "Y")
+
+			_, err := tx.Commit()
+			assert.NoError(t, err)
+
 			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
@@ -215,20 +209,6 @@ func TestCompiledBindingMatchUsesPrecomputedSymbolSlots(t *testing.T) {
 }
 
 func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
-	db, err := NewDatabase(t.TempDir())
-	assert.NoError(t, err)
-	defer db.Close()
-
-	leftEntity := datalog.NewIdentity("signed-zero-left")
-	rightEntity := datalog.NewIdentity("signed-zero-right")
-	leftAttr := datalog.NewKeyword(":number/left")
-	rightAttr := datalog.NewKeyword(":number/right")
-	tx := db.NewTransaction()
-	assert.NoError(t, tx.Add(leftEntity, leftAttr, float64(0)))
-	assert.NoError(t, tx.Add(rightEntity, rightAttr, math.Copysign(0, -1)))
-	_, err = tx.Commit()
-	assert.NoError(t, err)
-
 	parsed, err := parser.ParseQuery(
 		`[:find ?left ?right
 		  :where [?left :number/left ?value]
@@ -237,6 +217,18 @@ func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
 	assert.NoError(t, err)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			leftEntity := datalog.NewIdentity("signed-zero-left")
+			rightEntity := datalog.NewIdentity("signed-zero-right")
+			leftAttr := datalog.NewKeyword(":number/left")
+			rightAttr := datalog.NewKeyword(":number/right")
+			tx := db.NewTransaction()
+			assert.NoError(t, tx.Add(leftEntity, leftAttr, float64(0)))
+			assert.NoError(t, tx.Add(rightEntity, rightAttr, math.Copysign(0, -1)))
+			_, err := tx.Commit()
+			assert.NoError(t, err)
+
 			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})

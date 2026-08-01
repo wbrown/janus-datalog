@@ -1,8 +1,6 @@
 package storage
 
 import (
-	"fmt"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -46,153 +44,147 @@ func vBoundMatchCountWithAnnotations(t *testing.T, db *Database, a datalog.Keywo
 }
 
 func TestDiag_VBound_AfterOverwrite(t *testing.T) {
-	dir, err := os.MkdirTemp("", "vbound-diag-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/name"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
-	db.SetSchema(s)
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			tx1, err := tx.Commit()
+			require.NoError(t, err)
+			t.Logf("TX1 (Add Alice): Lamport=%d", tx1)
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	tx1, err := tx.Commit()
-	require.NoError(t, err)
-	t.Logf("TX1 (Add Alice): Lamport=%d", tx1)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Bob"))
+			tx2id, err := tx2.Commit()
+			require.NoError(t, err)
+			t.Logf("TX2 (Add Bob): Lamport=%d", tx2id)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Bob"))
-	tx2id, err := tx2.Commit()
-	require.NoError(t, err)
-	t.Logf("TX2 (Add Bob): Lamport=%d", tx2id)
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Remove(e, a, "Bob"))
+			tx3id, err := tx3.Commit()
+			require.NoError(t, err)
+			t.Logf("TX3 (Remove Bob): Lamport=%d", tx3id)
 
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Remove(e, a, "Bob"))
-	tx3id, err := tx3.Commit()
-	require.NoError(t, err)
-	t.Logf("TX3 (Remove Bob): Lamport=%d", tx3id)
+			t.Log("--- Query V=Bob (expect 0) ---")
+			bobCount := vBoundMatchCountWithAnnotations(t, db, a, "Bob")
+			t.Logf("Bob count: %d (expected 0)", bobCount)
 
-	t.Log("--- Query V=Bob (expect 0) ---")
-	bobCount := vBoundMatchCountWithAnnotations(t, db, a, "Bob")
-	t.Logf("Bob count: %d (expected 0)", bobCount)
+			t.Log("--- Query V=Alice (expect 0) ---")
+			aliceCount := vBoundMatchCountWithAnnotations(t, db, a, "Alice")
+			t.Logf("Alice count: %d (expected 0)", aliceCount)
 
-	t.Log("--- Query V=Alice (expect 0) ---")
-	aliceCount := vBoundMatchCountWithAnnotations(t, db, a, "Alice")
-	t.Logf("Alice count: %d (expected 0)", aliceCount)
-
-	if bobCount != 0 {
-		t.Errorf("V-bound: Bob should not match after Remove, got %d", bobCount)
-	}
-	if aliceCount != 0 {
-		t.Errorf("V-bound: Alice should not match after Remove, got %d", aliceCount)
+			if bobCount != 0 {
+				t.Errorf("V-bound: Bob should not match after Remove, got %d", bobCount)
+			}
+			if aliceCount != 0 {
+				t.Errorf("V-bound: Alice should not match after Remove, got %d", aliceCount)
+			}
+		})
 	}
 }
 
 func TestDiag_VBound_VIsIrrelevant(t *testing.T) {
-	dir, err := os.MkdirTemp("", "vbound-diag-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/name"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
-	db.SetSchema(s)
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			tx1, err := tx.Commit()
+			require.NoError(t, err)
+			t.Logf("TX1 (Add Alice): Lamport=%d", tx1)
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	tx1, err := tx.Commit()
-	require.NoError(t, err)
-	t.Logf("TX1 (Add Alice): Lamport=%d", tx1)
+			// Remove with different V
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Bob"))
+			tx2id, err := tx2.Commit()
+			require.NoError(t, err)
+			t.Logf("TX2 (Remove Bob): Lamport=%d", tx2id)
 
-	// Remove with different V
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Bob"))
-	tx2id, err := tx2.Commit()
-	require.NoError(t, err)
-	t.Logf("TX2 (Remove Bob): Lamport=%d", tx2id)
+			t.Log("--- Query V=Alice (expect 0, attribute tombstoned) ---")
+			aliceCount := vBoundMatchCountWithAnnotations(t, db, a, "Alice")
+			t.Logf("Alice count: %d (expected 0)", aliceCount)
 
-	t.Log("--- Query V=Alice (expect 0, attribute tombstoned) ---")
-	aliceCount := vBoundMatchCountWithAnnotations(t, db, a, "Alice")
-	t.Logf("Alice count: %d (expected 0)", aliceCount)
+			if aliceCount != 0 {
+				t.Errorf("V-bound: Alice should not match — attribute tombstoned regardless of Remove V, got %d", aliceCount)
+			}
 
-	if aliceCount != 0 {
-		t.Errorf("V-bound: Alice should not match — attribute tombstoned regardless of Remove V, got %d", aliceCount)
+			// Also dump a raw EATV scan for this (E, A) to see what's in storage
+			t.Log("--- Raw EATV scan for (alice, :person/name) ---")
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(db.Schema())
+			iter, err := db.Store().Scan(ScanBound{Index: EATV, Prefix: []datalog.Value{e, a}})
+			require.NoError(t, err)
+			defer iter.Close()
+			i := 0
+			for iter.Next() {
+				d, err := iter.Datom()
+				if err != nil {
+					t.Logf("  EATV[%d]: decode error: %v", i, err)
+					continue
+				}
+				t.Logf("  EATV[%d]: E=%s A=%s V=%v Tx={L:%d,R:%d} Op=%d",
+					i, d.E.String(), d.A.String(), d.V, d.Tx.Lamport, d.Tx.ReplicaID, d.Op)
+				i++
+			}
+
+			// Also dump raw AVET scan for (A, V=Alice)
+			t.Log("--- Raw AVET scan for (:person/name, Alice) ---")
+			iter2, err := db.Store().Scan(ScanBound{Index: AVET, Prefix: []datalog.Value{a, "Alice"}})
+			require.NoError(t, err)
+			defer iter2.Close()
+			i = 0
+			for iter2.Next() {
+				d, err := iter2.Datom()
+				if err != nil {
+					t.Logf("  AVET[%d]: decode error: %v", i, err)
+					continue
+				}
+				t.Logf("  AVET[%d]: E=%s A=%s V=%v Tx={L:%d,R:%d} Op=%d",
+					i, d.E.String(), d.A.String(), d.V, d.Tx.Lamport, d.Tx.ReplicaID, d.Op)
+				i++
+			}
+
+			// Also dump raw AVET scan for (A, V=Bob) to see tombstone
+			t.Log("--- Raw AVET scan for (:person/name, Bob) ---")
+			iter3, err := db.Store().Scan(ScanBound{Index: AVET, Prefix: []datalog.Value{a, "Bob"}})
+			require.NoError(t, err)
+			defer iter3.Close()
+			i = 0
+			for iter3.Next() {
+				d, err := iter3.Datom()
+				if err != nil {
+					t.Logf("  AVET[%d]: E=%s A=%s V=%v Tx={L:%d,R:%d} Op=%d",
+						i, d.E.String(), d.A.String(), d.V, d.Tx.Lamport, d.Tx.ReplicaID, d.Op)
+					continue
+				}
+				t.Logf("  AVET[%d]: E=%s A=%s V=%v Tx={L:%d,R:%d} Op=%d",
+					i, d.E.String(), d.A.String(), d.V, d.Tx.Lamport, d.Tx.ReplicaID, d.Op)
+				i++
+			}
+		})
 	}
-
-	// Also dump a raw EATV scan for this (E, A) to see what's in storage
-	t.Log("--- Raw EATV scan for (alice, :person/name) ---")
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(db.Schema())
-	iter, err := db.Store().Scan(ScanBound{Index: EATV, Prefix: []datalog.Value{e, a}})
-	require.NoError(t, err)
-	defer iter.Close()
-	i := 0
-	for iter.Next() {
-		d, err := iter.Datom()
-		if err != nil {
-			t.Logf("  EATV[%d]: decode error: %v", i, err)
-			continue
-		}
-		t.Logf("  EATV[%d]: E=%s A=%s V=%v Tx={L:%d,R:%d} Op=%d",
-			i, d.E.String(), d.A.String(), d.V, d.Tx.Lamport, d.Tx.ReplicaID, d.Op)
-		i++
-	}
-
-	// Also dump raw AVET scan for (A, V=Alice)
-	t.Log("--- Raw AVET scan for (:person/name, Alice) ---")
-	iter2, err := db.Store().Scan(ScanBound{Index: AVET, Prefix: []datalog.Value{a, "Alice"}})
-	require.NoError(t, err)
-	defer iter2.Close()
-	i = 0
-	for iter2.Next() {
-		d, err := iter2.Datom()
-		if err != nil {
-			t.Logf("  AVET[%d]: decode error: %v", i, err)
-			continue
-		}
-		t.Logf("  AVET[%d]: E=%s A=%s V=%v Tx={L:%d,R:%d} Op=%d",
-			i, d.E.String(), d.A.String(), d.V, d.Tx.Lamport, d.Tx.ReplicaID, d.Op)
-		i++
-	}
-
-	// Also dump raw AVET scan for (A, V=Bob) to see tombstone
-	t.Log("--- Raw AVET scan for (:person/name, Bob) ---")
-	iter3, err := db.Store().Scan(ScanBound{Index: AVET, Prefix: []datalog.Value{a, "Bob"}})
-	require.NoError(t, err)
-	defer iter3.Close()
-	i = 0
-	for iter3.Next() {
-		d, err := iter3.Datom()
-		if err != nil {
-			t.Logf("  AVET[%d]: E=%s A=%s V=%v Tx={L:%d,R:%d} Op=%d",
-				i, d.E.String(), d.A.String(), d.V, d.Tx.Lamport, d.Tx.ReplicaID, d.Op)
-			continue
-		}
-		t.Logf("  AVET[%d]: E=%s A=%s V=%v Tx={L:%d,R:%d} Op=%d",
-			i, d.E.String(), d.A.String(), d.V, d.Tx.Lamport, d.Tx.ReplicaID, d.Op)
-		i++
-	}
-
-	_ = fmt.Sprintf("done") // keep fmt import
 }

@@ -19,39 +19,6 @@ func TestOHLCQueryBug(t *testing.T) {
 		t.Skip("Skipping slow bug reproduction test")
 	}
 
-	tempDir := t.TempDir()
-	db, err := NewDatabase(tempDir)
-	require.NoError(t, err)
-	defer db.Close()
-
-	// Insert realistic OHLC price-bar data
-	tx := db.NewTransaction()
-
-	// Symbol
-	symbol := datalog.NewIdentity("CRWV")
-	tx.Add(symbol, datalog.NewKeyword(":symbol/ticker"), "CRWV")
-
-	// Create 100 price bars (enough to trigger the bug but not too slow)
-	baseTime := time.Date(2025, 6, 20, 9, 30, 0, 0, time.UTC)
-
-	for i := 0; i < 100; i++ {
-		barID := datalog.NewIdentity(fmt.Sprintf("bar-%d", i))
-		barTime := baseTime.Add(time.Duration(i) * time.Minute)
-		minuteOfDay := int64(570 + i) // 9:30 AM = minute 570
-
-		tx.Add(barID, datalog.NewKeyword(":price/symbol"), symbol)
-		tx.Add(barID, datalog.NewKeyword(":price/time"), barTime)
-		tx.Add(barID, datalog.NewKeyword(":price/minute-of-day"), minuteOfDay)
-		tx.Add(barID, datalog.NewKeyword(":price/open"), float64(100+i))
-		tx.Add(barID, datalog.NewKeyword(":price/high"), float64(105+i))
-		tx.Add(barID, datalog.NewKeyword(":price/low"), float64(95+i))
-		tx.Add(barID, datalog.NewKeyword(":price/close"), float64(102+i))
-		tx.Add(barID, datalog.NewKeyword(":price/volume"), int64(1000+i))
-	}
-
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
 	// The time-grouped OHLC aggregate query that triggers the bug
 	queryStr := `[:find ?year ?month ?day (min ?open) (max ?high) (min ?low) (max ?close) (sum ?volume)
 	              :where [?s :symbol/ticker "CRWV"]
@@ -74,6 +41,36 @@ func TestOHLCQueryBug(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Insert realistic OHLC price-bar data
+			tx := db.NewTransaction()
+
+			// Symbol
+			symbol := datalog.NewIdentity("CRWV")
+			tx.Add(symbol, datalog.NewKeyword(":symbol/ticker"), "CRWV")
+
+			// Create 100 price bars (enough to trigger the bug but not too slow)
+			baseTime := time.Date(2025, 6, 20, 9, 30, 0, 0, time.UTC)
+
+			for i := 0; i < 100; i++ {
+				barID := datalog.NewIdentity(fmt.Sprintf("bar-%d", i))
+				barTime := baseTime.Add(time.Duration(i) * time.Minute)
+				minuteOfDay := int64(570 + i) // 9:30 AM = minute 570
+
+				tx.Add(barID, datalog.NewKeyword(":price/symbol"), symbol)
+				tx.Add(barID, datalog.NewKeyword(":price/time"), barTime)
+				tx.Add(barID, datalog.NewKeyword(":price/minute-of-day"), minuteOfDay)
+				tx.Add(barID, datalog.NewKeyword(":price/open"), float64(100+i))
+				tx.Add(barID, datalog.NewKeyword(":price/high"), float64(105+i))
+				tx.Add(barID, datalog.NewKeyword(":price/low"), float64(95+i))
+				tx.Add(barID, datalog.NewKeyword(":price/close"), float64(102+i))
+				tx.Add(barID, datalog.NewKeyword(":price/volume"), int64(1000+i))
+			}
+
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
 			matcher := NewPatternMatcher(db.store)
 			popts := mode.plannerOptions()
 			exec := executor.NewExecutorWithOptions(matcher, db, popts)

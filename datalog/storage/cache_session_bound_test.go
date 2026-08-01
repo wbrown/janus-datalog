@@ -13,68 +13,70 @@ import (
 // path (GetOrResolve behind LookupAttribute) must agree with the session's
 // storage path (ResolveLWW) on the same matcher.
 func TestSessionBoundedCacheRead(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	e := datalog.NewIdentity("bound:e1")
-	attr := datalog.NewKeyword(":bound/value")
+			e := datalog.NewIdentity("bound:e1")
+			attr := datalog.NewKeyword(":bound/value")
 
-	tx := d.NewTransaction()
-	require.NoError(t, tx.Add(e, attr, int64(1)))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Add(e, attr, int64(1)))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Sessioned matcher pinned at the X=1 snapshot.
-	matcher, session, err := d.sessionMatcher(d.effectivePlannerOptions())
-	require.NoError(t, err)
-	defer session.Close()
-	sessioned := matcher.(*PatternMatcher)
+			// Sessioned matcher pinned at the X=1 snapshot.
+			matcher, session, err := d.sessionMatcher(d.effectivePlannerOptions())
+			require.NoError(t, err)
+			defer session.Close()
+			sessioned := matcher.(*PatternMatcher)
 
-	// First read through the session establishes X.
-	v, found, err := sessioned.LookupAttribute(e, attr)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, int64(1), v)
+			// First read through the session establishes X.
+			v, found, err := sessioned.LookupAttribute(e, attr)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, int64(1), v)
 
-	// Concurrent commit lands Y after the session opened...
-	tx2 := d.NewTransaction()
-	require.NoError(t, tx2.Add(e, attr, int64(2)))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Concurrent commit lands Y after the session opened...
+			tx2 := d.NewTransaction()
+			require.NoError(t, tx2.Add(e, attr, int64(2)))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// ...and another latest reader warms the cache slot to Y.
-	latest := d.Matcher().(*PatternMatcher)
-	v, found, err = latest.LookupAttribute(e, attr)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, int64(2), v, "the latest reader must see the new value")
+			// ...and another latest reader warms the cache slot to Y.
+			latest := d.Matcher().(*PatternMatcher)
+			v, found, err = latest.LookupAttribute(e, attr)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, int64(2), v, "the latest reader must see the new value")
 
-	// The sessioned matcher's cache path must still answer from its snapshot,
-	// agreeing with its own storage path.
-	v, found, err = sessioned.LookupAttribute(e, attr)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, int64(1), v,
-		"a sessioned read must not be served cache content newer than its snapshot")
+			// The sessioned matcher's cache path must still answer from its snapshot,
+			// agreeing with its own storage path.
+			v, found, err = sessioned.LookupAttribute(e, attr)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, int64(1), v,
+				"a sessioned read must not be served cache content newer than its snapshot")
 
-	var eBytes Entity
-	copy(eBytes[:], e.Bytes())
-	var aBytes Attribute
-	copy(aBytes[:], attr.String())
-	report := &scanReport{}
-	raw, _, present, err := sessioned.ResolveLWW(eBytes, aBytes, report)
-	require.NoError(t, err)
-	require.True(t, present, "a datom exists within the session's bound")
-	require.Equal(t, int64(1), raw, "storage path defines the snapshot answer")
-	require.Positive(t, report.scanned,
-		"the storage path read the index to answer; an intake of zero would mean it did not")
+			var eBytes Entity
+			copy(eBytes[:], e.Bytes())
+			var aBytes Attribute
+			copy(aBytes[:], attr.String())
+			report := &scanReport{}
+			raw, _, present, err := sessioned.ResolveLWW(eBytes, aBytes, report)
+			require.NoError(t, err)
+			require.True(t, present, "a datom exists within the session's bound")
+			require.Equal(t, int64(1), raw, "storage path defines the snapshot answer")
+			require.Positive(t, report.scanned,
+				"the storage path read the index to answer; an intake of zero would mean it did not")
 
-	// The latest reader is unaffected by the session's bound.
-	v, found, err = latest.LookupAttribute(e, attr)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, int64(2), v)
+			// The latest reader is unaffected by the session's bound.
+			v, found, err = latest.LookupAttribute(e, attr)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, int64(2), v)
+		})
+	}
 }
 
 // TestStoreGateKeepsFresherEntry pins the anti-clobber gate: a rebuild from

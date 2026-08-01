@@ -16,14 +16,6 @@ import (
 // day of 5-minute bars: whole-database counts, calendar-grouped aggregation,
 // per-window subqueries, and unfiltered bar scans.
 func TestOHLCRealisticQueries(t *testing.T) {
-	// Create test database with realistic OHLC data
-	tempDir := t.TempDir()
-	db, err := NewDatabase(tempDir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
 	// Fixture schema:
 	// - :symbol/ticker - string ticker symbol
 	// - :price/symbol - reference to symbol entity
@@ -42,50 +34,52 @@ func TestOHLCRealisticQueries(t *testing.T) {
 	priceClose := datalog.NewKeyword(":price/close")
 	priceVolume := datalog.NewKeyword(":price/volume")
 
-	// Create CRWV symbol entity
-	tx := db.NewTransaction()
-	crwvEntity := datalog.NewIdentity("CRWV")
-	if err := tx.Add(crwvEntity, symbolKw, "CRWV"); err != nil {
-		t.Fatalf("Failed to write CRWV symbol: %v", err)
-	}
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("Failed to commit symbol: %v", err)
-	}
-
-	// Generate realistic OHLC data for August 22, 2025
-	// Market hours: 9:30 AM (570 minutes) to 4:00 PM (960 minutes)
-	// 5-minute bars: 78 bars per day
-	tx = db.NewTransaction()
-	baseTime := time.Date(2025, 8, 22, 9, 30, 0, 0, time.UTC)
-	basePrice := 100.0
-
-	for i := 0; i < 78; i++ {
-		barEntity := datalog.NewIdentity(fmt.Sprintf("bar-CRWV-20250822-%d", i))
-		barTime := baseTime.Add(time.Duration(i*5) * time.Minute)
-		minuteOfDay := int64(570 + i*5)
-
-		open := basePrice + float64(i)*0.1
-		high := open + 0.5
-		low := open - 0.3
-		close := open + 0.2
-		volume := int64(10000 + i*100)
-
-		tx.Add(barEntity, priceSymbol, crwvEntity)
-		tx.Add(barEntity, priceTime, barTime)
-		tx.Add(barEntity, priceMinuteOfDay, minuteOfDay)
-		tx.Add(barEntity, priceOpen, open)
-		tx.Add(barEntity, priceHigh, high)
-		tx.Add(barEntity, priceLow, low)
-		tx.Add(barEntity, priceClose, close)
-		tx.Add(barEntity, priceVolume, volume)
-	}
-
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("Failed to commit price data: %v", err)
-	}
-
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Create CRWV symbol entity
+			tx := db.NewTransaction()
+			crwvEntity := datalog.NewIdentity("CRWV")
+			if err := tx.Add(crwvEntity, symbolKw, "CRWV"); err != nil {
+				t.Fatalf("Failed to write CRWV symbol: %v", err)
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit symbol: %v", err)
+			}
+
+			// Generate realistic OHLC data for August 22, 2025
+			// Market hours: 9:30 AM (570 minutes) to 4:00 PM (960 minutes)
+			// 5-minute bars: 78 bars per day
+			tx = db.NewTransaction()
+			baseTime := time.Date(2025, 8, 22, 9, 30, 0, 0, time.UTC)
+			basePrice := 100.0
+
+			for i := 0; i < 78; i++ {
+				barEntity := datalog.NewIdentity(fmt.Sprintf("bar-CRWV-20250822-%d", i))
+				barTime := baseTime.Add(time.Duration(i*5) * time.Minute)
+				minuteOfDay := int64(570 + i*5)
+
+				open := basePrice + float64(i)*0.1
+				high := open + 0.5
+				low := open - 0.3
+				close := open + 0.2
+				volume := int64(10000 + i*100)
+
+				tx.Add(barEntity, priceSymbol, crwvEntity)
+				tx.Add(barEntity, priceTime, barTime)
+				tx.Add(barEntity, priceMinuteOfDay, minuteOfDay)
+				tx.Add(barEntity, priceOpen, open)
+				tx.Add(barEntity, priceHigh, high)
+				tx.Add(barEntity, priceLow, low)
+				tx.Add(barEntity, priceClose, close)
+				tx.Add(barEntity, priceVolume, volume)
+			}
+
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit price data: %v", err)
+			}
+
 			// Create executor
 			matcher := NewPatternMatcher(db.store)
 			exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{

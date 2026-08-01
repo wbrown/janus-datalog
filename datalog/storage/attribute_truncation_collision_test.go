@@ -24,20 +24,21 @@ func longAttrName() string {
 // TestStorage_LongAttributeNameRejectedOnWrite: every write entry point rejects
 // an over-length attribute instead of truncating it.
 func TestStorage_LongAttributeNameRejectedOnWrite(t *testing.T) {
-	dir := t.TempDir()
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	e := datalog.NewIdentity("entity-1")
-	a := datalog.NewKeyword(longAttrName())
-	require.Greater(t, len(a.String()), datalog.MaxAttributeBytes)
+			e := datalog.NewIdentity("entity-1")
+			a := datalog.NewKeyword(longAttrName())
+			require.Greater(t, len(a.String()), datalog.MaxAttributeBytes)
 
-	tx := db.NewTransaction()
-	require.Error(t, tx.Set(e, a, "v"), "Set must reject over-length attribute")
-	require.Error(t, tx.Add(e, a, "v"), "Add must reject over-length attribute")
-	require.Error(t, tx.Remove(e, a, "v"), "Remove must reject over-length attribute")
-	require.Error(t, tx.Retract(e, a, "v"), "Retract must reject over-length attribute")
+			tx := db.NewTransaction()
+			require.Error(t, tx.Set(e, a, "v"), "Set must reject over-length attribute")
+			require.Error(t, tx.Add(e, a, "v"), "Add must reject over-length attribute")
+			require.Error(t, tx.Remove(e, a, "v"), "Remove must reject over-length attribute")
+			require.Error(t, tx.Retract(e, a, "v"), "Retract must reject over-length attribute")
+		})
+	}
 }
 
 // TestSchema_LongAttributeDefinitionRejected: schema construction rejects an
@@ -55,13 +56,7 @@ func TestSchema_LongAttributeDefinitionRejected(t *testing.T) {
 func TestStorage_MaxLengthAttributeNameAccepted(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// ":boundary/" is 10 bytes; pad to exactly MaxAttributeBytes.
 			name := ":boundary/" + strings.Repeat("a", datalog.MaxAttributeBytes-len(":boundary/"))
@@ -72,7 +67,7 @@ func TestStorage_MaxLengthAttributeNameAccepted(t *testing.T) {
 
 			tx := db.NewTransaction()
 			require.NoError(t, tx.Set(e, a, "value-at-limit"))
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			full, err := db.Pull(e, `[*]`)

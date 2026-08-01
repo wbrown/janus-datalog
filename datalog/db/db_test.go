@@ -319,7 +319,7 @@ func TestGetStrings(t *testing.T) {
 				Attribute(":person/tag").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			d := tempDB(t, mode.backend, db.WithSchema(s),db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithSchema(s), db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			tag := datalog.NewKeyword(":person/tag")

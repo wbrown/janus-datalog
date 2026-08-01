@@ -84,55 +84,61 @@ func TestSnapshotEmptyDatabase(t *testing.T) {
 }
 
 func TestSnapshotListCausalOrder(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	snapTestAddName(t, d, "alice", "Alice")
-	_, err = d.Snapshot("a")
-	require.NoError(t, err)
-	snapTestAddName(t, d, "bob", "Bob")
-	_, err = d.Snapshot("b")
-	require.NoError(t, err)
+			snapTestAddName(t, d, "alice", "Alice")
+			_, err := d.Snapshot("a")
+			require.NoError(t, err)
+			snapTestAddName(t, d, "bob", "Bob")
+			_, err = d.Snapshot("b")
+			require.NoError(t, err)
 
-	snaps, err := d.Snapshots()
-	require.NoError(t, err)
-	require.Len(t, snaps, 2)
-	assert.Equal(t, "a", snaps[0].Name)
-	assert.Equal(t, "b", snaps[1].Name)
-	assert.True(t, snaps[0].At.Less(snaps[1].At), "snapshot a captured before b")
+			snaps, err := d.Snapshots()
+			require.NoError(t, err)
+			require.Len(t, snaps, 2)
+			assert.Equal(t, "a", snaps[0].Name)
+			assert.Equal(t, "b", snaps[1].Name)
+			assert.True(t, snaps[0].At.Less(snaps[1].At), "snapshot a captured before b")
+		})
+	}
 }
 
 func TestSnapshotDuplicateName(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	_, err = d.Snapshot("x")
-	require.NoError(t, err)
-	_, err = d.Snapshot("x")
-	require.ErrorIs(t, err, ErrSnapshotExists)
+			_, err := d.Snapshot("x")
+			require.NoError(t, err)
+			_, err = d.Snapshot("x")
+			require.ErrorIs(t, err, ErrSnapshotExists)
+		})
+	}
 }
 
 func TestDeleteSnapshot(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	snapTestAddName(t, d, "alice", "Alice")
-	_, err = d.Snapshot("x")
-	require.NoError(t, err)
+			snapTestAddName(t, d, "alice", "Alice")
+			_, err := d.Snapshot("x")
+			require.NoError(t, err)
 
-	require.NoError(t, d.DeleteSnapshot("x"))
+			require.NoError(t, d.DeleteSnapshot("x"))
 
-	snaps, err := d.Snapshots()
-	require.NoError(t, err)
-	assert.Empty(t, snaps)
+			snaps, err := d.Snapshots()
+			require.NoError(t, err)
+			assert.Empty(t, snaps)
 
-	_, err = d.AsOfSnapshot("x")
-	require.ErrorIs(t, err, ErrSnapshotNotFound)
+			_, err = d.AsOfSnapshot("x")
+			require.ErrorIs(t, err, ErrSnapshotNotFound)
 
-	require.ErrorIs(t, d.DeleteSnapshot("nope"), ErrSnapshotNotFound)
+			require.ErrorIs(t, d.DeleteSnapshot("nope"), ErrSnapshotNotFound)
+		})
+	}
 }
 
 func TestTruncateToRemovesLaterWrites(t *testing.T) {
@@ -186,27 +192,29 @@ func TestTruncateToResumesClockWithoutCollision(t *testing.T) {
 }
 
 func TestTruncateToPrunesLaterSnapshots(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	snapTestAddName(t, d, "alice", "Alice")
-	_, err = d.Snapshot("cp1")
-	require.NoError(t, err)
-	snapTestAddName(t, d, "bob", "Bob")
-	_, err = d.Snapshot("cp2")
-	require.NoError(t, err)
+			snapTestAddName(t, d, "alice", "Alice")
+			_, err := d.Snapshot("cp1")
+			require.NoError(t, err)
+			snapTestAddName(t, d, "bob", "Bob")
+			_, err = d.Snapshot("cp2")
+			require.NoError(t, err)
 
-	// Truncating to cp1 erases everything after cp1's marker, cp2 included.
-	require.NoError(t, d.TruncateTo("cp1"))
+			// Truncating to cp1 erases everything after cp1's marker, cp2 included.
+			require.NoError(t, d.TruncateTo("cp1"))
 
-	snaps, err := d.Snapshots()
-	require.NoError(t, err)
-	require.Len(t, snaps, 1)
-	assert.Equal(t, "cp1", snaps[0].Name)
+			snaps, err := d.Snapshots()
+			require.NoError(t, err)
+			require.Len(t, snaps, 1)
+			assert.Equal(t, "cp1", snaps[0].Name)
 
-	_, err = d.AsOfSnapshot("cp2")
-	assert.ErrorIs(t, err, ErrSnapshotNotFound)
+			_, err = d.AsOfSnapshot("cp2")
+			assert.ErrorIs(t, err, ErrSnapshotNotFound)
+		})
+	}
 }
 
 func TestTruncateToLatestIsNoop(t *testing.T) {
@@ -259,25 +267,29 @@ func TestTruncateThenSnapshotRewoundTimeline(t *testing.T) {
 }
 
 func TestTruncateToUnknownSnapshot(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
-	assert.ErrorIs(t, d.TruncateTo("nope"), ErrSnapshotNotFound)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			assert.ErrorIs(t, d.TruncateTo("nope"), ErrSnapshotNotFound)
+		})
+	}
 }
 
 func TestAsOfSnapshotRejectsWrites(t *testing.T) {
-	d, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer d.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	_, err = d.Snapshot("cp1")
-	require.NoError(t, err)
-	asof, err := d.AsOfSnapshot("cp1")
-	require.NoError(t, err)
+			_, err := d.Snapshot("cp1")
+			require.NoError(t, err)
+			asof, err := d.AsOfSnapshot("cp1")
+			require.NoError(t, err)
 
-	assert.Panics(t, func() {
-		asof.NewTransaction()
-	}, "AsOfSnapshot handle must reject writes")
+			assert.Panics(t, func() {
+				asof.NewTransaction()
+			}, "AsOfSnapshot handle must reject writes")
+		})
+	}
 }
 
 // TestStoreTruncateAfterAndMaxTxForEntity exercises the two BadgerStore primitives

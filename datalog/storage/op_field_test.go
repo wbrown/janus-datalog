@@ -12,7 +12,6 @@ package storage
 // 4. AVET index matches raw value types for cardinality-many
 
 import (
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -97,149 +96,137 @@ func TestOpFieldPreservesRawValueType(t *testing.T) {
 
 // TestAddMethodUsesOpField verifies Transaction.Add() sets Op correctly
 func TestAddMethodUsesOpField(t *testing.T) {
-	dir, err := os.MkdirTemp("", "op-field-add-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
+			// Use Add() API
+			tx := db.NewTransaction()
+			err := tx.Add(entityID, attr, "warrior")
+			if err != nil {
+				t.Fatalf("Add failed: %v", err)
+			}
+			_, err = tx.Commit()
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Use Add() API
-	tx := db.NewTransaction()
-	err = tx.Add(entityID, attr, "warrior")
-	if err != nil {
-		t.Fatalf("Add failed: %v", err)
-	}
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			// Query should find the value
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
 
-	// Query should find the value
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: entityID},
+					query.Constant{Value: attr},
+					query.Variable{Name: datalog.NewSymbol("?tag")},
+					query.Blank{},
+				},
+			}
 
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Constant{Value: entityID},
-			query.Constant{Value: attr},
-			query.Variable{Name: datalog.NewSymbol("?tag")},
-			query.Blank{},
-		},
-	}
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
 
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
-
-	count := 0
-	iter := results.Iterator()
-	for iter.Next() {
-		count++
-		tuple := iter.Tuple()
-		if len(tuple) > 0 {
-			if tag, ok := tuple[0].(string); ok {
-				if tag != "warrior" {
-					t.Errorf("Expected 'warrior', got '%s'", tag)
+			count := 0
+			iter := results.Iterator()
+			for iter.Next() {
+				count++
+				tuple := iter.Tuple()
+				if len(tuple) > 0 {
+					if tag, ok := tuple[0].(string); ok {
+						if tag != "warrior" {
+							t.Errorf("Expected 'warrior', got '%s'", tag)
+						}
+					}
 				}
 			}
-		}
-	}
 
-	if count != 1 {
-		t.Errorf("Expected 1 result, got %d", count)
+			if count != 1 {
+				t.Errorf("Expected 1 result, got %d", count)
+			}
+		})
 	}
 }
 
 // TestRemoveMethodUsesOpField verifies Transaction.Remove() sets Op correctly
 func TestRemoveMethodUsesOpField(t *testing.T) {
-	dir, err := os.MkdirTemp("", "op-field-remove-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
+			// Add then Remove
+			tx := db.NewTransaction()
+			err := tx.Add(entityID, attr, "warrior")
+			if err != nil {
+				t.Fatalf("Add failed: %v", err)
+			}
+			_, err = tx.Commit()
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Add then Remove
-	tx := db.NewTransaction()
-	err = tx.Add(entityID, attr, "warrior")
-	if err != nil {
-		t.Fatalf("Add failed: %v", err)
-	}
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			tx2 := db.NewTransaction()
+			err = tx2.Remove(entityID, attr, "warrior")
+			if err != nil {
+				t.Fatalf("Remove failed: %v", err)
+			}
+			_, err = tx2.Commit()
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	tx2 := db.NewTransaction()
-	err = tx2.Remove(entityID, attr, "warrior")
-	if err != nil {
-		t.Fatalf("Remove failed: %v", err)
-	}
-	_, err = tx2.Commit()
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			// Query should return empty (remove has higher Lamport)
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
 
-	// Query should return empty (remove has higher Lamport)
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: entityID},
+					query.Constant{Value: attr},
+					query.Variable{Name: datalog.NewSymbol("?tag")},
+					query.Blank{},
+				},
+			}
 
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Constant{Value: entityID},
-			query.Constant{Value: attr},
-			query.Variable{Name: datalog.NewSymbol("?tag")},
-			query.Blank{},
-		},
-	}
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
 
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
+			count := 0
+			iter := results.Iterator()
+			for iter.Next() {
+				count++
+			}
 
-	count := 0
-	iter := results.Iterator()
-	for iter.Next() {
-		count++
-	}
-
-	if count != 0 {
-		t.Errorf("Expected 0 results after remove, got %d", count)
+			if count != 0 {
+				t.Errorf("Expected 0 results after remove, got %d", count)
+			}
+		})
 	}
 }
 
@@ -247,245 +234,227 @@ func TestRemoveMethodUsesOpField(t *testing.T) {
 // cardinality-many value tagged as generic bytes instead of its own type
 // would fail this lookup.
 func TestAVETLookupWithOpField(t *testing.T) {
-	dir, err := os.MkdirTemp("", "op-field-avet-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			// Add tags to multiple entities
+			entity1 := datalog.NewIdentity("entity1")
+			entity2 := datalog.NewIdentity("entity2")
+			attr := datalog.NewKeyword(":person/tags")
 
-	// Add tags to multiple entities
-	entity1 := datalog.NewIdentity("entity1")
-	entity2 := datalog.NewIdentity("entity2")
-	attr := datalog.NewKeyword(":person/tags")
-
-	tx := db.NewTransaction()
-	tx.Add(entity1, attr, "warrior")
-	tx.Add(entity1, attr, "veteran")
-	tx.Add(entity2, attr, "warrior") // Same tag on different entity
-	tx.Add(entity2, attr, "mage")
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Query: find all entities with "warrior" tag
-	// This requires AVET index to work with raw string values
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
-
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: attr},
-			query.Constant{Value: "warrior"},
-			query.Blank{},
-		},
-	}
-
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
-
-	entities := make(map[string]bool)
-	iter := results.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		if len(tuple) > 0 {
-			if e, ok := tuple[0].(datalog.Identity); ok {
-				entities[e.String()] = true
+			tx := db.NewTransaction()
+			tx.Add(entity1, attr, "warrior")
+			tx.Add(entity1, attr, "veteran")
+			tx.Add(entity2, attr, "warrior") // Same tag on different entity
+			tx.Add(entity2, attr, "mage")
+			_, err := tx.Commit()
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
 			}
-		}
-	}
 
-	if len(entities) != 2 {
-		t.Errorf("Expected 2 entities with 'warrior' tag, got %d: %v", len(entities), entities)
+			// Query: find all entities with "warrior" tag
+			// This requires AVET index to work with raw string values
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
+
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: attr},
+					query.Constant{Value: "warrior"},
+					query.Blank{},
+				},
+			}
+
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
+
+			entities := make(map[string]bool)
+			iter := results.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				if len(tuple) > 0 {
+					if e, ok := tuple[0].(datalog.Identity); ok {
+						entities[e.String()] = true
+					}
+				}
+			}
+
+			if len(entities) != 2 {
+				t.Errorf("Expected 2 entities with 'warrior' tag, got %d: %v", len(entities), entities)
+			}
+		})
 	}
 }
 
 // TestBadgerIteratorDecodesOp verifies BadgerIterator.Datom() sets Op from key
 func TestBadgerIteratorDecodesOp(t *testing.T) {
-	dir, err := os.MkdirTemp("", "op-field-iterator-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
+			// Add a value
+			tx := db.NewTransaction()
+			tx.Add(entityID, attr, "warrior")
+			_, err := tx.Commit()
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Add a value
-	tx := db.NewTransaction()
-	tx.Add(entityID, attr, "warrior")
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			// Scan EAVT and verify Op is decoded
+			iter, err := db.Store().Scan(ScanBound{
+				Index:  EAVT,
+				Prefix: []datalog.Value{entityID, attr},
+			})
+			if err != nil {
+				t.Fatalf("Scan failed: %v", err)
+			}
+			defer iter.Close()
 
-	// Scan EAVT and verify Op is decoded
-	iter, err := db.Store().Scan(ScanBound{
-		Index:  EAVT,
-		Prefix: []datalog.Value{entityID, attr},
-	})
-	if err != nil {
-		t.Fatalf("Scan failed: %v", err)
-	}
-	defer iter.Close()
+			found := false
+			for iter.Next() {
+				datom, err := iter.Datom()
+				if err != nil {
+					t.Fatalf("Datom() failed: %v", err)
+				}
 
-	found := false
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			t.Fatalf("Datom() failed: %v", err)
-		}
+				// Op should be OpCRDTAdd
+				if datom.Op != datalog.OpCRDTAdd {
+					t.Errorf("Expected Op=OpCRDTAdd (%d), got %d", datalog.OpCRDTAdd, datom.Op)
+				}
 
-		// Op should be OpCRDTAdd
-		if datom.Op != datalog.OpCRDTAdd {
-			t.Errorf("Expected Op=OpCRDTAdd (%d), got %d", datalog.OpCRDTAdd, datom.Op)
-		}
+				// V should be raw string
+				if v, ok := datom.V.(string); !ok || v != "warrior" {
+					t.Errorf("Expected V='warrior', got %v", datom.V)
+				}
 
-		// V should be raw string
-		if v, ok := datom.V.(string); !ok || v != "warrior" {
-			t.Errorf("Expected V='warrior', got %v", datom.V)
-		}
+				found = true
+			}
 
-		found = true
-	}
-
-	if !found {
-		t.Error("No datoms found in scan")
+			if !found {
+				t.Error("No datoms found in scan")
+			}
+		})
 	}
 }
 
 // TestSetMethodGeneratesCorrectOps verifies Set() for cardinality-many
 func TestSetMethodGeneratesCorrectOps(t *testing.T) {
-	dir, err := os.MkdirTemp("", "op-field-set-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
-
-	// Initial set
-	tx := db.NewTransaction()
-	err = tx.Set(entityID, attr, []interface{}{"a", "b", "c"})
-	if err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Verify initial set
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
-
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Constant{Value: entityID},
-			query.Constant{Value: attr},
-			query.Variable{Name: datalog.NewSymbol("?tag")},
-			query.Blank{},
-		},
-	}
-
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
-
-	tags := make(map[string]bool)
-	iter := results.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		if len(tuple) > 0 {
-			if tag, ok := tuple[0].(string); ok {
-				tags[tag] = true
+			// Initial set
+			tx := db.NewTransaction()
+			err := tx.Set(entityID, attr, []interface{}{"a", "b", "c"})
+			if err != nil {
+				t.Fatalf("Set failed: %v", err)
 			}
-		}
-	}
-
-	if len(tags) != 3 || !tags["a"] || !tags["b"] || !tags["c"] {
-		t.Errorf("Expected {a, b, c}, got %v", tags)
-	}
-
-	// Replace with new set
-	tx2 := db.NewTransaction()
-	err = tx2.Set(entityID, attr, []interface{}{"x", "y"})
-	if err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
-	_, err = tx2.Commit()
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Verify replacement
-	results2, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
-
-	tags2 := make(map[string]bool)
-	iter2 := results2.Iterator()
-	for iter2.Next() {
-		tuple := iter2.Tuple()
-		if len(tuple) > 0 {
-			if tag, ok := tuple[0].(string); ok {
-				tags2[tag] = true
+			_, err = tx.Commit()
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
 			}
-		}
-	}
 
-	if len(tags2) != 2 || !tags2["x"] || !tags2["y"] {
-		t.Errorf("Expected {x, y}, got %v", tags2)
-	}
-	if tags2["a"] || tags2["b"] || tags2["c"] {
-		t.Errorf("Old values should be removed, got %v", tags2)
+			// Verify initial set
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
+
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: entityID},
+					query.Constant{Value: attr},
+					query.Variable{Name: datalog.NewSymbol("?tag")},
+					query.Blank{},
+				},
+			}
+
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
+
+			tags := make(map[string]bool)
+			iter := results.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				if len(tuple) > 0 {
+					if tag, ok := tuple[0].(string); ok {
+						tags[tag] = true
+					}
+				}
+			}
+
+			if len(tags) != 3 || !tags["a"] || !tags["b"] || !tags["c"] {
+				t.Errorf("Expected {a, b, c}, got %v", tags)
+			}
+
+			// Replace with new set
+			tx2 := db.NewTransaction()
+			err = tx2.Set(entityID, attr, []interface{}{"x", "y"})
+			if err != nil {
+				t.Fatalf("Set failed: %v", err)
+			}
+			_, err = tx2.Commit()
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
+
+			// Verify replacement
+			results2, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
+
+			tags2 := make(map[string]bool)
+			iter2 := results2.Iterator()
+			for iter2.Next() {
+				tuple := iter2.Tuple()
+				if len(tuple) > 0 {
+					if tag, ok := tuple[0].(string); ok {
+						tags2[tag] = true
+					}
+				}
+			}
+
+			if len(tags2) != 2 || !tags2["x"] || !tags2["y"] {
+				t.Errorf("Expected {x, y}, got %v", tags2)
+			}
+			if tags2["a"] || tags2["b"] || tags2["c"] {
+				t.Errorf("Old values should be removed, got %v", tags2)
+			}
+		})
 	}
 }

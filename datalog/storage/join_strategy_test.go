@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -18,41 +17,6 @@ import (
 // TestVerifyStrategyUsed confirms which strategy is actually selected
 // and that ForceJoinStrategy() override works correctly
 func TestVerifyStrategyUsed(t *testing.T) {
-	// Setup test database
-	tempDir, err := os.MkdirTemp("", "verify-strategy-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	db, err := NewDatabase(tempDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	// Insert 1000 records
-	batchSize := 50
-	totalRecords := 1000
-	for batch := 0; batch < totalRecords; batch += batchSize {
-		tx := db.NewTransaction()
-		end := batch + batchSize
-		if end > totalRecords {
-			end = totalRecords
-		}
-
-		for i := batch; i < end; i++ {
-			person := datalog.NewIdentity(fmt.Sprintf("person%d", i))
-			tx.Add(person, datalog.NewKeyword(":person/name"), fmt.Sprintf("Name%d", i))
-			tx.Add(person, datalog.NewKeyword(":person/email"), fmt.Sprintf("email%d@example.com", i))
-		}
-
-		_, err := tx.Commit()
-		if err != nil {
-			t.Fatalf("Batch commit failed: %v", err)
-		}
-	}
-
 	queryStr := `[:find ?name ?email
 	           :where [?p :person/name ?name]
 	                  [?p :person/email ?email]]`
@@ -64,6 +28,30 @@ func TestVerifyStrategyUsed(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Insert 1000 records
+			batchSize := 50
+			totalRecords := 1000
+			for batch := 0; batch < totalRecords; batch += batchSize {
+				tx := db.NewTransaction()
+				end := batch + batchSize
+				if end > totalRecords {
+					end = totalRecords
+				}
+
+				for i := batch; i < end; i++ {
+					person := datalog.NewIdentity(fmt.Sprintf("person%d", i))
+					tx.Add(person, datalog.NewKeyword(":person/name"), fmt.Sprintf("Name%d", i))
+					tx.Add(person, datalog.NewKeyword(":person/email"), fmt.Sprintf("email%d@example.com", i))
+				}
+
+				_, err := tx.Commit()
+				if err != nil {
+					t.Fatalf("Batch commit failed: %v", err)
+				}
+			}
+
 			t.Run("default_behavior", func(t *testing.T) {
 				var strategies []string
 				opts := executor.ExecutorOptions{
@@ -154,52 +142,6 @@ func TestVerifyStrategyUsed(t *testing.T) {
 // TestMaterializationDetection adds instrumentation to detect when
 // materialization happens in the storage layer
 func TestMaterializationDetection(t *testing.T) {
-	// Setup test database
-	tempDir, err := os.MkdirTemp("", "materialize-detect-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	db, err := NewDatabase(tempDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	// Insert 1000 records (to trigger hash join strategy)
-	batchSize := 50
-	totalRecords := 1000
-	for batch := 0; batch < totalRecords; batch += batchSize {
-		tx := db.NewTransaction()
-		end := batch + batchSize
-		if end > totalRecords {
-			end = totalRecords
-		}
-
-		for i := batch; i < end; i++ {
-			person := datalog.NewIdentity(fmt.Sprintf("person%d", i))
-			tx.Add(person, datalog.NewKeyword(":person/name"), fmt.Sprintf("Name%d", i))
-			tx.Add(person, datalog.NewKeyword(":person/email"), fmt.Sprintf("email%d@example.com", i))
-		}
-
-		_, err := tx.Commit()
-		if err != nil {
-			t.Fatalf("Batch commit failed: %v", err)
-		}
-	}
-
-	// Add age attribute to trigger 3-way join
-	for i := 0; i < totalRecords; i++ {
-		person := datalog.NewIdentity(fmt.Sprintf("person%d", i))
-		tx := db.NewTransaction()
-		tx.Add(person, datalog.NewKeyword(":person/age"), int64(20+i))
-		_, err := tx.Commit()
-		if err != nil {
-			t.Fatalf("Failed to add age: %v", err)
-		}
-	}
-
 	// Use a 3-way join to trigger multiple strategy selections
 	query := `[:find ?name ?email ?age
 	           :where [?p :person/name ?name]
@@ -213,6 +155,41 @@ func TestMaterializationDetection(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Insert 1000 records (to trigger hash join strategy)
+			batchSize := 50
+			totalRecords := 1000
+			for batch := 0; batch < totalRecords; batch += batchSize {
+				tx := db.NewTransaction()
+				end := batch + batchSize
+				if end > totalRecords {
+					end = totalRecords
+				}
+
+				for i := batch; i < end; i++ {
+					person := datalog.NewIdentity(fmt.Sprintf("person%d", i))
+					tx.Add(person, datalog.NewKeyword(":person/name"), fmt.Sprintf("Name%d", i))
+					tx.Add(person, datalog.NewKeyword(":person/email"), fmt.Sprintf("email%d@example.com", i))
+				}
+
+				_, err := tx.Commit()
+				if err != nil {
+					t.Fatalf("Batch commit failed: %v", err)
+				}
+			}
+
+			// Add age attribute to trigger 3-way join
+			for i := 0; i < totalRecords; i++ {
+				person := datalog.NewIdentity(fmt.Sprintf("person%d", i))
+				tx := db.NewTransaction()
+				tx.Add(person, datalog.NewKeyword(":person/age"), int64(20+i))
+				_, err := tx.Commit()
+				if err != nil {
+					t.Fatalf("Failed to add age: %v", err)
+				}
+			}
+
 			// Create matcher with instrumentation registered on its options
 			var events []string
 			opts := executor.ExecutorOptions{

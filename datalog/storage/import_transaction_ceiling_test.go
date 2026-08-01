@@ -56,25 +56,31 @@ func TestBinaryImportEntityLargerThanOneTransaction(t *testing.T) {
 		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 2},
 	}}
 
+	// The ceiling is Badger's own, so the backend is this test's subject rather
+	// than a parameter: it is named here instead of taken from the mode axis.
+	backend, err := BackendNamed("badger")
+	require.NoError(t, err)
+	badgerOnly := optimizerMode{name: backend.Name, backend: backend}
+
 	// The premise, asserted through StoreTx — the path that does not split,
 	// because its caller owns the transaction boundary. If the ceiling ever
 	// moves, this fails and says the fixture needs growing, rather than the
 	// test quietly ceasing to reproduce anything.
-	probe := openBinaryTestDB(t)
+	probe := createOptimizerModeDB(t, badgerOnly, DatabaseOptions{})
 	stx, err := probe.store.BeginTx()
 	require.NoError(t, err)
 	require.ErrorIs(t, stx.Assert(large), badger.ErrTxnTooBig,
 		"fixture no longer exceeds one transaction; raise the datom count")
 	require.NoError(t, stx.Rollback())
 
-	source := openBinaryTestDB(t)
+	source := createOptimizerModeDB(t, badgerOnly, DatabaseOptions{})
 	require.NoError(t, source.store.Assert(large))
 	require.NoError(t, source.store.Assert(small))
 
 	var dump seekBuffer
 	require.NoError(t, source.ExportBinary(&dump))
 
-	target := openBinaryTestDB(t)
+	target := createOptimizerModeDB(t, badgerOnly, DatabaseOptions{})
 	require.NoError(t, target.ImportBinary(&dump))
 
 	var reexported seekBuffer

@@ -117,10 +117,15 @@ type queryBoundaryFaultCase struct {
 
 func queryBoundaryFaultCases() []queryBoundaryFaultCase {
 	return appendNativeBlobFaultCase([]queryBoundaryFaultCase{{
-		name:                 "injected",
-		openFailing:          func(t *testing.T, popts *planner.PlannerOptions) (*Database, datalog.Identity, datalog.Keyword) { return openInjectedFaultDatabase(t, popts, 0) },
-		openValidThenFailing: func(t *testing.T, popts *planner.PlannerOptions) *Database { db, _, _ := openInjectedFaultDatabase(t, popts, 1); return db },
-		errText:              "injected scan fault",
+		name: "injected",
+		openFailing: func(t *testing.T, popts *planner.PlannerOptions) (*Database, datalog.Identity, datalog.Keyword) {
+			return openInjectedFaultDatabase(t, popts, 0)
+		},
+		openValidThenFailing: func(t *testing.T, popts *planner.PlannerOptions) *Database {
+			db, _, _ := openInjectedFaultDatabase(t, popts, 1)
+			return db
+		},
+		errText: "injected scan fault",
 	}})
 }
 

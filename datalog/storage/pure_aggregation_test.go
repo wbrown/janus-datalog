@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,52 +12,39 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
-// TestPureAggregationWithBadgerDB tests that pure aggregations work with BadgerDB storage
-func TestPureAggregationWithBadgerDB(t *testing.T) {
-	// Create temp directory for test database
-	tmpDir, err := os.MkdirTemp("", "badger-agg-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Create BadgerDB database
-	db, err := NewDatabase(tmpDir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Insert test data
-	tx := db.NewTransaction()
-
-	symbol := datalog.NewIdentity("symbol:CRWV")
-
-	// Add symbol data
-	tx.Add(symbol, datalog.NewKeyword(":symbol/ticker"), "CRWV")
-
-	// Insert 500 price bars to trigger streaming aggregation (threshold is 100)
-	// Values range from 100.0 to 599.0, so max should be 599.0, min should be 100.0
-	for i := 0; i < 500; i++ {
-		barID := datalog.NewIdentity(fmt.Sprintf("bar:%d", i))
-		tx.Add(barID, datalog.NewKeyword(":price/symbol"), symbol)
-		tx.Add(barID, datalog.NewKeyword(":price/high"), float64(100+i))
-	}
-
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Failed to commit transaction: %v", err)
-	}
-
+// TestStorageBackedPureAggregation tests that pure aggregations work against a
+// real store, on every backend the mode matrix has.
+func TestStorageBackedPureAggregation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			testPureAggregationWithBadgerDB(t, db, mode)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Insert test data
+			tx := db.NewTransaction()
+
+			symbol := datalog.NewIdentity("symbol:CRWV")
+
+			// Add symbol data
+			tx.Add(symbol, datalog.NewKeyword(":symbol/ticker"), "CRWV")
+
+			// Insert 500 price bars to trigger streaming aggregation (threshold is 100)
+			// Values range from 100.0 to 599.0, so max should be 599.0, min should be 100.0
+			for i := 0; i < 500; i++ {
+				barID := datalog.NewIdentity(fmt.Sprintf("bar:%d", i))
+				tx.Add(barID, datalog.NewKeyword(":price/symbol"), symbol)
+				tx.Add(barID, datalog.NewKeyword(":price/high"), float64(100+i))
+			}
+
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit transaction: %v", err)
+			}
+
+			testStorageBackedPureAggregation(t, db, mode)
 		})
 	}
 }
 
-func testPureAggregationWithBadgerDB(t *testing.T, db *Database, mode optimizerMode) {
-	// Create executor with BadgerDB matcher
+func testStorageBackedPureAggregation(t *testing.T, db *Database, mode optimizerMode) {
 	// Note: Matcher options must match executor options for proper propagation
 	execOpts := executor.ExecutorOptions{
 		EnableTrueStreaming:        true,

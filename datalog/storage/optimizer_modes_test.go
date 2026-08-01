@@ -69,6 +69,30 @@ func pinnedOptimizerModes(algebra bool) []optimizerMode {
 	return modes
 }
 
+// byteKeyBackends is the axis for a test whose subject is the binary key
+// encoding rather than the engine. Badger and MemoryStore both hold encoded
+// index keys and decode them into an iterator-owned workspace; MemoryTreeStore
+// hands out the datom it already holds, so a property of that workspace is not
+// a property it has.
+//
+// The switch has no silent default: a new backend fails here until someone says
+// which side of that line it falls on.
+func byteKeyBackends(t *testing.T) []optimizerMode {
+	t.Helper()
+	var modes []optimizerMode
+	for _, mode := range optimizerModes {
+		switch mode.backend.Name {
+		case "badger", "memory":
+			modes = append(modes, mode)
+		case "memory-trees":
+		default:
+			t.Fatalf("byteKeyBackends: backend %q is unclassified — "+
+				"does it hold encoded index keys?", mode.backend.Name)
+		}
+	}
+	return modes
+}
+
 // plannerOptions returns the default planner options with this mode applied.
 func (m optimizerMode) plannerOptions() planner.PlannerOptions {
 	opts := DefaultPlannerOptions()

@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -10,7 +9,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
-// TestParallelDecorrelationSymbolOrderBadger pins OHLC subquery execution
+// TestStorageBackedParallelDecorrelationSymbolOrder pins OHLC subquery execution
 // against PatternMatcher: four correlated aggregate subqueries whose
 // correlation parameters are consumed only by equality predicates, verified
 // slot-by-slot so a symbol-order scramble from inconsistent transaction
@@ -18,20 +17,7 @@ import (
 // It runs the optimizer mode matrix, whose algebra leg exercises the
 // equality-bound decorrelation translation end-to-end on storage-backed
 // relations. See BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
-func TestParallelDecorrelationSymbolOrderBadger(t *testing.T) {
-	// Create temporary BadgerDB
-	tmpDir, err := os.MkdirTemp("", "badger-symbol-order-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	db, err := NewDatabase(tmpDir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
+func TestStorageBackedParallelDecorrelationSymbolOrder(t *testing.T) {
 	// Create test data - same as OHLC test
 	testData := []struct {
 		time   time.Time
@@ -44,28 +30,6 @@ func TestParallelDecorrelationSymbolOrderBadger(t *testing.T) {
 		{time: time.Date(2025, 1, 10, 9, 30, 0, 0, time.UTC), open: 100.00, high: 101.50, low: 99.50, close: 101.00, volume: 1000000},
 		{time: time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC), open: 101.00, high: 103.00, low: 100.50, close: 102.00, volume: 950000},
 		{time: time.Date(2025, 1, 10, 16, 0, 0, 0, time.UTC), open: 102.00, high: 103.00, low: 101.50, close: 102.50, volume: 1100000},
-	}
-
-	// Insert test data
-	tx := db.NewTransaction()
-	symbol := datalog.NewIdentity("TEST")
-	tx.Add(symbol, datalog.NewKeyword(":symbol/ticker"), "TEST")
-
-	for _, bar := range testData {
-		barID := datalog.NewIdentity("bar-" + bar.time.String())
-
-		// Price bar data
-		tx.Add(barID, datalog.NewKeyword(":price/symbol"), symbol)
-		tx.Add(barID, datalog.NewKeyword(":price/time"), bar.time)
-		tx.Add(barID, datalog.NewKeyword(":price/minute-of-day"), int64(bar.time.Hour()*60+bar.time.Minute()))
-		tx.Add(barID, datalog.NewKeyword(":price/open"), bar.open)
-		tx.Add(barID, datalog.NewKeyword(":price/high"), bar.high)
-		tx.Add(barID, datalog.NewKeyword(":price/low"), bar.low)
-		tx.Add(barID, datalog.NewKeyword(":price/close"), bar.close)
-		tx.Add(barID, datalog.NewKeyword(":price/volume"), bar.volume)
-	}
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("Failed to commit test data: %v", err)
 	}
 
 	// OHLC query with 4 subqueries
@@ -144,6 +108,30 @@ func TestParallelDecorrelationSymbolOrderBadger(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Insert test data
+			tx := db.NewTransaction()
+			symbol := datalog.NewIdentity("TEST")
+			tx.Add(symbol, datalog.NewKeyword(":symbol/ticker"), "TEST")
+
+			for _, bar := range testData {
+				barID := datalog.NewIdentity("bar-" + bar.time.String())
+
+				// Price bar data
+				tx.Add(barID, datalog.NewKeyword(":price/symbol"), symbol)
+				tx.Add(barID, datalog.NewKeyword(":price/time"), bar.time)
+				tx.Add(barID, datalog.NewKeyword(":price/minute-of-day"), int64(bar.time.Hour()*60+bar.time.Minute()))
+				tx.Add(barID, datalog.NewKeyword(":price/open"), bar.open)
+				tx.Add(barID, datalog.NewKeyword(":price/high"), bar.high)
+				tx.Add(barID, datalog.NewKeyword(":price/low"), bar.low)
+				tx.Add(barID, datalog.NewKeyword(":price/close"), bar.close)
+				tx.Add(barID, datalog.NewKeyword(":price/volume"), bar.volume)
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit test data: %v", err)
+			}
+
 			matcher := db.Matcher()
 			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 

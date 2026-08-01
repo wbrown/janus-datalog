@@ -153,84 +153,86 @@ func TestAfterRefHeuristicBug_KeyLayout(t *testing.T) {
 // TestAfterRefHeuristicBug_Integration tests the full write+read path
 // through BadgerDB, demonstrating that datoms are silently lost.
 func TestAfterRefHeuristicBug_Integration(t *testing.T) {
-	db, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Install schema via builder
-	refAttr := datalog.NewKeyword(":test/ref")
-	s, err := schema.NewBuilder().
-		Attribute(":test/ref").Type(schema.TypeRef).Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Install schema via builder
+			refAttr := datalog.NewKeyword(":test/ref")
+			s, err := schema.NewBuilder().
+				Attribute(":test/ref").Type(schema.TypeRef).Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Find identities that trigger and don't trigger the bug
-	triggerStr, _ := findHashWithByte4(3)
-	safeStr, _ := findHashWithByte4(0x20)
+			// Find identities that trigger and don't trigger the bug
+			triggerStr, _ := findHashWithByte4(3)
+			safeStr, _ := findHashWithByte4(0x20)
 
-	triggerRef := datalog.NewIdentity(triggerStr)
-	safeRef := datalog.NewIdentity(safeStr)
+			triggerRef := datalog.NewIdentity(triggerStr)
+			safeRef := datalog.NewIdentity(safeStr)
 
-	// Write both datoms
-	entity := datalog.NewIdentity("test-entity")
-	writeTx := db.NewTransaction()
-	writeTx.Add(entity, refAttr, triggerRef)
-	_, err = writeTx.Commit()
-	require.NoError(t, err)
+			// Write both datoms
+			entity := datalog.NewIdentity("test-entity")
+			writeTx := db.NewTransaction()
+			writeTx.Add(entity, refAttr, triggerRef)
+			_, err = writeTx.Commit()
+			require.NoError(t, err)
 
-	entity2 := datalog.NewIdentity("test-entity-2")
-	writeTx2 := db.NewTransaction()
-	writeTx2.Add(entity2, refAttr, safeRef)
-	_, err = writeTx2.Commit()
-	require.NoError(t, err)
+			entity2 := datalog.NewIdentity("test-entity-2")
+			writeTx2 := db.NewTransaction()
+			writeTx2.Add(entity2, refAttr, safeRef)
+			_, err = writeTx2.Commit()
+			require.NoError(t, err)
 
-	// Read back via EATV scan (used by LookupAttribute / ResolveLWW)
-	store := db.Store()
-	// Bind entity + refAttr on EATV
-	it, err := store.ScanKeysOnly(ScanBound{
-		Index:  EATV,
-		Prefix: []datalog.Value{entity, refAttr},
-	})
-	require.NoError(t, err)
-	defer it.Close()
+			// Read back via EATV scan (used by LookupAttribute / ResolveLWW)
+			store := db.Store()
+			// Bind entity + refAttr on EATV
+			it, err := store.ScanKeysOnly(ScanBound{
+				Index:  EATV,
+				Prefix: []datalog.Value{entity, refAttr},
+			})
+			require.NoError(t, err)
+			defer it.Close()
 
-	found := false
-	for it.Next() {
-		d, derr := it.Datom()
-		if derr != nil {
-			t.Logf("BUG: decode error during EATV scan: %v", derr)
-			continue
-		}
-		if d.E.Equal(entity) {
-			found = true
-		}
+			found := false
+			for it.Next() {
+				d, derr := it.Datom()
+				if derr != nil {
+					t.Logf("BUG: decode error during EATV scan: %v", derr)
+					continue
+				}
+				if d.E.Equal(entity) {
+					found = true
+				}
+			}
+
+			if !found {
+				t.Error("BUG CONFIRMED: trigger reference datom lost in EATV scan")
+			}
+
+			// Same for the safe entity — should always be found
+			it2, err := store.ScanKeysOnly(ScanBound{
+				Index:  EATV,
+				Prefix: []datalog.Value{entity2, refAttr},
+			})
+			require.NoError(t, err)
+			defer it2.Close()
+
+			found2 := false
+			for it2.Next() {
+				d, derr := it2.Datom()
+				if derr != nil {
+					t.Logf("decode error during safe EATV scan: %v", derr)
+					continue
+				}
+				if d.E.Equal(entity2) {
+					found2 = true
+				}
+			}
+			require.True(t, found2, "safe reference datom should always be found")
+		})
 	}
-
-	if !found {
-		t.Error("BUG CONFIRMED: trigger reference datom lost in EATV scan")
-	}
-
-	// Same for the safe entity — should always be found
-	it2, err := store.ScanKeysOnly(ScanBound{
-		Index:  EATV,
-		Prefix: []datalog.Value{entity2, refAttr},
-	})
-	require.NoError(t, err)
-	defer it2.Close()
-
-	found2 := false
-	for it2.Next() {
-		d, derr := it2.Datom()
-		if derr != nil {
-			t.Logf("decode error during safe EATV scan: %v", derr)
-			continue
-		}
-		if d.E.Equal(entity2) {
-			found2 = true
-		}
-	}
-	require.True(t, found2, "safe reference datom should always be found")
 }
 
 // TestAfterRefHeuristicBug_Statistical writes many random reference-valued
@@ -318,86 +320,88 @@ func TestAfterRefHeuristicBug_NonRefValues(t *testing.T) {
 // TestAfterRefHeuristicBug_FullDBRoundTrip writes N entities each with 3
 // reference fields, reads them back, and counts missing fields.
 func TestAfterRefHeuristicBug_FullDBRoundTrip(t *testing.T) {
-	db, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Install schema via builder
-	s, err := schema.NewBuilder().
-		Attribute(":test/ref-a").Type(schema.TypeRef).Add().
-		Attribute(":test/ref-b").Type(schema.TypeRef).Add().
-		Attribute(":test/ref-c").Type(schema.TypeRef).Add().
-		Attribute(":test/type").Type(schema.TypeKeyword).Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Install schema via builder
+			s, err := schema.NewBuilder().
+				Attribute(":test/ref-a").Type(schema.TypeRef).Add().
+				Attribute(":test/ref-b").Type(schema.TypeRef).Add().
+				Attribute(":test/ref-c").Type(schema.TypeRef).Add().
+				Attribute(":test/type").Type(schema.TypeKeyword).Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	refAttrs := []datalog.Keyword{
-		datalog.NewKeyword(":test/ref-a"),
-		datalog.NewKeyword(":test/ref-b"),
-		datalog.NewKeyword(":test/ref-c"),
-	}
-	kwAttr := datalog.NewKeyword(":test/type")
-
-	const N = 500
-	type record struct {
-		entity datalog.Identity
-		refs   [3]datalog.Identity
-	}
-	records := make([]record, N)
-
-	// Write N entities, each with 3 ref fields + 1 keyword field
-	for i := 0; i < N; i++ {
-		entityID := datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
-		refA := datalog.NewIdentity(fmt.Sprintf("ref-a-%d", i))
-		refB := datalog.NewIdentity(fmt.Sprintf("ref-b-%d", i))
-		refC := datalog.NewIdentity(fmt.Sprintf("ref-c-%d", i))
-		records[i] = record{entity: entityID, refs: [3]datalog.Identity{refA, refB, refC}}
-
-		writeTx := db.NewTransaction()
-		writeTx.Add(entityID, kwAttr, datalog.NewKeyword(":entity.type/test"))
-		writeTx.Add(entityID, refAttrs[0], refA)
-		writeTx.Add(entityID, refAttrs[1], refB)
-		writeTx.Add(entityID, refAttrs[2], refC)
-		_, err = writeTx.Commit()
-		require.NoError(t, err)
-	}
-
-	// Read back using LookupAttribute (same path as PullInto)
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
-
-	fieldLosses := 0
-	entityLosses := 0
-
-	for i := 0; i < N; i++ {
-		rec := records[i]
-		anyMissing := false
-
-		for j, attr := range refAttrs {
-			val, found := requireAttributeLookup(t, matcher, rec.entity, attr)
-			if !found || val == nil {
-				fieldLosses++
-				anyMissing = true
-				t.Logf("LOSS: entity=%d attr=%s ref hash[4]=%d",
-					i, attr.String(), rec.refs[j].Hash()[4])
+			refAttrs := []datalog.Keyword{
+				datalog.NewKeyword(":test/ref-a"),
+				datalog.NewKeyword(":test/ref-b"),
+				datalog.NewKeyword(":test/ref-c"),
 			}
-		}
+			kwAttr := datalog.NewKeyword(":test/type")
 
-		// Keyword field should never be lost
-		kwVal, kwFound := requireAttributeLookup(t, matcher, rec.entity, kwAttr)
-		require.True(t, kwFound, "keyword field should always be found (entity %d)", i)
-		require.NotNil(t, kwVal, "keyword value should not be nil (entity %d)", i)
+			const N = 500
+			type record struct {
+				entity datalog.Identity
+				refs   [3]datalog.Identity
+			}
+			records := make([]record, N)
 
-		if anyMissing {
-			entityLosses++
-		}
+			// Write N entities, each with 3 ref fields + 1 keyword field
+			for i := 0; i < N; i++ {
+				entityID := datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
+				refA := datalog.NewIdentity(fmt.Sprintf("ref-a-%d", i))
+				refB := datalog.NewIdentity(fmt.Sprintf("ref-b-%d", i))
+				refC := datalog.NewIdentity(fmt.Sprintf("ref-c-%d", i))
+				records[i] = record{entity: entityID, refs: [3]datalog.Identity{refA, refB, refC}}
+
+				writeTx := db.NewTransaction()
+				writeTx.Add(entityID, kwAttr, datalog.NewKeyword(":entity.type/test"))
+				writeTx.Add(entityID, refAttrs[0], refA)
+				writeTx.Add(entityID, refAttrs[1], refB)
+				writeTx.Add(entityID, refAttrs[2], refC)
+				_, err = writeTx.Commit()
+				require.NoError(t, err)
+			}
+
+			// Read back using LookupAttribute (same path as PullInto)
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
+
+			fieldLosses := 0
+			entityLosses := 0
+
+			for i := 0; i < N; i++ {
+				rec := records[i]
+				anyMissing := false
+
+				for j, attr := range refAttrs {
+					val, found := requireAttributeLookup(t, matcher, rec.entity, attr)
+					if !found || val == nil {
+						fieldLosses++
+						anyMissing = true
+						t.Logf("LOSS: entity=%d attr=%s ref hash[4]=%d",
+							i, attr.String(), rec.refs[j].Hash()[4])
+					}
+				}
+
+				// Keyword field should never be lost
+				kwVal, kwFound := requireAttributeLookup(t, matcher, rec.entity, kwAttr)
+				require.True(t, kwFound, "keyword field should always be found (entity %d)", i)
+				require.NotNil(t, kwVal, "keyword value should not be nil (entity %d)", i)
+
+				if anyMissing {
+					entityLosses++
+				}
+			}
+
+			rate := float64(entityLosses) / float64(N) * 100
+			t.Logf("Entity loss: %d/%d = %.1f%% (expected ~2.3%%)", entityLosses, N, rate)
+			t.Logf("Field loss: %d/%d total ref fields", fieldLosses, N*3)
+
+			assert.Equal(t, 0, fieldLosses,
+				"all reference fields must be readable; got %d/%d losses", fieldLosses, N*3)
+		})
 	}
-
-	rate := float64(entityLosses) / float64(N) * 100
-	t.Logf("Entity loss: %d/%d = %.1f%% (expected ~2.3%%)", entityLosses, N, rate)
-	t.Logf("Field loss: %d/%d total ref fields", fieldLosses, N*3)
-
-	assert.Equal(t, 0, fieldLosses,
-		"all reference fields must be readable; got %d/%d losses", fieldLosses, N*3)
 }

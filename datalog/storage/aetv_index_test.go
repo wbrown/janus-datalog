@@ -19,7 +19,6 @@ package storage
 
 import (
 	"bytes"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -306,88 +305,84 @@ func TestAETVPrefixRangeAttributeEntity(t *testing.T) {
 
 // TestAETVStorageScan verifies AETV can be written to and scanned from storage.
 func TestAETVStorageScan(t *testing.T) {
-	dir, err := os.MkdirTemp("", "aetv-scan-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	defer db.Close()
+			// Create test data: multiple entities with same attribute
+			attr := datalog.NewKeyword(":person/name")
+			entities := make([]datalog.Identity, 5)
 
-	// Create test data: multiple entities with same attribute
-	attr := datalog.NewKeyword(":person/name")
-	entities := make([]datalog.Identity, 5)
+			tx := db.NewTransaction()
+			for i := 0; i < 5; i++ {
+				entities[i] = datalog.NewIdentity("person-" + string(rune('A'+i)))
+				tx.Add(entities[i], attr, "Name "+string(rune('A'+i)))
+			}
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx := db.NewTransaction()
-	for i := 0; i < 5; i++ {
-		entities[i] = datalog.NewIdentity("person-" + string(rune('A'+i)))
-		tx.Add(entities[i], attr, "Name "+string(rune('A'+i)))
+			// Scan AETV for :person/name attribute
+			iter, err := db.Store().ScanKeysOnly(ScanBound{Index: AETV, Prefix: []datalog.Value{attr}})
+			require.NoError(t, err)
+			defer iter.Close()
+
+			// Count results
+			count := 0
+			for iter.Next() {
+				count++
+			}
+
+			assert.Equal(t, 5, count, "should find all 5 entities with :person/name")
+		})
 	}
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Scan AETV for :person/name attribute
-	iter, err := db.Store().ScanKeysOnly(ScanBound{Index: AETV, Prefix: []datalog.Value{attr}})
-	require.NoError(t, err)
-	defer iter.Close()
-
-	// Count results
-	count := 0
-	for iter.Next() {
-		count++
-	}
-
-	assert.Equal(t, 5, count, "should find all 5 entities with :person/name")
 }
 
 // TestAETVStorageScanTxDescendingOrder verifies scan returns Tx in descending order.
 func TestAETVStorageScanTxDescendingOrder(t *testing.T) {
-	dir, err := os.MkdirTemp("", "aetv-tx-order-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	defer db.Close()
+			// Create entity with multiple writes (different Tx values)
+			entity := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":test/value")
 
-	// Create entity with multiple writes (different Tx values)
-	entity := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":test/value")
+			// Write three values in sequence (Tx increases with each commit)
+			values := []string{"first", "second", "third"}
+			for _, v := range values {
+				tx := db.NewTransaction()
+				tx.Add(entity, attr, v)
+				_, err := tx.Commit()
+				require.NoError(t, err)
+			}
 
-	// Write three values in sequence (Tx increases with each commit)
-	values := []string{"first", "second", "third"}
-	for _, v := range values {
-		tx := db.NewTransaction()
-		tx.Add(entity, attr, v)
-		_, err = tx.Commit()
-		require.NoError(t, err)
+			// Scan AETV for this (A, E) pair
+			iter, err := db.Store().ScanKeysOnly(ScanBound{
+				Index:  AETV,
+				Prefix: []datalog.Value{attr, entity},
+			})
+			require.NoError(t, err)
+			defer iter.Close()
+
+			// Collect Tx values in scan order
+			var txValues []uint64
+			for iter.Next() {
+				d, err := iter.Datom()
+				require.NoError(t, err)
+				txValues = append(txValues, d.Tx.Lamport)
+			}
+
+			require.Len(t, txValues, 3, "should find all 3 writes")
+
+			// Verify descending order (highest Tx first)
+			for i := 1; i < len(txValues); i++ {
+				assert.True(t, txValues[i-1] > txValues[i],
+					"Tx should be in descending order: %d should be > %d", txValues[i-1], txValues[i])
+			}
+
+			t.Logf("Tx values in scan order: %v (should be descending)", txValues)
+		})
 	}
-
-	// Scan AETV for this (A, E) pair
-	iter, err := db.Store().ScanKeysOnly(ScanBound{
-		Index:  AETV,
-		Prefix: []datalog.Value{attr, entity},
-	})
-	require.NoError(t, err)
-	defer iter.Close()
-
-	// Collect Tx values in scan order
-	var txValues []uint64
-	for iter.Next() {
-		d, err := iter.Datom()
-		require.NoError(t, err)
-		txValues = append(txValues, d.Tx.Lamport)
-	}
-
-	require.Len(t, txValues, 3, "should find all 3 writes")
-
-	// Verify descending order (highest Tx first)
-	for i := 1; i < len(txValues); i++ {
-		assert.True(t, txValues[i-1] > txValues[i],
-			"Tx should be in descending order: %d should be > %d", txValues[i-1], txValues[i])
-	}
-
-	t.Logf("Tx values in scan order: %v (should be descending)", txValues)
 }
 
 // =============================================================================
@@ -398,19 +393,8 @@ func TestAETVStorageScanTxDescendingOrder(t *testing.T) {
 func TestAETVCRDTResolutionSingleEntity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			dir, err := os.MkdirTemp("", "aetv-crdt-single-*")
-			require.NoError(t, err)
-			defer os.RemoveAll(dir)
-
 			// Create database with cache disabled to test AETV path
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           dir,
-				DisableCache:   true,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
 
 			// Set up schema with cardinality-one attribute
 			s := schema.NewSchema()
@@ -428,7 +412,7 @@ func TestAETVCRDTResolutionSingleEntity(t *testing.T) {
 			for _, name := range names {
 				tx := db.NewTransaction()
 				tx.Add(entity, datalog.NewKeyword(":person/name"), name)
-				_, err = tx.Commit()
+				_, err := tx.Commit()
 				require.NoError(t, err)
 			}
 
@@ -449,19 +433,8 @@ func TestAETVCRDTResolutionSingleEntity(t *testing.T) {
 func TestAETVCRDTResolutionMultipleEntities(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			dir, err := os.MkdirTemp("", "aetv-crdt-multi-*")
-			require.NoError(t, err)
-			defer os.RemoveAll(dir)
-
 			// Create database with cache disabled
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           dir,
-				DisableCache:   true,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
 
 			// Set up schema with cardinality-one attribute
 			s := schema.NewSchema()
@@ -486,7 +459,7 @@ func TestAETVCRDTResolutionMultipleEntities(t *testing.T) {
 				for _, name := range names {
 					tx := db.NewTransaction()
 					tx.Add(entity, datalog.NewKeyword(":person/name"), name+" "+entity.String())
-					_, err = tx.Commit()
+					_, err := tx.Commit()
 					require.NoError(t, err)
 				}
 				hash := entity.Hash()
@@ -521,19 +494,8 @@ func TestAETVCRDTResolutionMultipleEntities(t *testing.T) {
 func TestAETVCRDTResolutionUnboundEntity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			dir, err := os.MkdirTemp("", "aetv-crdt-unbound-*")
-			require.NoError(t, err)
-			defer os.RemoveAll(dir)
-
 			// Create database with cache disabled
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           dir,
-				DisableCache:   true,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
 
 			// Set up schema
 			s := schema.NewSchema()
@@ -553,7 +515,7 @@ func TestAETVCRDTResolutionUnboundEntity(t *testing.T) {
 				for _, status := range statuses {
 					tx := db.NewTransaction()
 					tx.Add(entity, datalog.NewKeyword(":person/status"), status)
-					_, err = tx.Commit()
+					_, err := tx.Commit()
 					require.NoError(t, err)
 				}
 			}
@@ -580,55 +542,53 @@ func TestAETVCRDTResolutionUnboundEntity(t *testing.T) {
 
 // TestIndexSelectionAETVForInputBoundE verifies AETV is selected for E-from-input pattern.
 func TestIndexSelectionAETVForInputBoundE(t *testing.T) {
-	dir, err := os.MkdirTemp("", "aetv-selection-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	defer db.Close()
+			// Set up schema with cardinality-one attribute
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
 
-	// Set up schema with cardinality-one attribute
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/name"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
-	db.SetSchema(s)
+			// Add test data
+			entity := datalog.NewIdentity("test-person")
+			tx := db.NewTransaction()
+			tx.Add(entity, datalog.NewKeyword(":person/name"), "Test Name")
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Add test data
-	entity := datalog.NewIdentity("test-person")
-	tx := db.NewTransaction()
-	tx.Add(entity, datalog.NewKeyword(":person/name"), "Test Name")
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Create pattern and binding relation
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: datalog.NewKeyword(":person/name")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
+				},
+			}
 
-	// Create pattern and binding relation
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: datalog.NewKeyword(":person/name")},
-			query.Variable{Name: datalog.NewSymbol("?v")},
-		},
+			opts := getDefaultExecutorOptions()
+			inputRel := executor.NewMaterializedRelationWithOptions(
+				[]query.Symbol{datalog.NewSymbol("?e")},
+				[]executor.Tuple{{entity}},
+				opts,
+			)
+
+			// Analyze reuse strategy
+			strategy, _ := analyzeReuseStrategy(pattern, inputRel)
+
+			// With CardinalityOne schema, should select AETV (once implemented)
+			// For now, document the expected behavior
+			t.Logf("Strategy type: %v, Index: %v", strategy.Type, strategy.Index)
+
+			// TODO: After AETV implementation, verify:
+			// assert.Equal(t, AETV, strategy.Index, "should select AETV for E-from-input with CardinalityOne")
+		})
 	}
-
-	opts := getDefaultExecutorOptions()
-	inputRel := executor.NewMaterializedRelationWithOptions(
-		[]query.Symbol{datalog.NewSymbol("?e")},
-		[]executor.Tuple{{entity}},
-		opts,
-	)
-
-	// Analyze reuse strategy
-	strategy, _ := analyzeReuseStrategy(pattern, inputRel)
-
-	// With CardinalityOne schema, should select AETV (once implemented)
-	// For now, document the expected behavior
-	t.Logf("Strategy type: %v, Index: %v", strategy.Type, strategy.Index)
-
-	// TODO: After AETV implementation, verify:
-	// assert.Equal(t, AETV, strategy.Index, "should select AETV for E-from-input with CardinalityOne")
 }
 
 // =============================================================================
@@ -641,18 +601,7 @@ func TestIndexSelectionAETVForInputBoundE(t *testing.T) {
 func TestAETVCrossProductInputs(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			dir, err := os.MkdirTemp("", "aetv-cross-*")
-			require.NoError(t, err)
-			defer os.RemoveAll(dir)
-
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           dir,
-				DisableCache:   true,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -682,7 +631,7 @@ func TestAETVCrossProductInputs(t *testing.T) {
 				tx.Set(entity, attrs[0], "Name"+string(rune('A'+i)))
 				tx.Set(entity, attrs[1], int64(20+i*10))
 			}
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			// Query with both E and A from separate collections

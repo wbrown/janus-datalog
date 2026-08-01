@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -16,41 +15,6 @@ import (
 // Previously: Pattern [?e :constant-attr ?v] with RelationInput was only processing first entity
 // Now: All entities in the RelationInput should be processed and results returned
 func TestAEVTIndexBugDirect(t *testing.T) {
-	// Create temporary database
-	dir, err := os.MkdirTemp("", "aevt-bug-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Create test data: 10 entities, each with 5 attributes
-	// Total: 50 datoms
-	tx := db.NewTransaction()
-	entities := make([]datalog.Identity, 10)
-
-	for i := 0; i < 10; i++ {
-		entityID := datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
-		entities[i] = entityID
-
-		// Each entity has 5 different attributes
-		tx.Add(entityID, datalog.NewKeyword(":person/name"), fmt.Sprintf("Person%d", i))
-		tx.Add(entityID, datalog.NewKeyword(":person/age"), int64(20+i))
-		tx.Add(entityID, datalog.NewKeyword(":person/city"), fmt.Sprintf("City%d", i%3))
-		tx.Add(entityID, datalog.NewKeyword(":person/active"), true)
-		tx.Add(entityID, datalog.NewKeyword(":person/score"), int64(100*i))
-	}
-
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Failed to commit: %v", err)
-	}
-
 	// Query: Find :person/age for bound entities
 	// Use RelationInput to reproduce the reported pattern exactly.
 	// [[?e] ...] means "collection of tuples, each with one variable ?e"
@@ -84,6 +48,29 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Create test data: 10 entities, each with 5 attributes
+			// Total: 50 datoms
+			tx := db.NewTransaction()
+			entities := make([]datalog.Identity, 10)
+
+			for i := 0; i < 10; i++ {
+				entityID := datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
+				entities[i] = entityID
+
+				// Each entity has 5 different attributes
+				tx.Add(entityID, datalog.NewKeyword(":person/name"), fmt.Sprintf("Person%d", i))
+				tx.Add(entityID, datalog.NewKeyword(":person/age"), int64(20+i))
+				tx.Add(entityID, datalog.NewKeyword(":person/city"), fmt.Sprintf("City%d", i%3))
+				tx.Add(entityID, datalog.NewKeyword(":person/active"), true)
+				tx.Add(entityID, datalog.NewKeyword(":person/score"), int64(100*i))
+			}
+
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit: %v", err)
+			}
+
 			// Register an annotation handler to track datom scans. The matcher is
 			// built with the same options, so its own scan events reach the
 			// handler too — those happen inside Match(), where the executor's
@@ -152,92 +139,84 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 // NOTE: With CRDT semantics, schemaless queries (or cardinality-one) use EATV
 // to get the current value (first entry has highest Tx).
 func TestEATVPrefixRangeDebug(t *testing.T) {
-	// Create temporary database
-	dir, err := os.MkdirTemp("", "aevt-prefix-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			// Create test entity
+			entityID := datalog.NewIdentity("test-entity")
+			attrKw := datalog.NewKeyword(":test/attr")
 
-	// Create test entity
-	entityID := datalog.NewIdentity("test-entity")
-	attrKw := datalog.NewKeyword(":test/attr")
-
-	tx := db.NewTransaction()
-	tx.Add(entityID, attrKw, "test-value")
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Failed to commit: %v", err)
-	}
-
-	// Get the matcher and inspect prefix range for AEVT
-	matcher := NewPatternMatcher(db.Store())
-
-	// Call chooseIndex with both E and A bound
-	bound := matcher.chooseIndex(entityID, attrKw, nil, nil)
-	index := bound.Index
-	// The assertions below are about the byte range the bound addresses, so
-	// they render it the way this store's keys are encoded.
-	run, err := matcher.store.Encoder().EncodeScanBound(bound)
-	start := run.Start
-	end := run.End
-	if err != nil {
-		t.Fatalf("Failed to encode scan bound: %v", err)
-	}
-
-	t.Logf("Index selected: %s", index.String())
-	t.Logf("Start key length: %d bytes", len(start))
-	t.Logf("End key length: %d bytes", len(end))
-	t.Logf("Start key (hex): % x", start)
-	t.Logf("End key (hex): % x", end)
-
-	// For EATV with E+A bound, the prefix should be 52 bytes: E[20] + A[32]
-	// (CRDT semantics: schemaless/cardinality-one uses EATV for current value access)
-	expectedPrefixLen := 20 + 32 // E + A
-
-	if index != EATV {
-		t.Errorf("Expected EATV index (for schemaless/cardinality-one), got %s", index.String())
-	}
-
-	// Check if start key has proper length for (A, E) prefix
-	if len(start) < expectedPrefixLen {
-		t.Errorf("Start key too short: %d bytes (expected >=%d for A+E prefix)",
-			len(start), expectedPrefixLen)
-	}
-
-	// The range should be tight: end should be start with last byte incremented
-	// or start with additional 0xFF bytes for prefix matching
-	rangeSize := "unknown"
-	if len(start) > 0 && len(end) > 0 {
-		// Check if they share a common prefix
-		commonLen := 0
-		for i := 0; i < len(start) && i < len(end); i++ {
-			if start[i] == end[i] {
-				commonLen++
-			} else {
-				break
+			tx := db.NewTransaction()
+			tx.Add(entityID, attrKw, "test-value")
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit: %v", err)
 			}
-		}
-		t.Logf("Common prefix length: %d bytes", commonLen)
 
-		if commonLen >= expectedPrefixLen {
-			rangeSize = "tight (good)"
-		} else {
-			rangeSize = "wide (BUG!)"
-		}
+			// Get the matcher and inspect prefix range for AEVT
+			matcher := NewPatternMatcher(db.Store())
+
+			// Call chooseIndex with both E and A bound
+			bound := matcher.chooseIndex(entityID, attrKw, nil, nil)
+			index := bound.Index
+			// The assertions below are about the byte range the bound addresses, so
+			// they render it the way this store's keys are encoded.
+			run, err := matcher.store.Encoder().EncodeScanBound(bound)
+			if err != nil {
+				t.Fatalf("Failed to encode scan bound: %v", err)
+			}
+			start := run.Start
+			end := run.End
+
+			t.Logf("Index selected: %s", index.String())
+			t.Logf("Start key length: %d bytes", len(start))
+			t.Logf("End key length: %d bytes", len(end))
+			t.Logf("Start key (hex): % x", start)
+			t.Logf("End key (hex): % x", end)
+
+			// For EATV with E+A bound, the prefix should be 52 bytes: E[20] + A[32]
+			// (CRDT semantics: schemaless/cardinality-one uses EATV for current value access)
+			expectedPrefixLen := 20 + 32 // E + A
+
+			if index != EATV {
+				t.Errorf("Expected EATV index (for schemaless/cardinality-one), got %s", index.String())
+			}
+
+			// Check if start key has proper length for (A, E) prefix
+			if len(start) < expectedPrefixLen {
+				t.Errorf("Start key too short: %d bytes (expected >=%d for A+E prefix)",
+					len(start), expectedPrefixLen)
+			}
+
+			// The range should be tight: end should be start with last byte incremented
+			// or start with additional 0xFF bytes for prefix matching
+			rangeSize := "unknown"
+			if len(start) > 0 && len(end) > 0 {
+				// Check if they share a common prefix
+				commonLen := 0
+				for i := 0; i < len(start) && i < len(end); i++ {
+					if start[i] == end[i] {
+						commonLen++
+					} else {
+						break
+					}
+				}
+				t.Logf("Common prefix length: %d bytes", commonLen)
+
+				if commonLen >= expectedPrefixLen {
+					rangeSize = "tight (good)"
+				} else {
+					rangeSize = "wide (BUG!)"
+				}
+			}
+
+			t.Logf("Range size: %s", rangeSize)
+
+			// Debug: Show what the encoder thinks
+			aStorage := ToStorageDatom(datalog.Datom{A: attrKw}).A
+			eBytes := entityID.Bytes()
+			t.Logf("Attribute storage bytes: % x (%d bytes)", aStorage, len(aStorage))
+			t.Logf("Entity bytes: % x (%d bytes)", eBytes, len(eBytes))
+		})
 	}
-
-	t.Logf("Range size: %s", rangeSize)
-
-	// Debug: Show what the encoder thinks
-	aStorage := ToStorageDatom(datalog.Datom{A: attrKw}).A
-	eBytes := entityID.Bytes()
-	t.Logf("Attribute storage bytes: % x (%d bytes)", aStorage, len(aStorage))
-	t.Logf("Entity bytes: % x (%d bytes)", eBytes, len(eBytes))
 }

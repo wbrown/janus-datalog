@@ -195,92 +195,94 @@ func TestHistoryHandle_WildcardPull(t *testing.T) {
 // based key would collide the two. The walk uses encodeValueForSearch
 // which preserves type tags, so the two should be distinct.
 func TestValueEncoding_Int64VsString_DoesNotCrossCollide(t *testing.T) {
-	dir := t.TempDir()
-	// The walk uses the encoded-value key, which includes a type tag, so
-	// int64(5) and string("5") are distinct under the same V only if the
-	// attr accepts both. Use no type constraint so both writes succeed.
-	s, err := schema.NewBuilder().
-		Attribute(":thing/id").Unique(schema.UniqueValue).Add().
-		Build()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// The walk uses the encoded-value key, which includes a type tag, so
+			// int64(5) and string("5") are distinct under the same V only if the
+			// attr accepts both. Use no type constraint so both writes succeed.
+			s, err := schema.NewBuilder().
+				Attribute(":thing/id").Unique(schema.UniqueValue).Add().
+				Build()
+			require.NoError(t, err)
 
-	db, err := NewDatabaseWithSchema(dir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	id := datalog.NewKeyword(":thing/id")
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			id := datalog.NewKeyword(":thing/id")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(alice, id, int64(5)))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, id, int64(5)))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Set(bob, id, "5"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Set(bob, id, "5"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// alice owns int64(5); bob owns "5". They should NOT be conflated.
-	owner, err := db.LookupByUnique(id, int64(5))
-	require.NoError(t, err)
-	require.NotNil(t, owner)
-	assert.True(t, owner.Equal(alice), "int64(5) should be owned by alice, not bob (string '5')")
+			// alice owns int64(5); bob owns "5". They should NOT be conflated.
+			owner, err := db.LookupByUnique(id, int64(5))
+			require.NoError(t, err)
+			require.NotNil(t, owner)
+			assert.True(t, owner.Equal(alice), "int64(5) should be owned by alice, not bob (string '5')")
 
-	owner, err = db.LookupByUnique(id, "5")
-	require.NoError(t, err)
-	require.NotNil(t, owner)
-	assert.True(t, owner.Equal(bob), "string '5' should be owned by bob, not alice (int64 5)")
+			owner, err = db.LookupByUnique(id, "5")
+			require.NoError(t, err)
+			require.NotNil(t, owner)
+			assert.True(t, owner.Equal(bob), "string '5' should be owned by bob, not alice (int64 5)")
+		})
+	}
 }
 
 // TestValueEncoding_BytesComparison: []byte values should use content
 // equality in the walk. Two different entities claiming the same
 // []byte content should follow normal (A, V)-LWW rules.
 func TestValueEncoding_BytesComparison(t *testing.T) {
-	dir := t.TempDir()
-	s, err := schema.NewBuilder().
-		Attribute(":thing/hash").Type(schema.TypeBytes).Unique(schema.UniqueValue).Add().
-		Build()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":thing/hash").Type(schema.TypeBytes).Unique(schema.UniqueValue).Add().
+				Build()
+			require.NoError(t, err)
 
-	db, err := NewDatabaseWithSchema(dir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	hash := datalog.NewKeyword(":thing/hash")
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			hash := datalog.NewKeyword(":thing/hash")
 
-	content := []byte{0x01, 0x02, 0x03, 0x04}
-	differentContent := []byte{0x01, 0x02, 0x03, 0x05}
+			content := []byte{0x01, 0x02, 0x03, 0x04}
+			differentContent := []byte{0x01, 0x02, 0x03, 0x05}
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(alice, hash, content))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, hash, content))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Alice currently owns [1,2,3,4]. Lookup should find her.
-	ownerContent := []byte{0x01, 0x02, 0x03, 0x04} // distinct slice, same content
-	owner, err := db.LookupByUnique(hash, ownerContent)
-	require.NoError(t, err)
-	require.NotNil(t, owner, "content-equal []byte should find alice")
-	assert.True(t, owner.Equal(alice))
+			// Alice currently owns [1,2,3,4]. Lookup should find her.
+			ownerContent := []byte{0x01, 0x02, 0x03, 0x04} // distinct slice, same content
+			owner, err := db.LookupByUnique(hash, ownerContent)
+			require.NoError(t, err)
+			require.NotNil(t, owner, "content-equal []byte should find alice")
+			assert.True(t, owner.Equal(alice))
 
-	// Different content: no owner.
-	owner, err = db.LookupByUnique(hash, differentContent)
-	require.NoError(t, err)
-	assert.Nil(t, owner, "different []byte content should not collide")
+			// Different content: no owner.
+			owner, err = db.LookupByUnique(hash, differentContent)
+			require.NoError(t, err)
+			assert.Nil(t, owner, "different []byte content should not collide")
 
-	// Bob takes the value with a higher Tx.
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Set(bob, hash, content))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Bob takes the value with a higher Tx.
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Set(bob, hash, content))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Now bob owns via (A, V)-LWW.
-	owner, err = db.LookupByUnique(hash, content)
-	require.NoError(t, err)
-	require.NotNil(t, owner)
-	assert.True(t, owner.Equal(bob), "bob (higher Tx) should win over alice on []byte value")
+			// Now bob owns via (A, V)-LWW.
+			owner, err = db.LookupByUnique(hash, content)
+			require.NoError(t, err)
+			require.NotNil(t, owner)
+			assert.True(t, owner.Equal(bob), "bob (higher Tx) should win over alice on []byte value")
+		})
+	}
 }

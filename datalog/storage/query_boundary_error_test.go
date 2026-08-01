@@ -126,37 +126,38 @@ func TestKeyOnlyIteratorRetainsBlobErrorAfterRepeatedNext(t *testing.T) {
 // on the successor key. Datom()/Key() must report no current position — not
 // decode the out-of-range neighbor.
 func TestKeyOnlyIterator_DatomRejectsEndBoundSuccessor(t *testing.T) {
-	db, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	first := datalog.NewIdentity("bound-a")
-	second := datalog.NewIdentity("bound-b")
-	if bytes.Compare(first.Bytes(), second.Bytes()) > 0 {
-		first, second = second, first
+			first := datalog.NewIdentity("bound-a")
+			second := datalog.NewIdentity("bound-b")
+			if bytes.Compare(first.Bytes(), second.Bytes()) > 0 {
+				first, second = second, first
+			}
+			attr := datalog.NewKeyword(":bound/v")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(first, attr, "one"))
+			require.NoError(t, tx.Add(second, attr, "two"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			firstBytes := first.Bytes()
+			iter, err := db.store.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{first}})
+			require.NoError(t, err)
+			defer iter.Close()
+
+			require.True(t, iter.Next())
+			d, err := iter.Datom()
+			require.NoError(t, err)
+			require.True(t, bytes.Equal(d.E.Bytes(), firstBytes[:]))
+
+			require.False(t, iter.Next(), "scan of first entity must stop before successor")
+			_, err = iter.Datom()
+			require.ErrorContains(t, err, "no current datom")
+		})
 	}
-	attr := datalog.NewKeyword(":bound/v")
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(first, attr, "one"))
-	require.NoError(t, tx.Add(second, attr, "two"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	firstBytes := first.Bytes()
-	iter, err := db.store.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{first}})
-	require.NoError(t, err)
-	defer iter.Close()
-
-	require.True(t, iter.Next())
-	d, err := iter.Datom()
-	require.NoError(t, err)
-	require.True(t, bytes.Equal(d.E.Bytes(), firstBytes[:]))
-
-	require.False(t, iter.Next(), "scan of first entity must stop before successor")
-	_, err = iter.Datom()
-	require.ErrorContains(t, err, "no current datom")
 }
-
 
 // writeValidThenCorruptBlob writes two :doc/blob datoms so an unbound scan yields
 // a VALID datom first and a FAILING one second. The attr-bound, E/V-unbound scan is

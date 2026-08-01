@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"reflect"
 	"sort"
 	"testing"
@@ -15,21 +14,6 @@ import (
 
 // TestJoinStrategySelection verifies that the correct join strategy is chosen based on size and selectivity
 func TestJoinStrategySelection(t *testing.T) {
-	// Create temporary database
-	dir, err := os.MkdirTemp("", "join-strategy-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	matcher := NewPatternMatcher(db.Store())
-
 	tests := []struct {
 		name               string
 		bindingSize        int
@@ -102,38 +86,45 @@ func TestJoinStrategySelection(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create mock binding relation with specified size
-			bindingRel := createMockRelation(tt.bindingSize, []query.Symbol{datalog.NewSymbol("?e")})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			matcher := NewPatternMatcher(db.Store())
 
-			// Create pattern - attribute is bound to control cardinality estimate
-			pattern := &query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?e")},
-					query.Constant{Value: datalog.NewKeyword(":test/attr")},
-					query.Variable{Name: datalog.NewSymbol("?v")},
-				},
-			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					// Create mock binding relation with specified size
+					bindingRel := createMockRelation(tt.bindingSize, []query.Symbol{datalog.NewSymbol("?e")})
 
-			// Mock estimatePatternCardinality to return our test value
-			originalEstimate := matcher.estimatePatternCardinality(pattern)
-			defer func() {
-				// Note: In real implementation, we'd mock this properly
-				// For now, just verify the logic works with real estimates
-				_ = originalEstimate
-			}()
+					// Create pattern - attribute is bound to control cardinality estimate
+					pattern := &query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?e")},
+							query.Constant{Value: datalog.NewKeyword(":test/attr")},
+							query.Variable{Name: datalog.NewSymbol("?v")},
+						},
+					}
 
-			strategy := matcher.chooseJoinStrategy(pattern, bindingRel, 0)
+					// Mock estimatePatternCardinality to return our test value
+					originalEstimate := matcher.estimatePatternCardinality(pattern)
+					defer func() {
+						// Note: In real implementation, we'd mock this properly
+						// For now, just verify the logic works with real estimates
+						_ = originalEstimate
+					}()
 
-			if strategy != tt.expectedStrategy {
-				selectivity := float64(tt.bindingSize) / float64(tt.patternCardinality)
-				t.Errorf("Strategy mismatch for %s:\n"+
-					"  bindingSize=%d, patternCard=%d, selectivity=%.1f%%\n"+
-					"  expected=%s, got=%s\n"+
-					"  reason: %s",
-					tt.name, tt.bindingSize, tt.patternCardinality, selectivity*100,
-					tt.expectedStrategy, strategy, tt.reason)
+					strategy := matcher.chooseJoinStrategy(pattern, bindingRel, 0)
+
+					if strategy != tt.expectedStrategy {
+						selectivity := float64(tt.bindingSize) / float64(tt.patternCardinality)
+						t.Errorf("Strategy mismatch for %s:\n"+
+							"  bindingSize=%d, patternCard=%d, selectivity=%.1f%%\n"+
+							"  expected=%s, got=%s\n"+
+							"  reason: %s",
+							tt.name, tt.bindingSize, tt.patternCardinality, selectivity*100,
+							tt.expectedStrategy, strategy, tt.reason)
+					}
+				})
 			}
 		})
 	}
@@ -141,35 +132,12 @@ func TestJoinStrategySelection(t *testing.T) {
 
 // TestMergeJoinCorrectness verifies merge join produces correct results
 func TestMergeJoinCorrectness(t *testing.T) {
-	// Create temporary database
-	dir, err := os.MkdirTemp("", "merge-join-correctness-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Insert test data: entities with sequential IDs
-	// We'll create 100 entities, each with a :test/value attribute
-	tx := db.NewTransaction()
-
+	// The identities are content-addressed values, so they are the same on
+	// every backend; only the store they are written to differs per mode.
 	entities := make([]datalog.Identity, 100)
 	for i := 0; i < 100; i++ {
 		entities[i] = datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
-		tx.Add(entities[i], datalog.NewKeyword(":test/value"), int64(i))
 	}
-
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	matcher := NewPatternMatcher(db.Store())
 
 	tests := []struct {
 		name          string
@@ -215,76 +183,94 @@ func TestMergeJoinCorrectness(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create binding relation from test values
-			tuples := make([]executor.Tuple, len(tt.bindingValues))
-			for i, e := range tt.bindingValues {
-				tuples[i] = executor.Tuple{e}
-			}
-			bindingRel := executor.NewMaterializedRelationFromSet(
-				[]query.Symbol{datalog.NewSymbol("?e")},
-				tuples,
-				executor.ExecutorOptions{},
-			)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-			// Create pattern: [?e :test/value ?v]
-			pattern := &query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?e")},
-					query.Constant{Value: datalog.NewKeyword(":test/value")},
-					query.Variable{Name: datalog.NewSymbol("?v")},
-				},
+			// Insert test data: entities with sequential IDs
+			// We'll create 100 entities, each with a :test/value attribute
+			tx := db.NewTransaction()
+			for i := 0; i < 100; i++ {
+				tx.Add(entities[i], datalog.NewKeyword(":test/value"), int64(i))
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatal(err)
 			}
 
-			symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+			matcher := NewPatternMatcher(db.Store())
 
-			// Call merge join directly
-			result, err := matcher.matchWithMergeJoin(
-				pattern,
-				bindingRel,
-				symbols,
-				0, // position 0 = entity
-				EAVT,
-				nil, // no constraints
-			)
-
-			if err != nil {
-				t.Fatalf("merge join failed: %v", err)
-			}
-
-			// Iterate and count results
-			iter := result.Iterator()
-			resultCount := 0
-			for iter.Next() {
-				resultCount++
-				tuple := iter.Tuple()
-				if len(tuple) != 2 {
-					t.Errorf("expected 2 symbols, got %d", len(tuple))
-				}
-				// Verify entity is in binding set
-				entity, ok := tuple[0].(datalog.Identity)
-				if !ok {
-					t.Errorf("expected Identity, got %T", tuple[0])
-					continue
-				}
-				found := false
-				for _, e := range tt.bindingValues {
-					if entity.Equal(e) {
-						found = true
-						break
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					// Create binding relation from test values
+					tuples := make([]executor.Tuple, len(tt.bindingValues))
+					for i, e := range tt.bindingValues {
+						tuples[i] = executor.Tuple{e}
 					}
-				}
-				if !found && tt.expectedCount > 0 {
-					t.Errorf("result entity %v not in binding set", entity)
-				}
-			}
-			iter.Close()
+					bindingRel := executor.NewMaterializedRelationFromSet(
+						[]query.Symbol{datalog.NewSymbol("?e")},
+						tuples,
+						executor.ExecutorOptions{},
+					)
 
-			// Check count after iteration
-			if resultCount != tt.expectedCount {
-				t.Errorf("%s: expected %d results, got %d",
-					tt.description, tt.expectedCount, resultCount)
+					// Create pattern: [?e :test/value ?v]
+					pattern := &query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?e")},
+							query.Constant{Value: datalog.NewKeyword(":test/value")},
+							query.Variable{Name: datalog.NewSymbol("?v")},
+						},
+					}
+
+					symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+
+					// Call merge join directly
+					result, err := matcher.matchWithMergeJoin(
+						pattern,
+						bindingRel,
+						symbols,
+						0, // position 0 = entity
+						EAVT,
+						nil, // no constraints
+					)
+
+					if err != nil {
+						t.Fatalf("merge join failed: %v", err)
+					}
+
+					// Iterate and count results
+					iter := result.Iterator()
+					resultCount := 0
+					for iter.Next() {
+						resultCount++
+						tuple := iter.Tuple()
+						if len(tuple) != 2 {
+							t.Errorf("expected 2 symbols, got %d", len(tuple))
+						}
+						// Verify entity is in binding set
+						entity, ok := tuple[0].(datalog.Identity)
+						if !ok {
+							t.Errorf("expected Identity, got %T", tuple[0])
+							continue
+						}
+						found := false
+						for _, e := range tt.bindingValues {
+							if entity.Equal(e) {
+								found = true
+								break
+							}
+						}
+						if !found && tt.expectedCount > 0 {
+							t.Errorf("result entity %v not in binding set", entity)
+						}
+					}
+					iter.Close()
+
+					// Check count after iteration
+					if resultCount != tt.expectedCount {
+						t.Errorf("%s: expected %d results, got %d",
+							tt.description, tt.expectedCount, resultCount)
+					}
+				})
 			}
 		})
 	}
@@ -292,44 +278,140 @@ func TestMergeJoinCorrectness(t *testing.T) {
 
 // TestMergeJoinVsHashJoin verifies merge join and hash join produce identical results
 func TestMergeJoinVsHashJoin(t *testing.T) {
-	// Create temporary database
-	dir, err := os.MkdirTemp("", "merge-vs-hash-test-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Insert test data
+			tx := db.NewTransaction()
+
+			// Create 2000 entities to trigger merge join (>1000 threshold)
+			entities := make([]datalog.Identity, 2000)
+			for i := 0; i < 2000; i++ {
+				entities[i] = datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
+				tx.Add(entities[i], datalog.NewKeyword(":test/value"), int64(i*10))
+			}
+
+			if _, err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+
+			matcher := NewPatternMatcher(db.Store())
+
+			// Test with different binding set sizes
+			testSizes := []int{100, 500, 1000, 1500, 2000}
+
+			for _, size := range testSizes {
+				t.Run(t.Name()+"_size_"+string(rune(size)), func(t *testing.T) {
+					// Create binding relation
+					tuples := make([]executor.Tuple, size)
+					for i := 0; i < size; i++ {
+						tuples[i] = executor.Tuple{entities[i]}
+					}
+					bindingRel := executor.NewMaterializedRelationFromSet(
+						[]query.Symbol{datalog.NewSymbol("?e")},
+						tuples,
+						executor.ExecutorOptions{},
+					)
+
+					pattern := &query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?e")},
+							query.Constant{Value: datalog.NewKeyword(":test/value")},
+							query.Variable{Name: datalog.NewSymbol("?v")},
+						},
+					}
+					symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+
+					// Call hash join
+					hashResult, err := matcher.matchWithHashJoin(
+						pattern,
+						bindingRel,
+						symbols,
+						0, // position 0 = entity
+						EAVT,
+						nil,
+					)
+					if err != nil {
+						t.Fatalf("hash join failed: %v", err)
+					}
+
+					// Call merge join
+					mergeResult, err := matcher.matchWithMergeJoin(
+						pattern,
+						bindingRel,
+						symbols,
+						0, // position 0 = entity
+						EAVT,
+						nil,
+					)
+					if err != nil {
+						t.Fatalf("merge join failed: %v", err)
+					}
+
+					// Compare sizes
+					if hashResult.Size() != mergeResult.Size() {
+						t.Errorf("size mismatch: hash join returned %d, merge join returned %d",
+							hashResult.Size(), mergeResult.Size())
+					}
+
+					// Compare contents (convert to maps for easy comparison)
+					hashMap := resultToMap(hashResult)
+					mergeMap := resultToMap(mergeResult)
+
+					if len(hashMap) != len(mergeMap) {
+						t.Errorf("result count mismatch: hash=%d, merge=%d",
+							len(hashMap), len(mergeMap))
+					}
+
+					// Verify all hash join results are in merge join results
+					for key, hashVal := range hashMap {
+						mergeVal, found := mergeMap[key]
+						if !found {
+							t.Errorf("hash join result %v not found in merge join", key)
+							continue
+						}
+						if hashVal != mergeVal {
+							t.Errorf("value mismatch for %v: hash=%v, merge=%v",
+								key, hashVal, mergeVal)
+						}
+					}
+				})
+			}
+		})
 	}
-	defer os.RemoveAll(dir)
+}
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Insert test data
-	tx := db.NewTransaction()
-
-	// Create 2000 entities to trigger merge join (>1000 threshold)
-	entities := make([]datalog.Identity, 2000)
-	for i := 0; i < 2000; i++ {
-		entities[i] = datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
-		tx.Add(entities[i], datalog.NewKeyword(":test/value"), int64(i*10))
+// TestMergeJoinPerformance verifies merge join performs well on large sets
+func TestMergeJoinPerformance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping performance test in short mode")
 	}
 
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	matcher := NewPatternMatcher(db.Store())
+			// Insert 10K entities
+			tx := db.NewTransaction()
 
-	// Test with different binding set sizes
-	testSizes := []int{100, 500, 1000, 1500, 2000}
+			const numEntities = 10000
+			entities := make([]datalog.Identity, numEntities)
+			for i := 0; i < numEntities; i++ {
+				entities[i] = datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
+				tx.Add(entities[i], datalog.NewKeyword(":test/value"), int64(i))
+			}
 
-	for _, size := range testSizes {
-		t.Run(t.Name()+"_size_"+string(rune(size)), func(t *testing.T) {
-			// Create binding relation
-			tuples := make([]executor.Tuple, size)
-			for i := 0; i < size; i++ {
+			if _, err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+
+			matcher := NewPatternMatcher(db.Store())
+
+			// Test with 5000 entities (50% selectivity - should use merge join)
+			const bindingSize = 5000
+			tuples := make([]executor.Tuple, bindingSize)
+			for i := 0; i < bindingSize; i++ {
 				tuples[i] = executor.Tuple{entities[i]}
 			}
 			bindingRel := executor.NewMaterializedRelationFromSet(
@@ -347,25 +429,12 @@ func TestMergeJoinVsHashJoin(t *testing.T) {
 			}
 			symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
-			// Call hash join
-			hashResult, err := matcher.matchWithHashJoin(
+			start := time.Now()
+			result, err := matcher.matchWithMergeJoin(
 				pattern,
 				bindingRel,
 				symbols,
-				0, // position 0 = entity
-				EAVT,
-				nil,
-			)
-			if err != nil {
-				t.Fatalf("hash join failed: %v", err)
-			}
-
-			// Call merge join
-			mergeResult, err := matcher.matchWithMergeJoin(
-				pattern,
-				bindingRel,
-				symbols,
-				0, // position 0 = entity
+				0,
 				EAVT,
 				nil,
 			)
@@ -373,127 +442,28 @@ func TestMergeJoinVsHashJoin(t *testing.T) {
 				t.Fatalf("merge join failed: %v", err)
 			}
 
-			// Compare sizes
-			if hashResult.Size() != mergeResult.Size() {
-				t.Errorf("size mismatch: hash join returned %d, merge join returned %d",
-					hashResult.Size(), mergeResult.Size())
+			// Iterate and count results
+			iter := result.Iterator()
+			resultCount := 0
+			for iter.Next() {
+				resultCount++
+			}
+			iter.Close()
+
+			duration := time.Since(start)
+
+			if resultCount != bindingSize {
+				t.Errorf("expected %d results, got %d", bindingSize, resultCount)
 			}
 
-			// Compare contents (convert to maps for easy comparison)
-			hashMap := resultToMap(hashResult)
-			mergeMap := resultToMap(mergeResult)
-
-			if len(hashMap) != len(mergeMap) {
-				t.Errorf("result count mismatch: hash=%d, merge=%d",
-					len(hashMap), len(mergeMap))
-			}
-
-			// Verify all hash join results are in merge join results
-			for key, hashVal := range hashMap {
-				mergeVal, found := mergeMap[key]
-				if !found {
-					t.Errorf("hash join result %v not found in merge join", key)
-					continue
-				}
-				if hashVal != mergeVal {
-					t.Errorf("value mismatch for %v: hash=%v, merge=%v",
-						key, hashVal, mergeVal)
-				}
+			// Should complete in <100ms for 5K entities
+			if duration > 100*time.Millisecond {
+				t.Logf("WARNING: merge join took %v for %d entities (expected <100ms)",
+					duration, bindingSize)
+			} else {
+				t.Logf("merge join completed in %v for %d entities", duration, bindingSize)
 			}
 		})
-	}
-}
-
-// TestMergeJoinPerformance verifies merge join performs well on large sets
-func TestMergeJoinPerformance(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping performance test in short mode")
-	}
-
-	// Create temporary database
-	dir, err := os.MkdirTemp("", "merge-performance-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Insert 10K entities
-	tx := db.NewTransaction()
-
-	const numEntities = 10000
-	entities := make([]datalog.Identity, numEntities)
-	for i := 0; i < numEntities; i++ {
-		entities[i] = datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
-		tx.Add(entities[i], datalog.NewKeyword(":test/value"), int64(i))
-	}
-
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	matcher := NewPatternMatcher(db.Store())
-
-	// Test with 5000 entities (50% selectivity - should use merge join)
-	const bindingSize = 5000
-	tuples := make([]executor.Tuple, bindingSize)
-	for i := 0; i < bindingSize; i++ {
-		tuples[i] = executor.Tuple{entities[i]}
-	}
-	bindingRel := executor.NewMaterializedRelationFromSet(
-		[]query.Symbol{datalog.NewSymbol("?e")},
-		tuples,
-		executor.ExecutorOptions{},
-	)
-
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: datalog.NewKeyword(":test/value")},
-			query.Variable{Name: datalog.NewSymbol("?v")},
-		},
-	}
-	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
-
-	start := time.Now()
-	result, err := matcher.matchWithMergeJoin(
-		pattern,
-		bindingRel,
-		symbols,
-		0,
-		EAVT,
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("merge join failed: %v", err)
-	}
-
-	// Iterate and count results
-	iter := result.Iterator()
-	resultCount := 0
-	for iter.Next() {
-		resultCount++
-	}
-	iter.Close()
-
-	duration := time.Since(start)
-
-	if resultCount != bindingSize {
-		t.Errorf("expected %d results, got %d", bindingSize, resultCount)
-	}
-
-	// Should complete in <100ms for 5K entities
-	if duration > 100*time.Millisecond {
-		t.Logf("WARNING: merge join took %v for %d entities (expected <100ms)",
-			duration, bindingSize)
-	} else {
-		t.Logf("merge join completed in %v for %d entities", duration, bindingSize)
 	}
 }
 
