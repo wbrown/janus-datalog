@@ -146,16 +146,17 @@ func TestScanAndScanKeysOnlyShareWorkspaceContract(t *testing.T) {
 			keysOnly := collectIndexDatoms(t, store, false)
 			require.Equal(t, scan, keysOnly)
 
+			// Whether Datom reuses one address is the backend's to choose;
+			// requiring either answer forbids the other. What a caller relies on
+			// is that the two spellings give the same one.
+			require.Equal(t,
+				datomPointerReused(t, store, true),
+				datomPointerReused(t, store, false),
+				"Scan and ScanKeysOnly must agree on whether Datom reuses one address")
+
 			iter, err := store.Scan(ScanBound{Index: EAVT})
 			require.NoError(t, err)
-			defer iter.Close()
 			require.True(t, iter.Next())
-			first, err := iter.Datom()
-			require.NoError(t, err)
-			require.True(t, iter.Next())
-			second, err := iter.Datom()
-			require.NoError(t, err)
-			require.Same(t, first, second, "Scan must reuse one datom workspace")
 			require.NoError(t, iter.Close())
 			require.NoError(t, iter.Close())
 		})
@@ -204,7 +205,13 @@ func TestStoreBackendsRetainByteValuesAndStickyBlobErrors(t *testing.T) {
 			retained[0][0] ^= 0x20
 			require.Equal(t, secondBefore, string(retained[1]))
 
-			require.Greater(t, deleteStoreBlobs(t, store), 0)
+			// With no blob tier there is no out-of-line value to lose, so
+			// retention above is the whole of this contract for that backend.
+			deleted, hasBlobTier := deleteStoreBlobs(t, store)
+			if !hasBlobTier {
+				return
+			}
+			require.Greater(t, deleted, 0)
 
 			iter, err = store.ScanKeysOnly(entityBound)
 			require.NoError(t, err)
@@ -353,26 +360,37 @@ func TestDatabaseBackendsPublicSemantics(t *testing.T) {
 				})
 			}
 
-			if _, ok := results["badger"]; ok {
-				require.Equal(t, results["badger"].latest, results["memory"].latest)
-				require.Equal(t, results["badger"].asOf, results["memory"].asOf)
-				require.Equal(t, results["badger"].history, results["memory"].history)
-				require.Equal(t, results["badger"].queryInto, results["memory"].queryInto)
-				require.True(t, results["badger"].unique.Equal(results["memory"].unique))
-				require.Equal(t, results["badger"].pulled[datalog.NewKeyword(":item/name")], results["memory"].pulled[datalog.NewKeyword(":item/name")])
-				require.ElementsMatch(t,
-					results["badger"].pulled[datalog.NewKeyword(":item/tags")],
-					results["memory"].pulled[datalog.NewKeyword(":item/tags")],
-				)
-				require.Equal(t,
-					results["badger"].pulled[datalog.NewKeyword(":item/steps")],
-					results["memory"].pulled[datalog.NewKeyword(":item/steps")],
-				)
-				require.Equal(t, results["badger"].afterTruncate, results["memory"].afterTruncate)
-				require.Equal(t,
-					stabilizeExport(results["badger"].exported),
-					stabilizeExport(results["memory"].exported),
-				)
+			// Every backend answers against badger, the on-disk format. Naming
+			// the other side instead of deriving it from storeContractCases left
+			// a backend collecting results nothing compared.
+			reference, hasReference := results["badger"]
+			if !hasReference {
+				return
+			}
+			itemName := datalog.NewKeyword(":item/name")
+			itemTags := datalog.NewKeyword(":item/tags")
+			itemSteps := datalog.NewKeyword(":item/steps")
+			for _, testCase := range storeContractCases() {
+				if testCase.name == "badger" {
+					continue
+				}
+				t.Run("badger vs "+testCase.name, func(t *testing.T) {
+					other, ran := results[testCase.name]
+					require.True(t, ran, "%s produced no result to compare", testCase.name)
+					require.Equal(t, reference.latest, other.latest)
+					require.Equal(t, reference.asOf, other.asOf)
+					require.Equal(t, reference.history, other.history)
+					require.Equal(t, reference.queryInto, other.queryInto)
+					require.True(t, reference.unique.Equal(other.unique))
+					require.Equal(t, reference.pulled[itemName], other.pulled[itemName])
+					require.ElementsMatch(t, reference.pulled[itemTags], other.pulled[itemTags])
+					require.Equal(t, reference.pulled[itemSteps], other.pulled[itemSteps])
+					require.Equal(t, reference.afterTruncate, other.afterTruncate)
+					require.Equal(t,
+						stabilizeExport(reference.exported),
+						stabilizeExport(other.exported),
+					)
+				})
 			}
 		})
 	}
@@ -417,8 +435,10 @@ func TestStoreBackendTransactionOrderedScan(t *testing.T) {
 			require.Len(t, got, 2)
 			require.LessOrEqual(t, bytes.Compare(got[0].E.Bytes(), got[1].E.Bytes()), 0)
 
-			// Multi-key ordering must be deterministic and strictly sorted by
-			// encoded EAVT key — not a two-element flake check.
+			// Multi-key ordering must be deterministic and strictly ascending in
+			// EAVT order — not a two-element flake check. Asserted with
+			// compareDatoms because an encoded key is one backend's
+			// representation of that order, not the order itself.
 			extra := make([]datalog.Datom, 0, 5)
 			for i := 0; i < 5; i++ {
 				extra = append(extra, datalog.Datom{
@@ -431,19 +451,18 @@ func TestStoreBackendTransactionOrderedScan(t *testing.T) {
 			require.NoError(t, store.Assert(extra))
 			iter, err = store.ScanKeysOnly(ScanBound{Index: EAVT})
 			require.NoError(t, err)
-			var keys [][]byte
+			var ordered []datalog.Datom
 			for iter.Next() {
-				keyed, ok := iter.(interface{ Key() []byte })
-				require.True(t, ok, "store iterators must expose Key() for order checks")
-				key := keyed.Key()
-				require.NotNil(t, key)
-				keys = append(keys, append([]byte(nil), key...))
+				datom, err := iter.Datom()
+				require.NoError(t, err)
+				ordered = append(ordered, *datom)
 			}
 			require.NoError(t, iter.Error())
 			require.NoError(t, iter.Close())
-			require.GreaterOrEqual(t, len(keys), 7)
-			for i := 1; i < len(keys); i++ {
-				require.Equal(t, -1, bytes.Compare(keys[i-1], keys[i]))
+			require.GreaterOrEqual(t, len(ordered), 7)
+			for i := 1; i < len(ordered); i++ {
+				require.Less(t, compareDatoms(EAVT, &ordered[i-1], &ordered[i]), 0,
+					"scan emitted %v before %v", ordered[i-1], ordered[i])
 			}
 		})
 	}
@@ -641,6 +660,80 @@ func TestStoreBackendCompressedVBoundRun(t *testing.T) {
 	}
 }
 
+// TestStoreBackendsBinaryRoundTrip carries each backend's datoms out through
+// JDZL and back. A store holding typed datoms encodes only at this boundary, so
+// a format the contract leaves out is one only the byte-key backends are known
+// to produce.
+func TestStoreBackendsBinaryRoundTrip(t *testing.T) {
+	s, err := schema.NewBuilder().
+		Attribute(":item/name").Type(schema.TypeString).One().Add().
+		Attribute(":item/tags").Type(schema.TypeString).Many().Add().
+		Attribute(":item/steps").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	for _, testCase := range storeContractCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			source := openContractDatabase(t, testCase, DatabaseOptions{Schema: s, ReplicaID: 7})
+
+			entity := datalog.NewIdentity("binary:item")
+			name := datalog.NewKeyword(":item/name")
+			tags := datalog.NewKeyword(":item/tags")
+			steps := datalog.NewKeyword(":item/steps")
+
+			tx := source.NewTransaction()
+			require.NoError(t, tx.Set(entity, name, "first"))
+			require.NoError(t, tx.Add(entity, tags, "a"))
+			require.NoError(t, tx.Add(entity, tags, "b"))
+			require.NoError(t, tx.Add(entity, steps, "one"))
+			require.NoError(t, tx.Add(entity, steps, "two"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			// A second transaction so the export carries a superseded value and a
+			// tombstone, not one flat generation.
+			tx = source.NewTransaction()
+			require.NoError(t, tx.Set(entity, name, "second"))
+			require.NoError(t, tx.Remove(entity, tags, "a"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			var encoded seekBuffer
+			require.NoError(t, source.ExportBinary(&encoded))
+
+			restored := openContractDatabase(t, testCase, DatabaseOptions{Schema: s, ReplicaID: 7})
+			require.NoError(t, restored.ImportBinary(&encoded))
+
+			var before, after bytes.Buffer
+			require.NoError(t, source.Export(&before))
+			require.NoError(t, restored.Export(&after))
+			require.Equal(t, stabilizeExport(before.String()), stabilizeExport(after.String()),
+				"the binary round trip lost or altered datoms")
+
+			resolved, err := executor.CollectTuples(restored.Query(
+				`[:find ?name :where [?entity :item/name ?name]]`,
+			))
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"second"}}, resolved)
+
+			liveTags, err := restored.GetStrings(entity, tags)
+			require.NoError(t, err)
+			require.ElementsMatch(t, []string{"b"}, liveTags,
+				"the tombstone did not survive the round trip")
+
+			stepCount, err := restored.GetVectorLength(entity, steps)
+			require.NoError(t, err)
+			require.Equal(t, int64(2), stepCount)
+			first, err := restored.GetVectorNth(entity, steps, 0)
+			require.NoError(t, err)
+			require.Equal(t, "one", first)
+			second, err := restored.GetVectorNth(entity, steps, 1)
+			require.NoError(t, err)
+			require.Equal(t, "two", second)
+		})
+	}
+}
+
 func collectIndexDatoms(t *testing.T, store Store, useScan bool) []datalog.Datom {
 	t.Helper()
 	var (
@@ -666,6 +759,32 @@ func collectIndexDatoms(t *testing.T, store Store, useScan bool) []datalog.Datom
 	}
 	require.NoError(t, iter.Error())
 	return datoms
+}
+
+// datomPointerReused reports whether two successive Datom calls on one scan
+// hand back the same address.
+func datomPointerReused(t *testing.T, store Store, useScan bool) bool {
+	t.Helper()
+	var (
+		iter Iterator
+		err  error
+	)
+	if useScan {
+		iter, err = store.Scan(ScanBound{Index: EAVT})
+	} else {
+		iter, err = store.ScanKeysOnly(ScanBound{Index: EAVT})
+	}
+	require.NoError(t, err)
+	defer iter.Close()
+
+	require.True(t, iter.Next())
+	first, err := iter.Datom()
+	require.NoError(t, err)
+	require.True(t, iter.Next())
+	second, err := iter.Datom()
+	require.NoError(t, err)
+	require.NoError(t, iter.Error())
+	return first == second
 }
 
 func countStoreIndex(t *testing.T, store Store, index IndexType) int {

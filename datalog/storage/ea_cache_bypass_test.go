@@ -153,14 +153,9 @@ func TestEACacheBypass_CardinalityOne(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					personID := datalog.NewIdentity("person-1")
@@ -201,14 +196,9 @@ func TestEACacheBypass_CardinalityMany(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					personID := datalog.NewIdentity("person-1")
@@ -252,14 +242,9 @@ func TestEACacheBypass_CardinalityVector(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					docID := datalog.NewIdentity("doc-1")
@@ -301,14 +286,9 @@ func TestEACacheBypass_TupleInput(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					personID := datalog.NewIdentity("person-1")
@@ -338,14 +318,9 @@ func TestEACacheBypass_RelationInput(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					person1 := datalog.NewIdentity("person-1")
@@ -378,14 +353,9 @@ func TestEACacheBypass_CollectionEWithScalarA(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -422,14 +392,9 @@ func TestEACacheBypass_NonexistentAttribute(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					personID := datalog.NewIdentity("person-1")
@@ -457,14 +422,9 @@ func TestEACacheBypass_CacheInvalidation(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					personID := datalog.NewIdentity("person-1")
@@ -504,14 +464,9 @@ func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					person1 := datalog.NewIdentity("person-1")
@@ -686,14 +641,9 @@ func TestEACacheBypass_CacheMissFallback(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					person1 := datalog.NewIdentity("person-1")

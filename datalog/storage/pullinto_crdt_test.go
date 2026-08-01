@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -29,16 +28,10 @@ type PersonWithSkills struct {
 	Skills []string         `datalog:"person/skills"`
 }
 
-// createPullIntoCRDTTestDB creates a test database. popts sets the database's
-// default planner options (nil = defaults).
-func createPullIntoCRDTTestDB(t *testing.T, popts *planner.PlannerOptions) (*Database, func()) {
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           dir,
-		PlannerOptions: popts,
-	})
-	require.NoError(t, err)
-	return db, func() { db.Close() }
+// createPullIntoCRDTTestDB creates a test database on the mode's backend;
+// the schema is set per test.
+func createPullIntoCRDTTestDB(t *testing.T, mode optimizerMode) *Database {
+	return createOptimizerModeDB(t, mode, DatabaseOptions{})
 }
 
 // TestPullInto_CardinalityOne_LWW verifies that PullInto returns the
@@ -46,9 +39,7 @@ func createPullIntoCRDTTestDB(t *testing.T, popts *planner.PlannerOptions) (*Dat
 func TestPullInto_CardinalityOne_LWW(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createPullIntoCRDTTestDB(t, &popts)
-			defer cleanup()
+			db := createPullIntoCRDTTestDB(t, mode)
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -102,9 +93,7 @@ func TestPullInto_CardinalityOne_LWW(t *testing.T) {
 func TestPullInto_CardinalityMany_AddWins(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createPullIntoCRDTTestDB(t, &popts)
-			defer cleanup()
+			db := createPullIntoCRDTTestDB(t, mode)
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -159,9 +148,7 @@ func TestPullInto_CardinalityMany_AddWins(t *testing.T) {
 func TestPullInto_CardinalityVector_RGA(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createPullIntoCRDTTestDB(t, &popts)
-			defer cleanup()
+			db := createPullIntoCRDTTestDB(t, mode)
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -205,9 +192,7 @@ func TestPullInto_CardinalityVector_RGA(t *testing.T) {
 func TestPull_Wildcard_CRDTResolution(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createPullIntoCRDTTestDB(t, &popts)
-			defer cleanup()
+			db := createPullIntoCRDTTestDB(t, mode)
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -263,9 +248,7 @@ func TestPull_Wildcard_CRDTResolution(t *testing.T) {
 func TestPull_Wildcard_CardinalityVector(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createPullIntoCRDTTestDB(t, &popts)
-			defer cleanup()
+			db := createPullIntoCRDTTestDB(t, mode)
 
 			s, err := schema.NewBuilder().
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
@@ -313,9 +296,7 @@ func TestPull_Wildcard_CardinalityVector(t *testing.T) {
 func TestPullInto_AfterCacheClear(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createPullIntoCRDTTestDB(t, &popts)
-			defer cleanup()
+			db := createPullIntoCRDTTestDB(t, mode)
 
 			s, err := schema.NewBuilder().
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
@@ -362,9 +343,7 @@ type PersonWithAnyFields struct {
 func TestPullInto_AnyField(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createPullIntoCRDTTestDB(t, &popts)
-			defer cleanup()
+			db := createPullIntoCRDTTestDB(t, mode)
 
 			s, err := schema.NewBuilder().
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
@@ -406,9 +385,7 @@ func TestPullInto_AnyField(t *testing.T) {
 func TestPullInto_NilEntity_NoPanic(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createPullIntoCRDTTestDB(t, &popts)
-			defer cleanup()
+			db := createPullIntoCRDTTestDB(t, mode)
 
 			s, err := schema.NewBuilder().
 				Attribute(":entity/name").Type(schema.TypeString).One().Add().

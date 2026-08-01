@@ -2,8 +2,14 @@
 
 ## Status
 
-Proposal. PR 0 (hash-only `Identity`) and PR A (the typed-bound read seam) are
-in the tree. PR B, the representation swap, is next and not started.
+`MemoryTreeStore` is the typed representation this document argues for. It runs
+the backend contract beside `MemoryStore` and Badger, and
+[`MEMORY_BACKENDS_2026-07-31.md`](../perf/MEMORY_BACKENDS_2026-07-31.md)
+measures the pair.
+
+Two modes, not a swap: `MemoryStore` remains the Badger emulator and the wasm
+default. What remains open is the default, which moves on the measurements
+rather than on this document.
 
 ## Summary
 
@@ -148,20 +154,33 @@ Why all eight rather than only those the matcher selects against memory:
 Sharing the order table does not by itself make the comparator agree with the
 encoder. The table fixes which components an index orders by and in what
 sequence; how each component compares is separate code, and that is where
-divergence hides. The attribute case is the standing example: A compares as the
-fixed 32-byte storage form, not as a Go string
-(`attribute_truncation_collision_test.go`).
+divergence hides. E, A and Tx each compare exactly: identities and keywords are
+interned, so `Compare` short-circuits on the pointer and otherwise compares the
+hash or the string, and over-length attributes are rejected at write and schema
+time rather than truncated, so the fixed-width storage attribute and the keyword
+are in bijection.
+
+V does not, and cannot — see `BUG_V_PAYLOAD_NOT_PREFIX_FREE`. The payload
+carries no length or terminator, so wherever a component follows V the byte
+order of prefix-related payloads is decided by the following component's first
+byte. The trees order by value; the keys do not.
 
 ### Comparators compare storage projections, not user-facing values
 
 Binary key order is defined over the storage projections: E as the 20-byte
-identity hash, A as the fixed 32-byte attribute form (where truncation can
-diverge from Go string compare), V as type-tag-then-sort-preserving-bytes, and Tx
-**descending** in the Tx↓ indexes. Any edge case where the typed comparator
-disagrees with binary order makes Memory and Badger silently resolve the same
-datom set differently. The differential tests — same fixture, identical sort
-under `EncodeKey` bytes and under the typed comparator — are the single most
-load-bearing deliverable in this project.
+identity hash, A as the fixed 32-byte attribute form, V as
+type-tag-then-sort-preserving-bytes, and Tx **descending** in the Tx↓ indexes.
+An unintended disagreement between the typed comparator and binary order makes
+Memory and Badger resolve the same datom set differently, so the differential
+test — the same fixture ordered by `EncodeKey` bytes and by the comparator — is
+the single most load-bearing deliverable in this project.
+
+It cannot assert wholesale agreement, because one disagreement is structural
+rather than a defect in the comparator: `BUG_V_PAYLOAD_NOT_PREFIX_FREE`. What
+the test pins is agreement everywhere else, with the V-prefix pairs the one
+named and understood exception — which is a weaker statement than the project
+wants, and the reason that bug is a candidate to ride the
+[TRANSACTION_ENVELOPES.md](TRANSACTION_ENVELOPES.md) break.
 
 `Identity` is a bare interned 20-byte content address: in `datalog/identity.go`,
 `identity` is `struct { value [20]byte }`, `NewIdentity` hashes the seed and
@@ -502,6 +521,22 @@ a measurement.** The current side has an allocation measurement that bounds it
 from above ([`docs/perf/memory_assert_bulk_2026-07-31.txt`](../perf/memory_assert_bulk_2026-07-31.txt));
 neither side's retained figure is measured. See *Open*.
 
+The `|V|` columns below are no longer guesses.
+[`VALUE_DISTRIBUTION_2026-07-31.md`](../perf/VALUE_DISTRIBUTION_2026-07-31.md)
+measures a production database at **23.7 encoded value bytes per datom**, which
+lands on the `|V|`=24 column. Nothing in the table needed revising, and that is
+the useful part: the projection was not fitted to the dataset it now agrees
+with.
+
+That measurement also shows what a per-datom average conceals. Two attributes
+are 66.6% of the datoms; one of them carries 876,803 datoms across **five
+distinct keyword values**, and its single most common value occurs 495,909
+times. Keywords are already interned pointers, so those datoms cost the trees a
+pointer each and cost a key-backed store the encoded bytes eight times over.
+98.4% of values are of fixed-width or near-fixed-width types. The uniform
+model therefore *understates* the typed representation on this shape, and the
+figures below should be read as a floor rather than an estimate.
+
 **Pointer width.** Go's js/wasm is a 64-bit-word target:
 `cmd/internal/sys/arch.go` declares `ArchWasm{PtrSize: 8, RegSize: 8}`. Because
 linear memory is capped at 2³², the upper four bytes of every pointer on wasm are
@@ -678,8 +713,8 @@ This project is the prerequisite for the implementation plan in
 `TransactionRecord` trees reuse the tree-and-comparator machinery built here, and
 its visibility PR threads through `storage.PatternMatcher`, so both land after
 this project to avoid double churn. Envelopes remove 926,141 of 2,708,364 datoms
-on the Grimholt shape (34.2%); this project changes the per-datom representation
-for all of them. They compose, and the prerequisite ordering already recorded
+on the measured production shape (34.2%); this project changes the per-datom
+representation for all of them. They compose, and the prerequisite ordering already recorded
 there is also the larger-lever-first ordering.
 
 One establishment per PR:

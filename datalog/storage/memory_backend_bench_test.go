@@ -9,9 +9,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Portable MemoryStore benches for native vs js/wasm comparison.
-// These intentionally avoid Badger and path-backed databases so the same
-// binary can run under GOOS=js GOARCH=wasm via the Node runner.
+// Portable in-process benches. These intentionally avoid Badger and
+// path-backed databases so the same binary can run under GOOS=js GOARCH=wasm
+// via the Node runner.
+//
+// The store-level ones run every backend in inProcessStores(), so one run
+// answers both axes: backend against backend, and native against wasm for each.
+// Assert, retract and scan are where the byte-key backend pays BinaryKeyEncoder
+// and the typed one does not, which is the whole claim under measurement.
 
 func openMemoryBenchDB(b *testing.B) *Database {
 	b.Helper()
@@ -31,54 +36,56 @@ func openMemoryBenchDB(b *testing.B) *Database {
 }
 
 func BenchmarkMemoryKeyOnlyScanning(b *testing.B) {
-	for _, size := range []int{1000, 10000} {
-		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			store := NewMemoryStore(&BinaryKeyEncoder{})
-			b.Cleanup(func() { _ = store.Close() })
+	for _, backend := range inProcessStores() {
+		for _, size := range []int{1000, 10000} {
+			b.Run(fmt.Sprintf("%s/Size%d", backend.name, size), func(b *testing.B) {
+				store := backend.open(b, &BinaryKeyEncoder{})
+				b.Cleanup(func() { _ = store.Close() })
 
-			attr := datalog.NewKeyword(":test/value")
-			datoms := make([]datalog.Datom, size)
-			for i := 0; i < size; i++ {
-				datoms[i] = datalog.Datom{
-					E:  datalog.NewIdentity(fmt.Sprintf("entity-%d", i)),
-					A:  attr,
-					V:  int64(i),
-					Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
+				attr := datalog.NewKeyword(":test/value")
+				datoms := make([]datalog.Datom, size)
+				for i := 0; i < size; i++ {
+					datoms[i] = datalog.Datom{
+						E:  datalog.NewIdentity(fmt.Sprintf("entity-%d", i)),
+						A:  attr,
+						V:  int64(i),
+						Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
+					}
 				}
-			}
-			if err := store.Assert(datoms); err != nil {
-				b.Fatal(err)
-			}
-
-			bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{datoms[0].A}}
-
-			b.ReportAllocs()
-			b.ResetTimer()
-			for b.Loop() {
-				it, err := store.ScanKeysOnly(bound)
-				if err != nil {
+				if err := store.Assert(datoms); err != nil {
 					b.Fatal(err)
 				}
-				count := 0
-				for it.Next() {
-					d, err := it.Datom()
+
+				bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{datoms[0].A}}
+
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					it, err := store.ScanKeysOnly(bound)
 					if err != nil {
 						b.Fatal(err)
 					}
-					_ = d.V
-					count++
+					count := 0
+					for it.Next() {
+						d, err := it.Datom()
+						if err != nil {
+							b.Fatal(err)
+						}
+						_ = d.V
+						count++
+					}
+					if err := it.Error(); err != nil {
+						b.Fatal(err)
+					}
+					if err := it.Close(); err != nil {
+						b.Fatal(err)
+					}
+					if count != size {
+						b.Fatalf("expected %d datoms, got %d", size, count)
+					}
 				}
-				if err := it.Error(); err != nil {
-					b.Fatal(err)
-				}
-				if err := it.Close(); err != nil {
-					b.Fatal(err)
-				}
-				if count != size {
-					b.Fatalf("expected %d datoms, got %d", size, count)
-				}
-			}
-		})
+			})
+		}
 	}
 }
 
@@ -227,65 +234,69 @@ func BenchmarkMemorySimpleQuery(b *testing.B) {
 }
 
 func BenchmarkMemoryRetract(b *testing.B) {
-	for _, size := range []int{1000, 10000} {
-		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			store := NewMemoryStore(&BinaryKeyEncoder{})
-			b.Cleanup(func() { _ = store.Close() })
+	for _, backend := range inProcessStores() {
+		for _, size := range []int{1000, 10000} {
+			b.Run(fmt.Sprintf("%s/Size%d", backend.name, size), func(b *testing.B) {
+				store := backend.open(b, &BinaryKeyEncoder{})
+				b.Cleanup(func() { _ = store.Close() })
 
-			attr := datalog.NewKeyword(":bench/retract")
-			datoms := make([]datalog.Datom, size)
-			for i := 0; i < size; i++ {
-				datoms[i] = datalog.Datom{
-					E:  datalog.NewIdentity(fmt.Sprintf("retract-entity-%d", i)),
-					A:  attr,
-					V:  int64(i),
-					Tx: datalog.ElementID{Lamport: uint64(i + 1), ReplicaID: 1},
+				attr := datalog.NewKeyword(":bench/retract")
+				datoms := make([]datalog.Datom, size)
+				for i := 0; i < size; i++ {
+					datoms[i] = datalog.Datom{
+						E:  datalog.NewIdentity(fmt.Sprintf("retract-entity-%d", i)),
+						A:  attr,
+						V:  int64(i),
+						Tx: datalog.ElementID{Lamport: uint64(i + 1), ReplicaID: 1},
+					}
 				}
-			}
-			if err := store.Assert(datoms); err != nil {
-				b.Fatal(err)
-			}
-			target := datoms[size/2]
-
-			b.ReportAllocs()
-			b.ResetTimer()
-			for b.Loop() {
-				if err := store.Assert([]datalog.Datom{target}); err != nil {
+				if err := store.Assert(datoms); err != nil {
 					b.Fatal(err)
 				}
-				if err := store.Retract([]datalog.Datom{target}); err != nil {
-					b.Fatal(err)
+				target := datoms[size/2]
+
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					if err := store.Assert([]datalog.Datom{target}); err != nil {
+						b.Fatal(err)
+					}
+					if err := store.Retract([]datalog.Datom{target}); err != nil {
+						b.Fatal(err)
+					}
 				}
-			}
-		})
+			})
+		}
 	}
 }
 
 // BenchmarkMemoryAssertBulk tracks Import-shaped growth: N×4 datoms must not
 // produce ~N² wall time (the old sorted-[]string insert pathology).
 func BenchmarkMemoryAssertBulk(b *testing.B) {
-	for _, size := range []int{1000, 4000} {
-		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			attr := datalog.NewKeyword(":bench/assert-bulk")
-			datoms := make([]datalog.Datom, size)
-			for i := 0; i < size; i++ {
-				datoms[i] = datalog.Datom{
-					E:  datalog.NewIdentity(fmt.Sprintf("assert-entity-%d", i)),
-					A:  attr,
-					V:  int64(i),
-					Tx: datalog.ElementID{Lamport: uint64(i + 1), ReplicaID: 1},
+	for _, backend := range inProcessStores() {
+		for _, size := range []int{1000, 4000} {
+			b.Run(fmt.Sprintf("%s/Size%d", backend.name, size), func(b *testing.B) {
+				attr := datalog.NewKeyword(":bench/assert-bulk")
+				datoms := make([]datalog.Datom, size)
+				for i := 0; i < size; i++ {
+					datoms[i] = datalog.Datom{
+						E:  datalog.NewIdentity(fmt.Sprintf("assert-entity-%d", i)),
+						A:  attr,
+						V:  int64(i),
+						Tx: datalog.ElementID{Lamport: uint64(i + 1), ReplicaID: 1},
+					}
 				}
-			}
 
-			b.ReportAllocs()
-			b.ResetTimer()
-			for b.Loop() {
-				store := NewMemoryStore(&BinaryKeyEncoder{})
-				if err := store.Assert(datoms); err != nil {
-					b.Fatal(err)
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					store := backend.open(b, &BinaryKeyEncoder{})
+					if err := store.Assert(datoms); err != nil {
+						b.Fatal(err)
+					}
+					_ = store.Close()
 				}
-				_ = store.Close()
-			}
-		})
+			})
+		}
 	}
 }

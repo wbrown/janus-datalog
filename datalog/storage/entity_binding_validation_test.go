@@ -119,7 +119,7 @@ func TestBoundEntityNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 func TestVEJoinOverMixedDataMatchesOnlyRefs(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			alice := datalog.NewIdentity("user:alice")
 			group := datalog.NewIdentity("group:admins")

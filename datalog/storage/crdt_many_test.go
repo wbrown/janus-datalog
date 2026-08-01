@@ -64,755 +64,701 @@ func TestSetEntryEncodeDecode(t *testing.T) {
 
 // TestSetEntryStorageRoundTrip verifies SetEntry values survive storage and retrieval
 func TestSetEntryStorageRoundTrip(t *testing.T) {
-	dir, err := os.MkdirTemp("", "crdt-set-roundtrip-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
+			// Create and encode a SetEntry
+			originalEntry := SetEntry{Value: "warrior", Op: OpAdd}
+			encoded := EncodeSetEntry(originalEntry)
 
-	// Create and encode a SetEntry
-	originalEntry := SetEntry{Value: "warrior", Op: OpAdd}
-	encoded := EncodeSetEntry(originalEntry)
+			// Store via Assert with explicit Tx
+			datom := datalog.Datom{
+				E:  entityID,
+				A:  attr,
+				V:  encoded,
+				Tx: datalog.ElementID{Lamport: 1000, ReplicaID: 100},
+			}
+			err := db.Store().Assert([]datalog.Datom{datom})
+			if err != nil {
+				t.Fatalf("Assert failed: %v", err)
+			}
 
-	// Store via Assert with explicit Tx
-	datom := datalog.Datom{
-		E:  entityID,
-		A:  attr,
-		V:  encoded,
-		Tx: datalog.ElementID{Lamport: 1000, ReplicaID: 100},
-	}
-	err = db.Store().Assert([]datalog.Datom{datom})
-	if err != nil {
-		t.Fatalf("Assert failed: %v", err)
-	}
+			// Scan EAVT to retrieve the datom
+			iter, err := db.Store().Scan(ScanBound{
+				Index:  EAVT,
+				Prefix: []datalog.Value{entityID, attr},
+			})
+			if err != nil {
+				t.Fatalf("Scan failed: %v", err)
+			}
+			defer iter.Close()
 
-	// Scan EAVT to retrieve the datom
-	iter, err := db.Store().Scan(ScanBound{
-		Index:  EAVT,
-		Prefix: []datalog.Value{entityID, attr},
-	})
-	if err != nil {
-		t.Fatalf("Scan failed: %v", err)
-	}
-	defer iter.Close()
+			foundCount := 0
+			for iter.Next() {
+				foundCount++
+				d, err := iter.Datom()
+				if err != nil {
+					t.Errorf("Datom() error: %v", err)
+					continue
+				}
 
-	foundCount := 0
-	for iter.Next() {
-		foundCount++
-		d, err := iter.Datom()
-		if err != nil {
-			t.Errorf("Datom() error: %v", err)
-			continue
-		}
+				// Verify the value is []byte
+				vBytes, ok := d.V.([]byte)
+				if !ok {
+					t.Errorf("Expected V to be []byte, got %T: %v", d.V, d.V)
+					continue
+				}
 
-		// Verify the value is []byte
-		vBytes, ok := d.V.([]byte)
-		if !ok {
-			t.Errorf("Expected V to be []byte, got %T: %v", d.V, d.V)
-			continue
-		}
+				// Decode as SetEntry
+				decoded, err := DecodeSetEntry(vBytes)
+				if err != nil {
+					t.Errorf("DecodeSetEntry failed: %v", err)
+					continue
+				}
 
-		// Decode as SetEntry
-		decoded, err := DecodeSetEntry(vBytes)
-		if err != nil {
-			t.Errorf("DecodeSetEntry failed: %v", err)
-			continue
-		}
+				// Verify the decoded entry matches
+				if decoded.Op != originalEntry.Op {
+					t.Errorf("Op mismatch: expected %d, got %d", originalEntry.Op, decoded.Op)
+				}
+				if decoded.Value != originalEntry.Value {
+					t.Errorf("Value mismatch: expected %v, got %v", originalEntry.Value, decoded.Value)
+				}
 
-		// Verify the decoded entry matches
-		if decoded.Op != originalEntry.Op {
-			t.Errorf("Op mismatch: expected %d, got %d", originalEntry.Op, decoded.Op)
-		}
-		if decoded.Value != originalEntry.Value {
-			t.Errorf("Value mismatch: expected %v, got %v", originalEntry.Value, decoded.Value)
-		}
+				// Verify Tx
+				if d.Tx.Lamport != 1000 || d.Tx.ReplicaID != 100 {
+					t.Errorf("Tx mismatch: expected {1000, 100}, got %v", d.Tx)
+				}
+			}
 
-		// Verify Tx
-		if d.Tx.Lamport != 1000 || d.Tx.ReplicaID != 100 {
-			t.Errorf("Tx mismatch: expected {1000, 100}, got %v", d.Tx)
-		}
-	}
-
-	if foundCount == 0 {
-		t.Error("No datoms found in EAVT scan - storage round-trip failed")
-	} else if foundCount > 1 {
-		t.Errorf("Expected 1 datom, found %d", foundCount)
+			if foundCount == 0 {
+				t.Error("No datoms found in EAVT scan - storage round-trip failed")
+			} else if foundCount > 1 {
+				t.Errorf("Expected 1 datom, found %d", foundCount)
+			}
+		})
 	}
 }
 
 // TestResolveAddWinsSetDirect tests the resolveAddWinsSet function directly
 func TestResolveAddWinsSetDirect(t *testing.T) {
-	dir, err := os.MkdirTemp("", "crdt-resolve-direct-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
+			// Store two datoms with Op field: one add, one remove for same value
+			// Add at Lamport 1000, Remove at Lamport 900 (Add is newer, should be in set)
+			datoms := []datalog.Datom{
+				{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: 1000, ReplicaID: 100}, Op: datalog.OpCRDTAdd},
+				{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: 900, ReplicaID: 100}, Op: datalog.OpCRDTRemove},
+			}
+			err := db.Store().Assert(datoms)
+			if err != nil {
+				t.Fatalf("Assert failed: %v", err)
+			}
 
-	// Store two datoms with Op field: one add, one remove for same value
-	// Add at Lamport 1000, Remove at Lamport 900 (Add is newer, should be in set)
-	datoms := []datalog.Datom{
-		{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: 1000, ReplicaID: 100}, Op: datalog.OpCRDTAdd},
-		{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: 900, ReplicaID: 100}, Op: datalog.OpCRDTRemove},
-	}
-	err = db.Store().Assert(datoms)
-	if err != nil {
-		t.Fatalf("Assert failed: %v", err)
-	}
+			// Create matcher and call resolveAddWinsSet directly
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
 
-	// Create matcher and call resolveAddWinsSet directly
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
+			var eBytes [20]byte
+			var aBytes [32]byte
+			copy(eBytes[:], entityID.Bytes())
+			copy(aBytes[:], attr.String())
 
-	var eBytes [20]byte
-	var aBytes [32]byte
-	copy(eBytes[:], entityID.Bytes())
-	copy(aBytes[:], attr.String())
+			result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
+			if err != nil {
+				t.Fatalf("resolveAddWinsSet failed: %v", err)
+			}
 
-	result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
-	if err != nil {
-		t.Fatalf("resolveAddWinsSet failed: %v", err)
-	}
+			t.Logf("Result: Members=%v, MaxElementID=%v", result.Members, result.MaxElementID)
 
-	t.Logf("Result: Members=%v, MaxElementID=%v", result.Members, result.MaxElementID)
-
-	if len(result.Members) != 1 {
-		t.Errorf("Expected 1 member (add is newer), got %d: %v", len(result.Members), result.Members)
-	} else if _, ok := result.Members["warrior"]; !ok {
-		t.Errorf("Expected 'warrior' to be in set, got %v", result.Members)
+			if len(result.Members) != 1 {
+				t.Errorf("Expected 1 member (add is newer), got %d: %v", len(result.Members), result.Members)
+			} else if _, ok := result.Members["warrior"]; !ok {
+				t.Errorf("Expected 'warrior' to be in set, got %v", result.Members)
+			}
+		})
 	}
 }
 
 // TestResolveAddWinsSameLamport tests add-wins when Add and Remove have same Lamport
 func TestResolveAddWinsSameLamport(t *testing.T) {
-	dir, err := os.MkdirTemp("", "crdt-resolve-samelamp-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
+			// Store two datoms with Op field: add and remove with SAME Lamport
+			sameLamport := uint64(1000)
+			datoms := []datalog.Datom{
+				{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: 100}, Op: datalog.OpCRDTAdd},
+				{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: 200}, Op: datalog.OpCRDTRemove},
+			}
+			err := db.Store().Assert(datoms)
+			if err != nil {
+				t.Fatalf("Assert failed: %v", err)
+			}
 
-	// Store two datoms with Op field: add and remove with SAME Lamport
-	sameLamport := uint64(1000)
-	datoms := []datalog.Datom{
-		{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: 100}, Op: datalog.OpCRDTAdd},
-		{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: 200}, Op: datalog.OpCRDTRemove},
-	}
-	err = db.Store().Assert(datoms)
-	if err != nil {
-		t.Fatalf("Assert failed: %v", err)
-	}
+			// Create matcher and call resolveAddWinsSet directly
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
 
-	// Create matcher and call resolveAddWinsSet directly
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
+			var eBytes [20]byte
+			var aBytes [32]byte
+			copy(eBytes[:], entityID.Bytes())
+			copy(aBytes[:], attr.String())
 
-	var eBytes [20]byte
-	var aBytes [32]byte
-	copy(eBytes[:], entityID.Bytes())
-	copy(aBytes[:], attr.String())
+			result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
+			if err != nil {
+				t.Fatalf("resolveAddWinsSet failed: %v", err)
+			}
 
-	result, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:], DiscardIntake)
-	if err != nil {
-		t.Fatalf("resolveAddWinsSet failed: %v", err)
-	}
+			t.Logf("Result: Members=%v, MaxElementID=%v", result.Members, result.MaxElementID)
 
-	t.Logf("Result: Members=%v, MaxElementID=%v", result.Members, result.MaxElementID)
-
-	// At same Lamport, add should win
-	if len(result.Members) != 1 {
-		t.Errorf("Expected 1 member (add-wins at same Lamport), got %d: %v", len(result.Members), result.Members)
-	} else if _, ok := result.Members["warrior"]; !ok {
-		t.Errorf("Expected 'warrior' to be in set, got %v", result.Members)
+			// At same Lamport, add should win
+			if len(result.Members) != 1 {
+				t.Errorf("Expected 1 member (add-wins at same Lamport), got %d: %v", len(result.Members), result.Members)
+			} else if _, ok := result.Members["warrior"]; !ok {
+				t.Errorf("Expected 'warrior' to be in set, got %v", result.Members)
+			}
+		})
 	}
 }
 
 // TestCheckSetMembershipDirect tests the checkSetMembership function directly
 func TestCheckSetMembershipDirect(t *testing.T) {
-	dir, err := os.MkdirTemp("", "crdt-membership-direct-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
+			// Add a value using the Transaction API
+			tx := db.NewTransaction()
+			tx.Add(entityID, attr, "present")
+			_, err := tx.Commit()
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Add a value using the Transaction API
-	tx := db.NewTransaction()
-	tx.Add(entityID, attr, "present")
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			// Create matcher
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
 
-	// Create matcher
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
+			var eBytes [20]byte
+			var aBytes [32]byte
+			copy(eBytes[:], entityID.Bytes())
+			copy(aBytes[:], attr.String())
 
-	var eBytes [20]byte
-	var aBytes [32]byte
-	copy(eBytes[:], entityID.Bytes())
-	copy(aBytes[:], attr.String())
+			// The bound is the caller's: checkSetMembership is handed the same
+			// ScanBound the pattern arm announces, so the run it walks and the run
+			// reported to a handler cannot differ.
+			membershipBound := func(v datalog.Value) ScanBound {
+				return ScanBound{
+					Index: EAVT,
+					Prefix: []datalog.Value{
+						datalog.NewIdentityFromHash(Entity(eBytes)),
+						datalog.InternKeywordFromBytes(Attribute(aBytes)),
+						v,
+					},
+				}
+			}
 
-	// The bound is the caller's: checkSetMembership is handed the same
-	// ScanBound the pattern arm announces, so the run it walks and the run
-	// reported to a handler cannot differ.
-	membershipBound := func(v datalog.Value) ScanBound {
-		return ScanBound{
-			Index: EAVT,
-			Prefix: []datalog.Value{
-				datalog.NewIdentityFromHash(Entity(eBytes)),
-				datalog.InternKeywordFromBytes(Attribute(aBytes)),
-				v,
-			},
-		}
-	}
+			// Check membership for "present" (should be true). The intake reaches the
+			// report the scan was acquired through, so that is where it is read.
+			report := &scanReport{}
+			isMember, err := matcher.checkSetMembership(membershipBound("present"), report)
+			if err != nil {
+				t.Fatalf("checkSetMembership failed: %v", err)
+			}
+			t.Logf("Membership of 'present': %v (%d datoms read)", isMember, report.scanned)
+			if !isMember {
+				t.Error("Expected 'present' to be a member")
+			}
+			if report.scanned <= 0 {
+				t.Error("a membership check that found the value must report the index reads that found it")
+			}
 
-	// Check membership for "present" (should be true). The intake reaches the
-	// report the scan was acquired through, so that is where it is read.
-	report := &scanReport{}
-	isMember, err := matcher.checkSetMembership(membershipBound("present"), report)
-	if err != nil {
-		t.Fatalf("checkSetMembership failed: %v", err)
-	}
-	t.Logf("Membership of 'present': %v (%d datoms read)", isMember, report.scanned)
-	if !isMember {
-		t.Error("Expected 'present' to be a member")
-	}
-	if report.scanned <= 0 {
-		t.Error("a membership check that found the value must report the index reads that found it")
-	}
-
-	// Check membership for "absent" (should be false)
-	isMember2, err := matcher.checkSetMembership(membershipBound("absent"), DiscardIntake)
-	if err != nil {
-		t.Fatalf("checkSetMembership failed: %v", err)
-	}
-	t.Logf("Membership of 'absent': %v", isMember2)
-	if isMember2 {
-		t.Error("Expected 'absent' to NOT be a member")
+			// Check membership for "absent" (should be false)
+			isMember2, err := matcher.checkSetMembership(membershipBound("absent"), DiscardIntake)
+			if err != nil {
+				t.Fatalf("checkSetMembership failed: %v", err)
+			}
+			t.Logf("Membership of 'absent': %v", isMember2)
+			if isMember2 {
+				t.Error("Expected 'absent' to NOT be a member")
+			}
+		})
 	}
 }
 
 // TestCardinalityManyAddRemove verifies basic add/remove operations work
 func TestCardinalityManyAddRemove(t *testing.T) {
-	dir, err := os.MkdirTemp("", "crdt-many-basic-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			// Create schema with cardinality-many attribute
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	// Create schema with cardinality-many attribute
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
-
-	// Add some values
-	tx := db.NewTransaction()
-	err = tx.Add(entityID, attr, "warrior")
-	if err != nil {
-		t.Fatalf("Add failed: %v", err)
-	}
-	err = tx.Add(entityID, attr, "veteran")
-	if err != nil {
-		t.Fatalf("Add failed: %v", err)
-	}
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Query should return both values
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
-
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Constant{Value: entityID},
-			query.Constant{Value: attr},
-			query.Variable{Name: datalog.NewSymbol("?tag")},
-			query.Blank{},
-		},
-	}
-
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
-
-	// Collect results
-	tags := make(map[string]bool)
-	iter := results.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		if len(tuple) > 0 {
-			if tag, ok := tuple[0].(string); ok {
-				tags[tag] = true
+			// Add some values
+			tx := db.NewTransaction()
+			err := tx.Add(entityID, attr, "warrior")
+			if err != nil {
+				t.Fatalf("Add failed: %v", err)
 			}
-		}
-	}
-
-	if len(tags) != 2 {
-		t.Errorf("Expected 2 tags, got %d: %v", len(tags), tags)
-	}
-	if !tags["warrior"] {
-		t.Error("Expected 'warrior' tag")
-	}
-	if !tags["veteran"] {
-		t.Error("Expected 'veteran' tag")
-	}
-
-	// Now remove one value
-	tx2 := db.NewTransaction()
-	err = tx2.Remove(entityID, attr, "warrior")
-	if err != nil {
-		t.Fatalf("Remove failed: %v", err)
-	}
-	_, err = tx2.Commit()
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Query should return only one value now
-	results2, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
-
-	tags2 := make(map[string]bool)
-	iter2 := results2.Iterator()
-	for iter2.Next() {
-		tuple := iter2.Tuple()
-		if len(tuple) > 0 {
-			if tag, ok := tuple[0].(string); ok {
-				tags2[tag] = true
+			err = tx.Add(entityID, attr, "veteran")
+			if err != nil {
+				t.Fatalf("Add failed: %v", err)
 			}
-		}
-	}
+			_, err = tx.Commit()
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	if len(tags2) != 1 {
-		t.Errorf("Expected 1 tag after remove, got %d: %v", len(tags2), tags2)
-	}
-	if !tags2["veteran"] {
-		t.Error("Expected 'veteran' tag to remain")
-	}
-	if tags2["warrior"] {
-		t.Error("Expected 'warrior' tag to be removed")
+			// Query should return both values
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
+
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: entityID},
+					query.Constant{Value: attr},
+					query.Variable{Name: datalog.NewSymbol("?tag")},
+					query.Blank{},
+				},
+			}
+
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
+
+			// Collect results
+			tags := make(map[string]bool)
+			iter := results.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				if len(tuple) > 0 {
+					if tag, ok := tuple[0].(string); ok {
+						tags[tag] = true
+					}
+				}
+			}
+
+			if len(tags) != 2 {
+				t.Errorf("Expected 2 tags, got %d: %v", len(tags), tags)
+			}
+			if !tags["warrior"] {
+				t.Error("Expected 'warrior' tag")
+			}
+			if !tags["veteran"] {
+				t.Error("Expected 'veteran' tag")
+			}
+
+			// Now remove one value
+			tx2 := db.NewTransaction()
+			err = tx2.Remove(entityID, attr, "warrior")
+			if err != nil {
+				t.Fatalf("Remove failed: %v", err)
+			}
+			_, err = tx2.Commit()
+			if err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
+
+			// Query should return only one value now
+			results2, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
+
+			tags2 := make(map[string]bool)
+			iter2 := results2.Iterator()
+			for iter2.Next() {
+				tuple := iter2.Tuple()
+				if len(tuple) > 0 {
+					if tag, ok := tuple[0].(string); ok {
+						tags2[tag] = true
+					}
+				}
+			}
+
+			if len(tags2) != 1 {
+				t.Errorf("Expected 1 tag after remove, got %d: %v", len(tags2), tags2)
+			}
+			if !tags2["veteran"] {
+				t.Error("Expected 'veteran' tag to remain")
+			}
+			if tags2["warrior"] {
+				t.Error("Expected 'warrior' tag to be removed")
+			}
+		})
 	}
 }
 
 // TestCardinalityManyAddWins verifies add-wins semantics at same Lamport
 func TestCardinalityManyAddWins(t *testing.T) {
-	dir, err := os.MkdirTemp("", "crdt-many-addwins-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
+			// Create datoms with same Lamport but different operations
+			// When Lamport is equal, Add should win
+			sameLamport := uint64(1000)
+			replicaA := uint64(100)
+			replicaB := uint64(200)
 
-	// Create datoms with same Lamport but different operations
-	// When Lamport is equal, Add should win
-	sameLamport := uint64(1000)
-	replicaA := uint64(100)
-	replicaB := uint64(200)
-
-	// Create datoms - Add from replica A, Remove from replica B, same Lamport
-	// NEW FORMAT: Op is a field on Datom, V is the raw value
-	datomAdd := datalog.Datom{
-		E:  entityID,
-		A:  attr,
-		V:  "warrior",
-		Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaA},
-		Op: datalog.OpCRDTAdd,
-	}
-	datomRemove := datalog.Datom{
-		E:  entityID,
-		A:  attr,
-		V:  "warrior",
-		Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaB},
-		Op: datalog.OpCRDTRemove,
-	}
-
-	// Assert both directly
-	err = db.Store().Assert([]datalog.Datom{datomAdd, datomRemove})
-	if err != nil {
-		t.Fatalf("Assert failed: %v", err)
-	}
-
-	// Query should return the value (add-wins at same Lamport)
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
-
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Constant{Value: entityID},
-			query.Constant{Value: attr},
-			query.Variable{Name: datalog.NewSymbol("?tag")},
-			query.Blank{},
-		},
-	}
-
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
-
-	count := 0
-	var foundTag string
-	iter := results.Iterator()
-	for iter.Next() {
-		count++
-		tuple := iter.Tuple()
-		if len(tuple) > 0 {
-			if tag, ok := tuple[0].(string); ok {
-				foundTag = tag
+			// Create datoms - Add from replica A, Remove from replica B, same Lamport
+			// NEW FORMAT: Op is a field on Datom, V is the raw value
+			datomAdd := datalog.Datom{
+				E:  entityID,
+				A:  attr,
+				V:  "warrior",
+				Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaA},
+				Op: datalog.OpCRDTAdd,
 			}
-		}
-	}
+			datomRemove := datalog.Datom{
+				E:  entityID,
+				A:  attr,
+				V:  "warrior",
+				Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaB},
+				Op: datalog.OpCRDTRemove,
+			}
 
-	if count != 1 {
-		t.Errorf("Expected 1 result (add-wins), got %d", count)
-	}
-	if foundTag != "warrior" {
-		t.Errorf("Expected 'warrior' (add-wins), got '%s'", foundTag)
+			// Assert both directly
+			err := db.Store().Assert([]datalog.Datom{datomAdd, datomRemove})
+			if err != nil {
+				t.Fatalf("Assert failed: %v", err)
+			}
+
+			// Query should return the value (add-wins at same Lamport)
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
+
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: entityID},
+					query.Constant{Value: attr},
+					query.Variable{Name: datalog.NewSymbol("?tag")},
+					query.Blank{},
+				},
+			}
+
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
+
+			count := 0
+			var foundTag string
+			iter := results.Iterator()
+			for iter.Next() {
+				count++
+				tuple := iter.Tuple()
+				if len(tuple) > 0 {
+					if tag, ok := tuple[0].(string); ok {
+						foundTag = tag
+					}
+				}
+			}
+
+			if count != 1 {
+				t.Errorf("Expected 1 result (add-wins), got %d", count)
+			}
+			if foundTag != "warrior" {
+				t.Errorf("Expected 'warrior' (add-wins), got '%s'", foundTag)
+			}
+		})
 	}
 }
 
 // TestCardinalityManyReplicaIDTiebreaker verifies ReplicaID tiebreaker for add-wins
 func TestCardinalityManyReplicaIDTiebreaker(t *testing.T) {
-	dir, err := os.MkdirTemp("", "crdt-many-replicaid-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
+			// Two adds with same Lamport, different ReplicaID
+			// Both should be in the set (not a conflict - both are adds)
+			sameLamport := uint64(1000)
+			replicaA := uint64(100)
+			replicaB := uint64(200)
 
-	// Two adds with same Lamport, different ReplicaID
-	// Both should be in the set (not a conflict - both are adds)
-	sameLamport := uint64(1000)
-	replicaA := uint64(100)
-	replicaB := uint64(200)
-
-	// NEW FORMAT: Op is a field on Datom, V is the raw value
-	datomA := datalog.Datom{
-		E:  entityID,
-		A:  attr,
-		V:  "tagA",
-		Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaA},
-		Op: datalog.OpCRDTAdd,
-	}
-	datomB := datalog.Datom{
-		E:  entityID,
-		A:  attr,
-		V:  "tagB",
-		Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaB},
-		Op: datalog.OpCRDTAdd,
-	}
-
-	err = db.Store().Assert([]datalog.Datom{datomA, datomB})
-	if err != nil {
-		t.Fatalf("Assert failed: %v", err)
-	}
-
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
-
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Constant{Value: entityID},
-			query.Constant{Value: attr},
-			query.Variable{Name: datalog.NewSymbol("?tag")},
-			query.Blank{},
-		},
-	}
-
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
-
-	tags := make(map[string]bool)
-	iter := results.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		if len(tuple) > 0 {
-			if tag, ok := tuple[0].(string); ok {
-				tags[tag] = true
+			// NEW FORMAT: Op is a field on Datom, V is the raw value
+			datomA := datalog.Datom{
+				E:  entityID,
+				A:  attr,
+				V:  "tagA",
+				Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaA},
+				Op: datalog.OpCRDTAdd,
 			}
-		}
-	}
+			datomB := datalog.Datom{
+				E:  entityID,
+				A:  attr,
+				V:  "tagB",
+				Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaB},
+				Op: datalog.OpCRDTAdd,
+			}
 
-	if len(tags) != 2 {
-		t.Errorf("Expected 2 tags (both adds preserved), got %d: %v", len(tags), tags)
+			err := db.Store().Assert([]datalog.Datom{datomA, datomB})
+			if err != nil {
+				t.Fatalf("Assert failed: %v", err)
+			}
+
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
+
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: entityID},
+					query.Constant{Value: attr},
+					query.Variable{Name: datalog.NewSymbol("?tag")},
+					query.Blank{},
+				},
+			}
+
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
+
+			tags := make(map[string]bool)
+			iter := results.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				if len(tuple) > 0 {
+					if tag, ok := tuple[0].(string); ok {
+						tags[tag] = true
+					}
+				}
+			}
+
+			if len(tags) != 2 {
+				t.Errorf("Expected 2 tags (both adds preserved), got %d: %v", len(tags), tags)
+			}
+		})
 	}
 }
 
 // TestCardinalityManyAddThenRemove verifies: add at T1, remove at T2 (T2 > T1) → not in set
 func TestCardinalityManyAddThenRemove(t *testing.T) {
-	dir, err := os.MkdirTemp("", "crdt-many-add-then-remove-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
+			// Add first, then remove later
+			addEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpAdd})
+			removeEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpRemove})
 
-	// Add first, then remove later
-	addEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpAdd})
-	removeEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpRemove})
+			datomAdd := datalog.Datom{
+				E:  entityID,
+				A:  attr,
+				V:  addEntry,
+				Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1}, // Earlier
+			}
+			datomRemove := datalog.Datom{
+				E:  entityID,
+				A:  attr,
+				V:  removeEntry,
+				Tx: datalog.ElementID{Lamport: 200, ReplicaID: 1}, // Later
+			}
 
-	datomAdd := datalog.Datom{
-		E:  entityID,
-		A:  attr,
-		V:  addEntry,
-		Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1}, // Earlier
-	}
-	datomRemove := datalog.Datom{
-		E:  entityID,
-		A:  attr,
-		V:  removeEntry,
-		Tx: datalog.ElementID{Lamport: 200, ReplicaID: 1}, // Later
-	}
+			err := db.Store().Assert([]datalog.Datom{datomAdd, datomRemove})
+			if err != nil {
+				t.Fatalf("Assert failed: %v", err)
+			}
 
-	err = db.Store().Assert([]datalog.Datom{datomAdd, datomRemove})
-	if err != nil {
-		t.Fatalf("Assert failed: %v", err)
-	}
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
 
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: entityID},
+					query.Constant{Value: attr},
+					query.Variable{Name: datalog.NewSymbol("?tag")},
+					query.Blank{},
+				},
+			}
 
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Constant{Value: entityID},
-			query.Constant{Value: attr},
-			query.Variable{Name: datalog.NewSymbol("?tag")},
-			query.Blank{},
-		},
-	}
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
 
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
+			count := 0
+			iter := results.Iterator()
+			for iter.Next() {
+				count++
+			}
 
-	count := 0
-	iter := results.Iterator()
-	for iter.Next() {
-		count++
-	}
-
-	if count != 0 {
-		t.Errorf("Expected 0 results (remove after add), got %d", count)
+			if count != 0 {
+				t.Errorf("Expected 0 results (remove after add), got %d", count)
+			}
+		})
 	}
 }
 
 // TestCardinalityManyRemoveThenAdd verifies: remove at T1, add at T2 (T2 > T1) → in set
 func TestCardinalityManyRemoveThenAdd(t *testing.T) {
-	dir, err := os.MkdirTemp("", "crdt-many-remove-then-add-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			entityID := datalog.NewIdentity("test-entity")
+			attr := datalog.NewKeyword(":person/tags")
 
-	entityID := datalog.NewIdentity("test-entity")
-	attr := datalog.NewKeyword(":person/tags")
-
-	// Remove first, then add later (re-add)
-	// NEW FORMAT: Op is a field on Datom, V is the raw value
-	datomRemove := datalog.Datom{
-		E:  entityID,
-		A:  attr,
-		V:  "warrior",
-		Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1}, // Earlier
-		Op: datalog.OpCRDTRemove,
-	}
-	datomAdd := datalog.Datom{
-		E:  entityID,
-		A:  attr,
-		V:  "warrior",
-		Tx: datalog.ElementID{Lamport: 200, ReplicaID: 1}, // Later
-		Op: datalog.OpCRDTAdd,
-	}
-
-	err = db.Store().Assert([]datalog.Datom{datomRemove, datomAdd})
-	if err != nil {
-		t.Fatalf("Assert failed: %v", err)
-	}
-
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(s)
-
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Constant{Value: entityID},
-			query.Constant{Value: attr},
-			query.Variable{Name: datalog.NewSymbol("?tag")},
-			query.Blank{},
-		},
-	}
-
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
-
-	count := 0
-	var foundTag string
-	iter := results.Iterator()
-	for iter.Next() {
-		count++
-		tuple := iter.Tuple()
-		if len(tuple) > 0 {
-			if tag, ok := tuple[0].(string); ok {
-				foundTag = tag
+			// Remove first, then add later (re-add)
+			// NEW FORMAT: Op is a field on Datom, V is the raw value
+			datomRemove := datalog.Datom{
+				E:  entityID,
+				A:  attr,
+				V:  "warrior",
+				Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1}, // Earlier
+				Op: datalog.OpCRDTRemove,
 			}
-		}
-	}
+			datomAdd := datalog.Datom{
+				E:  entityID,
+				A:  attr,
+				V:  "warrior",
+				Tx: datalog.ElementID{Lamport: 200, ReplicaID: 1}, // Later
+				Op: datalog.OpCRDTAdd,
+			}
 
-	if count != 1 {
-		t.Errorf("Expected 1 result (add after remove), got %d", count)
-	}
-	if foundTag != "warrior" {
-		t.Errorf("Expected 'warrior', got '%s'", foundTag)
+			err := db.Store().Assert([]datalog.Datom{datomRemove, datomAdd})
+			if err != nil {
+				t.Fatalf("Assert failed: %v", err)
+			}
+
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(s)
+
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: entityID},
+					query.Constant{Value: attr},
+					query.Variable{Name: datalog.NewSymbol("?tag")},
+					query.Blank{},
+				},
+			}
+
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
+
+			count := 0
+			var foundTag string
+			iter := results.Iterator()
+			for iter.Next() {
+				count++
+				tuple := iter.Tuple()
+				if len(tuple) > 0 {
+					if tag, ok := tuple[0].(string); ok {
+						foundTag = tag
+					}
+				}
+			}
+
+			if count != 1 {
+				t.Errorf("Expected 1 result (add after remove), got %d", count)
+			}
+			if foundTag != "warrior" {
+				t.Errorf("Expected 'warrior', got '%s'", foundTag)
+			}
+		})
 	}
 }
 

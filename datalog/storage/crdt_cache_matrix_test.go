@@ -9,7 +9,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -38,17 +37,14 @@ var cacheTestModes = []cacheTestMode{
 	{"cache_disabled", true},
 }
 
-// createCacheTestDB creates a test database with the given cache mode and an
-// optional planner options override (nil = database default).
-func createCacheTestDB(t *testing.T, disableCache bool, popts *planner.PlannerOptions) (*Database, func()) {
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           dir,
-		DisableCache:   disableCache,
-		PlannerOptions: popts,
+// createCacheTestDB creates a test database on the mode's backend with the
+// given cache mode. handler is registered at open, since everything the
+// database builds is constructed with it; nil is annotations-off.
+func createCacheTestDB(t *testing.T, mode optimizerMode, disableCache bool, handler annotations.Handler) *Database {
+	return createOptimizerModeDB(t, mode, DatabaseOptions{
+		DisableCache:      disableCache,
+		AnnotationHandler: handler,
 	})
-	require.NoError(t, err)
-	return db, func() { db.Close() }
 }
 
 // assertCacheModesAgree is the second of the two shapes a cache test can take,
@@ -68,6 +64,7 @@ func createCacheTestDB(t *testing.T, disableCache bool, popts *planner.PlannerOp
 // consume relations, hold iterators, or write — it gets a database of its own.
 func assertCacheModesAgree(
 	t *testing.T,
+	omode optimizerMode,
 	build func(t *testing.T, db *Database),
 	probe func(t *testing.T, db *Database) interface{},
 ) {
@@ -75,10 +72,9 @@ func assertCacheModesAgree(
 
 	results := map[bool]interface{}{}
 	for _, mode := range cacheTestModes {
-		db, cleanup := createCacheTestDB(t, mode.disableCache, nil)
+		db := createCacheTestDB(t, omode, mode.disableCache, nil)
 		build(t, db)
 		results[mode.disableCache] = probe(t, db)
-		cleanup()
 	}
 
 	require.Equal(t, results[true], results[false],
@@ -97,9 +93,7 @@ func TestCacheMatrix_AConstant(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -138,9 +132,7 @@ func TestCacheMatrix_AFromScalarInput(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -180,9 +172,7 @@ func TestCacheMatrix_AUnbound(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -237,9 +227,7 @@ func TestCacheMatrix_EConstantAUnbound(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -303,14 +291,9 @@ func TestCacheMatrix_VOnlyBound(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					// Tracing, registered at open because everything the database
-					// builds is constructed with it.
-					popts := omode.plannerOptions()
-					popts.Handler = func(e annotations.Event) {
+					db := createCacheTestDB(t, omode, mode.disableCache, func(e annotations.Event) {
 						t.Logf("[TRACE] %s: %v", e.Name, e.Data)
-					}
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					})
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -376,9 +359,7 @@ func TestCacheMatrix_VOnlyBound_Supersede(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -447,14 +428,9 @@ func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					// Tracing, registered at open because everything the database
-					// builds is constructed with it.
-					popts := omode.plannerOptions()
-					popts.Handler = func(e annotations.Event) {
+					db := createCacheTestDB(t, omode, mode.disableCache, func(e annotations.Event) {
 						t.Logf("[TRACE] %s: %v", e.Name, e.Data)
-					}
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					})
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -557,9 +533,7 @@ func TestVOnlyBound_MixedCardinality(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -621,9 +595,7 @@ func TestVOnlyBound_Schemaless(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					// NO SCHEMA - all attributes are schemaless
 
@@ -663,9 +635,7 @@ func TestCacheMatrix_AVBound(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -718,9 +688,7 @@ func TestCacheMatrix_EFromCollection_AFromScalar(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -770,9 +738,7 @@ func TestCacheMatrix_CardinalityMany(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -826,9 +792,7 @@ func TestCacheMatrix_PullIntoComparison(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -871,9 +835,7 @@ func TestCacheMatrix_AFromCollection(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -931,9 +893,7 @@ func TestCacheMatrix_AFromTupleInput(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -977,9 +937,7 @@ func TestCacheMatrix_AFromRelationInput(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -1042,9 +1000,7 @@ func TestCacheMatrix_ABoundViaJoin(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -1102,9 +1058,7 @@ func TestCacheMatrix_EAndABothFromCollections(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -1165,9 +1119,7 @@ func TestCacheMatrix_WithNotClause(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -1235,9 +1187,7 @@ func TestCacheMatrix_WithOrClause(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -1301,9 +1251,7 @@ func TestCacheMatrix_WithAggregation(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -1355,9 +1303,7 @@ func TestCacheMatrix_CardinalityVector(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -1427,49 +1373,54 @@ func TestCacheMatrix_CardinalityVector(t *testing.T) {
 //
 // See BUG_CACHE_EMPTY_VECTOR_NEVER_SET.
 func TestCacheMatrix_NeverSetVectorAgainstEmptyVectorLiteral(t *testing.T) {
-	tuplesPerMode := map[string]int{}
+	// The optimizer axis is outside the cache axis: the two cache arms are
+	// compared against each other, so both must come from the same backend.
+	for _, omode := range optimizerModes {
+		t.Run(omode.name, func(t *testing.T) {
+			tuplesPerMode := map[string]int{}
 
-	for _, mode := range cacheTestModes {
-		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createCacheTestDB(t, mode.disableCache, nil)
-			defer cleanup()
+			for _, mode := range cacheTestModes {
+				t.Run(mode.name, func(t *testing.T) {
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
-			skill := datalog.NewKeyword(":person/skill")
-			s := schema.NewSchema()
-			s.Add(&schema.AttributeDefinition{
-				Ident:       skill,
-				ValueType:   schema.TypeString,
-				Cardinality: schema.CardinalityVector,
-			})
-			db.SetSchema(s)
+					skill := datalog.NewKeyword(":person/skill")
+					s := schema.NewSchema()
+					s.Add(&schema.AttributeDefinition{
+						Ident:       skill,
+						ValueType:   schema.TypeString,
+						Cardinality: schema.CardinalityVector,
+					})
+					db.SetSchema(s)
 
-			// One entity, written under a different attribute, so the entity
-			// exists and :person/skill genuinely never was.
-			who := datalog.NewIdentity("person:alice")
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Set(who, datalog.NewKeyword(":person/name"), "Alice"))
-			_, err := tx.Commit()
-			require.NoError(t, err)
+					// One entity, written under a different attribute, so the entity
+					// exists and :person/skill genuinely never was.
+					who := datalog.NewIdentity("person:alice")
+					tx := db.NewTransaction()
+					require.NoError(t, tx.Set(who, datalog.NewKeyword(":person/name"), "Alice"))
+					_, err := tx.Commit()
+					require.NoError(t, err)
 
-			pattern := &query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Constant{Value: who},
-					query.Constant{Value: skill},
-					query.Constant{Value: []interface{}{}},
-				},
+					pattern := &query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Constant{Value: who},
+							query.Constant{Value: skill},
+							query.Constant{Value: []interface{}{}},
+						},
+					}
+
+					m := db.Matcher().(*PatternMatcher)
+					rel, err := m.matchUnboundAsRelation(nil, pattern, nil, nil)
+					require.NoError(t, err)
+					tuplesPerMode[mode.name] = drainRelation(t, rel)
+				})
 			}
 
-			m := db.Matcher().(*PatternMatcher)
-			rel, err := m.matchUnboundAsRelation(nil, pattern, nil, nil)
-			require.NoError(t, err)
-			tuplesPerMode[mode.name] = drainRelation(t, rel)
+			require.Equal(t, tuplesPerMode["cache_disabled"], tuplesPerMode["cache_enabled"],
+				"the cache is an optimization: a never-set vector attribute cannot match an "+
+					"empty-vector literal through one path and not the other (disabled=%d, enabled=%d)",
+				tuplesPerMode["cache_disabled"], tuplesPerMode["cache_enabled"])
 		})
 	}
-
-	require.Equal(t, tuplesPerMode["cache_disabled"], tuplesPerMode["cache_enabled"],
-		"the cache is an optimization: a never-set vector attribute cannot match an "+
-			"empty-vector literal through one path and not the other (disabled=%d, enabled=%d)",
-		tuplesPerMode["cache_disabled"], tuplesPerMode["cache_enabled"])
 }
 
 // TestCacheMatrix_ABoundViaSubquery tests when A is bound via a subquery result
@@ -1480,9 +1431,7 @@ func TestCacheMatrix_ABoundViaSubquery(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -1548,9 +1497,7 @@ func TestCacheMatrix_AsOfQuery(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -1601,9 +1548,7 @@ func TestCacheMatrix_SchemaAfterWrite(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					personID := datalog.NewIdentity("person-1")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -1671,9 +1616,7 @@ func TestCacheMatrix_AllUnbound(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{

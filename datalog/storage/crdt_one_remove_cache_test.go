@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -44,16 +43,11 @@ type PersonWithCity struct {
 	City *string          `datalog:"person/city"`
 }
 
-// createRemoveCacheTestDB creates a DB with :person/name (one) and :person/city (one).
-// popts sets the database's default planner options (nil = defaults).
-func createCacheRemoveTestDB(t *testing.T, popts *planner.PlannerOptions) (*Database, func()) {
+// createCacheRemoveTestDB creates a DB on the mode's backend with
+// :person/name (one) and :person/city (one).
+func createCacheRemoveTestDB(t *testing.T, mode optimizerMode) *Database {
 	t.Helper()
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           dir,
-		PlannerOptions: popts,
-	})
-	require.NoError(t, err)
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 	s, err := schema.NewBuilder().
 		Attribute(":person/name").Type(schema.TypeString).One().Add().
@@ -62,7 +56,7 @@ func createCacheRemoveTestDB(t *testing.T, popts *planner.PlannerOptions) (*Data
 	require.NoError(t, err)
 	db.SetSchema(s)
 
-	return db, func() { db.Close() }
+	return db
 }
 
 func entityFromIdentity(identity datalog.Identity) Entity {
@@ -88,9 +82,7 @@ func TestEntityFromIdentityIgnoresInternedDisplayString(t *testing.T) {
 func TestCacheRemove_PullInto_RoundTrip(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -127,9 +119,7 @@ func TestCacheRemove_PullInto_RoundTrip(t *testing.T) {
 func TestCacheRemove_PullInto_AfterOverwrite(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -164,9 +154,7 @@ func TestCacheRemove_PullInto_AfterOverwrite(t *testing.T) {
 func TestCacheRemove_PullInto_ThenReAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -202,9 +190,7 @@ func TestCacheRemove_PullInto_ThenReAdd(t *testing.T) {
 func TestCacheRemove_PullInto_BeforeAnyAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -234,9 +220,7 @@ func TestCacheRemove_PullInto_BeforeAnyAdd(t *testing.T) {
 func TestCacheRemove_PullInto_VIsIrrelevant(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -266,9 +250,7 @@ func TestCacheRemove_PullInto_VIsIrrelevant(t *testing.T) {
 func TestCacheRemove_PullInto_MultipleEntities(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e1 := datalog.NewIdentity("alice")
 			e2 := datalog.NewIdentity("bob")
@@ -309,9 +291,7 @@ func TestCacheRemove_PullInto_MultipleEntities(t *testing.T) {
 func TestCacheRemove_Pull_RoundTrip(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -358,9 +338,7 @@ func TestCacheRemove_Pull_RoundTrip(t *testing.T) {
 func TestCacheRemove_JoinBoundE_RoundTrip(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 
@@ -399,9 +377,7 @@ func TestCacheRemove_JoinBoundE_RoundTrip(t *testing.T) {
 func TestCacheRemove_JoinBoundE_ThenReAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 
@@ -438,9 +414,7 @@ func TestCacheRemove_JoinBoundE_ThenReAdd(t *testing.T) {
 func TestCacheRemove_JoinBoundE_MultipleEntities(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e1 := datalog.NewIdentity("alice")
 			e2 := datalog.NewIdentity("bob")
@@ -477,9 +451,7 @@ func TestCacheRemove_JoinBoundE_MultipleEntities(t *testing.T) {
 func TestCacheRemove_JoinBoundE_VIsIrrelevant(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 
@@ -516,85 +488,91 @@ func TestCacheRemove_JoinBoundE_VIsIrrelevant(t *testing.T) {
 
 // Cache Test 12: ResolveLWW returns nil after Remove
 func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Add
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Verify ResolveLWW returns value
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(db.Schema())
-	eStorage := entityFromIdentity(e)
-	var aStorage Attribute
-	copy(aStorage[:], a.String())
+			// Verify ResolveLWW returns value
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(db.Schema())
+			eStorage := entityFromIdentity(e)
+			var aStorage Attribute
+			copy(aStorage[:], a.String())
 
-	val, _, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
-	require.NoError(t, err)
-	assert.True(t, present, "precondition: the (E, A) carries datoms")
-	assert.Equal(t, "Alice", val, "precondition: ResolveLWW should return value")
+			val, _, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
+			require.NoError(t, err)
+			assert.True(t, present, "precondition: the (E, A) carries datoms")
+			assert.Equal(t, "Alice", val, "precondition: ResolveLWW should return value")
 
-	// Remove
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// ResolveLWW should return nil after Remove
-	val, _, present, err = matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
-	require.NoError(t, err)
-	assert.True(t, present,
-		"a tombstone is a datom: the (E, A) stays present and holds no value")
-	assert.Nil(t, val,
-		"BUG: ResolveLWW returns value after Remove(). "+
-			"Expected nil, got %v. Does not check datom.Op.", val)
+			// ResolveLWW should return nil after Remove
+			val, _, present, err = matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
+			require.NoError(t, err)
+			assert.True(t, present,
+				"a tombstone is a datom: the (E, A) stays present and holds no value")
+			assert.Nil(t, val,
+				"BUG: ResolveLWW returns value after Remove(). "+
+					"Expected nil, got %v. Does not check datom.Op.", val)
+		})
+	}
 }
 
 // Cache Test 13: Cache rebuild after Remove returns nil
 func TestCacheRemove_CacheRebuild(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Add
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Remove
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Clear cache to force rebuild
-	db.Cache().Clear()
+			// Clear cache to force rebuild
+			db.Cache().Clear()
 
-	// Cache rebuild should reflect tombstone
-	eStorage := entityFromIdentity(e)
-	var aStorage Attribute
-	copy(aStorage[:], a.String())
-	key := CacheKey{E: eStorage, A: aStorage}
+			// Cache rebuild should reflect tombstone
+			eStorage := entityFromIdentity(e)
+			var aStorage Attribute
+			copy(aStorage[:], a.String())
+			key := CacheKey{E: eStorage, A: aStorage}
 
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(db.Schema())
-	entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
-	require.NoError(t, err)
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(db.Schema())
+			entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			require.NoError(t, err)
 
-	// Entry should either be nil or have nil OneValue
-	if entry != nil {
-		assert.Nil(t, entry.OneValue(),
-			"BUG: Cache rebuild returns value after Remove(). "+
-				"Expected nil OneValue, got %v", entry.OneValue())
+			// Entry should either be nil or have nil OneValue
+			if entry != nil {
+				assert.Nil(t, entry.OneValue(),
+					"BUG: Cache rebuild returns value after Remove(). "+
+						"Expected nil OneValue, got %v", entry.OneValue())
+			}
+		})
 	}
 }
 
@@ -611,9 +589,7 @@ func TestCacheRemove_CacheRebuild(t *testing.T) {
 func TestCacheRemove_StaleInvalidation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 
@@ -665,9 +641,7 @@ func TestCacheRemove_StaleInvalidation(t *testing.T) {
 func TestCacheRemove_PullInto_SetThenRemove(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -703,9 +677,7 @@ func TestCacheRemove_PullInto_SetThenRemove(t *testing.T) {
 func TestCacheRemove_JoinBoundE_SetThenRemove(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 
@@ -734,37 +706,40 @@ func TestCacheRemove_JoinBoundE_SetThenRemove(t *testing.T) {
 
 // Cache Test 17: Set() then Remove() via ResolveLWW direct
 func TestCacheRemove_ResolveLWW_SetThenRemove(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Set
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Set
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Remove
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// ResolveLWW → nil
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(db.Schema())
-	eStorage := entityFromIdentity(e)
-	var aStorage Attribute
-	copy(aStorage[:], a.String())
+			// ResolveLWW → nil
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(db.Schema())
+			eStorage := entityFromIdentity(e)
+			var aStorage Attribute
+			copy(aStorage[:], a.String())
 
-	val, _, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
-	require.NoError(t, err)
-	assert.True(t, present,
-		"a tombstone is a datom: the (E, A) stays present and holds no value")
-	assert.Nil(t, val,
-		"BUG: ResolveLWW returns value after Set() then Remove()")
+			val, _, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
+			require.NoError(t, err)
+			assert.True(t, present,
+				"a tombstone is a datom: the (E, A) stays present and holds no value")
+			assert.Nil(t, val,
+				"BUG: ResolveLWW returns value after Set() then Remove()")
+		})
+	}
 }
 
 // =============================================================================
@@ -775,9 +750,7 @@ func TestCacheRemove_ResolveLWW_SetThenRemove(t *testing.T) {
 func TestCacheRemove_JoinBoundE_AfterOverwrite(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 
@@ -814,9 +787,7 @@ func TestCacheRemove_JoinBoundE_AfterOverwrite(t *testing.T) {
 func TestCacheRemove_JoinBoundE_BeforeAnyAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 
@@ -854,38 +825,41 @@ func TestCacheRemove_JoinBoundE_BeforeAnyAdd(t *testing.T) {
 
 // Cache Test 20: After Remove, ResolveLWW returns (nil, non-zero ElementID, nil)
 func TestCacheRemove_ResolveLWW_ReturnsElementID(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Add
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Remove
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// ResolveLWW should return nil value but non-zero ElementID
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(db.Schema())
-	eStorage := entityFromIdentity(e)
-	var aStorage Attribute
-	copy(aStorage[:], a.String())
+			// ResolveLWW should return nil value but non-zero ElementID
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(db.Schema())
+			eStorage := entityFromIdentity(e)
+			var aStorage Attribute
+			copy(aStorage[:], a.String())
 
-	val, elemID, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
-	require.NoError(t, err, "ResolveLWW should not error after Remove")
-	assert.True(t, present,
-		"a tombstone is a datom: the (E, A) stays present and holds no value")
-	assert.Nil(t, val, "value should be nil after Remove")
-	assert.NotEqual(t, datalog.ElementID{}, elemID,
-		"ElementID should be non-zero after Remove — needed for cache freshness tracking")
+			val, elemID, present, err := matcher.ResolveLWW(eStorage, aStorage, DiscardIntake)
+			require.NoError(t, err, "ResolveLWW should not error after Remove")
+			assert.True(t, present,
+				"a tombstone is a datom: the (E, A) stays present and holds no value")
+			assert.Nil(t, val, "value should be nil after Remove")
+			assert.NotEqual(t, datalog.ElementID{}, elemID,
+				"ElementID should be non-zero after Remove — needed for cache freshness tracking")
+		})
+	}
 }
 
 // =============================================================================
@@ -895,9 +869,7 @@ func TestCacheRemove_ResolveLWW_ReturnsElementID(t *testing.T) {
 func TestCacheRemove_Pull_AfterOverwrite(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -928,9 +900,7 @@ func TestCacheRemove_Pull_AfterOverwrite(t *testing.T) {
 func TestCacheRemove_Pull_ThenReAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -960,9 +930,7 @@ func TestCacheRemove_Pull_ThenReAdd(t *testing.T) {
 func TestCacheRemove_Pull_BeforeAnyAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -987,9 +955,7 @@ func TestCacheRemove_Pull_BeforeAnyAdd(t *testing.T) {
 func TestCacheRemove_Pull_VIsIrrelevant(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -1015,9 +981,7 @@ func TestCacheRemove_Pull_VIsIrrelevant(t *testing.T) {
 func TestCacheRemove_Pull_MultipleEntities(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e1 := datalog.NewIdentity("alice")
 			e2 := datalog.NewIdentity("bob")
@@ -1049,9 +1013,7 @@ func TestCacheRemove_Pull_MultipleEntities(t *testing.T) {
 func TestCacheRemove_Pull_SetThenRemove(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -1102,123 +1064,138 @@ func resolveLWW(t *testing.T, db *Database, e datalog.Identity, a datalog.Keywor
 }
 
 func TestCacheRemove_ResolveLWW_AfterOverwrite(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Bob"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Bob"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Remove(e, a, "Bob"))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Remove(e, a, "Bob"))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	val, _ := resolveLWW(t, db, e, a)
-	assert.Nil(t, val, "ResolveLWW: should return nil after overwrite then Remove")
+			val, _ := resolveLWW(t, db, e, a)
+			assert.Nil(t, val, "ResolveLWW: should return nil after overwrite then Remove")
+		})
+	}
 }
 
 func TestCacheRemove_ResolveLWW_ThenReAdd(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Add(e, a, "Bob"))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Add(e, a, "Bob"))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	val, _ := resolveLWW(t, db, e, a)
-	assert.Equal(t, "Bob", val, "ResolveLWW: re-Add should win")
+			val, _ := resolveLWW(t, db, e, a)
+			assert.Equal(t, "Bob", val, "ResolveLWW: re-Add should win")
+		})
+	}
 }
 
 func TestCacheRemove_ResolveLWW_BeforeAnyAdd(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Remove(e, a, "phantom"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Remove(e, a, "phantom"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	val, _ := resolveLWW(t, db, e, a)
-	assert.Equal(t, "Alice", val, "ResolveLWW: Add should win over earlier Remove")
+			val, _ := resolveLWW(t, db, e, a)
+			assert.Equal(t, "Alice", val, "ResolveLWW: Add should win over earlier Remove")
+		})
+	}
 }
 
 func TestCacheRemove_ResolveLWW_VIsIrrelevant(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Bob"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Bob"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	val, _ := resolveLWW(t, db, e, a)
-	assert.Nil(t, val, "ResolveLWW: V is irrelevant for CardinalityOne Remove")
+			val, _ := resolveLWW(t, db, e, a)
+			assert.Nil(t, val, "ResolveLWW: V is irrelevant for CardinalityOne Remove")
+		})
+	}
 }
 
 func TestCacheRemove_ResolveLWW_MultipleEntities(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e1 := datalog.NewIdentity("alice")
-	e2 := datalog.NewIdentity("bob")
-	a := datalog.NewKeyword(":person/name")
+			e1 := datalog.NewIdentity("alice")
+			e2 := datalog.NewIdentity("bob")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e1, a, "Alice"))
-	require.NoError(t, tx.Add(e2, a, "Bob"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e1, a, "Alice"))
+			require.NoError(t, tx.Add(e2, a, "Bob"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e1, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e1, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	val1, _ := resolveLWW(t, db, e1, a)
-	assert.Nil(t, val1, "ResolveLWW: entity1 should be nil after Remove")
+			val1, _ := resolveLWW(t, db, e1, a)
+			assert.Nil(t, val1, "ResolveLWW: entity1 should be nil after Remove")
 
-	val2, _ := resolveLWW(t, db, e2, a)
-	assert.Equal(t, "Bob", val2, "ResolveLWW: entity2 should still have value")
+			val2, _ := resolveLWW(t, db, e2, a)
+			assert.Equal(t, "Bob", val2, "ResolveLWW: entity2 should still have value")
+		})
+	}
 }
 
 // =============================================================================
@@ -1244,144 +1221,162 @@ func cacheRebuildOneValue(t *testing.T, db *Database, e datalog.Identity, a data
 }
 
 func TestCacheRemove_CacheRebuild_AfterOverwrite(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Bob"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Bob"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Remove(e, a, "Bob"))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Remove(e, a, "Bob"))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	val := cacheRebuildOneValue(t, db, e, a)
-	assert.Nil(t, val, "Cache rebuild: should be nil after overwrite then Remove")
+			val := cacheRebuildOneValue(t, db, e, a)
+			assert.Nil(t, val, "Cache rebuild: should be nil after overwrite then Remove")
+		})
+	}
 }
 
 func TestCacheRemove_CacheRebuild_ThenReAdd(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Add(e, a, "Bob"))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Add(e, a, "Bob"))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	val := cacheRebuildOneValue(t, db, e, a)
-	assert.Equal(t, "Bob", val, "Cache rebuild: re-Add should win")
+			val := cacheRebuildOneValue(t, db, e, a)
+			assert.Equal(t, "Bob", val, "Cache rebuild: re-Add should win")
+		})
+	}
 }
 
 func TestCacheRemove_CacheRebuild_BeforeAnyAdd(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Remove(e, a, "phantom"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Remove(e, a, "phantom"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	val := cacheRebuildOneValue(t, db, e, a)
-	assert.Equal(t, "Alice", val, "Cache rebuild: Add should win over earlier Remove")
+			val := cacheRebuildOneValue(t, db, e, a)
+			assert.Equal(t, "Alice", val, "Cache rebuild: Add should win over earlier Remove")
+		})
+	}
 }
 
 func TestCacheRemove_CacheRebuild_VIsIrrelevant(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Bob"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Bob"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	val := cacheRebuildOneValue(t, db, e, a)
-	assert.Nil(t, val, "Cache rebuild: V is irrelevant for CardinalityOne Remove")
+			val := cacheRebuildOneValue(t, db, e, a)
+			assert.Nil(t, val, "Cache rebuild: V is irrelevant for CardinalityOne Remove")
+		})
+	}
 }
 
 func TestCacheRemove_CacheRebuild_MultipleEntities(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e1 := datalog.NewIdentity("alice")
-	e2 := datalog.NewIdentity("bob")
-	a := datalog.NewKeyword(":person/name")
+			e1 := datalog.NewIdentity("alice")
+			e2 := datalog.NewIdentity("bob")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e1, a, "Alice"))
-	require.NoError(t, tx.Add(e2, a, "Bob"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e1, a, "Alice"))
+			require.NoError(t, tx.Add(e2, a, "Bob"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e1, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e1, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	val1 := cacheRebuildOneValue(t, db, e1, a)
-	assert.Nil(t, val1, "Cache rebuild: entity1 should be nil after Remove")
+			val1 := cacheRebuildOneValue(t, db, e1, a)
+			assert.Nil(t, val1, "Cache rebuild: entity1 should be nil after Remove")
 
-	val2 := cacheRebuildOneValue(t, db, e2, a)
-	assert.Equal(t, "Bob", val2, "Cache rebuild: entity2 should still have value")
+			val2 := cacheRebuildOneValue(t, db, e2, a)
+			assert.Equal(t, "Bob", val2, "Cache rebuild: entity2 should still have value")
+		})
+	}
 }
 
 func TestCacheRemove_CacheRebuild_SetThenRemove(t *testing.T) {
-	db, cleanup := createCacheRemoveTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheRemoveTestDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	val := cacheRebuildOneValue(t, db, e, a)
-	assert.Nil(t, val, "Cache rebuild: should be nil after Set then Remove")
+			val := cacheRebuildOneValue(t, db, e, a)
+			assert.Nil(t, val, "Cache rebuild: should be nil after Set then Remove")
+		})
+	}
 }
 
 // =============================================================================
@@ -1399,9 +1394,7 @@ func warmCachePullIntoName(t *testing.T, db *Database, e datalog.Identity) *stri
 func TestCacheRemove_StaleInvalidation_AfterOverwrite(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -1436,9 +1429,7 @@ func TestCacheRemove_StaleInvalidation_AfterOverwrite(t *testing.T) {
 func TestCacheRemove_StaleInvalidation_ThenReAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -1475,9 +1466,7 @@ func TestCacheRemove_StaleInvalidation_ThenReAdd(t *testing.T) {
 func TestCacheRemove_StaleInvalidation_BeforeAnyAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -1508,9 +1497,7 @@ func TestCacheRemove_StaleInvalidation_BeforeAnyAdd(t *testing.T) {
 func TestCacheRemove_StaleInvalidation_VIsIrrelevant(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -1540,9 +1527,7 @@ func TestCacheRemove_StaleInvalidation_VIsIrrelevant(t *testing.T) {
 func TestCacheRemove_StaleInvalidation_MultipleEntities(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e1 := datalog.NewIdentity("alice")
 			e2 := datalog.NewIdentity("bob")
@@ -1579,9 +1564,7 @@ func TestCacheRemove_StaleInvalidation_MultipleEntities(t *testing.T) {
 func TestCacheRemove_StaleInvalidation_SetThenRemove(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCacheRemoveTestDB(t, &popts)
-			defer cleanup()
+			db := createCacheRemoveTestDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")

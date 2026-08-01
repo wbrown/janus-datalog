@@ -6,28 +6,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// createEntityResolveTestDB creates a test database with schema. popts sets
-// the database's default planner options (nil = default).
-func createEntityResolveTestDB(t *testing.T, popts *planner.PlannerOptions) (*Database, func()) {
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           dir,
-		PlannerOptions: popts,
-	})
-	require.NoError(t, err)
-	return db, func() { db.Close() }
+// createEntityResolveTestDB creates a test database on the mode's backend;
+// the schema is set per test.
+func createEntityResolveTestDB(t *testing.T, mode optimizerMode) *Database {
+	return createOptimizerModeDB(t, mode, DatabaseOptions{})
 }
 
 func TestResolveEntityAttributes_SingleAttribute(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createEntityResolveTestDB(t, &popts)
-			defer cleanup()
+			db := createEntityResolveTestDB(t, mode)
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -60,9 +51,7 @@ func TestResolveEntityAttributes_SingleAttribute(t *testing.T) {
 func TestResolveEntityAttributes_MultipleAttributes(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createEntityResolveTestDB(t, &popts)
-			defer cleanup()
+			db := createEntityResolveTestDB(t, mode)
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -107,9 +96,7 @@ func TestResolveEntityAttributes_MultipleAttributes(t *testing.T) {
 func TestResolveEntityAttributes_CardinalityMany(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createEntityResolveTestDB(t, &popts)
-			defer cleanup()
+			db := createEntityResolveTestDB(t, mode)
 
 			// Create schema with cardinality-many
 			s, err := schema.NewBuilder().
@@ -148,9 +135,7 @@ func TestResolveEntityAttributes_CardinalityMany(t *testing.T) {
 func TestResolveEntityAttributes_CardinalityVector(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createEntityResolveTestDB(t, &popts)
-			defer cleanup()
+			db := createEntityResolveTestDB(t, mode)
 
 			// Create schema with cardinality-vector
 			s, err := schema.NewBuilder().
@@ -188,9 +173,7 @@ func TestResolveEntityAttributes_CardinalityVector(t *testing.T) {
 func TestResolveEntityAttributes_LWWResolution(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createEntityResolveTestDB(t, &popts)
-			defer cleanup()
+			db := createEntityResolveTestDB(t, mode)
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -230,9 +213,7 @@ func TestResolveEntityAttributes_LWWResolution(t *testing.T) {
 func TestResolveEntityAttributes_MissingAttribute(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createEntityResolveTestDB(t, &popts)
-			defer cleanup()
+			db := createEntityResolveTestDB(t, mode)
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -271,9 +252,7 @@ func TestResolveEntityAttributes_MissingAttribute(t *testing.T) {
 func TestResolveEntityAttributes_UsesCachedEntries(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createEntityResolveTestDB(t, &popts)
-			defer cleanup()
+			db := createEntityResolveTestDB(t, mode)
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -312,9 +291,7 @@ func TestResolveEntityAttributes_UsesCachedEntries(t *testing.T) {
 func TestResolveEntityAttributes_NonexistentEntity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createEntityResolveTestDB(t, &popts)
-			defer cleanup()
+			db := createEntityResolveTestDB(t, mode)
 
 			// No data added
 			e1 := datalog.NewIdentity("nonexistent")

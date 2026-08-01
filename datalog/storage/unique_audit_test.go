@@ -30,7 +30,7 @@ import (
 func TestWildcardPull_UniqueFallback(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -93,7 +93,7 @@ func TestWildcardPull_UniqueFallback(t *testing.T) {
 func TestHistoryHandle_Pull_DoesNotApplyWalk(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -146,7 +146,7 @@ func TestHistoryHandle_Pull_DoesNotApplyWalk(t *testing.T) {
 func TestHistoryHandle_WildcardPull(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")

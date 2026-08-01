@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,13 +13,9 @@ import (
 
 // setupScanSharingTestDB creates a database with scenarios and tasks
 // for testing scan sharing across decorrelated subqueries.
-func setupScanSharingTestDB(t testing.TB) (*Database, func()) {
+func setupScanSharingTestDB(t testing.TB, mode optimizerMode) *Database {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "scan-sharing-test-*")
-	require.NoError(t, err)
-
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
-	require.NoError(t, err)
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 	tx := db.NewTransaction()
 
@@ -37,145 +32,144 @@ func setupScanSharingTestDB(t testing.TB) (*Database, func()) {
 		}
 	}
 
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	require.NoError(t, err)
 
-	cleanup := func() {
-		db.Close()
-		os.RemoveAll(dir)
-	}
-	return db, cleanup
+	return db
 }
 
 // TestScanSharing_DecorrelatedSubqueries verifies that two decorrelated
 // subqueries sharing [?t :task/root ?s] produce correct results with scan
 // sharing, and that the sharing annotation events fire.
 func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
-	db, cleanup := setupScanSharingTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupScanSharingTestDB(t, mode)
 
-	q := `[:find ?e ?count ?total
-	       :where [?e :entity/type :entity.type/scenario]
-	              (or-default [(q [:find (count ?t) (sum ?tok)
-	                       :in $ ?s
-	                       :where [?t :task/root ?s]
-	                              [?t :task/status :status/complete]
-	                              [(get-else $ ?t :task/token-count 0) ?tok]]
-	                      $ ?e) [[?count ?total]]]
-	                  [(ground [0 0]) [[?count ?total]]])]`
+			q := `[:find ?e ?count ?total
+			       :where [?e :entity/type :entity.type/scenario]
+			              (or-default [(q [:find (count ?t) (sum ?tok)
+			                       :in $ ?s
+			                       :where [?t :task/root ?s]
+			                              [?t :task/status :status/complete]
+			                              [(get-else $ ?t :task/token-count 0) ?tok]]
+			                      $ ?e) [[?count ?total]]]
+			                  [(ground [0 0]) [[?count ?total]]])]`
 
-	// Baseline without scan sharing
-	db.ClearPlanCache()
-	baselineOpts := DefaultPlannerOptions()
-	baselineOpts.EnableAlgebraOptimizer = true
-	baselineOpts.EnableScanSharing = false
-	baselineRel, err := db.queryUnderPlannerOptions(baselineOpts, q)
-	require.NoError(t, err)
-	baseline, err := executor.CollectTuples(baselineRel, nil)
-	require.NoError(t, err)
-	t.Logf("Baseline: %d results", len(baseline))
+			// Baseline without scan sharing
+			db.ClearPlanCache()
+			baselineOpts := mode.plannerOptions()
+			baselineOpts.EnableScanSharing = false
+			baselineRel, err := db.queryUnderPlannerOptions(baselineOpts, q)
+			require.NoError(t, err)
+			baseline, err := executor.CollectTuples(baselineRel, nil)
+			require.NoError(t, err)
+			t.Logf("Baseline: %d results", len(baseline))
 
-	// With scan sharing
-	db.ClearPlanCache()
-	var sharingEvents []annotations.Event
-	sharingOpts := DefaultPlannerOptions()
-	sharingOpts.EnableAlgebraOptimizer = true
-	sharingOpts.EnableScanSharing = true
-	sharingOpts.Handler = func(e annotations.Event) {
-		if e.Name == annotations.ScanSharingCacheHit || e.Name == annotations.ScanSharingCacheMiss {
-			sharingEvents = append(sharingEvents, e)
-		}
-	}
-	sharingRel, err := db.queryUnderPlannerOptions(sharingOpts, q)
-	require.NoError(t, err)
-	sharing, err := executor.CollectTuples(sharingRel, nil)
-	require.NoError(t, err)
-	t.Logf("Sharing: %d results", len(sharing))
+			// With scan sharing
+			db.ClearPlanCache()
+			var sharingEvents []annotations.Event
+			sharingOpts := mode.plannerOptions()
+			sharingOpts.EnableScanSharing = true
+			sharingOpts.Handler = func(e annotations.Event) {
+				if e.Name == annotations.ScanSharingCacheHit || e.Name == annotations.ScanSharingCacheMiss {
+					sharingEvents = append(sharingEvents, e)
+				}
+			}
+			sharingRel, err := db.queryUnderPlannerOptions(sharingOpts, q)
+			require.NoError(t, err)
+			sharing, err := executor.CollectTuples(sharingRel, nil)
+			require.NoError(t, err)
+			t.Logf("Sharing: %d results", len(sharing))
 
-	// Correctness: same result count
-	assert.Equal(t, len(baseline), len(sharing), "scan sharing should produce same result count")
+			// Correctness: same result count
+			assert.Equal(t, len(baseline), len(sharing), "scan sharing should produce same result count")
 
-	// Sharing events should include at least one cache hit
-	t.Logf("Sharing events: %d", len(sharingEvents))
-	for _, e := range sharingEvents {
-		t.Logf("  [%s] %v", e.Name, e.Data)
+			t.Logf("Sharing events: %d", len(sharingEvents))
+			for _, e := range sharingEvents {
+				t.Logf("  [%s] %v", e.Name, e.Data)
+			}
+		})
 	}
 }
 
 // TestScanSharing_CorrectnessDifferential runs the same query with and
 // without scan sharing and asserts identical result sets.
 func TestScanSharing_CorrectnessDifferential(t *testing.T) {
-	db, cleanup := setupScanSharingTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupScanSharingTestDB(t, mode)
 
-	q := `[:find ?e ?count
-	       :where [?e :entity/type :entity.type/scenario]
-	              (or-default [(q [:find (count ?t)
-	                       :in $ ?s
-	                       :where [?t :task/root ?s]
-	                              [?t :task/status :status/complete]]
-	                      $ ?e) [[?count]]]
-	                  [(ground 0) ?count])]`
+			q := `[:find ?e ?count
+			       :where [?e :entity/type :entity.type/scenario]
+			              (or-default [(q [:find (count ?t)
+			                       :in $ ?s
+			                       :where [?t :task/root ?s]
+			                              [?t :task/status :status/complete]]
+			                      $ ?e) [[?count]]]
+			                  [(ground 0) ?count])]`
 
-	db.ClearPlanCache()
-	offOpts := DefaultPlannerOptions()
-	offOpts.EnableAlgebraOptimizer = true
-	offOpts.EnableScanSharing = false
-	offRel, err := db.queryUnderPlannerOptions(offOpts, q)
-	require.NoError(t, err)
-	offResults, err := executor.CollectTuples(offRel, nil)
-	require.NoError(t, err)
+			db.ClearPlanCache()
+			offOpts := mode.plannerOptions()
+			offOpts.EnableScanSharing = false
+			offRel, err := db.queryUnderPlannerOptions(offOpts, q)
+			require.NoError(t, err)
+			offResults, err := executor.CollectTuples(offRel, nil)
+			require.NoError(t, err)
 
-	db.ClearPlanCache()
-	onOpts := DefaultPlannerOptions()
-	onOpts.EnableAlgebraOptimizer = true
-	onOpts.EnableScanSharing = true
-	onRel, err := db.queryUnderPlannerOptions(onOpts, q)
-	require.NoError(t, err)
-	onResults, err := executor.CollectTuples(onRel, nil)
-	require.NoError(t, err)
+			db.ClearPlanCache()
+			onOpts := mode.plannerOptions()
+			onOpts.EnableScanSharing = true
+			onRel, err := db.queryUnderPlannerOptions(onOpts, q)
+			require.NoError(t, err)
+			onResults, err := executor.CollectTuples(onRel, nil)
+			require.NoError(t, err)
 
-	assert.Equal(t, len(offResults), len(onResults),
-		"scan sharing on/off should produce identical result count")
+			assert.Equal(t, len(offResults), len(onResults),
+				"scan sharing on/off should produce identical result count")
 
-	// Verify each scenario has 50 completed tasks
-	for _, r := range onResults {
-		t.Logf("  %v: count=%v", r[0], r[1])
-		assert.Equal(t, int64(50), r[1], "each scenario should have 50 tasks")
+			// Verify each scenario has 50 completed tasks
+			for _, r := range onResults {
+				t.Logf("  %v: count=%v", r[0], r[1])
+				assert.Equal(t, int64(50), r[1], "each scenario should have 50 tasks")
+			}
+		})
 	}
 }
 
 // TestScanSharing_DisabledByDefault verifies that EnableScanSharing=false
 // means no scan registry is created and behavior is unchanged.
 func TestScanSharing_DisabledByDefault(t *testing.T) {
-	db, cleanup := setupScanSharingTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupScanSharingTestDB(t, mode)
 
-	q := `[:find ?e ?count
-	       :where [?e :entity/type :entity.type/scenario]
-	              (or-default [(q [:find (count ?t)
-	                       :in $ ?s
-	                       :where [?t :task/root ?s]
-	                              [?t :task/status :status/complete]]
-	                      $ ?e) [[?count]]]
-	                  [(ground 0) ?count])]`
+			q := `[:find ?e ?count
+			       :where [?e :entity/type :entity.type/scenario]
+			              (or-default [(q [:find (count ?t)
+			                       :in $ ?s
+			                       :where [?t :task/root ?s]
+			                              [?t :task/status :status/complete]]
+			                      $ ?e) [[?count]]]
+			                  [(ground 0) ?count])]`
 
-	var sharingEvents int
+			var sharingEvents int
 
-	db.ClearPlanCache()
-	opts := DefaultPlannerOptions()
-	opts.EnableAlgebraOptimizer = true
-	opts.EnableScanSharing = false
-	opts.Handler = func(e annotations.Event) {
-		if e.Name == annotations.ScanSharingCacheHit || e.Name == annotations.ScanSharingCacheMiss {
-			sharingEvents++
-		}
+			db.ClearPlanCache()
+			opts := mode.plannerOptions()
+			opts.EnableScanSharing = false
+			opts.Handler = func(e annotations.Event) {
+				if e.Name == annotations.ScanSharingCacheHit || e.Name == annotations.ScanSharingCacheMiss {
+					sharingEvents++
+				}
+			}
+			rel, err := db.queryUnderPlannerOptions(opts, q)
+			require.NoError(t, err)
+			results, err := executor.CollectTuples(rel, nil)
+			require.NoError(t, err)
+
+			assert.Equal(t, 5, len(results))
+			assert.Equal(t, 0, sharingEvents, "no scan-sharing events when disabled")
+		})
 	}
-	rel, err := db.queryUnderPlannerOptions(opts, q)
-	require.NoError(t, err)
-	results, err := executor.CollectTuples(rel, nil)
-	require.NoError(t, err)
-
-	assert.Equal(t, 5, len(results))
-	assert.Equal(t, 0, sharingEvents, "no scan-sharing events when disabled")
 }

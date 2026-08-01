@@ -169,7 +169,7 @@ func TestChooseIndex_ABoundPlusTxBound_PicksATEV(t *testing.T) {
 	}
 	// The assertions below are about the byte range the bound addresses, so
 	// they render it the way this store's keys are encoded.
-	run, err := matcher.encoder.EncodeScanBound(bound)
+	run, err := matcher.store.Encoder().EncodeScanBound(bound)
 	start := run.Start
 	end := run.End
 	if err != nil {

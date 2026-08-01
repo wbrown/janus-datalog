@@ -19,10 +19,12 @@ func TestJoinCopyAnnotationE2E(t *testing.T) {
 			// builds is constructed with it.
 			var events []annotations.Event
 			recording := false
-			db := createOptimizerModeDB(t, mode, func(e annotations.Event) {
-				if recording {
-					events = append(events, e)
-				}
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+				AnnotationHandler: func(e annotations.Event) {
+					if recording {
+						events = append(events, e)
+					}
+				},
 			})
 
 			// Add some entities with relationships that will require joins

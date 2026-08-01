@@ -45,7 +45,7 @@ func notSpanningFixture(t *testing.T, d *Database) (flagged, unflagged, otherFla
 func TestNotSpanningDisjointGroups(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -71,7 +71,7 @@ func TestNotSpanningDisjointGroups(t *testing.T) {
 func TestNotJoinSpanningDisjointGroups(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -98,7 +98,7 @@ func TestNotJoinSpanningDisjointGroups(t *testing.T) {
 func TestNotBodyConsumesInBoundParameter(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -142,7 +142,7 @@ func notSpanningExpected(unflagged, otherFlag datalog.Identity) map[string]bool 
 func TestNotJoinDeclaredEnvHeaderPatternProvided(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -167,7 +167,7 @@ func TestNotJoinDeclaredEnvHeaderPatternProvided(t *testing.T) {
 func TestNotJoinDeclaredEnvHeaderPredicateConsumed(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -193,7 +193,7 @@ func TestNotJoinDeclaredEnvHeaderPredicateConsumed(t *testing.T) {
 func TestNotBodyPredicateConsumesInBoundParameter(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -219,7 +219,7 @@ func TestNotBodyPredicateConsumesInBoundParameter(t *testing.T) {
 func TestNotJoinOmittedHeaderBodyProvidesInBoundParameter(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -245,7 +245,7 @@ func TestNotJoinOmittedHeaderBodyProvidesInBoundParameter(t *testing.T) {
 func TestNotJoinOmittedHeaderPredicateConsumptionRejected(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			notSpanningFixture(t, d)
 
 			_, err := d.Query(`[:find ?e
@@ -273,7 +273,7 @@ func TestNotJoinOmittedHeaderPredicateConsumptionRejected(t *testing.T) {
 func TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			notSpanningFixture(t, d)
 
 			_, err := d.Query(`[:find ?e
@@ -296,7 +296,7 @@ func TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors(t *testing.T) {
 func TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			notSpanningFixture(t, d)
 
 			_, err := d.Query(`[:find ?e
@@ -318,7 +318,7 @@ func TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors(t *testing.T) {
 func TestNotJoinHeaderSymbolBoundNowhereErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			notSpanningFixture(t, d)
 
 			_, err := d.Query(`[:find ?e
@@ -341,7 +341,7 @@ func TestNotJoinHeaderSymbolBoundNowhereErrors(t *testing.T) {
 func TestNotBodyPredicateConsumesUnboundSymbolErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			notSpanningFixture(t, d)
 
 			_, err := d.Query(`[:find ?e
@@ -383,7 +383,7 @@ func collectEntityFlagResults(t *testing.T, rel executor.Relation) map[string]bo
 func TestNotJoinDeclaredEnvHeaderCollectionInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			flagged, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e ?flag
@@ -414,7 +414,7 @@ func TestNotJoinDeclaredEnvHeaderCollectionInput(t *testing.T) {
 func TestNotJoinScalarEnvWithCollectionDataInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
@@ -439,7 +439,7 @@ func TestNotJoinScalarEnvWithCollectionDataInput(t *testing.T) {
 func TestNotJoinScalarEnvWithRelationInputIteration(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, unflagged, otherFlag := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e

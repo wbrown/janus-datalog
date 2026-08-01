@@ -880,6 +880,16 @@ EDN tradeoffs:
 - Audit in-tree `Transaction.Retract` callers (including the reflect
   `SaveStruct` replace path) before removing the public method.
 - Tier-3 blob writes join `ApplyEnvelope`'s atomic storage transaction.
+- Decide whether `BUG_V_PAYLOAD_NOT_PREFIX_FREE` rides this break. The V payload
+  carries no length or terminator, so wherever a component follows V the byte
+  order of two keys with prefix-related payloads is decided by the next
+  component's first byte rather than by the values — `"abc"` sorts after
+  `"abcd"`. It is not a wrong-answer bug (scans over-cover and `runMembership`
+  filters them, never under-cover), and it is out of scope for the typed-memory
+  swap, whose proof needs the encoder fixed. It belongs here or nowhere: this is
+  the break that already versions the storage format, so an order-preserving
+  escape of the payload costs no additional migration, and taking it deletes
+  `runMembership` and the over-scan it compensates for.
 
 ## Verification
 

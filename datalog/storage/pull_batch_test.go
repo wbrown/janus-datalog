@@ -27,15 +27,10 @@ func TestResolveAllAttributesManyPreservesWildcardSemantics(t *testing.T) {
 						Attribute(":person/missing").Type(schema.TypeString).One().Add().
 						Build()
 					require.NoError(t, err)
-					popts := mode.plannerOptions()
-					db, err := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						Schema:         s,
-						DisableCache:   disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, mode, DatabaseOptions{
+						Schema:       s,
+						DisableCache: disableCache,
 					})
-					require.NoError(t, err)
-					defer db.Close()
 
 					name := datalog.NewKeyword(":person/name")
 					tags := datalog.NewKeyword(":person/tags")
@@ -205,15 +200,10 @@ func TestResolveAllAttributesManyKeepsExplicitlyClearedVector(t *testing.T) {
 						Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
 						Build()
 					require.NoError(t, err)
-					popts := mode.plannerOptions()
-					db, err := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						Schema:         s,
-						DisableCache:   disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, mode, DatabaseOptions{
+						Schema:       s,
+						DisableCache: disableCache,
 					})
-					require.NoError(t, err)
-					defer db.Close()
 
 					entity := datalog.NewIdentity("batch-cleared-vector")
 					neverSet := datalog.NewIdentity("batch-never-set-vector")
@@ -259,15 +249,10 @@ func TestResolveAllAttributesManyDifferential(t *testing.T) {
 						Attribute(":person/missing").Type(schema.TypeString).One().Add().
 						Build()
 					require.NoError(t, err)
-					popts := mode.plannerOptions()
-					db, err := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						Schema:         s,
-						DisableCache:   disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, mode, DatabaseOptions{
+						Schema:       s,
+						DisableCache: disableCache,
 					})
-					require.NoError(t, err)
-					defer db.Close()
 
 					name := datalog.NewKeyword(":person/name")
 					tags := datalog.NewKeyword(":person/tags")
@@ -335,7 +320,7 @@ func TestResolveAllAttributesManyDifferential(t *testing.T) {
 func TestResolveAllAttributesManyHistoryMatchesPerEntity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			entity := datalog.NewIdentity("batch-history")
 			name := datalog.NewKeyword(":person/name")

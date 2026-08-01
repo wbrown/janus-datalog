@@ -37,7 +37,7 @@ func snapTestHistoryNames(t *testing.T, d *Database) []string {
 func TestSnapshotCaptureAndAsOf(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			snapTestAddName(t, d, "alice", "Alice")
 
@@ -62,7 +62,7 @@ func TestSnapshotCaptureAndAsOf(t *testing.T) {
 func TestSnapshotEmptyDatabase(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			snap, err := d.Snapshot("empty")
 			require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestDeleteSnapshot(t *testing.T) {
 func TestTruncateToRemovesLaterWrites(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			snapTestAddName(t, d, "alice", "Alice")
 			_, err := d.Snapshot("cp1")
@@ -168,7 +168,7 @@ func TestTruncateToRemovesLaterWrites(t *testing.T) {
 func TestTruncateToResumesClockWithoutCollision(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			snapTestAddName(t, d, "alice", "Alice")
 			_, err := d.Snapshot("cp1")
@@ -212,7 +212,7 @@ func TestTruncateToPrunesLaterSnapshots(t *testing.T) {
 func TestTruncateToLatestIsNoop(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			snapTestAddName(t, d, "alice", "Alice")
 			_, err := d.Snapshot("cp1")
@@ -232,7 +232,7 @@ func TestTruncateToLatestIsNoop(t *testing.T) {
 func TestTruncateThenSnapshotRewoundTimeline(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			snapTestAddName(t, d, "alice", "Alice")
 			_, err := d.Snapshot("cp1")
@@ -285,7 +285,7 @@ func TestAsOfSnapshotRejectsWrites(t *testing.T) {
 func TestStoreDatomsAfterDeleteAndMaxTxForEntity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, nil)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			snapTestAddName(t, d, "alice", "Alice")
 			mid, err := d.store.MaxElementID()

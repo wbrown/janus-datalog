@@ -51,7 +51,7 @@ func TestWritesRejectNaN(t *testing.T) {
 func TestInputsRejectNaN(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			e := datalog.NewIdentity("m:1")
 			attr := datalog.NewKeyword(":m/value")
@@ -78,7 +78,7 @@ func TestInputsRejectNaN(t *testing.T) {
 func TestExpressionProducingNaNIsError(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Division by zero already errors in the expression layer (a stricter,
 			// pre-existing contract than IEEE), so the NaN-producing shape that can
@@ -128,7 +128,7 @@ func TestExpressionProducingNaNIsError(t *testing.T) {
 func TestConstantExpressionProducingNaNIsError(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			e := datalog.NewIdentity("m:1")
 			attr := datalog.NewKeyword(":m/value")

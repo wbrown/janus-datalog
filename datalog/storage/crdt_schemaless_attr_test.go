@@ -32,9 +32,7 @@ func TestSchemalessAttrBoundQuery_BugRepro(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					// Create schema with some attributes, but NOT :module/input
 					s, err := schema.NewBuilder().
@@ -78,9 +76,7 @@ func TestSchemalessAttrUnboundQuery_BugRepro(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					// Create schema with some attributes, but NOT :test/data
 					s, err := schema.NewBuilder().
@@ -133,9 +129,7 @@ func TestSchemalessAttrMultipleWrites(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					// Schema exists but :test/counter is not registered
 					s, err := schema.NewBuilder().
@@ -208,9 +202,7 @@ func TestSchemalessRemove_RoundTrip(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					// Schema exists but :test/data is not registered
 					s, err := schema.NewBuilder().
@@ -276,9 +268,7 @@ func TestSchemalessRemove_ThenReAdd(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					// No schema at all — fully schemaless
 					entityID := datalog.NewIdentity("test-entity")
@@ -324,9 +314,7 @@ func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, cleanup := createCacheTestDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
 
 					// Schema with many attributes, but NOT :unregistered/attr
 					s, err := schema.NewBuilder().
@@ -400,65 +388,68 @@ func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 
 // Test 14: Nil-schema matcher can read data written with schema
 func TestNilSchemaMatcher_ReadsSchemaData(t *testing.T) {
-	db, cleanup := createCacheTestDB(t, false, nil)
-	defer cleanup()
+	for _, omode := range optimizerModes {
+		t.Run(omode.name, func(t *testing.T) {
+			db := createCacheTestDB(t, omode, false, nil)
 
-	// Set up schema with CardinalityOne attribute
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Set up schema with CardinalityOne attribute
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Write via schema-aware tx.Add() — writes OpNone
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Write via schema-aware tx.Add() — writes OpNone
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Overwrite — still OpNone, higher Tx
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Bob"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Overwrite — still OpNone, higher Tx
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Bob"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Create matcher WITHOUT schema
-	matcher := NewPatternMatcher(db.Store())
-	// Deliberately NOT calling matcher.SetSchema()
+			// Create matcher WITHOUT schema
+			matcher := NewPatternMatcher(db.Store())
+			// Deliberately NOT calling matcher.SetSchema()
 
-	// Query through nil-schema matcher using a DataPattern
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Constant{Value: e},
-			query.Constant{Value: a},
-			query.Variable{Name: datalog.NewSymbol("?v")},
-			query.Blank{},
-		},
+			// Query through nil-schema matcher using a DataPattern
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: e},
+					query.Constant{Value: a},
+					query.Variable{Name: datalog.NewSymbol("?v")},
+					query.Blank{},
+				},
+			}
+
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			require.NoError(t, err)
+
+			// Should return data — CRDTResolvingIterator with nil schema defaults to
+			// CardinalityOne. OpNone datoms are valid CardinalityOne assertions.
+			// First entry (highest Tx) = "Bob". Should return exactly 1 result.
+			count := 0
+			var lastValue any
+			iter := results.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				if len(tuple) > 0 {
+					lastValue = tuple[0]
+				}
+				count++
+			}
+			iter.Close()
+
+			require.Equal(t, 1, count,
+				"nil-schema matcher should return exactly 1 result (CardinalityOne default, LWW)")
+			assert.Equal(t, "Bob", lastValue,
+				"nil-schema matcher should return latest value (Bob)")
+		})
 	}
-
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	require.NoError(t, err)
-
-	// Should return data — CRDTResolvingIterator with nil schema defaults to
-	// CardinalityOne. OpNone datoms are valid CardinalityOne assertions.
-	// First entry (highest Tx) = "Bob". Should return exactly 1 result.
-	count := 0
-	var lastValue any
-	iter := results.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		if len(tuple) > 0 {
-			lastValue = tuple[0]
-		}
-		count++
-	}
-	iter.Close()
-
-	require.Equal(t, 1, count,
-		"nil-schema matcher should return exactly 1 result (CardinalityOne default, LWW)")
-	assert.Equal(t, "Bob", lastValue,
-		"nil-schema matcher should return latest value (Bob)")
 }

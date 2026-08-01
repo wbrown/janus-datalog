@@ -18,109 +18,115 @@ import (
 // to always return the current (latest) content instead of the
 // historical content at the requested ElementID.
 func TestAsOfVectorResolution(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheIntegrationTestDatabase(t, mode)
 
-	// Schema: a vector attribute (like task/content)
-	s, err := schema.NewBuilder().
-		Attribute(":doc/content").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Schema: a vector attribute (like task/content)
+			s, err := schema.NewBuilder().
+				Attribute(":doc/content").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	contentAttr := datalog.NewKeyword(":doc/content")
-	entity := datalog.NewIdentity("doc1")
+			contentAttr := datalog.NewKeyword(":doc/content")
+			entity := datalog.NewIdentity("doc1")
 
-	// Transaction 1: Write original content as a vector
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(entity, contentAttr, "Original line one."))
-	require.NoError(t, tx1.Add(entity, contentAttr, "Original line two."))
-	tx1ID, err := tx1.Commit()
-	require.NoError(t, err)
-	require.NotEqual(t, datalog.ElementID{}, tx1ID)
+			// Transaction 1: Write original content as a vector
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(entity, contentAttr, "Original line one."))
+			require.NoError(t, tx1.Add(entity, contentAttr, "Original line two."))
+			tx1ID, err := tx1.Commit()
+			require.NoError(t, err)
+			require.NotEqual(t, datalog.ElementID{}, tx1ID)
 
-	// Verify current content is the original
-	matcher1 := db.Matcher().(*PatternMatcher)
-	val1, found := requireAttributeLookup(t, matcher1, entity, contentAttr)
-	require.True(t, found)
-	require.Equal(t, []string{"Original line one.", "Original line two."}, val1)
+			// Verify current content is the original
+			matcher1 := db.Matcher().(*PatternMatcher)
+			val1, found := requireAttributeLookup(t, matcher1, entity, contentAttr)
+			require.True(t, found)
+			require.Equal(t, []string{"Original line one.", "Original line two."}, val1)
 
-	// Transaction 2: Replace the content with Set (tombstones old + inserts new)
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(entity, contentAttr, []interface{}{"Updated content after re-run."}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Transaction 2: Replace the content with Set (tombstones old + inserts new)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(entity, contentAttr, []interface{}{"Updated content after re-run."}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Verify current content is updated
-	matcher2 := db.Matcher().(*PatternMatcher)
-	val2, found := requireAttributeLookup(t, matcher2, entity, contentAttr)
-	require.True(t, found)
-	require.Len(t, val2, 1, "current content should have 1 element")
-	assert.Equal(t, "Updated content after re-run.", val2.([]string)[0],
-		"current content should be the updated version")
+			// Verify current content is updated
+			matcher2 := db.Matcher().(*PatternMatcher)
+			val2, found := requireAttributeLookup(t, matcher2, entity, contentAttr)
+			require.True(t, found)
+			require.Len(t, val2, 1, "current content should have 1 element")
+			assert.Equal(t, "Updated content after re-run.", val2.([]string)[0],
+				"current content should be the updated version")
 
-	// AsOf tx1: should see the ORIGINAL content, not the update
-	asOfMatcher := db.AsOf(tx1ID).Matcher().(*PatternMatcher)
-	asOfVal, found := requireAttributeLookup(t, asOfMatcher, entity, contentAttr)
-	require.True(t, found, "entity should have content as-of tx1")
-	assert.Equal(t, []string{"Original line one.", "Original line two."}, asOfVal,
-		"as-of query should return historical vector content, not current")
+			// AsOf tx1: should see the ORIGINAL content, not the update
+			asOfMatcher := db.AsOf(tx1ID).Matcher().(*PatternMatcher)
+			asOfVal, found := requireAttributeLookup(t, asOfMatcher, entity, contentAttr)
+			require.True(t, found, "entity should have content as-of tx1")
+			assert.Equal(t, []string{"Original line one.", "Original line two."}, asOfVal,
+				"as-of query should return historical vector content, not current")
+		})
+	}
 }
 
 // TestAsOfVectorResolution_AddOnly verifies AsOf works when elements
 // are only appended (no tombstoning). Elements added after the cutoff
 // should not appear.
 func TestAsOfVectorResolution_AddOnly(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheIntegrationTestDatabase(t, mode)
 
-	s, err := schema.NewBuilder().
-		Attribute(":log/entries").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			s, err := schema.NewBuilder().
+				Attribute(":log/entries").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	logAttr := datalog.NewKeyword(":log/entries")
-	entity := datalog.NewIdentity("log1")
+			logAttr := datalog.NewKeyword(":log/entries")
+			entity := datalog.NewIdentity("log1")
 
-	// Transaction 1: Two entries
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(entity, logAttr, "Entry A"))
-	require.NoError(t, tx1.Add(entity, logAttr, "Entry B"))
-	tx1ID, err := tx1.Commit()
-	require.NoError(t, err)
+			// Transaction 1: Two entries
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(entity, logAttr, "Entry A"))
+			require.NoError(t, tx1.Add(entity, logAttr, "Entry B"))
+			tx1ID, err := tx1.Commit()
+			require.NoError(t, err)
 
-	// Transaction 2: Append a third entry
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(entity, logAttr, "Entry C"))
-	tx2ID, err := tx2.Commit()
-	require.NoError(t, err)
+			// Transaction 2: Append a third entry
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(entity, logAttr, "Entry C"))
+			tx2ID, err := tx2.Commit()
+			require.NoError(t, err)
 
-	// Transaction 3: Append a fourth entry
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Add(entity, logAttr, "Entry D"))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			// Transaction 3: Append a fourth entry
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Add(entity, logAttr, "Entry D"))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	// Current: all four entries
-	matcher := db.Matcher().(*PatternMatcher)
-	val, found := requireAttributeLookup(t, matcher, entity, logAttr)
-	require.True(t, found)
-	assert.Equal(t, []string{"Entry A", "Entry B", "Entry C", "Entry D"}, val)
+			// Current: all four entries
+			matcher := db.Matcher().(*PatternMatcher)
+			val, found := requireAttributeLookup(t, matcher, entity, logAttr)
+			require.True(t, found)
+			assert.Equal(t, []string{"Entry A", "Entry B", "Entry C", "Entry D"}, val)
 
-	// AsOf tx1: only the first two entries
-	asOf1 := db.AsOf(tx1ID).Matcher().(*PatternMatcher)
-	val1, found := requireAttributeLookup(t, asOf1, entity, logAttr)
-	require.True(t, found)
-	assert.Equal(t, []string{"Entry A", "Entry B"}, val1,
-		"as-of tx1 should show only entries from tx1")
+			// AsOf tx1: only the first two entries
+			asOf1 := db.AsOf(tx1ID).Matcher().(*PatternMatcher)
+			val1, found := requireAttributeLookup(t, asOf1, entity, logAttr)
+			require.True(t, found)
+			assert.Equal(t, []string{"Entry A", "Entry B"}, val1,
+				"as-of tx1 should show only entries from tx1")
 
-	// AsOf tx2: first three entries
-	asOf2 := db.AsOf(tx2ID).Matcher().(*PatternMatcher)
-	val2, found := requireAttributeLookup(t, asOf2, entity, logAttr)
-	require.True(t, found)
-	assert.Equal(t, []string{"Entry A", "Entry B", "Entry C"}, val2,
-		"as-of tx2 should show entries from tx1 and tx2")
+			// AsOf tx2: first three entries
+			asOf2 := db.AsOf(tx2ID).Matcher().(*PatternMatcher)
+			val2, found := requireAttributeLookup(t, asOf2, entity, logAttr)
+			require.True(t, found)
+			assert.Equal(t, []string{"Entry A", "Entry B", "Entry C"}, val2,
+				"as-of tx2 should show entries from tx1 and tx2")
+		})
+	}
 }
 
 // TestAsOfVectorResolution_PullInto verifies that PullInto on an AsOf
@@ -128,7 +134,7 @@ func TestAsOfVectorResolution_AddOnly(t *testing.T) {
 func TestAsOfVectorResolution_PullInto(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			s, err := schema.NewBuilder().
 				Attribute(":doc/content").Type(schema.TypeString).Vector().Add().

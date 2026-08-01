@@ -297,7 +297,7 @@ func TestIndexSelectionEventReportsBound(t *testing.T) {
 // both Badger-only and portable test files.
 func encodeScanBoundForTest(t *testing.T, m *PatternMatcher, bound ScanBound) (start, end []byte) {
 	t.Helper()
-	run, err := m.encoder.EncodeScanBound(bound)
+	run, err := m.store.Encoder().EncodeScanBound(bound)
 	if err != nil {
 		t.Fatalf("encode scan bound on %v: %v", bound.Index, err)
 	}

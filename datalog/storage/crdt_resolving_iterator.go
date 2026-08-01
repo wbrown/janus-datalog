@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -42,13 +43,14 @@ type CRDTResolvingIterator struct {
 	// declared Unique in the schema):
 	//   - uniqueMode: true if current group is a unique CardinalityOne
 	//     attribute and uniqueMatcher is non-nil.
-	//   - uniqueRetracted: value-byte key → highest Remove Tx seen within
-	//     the current (E, A) group. Used to skip Set entries that have
-	//     been cancelled by a later Remove.
+	//   - uniqueRetracted: value → highest Remove Tx seen within the current
+	//     (E, A) group. Used to skip Set entries that have been cancelled by
+	//     a later Remove. Nothing is deleted; the name collides with physical
+	//     deletion, see BUG_RETRACT_NAMES_TWO_OPPOSITE_OPERATIONS.
 	//   - uniqueEmitted: whether we have already emitted a value for the
 	//     current group (emit at most one).
 	uniqueMode      bool
-	uniqueRetracted map[string]datalog.ElementID
+	uniqueRetracted *executor.TupleKeyMap
 	uniqueEmitted   bool
 
 	// report accounts for the AVET supersession scans the unique walk opens,
@@ -291,7 +293,7 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 	switch it.card {
 	case schema.CardinalityOne:
 		if it.uniqueMode {
-			it.uniqueRetracted = make(map[string]datalog.ElementID)
+			it.uniqueRetracted = executor.NewTupleKeyMap()
 			it.uniqueEmitted = false
 		}
 	case schema.CardinalityMany:

@@ -447,13 +447,20 @@ func BenchmarkComplexQueryJoinMaterialization(b *testing.B) {
 	})
 }
 
-func benchmarkComplexQueryCheckpoint(b *testing.B, options *planner.PlannerOptions) {
-	const (
-		numScenarios     = 75
-		tasksPerScenario = 100
-		resultLimit      = 25
-	)
+// BenchmarkComplexQueryBackends runs the checkpoint query on every backend.
+// Separate from BenchmarkComplexQueryCheckpoint, whose name and shape are the
+// baseline several analyses in docs/perf compare against.
+func BenchmarkComplexQueryBackends(b *testing.B) {
+	for _, backend := range storeContractCases() {
+		b.Run(backend.name, func(b *testing.B) {
+			runComplexQueryCheckpoint(b, openContractDatabase(b, backend, DatabaseOptions{
+				Schema: optimizationMatrixSchema(),
+			}))
+		})
+	}
+}
 
+func benchmarkComplexQueryCheckpoint(b *testing.B, options *planner.PlannerOptions) {
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:           b.TempDir(),
 		Schema:         optimizationMatrixSchema(),
@@ -461,6 +468,16 @@ func benchmarkComplexQueryCheckpoint(b *testing.B, options *planner.PlannerOptio
 	})
 	require.NoError(b, err)
 	defer db.Close()
+
+	runComplexQueryCheckpoint(b, db)
+}
+
+func runComplexQueryCheckpoint(b *testing.B, db *Database) {
+	const (
+		numScenarios     = 75
+		tasksPerScenario = 100
+		resultLimit      = 25
+	)
 
 	populateOptimizationMatrix(b, db, numScenarios, tasksPerScenario)
 	queryText := optimizationMatrixQuery(resultLimit)

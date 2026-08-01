@@ -21,15 +21,13 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-func setupTemporalTestDB(t *testing.T) (*Database, datalog.ElementID, func()) {
-	dir := t.TempDir()
+func setupTemporalTestDB(t *testing.T, mode optimizerMode) (*Database, datalog.ElementID) {
 	s, err := schema.NewBuilder().
 		Attribute(":person/name").Type(schema.TypeString).One().Add().
 		Build()
 	require.NoError(t, err)
 
-	db, err := NewDatabaseWithSchema(dir, s)
-	require.NoError(t, err)
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 	alice := datalog.NewIdentity("alice")
 	nameAttr := datalog.NewKeyword(":person/name")
@@ -39,7 +37,7 @@ func setupTemporalTestDB(t *testing.T) (*Database, datalog.ElementID, func()) {
 	txID, err := tx.Commit()
 	require.NoError(t, err)
 
-	return db, txID, func() { db.Close() }
+	return db, txID
 }
 
 // TestTemporalHandle_NewTransaction_PanicsWithClearMessage verifies that
@@ -47,20 +45,23 @@ func setupTemporalTestDB(t *testing.T) (*Database, datalog.ElementID, func()) {
 // descriptive panic (not the opaque nil-map crash from before the fix).
 // Temporal handles are read-only views; writes are not meaningful.
 func TestTemporalHandle_NewTransaction_PanicsWithClearMessage(t *testing.T) {
-	db, txID, cleanup := setupTemporalTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, txID := setupTemporalTestDB(t, mode)
 
-	for _, tc := range []struct {
-		name   string
-		handle *Database
-	}{
-		{"AsOf", db.AsOf(txID)},
-		{"History", db.History()},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Panics(t, func() {
-				tc.handle.NewTransaction()
-			}, "NewTransaction on temporal handle should panic with a clear message")
+			for _, tc := range []struct {
+				name   string
+				handle *Database
+			}{
+				{"AsOf", db.AsOf(txID)},
+				{"History", db.History()},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					assert.Panics(t, func() {
+						tc.handle.NewTransaction()
+					}, "NewTransaction on temporal handle should panic with a clear message")
+				})
+			}
 		})
 	}
 }
@@ -69,22 +70,25 @@ func TestTemporalHandle_NewTransaction_PanicsWithClearMessage(t *testing.T) {
 // temporal handle does not close the shared underlying store. The parent
 // must remain usable after the child is closed.
 func TestTemporalHandle_Close_DoesNotCloseParent(t *testing.T) {
-	db, txID, cleanup := setupTemporalTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, txID := setupTemporalTestDB(t, mode)
 
-	// Close the temporal handle.
-	asOf := db.AsOf(txID)
-	err := asOf.Close()
-	require.NoError(t, err)
+			// Close the temporal handle.
+			asOf := db.AsOf(txID)
+			err := asOf.Close()
+			require.NoError(t, err)
 
-	// Parent should still be fully functional.
-	alice := datalog.NewIdentity("alice")
-	nameAttr := datalog.NewKeyword(":person/name")
+			// Parent should still be fully functional.
+			alice := datalog.NewIdentity("alice")
+			nameAttr := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(alice, nameAttr, "Alice2"))
-	_, err = tx.Commit()
-	assert.NoError(t, err, "parent should be usable after temporal handle Close()")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, nameAttr, "Alice2"))
+			_, err = tx.Commit()
+			assert.NoError(t, err, "parent should be usable after temporal handle Close()")
+		})
+	}
 }
 
 // TestTemporalHandle_NewExecutorWithOptions_UsesTemporalMode verifies that
@@ -93,33 +97,30 @@ func TestTemporalHandle_Close_DoesNotCloseParent(t *testing.T) {
 // NewExecutorWithOptions() bypassed d.Matcher() and created a bare matcher
 // without temporal filtering.
 func TestTemporalHandle_NewExecutorWithOptions_UsesTemporalMode(t *testing.T) {
-	dir := t.TempDir()
 	s, err := schema.NewBuilder().
 		Attribute(":person/name").Type(schema.TypeString).One().Add().
 		Build()
 	require.NoError(t, err)
 
-	db, err := NewDatabaseWithSchema(dir, s)
-	require.NoError(t, err)
-	defer db.Close()
-
-	alice := datalog.NewIdentity("alice")
-	nameAttr := datalog.NewKeyword(":person/name")
-
-	// Write "Alice" at tx1.
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Set(alice, nameAttr, "Alice"))
-	tx1ID, err := tx1.Commit()
-	require.NoError(t, err)
-
-	// Overwrite with "Alice2" at tx2.
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, nameAttr, "Alice2"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
+
+			alice := datalog.NewIdentity("alice")
+			nameAttr := datalog.NewKeyword(":person/name")
+
+			// Write "Alice" at tx1.
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Set(alice, nameAttr, "Alice"))
+			tx1ID, err := tx1.Commit()
+			require.NoError(t, err)
+
+			// Overwrite with "Alice2" at tx2.
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, nameAttr, "Alice2"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
+
 			// As-of tx1: should see "Alice", not "Alice2".
 			asOf := db.AsOf(tx1ID)
 			exec := asOf.NewExecutorWithOptions(mode.plannerOptions())
@@ -153,27 +154,24 @@ func TestTemporalHandle_NewExecutorWithOptions_UsesTemporalMode(t *testing.T) {
 // schema and cache to the matcher. Before the fix, it created a bare
 // matcher that treated all attributes as cardinality-one.
 func TestNewExecutorWithOptions_HasSchemaAndCache(t *testing.T) {
-	dir := t.TempDir()
 	s, err := schema.NewBuilder().
 		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 		Build()
 	require.NoError(t, err)
 
-	db, err := NewDatabaseWithSchema(dir, s)
-	require.NoError(t, err)
-	defer db.Close()
-
-	alice := datalog.NewIdentity("alice")
-	tagAttr := datalog.NewKeyword(":person/tags")
-
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, tagAttr, "admin"))
-	require.NoError(t, tx.Add(alice, tagAttr, "user"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
+
+			alice := datalog.NewIdentity("alice")
+			tagAttr := datalog.NewKeyword(":person/tags")
+
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(alice, tagAttr, "admin"))
+			require.NoError(t, tx.Add(alice, tagAttr, "user"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
 			// Query via NewExecutorWithOptions — should return both tags (add-wins).
 			// Before fix: bare matcher has no schema, treats :person/tags as
 			// cardinality-one, returns only the LWW winner (one tag).

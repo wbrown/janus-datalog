@@ -3,7 +3,6 @@ package storage
 import (
 	"testing"
 
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
@@ -25,15 +24,49 @@ import (
 // Plan of record: docs/wip/OPTIMIZER_MODE_MATRIX.md
 // =============================================================================
 
-// optimizerMode is one leg of the optimizer matrix.
+// optimizerMode is one leg of the matrix: a storage backend crossed with an
+// optimizer path. Backends come from AvailableBackends, so a backend this build
+// has is one every executing test on this axis runs against.
 type optimizerMode struct {
 	name    string
 	algebra bool
+	backend Backend
 }
 
-var optimizerModes = []optimizerMode{
-	{"algebra_on", true},
-	{"algebra_off", false},
+var optimizerModes = buildOptimizerModes()
+
+func buildOptimizerModes() []optimizerMode {
+	algebraLegs := []struct {
+		name string
+		on   bool
+	}{
+		{"algebra_on", true},
+		{"algebra_off", false},
+	}
+	backends := AvailableBackends()
+	modes := make([]optimizerMode, 0, len(backends)*len(algebraLegs))
+	for _, backend := range backends {
+		for _, algebra := range algebraLegs {
+			modes = append(modes, optimizerMode{
+				name:    backend.Name + "/" + algebra.name,
+				algebra: algebra.on,
+				backend: backend,
+			})
+		}
+	}
+	return modes
+}
+
+// pinnedOptimizerModes is the axis with one optimizer path fixed — still one
+// leg per backend, because pinning a plan shape does not pin a store.
+func pinnedOptimizerModes(algebra bool) []optimizerMode {
+	var modes []optimizerMode
+	for _, mode := range optimizerModes {
+		if mode.algebra == algebra {
+			modes = append(modes, mode)
+		}
+	}
+	return modes
 }
 
 // plannerOptions returns the default planner options with this mode applied.
@@ -43,19 +76,37 @@ func (m optimizerMode) plannerOptions() planner.PlannerOptions {
 	return opts
 }
 
-// createOptimizerModeDB creates a test database whose default planner
-// options carry this mode; queries through db.Query and the pull APIs run
-// on the mode's path without per-call option plumbing.
-// handler is registered at open, since every executor, matcher, and relation the
-// database builds is constructed with it; nil is annotations-off.
-func createOptimizerModeDB(t testing.TB, mode optimizerMode, handler annotations.Handler) *Database {
+// createOptimizerModeDB creates a test database on this mode's backend whose
+// default planner options carry this mode, so queries through db.Query and the
+// pull APIs run on the mode's path without per-call option plumbing. Callers
+// set schema, cache, compression, the annotation handler and the rest on opts;
+// Store and PlannerOptions come from the mode.
+//
+// An annotation handler must arrive at open: every executor, matcher and
+// relation the database builds is constructed with it.
+func createOptimizerModeDB(t testing.TB, mode optimizerMode, opts DatabaseOptions) *Database {
 	t.Helper()
-	opts := mode.plannerOptions()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:              t.TempDir(),
-		PlannerOptions:    &opts,
-		AnnotationHandler: handler,
-	})
+	plannerOpts := mode.plannerOptions()
+
+	// An injected store owns its encoder, so a compression threshold has to
+	// reach the encoder here rather than through DatabaseOptions.
+	encoder := &BinaryKeyEncoder{}
+	if opts.CompressionThreshold != 0 {
+		encoder.CompressionThreshold = opts.CompressionThreshold
+	}
+	store, err := mode.backend.Open(t.TempDir(), encoder)
+	if err != nil {
+		t.Fatalf("failed to open %s store: %v", mode.backend.Name, err)
+	}
+	// Registered before the database is built: NewDatabaseWithOptions can fail,
+	// and an open store abandoned by t.Fatalf holds its directory lock for the
+	// rest of the binary.
+	t.Cleanup(func() { _ = store.Close() })
+
+	opts.Path = ""
+	opts.Store = store
+	opts.PlannerOptions = &plannerOpts
+	db, err := NewDatabaseWithOptions(opts)
 	if err != nil {
 		t.Fatalf("failed to create %s database: %v", mode.name, err)
 	}

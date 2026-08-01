@@ -91,7 +91,7 @@ func TestSaveStruct_KeywordField(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -150,7 +150,7 @@ func TestSaveStructAndPullInto_Simple(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -204,7 +204,7 @@ func TestSaveStructAndPullInto_CardinalityMany(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -315,7 +315,7 @@ func TestPullIntoMany(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -384,7 +384,7 @@ func TestSaveStructCardinalityOne(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -467,7 +467,7 @@ func TestSaveStructCardinalityMany(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -552,7 +552,7 @@ func TestNilVsEmptySliceSemantics(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -632,7 +632,7 @@ func TestSaveStructUpsertSemantics(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -719,7 +719,7 @@ func TestPullInto_CardinalityManyRefs(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -813,7 +813,7 @@ func TestPullInto_CardinalityManyRefs_ManualSchema(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         manualSchema,
 				PlannerOptions: &popts,
 			})
@@ -897,7 +897,7 @@ func TestLookupAttributeWithStructAPI(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -1167,7 +1167,7 @@ func TestSaveStructAndPullInto_WorldEntity(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -1398,7 +1398,7 @@ func TestStructWriter_NoEventsWhenHandlerNil(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -1472,7 +1472,7 @@ func TestPullInto_CardinalityManyStrings_MultipleValues(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -1553,7 +1553,7 @@ func TestCRDTTombstoneReAdd(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -1672,7 +1672,7 @@ func TestCRDTTombstoneReAdd_TxSetWorkaround(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})

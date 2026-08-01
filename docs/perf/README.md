@@ -9,6 +9,18 @@ Durable benchmark and profile artifacts captured pre-refactor, kept so
   operation-by-operation time and space bounds for
   `BenchmarkComplexQueryCheckpoint`, including decorrelation and worst-case
   qualifications.
+- [The two in-process backends, measured](MEMORY_BACKENDS_2026-07-31.md) —
+  `MemoryStore` against `MemoryTreeStore` on assert, retract and scan, native
+  and wasm. Scan is 13–19× faster at three allocations regardless of size; bulk
+  assert allocates 11× less; single-datom retract is 2.5–5.3× slower and
+  degrades with store size. At query level, with Badger as the third arm, the
+  typed store's allocation profile is Badger's to within 0.16% and `MemoryStore`
+  is the outlier at +50% allocations.
+- [Value distribution of a production database](VALUE_DISTRIBUTION_2026-07-31.md) —
+  2.7M datoms measured with `datalog -stats`: 23.7 encoded value bytes per datom,
+  52.4% of value bytes duplicated, two attributes accounting for two thirds of
+  all datoms, and what the concentration means for a typed representation. The
+  raw report is deliberately absent; it enumerates an application's schema.
 
 ## How to read this directory
 
@@ -79,6 +91,11 @@ is the N² pathology this benchmark was written to catch.
 
 Shape: `|V|`=8 (int64), one attribute, no vectors or blobs. Machine: Apple M5,
 go1.26.3.
+
+`BenchmarkMemoryAssertBulk` now runs per backend, so its sub-benchmarks are
+`memory/Size1000` where this file records `Size1000`. benchstat pairs by name
+and will report the old rows as dropped; compare against the `memory` arm in
+[`MEMORY_BACKENDS_2026-07-31.md`](MEMORY_BACKENDS_2026-07-31.md) by hand.
 
 ### Typed scan-bound campaign A/B (`typed_scan_bound_campaign_*_2026-07-30.txt`)
 

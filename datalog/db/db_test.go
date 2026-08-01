@@ -13,13 +13,13 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-func tempDB(t *testing.T, opts ...db.Option) *db.DB {
+func tempDB(t *testing.T, backend storage.Backend, opts ...db.Option) *db.DB {
 	t.Helper()
-	tmpDir, err := os.MkdirTemp("", "db-test")
+	store, err := backend.Open(t.TempDir(), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+	t.Cleanup(func() { _ = store.Close() })
 
-	d, err := db.Open(filepath.Join(tmpDir, "test.db"), opts...)
+	d, err := db.Open("", append([]db.Option{db.WithStore(store)}, opts...)...)
 	require.NoError(t, err)
 	t.Cleanup(func() { d.Close() })
 	return d
@@ -75,7 +75,7 @@ func TestOpenWithInjectedStoreDoesNotRequirePath(t *testing.T) {
 func TestQueryRoundTrip(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -100,7 +100,7 @@ func TestQueryRoundTrip(t *testing.T) {
 func TestQueryWithInputs(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -129,7 +129,7 @@ func TestQueryWithInputs(t *testing.T) {
 func TestQueryInto(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -151,7 +151,7 @@ func TestQueryInto(t *testing.T) {
 func TestQueryOneInto(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -179,7 +179,7 @@ func TestQueryOneInto(t *testing.T) {
 func TestGetString(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -206,7 +206,7 @@ func TestGetString(t *testing.T) {
 func TestGetInt(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			age := datalog.NewKeyword(":person/age")
@@ -233,7 +233,7 @@ func TestGetInt(t *testing.T) {
 func TestGetFloat(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			score := datalog.NewKeyword(":person/score")
@@ -260,7 +260,7 @@ func TestGetFloat(t *testing.T) {
 func TestGetBool(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			active := datalog.NewKeyword(":person/active")
@@ -287,7 +287,7 @@ func TestGetBool(t *testing.T) {
 func TestGetRef(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -319,7 +319,7 @@ func TestGetStrings(t *testing.T) {
 				Attribute(":person/tag").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			d := tempDB(t, db.WithSchema(s), db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithSchema(s),db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			tag := datalog.NewKeyword(":person/tag")
@@ -347,7 +347,7 @@ func TestGetStrings(t *testing.T) {
 func TestAsOf(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -381,7 +381,7 @@ func TestAsOf(t *testing.T) {
 func TestHistory(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -428,7 +428,7 @@ func TestMustParseQuery(t *testing.T) {
 func TestMustParseQueryWithQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -453,7 +453,7 @@ func TestMustParseQueryWithQuery(t *testing.T) {
 func TestAssert(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -472,7 +472,7 @@ func TestAssert(t *testing.T) {
 func TestPullInto(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -500,7 +500,7 @@ func TestPullInto(t *testing.T) {
 func TestTransactionRollback(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -522,7 +522,7 @@ func TestTransactionRollback(t *testing.T) {
 func TestSaveStruct(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			type Person struct {
 				ID   datalog.Identity `datalog:"-,id"`

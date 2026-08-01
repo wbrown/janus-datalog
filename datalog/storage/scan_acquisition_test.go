@@ -54,6 +54,8 @@ var acquisitionsOutsideTheOpeners = map[string]string{
 // Scan/ScanKeysOnly. A name whitelist missed db.Store().Scan(bound), whose
 // receiver is a call and not a field, and would go on missing whatever the next
 // spelling is. Arity separates these from bufio.Scanner.Scan, which takes none.
+// One shape is exempt by construction rather than by name — see
+// delegatesToItsSibling.
 //
 // Occurrences are attributed to the enclosing function because that is what
 // stays stable while line numbers move.
@@ -99,6 +101,9 @@ func TestScanAcquisitionGoesThroughAReport(t *testing.T) {
 			if !ok {
 				continue
 			}
+			if delegatesToItsSibling(fn) {
+				continue
+			}
 			ast.Inspect(fn, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
@@ -108,7 +113,7 @@ func TestScanAcquisitionGoesThroughAReport(t *testing.T) {
 				if !ok {
 					return true
 				}
-				if sel.Sel.Name != "Scan" && sel.Sel.Name != "ScanKeysOnly" {
+				if !isScanSpelling(sel.Sel.Name) {
 					return true
 				}
 				if len(call.Args) != 1 {
@@ -140,5 +145,71 @@ func TestScanAcquisitionGoesThroughAReport(t *testing.T) {
 			t.Errorf("%s no longer acquires directly; remove it from "+
 				"acquisitionsOutsideTheOpeners", name)
 		}
+	}
+}
+
+func isScanSpelling(name string) bool {
+	return name == "Scan" || name == "ScanKeysOnly"
+}
+
+// delegatesToItsSibling reports whether fn is one scan spelling whose whole body
+// returns the other on fn's own receiver. Such a frame acquires nothing: its
+// caller is the acquirer and this only picks a spelling. The receiver must be
+// fn's own — delegating to a different object reads that object's store, which
+// is an acquisition.
+func delegatesToItsSibling(fn *ast.FuncDecl) bool {
+	if fn.Recv == nil || len(fn.Recv.List) != 1 || fn.Body == nil {
+		return false
+	}
+	if !isScanSpelling(fn.Name.Name) || len(fn.Body.List) != 1 {
+		return false
+	}
+	returned, ok := fn.Body.List[0].(*ast.ReturnStmt)
+	if !ok || len(returned.Results) != 1 {
+		return false
+	}
+	call, ok := returned.Results[0].(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || !isScanSpelling(sel.Sel.Name) {
+		return false
+	}
+	base, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	receiver := fn.Recv.List[0].Names
+	return len(receiver) == 1 && receiver[0].Name == base.Name
+}
+
+// TestDelegatesToItsSiblingIsNarrow pins the carve-out. Over-matching here turns
+// the gate above off silently, which is the one way it can fail without saying
+// so.
+func TestDelegatesToItsSiblingIsNarrow(t *testing.T) {
+	cases := []struct {
+		name string
+		decl string
+		want bool
+	}{
+		{"sibling on its own receiver", "func (s *T) ScanKeysOnly(b B) (I, error) { return s.Scan(b) }", true},
+		{"sibling the other way", "func (s *T) Scan(b B) (I, error) { return s.ScanKeysOnly(b) }", true},
+		{"another object's scan", "func (s *T) ScanKeysOnly(b B) (I, error) { return s.inner.Scan(b) }", false},
+		{"a package-level store", "func (s *T) ScanKeysOnly(b B) (I, error) { return shared.Scan(b) }", false},
+		{"more than a delegation", "func (s *T) ScanKeysOnly(b B) (I, error) { s.n++; return s.Scan(b) }", false},
+		{"not a scan spelling", "func (s *T) Rows(b B) (I, error) { return s.Scan(b) }", false},
+		{"free function", "func ScanKeysOnly(s *T, b B) (I, error) { return s.Scan(b) }", false},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			file, err := parser.ParseFile(token.NewFileSet(), "snippet.go",
+				"package snippet\n"+testCase.decl+"\n", 0)
+			require.NoError(t, err)
+			fn, ok := file.Decls[0].(*ast.FuncDecl)
+			require.True(t, ok)
+			require.Equal(t, testCase.want, delegatesToItsSibling(fn))
+		})
 	}
 }

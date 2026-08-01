@@ -27,7 +27,7 @@ func TestOrJoinContainerItemCardinality(t *testing.T) {
 	t.Run("without_schema_lww_loses_item1", func(t *testing.T) {
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
-				db := createOptimizerModeDB(t, mode, nil)
+				db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 				tx := db.NewTransaction()
 				tx.Add(containerA, kw(":container/item"), item1)

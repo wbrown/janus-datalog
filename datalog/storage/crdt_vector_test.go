@@ -487,14 +487,7 @@ func TestVectorQueryIntegration(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -541,14 +534,7 @@ func TestVectorQueryWithBoundEntity(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":character/name")
@@ -612,14 +598,7 @@ func TestVectorQueryProjectSkills(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":character/name")
@@ -666,14 +645,7 @@ func TestVectorQueryNameAndSkills(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":character/name")
@@ -723,14 +695,7 @@ func TestVectorPullIntegration(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":character/name")
@@ -1317,14 +1282,7 @@ func TestVectorEnumerateQuery(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			widget := datalog.NewIdentity("widget")
 
@@ -1381,14 +1339,7 @@ func TestVectorEnumerateMultipleEntities(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			widget := datalog.NewIdentity("widget")
 			gadget := datalog.NewIdentity("gadget")
@@ -1449,14 +1400,7 @@ func TestVectorEnumerateRefWithFilter(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			// Create child entities (items) with different colors
 			redItem := datalog.NewIdentity("red-item")
@@ -1781,14 +1725,7 @@ func TestPlannerReordersDataPatternBeforeEnumerate(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			red := datalog.NewKeyword(":color/red")
 			blue := datalog.NewKeyword(":color/blue")
@@ -1953,14 +1890,7 @@ func TestVectorTypeDouble(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			sensor := datalog.NewIdentity("sensor1")
 			readings := datalog.NewKeyword(":sensor/readings")
@@ -2012,14 +1942,7 @@ func TestVectorTypeBoolean(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			cfg := datalog.NewIdentity("cfg1")
 			flags := datalog.NewKeyword(":config/flags")
@@ -2071,14 +1994,7 @@ func TestVectorTypeLong_QueryPath(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			game := datalog.NewIdentity("game1")
 			scores := datalog.NewKeyword(":event/scores")
@@ -2334,14 +2250,7 @@ func TestVectorLiteralMatch(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			name := datalog.NewKeyword(":entity/name")
 			lore := datalog.NewKeyword(":entity/lore")
@@ -2588,14 +2497,7 @@ func TestVectorLiteralWithOr(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			name := datalog.NewKeyword(":entity/name")
 			lore := datalog.NewKeyword(":entity/lore")

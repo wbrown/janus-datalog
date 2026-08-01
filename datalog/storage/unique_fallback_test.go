@@ -61,7 +61,7 @@ func queryEntityEmail(t *testing.T, db *Database, e datalog.Identity) string {
 func TestEntityView_NoSupersession(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			email := datalog.NewKeyword(":user/email")
@@ -86,7 +86,7 @@ func TestEntityView_NoSupersession(t *testing.T) {
 func TestEntityView_FallbackToOlder(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -125,7 +125,7 @@ func TestEntityView_FallbackToOlder(t *testing.T) {
 func TestEntityView_MultiLayerFallback(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -164,7 +164,7 @@ func TestEntityView_MultiLayerFallback(t *testing.T) {
 func TestEntityView_AllSuperseded_NoValue(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -209,7 +209,7 @@ func TestEntityView_AllSuperseded_NoValue(t *testing.T) {
 func TestEntityView_RetractCancelsSet(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			email := datalog.NewKeyword(":user/email")
@@ -236,7 +236,7 @@ func TestEntityView_RetractCancelsSet(t *testing.T) {
 func TestEntityView_RetractThenReassert(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			email := datalog.NewKeyword(":user/email")
@@ -268,7 +268,7 @@ func TestEntityView_RetractThenReassert(t *testing.T) {
 func TestEntityView_NonUnique_NoFallback(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -308,7 +308,7 @@ func TestEntityView_NonUnique_NoFallback(t *testing.T) {
 func TestVViewEntityViewSymmetry_Fallback(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -355,7 +355,7 @@ func TestVViewEntityViewSymmetry_Fallback(t *testing.T) {
 func TestVViewEntityViewSymmetry_MovedOnWithFallback(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -401,7 +401,7 @@ func TestVViewEntityViewSymmetry_MovedOnWithFallback(t *testing.T) {
 func TestEntityView_HistoryMode_RawDatoms(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -457,7 +457,7 @@ func TestEntityView_HistoryMode_RawDatoms(t *testing.T) {
 func TestEntityView_AsOf_BeforeSupersession(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -498,7 +498,7 @@ func TestEntityView_AsOf_BeforeSupersession(t *testing.T) {
 func TestEntityView_AsOf_AfterSupersession(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -541,7 +541,7 @@ func TestEntityView_AsOf_AfterSupersession(t *testing.T) {
 func TestEntityView_PullReflectsFallback(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")

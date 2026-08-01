@@ -2,13 +2,10 @@ package storage
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -22,25 +19,10 @@ import (
 // Query: find ages >= 25 (should return 25, 30)
 // =============================================================================
 
-// createWorkspaceTestDB seeds the 10-person fixture. popts sets the database's
-// default planner options (nil = defaults).
-func createWorkspaceTestDB(t *testing.T, popts *planner.PlannerOptions) (*Database, func()) {
+// createWorkspaceTestDB seeds the 10-person fixture.
+func createWorkspaceTestDB(t *testing.T, mode optimizerMode) *Database {
 	t.Helper()
-
-	tmpDir, err := os.MkdirTemp("", "workspace_regression_test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           dbPath,
-		PlannerOptions: popts,
-	})
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		t.Fatalf("failed to create database: %v", err)
-	}
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 	tx := db.NewTransaction()
 	age := datalog.NewKeyword(":person/age")
@@ -53,165 +35,166 @@ func createWorkspaceTestDB(t *testing.T, popts *planner.PlannerOptions) (*Databa
 	}
 
 	if _, err := tx.Commit(); err != nil {
-		db.Close()
-		os.RemoveAll(tmpDir)
 		t.Fatalf("commit failed: %v", err)
 	}
 
-	return db, func() {
-		db.Close()
-		os.RemoveAll(tmpDir)
-	}
+	return db
 }
 
 // Test 1: Raw storage iterator - verify tuples are produced correctly
 func TestWorkspaceRegression_RawIterator(t *testing.T) {
-	db, cleanup := createWorkspaceTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createWorkspaceTestDB(t, mode)
 
-	// Create pattern to match all ages
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: datalog.NewKeyword(":person/age")},
-			query.Variable{Name: datalog.NewSymbol("?age")},
-			query.Blank{},
-		},
-	}
-
-	matcher := db.Matcher().(*PatternMatcher)
-	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
-
-	// Collect all tuples and their ages
-	var ages []int64
-	var tuples []executor.Tuple
-	it := rel.Iterator()
-	for it.Next() {
-		tuple := it.Tuple()
-		// Copy the tuple to preserve it
-		tupleCopy := make(executor.Tuple, len(tuple))
-		copy(tupleCopy, tuple)
-		tuples = append(tuples, tupleCopy)
-
-		if len(tuple) >= 2 {
-			if age, ok := tuple[1].(int64); ok {
-				ages = append(ages, age)
-			} else {
-				t.Errorf("unexpected age type: %T", tuple[1])
+			// Create pattern to match all ages
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: datalog.NewKeyword(":person/age")},
+					query.Variable{Name: datalog.NewSymbol("?age")},
+					query.Blank{},
+				},
 			}
-		}
-	}
-	it.Close()
 
-	t.Logf("Raw iterator produced %d tuples", len(tuples))
-	t.Logf("Ages: %v", ages)
+			matcher := db.Matcher().(*PatternMatcher)
+			rel, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
 
-	// Should have 10 tuples
-	if len(tuples) != 10 {
-		t.Errorf("expected 10 tuples, got %d", len(tuples))
-	}
+			// Collect all tuples and their ages
+			var ages []int64
+			var tuples []executor.Tuple
+			it := rel.Iterator()
+			for it.Next() {
+				tuple := it.Tuple()
+				// Copy the tuple to preserve it
+				tupleCopy := make(executor.Tuple, len(tuple))
+				copy(tupleCopy, tuple)
+				tuples = append(tuples, tupleCopy)
 
-	// Count age occurrences
-	ageCounts := make(map[int64]int)
-	for _, age := range ages {
-		ageCounts[age]++
-	}
-	t.Logf("Age counts: %v", ageCounts)
+				if len(tuple) >= 2 {
+					if age, ok := tuple[1].(int64); ok {
+						ages = append(ages, age)
+					} else {
+						t.Errorf("unexpected age type: %T", tuple[1])
+					}
+				}
+			}
+			it.Close()
 
-	// Should have: 20 (4 times), 25 (3 times), 30 (3 times)
-	if ageCounts[20] != 4 {
-		t.Errorf("expected 4 people with age 20, got %d", ageCounts[20])
-	}
-	if ageCounts[25] != 3 {
-		t.Errorf("expected 3 people with age 25, got %d", ageCounts[25])
-	}
-	if ageCounts[30] != 3 {
-		t.Errorf("expected 3 people with age 30, got %d", ageCounts[30])
+			t.Logf("Raw iterator produced %d tuples", len(tuples))
+			t.Logf("Ages: %v", ages)
+
+			// Should have 10 tuples
+			if len(tuples) != 10 {
+				t.Errorf("expected 10 tuples, got %d", len(tuples))
+			}
+
+			// Count age occurrences
+			ageCounts := make(map[int64]int)
+			for _, age := range ages {
+				ageCounts[age]++
+			}
+			t.Logf("Age counts: %v", ageCounts)
+
+			// Should have: 20 (4 times), 25 (3 times), 30 (3 times)
+			if ageCounts[20] != 4 {
+				t.Errorf("expected 4 people with age 20, got %d", ageCounts[20])
+			}
+			if ageCounts[25] != 3 {
+				t.Errorf("expected 3 people with age 25, got %d", ageCounts[25])
+			}
+			if ageCounts[30] != 3 {
+				t.Errorf("expected 3 people with age 30, got %d", ageCounts[30])
+			}
+		})
 	}
 }
 
 // Test 2: Verify workspace reuse - immediate reads are correct, stored refs share memory
 func TestWorkspaceRegression_WorkspaceReuse(t *testing.T) {
-	db, cleanup := createWorkspaceTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createWorkspaceTestDB(t, mode)
 
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: datalog.NewKeyword(":person/age")},
-			query.Variable{Name: datalog.NewSymbol("?age")},
-			query.Blank{},
-		},
-	}
-
-	matcher := db.Matcher().(*PatternMatcher)
-	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
-
-	// Verify that IMMEDIATE reads produce correct values
-	var immediateAges []int64
-	it := rel.Iterator()
-	for it.Next() {
-		tuple := it.Tuple()
-		if age, ok := tuple[1].(int64); ok {
-			immediateAges = append(immediateAges, age)
-		}
-	}
-	it.Close()
-
-	// Should have 10 tuples with correct age distribution
-	if len(immediateAges) != 10 {
-		t.Fatalf("expected 10 ages, got %d", len(immediateAges))
-	}
-
-	ageCounts := make(map[int64]int)
-	for _, age := range immediateAges {
-		ageCounts[age]++
-	}
-
-	if ageCounts[20] != 4 {
-		t.Errorf("expected 4 people with age 20, got %d", ageCounts[20])
-	}
-	if ageCounts[25] != 3 {
-		t.Errorf("expected 3 people with age 25, got %d", ageCounts[25])
-	}
-	if ageCounts[30] != 3 {
-		t.Errorf("expected 3 people with age 30, got %d", ageCounts[30])
-	}
-
-	// Now verify that stored references share memory (workspace reuse is active)
-	rel2, _ := matcher.Match(query.PatternQuery(pattern), nil)
-	var storedTuples []executor.Tuple
-	it2 := rel2.Iterator()
-	for it2.Next() {
-		// Store reference without copying
-		storedTuples = append(storedTuples, it2.Tuple())
-	}
-	it2.Close()
-
-	// All stored tuples should point to same backing array (workspace)
-	if len(storedTuples) > 1 {
-		// Check if first and last tuple share the same backing array
-		first := storedTuples[0]
-		last := storedTuples[len(storedTuples)-1]
-
-		// They should have the same values because they point to same workspace
-		sameValues := true
-		for i := range first {
-			if first[i] != last[i] {
-				sameValues = false
-				break
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: datalog.NewKeyword(":person/age")},
+					query.Variable{Name: datalog.NewSymbol("?age")},
+					query.Blank{},
+				},
 			}
-		}
 
-		if !sameValues {
-			t.Errorf("workspace reuse not working: stored tuples have different values")
-		}
+			matcher := db.Matcher().(*PatternMatcher)
+			rel, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
+
+			// Verify that IMMEDIATE reads produce correct values
+			var immediateAges []int64
+			it := rel.Iterator()
+			for it.Next() {
+				tuple := it.Tuple()
+				if age, ok := tuple[1].(int64); ok {
+					immediateAges = append(immediateAges, age)
+				}
+			}
+			it.Close()
+
+			// Should have 10 tuples with correct age distribution
+			if len(immediateAges) != 10 {
+				t.Fatalf("expected 10 ages, got %d", len(immediateAges))
+			}
+
+			ageCounts := make(map[int64]int)
+			for _, age := range immediateAges {
+				ageCounts[age]++
+			}
+
+			if ageCounts[20] != 4 {
+				t.Errorf("expected 4 people with age 20, got %d", ageCounts[20])
+			}
+			if ageCounts[25] != 3 {
+				t.Errorf("expected 3 people with age 25, got %d", ageCounts[25])
+			}
+			if ageCounts[30] != 3 {
+				t.Errorf("expected 3 people with age 30, got %d", ageCounts[30])
+			}
+
+			// Now verify that stored references share memory (workspace reuse is active)
+			rel2, _ := matcher.Match(query.PatternQuery(pattern), nil)
+			var storedTuples []executor.Tuple
+			it2 := rel2.Iterator()
+			for it2.Next() {
+				// Store reference without copying
+				storedTuples = append(storedTuples, it2.Tuple())
+			}
+			it2.Close()
+
+			// All stored tuples should point to same backing array (workspace)
+			if len(storedTuples) > 1 {
+				// Check if first and last tuple share the same backing array
+				first := storedTuples[0]
+				last := storedTuples[len(storedTuples)-1]
+
+				// They should have the same values because they point to same workspace
+				sameValues := true
+				for i := range first {
+					if first[i] != last[i] {
+						sameValues = false
+						break
+					}
+				}
+
+				if !sameValues {
+					t.Errorf("workspace reuse not working: stored tuples have different values")
+				}
+			}
+		})
 	}
 }
 
@@ -219,9 +202,7 @@ func TestWorkspaceRegression_WorkspaceReuse(t *testing.T) {
 func TestWorkspaceRegression_PredicateFilter(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createWorkspaceTestDB(t, &popts)
-			defer cleanup()
+			db := createWorkspaceTestDB(t, mode)
 
 			// Query with predicate
 			results, err := executor.CollectTuples(db.Query(`
@@ -262,9 +243,7 @@ func TestWorkspaceRegression_PredicateFilter(t *testing.T) {
 func TestWorkspaceRegression_Projection(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createWorkspaceTestDB(t, &popts)
-			defer cleanup()
+			db := createWorkspaceTestDB(t, mode)
 
 			// Query projecting only age
 			results, err := executor.CollectTuples(db.Query(`
@@ -307,9 +286,7 @@ func TestWorkspaceRegression_Projection(t *testing.T) {
 func TestWorkspaceRegression_FilterThenProject(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createWorkspaceTestDB(t, &popts)
-			defer cleanup()
+			db := createWorkspaceTestDB(t, mode)
 
 			results, err := executor.CollectTuples(db.Query(`
 				[:find ?age
@@ -355,124 +332,130 @@ func TestWorkspaceRegression_FilterThenProject(t *testing.T) {
 
 // Test 6: Verify StreamingRelation caching copies tuples
 func TestWorkspaceRegression_StreamingRelationCache(t *testing.T) {
-	db, cleanup := createWorkspaceTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createWorkspaceTestDB(t, mode)
 
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: datalog.NewKeyword(":person/age")},
-			query.Variable{Name: datalog.NewSymbol("?age")},
-			query.Blank{},
-		},
-	}
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: datalog.NewKeyword(":person/age")},
+					query.Variable{Name: datalog.NewSymbol("?age")},
+					query.Blank{},
+				},
+			}
 
-	matcher := db.Matcher().(*PatternMatcher)
-	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
-	if err != nil {
-		t.Fatalf("Match failed: %v", err)
-	}
+			matcher := db.Matcher().(*PatternMatcher)
+			rel, err := matcher.Match(query.PatternQuery(pattern), nil)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
 
-	// Force caching by calling Materialize
-	matRel := rel.Materialize()
+			// Force caching by calling Materialize
+			matRel := rel.Materialize()
 
-	// Iterate twice to verify cache works
-	var firstPass []int64
-	it1 := matRel.Iterator()
-	for it1.Next() {
-		tuple := it1.Tuple()
-		if age, ok := tuple[1].(int64); ok {
-			firstPass = append(firstPass, age)
-		}
-	}
-	it1.Close()
+			// Iterate twice to verify cache works
+			var firstPass []int64
+			it1 := matRel.Iterator()
+			for it1.Next() {
+				tuple := it1.Tuple()
+				if age, ok := tuple[1].(int64); ok {
+					firstPass = append(firstPass, age)
+				}
+			}
+			it1.Close()
 
-	var secondPass []int64
-	it2 := matRel.Iterator()
-	for it2.Next() {
-		tuple := it2.Tuple()
-		if age, ok := tuple[1].(int64); ok {
-			secondPass = append(secondPass, age)
-		}
-	}
-	it2.Close()
+			var secondPass []int64
+			it2 := matRel.Iterator()
+			for it2.Next() {
+				tuple := it2.Tuple()
+				if age, ok := tuple[1].(int64); ok {
+					secondPass = append(secondPass, age)
+				}
+			}
+			it2.Close()
 
-	t.Logf("First pass: %v", firstPass)
-	t.Logf("Second pass: %v", secondPass)
+			t.Logf("First pass: %v", firstPass)
+			t.Logf("Second pass: %v", secondPass)
 
-	// Both passes should have same values
-	if len(firstPass) != len(secondPass) {
-		t.Errorf("pass lengths differ: %d vs %d", len(firstPass), len(secondPass))
-	}
+			// Both passes should have same values
+			if len(firstPass) != len(secondPass) {
+				t.Errorf("pass lengths differ: %d vs %d", len(firstPass), len(secondPass))
+			}
 
-	for i := range firstPass {
-		if i < len(secondPass) && firstPass[i] != secondPass[i] {
-			t.Errorf("value mismatch at %d: %d vs %d", i, firstPass[i], secondPass[i])
-		}
+			for i := range firstPass {
+				if i < len(secondPass) && firstPass[i] != secondPass[i] {
+					t.Errorf("value mismatch at %d: %d vs %d", i, firstPass[i], secondPass[i])
+				}
+			}
+		})
 	}
 }
 
 // Test 7: BufferedIterator correctly copies from workspace-reusing iterator
 func TestWorkspaceRegression_BufferedIterator(t *testing.T) {
-	db, cleanup := createWorkspaceTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createWorkspaceTestDB(t, mode)
 
-	agePattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: datalog.NewKeyword(":person/age")},
-			query.Variable{Name: datalog.NewSymbol("?age")},
-			query.Blank{},
-		},
-	}
+			agePattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: datalog.NewKeyword(":person/age")},
+					query.Variable{Name: datalog.NewSymbol("?age")},
+					query.Blank{},
+				},
+			}
 
-	matcher := db.Matcher().(*PatternMatcher)
-	rel, _ := matcher.Match(query.PatternQuery(agePattern), nil)
+			matcher := db.Matcher().(*PatternMatcher)
+			rel, _ := matcher.Match(query.PatternQuery(agePattern), nil)
 
-	// Wrap streaming iterator in BufferedIterator
-	buffered := executor.NewBufferedIterator(rel.Iterator())
+			// Wrap streaming iterator in BufferedIterator
+			buffered := executor.NewBufferedIterator(rel.Iterator())
 
-	// First pass - consume and buffer
-	var firstPassAges []int64
-	for buffered.Next() {
-		tuple := buffered.Tuple()
-		if age, ok := tuple[1].(int64); ok {
-			firstPassAges = append(firstPassAges, age)
-		}
-	}
+			// First pass - consume and buffer
+			var firstPassAges []int64
+			for buffered.Next() {
+				tuple := buffered.Tuple()
+				if age, ok := tuple[1].(int64); ok {
+					firstPassAges = append(firstPassAges, age)
+				}
+			}
 
-	if len(firstPassAges) != 10 {
-		t.Fatalf("expected 10 ages on first pass, got %d", len(firstPassAges))
-	}
+			if len(firstPassAges) != 10 {
+				t.Fatalf("expected 10 ages on first pass, got %d", len(firstPassAges))
+			}
 
-	// Reset and re-iterate
-	buffered.Reset()
+			// Reset and re-iterate
+			buffered.Reset()
 
-	var secondPassAges []int64
-	for buffered.Next() {
-		tuple := buffered.Tuple()
-		if age, ok := tuple[1].(int64); ok {
-			secondPassAges = append(secondPassAges, age)
-		}
-	}
+			var secondPassAges []int64
+			for buffered.Next() {
+				tuple := buffered.Tuple()
+				if age, ok := tuple[1].(int64); ok {
+					secondPassAges = append(secondPassAges, age)
+				}
+			}
 
-	// Both passes should have identical values
-	if len(secondPassAges) != len(firstPassAges) {
-		t.Fatalf("pass lengths differ: %d vs %d", len(firstPassAges), len(secondPassAges))
-	}
+			// Both passes should have identical values
+			if len(secondPassAges) != len(firstPassAges) {
+				t.Fatalf("pass lengths differ: %d vs %d", len(firstPassAges), len(secondPassAges))
+			}
 
-	for i := range firstPassAges {
-		if firstPassAges[i] != secondPassAges[i] {
-			t.Errorf("value mismatch at %d: first=%d second=%d", i, firstPassAges[i], secondPassAges[i])
-		}
-	}
+			for i := range firstPassAges {
+				if firstPassAges[i] != secondPassAges[i] {
+					t.Errorf("value mismatch at %d: first=%d second=%d", i, firstPassAges[i], secondPassAges[i])
+				}
+			}
 
-	// Verify we got distinct ages (not all same due to workspace corruption)
-	ageCounts := make(map[int64]int)
-	for _, age := range firstPassAges {
-		ageCounts[age]++
-	}
-	if ageCounts[20] != 4 || ageCounts[25] != 3 || ageCounts[30] != 3 {
-		t.Errorf("wrong age distribution: %v", ageCounts)
+			// Verify we got distinct ages (not all same due to workspace corruption)
+			ageCounts := make(map[int64]int)
+			for _, age := range firstPassAges {
+				ageCounts[age]++
+			}
+			if ageCounts[20] != 4 || ageCounts[25] != 3 || ageCounts[30] != 3 {
+				t.Errorf("wrong age distribution: %v", ageCounts)
+			}
+		})
 	}
 }

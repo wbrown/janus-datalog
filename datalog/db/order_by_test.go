@@ -16,7 +16,7 @@ import (
 func TestOrderByNonProjectedThroughStorage(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			name := datalog.NewKeyword(":task/name")
 			priority := datalog.NewKeyword(":task/priority")
