@@ -554,11 +554,15 @@ func TestMergeJoinKeyComparison(t *testing.T) {
 // verification while a later one passes, and distinct datoms sharing a key
 // can each match a different tuple of the group.
 func TestMergeJoinDuplicateKeyBindings(t *testing.T) {
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testMergeJoinDuplicateKeyBindings(t, mode)
+		})
 	}
-	defer db.Close()
+}
+
+func testMergeJoinDuplicateKeyBindings(t *testing.T, mode optimizerMode) {
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 	alice := datalog.NewIdentity("user:alice")
 	bob := datalog.NewIdentity("user:bob")
@@ -667,11 +671,15 @@ func TestMergeJoinDuplicateKeyBindings(t *testing.T) {
 // not an empty one, and the merge join must surface it exactly as the hash
 // join does.
 func TestMergeJoinPropagatesDeferredScanError(t *testing.T) {
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testMergeJoinPropagatesDeferredScanError(t, mode)
+		})
 	}
-	defer db.Close()
+}
+
+func testMergeJoinPropagatesDeferredScanError(t *testing.T, mode optimizerMode) {
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 	matcher := NewPatternMatcher(db.Store())
 

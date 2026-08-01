@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -7,10 +5,8 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // Integration reproduction for BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md.
@@ -22,12 +18,14 @@ import (
 // boundaries (CollectTuples / QueryInto / QueryOneInto), which must not report
 // it as an empty or "not found" success.
 
-// appendNativeBlobFaultCase adds the reproduction of the original defect: a
-// real Tier-3 blob deleted out from under a real value. It needs Badger, so the
-// injected case carries the same assertions everywhere this one cannot go.
-func appendNativeBlobFaultCase(cases []queryBoundaryFaultCase) []queryBoundaryFaultCase {
+// appendBlobFaultCase adds the reproduction of the original defect: a
+// real Tier-3 blob deleted out from under a real value. It runs on the stores
+// that keep blobs — the ones whose fixed-width keys force a large value
+// out of line — so the injected case carries these assertions on the rest.
+func appendBlobFaultCase(t *testing.T, cases []queryBoundaryFaultCase) []queryBoundaryFaultCase {
 	return append(cases, queryBoundaryFaultCase{
 		name:                 "tier3-blob",
+		modes:                byteKeyBackends(t),
 		openFailing:          writeTier3ValueThenCorruptBlob,
 		openValidThenFailing: writeValidThenCorruptBlob,
 		errText:              "blob",
@@ -36,27 +34,17 @@ func appendNativeBlobFaultCase(cases []queryBoundaryFaultCase) []queryBoundaryFa
 
 // writeTier3ValueThenCorruptBlob writes one datom whose value lands in the Tier-3
 // blob store, then deletes every blob key so the value can no longer be decoded.
-func writeTier3ValueThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions) (*Database, datalog.Identity, datalog.Keyword) {
+func writeTier3ValueThenCorruptBlob(t *testing.T, mode optimizerMode) (*Database, datalog.Identity, datalog.Keyword) {
 	t.Helper()
-	dir := t.TempDir()
 
 	// DisableCache so reads hit storage (and thus the blob) rather than a warm
 	// resolved value. Small compression threshold so the value is compressed;
 	// large incompressible payload so the compressed form exceeds the in-key
-	// size limit and routes to Tier 3. popts sets the database's default
-	// planner options (nil = defaults).
-	// Badger explicitly, not by Path: this is the Tier-3 reproduction, so it has
-	// to be the backend that has a Tier 3.
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{CompressionThreshold: 64})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
-
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Store:          store,
-		DisableCache:   true,
-		PlannerOptions: popts,
+	// size limit and routes to Tier 3.
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
+		DisableCache:         true,
+		CompressionThreshold: 64,
 	})
-	require.NoError(t, err)
 
 	e := datalog.NewIdentity("doc-1")
 	a := datalog.NewKeyword(":doc/blob")
@@ -66,7 +54,7 @@ func writeTier3ValueThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions)
 	// plus a compressible (zero) region so Compress() reports a net benefit and
 	// returns non-nil (pure-random returns nil and would store raw, inline).
 	payload := make([]byte, 80*1024)
-	_, err = rand.Read(payload)
+	_, err := rand.Read(payload)
 	require.NoError(t, err)
 	payload = append(payload, make([]byte, 80*1024)...)
 
@@ -78,48 +66,33 @@ func writeTier3ValueThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions)
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	// Delete all blob keys (prefix 0xFF) so the value cannot be decoded.
-	deleted := 0
-	err = requireBadgerStore(t, db).db.Update(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-		prefix := []byte{0xFF}
-		var keys [][]byte
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			keys = append(keys, it.Item().KeyCopy(nil))
-		}
-		for _, k := range keys {
-			if derr := txn.Delete(k); derr != nil {
-				return derr
-			}
-			deleted++
-		}
-		return nil
-	})
-	require.NoError(t, err)
+	deleted, _ := deleteStoreBlobs(t, db.Store())
 	require.Greater(t, deleted, 0, "expected a Tier-3 blob to corrupt; value may not have routed to the blob store")
 
 	return db, e, a
 }
 
 func TestKeyOnlyIteratorRetainsBlobErrorAfterRepeatedNext(t *testing.T) {
-	db, entity, attr := writeTier3ValueThenCorruptBlob(t, nil)
-	defer db.Close()
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			db, entity, attr := writeTier3ValueThenCorruptBlob(t, mode)
 
-	iter, err := db.store.ScanKeysOnly(ScanBound{
-		Index:  EATV,
-		Prefix: []datalog.Value{entity, attr},
-	})
-	require.NoError(t, err)
-	defer iter.Close()
+			iter, err := db.store.ScanKeysOnly(ScanBound{
+				Index:  EATV,
+				Prefix: []datalog.Value{entity, attr},
+			})
+			require.NoError(t, err)
+			defer iter.Close()
 
-	require.True(t, iter.Next())
-	_, err = iter.Datom()
-	require.ErrorContains(t, err, "blob")
-	firstErr := iter.Error()
-	require.ErrorIs(t, firstErr, err)
-	require.False(t, iter.Next())
-	require.ErrorIs(t, iter.Error(), firstErr)
+			require.True(t, iter.Next())
+			_, err = iter.Datom()
+			require.ErrorContains(t, err, "blob")
+			firstErr := iter.Error()
+			require.ErrorIs(t, firstErr, err)
+			require.False(t, iter.Next())
+			require.ErrorIs(t, iter.Error(), firstErr)
+		})
+	}
 }
 
 // After Next() returns false at an exclusive end bound, Badger may still sit
@@ -167,20 +140,13 @@ func TestKeyOnlyIterator_DatomRejectsEndBoundSuccessor(t *testing.T) {
 // the other gets a large Tier-3 value whose blob is then deleted. Deleting every
 // blob key corrupts only the Tier-3 entity, so the failure lands on the SECOND
 // Next() — exercising the truncation / second-Next() boundary paths.
-func writeValidThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions) *Database {
+func writeValidThenCorruptBlob(t *testing.T, mode optimizerMode) *Database {
 	t.Helper()
-	dir := t.TempDir()
 
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{CompressionThreshold: 64})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
-
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Store:          store,
-		DisableCache:   true,
-		PlannerOptions: popts,
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
+		DisableCache:         true,
+		CompressionThreshold: 64,
 	})
-	require.NoError(t, err)
 
 	a := datalog.NewKeyword(":doc/blob")
 	low, high := datalog.NewIdentity("doc-1"), datalog.NewIdentity("doc-2")
@@ -191,7 +157,7 @@ func writeValidThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions) *Dat
 	// Tier 3 requires the compressed size to exceed maxKeyValueSize (60000): a
 	// large incompressible region plus a compressible region so Compress() helps.
 	payload := make([]byte, 80*1024)
-	_, err = rand.Read(payload)
+	_, err := rand.Read(payload)
 	require.NoError(t, err)
 	payload = append(payload, make([]byte, 80*1024)...)
 
@@ -201,26 +167,9 @@ func writeValidThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions) *Dat
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	// Delete all blob keys (prefix 0xFF). Only `high` is Tier-3, so only its value
-	// becomes undecodable; `low` is inline and still resolves.
-	deleted := 0
-	err = requireBadgerStore(t, db).db.Update(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-		prefix := []byte{0xFF}
-		var keys [][]byte
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			keys = append(keys, it.Item().KeyCopy(nil))
-		}
-		for _, k := range keys {
-			if derr := txn.Delete(k); derr != nil {
-				return derr
-			}
-			deleted++
-		}
-		return nil
-	})
-	require.NoError(t, err)
+	// Only `high` is Tier-3, so only its value becomes undecodable; `low` is
+	// inline and still resolves.
+	deleted, _ := deleteStoreBlobs(t, db.Store())
 	require.Greater(t, deleted, 0, "expected a Tier-3 blob to corrupt")
 
 	return db
@@ -232,11 +181,9 @@ func writeValidThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions) *Dat
 // prefix. If the ForEach error check were missing, out would hold the valid "ok"
 // entry and err would be nil.
 func TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range byteKeyBackends(t) {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db := writeValidThenCorruptBlob(t, &popts)
-			defer db.Close()
+			db := writeValidThenCorruptBlob(t, mode)
 
 			var out [][]byte
 			err := db.QueryInto(&out, `[:find ?v :where [?e :doc/blob ?v]]`)
@@ -251,11 +198,9 @@ func TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults(t *testing.T) {
 // must surface as found=false. If the second-Next() Error() check were missing,
 // the first tuple would be mapped and the call would return found=true, nil.
 func TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range byteKeyBackends(t) {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db := writeValidThenCorruptBlob(t, &popts)
-			defer db.Close()
+			db := writeValidThenCorruptBlob(t, mode)
 
 			var out []byte
 			found, err := db.QueryOneInto(&out, `[:find ?v :where [?e :doc/blob ?v]]`)
@@ -271,11 +216,9 @@ func TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext(t *testing.T) {
 // already-covered first-Next() path. If the scan order ever changes, this fails
 // and flags the coverage regression directly.
 func TestScan_YieldsValidDatomThenFails(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range byteKeyBackends(t) {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db := writeValidThenCorruptBlob(t, &popts)
-			defer db.Close()
+			db := writeValidThenCorruptBlob(t, mode)
 
 			rel, err := db.Query(`[:find ?v :where [?e :doc/blob ?v]]`)
 			require.NoError(t, err)

@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -31,19 +30,13 @@ func intNormSchema() *schema.Schema {
 	return s
 }
 
-// openIntNormDB opens the int-normalization fixture. popts sets the database's
-// default planner options (nil = defaults).
-func openIntNormDB(t *testing.T, popts *planner.PlannerOptions) *Database {
+// openIntNormDB opens the int-normalization fixture on the mode's backend.
+func openIntNormDB(t *testing.T, mode optimizerMode) *Database {
 	t.Helper()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           t.TempDir(),
-		Schema:         intNormSchema(),
-		ReplicaID:      1,
-		PlannerOptions: popts,
+	return createOptimizerModeDB(t, mode, DatabaseOptions{
+		Schema:    intNormSchema(),
+		ReplicaID: 1,
 	})
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
-	return db
 }
 
 func queryTuples(t *testing.T, db *Database, q string, args ...interface{}) []string {
@@ -68,8 +61,7 @@ func queryTuples(t *testing.T, db *Database, q string, args ...interface{}) []st
 func TestWrite_GoIntValueDoesNotPanic(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db := openIntNormDB(t, &popts)
+			db := openIntNormDB(t, mode)
 			e := datalog.NewIdentity("alice")
 			age := datalog.NewKeyword(":person/age")
 
@@ -98,8 +90,7 @@ func TestWrite_GoIntValueDoesNotPanic(t *testing.T) {
 func TestQuery_IntInputMatchesInt64StoredValue(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db := openIntNormDB(t, &popts)
+			db := openIntNormDB(t, mode)
 			age := datalog.NewKeyword(":person/age")
 
 			tx := db.NewTransaction()
@@ -126,8 +117,7 @@ func TestQuery_IntInputMatchesInt64StoredValue(t *testing.T) {
 func TestPredicateAndJoinAgreeOnIntInt64(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db := openIntNormDB(t, &popts)
+			db := openIntNormDB(t, mode)
 			age := datalog.NewKeyword(":person/age")
 
 			tx := db.NewTransaction()
@@ -157,7 +147,6 @@ func TestPredicateAndJoinAgreeOnIntInt64(t *testing.T) {
 func TestRetract_GoIntValueMatchesStoredInt64(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			s := schema.NewSchema()
 			numbers := datalog.NewKeyword(":person/lucky-numbers")
 			s.Add(&schema.AttributeDefinition{
@@ -165,20 +154,16 @@ func TestRetract_GoIntValueMatchesStoredInt64(t *testing.T) {
 				ValueType:   schema.TypeLong,
 				Cardinality: schema.CardinalityMany,
 			})
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				ReplicaID:      1,
-				PlannerOptions: &popts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+				Schema:    s,
+				ReplicaID: 1,
 			})
-			require.NoError(t, err)
-			t.Cleanup(func() { db.Close() })
 
 			e := datalog.NewIdentity("alice")
 			tx := db.NewTransaction()
 			require.NoError(t, tx.Add(e, numbers, int64(7)))
 			require.NoError(t, tx.Add(e, numbers, int64(30)))
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			tx = db.NewTransaction()

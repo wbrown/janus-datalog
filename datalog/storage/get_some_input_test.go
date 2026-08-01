@@ -21,15 +21,7 @@ import (
 func TestGetSome_WithScalarInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create an entity with :entity/code attribute
 			entity := datalog.NewIdentity("test:entity1")
@@ -38,7 +30,7 @@ func TestGetSome_WithScalarInput(t *testing.T) {
 
 			tx := db.NewTransaction()
 			tx.Add(entity, codeAttr, "E1-CODE")
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -93,15 +85,7 @@ func TestGetSome_WithScalarInput(t *testing.T) {
 func TestGetSome_WithScalarInput_NoMatch(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create an entity with a different attribute (not :entity/code or :entity/name)
 			entity := datalog.NewIdentity("test:entity1")
@@ -109,7 +93,7 @@ func TestGetSome_WithScalarInput_NoMatch(t *testing.T) {
 
 			tx := db.NewTransaction()
 			tx.Add(entity, otherAttr, "some value")
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}

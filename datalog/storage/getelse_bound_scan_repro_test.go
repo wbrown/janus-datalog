@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -10,7 +9,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // indexForAttrPattern returns the index chosen for the pattern/index-selection
@@ -72,16 +70,9 @@ func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 			// each call returns its own query's events; the handler is never
 			// replaced.
 			var collected []annotations.Event
-			popts := mode.plannerOptions()
-			popts.Handler = func(e annotations.Event) { collected = append(collected, e) }
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+				AnnotationHandler: func(e annotations.Event) { collected = append(collected, e) },
 			})
-			if err != nil {
-				t.Fatalf("create db: %v", err)
-			}
-			defer db.Close()
 
 			// Inflate the :repro/note extent: every entity carries the optional field.
 			// Only the target additionally carries the anchor attribute :repro/kind, so
@@ -189,26 +180,14 @@ func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 // the :repro/note extent so a full-attribute scan is observably different from a
 // narrowed, entity-bound scan, and the filler must never appear in results.
 //
-// popts sets the database's default planner options (nil = defaults);
-// differential tests that route options per execution pass nil.
+// The database opens on the mode's backend; handler may be nil.
 //
 // Identities are interned by hash, so the returned `want` keys (fresh
 // NewIdentity values) are the same pointers as the entities read back from
 // storage — safe to use as map keys for result assertions.
-func setupGetElseNarrowingDB(t *testing.T, popts *planner.PlannerOptions) (db *Database, want map[datalog.Identity]string, cleanup func()) {
+func setupGetElseNarrowingDB(t *testing.T, mode optimizerMode, handler annotations.Handler) (db *Database, want map[datalog.Identity]string) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "getelse-narrowing-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err = NewDatabaseWithOptions(DatabaseOptions{
-		Path:           dir,
-		PlannerOptions: popts,
-	})
-	if err != nil {
-		os.RemoveAll(dir)
-		t.Fatalf("create db: %v", err)
-	}
+	db = createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: handler})
 
 	kind := datalog.NewKeyword(":repro/kind")
 	note := datalog.NewKeyword(":repro/note")
@@ -245,11 +224,7 @@ func setupGetElseNarrowingDB(t *testing.T, popts *planner.PlannerOptions) (db *D
 		t.Fatalf("commit: %v", err)
 	}
 
-	cleanup = func() {
-		db.Close()
-		os.RemoveAll(dir)
-	}
-	return db, want, cleanup
+	return db, want
 }
 
 // TestGetElseMultiEntityStoredOrDefault pins get-else tuple semantics over
@@ -260,9 +235,7 @@ func setupGetElseNarrowingDB(t *testing.T, popts *planner.PlannerOptions) (db *D
 func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, want, cleanup := setupGetElseNarrowingDB(t, &popts)
-			defer cleanup()
+			db, want := setupGetElseNarrowingDB(t, mode, nil)
 
 			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?note
@@ -307,14 +280,19 @@ func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 // TestGetElseMultiEntityStoredOrDefault, and cross-mode tuple equivalence in
 // TestGetElseScanNarrowing_SemanticPreservation.
 func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
+	for _, mode := range pinnedOptimizerModes(true) {
+		t.Run(mode.name, func(t *testing.T) {
+			testGetElseMultiEntityScanNarrowed(t, mode)
+		})
+	}
+}
+
+func testGetElseMultiEntityScanNarrowed(t *testing.T, mode optimizerMode) {
 	// Registered at open; the fixture's own events precede the query's and the
 	// assertion below looks for a specific narrowing event's presence.
 	var events []annotations.Event
-	popts := DefaultPlannerOptions()
-	popts.EnableAlgebraOptimizer = true
-	popts.Handler = func(e annotations.Event) { events = append(events, e) }
-	db, want, cleanup := setupGetElseNarrowingDB(t, &popts)
-	defer cleanup()
+	db, want := setupGetElseNarrowingDB(t, mode,
+		func(e annotations.Event) { events = append(events, e) })
 
 	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?note
@@ -399,47 +377,50 @@ func narrowingEvent(events []annotations.Event) *annotations.Event {
 // tuples — defaults included — as the un-rewritten, per-tuple get-else (algebra
 // optimizer OFF).
 func TestGetElseScanNarrowing_SemanticPreservation(t *testing.T) {
-	db, _, cleanup := setupGetElseNarrowingDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, _ := setupGetElseNarrowingDB(t, mode, nil)
 
-	q := `[:find ?e ?note
+			q := `[:find ?e ?note
 	       :where [?e :repro/kind _]
 	              [(get-else $ ?e :repro/note "MISSING") ?note]]`
 
-	db.ClearPlanCache()
-	baseRel, err := queryWithoutAlgebra(db, q)
-	if err != nil {
-		t.Fatalf("baseline (optimizer off) failed: %v", err)
-	}
-	baseline, err := executor.CollectTuples(baseRel, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+			db.ClearPlanCache()
+			baseRel, err := queryWithoutAlgebra(db, q)
+			if err != nil {
+				t.Fatalf("baseline (optimizer off) failed: %v", err)
+			}
+			baseline, err := executor.CollectTuples(baseRel, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	db.ClearPlanCache()
-	optRel, err := queryWithAlgebra(db, q)
-	if err != nil {
-		t.Fatalf("optimized (optimizer on + narrowing) failed: %v", err)
-	}
-	optimized, err := executor.CollectTuples(optRel, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+			db.ClearPlanCache()
+			optRel, err := queryWithAlgebra(db, q)
+			if err != nil {
+				t.Fatalf("optimized (optimizer on + narrowing) failed: %v", err)
+			}
+			optimized, err := executor.CollectTuples(optRel, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	norm := func(tuples [][]interface{}) map[datalog.Identity]string {
-		m := make(map[datalog.Identity]string, len(tuples))
-		for _, r := range tuples {
-			m[r[0].(datalog.Identity)] = r[1].(string)
-		}
-		return m
-	}
-	baseMap, optMap := norm(baseline), norm(optimized)
-	if len(baseMap) != len(optMap) {
-		t.Fatalf("tuple count differs: optimizer-off=%d optimizer-on=%d", len(baseMap), len(optMap))
-	}
-	for e, bv := range baseMap {
-		if ov, ok := optMap[e]; !ok || ov != bv {
-			t.Errorf("entity %v: optimizer-off=%q optimizer-on=%q (present=%v)", e, bv, ov, ok)
-		}
+			norm := func(tuples [][]interface{}) map[datalog.Identity]string {
+				m := make(map[datalog.Identity]string, len(tuples))
+				for _, r := range tuples {
+					m[r[0].(datalog.Identity)] = r[1].(string)
+				}
+				return m
+			}
+			baseMap, optMap := norm(baseline), norm(optimized)
+			if len(baseMap) != len(optMap) {
+				t.Fatalf("tuple count differs: optimizer-off=%d optimizer-on=%d", len(baseMap), len(optMap))
+			}
+			for e, bv := range baseMap {
+				if ov, ok := optMap[e]; !ok || ov != bv {
+					t.Errorf("entity %v: optimizer-off=%q optimizer-on=%q (present=%v)", e, bv, ov, ok)
+				}
+			}
+		})
 	}
 }

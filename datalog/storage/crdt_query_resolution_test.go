@@ -266,38 +266,36 @@ func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 // TestSchemaAwareness_InQueryExecution verifies the schema is accessible
 // during query execution.
 func TestSchemaAwareness_InQueryExecution(t *testing.T) {
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/name"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
 
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   dir,
-		Schema: s,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	// Verify schema is set
-	require.NotNil(t, db.Schema(), "Database should have schema set")
+			// Verify schema is set
+			require.NotNil(t, db.Schema(), "Database should have schema set")
 
-	attrDef := db.Schema().GetAttribute(datalog.NewKeyword(":person/name"))
-	require.NotNil(t, attrDef, "Schema should contain :person/name")
-	assert.Equal(t, schema.CardinalityOne, attrDef.Cardinality,
-		":person/name should be CardinalityOne")
+			attrDef := db.Schema().GetAttribute(datalog.NewKeyword(":person/name"))
+			require.NotNil(t, attrDef, "Schema should contain :person/name")
+			assert.Equal(t, schema.CardinalityOne, attrDef.Cardinality,
+				":person/name should be CardinalityOne")
 
-	// Verify Matcher() has schema
-	matcher := db.Matcher()
-	require.NotNil(t, matcher, "Matcher should not be nil")
+			// Verify Matcher() has schema
+			matcher := db.Matcher()
+			require.NotNil(t, matcher, "Matcher should not be nil")
 
-	// The matcher should be using the schema for CRDT resolution
-	// This test documents that the schema IS available - the bug is in
-	// how/whether the executor applies CRDT resolution during query execution
-	t.Log("Schema is correctly configured and accessible")
-	t.Log("The bug is NOT in schema configuration - it's in query execution CRDT resolution")
+			// The matcher should be using the schema for CRDT resolution
+			// This test documents that the schema IS available - the bug is in
+			// how/whether the executor applies CRDT resolution during query execution
+			t.Log("Schema is correctly configured and accessible")
+			t.Log("The bug is NOT in schema configuration - it's in query execution CRDT resolution")
+		})
+	}
 }
 
 // TestAllQueryMethods_CRDTResolution tests all query methods to determine which

@@ -197,20 +197,15 @@ func TestIndexSelectionEventReportsBound(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var events []annotations.Event
-			opts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:              t.TempDir(),
-				PlannerOptions:    &opts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			name := datalog.NewKeyword(":person/name")
 			tx := db.NewTransaction()
 			require.NoError(t, tx.Add(datalog.NewIdentity("p1"), name, "Alice"))
 			require.NoError(t, tx.Add(datalog.NewIdentity("p2"), name, "Bob"))
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			eventFor := func(t *testing.T, name, query string) annotations.Event {

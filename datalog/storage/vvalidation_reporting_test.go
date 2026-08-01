@@ -26,6 +26,14 @@ import (
 // tuple without going near that loop, so an increment only there would report
 // every unique-attribute binding as matching nothing.
 func TestVValidationReportsWhatItsScansCost(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testVValidationReportsWhatItsScansCost(t, mode)
+		})
+	}
+}
+
+func testVValidationReportsWhatItsScansCost(t *testing.T, mode optimizerMode) {
 	name := datalog.NewKeyword(":person/name")
 	email := datalog.NewKeyword(":person/email")
 
@@ -59,13 +67,10 @@ func TestVValidationReportsWhatItsScansCost(t *testing.T) {
 			// That arm reports nothing either, so reaching the
 			// code under test means going around it.
 			var events []annotations.Event
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:              t.TempDir(),
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				DisableCache:      true,
 				AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			s, err := schema.NewBuilder().
 				Attribute(":person/name").Type(schema.TypeString).One().Add().

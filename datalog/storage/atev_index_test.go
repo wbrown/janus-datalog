@@ -1,11 +1,8 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
 	"bytes"
 	"crypto/sha1"
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -97,16 +94,15 @@ func TestATEVDescendingTxOrder(t *testing.T) {
 // writing ATEV. If ATEV is not populated, an A-bound, Tx-bound pattern scans an
 // empty run and reports no datoms even though the attribute has data.
 func TestATEVIsPopulatedOnCommit(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-populate-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, storeCase := range storeContractCases() {
+		t.Run(storeCase.name, func(t *testing.T) {
+			testATEVIsPopulatedOnCommit(t, storeCase)
+		})
 	}
-	defer os.RemoveAll(dir)
+}
 
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
+func testATEVIsPopulatedOnCommit(t *testing.T, storeCase storeContractCase) {
+	store := storeCase.open(t, &BinaryKeyEncoder{})
 	defer store.Close()
 
 	e := datalog.NewIdentity("e1")
@@ -147,16 +143,15 @@ func TestATEVIsPopulatedOnCommit(t *testing.T) {
 // selects ATEV when both A and Tx are bound (and V is unbound). Regressions
 // in chooseIndex would silently send these patterns back to AETV/TAEV.
 func TestChooseIndex_ABoundPlusTxBound_PicksATEV(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-matcher-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, storeCase := range storeContractCases() {
+		t.Run(storeCase.name, func(t *testing.T) {
+			testChooseIndexABoundPlusTxBoundPicksATEV(t, storeCase)
+		})
 	}
-	defer os.RemoveAll(dir)
+}
 
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
+func testChooseIndexABoundPlusTxBoundPicksATEV(t *testing.T, storeCase storeContractCase) {
+	store := storeCase.open(t, &BinaryKeyEncoder{})
 	defer store.Close()
 
 	matcher := NewPatternMatcher(store)
@@ -191,16 +186,15 @@ func TestChooseIndex_ABoundPlusTxBound_PicksATEV(t *testing.T) {
 // selective than Tx-tightening on the typical workload). Locks the rule into
 // the test suite so future planner edits don't silently shift the boundary.
 func TestChooseIndex_ABoundPlusTxBoundPlusVBound_DoesNotPickATEV(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-no-v-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, storeCase := range storeContractCases() {
+		t.Run(storeCase.name, func(t *testing.T) {
+			testChooseIndexABoundPlusTxBoundPlusVBoundDoesNotPickATEV(t, storeCase)
+		})
 	}
-	defer os.RemoveAll(dir)
+}
 
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
+func testChooseIndexABoundPlusTxBoundPlusVBoundDoesNotPickATEV(t *testing.T, storeCase storeContractCase) {
+	store := storeCase.open(t, &BinaryKeyEncoder{})
 	defer store.Close()
 
 	matcher := NewPatternMatcher(store)
@@ -221,16 +215,15 @@ func TestChooseIndex_ABoundPlusTxBoundPlusVBound_DoesNotPickATEV(t *testing.T) {
 // range, the CRDT iterator's ATEV handling, and result conversion all at once
 // — none of those is individually exercised end-to-end by other tests.
 func TestEndToEndABoundTxBoundQuery(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-e2e-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, storeCase := range storeContractCases() {
+		t.Run(storeCase.name, func(t *testing.T) {
+			testEndToEndABoundTxBoundQuery(t, storeCase)
+		})
 	}
-	defer os.RemoveAll(dir)
+}
 
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
+func testEndToEndABoundTxBoundQuery(t *testing.T, storeCase storeContractCase) {
+	store := storeCase.open(t, &BinaryKeyEncoder{})
 	defer store.Close()
 
 	attr := datalog.NewKeyword(":atev/e2e")
@@ -294,16 +287,15 @@ func TestEndToEndABoundTxBoundQuery(t *testing.T) {
 // silently wrong and every existing test would still pass — the matcher
 // integration would degrade to an empty-prefix full-ATEV scan under hash joins.
 func TestChooseIndexForValues_ATEV(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-hashjoin-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, storeCase := range storeContractCases() {
+		t.Run(storeCase.name, func(t *testing.T) {
+			testChooseIndexForValuesATEV(t, storeCase)
+		})
 	}
-	defer os.RemoveAll(dir)
+}
 
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
+func testChooseIndexForValuesATEV(t *testing.T, storeCase storeContractCase) {
+	store := storeCase.open(t, &BinaryKeyEncoder{})
 	defer store.Close()
 
 	matcher := NewPatternMatcher(store)
@@ -347,16 +339,15 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 // before DerefElementID; with the legacy branch gone, this test pins that
 // passing an ElementID still routes to TAEV with a proper prefix range.
 func TestChooseIndex_TxOnly_TAEV_WithElementID(t *testing.T) {
-	dir, err := os.MkdirTemp("", "atev-taev-regression-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, storeCase := range storeContractCases() {
+		t.Run(storeCase.name, func(t *testing.T) {
+			testChooseIndexTxOnlyTAEVWithElementID(t, storeCase)
+		})
 	}
-	defer os.RemoveAll(dir)
+}
 
-	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
-	if err != nil {
-		t.Fatal(err)
-	}
+func testChooseIndexTxOnlyTAEVWithElementID(t *testing.T, storeCase storeContractCase) {
+	store := storeCase.open(t, &BinaryKeyEncoder{})
 	defer store.Close()
 
 	matcher := NewPatternMatcher(store)

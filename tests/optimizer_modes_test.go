@@ -88,6 +88,23 @@ func eachBackendAndMode(t *testing.T, body func(t *testing.T, db *storage.Databa
 	eachBackendAndModeOpts(t, storage.DatabaseOptions{}, body)
 }
 
+// eachBackendAndModeWith hands the mode to the body as well as the database,
+// for a test that builds its own executor or matcher options instead of taking
+// the database's — the mode has to reach those too, or the leg runs under a
+// name whose optimizer path it never used.
+func eachBackendAndModeWith(t *testing.T, body func(t *testing.T, db *storage.Database, mode optimizerMode)) {
+	t.Helper()
+	for _, backend := range storage.AvailableBackends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					body(t, createBackendModeDB(t, backend, mode, storage.DatabaseOptions{}), mode)
+				})
+			}
+		})
+	}
+}
+
 // eachBackendAndModeOpts is eachBackendAndMode for a test that needs a schema,
 // the cache disabled, or anything else on the database.
 func eachBackendAndModeOpts(t *testing.T, opts storage.DatabaseOptions, body func(t *testing.T, db *storage.Database)) {

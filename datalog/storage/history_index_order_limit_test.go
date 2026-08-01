@@ -11,7 +11,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -59,16 +58,12 @@ func (c *historyOrderScanCapture) snapshot() (int, string) {
 	return c.scanned, c.index
 }
 
-func openHistoryOrderDatabase(tb testing.TB, capture *historyOrderScanCapture) *Database {
-	return openHistoryOrderDatabaseWithPlanner(tb, capture, nil)
-}
-
-// openHistoryOrderDatabaseWithPlanner seeds the multi-entity history fixture.
-// popts sets the database's default planner options (nil = defaults).
-func openHistoryOrderDatabaseWithPlanner(
+// openHistoryOrderDatabase seeds the multi-entity history fixture on the mode's
+// backend. capture may be nil.
+func openHistoryOrderDatabase(
 	tb testing.TB,
+	mode optimizerMode,
 	capture *historyOrderScanCapture,
-	popts *planner.PlannerOptions,
 ) *Database {
 	tb.Helper()
 	valueAttr := datalog.NewKeyword(":event/value")
@@ -79,17 +74,11 @@ func openHistoryOrderDatabaseWithPlanner(
 		Cardinality: schema.CardinalityOne,
 	})
 
-	options := DatabaseOptions{
-		Path:           tb.TempDir(),
-		Schema:         s,
-		PlannerOptions: popts,
-	}
+	options := DatabaseOptions{Schema: s}
 	if capture != nil {
 		options.AnnotationHandler = capture.handler
 	}
-	db, err := NewDatabaseWithOptions(options)
-	require.NoError(tb, err)
-	tb.Cleanup(func() { db.Close() })
+	db := createOptimizerModeDB(tb, mode, options)
 
 	entities := make([]datalog.Identity, historyOrderEntities)
 	for i := range entities {
@@ -106,20 +95,12 @@ func openHistoryOrderDatabaseWithPlanner(
 	return db
 }
 
+// openHistoryEntityOrderDatabase seeds the single-entity, multi-attribute
+// history fixture on the mode's backend. capture may be nil.
 func openHistoryEntityOrderDatabase(
 	tb testing.TB,
+	mode optimizerMode,
 	capture *historyOrderScanCapture,
-) (*Database, datalog.Identity) {
-	return openHistoryEntityOrderDatabaseWithPlanner(tb, capture, nil)
-}
-
-// openHistoryEntityOrderDatabaseWithPlanner seeds the single-entity,
-// multi-attribute history fixture. popts sets the database's default planner
-// options (nil = defaults).
-func openHistoryEntityOrderDatabaseWithPlanner(
-	tb testing.TB,
-	capture *historyOrderScanCapture,
-	popts *planner.PlannerOptions,
 ) (*Database, datalog.Identity) {
 	tb.Helper()
 	attributes := make([]datalog.Keyword, historyOrderEntities)
@@ -133,17 +114,11 @@ func openHistoryEntityOrderDatabaseWithPlanner(
 		})
 	}
 
-	options := DatabaseOptions{
-		Path:           tb.TempDir(),
-		Schema:         s,
-		PlannerOptions: popts,
-	}
+	options := DatabaseOptions{Schema: s}
 	if capture != nil {
 		options.AnnotationHandler = capture.handler
 	}
-	db, err := NewDatabaseWithOptions(options)
-	require.NoError(tb, err)
-	tb.Cleanup(func() { db.Close() })
+	db := createOptimizerModeDB(tb, mode, options)
 
 	entity := datalog.NewIdentity("history-entity-order")
 	for version := 0; version < historyOrderVersions; version++ {
@@ -203,8 +178,7 @@ func TestHistoryOrderedLimitUsesATEV(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
-			popts := mode.plannerOptions()
-			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
+			db := openHistoryOrderDatabase(t, mode, capture)
 
 			capture.reset()
 			result, err := db.History().Query(historyOrderedLimitQuery(limit))
@@ -237,8 +211,7 @@ func TestLatestOrderedLimitDeclinesATEV(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
-			popts := mode.plannerOptions()
-			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
+			db := openHistoryOrderDatabase(t, mode, capture)
 
 			capture.reset()
 			result, err := db.Query(historyOrderedLimitQuery(10))
@@ -259,8 +232,7 @@ func TestHistoryTransactionOrderedLimitUsesTAEV(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
-			popts := mode.plannerOptions()
-			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
+			db := openHistoryOrderDatabase(t, mode, capture)
 
 			capture.reset()
 			result, err := db.History().Query(historyTransactionOrderedLimitQuery(limit))
@@ -298,8 +270,7 @@ func TestLatestTransactionOrderedLimitDeclinesTAEV(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
-			popts := mode.plannerOptions()
-			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
+			db := openHistoryOrderDatabase(t, mode, capture)
 
 			capture.reset()
 			result, err := db.Query(historyTransactionOrderedLimitQuery(10))
@@ -320,8 +291,7 @@ func TestHistoryEntityOrderedLimitUsesAETV(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
-			popts := mode.plannerOptions()
-			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
+			db := openHistoryOrderDatabase(t, mode, capture)
 
 			capture.reset()
 			result, err := db.History().Query(historyEntityOrderedLimitQuery(limit))
@@ -355,8 +325,7 @@ func TestLatestEntityOrderedLimitDoesNotUseHistoryAETVProperty(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
-			popts := mode.plannerOptions()
-			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
+			db := openHistoryOrderDatabase(t, mode, capture)
 
 			capture.reset()
 			result, err := db.Query(historyEntityOrderedLimitQuery(limit))
@@ -378,8 +347,7 @@ func TestHistoryAttributeOrderedLimitUsesEATV(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
-			popts := mode.plannerOptions()
-			db, entity := openHistoryEntityOrderDatabaseWithPlanner(t, capture, &popts)
+			db, entity := openHistoryEntityOrderDatabase(t, mode, capture)
 
 			capture.reset()
 			result, err := db.History().Query(historyAttributeOrderedLimitQuery(entity, limit))
@@ -413,8 +381,7 @@ func TestLatestAttributeOrderedLimitDoesNotUseHistoryEATVProperty(t *testing.T) 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
-			popts := mode.plannerOptions()
-			db, entity := openHistoryEntityOrderDatabaseWithPlanner(t, capture, &popts)
+			db, entity := openHistoryEntityOrderDatabase(t, mode, capture)
 
 			capture.reset()
 			result, err := db.Query(historyAttributeOrderedLimitQuery(entity, limit))
@@ -442,9 +409,8 @@ func TestHistoryOrderedLimitDifferentialRandomized(t *testing.T) {
 func runHistoryOrderedLimitDifferentialRandomized(t *testing.T, mode optimizerMode) {
 	random := rand.New(rand.NewSource(0x1d85))
 	capture := &historyOrderScanCapture{}
-	popts := mode.plannerOptions()
-	db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
-	entityDB, entity := openHistoryEntityOrderDatabaseWithPlanner(t, capture, &popts)
+	db := openHistoryOrderDatabase(t, mode, capture)
+	entityDB, entity := openHistoryEntityOrderDatabase(t, mode, capture)
 
 	type shape struct {
 		name      string
@@ -578,15 +544,10 @@ func runHistoryOrderedLimitUsesFullElementIDAcrossReplicas(t *testing.T, mode op
 			Cardinality: schema.CardinalityOne,
 		})
 	}
-	popts := mode.plannerOptions()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:              t.TempDir(),
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema:            s,
 		AnnotationHandler: capture.handler,
-		PlannerOptions:    &popts,
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	entities := []datalog.Identity{
 		datalog.NewIdentity("replica-history-0"),
@@ -735,15 +696,10 @@ func runAsOfOrderedLimitDifferentialAroundTombstone(t *testing.T, mode optimizer
 			Cardinality: schema.CardinalityOne,
 		})
 	}
-	popts := mode.plannerOptions()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:              t.TempDir(),
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema:            s,
 		AnnotationHandler: capture.handler,
-		PlannerOptions:    &popts,
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	entities := []datalog.Identity{
 		datalog.NewIdentity("boundary-0"),

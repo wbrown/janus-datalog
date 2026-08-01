@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,22 +25,13 @@ import (
 func TestOrUnionAsLeftJoin(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			dir, err := os.MkdirTemp("", "or-union-left-join-*")
-			require.NoError(t, err)
-			defer os.RemoveAll(dir)
-
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           dir,
-				PlannerOptions: &popts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				AnnotationHandler: func(e annotations.Event) {
 					if e.Name == "algebra/bridge-complete" {
 						t.Logf("[%s] %v", e.Name, e.Data)
 					}
 				},
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			// Setup: 3 parents, some with children, some without
 			tx := db.NewTransaction()
@@ -66,7 +56,7 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 			tx.Add(c, datalog.NewKeyword(":child/parent"), p2)
 			tx.Add(c, datalog.NewKeyword(":child/value"), int64(99))
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			// Verify data

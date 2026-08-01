@@ -2,7 +2,6 @@ package tests
 
 import (
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -25,22 +24,13 @@ func collectTuples(r executor.Relation) []executor.Tuple {
 
 // TestMultipleAggregateSubqueriesNilBug reproduces the critical bug where
 // multiple aggregate subqueries return nil values except for the last one.
-// This test uses real BadgerDB storage to reproduce the production issue.
+// The reproduction needs storage-backed resolution rather than an in-memory
+// relation, so it runs against every backend the build has.
 func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
-	// Create temporary directory for test database
-	dir, err := os.MkdirTemp("", "nilbug-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	eachBackendAndMode(t, testMultipleAggregateSubqueriesNilBug)
+}
 
-	// Create database
-	db, err := storage.NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
+func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {
 	// Add sample price data for a single day
 	tx := db.NewTransaction()
 
@@ -86,195 +76,181 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 		t.Fatalf("Failed to commit transaction: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
+	// Verify data was written - check for bars with :price/symbol
+	verifyQuery := `[:find ?bar :where [?bar :price/symbol ?s]]`
+	vq, verifyErr := parser.ParseQuery(verifyQuery)
+	if verifyErr != nil {
+		t.Fatalf("Failed to parse verify query: %v", verifyErr)
+	}
+	verifyExec := db.NewExecutor()
+	vresult, verifyErr := verifyExec.Execute(vq)
+	if verifyErr != nil {
+		t.Fatalf("Failed to execute verify query: %v", verifyErr)
+	}
+	vtuples := collectTuples(vresult)
+	t.Logf("Verify query found %d bars with :price/symbol", len(vtuples))
+	if len(vtuples) != 5 {
+		t.Fatalf("Expected 5 bars with :price/symbol, got %d", len(vtuples))
+	}
 
-			// Verify data was written - check for bars with :price/symbol
-			verifyQuery := `[:find ?bar :where [?bar :price/symbol ?s]]`
-			vq, verifyErr := parser.ParseQuery(verifyQuery)
-			if verifyErr != nil {
-				t.Fatalf("Failed to parse verify query: %v", verifyErr)
-			}
-			verifyMatcher := storage.NewPatternMatcher(db.Store())
-			verifyExec := executor.NewExecutorWithOptions(verifyMatcher, nil, popts)
-			vresult, verifyErr := verifyExec.Execute(vq)
-			if verifyErr != nil {
-				t.Fatalf("Failed to execute verify query: %v", verifyErr)
-			}
-			vtuples := collectTuples(vresult)
-			t.Logf("Verify query found %d bars with :price/symbol", len(vtuples))
-			if len(vtuples) != 5 {
-				t.Fatalf("Expected 5 bars with :price/symbol, got %d", len(vtuples))
-			}
+	// Now verify we can find the symbol and bars together
+	symbolQuery := `[:find ?s ?bar :where [?s :symbol/ticker "TEST"] [?bar :price/symbol ?s]]`
+	sq, symbolErr := parser.ParseQuery(symbolQuery)
+	if symbolErr != nil {
+		t.Fatalf("Failed to parse symbol query: %v", symbolErr)
+	}
+	symbolExec := db.NewExecutor()
+	sresult, symbolErr := symbolExec.Execute(sq)
+	if symbolErr != nil {
+		t.Fatalf("Failed to execute symbol query: %v", symbolErr)
+	}
+	stuples := collectTuples(sresult)
+	t.Logf("Symbol query found %d results", len(stuples))
+	if len(stuples) != 5 {
+		t.Fatalf("Expected 5 results from symbol query, got %d", len(stuples))
+	}
 
-			// Now verify we can find the symbol and bars together
-			symbolQuery := `[:find ?s ?bar :where [?s :symbol/ticker "TEST"] [?bar :price/symbol ?s]]`
-			sq, symbolErr := parser.ParseQuery(symbolQuery)
-			if symbolErr != nil {
-				t.Fatalf("Failed to parse symbol query: %v", symbolErr)
-			}
-			symbolMatcher := storage.NewPatternMatcher(db.Store())
-			symbolExec := executor.NewExecutorWithOptions(symbolMatcher, nil, popts)
-			sresult, symbolErr := symbolExec.Execute(sq)
-			if symbolErr != nil {
-				t.Fatalf("Failed to execute symbol query: %v", symbolErr)
-			}
-			stuples := collectTuples(sresult)
-			t.Logf("Symbol query found %d results", len(stuples))
-			if len(stuples) != 5 {
-				t.Fatalf("Expected 5 results from symbol query, got %d", len(stuples))
-			}
+	// Test with the morning-bar variable name (matching main query)
+	morningQuery := `[:find ?s ?morning-bar :where [?s :symbol/ticker "TEST"] [?morning-bar :price/symbol ?s]]`
+	mq, morningErr := parser.ParseQuery(morningQuery)
+	if morningErr != nil {
+		t.Fatalf("Failed to parse morning query: %v", morningErr)
+	}
+	morningExec := db.NewExecutor()
+	mresult, morningErr := morningExec.Execute(mq)
+	if morningErr != nil {
+		t.Fatalf("Failed to execute morning query: %v", morningErr)
+	}
+	mtuples := collectTuples(mresult)
+	t.Logf("Morning query found %d results", len(mtuples))
+	if len(mtuples) != 5 {
+		t.Fatalf("Expected 5 results from morning query, got %d", len(mtuples))
+	}
 
-			// Test with the morning-bar variable name (matching main query)
-			morningQuery := `[:find ?s ?morning-bar :where [?s :symbol/ticker "TEST"] [?morning-bar :price/symbol ?s]]`
-			mq, morningErr := parser.ParseQuery(morningQuery)
-			if morningErr != nil {
-				t.Fatalf("Failed to parse morning query: %v", morningErr)
-			}
-			morningMatcher := storage.NewPatternMatcher(db.Store())
-			morningExec := executor.NewExecutorWithOptions(morningMatcher, nil, popts)
-			mresult, morningErr := morningExec.Execute(mq)
-			if morningErr != nil {
-				t.Fatalf("Failed to execute morning query: %v", morningErr)
-			}
-			mtuples := collectTuples(mresult)
-			t.Logf("Morning query found %d results", len(mtuples))
-			if len(mtuples) != 5 {
-				t.Fatalf("Expected 5 results from morning query, got %d", len(mtuples))
-			}
+	// First check what minute-of-day values are stored
+	checkMinuteQuery := `[:find ?bar ?mod :where [?bar :price/minute-of-day ?mod]]`
+	cmq, checkErr := parser.ParseQuery(checkMinuteQuery)
+	if checkErr != nil {
+		t.Fatalf("Failed to parse check minute query: %v", checkErr)
+	}
+	checkExec := db.NewExecutor()
+	checkResult, checkErr := checkExec.Execute(cmq)
+	if checkErr != nil {
+		t.Fatalf("Failed to execute check minute query: %v", checkErr)
+	}
+	checkTuples := collectTuples(checkResult)
+	t.Logf("Check minute query found %d results", len(checkTuples))
+	for i, tuple := range checkTuples {
+		t.Logf("  Bar %v has minute-of-day %v (type %T)", tuple[0], tuple[1], tuple[1])
+		_ = i
+	}
 
-			// First check what minute-of-day values are stored
-			checkMinuteQuery := `[:find ?bar ?mod :where [?bar :price/minute-of-day ?mod]]`
-			cmq, checkErr := parser.ParseQuery(checkMinuteQuery)
-			if checkErr != nil {
-				t.Fatalf("Failed to parse check minute query: %v", checkErr)
-			}
-			checkMatcher := storage.NewPatternMatcher(db.Store())
-			checkExec := executor.NewExecutorWithOptions(checkMatcher, nil, popts)
-			checkResult, checkErr := checkExec.Execute(cmq)
-			if checkErr != nil {
-				t.Fatalf("Failed to execute check minute query: %v", checkErr)
-			}
-			checkTuples := collectTuples(checkResult)
-			t.Logf("Check minute query found %d results", len(checkTuples))
-			for i, tuple := range checkTuples {
-				t.Logf("  Bar %v has minute-of-day %v (type %T)", tuple[0], tuple[1], tuple[1])
-				_ = i
-			}
+	// Check each bar's attributes separately
+	checkHighQuery := `[:find ?bar ?h :where [?bar :price/high ?h]]`
+	chq, chErr := parser.ParseQuery(checkHighQuery)
+	if chErr != nil {
+		t.Fatalf("Failed to parse check high query: %v", chErr)
+	}
+	chExec := db.NewExecutor()
+	chResult, chErr := chExec.Execute(chq)
+	if chErr != nil {
+		t.Fatalf("Failed to execute check high query: %v", chErr)
+	}
+	chTuples := collectTuples(chResult)
+	t.Logf("Check high query found %d results", len(chTuples))
 
-			// Check each bar's attributes separately
-			checkHighQuery := `[:find ?bar ?h :where [?bar :price/high ?h]]`
-			chq, chErr := parser.ParseQuery(checkHighQuery)
-			if chErr != nil {
-				t.Fatalf("Failed to parse check high query: %v", chErr)
-			}
-			chMatcher := storage.NewPatternMatcher(db.Store())
-			chExec := executor.NewExecutorWithOptions(chMatcher, nil, popts)
-			chResult, chErr := chExec.Execute(chq)
-			if chErr != nil {
-				t.Fatalf("Failed to execute check high query: %v", chErr)
-			}
-			chTuples := collectTuples(chResult)
-			t.Logf("Check high query found %d results", len(chTuples))
+	checkLowQuery := `[:find ?bar ?l :where [?bar :price/low ?l]]`
+	clq, clErr := parser.ParseQuery(checkLowQuery)
+	if clErr != nil {
+		t.Fatalf("Failed to parse check low query: %v", clErr)
+	}
+	clExec := db.NewExecutor()
+	clResult, clErr := clExec.Execute(clq)
+	if clErr != nil {
+		t.Fatalf("Failed to execute check low query: %v", clErr)
+	}
+	clTuples := collectTuples(clResult)
+	t.Logf("Check low query found %d results", len(clTuples))
+	for i, tuple := range clTuples {
+		t.Logf("  Low bar %d: %v -> %v", i, tuple[0], tuple[1])
+	}
 
-			checkLowQuery := `[:find ?bar ?l :where [?bar :price/low ?l]]`
-			clq, clErr := parser.ParseQuery(checkLowQuery)
-			if clErr != nil {
-				t.Fatalf("Failed to parse check low query: %v", clErr)
-			}
-			clMatcher := storage.NewPatternMatcher(db.Store())
-			clExec := executor.NewExecutorWithOptions(clMatcher, nil, popts)
-			clResult, clErr := clExec.Execute(clq)
-			if clErr != nil {
-				t.Fatalf("Failed to execute check low query: %v", clErr)
-			}
-			clTuples := collectTuples(clResult)
-			t.Logf("Check low query found %d results", len(clTuples))
-			for i, tuple := range clTuples {
-				t.Logf("  Low bar %d: %v -> %v", i, tuple[0], tuple[1])
-			}
+	// Test with just the bound minute-of-day value (no joins)
+	simpleBoundQuery := `[:find ?bar :where [?bar :price/minute-of-day 570]]`
+	sbq, sbErr := parser.ParseQuery(simpleBoundQuery)
+	if sbErr != nil {
+		t.Fatalf("Failed to parse simple bound query: %v", sbErr)
+	}
+	sbExec := db.NewExecutor()
+	sbResult, sbErr := sbExec.Execute(sbq)
+	if sbErr != nil {
+		t.Fatalf("Failed to execute simple bound query: %v", sbErr)
+	}
+	sbTuples := collectTuples(sbResult)
+	t.Logf("Simple bound query found %d results", len(sbTuples))
+	if len(sbTuples) != 1 {
+		t.Fatalf("Expected 1 result from simple bound query, got %d", len(sbTuples))
+	}
 
-			// Test with just the bound minute-of-day value (no joins)
-			simpleBoundQuery := `[:find ?bar :where [?bar :price/minute-of-day 570]]`
-			sbq, sbErr := parser.ParseQuery(simpleBoundQuery)
-			if sbErr != nil {
-				t.Fatalf("Failed to parse simple bound query: %v", sbErr)
-			}
-			sbMatcher := storage.NewPatternMatcher(db.Store())
-			sbExec := executor.NewExecutorWithOptions(sbMatcher, nil, popts)
-			sbResult, sbErr := sbExec.Execute(sbq)
-			if sbErr != nil {
-				t.Fatalf("Failed to execute simple bound query: %v", sbErr)
-			}
-			sbTuples := collectTuples(sbResult)
-			t.Logf("Simple bound query found %d results", len(sbTuples))
-			if len(sbTuples) != 1 {
-				t.Fatalf("Expected 1 result from simple bound query, got %d", len(sbTuples))
-			}
+	// Test if entity joins work at all - join two attributes on same entity
+	barJoinQuery := `[:find ?bar :where [?bar :price/high ?h] [?bar :price/low ?l]]`
+	bjq, bjErr := parser.ParseQuery(barJoinQuery)
+	if bjErr != nil {
+		t.Fatalf("Failed to parse bar join query: %v", bjErr)
+	}
+	bjExec := db.NewExecutor()
+	bjResult, bjErr := bjExec.Execute(bjq)
+	if bjErr != nil {
+		t.Fatalf("Failed to execute bar join query: %v", bjErr)
+	}
+	bjTuples := collectTuples(bjResult)
+	t.Logf("Bar join query found %d results", len(bjTuples))
+	if len(bjTuples) != 5 {
+		for i, tuple := range bjTuples {
+			t.Logf("  Result %d: bar=%v", i, tuple[0])
+		}
+		t.Fatalf("Expected 5 results from bar join query, got %d", len(bjTuples))
+	}
 
-			// Test if entity joins work at all - join two attributes on same entity
-			barJoinQuery := `[:find ?bar :where [?bar :price/high ?h] [?bar :price/low ?l]]`
-			bjq, bjErr := parser.ParseQuery(barJoinQuery)
-			if bjErr != nil {
-				t.Fatalf("Failed to parse bar join query: %v", bjErr)
-			}
-			bjMatcher := storage.NewPatternMatcher(db.Store())
-			bjExec := executor.NewExecutorWithOptions(bjMatcher, nil, popts)
-			bjResult, bjErr := bjExec.Execute(bjq)
-			if bjErr != nil {
-				t.Fatalf("Failed to execute bar join query: %v", bjErr)
-			}
-			bjTuples := collectTuples(bjResult)
-			t.Logf("Bar join query found %d results", len(bjTuples))
-			if len(bjTuples) != 5 {
-				for i, tuple := range bjTuples {
-					t.Logf("  Result %d: bar=%v", i, tuple[0])
-				}
-				t.Fatalf("Expected 5 results from bar join query, got %d", len(bjTuples))
-			}
+	// Test bar + minute-of-day join (no symbol)
+	barMinuteQuery := `[:find ?bar :where [?bar :price/symbol ?s] [?bar :price/minute-of-day 570]]`
+	bmq, bmErr := parser.ParseQuery(barMinuteQuery)
+	if bmErr != nil {
+		t.Fatalf("Failed to parse bar-minute query: %v", bmErr)
+	}
+	bmExec := db.NewExecutor()
+	bmResult, bmErr := bmExec.Execute(bmq)
+	if bmErr != nil {
+		t.Fatalf("Failed to execute bar-minute query: %v", bmErr)
+	}
+	bmTuples := collectTuples(bmResult)
+	t.Logf("Bar-minute query found %d results", len(bmTuples))
+	if len(bmTuples) != 1 {
+		t.Fatalf("Expected 1 result from bar-minute query, got %d", len(bmTuples))
+	}
 
-			// Test bar + minute-of-day join (no symbol)
-			barMinuteQuery := `[:find ?bar :where [?bar :price/symbol ?s] [?bar :price/minute-of-day 570]]`
-			bmq, bmErr := parser.ParseQuery(barMinuteQuery)
-			if bmErr != nil {
-				t.Fatalf("Failed to parse bar-minute query: %v", bmErr)
-			}
-			bmMatcher := storage.NewPatternMatcher(db.Store())
-			bmExec := executor.NewExecutorWithOptions(bmMatcher, nil, popts)
-			bmResult, bmErr := bmExec.Execute(bmq)
-			if bmErr != nil {
-				t.Fatalf("Failed to execute bar-minute query: %v", bmErr)
-			}
-			bmTuples := collectTuples(bmResult)
-			t.Logf("Bar-minute query found %d results", len(bmTuples))
-			if len(bmTuples) != 1 {
-				t.Fatalf("Expected 1 result from bar-minute query, got %d", len(bmTuples))
-			}
-
-			// Test with minute-of-day filter
-			minuteQuery := `[:find ?s ?morning-bar
+	// Test with minute-of-day filter
+	minuteQuery := `[:find ?s ?morning-bar
 			                 :where [?s :symbol/ticker "TEST"]
 			                        [?morning-bar :price/symbol ?s]
 			                        [?morning-bar :price/minute-of-day 570]]`
-			minq, minuteErr := parser.ParseQuery(minuteQuery)
-			if minuteErr != nil {
-				t.Fatalf("Failed to parse minute query: %v", minuteErr)
-			}
-			minuteMatcher := storage.NewPatternMatcher(db.Store())
-			minuteExec := executor.NewExecutorWithOptions(minuteMatcher, nil, popts)
-			minresult, minuteErr := minuteExec.Execute(minq)
-			if minuteErr != nil {
-				t.Fatalf("Failed to execute minute query: %v", minuteErr)
-			}
-			minTuples := collectTuples(minresult)
-			t.Logf("Minute query found %d results", len(minTuples))
-			if len(minTuples) != 1 {
-				t.Fatalf("Expected 1 result from minute query, got %d", len(minTuples))
-			}
+	minq, minuteErr := parser.ParseQuery(minuteQuery)
+	if minuteErr != nil {
+		t.Fatalf("Failed to parse minute query: %v", minuteErr)
+	}
+	minuteExec := db.NewExecutor()
+	minresult, minuteErr := minuteExec.Execute(minq)
+	if minuteErr != nil {
+		t.Fatalf("Failed to execute minute query: %v", minuteErr)
+	}
+	minTuples := collectTuples(minresult)
+	t.Logf("Minute query found %d results", len(minTuples))
+	if len(minTuples) != 1 {
+		t.Fatalf("Expected 1 result from minute query, got %d", len(minTuples))
+	}
 
-			// Main test: query with multiple aggregate subqueries
-			mainQuery := `[:find ?s ?morning-bar ?open-price ?high-price ?low-price
+	// Main test: query with multiple aggregate subqueries
+	mainQuery := `[:find ?s ?morning-bar ?open-price ?high-price ?low-price
 			              :where [?s :symbol/ticker "TEST"]
 			                     [?morning-bar :price/symbol ?s]
 			                     [?morning-bar :price/minute-of-day 570]
@@ -282,68 +258,65 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 			                     [(q [:find (max ?h) :in $ ?bar :where [?bar :price/high ?h]] $ ?morning-bar) [[?high-price]]]
 			                     [(q [:find (min ?l) :in $ ?bar :where [?bar :price/low ?l]] $ ?morning-bar) [[?low-price]]]]`
 
-			q, parseErr := parser.ParseQuery(mainQuery)
-			if parseErr != nil {
-				t.Fatalf("Failed to parse main query: %v", parseErr)
-			}
+	q, parseErr := parser.ParseQuery(mainQuery)
+	if parseErr != nil {
+		t.Fatalf("Failed to parse main query: %v", parseErr)
+	}
 
-			matcher := storage.NewPatternMatcher(db.Store())
-			exec := executor.NewExecutorWithOptions(matcher, nil, popts)
-			result, execErr := exec.Execute(q)
-			if execErr != nil {
-				t.Fatalf("Failed to execute main query: %v", execErr)
-			}
+	exec := db.NewExecutor()
+	result, execErr := exec.Execute(q)
+	if execErr != nil {
+		t.Fatalf("Failed to execute main query: %v", execErr)
+	}
 
-			resultTuples := collectTuples(result)
-			t.Logf("Main query result: %d tuples", len(resultTuples))
+	resultTuples := collectTuples(result)
+	t.Logf("Main query result: %d tuples", len(resultTuples))
 
-			if len(resultTuples) != 1 {
-				t.Fatalf("Expected 1 result tuple, got %d", len(resultTuples))
-			}
+	if len(resultTuples) != 1 {
+		t.Fatalf("Expected 1 result tuple, got %d", len(resultTuples))
+	}
 
-			tuple := resultTuples[0]
-			t.Logf("Result tuple: %v", tuple)
+	tuple := resultTuples[0]
+	t.Logf("Result tuple: %v", tuple)
 
-			// Check that all aggregate values are non-nil
-			if len(tuple) != 5 {
-				t.Fatalf("Expected 5 symbols in result, got %d", len(tuple))
-			}
+	// Check that all aggregate values are non-nil
+	if len(tuple) != 5 {
+		t.Fatalf("Expected 5 symbols in result, got %d", len(tuple))
+	}
 
-			openPrice := tuple[2]
-			highPrice := tuple[3]
-			lowPrice := tuple[4]
+	openPrice := tuple[2]
+	highPrice := tuple[3]
+	lowPrice := tuple[4]
 
-			t.Logf("Open price: %v (type: %T)", openPrice, openPrice)
-			t.Logf("High price: %v (type: %T)", highPrice, highPrice)
-			t.Logf("Low price: %v (type: %T)", lowPrice, lowPrice)
+	t.Logf("Open price: %v (type: %T)", openPrice, openPrice)
+	t.Logf("High price: %v (type: %T)", highPrice, highPrice)
+	t.Logf("Low price: %v (type: %T)", lowPrice, lowPrice)
 
-			// THE BUG: First aggregate values come back as nil
-			if openPrice == nil {
-				t.Errorf("BUG: open-price is nil (expected 100.0)")
-			}
-			if highPrice == nil {
-				t.Errorf("BUG: high-price is nil (expected 105.0)")
-			}
-			if lowPrice == nil {
-				t.Errorf("BUG: low-price is nil (expected 99.0)")
-			}
+	// THE BUG: First aggregate values come back as nil
+	if openPrice == nil {
+		t.Errorf("BUG: open-price is nil (expected 100.0)")
+	}
+	if highPrice == nil {
+		t.Errorf("BUG: high-price is nil (expected 105.0)")
+	}
+	if lowPrice == nil {
+		t.Errorf("BUG: low-price is nil (expected 99.0)")
+	}
 
-			// Verify actual values
-			if openPrice != nil {
-				if op, ok := openPrice.(float64); !ok || op != 100.0 {
-					t.Errorf("Expected open-price=100.0, got %v", openPrice)
-				}
-			}
-			if highPrice != nil {
-				if hp, ok := highPrice.(float64); !ok || hp != 105.0 {
-					t.Errorf("Expected high-price=105.0, got %v", highPrice)
-				}
-			}
-			if lowPrice != nil {
-				if lp, ok := lowPrice.(float64); !ok || lp != 99.0 {
-					t.Errorf("Expected low-price=99.0, got %v", lowPrice)
-				}
-			}
-		})
+	// Verify actual values
+	if openPrice != nil {
+		if op, ok := openPrice.(float64); !ok || op != 100.0 {
+			t.Errorf("Expected open-price=100.0, got %v", openPrice)
+		}
+	}
+	if highPrice != nil {
+		if hp, ok := highPrice.(float64); !ok || hp != 105.0 {
+			t.Errorf("Expected high-price=105.0, got %v", highPrice)
+		}
+	}
+	if lowPrice != nil {
+		if lp, ok := lowPrice.(float64); !ok || lp != 99.0 {
+			t.Errorf("Expected low-price=99.0, got %v", lowPrice)
+		}
 	}
 }

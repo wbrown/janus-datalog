@@ -19,15 +19,7 @@ import (
 func TestGetElseWithConstantEntity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create test data
 			tx := db.NewTransaction()
@@ -44,7 +36,7 @@ func TestGetElseWithConstantEntity(t *testing.T) {
 			tx.Add(datalog.NewIdentity("item1"), datalog.NewKeyword(":item/name"), "Widget")
 			tx.Add(datalog.NewIdentity("item2"), datalog.NewKeyword(":item/name"), "Gadget")
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}

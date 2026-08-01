@@ -331,10 +331,10 @@ func isDumpFilePath(path string) bool {
 // directory. The returned cleanup function closes the database and removes
 // the temporary directory; callers must invoke it. Writes to a dump-backed
 // database are discarded when the process exits.
-// openDatabaseOrEDN opens a BadgerDB directory, or loads an .edn/.jdzl dump
-// into a temporary database. plannerOpts, when non-nil, becomes the database's
-// planner-options override (the -optimize flag rides it); nil keeps the
-// engine defaults — the export/import/stats paths run no queries and pass nil.
+//
+// plannerOpts, when non-nil, becomes the database's planner-options override
+// (the -optimize flag rides it); nil keeps the engine defaults — the
+// export/import/stats paths run no queries and pass nil.
 func openDatabaseOrEDN(dbPath string, plannerOpts *planner.PlannerOptions) (*storage.Database, func(), error) {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, nil, fmt.Errorf("database does not exist: %s", dbPath)

@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,23 +28,12 @@ import (
 func TestOrJoinProjectionInheritsOuterBindings(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "orjoin-projection-*")
-			require.NoError(t, err)
-			defer os.RemoveAll(tmpDir)
-
 			// Schema: :container/item is cardinality-many (a container has multiple items)
 			s := schema.NewBuilder().
 				Attribute(":container/item").Type(schema.TypeRef).Many().Add().
 				MustBuild()
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			// Set up data
 			containerA := datalog.NewIdentity("container:A")
@@ -86,7 +74,7 @@ func TestOrJoinProjectionInheritsOuterBindings(t *testing.T) {
 			// Item 4: flagged, but in warehouse-2 (should be excluded by location filter)
 			tx.Add(item4, kw(":item/flagged"), true)
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			t.Run("idiomatic_or_join_with_outer_bindings", func(t *testing.T) {

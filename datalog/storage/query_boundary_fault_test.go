@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // A scan that fails mid-stream must surface at every public boundary rather
@@ -16,11 +15,11 @@ import (
 // every backend.
 //
 // Inducing the failure does not. The blob case deletes a Tier-3 blob out from
-// under a value, which reproduces the original defect exactly and needs Badger;
-// the injected case wraps whatever store the build selected and fails its
-// iterator on demand, which needs nothing. Running the boundary assertions over
-// both is what puts the property on every backend without giving up the
-// reproduction.
+// under a value, which reproduces the original defect exactly and needs a store
+// that keeps blobs; the injected case wraps any store and fails its iterator on
+// demand, which needs nothing. Each case therefore names the modes it runs on,
+// and running the boundary assertions over both is what puts the property on
+// every backend without giving up the reproduction.
 
 var errInjectedScanFault = errors.New("injected scan fault")
 
@@ -105,24 +104,27 @@ func (it *scanFaultIterator) Error() error {
 // resulting error says.
 type queryBoundaryFaultCase struct {
 	name string
+	// modes is the axis this way of inducing a failure can be induced on.
+	modes []optimizerMode
 	// openFailing returns a database whose every scan of (entity, attr) fails
 	// before yielding anything.
-	openFailing func(t *testing.T, popts *planner.PlannerOptions) (*Database, datalog.Identity, datalog.Keyword)
+	openFailing func(t *testing.T, mode optimizerMode) (*Database, datalog.Identity, datalog.Keyword)
 	// openValidThenFailing returns a database whose attribute-wide scan yields
 	// one good datom and then fails, which is the truncation boundary.
-	openValidThenFailing func(t *testing.T, popts *planner.PlannerOptions) *Database
+	openValidThenFailing func(t *testing.T, mode optimizerMode) *Database
 	// errText is a substring every boundary must carry through.
 	errText string
 }
 
-func queryBoundaryFaultCases() []queryBoundaryFaultCase {
-	return appendNativeBlobFaultCase([]queryBoundaryFaultCase{{
-		name: "injected",
-		openFailing: func(t *testing.T, popts *planner.PlannerOptions) (*Database, datalog.Identity, datalog.Keyword) {
-			return openInjectedFaultDatabase(t, popts, 0)
+func queryBoundaryFaultCases(t *testing.T) []queryBoundaryFaultCase {
+	return appendBlobFaultCase(t, []queryBoundaryFaultCase{{
+		name:  "injected",
+		modes: optimizerModes,
+		openFailing: func(t *testing.T, mode optimizerMode) (*Database, datalog.Identity, datalog.Keyword) {
+			return openInjectedFaultDatabase(t, mode, 0)
 		},
-		openValidThenFailing: func(t *testing.T, popts *planner.PlannerOptions) *Database {
-			db, _, _ := openInjectedFaultDatabase(t, popts, 1)
+		openValidThenFailing: func(t *testing.T, mode optimizerMode) *Database {
+			db, _, _ := openInjectedFaultDatabase(t, mode, 1)
 			return db
 		},
 		errText: "injected scan fault",
@@ -131,17 +133,18 @@ func queryBoundaryFaultCases() []queryBoundaryFaultCase {
 
 // openInjectedFaultDatabase writes two datoms through an unarmed fault store,
 // then arms it so every scan under test fails after failAfter datoms.
-func openInjectedFaultDatabase(t *testing.T, popts *planner.PlannerOptions, failAfter int) (*Database, datalog.Identity, datalog.Keyword) {
+func openInjectedFaultDatabase(t *testing.T, mode optimizerMode, failAfter int) (*Database, datalog.Identity, datalog.Keyword) {
 	t.Helper()
 
-	base, err := openDefaultStore(t.TempDir(), &BinaryKeyEncoder{})
+	base, err := mode.backend.Open(t.TempDir(), &BinaryKeyEncoder{})
 	require.NoError(t, err)
 	store := &scanFaultStore{Store: base, failAfter: failAfter}
 
+	popts := mode.plannerOptions()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Store:          store,
 		DisableCache:   true,
-		PlannerOptions: popts,
+		PlannerOptions: &popts,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -164,15 +167,16 @@ func openInjectedFaultDatabase(t *testing.T, popts *planner.PlannerOptions, fail
 	return db, entity, attr
 }
 
-// eachFaultAndMode runs body for every fault-injection case crossed with every
-// optimizer mode, which is the grid each boundary assertion below is pinned on.
-func eachFaultAndMode(t *testing.T, body func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions)) {
+// eachFaultAndMode runs body for every fault-injection case crossed with the
+// modes that case can be induced on, which is the grid each boundary assertion
+// below is pinned on.
+func eachFaultAndMode(t *testing.T, body func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode)) {
 	t.Helper()
-	for _, fault := range queryBoundaryFaultCases() {
+	for _, fault := range queryBoundaryFaultCases(t) {
 		t.Run(fault.name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range fault.modes {
 				t.Run(mode.name, func(t *testing.T) {
-					body(t, fault, mode.plannerOptions())
+					body(t, fault, mode)
 				})
 			}
 		})
@@ -183,8 +187,8 @@ func eachFaultAndMode(t *testing.T, body func(t *testing.T, fault queryBoundaryF
 // ANALYZE-style), so a deferred failure must surface from Analyze itself rather
 // than be deferred past the API boundary into a lazy result.
 func TestAnalyze_SurfacesScanFault(t *testing.T) {
-	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions) {
-		db, entity, _ := fault.openFailing(t, &popts)
+	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode) {
+		db, entity, _ := fault.openFailing(t, mode)
 		defer db.Close()
 
 		_, err := db.Analyze(`[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, entity)
@@ -194,8 +198,8 @@ func TestAnalyze_SurfacesScanFault(t *testing.T) {
 }
 
 func TestQueryInto_SurfacesScanFault(t *testing.T) {
-	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions) {
-		db, entity, _ := fault.openFailing(t, &popts)
+	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode) {
+		db, entity, _ := fault.openFailing(t, mode)
 		defer db.Close()
 
 		var out [][]byte
@@ -206,8 +210,8 @@ func TestQueryInto_SurfacesScanFault(t *testing.T) {
 }
 
 func TestQueryOneInto_SurfacesScanFault(t *testing.T) {
-	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions) {
-		db, entity, _ := fault.openFailing(t, &popts)
+	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode) {
+		db, entity, _ := fault.openFailing(t, mode)
 		defer db.Close()
 
 		var out []byte
@@ -221,8 +225,8 @@ func TestQueryOneInto_SurfacesScanFault(t *testing.T) {
 // TestQueryOrderBy_SurfacesScanFault: order-by materializes (Sort) the failing
 // scan; the error must survive that transform to the boundary.
 func TestQueryOrderBy_SurfacesScanFault(t *testing.T) {
-	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions) {
-		db, entity, _ := fault.openFailing(t, &popts)
+	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode) {
+		db, entity, _ := fault.openFailing(t, mode)
 		defer db.Close()
 
 		_, err := executor.CollectTuples(
@@ -235,8 +239,8 @@ func TestQueryOrderBy_SurfacesScanFault(t *testing.T) {
 // TestQueryAggregate_SurfacesScanFault: aggregation consumes the failing scan;
 // the error must survive that transform to the boundary.
 func TestQueryAggregate_SurfacesScanFault(t *testing.T) {
-	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions) {
-		db, entity, _ := fault.openFailing(t, &popts)
+	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode) {
+		db, entity, _ := fault.openFailing(t, mode)
 		defer db.Close()
 
 		_, err := executor.CollectTuples(
@@ -251,8 +255,8 @@ func TestQueryAggregate_SurfacesScanFault(t *testing.T) {
 // the entity. The error must surface instead of producing a silently-wrong
 // result. Both fixtures carry :doc/name so the outer pattern matches.
 func TestQueryNot_SurfacesScanFault(t *testing.T) {
-	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions) {
-		db, entity, _ := fault.openFailing(t, &popts)
+	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode) {
+		db, entity, _ := fault.openFailing(t, mode)
 		defer db.Close()
 
 		_, err := executor.CollectTuples(db.Query(
@@ -266,8 +270,8 @@ func TestQueryNot_SurfacesScanFault(t *testing.T) {
 // TestQueryGroupedAggregate_SurfacesScanFault: a group-by var in :find routes
 // through the grouped path; the failing scan's error must survive.
 func TestQueryGroupedAggregate_SurfacesScanFault(t *testing.T) {
-	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions) {
-		db, entity, _ := fault.openFailing(t, &popts)
+	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode) {
+		db, entity, _ := fault.openFailing(t, mode)
 		defer db.Close()
 
 		_, err := executor.CollectTuples(
@@ -281,8 +285,8 @@ func TestQueryGroupedAggregate_SurfacesScanFault(t *testing.T) {
 // input tuple and collects the per-tuple results; that collection must
 // propagate a failing scan's error rather than drop it.
 func TestQueryRelationInput_SurfacesScanFault(t *testing.T) {
-	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions) {
-		db, entity, _ := fault.openFailing(t, &popts)
+	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode) {
+		db, entity, _ := fault.openFailing(t, mode)
 		defer db.Close()
 
 		_, err := executor.CollectTuples(db.Query(
@@ -296,8 +300,8 @@ func TestQueryRelationInput_SurfacesScanFault(t *testing.T) {
 // TestQuerySubquery_SurfacesScanFault: a subquery whose inner scan fails must
 // surface the error through subquery result combination.
 func TestQuerySubquery_SurfacesScanFault(t *testing.T) {
-	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions) {
-		db, entity, _ := fault.openFailing(t, &popts)
+	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode) {
+		db, entity, _ := fault.openFailing(t, mode)
 		defer db.Close()
 
 		_, err := executor.CollectTuples(db.Query(
@@ -312,8 +316,8 @@ func TestQuerySubquery_SurfacesScanFault(t *testing.T) {
 // TestQueryOr_SurfacesScanFault: an (or ...) branch whose scan fails must
 // surface the error through the union of branch results.
 func TestQueryOr_SurfacesScanFault(t *testing.T) {
-	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions) {
-		db, entity, _ := fault.openFailing(t, &popts)
+	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode) {
+		db, entity, _ := fault.openFailing(t, mode)
 		defer db.Close()
 
 		_, err := executor.CollectTuples(db.Query(
@@ -330,8 +334,8 @@ func TestQueryOr_SurfacesScanFault(t *testing.T) {
 // non-last phase's Keep projection in executor.go — that laundering site
 // (Site 1) is not yet triggered and remains open.
 func TestQueryMultiPhase_SurfacesScanFault(t *testing.T) {
-	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, popts planner.PlannerOptions) {
-		db, entity, _ := fault.openFailing(t, &popts)
+	eachFaultAndMode(t, func(t *testing.T, fault queryBoundaryFaultCase, mode optimizerMode) {
+		db, entity, _ := fault.openFailing(t, mode)
 		defer db.Close()
 
 		_, err := executor.CollectTuples(db.Query(
@@ -343,12 +347,11 @@ func TestQueryMultiPhase_SurfacesScanFault(t *testing.T) {
 }
 
 func TestCollectTuples_SurfacesScanFault(t *testing.T) {
-	for _, fault := range queryBoundaryFaultCases() {
+	for _, fault := range queryBoundaryFaultCases(t) {
 		t.Run(fault.name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
+			for _, mode := range fault.modes {
 				t.Run(mode.name, func(t *testing.T) {
-					popts := mode.plannerOptions()
-					db, entity, _ := fault.openFailing(t, &popts)
+					db, entity, _ := fault.openFailing(t, mode)
 					defer db.Close()
 
 					_, err := executor.CollectTuples(

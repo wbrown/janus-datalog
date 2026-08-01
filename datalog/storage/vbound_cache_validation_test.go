@@ -9,7 +9,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -88,22 +87,18 @@ func placeTypeSchema() *schema.Schema {
 	return s
 }
 
-// openVBoundDB opens a fresh database with a pinned ReplicaID (so the two sides
-// of a differential run produce identical ElementIDs) and an annotation capture.
-// popts sets the database's default planner options (nil = defaults).
-func openVBoundDB(t *testing.T, sch schema.SchemaProvider, disableCache bool, popts *planner.PlannerOptions) (*Database, *vboundCapture) {
+// openVBoundDB opens a fresh database on the mode's backend with a pinned
+// ReplicaID (so the two sides of a differential run produce identical
+// ElementIDs) and an annotation capture.
+func openVBoundDB(t *testing.T, mode optimizerMode, sch schema.SchemaProvider, disableCache bool) (*Database, *vboundCapture) {
 	t.Helper()
 	cap := newVBoundCapture()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:              t.TempDir(),
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema:            sch,
 		ReplicaID:         1, // pin so cache-on and cache-off get identical Tx
 		DisableCache:      disableCache,
 		AnnotationHandler: cap.handler(),
-		PlannerOptions:    popts,
 	})
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
 	return db, cap
 }
 
@@ -136,26 +131,24 @@ func expectedSet(ids ...datalog.Identity) map[string]bool {
 // both, and asserts cache-on == cache-off == expected. When expectCacheBranch
 // is true it also asserts the coverage guard: cache-on used the cache branch
 // and no scan validation; cache-off used scan validation and no cache branch.
-// popts carries the optimizer mode's planner options to both databases
-// (nil = defaults).
 func assertVBoundEquivalent(
 	t *testing.T,
+	mode optimizerMode,
 	sch schema.SchemaProvider,
 	apply func(db *Database),
 	expected map[string]bool,
 	expectCacheBranch bool,
-	popts *planner.PlannerOptions,
 	queryStr string,
 	args ...interface{},
 ) {
 	t.Helper()
 
-	dbOn, capOn := openVBoundDB(t, sch, false, popts)
+	dbOn, capOn := openVBoundDB(t, mode, sch, false)
 	apply(dbOn)
 	capOn.reset() // discard any write-side events; measure only the query
 	gotOn := queryEntitySet(t, dbOn, queryStr, args...)
 
-	dbOff, capOff := openVBoundDB(t, sch, true, popts)
+	dbOff, capOff := openVBoundDB(t, mode, sch, true)
 	apply(dbOff)
 	capOff.reset()
 	gotOff := queryEntitySet(t, dbOff, queryStr, args...)
@@ -192,7 +185,6 @@ func vboundQueryFor(v string) string {
 func TestVBoundCache_SimpleSet(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			e1 := datalog.NewIdentity("e1")
 			apply := func(db *Database) {
 				tx := db.NewTransaction()
@@ -200,7 +192,7 @@ func TestVBoundCache_SimpleSet(t *testing.T) {
 				_, err := tx.Commit()
 				require.NoError(t, err)
 			}
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(e1), true, &popts, vboundQueryFor("room"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(e1), true, vboundQueryFor("room"))
 		})
 	}
 }
@@ -211,7 +203,6 @@ func TestVBoundCache_SimpleSet(t *testing.T) {
 func TestVBoundCache_Supersession(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			e1 := datalog.NewIdentity("e1")
 			apply := func(db *Database) {
 				tx := db.NewTransaction()
@@ -225,9 +216,9 @@ func TestVBoundCache_Supersession(t *testing.T) {
 				require.NoError(t, err)
 			}
 			// Querying the stale value must return nothing...
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(), true, &popts, vboundQueryFor("room"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(), true, vboundQueryFor("room"))
 			// ...and the current value returns e1.
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(e1), true, &popts, vboundQueryFor("cave"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(e1), true, vboundQueryFor("cave"))
 		})
 	}
 }
@@ -237,7 +228,6 @@ func TestVBoundCache_Supersession(t *testing.T) {
 func TestVBoundCache_ReAddSameValue(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
 			apply := func(db *Database) {
@@ -248,8 +238,8 @@ func TestVBoundCache_ReAddSameValue(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(e1), true, &popts, vboundQueryFor("room"))
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(), true, &popts, vboundQueryFor("cave"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(e1), true, vboundQueryFor("room"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(), true, vboundQueryFor("cave"))
 		})
 	}
 }
@@ -263,7 +253,6 @@ func TestVBoundCache_ReAddSameValue(t *testing.T) {
 func TestVBoundCache_Tombstone(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
 			apply := func(db *Database) {
@@ -277,7 +266,7 @@ func TestVBoundCache_Tombstone(t *testing.T) {
 				_, err = tx2.Commit()
 				require.NoError(t, err)
 			}
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(), false, &popts, vboundQueryFor("room"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(), false, vboundQueryFor("room"))
 		})
 	}
 }
@@ -291,7 +280,6 @@ func TestVBoundCache_Tombstone(t *testing.T) {
 func TestVBoundCache_TombstoneAfterOverwrite(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
 			apply := func(db *Database) {
@@ -306,7 +294,7 @@ func TestVBoundCache_TombstoneAfterOverwrite(t *testing.T) {
 				_, err := tx.Commit()
 				require.NoError(t, err)
 			}
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(), true, &popts, vboundQueryFor("room"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(), true, vboundQueryFor("room"))
 		})
 	}
 }
@@ -314,7 +302,6 @@ func TestVBoundCache_TombstoneAfterOverwrite(t *testing.T) {
 func TestVBoundCache_TombstoneThenReAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
 			apply := func(db *Database) {
@@ -333,7 +320,7 @@ func TestVBoundCache_TombstoneThenReAdd(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(e1), true, &popts, vboundQueryFor("room"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(e1), true, vboundQueryFor("room"))
 		})
 	}
 }
@@ -341,7 +328,6 @@ func TestVBoundCache_TombstoneThenReAdd(t *testing.T) {
 func TestVBoundCache_TombstoneThenReAddDifferent(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
 			apply := func(db *Database) {
@@ -363,8 +349,8 @@ func TestVBoundCache_TombstoneThenReAddDifferent(t *testing.T) {
 			// "room" group holds add+remove → candidate iterator drops e1 before
 			// validation (expectCacheBranch=false). "cave" group holds only the re-add →
 			// candidate reaches validateCandidate and matches (expectCacheBranch=true).
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(), false, &popts, vboundQueryFor("room"))
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(e1), true, &popts, vboundQueryFor("cave"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(), false, vboundQueryFor("room"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(e1), true, vboundQueryFor("cave"))
 		})
 	}
 }
@@ -372,7 +358,6 @@ func TestVBoundCache_TombstoneThenReAddDifferent(t *testing.T) {
 func TestVBoundCache_MultiEntitySameValue(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			e1 := datalog.NewIdentity("e1")
 			e2 := datalog.NewIdentity("e2")
 			e3 := datalog.NewIdentity("e3")
@@ -385,8 +370,8 @@ func TestVBoundCache_MultiEntitySameValue(t *testing.T) {
 				_, err := tx.Commit()
 				require.NoError(t, err)
 			}
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(e1, e2), true, &popts, vboundQueryFor("room"))
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(e3), true, &popts, vboundQueryFor("cave"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(e1, e2), true, vboundQueryFor("room"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(e3), true, vboundQueryFor("cave"))
 		})
 	}
 }
@@ -396,7 +381,6 @@ func TestVBoundCache_MultiEntitySameValue(t *testing.T) {
 func TestVBoundCache_MultiEntityMixedSupersession(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			e1 := datalog.NewIdentity("e1")
 			e2 := datalog.NewIdentity("e2")
 			e3 := datalog.NewIdentity("e3")
@@ -415,8 +399,8 @@ func TestVBoundCache_MultiEntityMixedSupersession(t *testing.T) {
 				_, err = tx2.Commit()
 				require.NoError(t, err)
 			}
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(e1, e3), true, &popts, vboundQueryFor("room"))
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(e2), true, &popts, vboundQueryFor("cave"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(e1, e3), true, vboundQueryFor("room"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(e2), true, vboundQueryFor("cave"))
 		})
 	}
 }
@@ -426,7 +410,6 @@ func TestVBoundCache_MultiEntityMixedSupersession(t *testing.T) {
 func TestVBoundCache_NeverExisted(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			e1 := datalog.NewIdentity("e1")
 			apply := func(db *Database) {
 				tx := db.NewTransaction()
@@ -434,7 +417,7 @@ func TestVBoundCache_NeverExisted(t *testing.T) {
 				_, err := tx.Commit()
 				require.NoError(t, err)
 			}
-			assertVBoundEquivalent(t, placeTypeSchema(), apply, expectedSet(), false, &popts, vboundQueryFor("forest"))
+			assertVBoundEquivalent(t, mode, placeTypeSchema(), apply, expectedSet(), false, vboundQueryFor("forest"))
 		})
 	}
 }
@@ -448,12 +431,11 @@ func TestVBoundCache_NeverExisted(t *testing.T) {
 func TestVBoundCache_AsOfGateOff(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/type")
 
 			build := func(disableCache bool) (*Database, *vboundCapture, datalog.ElementID) {
-				db, capt := openVBoundDB(t, placeTypeSchema(), disableCache, &popts)
+				db, capt := openVBoundDB(t, mode, placeTypeSchema(), disableCache)
 				tx := db.NewTransaction()
 				require.NoError(t, tx.Add(e1, a, "room"))
 				txAtRoom, err := tx.Commit()
@@ -506,11 +488,10 @@ func TestVBoundCache_AsOfGateOff(t *testing.T) {
 func TestVBoundValidation_AsOfRespectsSnapshot(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			a := datalog.NewKeyword(":place/type")
 
 			t.Run("overwrite after snapshot", func(t *testing.T) {
-				db, _ := openVBoundDB(t, placeTypeSchema(), false, &popts)
+				db, _ := openVBoundDB(t, mode, placeTypeSchema(), false)
 				e1 := datalog.NewIdentity("e1")
 
 				tx := db.NewTransaction()
@@ -535,7 +516,7 @@ func TestVBoundValidation_AsOfRespectsSnapshot(t *testing.T) {
 			})
 
 			t.Run("tombstone after snapshot", func(t *testing.T) {
-				db, _ := openVBoundDB(t, placeTypeSchema(), false, &popts)
+				db, _ := openVBoundDB(t, mode, placeTypeSchema(), false)
 				e1 := datalog.NewIdentity("e1")
 
 				tx := db.NewTransaction()
@@ -565,7 +546,6 @@ func TestVBoundValidation_AsOfRespectsSnapshot(t *testing.T) {
 func TestVBoundCache_UniqueSkipsCacheBranch(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			uniqueSchema := func() *schema.Schema {
 				s := schema.NewSchema()
 				s.Add(&schema.AttributeDefinition{
@@ -580,7 +560,7 @@ func TestVBoundCache_UniqueSkipsCacheBranch(t *testing.T) {
 			e1 := datalog.NewIdentity("e1")
 			a := datalog.NewKeyword(":place/code")
 
-			dbOn, capOn := openVBoundDB(t, uniqueSchema(), false, &popts)
+			dbOn, capOn := openVBoundDB(t, mode, uniqueSchema(), false)
 			tx := dbOn.NewTransaction()
 			require.NoError(t, tx.Add(e1, a, "ABC"))
 			_, err := tx.Commit()
@@ -593,7 +573,7 @@ func TestVBoundCache_UniqueSkipsCacheBranch(t *testing.T) {
 				"unique attributes must NOT take the cache fast path")
 
 			// Cross-check: a DisableCache database returns the same entity.
-			dbOff, _ := openVBoundDB(t, uniqueSchema(), true, &popts)
+			dbOff, _ := openVBoundDB(t, mode, uniqueSchema(), true)
 			txOff := dbOff.NewTransaction()
 			require.NoError(t, txOff.Add(e1, a, "ABC"))
 			_, err = txOff.Commit()

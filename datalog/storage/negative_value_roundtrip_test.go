@@ -16,10 +16,7 @@ import (
 func TestNegativeAndPre1970ValuesRoundTripThroughStorage(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), ReplicaID: 1, PlannerOptions: &popts})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{ReplicaID: 1})
 
 			e := datalog.NewIdentity("e1")
 			negInt := datalog.NewKeyword(":n/int")
@@ -31,7 +28,7 @@ func TestNegativeAndPre1970ValuesRoundTripThroughStorage(t *testing.T) {
 			require.NoError(t, tx.Set(e, negInt, int64(-9000)))
 			require.NoError(t, tx.Set(e, negFloat, -3.5))
 			require.NoError(t, tx.Set(e, oldTime, wantTime))
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			readOne := func(a datalog.Keyword) any {

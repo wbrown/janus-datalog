@@ -18,10 +18,7 @@ import (
 func TestIssue61_ExampleUseCases(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			d, err := db.Open(filepath.Join(tmpDir, "issue61.db"), db.WithPlannerOptions(mode.plannerOptions()))
-			require.NoError(t, err)
-			defer d.Close()
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			alice := datalog.NewIdentity("user:alice")
 			bob := datalog.NewIdentity("user:bob")
@@ -33,7 +30,7 @@ func TestIssue61_ExampleUseCases(t *testing.T) {
 			require.NoError(t, tx1.Add(alice, datalog.NewKeyword(":user/joined"), time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)))
 			require.NoError(t, tx1.Add(bob, datalog.NewKeyword(":user/name"), "Bob Jones"))
 			require.NoError(t, tx1.Add(bob, datalog.NewKeyword(":user/email"), "bob@example.com"))
-			_, err = tx1.Commit()
+			_, err := tx1.Commit()
 			require.NoError(t, err)
 
 			tx2 := d.NewTransactionAt(time.Date(2024, 6, 19, 10, 30, 0, 0, time.UTC))

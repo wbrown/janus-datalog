@@ -225,16 +225,9 @@ func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 			// asserts on the contents, so events from the whole test are welcome
 			// in the dump.
 			var events []annotations.Event
-			popts := mode.plannerOptions()
-			popts.Handler = func(event annotations.Event) { events = append(events, event) }
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+				AnnotationHandler: func(event annotations.Event) { events = append(events, event) },
 			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
 
 			tx := db.NewTransaction()
 			alice := datalog.NewIdentity("alice")
@@ -732,16 +725,7 @@ func TestGetElseWithVectorDefault(t *testing.T) {
 				t.Fatalf("Failed to build schema: %v", err)
 			}
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			tx := db.NewTransaction()
 			room1 := datalog.NewIdentity("room1")
@@ -931,16 +915,7 @@ func TestGetElseWithPopulatedVectorDefault(t *testing.T) {
 				t.Fatalf("Failed to build schema: %v", err)
 			}
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			tx := db.NewTransaction()
 			hasData := datalog.NewIdentity("has-data")

@@ -13,13 +13,12 @@ func appendNativeReopenCases(cases []reopenBackendCase) []reopenBackendCase {
 	return cases
 }
 
-func deleteNativeStoreBlobs(t *testing.T, _ Store) (int, bool) {
+func nativeBlobKeys(t *testing.T, _ Store) ([][]byte, bool) {
 	t.Helper()
-	return 0, false
+	return nil, false
 }
 
-// The Tier-3 blob reproduction needs Badger. The injected fault case carries
-// the boundary assertions here.
-func appendNativeBlobFaultCase(cases []queryBoundaryFaultCase) []queryBoundaryFaultCase {
-	return cases
+func deleteNativeBlobKeys(t *testing.T, _ Store, _ [][]byte) bool {
+	t.Helper()
+	return false
 }

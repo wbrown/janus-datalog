@@ -62,28 +62,38 @@ func appendNativeReopenCases(cases []reopenBackendCase) []reopenBackendCase {
 	return append(cases, badgerCase)
 }
 
-func deleteNativeStoreBlobs(t *testing.T, store Store) (int, bool) {
+func nativeBlobKeys(t *testing.T, store Store) ([][]byte, bool) {
 	t.Helper()
 	badgerStore, ok := store.(*BadgerStore)
 	if !ok {
-		return 0, false
+		return nil, false
 	}
-	deleted := 0
-	require.NoError(t, badgerStore.db.Update(func(txn *badger.Txn) error {
+	var keys [][]byte
+	require.NoError(t, badgerStore.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		prefix := []byte{blobKeyPrefix}
-		var keys [][]byte
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			keys = append(keys, it.Item().KeyCopy(nil))
 		}
+		return nil
+	}))
+	return keys, true
+}
+
+func deleteNativeBlobKeys(t *testing.T, store Store, keys [][]byte) bool {
+	t.Helper()
+	badgerStore, ok := store.(*BadgerStore)
+	if !ok {
+		return false
+	}
+	require.NoError(t, badgerStore.db.Update(func(txn *badger.Txn) error {
 		for _, key := range keys {
 			if err := txn.Delete(key); err != nil {
 				return err
 			}
-			deleted++
 		}
 		return nil
 	}))
-	return deleted, true
+	return true
 }

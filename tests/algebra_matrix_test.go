@@ -1,11 +1,9 @@
 package tests
 
 import (
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
@@ -13,18 +11,10 @@ import (
 // TestAlgebraMatrix_ComparisonBindingOr runs the comparison binding + or
 // subquery query with and without the algebra optimizer.
 func TestAlgebraMatrix_ComparisonBindingOr(t *testing.T) {
-	dir, err := os.MkdirTemp("", "algebra-matrix-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	eachBackendAndMode(t, testAlgebraMatrixComparisonBindingOr)
+}
 
-	db, err := storage.NewDatabase(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
+func testAlgebraMatrixComparisonBindingOr(t *testing.T, db *storage.Database) {
 	tx := db.NewTransaction()
 	s1 := datalog.NewIdentity("scenario:1")
 	s2 := datalog.NewIdentity("scenario:2")
@@ -58,30 +48,20 @@ func TestAlgebraMatrix_ComparisonBindingOr(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, algebra := range []bool{false, true} {
-		name := "without-algebra"
-		if algebra {
-			name = "with-algebra"
-		}
-		t.Run(name, func(t *testing.T) {
-			opts := storage.DefaultPlannerOptions()
-			opts.EnableAlgebraOptimizer = algebra
-			matcher := storage.NewPatternMatcher(db.Store())
-			exec := executor.NewExecutorWithOptions(matcher, nil, opts)
-			result, err := exec.Execute(q)
-			if err != nil {
-				t.Fatalf("Query failed: %v", err)
-			}
-
-			iter := result.Iterator()
-			var count int
-			for iter.Next() {
-				tuple := iter.Tuple()
-				t.Logf("  %v", tuple)
-				count++
-			}
-			iter.Close()
-			t.Logf("Total: %d tuples", count)
-		})
+	// The executor carries the database's planner options, which eachBackendAndMode
+	// set from the mode.
+	result, err := db.NewExecutor().Execute(q)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
 	}
+
+	iter := result.Iterator()
+	var count int
+	for iter.Next() {
+		tuple := iter.Tuple()
+		t.Logf("  %v", tuple)
+		count++
+	}
+	iter.Close()
+	t.Logf("Total: %d tuples", count)
 }

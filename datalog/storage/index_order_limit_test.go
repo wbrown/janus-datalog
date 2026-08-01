@@ -42,22 +42,17 @@ func TestIndexOrderedLimitStopsSatisfiedScan(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:              t.TempDir(),
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				Schema:            s,
 				AnnotationHandler: handler,
-				PlannerOptions:    &popts,
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			tx := db.NewTransaction()
 			for i := 0; i < entityCount; i++ {
 				entity := datalog.NewIdentity(fmt.Sprintf("index-order-person:%d", i))
 				require.NoError(t, tx.Set(entity, nameAttr, fmt.Sprintf("Person %d", i)))
 			}
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			run := func(direction string) ([][]interface{}, int64) {

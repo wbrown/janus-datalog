@@ -82,14 +82,7 @@ func TestResolveAllAttributesManyHonorsAsOf(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			name := datalog.NewKeyword(":person/name")
 			first := datalog.NewIdentity("batch-asof-first")
@@ -123,14 +116,7 @@ func TestResolveAllAttributesManyPreservesUniqueFallback(t *testing.T) {
 				Attribute(":person/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
 				Build()
 			require.NoError(t, err)
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			email := datalog.NewKeyword(":person/email")
 			first := datalog.NewIdentity("batch-unique-first")
@@ -163,14 +149,7 @@ func TestResolveAllAttributesManyMatchesDeclaredSchema(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			entity := datalog.NewIdentity("batch-declared-schema")
 			name := datalog.NewKeyword(":person/name")
@@ -347,10 +326,7 @@ func TestWildcardPullQueryUsesOneBatch(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var batchBegins, batchCompletes int
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				AnnotationHandler: func(event annotations.Event) {
 					switch event.Name {
 					case annotations.PullBatchBegin:
@@ -362,8 +338,6 @@ func TestWildcardPullQueryUsesOneBatch(t *testing.T) {
 					}
 				},
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			entityType := datalog.NewKeyword(":entity/type")
 			name := datalog.NewKeyword(":entity/name")
@@ -373,7 +347,7 @@ func TestWildcardPullQueryUsesOneBatch(t *testing.T) {
 				require.NoError(t, tx.Set(entity, entityType, "scenario"))
 				require.NoError(t, tx.Set(entity, name, fmt.Sprintf("Scenario %d", i)))
 			}
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			result, queryErr := db.Query(`[:find (pull ?entity [*])
@@ -402,14 +376,7 @@ func TestWildcardPullQueryRendersMultiValuedAttributes(t *testing.T) {
 				Attribute(":entity/steps").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			entityType := datalog.NewKeyword(":entity/type")
 			tags := datalog.NewKeyword(":entity/tags")

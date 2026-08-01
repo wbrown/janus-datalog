@@ -28,15 +28,10 @@ func TestScanReportsIntakeAndResolution(t *testing.T) {
 			require.NoError(t, err)
 
 			var events []annotations.Event
-			opts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:              t.TempDir(),
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				Schema:            s,
-				PlannerOptions:    &opts,
 				AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			person := datalog.NewIdentity("person:alice")
 			name := datalog.NewKeyword(":person/name")
@@ -98,21 +93,16 @@ func TestScanStatisticsCarryTheirDuration(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var events []annotations.Event
-			opts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:              t.TempDir(),
-				PlannerOptions:    &opts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			name := datalog.NewKeyword(":person/name")
 			tx := db.NewTransaction()
 			for _, who := range []string{"Alice", "Bob", "Carol"} {
 				require.NoError(t, tx.Add(datalog.NewIdentity("person:"+who), name, who))
 			}
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			result, err := db.Query(`[:find ?e ?n :where [?e :person/name ?n]]`)

@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -30,17 +29,11 @@ var resolveDisableCacheModes = []struct {
 	{"cache_disabled", true},
 }
 
-// setupResolveDisableCacheDB opens a database in the requested cache mode.
-// popts sets the database's default planner options (nil = default).
-func setupResolveDisableCacheDB(t *testing.T, disableCache bool, popts *planner.PlannerOptions) (*Database, func()) {
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           dir,
-		DisableCache:   disableCache,
-		PlannerOptions: popts,
-	})
-	require.NoError(t, err)
-	return db, func() { db.Close() }
+// setupResolveDisableCacheDB opens a database on the mode's backend in the
+// requested cache mode.
+func setupResolveDisableCacheDB(t *testing.T, optMode optimizerMode, disableCache bool) *Database {
+	t.Helper()
+	return createOptimizerModeDB(t, optMode, DatabaseOptions{DisableCache: disableCache})
 }
 
 // TestResolveEntityAttributes_BothCacheModes_CardinalityOne verifies
@@ -50,11 +43,9 @@ func setupResolveDisableCacheDB(t *testing.T, disableCache bool, popts *planner.
 func TestResolveEntityAttributes_BothCacheModes_CardinalityOne(t *testing.T) {
 	for _, optMode := range optimizerModes {
 		t.Run(optMode.name, func(t *testing.T) {
-			popts := optMode.plannerOptions()
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {
-					db, cleanup := setupResolveDisableCacheDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := setupResolveDisableCacheDB(t, optMode, mode.disableCache)
 
 					s, err := schema.NewBuilder().
 						Attribute(":person/name").Type(schema.TypeString).One().Add().
@@ -96,11 +87,9 @@ func TestResolveEntityAttributes_BothCacheModes_CardinalityOne(t *testing.T) {
 func TestResolveEntityAttributes_BothCacheModes_CardinalityMany(t *testing.T) {
 	for _, optMode := range optimizerModes {
 		t.Run(optMode.name, func(t *testing.T) {
-			popts := optMode.plannerOptions()
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {
-					db, cleanup := setupResolveDisableCacheDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := setupResolveDisableCacheDB(t, optMode, mode.disableCache)
 
 					s, err := schema.NewBuilder().
 						Attribute(":person/tags").Type(schema.TypeString).Many().Add().
@@ -143,11 +132,9 @@ func TestResolveEntityAttributes_BothCacheModes_CardinalityMany(t *testing.T) {
 func TestResolveEntityAttributes_BothCacheModes_CardinalityVector(t *testing.T) {
 	for _, optMode := range optimizerModes {
 		t.Run(optMode.name, func(t *testing.T) {
-			popts := optMode.plannerOptions()
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {
-					db, cleanup := setupResolveDisableCacheDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := setupResolveDisableCacheDB(t, optMode, mode.disableCache)
 
 					s, err := schema.NewBuilder().
 						Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
@@ -196,11 +183,9 @@ func TestResolveEntityAttributes_BothCacheModes_CardinalityVector(t *testing.T) 
 func TestResolveEntityAttributes_BothCacheModes_MissingAttribute(t *testing.T) {
 	for _, optMode := range optimizerModes {
 		t.Run(optMode.name, func(t *testing.T) {
-			popts := optMode.plannerOptions()
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {
-					db, cleanup := setupResolveDisableCacheDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := setupResolveDisableCacheDB(t, optMode, mode.disableCache)
 
 					s, err := schema.NewBuilder().
 						Attribute(":person/name").Type(schema.TypeString).One().Add().
@@ -236,11 +221,9 @@ func TestResolveEntityAttributes_BothCacheModes_MissingAttribute(t *testing.T) {
 func TestResolveAllAttributes_BothCacheModes_WithSchema(t *testing.T) {
 	for _, optMode := range optimizerModes {
 		t.Run(optMode.name, func(t *testing.T) {
-			popts := optMode.plannerOptions()
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {
-					db, cleanup := setupResolveDisableCacheDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := setupResolveDisableCacheDB(t, optMode, mode.disableCache)
 
 					s, err := schema.NewBuilder().
 						Attribute(":person/name").Type(schema.TypeString).One().Add().
@@ -280,11 +263,9 @@ func TestResolveAllAttributes_BothCacheModes_WithSchema(t *testing.T) {
 func TestResolveAllAttributes_BothCacheModes_NoSchema(t *testing.T) {
 	for _, optMode := range optimizerModes {
 		t.Run(optMode.name, func(t *testing.T) {
-			popts := optMode.plannerOptions()
 			for _, mode := range resolveDisableCacheModes {
 				t.Run(mode.name, func(t *testing.T) {
-					db, cleanup := setupResolveDisableCacheDB(t, mode.disableCache, &popts)
-					defer cleanup()
+					db := setupResolveDisableCacheDB(t, optMode, mode.disableCache)
 
 					// No schema; ResolveAllAttributes uses EAVT to discover attributes.
 					alice := datalog.NewIdentity("alice")

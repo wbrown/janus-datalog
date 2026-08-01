@@ -262,20 +262,14 @@ func TestQuerySnapshotConsistency(t *testing.T) {
 					}
 				})
 			}
-			opts := mode.plannerOptions()
-			opts.Handler = handler
-			var err error
-			d, err = NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &opts,
+			d = createOptimizerModeDB(t, mode, DatabaseOptions{
+				AnnotationHandler: handler,
 			})
-			require.NoError(t, err)
-			defer d.Close()
 
 			tx := d.NewTransaction()
 			require.NoError(t, tx.Add(e1, attrA, int64(1)))
 			require.NoError(t, tx.Add(e1, attrB, int64(1)))
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			rel, err := d.Query(`[:find ?va ?vb :where [?e :snap/a ?va] [?e :snap/b ?vb]]`)

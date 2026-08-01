@@ -89,11 +89,7 @@ func TestLiteralValueMatchesPredicateForm(t *testing.T) {
 			t.Run(tc.name+"/"+schemaMode, func(t *testing.T) {
 				for _, mode := range optimizerModes {
 					t.Run(mode.name, func(t *testing.T) {
-						popts := mode.plannerOptions()
-						dbOpts := DatabaseOptions{
-							Path:           t.TempDir(),
-							PlannerOptions: &popts,
-						}
+						var dbOpts DatabaseOptions
 						if schemaMode == "schema_aware" {
 							dbOpts.Schema = schema.NewSchema().Add(&schema.AttributeDefinition{
 								Ident:       attr,
@@ -101,11 +97,7 @@ func TestLiteralValueMatchesPredicateForm(t *testing.T) {
 								Cardinality: schema.CardinalityOne,
 							})
 						}
-						db, err := NewDatabaseWithOptions(dbOpts)
-						if err != nil {
-							t.Fatal(err)
-						}
-						defer db.Close()
+						db := createOptimizerModeDB(t, mode, dbOpts)
 
 						// Insert two entities with the matching value and one with
 						// the other value. Both query forms must find exactly the

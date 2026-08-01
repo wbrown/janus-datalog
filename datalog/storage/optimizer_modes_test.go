@@ -72,8 +72,9 @@ func pinnedOptimizerModes(algebra bool) []optimizerMode {
 // byteKeyBackends is the axis for a test whose subject is the binary key
 // encoding rather than the engine. Badger and MemoryStore both hold encoded
 // index keys and decode them into an iterator-owned workspace; MemoryTreeStore
-// hands out the datom it already holds, so a property of that workspace is not
-// a property it has.
+// hands out the datom it already holds, so a property of that workspace — the
+// key layout, or anything downstream of it such as the out-of-line value tier
+// — is not a property it has.
 //
 // The switch has no silent default: a new backend fails here until someone says
 // which side of that line it falls on.
@@ -111,6 +112,19 @@ func (m optimizerMode) plannerOptions() planner.PlannerOptions {
 func createOptimizerModeDB(t testing.TB, mode optimizerMode, opts DatabaseOptions) *Database {
 	t.Helper()
 	plannerOpts := mode.plannerOptions()
+	opts.PlannerOptions = &plannerOpts
+	return openBackendDB(t, mode.backend, opts)
+}
+
+// openBackendDB creates a test database on the named backend, leaving opts as
+// the caller wrote it — including PlannerOptions. It is the constructor for a
+// test whose own planner options are its subject: the mode axis has nothing
+// left to vary there but the backend, so it takes a Backend rather than a mode.
+//
+// Every other test wants createOptimizerModeDB above, which runs both optimizer
+// paths. Reaching for this one drops that half of the axis.
+func openBackendDB(t testing.TB, backend Backend, opts DatabaseOptions) *Database {
+	t.Helper()
 
 	// An injected store owns its encoder, so a compression threshold has to
 	// reach the encoder here rather than through DatabaseOptions.
@@ -118,9 +132,9 @@ func createOptimizerModeDB(t testing.TB, mode optimizerMode, opts DatabaseOption
 	if opts.CompressionThreshold != 0 {
 		encoder.CompressionThreshold = opts.CompressionThreshold
 	}
-	store, err := mode.backend.Open(t.TempDir(), encoder)
+	store, err := backend.Open(t.TempDir(), encoder)
 	if err != nil {
-		t.Fatalf("failed to open %s store: %v", mode.backend.Name, err)
+		t.Fatalf("failed to open %s store: %v", backend.Name, err)
 	}
 	// Registered before the database is built: NewDatabaseWithOptions can fail,
 	// and an open store abandoned by t.Fatalf holds its directory lock for the
@@ -129,10 +143,9 @@ func createOptimizerModeDB(t testing.TB, mode optimizerMode, opts DatabaseOption
 
 	opts.Path = ""
 	opts.Store = store
-	opts.PlannerOptions = &plannerOpts
 	db, err := NewDatabaseWithOptions(opts)
 	if err != nil {
-		t.Fatalf("failed to create %s database: %v", mode.name, err)
+		t.Fatalf("failed to create %s database: %v", backend.Name, err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
