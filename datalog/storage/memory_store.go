@@ -74,6 +74,24 @@ func (s *MemoryStore) Assert(datoms []datalog.Datom) error {
 	return tx.Commit()
 }
 
+// AssertEach gathers what produce yields and asserts it. Gathering is the whole
+// of it here: entries are a map keyed by encoded key, so there is no incremental
+// structure to build into and a per-datom path would save nothing.
+func (s *MemoryStore) AssertEach(produce func(add func(*datalog.Datom) error) error) error {
+	var datoms []datalog.Datom
+	if err := produce(func(d *datalog.Datom) error {
+		datoms = append(datoms, *d)
+		return nil
+	}); err != nil {
+		return err
+	}
+	return s.Assert(datoms)
+}
+
+// FinishBatch has nothing to complete: AssertEach writes its datoms before
+// returning.
+func (s *MemoryStore) FinishBatch() error { return nil }
+
 func (s *MemoryStore) Retract(datoms []datalog.Datom) error {
 	tx, err := s.BeginTx()
 	if err != nil {

@@ -189,8 +189,7 @@ func TestBinaryExport_IndexSeekable(t *testing.T) {
 			for _, entry := range trailer.entries {
 				unc, err := readBinaryChunkPayload(&out, entry, &seekMu)
 				require.NoError(t, err)
-				datoms, err := decodeBinaryChunk(unc)
-				require.NoError(t, err)
+				datoms := collectChunkDatoms(t, unc)
 				require.NotEmpty(t, datoms)
 				var first, last [20]byte
 				copy(first[:], datoms[0].E.Bytes())
@@ -268,8 +267,7 @@ func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
 			for _, entry := range trailer.entries {
 				unc, err := readBinaryChunkPayload(&out, entry, &seekMu)
 				require.NoError(t, err)
-				datoms, err := decodeBinaryChunk(unc)
-				require.NoError(t, err)
+				datoms := collectChunkDatoms(t, unc)
 				for _, d := range datoms {
 					if !d.Op.HasAfterRef() {
 						continue
@@ -302,24 +300,40 @@ func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
 	}
 }
 
-func TestDecodeBinaryChunk_TruncatedAfterRef(t *testing.T) {
+// collectChunkDatoms drains a chunk into a slice. The import never does this —
+// a chunk has no size ceiling — but a test asserting on a whole chunk needs the
+// whole chunk.
+func collectChunkDatoms(t *testing.T, unc []byte) []datalog.Datom {
+	t.Helper()
+	var datoms []datalog.Datom
+	cursor := newBinaryChunkCursor(unc)
+	for cursor.Next() {
+		datoms = append(datoms, *cursor.Datom())
+	}
+	require.NoError(t, cursor.Err())
+	return datoms
+}
+
+func TestBinaryChunkCursor_TruncatedAfterRef(t *testing.T) {
 	// Fixed prefix through flags (70 bytes), flag AfterRef, then only 8 of 16.
 	unc := make([]byte, 70+8)
 	unc[68] = byte(datalog.OpRGAInsert)
 	unc[69] = binaryRecordFlagAfterRef
-	_, err := decodeBinaryChunk(unc)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "AfterRef")
+	cursor := newBinaryChunkCursor(unc)
+	require.False(t, cursor.Next())
+	require.Error(t, cursor.Err())
+	require.Contains(t, cursor.Err().Error(), "AfterRef")
 }
 
-func TestDecodeBinaryChunk_TruncatedValueHeaderAfterAfterRef(t *testing.T) {
+func TestBinaryChunkCursor_TruncatedValueHeaderAfterAfterRef(t *testing.T) {
 	// Full AfterRef present, but cut before V_type / V_len — must not panic.
 	unc := make([]byte, 70+16)
 	unc[68] = byte(datalog.OpRGAInsert)
 	unc[69] = binaryRecordFlagAfterRef
-	_, err := decodeBinaryChunk(unc)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "value header")
+	cursor := newBinaryChunkCursor(unc)
+	require.False(t, cursor.Next())
+	require.Error(t, cursor.Err())
+	require.Contains(t, cursor.Err().Error(), "value header")
 }
 
 func TestBinaryImport_RejectsBadMagic(t *testing.T) {

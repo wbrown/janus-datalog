@@ -17,12 +17,20 @@ const bytesPerMB = 1 << 20
 
 // BenchmarkDumpLoadMemory reports what holding a dump costs each backend.
 //
-// Two numbers, because they answer different questions. peak_sys_mb is
-// MemStats.Sys, the memory the process obtained: under js/wasm that is the
-// WebAssembly linear memory, which grows and never shrinks, so its value after
-// the load is the peak — what a browser tab has to survive. retained_mb is the
-// live heap after two collections, which is the store itself once the import's
-// garbage is gone. The gap between them is the import's transient cost.
+// Three numbers, because they answer different questions.
+//
+// sys_total_mb is MemStats.Sys, the memory the whole process has obtained. Sys
+// counts address space taken from the OS and never decreases — releasing pages
+// does not lower it — so in a run with more than one backend this carries the
+// high-water mark of every subtest before it, not this one's. It is the browser
+// figure only when the backend runs alone, which under js/wasm it does.
+//
+// sys_growth_mb is what this load made the process obtain, so it is the
+// backend's own cost wherever it runs in the order.
+//
+// retained_mb is the live heap after two collections: the store itself, once
+// the import's garbage is gone. The gap to growth is the import's transient
+// cost.
 //
 // -benchmem already reports cumulative allocation as B/op, so this adds no
 // third metric for it. Intended at -benchtime=1x: loading the same dump N times
@@ -35,13 +43,12 @@ func BenchmarkDumpLoadMemory(b *testing.B) {
 
 	for _, backend := range AvailableBackends() {
 		b.Run(backend.Name, func(b *testing.B) {
-			var peakSys, retained uint64
+			var m importMemory
 			for i := 0; i < b.N; i++ {
-				peakSys, retained = measureImport(b, backend, dumpPath,
+				m = measureImport(b, backend, dumpPath,
 					func(db *Database, r io.ReadSeeker) error { return db.ImportDump(r) })
 			}
-			b.ReportMetric(float64(peakSys)/bytesPerMB, "peak_sys_mb")
-			b.ReportMetric(float64(retained)/bytesPerMB, "retained_mb")
+			m.report(b)
 		})
 	}
 }
@@ -64,15 +71,14 @@ func BenchmarkDumpImportWorkers(b *testing.B) {
 		b.Run(backend.Name, func(b *testing.B) {
 			for _, workers := range []int{1, 2, 4, runtime.GOMAXPROCS(0)} {
 				b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
-					var peakSys, retained uint64
+					var m importMemory
 					for i := 0; i < b.N; i++ {
-						peakSys, retained = measureImport(b, backend, dumpPath,
+						m = measureImport(b, backend, dumpPath,
 							func(db *Database, r io.ReadSeeker) error {
 								return db.ImportBinary(r, BinaryImportOptions{Workers: workers})
 							})
 					}
-					b.ReportMetric(float64(peakSys)/bytesPerMB, "peak_sys_mb")
-					b.ReportMetric(float64(retained)/bytesPerMB, "retained_mb")
+					m.report(b)
 				})
 			}
 		})
@@ -104,8 +110,22 @@ func skipUnlessJDZL(b *testing.B, dumpPath string) {
 	}
 }
 
+// importMemory is what one load cost.
+type importMemory struct {
+	sysTotal  uint64
+	sysGrowth uint64
+	retained  uint64
+}
+
+func (m importMemory) report(b *testing.B) {
+	b.Helper()
+	b.ReportMetric(float64(m.sysTotal)/bytesPerMB, "sys_total_mb")
+	b.ReportMetric(float64(m.sysGrowth)/bytesPerMB, "sys_growth_mb")
+	b.ReportMetric(float64(m.retained)/bytesPerMB, "retained_mb")
+}
+
 // measureImport loads dumpPath into a fresh database on backend through load,
-// and returns the process's peak memory and the heap the loaded store retains.
+// and returns what that cost.
 //
 // The dump is read through the file rather than a []byte so the source does not
 // sit in the heap being measured.
@@ -114,7 +134,7 @@ func measureImport(
 	backend Backend,
 	dumpPath string,
 	load func(*Database, io.ReadSeeker) error,
-) (peakSys, retained uint64) {
+) importMemory {
 	b.Helper()
 
 	file, err := os.Open(dumpPath)
@@ -159,9 +179,12 @@ func measureImport(
 	}
 	b.StartTimer()
 
-	peakSys = max(loaded.Sys, settled.Sys)
-	if settled.HeapAlloc > before.HeapAlloc {
-		retained = settled.HeapAlloc - before.HeapAlloc
+	m := importMemory{sysTotal: max(loaded.Sys, settled.Sys)}
+	if m.sysTotal > before.Sys {
+		m.sysGrowth = m.sysTotal - before.Sys
 	}
-	return peakSys, retained
+	if settled.HeapAlloc > before.HeapAlloc {
+		m.retained = settled.HeapAlloc - before.HeapAlloc
+	}
+	return m
 }

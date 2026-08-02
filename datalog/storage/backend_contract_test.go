@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"regexp"
 	"testing"
@@ -69,6 +70,80 @@ func TestStoreBackendContract(t *testing.T) {
 			require.Equal(t, 1, countStoreIndex(t, store, EAVT))
 			require.NoError(t, store.Close())
 			require.NoError(t, store.Close())
+		})
+	}
+}
+
+// TestStoreBackendAssertEach pins the streaming write path across backends.
+//
+// Three properties, each of which a backend can break on its own.
+//
+// Parity: what AssertEach stores is what Assert stores — every index, every
+// datom, same order.
+//
+// Workspace: the producer yields one reused datom, which is the shape a decoder
+// has — binaryChunkCursor.Datom returns the same address for every record. A
+// backend that keeps the pointer rather than the datom stores the last record
+// N times over, collapsing every index to a single entry. The tree store holds
+// *Datom in its nodes and is where this bites.
+//
+// Abort: a producer that fails stores nothing and its error reaches the caller
+// intact.
+func TestStoreBackendAssertEach(t *testing.T) {
+	entity := datalog.NewIdentity("asserteach:entity")
+	attr := datalog.NewKeyword(":asserteach/value")
+	datoms := make([]datalog.Datom, 16)
+	for i := range datoms {
+		datoms[i] = datalog.Datom{
+			E:  entity,
+			A:  attr,
+			V:  int64(i),
+			Tx: datalog.ElementID{Lamport: uint64(i + 1), ReplicaID: 3},
+		}
+	}
+	yieldThroughWorkspace := func(add func(*datalog.Datom) error) error {
+		var workspace datalog.Datom
+		for i := range datoms {
+			workspace = datoms[i]
+			if err := add(&workspace); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	for _, testCase := range storeContractCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			streamed := testCase.open(t, &BinaryKeyEncoder{})
+			defer streamed.Close()
+			require.NoError(t, streamed.AssertEach(yieldThroughWorkspace))
+			// A backend may leave the run open, so the run has to end before what
+			// it wrote can be counted.
+			require.NoError(t, streamed.FinishBatch())
+
+			gathered := testCase.open(t, &BinaryKeyEncoder{})
+			defer gathered.Close()
+			require.NoError(t, gathered.Assert(datoms))
+
+			for _, index := range Indices {
+				require.Equal(t, len(datoms), countStoreIndex(t, streamed, index),
+					"index %v: AssertEach stored the wrong number of datoms", index)
+			}
+			require.Equal(t,
+				collectIndexDatoms(t, gathered, true),
+				collectIndexDatoms(t, streamed, true),
+				"AssertEach and Assert disagree on what they stored")
+
+			aborted := testCase.open(t, &BinaryKeyEncoder{})
+			defer aborted.Close()
+			producerFailed := errors.New("producer failed")
+			err := aborted.AssertEach(func(add func(*datalog.Datom) error) error {
+				if err := add(&datoms[0]); err != nil {
+					return err
+				}
+				return producerFailed
+			})
+			require.ErrorIs(t, err, producerFailed)
 		})
 	}
 }

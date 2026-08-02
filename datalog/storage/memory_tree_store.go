@@ -32,6 +32,17 @@ type MemoryTreeStore struct {
 	mu       sync.RWMutex
 	metadata map[string]uint64
 	closed   bool
+
+	// batchMu guards pending and serializes the producers writing into it. A
+	// builder is a plain B-tree with no locking of its own, so one writer at a
+	// time is the whole of its concurrency contract.
+	//
+	// pending is a batch left open across AssertEach calls, holding the version
+	// holder's write lock until FinishBatch publishes it. Readers are unaffected:
+	// they load the last published version through an atomic pointer and never
+	// take that lock.
+	batchMu sync.Mutex
+	pending *versionBuilder
 }
 
 // NewMemoryTreeStore returns an empty typed store.
@@ -60,7 +71,71 @@ func (s *MemoryTreeStore) checkOpen() error {
 // Assert adds datoms. Every datom enters all eight orders in one batch, so the
 // version that publishes them is indivisible.
 func (s *MemoryTreeStore) Assert(datoms []datalog.Datom) error {
-	return s.applyBatch(nil, datoms)
+	if len(datoms) == 0 {
+		return s.checkOpen()
+	}
+	if err := s.AssertEach(func(add func(*datalog.Datom) error) error {
+		for i := range datoms {
+			if err := add(&datoms[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return s.FinishBatch()
+}
+
+// AssertEach inserts what produce yields straight into the version being built,
+// so the datoms gather nowhere first.
+//
+// The batch is left open. Successive calls share one builder and one version, so
+// a caller writing in a run — the dump importers — pays a single copy-on-write
+// generation for the run instead of one per call. FinishBatch publishes it, and
+// until then the run is invisible: readers hold the previously published version.
+func (s *MemoryTreeStore) AssertEach(produce func(add func(*datalog.Datom) error) error) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
+
+	s.batchMu.Lock()
+	defer s.batchMu.Unlock()
+	if s.pending == nil {
+		s.pending = s.versions.begin()
+	}
+	b := s.pending
+
+	if err := produce(func(d *datalog.Datom) error {
+		// The trees hold the pointer, so each datom needs one that outlives the
+		// producer's workspace.
+		stored := *d
+		b.addDatom(&stored)
+		return nil
+	}); err != nil {
+		// The whole batch goes, not just this call's share of it: a builder is a
+		// tree of edits with no record of which call made which, and abandoning
+		// is what releases the write lock.
+		s.pending = nil
+		s.versions.abandon(b)
+		return err
+	}
+	return nil
+}
+
+// FinishBatch publishes an open batch, and is what makes a run of AssertEach
+// calls visible. With no batch open there is nothing to publish and it says so
+// by doing nothing.
+func (s *MemoryTreeStore) FinishBatch() error {
+	s.batchMu.Lock()
+	defer s.batchMu.Unlock()
+	if s.pending == nil {
+		return nil
+	}
+	b := s.pending
+	s.pending = nil
+	s.versions.publish(b)
+	return nil
 }
 
 // Retract physically removes every stored datom sharing an (E, A, V) with one
@@ -71,46 +146,19 @@ func (s *MemoryTreeStore) Assert(datoms []datalog.Datom) error {
 // Assert writes like any other; truncate removes through DeleteDatoms.
 // See BUG_RETRACT_NAMES_TWO_OPPOSITE_OPERATIONS on the name.
 func (s *MemoryTreeStore) Retract(datoms []datalog.Datom) error {
-	return s.applyBatch(datoms, nil)
-}
-
-// applyBatch is the one write path: retractions and assertions land in a single
-// version, so no reader can observe half of them.
-//
-// The (E, A, V) matches a retraction expands to are read from the batch's own
-// base version, under the write lock the batch already holds. Reading the store
-// before taking that lock would let a concurrent assert slip in between, and the
-// retraction would silently miss it.
-func (s *MemoryTreeStore) applyBatch(retracts, asserts []datalog.Datom) error {
-	if err := s.checkOpen(); err != nil {
+	if len(datoms) == 0 {
+		return s.checkOpen()
+	}
+	tx, err := s.BeginTx()
+	if err != nil {
 		return err
 	}
-	if len(retracts) == 0 && len(asserts) == 0 {
-		return nil
+	if err := tx.Retract(datoms); err != nil {
+		// Retract released the lock itself when it failed; the transaction is
+		// already closed and Rollback would be a second release.
+		return err
 	}
-
-	b := s.versions.begin()
-
-	var doomed []*datalog.Datom
-	for i := range retracts {
-		matches, err := matchingStoredDatoms(b.base, &retracts[i])
-		if err != nil {
-			s.versions.abandon(b)
-			return err
-		}
-		doomed = append(doomed, matches...)
-	}
-	for _, d := range doomed {
-		b.removeDatom(d)
-	}
-
-	for i := range asserts {
-		d := asserts[i]
-		b.addDatom(&d)
-	}
-
-	s.versions.publish(b)
-	return nil
+	return tx.Commit()
 }
 
 // DeleteDatoms removes exactly the datoms given — matched on every component,
@@ -250,10 +298,21 @@ func (s *MemoryTreeStore) BeginTx() (StoreTx, error) {
 	if err := s.checkOpen(); err != nil {
 		return nil, err
 	}
-	return &memoryTreeStoreTx{store: s}, nil
+	return &memoryTreeStoreTx{store: s, b: s.versions.begin()}, nil
 }
 
 func (s *MemoryTreeStore) Close() error {
+	// An abandoned import leaves its batch open, and with it the write lock. The
+	// datoms are discarded rather than published: a run that never finished is a
+	// partial dump, and closing is not the caller saying otherwise.
+	s.batchMu.Lock()
+	if s.pending != nil {
+		b := s.pending
+		s.pending = nil
+		s.versions.abandon(b)
+	}
+	s.batchMu.Unlock()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
@@ -296,26 +355,37 @@ func (s *memoryTreeReadSession) MaxTxForEntity(e datalog.Identity) (datalog.Elem
 	return maxTxForEntityByScan(s, e)
 }
 
-// memoryTreeStoreTx accumulates a transaction's writes and applies them as one
-// batch at commit.
+// memoryTreeStoreTx holds one open builder and writes into it as each datom
+// arrives, so a transaction never accumulates its own copy of what it is about
+// to store. The builder owns the write lock from BeginTx until Commit or
+// Rollback; Store.BeginTx has one caller, Database.Transaction's commit, which
+// opens it, writes already-materialized slices and closes it with no caller
+// code in between, so the lock is held for the same window buffering held it.
 //
-// Buffering until commit, rather than holding an open builder, keeps the write
-// lock out of the caller's hands: a transaction lives as long as its user wants
-// it to, and a builder blocks every other writer for its whole life. Rollback
-// is then discarding the buffer — there is no undo journal to get wrong,
-// because nothing was applied.
+// Rollback is dropping the root: nothing the builder touched was ever reachable,
+// so there is no undo journal to get wrong.
+//
+// The (E, A, V) matches a retraction expands to are read from the transaction's
+// own base version, under the write lock it already holds. Reading the store
+// before taking that lock would let a concurrent assert slip in between and the
+// retraction would silently miss it. Resolving against the base — not the
+// builder — is also what keeps a retract from taking a datom asserted beside it
+// in the same transaction, whatever order the two arrive in; see
+// TestTreeStoreTxRetractAndAssertOrderIndependent.
 type memoryTreeStoreTx struct {
-	store    *MemoryTreeStore
-	asserts  []datalog.Datom
-	retracts []datalog.Datom
-	done     bool
+	store *MemoryTreeStore
+	b     *versionBuilder
+	done  bool
 }
 
 func (tx *memoryTreeStoreTx) Assert(datoms []datalog.Datom) error {
 	if tx.done {
 		return errors.New("memory tree transaction closed")
 	}
-	tx.asserts = append(tx.asserts, datoms...)
+	for i := range datoms {
+		d := datoms[i]
+		tx.b.addDatom(&d)
+	}
 	return nil
 }
 
@@ -323,7 +393,20 @@ func (tx *memoryTreeStoreTx) Retract(datoms []datalog.Datom) error {
 	if tx.done {
 		return errors.New("memory tree transaction closed")
 	}
-	tx.retracts = append(tx.retracts, datoms...)
+	for i := range datoms {
+		doomed, err := matchingStoredDatoms(tx.b.base, &datoms[i])
+		if err != nil {
+			// The builder holds the write lock, so a failed retraction must
+			// release it here rather than wait for a Rollback the caller may
+			// not make.
+			tx.done = true
+			tx.store.versions.abandon(tx.b)
+			return err
+		}
+		for _, d := range doomed {
+			tx.b.removeDatom(d)
+		}
+	}
 	return nil
 }
 
@@ -332,12 +415,15 @@ func (tx *memoryTreeStoreTx) Commit() error {
 		return errors.New("memory tree transaction closed")
 	}
 	tx.done = true
-	return tx.store.applyBatch(tx.retracts, tx.asserts)
+	tx.store.versions.publish(tx.b)
+	return nil
 }
 
 func (tx *memoryTreeStoreTx) Rollback() error {
+	if tx.done {
+		return nil
+	}
 	tx.done = true
-	tx.asserts = nil
-	tx.retracts = nil
+	tx.store.versions.abandon(tx.b)
 	return nil
 }

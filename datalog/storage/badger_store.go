@@ -60,26 +60,36 @@ func NewBadgerStore(path string, encoder *BinaryKeyEncoder) (*BadgerStore, error
 }
 
 // Assert adds datoms to the store.
-//
-// The writes go through a WriteBatch rather than one transaction. A caller
-// hands this arbitrarily many datoms, and at eight index keys each plus a blob
-// per out-of-line value, Badger's per-transaction ceiling arrives long before
-// a caller has reason to suspect a limit exists — a single entity's history is
+func (s *BadgerStore) Assert(datoms []datalog.Datom) error {
+	return s.AssertEach(func(add func(*datalog.Datom) error) error {
+		for i := range datoms {
+			if err := add(&datoms[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// AssertEach writes through a WriteBatch rather than one transaction. A producer
+// yields arbitrarily many datoms, and at eight index keys each plus a blob per
+// out-of-line value, Badger's per-transaction ceiling arrives long before a
+// caller has reason to suspect a limit exists — a single entity's history is
 // enough. The batch splits at that ceiling itself, so the arithmetic stays
 // Badger's and cannot drift from it.
 //
-// The cost is that Assert is not atomic: a mid-way failure leaves the datoms
+// The cost is that this is not atomic: a mid-way failure leaves the datoms
 // already committed in place. Re-asserting is safe, because an index key is
 // derived wholly from its datom and a repeated write reproduces it exactly.
 // A caller that needs a boundary uses BeginTx, whose StoreTx.Assert still
 // writes into the one transaction that caller owns.
-func (s *BadgerStore) Assert(datoms []datalog.Datom) error {
+func (s *BadgerStore) AssertEach(produce func(add func(*datalog.Datom) error) error) error {
 	wb := s.db.NewWriteBatch()
 	defer wb.Cancel()
-	for _, d := range datoms {
-		if err := s.assertDatom(wb.Set, &d); err != nil {
-			return err
-		}
+	if err := produce(func(d *datalog.Datom) error {
+		return s.assertDatom(wb.Set, d)
+	}); err != nil {
+		return err
 	}
 	return wb.Flush()
 }
@@ -110,6 +120,10 @@ func (s *BadgerStore) assertDatom(set func(key, value []byte) error, d *datalog.
 
 	return nil
 }
+
+// FinishBatch has nothing to complete: AssertEach flushes its write batch before
+// returning.
+func (s *BadgerStore) FinishBatch() error { return nil }
 
 // Retract removes datoms from the store
 func (s *BadgerStore) Retract(datoms []datalog.Datom) error {
