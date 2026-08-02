@@ -1,0 +1,36 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkComplexQueryBackends/memory-10         	      52	  20456135 ns/op	43777282 B/op	  199889 allocs/op
+BenchmarkComplexQueryBackends/memory-10         	      66	  20984097 ns/op	43754709 B/op	  199886 allocs/op
+BenchmarkComplexQueryBackends/memory-10         	      60	  20492423 ns/op	43787965 B/op	  199887 allocs/op
+BenchmarkComplexQueryBackends/memory-10         	      66	  20833963 ns/op	43728494 B/op	  199884 allocs/op
+BenchmarkComplexQueryBackends/memory-10         	      63	  20433341 ns/op	43768725 B/op	  199886 allocs/op
+BenchmarkComplexQueryBackends/memory-10         	      63	  20739188 ns/op	43757725 B/op	  199886 allocs/op
+BenchmarkComplexQueryBackends/memory-10         	      60	  20295138 ns/op	43776439 B/op	  199886 allocs/op
+BenchmarkComplexQueryBackends/memory-10         	      51	  20568627 ns/op	43769158 B/op	  199886 allocs/op
+BenchmarkComplexQueryBackends/memory-10         	      62	  20711067 ns/op	43771888 B/op	  199887 allocs/op
+BenchmarkComplexQueryBackends/memory-10         	      63	  20466688 ns/op	43761374 B/op	  199886 allocs/op
+BenchmarkComplexQueryBackends/memory-trees-10   	      61	  17612300 ns/op	29110515 B/op	  124324 allocs/op
+BenchmarkComplexQueryBackends/memory-trees-10   	      60	  17267932 ns/op	29089714 B/op	  124319 allocs/op
+BenchmarkComplexQueryBackends/memory-trees-10   	      70	  17030848 ns/op	29072425 B/op	  124318 allocs/op
+BenchmarkComplexQueryBackends/memory-trees-10   	      78	  17022457 ns/op	29091522 B/op	  124318 allocs/op
+BenchmarkComplexQueryBackends/memory-trees-10   	      61	  17544412 ns/op	29075273 B/op	  124318 allocs/op
+BenchmarkComplexQueryBackends/memory-trees-10   	      85	  17489222 ns/op	29094774 B/op	  124319 allocs/op
+BenchmarkComplexQueryBackends/memory-trees-10   	      81	  17116916 ns/op	29061880 B/op	  124318 allocs/op
+BenchmarkComplexQueryBackends/memory-trees-10   	      62	  17415043 ns/op	29109548 B/op	  124320 allocs/op
+BenchmarkComplexQueryBackends/memory-trees-10   	      78	  17330386 ns/op	29104849 B/op	  124319 allocs/op
+BenchmarkComplexQueryBackends/memory-trees-10   	      64	  16891286 ns/op	29086803 B/op	  124318 allocs/op
+BenchmarkComplexQueryBackends/badger-10         	      63	  17956665 ns/op	29111835 B/op	  124504 allocs/op
+BenchmarkComplexQueryBackends/badger-10         	      61	  19213152 ns/op	29067860 B/op	  124504 allocs/op
+BenchmarkComplexQueryBackends/badger-10         	      66	  18057913 ns/op	29074692 B/op	  124502 allocs/op
+BenchmarkComplexQueryBackends/badger-10         	      64	  18329637 ns/op	29092474 B/op	  124503 allocs/op
+BenchmarkComplexQueryBackends/badger-10         	      56	  18097306 ns/op	29129114 B/op	  124506 allocs/op
+BenchmarkComplexQueryBackends/badger-10         	      64	  18236551 ns/op	29078003 B/op	  124503 allocs/op
+BenchmarkComplexQueryBackends/badger-10         	      62	  18929878 ns/op	29096798 B/op	  124505 allocs/op
+BenchmarkComplexQueryBackends/badger-10         	      55	  18457276 ns/op	29096961 B/op	  124502 allocs/op
+BenchmarkComplexQueryBackends/badger-10         	      62	  18861718 ns/op	29086986 B/op	  124502 allocs/op
+BenchmarkComplexQueryBackends/badger-10         	      63	  18681675 ns/op	29079088 B/op	  124503 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	45.041s

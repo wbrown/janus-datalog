@@ -82,23 +82,24 @@ func TestGroundVectorPatternDistinguishesClearedFromNeverSet(t *testing.T) {
 		{"cleared to empty binds the empty vector", clearedToEmpty, unbound, 1, true},
 	} {
 		for _, mode := range cacheTestModes {
-			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
-				db, cleanup := createCacheTestDB(t, mode.disableCache, nil)
-				defer cleanup()
-				db.SetSchema(constantPatternSchema(t))
-				tc.write(t, db)
+			for _, omode := range optimizerModes {
+				t.Run(tc.name+"/"+mode.name+"/"+omode.name, func(t *testing.T) {
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
+					db.SetSchema(constantPatternSchema(t))
+					tc.write(t, db)
 
-				rel, err := db.Query(tc.query)
-				require.NoError(t, err)
-				tuples, err := executor.CollectTuples(rel, nil)
-				require.NoError(t, err)
-				require.Len(t, tuples, tc.want)
+					rel, err := db.Query(tc.query)
+					require.NoError(t, err)
+					tuples, err := executor.CollectTuples(rel, nil)
+					require.NoError(t, err)
+					require.Len(t, tuples, tc.want)
 
-				if tc.emptyVectorBinding {
-					require.True(t, datalog.ValuesEqual(tuples[0][0], []interface{}{}),
-						"a cleared vector resolves to the empty vector, got %#v", tuples[0][0])
-				}
-			})
+					if tc.emptyVectorBinding {
+						require.True(t, datalog.ValuesEqual(tuples[0][0], []interface{}{}),
+							"a cleared vector resolves to the empty vector, got %#v", tuples[0][0])
+					}
+				})
+			}
 		}
 	}
 }
@@ -129,32 +130,33 @@ func TestClearedVectorBindsEmptyVectorNotNil(t *testing.T) {
 	}
 
 	for _, mode := range cacheTestModes {
-		t.Run(mode.name, func(t *testing.T) {
-			db, cleanup := createCacheTestDB(t, mode.disableCache, nil)
-			defer cleanup()
-			db.SetSchema(refSchema(t))
+		for _, omode := range optimizerModes {
+			t.Run(mode.name+"/"+omode.name, func(t *testing.T) {
+				db := createCacheTestDB(t, omode, mode.disableCache, nil)
+				db.SetSchema(refSchema(t))
 
-			commitGroundPattern(t, db, func(tx *Transaction) error {
-				return tx.Set(e, refs, []interface{}{
-					datalog.NewIdentity("doc:one"),
-					datalog.NewIdentity("doc:two"),
+				commitGroundPattern(t, db, func(tx *Transaction) error {
+					return tx.Set(e, refs, []interface{}{
+						datalog.NewIdentity("doc:one"),
+						datalog.NewIdentity("doc:two"),
+					})
 				})
-			})
-			commitGroundPattern(t, db, func(tx *Transaction) error {
-				return tx.Set(e, refs, []interface{}{})
-			})
+				commitGroundPattern(t, db, func(tx *Transaction) error {
+					return tx.Set(e, refs, []interface{}{})
+				})
 
-			rel, err := db.Query(`[:find ?v :where [#id "cache-parity:subject" :doc/refs ?v]]`)
-			require.NoError(t, err)
-			tuples, err := executor.CollectTuples(rel, nil)
-			require.NoError(t, err)
-			require.Len(t, tuples, 1, "a cleared vector is a value and binds")
+				rel, err := db.Query(`[:find ?v :where [#id "cache-parity:subject" :doc/refs ?v]]`)
+				require.NoError(t, err)
+				tuples, err := executor.CollectTuples(rel, nil)
+				require.NoError(t, err)
+				require.Len(t, tuples, 1, "a cleared vector is a value and binds")
 
-			require.NotNil(t, tuples[0][0],
-				"nil is not a datalog value and must never occupy a tuple position")
-			require.True(t, datalog.ValuesEqual(tuples[0][0], []interface{}{}),
-				"a cleared vector resolves to the empty vector, got %#v", tuples[0][0])
-		})
+				require.NotNil(t, tuples[0][0],
+					"nil is not a datalog value and must never occupy a tuple position")
+				require.True(t, datalog.ValuesEqual(tuples[0][0], []interface{}{}),
+					"a cleared vector resolves to the empty vector, got %#v", tuples[0][0])
+			})
+		}
 	}
 }
 
@@ -190,18 +192,19 @@ func TestVBoundScanWithUnboundEntityRejectsSupersededValue(t *testing.T) {
 			`[:find ?e :where [?e :person/name "Alicia"]]`, 1},
 	} {
 		for _, mode := range cacheTestModes {
-			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
-				db, cleanup := createCacheTestDB(t, mode.disableCache, nil)
-				defer cleanup()
-				db.SetSchema(constantPatternSchema(t))
-				renamed(t, db)
+			for _, omode := range optimizerModes {
+				t.Run(tc.name+"/"+mode.name+"/"+omode.name, func(t *testing.T) {
+					db := createCacheTestDB(t, omode, mode.disableCache, nil)
+					db.SetSchema(constantPatternSchema(t))
+					renamed(t, db)
 
-				rel, err := db.Query(tc.query)
-				require.NoError(t, err)
-				tuples, err := executor.CollectTuples(rel, nil)
-				require.NoError(t, err)
-				require.Len(t, tuples, tc.want)
-			})
+					rel, err := db.Query(tc.query)
+					require.NoError(t, err)
+					tuples, err := executor.CollectTuples(rel, nil)
+					require.NoError(t, err)
+					require.Len(t, tuples, tc.want)
+				})
+			}
 		}
 	}
 }

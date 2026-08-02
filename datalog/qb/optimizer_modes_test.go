@@ -28,15 +28,37 @@ import (
 // Plan of record: docs/wip/OPTIMIZER_MODE_MATRIX.md
 // =============================================================================
 
-// optimizerMode is one leg of the optimizer matrix.
+// optimizerMode is one leg of the matrix: a storage backend crossed with an
+// optimizer path. Backends come from storage.AvailableBackends, so a backend
+// this build has is one every executing test in this package runs against.
 type optimizerMode struct {
 	name    string
 	algebra bool
+	backend storage.Backend
 }
 
-var optimizerModes = []optimizerMode{
-	{"algebra_on", true},
-	{"algebra_off", false},
+var optimizerModes = buildOptimizerModes()
+
+func buildOptimizerModes() []optimizerMode {
+	algebraLegs := []struct {
+		name string
+		on   bool
+	}{
+		{"algebra_on", true},
+		{"algebra_off", false},
+	}
+	backends := storage.AvailableBackends()
+	modes := make([]optimizerMode, 0, len(backends)*len(algebraLegs))
+	for _, backend := range backends {
+		for _, algebra := range algebraLegs {
+			modes = append(modes, optimizerMode{
+				name:    backend.Name + "/" + algebra.name,
+				algebra: algebra.on,
+				backend: backend,
+			})
+		}
+	}
+	return modes
 }
 
 // plannerOptions returns the default planner options with this mode applied.

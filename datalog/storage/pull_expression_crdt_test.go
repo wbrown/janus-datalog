@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -27,23 +26,7 @@ func TestPullInto_CardinalityOne_MultipleWrites(t *testing.T) {
 				t.Fatalf("Failed to build schema: %v", err)
 			}
 
-			// Create temp database
-			dir, err := os.MkdirTemp("", "pullinto-test-*")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer os.RemoveAll(dir)
-
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           dir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			// Create entity with initial status
 			task := &PullExprTestEntity{
@@ -109,23 +92,7 @@ func TestPullExpression_CardinalityOne_MultipleWrites(t *testing.T) {
 				t.Fatalf("Failed to build schema: %v", err)
 			}
 
-			// Create temp database
-			dir, err := os.MkdirTemp("", "pullexpr-test-*")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer os.RemoveAll(dir)
-
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           dir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			// Create entity with initial status
 			task := &PullExprTestEntity{

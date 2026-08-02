@@ -11,6 +11,14 @@ import (
 )
 
 func TestAETVCardinalityOneRelationProperties(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testAETVCardinalityOneRelationProperties(t, mode)
+		})
+	}
+}
+
+func testAETVCardinalityOneRelationProperties(t *testing.T, mode optimizerMode) {
 	nameAttr := datalog.NewKeyword(":person/name")
 	s := schema.NewSchema()
 	s.Add(&schema.AttributeDefinition{
@@ -19,18 +27,13 @@ func TestAETVCardinalityOneRelationProperties(t *testing.T) {
 		Cardinality: schema.CardinalityOne,
 	})
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
-		Schema: s,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 	tx := db.NewTransaction()
 	require.NoError(t, tx.Set(datalog.NewIdentity("person:1"), nameAttr, "one"))
 	require.NoError(t, tx.Set(datalog.NewIdentity("person:2"), nameAttr, "two"))
 	require.NoError(t, tx.Set(datalog.NewIdentity("person:3"), nameAttr, "three"))
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	require.NoError(t, err)
 
 	entity := datalog.NewSymbol("?e")
@@ -103,6 +106,14 @@ func TestValidatedVBoundProperties(t *testing.T) {
 }
 
 func TestAVETValidatedRelationProperties(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testAVETValidatedRelationProperties(t, mode)
+		})
+	}
+}
+
+func testAVETValidatedRelationProperties(t *testing.T, mode optimizerMode) {
 	typeAttr := datalog.NewKeyword(":entity/type")
 	personType := datalog.NewKeyword(":entity.type/person")
 	s := schema.NewSchema()
@@ -111,12 +122,7 @@ func TestAVETValidatedRelationProperties(t *testing.T) {
 		ValueType:   schema.TypeKeyword,
 		Cardinality: schema.CardinalityOne,
 	})
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
-		Schema: s,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 	tx := db.NewTransaction()
 	for _, identity := range []datalog.Identity{
@@ -126,7 +132,7 @@ func TestAVETValidatedRelationProperties(t *testing.T) {
 	} {
 		require.NoError(t, tx.Set(identity, typeAttr, personType))
 	}
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	require.NoError(t, err)
 
 	entity := datalog.NewSymbol("?e")

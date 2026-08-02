@@ -14,326 +14,345 @@ import (
 // These tests verify that the cache is actually integrated into the query path,
 // not just available for direct LookupAttribute calls.
 
-// createCacheIntegrationTestDB creates a test database with cache for integration tests
-func createCacheIntegrationTestDatabase(t *testing.T) (*Database, func()) {
-	dir := t.TempDir()
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	return db, func() { db.Close() }
+// createCacheIntegrationTestDatabase creates a database on the mode's backend
+// with cache for integration tests.
+func createCacheIntegrationTestDatabase(t *testing.T, mode optimizerMode) *Database {
+	return createOptimizerModeDB(t, mode, DatabaseOptions{})
 }
 
 // TestQueryPathUsesCache verifies that the matcher created by Database.Matcher()
 // has the cache wired in and uses it for lookups.
 func TestQueryPathUsesCache(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheIntegrationTestDatabase(t, mode)
 
-	// Create schema
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Create schema
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Add data
-	tx := db.NewTransaction()
-	e := datalog.NewIdentity("person1")
-	err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add data
+			tx := db.NewTransaction()
+			e := datalog.NewIdentity("person1")
+			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			require.NoError(t, err)
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Get matcher from database - this should have cache set
-	matcher := db.Matcher()
-	bm, ok := matcher.(*PatternMatcher)
-	require.True(t, ok, "matcher should be a *PatternMatcher")
-	require.NotNil(t, bm.cache, "matcher should have cache set")
+			// Get matcher from database - this should have cache set
+			matcher := db.Matcher()
+			bm, ok := matcher.(*PatternMatcher)
+			require.True(t, ok, "matcher should be a *PatternMatcher")
+			require.NotNil(t, bm.cache, "matcher should have cache set")
 
-	// Clear the cache entries (but keep the maxVersions tracking)
-	// This simulates a scenario where we need to verify cache population
-	db.Cache().Clear()
+			// Clear the cache entries (but keep the maxVersions tracking)
+			// This simulates a scenario where we need to verify cache population
+			db.Cache().Clear()
 
-	// First lookup should populate the cache
-	val, found := requireAttributeLookup(t, bm, e, datalog.NewKeyword(":person/name"))
-	require.True(t, found)
-	assert.Equal(t, "Alice", val)
+			// First lookup should populate the cache
+			val, found := requireAttributeLookup(t, bm, e, datalog.NewKeyword(":person/name"))
+			require.True(t, found)
+			assert.Equal(t, "Alice", val)
 
-	// Verify the cache was populated
-	eBytes := Entity(e.Hash())
-	var aBytes Attribute
-	copy(aBytes[:], ":person/name")
-	key := CacheKey{E: eBytes, A: aBytes}
+			// Verify the cache was populated
+			eBytes := Entity(e.Hash())
+			var aBytes Attribute
+			copy(aBytes[:], ":person/name")
+			key := CacheKey{E: eBytes, A: aBytes}
 
-	// The cache should now have an entry for this (E, A) pair
-	entry, err := db.Cache().GetOrResolve(key, bm, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-	assert.Equal(t, "Alice", entry.OneValue())
+			// The cache should now have an entry for this (E, A) pair
+			entry, err := db.Cache().GetOrResolve(key, bm, nil, nil, DiscardIntake)
+			require.NoError(t, err)
+			require.NotNil(t, entry)
+			assert.Equal(t, "Alice", entry.OneValue())
+		})
+	}
 }
 
 // TestPullAPIUsesCache verifies that Pull API lookups go through the cache.
 func TestPullAPIUsesCache(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheIntegrationTestDatabase(t, mode)
 
-	// Create schema with multiple cardinalities
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Create schema with multiple cardinalities
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Add data
-	tx := db.NewTransaction()
-	e := datalog.NewIdentity("person1")
-	err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
-	require.NoError(t, err)
-	err = tx.Add(e, datalog.NewKeyword(":person/tags"), "developer")
-	require.NoError(t, err)
-	err = tx.Add(e, datalog.NewKeyword(":person/tags"), "golang")
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add data
+			tx := db.NewTransaction()
+			e := datalog.NewIdentity("person1")
+			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			require.NoError(t, err)
+			err = tx.Add(e, datalog.NewKeyword(":person/tags"), "developer")
+			require.NoError(t, err)
+			err = tx.Add(e, datalog.NewKeyword(":person/tags"), "golang")
+			require.NoError(t, err)
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Get matcher from database
-	matcher := db.Matcher()
-	bm, ok := matcher.(*PatternMatcher)
-	require.True(t, ok)
+			// Get matcher from database
+			matcher := db.Matcher()
+			bm, ok := matcher.(*PatternMatcher)
+			require.True(t, ok)
 
-	// Lookup name (cardinality-one)
-	name, found := requireAttributeLookup(t, bm, e, datalog.NewKeyword(":person/name"))
-	require.True(t, found)
-	assert.Equal(t, "Alice", name)
+			// Lookup name (cardinality-one)
+			name, found := requireAttributeLookup(t, bm, e, datalog.NewKeyword(":person/name"))
+			require.True(t, found)
+			assert.Equal(t, "Alice", name)
 
-	// Lookup all tags (cardinality-many via LookupAllAttributes)
-	tags, err := bm.LookupAllAttributes(e, datalog.NewKeyword(":person/tags"))
-	require.NoError(t, err)
-	assert.Len(t, tags, 2)
-	// Convert to set for order-independent comparison
-	tagSet := make(map[interface{}]bool)
-	for _, tag := range tags {
-		tagSet[tag] = true
+			// Lookup all tags (cardinality-many via LookupAllAttributes)
+			tags, err := bm.LookupAllAttributes(e, datalog.NewKeyword(":person/tags"))
+			require.NoError(t, err)
+			assert.Len(t, tags, 2)
+			// Convert to set for order-independent comparison
+			tagSet := make(map[interface{}]bool)
+			for _, tag := range tags {
+				tagSet[tag] = true
+			}
+			assert.True(t, tagSet["developer"])
+			assert.True(t, tagSet["golang"])
+		})
 	}
-	assert.True(t, tagSet["developer"])
-	assert.True(t, tagSet["golang"])
 }
 
 // TestCacheInvalidatedOnCommit verifies that committing a transaction
 // invalidates affected cache entries.
 func TestCacheInvalidatedOnCommit(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheIntegrationTestDatabase(t, mode)
 
-	// Create schema
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Create schema
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Add initial data
-	tx := db.NewTransaction()
-	e := datalog.NewIdentity("person1")
-	err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add initial data
+			tx := db.NewTransaction()
+			e := datalog.NewIdentity("person1")
+			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			require.NoError(t, err)
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Get matcher and populate cache
-	matcher := db.Matcher()
-	bm := matcher.(*PatternMatcher)
-	val, found := requireAttributeLookup(t, bm, e, datalog.NewKeyword(":person/name"))
-	require.True(t, found)
-	assert.Equal(t, "Alice", val)
+			// Get matcher and populate cache
+			matcher := db.Matcher()
+			bm := matcher.(*PatternMatcher)
+			val, found := requireAttributeLookup(t, bm, e, datalog.NewKeyword(":person/name"))
+			require.True(t, found)
+			assert.Equal(t, "Alice", val)
 
-	// Update the name
-	tx2 := db.NewTransaction()
-	err = tx2.Set(e, datalog.NewKeyword(":person/name"), "Bob")
-	require.NoError(t, err)
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Update the name
+			tx2 := db.NewTransaction()
+			err = tx2.Set(e, datalog.NewKeyword(":person/name"), "Bob")
+			require.NoError(t, err)
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// New matcher should see the updated value
-	matcher2 := db.Matcher()
-	bm2 := matcher2.(*PatternMatcher)
-	val2, found := requireAttributeLookup(t, bm2, e, datalog.NewKeyword(":person/name"))
-	require.True(t, found)
-	assert.Equal(t, "Bob", val2, "cache should reflect updated value after commit")
+			// New matcher should see the updated value
+			matcher2 := db.Matcher()
+			bm2 := matcher2.(*PatternMatcher)
+			val2, found := requireAttributeLookup(t, bm2, e, datalog.NewKeyword(":person/name"))
+			require.True(t, found)
+			assert.Equal(t, "Bob", val2, "cache should reflect updated value after commit")
+		})
+	}
 }
 
 // TestMultipleMatchersShareCache verifies that multiple matchers from the same
 // database share the same cache instance.
 func TestMultipleMatchersShareCache(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheIntegrationTestDatabase(t, mode)
 
-	// Create schema
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Create schema
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Add data
-	tx := db.NewTransaction()
-	e := datalog.NewIdentity("person1")
-	err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add data
+			tx := db.NewTransaction()
+			e := datalog.NewIdentity("person1")
+			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			require.NoError(t, err)
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Get two matchers
-	matcher1 := db.Matcher().(*PatternMatcher)
-	matcher2 := db.Matcher().(*PatternMatcher)
+			// Get two matchers
+			matcher1 := db.Matcher().(*PatternMatcher)
+			matcher2 := db.Matcher().(*PatternMatcher)
 
-	// Both should have the same cache
-	assert.Same(t, db.Cache(), matcher1.cache, "matcher1 should share database cache")
-	assert.Same(t, db.Cache(), matcher2.cache, "matcher2 should share database cache")
+			// Both should have the same cache
+			assert.Same(t, db.Cache(), matcher1.cache, "matcher1 should share database cache")
+			assert.Same(t, db.Cache(), matcher2.cache, "matcher2 should share database cache")
 
-	// Lookup via matcher1 populates cache
-	val, found := requireAttributeLookup(t, matcher1, e, datalog.NewKeyword(":person/name"))
-	require.True(t, found)
-	assert.Equal(t, "Alice", val)
+			// Lookup via matcher1 populates cache
+			val, found := requireAttributeLookup(t, matcher1, e, datalog.NewKeyword(":person/name"))
+			require.True(t, found)
+			assert.Equal(t, "Alice", val)
 
-	// Lookup via matcher2 should use the cached entry (same cache instance)
-	val2, found := requireAttributeLookup(t, matcher2, e, datalog.NewKeyword(":person/name"))
-	require.True(t, found)
-	assert.Equal(t, "Alice", val2)
+			// Lookup via matcher2 should use the cached entry (same cache instance)
+			val2, found := requireAttributeLookup(t, matcher2, e, datalog.NewKeyword(":person/name"))
+			require.True(t, found)
+			assert.Equal(t, "Alice", val2)
+		})
+	}
 }
 
 // TestAsOfDoesNotUseCache verifies that as-of queries bypass the cache
 // since the cache only stores the latest state.
 func TestAsOfDoesNotUseCache(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheIntegrationTestDatabase(t, mode)
 
-	// Create schema
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Create schema
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Add initial data
-	tx := db.NewTransaction()
-	e := datalog.NewIdentity("person1")
-	err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
-	require.NoError(t, err)
-	tx1ID, err := tx.Commit()
-	require.NoError(t, err)
+			// Add initial data
+			tx := db.NewTransaction()
+			e := datalog.NewIdentity("person1")
+			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			require.NoError(t, err)
+			tx1ID, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Update the name
-	tx2 := db.NewTransaction()
-	err = tx2.Set(e, datalog.NewKeyword(":person/name"), "Bob")
-	require.NoError(t, err)
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Update the name
+			tx2 := db.NewTransaction()
+			err = tx2.Set(e, datalog.NewKeyword(":person/name"), "Bob")
+			require.NoError(t, err)
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Current value should be "Bob"
-	matcher := db.Matcher().(*PatternMatcher)
-	val, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":person/name"))
-	require.True(t, found)
-	assert.Equal(t, "Bob", val)
+			// Current value should be "Bob"
+			matcher := db.Matcher().(*PatternMatcher)
+			val, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":person/name"))
+			require.True(t, found)
+			assert.Equal(t, "Bob", val)
 
-	// As-of tx1 should still return "Alice" (bypassing cache)
-	asOfMatcher := db.AsOf(tx1ID).Matcher().(*PatternMatcher)
-	asOfVal, found := requireAttributeLookup(t, asOfMatcher, e, datalog.NewKeyword(":person/name"))
-	require.True(t, found)
-	assert.Equal(t, "Alice", asOfVal, "as-of query should bypass cache and return historical value")
+			// As-of tx1 should still return "Alice" (bypassing cache)
+			asOfMatcher := db.AsOf(tx1ID).Matcher().(*PatternMatcher)
+			asOfVal, found := requireAttributeLookup(t, asOfMatcher, e, datalog.NewKeyword(":person/name"))
+			require.True(t, found)
+			assert.Equal(t, "Alice", asOfVal, "as-of query should bypass cache and return historical value")
+		})
+	}
 }
 
 // TestVectorCacheIntegration verifies that vector attributes work with the cache.
 func TestVectorCacheIntegration(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheIntegrationTestDatabase(t, mode)
 
-	// Create schema with vector attribute
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Create schema with vector attribute
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Add vector data
-	tx := db.NewTransaction()
-	e := datalog.NewIdentity("character1")
-	err = tx.Add(e, datalog.NewKeyword(":character/skills"), "stealth")
-	require.NoError(t, err)
-	err = tx.Add(e, datalog.NewKeyword(":character/skills"), "archery")
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add vector data
+			tx := db.NewTransaction()
+			e := datalog.NewIdentity("character1")
+			err = tx.Add(e, datalog.NewKeyword(":character/skills"), "stealth")
+			require.NoError(t, err)
+			err = tx.Add(e, datalog.NewKeyword(":character/skills"), "archery")
+			require.NoError(t, err)
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Get matcher from database
-	matcher := db.Matcher().(*PatternMatcher)
+			// Get matcher from database
+			matcher := db.Matcher().(*PatternMatcher)
 
-	// Lookup vector via LookupAttribute
-	skills, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":character/skills"))
-	require.True(t, found)
+			// Lookup vector via LookupAttribute
+			skills, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":character/skills"))
+			require.True(t, found)
 
-	skillSlice, ok := skills.([]string)
-	require.True(t, ok, "vector should be returned as []string")
-	assert.Len(t, skillSlice, 2)
-	assert.Equal(t, "stealth", skillSlice[0])
-	assert.Equal(t, "archery", skillSlice[1])
+			skillSlice, ok := skills.([]string)
+			require.True(t, ok, "vector should be returned as []string")
+			assert.Len(t, skillSlice, 2)
+			assert.Equal(t, "stealth", skillSlice[0])
+			assert.Equal(t, "archery", skillSlice[1])
+		})
+	}
 }
 
 // TestCacheResolverInterface verifies that PatternMatcher implements CacheResolver
 // correctly when used by the cache.
 func TestCacheResolverInterface(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheIntegrationTestDatabase(t, mode)
 
-	// Create schema
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Create schema
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Add data
-	tx := db.NewTransaction()
-	e := datalog.NewIdentity("person1")
-	err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
-	require.NoError(t, err)
-	err = tx.Add(e, datalog.NewKeyword(":person/tags"), "dev")
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add data
+			tx := db.NewTransaction()
+			e := datalog.NewIdentity("person1")
+			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			require.NoError(t, err)
+			err = tx.Add(e, datalog.NewKeyword(":person/tags"), "dev")
+			require.NoError(t, err)
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Get matcher which implements CacheResolver
-	matcher := db.Matcher().(*PatternMatcher)
+			// Get matcher which implements CacheResolver
+			matcher := db.Matcher().(*PatternMatcher)
 
-	// Test that matcher can be used as a CacheResolver
-	eBytes := Entity(e.Hash())
-	var nameAttr, tagsAttr Attribute
-	copy(nameAttr[:], ":person/name")
-	copy(tagsAttr[:], ":person/tags")
+			// Test that matcher can be used as a CacheResolver
+			eBytes := Entity(e.Hash())
+			var nameAttr, tagsAttr Attribute
+			copy(nameAttr[:], ":person/name")
+			copy(tagsAttr[:], ":person/tags")
 
-	// Test GetCardinality
-	assert.Equal(t, schema.CardinalityOne, matcher.GetCardinality(nameAttr))
-	assert.Equal(t, schema.CardinalityMany, matcher.GetCardinality(tagsAttr))
+			// Test GetCardinality
+			assert.Equal(t, schema.CardinalityOne, matcher.GetCardinality(nameAttr))
+			assert.Equal(t, schema.CardinalityMany, matcher.GetCardinality(tagsAttr))
 
-	// Test ResolveLWW
-	lww := &scanReport{}
-	val, maxID, present, err := matcher.ResolveLWW(eBytes, nameAttr, lww)
-	require.NoError(t, err)
-	assert.True(t, present, "the (E, A) carries datoms, so it is present")
-	assert.Equal(t, "Alice", val)
-	assert.NotZero(t, maxID.Lamport)
-	assert.Positive(t, lww.scanned, "resolution read the index and must report it")
+			// Test ResolveLWW
+			lww := &scanReport{}
+			val, maxID, present, err := matcher.ResolveLWW(eBytes, nameAttr, lww)
+			require.NoError(t, err)
+			assert.True(t, present, "the (E, A) carries datoms, so it is present")
+			assert.Equal(t, "Alice", val)
+			assert.NotZero(t, maxID.Lamport)
+			assert.Positive(t, lww.scanned, "resolution read the index and must report it")
 
-	// Test ResolveAddWins
-	addWins := &scanReport{}
-	set, maxID, present, err := matcher.ResolveAddWins(eBytes, tagsAttr, addWins)
-	require.NoError(t, err)
-	assert.True(t, present, "the (E, A) carries datoms, so it is present")
-	_, hasDev := set["dev"]
-	assert.True(t, hasDev)
-	assert.NotZero(t, maxID.Lamport)
-	assert.Positive(t, addWins.scanned, "resolution read the index and must report it")
+			// Test ResolveAddWins
+			addWins := &scanReport{}
+			set, maxID, present, err := matcher.ResolveAddWins(eBytes, tagsAttr, addWins)
+			require.NoError(t, err)
+			assert.True(t, present, "the (E, A) carries datoms, so it is present")
+			_, hasDev := set["dev"]
+			assert.True(t, hasDev)
+			assert.NotZero(t, maxID.Lamport)
+			assert.Positive(t, addWins.scanned, "resolution read the index and must report it")
+		})
+	}
 }
 
 // TestQueryExecutionUsesCache verifies that actual Datalog queries
@@ -341,7 +360,7 @@ func TestCacheResolverInterface(t *testing.T) {
 func TestQueryExecutionUsesCache(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -390,7 +409,7 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 func TestJoinQueryUsesCache(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create schema
 			s, err := schema.NewBuilder().
@@ -451,7 +470,7 @@ func TestJoinQueryUsesCache(t *testing.T) {
 func TestCardinalityManyQueryUsesCache(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create schema with cardinality-many attribute
 			s, err := schema.NewBuilder().
@@ -509,68 +528,71 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 // TestCacheConcurrency verifies that concurrent cache access with real storage
 // is thread-safe and returns correct values.
 func TestCacheConcurrency(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCacheIntegrationTestDatabase(t, mode)
 
-	// Create schema
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Create schema
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Add data
-	tx := db.NewTransaction()
-	e := datalog.NewIdentity("person1")
-	err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add data
+			tx := db.NewTransaction()
+			e := datalog.NewIdentity("person1")
+			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			require.NoError(t, err)
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Get matcher (implements CacheResolver)
-	matcher := db.Matcher().(*PatternMatcher)
-	cache := db.Cache()
+			// Get matcher (implements CacheResolver)
+			matcher := db.Matcher().(*PatternMatcher)
+			cache := db.Cache()
 
-	eBytes := Entity(e.Hash())
-	var nameAttr Attribute
-	copy(nameAttr[:], ":person/name")
-	key := CacheKey{E: eBytes, A: nameAttr}
+			eBytes := Entity(e.Hash())
+			var nameAttr Attribute
+			copy(nameAttr[:], ":person/name")
+			key := CacheKey{E: eBytes, A: nameAttr}
 
-	// Populate initial entry
-	_, err = cache.GetOrResolve(key, matcher, nil, nil, DiscardIntake)
-	require.NoError(t, err)
+			// Populate initial entry
+			_, err = cache.GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			require.NoError(t, err)
 
-	var wg sync.WaitGroup
+			var wg sync.WaitGroup
 
-	// Concurrent readers
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			entry, err := cache.GetOrResolve(key, matcher, nil, nil, DiscardIntake)
-			assert.NoError(t, err)
-			assert.NotNil(t, entry)
-		}()
+			// Concurrent readers
+			for i := 0; i < 50; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					entry, err := cache.GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+					assert.NoError(t, err)
+					assert.NotNil(t, entry)
+				}()
+			}
+
+			// Concurrent writers (updating max version)
+			for i := 0; i < 50; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: uint64(100 + i), ReplicaID: 1})
+				}(i)
+			}
+
+			// Concurrent invalidations
+			for i := 0; i < 10; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					cache.Invalidate([]CacheKey{key})
+				}()
+			}
+
+			wg.Wait()
+			// Should complete without panic or data race
+		})
 	}
-
-	// Concurrent writers (updating max version)
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: uint64(100 + i), ReplicaID: 1})
-		}(i)
-	}
-
-	// Concurrent invalidations
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cache.Invalidate([]CacheKey{key})
-		}()
-	}
-
-	wg.Wait()
-	// Should complete without panic or data race
 }

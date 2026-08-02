@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,169 +12,152 @@ import (
 
 // TestOrderedSet_UniqueElementsEnforcement verifies that UniqueElements prevents duplicates
 func TestOrderedSet_UniqueElementsEnforcement(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "orderedset-unique-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create schema with OrderedSet (Vector + UniqueElements)
+			s, err := schema.NewBuilder().
+				Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add().
+				Build()
+			require.NoError(t, err)
 
-	// Create schema with OrderedSet (Vector + UniqueElements)
-	s, err := schema.NewBuilder().
-		Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			prefs := datalog.NewKeyword(":character/prefs")
 
-	alice := datalog.NewIdentity("alice")
-	prefs := datalog.NewKeyword(":character/prefs")
+			// Add values including duplicates
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(alice, prefs, "dark-mode"))
+			require.NoError(t, tx.Add(alice, prefs, "compact"))
+			require.NoError(t, tx.Add(alice, prefs, "dark-mode")) // Duplicate - should be no-op
+			require.NoError(t, tx.Add(alice, prefs, "notifications"))
+			require.NoError(t, tx.Add(alice, prefs, "compact")) // Duplicate - should be no-op
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Add values including duplicates
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, prefs, "dark-mode"))
-	require.NoError(t, tx.Add(alice, prefs, "compact"))
-	require.NoError(t, tx.Add(alice, prefs, "dark-mode")) // Duplicate - should be no-op
-	require.NoError(t, tx.Add(alice, prefs, "notifications"))
-	require.NoError(t, tx.Add(alice, prefs, "compact")) // Duplicate - should be no-op
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Verify only unique values stored
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	// Verify only unique values stored
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, prefs)
+			require.True(t, found)
 
-	result, found := requireAttributeLookup(t, matcher, alice, prefs)
-	require.True(t, found)
+			vec, ok := result.([]string)
+			require.True(t, ok, "result should be []string")
 
-	vec, ok := result.([]string)
-	require.True(t, ok, "result should be []string")
-
-	t.Logf("OrderedSet contains: %v", vec)
-	assert.Len(t, vec, 3, "should have 3 unique values")
-	assert.Equal(t, "dark-mode", vec[0])
-	assert.Equal(t, "compact", vec[1])
-	assert.Equal(t, "notifications", vec[2])
+			t.Logf("OrderedSet contains: %v", vec)
+			assert.Len(t, vec, 3, "should have 3 unique values")
+			assert.Equal(t, "dark-mode", vec[0])
+			assert.Equal(t, "compact", vec[1])
+			assert.Equal(t, "notifications", vec[2])
+		})
+	}
 }
 
 // TestOrderedSet_UniqueAcrossTransactions verifies uniqueness across multiple transactions
 func TestOrderedSet_UniqueAcrossTransactions(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "orderedset-multi-tx-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			prefs := datalog.NewKeyword(":character/prefs")
 
-	alice := datalog.NewIdentity("alice")
-	prefs := datalog.NewKeyword(":character/prefs")
+			// First transaction: add initial values
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, prefs, "a"))
+			require.NoError(t, tx1.Add(alice, prefs, "b"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// First transaction: add initial values
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, prefs, "a"))
-	require.NoError(t, tx1.Add(alice, prefs, "b"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Second transaction: try to add duplicates
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(alice, prefs, "b")) // Already exists - no-op
+			require.NoError(t, tx2.Add(alice, prefs, "c")) // New value
+			require.NoError(t, tx2.Add(alice, prefs, "a")) // Already exists - no-op
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Second transaction: try to add duplicates
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(alice, prefs, "b")) // Already exists - no-op
-	require.NoError(t, tx2.Add(alice, prefs, "c")) // New value
-	require.NoError(t, tx2.Add(alice, prefs, "a")) // Already exists - no-op
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Verify
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	// Verify
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, prefs)
+			require.True(t, found)
 
-	result, found := requireAttributeLookup(t, matcher, alice, prefs)
-	require.True(t, found)
+			vec, ok := result.([]string)
+			require.True(t, ok)
 
-	vec, ok := result.([]string)
-	require.True(t, ok)
-
-	t.Logf("OrderedSet after two transactions: %v", vec)
-	assert.Len(t, vec, 3, "should have 3 unique values: a, b, c")
+			t.Logf("OrderedSet after two transactions: %v", vec)
+			assert.Len(t, vec, 3, "should have 3 unique values: a, b, c")
+		})
+	}
 }
 
 // TestOrderedSet_SetReplacement verifies Set() correctly replaces with unique enforcement
 func TestOrderedSet_SetReplacement(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "orderedset-set-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			prefs := datalog.NewKeyword(":character/prefs")
 
-	alice := datalog.NewIdentity("alice")
-	prefs := datalog.NewKeyword(":character/prefs")
+			// Initial values
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, prefs, "a"))
+			require.NoError(t, tx1.Add(alice, prefs, "b"))
+			require.NoError(t, tx1.Add(alice, prefs, "c"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Initial values
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, prefs, "a"))
-	require.NoError(t, tx1.Add(alice, prefs, "b"))
-	require.NoError(t, tx1.Add(alice, prefs, "c"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Replace with new set (some overlap)
+			tx2 := db.NewTransaction()
+			newVals := []any{"b", "d", "e"} // Keep b, remove a & c, add d & e
+			require.NoError(t, tx2.Set(alice, prefs, newVals))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Replace with new set (some overlap)
-	tx2 := db.NewTransaction()
-	newVals := []any{"b", "d", "e"} // Keep b, remove a & c, add d & e
-	require.NoError(t, tx2.Set(alice, prefs, newVals))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Verify
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	// Verify
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, prefs)
+			require.True(t, found)
 
-	result, found := requireAttributeLookup(t, matcher, alice, prefs)
-	require.True(t, found)
+			vec, ok := result.([]string)
+			require.True(t, ok)
 
-	vec, ok := result.([]string)
-	require.True(t, ok)
-
-	t.Logf("OrderedSet after Set(): %v", vec)
-	assert.Len(t, vec, 3, "should have 3 values: b, d, e")
-	assert.Equal(t, "b", vec[0])
-	assert.Equal(t, "d", vec[1])
-	assert.Equal(t, "e", vec[2])
+			t.Logf("OrderedSet after Set(): %v", vec)
+			assert.Len(t, vec, 3, "should have 3 values: b, d, e")
+			assert.Equal(t, "b", vec[0])
+			assert.Equal(t, "d", vec[1])
+			assert.Equal(t, "e", vec[2])
+		})
+	}
 }
 
 // TestOrderedSet_QueryIntegration verifies OrderedSet works with queries
 func TestOrderedSet_QueryIntegration(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "orderedset-query-test")
-			require.NoError(t, err)
-			defer os.RemoveAll(tmpDir)
-
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
 				Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add().
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":character/name")
@@ -208,91 +190,87 @@ func TestOrderedSet_QueryIntegration(t *testing.T) {
 
 // TestOrderedSet_RefType verifies OrderedSet works with Identity references
 func TestOrderedSet_RefType(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "orderedset-ref-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":person/follows").Type(schema.TypeRef).OrderedSet().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":person/follows").Type(schema.TypeRef).OrderedSet().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			carol := datalog.NewIdentity("carol")
+			follows := datalog.NewKeyword(":person/follows")
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	carol := datalog.NewIdentity("carol")
-	follows := datalog.NewKeyword(":person/follows")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(alice, follows, bob))
+			require.NoError(t, tx.Add(alice, follows, carol))
+			require.NoError(t, tx.Add(alice, follows, bob)) // Duplicate ref - should be no-op
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, follows, bob))
-	require.NoError(t, tx.Add(alice, follows, carol))
-	require.NoError(t, tx.Add(alice, follows, bob)) // Duplicate ref - should be no-op
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, follows)
+			require.True(t, found)
 
-	result, found := requireAttributeLookup(t, matcher, alice, follows)
-	require.True(t, found)
+			vec, ok := result.([]any)
+			require.True(t, ok)
 
-	vec, ok := result.([]any)
-	require.True(t, ok)
-
-	t.Logf("Follows (refs): %v", vec)
-	assert.Len(t, vec, 2, "should have 2 unique refs")
+			t.Logf("Follows (refs): %v", vec)
+			assert.Len(t, vec, 2, "should have 2 unique refs")
+		})
+	}
 }
 
 // TestOrderedSet_VsRegularVector compares OrderedSet vs regular Vector behavior
 func TestOrderedSet_VsRegularVector(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "orderedset-vs-vector-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":entity/orderedset").Type(schema.TypeString).OrderedSet().Add().
+				Attribute(":entity/vector").Type(schema.TypeString).Vector().Add(). // No UniqueElements
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":entity/orderedset").Type(schema.TypeString).OrderedSet().Add().
-		Attribute(":entity/vector").Type(schema.TypeString).Vector().Add(). // No UniqueElements
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			entity := datalog.NewIdentity("entity1")
+			orderedSetAttr := datalog.NewKeyword(":entity/orderedset")
+			vectorAttr := datalog.NewKeyword(":entity/vector")
 
-	entity := datalog.NewIdentity("entity1")
-	orderedSetAttr := datalog.NewKeyword(":entity/orderedset")
-	vectorAttr := datalog.NewKeyword(":entity/vector")
+			tx := db.NewTransaction()
+			// Add same values to both attributes
+			for _, val := range []string{"a", "b", "a", "c", "b"} {
+				require.NoError(t, tx.Add(entity, orderedSetAttr, val))
+				require.NoError(t, tx.Add(entity, vectorAttr, val))
+			}
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	tx := db.NewTransaction()
-	// Add same values to both attributes
-	for _, val := range []string{"a", "b", "a", "c", "b"} {
-		require.NoError(t, tx.Add(entity, orderedSetAttr, val))
-		require.NoError(t, tx.Add(entity, vectorAttr, val))
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+
+			// OrderedSet should have 3 unique values
+			osResult, found := requireAttributeLookup(t, matcher, entity, orderedSetAttr)
+			require.True(t, found)
+			osVec, ok := osResult.([]string)
+			require.True(t, ok)
+			t.Logf("OrderedSet: %v (len=%d)", osVec, len(osVec))
+			assert.Len(t, osVec, 3, "OrderedSet should have 3 unique values")
+
+			// Regular Vector should have all 5 values (duplicates allowed)
+			vecResult, found := requireAttributeLookup(t, matcher, entity, vectorAttr)
+			require.True(t, found)
+			vecVec, ok := vecResult.([]string)
+			require.True(t, ok)
+			t.Logf("Regular Vector: %v (len=%d)", vecVec, len(vecVec))
+			assert.Len(t, vecVec, 5, "Regular Vector should have all 5 values including duplicates")
+		})
 	}
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-
-	// OrderedSet should have 3 unique values
-	osResult, found := requireAttributeLookup(t, matcher, entity, orderedSetAttr)
-	require.True(t, found)
-	osVec, ok := osResult.([]string)
-	require.True(t, ok)
-	t.Logf("OrderedSet: %v (len=%d)", osVec, len(osVec))
-	assert.Len(t, osVec, 3, "OrderedSet should have 3 unique values")
-
-	// Regular Vector should have all 5 values (duplicates allowed)
-	vecResult, found := requireAttributeLookup(t, matcher, entity, vectorAttr)
-	require.True(t, found)
-	vecVec, ok := vecResult.([]string)
-	require.True(t, ok)
-	t.Logf("Regular Vector: %v (len=%d)", vecVec, len(vecVec))
-	assert.Len(t, vecVec, 5, "Regular Vector should have all 5 values including duplicates")
 }
 
 // TestOrderedSet_SchemaIsOrderedSet verifies the IsOrderedSet() derived getter

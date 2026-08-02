@@ -3,7 +3,6 @@ package storage
 import (
 	"testing"
 
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
@@ -25,15 +24,74 @@ import (
 // Plan of record: docs/wip/OPTIMIZER_MODE_MATRIX.md
 // =============================================================================
 
-// optimizerMode is one leg of the optimizer matrix.
+// optimizerMode is one leg of the matrix: a storage backend crossed with an
+// optimizer path. Backends come from AvailableBackends, so a backend this build
+// has is one every executing test on this axis runs against.
 type optimizerMode struct {
 	name    string
 	algebra bool
+	backend Backend
 }
 
-var optimizerModes = []optimizerMode{
-	{"algebra_on", true},
-	{"algebra_off", false},
+var optimizerModes = buildOptimizerModes()
+
+func buildOptimizerModes() []optimizerMode {
+	algebraLegs := []struct {
+		name string
+		on   bool
+	}{
+		{"algebra_on", true},
+		{"algebra_off", false},
+	}
+	backends := AvailableBackends()
+	modes := make([]optimizerMode, 0, len(backends)*len(algebraLegs))
+	for _, backend := range backends {
+		for _, algebra := range algebraLegs {
+			modes = append(modes, optimizerMode{
+				name:    backend.Name + "/" + algebra.name,
+				algebra: algebra.on,
+				backend: backend,
+			})
+		}
+	}
+	return modes
+}
+
+// pinnedOptimizerModes is the axis with one optimizer path fixed — still one
+// leg per backend, because pinning a plan shape does not pin a store.
+func pinnedOptimizerModes(algebra bool) []optimizerMode {
+	var modes []optimizerMode
+	for _, mode := range optimizerModes {
+		if mode.algebra == algebra {
+			modes = append(modes, mode)
+		}
+	}
+	return modes
+}
+
+// byteKeyBackends is the axis for a test whose subject is the binary key
+// encoding rather than the engine. Badger and MemoryStore both hold encoded
+// index keys and decode them into an iterator-owned workspace; MemoryTreeStore
+// hands out the datom it already holds, so a property of that workspace — the
+// key layout, or anything downstream of it such as the out-of-line value tier
+// — is not a property it has.
+//
+// The switch has no silent default: a new backend fails here until someone says
+// which side of that line it falls on.
+func byteKeyBackends(t *testing.T) []optimizerMode {
+	t.Helper()
+	var modes []optimizerMode
+	for _, mode := range optimizerModes {
+		switch mode.backend.Name {
+		case "badger", "memory":
+			modes = append(modes, mode)
+		case "memory-trees":
+		default:
+			t.Fatalf("byteKeyBackends: backend %q is unclassified — "+
+				"does it hold encoded index keys?", mode.backend.Name)
+		}
+	}
+	return modes
 }
 
 // plannerOptions returns the default planner options with this mode applied.
@@ -43,21 +101,46 @@ func (m optimizerMode) plannerOptions() planner.PlannerOptions {
 	return opts
 }
 
-// createOptimizerModeDB creates a test database whose default planner
-// options carry this mode; queries through db.Query and the pull APIs run
-// on the mode's path without per-call option plumbing.
-// handler is registered at open, since every executor, matcher, and relation the
-// database builds is constructed with it; nil is annotations-off.
-func createOptimizerModeDB(t testing.TB, mode optimizerMode, handler annotations.Handler) *Database {
+// createOptimizerModeDB creates a test database on this mode's backend whose
+// default planner options carry this mode, so queries through db.Query and the
+// pull APIs run on the mode's path without per-call option plumbing. Callers
+// set schema, cache, compression, the annotation handler and the rest on opts;
+// BackendName, Path and PlannerOptions come from the mode.
+//
+// An annotation handler must arrive at open: every executor, matcher and
+// relation the database builds is constructed with it.
+func createOptimizerModeDB(t testing.TB, mode optimizerMode, opts DatabaseOptions) *Database {
 	t.Helper()
-	opts := mode.plannerOptions()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:              t.TempDir(),
-		PlannerOptions:    &opts,
-		AnnotationHandler: handler,
-	})
+	plannerOpts := mode.plannerOptions()
+	opts.PlannerOptions = &plannerOpts
+	return openBackendDB(t, mode.backend, opts)
+}
+
+// openBackendDB creates a test database on the named backend, leaving opts as
+// the caller wrote it — including PlannerOptions. It is the constructor for a
+// test whose own planner options are its subject: the mode axis has nothing
+// left to vary there but the backend, so it takes a Backend rather than a mode.
+//
+// Every other test wants createOptimizerModeDB above, which runs both optimizer
+// paths. Reaching for this one drops that half of the axis.
+func openBackendDB(t testing.TB, backend Backend, opts DatabaseOptions) *Database {
+	t.Helper()
+
+	opts.BackendName = backend.Name
+	opts.Path = ""
+	if backend.Persistent {
+		opts.Path = t.TempDir()
+	}
+	if opts.CompressionThreshold == 0 {
+		// This harness has always handed its tests a bare BinaryKeyEncoder, so
+		// compression is off unless a test asks for it. The constructor reads an
+		// unset threshold as the 512-byte production default; -1 is how it spells
+		// the encoder these tests have been running on.
+		opts.CompressionThreshold = -1
+	}
+	db, err := NewDatabaseWithOptions(opts)
 	if err != nil {
-		t.Fatalf("failed to create %s database: %v", mode.name, err)
+		t.Fatalf("failed to create %s database: %v", backend.Name, err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db

@@ -62,7 +62,7 @@
           {
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/review-edit.sh",
-            "timeout": 30
+            "timeout": 120
           },
           {
             "type": "command",

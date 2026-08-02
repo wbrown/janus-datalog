@@ -47,19 +47,72 @@ func (m optimizerMode) plannerOptions() planner.PlannerOptions {
 	return opts
 }
 
-// createOptimizerModeDB creates a test database whose default planner
-// options carry this mode; queries through db.Query and the pull APIs run
-// on the mode's path without per-call option plumbing.
-func createOptimizerModeDB(t testing.TB, mode optimizerMode) *storage.Database {
+// createBackendModeDB creates a test database on a named backend whose default
+// planner options carry this mode, so queries through db.Query and the pull
+// APIs run on the mode's path without per-call option plumbing. Callers set
+// schema, cache and the rest on opts; BackendName, Path and PlannerOptions come
+// from the backend and the mode.
+func createBackendModeDB(t testing.TB, backend storage.Backend, mode optimizerMode, opts storage.DatabaseOptions) *storage.Database {
 	t.Helper()
-	opts := mode.plannerOptions()
-	db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-		Path:           t.TempDir(),
-		PlannerOptions: &opts,
-	})
+	planner := mode.plannerOptions()
+
+	opts.BackendName = backend.Name
+	opts.Path = ""
+	if backend.Persistent {
+		opts.Path = t.TempDir()
+	}
+	if opts.CompressionThreshold == 0 {
+		// This harness has always handed its tests a bare BinaryKeyEncoder, so
+		// compression is off unless a test asks for it. The constructor reads an
+		// unset threshold as the 512-byte production default; -1 is how it spells
+		// the encoder these tests have been running on.
+		opts.CompressionThreshold = -1
+	}
+	opts.PlannerOptions = &planner
+	db, err := storage.NewDatabaseWithOptions(opts)
 	if err != nil {
-		t.Fatalf("failed to create %s database: %v", mode.name, err)
+		t.Fatalf("failed to create %s/%s database: %v", backend.Name, mode.name, err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+// eachBackendAndMode runs body over the storage axis crossed with the optimizer
+// axis. Backends come from storage.AvailableBackends, so a backend the build
+// has is a backend this package's integration tests execute against.
+func eachBackendAndMode(t *testing.T, body func(t *testing.T, db *storage.Database)) {
+	t.Helper()
+	eachBackendAndModeOpts(t, storage.DatabaseOptions{}, body)
+}
+
+// eachBackendAndModeWith hands the mode to the body as well as the database,
+// for a test that builds its own executor or matcher options instead of taking
+// the database's — the mode has to reach those too, or the leg runs under a
+// name whose optimizer path it never used.
+func eachBackendAndModeWith(t *testing.T, body func(t *testing.T, db *storage.Database, mode optimizerMode)) {
+	t.Helper()
+	for _, backend := range storage.AvailableBackends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					body(t, createBackendModeDB(t, backend, mode, storage.DatabaseOptions{}), mode)
+				})
+			}
+		})
+	}
+}
+
+// eachBackendAndModeOpts is eachBackendAndMode for a test that needs a schema,
+// the cache disabled, or anything else on the database.
+func eachBackendAndModeOpts(t *testing.T, opts storage.DatabaseOptions, body func(t *testing.T, db *storage.Database)) {
+	t.Helper()
+	for _, backend := range storage.AvailableBackends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					body(t, createBackendModeDB(t, backend, mode, opts))
+				})
+			}
+		})
+	}
 }

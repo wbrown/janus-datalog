@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,54 +13,6 @@ import (
 // top-level :in parameter combined with correlated subqueries fails with
 // "cannot project: symbol ?open-price not found in relation"
 func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
-	// Create temporary database
-	dbPath := "/tmp/test-in-param-subquery-" + t.Name()
-	defer os.RemoveAll(dbPath)
-
-	db, err := NewDatabase(dbPath)
-	assert.NoError(t, err)
-	defer db.Close()
-
-	// Insert test data
-	tx := db.NewTransaction()
-
-	aapl := datalog.NewIdentity("AAPL")
-	bar1 := datalog.NewIdentity("bar1")
-	bar2 := datalog.NewIdentity("bar2")
-	bar3 := datalog.NewIdentity("bar3")
-	bar4 := datalog.NewIdentity("bar4")
-
-	assert.NoError(t, tx.Add(aapl, datalog.NewKeyword(":symbol/ticker"), "AAPL"))
-
-	// Day 1 bars
-	assert.NoError(t, tx.Add(bar1, datalog.NewKeyword(":bar/symbol"), aapl))
-	assert.NoError(t, tx.Add(bar1, datalog.NewKeyword(":bar/year"), int64(2025)))
-	assert.NoError(t, tx.Add(bar1, datalog.NewKeyword(":bar/month"), int64(1)))
-	assert.NoError(t, tx.Add(bar1, datalog.NewKeyword(":bar/day"), int64(1)))
-	assert.NoError(t, tx.Add(bar1, datalog.NewKeyword(":bar/open"), 100.0))
-
-	assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/symbol"), aapl))
-	assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/year"), int64(2025)))
-	assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/month"), int64(1)))
-	assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/day"), int64(1)))
-	assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/open"), 105.0))
-
-	// Day 2 bars (so anchor pattern returns multiple tuples)
-	assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/symbol"), aapl))
-	assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/year"), int64(2025)))
-	assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/month"), int64(1)))
-	assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/day"), int64(2)))
-	assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/open"), 200.0))
-
-	assert.NoError(t, tx.Add(bar4, datalog.NewKeyword(":bar/symbol"), aapl))
-	assert.NoError(t, tx.Add(bar4, datalog.NewKeyword(":bar/year"), int64(2025)))
-	assert.NoError(t, tx.Add(bar4, datalog.NewKeyword(":bar/month"), int64(1)))
-	assert.NoError(t, tx.Add(bar4, datalog.NewKeyword(":bar/day"), int64(2)))
-	assert.NoError(t, tx.Add(bar4, datalog.NewKeyword(":bar/open"), 210.0))
-
-	_, err = tx.Commit()
-	assert.NoError(t, err)
-
 	// The key shape: a RelationBinding with MULTIPLE symbols in one binding —
 	// [[?daily-high ?daily-low]] returns two symbols from a single subquery.
 	queryStr := `[:find ?date ?daily-high ?daily-low ?open-price
@@ -104,6 +55,48 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Insert test data
+			tx := db.NewTransaction()
+
+			aapl := datalog.NewIdentity("AAPL")
+			bar1 := datalog.NewIdentity("bar1")
+			bar2 := datalog.NewIdentity("bar2")
+			bar3 := datalog.NewIdentity("bar3")
+			bar4 := datalog.NewIdentity("bar4")
+
+			assert.NoError(t, tx.Add(aapl, datalog.NewKeyword(":symbol/ticker"), "AAPL"))
+
+			// Day 1 bars
+			assert.NoError(t, tx.Add(bar1, datalog.NewKeyword(":bar/symbol"), aapl))
+			assert.NoError(t, tx.Add(bar1, datalog.NewKeyword(":bar/year"), int64(2025)))
+			assert.NoError(t, tx.Add(bar1, datalog.NewKeyword(":bar/month"), int64(1)))
+			assert.NoError(t, tx.Add(bar1, datalog.NewKeyword(":bar/day"), int64(1)))
+			assert.NoError(t, tx.Add(bar1, datalog.NewKeyword(":bar/open"), 100.0))
+
+			assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/symbol"), aapl))
+			assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/year"), int64(2025)))
+			assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/month"), int64(1)))
+			assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/day"), int64(1)))
+			assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/open"), 105.0))
+
+			// Day 2 bars (so anchor pattern returns multiple tuples)
+			assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/symbol"), aapl))
+			assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/year"), int64(2025)))
+			assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/month"), int64(1)))
+			assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/day"), int64(2)))
+			assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/open"), 200.0))
+
+			assert.NoError(t, tx.Add(bar4, datalog.NewKeyword(":bar/symbol"), aapl))
+			assert.NoError(t, tx.Add(bar4, datalog.NewKeyword(":bar/year"), int64(2025)))
+			assert.NoError(t, tx.Add(bar4, datalog.NewKeyword(":bar/month"), int64(1)))
+			assert.NoError(t, tx.Add(bar4, datalog.NewKeyword(":bar/day"), int64(2)))
+			assert.NoError(t, tx.Add(bar4, datalog.NewKeyword(":bar/open"), 210.0))
+
+			_, err := tx.Commit()
+			assert.NoError(t, err)
+
 			// Convert inputs
 			inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
 			assert.NoError(t, err)

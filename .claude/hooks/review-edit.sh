@@ -128,7 +128,7 @@ $REVIEW_PROMPT"
 fi
 
 START_TIME=$(date +%s)
-REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE -u ANTHROPIC_API_KEY claude -p --model sonnet --system-prompt "$FULL_SYSTEM" --no-session-persistence --tools "" "Review this proposed code change against the failure modes in your instructions. Walk each mode and state whether it applies; your verdict is the conclusion of that walk. Which mode does this change match? If none, state which you checked and why none applies. Note especially whether it modifies the right component." 2>/dev/null) || REVIEW_RESULT=""
+REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE -u ANTHROPIC_API_KEY claude -p --model sonnet --effort medium --system-prompt "$FULL_SYSTEM" --no-session-persistence --tools "" "Review this proposed code change against the failure modes in your instructions. Walk each mode and state whether it applies; your verdict is the conclusion of that walk. Which mode does this change match? If none, state which you checked and why none applies. Note especially whether it modifies the right component." 2>/dev/null) || REVIEW_RESULT=""
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
 LABEL="SUPERVISOR [${ELAPSED}s]"

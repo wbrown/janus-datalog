@@ -2,8 +2,9 @@
 name: comment-sweep
 description: >
   Sweep a package, directory, or the whole tree for comments that do not describe
-  the present code — comments written for someone reading a diff, and comments that
-  are flatly false about current behaviour. Use it when clearing a backlog across
+  the present code — comments written for someone reading a diff, comments that are
+  flatly false about current behaviour, and comments several times longer than the
+  fact they carry. Use it when clearing a backlog across
   many files, when a review turns up one of these and you suspect a cluster, or
   before publishing a repo. Covers what to remove, what is protected (regression
   specifications, bug-doc citations, expected-value derivations, external
@@ -19,7 +20,7 @@ A comment earns its place by telling a reader of *this file, as it is now*
 something the code does not already say. Two defects break that, and they need
 hunting together because the first decays into the second.
 
-## The two targets, co-equal
+## The three targets, co-equal
 
 **1. Written for a diff reader.** The audience is someone comparing this file
 against its previous version, or against an alternative the author considered and
@@ -28,14 +29,20 @@ rejected. Neither is in the file.
 **2. False about the present.** The comment states something about current
 behaviour that is not true.
 
-These are not independent. A comment about the present gets re-read every time
-someone edits the code beneath it, so it gets corrected. A comment about the past
-never does — nothing rechecks it, and it drifts into falsehood unopposed. Target 1
-is therefore the prophylactic for target 2, and target 2 is the more damaging of
-the pair: diff narration is noise a reader skips, a false comment is followed.
+**3. True, present-tense, and four times too long.** Every sentence carries
+something; together they argue where one would inform.
 
-A sweep that hunts only target 1 will *find* target 2 and walk past it. That has
-happened; brief for both explicitly.
+The first two are not independent. A comment about the present gets re-read every
+time someone edits the code beneath it, so it gets corrected. A comment about the
+past never does — nothing rechecks it, and it drifts into falsehood unopposed.
+Target 1 is therefore the prophylactic for target 2, and target 2 is the more
+damaging of the pair: diff narration is noise a reader skips, a false comment is
+followed. Target 3 is where the other two hide: a rejected alternative is easiest
+to smuggle in as the fourth sentence of something that opened with a real
+invariant.
+
+A sweep that hunts only target 1 will *find* the others and walk past them. That
+has happened; brief for all three explicitly.
 
 ## Target 1: forms to remove
 
@@ -94,6 +101,19 @@ instructing that its tests "must fail" long after the fixes landed.
 
 The repair is a present-tense restatement, not deletion — the comment is in the
 right place, it is just wrong. Deleting loses the fact the next reader needed.
+
+## Target 3: the comment that keeps going
+
+Find the sentence carrying the fact. Every sentence after it either carries a
+second fact the reader needs or elaborates the first; elaboration goes. Length
+alone is not the criterion — a system-level invariant with several consequences
+earns a line per consequence. What earns nothing: a restatement in other terms, a
+walk through what would happen otherwise, an analogy, the reason a different
+representation does it differently, or a named caller elsewhere that relies on the
+property.
+
+The repair is a cut back to the sentence carrying the fact, not deletion. The fact
+is in there, wrapped.
 
 ## What is protected
 

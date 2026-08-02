@@ -2,12 +2,10 @@ package storage
 
 import (
 	"errors"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	dlreflect "github.com/wbrown/janus-datalog/datalog/reflect"
 )
 
@@ -42,22 +40,9 @@ type WithPointers struct {
 
 // createTestDatabaseWithPeople creates a test database with data. popts sets
 // the database's default planner options (nil = defaults).
-func createTestDatabaseWithPeople(t *testing.T, popts *planner.PlannerOptions) (*Database, func()) {
+func createTestDatabaseWithPeople(t *testing.T, mode optimizerMode) *Database {
 	t.Helper()
-
-	tmpDir, err := os.MkdirTemp("", "query-into-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           tmpDir,
-		PlannerOptions: popts,
-	})
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		t.Fatalf("failed to create database: %v", err)
-	}
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 	// Add test data
 	alice := datalog.NewIdentity("person:alice")
@@ -78,37 +63,17 @@ func createTestDatabaseWithPeople(t *testing.T, popts *planner.PlannerOptions) (
 	tx.Add(charlie, datalog.NewKeyword(":person/email"), "charlie@example.com")
 
 	if _, err := tx.Commit(); err != nil {
-		db.Close()
-		os.RemoveAll(tmpDir)
 		t.Fatalf("failed to commit: %v", err)
 	}
 
-	cleanup := func() {
-		db.Close()
-		os.RemoveAll(tmpDir)
-	}
-
-	return db, cleanup
+	return db
 }
 
-// createTestDatabaseWithEmployees seeds aggregation test data. popts sets the
-// database's default planner options (nil = defaults).
-func createTestDatabaseWithEmployees(t *testing.T, popts *planner.PlannerOptions) (*Database, func()) {
+// createTestDatabaseWithEmployees seeds aggregation test data on the mode's
+// backend.
+func createTestDatabaseWithEmployees(t *testing.T, mode optimizerMode) *Database {
 	t.Helper()
-
-	tmpDir, err := os.MkdirTemp("", "query-into-emp-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           tmpDir,
-		PlannerOptions: popts,
-	})
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		t.Fatalf("failed to create database: %v", err)
-	}
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 	// Add employee data for aggregation tests
 	employees := []struct {
@@ -133,25 +98,16 @@ func createTestDatabaseWithEmployees(t *testing.T, popts *planner.PlannerOptions
 	}
 
 	if _, err := tx.Commit(); err != nil {
-		db.Close()
-		os.RemoveAll(tmpDir)
 		t.Fatalf("failed to commit: %v", err)
 	}
 
-	cleanup := func() {
-		db.Close()
-		os.RemoveAll(tmpDir)
-	}
-
-	return db, cleanup
+	return db
 }
 
 func TestQueryInto_BasicQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var results []PersonResult
 			err := db.QueryInto(&results, `
@@ -189,9 +145,7 @@ func TestQueryInto_BasicQuery(t *testing.T) {
 func TestQueryInto_WithInputs(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			// Test with a bound value directly in the pattern (this is how inputs typically work)
 			var results []PersonResult
@@ -223,9 +177,7 @@ func TestQueryInto_WithInputs(t *testing.T) {
 func TestQueryInto_WithAggregates(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithEmployees(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithEmployees(t, mode)
 
 			var results []DeptStats
 			err := db.QueryInto(&results, `
@@ -277,9 +229,7 @@ func TestQueryInto_WithAggregates(t *testing.T) {
 func TestQueryInto_PositionalMapping(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var results []PositionalResult
 			err := db.QueryInto(&results, `
@@ -311,9 +261,7 @@ func TestQueryInto_PositionalMapping(t *testing.T) {
 func TestQueryInto_EmptyResults(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var results []PersonResult
 			err := db.QueryInto(&results, `
@@ -336,9 +284,7 @@ func TestQueryInto_EmptyResults(t *testing.T) {
 func TestQueryOneInto_SingleResult(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var result PersonResult
 			found, err := db.QueryOneInto(&result, `
@@ -367,9 +313,7 @@ func TestQueryOneInto_SingleResult(t *testing.T) {
 func TestQueryOneInto_NoResults(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var result PersonResult
 			found, err := db.QueryOneInto(&result, `
@@ -393,9 +337,7 @@ func TestQueryOneInto_NoResults(t *testing.T) {
 func TestQueryOneInto_MultipleResults(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var result PersonResult
 			found, err := db.QueryOneInto(&result, `
@@ -420,9 +362,7 @@ func TestQueryOneInto_MultipleResults(t *testing.T) {
 func TestQueryInto_InvalidDest(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			// Test non-pointer
 			var results []PersonResult
@@ -451,9 +391,7 @@ func TestQueryInto_InvalidDest(t *testing.T) {
 func TestQueryOneInto_InvalidDest(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			// Test non-pointer
 			var result PersonResult
@@ -475,9 +413,7 @@ func TestQueryOneInto_InvalidDest(t *testing.T) {
 func TestQueryInto_SymbolNotFound(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			type BadStruct struct {
 				Name     string `datalog:"?name"`
@@ -504,9 +440,7 @@ func TestQueryInto_SymbolNotFound(t *testing.T) {
 func TestQueryInto_TypeCoercion(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			// Test int64 -> int coercion
 			type SmallResult struct {
@@ -539,9 +473,7 @@ func TestQueryInto_TypeCoercion(t *testing.T) {
 func TestQueryInto_ParseError(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var results []PersonResult
 			err := db.QueryInto(&results, `[:find ?name :where [invalid syntax`)
@@ -558,9 +490,7 @@ func TestQueryInto_ParseError(t *testing.T) {
 func TestQueryInto_ScalarString(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var names []string
 			err := db.QueryInto(&names, `
@@ -592,9 +522,7 @@ func TestQueryInto_ScalarString(t *testing.T) {
 func TestQueryInto_ScalarInt64(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var ages []int64
 			err := db.QueryInto(&ages, `
@@ -615,9 +543,7 @@ func TestQueryInto_ScalarInt64(t *testing.T) {
 func TestQueryInto_ScalarIdentity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var entities []datalog.Identity
 			err := db.QueryInto(&entities, `
@@ -648,9 +574,7 @@ func TestQueryInto_ScalarIdentity(t *testing.T) {
 func TestQueryInto_KeywordField(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			// Add some data with keyword values
 			statusKw := datalog.NewKeyword(":person/status")
@@ -699,9 +623,7 @@ func TestQueryInto_KeywordField(t *testing.T) {
 func TestQueryInto_ScalarMultiSymbolError(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var names []string
 			err := db.QueryInto(&names, `
@@ -720,9 +642,7 @@ func TestQueryInto_ScalarMultiSymbolError(t *testing.T) {
 func TestQueryOneInto_ScalarString(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var name string
 			found, err := db.QueryOneInto(&name, `
@@ -746,9 +666,7 @@ func TestQueryOneInto_ScalarString(t *testing.T) {
 func TestQueryOneInto_ScalarInt64(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var age int64
 			found, err := db.QueryOneInto(&age, `
@@ -772,9 +690,7 @@ func TestQueryOneInto_ScalarInt64(t *testing.T) {
 func TestQueryOneInto_ScalarNotFound(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var name string
 			found, err := db.QueryOneInto(&name, `
@@ -795,9 +711,7 @@ func TestQueryOneInto_ScalarNotFound(t *testing.T) {
 func TestQueryOneInto_ScalarMultiSymbolError(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var name string
 			_, err := db.QueryOneInto(&name, `
@@ -816,9 +730,7 @@ func TestQueryOneInto_ScalarMultiSymbolError(t *testing.T) {
 func TestQueryOneInto_ScalarMultipleResults(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var name string
 			found, err := db.QueryOneInto(&name, `
@@ -862,9 +774,7 @@ type MixedModeResult struct {
 func TestQueryInto_PullExpression(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			// Query with pull expression - returns entity attributes as map
 			var results []PullResult
@@ -898,9 +808,7 @@ func TestQueryInto_PullExpression(t *testing.T) {
 func TestQueryInto_PullWildcard(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			// Query with pull wildcard - returns all entity attributes
 			var results []PullResult
@@ -930,9 +838,7 @@ func TestQueryInto_PullWildcard(t *testing.T) {
 func TestQueryInto_MixedMode(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			// Mixed mode: query variable + pull expression
 			// This tests the full flow: query -> executor -> pull -> struct mapping
@@ -973,9 +879,7 @@ func TestQueryInto_MixedMode(t *testing.T) {
 func TestQueryOneInto_PullExpression(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var result PullResult
 			found, err := db.QueryOneInto(&result, `
@@ -1005,9 +909,7 @@ func TestQueryOneInto_PullExpression(t *testing.T) {
 func TestQueryOneInto_MixedMode(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			var result MixedModeResult
 			found, err := db.QueryOneInto(&result, `
@@ -1051,9 +953,7 @@ type EntityAttr struct {
 func TestQueryInto_AnyField(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			// Get Alice's entity ID for the query
 			alice := datalog.NewIdentity("person:alice")
@@ -1107,9 +1007,7 @@ func TestQueryInto_AnyField(t *testing.T) {
 func TestQueryInto_AnyFieldWithKeywordValue(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			// Add a keyword-valued attribute
 			statusKw := datalog.NewKeyword(":person/status")
@@ -1154,9 +1052,7 @@ func TestQueryInto_AnyFieldWithKeywordValue(t *testing.T) {
 func TestQueryOneInto_AnyField(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createTestDatabaseWithPeople(t, &popts)
-			defer cleanup()
+			db := createTestDatabaseWithPeople(t, mode)
 
 			alice := datalog.NewIdentity("person:alice")
 

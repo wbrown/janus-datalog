@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -60,23 +59,19 @@ func fusionSchema() *schema.Schema {
 	return s
 }
 
-func openFusionDB(t *testing.T, fusion bool, handler annotations.Handler, popts *planner.PlannerOptions) *Database {
+// openFusionDB opens the fusion fixture on the mode's backend, with the fusion
+// flag applied on top of the mode's planner options.
+func openFusionDB(t *testing.T, mode optimizerMode, fusion bool, handler annotations.Handler) *Database {
 	t.Helper()
-	opts := DefaultPlannerOptions()
-	if popts != nil {
-		opts = *popts
-	}
+	opts := mode.plannerOptions()
 	opts.EnableAttributeFetchFusion = fusion
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:              t.TempDir(),
+
+	return openBackendDB(t, mode.backend, DatabaseOptions{
 		Schema:            fusionSchema(),
 		ReplicaID:         1,
 		PlannerOptions:    &opts,
 		AnnotationHandler: handler,
 	})
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
-	return db
 }
 
 func fusionTuples(t *testing.T, db *Database, query string, args ...interface{}) []string {
@@ -96,13 +91,12 @@ func fusionTuples(t *testing.T, db *Database, query string, args ...interface{})
 
 // assertFusionEquivalent applies the same ops to a fusion-off and a fusion-on
 // database (identical data, pinned ReplicaID) and asserts the query returns
-// identical tuples. popts sets the databases' remaining planner options
-// (nil = defaults); the fusion flag is applied on top.
-func assertFusionEquivalent(t *testing.T, popts *planner.PlannerOptions, apply func(*Database), query string, args ...interface{}) {
+// identical tuples. Both open on the mode's backend.
+func assertFusionEquivalent(t *testing.T, mode optimizerMode, apply func(*Database), query string, args ...interface{}) {
 	t.Helper()
-	off := openFusionDB(t, false, nil, popts)
+	off := openFusionDB(t, mode, false, nil)
 	apply(off)
-	on := openFusionDB(t, true, nil, popts)
+	on := openFusionDB(t, mode, true, nil)
 	apply(on)
 	want := fusionTuples(t, off, query, args...)
 	got := fusionTuples(t, on, query, args...)
@@ -129,10 +123,9 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 
 			t.Run("present", func(t *testing.T) {
-				assertFusionEquivalent(t, &popts, func(db *Database) {
+				assertFusionEquivalent(t, mode, func(db *Database) {
 					commit(t, db, func(tx *Transaction) {
 						require.NoError(t, tx.Set(e1, typ, "room"))
 						require.NoError(t, tx.Set(e1, code, "R1"))
@@ -143,7 +136,7 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 			})
 
 			t.Run("missing attribute drops the entity", func(t *testing.T) {
-				assertFusionEquivalent(t, &popts, func(db *Database) {
+				assertFusionEquivalent(t, mode, func(db *Database) {
 					commit(t, db, func(tx *Transaction) {
 						require.NoError(t, tx.Set(e1, typ, "room")) // no code
 						require.NoError(t, tx.Set(e2, typ, "room"))
@@ -153,7 +146,7 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 			})
 
 			t.Run("tombstoned attribute drops the entity", func(t *testing.T) {
-				assertFusionEquivalent(t, &popts, func(db *Database) {
+				assertFusionEquivalent(t, mode, func(db *Database) {
 					commit(t, db, func(tx *Transaction) {
 						require.NoError(t, tx.Set(e1, typ, "room"))
 						require.NoError(t, tx.Set(e1, code, "R1"))
@@ -167,7 +160,7 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 			})
 
 			t.Run("overwritten attribute uses latest value", func(t *testing.T) {
-				assertFusionEquivalent(t, &popts, func(db *Database) {
+				assertFusionEquivalent(t, mode, func(db *Database) {
 					commit(t, db, func(tx *Transaction) {
 						require.NoError(t, tx.Set(e1, typ, "room"))
 						require.NoError(t, tx.Set(e1, code, "R1"))
@@ -179,7 +172,7 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 			})
 
 			t.Run("multiple fused attributes", func(t *testing.T) {
-				assertFusionEquivalent(t, &popts, func(db *Database) {
+				assertFusionEquivalent(t, mode, func(db *Database) {
 					commit(t, db, func(tx *Transaction) {
 						require.NoError(t, tx.Set(e1, typ, "room"))
 						require.NoError(t, tx.Set(e1, code, "R1"))
@@ -192,7 +185,7 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 			})
 
 			t.Run("missing middle attribute drops entity from bundle", func(t *testing.T) {
-				assertFusionEquivalent(t, &popts, func(db *Database) {
+				assertFusionEquivalent(t, mode, func(db *Database) {
 					commit(t, db, func(tx *Transaction) {
 						require.NoError(t, tx.Set(e1, typ, "room"))
 						require.NoError(t, tx.Set(e1, code, "R1"))
@@ -210,7 +203,7 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 			})
 
 			t.Run("cardinality-many pattern ends bundle", func(t *testing.T) {
-				assertFusionEquivalent(t, &popts, func(db *Database) {
+				assertFusionEquivalent(t, mode, func(db *Database) {
 					commit(t, db, func(tx *Transaction) {
 						require.NoError(t, tx.Set(e1, typ, "room"))
 						require.NoError(t, tx.Set(e1, code, "R1"))
@@ -226,7 +219,7 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 			})
 
 			t.Run("cardinality-many fetch is not fused, still correct", func(t *testing.T) {
-				assertFusionEquivalent(t, &popts, func(db *Database) {
+				assertFusionEquivalent(t, mode, func(db *Database) {
 					commit(t, db, func(tx *Transaction) {
 						require.NoError(t, tx.Set(e1, typ, "room"))
 						require.NoError(t, tx.Add(e1, tags, "a"))
@@ -249,10 +242,9 @@ func TestFusionConstantConstraintDifferential(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 
 			t.Run("matching value keeps tuple", func(t *testing.T) {
-				assertFusionEquivalent(t, &popts, func(db *Database) {
+				assertFusionEquivalent(t, mode, func(db *Database) {
 					tx := db.NewTransaction()
 					require.NoError(t, tx.Set(e1, code, "R1"))
 					require.NoError(t, tx.Set(e1, typ, "room"))
@@ -264,7 +256,7 @@ func TestFusionConstantConstraintDifferential(t *testing.T) {
 			})
 
 			t.Run("missing value drops tuple", func(t *testing.T) {
-				assertFusionEquivalent(t, &popts, func(db *Database) {
+				assertFusionEquivalent(t, mode, func(db *Database) {
 					tx := db.NewTransaction()
 					require.NoError(t, tx.Set(e1, code, "R1"))
 					_, err := tx.Commit()
@@ -273,7 +265,7 @@ func TestFusionConstantConstraintDifferential(t *testing.T) {
 			})
 
 			t.Run("latest value controls constraint", func(t *testing.T) {
-				assertFusionEquivalent(t, &popts, func(db *Database) {
+				assertFusionEquivalent(t, mode, func(db *Database) {
 					tx := db.NewTransaction()
 					require.NoError(t, tx.Set(e1, code, "R1"))
 					require.NoError(t, tx.Set(e1, typ, "hall"))
@@ -297,11 +289,10 @@ func TestFusionConstantConstraintCoverage(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 
 			t.Run("cardinality one constraint fires", func(t *testing.T) {
 				cap := &fusionCapture{n: map[string]int{}}
-				db := openFusionDB(t, true, cap.handler(), &popts)
+				db := openFusionDB(t, mode, true, cap.handler())
 				tx := db.NewTransaction()
 				require.NoError(t, tx.Set(e1, code, "R1"))
 				require.NoError(t, tx.Set(e1, typ, "room"))
@@ -317,7 +308,7 @@ func TestFusionConstantConstraintCoverage(t *testing.T) {
 
 			t.Run("cardinality many constraint does not fire", func(t *testing.T) {
 				cap := &fusionCapture{n: map[string]int{}}
-				db := openFusionDB(t, true, cap.handler(), &popts)
+				db := openFusionDB(t, mode, true, cap.handler())
 				tx := db.NewTransaction()
 				require.NoError(t, tx.Set(e1, code, "R1"))
 				require.NoError(t, tx.Add(e1, tags, "selected"))
@@ -364,11 +355,10 @@ func TestFusion_CoverageFires(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 
 			t.Run("card-one fetch fires fusion", func(t *testing.T) {
 				cap := &fusionCapture{n: map[string]int{}}
-				db := openFusionDB(t, true, cap.handler(), &popts)
+				db := openFusionDB(t, mode, true, cap.handler())
 				tx := db.NewTransaction()
 				require.NoError(t, tx.Set(e1, typ, "room"))
 				require.NoError(t, tx.Set(e1, code, "R1"))
@@ -382,7 +372,7 @@ func TestFusion_CoverageFires(t *testing.T) {
 
 			t.Run("card-many fetch does not fire fusion", func(t *testing.T) {
 				cap := &fusionCapture{n: map[string]int{}}
-				db := openFusionDB(t, true, cap.handler(), &popts)
+				db := openFusionDB(t, mode, true, cap.handler())
 				tx := db.NewTransaction()
 				require.NoError(t, tx.Set(e1, typ, "room"))
 				require.NoError(t, tx.Add(e1, tags, "a"))
@@ -401,7 +391,15 @@ func TestFusion_CoverageFires(t *testing.T) {
 // TestFusionGate_ModeAndCardinality proves the matcher gate the executor
 // consults: fusion is permitted only for latest-mode CardinalityOne attributes.
 func TestFusionGate_ModeAndCardinality(t *testing.T) {
-	db := openFusionDB(t, true, nil, nil)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testFusionGateModeAndCardinality(t, mode)
+		})
+	}
+}
+
+func testFusionGateModeAndCardinality(t *testing.T, mode optimizerMode) {
+	db := openFusionDB(t, mode, true, nil)
 
 	latest, ok := db.Matcher().(*PatternMatcher)
 	require.True(t, ok)
@@ -439,9 +437,8 @@ func TestFusionDifferentialAsOfUpdatesAndTombstones(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			open := func(fusion bool) fixture {
-				db := openFusionDB(t, fusion, nil, &popts)
+				db := openFusionDB(t, mode, fusion, nil)
 				tx := db.NewTransaction()
 				require.NoError(t, tx.Set(entity, typ, "room"))
 				require.NoError(t, tx.Set(entity, code, "R1"))
@@ -488,10 +485,9 @@ func TestFusionLookupFailureIsNotAttributeAbsence(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			for _, fusion := range []bool{false, true} {
 				t.Run(fmt.Sprintf("fusion_%t", fusion), func(t *testing.T) {
-					db := openFusionDB(t, fusion, nil, &popts)
+					db := openFusionDB(t, mode, fusion, nil)
 					tx := db.NewTransaction()
 					require.NoError(t, tx.Set(entity, code, "R1"))
 					_, err := tx.Commit()

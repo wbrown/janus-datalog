@@ -74,6 +74,24 @@ func (s *MemoryStore) Assert(datoms []datalog.Datom) error {
 	return tx.Commit()
 }
 
+// AssertEach gathers what produce yields and asserts it. Gathering is the whole
+// of it here: entries are a map keyed by encoded key, so there is no incremental
+// structure to build into and a per-datom path would save nothing.
+func (s *MemoryStore) AssertEach(produce func(add func(*datalog.Datom) error) error) error {
+	var datoms []datalog.Datom
+	if err := produce(func(d *datalog.Datom) error {
+		datoms = append(datoms, *d)
+		return nil
+	}); err != nil {
+		return err
+	}
+	return s.Assert(datoms)
+}
+
+// FinishBatch has nothing to complete: AssertEach writes its datoms before
+// returning.
+func (s *MemoryStore) FinishBatch() error { return nil }
+
 func (s *MemoryStore) Retract(datoms []datalog.Datom) error {
 	tx, err := s.BeginTx()
 	if err != nil {
@@ -320,6 +338,15 @@ func (tx *memoryStoreTx) Commit() error {
 		return errMemoryStoreClosed
 	}
 	var undo []memoryEntryUndo
+	// The journal exists only for restoreMemoryEntries below, which only a
+	// failing retract reaches: assertMemoryDatom has no error path, so once an
+	// assert-only transaction starts writing it cannot stop. Journaling it would
+	// record every index entry for a rollback that cannot happen — 30% of the
+	// allocation in a bulk import.
+	var journal *[]memoryEntryUndo
+	if opsContainRetract(tx.ops) {
+		journal = &undo
+	}
 	// Commit already holds the write lock; blob reads must not re-enter the mutex.
 	reader := memoryEntriesBlobReader{entries: tx.store.entries}
 	for i := range tx.ops {
@@ -327,11 +354,11 @@ func (tx *memoryStoreTx) Commit() error {
 		switch op.kind {
 		case memoryTxAssert:
 			for j := range op.datoms {
-				assertMemoryDatom(tx.store, &op.datoms[j], &undo)
+				assertMemoryDatom(tx.store, &op.datoms[j], journal)
 			}
 		case memoryTxRetract:
 			for j := range op.datoms {
-				if err := retractMemoryDatom(tx.store, reader, &op.datoms[j], &undo); err != nil {
+				if err := retractMemoryDatom(tx.store, reader, &op.datoms[j], journal); err != nil {
 					restoreMemoryEntries(tx.store, undo)
 					return err
 				}
@@ -349,13 +376,29 @@ func (tx *memoryStoreTx) Rollback() error {
 	return nil
 }
 
+// opsContainRetract reports whether the transaction can still fail once it
+// starts writing. Only a retract can: it decodes what it finds in the keyspace,
+// and a malformed key rejects.
+func opsContainRetract(ops []memoryTxOp) bool {
+	for i := range ops {
+		if ops[i].kind == memoryTxRetract {
+			return true
+		}
+	}
+	return false
+}
+
+// A nil undo means the caller has established that this transaction cannot
+// fail, so there is nothing to restore to.
 func putMemoryEntry(store *MemoryStore, undo *[]memoryEntryUndo, key string, value []byte) {
 	old, had := store.entries[key]
-	*undo = append(*undo, memoryEntryUndo{
-		key: key,
-		had: had,
-		val: append([]byte(nil), old...),
-	})
+	if undo != nil {
+		*undo = append(*undo, memoryEntryUndo{
+			key: key,
+			had: had,
+			val: append([]byte(nil), old...),
+		})
+	}
 	if !had {
 		store.keys.ReplaceOrInsert(key)
 	}

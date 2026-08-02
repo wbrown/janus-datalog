@@ -62,6 +62,9 @@ datalog-db/
 /cmd/datalog/datalog-db/
 *.db
 
+# Binary database dumps (-export-bin)
+*.jdzl
+
 # Test databases (generated)
 datalog/storage/testdata/
 

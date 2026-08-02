@@ -27,7 +27,7 @@ func TestOrJoinContainerItemCardinality(t *testing.T) {
 	t.Run("without_schema_lww_loses_item1", func(t *testing.T) {
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
-				db := createOptimizerModeDB(t, mode, nil)
+				db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 				tx := db.NewTransaction()
 				tx.Add(containerA, kw(":container/item"), item1)
@@ -52,19 +52,12 @@ func TestOrJoinContainerItemCardinality(t *testing.T) {
 
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
-				popts := mode.plannerOptions()
-				db, err := NewDatabaseWithOptions(DatabaseOptions{
-					Path:           t.TempDir(),
-					Schema:         s,
-					PlannerOptions: &popts,
-				})
-				require.NoError(t, err)
-				defer db.Close()
+				db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 				tx := db.NewTransaction()
 				tx.Add(containerA, kw(":container/item"), item1)
 				tx.Add(containerA, kw(":container/item"), item2)
-				_, err = tx.Commit()
+				_, err := tx.Commit()
 				require.NoError(t, err)
 
 				results, err := executor.CollectTuples(db.Query(

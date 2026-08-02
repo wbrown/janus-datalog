@@ -1,14 +1,12 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -29,18 +27,11 @@ import (
 // See: BUG_SCHEMALESS_ATTR_BOUND_QUERY.md
 // =============================================================================
 
-// createRemoveTestDB creates a database with a CardinalityOne schema.
-// popts sets the database's default planner options (nil = defaults).
-func createCardinalityOneDB(t *testing.T, popts *planner.PlannerOptions) (*Database, func()) {
+// createCardinalityOneDB creates a database with a CardinalityOne schema on the
+// mode's backend.
+func createCardinalityOneDB(t *testing.T, mode optimizerMode) *Database {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "crdt-one-remove-*")
-	require.NoError(t, err)
-
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           dir,
-		PlannerOptions: popts,
-	})
-	require.NoError(t, err)
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 	s := schema.NewSchema()
 	s.Add(&schema.AttributeDefinition{
@@ -49,12 +40,7 @@ func createCardinalityOneDB(t *testing.T, popts *planner.PlannerOptions) (*Datab
 		Cardinality: schema.CardinalityOne,
 	})
 	db.SetSchema(s)
-
-	cleanup := func() {
-		db.Close()
-		os.RemoveAll(dir)
-	}
-	return db, cleanup
+	return db
 }
 
 // queryBoundValue runs a bound query for a single attribute value
@@ -95,9 +81,7 @@ func queryUnboundForEA(t *testing.T, db *Database, e datalog.Identity, a datalog
 func TestCardinalityOneRemove_RoundTrip(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -136,9 +120,7 @@ func TestCardinalityOneRemove_RoundTrip(t *testing.T) {
 func TestCardinalityOneRemove_AfterOverwrite(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -172,9 +154,7 @@ func TestCardinalityOneRemove_AfterOverwrite(t *testing.T) {
 func TestCardinalityOneRemove_ThenReAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -209,9 +189,7 @@ func TestCardinalityOneRemove_ThenReAdd(t *testing.T) {
 func TestCardinalityOneRemove_BeforeAnyAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -242,9 +220,7 @@ func TestCardinalityOneRemove_BeforeAnyAdd(t *testing.T) {
 func TestCardinalityOneRemove_VIsIrrelevant(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -273,9 +249,7 @@ func TestCardinalityOneRemove_VIsIrrelevant(t *testing.T) {
 func TestCardinalityOneRemove_MultipleEntities(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e1 := datalog.NewIdentity("alice")
 			e2 := datalog.NewIdentity("bob")
@@ -314,9 +288,7 @@ func TestCardinalityOneRemove_MultipleEntities(t *testing.T) {
 func TestCardinalityOneRemove_BoundQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -345,56 +317,57 @@ func TestCardinalityOneRemove_BoundQuery(t *testing.T) {
 
 // Test 12: V-bound query after remove → empty
 func TestCardinalityOneRemove_VBoundQuery(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCardinalityOneDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	// Add then Remove
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add then Remove
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// V-bound query: find entities where :person/name = "Alice"
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(db.Schema())
+			// V-bound query: find entities where :person/name = "Alice"
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(db.Schema())
 
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: a},
-			query.Constant{Value: "Alice"},
-			query.Blank{},
-		},
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: a},
+					query.Constant{Value: "Alice"},
+					query.Blank{},
+				},
+			}
+
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			require.NoError(t, err)
+
+			count := 0
+			iter := results.Iterator()
+			for iter.Next() {
+				count++
+			}
+			iter.Close()
+
+			assert.Equal(t, 0, count, "V-bound query should return empty after Remove")
+		})
 	}
-
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	require.NoError(t, err)
-
-	count := 0
-	iter := results.Iterator()
-	for iter.Next() {
-		count++
-	}
-	iter.Close()
-
-	assert.Equal(t, 0, count, "V-bound query should return empty after Remove")
 }
 
 // Test 13: Unbound query after remove → entity/attribute absent from results
 func TestCardinalityOneRemove_UnboundQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -424,9 +397,7 @@ func TestCardinalityOneRemove_UnboundQuery(t *testing.T) {
 func TestCardinalityOneRemove_SetThenRemove(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -456,9 +427,7 @@ func TestCardinalityOneRemove_SetThenRemove(t *testing.T) {
 func TestCardinalityOneRemove_Unbound_AfterOverwrite(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -487,9 +456,7 @@ func TestCardinalityOneRemove_Unbound_AfterOverwrite(t *testing.T) {
 func TestCardinalityOneRemove_Unbound_ThenReAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -519,9 +486,7 @@ func TestCardinalityOneRemove_Unbound_ThenReAdd(t *testing.T) {
 func TestCardinalityOneRemove_Unbound_BeforeAnyAdd(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -546,9 +511,7 @@ func TestCardinalityOneRemove_Unbound_BeforeAnyAdd(t *testing.T) {
 func TestCardinalityOneRemove_Unbound_VIsIrrelevant(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -572,9 +535,7 @@ func TestCardinalityOneRemove_Unbound_VIsIrrelevant(t *testing.T) {
 func TestCardinalityOneRemove_Unbound_MultipleEntities(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e1 := datalog.NewIdentity("alice")
 			e2 := datalog.NewIdentity("bob")
@@ -604,9 +565,7 @@ func TestCardinalityOneRemove_Unbound_MultipleEntities(t *testing.T) {
 func TestCardinalityOneRemove_Unbound_SetThenRemove(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createCardinalityOneDB(t, &popts)
-			defer cleanup()
+			db := createCardinalityOneDB(t, mode)
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -659,149 +618,167 @@ func vBoundMatchCount(t *testing.T, db *Database, a datalog.Keyword, v interface
 }
 
 func TestCardinalityOneRemove_VBound_AfterOverwrite(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCardinalityOneDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Bob"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Bob"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Remove(e, a, "Bob"))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Remove(e, a, "Bob"))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	// V-bound for "Bob" (last written value) → 0
-	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Bob"),
-		"V-bound: Bob should not match after Remove")
-	// V-bound for "Alice" (earlier value) → also 0, attribute is gone
-	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
-		"V-bound: Alice should not match after Remove (attribute tombstoned)")
+			// V-bound for "Bob" (last written value) → 0
+			assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Bob"),
+				"V-bound: Bob should not match after Remove")
+			// V-bound for "Alice" (earlier value) → also 0, attribute is gone
+			assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
+				"V-bound: Alice should not match after Remove (attribute tombstoned)")
+		})
+	}
 }
 
 func TestCardinalityOneRemove_VBound_ThenReAdd(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCardinalityOneDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Add(e, a, "Bob"))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Add(e, a, "Bob"))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	assert.Equal(t, 1, vBoundMatchCount(t, db, a, "Bob"),
-		"V-bound: Bob should match after re-Add")
-	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
-		"V-bound: Alice should not match (superseded by Bob)")
+			assert.Equal(t, 1, vBoundMatchCount(t, db, a, "Bob"),
+				"V-bound: Bob should match after re-Add")
+			assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
+				"V-bound: Alice should not match (superseded by Bob)")
+		})
+	}
 }
 
 func TestCardinalityOneRemove_VBound_BeforeAnyAdd(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCardinalityOneDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Remove(e, a, "phantom"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Remove(e, a, "phantom"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	assert.Equal(t, 1, vBoundMatchCount(t, db, a, "Alice"),
-		"V-bound: Alice should match — Add wins over earlier Remove")
+			assert.Equal(t, 1, vBoundMatchCount(t, db, a, "Alice"),
+				"V-bound: Alice should match — Add wins over earlier Remove")
+		})
+	}
 }
 
 func TestCardinalityOneRemove_VBound_VIsIrrelevant(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCardinalityOneDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Remove with different V
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Bob"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove with different V
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Bob"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Attribute is tombstoned regardless of V in Remove
-	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
-		"V-bound: Alice should not match — attribute tombstoned regardless of Remove V")
+			// Attribute is tombstoned regardless of V in Remove
+			assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
+				"V-bound: Alice should not match — attribute tombstoned regardless of Remove V")
+		})
+	}
 }
 
 func TestCardinalityOneRemove_VBound_MultipleEntities(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCardinalityOneDB(t, mode)
 
-	e1 := datalog.NewIdentity("alice")
-	e2 := datalog.NewIdentity("bob")
-	a := datalog.NewKeyword(":person/name")
+			e1 := datalog.NewIdentity("alice")
+			e2 := datalog.NewIdentity("bob")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(e1, a, "Alice"))
-	require.NoError(t, tx.Add(e2, a, "Bob"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(e1, a, "Alice"))
+			require.NoError(t, tx.Add(e2, a, "Bob"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e1, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e1, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
-		"V-bound: Alice should not match after Remove on entity1")
-	assert.Equal(t, 1, vBoundMatchCount(t, db, a, "Bob"),
-		"V-bound: Bob should still match on entity2")
+			assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
+				"V-bound: Alice should not match after Remove on entity1")
+			assert.Equal(t, 1, vBoundMatchCount(t, db, a, "Bob"),
+				"V-bound: Bob should still match on entity2")
+		})
+	}
 }
 
 func TestCardinalityOneRemove_VBound_SetThenRemove(t *testing.T) {
-	db, cleanup := createCardinalityOneDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createCardinalityOneDB(t, mode)
 
-	e := datalog.NewIdentity("alice")
-	a := datalog.NewKeyword(":person/name")
+			e := datalog.NewIdentity("alice")
+			a := datalog.NewKeyword(":person/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, a, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, a, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(e, a, "Alice"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(e, a, "Alice"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
-		"V-bound: should not match after Set then Remove")
+			assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
+				"V-bound: should not match after Set then Remove")
+		})
+	}
 }

@@ -134,268 +134,278 @@ func TestDatomFromKeyAllIndexTypes(t *testing.T) {
 // method: each Next() overwrites the same field (same address, different
 // value) rather than allocating a new *Datom per call.
 func TestIteratorDatomStability(t *testing.T) {
-	db, err := NewDatabase(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Add test data
-	tx := db.NewTransaction()
-	for i := 0; i < 5; i++ {
-		e := datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
-		tx.Add(e, datalog.NewKeyword(":test/value"), int64(i))
-	}
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatal(err)
-	}
+			// Add test data
+			tx := db.NewTransaction()
+			for i := 0; i < 5; i++ {
+				e := datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
+				tx.Add(e, datalog.NewKeyword(":test/value"), int64(i))
+			}
+			_, err := tx.Commit()
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
-	if err != nil {
-		t.Fatal(err)
+			it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer it.Close()
+
+			var addresses []*datalog.Datom
+			var values []interface{}
+
+			for it.Next() {
+				d, err := it.Datom()
+				if err != nil {
+					t.Fatal(err)
+				}
+				addresses = append(addresses, d)
+				values = append(values, d.V)
+			}
+
+			if len(addresses) < 2 {
+				t.Fatalf("Expected at least 2 datoms, got %d", len(addresses))
+			}
+
+			// Check whether all Datom() calls returned the same address (workspace reuse) or different addresses
+			allSameAddress := true
+			for i := 1; i < len(addresses); i++ {
+				if addresses[i] != addresses[0] {
+					allSameAddress = false
+					break
+				}
+			}
+
+			// Log the behavior for visibility
+			if allSameAddress {
+				t.Logf("Phase 4 behavior: All %d Datom() calls returned same address (workspace reuse)", len(addresses))
+				// The values array captures each value at call time, even
+				// though all addresses point to the same location.
+			} else {
+				t.Logf("Current behavior: %d Datom() calls returned different addresses", len(addresses))
+			}
+
+			// Verify we got the expected number of results
+			t.Logf("Iterated %d datoms with values: %v", len(values), values)
+		})
 	}
-	defer it.Close()
-
-	var addresses []*datalog.Datom
-	var values []interface{}
-
-	for it.Next() {
-		d, err := it.Datom()
-		if err != nil {
-			t.Fatal(err)
-		}
-		addresses = append(addresses, d)
-		values = append(values, d.V)
-	}
-
-	if len(addresses) < 2 {
-		t.Fatalf("Expected at least 2 datoms, got %d", len(addresses))
-	}
-
-	// Check whether all Datom() calls returned the same address (workspace reuse) or different addresses
-	allSameAddress := true
-	for i := 1; i < len(addresses); i++ {
-		if addresses[i] != addresses[0] {
-			allSameAddress = false
-			break
-		}
-	}
-
-	// Log the behavior for visibility
-	if allSameAddress {
-		t.Logf("Phase 4 behavior: All %d Datom() calls returned same address (workspace reuse)", len(addresses))
-		// The values array captures each value at call time, even
-		// though all addresses point to the same location.
-	} else {
-		t.Logf("Current behavior: %d Datom() calls returned different addresses", len(addresses))
-	}
-
-	// Verify we got the expected number of results
-	t.Logf("Iterated %d datoms with values: %v", len(values), values)
 }
 
 // TestBadgerIteratorKeyBufferReuse verifies that the key buffer reuse
 // optimization in BadgerIterator.Datom() produces correct results.
+//
+// Its subject is that buffer, so it runs on byteKeyBackends rather than the
+// whole axis.
 func TestBadgerIteratorKeyBufferReuse(t *testing.T) {
-	db, err := NewDatabase(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Add test data with distinct values
-	tx := db.NewTransaction()
-	entities := make([]datalog.Identity, 5)
-	for i := 0; i < 5; i++ {
-		entities[i] = datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
-		tx.Add(entities[i], datalog.NewKeyword(":test/value"), int64(i*100))
-		tx.Add(entities[i], datalog.NewKeyword(":test/name"), fmt.Sprintf("name-%d", i))
-	}
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Run("DatomValuesAreCorrectAcrossIteration", func(t *testing.T) {
-		it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer it.Close()
-
-		// Collect all datoms and their values
-		type datomRecord struct {
-			E datalog.Identity
-			A datalog.Keyword
-			V interface{}
-		}
-		var records []datomRecord
-
-		for it.Next() {
-			d, err := it.Datom()
+			// Add test data with distinct values
+			tx := db.NewTransaction()
+			entities := make([]datalog.Identity, 5)
+			for i := 0; i < 5; i++ {
+				entities[i] = datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
+				tx.Add(entities[i], datalog.NewKeyword(":test/value"), int64(i*100))
+				tx.Add(entities[i], datalog.NewKeyword(":test/name"), fmt.Sprintf("name-%d", i))
+			}
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Store copies of the values (not pointers to shared state)
-			records = append(records, datomRecord{E: d.E, A: d.A, V: d.V})
-		}
 
-		// Verify we got at least the expected number of datoms (5 entities * 2 attributes = 10)
-		// May have additional schema/metadata datoms
-		if len(records) < 10 {
-			t.Fatalf("Expected at least 10 datoms, got %d", len(records))
-		}
+			t.Run("DatomValuesAreCorrectAcrossIteration", func(t *testing.T) {
+				it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer it.Close()
 
-		// Verify each record has valid, non-zero values
-		for i, r := range records {
-			if r.E == nil {
-				t.Errorf("Record %d: entity is nil", i)
-			}
-			if r.A == nil {
-				t.Errorf("Record %d: attribute is nil", i)
-			}
-			if r.V == nil {
-				t.Errorf("Record %d: value is nil", i)
-			}
-		}
+				// Collect all datoms and their values
+				type datomRecord struct {
+					E datalog.Identity
+					A datalog.Keyword
+					V interface{}
+				}
+				var records []datomRecord
 
-		// Verify that different datoms have different values (no corruption from buffer reuse)
-		valueSet := make(map[string]bool)
-		for _, r := range records {
-			key := fmt.Sprintf("%s|%s|%v", r.E.L85(), r.A.String(), r.V)
-			if valueSet[key] {
-				t.Errorf("Duplicate datom found: %s (indicates buffer reuse corruption)", key)
-			}
-			valueSet[key] = true
-		}
-	})
+				for it.Next() {
+					d, err := it.Datom()
+					if err != nil {
+						t.Fatal(err)
+					}
+					// Store copies of the values (not pointers to shared state)
+					records = append(records, datomRecord{E: d.E, A: d.A, V: d.V})
+				}
 
-	t.Run("WorkspaceReuseIsDocumented", func(t *testing.T) {
-		// KeyOnlyIterator uses workspace reuse (currentDatom field).
-		// This means Datom() returns a pointer to the SAME memory each time.
-		// Callers must copy values if they need them after calling Next().
-		it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer it.Close()
+				// Verify we got at least the expected number of datoms (5 entities * 2 attributes = 10)
+				// May have additional schema/metadata datoms
+				if len(records) < 10 {
+					t.Fatalf("Expected at least 10 datoms, got %d", len(records))
+				}
 
-		// Collect datom pointers
-		var addresses []*datalog.Datom
+				// Verify each record has valid, non-zero values
+				for i, r := range records {
+					if r.E == nil {
+						t.Errorf("Record %d: entity is nil", i)
+					}
+					if r.A == nil {
+						t.Errorf("Record %d: attribute is nil", i)
+					}
+					if r.V == nil {
+						t.Errorf("Record %d: value is nil", i)
+					}
+				}
 
-		for it.Next() {
-			d, err := it.Datom()
-			if err != nil {
-				t.Fatal(err)
-			}
-			addresses = append(addresses, d)
-		}
+				// Verify that different datoms have different values (no corruption from buffer reuse)
+				valueSet := make(map[string]bool)
+				for _, r := range records {
+					key := fmt.Sprintf("%s|%s|%v", r.E.L85(), r.A.String(), r.V)
+					if valueSet[key] {
+						t.Errorf("Duplicate datom found: %s (indicates buffer reuse corruption)", key)
+					}
+					valueSet[key] = true
+				}
+			})
 
-		if len(addresses) < 2 {
-			t.Fatalf("Expected at least 2 datoms, got %d", len(addresses))
-		}
+			t.Run("WorkspaceReuseIsDocumented", func(t *testing.T) {
+				// KeyOnlyIterator uses workspace reuse (currentDatom field).
+				// This means Datom() returns a pointer to the SAME memory each time.
+				// Callers must copy values if they need them after calling Next().
+				it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer it.Close()
 
-		// With workspace reuse, all pointers should be the SAME address
-		allSame := true
-		for i := 1; i < len(addresses); i++ {
-			if addresses[i] != addresses[0] {
-				allSame = false
-				break
-			}
-		}
+				// Collect datom pointers
+				var addresses []*datalog.Datom
 
-		if !allSame {
-			t.Errorf("Expected workspace reuse (all same address), but got different addresses")
-		} else {
-			t.Logf("Confirmed: KeyOnlyIterator uses workspace reuse (%d calls, same address)", len(addresses))
-		}
-	})
+				for it.Next() {
+					d, err := it.Datom()
+					if err != nil {
+						t.Fatal(err)
+					}
+					addresses = append(addresses, d)
+				}
 
-	t.Run("MultipleDatomCallsAtSamePosition", func(t *testing.T) {
-		it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer it.Close()
+				if len(addresses) < 2 {
+					t.Fatalf("Expected at least 2 datoms, got %d", len(addresses))
+				}
 
-		if !it.Next() {
-			t.Fatal("Expected at least one datom")
-		}
+				// With workspace reuse, all pointers should be the SAME address
+				allSame := true
+				for i := 1; i < len(addresses); i++ {
+					if addresses[i] != addresses[0] {
+						allSame = false
+						break
+					}
+				}
 
-		// Call Datom() multiple times at the same position
-		d1, _ := it.Datom()
-		d2, _ := it.Datom()
-		d3, _ := it.Datom()
+				if !allSame {
+					t.Errorf("Expected workspace reuse (all same address), but got different addresses")
+				} else {
+					t.Logf("Confirmed: KeyOnlyIterator uses workspace reuse (%d calls, same address)", len(addresses))
+				}
+			})
 
-		// All should return the same values
-		if !d1.E.Equal(d2.E) || !d2.E.Equal(d3.E) {
-			t.Errorf("Entity differs across Datom() calls: %v, %v, %v", d1.E, d2.E, d3.E)
-		}
-		if d1.A.String() != d2.A.String() || d2.A.String() != d3.A.String() {
-			t.Errorf("Attribute differs across Datom() calls: %v, %v, %v", d1.A, d2.A, d3.A)
-		}
-		if d1.V != d2.V || d2.V != d3.V {
-			t.Errorf("Value differs across Datom() calls: %v, %v, %v", d1.V, d2.V, d3.V)
-		}
-	})
+			t.Run("MultipleDatomCallsAtSamePosition", func(t *testing.T) {
+				it, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer it.Close()
+
+				if !it.Next() {
+					t.Fatal("Expected at least one datom")
+				}
+
+				// Call Datom() multiple times at the same position
+				d1, _ := it.Datom()
+				d2, _ := it.Datom()
+				d3, _ := it.Datom()
+
+				// All should return the same values
+				if !d1.E.Equal(d2.E) || !d2.E.Equal(d3.E) {
+					t.Errorf("Entity differs across Datom() calls: %v, %v, %v", d1.E, d2.E, d3.E)
+				}
+				if d1.A.String() != d2.A.String() || d2.A.String() != d3.A.String() {
+					t.Errorf("Attribute differs across Datom() calls: %v, %v, %v", d1.A, d2.A, d3.A)
+				}
+				if d1.V != d2.V || d2.V != d3.V {
+					t.Errorf("Value differs across Datom() calls: %v, %v, %v", d1.V, d2.V, d3.V)
+				}
+			})
+		})
+	}
 }
 
+// TestKeyOnlyIteratorRetainedByteValuesOutliveBorrowedKeys pins that a []byte
+// decoded out of a borrowed index key is a copy: it survives the key going
+// away, and two of them do not alias.
+//
+// The borrowed key is the subject, so this runs on byteKeyBackends. It also has
+// to: the final check writes through retained[0], which on a typed store would
+// be scribbling into the stored datom rather than into a decode copy.
 func TestKeyOnlyIteratorRetainedByteValuesOutliveBorrowedKeys(t *testing.T) {
-	db, err := NewDatabase(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	attr := datalog.NewKeyword(":test/bytes")
-	first := datalog.NewIdentity("bytes:first")
-	second := datalog.NewIdentity("bytes:second")
-	tx := db.NewTransaction()
-	if err := tx.Set(first, attr, []byte("first-value")); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Set(second, attr, []byte("second-value")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
+			attr := datalog.NewKeyword(":test/bytes")
+			first := datalog.NewIdentity("bytes:first")
+			second := datalog.NewIdentity("bytes:second")
+			tx := db.NewTransaction()
+			if err := tx.Set(first, attr, []byte("first-value")); err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.Set(second, attr, []byte("second-value")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
 
-	iter, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var retained [][]byte
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if datom.A == attr {
-			retained = append(retained, datom.V.([]byte))
-		}
-	}
-	if err := iter.Error(); err != nil {
-		t.Fatal(err)
-	}
-	if err := iter.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if len(retained) != 2 {
-		t.Fatalf("got %d byte values, want 2", len(retained))
-	}
+			iter, err := db.Store().ScanKeysOnly(ScanBound{Index: EAVT})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var retained [][]byte
+			for iter.Next() {
+				datom, err := iter.Datom()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if datom.A == attr {
+					retained = append(retained, datom.V.([]byte))
+				}
+			}
+			if err := iter.Error(); err != nil {
+				t.Fatal(err)
+			}
+			if err := iter.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if len(retained) != 2 {
+				t.Fatalf("got %d byte values, want 2", len(retained))
+			}
 
-	values := map[string]bool{
-		string(retained[0]): true,
-		string(retained[1]): true,
-	}
-	if !values["first-value"] || !values["second-value"] {
-		t.Fatalf("retained byte values were corrupted after iteration: %q", retained)
-	}
-	secondBefore := string(retained[1])
-	retained[0][0] ^= 0x20
-	if string(retained[1]) != secondBefore {
-		t.Fatal("retained byte values share backing storage")
+			values := map[string]bool{
+				string(retained[0]): true,
+				string(retained[1]): true,
+			}
+			if !values["first-value"] || !values["second-value"] {
+				t.Fatalf("retained byte values were corrupted after iteration: %q", retained)
+			}
+			secondBefore := string(retained[1])
+			retained[0][0] ^= 0x20
+			if string(retained[1]) != secondBefore {
+				t.Fatal("retained byte values share backing storage")
+			}
+		})
 	}
 }

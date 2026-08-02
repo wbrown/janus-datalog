@@ -2,34 +2,12 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
-
-// setupTestDB creates a temporary database for testing
-func setupTestDB(t *testing.T) (*Database, func()) {
-	tempDir, err := os.MkdirTemp("", "join-e2e-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	db, err := NewDatabase(tempDir)
-	if err != nil {
-		os.RemoveAll(tempDir)
-		t.Fatal(err)
-	}
-
-	cleanup := func() {
-		db.Close()
-		os.RemoveAll(tempDir)
-	}
-
-	return db, cleanup
-}
 
 // populatePersonData inserts test people with specified attributes
 func populatePersonData(t *testing.T, db *Database, count int, attributes map[string]func(int) interface{}) {
@@ -61,15 +39,6 @@ func populatePersonData(t *testing.T, db *Database, count int, attributes map[st
 //
 // This tests tuple copying in the real pipeline, not isolated primitives
 func TestStorageBackedJoinE2E(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	// Insert 100 people with name and age
-	populatePersonData(t, db, 100, map[string]func(int) interface{}{
-		":person/name": func(i int) interface{} { return fmt.Sprintf("Name%d", i) },
-		":person/age":  func(i int) interface{} { return int64(20 + i) },
-	})
-
 	testCases := []struct {
 		name             string
 		query            string
@@ -184,6 +153,14 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Insert 100 people with name and age
+			populatePersonData(t, db, 100, map[string]func(int) interface{}{
+				":person/name": func(i int) interface{} { return fmt.Sprintf("Name%d", i) },
+				":person/age":  func(i int) interface{} { return int64(20 + i) },
+			})
+
 			for _, tc := range testCases {
 				t.Run(tc.name, func(t *testing.T) {
 					// Parse query
@@ -251,15 +228,6 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 // TestStorageBackedJoinLimitE2E tests LIMIT queries through full execution path
 // This is where symmetric hash join should show massive speedup
 func TestStorageBackedJoinLimitE2E(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	// Insert 1000 people with name and email
-	populatePersonData(t, db, 1000, map[string]func(int) interface{}{
-		":person/name":  func(i int) interface{} { return fmt.Sprintf("Name%d", i) },
-		":person/email": func(i int) interface{} { return fmt.Sprintf("email%d@example.com", i) },
-	})
-
 	testCases := []struct {
 		name      string
 		query     string
@@ -302,6 +270,14 @@ func TestStorageBackedJoinLimitE2E(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Insert 1000 people with name and email
+			populatePersonData(t, db, 1000, map[string]func(int) interface{}{
+				":person/name":  func(i int) interface{} { return fmt.Sprintf("Name%d", i) },
+				":person/email": func(i int) interface{} { return fmt.Sprintf("email%d@example.com", i) },
+			})
+
 			for _, tc := range testCases {
 				t.Run(tc.name, func(t *testing.T) {
 					q, err := parser.ParseQuery(tc.query)

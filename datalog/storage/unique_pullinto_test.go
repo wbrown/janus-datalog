@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 type pullUser struct {
@@ -29,23 +28,7 @@ type pullUser struct {
 func TestPullInto_UniqueFallback(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Same schema as setupUniqueTestDB (unique_lookup_test.go), built
-			// inline so the mode's planner options thread through
-			// DatabaseOptions.
-			s, err := schema.NewBuilder().
-				Attribute(":user/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
-				Attribute(":user/name").Type(schema.TypeString).One().Add().
-				Build()
-			require.NoError(t, err)
-
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -55,7 +38,7 @@ func TestPullInto_UniqueFallback(t *testing.T) {
 			tx := db.NewTransaction()
 			require.NoError(t, tx.Set(alice, name, "Alice"))
 			require.NoError(t, tx.Set(alice, email, "v1@example.com"))
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			tx = db.NewTransaction()

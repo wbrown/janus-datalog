@@ -61,38 +61,34 @@ func (s *seekBuffer) Seek(offset int64, whence int) (int64, error) {
 	return s.off, nil
 }
 
-func openBinaryTestDB(t *testing.T) *Database {
-	t.Helper()
-	db, err := NewDatabase(t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
-	return db
-}
-
 func TestBinaryExportImport_RoundTrip(t *testing.T) {
-	db1 := openBinaryTestDB(t)
-	tx := db1.NewTransaction()
-	e1 := datalog.NewIdentity("bin:alice")
-	e2 := datalog.NewIdentity("bin:bob")
-	require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/name"), "Alice"))
-	require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/age"), int64(30)))
-	require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/active"), true))
-	require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/created"), time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)))
-	require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/data"), []byte{1, 2, 3, 4}))
-	require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/friend"), e2))
-	require.NoError(t, tx.Add(e2, datalog.NewKeyword(":person/name"), "Bob"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			tx := db1.NewTransaction()
+			e1 := datalog.NewIdentity("bin:alice")
+			e2 := datalog.NewIdentity("bin:bob")
+			require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/name"), "Alice"))
+			require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/age"), int64(30)))
+			require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/active"), true))
+			require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/created"), time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)))
+			require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/data"), []byte{1, 2, 3, 4}))
+			require.NoError(t, tx.Add(e1, datalog.NewKeyword(":person/friend"), e2))
+			require.NoError(t, tx.Add(e2, datalog.NewKeyword(":person/name"), "Bob"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	var out seekBuffer
-	require.NoError(t, db1.ExportBinary(&out, BinaryExportOptions{SoftBudget: 64}))
+			var out seekBuffer
+			require.NoError(t, db1.ExportBinary(&out, BinaryExportOptions{SoftBudget: 64}))
 
-	db2 := openBinaryTestDB(t)
-	require.NoError(t, db2.ImportBinary(&out, BinaryImportOptions{Workers: 2}))
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			require.NoError(t, db2.ImportBinary(&out, BinaryImportOptions{Workers: 2}))
 
-	var again seekBuffer
-	require.NoError(t, db2.ExportBinary(&again, BinaryExportOptions{SoftBudget: 64}))
-	require.Equal(t, out.buf, again.buf)
+			var again seekBuffer
+			require.NoError(t, db2.ExportBinary(&again, BinaryExportOptions{SoftBudget: 64}))
+			require.Equal(t, out.buf, again.buf)
+		})
+	}
 }
 
 func TestBinaryExportImport_PreservesCRDTOps(t *testing.T) {
@@ -103,14 +99,7 @@ func TestBinaryExportImport_PreservesCRDTOps(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db1, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         sch,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			t.Cleanup(func() { db1.Close() })
+			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sch})
 
 			e := datalog.NewIdentity("bin:crdt")
 			tx := db1.NewTransaction()
@@ -127,13 +116,7 @@ func TestBinaryExportImport_PreservesCRDTOps(t *testing.T) {
 			var out seekBuffer
 			require.NoError(t, db1.ExportBinary(&out))
 
-			db2, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         sch,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			t.Cleanup(func() { db2.Close() })
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sch})
 			require.NoError(t, db2.ImportBinary(&out))
 
 			tags, err := db2.GetStrings(e, datalog.NewKeyword(":item/tags"))
@@ -144,94 +127,105 @@ func TestBinaryExportImport_PreservesCRDTOps(t *testing.T) {
 }
 
 func TestBinaryExport_EntityAlignedSoftClose(t *testing.T) {
-	db := openBinaryTestDB(t)
-	tx := db.NewTransaction()
-	// Three entities; tiny soft budget forces closeSoon quickly, but each
-	// entity's datoms must remain in one chunk.
-	for _, name := range []string{"e0", "e1", "e2"} {
-		e := datalog.NewIdentity("bin:align:" + name)
-		require.NoError(t, tx.Add(e, datalog.NewKeyword(":x/a"), name+"-a"))
-		require.NoError(t, tx.Add(e, datalog.NewKeyword(":x/b"), name+"-b"))
-		require.NoError(t, tx.Add(e, datalog.NewKeyword(":x/c"), name+"-c"))
-	}
-	_, err := tx.Commit()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			tx := db.NewTransaction()
+			// Three entities; tiny soft budget forces closeSoon quickly, but each
+			// entity's datoms must remain in one chunk.
+			for _, name := range []string{"e0", "e1", "e2"} {
+				e := datalog.NewIdentity("bin:align:" + name)
+				require.NoError(t, tx.Add(e, datalog.NewKeyword(":x/a"), name+"-a"))
+				require.NoError(t, tx.Add(e, datalog.NewKeyword(":x/b"), name+"-b"))
+				require.NoError(t, tx.Add(e, datalog.NewKeyword(":x/c"), name+"-c"))
+			}
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	var out seekBuffer
-	require.NoError(t, db.ExportBinary(&out, BinaryExportOptions{SoftBudget: 1}))
+			var out seekBuffer
+			require.NoError(t, db.ExportBinary(&out, BinaryExportOptions{SoftBudget: 1}))
 
-	hdr, err := readBinaryHeader(&out)
-	require.NoError(t, err)
-	trailer, err := readBinaryIndex(&out, hdr.indexOffset)
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(trailer.entries), 1)
+			hdr, err := readBinaryHeader(&out)
+			require.NoError(t, err)
+			trailer, err := readBinaryIndex(&out, hdr.indexOffset)
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, len(trailer.entries), 1)
 
-	for _, entry := range trailer.entries {
-		require.Equal(t, entry.firstE, entry.lastE,
-			"soft-close must not split an entity across chunks; first=%x last=%x", entry.firstE, entry.lastE)
+			for _, entry := range trailer.entries {
+				require.Equal(t, entry.firstE, entry.lastE,
+					"soft-close must not split an entity across chunks; first=%x last=%x", entry.firstE, entry.lastE)
+			}
+		})
 	}
 }
 
 func TestBinaryExport_IndexSeekable(t *testing.T) {
-	db := openBinaryTestDB(t)
-	tx := db.NewTransaction()
-	for i := 0; i < 5; i++ {
-		e := datalog.NewIdentity("bin:idx:" + string(rune('a'+i)))
-		require.NoError(t, tx.Add(e, datalog.NewKeyword(":n/v"), int64(i)))
-	}
-	_, err := tx.Commit()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			tx := db.NewTransaction()
+			for i := 0; i < 5; i++ {
+				e := datalog.NewIdentity("bin:idx:" + string(rune('a'+i)))
+				require.NoError(t, tx.Add(e, datalog.NewKeyword(":n/v"), int64(i)))
+			}
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	var out seekBuffer
-	require.NoError(t, db.ExportBinary(&out, BinaryExportOptions{SoftBudget: 1}))
+			var out seekBuffer
+			require.NoError(t, db.ExportBinary(&out, BinaryExportOptions{SoftBudget: 1}))
 
-	require.Equal(t, binaryExportMagic, string(out.buf[0:4]))
-	indexOffset := binary.BigEndian.Uint64(out.buf[16:24])
-	require.Greater(t, indexOffset, uint64(binaryHeaderSize))
-	require.Equal(t, binaryIndexMagic, string(out.buf[indexOffset:indexOffset+4]))
+			require.Equal(t, binaryExportMagic, string(out.buf[0:4]))
+			indexOffset := binary.BigEndian.Uint64(out.buf[16:24])
+			require.Greater(t, indexOffset, uint64(binaryHeaderSize))
+			require.Equal(t, binaryIndexMagic, string(out.buf[indexOffset:indexOffset+4]))
 
-	hdr, err := readBinaryHeader(&out)
-	require.NoError(t, err)
-	trailer, err := readBinaryIndex(&out, hdr.indexOffset)
-	require.NoError(t, err)
-	require.NotEmpty(t, trailer.entries)
+			hdr, err := readBinaryHeader(&out)
+			require.NoError(t, err)
+			trailer, err := readBinaryIndex(&out, hdr.indexOffset)
+			require.NoError(t, err)
+			require.NotEmpty(t, trailer.entries)
 
-	var seekMu sync.Mutex
-	for _, entry := range trailer.entries {
-		unc, err := readBinaryChunkPayload(&out, entry, &seekMu)
-		require.NoError(t, err)
-		datoms, err := decodeBinaryChunk(unc)
-		require.NoError(t, err)
-		require.NotEmpty(t, datoms)
-		var first, last [20]byte
-		copy(first[:], datoms[0].E.Bytes())
-		copy(last[:], datoms[len(datoms)-1].E.Bytes())
-		require.Equal(t, entry.firstE, first)
-		require.Equal(t, entry.lastE, last)
+			var seekMu sync.Mutex
+			for _, entry := range trailer.entries {
+				unc, err := readBinaryChunkPayload(&out, entry, &seekMu)
+				require.NoError(t, err)
+				datoms := collectChunkDatoms(t, unc)
+				require.NotEmpty(t, datoms)
+				var first, last [20]byte
+				copy(first[:], datoms[0].E.Bytes())
+				copy(last[:], datoms[len(datoms)-1].E.Bytes())
+				require.Equal(t, entry.firstE, first)
+				require.Equal(t, entry.lastE, last)
+			}
+		})
 	}
 }
 
 func TestBinaryImport_ParallelWorkers(t *testing.T) {
-	db1 := openBinaryTestDB(t)
-	tx := db1.NewTransaction()
-	for i := 0; i < 20; i++ {
-		e := datalog.NewIdentity("bin:par:" + string(rune('a'+i%26)) + string(rune('0'+i/26)))
-		require.NoError(t, tx.Add(e, datalog.NewKeyword(":p/n"), int64(i)))
-		require.NoError(t, tx.Add(e, datalog.NewKeyword(":p/s"), "payload-"+string(rune('a'+i%26))))
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			tx := db1.NewTransaction()
+			for i := 0; i < 20; i++ {
+				e := datalog.NewIdentity("bin:par:" + string(rune('a'+i%26)) + string(rune('0'+i/26)))
+				require.NoError(t, tx.Add(e, datalog.NewKeyword(":p/n"), int64(i)))
+				require.NoError(t, tx.Add(e, datalog.NewKeyword(":p/s"), "payload-"+string(rune('a'+i%26))))
+			}
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			var out seekBuffer
+			require.NoError(t, db1.ExportBinary(&out, BinaryExportOptions{SoftBudget: 32}))
+
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			require.NoError(t, db2.ImportBinary(&out, BinaryImportOptions{Workers: 4}))
+
+			var edn1, edn2 bytes.Buffer
+			require.NoError(t, db1.Export(&edn1))
+			require.NoError(t, db2.Export(&edn2))
+			require.Equal(t, edn1.String(), edn2.String())
+		})
 	}
-	_, err := tx.Commit()
-	require.NoError(t, err)
-
-	var out seekBuffer
-	require.NoError(t, db1.ExportBinary(&out, BinaryExportOptions{SoftBudget: 32}))
-
-	db2 := openBinaryTestDB(t)
-	require.NoError(t, db2.ImportBinary(&out, BinaryImportOptions{Workers: 4}))
-
-	var edn1, edn2 bytes.Buffer
-	require.NoError(t, db1.Export(&edn1))
-	require.NoError(t, db2.Export(&edn2))
-	require.Equal(t, edn1.String(), edn2.String())
 }
 
 func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
@@ -242,14 +236,7 @@ func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db1, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         sch,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			t.Cleanup(func() { db1.Close() })
+			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sch})
 
 			id := datalog.NewIdentity("bin:rga")
 			items := datalog.NewKeyword(":doc/items")
@@ -280,8 +267,7 @@ func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
 			for _, entry := range trailer.entries {
 				unc, err := readBinaryChunkPayload(&out, entry, &seekMu)
 				require.NoError(t, err)
-				datoms, err := decodeBinaryChunk(unc)
-				require.NoError(t, err)
+				datoms := collectChunkDatoms(t, unc)
 				for _, d := range datoms {
 					if !d.Op.HasAfterRef() {
 						continue
@@ -297,13 +283,7 @@ func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
 			require.Equal(t, rga[1].tx, rga[2].afterRef, "third insert AfterRef must equal second Tx")
 			require.Equal(t, []string{"first", "second", "third"}, []string{rga[0].v, rga[1].v, rga[2].v})
 
-			db2, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         sch,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			t.Cleanup(func() { db2.Close() })
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sch})
 			require.NoError(t, db2.ImportBinary(&out))
 
 			type docItems struct {
@@ -320,107 +300,139 @@ func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
 	}
 }
 
-func TestDecodeBinaryChunk_TruncatedAfterRef(t *testing.T) {
+// collectChunkDatoms drains a chunk into a slice. The import never does this —
+// a chunk has no size ceiling — but a test asserting on a whole chunk needs the
+// whole chunk.
+func collectChunkDatoms(t *testing.T, unc []byte) []datalog.Datom {
+	t.Helper()
+	var datoms []datalog.Datom
+	cursor := newBinaryChunkCursor(unc)
+	for cursor.Next() {
+		datoms = append(datoms, *cursor.Datom())
+	}
+	require.NoError(t, cursor.Err())
+	return datoms
+}
+
+func TestBinaryChunkCursor_TruncatedAfterRef(t *testing.T) {
 	// Fixed prefix through flags (70 bytes), flag AfterRef, then only 8 of 16.
 	unc := make([]byte, 70+8)
 	unc[68] = byte(datalog.OpRGAInsert)
 	unc[69] = binaryRecordFlagAfterRef
-	_, err := decodeBinaryChunk(unc)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "AfterRef")
+	cursor := newBinaryChunkCursor(unc)
+	require.False(t, cursor.Next())
+	require.Error(t, cursor.Err())
+	require.Contains(t, cursor.Err().Error(), "AfterRef")
 }
 
-func TestDecodeBinaryChunk_TruncatedValueHeaderAfterAfterRef(t *testing.T) {
+func TestBinaryChunkCursor_TruncatedValueHeaderAfterAfterRef(t *testing.T) {
 	// Full AfterRef present, but cut before V_type / V_len — must not panic.
 	unc := make([]byte, 70+16)
 	unc[68] = byte(datalog.OpRGAInsert)
 	unc[69] = binaryRecordFlagAfterRef
-	_, err := decodeBinaryChunk(unc)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "value header")
+	cursor := newBinaryChunkCursor(unc)
+	require.False(t, cursor.Next())
+	require.Error(t, cursor.Err())
+	require.Contains(t, cursor.Err().Error(), "value header")
 }
 
 func TestBinaryImport_RejectsBadMagic(t *testing.T) {
-	db := openBinaryTestDB(t)
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(datalog.NewIdentity("bin:bad"), datalog.NewKeyword(":t/v"), "x"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(datalog.NewIdentity("bin:bad"), datalog.NewKeyword(":t/v"), "x"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	var out seekBuffer
-	require.NoError(t, db.ExportBinary(&out))
-	out.buf[0] = 'X'
+			var out seekBuffer
+			require.NoError(t, db.ExportBinary(&out))
+			out.buf[0] = 'X'
 
-	db2 := openBinaryTestDB(t)
-	err = db2.ImportBinary(&out)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "bad magic")
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			err = db2.ImportBinary(&out)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "bad magic")
+		})
+	}
 }
 
 func TestBinaryImport_RejectsUnsupportedVersion(t *testing.T) {
-	db := openBinaryTestDB(t)
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(datalog.NewIdentity("bin:ver"), datalog.NewKeyword(":t/v"), "x"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(datalog.NewIdentity("bin:ver"), datalog.NewKeyword(":t/v"), "x"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	var out seekBuffer
-	require.NoError(t, db.ExportBinary(&out))
-	out.buf[4] = binaryExportVersion + 1
+			var out seekBuffer
+			require.NoError(t, db.ExportBinary(&out))
+			out.buf[4] = binaryExportVersion + 1
 
-	db2 := openBinaryTestDB(t)
-	err = db2.ImportBinary(&out)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported version")
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			err = db2.ImportBinary(&out)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "unsupported version")
+		})
+	}
 }
 
 func TestBinaryImport_RejectsCorruptChunk(t *testing.T) {
-	db1 := openBinaryTestDB(t)
-	tx := db1.NewTransaction()
-	for i := 0; i < 8; i++ {
-		e := datalog.NewIdentity("bin:corrupt:" + string(rune('a'+i)))
-		require.NoError(t, tx.Add(e, datalog.NewKeyword(":c/v"), int64(i)))
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			tx := db1.NewTransaction()
+			for i := 0; i < 8; i++ {
+				e := datalog.NewIdentity("bin:corrupt:" + string(rune('a'+i)))
+				require.NoError(t, tx.Add(e, datalog.NewKeyword(":c/v"), int64(i)))
+			}
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			var out seekBuffer
+			require.NoError(t, db1.ExportBinary(&out, BinaryExportOptions{SoftBudget: 1}))
+
+			hdr, err := readBinaryHeader(&out)
+			require.NoError(t, err)
+			trailer, err := readBinaryIndex(&out, hdr.indexOffset)
+			require.NoError(t, err)
+			require.NotEmpty(t, trailer.entries)
+
+			// Corrupt the first chunk's type byte — reliable whether the payload is
+			// LZJ-compressed or raw (small SoftBudget chunks often stay raw).
+			entry := trailer.entries[0]
+			require.Less(t, int(entry.offset), len(out.buf))
+			out.buf[entry.offset] = 0xff
+
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			err = db2.ImportBinary(&out, BinaryImportOptions{Workers: 4})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "unexpected chunk type")
+		})
 	}
-	_, err := tx.Commit()
-	require.NoError(t, err)
-
-	var out seekBuffer
-	require.NoError(t, db1.ExportBinary(&out, BinaryExportOptions{SoftBudget: 1}))
-
-	hdr, err := readBinaryHeader(&out)
-	require.NoError(t, err)
-	trailer, err := readBinaryIndex(&out, hdr.indexOffset)
-	require.NoError(t, err)
-	require.NotEmpty(t, trailer.entries)
-
-	// Corrupt the first chunk's type byte — reliable whether the payload is
-	// LZJ-compressed or raw (small SoftBudget chunks often stay raw).
-	entry := trailer.entries[0]
-	require.Less(t, int(entry.offset), len(out.buf))
-	out.buf[entry.offset] = 0xff
-
-	db2 := openBinaryTestDB(t)
-	err = db2.ImportBinary(&out, BinaryImportOptions{Workers: 4})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unexpected chunk type")
 }
 
 func TestBinaryImport_RejectsOversizedIndexCount(t *testing.T) {
-	// Minimal header + trailer claiming an absurd entry count for a tiny file.
-	var buf seekBuffer
-	require.NoError(t, writeBinaryHeader(&buf, 64, binaryHeaderSize))
-	var hdr [24]byte
-	copy(hdr[0:4], binaryIndexMagic)
-	binary.BigEndian.PutUint32(hdr[4:8], math.MaxUint32)
-	_, err := buf.Write(hdr[:])
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Minimal header + trailer claiming an absurd entry count for a tiny file.
+			var buf seekBuffer
+			require.NoError(t, writeBinaryHeader(&buf, 64, binaryHeaderSize))
+			var hdr [24]byte
+			copy(hdr[0:4], binaryIndexMagic)
+			binary.BigEndian.PutUint32(hdr[4:8], math.MaxUint32)
+			_, err := buf.Write(hdr[:])
+			require.NoError(t, err)
 
-	db := openBinaryTestDB(t)
-	err = db.ImportBinary(&buf)
-	require.Error(t, err)
-	require.True(t,
-		strings.Contains(err.Error(), "index count") || strings.Contains(err.Error(), "index"),
-		"got: %v", err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			err = db.ImportBinary(&buf)
+			require.Error(t, err)
+			require.True(t,
+				strings.Contains(err.Error(), "index count") || strings.Contains(err.Error(), "index"),
+				"got: %v", err)
+		})
+	}
 }
 
 func TestBinaryUint32Len_RejectsOverflow(t *testing.T) {

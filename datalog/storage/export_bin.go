@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -41,8 +40,16 @@ type BinaryExportOptions struct {
 // BinaryImportOptions configures JDZL binary import.
 type BinaryImportOptions struct {
 	// Workers is the maximum number of chunks decoded and asserted concurrently.
-	// Zero selects GOMAXPROCS.
+	// Zero selects one: chunks then arrive in file order — the EAVT order the
+	// tree store's bulk build takes as given — and the sweep in
+	// BenchmarkDumpImportWorkers measured no throughput return on more.
 	Workers int
+
+	// Finalize runs once after the last chunk is written and the store's own
+	// batch is complete, and not at all if any chunk failed. It is a hook for a
+	// caller with its own work to close out; the store's batch is finished
+	// whether or not one is given.
+	Finalize func() error
 }
 
 type binaryIndexEntry struct {
@@ -183,9 +190,13 @@ func (d *Database) ExportBinary(w io.WriteSeeker, opts ...BinaryExportOptions) e
 // subset of the file in the store. Retrying into the same database is not a
 // safe recovery; use a fresh database (or discard the target) after failure.
 func (d *Database) ImportBinary(r io.ReadSeeker, opts ...BinaryImportOptions) error {
-	workers := runtime.GOMAXPROCS(0)
-	if len(opts) > 0 && opts[0].Workers > 0 {
-		workers = opts[0].Workers
+	workers := 1
+	var finalize func() error
+	if len(opts) > 0 {
+		if opts[0].Workers > 0 {
+			workers = opts[0].Workers
+		}
+		finalize = opts[0].Finalize
 	}
 
 	header, err := readBinaryHeader(r)
@@ -234,15 +245,10 @@ func (d *Database) ImportBinary(r io.ReadSeeker, opts ...BinaryImportOptions) er
 				if ctx.Err() != nil {
 					return
 				}
-				datoms, err := decodeBinaryChunk(unc)
-				if err != nil {
-					reportErr(err)
+				if len(unc) == 0 || ctx.Err() != nil {
 					return
 				}
-				if len(datoms) == 0 || ctx.Err() != nil {
-					return
-				}
-				if err := d.store.Assert(datoms); err != nil {
+				if err := assertBinaryChunk(d.store, unc); err != nil {
 					reportErr(fmt.Errorf("binary import assert chunk at %d: %w", entry.offset, err))
 				}
 			}(entry)
@@ -254,6 +260,19 @@ func (d *Database) ImportBinary(r io.ReadSeeker, opts ...BinaryImportOptions) er
 	close(errCh)
 	if err := <-errCh; err != nil {
 		return err
+	}
+
+	// Every chunk is written, so a store holding its write open across them has
+	// the whole dump and nothing further is coming. This runs before the clock is
+	// restored: the datoms the restored ElementID describes must already be in
+	// the store.
+	if err := d.store.FinishBatch(); err != nil {
+		return fmt.Errorf("binary import finish batch: %w", err)
+	}
+	if finalize != nil {
+		if err := finalize(); err != nil {
+			return fmt.Errorf("binary import finalize: %w", err)
+		}
 	}
 
 	maxElementID := trailer.maxTx
@@ -419,41 +438,12 @@ func readBinaryIndex(r io.ReadSeeker, indexOffset uint64) (binaryTrailer, error)
 }
 
 func readBinaryChunkPayload(r io.ReadSeeker, entry binaryIndexEntry, seekMu *sync.Mutex) ([]byte, error) {
-	seekMu.Lock()
-	defer seekMu.Unlock()
-	fileSize, err := seekerSize(r)
+	payload, flags, err := readBinaryChunkBytes(r, entry, seekMu)
 	if err != nil {
 		return nil, err
 	}
-	if entry.offset > uint64(fileSize) {
-		return nil, fmt.Errorf("binary import: chunk offset %d past end of file", entry.offset)
-	}
-	if _, err := r.Seek(int64(entry.offset), io.SeekStart); err != nil {
-		return nil, fmt.Errorf("binary import seek chunk: %w", err)
-	}
-	var hdr [binaryChunkHeaderSize]byte
-	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return nil, fmt.Errorf("binary import chunk header: %w", err)
-	}
-	if hdr[0] != binaryChunkTypeData {
-		return nil, fmt.Errorf("binary import: unexpected chunk type %d", hdr[0])
-	}
-	flags := hdr[1]
-	uncLen := binary.BigEndian.Uint32(hdr[2:6])
-	cmpLen := binary.BigEndian.Uint32(hdr[6:10])
-	if uncLen != entry.uncLen || cmpLen != entry.cmpLen {
-		return nil, fmt.Errorf("binary import: chunk length mismatch at %d", entry.offset)
-	}
-	payloadEnd := entry.offset + uint64(binaryChunkHeaderSize) + uint64(cmpLen)
-	if payloadEnd > uint64(fileSize) {
-		return nil, fmt.Errorf("binary import: chunk payload at %d exceeds file size", entry.offset)
-	}
-	payload := make([]byte, cmpLen)
-	if _, err := io.ReadFull(r, payload); err != nil {
-		return nil, fmt.Errorf("binary import chunk payload: %w", err)
-	}
 	if flags&binaryChunkFlagRaw != 0 {
-		if uint32(len(payload)) != uncLen {
+		if uint32(len(payload)) != entry.uncLen {
 			return nil, fmt.Errorf("binary import: raw chunk size mismatch")
 		}
 		return payload, nil
@@ -462,10 +452,50 @@ func readBinaryChunkPayload(r io.ReadSeeker, entry binaryIndexEntry, seekMu *syn
 	if err != nil {
 		return nil, fmt.Errorf("binary import decompress: %w", err)
 	}
-	if uint32(len(unc)) != uncLen {
+	if uint32(len(unc)) != entry.uncLen {
 		return nil, fmt.Errorf("binary import: decompressed length mismatch")
 	}
 	return unc, nil
+}
+
+// readBinaryChunkBytes reads one chunk's stored bytes and its flags. The lock
+// covers the seek and the read, which share the file; decompression shares
+// nothing and runs outside it.
+func readBinaryChunkBytes(r io.ReadSeeker, entry binaryIndexEntry, seekMu *sync.Mutex) ([]byte, byte, error) {
+	seekMu.Lock()
+	defer seekMu.Unlock()
+	fileSize, err := seekerSize(r)
+	if err != nil {
+		return nil, 0, err
+	}
+	if entry.offset > uint64(fileSize) {
+		return nil, 0, fmt.Errorf("binary import: chunk offset %d past end of file", entry.offset)
+	}
+	if _, err := r.Seek(int64(entry.offset), io.SeekStart); err != nil {
+		return nil, 0, fmt.Errorf("binary import seek chunk: %w", err)
+	}
+	var hdr [binaryChunkHeaderSize]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return nil, 0, fmt.Errorf("binary import chunk header: %w", err)
+	}
+	if hdr[0] != binaryChunkTypeData {
+		return nil, 0, fmt.Errorf("binary import: unexpected chunk type %d", hdr[0])
+	}
+	flags := hdr[1]
+	uncLen := binary.BigEndian.Uint32(hdr[2:6])
+	cmpLen := binary.BigEndian.Uint32(hdr[6:10])
+	if uncLen != entry.uncLen || cmpLen != entry.cmpLen {
+		return nil, 0, fmt.Errorf("binary import: chunk length mismatch at %d", entry.offset)
+	}
+	payloadEnd := entry.offset + uint64(binaryChunkHeaderSize) + uint64(cmpLen)
+	if payloadEnd > uint64(fileSize) {
+		return nil, 0, fmt.Errorf("binary import: chunk payload at %d exceeds file size", entry.offset)
+	}
+	payload := make([]byte, cmpLen)
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return nil, 0, fmt.Errorf("binary import chunk payload: %w", err)
+	}
+	return payload, flags, nil
 }
 
 func encodeBinaryDatom(d *datalog.Datom) ([]byte, error) {
@@ -516,61 +546,120 @@ func encodeBinaryDatom(d *datalog.Datom) ([]byte, error) {
 	return buf, nil
 }
 
-func decodeBinaryChunk(unc []byte) ([]datalog.Datom, error) {
-	var datoms []datalog.Datom
-	off := 0
-	for off < len(unc) {
-		// Fixed prefix through flags; AfterRef and value header checked after.
-		const prefixLen = 20 + 32 + 16 + 1 + 1
-		if off+prefixLen > len(unc) {
-			return nil, fmt.Errorf("binary import: truncated record at %d", off)
-		}
-		var eHash [20]byte
-		copy(eHash[:], unc[off:off+20])
-		off += 20
-		var aBytes [32]byte
-		copy(aBytes[:], unc[off:off+32])
-		off += 32
-		tx := datalog.ElementIDFromBytes(unc[off : off+16])
-		off += 16
-		op := datalog.CRDTOp(unc[off])
-		off++
-		flags := unc[off]
-		off++
-		var afterRef datalog.ElementID
-		if flags&binaryRecordFlagAfterRef != 0 {
-			if off+16 > len(unc) {
-				return nil, fmt.Errorf("binary import: truncated AfterRef at %d", off)
+// assertBinaryChunk decodes one chunk straight into the store: each record goes
+// from the cursor to the store's add as it is read, so the chunk never becomes a
+// slice of datoms. JDZL closes a chunk only at an entity boundary, so one entity
+// is the floor and a chunk has no size ceiling — that slice was the unbounded
+// one.
+//
+// What arrival means is the backend's: the tree store inserts the datom into the
+// version it is building, Badger encodes it into a write batch.
+func assertBinaryChunk(store Store, unc []byte) error {
+	return store.AssertEach(func(add func(*datalog.Datom) error) error {
+		cursor := newBinaryChunkCursor(unc)
+		for cursor.Next() {
+			if err := add(cursor.Datom()); err != nil {
+				return err
 			}
-			afterRef = datalog.ElementIDFromBytes(unc[off : off+16])
-			off += 16
 		}
-		if off+5 > len(unc) {
-			return nil, fmt.Errorf("binary import: truncated value header at %d", off)
-		}
-		vType := datalog.ValueType(unc[off])
-		off++
-		vLen := binary.BigEndian.Uint32(unc[off : off+4])
-		off += 4
-		if uint64(off)+uint64(vLen) > uint64(len(unc)) {
-			return nil, fmt.Errorf("binary import: truncated value at %d", off)
-		}
-		v, err := datalog.ValueFromBytes(vType, unc[off:off+int(vLen)])
-		if err != nil {
-			return nil, fmt.Errorf("binary import value: %w", err)
-		}
-		off += int(vLen)
+		return cursor.Err()
+	})
+}
 
-		datoms = append(datoms, datalog.Datom{
-			E:        datalog.NewIdentityFromHash(eHash),
-			A:        datalog.InternKeywordFromBytes(aBytes),
-			V:        v,
-			Tx:       tx,
-			Op:       op,
-			AfterRef: afterRef,
-		})
+// binaryChunkCursor walks a chunk one record at a time.
+//
+// Records are fixed-width or self-delimiting and carry no cross-record state,
+// so a chunk never has to become a slice of datoms — and it must not: JDZL
+// closes a chunk only at an entity boundary, so one entity is the floor and a
+// chunk has no size ceiling.
+//
+// Datom is the cursor's workspace, valid until the next Next. Values alias unc,
+// so unc must outlive the walk.
+type binaryChunkCursor struct {
+	unc []byte
+	off int
+	d   datalog.Datom
+	err error
+}
+
+func newBinaryChunkCursor(unc []byte) *binaryChunkCursor {
+	return &binaryChunkCursor{unc: unc}
+}
+
+// Datom returns the record Next just decoded.
+func (c *binaryChunkCursor) Datom() *datalog.Datom { return &c.d }
+
+// Err reports why iteration stopped early. Nil after a walk that ran out of
+// records normally.
+func (c *binaryChunkCursor) Err() error { return c.err }
+
+func (c *binaryChunkCursor) Next() bool {
+	if c.err != nil || c.off >= len(c.unc) {
+		return false
 	}
-	return datoms, nil
+	d, off, err := decodeBinaryRecord(c.unc, c.off)
+	if err != nil {
+		c.err = err
+		return false
+	}
+	c.d, c.off = d, off
+	return true
+}
+
+// decodeBinaryRecord decodes the record at off and returns the offset of the
+// next one.
+func decodeBinaryRecord(unc []byte, off int) (datalog.Datom, int, error) {
+	var zero datalog.Datom
+
+	// Fixed prefix through flags; AfterRef and value header checked after.
+	const prefixLen = 20 + 32 + 16 + 1 + 1
+	if off+prefixLen > len(unc) {
+		return zero, 0, fmt.Errorf("binary import: truncated record at %d", off)
+	}
+	var eHash [20]byte
+	copy(eHash[:], unc[off:off+20])
+	off += 20
+	var aBytes [32]byte
+	copy(aBytes[:], unc[off:off+32])
+	off += 32
+	tx := datalog.ElementIDFromBytes(unc[off : off+16])
+	off += 16
+	op := datalog.CRDTOp(unc[off])
+	off++
+	flags := unc[off]
+	off++
+	var afterRef datalog.ElementID
+	if flags&binaryRecordFlagAfterRef != 0 {
+		if off+16 > len(unc) {
+			return zero, 0, fmt.Errorf("binary import: truncated AfterRef at %d", off)
+		}
+		afterRef = datalog.ElementIDFromBytes(unc[off : off+16])
+		off += 16
+	}
+	if off+5 > len(unc) {
+		return zero, 0, fmt.Errorf("binary import: truncated value header at %d", off)
+	}
+	vType := datalog.ValueType(unc[off])
+	off++
+	vLen := binary.BigEndian.Uint32(unc[off : off+4])
+	off += 4
+	if uint64(off)+uint64(vLen) > uint64(len(unc)) {
+		return zero, 0, fmt.Errorf("binary import: truncated value at %d", off)
+	}
+	v, err := datalog.ValueFromBytes(vType, unc[off:off+int(vLen)])
+	if err != nil {
+		return zero, 0, fmt.Errorf("binary import value: %w", err)
+	}
+	off += int(vLen)
+
+	return datalog.Datom{
+		E:        datalog.NewIdentityFromHash(eHash),
+		A:        datalog.InternKeywordFromBytes(aBytes),
+		V:        v,
+		Tx:       tx,
+		Op:       op,
+		AfterRef: afterRef,
+	}, off, nil
 }
 
 func binaryUint32Len(n int, what string) (uint32, error) {

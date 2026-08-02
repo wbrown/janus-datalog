@@ -35,51 +35,29 @@ func uniqueTestSchema(t *testing.T) *schema.Schema {
 	return s
 }
 
-// setupUniqueTestDB creates a database with :user/email (UniqueValue) and
-// :user/name (not unique) attributes.
+// setupUniqueTestDB creates a database on the mode's backend with :user/email
+// (UniqueValue) and :user/name (not unique) attributes.
 // handler is registered at open; nil is annotations-off.
-func setupUniqueTestDB(t *testing.T, handler annotations.Handler) (*Database, func()) {
+func setupUniqueTestDB(t *testing.T, mode optimizerMode, handler annotations.Handler) *Database {
 	t.Helper()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:              t.TempDir(),
+	return createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema:            uniqueTestSchema(t),
 		AnnotationHandler: handler,
 	})
-	require.NoError(t, err)
-	return db, func() { db.Close() }
-}
-
-// openUniqueModeDB creates the same database as setupUniqueTestDB with the
-// optimizer mode's planner options as the database default; query-executing
-// tests construct one per mode.
-func openUniqueModeDB(t *testing.T, mode optimizerMode) *Database {
-	t.Helper()
-	popts := mode.plannerOptions()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           t.TempDir(),
-		Schema:         uniqueTestSchema(t),
-		PlannerOptions: &popts,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
-	return db
 }
 
 // setupUniqueIdentityTestDB creates a database with :user/email declared as
 // UniqueIdentity. Under Position 2 this is semantically identical to
 // UniqueValue for resolution; the distinction is the availability of
 // LookupByUnique (both support it).
-func setupUniqueIdentityTestDB(t *testing.T) (*Database, func()) {
+func setupUniqueIdentityTestDB(t *testing.T, mode optimizerMode) *Database {
 	t.Helper()
-	dir := t.TempDir()
 	s, err := schema.NewBuilder().
 		Attribute(":user/email").Type(schema.TypeString).Unique(schema.UniqueIdentity).Add().
 		Build()
 	require.NoError(t, err)
 
-	db, err := NewDatabaseWithSchema(dir, s)
-	require.NoError(t, err)
-	return db, func() { db.Close() }
+	return createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 }
 
 // ================================================================
@@ -88,32 +66,38 @@ func setupUniqueIdentityTestDB(t *testing.T) (*Database, func()) {
 
 // TestLookupByUnique_NoOwner: nobody has claimed the value.
 func TestLookupByUnique_NoOwner(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupUniqueTestDB(t, mode, nil)
 
-	email := datalog.NewKeyword(":user/email")
-	owner, err := db.LookupByUnique(email, "nobody@example.com")
-	require.NoError(t, err)
-	assert.Nil(t, owner, "no owner for unclaimed value should return nil Identity")
+			email := datalog.NewKeyword(":user/email")
+			owner, err := db.LookupByUnique(email, "nobody@example.com")
+			require.NoError(t, err)
+			assert.Nil(t, owner, "no owner for unclaimed value should return nil Identity")
+		})
+	}
 }
 
 // TestLookupByUnique_SingleOwner: one entity claims the value.
 func TestLookupByUnique_SingleOwner(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupUniqueTestDB(t, mode, nil)
 
-	alice := datalog.NewIdentity("alice")
-	email := datalog.NewKeyword(":user/email")
+			alice := datalog.NewIdentity("alice")
+			email := datalog.NewKeyword(":user/email")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(alice, email, "alice@example.com"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, email, "alice@example.com"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	owner, err := db.LookupByUnique(email, "alice@example.com")
-	require.NoError(t, err)
-	require.NotNil(t, owner)
-	assert.True(t, owner.Equal(alice), "single claimant should be returned")
+			owner, err := db.LookupByUnique(email, "alice@example.com")
+			require.NoError(t, err)
+			require.NotNil(t, owner)
+			assert.True(t, owner.Equal(alice), "single claimant should be returned")
+		})
+	}
 }
 
 // TestUniqueLookupReportsItsFunnel pins that LookupByUnique reports the same
@@ -127,78 +111,81 @@ func TestLookupByUnique_SingleOwner(t *testing.T) {
 // and reporting it as "nothing found" makes it indistinguishable from a value
 // nobody ever wrote, which costs nothing at all.
 func TestUniqueLookupReportsItsFunnel(t *testing.T) {
-	// One collector for the whole test: only LookupByUnique emits
-	// ScanUniqueLookup, and each subtest reads the last one, which is its own.
-	var events []annotations.Event
-	db, cleanup := setupUniqueTestDB(t,
-		func(e annotations.Event) { events = append(events, e) })
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// One collector for the whole test: only LookupByUnique emits
+			// ScanUniqueLookup, and each subtest reads the last one, which is its own.
+			var events []annotations.Event
+			db := setupUniqueTestDB(t, mode,
+				func(e annotations.Event) { events = append(events, e) })
 
-	alice := datalog.NewIdentity("alice")
-	email := datalog.NewKeyword(":user/email")
+			alice := datalog.NewIdentity("alice")
+			email := datalog.NewKeyword(":user/email")
 
-	// Two writes to the same (E, A): the first value keeps its AVET entry.
-	for _, v := range []string{"old@example.com", "new@example.com"} {
-		tx := db.NewTransaction()
-		require.NoError(t, tx.Set(alice, email, v))
-		_, err := tx.Commit()
-		require.NoError(t, err)
-	}
-
-	for _, tc := range []struct {
-		name              string
-		value             string
-		owner             datalog.Identity
-		resolved          int
-		matched           int
-		scannedIsPositive bool
-	}{
-		{name: "current owner", value: "new@example.com", owner: alice,
-			resolved: 1, matched: 1, scannedIsPositive: true},
-		{name: "superseded value still in AVET", value: "old@example.com",
-			resolved: 1, matched: 0, scannedIsPositive: true},
-		{name: "never written", value: "never@example.com",
-			resolved: 0, matched: 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			owner, err := db.LookupByUnique(email, tc.value)
-			require.NoError(t, err)
-			if tc.owner == nil {
-				require.Nil(t, owner)
-			} else {
-				require.NotNil(t, owner)
-				require.True(t, owner.Equal(tc.owner))
+			// Two writes to the same (E, A): the first value keeps its AVET entry.
+			for _, v := range []string{"old@example.com", "new@example.com"} {
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(alice, email, v))
+				_, err := tx.Commit()
+				require.NoError(t, err)
 			}
 
-			complete := lastScanComplete(events, annotations.ScanUniqueLookup)
-			require.NotNil(t, complete, "the lookup opened scans and must report what they cost")
-			require.Equal(t, tc.resolved, complete.Data[annotations.KeyDatomsResolved])
-			require.Equal(t, tc.matched, complete.Data[annotations.KeyDatomsMatched])
-			if tc.scannedIsPositive {
-				require.Positive(t, complete.Data[annotations.KeyDatomsScanned],
-					"a candidate was found and walked, which reads the index")
-			}
+			for _, tc := range []struct {
+				name              string
+				value             string
+				owner             datalog.Identity
+				resolved          int
+				matched           int
+				scannedIsPositive bool
+			}{
+				{name: "current owner", value: "new@example.com", owner: alice,
+					resolved: 1, matched: 1, scannedIsPositive: true},
+				{name: "superseded value still in AVET", value: "old@example.com",
+					resolved: 1, matched: 0, scannedIsPositive: true},
+				{name: "never written", value: "never@example.com",
+					resolved: 0, matched: 0},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					owner, err := db.LookupByUnique(email, tc.value)
+					require.NoError(t, err)
+					if tc.owner == nil {
+						require.Nil(t, owner)
+					} else {
+						require.NotNil(t, owner)
+						require.True(t, owner.Equal(tc.owner))
+					}
 
-			// The pattern the lookup resolves, carried rather than rendered —
-			// the same subject every other scan event names.
-			pattern, ok := complete.Data[annotations.KeyPattern].(*query.DataPattern)
-			require.True(t, ok, "carries a pattern, not a rendering of one; got %T",
-				complete.Data[annotations.KeyPattern])
-			require.Contains(t, pattern.String(), ":user/email")
-			require.Contains(t, pattern.String(), tc.value)
+					complete := lastScanComplete(events, annotations.ScanUniqueLookup)
+					require.NotNil(t, complete, "the lookup opened scans and must report what they cost")
+					require.Equal(t, tc.resolved, complete.Data[annotations.KeyDatomsResolved])
+					require.Equal(t, tc.matched, complete.Data[annotations.KeyDatomsMatched])
+					if tc.scannedIsPositive {
+						require.Positive(t, complete.Data[annotations.KeyDatomsScanned],
+							"a candidate was found and walked, which reads the index")
+					}
 
-			// The formatter's arm is pinned in its own package against a
-			// hand-built event; here the two meet. Separate pins can agree on a
-			// payload shape neither side produces, and this is the event whose
-			// producer feeds that arm.
-			var rendered bytes.Buffer
-			formatter := annotations.NewPlainTextFormatter(&rendered)
-			for _, e := range events {
-				formatter.Handle(e)
+					// The pattern the lookup resolves, carried rather than rendered —
+					// the same subject every other scan event names.
+					pattern, ok := complete.Data[annotations.KeyPattern].(*query.DataPattern)
+					require.True(t, ok, "carries a pattern, not a rendering of one; got %T",
+						complete.Data[annotations.KeyPattern])
+					require.Contains(t, pattern.String(), ":user/email")
+					require.Contains(t, pattern.String(), tc.value)
+
+					// The formatter's arm is pinned in its own package against a
+					// hand-built event; here the two meet. Separate pins can agree on a
+					// payload shape neither side produces, and this is the event whose
+					// producer feeds that arm.
+					var rendered bytes.Buffer
+					formatter := annotations.NewPlainTextFormatter(&rendered)
+					for _, e := range events {
+						formatter.Handle(e)
+					}
+					require.Contains(t, rendered.String(),
+						fmt.Sprintf("%d matched, %d resolved", tc.matched, tc.resolved),
+						"the funnel the matcher emitted must be the funnel the formatter renders")
+				})
 			}
-			require.Contains(t, rendered.String(),
-				fmt.Sprintf("%d matched, %d resolved", tc.matched, tc.resolved),
-				"the funnel the matcher emitted must be the funnel the formatter renders")
 		})
 	}
 }
@@ -206,21 +193,24 @@ func TestUniqueLookupReportsItsFunnel(t *testing.T) {
 // TestLookupByUnique_UniqueIdentity: UniqueIdentity supports lookup the
 // same way as UniqueValue (Position 2).
 func TestLookupByUnique_UniqueIdentity(t *testing.T) {
-	db, cleanup := setupUniqueIdentityTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupUniqueIdentityTestDB(t, mode)
 
-	alice := datalog.NewIdentity("alice")
-	email := datalog.NewKeyword(":user/email")
+			alice := datalog.NewIdentity("alice")
+			email := datalog.NewKeyword(":user/email")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(alice, email, "alice@example.com"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, email, "alice@example.com"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	owner, err := db.LookupByUnique(email, "alice@example.com")
-	require.NoError(t, err)
-	require.NotNil(t, owner)
-	assert.True(t, owner.Equal(alice))
+			owner, err := db.LookupByUnique(email, "alice@example.com")
+			require.NoError(t, err)
+			require.NotNil(t, owner)
+			assert.True(t, owner.Equal(alice))
+		})
+	}
 }
 
 // ================================================================
@@ -230,148 +220,163 @@ func TestLookupByUnique_UniqueIdentity(t *testing.T) {
 // TestLookupByUnique_MultiClaimant_HighestTxWins: two entities both claim
 // the same value in sequence. The second (higher Tx) wins.
 func TestLookupByUnique_MultiClaimant_HighestTxWins(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupUniqueTestDB(t, mode, nil)
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	email := datalog.NewKeyword(":user/email")
-	shared := "shared@example.com"
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			email := datalog.NewKeyword(":user/email")
+			shared := "shared@example.com"
 
-	// Alice claims first (lower Tx).
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Set(alice, email, shared))
-	_, err := tx1.Commit()
-	require.NoError(t, err)
+			// Alice claims first (lower Tx).
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Set(alice, email, shared))
+			_, err := tx1.Commit()
+			require.NoError(t, err)
 
-	// Bob claims second (higher Tx).
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(bob, email, shared))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Bob claims second (higher Tx).
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(bob, email, shared))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	owner, err := db.LookupByUnique(email, shared)
-	require.NoError(t, err)
-	require.NotNil(t, owner)
-	assert.True(t, owner.Equal(bob), "bob (higher Tx) should win (A, V)-LWW over alice; got %s", owner.String())
+			owner, err := db.LookupByUnique(email, shared)
+			require.NoError(t, err)
+			require.NotNil(t, owner)
+			assert.True(t, owner.Equal(bob), "bob (higher Tx) should win (A, V)-LWW over alice; got %s", owner.String())
+		})
+	}
 }
 
 // TestLookupByUnique_MultiClaimant_ReverseOrder: bob claims first, then
 // alice. Alice should win because she has the higher Tx.
 func TestLookupByUnique_MultiClaimant_ReverseOrder(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupUniqueTestDB(t, mode, nil)
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	email := datalog.NewKeyword(":user/email")
-	shared := "shared@example.com"
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			email := datalog.NewKeyword(":user/email")
+			shared := "shared@example.com"
 
-	// Bob first.
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Set(bob, email, shared))
-	_, err := tx1.Commit()
-	require.NoError(t, err)
+			// Bob first.
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Set(bob, email, shared))
+			_, err := tx1.Commit()
+			require.NoError(t, err)
 
-	// Alice second (higher Tx).
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, email, shared))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Alice second (higher Tx).
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, email, shared))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	owner, err := db.LookupByUnique(email, shared)
-	require.NoError(t, err)
-	require.NotNil(t, owner)
-	assert.True(t, owner.Equal(alice), "alice (higher Tx) should win (A, V)-LWW over bob; got %s", owner.String())
+			owner, err := db.LookupByUnique(email, shared)
+			require.NoError(t, err)
+			require.NotNil(t, owner)
+			assert.True(t, owner.Equal(alice), "alice (higher Tx) should win (A, V)-LWW over bob; got %s", owner.String())
+		})
+	}
 }
 
 // TestLookupByUnique_CandidateMovedOn: alice once claimed V, then moved
 // to a different value. She is no longer a claimant for V.
 func TestLookupByUnique_CandidateMovedOn(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupUniqueTestDB(t, mode, nil)
 
-	alice := datalog.NewIdentity("alice")
-	email := datalog.NewKeyword(":user/email")
+			alice := datalog.NewIdentity("alice")
+			email := datalog.NewKeyword(":user/email")
 
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Set(alice, email, "old@example.com"))
-	_, err := tx1.Commit()
-	require.NoError(t, err)
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Set(alice, email, "old@example.com"))
+			_, err := tx1.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, email, "new@example.com"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, email, "new@example.com"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Old value: no current claimant (alice's current (E, A)-LWW is "new", not "old").
-	owner, err := db.LookupByUnique(email, "old@example.com")
-	require.NoError(t, err)
-	assert.Nil(t, owner, "old value should have no current owner after alice moved on")
+			// Old value: no current claimant (alice's current (E, A)-LWW is "new", not "old").
+			owner, err := db.LookupByUnique(email, "old@example.com")
+			require.NoError(t, err)
+			assert.Nil(t, owner, "old value should have no current owner after alice moved on")
 
-	// New value: alice.
-	owner, err = db.LookupByUnique(email, "new@example.com")
-	require.NoError(t, err)
-	require.NotNil(t, owner)
-	assert.True(t, owner.Equal(alice))
+			// New value: alice.
+			owner, err = db.LookupByUnique(email, "new@example.com")
+			require.NoError(t, err)
+			require.NotNil(t, owner)
+			assert.True(t, owner.Equal(alice))
+		})
+	}
 }
 
 // TestLookupByUnique_TombstonedClaimant: alice claimed V, then retracted.
 // She is no longer a claimant.
 func TestLookupByUnique_TombstonedClaimant(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupUniqueTestDB(t, mode, nil)
 
-	alice := datalog.NewIdentity("alice")
-	email := datalog.NewKeyword(":user/email")
+			alice := datalog.NewIdentity("alice")
+			email := datalog.NewKeyword(":user/email")
 
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Set(alice, email, "alice@example.com"))
-	_, err := tx1.Commit()
-	require.NoError(t, err)
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Set(alice, email, "alice@example.com"))
+			_, err := tx1.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(alice, email, "alice@example.com"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(alice, email, "alice@example.com"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	owner, err := db.LookupByUnique(email, "alice@example.com")
-	require.NoError(t, err)
-	assert.Nil(t, owner, "tombstoned claim should not register as current owner")
+			owner, err := db.LookupByUnique(email, "alice@example.com")
+			require.NoError(t, err)
+			assert.Nil(t, owner, "tombstoned claim should not register as current owner")
+		})
+	}
 }
 
 // TestLookupByUnique_OneMovedOneClaiming: alice moved to V2; bob claims V.
 // V's owner is bob only.
 func TestLookupByUnique_OneMovedOneClaiming(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupUniqueTestDB(t, mode, nil)
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	email := datalog.NewKeyword(":user/email")
-	shared := "shared@example.com"
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			email := datalog.NewKeyword(":user/email")
+			shared := "shared@example.com"
 
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Set(alice, email, shared))
-	_, err := tx1.Commit()
-	require.NoError(t, err)
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Set(alice, email, shared))
+			_, err := tx1.Commit()
+			require.NoError(t, err)
 
-	// Alice moves on.
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, email, "alice-new@example.com"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Alice moves on.
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, email, "alice-new@example.com"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Bob takes the shared value.
-	tx3 := db.NewTransaction()
-	require.NoError(t, tx3.Set(bob, email, shared))
-	_, err = tx3.Commit()
-	require.NoError(t, err)
+			// Bob takes the shared value.
+			tx3 := db.NewTransaction()
+			require.NoError(t, tx3.Set(bob, email, shared))
+			_, err = tx3.Commit()
+			require.NoError(t, err)
 
-	owner, err := db.LookupByUnique(email, shared)
-	require.NoError(t, err)
-	require.NotNil(t, owner)
-	assert.True(t, owner.Equal(bob), "only bob currently claims V; he should win regardless of Tx comparison with alice's stale claim")
+			owner, err := db.LookupByUnique(email, shared)
+			require.NoError(t, err)
+			require.NotNil(t, owner)
+			assert.True(t, owner.Equal(bob), "only bob currently claims V; he should win regardless of Tx comparison with alice's stale claim")
+		})
+	}
 }
 
 // ================================================================
@@ -381,37 +386,44 @@ func TestLookupByUnique_OneMovedOneClaiming(t *testing.T) {
 // TestLookupByUnique_NonUniqueAttribute: calling on a non-unique attribute
 // is an error.
 func TestLookupByUnique_NonUniqueAttribute(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupUniqueTestDB(t, mode, nil)
 
-	// :user/name exists in the schema but is not declared unique.
-	name := datalog.NewKeyword(":user/name")
-	_, err := db.LookupByUnique(name, "Alice")
-	require.Error(t, err, "LookupByUnique on non-unique attribute should error")
-	assert.Contains(t, err.Error(), "not unique")
+			// :user/name exists in the schema but is not declared unique.
+			name := datalog.NewKeyword(":user/name")
+			_, err := db.LookupByUnique(name, "Alice")
+			require.Error(t, err, "LookupByUnique on non-unique attribute should error")
+			assert.Contains(t, err.Error(), "not unique")
+		})
+	}
 }
 
 // TestLookupByUnique_UnknownAttribute: attribute not in schema.
 func TestLookupByUnique_UnknownAttribute(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t, nil)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupUniqueTestDB(t, mode, nil)
 
-	unknown := datalog.NewKeyword(":user/unknown")
-	_, err := db.LookupByUnique(unknown, "anything")
-	require.Error(t, err, "LookupByUnique on unknown attribute should error")
+			unknown := datalog.NewKeyword(":user/unknown")
+			_, err := db.LookupByUnique(unknown, "anything")
+			require.Error(t, err, "LookupByUnique on unknown attribute should error")
+		})
+	}
 }
 
 // TestLookupByUnique_NoSchema: database without any schema — uniqueness
 // is not declared for anything, so LookupByUnique cannot operate.
 func TestLookupByUnique_NoSchema(t *testing.T) {
-	dir := t.TempDir()
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	email := datalog.NewKeyword(":user/email")
-	_, err = db.LookupByUnique(email, "alice@example.com")
-	require.Error(t, err, "LookupByUnique without schema should error")
+			email := datalog.NewKeyword(":user/email")
+			_, err := db.LookupByUnique(email, "alice@example.com")
+			require.Error(t, err, "LookupByUnique without schema should error")
+		})
+	}
 }
 
 // ================================================================
@@ -424,7 +436,7 @@ func TestLookupByUnique_NoSchema(t *testing.T) {
 func TestVBoundQuery_MultiClaimant_SingleWinner(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -473,7 +485,7 @@ func TestVBoundQuery_MultiClaimant_SingleWinner(t *testing.T) {
 func TestVBoundQuery_NonUnique_ReturnsAll(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			e1 := datalog.NewIdentity("e1")
 			e2 := datalog.NewIdentity("e2")

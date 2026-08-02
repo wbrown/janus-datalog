@@ -40,14 +40,10 @@ func newBytesOneDB(
 		Attribute(":doc/hash").Type(schema.TypeBytes).One().Add().
 		Build()
 	require.NoError(t, err)
-	opts := mode.plannerOptions()
-	opts.Handler = handler
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           t.TempDir(),
-		Schema:         s,
-		PlannerOptions: &opts,
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
+		Schema:            s,
+		AnnotationHandler: handler,
 	})
-	require.NoError(t, err)
 	return db, datalog.NewIdentity("doc-1"), datalog.NewKeyword(":doc/hash")
 }
 
@@ -265,10 +261,18 @@ func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
 // input. This isolates matcher behaviour from the join: if this returns the
 // entity under -race but the full query does not, the join is the culprit.
 // It drives the matcher rather than the executor, so the algebra optimizer is
-// not on its path: it pins one mode explicitly instead of looping the axis.
+// not on its path: the axis is pinned to one algebra leg. The backend is not
+// pinned — the matcher is exactly what differs across stores.
 func TestVBoundCardinalityOneBytes_DirectMatcher(t *testing.T) {
-	db, e, a := newBytesOneDB(t, optimizerMode{name: "algebra_off", algebra: false}, nil)
-	defer db.Close()
+	for _, mode := range pinnedOptimizerModes(false) {
+		t.Run(mode.name, func(t *testing.T) {
+			testVBoundCardinalityOneBytesDirectMatcher(t, mode)
+		})
+	}
+}
+
+func testVBoundCardinalityOneBytesDirectMatcher(t *testing.T, mode optimizerMode) {
+	db, e, a := newBytesOneDB(t, mode, nil)
 
 	v := []byte{0xde, 0xad, 0xbe, 0xef}
 	tx := db.NewTransaction()

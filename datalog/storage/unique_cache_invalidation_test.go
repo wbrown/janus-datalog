@@ -28,7 +28,7 @@ import (
 func TestCacheInvalidation_UniqueTakeover(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -78,7 +78,7 @@ func TestCacheInvalidation_UniqueTakeover(t *testing.T) {
 func TestCacheInvalidation_UniqueAttrInvalidatesAllE(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -128,7 +128,7 @@ func TestCacheInvalidation_UniqueAttrInvalidatesAllE(t *testing.T) {
 func TestCacheInvalidation_NonUniqueAttrOnlyTouchedEntries(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -182,7 +182,7 @@ func TestCacheInvalidation_NonUniqueAttrOnlyTouchedEntries(t *testing.T) {
 func TestCacheInvalidation_UniqueDoesNotAffectOtherAttrs(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := openUniqueModeDB(t, mode)
+			db := setupUniqueTestDB(t, mode, nil)
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")

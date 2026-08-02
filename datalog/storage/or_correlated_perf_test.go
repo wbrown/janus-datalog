@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -22,14 +21,7 @@ import (
 func TestOrCorrelatedUnionPartialOuterRelation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			dir, err := os.MkdirTemp("", "or-partial-outer-*")
-			require.NoError(t, err)
-			t.Cleanup(func() { os.RemoveAll(dir) })
-
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, PlannerOptions: &popts})
-			require.NoError(t, err)
-			t.Cleanup(func() { db.Close() })
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Build a database with ~600 entities across three types.
 			// Enough to expose the O(entities × attributes) blowup when ?fwd is unbound.
@@ -74,7 +66,7 @@ func TestOrCorrelatedUnionPartialOuterRelation(t *testing.T) {
 			tx.Add(group1, datalog.NewKeyword(":item/label"), "Alpha Group")
 			tx.Add(group2, datalog.NewKeyword(":item/label"), "Beta Group")
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			// Bug query: ?self is an event (no :agent/container), ?fwd = [:agent/container].

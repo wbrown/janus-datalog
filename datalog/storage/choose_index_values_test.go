@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -16,7 +15,7 @@ import (
 func TestChooseIndexForValuesAVET(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create test data: tasks belonging to different scenarios
 			scenario1 := datalog.NewIdentity("scenario-alpha")
@@ -177,7 +176,7 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 func TestChooseIndexForValuesVAET(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create test data with references
 			parent1 := datalog.NewIdentity("parent-1")
@@ -263,162 +262,144 @@ func TestChooseIndexForValuesVAET(t *testing.T) {
 // TestChooseIndexForValuesIdentity verifies that datalog.Identity
 // values are handled correctly (Identity is now always a pointer type).
 func TestChooseIndexForValuesIdentity(t *testing.T) {
-	dir, err := os.MkdirTemp("", "choose-index-identity-test-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			scenario := datalog.NewIdentity("test-scenario")
+
+			tx := db.NewTransaction()
+			for i := 0; i < 5; i++ {
+				task := datalog.NewIdentity("ptr-task-" + string(rune('A'+i)))
+				tx.Add(task, datalog.NewKeyword(":task/scenario"), scenario)
+			}
+			_, err := tx.Commit()
+			if err != nil {
+				t.Fatalf("Failed to commit: %v", err)
+			}
+
+			matcher := db.Matcher().(*PatternMatcher)
+			attr := datalog.NewKeyword(":task/scenario")
+
+			t.Run("Identity value", func(t *testing.T) {
+				iter, _ := matcher.store.ScanKeysOnly(
+					matcher.scanBoundForValues(AVET, nil, attr, scenario, 0))
+				count := 0
+				for iter.Next() {
+					count++
+				}
+				iter.Close()
+
+				if count != 5 {
+					t.Errorf("Expected 5 datoms with Identity value, got %d", count)
+				}
+			})
+		})
 	}
-	defer os.RemoveAll(dir)
-
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	scenario := datalog.NewIdentity("test-scenario")
-
-	tx := db.NewTransaction()
-	for i := 0; i < 5; i++ {
-		task := datalog.NewIdentity("ptr-task-" + string(rune('A'+i)))
-		tx.Add(task, datalog.NewKeyword(":task/scenario"), scenario)
-	}
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Failed to commit: %v", err)
-	}
-
-	matcher := db.Matcher().(*PatternMatcher)
-	attr := datalog.NewKeyword(":task/scenario")
-
-	t.Run("Identity value", func(t *testing.T) {
-		iter, _ := matcher.store.ScanKeysOnly(
-			matcher.scanBoundForValues(AVET, nil, attr, scenario, 0))
-		count := 0
-		for iter.Next() {
-			count++
-		}
-		iter.Close()
-
-		if count != 5 {
-			t.Errorf("Expected 5 datoms with Identity value, got %d", count)
-		}
-	})
 }
 
 // TestChooseIndexForValuesEAVT verifies EAVT index handling still works correctly.
 func TestChooseIndexForValuesEAVT(t *testing.T) {
-	dir, err := os.MkdirTemp("", "choose-index-eavt-test-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			entity := datalog.NewIdentity("test-entity")
+
+			tx := db.NewTransaction()
+			tx.Add(entity, datalog.NewKeyword(":entity/name"), "Test")
+			tx.Add(entity, datalog.NewKeyword(":entity/type"), "example")
+			tx.Add(entity, datalog.NewKeyword(":entity/count"), int64(42))
+			_, err := tx.Commit()
+			if err != nil {
+				t.Fatalf("Failed to commit: %v", err)
+			}
+
+			matcher := db.Matcher().(*PatternMatcher)
+
+			t.Run("EAVT with entity bound", func(t *testing.T) {
+				iter, _ := matcher.store.ScanKeysOnly(
+					matcher.scanBoundForValues(EAVT, entity, nil, nil, 0))
+				count := 0
+				for iter.Next() {
+					count++
+				}
+				iter.Close()
+
+				if count != 3 {
+					t.Errorf("Expected 3 datoms for entity, got %d", count)
+				}
+			})
+
+			t.Run("EAVT with entity and attribute bound", func(t *testing.T) {
+				attr := datalog.NewKeyword(":entity/name")
+				iter, _ := matcher.store.ScanKeysOnly(
+					matcher.scanBoundForValues(EAVT, entity, attr, nil, 0))
+				count := 0
+				for iter.Next() {
+					count++
+				}
+				iter.Close()
+
+				if count != 1 {
+					t.Errorf("Expected 1 datom for entity+attr, got %d", count)
+				}
+			})
+		})
 	}
-	defer os.RemoveAll(dir)
-
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	entity := datalog.NewIdentity("test-entity")
-
-	tx := db.NewTransaction()
-	tx.Add(entity, datalog.NewKeyword(":entity/name"), "Test")
-	tx.Add(entity, datalog.NewKeyword(":entity/type"), "example")
-	tx.Add(entity, datalog.NewKeyword(":entity/count"), int64(42))
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Failed to commit: %v", err)
-	}
-
-	matcher := db.Matcher().(*PatternMatcher)
-
-	t.Run("EAVT with entity bound", func(t *testing.T) {
-		iter, _ := matcher.store.ScanKeysOnly(
-			matcher.scanBoundForValues(EAVT, entity, nil, nil, 0))
-		count := 0
-		for iter.Next() {
-			count++
-		}
-		iter.Close()
-
-		if count != 3 {
-			t.Errorf("Expected 3 datoms for entity, got %d", count)
-		}
-	})
-
-	t.Run("EAVT with entity and attribute bound", func(t *testing.T) {
-		attr := datalog.NewKeyword(":entity/name")
-		iter, _ := matcher.store.ScanKeysOnly(
-			matcher.scanBoundForValues(EAVT, entity, attr, nil, 0))
-		count := 0
-		for iter.Next() {
-			count++
-		}
-		iter.Close()
-
-		if count != 1 {
-			t.Errorf("Expected 1 datom for entity+attr, got %d", count)
-		}
-	})
 }
 
 // TestChooseIndexForValuesAEVT verifies AEVT index handling still works correctly.
 func TestChooseIndexForValuesAEVT(t *testing.T) {
-	dir, err := os.MkdirTemp("", "choose-index-aevt-test-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			entity1 := datalog.NewIdentity("entity-1")
+			entity2 := datalog.NewIdentity("entity-2")
+
+			tx := db.NewTransaction()
+			tx.Add(entity1, datalog.NewKeyword(":entity/name"), "Entity 1")
+			tx.Add(entity2, datalog.NewKeyword(":entity/name"), "Entity 2")
+			tx.Add(entity1, datalog.NewKeyword(":entity/type"), "alpha")
+			_, err := tx.Commit()
+			if err != nil {
+				t.Fatalf("Failed to commit: %v", err)
+			}
+
+			matcher := db.Matcher().(*PatternMatcher)
+
+			t.Run("AEVT with attribute bound", func(t *testing.T) {
+				attr := datalog.NewKeyword(":entity/name")
+				iter, _ := matcher.store.ScanKeysOnly(
+					matcher.scanBoundForValues(AEVT, nil, attr, nil, 0))
+				count := 0
+				for iter.Next() {
+					count++
+				}
+				iter.Close()
+
+				if count != 2 {
+					t.Errorf("Expected 2 datoms for :entity/name, got %d", count)
+				}
+			})
+
+			t.Run("AEVT with attribute and entity bound", func(t *testing.T) {
+				attr := datalog.NewKeyword(":entity/name")
+				iter, _ := matcher.store.ScanKeysOnly(
+					matcher.scanBoundForValues(AEVT, entity1, attr, nil, 0))
+				count := 0
+				for iter.Next() {
+					count++
+				}
+				iter.Close()
+
+				if count != 1 {
+					t.Errorf("Expected 1 datom for entity1+attr, got %d", count)
+				}
+			})
+		})
 	}
-	defer os.RemoveAll(dir)
-
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	entity1 := datalog.NewIdentity("entity-1")
-	entity2 := datalog.NewIdentity("entity-2")
-
-	tx := db.NewTransaction()
-	tx.Add(entity1, datalog.NewKeyword(":entity/name"), "Entity 1")
-	tx.Add(entity2, datalog.NewKeyword(":entity/name"), "Entity 2")
-	tx.Add(entity1, datalog.NewKeyword(":entity/type"), "alpha")
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Failed to commit: %v", err)
-	}
-
-	matcher := db.Matcher().(*PatternMatcher)
-
-	t.Run("AEVT with attribute bound", func(t *testing.T) {
-		attr := datalog.NewKeyword(":entity/name")
-		iter, _ := matcher.store.ScanKeysOnly(
-			matcher.scanBoundForValues(AEVT, nil, attr, nil, 0))
-		count := 0
-		for iter.Next() {
-			count++
-		}
-		iter.Close()
-
-		if count != 2 {
-			t.Errorf("Expected 2 datoms for :entity/name, got %d", count)
-		}
-	})
-
-	t.Run("AEVT with attribute and entity bound", func(t *testing.T) {
-		attr := datalog.NewKeyword(":entity/name")
-		iter, _ := matcher.store.ScanKeysOnly(
-			matcher.scanBoundForValues(AEVT, entity1, attr, nil, 0))
-		count := 0
-		for iter.Next() {
-			count++
-		}
-		iter.Close()
-
-		if count != 1 {
-			t.Errorf("Expected 1 datom for entity1+attr, got %d", count)
-		}
-	})
 }
 
 // TestChooseIndexForValuesAETV verifies that AETV index scan ranges
@@ -426,106 +407,100 @@ func TestChooseIndexForValuesAEVT(t *testing.T) {
 // AETV is the A-primary CRDT-aware index (A → E → Tx↓ → V).
 // This test ensures scanBoundForValues handles AETV properly.
 func TestChooseIndexForValuesAETV(t *testing.T) {
-	dir, err := os.MkdirTemp("", "choose-index-aetv-test-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Create test data: multiple entities with different attributes
+			entity1 := datalog.NewIdentity("person-1")
+			entity2 := datalog.NewIdentity("person-2")
+			entity3 := datalog.NewIdentity("person-3")
+
+			tx := db.NewTransaction()
+			// Each entity has :person/name and :person/age
+			tx.Add(entity1, datalog.NewKeyword(":person/name"), "Alice")
+			tx.Add(entity1, datalog.NewKeyword(":person/age"), int64(30))
+			tx.Add(entity2, datalog.NewKeyword(":person/name"), "Bob")
+			tx.Add(entity2, datalog.NewKeyword(":person/age"), int64(25))
+			tx.Add(entity3, datalog.NewKeyword(":person/name"), "Charlie")
+			tx.Add(entity3, datalog.NewKeyword(":person/age"), int64(35))
+			// Add some other attributes to increase total datom count
+			tx.Add(entity1, datalog.NewKeyword(":person/city"), "NYC")
+			tx.Add(entity2, datalog.NewKeyword(":person/city"), "LA")
+			_, err := tx.Commit()
+			if err != nil {
+				t.Fatalf("Failed to commit: %v", err)
+			}
+
+			matcher := db.Matcher().(*PatternMatcher)
+
+			t.Run("AETV with attribute bound only", func(t *testing.T) {
+				// Scan AETV for :person/name - should get exactly 3 datoms
+				attr := datalog.NewKeyword(":person/name")
+				iter, err := matcher.store.ScanKeysOnly(
+					matcher.scanBoundForValues(AETV, nil, attr, nil, 0))
+				if err != nil {
+					t.Fatalf("Scan failed: %v", err)
+				}
+
+				count := 0
+				for iter.Next() {
+					count++
+				}
+				iter.Close()
+
+				// Should find exactly 3 :person/name datoms
+				if count != 3 {
+					t.Errorf("Expected 3 datoms for :person/name via AETV, got %d", count)
+				}
+			})
+
+			t.Run("AETV with attribute and entity bound", func(t *testing.T) {
+				// Scan AETV for entity1 + :person/name - should get exactly 1 datom
+				attr := datalog.NewKeyword(":person/name")
+				iter, err := matcher.store.ScanKeysOnly(
+					matcher.scanBoundForValues(AETV, entity1, attr, nil, 0))
+				if err != nil {
+					t.Fatalf("Scan failed: %v", err)
+				}
+
+				count := 0
+				for iter.Next() {
+					count++
+				}
+				iter.Close()
+
+				// Should find exactly 1 datom for entity1 + :person/name
+				if count != 1 {
+					t.Errorf("Expected 1 datom for entity1+:person/name via AETV, got %d", count)
+				}
+			})
+
+			t.Run("AETV scan should not exceed attribute datom count", func(t *testing.T) {
+				// This test verifies the bug is fixed: without AETV case in scanBoundForValues,
+				// it would scan ALL datoms in the index instead of just the attribute's datoms
+				attr := datalog.NewKeyword(":person/age")
+				iter, err := matcher.store.ScanKeysOnly(
+					matcher.scanBoundForValues(AETV, nil, attr, nil, 0))
+				if err != nil {
+					t.Fatalf("Scan failed: %v", err)
+				}
+
+				count := 0
+				for iter.Next() {
+					count++
+				}
+				iter.Close()
+
+				// Total datoms in DB is 8, :person/age has 3
+				// If AETV case is missing, count would be >= 8 (full scan)
+				if count > 3 {
+					t.Errorf("AETV scan for :person/age scanned %d datoms, expected 3 (possible full index scan)", count)
+				}
+				if count != 3 {
+					t.Errorf("Expected exactly 3 datoms for :person/age, got %d", count)
+				}
+			})
+		})
 	}
-	defer os.RemoveAll(dir)
-
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Create test data: multiple entities with different attributes
-	entity1 := datalog.NewIdentity("person-1")
-	entity2 := datalog.NewIdentity("person-2")
-	entity3 := datalog.NewIdentity("person-3")
-
-	tx := db.NewTransaction()
-	// Each entity has :person/name and :person/age
-	tx.Add(entity1, datalog.NewKeyword(":person/name"), "Alice")
-	tx.Add(entity1, datalog.NewKeyword(":person/age"), int64(30))
-	tx.Add(entity2, datalog.NewKeyword(":person/name"), "Bob")
-	tx.Add(entity2, datalog.NewKeyword(":person/age"), int64(25))
-	tx.Add(entity3, datalog.NewKeyword(":person/name"), "Charlie")
-	tx.Add(entity3, datalog.NewKeyword(":person/age"), int64(35))
-	// Add some other attributes to increase total datom count
-	tx.Add(entity1, datalog.NewKeyword(":person/city"), "NYC")
-	tx.Add(entity2, datalog.NewKeyword(":person/city"), "LA")
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Failed to commit: %v", err)
-	}
-
-	matcher := db.Matcher().(*PatternMatcher)
-
-	t.Run("AETV with attribute bound only", func(t *testing.T) {
-		// Scan AETV for :person/name - should get exactly 3 datoms
-		attr := datalog.NewKeyword(":person/name")
-		iter, err := matcher.store.ScanKeysOnly(
-			matcher.scanBoundForValues(AETV, nil, attr, nil, 0))
-		if err != nil {
-			t.Fatalf("Scan failed: %v", err)
-		}
-
-		count := 0
-		for iter.Next() {
-			count++
-		}
-		iter.Close()
-
-		// Should find exactly 3 :person/name datoms
-		if count != 3 {
-			t.Errorf("Expected 3 datoms for :person/name via AETV, got %d", count)
-		}
-	})
-
-	t.Run("AETV with attribute and entity bound", func(t *testing.T) {
-		// Scan AETV for entity1 + :person/name - should get exactly 1 datom
-		attr := datalog.NewKeyword(":person/name")
-		iter, err := matcher.store.ScanKeysOnly(
-			matcher.scanBoundForValues(AETV, entity1, attr, nil, 0))
-		if err != nil {
-			t.Fatalf("Scan failed: %v", err)
-		}
-
-		count := 0
-		for iter.Next() {
-			count++
-		}
-		iter.Close()
-
-		// Should find exactly 1 datom for entity1 + :person/name
-		if count != 1 {
-			t.Errorf("Expected 1 datom for entity1+:person/name via AETV, got %d", count)
-		}
-	})
-
-	t.Run("AETV scan should not exceed attribute datom count", func(t *testing.T) {
-		// This test verifies the bug is fixed: without AETV case in scanBoundForValues,
-		// it would scan ALL datoms in the index instead of just the attribute's datoms
-		attr := datalog.NewKeyword(":person/age")
-		iter, err := matcher.store.ScanKeysOnly(
-			matcher.scanBoundForValues(AETV, nil, attr, nil, 0))
-		if err != nil {
-			t.Fatalf("Scan failed: %v", err)
-		}
-
-		count := 0
-		for iter.Next() {
-			count++
-		}
-		iter.Close()
-
-		// Total datoms in DB is 8, :person/age has 3
-		// If AETV case is missing, count would be >= 8 (full scan)
-		if count > 3 {
-			t.Errorf("AETV scan for :person/age scanned %d datoms, expected 3 (possible full index scan)", count)
-		}
-		if count != 3 {
-			t.Errorf("Expected exactly 3 datoms for :person/age, got %d", count)
-		}
-	})
 }

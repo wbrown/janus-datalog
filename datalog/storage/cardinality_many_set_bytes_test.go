@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -17,21 +16,14 @@ import (
 // []byte is a valid TypeBytes value but is not a valid Go map key, so Set
 // panics with "hash of unhashable type []uint8".
 
-// newBytesManyDB opens the []byte cardinality-many fixture. popts sets the
-// database's default planner options (nil = defaults).
-func newBytesManyDB(t *testing.T, popts *planner.PlannerOptions) (*Database, datalog.Identity, datalog.Keyword) {
+// newBytesManyDB opens the []byte cardinality-many fixture on the mode's backend.
+func newBytesManyDB(t *testing.T, mode optimizerMode) (*Database, datalog.Identity, datalog.Keyword) {
 	t.Helper()
-	dir := t.TempDir()
 	s, err := schema.NewBuilder().
 		Attribute(":file/chunks").Type(schema.TypeBytes).Many().Add().
 		Build()
 	require.NoError(t, err)
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           dir,
-		Schema:         s,
-		PlannerOptions: popts,
-	})
-	require.NoError(t, err)
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 	return db, datalog.NewIdentity("file-1"), datalog.NewKeyword(":file/chunks")
 }
 
@@ -53,9 +45,7 @@ func collectByteSet(t *testing.T, db *Database, e datalog.Identity) [][]byte {
 func TestCardinalityManySet_ByteValues_NoPanic(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, e, a := newBytesManyDB(t, &popts)
-			defer db.Close()
+			db, e, a := newBytesManyDB(t, mode)
 
 			defer func() {
 				if r := recover(); r != nil {
@@ -78,9 +68,7 @@ func TestCardinalityManySet_ByteValues_NoPanic(t *testing.T) {
 func TestCardinalityManySet_ByteValues_ReplacesExistingSet(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, e, a := newBytesManyDB(t, &popts)
-			defer db.Close()
+			db, e, a := newBytesManyDB(t, mode)
 
 			defer func() {
 				if r := recover(); r != nil {
@@ -110,9 +98,7 @@ func TestCardinalityManySet_ByteValues_ReplacesExistingSet(t *testing.T) {
 func TestCardinalityManySet_ByteValues_PendingOpsInSameTransaction(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, e, a := newBytesManyDB(t, &popts)
-			defer db.Close()
+			db, e, a := newBytesManyDB(t, mode)
 
 			defer func() {
 				if r := recover(); r != nil {
@@ -137,9 +123,7 @@ func TestCardinalityManySet_ByteValues_PendingOpsInSameTransaction(t *testing.T)
 func TestCardinalityManySet_ByteValues_DuplicateMembersDedupByContent(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, e, a := newBytesManyDB(t, &popts)
-			defer db.Close()
+			db, e, a := newBytesManyDB(t, mode)
 
 			defer func() {
 				if r := recover(); r != nil {

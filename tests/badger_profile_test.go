@@ -14,7 +14,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-// TestBadgerParallelProfile profiles parallel execution to find bottlenecks
+// TestBadgerParallelProfile profiles parallel execution to find bottlenecks.
+//
+// It is an instrument rather than a correctness test: it writes a CPU profile
+// and a duration, and the only thing it asserts is that execution did not
+// error. The backend is fixed so successive profiles are comparable, which is
+// also why it stays off the backend axis — three stores would produce three
+// runs overwriting one profile. TestParallelSubqueryOverStorage carries the
+// parallel-execution correctness claim across every backend.
 func TestBadgerParallelProfile(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping profiling test in short mode")

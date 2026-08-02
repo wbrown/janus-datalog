@@ -2,7 +2,6 @@ package tests
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -16,19 +15,20 @@ import (
 // TestEntityJoinBug reproduces the bug where joining two patterns on the same entity
 // loses one result
 func TestEntityJoinBug(t *testing.T) {
-	// Create temporary directory for test database
-	dir, err := os.MkdirTemp("", "entity-join-bug-*")
-	if err != nil {
-		t.Fatal(err)
+	for _, backend := range storage.AvailableBackends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					testEntityJoinBug(t, backend, mode)
+				})
+			}
+		})
 	}
-	defer os.RemoveAll(dir)
+}
 
-	// Create database
-	db, err := storage.NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+func testEntityJoinBug(t *testing.T, backend storage.Backend, mode optimizerMode) {
+	db := createBackendModeDB(t, backend, mode, storage.DatabaseOptions{})
+	popts := mode.plannerOptions()
 
 	// Add test data - 5 bars with both high and low values
 	tx := db.NewTransaction()
@@ -45,126 +45,120 @@ func TestEntityJoinBug(t *testing.T) {
 		t.Fatalf("Failed to commit transaction: %v", err)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
+	// Verify individual patterns work
+	highQuery := `[:find ?bar :where [?bar :price/high ?h]]`
+	hq, _ := parser.ParseQuery(highQuery)
+	matcher := db.Matcher()
+	exec := db.NewExecutor()
+	hresult, _ := exec.Execute(hq)
 
-			// Verify individual patterns work
-			highQuery := `[:find ?bar :where [?bar :price/high ?h]]`
-			hq, _ := parser.ParseQuery(highQuery)
-			matcher := storage.NewPatternMatcher(db.Store())
-			exec := executor.NewExecutorWithOptions(matcher, nil, popts)
-			hresult, _ := exec.Execute(hq)
+	// Collect results by iterating
+	var htuples []executor.Tuple
+	hIt := hresult.Iterator()
+	for hIt.Next() {
+		htuples = append(htuples, hIt.Tuple())
+	}
+	hIt.Close()
 
-			// Collect results by iterating
-			var htuples []executor.Tuple
-			hIt := hresult.Iterator()
-			for hIt.Next() {
-				htuples = append(htuples, hIt.Tuple())
-			}
-			hIt.Close()
+	t.Logf("High query found %d results (type=%T)", len(htuples), hresult)
+	for i, tuple := range htuples {
+		t.Logf("  High result %d: %v", i, tuple[0])
+	}
+	if len(htuples) != 5 {
+		t.Fatalf("Expected 5 results from high query, got %d", len(htuples))
+	}
 
-			t.Logf("High query found %d results (type=%T)", len(htuples), hresult)
-			for i, tuple := range htuples {
-				t.Logf("  High result %d: %v", i, tuple[0])
-			}
-			if len(htuples) != 5 {
-				t.Fatalf("Expected 5 results from high query, got %d", len(htuples))
-			}
+	// Now test the Relation directly from the matcher (before executor)
+	highPattern := hq.Where[0].(*query.DataPattern)
+	highRel, _ := matcher.Match(query.PatternQuery(highPattern), nil)
+	t.Logf("High pattern Match() returned type=%T, symbols=%v", highRel, highRel.Symbols())
 
-			// Now test the Relation directly from the matcher (before executor)
-			highPattern := hq.Where[0].(*query.DataPattern)
-			highRel, _ := matcher.Match(query.PatternQuery(highPattern), nil)
-			t.Logf("High pattern Match() returned type=%T, symbols=%v", highRel, highRel.Symbols())
+	// Iterate directly to see all tuples
+	hPatIt := highRel.Iterator()
+	hCount := 0
+	for hPatIt.Next() {
+		hCount++
+		t.Logf("  High pattern tuple %d: %v", hCount, hPatIt.Tuple())
+	}
+	hPatIt.Close()
+	t.Logf("High pattern iterator returned %d tuples", hCount)
+	if hCount != 5 {
+		t.Fatalf("Expected 5 tuples from high pattern iterator, got %d", hCount)
+	}
 
-			// Iterate directly to see all tuples
-			hPatIt := highRel.Iterator()
-			hCount := 0
-			for hPatIt.Next() {
-				hCount++
-				t.Logf("  High pattern tuple %d: %v", hCount, hPatIt.Tuple())
-			}
-			hPatIt.Close()
-			t.Logf("High pattern iterator returned %d tuples", hCount)
-			if hCount != 5 {
-				t.Fatalf("Expected 5 tuples from high pattern iterator, got %d", hCount)
-			}
+	lowQuery := `[:find ?bar :where [?bar :price/low ?l]]`
+	lq, _ := parser.ParseQuery(lowQuery)
+	lresult, _ := exec.Execute(lq)
 
-			lowQuery := `[:find ?bar :where [?bar :price/low ?l]]`
-			lq, _ := parser.ParseQuery(lowQuery)
-			lresult, _ := exec.Execute(lq)
+	// Collect results by iterating
+	var ltuples []executor.Tuple
+	lIt := lresult.Iterator()
+	for lIt.Next() {
+		ltuples = append(ltuples, lIt.Tuple())
+	}
+	lIt.Close()
 
-			// Collect results by iterating
-			var ltuples []executor.Tuple
-			lIt := lresult.Iterator()
-			for lIt.Next() {
-				ltuples = append(ltuples, lIt.Tuple())
-			}
-			lIt.Close()
+	t.Logf("Low query found %d results (type=%T)", len(ltuples), lresult)
+	for i, tuple := range ltuples {
+		t.Logf("  Low result %d: %v", i, tuple[0])
+	}
+	if len(ltuples) != 5 {
+		t.Fatalf("Expected 5 results from low query, got %d", len(ltuples))
+	}
 
-			t.Logf("Low query found %d results (type=%T)", len(ltuples), lresult)
-			for i, tuple := range ltuples {
-				t.Logf("  Low result %d: %v", i, tuple[0])
-			}
-			if len(ltuples) != 5 {
-				t.Fatalf("Expected 5 results from low query, got %d", len(ltuples))
-			}
+	// Now test the low pattern directly
+	lowPattern := lq.Where[0].(*query.DataPattern)
+	lowRel, _ := matcher.Match(query.PatternQuery(lowPattern), nil)
+	t.Logf("Low pattern Match() returned type=%T, symbols=%v", lowRel, lowRel.Symbols())
 
-			// Now test the low pattern directly
-			lowPattern := lq.Where[0].(*query.DataPattern)
-			lowRel, _ := matcher.Match(query.PatternQuery(lowPattern), nil)
-			t.Logf("Low pattern Match() returned type=%T, symbols=%v", lowRel, lowRel.Symbols())
+	// Iterate directly to see all tuples
+	lPatIt := lowRel.Iterator()
+	lCount := 0
+	for lPatIt.Next() {
+		lCount++
+		t.Logf("  Low pattern tuple %d: %v", lCount, lPatIt.Tuple())
+	}
+	lPatIt.Close()
+	t.Logf("Low pattern iterator returned %d tuples", lCount)
+	if lCount != 5 {
+		t.Fatalf("Expected 5 tuples from low pattern iterator, got %d", lCount)
+	}
 
-			// Iterate directly to see all tuples
-			lPatIt := lowRel.Iterator()
-			lCount := 0
-			for lPatIt.Next() {
-				lCount++
-				t.Logf("  Low pattern tuple %d: %v", lCount, lPatIt.Tuple())
-			}
-			lPatIt.Close()
-			t.Logf("Low pattern iterator returned %d tuples", lCount)
-			if lCount != 5 {
-				t.Fatalf("Expected 5 tuples from low pattern iterator, got %d", lCount)
-			}
+	// Test join with annotations - this should return 5 results but returns 4
+	joinQuery := `[:find ?bar :where [?bar :price/high ?h] [?bar :price/low ?l]]`
+	jq, _ := parser.ParseQuery(joinQuery)
 
-			// Test join with annotations - this should return 5 results but returns 4
-			joinQuery := `[:find ?bar :where [?bar :price/high ?h] [?bar :price/low ?l]]`
-			jq, _ := parser.ParseQuery(joinQuery)
+	var joinEvents []annotations.Event
+	annotatedPopts := popts
+	annotatedPopts.Handler = func(event annotations.Event) {
+		if event.Name == annotations.JoinStrategy {
+			joinEvents = append(joinEvents, event)
+		}
+	}
+	annotatedMatcher := storage.NewPatternMatcherWithOptions(
+		db.Store(), executor.ExecutorOptionsFromPlanner(annotatedPopts))
+	annotatedExec := executor.NewExecutorWithOptions(annotatedMatcher, nil, annotatedPopts)
 
-			var joinEvents []annotations.Event
-			annotatedPopts := popts
-			annotatedPopts.Handler = func(event annotations.Event) {
-				if event.Name == annotations.JoinStrategy {
-					joinEvents = append(joinEvents, event)
-				}
-			}
-			annotatedMatcher := storage.NewPatternMatcherWithOptions(
-				db.Store(), executor.ExecutorOptionsFromPlanner(annotatedPopts))
-			annotatedExec := executor.NewExecutorWithOptions(annotatedMatcher, nil, annotatedPopts)
+	jresult, _ := annotatedExec.Execute(jq)
 
-			jresult, _ := annotatedExec.Execute(jq)
+	// Collect results by iterating
+	var jtuples []executor.Tuple
+	jIt := jresult.Iterator()
+	for jIt.Next() {
+		jtuples = append(jtuples, jIt.Tuple())
+	}
+	jIt.Close()
 
-			// Collect results by iterating
-			var jtuples []executor.Tuple
-			jIt := jresult.Iterator()
-			for jIt.Next() {
-				jtuples = append(jtuples, jIt.Tuple())
-			}
-			jIt.Close()
-
-			t.Logf("Join query found %d results", len(jtuples))
-			if len(jtuples) != 5 {
-				t.Errorf("BUG REPRODUCED: Join query expected 5 results, got %d", len(jtuples))
-				// Print which bars we got
-				for i, tuple := range jtuples {
-					t.Logf("  Got bar: %v", tuple[0])
-					_ = i
-				}
-			}
-			if len(joinEvents) == 0 {
-				t.Error("expected structured join strategy annotations")
-			}
-		})
+	t.Logf("Join query found %d results", len(jtuples))
+	if len(jtuples) != 5 {
+		t.Errorf("BUG REPRODUCED: Join query expected 5 results, got %d", len(jtuples))
+		// Print which bars we got
+		for i, tuple := range jtuples {
+			t.Logf("  Got bar: %v", tuple[0])
+			_ = i
+		}
+	}
+	if len(joinEvents) == 0 {
+		t.Error("expected structured join strategy annotations")
 	}
 }

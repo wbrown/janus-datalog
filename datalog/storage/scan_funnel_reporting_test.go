@@ -151,25 +151,21 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 					// report, so the fixture's writes below stay out of events.
 					var events []annotations.Event
 					recording := false
-					opts := mode.plannerOptions()
-					opts.Handler = func(ev annotations.Event) {
-						if recording {
-							events = append(events, ev)
-						}
-					}
-					db, err := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						Schema:         funnelSchema(t),
-						PlannerOptions: &opts,
-						DisableCache:   true,
+					db := createOptimizerModeDB(t, mode, DatabaseOptions{
+						Schema:       funnelSchema(t),
+						DisableCache: true,
+						AnnotationHandler: func(ev annotations.Event) {
+							if recording {
+								events = append(events, ev)
+							}
+						},
 					})
-					require.NoError(t, err)
-					defer db.Close()
 
 					e := funnelFixture(t, db)
 
 					recording = true
 					var result executor.Relation
+					var err error
 					if tc.inputEntity {
 						result, err = db.Query(tc.query, e)
 					} else {
@@ -317,19 +313,14 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 					// everything the database builds is constructed with it.
 					var events []annotations.Event
 					recording := false
-					opts := mode.plannerOptions()
-					opts.Handler = func(ev annotations.Event) {
-						if recording {
-							events = append(events, ev)
-						}
-					}
-					db, err := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						Schema:         funnelSchema(t),
-						PlannerOptions: &opts,
+					db := createOptimizerModeDB(t, mode, DatabaseOptions{
+						Schema: funnelSchema(t),
+						AnnotationHandler: func(ev annotations.Event) {
+							if recording {
+								events = append(events, ev)
+							}
+						},
 					})
-					require.NoError(t, err)
-					defer db.Close()
 
 					funnelFixture(t, db)
 					recording = true
@@ -398,12 +389,19 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 // no entry and contributes no tuple, but establishing that costs a read, and an
 // arm reporting only its matches prices that read at nothing.
 func TestBindingDrivenCacheArmReportsWhatItServed(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testBindingDrivenCacheArmReportsWhatItServed(t, mode)
+		})
+	}
+}
+
+func testBindingDrivenCacheArmReportsWhatItServed(t *testing.T, mode optimizerMode) {
 	// The recording flag scopes collection to the matches below; the handler is
 	// registered at open because everything the database builds carries it.
 	var events []annotations.Event
 	recording := false
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema: funnelSchema(t),
 		AnnotationHandler: func(ev annotations.Event) {
 			if recording {
@@ -411,8 +409,6 @@ func TestBindingDrivenCacheArmReportsWhatItServed(t *testing.T) {
 			}
 		},
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	name := datalog.NewKeyword(":person/name")
 	alice := funnelFixture(t, db)
@@ -420,7 +416,7 @@ func TestBindingDrivenCacheArmReportsWhatItServed(t *testing.T) {
 	bob := datalog.NewIdentity("funnel:bob")
 	tx := db.NewTransaction()
 	require.NoError(t, tx.Set(bob, name, "Bob"))
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	require.NoError(t, err)
 
 	// Carol carries a different attribute, so she binds, reads, and resolves to
@@ -513,6 +509,14 @@ func TestBindingDrivenCacheArmReportsWhatItServed(t *testing.T) {
 // peeks before it resolves, so it walks two and reports the count instead —
 // naming an index there would name whichever arm reached it last.
 func TestPatternLessReadsReportUnderEntityAndAttribute(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testPatternLessReadsReportUnderEntityAndAttribute(t, mode)
+		})
+	}
+}
+
+func testPatternLessReadsReportUnderEntityAndAttribute(t *testing.T, mode optimizerMode) {
 	name := datalog.NewKeyword(":person/name")
 	tag := datalog.NewKeyword(":person/tag")
 
@@ -522,8 +526,7 @@ func TestPatternLessReadsReportUnderEntityAndAttribute(t *testing.T) {
 		// the fixture's writes stay out of events.
 		var events []annotations.Event
 		recording := false
-		db, err := NewDatabaseWithOptions(DatabaseOptions{
-			Path:         t.TempDir(),
+		db := createOptimizerModeDB(t, mode, DatabaseOptions{
 			Schema:       funnelSchema(t),
 			DisableCache: disableCache,
 			AnnotationHandler: func(ev annotations.Event) {
@@ -532,8 +535,6 @@ func TestPatternLessReadsReportUnderEntityAndAttribute(t *testing.T) {
 				}
 			},
 		})
-		require.NoError(t, err)
-		t.Cleanup(func() { db.Close() })
 		e := funnelFixture(t, db)
 		recording = true
 		return db, &events, e
@@ -625,11 +626,18 @@ func TestPatternLessReadsReportUnderEntityAndAttribute(t *testing.T) {
 // separates them in a trace is the run: prefetch opens one per entity and names
 // none, batch pull shares a single EATV traversal and names it.
 func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testBulkReadsReportUnderNoSingleSubject(t, mode)
+		})
+	}
+}
+
+func testBulkReadsReportUnderNoSingleSubject(t *testing.T, mode optimizerMode) {
 	t.Run("prefetch reports what it filled", func(t *testing.T) {
 		var events []annotations.Event
 		recording := false
-		db, err := NewDatabaseWithOptions(DatabaseOptions{
-			Path:   t.TempDir(),
+		db := createOptimizerModeDB(t, mode, DatabaseOptions{
 			Schema: funnelSchema(t),
 			AnnotationHandler: func(ev annotations.Event) {
 				if recording {
@@ -637,14 +645,12 @@ func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
 				}
 			},
 		})
-		require.NoError(t, err)
-		defer db.Close()
 
 		alice := funnelFixture(t, db)
 		bob := datalog.NewIdentity("funnel:bob")
 		tx := db.NewTransaction()
 		require.NoError(t, tx.Set(bob, datalog.NewKeyword(":person/name"), "Bob"))
-		_, err = tx.Commit()
+		_, err := tx.Commit()
 		require.NoError(t, err)
 
 		recording = true
@@ -666,8 +672,7 @@ func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
 	t.Run("batch pull names its shared run", func(t *testing.T) {
 		var events []annotations.Event
 		recording := false
-		db, err := NewDatabaseWithOptions(DatabaseOptions{
-			Path:   t.TempDir(),
+		db := createOptimizerModeDB(t, mode, DatabaseOptions{
 			Schema: funnelSchema(t),
 			AnnotationHandler: func(ev annotations.Event) {
 				if recording {
@@ -675,8 +680,6 @@ func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
 				}
 			},
 		})
-		require.NoError(t, err)
-		defer db.Close()
 
 		alice := funnelFixture(t, db)
 
@@ -711,6 +714,14 @@ func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
 // which is what the source reads. No other cardinality can satisfy it: intake
 // above the source is the walk's, and only this branch opens those scans.
 func TestUniqueAttributeWalkReportsItsOwnScans(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testUniqueAttributeWalkReportsItsOwnScans(t, mode)
+		})
+	}
+}
+
+func testUniqueAttributeWalkReportsItsOwnScans(t *testing.T, mode optimizerMode) {
 	const (
 		entities        = 8
 		writesPerEntity = 3
@@ -725,8 +736,7 @@ func TestUniqueAttributeWalkReportsItsOwnScans(t *testing.T) {
 
 	var events []annotations.Event
 	recording := false
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema: s,
 		AnnotationHandler: func(ev annotations.Event) {
 			if recording {
@@ -734,8 +744,6 @@ func TestUniqueAttributeWalkReportsItsOwnScans(t *testing.T) {
 			}
 		},
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	// Rewritten rather than written once, so each entity's group has entries
 	// behind the winner for the walk to step over.

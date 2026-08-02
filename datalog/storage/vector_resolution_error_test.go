@@ -9,6 +9,12 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
+// TestLoadRGAElementsPropagatesDatomDecodeError is the reproduction standing
+// behind TestResolveVectorAttributeSurfacesScanErrors, which carries the same
+// contract on every backend through an injected iterator. Here the key is
+// really truncated and the decoder really rejects it. No Store method writes a
+// malformed key — no correct writer produces one — so planting it means
+// reaching past the interface into a backend's own keyspace, Badger's here.
 func TestLoadRGAElementsPropagatesDatomDecodeError(t *testing.T) {
 	store, err := NewBadgerStore(t.TempDir(), &BinaryKeyEncoder{})
 	require.NoError(t, err)

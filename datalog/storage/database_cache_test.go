@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -10,31 +9,6 @@ import (
 )
 
 func TestDatabasePlanCache(t *testing.T) {
-	// Create a temporary database
-	dbPath := "/tmp/test-db-cache"
-	os.RemoveAll(dbPath)
-	defer os.RemoveAll(dbPath)
-
-	db, err := NewDatabase(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Add some test data
-	tx := db.NewTransaction()
-	person1 := datalog.NewIdentity("person1")
-	person2 := datalog.NewIdentity("person2")
-
-	tx.Add(person1, datalog.NewKeyword(":person/name"), "Alice")
-	tx.Add(person2, datalog.NewKeyword(":person/name"), "Bob")
-	tx.Add(person1, datalog.NewKeyword(":person/age"), int64(30))
-	tx.Add(person2, datalog.NewKeyword(":person/age"), int64(25))
-
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("Failed to commit transaction: %v", err)
-	}
-
 	// Parse a query
 	queryStr := `[:find ?e ?name ?age
 	              :where [?e :person/name ?name]
@@ -47,6 +21,22 @@ func TestDatabasePlanCache(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Add some test data
+			tx := db.NewTransaction()
+			person1 := datalog.NewIdentity("person1")
+			person2 := datalog.NewIdentity("person2")
+
+			tx.Add(person1, datalog.NewKeyword(":person/name"), "Alice")
+			tx.Add(person2, datalog.NewKeyword(":person/name"), "Bob")
+			tx.Add(person1, datalog.NewKeyword(":person/age"), int64(30))
+			tx.Add(person2, datalog.NewKeyword(":person/age"), int64(25))
+
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit transaction: %v", err)
+			}
+
 			// Test 1: Create multiple executors - they should share the cache
 			exec1 := db.NewExecutorWithOptions(mode.plannerOptions())
 			exec2 := db.NewExecutorWithOptions(mode.plannerOptions())
@@ -118,20 +108,6 @@ func TestDatabasePlanCache(t *testing.T) {
 }
 
 func TestDatabaseWithoutCache(t *testing.T) {
-	// Create a temporary database
-	dbPath := "/tmp/test-db-no-cache"
-	os.RemoveAll(dbPath)
-	defer os.RemoveAll(dbPath)
-
-	db, err := NewDatabase(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Disable caching
-	db.SetPlanCache(nil)
-
 	// Parse a query
 	queryStr := `[:find ?e :where [?e :person/name _]]`
 	q, err := parser.ParseQuery(queryStr)
@@ -141,6 +117,11 @@ func TestDatabaseWithoutCache(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Disable caching
+			db.SetPlanCache(nil)
+
 			// Create executor - should work without cache
 			exec := db.NewExecutorWithOptions(mode.plannerOptions())
 
@@ -160,17 +141,6 @@ func TestDatabaseWithoutCache(t *testing.T) {
 
 // TestExecutorCreationOverhead verifies that creating executors is cheap
 func TestExecutorCreationOverhead(t *testing.T) {
-	// Create a temporary database
-	dbPath := "/tmp/test-db-overhead"
-	os.RemoveAll(dbPath)
-	defer os.RemoveAll(dbPath)
-
-	db, err := NewDatabase(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
 	// Basic sanity check that they work
 	queryStr := `[:find ?e :where [?e _ _]]`
 	q, err := parser.ParseQuery(queryStr)
@@ -180,6 +150,8 @@ func TestExecutorCreationOverhead(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
 			// Create many executors - should be fast and low memory
 			executors := make([]*executor.Executor, 1000)
 			for i := 0; i < 1000; i++ {

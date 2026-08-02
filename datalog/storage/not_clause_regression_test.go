@@ -146,8 +146,10 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			// Tracing only; registered at open because everything the database
 			// builds is constructed with it.
-			db := createOptimizerModeDB(t, mode, func(event annotations.Event) {
-				t.Logf("ANNOTATION: %s %v", event.Name, event.Data)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+				AnnotationHandler: func(event annotations.Event) {
+					t.Logf("ANNOTATION: %s %v", event.Name, event.Data)
+				},
 			})
 
 			tx := db.NewTransaction()
@@ -261,7 +263,7 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 func TestNotClauseWithUnboundInnerVar_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 

@@ -60,19 +60,6 @@ func eaCacheBypassSchema() *schema.Schema {
 	return s
 }
 
-// createEACacheTestDB creates a database with schema for cache bypass testing.
-func createEACacheTestDB(t *testing.T, disableCache bool) (*Database, func()) {
-	t.Helper()
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:         dir,
-		DisableCache: disableCache,
-	})
-	require.NoError(t, err)
-	db.SetSchema(eaCacheBypassSchema())
-	return db, func() { db.Close() }
-}
-
 // =============================================================================
 // Test 1: Reproduction — prove the cache path is taken (cache-only test)
 // =============================================================================
@@ -87,15 +74,10 @@ func TestEACacheBypass_Reproduction(t *testing.T) {
 	// clears events after the fixture so what it asserts on is its query's.
 	open := func(t *testing.T, omode optimizerMode, events *[]annotations.Event) *Database {
 		t.Helper()
-		popts := omode.plannerOptions()
-		popts.Handler = func(e annotations.Event) { *events = append(*events, e) }
-		db, err := NewDatabaseWithOptions(DatabaseOptions{
-			Path:           t.TempDir(),
-			DisableCache:   false,
-			PlannerOptions: &popts,
+		db := createOptimizerModeDB(t, omode, DatabaseOptions{
+			DisableCache:      false,
+			AnnotationHandler: func(e annotations.Event) { *events = append(*events, e) },
 		})
-		require.NoError(t, err)
-		t.Cleanup(func() { db.Close() })
 		db.SetSchema(eaCacheBypassSchema())
 
 		for _, name := range []string{"Alice", "Bob", "Charlie"} {
@@ -153,14 +135,9 @@ func TestEACacheBypass_CardinalityOne(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					personID := datalog.NewIdentity("person-1")
@@ -201,14 +178,9 @@ func TestEACacheBypass_CardinalityMany(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					personID := datalog.NewIdentity("person-1")
@@ -252,14 +224,9 @@ func TestEACacheBypass_CardinalityVector(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					docID := datalog.NewIdentity("doc-1")
@@ -301,14 +268,9 @@ func TestEACacheBypass_TupleInput(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					personID := datalog.NewIdentity("person-1")
@@ -338,14 +300,9 @@ func TestEACacheBypass_RelationInput(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					person1 := datalog.NewIdentity("person-1")
@@ -378,14 +335,9 @@ func TestEACacheBypass_CollectionEWithScalarA(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -422,14 +374,9 @@ func TestEACacheBypass_NonexistentAttribute(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					personID := datalog.NewIdentity("person-1")
@@ -457,14 +404,9 @@ func TestEACacheBypass_CacheInvalidation(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					personID := datalog.NewIdentity("person-1")
@@ -504,14 +446,9 @@ func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					person1 := datalog.NewIdentity("person-1")
@@ -561,15 +498,9 @@ func TestEACacheBypass_PerTupleA_UsesCache(t *testing.T) {
 			// Registered at open; events is cleared after the fixture so the
 			// absence assertion below is about this query's events.
 			var events []annotations.Event
-			dir := t.TempDir()
-			popts := omode.plannerOptions()
-			popts.Handler = func(e annotations.Event) { events = append(events, e) }
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           dir,
-				PlannerOptions: &popts,
+			db := createOptimizerModeDB(t, omode, DatabaseOptions{
+				AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -603,7 +534,7 @@ func TestEACacheBypass_PerTupleA_UsesCache(t *testing.T) {
 			// entity-2: config/attr = :person/age, person/age = 30
 			tx.Set(entity2, configAttr, ageAttr)
 			tx.Set(entity2, ageAttr, int64(30))
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			events = nil
@@ -634,15 +565,10 @@ func TestEACacheBypass_PerTupleVector_RelationInput(t *testing.T) {
 					// Registered at open; events feeds the failure dump below and
 					// nothing asserts on its contents.
 					var events []annotations.Event
-					popts := omode.plannerOptions()
-					popts.Handler = func(e annotations.Event) { events = append(events, e) }
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache:      mode.disableCache,
+						AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					person1 := datalog.NewIdentity("person-1")
@@ -686,14 +612,9 @@ func TestEACacheBypass_CacheMissFallback(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					popts := omode.plannerOptions()
-					db, dbErr := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           t.TempDir(),
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, dbErr)
-					defer db.Close()
 					db.SetSchema(eaCacheBypassSchema())
 
 					person1 := datalog.NewIdentity("person-1")
@@ -725,15 +646,9 @@ func TestEACacheBypass_JoinBoundA(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(omode.name, func(t *testing.T) {
-					dir := t.TempDir()
-					popts := omode.plannerOptions()
-					db, err := NewDatabaseWithOptions(DatabaseOptions{
-						Path:           dir,
-						DisableCache:   mode.disableCache,
-						PlannerOptions: &popts,
+					db := createOptimizerModeDB(t, omode, DatabaseOptions{
+						DisableCache: mode.disableCache,
 					})
-					require.NoError(t, err)
-					defer db.Close()
 
 					s := schema.NewSchema()
 					s.Add(&schema.AttributeDefinition{
@@ -756,7 +671,7 @@ func TestEACacheBypass_JoinBoundA(t *testing.T) {
 					tx := db.NewTransaction()
 					tx.Set(metaID, targetAttr, nameAttr)
 					tx.Set(personID, nameAttr, "Alice")
-					_, err = tx.Commit()
+					_, err := tx.Commit()
 					require.NoError(t, err)
 
 					results, err := executor.CollectTuples(db.Query(

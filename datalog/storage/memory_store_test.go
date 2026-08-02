@@ -180,7 +180,12 @@ func TestInjectedStoreNotClosedOnConstructorError(t *testing.T) {
 	}}))
 }
 
-func TestInjectedStoreEncoderThresholdNotMutated(t *testing.T) {
+// CompressionThreshold configures an encoder this constructor builds for a
+// backend it opens. An injected store arrived with its encoder already set, and
+// the constructor takes that encoder as-is, so the option had nowhere to land:
+// it was accepted, discarded, and reported nothing. It is now a rejected
+// contradiction, and the store's own encoder is still never mutated.
+func TestInjectedStoreRejectsCompressionThreshold(t *testing.T) {
 	encoder := &BinaryKeyEncoder{CompressionThreshold: 0}
 	store := NewMemoryStore(encoder)
 	t.Cleanup(func() { _ = store.Close() })
@@ -188,8 +193,9 @@ func TestInjectedStoreEncoderThresholdNotMutated(t *testing.T) {
 		Store:                store,
 		CompressionThreshold: 512,
 	})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
+	require.Error(t, err)
+	require.Nil(t, db)
+	require.Contains(t, err.Error(), "CompressionThreshold")
 	require.Equal(t, 0, store.Encoder().CompressionThreshold)
 }
 

@@ -14,162 +14,154 @@ import (
 
 // TestVectorBasicAdd verifies basic vector append via Add()
 func TestVectorBasicAdd(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-basic-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create schema with vector attribute
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	// Create schema with vector attribute
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Add skills in order
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(alice, skills, "stealth"))
+			require.NoError(t, tx.Add(alice, skills, "archery"))
+			require.NoError(t, tx.Add(alice, skills, "lockpicking"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Add skills in order
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, skills, "stealth"))
-	require.NoError(t, tx.Add(alice, skills, "archery"))
-	require.NoError(t, tx.Add(alice, skills, "lockpicking"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Verify the vector is resolved in order
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	// Verify the vector is resolved in order
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found, "should find skills")
 
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found, "should find skills")
+			vec, ok := result.([]string)
+			require.True(t, ok, "result should be []string for TypeString vector, got %T", result)
+			require.Len(t, vec, 3, "should have 3 skills")
 
-	vec, ok := result.([]string)
-	require.True(t, ok, "result should be []string for TypeString vector, got %T", result)
-	require.Len(t, vec, 3, "should have 3 skills")
-
-	// Order should match insertion order within same transaction
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
-	assert.Equal(t, "lockpicking", vec[2])
+			// Order should match insertion order within same transaction
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+			assert.Equal(t, "lockpicking", vec[2])
+		})
+	}
 }
 
 // TestVectorMultipleTransactions verifies ordering across transactions
 func TestVectorMultipleTransactions(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-multi-tx-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// First transaction
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// First transaction
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Second transaction
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Add(alice, skills, "lockpicking"))
+			require.NoError(t, tx2.Add(alice, skills, "pickpocket"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Second transaction
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Add(alice, skills, "lockpicking"))
-	require.NoError(t, tx2.Add(alice, skills, "pickpocket"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Verify all elements in order
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	// Verify all elements in order
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
 
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 4)
 
-	vec := result.([]string)
-	require.Len(t, vec, 4)
-
-	// All elements from tx1 should come before tx2
-	// Within each tx, order is preserved
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
-	assert.Equal(t, "lockpicking", vec[2])
-	assert.Equal(t, "pickpocket", vec[3])
+			// All elements from tx1 should come before tx2
+			// Within each tx, order is preserved
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+			assert.Equal(t, "lockpicking", vec[2])
+			assert.Equal(t, "pickpocket", vec[3])
+		})
+	}
 }
 
 // TestVectorEmpty verifies empty vector handling
 func TestVectorEmpty(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-empty-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// No data added — never-set vector is not found, consistent with other cardinalities
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	// No data added — never-set vector is not found, consistent with other cardinalities
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	assert.False(t, found, "never-set vector attribute should not be found")
-	assert.Nil(t, result, "never-set vector should return nil")
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			assert.False(t, found, "never-set vector attribute should not be found")
+			assert.Nil(t, result, "never-set vector should return nil")
+		})
+	}
 }
 
 // TestVectorWithDifferentTypes verifies vectors can hold different value types
 func TestVectorWithDifferentTypes(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-types-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":event/scores").Type(schema.TypeLong).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":event/scores").Type(schema.TypeLong).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			game := datalog.NewIdentity("game1")
+			scores := datalog.NewKeyword(":event/scores")
 
-	game := datalog.NewIdentity("game1")
-	scores := datalog.NewKeyword(":event/scores")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(game, scores, int64(100)))
+			require.NoError(t, tx.Add(game, scores, int64(250)))
+			require.NoError(t, tx.Add(game, scores, int64(175)))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(game, scores, int64(100)))
-	require.NoError(t, tx.Add(game, scores, int64(250)))
-	require.NoError(t, tx.Add(game, scores, int64(175)))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, game, scores)
+			require.True(t, found)
 
-	result, found := requireAttributeLookup(t, matcher, game, scores)
-	require.True(t, found)
+			vec := result.([]int64)
+			require.Len(t, vec, 3)
 
-	vec := result.([]int64)
-	require.Len(t, vec, 3)
-
-	assert.Equal(t, int64(100), vec[0])
-	assert.Equal(t, int64(250), vec[1])
-	assert.Equal(t, int64(175), vec[2])
+			assert.Equal(t, int64(100), vec[0])
+			assert.Equal(t, int64(250), vec[1])
+			assert.Equal(t, int64(175), vec[2])
+		})
+	}
 }
 
 // TestRGAElementEncodeDecode verifies RGAElement round-trip encoding
@@ -305,196 +297,177 @@ func TestRGAReconstructionWithTombstones(t *testing.T) {
 
 // TestVectorSchemaValidation verifies that Add() validates vector values
 func TestVectorSchemaValidation(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-validation-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			tx := db.NewTransaction()
 
-	tx := db.NewTransaction()
+			// String should work
+			require.NoError(t, tx.Add(alice, skills, "stealth"))
 
-	// String should work
-	require.NoError(t, tx.Add(alice, skills, "stealth"))
-
-	// Integer should fail (wrong type for string vector)
-	err = tx.Add(alice, skills, int64(123))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "schema validation failed")
+			// Integer should fail (wrong type for string vector)
+			err = tx.Add(alice, skills, int64(123))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "schema validation failed")
+		})
+	}
 }
 
 // TestVectorSetReplacesEntireVector verifies Set() replaces the entire vector
 func TestVectorSetReplacesEntireVector(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-set-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// First, add some skills via Add()
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// First, add some skills via Add()
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Verify initial state
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 3)
 
-	// Verify initial state
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 3)
+			// Now use Set() to replace entire vector
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, skills, []interface{}{"magic", "alchemy"}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Now use Set() to replace entire vector
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, skills, []interface{}{"magic", "alchemy"}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify the vector was replaced
-	matcher2 := NewPatternMatcher(db.store)
-	matcher2.SetSchema(s)
-	result2, found2 := requireAttributeLookup(t, matcher2, alice, skills)
-	require.True(t, found2)
-	vec2 := result2.([]string)
-	require.Len(t, vec2, 2, "vector should have 2 elements after Set()")
-	assert.Equal(t, "magic", vec2[0])
-	assert.Equal(t, "alchemy", vec2[1])
+			// Verify the vector was replaced
+			matcher2 := NewPatternMatcher(db.store)
+			matcher2.SetSchema(s)
+			result2, found2 := requireAttributeLookup(t, matcher2, alice, skills)
+			require.True(t, found2)
+			vec2 := result2.([]string)
+			require.Len(t, vec2, 2, "vector should have 2 elements after Set()")
+			assert.Equal(t, "magic", vec2[0])
+			assert.Equal(t, "alchemy", vec2[1])
+		})
+	}
 }
 
 // TestVectorSetToEmpty verifies Set() with empty slice clears vector
 func TestVectorSetToEmpty(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-set-empty-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Add some skills
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Add some skills
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Clear vector with empty Set()
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, skills, []interface{}{}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Clear vector with empty Set()
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, skills, []interface{}{}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify vector is empty (but still "found" — empty is a value)
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	assert.True(t, found, "vector attribute always exists (empty is a value)")
-	assert.Equal(t, []string{}, result, "cleared vector should return typed empty slice")
+			// Verify vector is empty (but still "found" — empty is a value)
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			assert.True(t, found, "vector attribute always exists (empty is a value)")
+			assert.Equal(t, []string{}, result, "cleared vector should return typed empty slice")
+		})
+	}
 }
 
 // TestVectorAddNoReadDatabase verifies Add() does NOT read from database
 func TestVectorAddNoReadDatabase(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-no-read-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Pre-populate some skills
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Pre-populate some skills
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Now Add() in a new transaction - it should NOT read the existing data
+			// to determine afterRef, it should use HEAD (and chain within transaction)
+			tx2 := db.NewTransaction()
 
-	// Now Add() in a new transaction - it should NOT read the existing data
-	// to determine afterRef, it should use HEAD (and chain within transaction)
-	tx2 := db.NewTransaction()
+			// These adds should chain: archery -> lockpicking (both after HEAD since
+			// Add() doesn't read existing vector)
+			require.NoError(t, tx2.Add(alice, skills, "archery"))
+			require.NoError(t, tx2.Add(alice, skills, "lockpicking"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// These adds should chain: archery -> lockpicking (both after HEAD since
-	// Add() doesn't read existing vector)
-	require.NoError(t, tx2.Add(alice, skills, "archery"))
-	require.NoError(t, tx2.Add(alice, skills, "lockpicking"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Verify all three skills exist (stealth from tx1, archery+lockpicking from tx2)
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 3, "should have all 3 skills")
 
-	// Verify all three skills exist (stealth from tx1, archery+lockpicking from tx2)
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 3, "should have all 3 skills")
-
-	// The order depends on ElementID sorting at HEAD level
-	// stealth was added first (lower Lamport), so it should come first
-	// archery and lockpicking are chained within tx2
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
-	assert.Equal(t, "lockpicking", vec[2])
+			// The order depends on ElementID sorting at HEAD level
+			// stealth was added first (lower Lamport), so it should come first
+			// archery and lockpicking are chained within tx2
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+			assert.Equal(t, "lockpicking", vec[2])
+		})
+	}
 }
 
 // TestVectorQueryIntegration verifies vectors work through Datalog queries
 func TestVectorQueryIntegration(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "vector-query-test")
-			require.NoError(t, err)
-			defer os.RemoveAll(tmpDir)
-
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			bob := datalog.NewIdentity("bob")
@@ -531,24 +504,13 @@ func TestVectorQueryIntegration(t *testing.T) {
 func TestVectorQueryWithBoundEntity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "vector-query-bound-e-test")
-			require.NoError(t, err)
-			defer os.RemoveAll(tmpDir)
-
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":character/name")
@@ -602,24 +564,13 @@ func TestVectorQueryWithBoundEntity(t *testing.T) {
 func TestVectorQueryProjectSkills(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "vector-query-project-test")
-			require.NoError(t, err)
-			defer os.RemoveAll(tmpDir)
-
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":character/name")
@@ -656,24 +607,13 @@ func TestVectorQueryProjectSkills(t *testing.T) {
 func TestVectorQueryNameAndSkills(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "vector-query-join-test")
-			require.NoError(t, err)
-			defer os.RemoveAll(tmpDir)
-
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":character/name")
@@ -713,24 +653,13 @@ func TestVectorQueryNameAndSkills(t *testing.T) {
 func TestVectorPullIntegration(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "vector-pull-test")
-			require.NoError(t, err)
-			defer os.RemoveAll(tmpDir)
-
 			s, err := schema.NewBuilder().
 				Attribute(":character/name").Type(schema.TypeString).Add().
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":character/name")
@@ -780,208 +709,200 @@ func TestVectorPullIntegration(t *testing.T) {
 // Users wanting to remove the FIRST occurrence (in order) must use
 // read-modify-write via Set().
 func TestVectorRemoveMostRecent(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-remove-lifo-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Add skills with duplicates - "stealth" appears twice
+			// Order: stealth(0), archery(1), stealth(2)
+			// Position 0 and 2 both have value "stealth"
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth")) // First "stealth" - lower ElementID
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			require.NoError(t, tx1.Add(alice, skills, "stealth")) // Second "stealth" - higher ElementID
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Add skills with duplicates - "stealth" appears twice
-	// Order: stealth(0), archery(1), stealth(2)
-	// Position 0 and 2 both have value "stealth"
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth")) // First "stealth" - lower ElementID
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	require.NoError(t, tx1.Add(alice, skills, "stealth")) // Second "stealth" - higher ElementID
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Verify initial state: ["stealth", "archery", "stealth"]
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 3)
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+			assert.Equal(t, "stealth", vec[2])
 
-	// Verify initial state: ["stealth", "archery", "stealth"]
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 3)
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
-	assert.Equal(t, "stealth", vec[2])
+			// Remove "stealth" - should remove the MOST RECENT one (position 2)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(alice, skills, "stealth"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Remove "stealth" - should remove the MOST RECENT one (position 2)
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(alice, skills, "stealth"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify result: ["stealth", "archery"]
-	// The first "stealth" remains, the second (most recent) is removed
-	matcher2 := NewPatternMatcher(db.store)
-	matcher2.SetSchema(s)
-	result2, found2 := requireAttributeLookup(t, matcher2, alice, skills)
-	require.True(t, found2)
-	vec2 := result2.([]string)
-	require.Len(t, vec2, 2, "should have 2 elements after Remove()")
-	assert.Equal(t, "stealth", vec2[0], "first stealth should remain")
-	assert.Equal(t, "archery", vec2[1], "archery should remain")
+			// Verify result: ["stealth", "archery"]
+			// The first "stealth" remains, the second (most recent) is removed
+			matcher2 := NewPatternMatcher(db.store)
+			matcher2.SetSchema(s)
+			result2, found2 := requireAttributeLookup(t, matcher2, alice, skills)
+			require.True(t, found2)
+			vec2 := result2.([]string)
+			require.Len(t, vec2, 2, "should have 2 elements after Remove()")
+			assert.Equal(t, "stealth", vec2[0], "first stealth should remain")
+			assert.Equal(t, "archery", vec2[1], "archery should remain")
+		})
+	}
 }
 
 // TestVectorRemoveNonExistent verifies Remove() is a no-op for values not in vector
 func TestVectorRemoveNonExistent(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-remove-nonexistent-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Add some skills
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Add some skills
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Remove a value that doesn't exist - should be a no-op
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(alice, skills, "magic")) // "magic" not in vector
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Remove a value that doesn't exist - should be a no-op
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(alice, skills, "magic")) // "magic" not in vector
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify vector unchanged: ["stealth", "archery"]
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 2, "vector should be unchanged")
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
+			// Verify vector unchanged: ["stealth", "archery"]
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 2, "vector should be unchanged")
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+		})
+	}
 }
 
 // TestVectorRemoveAllOccurrences verifies multiple Remove() calls remove all occurrences
 func TestVectorRemoveAllOccurrences(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-remove-all-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Add skills with duplicates
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth")) // Position 0
+			require.NoError(t, tx1.Add(alice, skills, "archery")) // Position 1
+			require.NoError(t, tx1.Add(alice, skills, "stealth")) // Position 2
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Add skills with duplicates
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth")) // Position 0
-	require.NoError(t, tx1.Add(alice, skills, "archery")) // Position 1
-	require.NoError(t, tx1.Add(alice, skills, "stealth")) // Position 2
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Remove "stealth" twice - should remove both occurrences
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Remove(alice, skills, "stealth")) // Removes position 2 (most recent)
+			require.NoError(t, tx2.Remove(alice, skills, "stealth")) // Removes position 0 (now most recent)
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Remove "stealth" twice - should remove both occurrences
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Remove(alice, skills, "stealth")) // Removes position 2 (most recent)
-	require.NoError(t, tx2.Remove(alice, skills, "stealth")) // Removes position 0 (now most recent)
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify result: ["archery"]
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 1, "should have 1 element after removing both stealths")
-	assert.Equal(t, "archery", vec[0])
+			// Verify result: ["archery"]
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 1, "should have 1 element after removing both stealths")
+			assert.Equal(t, "archery", vec[0])
+		})
+	}
 }
 
 // TestAddSchemaAwareVector verifies Add() properly handles vector cardinality
 func TestAddSchemaAwareVector(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "add-schema-vector-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create schema with all three cardinalities
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).Add().            // One
+				Attribute(":person/tags").Type(schema.TypeString).Many().Add().     // Many
+				Attribute(":person/skills").Type(schema.TypeString).Vector().Add(). // Vector
+				Build()
+			require.NoError(t, err)
 
-	// Create schema with all three cardinalities
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).Add().            // One
-		Attribute(":person/tags").Type(schema.TypeString).Many().Add().     // Many
-		Attribute(":person/skills").Type(schema.TypeString).Vector().Add(). // Vector
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			name := datalog.NewKeyword(":person/name")
+			tags := datalog.NewKeyword(":person/tags")
+			skills := datalog.NewKeyword(":person/skills")
 
-	alice := datalog.NewIdentity("alice")
-	name := datalog.NewKeyword(":person/name")
-	tags := datalog.NewKeyword(":person/tags")
-	skills := datalog.NewKeyword(":person/skills")
+			// Add values to all three types using same Add() method
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(alice, name, "Alice"))     // One
+			require.NoError(t, tx.Add(alice, tags, "developer")) // Many
+			require.NoError(t, tx.Add(alice, tags, "lead"))      // Many
+			require.NoError(t, tx.Add(alice, skills, "go"))      // Vector
+			require.NoError(t, tx.Add(alice, skills, "python"))  // Vector
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Add values to all three types using same Add() method
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, name, "Alice"))     // One
-	require.NoError(t, tx.Add(alice, tags, "developer")) // Many
-	require.NoError(t, tx.Add(alice, tags, "lead"))      // Many
-	require.NoError(t, tx.Add(alice, skills, "go"))      // Vector
-	require.NoError(t, tx.Add(alice, skills, "python"))  // Vector
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Verify all cardinalities work correctly
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	// Verify all cardinalities work correctly
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
+			// Cardinality-one: single value
+			nameVal, found := requireAttributeLookup(t, matcher, alice, name)
+			require.True(t, found)
+			assert.Equal(t, "Alice", nameVal)
 
-	// Cardinality-one: single value
-	nameVal, found := requireAttributeLookup(t, matcher, alice, name)
-	require.True(t, found)
-	assert.Equal(t, "Alice", nameVal)
+			// Cardinality-many: returns slice of all set members
+			tagVal, found := requireAttributeLookup(t, matcher, alice, tags)
+			require.True(t, found)
+			tagSlice := tagVal.([]interface{})
+			require.Len(t, tagSlice, 2)
+			// Set members may be in any order
+			tagSet := make(map[string]bool)
+			for _, t := range tagSlice {
+				tagSet[t.(string)] = true
+			}
+			assert.True(t, tagSet["developer"])
+			assert.True(t, tagSet["lead"])
 
-	// Cardinality-many: returns slice of all set members
-	tagVal, found := requireAttributeLookup(t, matcher, alice, tags)
-	require.True(t, found)
-	tagSlice := tagVal.([]interface{})
-	require.Len(t, tagSlice, 2)
-	// Set members may be in any order
-	tagSet := make(map[string]bool)
-	for _, t := range tagSlice {
-		tagSet[t.(string)] = true
+			// Cardinality-vector: returns ordered slice
+			skillsVal, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := skillsVal.([]string)
+			require.Len(t, vec, 2)
+			assert.Equal(t, "go", vec[0])
+			assert.Equal(t, "python", vec[1])
+		})
 	}
-	assert.True(t, tagSet["developer"])
-	assert.True(t, tagSet["lead"])
-
-	// Cardinality-vector: returns ordered slice
-	skillsVal, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := skillsVal.([]string)
-	require.Len(t, vec, 2)
-	assert.Equal(t, "go", vec[0])
-	assert.Equal(t, "python", vec[1])
 }
 
 // ============================================================================
@@ -1004,302 +925,288 @@ func TestAddSchemaAwareVector(t *testing.T) {
 // TestVectorSetAppend verifies Set() efficiently handles appending elements.
 // This is the most common operation and should only insert new elements.
 func TestVectorSetAppend(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-set-append-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Initial state: ["stealth", "archery", "lockpicking"]
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Initial state: ["stealth", "archery", "lockpicking"]
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Append one element: ["stealth", "archery", "lockpicking", "magic"]
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking", "magic"}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Append one element: ["stealth", "archery", "lockpicking", "magic"]
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking", "magic"}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify result
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 4)
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
-	assert.Equal(t, "lockpicking", vec[2])
-	assert.Equal(t, "magic", vec[3])
+			// Verify result
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 4)
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+			assert.Equal(t, "lockpicking", vec[2])
+			assert.Equal(t, "magic", vec[3])
+		})
+	}
 }
 
 // TestVectorSetAppendMultiple verifies Set() handles appending multiple elements.
 func TestVectorSetAppendMultiple(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-set-append-multi-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Initial state: ["stealth"]
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Initial state: ["stealth"]
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Append multiple: ["stealth", "archery", "lockpicking"]
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Append multiple: ["stealth", "archery", "lockpicking"]
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify result
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 3)
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
-	assert.Equal(t, "lockpicking", vec[2])
+			// Verify result
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 3)
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+			assert.Equal(t, "lockpicking", vec[2])
+		})
+	}
 }
 
 // TestVectorSetChangeEnd verifies Set() handles changing the last element.
 func TestVectorSetChangeEnd(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-set-change-end-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Initial state: ["stealth", "archery", "lockpicking"]
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Initial state: ["stealth", "archery", "lockpicking"]
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Change last element: ["stealth", "archery", "magic"]
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "magic"}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Change last element: ["stealth", "archery", "magic"]
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "magic"}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify result
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 3)
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
-	assert.Equal(t, "magic", vec[2])
+			// Verify result
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 3)
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+			assert.Equal(t, "magic", vec[2])
+		})
+	}
 }
 
 // TestVectorSetChangeMiddle verifies Set() handles changing a middle element.
 func TestVectorSetChangeMiddle(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-set-change-middle-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Initial state: ["stealth", "archery", "lockpicking"]
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Initial state: ["stealth", "archery", "lockpicking"]
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Change middle element: ["stealth", "MAGIC", "lockpicking"]
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "MAGIC", "lockpicking"}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Change middle element: ["stealth", "MAGIC", "lockpicking"]
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "MAGIC", "lockpicking"}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify result
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 3)
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "MAGIC", vec[1])
-	assert.Equal(t, "lockpicking", vec[2])
+			// Verify result
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 3)
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "MAGIC", vec[1])
+			assert.Equal(t, "lockpicking", vec[2])
+		})
+	}
 }
 
 // TestVectorSetPrepend verifies Set() handles prepending (worst case for optimization).
 func TestVectorSetPrepend(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-set-prepend-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Initial state: ["archery", "lockpicking"]
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Initial state: ["archery", "lockpicking"]
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Prepend element: ["stealth", "archery", "lockpicking"]
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Prepend element: ["stealth", "archery", "lockpicking"]
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify result
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 3)
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
-	assert.Equal(t, "lockpicking", vec[2])
+			// Verify result
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 3)
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+			assert.Equal(t, "lockpicking", vec[2])
+		})
+	}
 }
 
 // TestVectorSetNoChange verifies Set() does nothing when vectors are identical.
 func TestVectorSetNoChange(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-set-nochange-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Initial state: ["stealth", "archery", "lockpicking"]
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Initial state: ["stealth", "archery", "lockpicking"]
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Set to same values: ["stealth", "archery", "lockpicking"]
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Set to same values: ["stealth", "archery", "lockpicking"]
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify result unchanged
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 3)
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
-	assert.Equal(t, "lockpicking", vec[2])
+			// Verify result unchanged
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 3)
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+			assert.Equal(t, "lockpicking", vec[2])
+		})
+	}
 }
 
 // TestVectorSetFromEmpty verifies Set() works when starting with empty vector.
 func TestVectorSetFromEmpty(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-set-from-empty-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// No initial state - vector doesn't exist
 
-	// No initial state - vector doesn't exist
+			// Set from empty: ["stealth", "archery", "lockpicking"]
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Set from empty: ["stealth", "archery", "lockpicking"]
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Verify result
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 3)
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
-	assert.Equal(t, "lockpicking", vec[2])
+			// Verify result
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 3)
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+			assert.Equal(t, "lockpicking", vec[2])
+		})
+	}
 }
 
 // TestVectorEnumerateQuery verifies that [(enumerate ?vec) [?idx ?val]] expands
@@ -1307,24 +1214,13 @@ func TestVectorSetFromEmpty(t *testing.T) {
 func TestVectorEnumerateQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "vector-enumerate-query-test")
-			require.NoError(t, err)
-			defer os.RemoveAll(tmpDir)
-
 			s, err := schema.NewBuilder().
 				Attribute(":product/label").Type(schema.TypeString).Add().
 				Attribute(":product/tags").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			widget := datalog.NewIdentity("widget")
 
@@ -1381,14 +1277,7 @@ func TestVectorEnumerateMultipleEntities(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			widget := datalog.NewIdentity("widget")
 			gadget := datalog.NewIdentity("gadget")
@@ -1449,14 +1338,7 @@ func TestVectorEnumerateRefWithFilter(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			// Create child entities (items) with different colors
 			redItem := datalog.NewIdentity("red-item")
@@ -1519,10 +1401,6 @@ func TestVectorEnumerateRefWithFilter(t *testing.T) {
 func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "vector-enumerate-ref-join-test")
-			require.NoError(t, err)
-			defer os.RemoveAll(tmpDir)
-
 			s, err := schema.NewBuilder().
 				Attribute(":instance/template").Type(schema.TypeRef).Add().
 				Attribute(":instance/room").Type(schema.TypeRef).Add().
@@ -1537,22 +1415,17 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 			// Join-shape tracing for the steps below, registered at open because
 			// everything the database builds is constructed with it. Filtered to
 			// JoinHash, and diagnostic only — nothing here is asserted on.
-			popts := mode.plannerOptions()
-			popts.Handler = func(event annotations.Event) {
-				if event.Name == annotations.JoinHash {
-					t.Logf("ANNOTATION [%s]: left.attrs=%v right.attrs=%v result.attrs=%v left.size=%v right.size=%v result.size=%v",
-						event.Name,
-						event.Data["left.attrs"], event.Data["right.attrs"], event.Data["result.attrs"],
-						event.Data["left.size"], event.Data["right.size"], event.Data["result.size"])
-				}
-			}
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+				Schema: s,
+				AnnotationHandler: func(event annotations.Event) {
+					if event.Name == annotations.JoinHash {
+						t.Logf("ANNOTATION [%s]: left.attrs=%v right.attrs=%v result.attrs=%v left.size=%v right.size=%v result.size=%v",
+							event.Name,
+							event.Data["left.attrs"], event.Data["right.attrs"], event.Data["result.attrs"],
+							event.Data["left.size"], event.Data["right.size"], event.Data["result.size"])
+					}
+				},
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			// Child entities
 			redItem := datalog.NewIdentity("red-item")
@@ -1711,46 +1584,44 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 
 // TestVectorSetTruncate verifies Set() handles removing elements from the end.
 func TestVectorSetTruncate(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-set-truncate-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	skills := datalog.NewKeyword(":character/skills")
+			// Initial state: ["stealth", "archery", "lockpicking", "magic"]
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Add(alice, skills, "stealth"))
+			require.NoError(t, tx1.Add(alice, skills, "archery"))
+			require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+			require.NoError(t, tx1.Add(alice, skills, "magic"))
+			_, err = tx1.Commit()
+			require.NoError(t, err)
 
-	// Initial state: ["stealth", "archery", "lockpicking", "magic"]
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))
-	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
-	require.NoError(t, tx1.Add(alice, skills, "magic"))
-	_, err = tx1.Commit()
-	require.NoError(t, err)
+			// Truncate to first two: ["stealth", "archery"]
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery"}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Truncate to first two: ["stealth", "archery"]
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery"}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
-
-	// Verify result
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
-	result, found := requireAttributeLookup(t, matcher, alice, skills)
-	require.True(t, found)
-	vec := result.([]string)
-	require.Len(t, vec, 2)
-	assert.Equal(t, "stealth", vec[0])
-	assert.Equal(t, "archery", vec[1])
+			// Verify result
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
+			result, found := requireAttributeLookup(t, matcher, alice, skills)
+			require.True(t, found)
+			vec := result.([]string)
+			require.Len(t, vec, 2)
+			assert.Equal(t, "stealth", vec[0])
+			assert.Equal(t, "archery", vec[1])
+		})
+	}
 }
 
 // TestPlannerReordersDataPatternBeforeEnumerate reproduces a bug where the
@@ -1768,10 +1639,6 @@ func TestVectorSetTruncate(t *testing.T) {
 func TestPlannerReordersDataPatternBeforeEnumerate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "planner-reorder-enumerate-test")
-			require.NoError(t, err)
-			defer os.RemoveAll(tmpDir)
-
 			s, err := schema.NewBuilder().
 				Attribute(":container/name").Type(schema.TypeString).Add().
 				Attribute(":container/room").Type(schema.TypeRef).Add().
@@ -1781,14 +1648,7 @@ func TestPlannerReordersDataPatternBeforeEnumerate(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			red := datalog.NewKeyword(":color/red")
 			blue := datalog.NewKeyword(":color/blue")
@@ -1953,14 +1813,7 @@ func TestVectorTypeDouble(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			sensor := datalog.NewIdentity("sensor1")
 			readings := datalog.NewKeyword(":sensor/readings")
@@ -2012,14 +1865,7 @@ func TestVectorTypeBoolean(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			cfg := datalog.NewIdentity("cfg1")
 			flags := datalog.NewKeyword(":config/flags")
@@ -2071,14 +1917,7 @@ func TestVectorTypeLong_QueryPath(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			game := datalog.NewIdentity("game1")
 			scores := datalog.NewKeyword(":event/scores")
@@ -2107,207 +1946,201 @@ func TestVectorTypeLong_QueryPath(t *testing.T) {
 // []int64, etc.) directly, not just []interface{}. toAnySlice uses
 // reflection to convert them.
 func TestSetWithTypedSlices(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "set-typed-slices-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Attribute(":event/scores").Type(schema.TypeLong).Vector().Add().
+				Attribute(":sensor/readings").Type(schema.TypeDouble).Vector().Add().
+				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Attribute(":event/scores").Type(schema.TypeLong).Vector().Add().
-		Attribute(":sensor/readings").Type(schema.TypeDouble).Vector().Add().
-		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			e := datalog.NewIdentity("entity1")
 
-	e := datalog.NewIdentity("entity1")
+			t.Run("vector []string", func(t *testing.T) {
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(e, datalog.NewKeyword(":character/skills"), []string{"stealth", "archery"}))
+				_, err := tx.Commit()
+				require.NoError(t, err)
 
-	t.Run("vector []string", func(t *testing.T) {
-		tx := db.NewTransaction()
-		require.NoError(t, tx.Set(e, datalog.NewKeyword(":character/skills"), []string{"stealth", "archery"}))
-		_, err := tx.Commit()
-		require.NoError(t, err)
+				matcher := NewPatternMatcher(db.store)
+				matcher.SetSchema(s)
+				result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":character/skills"))
+				require.True(t, found)
+				vec, ok := result.([]string)
+				require.True(t, ok, "expected []string, got %T", result)
+				assert.Equal(t, []string{"stealth", "archery"}, vec)
+			})
 
-		matcher := NewPatternMatcher(db.store)
-		matcher.SetSchema(s)
-		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":character/skills"))
-		require.True(t, found)
-		vec, ok := result.([]string)
-		require.True(t, ok, "expected []string, got %T", result)
-		assert.Equal(t, []string{"stealth", "archery"}, vec)
-	})
+			t.Run("vector []int64", func(t *testing.T) {
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(e, datalog.NewKeyword(":event/scores"), []int64{100, 250, 175}))
+				_, err := tx.Commit()
+				require.NoError(t, err)
 
-	t.Run("vector []int64", func(t *testing.T) {
-		tx := db.NewTransaction()
-		require.NoError(t, tx.Set(e, datalog.NewKeyword(":event/scores"), []int64{100, 250, 175}))
-		_, err := tx.Commit()
-		require.NoError(t, err)
+				matcher := NewPatternMatcher(db.store)
+				matcher.SetSchema(s)
+				result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":event/scores"))
+				require.True(t, found)
+				vec, ok := result.([]int64)
+				require.True(t, ok, "expected []int64, got %T", result)
+				assert.Equal(t, []int64{100, 250, 175}, vec)
+			})
 
-		matcher := NewPatternMatcher(db.store)
-		matcher.SetSchema(s)
-		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":event/scores"))
-		require.True(t, found)
-		vec, ok := result.([]int64)
-		require.True(t, ok, "expected []int64, got %T", result)
-		assert.Equal(t, []int64{100, 250, 175}, vec)
-	})
+			t.Run("vector []float64", func(t *testing.T) {
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(e, datalog.NewKeyword(":sensor/readings"), []float64{23.5, 24.1}))
+				_, err := tx.Commit()
+				require.NoError(t, err)
 
-	t.Run("vector []float64", func(t *testing.T) {
-		tx := db.NewTransaction()
-		require.NoError(t, tx.Set(e, datalog.NewKeyword(":sensor/readings"), []float64{23.5, 24.1}))
-		_, err := tx.Commit()
-		require.NoError(t, err)
+				matcher := NewPatternMatcher(db.store)
+				matcher.SetSchema(s)
+				result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":sensor/readings"))
+				require.True(t, found)
+				vec, ok := result.([]float64)
+				require.True(t, ok, "expected []float64, got %T", result)
+				assert.Equal(t, []float64{23.5, 24.1}, vec)
+			})
 
-		matcher := NewPatternMatcher(db.store)
-		matcher.SetSchema(s)
-		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":sensor/readings"))
-		require.True(t, found)
-		vec, ok := result.([]float64)
-		require.True(t, ok, "expected []float64, got %T", result)
-		assert.Equal(t, []float64{23.5, 24.1}, vec)
-	})
+			t.Run("many []string", func(t *testing.T) {
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(e, datalog.NewKeyword(":person/tags"), []string{"developer", "lead"}))
+				_, err := tx.Commit()
+				require.NoError(t, err)
 
-	t.Run("many []string", func(t *testing.T) {
-		tx := db.NewTransaction()
-		require.NoError(t, tx.Set(e, datalog.NewKeyword(":person/tags"), []string{"developer", "lead"}))
-		_, err := tx.Commit()
-		require.NoError(t, err)
-
-		matcher := NewPatternMatcher(db.store)
-		matcher.SetSchema(s)
-		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":person/tags"))
-		require.True(t, found)
-		// Cardinality-many returns []interface{} (unordered set)
-		vals, ok := result.([]interface{})
-		require.True(t, ok, "expected []interface{}, got %T", result)
-		tagSet := make(map[string]bool)
-		for _, v := range vals {
-			tagSet[v.(string)] = true
-		}
-		assert.True(t, tagSet["developer"])
-		assert.True(t, tagSet["lead"])
-	})
+				matcher := NewPatternMatcher(db.store)
+				matcher.SetSchema(s)
+				result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":person/tags"))
+				require.True(t, found)
+				// Cardinality-many returns []interface{} (unordered set)
+				vals, ok := result.([]interface{})
+				require.True(t, ok, "expected []interface{}, got %T", result)
+				tagSet := make(map[string]bool)
+				for _, v := range vals {
+					tagSet[v.(string)] = true
+				}
+				assert.True(t, tagSet["developer"])
+				assert.True(t, tagSet["lead"])
+			})
+		})
+	}
 }
 
 // TestTypeDefault verifies PatternMatcher.TypeDefault converts default values
 // to match schema types for vector and many attributes.
 func TestTypeDefault(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "type-default-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":entity/skills").Type(schema.TypeString).Vector().Add().
+				Attribute(":entity/scores").Type(schema.TypeLong).Vector().Add().
+				Attribute(":entity/tags").Type(schema.TypeString).Many().Add().
+				Attribute(":entity/name").Type(schema.TypeString).Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":entity/skills").Type(schema.TypeString).Vector().Add().
-		Attribute(":entity/scores").Type(schema.TypeLong).Vector().Add().
-		Attribute(":entity/tags").Type(schema.TypeString).Many().Add().
-		Attribute(":entity/name").Type(schema.TypeString).Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
+			t.Run("vector string empty", func(t *testing.T) {
+				result := matcher.TypeDefault(datalog.NewKeyword(":entity/skills"), []interface{}{})
+				_, ok := result.([]string)
+				assert.True(t, ok, "empty []interface{} for TypeString vector should become []string, got %T", result)
+			})
 
-	t.Run("vector string empty", func(t *testing.T) {
-		result := matcher.TypeDefault(datalog.NewKeyword(":entity/skills"), []interface{}{})
-		_, ok := result.([]string)
-		assert.True(t, ok, "empty []interface{} for TypeString vector should become []string, got %T", result)
-	})
+			t.Run("vector string populated", func(t *testing.T) {
+				result := matcher.TypeDefault(datalog.NewKeyword(":entity/skills"), []interface{}{"a", "b"})
+				vec, ok := result.([]string)
+				require.True(t, ok, "expected []string, got %T", result)
+				assert.Equal(t, []string{"a", "b"}, vec)
+			})
 
-	t.Run("vector string populated", func(t *testing.T) {
-		result := matcher.TypeDefault(datalog.NewKeyword(":entity/skills"), []interface{}{"a", "b"})
-		vec, ok := result.([]string)
-		require.True(t, ok, "expected []string, got %T", result)
-		assert.Equal(t, []string{"a", "b"}, vec)
-	})
+			t.Run("vector long populated", func(t *testing.T) {
+				result := matcher.TypeDefault(datalog.NewKeyword(":entity/scores"), []interface{}{int64(1), int64(2)})
+				vec, ok := result.([]int64)
+				require.True(t, ok, "expected []int64, got %T", result)
+				assert.Equal(t, []int64{1, 2}, vec)
+			})
 
-	t.Run("vector long populated", func(t *testing.T) {
-		result := matcher.TypeDefault(datalog.NewKeyword(":entity/scores"), []interface{}{int64(1), int64(2)})
-		vec, ok := result.([]int64)
-		require.True(t, ok, "expected []int64, got %T", result)
-		assert.Equal(t, []int64{1, 2}, vec)
-	})
+			t.Run("many string", func(t *testing.T) {
+				result := matcher.TypeDefault(datalog.NewKeyword(":entity/tags"), []interface{}{"x"})
+				// Many also gets typed via typedVector
+				_, ok := result.([]string)
+				assert.True(t, ok, "expected []string for many, got %T", result)
+			})
 
-	t.Run("many string", func(t *testing.T) {
-		result := matcher.TypeDefault(datalog.NewKeyword(":entity/tags"), []interface{}{"x"})
-		// Many also gets typed via typedVector
-		_, ok := result.([]string)
-		assert.True(t, ok, "expected []string for many, got %T", result)
-	})
+			t.Run("cardinality-one passthrough", func(t *testing.T) {
+				result := matcher.TypeDefault(datalog.NewKeyword(":entity/name"), "default")
+				assert.Equal(t, "default", result, "cardinality-one should pass through unchanged")
+			})
 
-	t.Run("cardinality-one passthrough", func(t *testing.T) {
-		result := matcher.TypeDefault(datalog.NewKeyword(":entity/name"), "default")
-		assert.Equal(t, "default", result, "cardinality-one should pass through unchanged")
-	})
+			t.Run("unknown attribute passthrough", func(t *testing.T) {
+				result := matcher.TypeDefault(datalog.NewKeyword(":unknown/attr"), []interface{}{"x"})
+				_, ok := result.([]interface{})
+				assert.True(t, ok, "unknown attribute should pass through as []interface{}, got %T", result)
+			})
 
-	t.Run("unknown attribute passthrough", func(t *testing.T) {
-		result := matcher.TypeDefault(datalog.NewKeyword(":unknown/attr"), []interface{}{"x"})
-		_, ok := result.([]interface{})
-		assert.True(t, ok, "unknown attribute should pass through as []interface{}, got %T", result)
-	})
-
-	t.Run("no schema passthrough", func(t *testing.T) {
-		noSchemaMatcher := NewPatternMatcher(db.store)
-		// No SetSchema call
-		result := noSchemaMatcher.TypeDefault(datalog.NewKeyword(":entity/skills"), []interface{}{"x"})
-		_, ok := result.([]interface{})
-		assert.True(t, ok, "no schema should pass through, got %T", result)
-	})
+			t.Run("no schema passthrough", func(t *testing.T) {
+				noSchemaMatcher := NewPatternMatcher(db.store)
+				// No SetSchema call
+				result := noSchemaMatcher.TypeDefault(datalog.NewKeyword(":entity/skills"), []interface{}{"x"})
+				_, ok := result.([]interface{})
+				assert.True(t, ok, "no schema should pass through, got %T", result)
+			})
+		})
+	}
 }
 
 // TestVectorClearedVsNeverSet verifies the distinction between a vector that
 // was explicitly cleared (Set to []) and one that was never written at all.
 // Cleared vectors return ([]string{}, true); never-set return (nil, false).
 func TestVectorClearedVsNeverSet(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "vector-cleared-vs-never-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			skills := datalog.NewKeyword(":character/skills")
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	skills := datalog.NewKeyword(":character/skills")
+			// Alice: add skills then clear them
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(alice, skills, "stealth"))
+			require.NoError(t, tx.Add(alice, skills, "archery"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Alice: add skills then clear them
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, skills, "stealth"))
-	require.NoError(t, tx.Add(alice, skills, "archery"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(alice, skills, []interface{}{}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(alice, skills, []interface{}{}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Bob: never had skills written at all
 
-	// Bob: never had skills written at all
+			matcher := NewPatternMatcher(db.store)
+			matcher.SetSchema(s)
 
-	matcher := NewPatternMatcher(db.store)
-	matcher.SetSchema(s)
+			// Alice: explicitly cleared — tombstones exist, returns empty typed slice
+			aliceResult, aliceFound := requireAttributeLookup(t, matcher, alice, skills)
+			assert.True(t, aliceFound, "cleared vector should be found (tombstones exist)")
+			assert.Equal(t, []string{}, aliceResult, "cleared vector should return typed empty slice")
 
-	// Alice: explicitly cleared — tombstones exist, returns empty typed slice
-	aliceResult, aliceFound := requireAttributeLookup(t, matcher, alice, skills)
-	assert.True(t, aliceFound, "cleared vector should be found (tombstones exist)")
-	assert.Equal(t, []string{}, aliceResult, "cleared vector should return typed empty slice")
-
-	// Bob: never set — no datoms at all
-	bobResult, bobFound := requireAttributeLookup(t, matcher, bob, skills)
-	assert.False(t, bobFound, "never-set vector should not be found")
-	assert.Nil(t, bobResult, "never-set vector should return nil")
+			// Bob: never set — no datoms at all
+			bobResult, bobFound := requireAttributeLookup(t, matcher, bob, skills)
+			assert.False(t, bobFound, "never-set vector should not be found")
+			assert.Nil(t, bobResult, "never-set vector should return nil")
+		})
+	}
 }
 
 // =============================================================================
@@ -2334,14 +2167,7 @@ func TestVectorLiteralMatch(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			name := datalog.NewKeyword(":entity/name")
 			lore := datalog.NewKeyword(":entity/lore")
@@ -2588,14 +2414,7 @@ func TestVectorLiteralWithOr(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			name := datalog.NewKeyword(":entity/name")
 			lore := datalog.NewKeyword(":entity/lore")

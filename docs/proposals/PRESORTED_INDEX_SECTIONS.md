@@ -85,6 +85,12 @@ If the ordering specification ever changes, an old dump builds its trees in the 
 
 The rule: **as the reader walks a stored permutation, check that each consecutive pair is non-decreasing under the current comparator.** N comparisons per order instead of N log N, so roughly 95% of the win survives; a stale permutation becomes a loud error at import rather than a wrong answer at query time; and because the permutation is then a *hint*, falling back to a sort is always available.
 
+**Which comparator, though — there are two.** `BUG_V_PAYLOAD_NOT_PREFIX_FREE`: an encoded value carries no length or terminator, so wherever a component follows V the key's byte order for prefix-related payloads is decided by the following component's first byte, not by the values. Badger's keys and the memory trees therefore disagree on exactly those pairs, and neither order is reachable from the other without re-sorting.
+
+So a permutation is sorted **in the typed comparator's order** — the order the trees it builds are in — and the verification walk uses that same comparator. A permutation derived from Badger's key order would fail that walk on the first prefix-related pair, which is the correct outcome: it is not the order the reader is building.
+
+That makes the sections tree-shaped rather than key-shaped, and it means a writer must produce them from the typed order even when its own storage is Badger. If the bug is fixed at the `TRANSACTION_ENVELOPES.md` break, the two orders converge and the distinction stops mattering — but sections written before that point are in the typed order, and the format version has to be able to say so.
+
 ### Chunk boundaries are EAVT-shaped
 
 Chunks close at entity boundaries and the trailer records first and last entity per chunk, so chunk order *is* EAVT order, and each chunk is independently compressed. For any other order a permutation jumps arbitrarily across chunks, so walking one directly would mean repeatedly decompressing chunks as the walk bounces between them.

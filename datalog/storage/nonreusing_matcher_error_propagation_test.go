@@ -126,38 +126,40 @@ func TestNonReusingIterator_SurfacesDeferredScanError(t *testing.T) {
 // result. The error must surface either from the call itself or from draining
 // the returned relation.
 func TestMatchWithoutIteratorReuse_SurfacesDeferredBindingError(t *testing.T) {
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), ReplicaID: 1})
-	require.NoError(t, err)
-	defer db.Close()
-	m := db.Matcher().(*PatternMatcher)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{ReplicaID: 1})
+			m := db.Matcher().(*PatternMatcher)
 
-	sentinel := errors.New("deferred binding-relation scan failure")
-	eSym := datalog.NewSymbol("?e")
-	vSym := datalog.NewSymbol("?v")
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: eSym},
-			query.Constant{Value: datalog.NewKeyword(":test/attr")},
-			query.Variable{Name: vSym},
-		},
+			sentinel := errors.New("deferred binding-relation scan failure")
+			eSym := datalog.NewSymbol("?e")
+			vSym := datalog.NewSymbol("?v")
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: eSym},
+					query.Constant{Value: datalog.NewKeyword(":test/attr")},
+					query.Variable{Name: vSym},
+				},
+			}
+			symbols := pattern.Symbols()
+
+			// Binding relation yields one tuple, then defers the error.
+			base := executor.NewMaterializedRelation(
+				[]query.Symbol{eSym},
+				[]executor.Tuple{{datalog.NewIdentity("e1")}},
+			)
+			bindingRel := deferredErrorBindingRel{Relation: base, err: sentinel}
+
+			rel, err := m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, nil)
+			if err != nil {
+				require.ErrorIs(t, err, sentinel)
+				return
+			}
+			// Fix may instead surface the error through the returned relation's
+			// iterator. Drive it to exhaustion via the contract-enforcing ForEach.
+			drainErr := executor.ForEach(rel, func(executor.Tuple) error { return nil })
+			require.ErrorIs(t, drainErr, sentinel,
+				"deferred binding-relation error must surface, not be laundered into a clean result")
+		})
 	}
-	symbols := pattern.Symbols()
-
-	// Binding relation yields one tuple, then defers the error.
-	base := executor.NewMaterializedRelation(
-		[]query.Symbol{eSym},
-		[]executor.Tuple{{datalog.NewIdentity("e1")}},
-	)
-	bindingRel := deferredErrorBindingRel{Relation: base, err: sentinel}
-
-	rel, err := m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, nil)
-	if err != nil {
-		require.ErrorIs(t, err, sentinel)
-		return
-	}
-	// Fix may instead surface the error through the returned relation's
-	// iterator. Drive it to exhaustion via the contract-enforcing ForEach.
-	drainErr := executor.ForEach(rel, func(executor.Tuple) error { return nil })
-	require.ErrorIs(t, drainErr, sentinel,
-		"deferred binding-relation error must surface, not be laundered into a clean result")
 }

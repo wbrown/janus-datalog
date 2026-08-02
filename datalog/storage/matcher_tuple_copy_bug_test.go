@@ -19,32 +19,6 @@ import (
 //
 // After fixing matcher_relations.go:241 to copy tuples, this test should PASS.
 func TestMatcherTupleCopyBug(t *testing.T) {
-	tempDir := t.TempDir()
-	db, err := NewDatabase(tempDir)
-	require.NoError(t, err)
-	defer db.Close()
-
-	// Create data shaped to trigger the bug:
-	// - 10 symbols (MORE binding tuples to trigger bug)
-	// - Many price bars per symbol (to ensure we hit the bug)
-	tx := db.NewTransaction()
-
-	symbols := []string{"AAPL", "GOOG", "MSFT", "AMZN", "META", "TSLA", "NVDA", "AMD", "INTC", "QCOM"}
-	for _, sym := range symbols {
-		symbolEntity := datalog.NewIdentity(sym)
-		tx.Add(symbolEntity, datalog.NewKeyword(":symbol/ticker"), sym)
-
-		// Add 100 price bars per symbol (1000 total datoms)
-		for i := 0; i < 100; i++ {
-			barEntity := datalog.NewIdentity(fmt.Sprintf("%s-bar-%d", sym, i))
-			tx.Add(barEntity, datalog.NewKeyword(":price/symbol"), symbolEntity)
-			tx.Add(barEntity, datalog.NewKeyword(":price/open"), float64(100+i))
-		}
-	}
-
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
 	// Multi-pattern query that triggers matcher_relations.go:241
 	// Pattern 1: [?s :symbol/ticker ?ticker] → binds ?s
 	// Pattern 2: [?b :price/symbol ?s]       → uses ?s from pattern 1
@@ -60,6 +34,29 @@ func TestMatcherTupleCopyBug(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			// Create data shaped to trigger the bug:
+			// - 10 symbols (MORE binding tuples to trigger bug)
+			// - Many price bars per symbol (to ensure we hit the bug)
+			tx := db.NewTransaction()
+
+			symbols := []string{"AAPL", "GOOG", "MSFT", "AMZN", "META", "TSLA", "NVDA", "AMD", "INTC", "QCOM"}
+			for _, sym := range symbols {
+				symbolEntity := datalog.NewIdentity(sym)
+				tx.Add(symbolEntity, datalog.NewKeyword(":symbol/ticker"), sym)
+
+				// Add 100 price bars per symbol (1000 total datoms)
+				for i := 0; i < 100; i++ {
+					barEntity := datalog.NewIdentity(fmt.Sprintf("%s-bar-%d", sym, i))
+					tx.Add(barEntity, datalog.NewKeyword(":price/symbol"), symbolEntity)
+					tx.Add(barEntity, datalog.NewKeyword(":price/open"), float64(100+i))
+				}
+			}
+
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
 			// CRITICAL: Use streaming to trigger the buffer reuse bug
 			opts := executor.ExecutorOptions{
 				EnableTrueStreaming: true,

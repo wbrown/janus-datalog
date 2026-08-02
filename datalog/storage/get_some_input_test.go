@@ -21,15 +21,7 @@ import (
 func TestGetSome_WithScalarInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create an entity with :entity/code attribute
 			entity := datalog.NewIdentity("test:entity1")
@@ -38,7 +30,7 @@ func TestGetSome_WithScalarInput(t *testing.T) {
 
 			tx := db.NewTransaction()
 			tx.Add(entity, codeAttr, "E1-CODE")
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -93,15 +85,7 @@ func TestGetSome_WithScalarInput(t *testing.T) {
 func TestGetSome_WithScalarInput_NoMatch(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create an entity with a different attribute (not :entity/code or :entity/name)
 			entity := datalog.NewIdentity("test:entity1")
@@ -109,7 +93,7 @@ func TestGetSome_WithScalarInput_NoMatch(t *testing.T) {
 
 			tx := db.NewTransaction()
 			tx.Add(entity, otherAttr, "some value")
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -165,7 +149,7 @@ func getSomeGroupsFixture(t *testing.T, db *Database) (named, bare datalog.Ident
 func TestGetSome_InBoundEntityWithGroups_AllMissing(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			_, bare := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(
@@ -188,7 +172,7 @@ func TestGetSome_InBoundEntityWithGroups_AllMissing(t *testing.T) {
 func TestGetSome_InBoundEntityWithGroups_AttrPresent(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			named, _ := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(
@@ -216,7 +200,7 @@ func TestGetSome_InBoundEntityWithGroups_AttrPresent(t *testing.T) {
 func TestGetSome_RelationInputEntities_MixedFound(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			named, bare := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(
@@ -249,7 +233,7 @@ func TestGetSome_RelationInputEntities_MixedFound(t *testing.T) {
 func TestGetSome_LiteralEntity(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			getSomeGroupsFixture(t, db)
 
 			t.Run("attr-present", func(t *testing.T) {
@@ -286,7 +270,7 @@ func TestGetSome_LiteralEntity(t *testing.T) {
 func TestGetSome_CollectionInputEntities_MixedFound(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			named, bare := getSomeGroupsFixture(t, db)
 
 			results, err := executor.CollectTuples(db.Query(

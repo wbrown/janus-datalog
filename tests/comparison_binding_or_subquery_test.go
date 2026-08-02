@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -23,18 +22,10 @@ import (
 //	            [(ground 0) ?taskCount])
 //	[(> ?taskCount 0) ?complete]
 func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
-	dir, err := os.MkdirTemp("", "comparison-or-subquery-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	eachBackendAndModeWith(t, testComparisonBindingWithOrSubqueryE2E)
+}
 
-	db, err := storage.NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
-
+func testComparisonBindingWithOrSubqueryE2E(t *testing.T, db *storage.Database, mode optimizerMode) {
 	// :scenario/task is cardinality-many (a scenario can have multiple tasks)
 	s := schema.NewSchema()
 	s.Add(&schema.AttributeDefinition{
@@ -69,7 +60,7 @@ func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 	// scenario:3 has no tasks
 	tx.Add(scenario3, nameAttr, "Scenario Three")
 
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	if err != nil {
 		t.Fatalf("Failed to commit: %v", err)
 	}
@@ -95,79 +86,75 @@ func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 		t.Logf("  Clause %d: %T - %v", i, clause, clause)
 	}
 
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			// Register the trace handler on the options the executor and its
-			// matcher are built with.
-			opts := mode.plannerOptions()
-			opts.Handler = func(event annotations.Event) {
-				t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
-			}
-			matcher := storage.NewPatternMatcherWithOptions(
-				db.Store(), executor.ExecutorOptionsFromPlanner(opts))
-			matcher.SetSchema(s)
-			exec := executor.NewExecutorWithOptions(matcher, nil, opts)
+	// Register the trace handler on the options the executor and its
+	// matcher are built with.
+	opts := mode.plannerOptions()
+	opts.Handler = func(event annotations.Event) {
+		t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
+	}
+	matcher := storage.NewPatternMatcherWithOptions(
+		db.Store(), executor.ExecutorOptionsFromPlanner(opts))
+	matcher.SetSchema(s)
+	exec := executor.NewExecutorWithOptions(matcher, nil, opts)
 
-			result, err := exec.Execute(q)
-			if err != nil {
-				t.Fatalf("Query failed: %v", err)
-			}
+	result, err := exec.Execute(q)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
 
-			// Collect results
-			var tuples [][]interface{}
-			iter := result.Iterator()
-			for iter.Next() {
-				tuple := iter.Tuple()
-				copied := make([]interface{}, len(tuple))
-				copy(copied, tuple)
-				tuples = append(tuples, copied)
-			}
-			iter.Close()
+	// Collect results
+	var tuples [][]interface{}
+	iter := result.Iterator()
+	for iter.Next() {
+		tuple := iter.Tuple()
+		copied := make([]interface{}, len(tuple))
+		copy(copied, tuple)
+		tuples = append(tuples, copied)
+	}
+	iter.Close()
 
-			t.Logf("Result count: %d", len(tuples))
+	t.Logf("Result count: %d", len(tuples))
 
-			// Verify we got 3 tuples
-			if len(tuples) != 3 {
-				t.Errorf("Expected 3 tuples, got %d", len(tuples))
-			}
+	// Verify we got 3 tuples
+	if len(tuples) != 3 {
+		t.Errorf("Expected 3 tuples, got %d", len(tuples))
+	}
 
-			// Verify results
-			resultMap := make(map[string]struct {
-				taskCount int64
-				complete  bool
-			})
+	// Verify results
+	resultMap := make(map[string]struct {
+		taskCount int64
+		complete  bool
+	})
 
-			for _, tuple := range tuples {
-				name := tuple[1].(string)
-				taskCount := tuple[2].(int64)
-				complete := tuple[3].(bool)
-				resultMap[name] = struct {
-					taskCount int64
-					complete  bool
-				}{taskCount, complete}
-				t.Logf("Tuple: name=%s, taskCount=%d, complete=%v", name, taskCount, complete)
-			}
+	for _, tuple := range tuples {
+		name := tuple[1].(string)
+		taskCount := tuple[2].(int64)
+		complete := tuple[3].(bool)
+		resultMap[name] = struct {
+			taskCount int64
+			complete  bool
+		}{taskCount, complete}
+		t.Logf("Tuple: name=%s, taskCount=%d, complete=%v", name, taskCount, complete)
+	}
 
-			// Scenario One: taskCount=2 > 0, complete=true
-			if data, ok := resultMap["Scenario One"]; !ok {
-				t.Error("Missing Scenario One in results")
-			} else if data.taskCount != 2 || data.complete != true {
-				t.Errorf("Scenario One: expected taskCount=2, complete=true, got taskCount=%d, complete=%v", data.taskCount, data.complete)
-			}
+	// Scenario One: taskCount=2 > 0, complete=true
+	if data, ok := resultMap["Scenario One"]; !ok {
+		t.Error("Missing Scenario One in results")
+	} else if data.taskCount != 2 || data.complete != true {
+		t.Errorf("Scenario One: expected taskCount=2, complete=true, got taskCount=%d, complete=%v", data.taskCount, data.complete)
+	}
 
-			// Scenario Two: taskCount=1 > 0, complete=true
-			if data, ok := resultMap["Scenario Two"]; !ok {
-				t.Error("Missing Scenario Two in results")
-			} else if data.taskCount != 1 || data.complete != true {
-				t.Errorf("Scenario Two: expected taskCount=1, complete=true, got taskCount=%d, complete=%v", data.taskCount, data.complete)
-			}
+	// Scenario Two: taskCount=1 > 0, complete=true
+	if data, ok := resultMap["Scenario Two"]; !ok {
+		t.Error("Missing Scenario Two in results")
+	} else if data.taskCount != 1 || data.complete != true {
+		t.Errorf("Scenario Two: expected taskCount=1, complete=true, got taskCount=%d, complete=%v", data.taskCount, data.complete)
+	}
 
-			// Scenario Three: taskCount=0 (from ground fallback), complete=false
-			if data, ok := resultMap["Scenario Three"]; !ok {
-				t.Error("Missing Scenario Three in results")
-			} else if data.taskCount != 0 || data.complete != false {
-				t.Errorf("Scenario Three: expected taskCount=0, complete=false, got taskCount=%d, complete=%v", data.taskCount, data.complete)
-			}
-		})
+	// Scenario Three: taskCount=0 (from ground fallback), complete=false
+	if data, ok := resultMap["Scenario Three"]; !ok {
+		t.Error("Missing Scenario Three in results")
+	} else if data.taskCount != 0 || data.complete != false {
+		t.Errorf("Scenario Three: expected taskCount=0, complete=false, got taskCount=%d, complete=%v", data.taskCount, data.complete)
 	}
 }

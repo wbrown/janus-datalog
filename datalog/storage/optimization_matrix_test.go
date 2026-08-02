@@ -120,17 +120,22 @@ func populateOptimizationMatrix(tb testing.TB, db *Database, numScenarios, tasks
 // combinations of optimizer flags to measure their individual and combined
 // impact. Uses 75 scenarios × 100 tasks (7,500 tasks total).
 func TestOptimizationMatrix(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testOptimizationMatrix(t, mode)
+		})
+	}
+}
+
+func testOptimizationMatrix(t *testing.T, mode optimizerMode) {
 	const (
 		numScenarios     = 75
 		tasksPerScenario = 100
 	)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema: optimizationMatrixSchema(),
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	populateOptimizationMatrix(t, db, numScenarios, tasksPerScenario)
 	t.Logf("Populated %d scenarios × %d tasks = %d tasks", numScenarios, tasksPerScenario, numScenarios*tasksPerScenario)
@@ -190,21 +195,23 @@ func TestOptimizationMatrix(t *testing.T) {
 // mode explicitly. Cross-mode result equivalence for the same query body
 // is covered by TestOptimizationMatrix.
 func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
-	popts := DefaultPlannerOptions()
-	popts.EnableAlgebraOptimizer = true
+	for _, mode := range pinnedOptimizerModes(true) {
+		t.Run(mode.name, func(t *testing.T) {
+			testComplexQueryRetainsScenarioKeyThroughFallbacks(t, mode)
+		})
+	}
+}
+
+func testComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T, mode optimizerMode) {
 	var propertyEvents []annotations.Event
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           t.TempDir(),
-		Schema:         optimizationMatrixSchema(),
-		PlannerOptions: &popts,
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
+		Schema: optimizationMatrixSchema(),
 		AnnotationHandler: func(event annotations.Event) {
 			if event.Name == annotations.OrPropertiesDerived {
 				propertyEvents = append(propertyEvents, event)
 			}
 		},
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	populateOptimizationMatrix(t, db, 3, 2)
 	base, err := db.Query(`[:find ?scenario ?title ?createdAt
@@ -327,18 +334,22 @@ func BenchmarkComplexQueryCheckpoint(b *testing.B) {
 // declares its mode explicitly. Cross-mode result equivalence for the same
 // query body is covered by TestOptimizationMatrix.
 func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
-	popts := DefaultPlannerOptions()
-	popts.EnableAlgebraOptimizer = true
+	for _, mode := range pinnedOptimizerModes(true) {
+		t.Run(mode.name, func(t *testing.T) {
+			testComplexQuerySubqueryExecutionCounts(t, mode)
+		})
+	}
+}
+
+func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 	var subqueryExecutions atomic.Int64
 	var fallbackCacheBuilds atomic.Int64
 	var fusedConstraints atomic.Int64
 	var uniqueJoinBuilds atomic.Int64
 	var replacedOuterGroups atomic.Int64
 	var narrowedOuterMaterializations atomic.Int64
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           t.TempDir(),
-		Schema:         optimizationMatrixSchema(),
-		PlannerOptions: &popts,
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
+		Schema: optimizationMatrixSchema(),
 		AnnotationHandler: func(event annotations.Event) {
 			switch event.Name {
 			case "subquery/executor-path":
@@ -358,8 +369,6 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 			}
 		},
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	populateOptimizationMatrix(t, db, 10, 20)
 	result, err := db.Query(optimizationMatrixQuery(10))
@@ -380,6 +389,14 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 // A warm read-only steady state is expected to rebuild nothing; this reports
 // any rebuild population by attribute and reason.
 func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testComplexQueryCheckpointCacheSteadyState(t, mode)
+		})
+	}
+}
+
+func testComplexQueryCheckpointCacheSteadyState(t *testing.T, mode optimizerMode) {
 	const (
 		numScenarios     = 75
 		tasksPerScenario = 100
@@ -393,8 +410,7 @@ func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
 		reason    string
 	}
 	counts := map[rebuildKey]int{}
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema: optimizationMatrixSchema(),
 		AnnotationHandler: func(event annotations.Event) {
 			if event.Name != annotations.CacheRebuild || !recording.Load() {
@@ -406,8 +422,6 @@ func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
 			}]++
 		},
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	populateOptimizationMatrix(t, db, numScenarios, tasksPerScenario)
 	queryText := optimizationMatrixQuery(resultLimit)
@@ -447,13 +461,20 @@ func BenchmarkComplexQueryJoinMaterialization(b *testing.B) {
 	})
 }
 
-func benchmarkComplexQueryCheckpoint(b *testing.B, options *planner.PlannerOptions) {
-	const (
-		numScenarios     = 75
-		tasksPerScenario = 100
-		resultLimit      = 25
-	)
+// BenchmarkComplexQueryBackends runs the checkpoint query on every backend.
+// Separate from BenchmarkComplexQueryCheckpoint, whose name and shape are the
+// baseline several analyses in docs/perf compare against.
+func BenchmarkComplexQueryBackends(b *testing.B) {
+	for _, backend := range storeContractCases() {
+		b.Run(backend.name, func(b *testing.B) {
+			runComplexQueryCheckpoint(b, openContractDatabase(b, backend, DatabaseOptions{
+				Schema: optimizationMatrixSchema(),
+			}))
+		})
+	}
+}
 
+func benchmarkComplexQueryCheckpoint(b *testing.B, options *planner.PlannerOptions) {
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:           b.TempDir(),
 		Schema:         optimizationMatrixSchema(),
@@ -461,6 +482,16 @@ func benchmarkComplexQueryCheckpoint(b *testing.B, options *planner.PlannerOptio
 	})
 	require.NoError(b, err)
 	defer db.Close()
+
+	runComplexQueryCheckpoint(b, db)
+}
+
+func runComplexQueryCheckpoint(b *testing.B, db *Database) {
+	const (
+		numScenarios     = 75
+		tasksPerScenario = 100
+		resultLimit      = 25
+	)
 
 	populateOptimizationMatrix(b, db, numScenarios, tasksPerScenario)
 	queryText := optimizationMatrixQuery(resultLimit)

@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,10 +15,14 @@ import (
 // with cardinality-many (add-wins set) CRDT semantics. This is a regression
 // test for a panic caused by using []byte as a map key in resolveAddWinsSet.
 func TestCardinalityMany_ByteValues(t *testing.T) {
-	dir, err := os.MkdirTemp("", "bytes-many-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testCardinalityManyByteValues(t, mode)
+		})
+	}
+}
 
+func testCardinalityManyByteValues(t *testing.T, mode optimizerMode) {
 	s := schema.NewSchema()
 	s.Add(&schema.AttributeDefinition{
 		Ident:       datalog.NewKeyword(":test/data"),
@@ -27,12 +30,7 @@ func TestCardinalityMany_ByteValues(t *testing.T) {
 		Cardinality: schema.CardinalityMany,
 	})
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   dir,
-		Schema: s,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 	entity := datalog.NewIdentity("bytes-entity")
 	attr := datalog.NewKeyword(":test/data")
@@ -43,7 +41,7 @@ func TestCardinalityMany_ByteValues(t *testing.T) {
 	tx := db.NewTransaction()
 	tx.Add(entity, attr, v1)
 	tx.Add(entity, attr, v2)
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	require.NoError(t, err)
 
 	// Query — should return both without panicking
@@ -71,10 +69,14 @@ func TestCardinalityMany_ByteValues(t *testing.T) {
 // TestCardinalityMany_ByteValues_Retract verifies retraction works for []byte
 // values in cardinality-many sets.
 func TestCardinalityMany_ByteValues_Retract(t *testing.T) {
-	dir, err := os.MkdirTemp("", "bytes-retract-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testCardinalityManyByteValuesRetract(t, mode)
+		})
+	}
+}
 
+func testCardinalityManyByteValuesRetract(t *testing.T, mode optimizerMode) {
 	s := schema.NewSchema()
 	s.Add(&schema.AttributeDefinition{
 		Ident:       datalog.NewKeyword(":test/data"),
@@ -82,12 +84,7 @@ func TestCardinalityMany_ByteValues_Retract(t *testing.T) {
 		Cardinality: schema.CardinalityMany,
 	})
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   dir,
-		Schema: s,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 	entity := datalog.NewIdentity("bytes-retract")
 	attr := datalog.NewKeyword(":test/data")
@@ -98,7 +95,7 @@ func TestCardinalityMany_ByteValues_Retract(t *testing.T) {
 	tx := db.NewTransaction()
 	tx.Add(entity, attr, v1)
 	tx.Add(entity, attr, v2)
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	require.NoError(t, err)
 
 	// Retract v2

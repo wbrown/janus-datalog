@@ -61,38 +61,38 @@ func TestResolveLWWFromDatoms_TombstoneReturnsNil(t *testing.T) {
 //
 // Pre-fix: returns the tombstoned datom's V via line 867.
 func TestLookupAttribute_StorageFallback_Tombstone(t *testing.T) {
-	dir := t.TempDir()
-	s, err := schema.NewBuilder().
-		Attribute(":user/name").Type(schema.TypeString).One().Add().
-		Build()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":user/name").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:         dir,
-		Schema:       s,
-		DisableCache: true, // force the storage-fallback path
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+				Schema:       s,
+				DisableCache: true, // force the storage-fallback path
+			})
 
-	alice := datalog.NewIdentity("alice")
-	name := datalog.NewKeyword(":user/name")
+			alice := datalog.NewIdentity("alice")
+			name := datalog.NewKeyword(":user/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(alice, name, "Alice"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, name, "Alice"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Remove(alice, name, "Alice"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Remove(alice, name, "Alice"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	matcher := db.Matcher().(*PatternMatcher)
-	v, ok := requireAttributeLookup(t, matcher, alice, name)
+			matcher := db.Matcher().(*PatternMatcher)
+			v, ok := requireAttributeLookup(t, matcher, alice, name)
 
-	assert.False(t, ok, "tombstoned attribute must not report as present")
-	assert.Nil(t, v, "tombstoned attribute must not return its retracted V")
+			assert.False(t, ok, "tombstoned attribute must not report as present")
+			assert.Nil(t, v, "tombstoned attribute must not return its retracted V")
+		})
+	}
 }
 
 // ================================================================

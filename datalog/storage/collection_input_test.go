@@ -24,7 +24,7 @@ import (
 func TestCollectionInput_SingleCollection(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create test data
 			entities := []datalog.Identity{
@@ -60,7 +60,7 @@ func TestCollectionInput_SingleCollection(t *testing.T) {
 func TestCollectionInput_SingleElement(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			entity := datalog.NewIdentity("person-1")
 
@@ -84,7 +84,7 @@ func TestCollectionInput_SingleElement(t *testing.T) {
 func TestCollectionInput_EmptyCollection(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Add some data
 			tx := db.NewTransaction()
@@ -111,14 +111,7 @@ func TestCollectionInput_EmptyCollection(t *testing.T) {
 func TestCollectionInput_TwoCollections(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				DisableCache:   true,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -148,7 +141,7 @@ func TestCollectionInput_TwoCollections(t *testing.T) {
 				tx.Set(e, attrs[0], "Name"+string(rune('A'+i)))
 				tx.Set(e, attrs[1], int64(20+i*10))
 			}
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			// Query with two collection inputs - should get cross-product
@@ -172,7 +165,7 @@ func TestCollectionInput_TwoCollections(t *testing.T) {
 func TestCollectionInput_ThreeCollections(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create entities with multiple attributes having multiple values
 			entities := []datalog.Identity{
@@ -225,7 +218,7 @@ func TestCollectionInput_ThreeCollections(t *testing.T) {
 func TestCollectionInput_ScalarPlusCollection(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			entities := []datalog.Identity{
 				datalog.NewIdentity("person-1"),
@@ -261,7 +254,7 @@ func TestCollectionInput_ScalarPlusCollection(t *testing.T) {
 func TestCollectionInput_CollectionPlusScalar(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			entities := []datalog.Identity{
 				datalog.NewIdentity("person-1"),
@@ -295,7 +288,7 @@ func TestCollectionInput_CollectionPlusScalar(t *testing.T) {
 func TestCollectionInput_KeywordCollection(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			entity := datalog.NewIdentity("person-1")
 			attrs := []datalog.Keyword{
@@ -329,7 +322,7 @@ func TestCollectionInput_KeywordCollection(t *testing.T) {
 func TestCollectionInput_IntCollection(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -364,7 +357,7 @@ func TestCollectionInput_IntCollection(t *testing.T) {
 func TestCollectionInput_StringCollection(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{

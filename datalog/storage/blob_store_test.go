@@ -1,14 +1,9 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
-	"crypto/sha1"
-	"os"
 	"strings"
 	"testing"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -17,97 +12,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// ---- Blob Store Unit Tests ----
-
-func openTestBadger(t *testing.T) (*badger.DB, func()) {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "blob-test-*")
-	require.NoError(t, err)
-
-	opts := badger.DefaultOptions(dir)
-	opts.Logger = nil
-	db, err := badger.Open(opts)
-	require.NoError(t, err)
-
-	return db, func() {
-		db.Close()
-		os.RemoveAll(dir)
-	}
-}
-
-func TestBlobStore_PutGet(t *testing.T) {
-	db, cleanup := openTestBadger(t)
-	defer cleanup()
-
-	data := []byte("compressed blob content " + strings.Repeat("x", 100))
-	hash := sha1.Sum(data)
-
-	// Put
-	err := db.Update(func(txn *badger.Txn) error {
-		return putBlob(txn.Set, hash, data)
-	})
-	require.NoError(t, err)
-
-	// Get
-	result, err := getBlob(db, hash)
-	require.NoError(t, err)
-	assert.Equal(t, data, result)
-}
-
-func TestBlobStore_ContentAddressing(t *testing.T) {
-	db, cleanup := openTestBadger(t)
-	defer cleanup()
-
-	data := []byte("deduplicated content")
-	hash := sha1.Sum(data)
-
-	// Put twice
-	for i := 0; i < 2; i++ {
-		err := db.Update(func(txn *badger.Txn) error {
-			return putBlob(txn.Set, hash, data)
-		})
-		require.NoError(t, err)
-	}
-
-	// Should still read correctly
-	result, err := getBlob(db, hash)
-	require.NoError(t, err)
-	assert.Equal(t, data, result)
-
-	// Count blob keys
-	count := 0
-	err = db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte{blobKeyPrefix}
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			count++
-		}
-		return nil
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, count, "should have exactly 1 blob key")
-}
-
-func TestBlobStore_Missing(t *testing.T) {
-	db, cleanup := openTestBadger(t)
-	defer cleanup()
-
-	hash := sha1.Sum([]byte("nonexistent"))
-	_, err := getBlob(db, hash)
-	assert.Error(t, err)
-}
-
-func TestBlobStore_KeyPrefix(t *testing.T) {
-	// Verify blob prefix doesn't collide with any index prefix
-	assert.Greater(t, blobKeyPrefix, byte(TAEV), "blob prefix must be > highest index prefix")
-}
-
 // ---- Tier 3 Integration Tests ----
-
-// makeTier3Data lives in compressed_export_test.go, which is wasm-portable;
-// this file is not.
 
 // makeTier3String creates a string version of Tier 3 test data.
 // Uses printable ASCII subset for valid string content.
@@ -123,16 +28,15 @@ func makeTier3String(size int) string {
 }
 
 func TestTier3_WriteRead(t *testing.T) {
-	dir, err := os.MkdirTemp("", "tier3-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			testTier3WriteRead(t, mode)
+		})
+	}
+}
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:                 dir,
-		CompressionThreshold: 256,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+func testTier3WriteRead(t *testing.T, mode optimizerMode) {
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{CompressionThreshold: 256})
 
 	entity := datalog.NewIdentity("tier3-entity")
 	attr := datalog.NewKeyword(":test/big")
@@ -149,7 +53,7 @@ func TestTier3_WriteRead(t *testing.T) {
 	// Write
 	tx := db.NewTransaction()
 	tx.Add(entity, attr, bigValue)
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	require.NoError(t, err)
 
 	// Read back
@@ -173,16 +77,15 @@ func TestTier3_WriteRead(t *testing.T) {
 }
 
 func TestTier3_ContentDedup(t *testing.T) {
-	dir, err := os.MkdirTemp("", "tier3-dedup-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			testTier3ContentDedup(t, mode)
+		})
+	}
+}
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:                 dir,
-		CompressionThreshold: 256,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+func testTier3ContentDedup(t *testing.T, mode optimizerMode) {
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{CompressionThreshold: 256})
 
 	bigValue := makeTier3Data(100000)
 
@@ -196,24 +99,14 @@ func TestTier3_ContentDedup(t *testing.T) {
 		entity := datalog.NewIdentity(strings.Repeat("e", i+1))
 		tx := db.NewTransaction()
 		tx.Add(entity, datalog.NewKeyword(":test/big"), bigValue)
-		_, err = tx.Commit()
+		_, err := tx.Commit()
 		require.NoError(t, err)
 	}
 
-	// Count blobs — should be exactly 1 (content-addressed dedup)
-	count := 0
-	err = requireBadgerStore(t, db).db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte{blobKeyPrefix}
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			count++
-		}
-		return nil
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, count, "same content should produce one blob (content-addressed)")
+	keys, hasBlobTier := blobKeys(t, db.Store())
+	require.True(t, hasBlobTier,
+		"byteKeyBackends selects the stores whose fixed-width keys force a large value out of line")
+	assert.Len(t, keys, 1, "same content should produce one blob (content-addressed)")
 
 	// Both entities should read back correctly
 	for i := 0; i < 2; i++ {
@@ -260,16 +153,15 @@ func TestTier3_DatomFromKey_NilDB(t *testing.T) {
 }
 
 func TestTier3_WriteRead_String(t *testing.T) {
-	dir, err := os.MkdirTemp("", "tier3-str-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			testTier3WriteReadString(t, mode)
+		})
+	}
+}
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:                 dir,
-		CompressionThreshold: 256,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+func testTier3WriteReadString(t *testing.T, mode optimizerMode) {
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{CompressionThreshold: 256})
 
 	entity := datalog.NewIdentity("tier3-str-entity")
 	attr := datalog.NewKeyword(":test/big-text")
@@ -284,7 +176,7 @@ func TestTier3_WriteRead_String(t *testing.T) {
 
 	tx := db.NewTransaction()
 	tx.Add(entity, attr, bigValue)
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	require.NoError(t, err)
 
 	matcher := NewPatternMatcher(db.Store())
@@ -307,17 +199,12 @@ func TestTier3_WriteRead_String(t *testing.T) {
 
 // ---- Tier 3 Query Integration Tests ----
 
-func newTier3DB(t *testing.T, s schema.SchemaProvider) (*Database, func()) {
+func newTier3DB(t *testing.T, mode optimizerMode, s schema.SchemaProvider) *Database {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "tier3-query-*")
-	require.NoError(t, err)
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:                 dir,
+	return createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema:               s,
 		CompressionThreshold: 256,
 	})
-	require.NoError(t, err)
-	return db, func() { db.Close(); os.RemoveAll(dir) }
 }
 
 func skipIfNotTier3Bytes(t *testing.T, data []byte) {
@@ -337,8 +224,15 @@ func skipIfNotTier3String(t *testing.T, data string) {
 }
 
 func TestTier3_AVET_ExactMatch(t *testing.T) {
-	db, cleanup := newTier3DB(t, nil)
-	defer cleanup()
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			testTier3AVETExactMatch(t, mode)
+		})
+	}
+}
+
+func testTier3AVETExactMatch(t *testing.T, mode optimizerMode) {
+	db := newTier3DB(t, mode, nil)
 
 	entity := datalog.NewIdentity("avet-tier3")
 	attr := datalog.NewKeyword(":test/big")
@@ -370,8 +264,15 @@ func TestTier3_AVET_ExactMatch(t *testing.T) {
 }
 
 func TestTier3_AVET_NoFalsePositive(t *testing.T) {
-	db, cleanup := newTier3DB(t, nil)
-	defer cleanup()
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			testTier3AVETNoFalsePositive(t, mode)
+		})
+	}
+}
+
+func testTier3AVETNoFalsePositive(t *testing.T, mode optimizerMode) {
+	db := newTier3DB(t, mode, nil)
 
 	entity := datalog.NewIdentity("avet-tier3-fp")
 	attr := datalog.NewKeyword(":test/big")
@@ -402,14 +303,21 @@ func TestTier3_AVET_NoFalsePositive(t *testing.T) {
 }
 
 func TestTier3_CRDT_CardinalityOne_LWW(t *testing.T) {
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			testTier3CRDTCardinalityOneLWW(t, mode)
+		})
+	}
+}
+
+func testTier3CRDTCardinalityOneLWW(t *testing.T, mode optimizerMode) {
 	s := schema.NewSchema()
 	s.Add(&schema.AttributeDefinition{
 		Ident:       datalog.NewKeyword(":test/big"),
 		ValueType:   schema.TypeBytes,
 		Cardinality: schema.CardinalityOne,
 	})
-	db, cleanup := newTier3DB(t, s)
-	defer cleanup()
+	db := newTier3DB(t, mode, s)
 
 	entity := datalog.NewIdentity("lww-tier3")
 	attr := datalog.NewKeyword(":test/big")
@@ -453,14 +361,21 @@ func TestTier3_CRDT_CardinalityOne_LWW(t *testing.T) {
 }
 
 func TestTier3_CRDT_CardinalityMany_AddRetract(t *testing.T) {
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			testTier3CRDTCardinalityManyAddRetract(t, mode)
+		})
+	}
+}
+
+func testTier3CRDTCardinalityManyAddRetract(t *testing.T, mode optimizerMode) {
 	s := schema.NewSchema()
 	s.Add(&schema.AttributeDefinition{
 		Ident:       datalog.NewKeyword(":test/blobs"),
 		ValueType:   schema.TypeBytes,
 		Cardinality: schema.CardinalityMany,
 	})
-	db, cleanup := newTier3DB(t, s)
-	defer cleanup()
+	db := newTier3DB(t, mode, s)
 
 	entity := datalog.NewIdentity("many-tier3")
 	attr := datalog.NewKeyword(":test/blobs")
@@ -520,8 +435,15 @@ func TestTier3_CRDT_CardinalityMany_AddRetract(t *testing.T) {
 }
 
 func TestTier3_EntityScan_MixedTiers(t *testing.T) {
-	db, cleanup := newTier3DB(t, nil)
-	defer cleanup()
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			testTier3EntityScanMixedTiers(t, mode)
+		})
+	}
+}
+
+func testTier3EntityScanMixedTiers(t *testing.T, mode optimizerMode) {
+	db := newTier3DB(t, mode, nil)
 
 	entity := datalog.NewIdentity("mixed-tier-entity")
 	smallValue := "short name"                                      // Tier 1

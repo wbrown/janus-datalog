@@ -19,19 +19,22 @@ import (
 // TestTemporalHandlesInheritPlannerOptions pins the options-threading
 // contract: a handle derived from a configured database observes the parent's
 // planner options, not the defaults.
+// The axis is AvailableBackends rather than optimizerModes: the PlannerOptions
+// this test configures are its subject, and the mode's would replace them.
 func TestTemporalHandlesInheritPlannerOptions(t *testing.T) {
+	for _, backend := range AvailableBackends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			testTemporalHandlesInheritPlannerOptions(t, backend)
+		})
+	}
+}
+
+func testTemporalHandlesInheritPlannerOptions(t *testing.T, backend Backend) {
 	popts := DefaultPlannerOptions()
 	popts.EnableAlgebraOptimizer = false
 	popts.EnableScanSharing = !popts.EnableScanSharing
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           t.TempDir(),
-		PlannerOptions: &popts,
-	})
-	if err != nil {
-		t.Fatalf("create db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openBackendDB(t, backend, DatabaseOptions{PlannerOptions: &popts})
 
 	// DeepEqual rather than ==: PlannerOptions carries Handler, a func, and a
 	// struct holding one is not comparable. This database registers no handler,
@@ -83,6 +86,7 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	"rollbackInProgress": fieldZeroed, // rollback coordination (write path)
 	"drainCond":          fieldZeroed,
 	"rollbackMu":         fieldZeroed,
+	"removePath":         fieldZeroed, // parent's scratch dir; a handle holding it would RemoveAll the parent's data
 
 	// builderCache is snapshot-independent (keyed on pattern structure), so
 	// handles share the parent's builder population.
@@ -101,6 +105,14 @@ var temporalFieldContract = map[string]temporalFieldClass{
 // the contract table (structural completeness) and asserts the inherited and
 // per-handle dispositions behaviorally where they are observable.
 func TestTemporalHandleFieldClassification(t *testing.T) {
+	for _, backend := range AvailableBackends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			testTemporalHandleFieldClassification(t, backend)
+		})
+	}
+}
+
+func testTemporalHandleFieldClassification(t *testing.T, backend Backend) {
 	dbType := reflect.TypeOf(Database{})
 	for i := 0; i < dbType.NumField(); i++ {
 		name := dbType.Field(i).Name
@@ -117,14 +129,7 @@ func TestTemporalHandleFieldClassification(t *testing.T) {
 	popts := DefaultPlannerOptions()
 	popts.EnableAlgebraOptimizer = false
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           t.TempDir(),
-		PlannerOptions: &popts,
-	})
-	if err != nil {
-		t.Fatalf("create db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openBackendDB(t, backend, DatabaseOptions{PlannerOptions: &popts})
 
 	for handleName, handle := range map[string]*Database{
 		"AsOf":    db.AsOf(datalog.ElementID{Lamport: 1, ReplicaID: 1}),
@@ -162,6 +167,9 @@ func TestTemporalHandleFieldClassification(t *testing.T) {
 		}
 		if handle.activeTx != nil {
 			t.Errorf("%s: activeTx must be zero on a read-only temporal handle", handleName)
+		}
+		if handle.removePath != "" {
+			t.Errorf("%s: removePath must be zero — it would RemoveAll the parent's directory", handleName)
 		}
 	}
 

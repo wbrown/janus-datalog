@@ -14,18 +14,13 @@ import (
 func TestDecorrelatedOrJoinBranchResults(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path: t.TempDir(),
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				AnnotationHandler: func(e annotations.Event) {
 					if e.Name == "or/branch.complete" {
 						t.Logf("[ANNOTATION] %s: %v", e.Name, e.Data)
 					}
 				},
-				PlannerOptions: &popts,
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			tx := db.NewTransaction()
 			scenario1 := datalog.NewIdentity("scenario:1")
@@ -36,7 +31,7 @@ func TestDecorrelatedOrJoinBranchResults(t *testing.T) {
 			tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2")
 			tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1)
 			tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete"))
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			// Exact query from TestOrWithGetElseInsideSubquery_E2E

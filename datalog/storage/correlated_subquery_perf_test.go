@@ -38,22 +38,13 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			dir, err := os.MkdirTemp("", "correlated-subquery-perf-*")
-			require.NoError(t, err)
-			defer os.RemoveAll(dir)
-
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           dir,
-				PlannerOptions: &popts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				AnnotationHandler: func(e annotations.Event) {
 					if e.Name == "subquery/decorrelation-cached" || e.Name == "subquery/decorrelation-cache-hit" {
 						t.Logf("[%s] %v", e.Name, e.Data)
 					}
 				},
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			// Populate data — one transaction per scenario to avoid BadgerDB size limits
 			baseTime := time.Date(2026, 3, 14, 0, 0, 0, 0, time.UTC)
@@ -92,7 +83,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 						require.NoError(t, tx.Add(task, kwTaskKey, datalog.NewKeyword(fmt.Sprintf(":scenario/task-%d", j))))
 					}
 				}
-				_, err = tx.Commit()
+				_, err := tx.Commit()
 				require.NoError(t, err)
 			}
 			t.Logf("Populated %d scenarios with %d tasks each (%d total datoms)",
@@ -282,25 +273,26 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 // against optimized (algebra optimizer with decorrelation) on the same data
 // and query as TestCorrelatedSubqueryPerformance.
 func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
-	dir, err := os.MkdirTemp("", "correlated-subquery-algebra-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, backend := range AvailableBackends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			testCorrelatedSubqueryAlgebraOptimizer(t, backend)
+		})
+	}
+}
 
+func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, backend Backend) {
 	const (
 		numScenarios     = 75
 		tasksPerScenario = 100
 	)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dir,
+	db := openBackendDB(t, backend, DatabaseOptions{
 		AnnotationHandler: func(e annotations.Event) {
 			if e.Name == "subquery/correlation-check" || e.Name == "subquery/uncorrelated-cached" || e.Name == "subquery/uncorrelated-cache-hit" || e.Name == "subquery/inner-clause-dispatch" {
 				t.Logf("[%s] %v", e.Name, e.Data)
 			}
 		},
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	// Reuse same data setup as TestCorrelatedSubqueryPerformance
 	baseTime := time.Date(2026, 3, 14, 0, 0, 0, 0, time.UTC)
@@ -327,7 +319,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 				require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/key"), datalog.NewKeyword(fmt.Sprintf(":scenario/task-%d", j))))
 			}
 		}
-		_, err = tx.Commit()
+		_, err := tx.Commit()
 		require.NoError(t, err)
 	}
 	t.Logf("Populated %d scenarios with %d tasks each", numScenarios, tasksPerScenario)
@@ -440,10 +432,14 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 // so InnerJoin never drops anything — it validates the decorrelation speedup.
 // This test validates correctness when defaults are needed.
 func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
-	dir, err := os.MkdirTemp("", "correlated-subquery-defaults-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testCorrelatedSubqueryAlgebraOptimizerWithDefaults(t, mode)
+		})
+	}
+}
 
+func testCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T, mode optimizerMode) {
 	const (
 		totalScenarios       = 75
 		scenariosWithTasks   = 37 // Matches production: roughly half have completed tasks
@@ -451,9 +447,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 		scenariosWithOpening = 30 // Subset that have an opening task (determines ?complete)
 	)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
-	require.NoError(t, err)
-	defer db.Close()
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 	baseTime := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
 	statusComplete := datalog.NewKeyword(":status/complete")
@@ -483,7 +477,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 				}
 			}
 		}
-		_, err = tx.Commit()
+		_, err := tx.Commit()
 		require.NoError(t, err)
 	}
 
@@ -617,17 +611,20 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 // Previous tests used simplified queries that missed phasing issues triggered
 // by the combination of get-else + NOT + OR-fallback in the same clause set.
 func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
-	dir, err := os.MkdirTemp("", "correlated-subquery-production-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testCorrelatedSubqueryAlgebraOptimizerProductionStructure(t, mode)
+		})
+	}
+}
 
+func testCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T, mode optimizerMode) {
 	const (
 		numProjects     = 10
 		itemsPerProject = 5
 	)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dir,
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		AnnotationHandler: func(e annotations.Event) {
 			if e.Name == "or-fallback/cache-build" || e.Name == "or-fallback/branch.success" {
 				t.Logf("[%s] %v", e.Name, e.Data)
@@ -637,8 +634,6 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 			}
 		},
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	baseTime := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
 	statusDone := datalog.NewKeyword(":status/done")
@@ -673,7 +668,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 				require.NoError(t, tx.Add(item, datalog.NewKeyword(":item/key"), datalog.NewKeyword(fmt.Sprintf(":step/work-%d", j))))
 			}
 		}
-		_, err = tx.Commit()
+		_, err := tx.Commit()
 		require.NoError(t, err)
 	}
 

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 // walkEntryDecision is the outcome of applying the CRDT-unique walk
@@ -29,12 +30,22 @@ const (
 // streaming path (CRDTResolvingIterator.processUniqueEntry) build this
 // state and feed it to walkApplyEntry.
 type uniqueWalkState struct {
-	retracted map[string]datalog.ElementID
+	// retracted maps a value to the highest Tx at which a CRDT Remove
+	// tombstone was seen for it. Nothing is deleted — the name predates the
+	// distinction and collides with physical deletion; see
+	// BUG_RETRACT_NAMES_TWO_OPPOSITE_OPERATIONS.
+	//
+	// It is keyed by the value itself. Values are not all usable as Go map
+	// keys — []byte and vectors are not comparable — so this uses the engine's
+	// value-keyed map, which hashes content and settles collisions with
+	// datalog.ValuesEqual. Rendering the value to bytes for a key would mean
+	// reaching for a storage encoding to answer a value-domain question.
+	retracted *executor.TupleKeyMap
 }
 
 // newUniqueWalkState constructs an empty walk state.
 func newUniqueWalkState() *uniqueWalkState {
-	return &uniqueWalkState{retracted: make(map[string]datalog.ElementID)}
+	return &uniqueWalkState{retracted: executor.NewTupleKeyMap()}
 }
 
 // walkApplyEntry applies the CRDT-unique walk rule to one entry. The
@@ -56,18 +67,17 @@ func newUniqueWalkState() *uniqueWalkState {
 // The supersession scan accrues into report; the decisions that short-circuit
 // before it read no index.
 func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Datom, eBytes Entity, aBytes Attribute, report *scanReport) (walkEntryDecision, error) {
-	vKey := string(encodeValueForSearch(datom.V, m.encoder))
-
 	if datom.Op == datalog.OpCRDTRemove {
-		if existing, ok := state.retracted[vKey]; !ok || existing.Less(datom.Tx) {
-			state.retracted[vKey] = datom.Tx
+		existing, ok := state.retracted.GetValue(datom.V)
+		if !ok || existing.(datalog.ElementID).Less(datom.Tx) {
+			state.retracted.PutValue(datom.V, datom.Tx)
 		}
 		return walkEntryRetract, nil
 	}
 
 	// Set (or default OpNone). Check if this V has been retracted at a
 	// higher Tx by a later entry in this entity's own history.
-	if rTx, ok := state.retracted[vKey]; ok && datom.Tx.Less(rTx) {
+	if rTx, ok := state.retracted.GetValue(datom.V); ok && datom.Tx.Less(rTx.(datalog.ElementID)) {
 		return walkEntrySkip, nil
 	}
 

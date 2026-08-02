@@ -93,7 +93,7 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte, report *scanRe
 	// Store implementations resolve through Datom() with identical
 	// semantics.
 	if it, ok := iter.(*memoryIterator); ok {
-		if err := scanAddWinsMemory(m.encoder, it, acc); err != nil {
+		if err := scanAddWinsMemory(it, acc); err != nil {
 			return nil, err
 		}
 		if err := it.Error(); err != nil {
@@ -101,7 +101,7 @@ func (m *PatternMatcher) resolveAddWinsSet(eBytes, aBytes []byte, report *scanRe
 		}
 		return finishWithBound(acc, it.blobs, bound)
 	}
-	if blobs, ok, err := scanAddWinsBadger(m.encoder, iter, acc); ok {
+	if blobs, ok, err := scanAddWinsBadger(iter, acc); ok {
 		if err != nil {
 			return nil, err
 		}
@@ -267,9 +267,11 @@ func (a *addWinsAccumulator) finish(blobs BlobReader) (*SetResolutionResult, err
 
 // scanAddWinsMemory drives the accumulator from a memory-store iterator's
 // raw keys with direct, inlinable per-entry calls.
-func scanAddWinsMemory(encoder *BinaryKeyEncoder, it *memoryIterator, acc *addWinsAccumulator) error {
+func scanAddWinsMemory(it *memoryIterator, acc *addWinsAccumulator) error {
+	// The iterator carries the encoder that produced the keys it is walking;
+	// see scanAddWinsBadger.
 	for it.Next() {
-		_, _, vBytes, tx, op, _, err := encoder.DecodeKey(EAVT, it.Key())
+		_, _, vBytes, tx, op, _, err := it.encoder.DecodeKey(EAVT, it.Key())
 		if err != nil {
 			return err
 		}

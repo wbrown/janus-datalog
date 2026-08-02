@@ -28,7 +28,7 @@ func collectFirstValue(t *testing.T, rel executor.Relation) []interface{} {
 func TestQueryLimitThroughStorage(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			kind := datalog.NewKeyword(":event/kind")
 			seq := datalog.NewKeyword(":event/seq")
@@ -93,7 +93,7 @@ func TestQueryLimitThroughStorage(t *testing.T) {
 func TestLimitComposesWithAsOf(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := tempDB(t, db.WithPlannerOptions(mode.plannerOptions()))
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
 			kind := datalog.NewKeyword(":snap/kind")
 			seq := datalog.NewKeyword(":snap/seq")

@@ -1,13 +1,10 @@
 package storage
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // =============================================================================
@@ -17,26 +14,11 @@ import (
 // when the underlying storage returns StreamingRelation (RequiresCopy = true).
 // =============================================================================
 
-// popts sets the database's default planner options (nil = defaults).
-func createOrTestDB(t *testing.T, popts *planner.PlannerOptions) (*Database, func()) {
+// handler is registered at open, since everything the database builds is
+// constructed with it; nil is annotations-off.
+func createOrTestDB(t *testing.T, mode optimizerMode, handler annotations.Handler) *Database {
 	t.Helper()
-
-	tmpDir, err := os.MkdirTemp("", "or_fallback_copy_test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dbPath, PlannerOptions: popts})
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		t.Fatalf("failed to create database: %v", err)
-	}
-
-	return db, func() {
-		db.Close()
-		os.RemoveAll(tmpDir)
-	}
+	return createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: handler})
 }
 
 // TestOrClauseTupleStability verifies that tuples from OR clause execution
@@ -45,14 +27,9 @@ func createOrTestDB(t *testing.T, popts *planner.PlannerOptions) (*Database, fun
 func TestOrClauseTupleStability(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Tracing only; registered at open because everything the database
-			// builds is constructed with it.
-			popts := mode.plannerOptions()
-			popts.Handler = func(e annotations.Event) {
+			db := createOrTestDB(t, mode, func(e annotations.Event) {
 				t.Logf("[TRACE] %s: %v", e.Name, e.Data)
-			}
-			db, cleanup := createOrTestDB(t, &popts)
-			defer cleanup()
+			})
 
 			// Add test data - entities with status "active" or "pending"
 			tx := db.NewTransaction()
@@ -123,9 +100,7 @@ func TestOrClauseTupleStability(t *testing.T) {
 func TestOrClauseMultipleBranches(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, cleanup := createOrTestDB(t, &popts)
-			defer cleanup()
+			db := createOrTestDB(t, mode, nil)
 
 			// Add test data with different categories
 			tx := db.NewTransaction()

@@ -35,6 +35,7 @@ const bindingDrivenWrites = 3
 // builds are all constructed with it; nil is annotations-off.
 func bindingDrivenFixture(
 	t *testing.T,
+	mode optimizerMode,
 	handler annotations.Handler,
 ) (*Database, *query.DataPattern, executor.Relation, []query.Symbol) {
 	t.Helper()
@@ -44,18 +45,10 @@ func bindingDrivenFixture(
 		Build()
 	require.NoError(t, err)
 
-	// One mode pinned explicitly rather than the package's optimizer-mode loop:
-	// these tests drive the matcher directly, so the planner — and therefore the
-	// algebra optimizer — is not on their path.
-	opts := optimizerMode{name: "algebra_off", algebra: false}.plannerOptions()
-	opts.Handler = handler
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           t.TempDir(),
-		Schema:         s,
-		PlannerOptions: &opts,
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
+		Schema:            s,
+		AnnotationHandler: handler,
 	})
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
 
 	name := datalog.NewKeyword(":person/name")
 	bindings := make([]executor.Tuple, len(bindingDrivenPeople))
@@ -116,7 +109,18 @@ func drainRelation(t *testing.T, rel executor.Relation) int {
 // one chooseJoinStrategy picks depends on binding-set size and its own
 // thresholds, so a query-level test would pin whichever it picks today and
 // silently stop covering the other two.
+// The algebra axis is pinned off — the planner is not on this path — while the
+// backend is not: these strategies are matcher-level, and the matcher is what
+// each store implements differently.
 func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
+	for _, mode := range pinnedOptimizerModes(false) {
+		t.Run(mode.name, func(t *testing.T) {
+			testBindingDrivenStrategiesReportTheirFunnel(t, mode)
+		})
+	}
+}
+
+func testBindingDrivenStrategiesReportTheirFunnel(t *testing.T, mode optimizerMode) {
 	const (
 		entities = len(bindingDrivenPeople)
 		// Every write is intake: the scan reads the whole (A, E) group and CRDT
@@ -155,7 +159,7 @@ func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
 	} {
 		t.Run(string(tc.strategy), func(t *testing.T) {
 			var events []annotations.Event
-			db, pattern, bindingRel, symbols := bindingDrivenFixture(t,
+			db, pattern, bindingRel, symbols := bindingDrivenFixture(t, mode,
 				func(e annotations.Event) { events = append(events, e) })
 
 			rel, err := tc.match(db.Matcher().(*PatternMatcher), pattern, bindingRel, symbols)
@@ -218,6 +222,14 @@ func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
 // from the datom alone and the matcher's single exit restores set semantics.
 // Pinning tuple counts here would pin that difference rather than the unit.
 func TestBindingSizeCountsTuplesNotDistinctKeys(t *testing.T) {
+	for _, mode := range pinnedOptimizerModes(false) {
+		t.Run(mode.name, func(t *testing.T) {
+			testBindingSizeCountsTuplesNotDistinctKeys(t, mode)
+		})
+	}
+}
+
+func testBindingSizeCountsTuplesNotDistinctKeys(t *testing.T, mode optimizerMode) {
 	const slotsPerEntity = 2
 	const wantTuples = len(bindingDrivenPeople) * slotsPerEntity
 
@@ -244,7 +256,7 @@ func TestBindingSizeCountsTuplesNotDistinctKeys(t *testing.T) {
 	} {
 		t.Run(string(tc.strategy), func(t *testing.T) {
 			var events []annotations.Event
-			db, pattern, _, symbols := bindingDrivenFixture(t,
+			db, pattern, _, symbols := bindingDrivenFixture(t, mode,
 				func(e annotations.Event) { events = append(events, e) })
 
 			// The entity stays at tuple position 0, which is where all three
@@ -308,10 +320,18 @@ func lastScanComplete(events []annotations.Event, strategy annotations.ScanStrat
 // which shares the fixture; what is left here is the count of events and the
 // scan count only this strategy carries.
 func TestPerBindingScanReportsOneCountedEvent(t *testing.T) {
+	for _, mode := range pinnedOptimizerModes(false) {
+		t.Run(mode.name, func(t *testing.T) {
+			testPerBindingScanReportsOneCountedEvent(t, mode)
+		})
+	}
+}
+
+func testPerBindingScanReportsOneCountedEvent(t *testing.T, mode optimizerMode) {
 	// Cleared after the fixture: the assertion below counts scan-completions, so
 	// it has to be about the match and not about the fixture's writes.
 	var events []annotations.Event
-	db, pattern, bindingRel, symbols := bindingDrivenFixture(t,
+	db, pattern, bindingRel, symbols := bindingDrivenFixture(t, mode,
 		func(e annotations.Event) { events = append(events, e) })
 	events = nil
 
@@ -394,19 +414,14 @@ func TestBoundAnnotationKeyHasOneType(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var events []annotations.Event
-			opts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:              t.TempDir(),
-				PlannerOptions:    &opts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			name := datalog.NewKeyword(":person/name")
 			tx := db.NewTransaction()
 			require.NoError(t, tx.Add(datalog.NewIdentity("person:alice"), name, "Alice"))
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			result, err := db.Query(`[:find ?e :where [?e :person/name "Alice"]]`)
@@ -450,24 +465,27 @@ func TestBoundAnnotationKeyHasOneType(t *testing.T) {
 // meet in one trace. Both are required to appear, so this cannot pass by
 // exercising neither.
 //
-// One optimizer mode rather than the package's loop: with the algebra optimizer
-// on, decorrelation rewrites this correlated subquery into a join and the
-// subquery family never reaches the trace. Where the producer does not run there
-// is no collision to pin, and the scan events' own typing is covered in both
-// modes by the tests above.
+// The algebra axis is pinned off: with the optimizer on, decorrelation rewrites
+// this correlated subquery into a join and the subquery family never reaches the
+// trace. Where the producer does not run there is no collision to pin, and the
+// scan events' own typing is covered in both modes by the tests above. The
+// backend still varies — the index key is written by every store's scan path.
 func TestIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T) {
+	for _, mode := range pinnedOptimizerModes(false) {
+		t.Run(mode.name, func(t *testing.T) {
+			testIndexAnnotationKeyCarriesOnlyAnIndexType(t, mode)
+		})
+	}
+}
+
+func testIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T, mode optimizerMode) {
 	// Registered at open; the assertions below are presence checks over the
 	// stream, so the fixture's own events are harmless.
 	var events []annotations.Event
-	opts := optimizerMode{name: "algebra_off", algebra: false}.plannerOptions()
-	opts.Handler = func(e annotations.Event) { events = append(events, e) }
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           t.TempDir(),
-		Schema:         funnelSchema(t),
-		PlannerOptions: &opts,
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
+		Schema:            funnelSchema(t),
+		AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	funnelFixture(t, db)
 
@@ -507,16 +525,21 @@ func TestIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T) {
 // the cache on, matchWithBindingsFromCache answers a binding-driven pattern
 // before analyzeReuseStrategy is consulted and the arm never runs.
 func TestCardinalityAnnotationKeyCarriesOnlyAKeyword(t *testing.T) {
+	for _, mode := range pinnedOptimizerModes(false) {
+		t.Run(mode.name, func(t *testing.T) {
+			testCardinalityAnnotationKeyCarriesOnlyAKeyword(t, mode)
+		})
+	}
+}
+
+func testCardinalityAnnotationKeyCarriesOnlyAKeyword(t *testing.T, mode optimizerMode) {
 	// Registered at open; the assertion below is a presence check over the
 	// stream, so the fixture's own events are harmless.
 	var events []annotations.Event
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:              t.TempDir(),
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		DisableCache:      true,
 		AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	s, err := schema.NewBuilder().
 		Attribute(":person/name").Type(schema.TypeString).One().Add().

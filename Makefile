@@ -12,7 +12,7 @@ help:
 	@echo "  make test-fast      - Run tests with short flag (skips slow tests)"
 	@echo "  make test-storage   - Run storage tests only (native)"
 	@echo "  make test-examples  - Compile-check every examples/ file under its build tag"
-	@echo "  make test-wasm      - Every datalog package's tests under js/wasm (node runner)"
+	@echo "  make test-wasm      - datalog and tests packages under js/wasm (node runner)"
 	@echo "  make test-hooks     - .claude/hooks harness (Tier 2 runs the real claude CLI)"
 	@echo "  make bench          - Run all benchmarks"
 	@echo "  make bench-prebuilt - Run pre-built database benchmarks"
@@ -42,7 +42,7 @@ test-storage: build-testdb
 test-wasm:
 	@command -v node >/dev/null 2>&1 || { echo "node is required for wasm tests (go_js_wasm_exec)"; exit 1; }
 	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go build ./datalog/...
-	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go test -count=1 ./datalog/...
+	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go test -count=1 ./datalog/... ./tests/...
 
 # Every examples/ file is its own `package main` behind //go:build example, so
 # `go vet ./examples/` reports main redeclared and no ordinary build reaches

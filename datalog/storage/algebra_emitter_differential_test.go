@@ -11,9 +11,6 @@ import (
 )
 
 func TestAlgebraBridgeOptimizedOffExactTupleDifferential(t *testing.T) {
-	db, cleanup := setupAlgebraTestDB(t, nil)
-	defer cleanup()
-
 	testCases := []struct {
 		name    string
 		query   string
@@ -91,100 +88,113 @@ func TestAlgebraBridgeOptimizedOffExactTupleDifferential(t *testing.T) {
 		},
 	}
 
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			baseline := executeAlgebraMode(t, db, testCase.query, testCase.inputs, false)
-			optimized := executeAlgebraMode(t, db, testCase.query, testCase.inputs, true)
-			if testCase.ordered {
-				require.Equal(t, baseline, optimized)
-			} else {
-				require.ElementsMatch(t, baseline, optimized)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := setupAlgebraTestDB(t, mode)
+			for _, testCase := range testCases {
+				t.Run(testCase.name, func(t *testing.T) {
+					baseline := executeAlgebraMode(t, db, testCase.query, testCase.inputs, false)
+					optimized := executeAlgebraMode(t, db, testCase.query, testCase.inputs, true)
+					if testCase.ordered {
+						require.Equal(t, baseline, optimized)
+					} else {
+						require.ElementsMatch(t, baseline, optimized)
+					}
+				})
 			}
 		})
 	}
 }
 
+// The two project-insertion differentials below run through
+// runPlannerOptions, which builds its own executor from the options passed in
+// and ignores the database's — so the mode has to seed those options directly
+// or the optimizer axis never moves.
 func TestJoinProjectInsertionExactTupleDifferential(t *testing.T) {
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir()})
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	score := datalog.NewKeyword(":item/score")
-	payload := datalog.NewKeyword(":item/payload")
-	tx := db.NewTransaction()
-	for _, item := range []struct {
-		id      string
-		score   int64
-		payload string
-	}{
-		{id: "item-a", score: 95, payload: "alpha"},
-		{id: "item-b", score: 80, payload: "beta"},
-		{id: "item-c", score: 100, payload: "gamma"},
-	} {
-		entity := datalog.NewIdentity(item.id)
-		tx.Add(entity, score, item.score)
-		tx.Add(entity, payload, item.payload)
+			score := datalog.NewKeyword(":item/score")
+			payload := datalog.NewKeyword(":item/payload")
+			tx := db.NewTransaction()
+			for _, item := range []struct {
+				id      string
+				score   int64
+				payload string
+			}{
+				{id: "item-a", score: 95, payload: "alpha"},
+				{id: "item-b", score: 80, payload: "beta"},
+				{id: "item-c", score: 100, payload: "gamma"},
+			} {
+				entity := datalog.NewIdentity(item.id)
+				tx.Add(entity, score, item.score)
+				tx.Add(entity, payload, item.payload)
+			}
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			source := `[:find ?entity ?payload
+				:where [?entity :item/score ?score]
+				       [(> ?score 90)]
+				       [?entity :item/payload ?payload]]`
+			baselineOptions := mode.plannerOptions()
+			baselineOptions.EnableJoinProjectInsertion = false
+			projectOptions := baselineOptions
+			projectOptions.EnableJoinProjectInsertion = true
+			baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
+			optimized := executePlannerOptions(t, db, source, nil, projectOptions)
+			require.ElementsMatch(t, baseline, optimized)
+			require.Len(t, optimized, 2)
+			require.ElementsMatch(t, []interface{}{"alpha", "gamma"}, []interface{}{
+				optimized[0][1],
+				optimized[1][1],
+			})
+		})
 	}
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	source := `[:find ?entity ?payload
-		:where [?entity :item/score ?score]
-		       [(> ?score 90)]
-		       [?entity :item/payload ?payload]]`
-	baselineOptions := DefaultPlannerOptions()
-	baselineOptions.EnableJoinProjectInsertion = false
-	projectOptions := baselineOptions
-	projectOptions.EnableJoinProjectInsertion = true
-	baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
-	optimized := executePlannerOptions(t, db, source, nil, projectOptions)
-	require.ElementsMatch(t, baseline, optimized)
-	require.Len(t, optimized, 2)
-	require.ElementsMatch(t, []interface{}{"alpha", "gamma"}, []interface{}{
-		optimized[0][1],
-		optimized[1][1],
-	})
 }
 
 func TestJoinProjectInsertionDeduplicatesProjectedFanout(t *testing.T) {
-	tag := datalog.NewKeyword(":item/tag")
-	payload := datalog.NewKeyword(":item/payload")
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       tag,
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	s.Add(&schema.AttributeDefinition{
-		Ident:       payload,
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), Schema: s})
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			tag := datalog.NewKeyword(":item/tag")
+			payload := datalog.NewKeyword(":item/payload")
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       tag,
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			s.Add(&schema.AttributeDefinition{
+				Ident:       payload,
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	entity := datalog.NewIdentity("fanout-item")
-	tx := db.NewTransaction()
-	tx.Add(entity, tag, "alpha")
-	tx.Add(entity, tag, "beta")
-	tx.Add(entity, payload, "shared")
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			entity := datalog.NewIdentity("fanout-item")
+			tx := db.NewTransaction()
+			tx.Add(entity, tag, "alpha")
+			tx.Add(entity, tag, "beta")
+			tx.Add(entity, payload, "shared")
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	source := `[:find ?entity ?payload
-		:where [?entity :item/tag ?tag]
-		       [?entity :item/payload ?payload]]`
-	baselineOptions := DefaultPlannerOptions()
-	baselineOptions.EnableJoinProjectInsertion = false
-	projectOptions := baselineOptions
-	projectOptions.EnableJoinProjectInsertion = true
+			source := `[:find ?entity ?payload
+				:where [?entity :item/tag ?tag]
+				       [?entity :item/payload ?payload]]`
+			baselineOptions := mode.plannerOptions()
+			baselineOptions.EnableJoinProjectInsertion = false
+			projectOptions := baselineOptions
+			projectOptions.EnableJoinProjectInsertion = true
 
-	baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
-	projected := executePlannerOptions(t, db, source, nil, projectOptions)
-	require.Equal(t, [][]interface{}{{entity, "shared"}}, baseline)
-	require.Equal(t, baseline, projected,
-		"projecting the fanout symbol must retain Relation set semantics")
+			baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
+			projected := executePlannerOptions(t, db, source, nil, projectOptions)
+			require.Equal(t, [][]interface{}{{entity, "shared"}}, baseline)
+			require.Equal(t, baseline, projected,
+				"projecting the fanout symbol must retain Relation set semantics")
+		})
+	}
 }
 
 func executeAlgebraMode(

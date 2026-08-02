@@ -25,65 +25,6 @@ import (
 // With production dataset (28,040 datoms), this causes a 10+ second hang.
 // This is the default path for binding-driven scans.
 func TestHashJoinScanRangeBug(t *testing.T) {
-	tempDir := t.TempDir()
-	db, err := NewDatabase(tempDir)
-	assert.NoError(t, err)
-	defer db.Close()
-
-	symbolKw := datalog.NewKeyword(":symbol/ticker")
-	priceSymbol := datalog.NewKeyword(":price/symbol")
-	priceTime := datalog.NewKeyword(":price/time")
-	priceMinuteOfDay := datalog.NewKeyword(":price/minute-of-day")
-	priceOpen := datalog.NewKeyword(":price/open")
-	priceHigh := datalog.NewKeyword(":price/high")
-	priceLow := datalog.NewKeyword(":price/low")
-	priceClose := datalog.NewKeyword(":price/close")
-	priceVolume := datalog.NewKeyword(":price/volume")
-
-	loc, _ := time.LoadLocation("America/New_York")
-
-	// Create 10 symbols with 1,000 bars each = 10,000 price entities total
-	// We query for 1 symbol's bars (1,000) but scan all 10,000 without range narrowing
-	// Production has ~3,500 bars × 8 attributes = 28,000 datoms
-	symbols := []string{"AAPL", "GOOGL", "MSFT", "AMZN", "META", "NVDA", "TSLA", "AMD", "INTC", "NFLX"}
-	symbolEntities := make(map[string]datalog.Identity)
-
-	tx := db.NewTransaction()
-	for _, sym := range symbols {
-		symbolEntity := datalog.NewIdentity(sym)
-		symbolEntities[sym] = symbolEntity
-		err = tx.Add(symbolEntity, symbolKw, sym)
-		assert.NoError(t, err)
-	}
-	_, err = tx.Commit()
-	assert.NoError(t, err)
-
-	// Add 1,000 price bars per symbol (10,000 total, 80,000 datoms with 8 attributes each)
-	// Match production schema exactly
-	batchSize := 50
-	baseTime := time.Date(2025, 8, 1, 9, 30, 0, 0, loc)
-	for _, sym := range symbols {
-		for batch := 0; batch < 1000; batch += batchSize {
-			tx := db.NewTransaction()
-			for i := batch; i < batch+batchSize && i < 1000; i++ {
-				priceEntity := datalog.NewIdentity(fmt.Sprintf("%s-bar-%d", sym, i))
-				barTime := baseTime.Add(time.Duration(i) * time.Minute)
-				minuteOfDay := int64(barTime.Hour()*60 + barTime.Minute())
-
-				tx.Add(priceEntity, priceSymbol, symbolEntities[sym])
-				tx.Add(priceEntity, priceTime, barTime)
-				tx.Add(priceEntity, priceMinuteOfDay, minuteOfDay)
-				tx.Add(priceEntity, priceOpen, float64(100+i%100))
-				tx.Add(priceEntity, priceHigh, float64(105+i%100))
-				tx.Add(priceEntity, priceLow, float64(95+i%100))
-				tx.Add(priceEntity, priceClose, float64(102+i%100))
-				tx.Add(priceEntity, priceVolume, int64(1000+i))
-			}
-			_, err := tx.Commit()
-			assert.NoError(t, err)
-		}
-	}
-
 	// Production query that hangs:
 	// 1. [?s :symbol/ticker "AAPL"] returns 1 entity
 	// 2. [?e :price/symbol ?s] should scan only ~1,000 AAPL price bars
@@ -111,6 +52,61 @@ func TestHashJoinScanRangeBug(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			symbolKw := datalog.NewKeyword(":symbol/ticker")
+			priceSymbol := datalog.NewKeyword(":price/symbol")
+			priceTime := datalog.NewKeyword(":price/time")
+			priceMinuteOfDay := datalog.NewKeyword(":price/minute-of-day")
+			priceOpen := datalog.NewKeyword(":price/open")
+			priceHigh := datalog.NewKeyword(":price/high")
+			priceLow := datalog.NewKeyword(":price/low")
+			priceClose := datalog.NewKeyword(":price/close")
+			priceVolume := datalog.NewKeyword(":price/volume")
+
+			loc, _ := time.LoadLocation("America/New_York")
+
+			// Create 10 symbols with 1,000 bars each = 10,000 price entities total
+			// We query for 1 symbol's bars (1,000) but scan all 10,000 without range narrowing
+			// Production has ~3,500 bars × 8 attributes = 28,000 datoms
+			symbols := []string{"AAPL", "GOOGL", "MSFT", "AMZN", "META", "NVDA", "TSLA", "AMD", "INTC", "NFLX"}
+			symbolEntities := make(map[string]datalog.Identity)
+
+			tx := db.NewTransaction()
+			for _, sym := range symbols {
+				symbolEntity := datalog.NewIdentity(sym)
+				symbolEntities[sym] = symbolEntity
+				assert.NoError(t, tx.Add(symbolEntity, symbolKw, sym))
+			}
+			_, err := tx.Commit()
+			assert.NoError(t, err)
+
+			// Add 1,000 price bars per symbol (10,000 total, 80,000 datoms with 8 attributes each)
+			// Match production schema exactly
+			batchSize := 50
+			baseTime := time.Date(2025, 8, 1, 9, 30, 0, 0, loc)
+			for _, sym := range symbols {
+				for batch := 0; batch < 1000; batch += batchSize {
+					tx := db.NewTransaction()
+					for i := batch; i < batch+batchSize && i < 1000; i++ {
+						priceEntity := datalog.NewIdentity(fmt.Sprintf("%s-bar-%d", sym, i))
+						barTime := baseTime.Add(time.Duration(i) * time.Minute)
+						minuteOfDay := int64(barTime.Hour()*60 + barTime.Minute())
+
+						tx.Add(priceEntity, priceSymbol, symbolEntities[sym])
+						tx.Add(priceEntity, priceTime, barTime)
+						tx.Add(priceEntity, priceMinuteOfDay, minuteOfDay)
+						tx.Add(priceEntity, priceOpen, float64(100+i%100))
+						tx.Add(priceEntity, priceHigh, float64(105+i%100))
+						tx.Add(priceEntity, priceLow, float64(95+i%100))
+						tx.Add(priceEntity, priceClose, float64(102+i%100))
+						tx.Add(priceEntity, priceVolume, int64(1000+i))
+					}
+					_, err := tx.Commit()
+					assert.NoError(t, err)
+				}
+			}
+
 			// Same options as datalog-cli; binding-driven scans use HashJoinScan.
 			exec := db.NewExecutorWithOptions(mode.plannerOptions())
 

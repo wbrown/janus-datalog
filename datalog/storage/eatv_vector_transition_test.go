@@ -22,19 +22,14 @@ import (
 func TestEATV_VectorTransitionDropsDatom(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
 			// Registered at open. The assertion below is that a reuse-strategy
 			// event naming EATV is present, so the fixture's own events are
 			// harmless — they can only add.
 			var events []annotations.Event
-			popts.Handler = func(e annotations.Event) { events = append(events, e) }
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				DisableCache:   true, // cache disabled
-				PlannerOptions: &popts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+				DisableCache:      true, // cache disabled
+				AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 			})
-			require.NoError(t, err)
-			defer db.Close()
 			db.SetSchema(eaCacheBypassSchema())
 
 			nameAttr := datalog.NewKeyword(":person/name")

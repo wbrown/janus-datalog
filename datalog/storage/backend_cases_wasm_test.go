@@ -4,15 +4,21 @@ package storage
 
 import "testing"
 
-func appendNativeBackendCases(cases []storeContractCase) []storeContractCase {
-	return cases
+// Badger needs a filesystem, so a wasm build has no persistent backend.
+func expectedBackendNames() []string {
+	return []string{"memory", "memory-trees"}
 }
 
 func appendNativeReopenCases(cases []reopenBackendCase) []reopenBackendCase {
 	return cases
 }
 
-func deleteNativeStoreBlobs(t *testing.T, _ Store) (int, bool) {
+func nativeBlobKeys(t *testing.T, _ Store) ([][]byte, bool) {
 	t.Helper()
-	return 0, false
+	return nil, false
+}
+
+func deleteNativeBlobKeys(t *testing.T, _ Store, _ [][]byte) bool {
+	t.Helper()
+	return false
 }

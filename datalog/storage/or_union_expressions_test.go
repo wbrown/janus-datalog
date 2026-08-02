@@ -2,28 +2,20 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // setupBaseEntities creates a fresh database with 3 named entities.
 // Alice has score 100, Bob has score 200, Carol has no score.
-// popts sets the database's default planner options (nil = defaults).
-func setupBaseEntities(t *testing.T, popts *planner.PlannerOptions) (*Database, datalog.Identity, datalog.Identity, datalog.Identity) {
+// The database opens on the mode's backend.
+func setupBaseEntities(t *testing.T, mode optimizerMode) (*Database, datalog.Identity, datalog.Identity, datalog.Identity) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "or-union-expr-*")
-	require.NoError(t, err)
-	t.Cleanup(func() { os.RemoveAll(dir) })
-
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, PlannerOptions: popts})
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 	e1 := datalog.NewIdentity("entity:1")
 	e2 := datalog.NewIdentity("entity:2")
@@ -35,7 +27,7 @@ func setupBaseEntities(t *testing.T, popts *planner.PlannerOptions) (*Database, 
 	tx.Add(e3, datalog.NewKeyword(":entity/name"), "Carol")
 	tx.Add(e1, datalog.NewKeyword(":entity/score"), int64(100))
 	tx.Add(e2, datalog.NewKeyword(":entity/score"), int64(200))
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	require.NoError(t, err)
 
 	return db, e1, e2, e3
@@ -68,8 +60,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	t.Run("or_join_union_with_ground_default", func(t *testing.T) {
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
-				popts := mode.plannerOptions()
-				db, _, _, _ := setupBaseEntities(t, &popts)
+				db, _, _, _ := setupBaseEntities(t, mode)
 
 				results, err := executor.CollectTuples(db.Query(`
 			[:find ?name ?score
@@ -96,8 +87,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	t.Run("or_union_with_ground_default", func(t *testing.T) {
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
-				popts := mode.plannerOptions()
-				db, _, _, _ := setupBaseEntities(t, &popts)
+				db, _, _, _ := setupBaseEntities(t, mode)
 
 				results, err := executor.CollectTuples(db.Query(`
 			[:find ?name ?score
@@ -123,8 +113,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	t.Run("not_branch_standalone", func(t *testing.T) {
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
-				popts := mode.plannerOptions()
-				db, e1, e2, e3 := setupBaseEntities(t, &popts)
+				db, e1, e2, e3 := setupBaseEntities(t, mode)
 				addChildrenTypesAndFriends(t, db, e1, e2, e3)
 
 				results, err := executor.CollectTuples(db.Query(`
@@ -142,8 +131,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	t.Run("nested_or_join_in_and_branches", func(t *testing.T) {
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
-				popts := mode.plannerOptions()
-				db, e1, e2, e3 := setupBaseEntities(t, &popts)
+				db, e1, e2, e3 := setupBaseEntities(t, mode)
 				addChildrenTypesAndFriends(t, db, e1, e2, e3)
 
 				results, err := executor.CollectTuples(db.Query(`
@@ -183,13 +171,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	t.Run("deeply_nested_or_join_4_branches_generic", func(t *testing.T) {
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
-				dir, err := os.MkdirTemp("", "deep-nested-generic-*")
-				require.NoError(t, err)
-				t.Cleanup(func() { os.RemoveAll(dir) })
-				popts := mode.plannerOptions()
-				db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, PlannerOptions: &popts})
-				require.NoError(t, err)
-				t.Cleanup(func() { db.Close() })
+				db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 				// Entities:
 				//   A1 (alpha) — located at A2, in region R1
@@ -236,7 +218,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 
 				tx.Add(d1, datalog.NewKeyword(":rel/link"), d2)
 
-				_, err = tx.Commit()
+				_, err := tx.Commit()
 				require.NoError(t, err)
 
 				// Same 4-branch structure with generic attributes
@@ -292,8 +274,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	t.Run("ground_rebinding_existing_symbol", func(t *testing.T) {
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
-				popts := mode.plannerOptions()
-				db, e1, e2, e3 := setupBaseEntities(t, &popts)
+				db, e1, e2, e3 := setupBaseEntities(t, mode)
 				addChildrenTypesAndFriends(t, db, e1, e2, e3)
 
 				results, err := executor.CollectTuples(db.Query(`
@@ -315,8 +296,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	t.Run("or_join_decorrelated_subquery_with_default", func(t *testing.T) {
 		for _, mode := range optimizerModes {
 			t.Run(mode.name, func(t *testing.T) {
-				popts := mode.plannerOptions()
-				db, e1, e2, e3 := setupBaseEntities(t, &popts)
+				db, e1, e2, e3 := setupBaseEntities(t, mode)
 				addChildrenTypesAndFriends(t, db, e1, e2, e3)
 
 				results, err := executor.CollectTuples(db.Query(`
@@ -357,14 +337,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 func TestOrCorrelatedUnionWithNestedOrExpression_E2E(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			dir, err := os.MkdirTemp("", "or-nested-expr-*")
-			require.NoError(t, err)
-			t.Cleanup(func() { os.RemoveAll(dir) })
-
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, PlannerOptions: &popts})
-			require.NoError(t, err)
-			t.Cleanup(func() { db.Close() })
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			area1 := datalog.NewIdentity("area:caves")
 			room1 := datalog.NewIdentity("room:guard")
@@ -381,7 +354,7 @@ func TestOrCorrelatedUnionWithNestedOrExpression_E2E(t *testing.T) {
 			tx.Add(room2, datalog.NewKeyword(":entity/area"), area1)
 			// npc1 is located in room1
 			tx.Add(npc1, datalog.NewKeyword(":entity/location"), room1)
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			// Exact production pattern: variable attributes from collection inputs

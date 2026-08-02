@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,17 +11,7 @@ import (
 func TestAsOfWildcardPullUsesSnapshot(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			dir, err := os.MkdirTemp("", "asof-wildcard-*")
-			require.NoError(t, err)
-			defer os.RemoveAll(dir)
-
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           dir,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			alice := datalog.NewIdentity("alice")
 			name := datalog.NewKeyword(":person/name")
@@ -56,23 +45,12 @@ func TestAsOfWildcardPullUsesSnapshot(t *testing.T) {
 func TestAsOfWildcardPullUsesSnapshotForCardinalityMany(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			dir, err := os.MkdirTemp("", "asof-wildcard-many-*")
-			require.NoError(t, err)
-			defer os.RemoveAll(dir)
-
 			s, err := schema.NewBuilder().
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           dir,
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			alice := datalog.NewIdentity("alice")
 			tags := datalog.NewKeyword(":person/tags")

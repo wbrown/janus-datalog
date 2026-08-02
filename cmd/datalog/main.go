@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/db"
 	"github.com/wbrown/janus-datalog/datalog/edn"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
@@ -319,78 +319,31 @@ func parseValue(s string) interface{} {
 	return s
 }
 
-// isDumpFilePath reports whether path is an EDN or JDZL dump file (not a
-// BadgerDB directory). Both formats load into a disposable temp database via
-// openDatabaseOrEDN.
-func isDumpFilePath(path string) bool {
-	return strings.HasSuffix(path, ".edn") || strings.HasSuffix(path, ".jdzl")
-}
-
-// openDatabaseOrEDN opens dbPath as a BadgerDB database, or — when the path
-// ends in .edn or .jdzl — imports that dump into a database in a temporary
-// directory. The returned cleanup function closes the database and removes
-// the temporary directory; callers must invoke it. Writes to a dump-backed
-// database are discarded when the process exits.
-// openDatabaseOrEDN opens a BadgerDB directory, or loads an .edn/.jdzl dump
-// into a temporary database. plannerOpts, when non-nil, becomes the database's
-// planner-options override (the -optimize flag rides it); nil keeps the
-// engine defaults — the export/import/stats paths run no queries and pass nil.
+// openDatabaseOrEDN opens dbPath as a database directory, or — when the path
+// ends in .edn or .jdzl — loads that dump into an in-process database. The
+// returned cleanup function closes the database; callers must invoke it. Writes
+// to a dump-backed database are discarded when the process exits.
+//
+// plannerOpts, when non-nil, becomes the database's planner-options override
+// (the -optimize flag rides it); nil keeps the engine defaults — the
+// export/import/stats paths run no queries and pass nil.
 func openDatabaseOrEDN(dbPath string, plannerOpts *planner.PlannerOptions) (*storage.Database, func(), error) {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, nil, fmt.Errorf("database does not exist: %s", dbPath)
 	}
 
-	if !isDumpFilePath(dbPath) {
-		db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-			Path:           dbPath,
-			PlannerOptions: plannerOpts,
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to open database: %w", err)
-		}
-		return db, func() { db.Close() }, nil
+	var opts []db.Option
+	if plannerOpts != nil {
+		opts = append(opts, db.WithPlannerOptions(*plannerOpts))
 	}
-
-	tmpDir, err := os.MkdirTemp("", "datalog-dump-*")
+	database, err := db.Open(dbPath, opts...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create temp dir: %w", err)
+		return nil, nil, fmt.Errorf("failed to open %s: %w", dbPath, err)
 	}
-	db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-		Path:           filepath.Join(tmpDir, "temp.db"),
-		PlannerOptions: plannerOpts,
-	})
-	if err != nil {
-		os.RemoveAll(tmpDir)
-		return nil, nil, fmt.Errorf("failed to create temp database: %w", err)
+	if storage.IsDumpPath(dbPath) {
+		fmt.Fprintf(os.Stderr, "Loaded dump %s into an in-process database (changes will be discarded)\n", dbPath)
 	}
-	cleanup := func() {
-		db.Close()
-		os.RemoveAll(tmpDir)
-	}
-
-	f, err := os.Open(dbPath)
-	if err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("failed to open dump file: %w", err)
-	}
-	defer f.Close()
-
-	switch {
-	case strings.HasSuffix(dbPath, ".edn"):
-		if err := db.Import(f); err != nil {
-			cleanup()
-			return nil, nil, fmt.Errorf("failed to import EDN dump: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "Loaded EDN dump %s into a temporary database (changes will be discarded)\n", dbPath)
-	case strings.HasSuffix(dbPath, ".jdzl"):
-		if err := db.ImportBinary(f); err != nil {
-			cleanup()
-			return nil, nil, fmt.Errorf("failed to import JDZL dump: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "Loaded JDZL dump %s into a temporary database (changes will be discarded)\n", dbPath)
-	}
-
-	return db, cleanup, nil
+	return database, func() { database.Close() }, nil
 }
 
 // runExport exports the database to an EDN file. The source may itself be an
@@ -421,7 +374,7 @@ func runExport(dbPath, exportPath string, compressed bool) {
 func runImport(dbPath, importPath string) {
 	// Importing into a dump path would open/create a Badger directory named
 	// after the dump file; the target must be a real database directory.
-	if isDumpFilePath(dbPath) {
+	if storage.IsDumpPath(dbPath) {
 		log.Fatalf("Cannot import into %s: -db must be a database directory", dbPath)
 	}
 
@@ -481,7 +434,7 @@ func exportBinaryDatabase(dbPath, exportPath string) error {
 }
 
 func runImportBin(dbPath, importPath string) {
-	if isDumpFilePath(dbPath) {
+	if storage.IsDumpPath(dbPath) {
 		log.Fatalf("Cannot import into %s: -db must be a database directory", dbPath)
 	}
 	if _, err := os.Stat(importPath); os.IsNotExist(err) {

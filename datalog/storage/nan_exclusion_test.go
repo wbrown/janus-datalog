@@ -14,44 +14,44 @@ import (
 // inputs, and expression outputs. ±Inf remains a value.
 
 func TestWritesRejectNaN(t *testing.T) {
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	e := datalog.NewIdentity("m:1")
-	attr := datalog.NewKeyword(":m/value")
-	nan := math.NaN()
+			e := datalog.NewIdentity("m:1")
+			attr := datalog.NewKeyword(":m/value")
+			nan := math.NaN()
 
-	tx := db.NewTransaction()
-	defer tx.Rollback()
+			tx := db.NewTransaction()
+			defer tx.Rollback()
 
-	if err := tx.Add(e, attr, nan); err == nil {
-		t.Error("Add must reject NaN")
-	} else if !strings.Contains(err.Error(), "NaN") {
-		t.Errorf("Add error should name NaN; got: %v", err)
-	}
-	if err := tx.Set(e, attr, nan); err == nil {
-		t.Error("Set must reject NaN")
-	}
-	if err := tx.Remove(e, attr, nan); err == nil {
-		t.Error("Remove must reject NaN")
-	}
-	if err := tx.Retract(e, attr, nan); err == nil {
-		t.Error("Retract must reject NaN")
-	}
+			if err := tx.Add(e, attr, nan); err == nil {
+				t.Error("Add must reject NaN")
+			} else if !strings.Contains(err.Error(), "NaN") {
+				t.Errorf("Add error should name NaN; got: %v", err)
+			}
+			if err := tx.Set(e, attr, nan); err == nil {
+				t.Error("Set must reject NaN")
+			}
+			if err := tx.Remove(e, attr, nan); err == nil {
+				t.Error("Remove must reject NaN")
+			}
+			if err := tx.Retract(e, attr, nan); err == nil {
+				t.Error("Retract must reject NaN")
+			}
 
-	// ±Inf is a value: self-equal, totally ordered, storable.
-	if err := tx.Add(e, attr, math.Inf(1)); err != nil {
-		t.Errorf("Add must accept +Inf: %v", err)
+			// ±Inf is a value: self-equal, totally ordered, storable.
+			if err := tx.Add(e, attr, math.Inf(1)); err != nil {
+				t.Errorf("Add must accept +Inf: %v", err)
+			}
+		})
 	}
 }
 
 func TestInputsRejectNaN(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			e := datalog.NewIdentity("m:1")
 			attr := datalog.NewKeyword(":m/value")
@@ -78,7 +78,7 @@ func TestInputsRejectNaN(t *testing.T) {
 func TestExpressionProducingNaNIsError(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Division by zero already errors in the expression layer (a stricter,
 			// pre-existing contract than IEEE), so the NaN-producing shape that can
@@ -128,7 +128,7 @@ func TestExpressionProducingNaNIsError(t *testing.T) {
 func TestConstantExpressionProducingNaNIsError(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, nil)
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			e := datalog.NewIdentity("m:1")
 			attr := datalog.NewKeyword(":m/value")

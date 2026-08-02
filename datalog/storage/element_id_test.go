@@ -338,88 +338,91 @@ func TestElementIDOrderingTransitivity(t *testing.T) {
 
 func TestMaxElementID(t *testing.T) {
 	// Test that MaxElementID returns the highest ElementID from the database
-	tempDir := t.TempDir()
-	db, err := NewDatabase(tempDir)
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Initially should be zero (empty database)
-	maxID, err := db.store.MaxElementID()
-	require.NoError(t, err)
-	t.Logf("Initial MaxElementID: %v", maxID)
-	assert.True(t, maxID.IsZero(), "Empty database should have zero MaxElementID")
+			// Initially should be zero (empty database)
+			maxID, err := db.store.MaxElementID()
+			require.NoError(t, err)
+			t.Logf("Initial MaxElementID: %v", maxID)
+			assert.True(t, maxID.IsZero(), "Empty database should have zero MaxElementID")
 
-	// Add some datoms
-	tx := db.NewTransaction()
-	entity1 := datalog.NewIdentity("test:entity1")
-	attr := datalog.NewKeyword(":test/name")
-	tx.Add(entity1, attr, "value1")
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add some datoms
+			tx := db.NewTransaction()
+			entity1 := datalog.NewIdentity("test:entity1")
+			attr := datalog.NewKeyword(":test/name")
+			tx.Add(entity1, attr, "value1")
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// MaxElementID should now be greater
-	maxID1, err := db.store.MaxElementID()
-	require.NoError(t, err)
-	t.Logf("After first tx MaxElementID: %v", maxID1)
-	assert.Greater(t, maxID1.Lamport, uint64(0), "MaxElementID should be non-zero after write")
+			// MaxElementID should now be greater
+			maxID1, err := db.store.MaxElementID()
+			require.NoError(t, err)
+			t.Logf("After first tx MaxElementID: %v", maxID1)
+			assert.Greater(t, maxID1.Lamport, uint64(0), "MaxElementID should be non-zero after write")
 
-	// Add more datoms
-	tx2 := db.NewTransaction()
-	entity2 := datalog.NewIdentity("test:entity2")
-	tx2.Add(entity2, attr, "value2")
-	tx2.Add(entity2, attr, "value3")
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Add more datoms
+			tx2 := db.NewTransaction()
+			entity2 := datalog.NewIdentity("test:entity2")
+			tx2.Add(entity2, attr, "value2")
+			tx2.Add(entity2, attr, "value3")
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// MaxElementID should be higher
-	maxID2, err := db.store.MaxElementID()
-	require.NoError(t, err)
-	t.Logf("After second tx MaxElementID: %v", maxID2)
-	assert.True(t, maxID1.Less(maxID2), "MaxElementID should increase after more writes")
+			// MaxElementID should be higher
+			maxID2, err := db.store.MaxElementID()
+			require.NoError(t, err)
+			t.Logf("After second tx MaxElementID: %v", maxID2)
+			assert.True(t, maxID1.Less(maxID2), "MaxElementID should increase after more writes")
+		})
+	}
 }
 
 // TestDatabaseClockRestoration lives in persistence_reopen_test.go — its
 // write/close/reopen premise needs a durable backend.
 
 func TestElementIDKeyEncodingWithBadgerDB(t *testing.T) {
-	// Integration test: verify that encoded keys sort correctly in actual BadgerDB
-	tempDir := t.TempDir()
-	db, err := NewDatabase(tempDir)
-	require.NoError(t, err)
-	defer db.Close()
+	// Integration test: TAEV descending Tx order is an index-ordering property
+	// every backend owes, so this runs the whole axis despite the name.
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Write datoms with specific known Lamport values
-	// We'll use different transactions to get different ElementIDs
-	attr := datalog.NewKeyword(":test/attr")
-	var entities []datalog.Identity
+			// Write datoms with specific known Lamport values
+			// We'll use different transactions to get different ElementIDs
+			attr := datalog.NewKeyword(":test/attr")
+			var entities []datalog.Identity
 
-	for i := 0; i < 5; i++ {
-		tx := db.NewTransaction()
-		entity := datalog.NewIdentity(fmt.Sprintf("test:e%d", i))
-		entities = append(entities, entity)
-		tx.Add(entity, attr, fmt.Sprintf("value%d", i))
-		_, err = tx.Commit()
-		require.NoError(t, err)
+			for i := 0; i < 5; i++ {
+				tx := db.NewTransaction()
+				entity := datalog.NewIdentity(fmt.Sprintf("test:e%d", i))
+				entities = append(entities, entity)
+				tx.Add(entity, attr, fmt.Sprintf("value%d", i))
+				_, err := tx.Commit()
+				require.NoError(t, err)
+			}
+
+			// Scan TAEV index (Tx first) - should return entries in descending Tx order
+			// because of bitwise NOT encoding
+			iter, err := db.store.Scan(ScanBound{Index: TAEV})
+			require.NoError(t, err)
+			defer iter.Close()
+
+			var foundTx []datalog.ElementID
+			for iter.Next() {
+				datom, err := iter.Datom()
+				require.NoError(t, err)
+				foundTx = append(foundTx, datom.Tx)
+			}
+
+			// Verify descending order (highest Tx first)
+			for i := 0; i < len(foundTx)-1; i++ {
+				assert.GreaterOrEqual(t, foundTx[i].Lamport, foundTx[i+1].Lamport,
+					"TAEV scan should return entries in descending Tx order (highest first)")
+			}
+
+			t.Logf("Found Tx values in scan order: %v", foundTx)
+		})
 	}
-
-	// Scan TAEV index (Tx first) - should return entries in descending Tx order
-	// because of bitwise NOT encoding
-	iter, err := db.store.Scan(ScanBound{Index: TAEV})
-	require.NoError(t, err)
-	defer iter.Close()
-
-	var foundTx []datalog.ElementID
-	for iter.Next() {
-		datom, err := iter.Datom()
-		require.NoError(t, err)
-		foundTx = append(foundTx, datom.Tx)
-	}
-
-	// Verify descending order (highest Tx first)
-	for i := 0; i < len(foundTx)-1; i++ {
-		assert.GreaterOrEqual(t, foundTx[i].Lamport, foundTx[i+1].Lamport,
-			"TAEV scan should return entries in descending Tx order (highest first)")
-	}
-
-	t.Logf("Found Tx values in scan order: %v", foundTx)
 }

@@ -26,7 +26,6 @@ type PatternMatcher struct {
 	sessionBounded    bool
 	boundOnce         sync.Once
 	readBound         datalog.ElementID
-	encoder           *BinaryKeyEncoder
 	txID              *datalog.ElementID       // nil=latest CRDT-resolved, &ElementID{}=raw history, &ElementID{L,R}=as-of
 	builderCache      *tupleBuilderCache       // Structurally-keyed tuple builders, shared with temporal-handle copies
 	builderCacheOnce  sync.Once                // Ensures builderCache is initialized exactly once
@@ -87,7 +86,6 @@ func NewPatternMatcher(store Store) *PatternMatcher {
 	return &PatternMatcher{
 		store:   store,
 		reader:  store,
-		encoder: store.Encoder(),
 		options: executor.ExecutorOptions{}, // Default options
 	}
 }
@@ -102,7 +100,6 @@ func NewPatternMatcherWithOptions(store Store, opts executor.ExecutorOptions) *P
 	return &PatternMatcher{
 		store:   store,
 		reader:  store,
-		encoder: store.Encoder(),
 		options: opts,
 		handler: opts.Handler,
 	}
@@ -151,7 +148,6 @@ func (m *PatternMatcher) AsOf(txID datalog.ElementID) *PatternMatcher {
 		store:          m.store,
 		reader:         m.reader,
 		sessionBounded: m.sessionBounded,
-		encoder:        m.encoder,
 		txID:           &txID,
 		builderCache:   m.builderCache,
 		handler:        m.handler,

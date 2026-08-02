@@ -19,21 +19,14 @@ func TestSymbolValueRoundTripAndQuery(t *testing.T) {
 				ValueType:   schema.TypeSymbol,
 				Cardinality: schema.CardinalityOne,
 			})
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			entity := datalog.NewIdentity("symbol-value")
 			state := datalog.NewSymbol("workflow/active")
 			require.Equal(t, schema.TypeSymbol, valueTypeFromValue(state))
 			tx := db.NewTransaction()
 			require.NoError(t, tx.Set(entity, attribute, state))
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			result, err := db.Query(

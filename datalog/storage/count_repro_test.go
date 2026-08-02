@@ -16,17 +16,12 @@ func TestCountRepro_WithVector(t *testing.T) {
 			// with it. The loop below filters by event name and only logs, so the
 			// fixture's own events are harmless here.
 			var events []annotations.Event
-			popts := mode.plannerOptions()
-			popts.Handler = func(e annotations.Event) {
-				events = append(events, e)
-			}
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				DisableCache:   true, // cache_disabled
-				PlannerOptions: &popts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+				DisableCache: true, // cache_disabled
+				AnnotationHandler: func(e annotations.Event) {
+					events = append(events, e)
+				},
 			})
-			require.NoError(t, err)
-			defer db.Close()
 			db.SetSchema(eaCacheBypassSchema())
 
 			person1 := datalog.NewIdentity("person-1")
@@ -35,7 +30,7 @@ func TestCountRepro_WithVector(t *testing.T) {
 
 			tx := db.NewTransaction()
 			tx.Set(person1, nameAttr, "Alice")
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			tx2 := db.NewTransaction()

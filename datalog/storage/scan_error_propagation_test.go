@@ -2,9 +2,11 @@ package storage
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // deferredErrorIterator models a storage scan that ends with a sticky error:
@@ -102,7 +104,12 @@ func TestResolveEntityAttributesSurfacesScanErrors(t *testing.T) {
 			// Failure-shape iterators are stateful; build a fresh set per mode.
 			for name, iter := range scanFailureShapes(injected) {
 				t.Run(name, func(t *testing.T) {
-					store := NewMemoryStore(&BinaryKeyEncoder{})
+					store, err := mode.backend.Open(t.TempDir(), &BinaryKeyEncoder{})
+					if err != nil {
+						t.Fatalf("failed to open %s store: %v", mode.backend.Name, err)
+					}
+					t.Cleanup(func() { _ = store.Close() })
+
 					db, err := NewDatabaseWithOptions(DatabaseOptions{
 						Store:          &indexScanOverrideStore{Store: store, index: EATV, iter: iter},
 						DisableCache:   true,
@@ -118,6 +125,57 @@ func TestResolveEntityAttributesSurfacesScanErrors(t *testing.T) {
 					_, err = db.ResolveEntityAttributes(entity, []datalog.Keyword{attr})
 					if err == nil {
 						t.Fatal("expected the scan failure to surface, got nil error")
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestResolveVectorAttributeSurfacesScanErrors is the CardinalityVector arm of
+// the contract above. It needs a schema where that one is schemaless, because
+// vector resolution is reached by declared cardinality: without the schema the
+// same call takes the CardinalityOne arm and the RGA walk never runs.
+func TestResolveVectorAttributeSurfacesScanErrors(t *testing.T) {
+	injected := fmt.Errorf("simulated scan failure")
+	s, err := schema.NewBuilder().
+		Attribute(":user/tags").Type(schema.TypeString).Vector().Add().
+		Build()
+	if err != nil {
+		t.Fatalf("build schema: %v", err)
+	}
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			// Failure-shape iterators are stateful; build a fresh set per mode.
+			for name, iter := range scanFailureShapes(injected) {
+				t.Run(name, func(t *testing.T) {
+					store, err := mode.backend.Open(t.TempDir(), &BinaryKeyEncoder{})
+					if err != nil {
+						t.Fatalf("failed to open %s store: %v", mode.backend.Name, err)
+					}
+					t.Cleanup(func() { _ = store.Close() })
+
+					db, err := NewDatabaseWithOptions(DatabaseOptions{
+						Store:          &indexScanOverrideStore{Store: store, index: EATV, iter: iter},
+						Schema:         s,
+						DisableCache:   true,
+						PlannerOptions: &popts,
+					})
+					if err != nil {
+						t.Fatalf("failed to create database: %v", err)
+					}
+					t.Cleanup(func() { _ = db.Close() })
+
+					entity := datalog.NewIdentity("user:alice")
+					attr := datalog.NewKeyword(":user/tags")
+					_, err = db.ResolveEntityAttributes(entity, []datalog.Keyword{attr})
+					if err == nil {
+						t.Fatal("expected the scan failure to surface, got nil error")
+					}
+					if !strings.Contains(err.Error(), "decode RGA element") {
+						t.Fatalf("expected the RGA walk to be what failed, got %v", err)
 					}
 				})
 			}

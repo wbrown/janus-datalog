@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,14 +18,7 @@ import (
 func TestPrefetchDoesNotBreakMaterialize(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			dir, err := os.MkdirTemp("", "prefetch-materialize-*")
-			require.NoError(t, err)
-			defer os.RemoveAll(dir)
-
-			db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, PlannerOptions: &popts})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create enough entities to trigger prefetch (>50)
 			tx := db.NewTransaction()
@@ -35,7 +27,7 @@ func TestPrefetchDoesNotBreakMaterialize(t *testing.T) {
 				tx.Add(e, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/thing"))
 				tx.Add(e, datalog.NewKeyword(":entity/name"), "Name")
 			}
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			// Query with subquery that triggers nested Execute() via
@@ -58,13 +50,7 @@ func TestPrefetchDoesNotBreakMaterialize(t *testing.T) {
 			// unbound patterns, wraps in LazySeq. On empty results, the CachingIterator
 			// completes with cache=nil but cacheReady=true. A subsequent Materialize()
 			// must check cacheReady, not just cache!=nil.
-			emptyDir2, err := os.MkdirTemp("", "prefetch-empty-*")
-			require.NoError(t, err)
-			defer os.RemoveAll(emptyDir2)
-
-			emptyDB, err := NewDatabaseWithOptions(DatabaseOptions{Path: emptyDir2, PlannerOptions: &popts})
-			require.NoError(t, err)
-			defer emptyDB.Close()
+			emptyDB := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			parent := datalog.NewIdentity("parent:1")
 

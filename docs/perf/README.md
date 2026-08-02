@@ -9,6 +9,18 @@ Durable benchmark and profile artifacts captured pre-refactor, kept so
   operation-by-operation time and space bounds for
   `BenchmarkComplexQueryCheckpoint`, including decorrelation and worst-case
   qualifications.
+- [The two in-process backends, measured](MEMORY_BACKENDS_2026-07-31.md) —
+  `MemoryStore` against `MemoryTreeStore` on assert, retract and scan, native
+  and wasm. Scan is 13–19× faster at three allocations regardless of size; bulk
+  assert allocates 11× less; single-datom retract is 2.5–5.3× slower and
+  degrades with store size. At query level, with Badger as the third arm, the
+  typed store's allocation profile is Badger's to within 0.16% and `MemoryStore`
+  is the outlier at +50% allocations.
+- [Value distribution of a production database](VALUE_DISTRIBUTION_2026-07-31.md) —
+  2.7M datoms measured with `datalog -stats`: 23.7 encoded value bytes per datom,
+  52.4% of value bytes duplicated, two attributes accounting for two thirds of
+  all datoms, and what the concentration means for a typed representation. The
+  raw report is deliberately absent; it enumerates an application's schema.
 
 ## How to read this directory
 
@@ -39,6 +51,51 @@ go tool pprof -top -cum -nodecount=40 /tmp/exec.test <prof>.prof
 ```
 
 ## Current baselines
+
+### `memory_assert_bulk_2026-07-31.txt`
+
+`BenchmarkMemoryAssertBulk` with `-benchmem`, count=3 — the diagnostic
+[`MEMORY_DATOM_INDEXES.md`](../proposals/MEMORY_DATOM_INDEXES.md) asks for:
+whether the MemoryStore key representation is where the wasm 4 GiB ceiling
+actually goes.
+
+| N | B/op | per datom | allocs/datom | ns/datom |
+|---|---:|---:|---:|---:|
+| 1000 | 5,005,233 | 5,005 B | 18.7 | 2,070 |
+| 4000 | 21,500,030 | 5,375 B | 18.7 | 2,297 |
+
+`B/op` is total allocated for a fresh store plus N asserts, so it counts
+transients — the `memoryEntryUndo` journal, map rehashing, btree splits — as well
+as retained store. It bounds retained from above; it does not measure it. The
+structural model in the proposal projects 1,296 B/datom *retained* at `|V|`=8,
+which sits comfortably inside 5,005 allocated, so the measurement is consistent
+with the model rather than a test of it. What it does settle is direction: the
+per-datom cost is thousands of bytes, not hundreds.
+
+**Against the 2026-07-15 run**
+(`wasm_memory_backend_2026-07-15/memory_assert_retract_native_darwin_arm64_count3.txt`,
+same machine and Go version): 6,300 → 5,005 B/datom and 27.75 → 18.7 allocs/datom
+at N=1000, reductions of 21% and 33%. Allocation counts are deterministic, so that
+half of the comparison is exact rather than host-sensitive. Several things landed
+in the window — the typed `ScanBound` seam, the batch-scanner and iterator-reuse
+deletions, `Store.Get`'s removal — and nothing here attributes the delta to any
+one of them.
+
+**18.7 allocations per datom** is the figure the sizing model does not predict; it
+counts bytes only. On wasm, where every transient is charged to a high-water mark
+that never returns, allocation count bears on the hydration peak at least as
+directly as retained size does.
+
+Scaling is linear — 4× the datoms gives 4.3× the bytes and 4.4× the time — which
+is the N² pathology this benchmark was written to catch.
+
+Shape: `|V|`=8 (int64), one attribute, no vectors or blobs. Machine: Apple M5,
+go1.26.3.
+
+`BenchmarkMemoryAssertBulk` now runs per backend, so its sub-benchmarks are
+`memory/Size1000` where this file records `Size1000`. benchstat pairs by name
+and will report the old rows as dropped; compare against the `memory` arm in
+[`MEMORY_BACKENDS_2026-07-31.md`](MEMORY_BACKENDS_2026-07-31.md) by hand.
 
 ### Typed scan-bound campaign A/B (`typed_scan_bound_campaign_*_2026-07-30.txt`)
 

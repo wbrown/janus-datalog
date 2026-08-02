@@ -48,7 +48,8 @@ func benchmarkHistoryOrderedLimitQuery(
 	if countScans {
 		capture = &historyOrderScanCapture{}
 	}
-	db := openHistoryOrderDatabase(b, capture)
+	backend := DefaultBackend()
+	db := openHistoryOrderDatabase(b, optimizerMode{name: backend.Name, backend: backend}, capture)
 	history := db.History()
 
 	for _, limit := range []int{1, 10, 100} {
@@ -100,7 +101,7 @@ func benchmarkHistoryEATVOrderedLimit(b *testing.B, countScans bool) {
 	if countScans {
 		capture = &historyOrderScanCapture{}
 	}
-	db, entity := openHistoryEntityOrderDatabase(b, capture)
+	db, entity := openHistoryEntityOrderDatabase(b, optimizerMode{name: DefaultBackend().Name, backend: DefaultBackend()}, capture)
 	history := db.History()
 
 	for _, limit := range []int{1, 10, 100} {

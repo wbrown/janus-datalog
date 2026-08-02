@@ -1,8 +1,6 @@
 package qb_test
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -26,21 +24,20 @@ var (
 // database's planner options (nil = defaults); the optimizer mode matrix
 // (docs/wip/OPTIMIZER_MODE_MATRIX.md) passes each mode's options so every
 // executing test in this file runs under both optimizer paths.
-func setupTestDB(t *testing.T, popts *planner.PlannerOptions) (*storage.Database, func()) {
+func setupTestDB(t *testing.T, backend storage.Backend, popts *planner.PlannerOptions) (*storage.Database, func()) {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "qb-integration-test-*")
+	store, err := backend.Open(t.TempDir(), nil)
 	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+		t.Fatalf("Failed to open %s store: %v", backend.Name, err)
 	}
 
-	dbPath := filepath.Join(tmpDir, "test.db")
 	db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-		Path:           dbPath,
+		Store:          store,
 		PlannerOptions: popts,
 	})
 	if err != nil {
-		os.RemoveAll(tmpDir)
+		store.Close()
 		t.Fatalf("Failed to create database: %v", err)
 	}
 
@@ -76,13 +73,13 @@ func setupTestDB(t *testing.T, popts *planner.PlannerOptions) (*storage.Database
 
 	if _, err := tx.Commit(); err != nil {
 		db.Close()
-		os.RemoveAll(tmpDir)
+		store.Close()
 		t.Fatalf("Failed to commit transaction: %v", err)
 	}
 
 	cleanup := func() {
 		db.Close()
-		os.RemoveAll(tmpDir)
+		store.Close()
 	}
 
 	return db, cleanup
@@ -93,7 +90,7 @@ func TestIntegration_BasicQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -136,7 +133,7 @@ func TestIntegration_JoinQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			// Same `e` variable in both patterns = join on entity
@@ -180,7 +177,7 @@ func TestIntegration_PredicateQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -229,7 +226,7 @@ func TestIntegration_MultiplePredicates(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -267,7 +264,7 @@ func TestIntegration_AggregationQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -321,7 +318,7 @@ func TestIntegration_CountAggregation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -366,7 +363,7 @@ func TestIntegration_InputParameters(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -411,7 +408,7 @@ func TestIntegration_CollectionInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -458,7 +455,7 @@ func TestIntegration_OrderBy(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -502,7 +499,7 @@ func TestIntegration_QueryInto(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			// No datalog tags - fields map positionally to Find() order
@@ -549,7 +546,7 @@ func TestIntegration_QueryOneInto(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			// No datalog tags - fields map positionally
@@ -595,7 +592,7 @@ func TestIntegration_QueryIntoWithAggregation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			// No datalog tags - fields map positionally to Find() order
@@ -665,7 +662,7 @@ func TestIntegration_CompareWithEDN(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			// EDN query
@@ -735,7 +732,7 @@ func TestIntegration_ConstantValue(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -768,7 +765,7 @@ func TestIntegration_BooleanPredicate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -803,7 +800,7 @@ func TestIntegration_AvgAggregation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -843,7 +840,7 @@ func TestIntegration_MinMaxAggregation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -892,7 +889,7 @@ func TestIntegration_ThreeWayJoin(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -938,7 +935,7 @@ func TestIntegration_Explain(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -990,7 +987,7 @@ func TestIntegration_TupleInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -1040,7 +1037,7 @@ func TestIntegration_RelationInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -1092,7 +1089,7 @@ func TestIntegration_RelationInputNoMatch(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -1132,7 +1129,7 @@ func TestIntegration_MultipleScalarInputs(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -1173,7 +1170,7 @@ func TestIntegration_CompareInputBindingsWithEDN(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			t.Run("ScalarInput", func(t *testing.T) {
@@ -1319,7 +1316,7 @@ func TestIntegration_ComparisonBinding(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -1381,7 +1378,7 @@ func TestIntegration_ComparisonBindingEDNEquivalence(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			// EDN query with comparison binding
@@ -1433,7 +1430,7 @@ func TestIntegration_ChainedComparisonBinding(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDB(t, &popts)
+			db, cleanup := setupTestDB(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -1504,21 +1501,20 @@ var (
 // setupTestDBWithOptionalAttrs creates a test database with some optional
 // attributes. popts sets the database's planner options (nil = defaults);
 // see setupTestDB for the optimizer mode matrix rationale.
-func setupTestDBWithOptionalAttrs(t *testing.T, popts *planner.PlannerOptions) (*storage.Database, func()) {
+func setupTestDBWithOptionalAttrs(t *testing.T, backend storage.Backend, popts *planner.PlannerOptions) (*storage.Database, func()) {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "qb-dbfunc-test-*")
+	store, err := backend.Open(t.TempDir(), nil)
 	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+		t.Fatalf("Failed to open %s store: %v", backend.Name, err)
 	}
 
-	dbPath := filepath.Join(tmpDir, "test.db")
 	db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-		Path:           dbPath,
+		Store:          store,
 		PlannerOptions: popts,
 	})
 	if err != nil {
-		os.RemoveAll(tmpDir)
+		store.Close()
 		t.Fatalf("Failed to create database: %v", err)
 	}
 
@@ -1547,13 +1543,13 @@ func setupTestDBWithOptionalAttrs(t *testing.T, popts *planner.PlannerOptions) (
 
 	if _, err := tx.Commit(); err != nil {
 		db.Close()
-		os.RemoveAll(tmpDir)
+		store.Close()
 		t.Fatalf("Failed to commit transaction: %v", err)
 	}
 
 	cleanup := func() {
 		db.Close()
-		os.RemoveAll(tmpDir)
+		store.Close()
 	}
 
 	return db, cleanup
@@ -1564,7 +1560,7 @@ func TestIntegration_GetElse(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDBWithOptionalAttrs(t, &popts)
+			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -1622,7 +1618,7 @@ func TestIntegration_GetElseEDNEquivalence(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDBWithOptionalAttrs(t, &popts)
+			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)
 			defer cleanup()
 
 			// EDN query
@@ -1671,7 +1667,7 @@ func TestIntegration_MissingPredicate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDBWithOptionalAttrs(t, &popts)
+			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -1717,7 +1713,7 @@ func TestIntegration_MissingPredicateEDNEquivalence(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDBWithOptionalAttrs(t, &popts)
+			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)
 			defer cleanup()
 
 			// EDN query
@@ -1765,7 +1761,7 @@ func TestIntegration_MissingExpression(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDBWithOptionalAttrs(t, &popts)
+			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")
@@ -1824,7 +1820,7 @@ func TestIntegration_GetSome(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
-			db, cleanup := setupTestDBWithOptionalAttrs(t, &popts)
+			db, cleanup := setupTestDBWithOptionalAttrs(t, mode.backend, &popts)
 			defer cleanup()
 
 			e := qb.NewVar("e")

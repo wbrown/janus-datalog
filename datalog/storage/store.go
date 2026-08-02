@@ -60,6 +60,36 @@ type Store interface {
 
 	// Write operations
 	Assert(datoms []datalog.Datom) error
+
+	// AssertEach writes the datoms produce yields as one write unit, without the
+	// caller gathering them first. The store calls produce once, handing it an
+	// add to call per datom, and owns the unit's setup and teardown, so an early
+	// return from produce cannot skip either.
+	//
+	// This is the write path for a producer whose extent is neither known nor
+	// bounded — a decoder walking a dump chunk, where an entity is the floor and
+	// nothing caps the top. What arrival means is each backend's own: the tree
+	// store inserts into the version it is building, Badger encodes into a write
+	// batch that splits at its own transaction ceiling.
+	//
+	// The datom add receives is the producer's workspace, valid for that call
+	// only; a backend that retains one past the call copies it.
+	//
+	// A backend may leave the write open when the call returns, in which case
+	// FinishBatch is what completes it. A failed producer stores an unspecified
+	// part of its run; re-asserting is safe.
+	AssertEach(produce func(add func(*datalog.Datom) error) error) error
+
+	// FinishBatch completes a run of AssertEach calls, and is what makes the run
+	// visible for a backend that left it open. A caller writing in a run — the
+	// dump importers — calls it once when the run ends; a backend that completed
+	// each AssertEach as it returned has nothing to do and returns nil.
+	//
+	// The tree store leaves runs open because publishing a version costs a
+	// copy-on-write clone of every node that version touches, so a run that
+	// publishes once pays for those nodes once rather than per call.
+	FinishBatch() error
+
 	Retract(datoms []datalog.Datom) error
 	DeleteDatoms(datoms []datalog.Datom) (int, error)
 

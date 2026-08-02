@@ -41,7 +41,7 @@ func TestReflect_VectorOrderPreserved(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -107,7 +107,7 @@ func TestReflect_VectorDuplicatesAllowed(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -171,7 +171,7 @@ func TestReflect_VectorUpdatePreservesUnchangedPrefix(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -249,7 +249,7 @@ func TestReflect_VectorReplaceMiddleElement(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -327,7 +327,7 @@ func TestReflect_VectorRemoveFromMiddle(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -402,7 +402,7 @@ func TestReflect_VectorReorder(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -477,7 +477,7 @@ func TestReflect_VectorPrepend(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -552,7 +552,7 @@ func TestReflect_VectorInsertInMiddle(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -627,7 +627,7 @@ func TestReflect_VectorClearAndRepopulate(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})

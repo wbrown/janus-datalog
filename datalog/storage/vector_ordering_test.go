@@ -21,20 +21,25 @@ import (
 // and a comparator that recurses through CompareValues cannot accidentally agree
 // with the old one.
 func TestVectorOrderingIsElementWiseEndToEnd(t *testing.T) {
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: t.TempDir(),
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testVectorOrderingIsElementWiseEndToEnd(t, mode)
+		})
+	}
+}
+
+func testVectorOrderingIsElementWiseEndToEnd(t *testing.T, mode optimizerMode) {
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema: schema.NewBuilder().
 			Attribute(":m/samples").Type(schema.TypeLong).Vector().Add().
 			MustBuild(),
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	attr := datalog.NewKeyword(":m/samples")
 	tx := db.NewTransaction()
 	require.NoError(t, tx.Add(datalog.NewIdentity("m-ten"), attr, int64(10)))
 	require.NoError(t, tx.Add(datalog.NewIdentity("m-two"), attr, int64(2)))
-	_, err = tx.Commit()
+	_, err := tx.Commit()
 	require.NoError(t, err)
 
 	t.Run("ascending order-by puts the vector holding 2 first", func(t *testing.T) {

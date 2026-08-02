@@ -61,12 +61,7 @@ func TestScanBoundOnNegativeLongDoesNotMatchItsNeighbour(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			opts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path: t.TempDir(), Schema: s, PlannerOptions: &opts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			count := datalog.NewKeyword(":person/count")
 			negative := datalog.NewIdentity("person:negative")
@@ -108,12 +103,7 @@ func TestScanBoundOnStringDoesNotMatchItsExtension(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			opts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path: t.TempDir(), Schema: s, PlannerOptions: &opts,
-			})
-			require.NoError(t, err)
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			tag := datalog.NewKeyword(":person/tag")
 			short := datalog.NewIdentity("person:short")

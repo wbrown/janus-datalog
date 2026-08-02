@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -13,22 +12,7 @@ import (
 func TestPullIntegration_StandaloneAPI(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Create temporary database
-			tmpDir, err := os.MkdirTemp("", "pull-test-*")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			defer os.RemoveAll(tmpDir)
-
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create test entities
 			alice := datalog.NewIdentity("user:alice")
@@ -215,22 +199,7 @@ func TestPullIntegration_StandaloneAPI(t *testing.T) {
 func TestPullWildcardPatternMatching(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Create temporary database
-			tmpDir, err := os.MkdirTemp("", "pull-pattern-test-*")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			defer os.RemoveAll(tmpDir)
-
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create test entity
 			alice := datalog.NewIdentity("user:alice")
@@ -380,22 +349,7 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 func TestPullIntegration_InQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Create temporary database
-			tmpDir, err := os.MkdirTemp("", "pull-query-test-*")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			defer os.RemoveAll(tmpDir)
-
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           tmpDir,
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Create test entities
 			alice := datalog.NewIdentity("person:alice")

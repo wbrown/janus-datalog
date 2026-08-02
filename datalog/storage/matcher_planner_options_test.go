@@ -35,7 +35,18 @@ func getDefaultExecutorOptions() executor.ExecutorOptions {
 // options, not DefaultPlannerOptions(). It exercises both drift directions:
 // a field Matcher() copied but from the wrong source (EnableTrueStreaming) and
 // fields Matcher() dropped entirely (EnableScanSharing, EnableEntityPrefetch).
+// The axis is AvailableBackends rather than optimizerModes: the PlannerOptions
+// this test supplies are its subject, and createOptimizerModeDB replaces them
+// with the mode's — which would erase what is being asserted.
 func TestDatabaseMatcher_HonorsCustomPlannerOptions(t *testing.T) {
+	for _, backend := range AvailableBackends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			testDatabaseMatcherHonorsCustomPlannerOptions(t, backend)
+		})
+	}
+}
+
+func testDatabaseMatcherHonorsCustomPlannerOptions(t *testing.T, backend Backend) {
 	custom := DefaultPlannerOptions()
 	custom.EnableTrueStreaming = false // default true
 	custom.EnableScanSharing = true    // default false; dropped by Matcher() pre-fix
@@ -45,13 +56,10 @@ func TestDatabaseMatcher_HonorsCustomPlannerOptions(t *testing.T) {
 	// zero is caught outright.
 	custom.MaxSubqueryWorkers = 7 // default 0, meaning 4
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           t.TempDir(),
+	db := openBackendDB(t, backend, DatabaseOptions{
 		ReplicaID:      1,
 		PlannerOptions: &custom,
 	})
-	require.NoError(t, err)
-	defer db.Close()
 
 	m := db.Matcher().(*PatternMatcher)
 	pattern := &query.DataPattern{

@@ -1,13 +1,11 @@
 package storage
 
 import (
-	"os"
 	"sort"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -18,8 +16,8 @@ type bridgeTestDB struct {
 	Alice, Bob, Charlie, Diana, Eve datalog.Identity
 }
 
-// setupBridgeTestDB creates a database with 5 people for testing bridging predicates.
-// popts sets the database's default planner options (nil = defaults).
+// setupBridgeTestDB creates a database with 5 people for testing bridging
+// predicates, on the mode's backend.
 //
 // People:
 //
@@ -28,24 +26,12 @@ type bridgeTestDB struct {
 //	charlie: "Charlie", age 35, team "beta"
 //	diana:   "Diana",   age 28, team "beta"
 //	eve:     "Eve",     age 40, team "gamma"
-func setupBridgeTestDB(t *testing.T, popts *planner.PlannerOptions) *bridgeTestDB {
+func setupBridgeTestDB(t *testing.T, mode optimizerMode) *bridgeTestDB {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "predicate-bridge-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:           dir,
-		PlannerOptions: popts,
-	})
-	if err != nil {
-		os.RemoveAll(dir)
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 	tdb := &bridgeTestDB{
 		DB:      db,
-		Dir:     dir,
 		Alice:   datalog.NewIdentity("person:alice"),
 		Bob:     datalog.NewIdentity("person:bob"),
 		Charlie: datalog.NewIdentity("person:charlie"),
@@ -74,18 +60,10 @@ func setupBridgeTestDB(t *testing.T, popts *planner.PlannerOptions) *bridgeTestD
 		tx.Add(p.id, ageAttr, p.age)
 		tx.Add(p.id, teamAttr, p.team)
 	}
-	_, err = tx.Commit()
-	if err != nil {
-		db.Close()
-		os.RemoveAll(dir)
+	if _, err := tx.Commit(); err != nil {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 	return tdb
-}
-
-func (tdb *bridgeTestDB) cleanup() {
-	tdb.DB.Close()
-	os.RemoveAll(tdb.Dir)
 }
 
 // collectStrings extracts the first symbol as strings from query results.
@@ -110,9 +88,7 @@ func collectStrings(results [][]interface{}) []string {
 func TestScalarInput_InequalityPredicate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			tdb := setupBridgeTestDB(t, &popts)
-			defer tdb.cleanup()
+			tdb := setupBridgeTestDB(t, mode)
 
 			results, err := executor.CollectTuples(tdb.DB.Query(
 				`[:find ?name
@@ -145,9 +121,7 @@ func TestScalarInput_InequalityPredicate(t *testing.T) {
 func TestScalarInput_ComparisonPredicate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			tdb := setupBridgeTestDB(t, &popts)
-			defer tdb.cleanup()
+			tdb := setupBridgeTestDB(t, mode)
 
 			results, err := executor.CollectTuples(tdb.DB.Query(
 				`[:find ?name
@@ -182,9 +156,7 @@ func TestScalarInput_ComparisonPredicate(t *testing.T) {
 func TestScalarInput_EqualityPredicate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			tdb := setupBridgeTestDB(t, &popts)
-			defer tdb.cleanup()
+			tdb := setupBridgeTestDB(t, mode)
 
 			results, err := executor.CollectTuples(tdb.DB.Query(
 				`[:find ?name
@@ -217,9 +189,7 @@ func TestScalarInput_EqualityPredicate(t *testing.T) {
 func TestScalarInput_MultipleBridgingPredicates(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			tdb := setupBridgeTestDB(t, &popts)
-			defer tdb.cleanup()
+			tdb := setupBridgeTestDB(t, mode)
 
 			results, err := executor.CollectTuples(tdb.DB.Query(
 				`[:find ?name
@@ -255,9 +225,7 @@ func TestScalarInput_MultipleBridgingPredicates(t *testing.T) {
 func TestScalarInput_ExpressionBridge(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			tdb := setupBridgeTestDB(t, &popts)
-			defer tdb.cleanup()
+			tdb := setupBridgeTestDB(t, mode)
 
 			results, err := executor.CollectTuples(tdb.DB.Query(
 				`[:find ?name ?adjusted
@@ -304,9 +272,7 @@ func TestScalarInput_ExpressionBridge(t *testing.T) {
 func TestScalarInput_InPatternNotConstantBindable(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			tdb := setupBridgeTestDB(t, &popts)
-			defer tdb.cleanup()
+			tdb := setupBridgeTestDB(t, mode)
 
 			results, err := executor.CollectTuples(tdb.DB.Query(
 				`[:find ?other-name
@@ -352,9 +318,7 @@ func TestScalarInput_InPatternNotConstantBindable(t *testing.T) {
 func TestCollectionInput_BridgingPredicate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			tdb := setupBridgeTestDB(t, &popts)
-			defer tdb.cleanup()
+			tdb := setupBridgeTestDB(t, mode)
 
 			results, err := executor.CollectTuples(tdb.DB.Query(
 				`[:find ?name
@@ -390,9 +354,7 @@ func TestCollectionInput_BridgingPredicate(t *testing.T) {
 func TestCollectionInput_ComparisonBridge(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			tdb := setupBridgeTestDB(t, &popts)
-			defer tdb.cleanup()
+			tdb := setupBridgeTestDB(t, mode)
 
 			results, err := executor.CollectTuples(tdb.DB.Query(
 				`[:find ?name ?age
@@ -453,9 +415,7 @@ func TestCollectionInput_ComparisonBridge(t *testing.T) {
 func TestDisjointPatterns_BridgedByPredicate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			tdb := setupBridgeTestDB(t, &popts)
-			defer tdb.cleanup()
+			tdb := setupBridgeTestDB(t, mode)
 
 			results, err := executor.CollectTuples(tdb.DB.Query(
 				`[:find ?n1 ?n2
@@ -502,9 +462,7 @@ func TestDisjointPatterns_BridgedByPredicate(t *testing.T) {
 func TestDisjointGroups_ExpressionBridge(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			tdb := setupBridgeTestDB(t, &popts)
-			defer tdb.cleanup()
+			tdb := setupBridgeTestDB(t, mode)
 
 			results, err := executor.CollectTuples(tdb.DB.Query(
 				`[:find ?n1 ?n2 ?combined
@@ -552,9 +510,7 @@ func TestDisjointGroups_ExpressionBridge(t *testing.T) {
 func TestScalarInput_AllExcluded(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			tdb := setupBridgeTestDB(t, &popts)
-			defer tdb.cleanup()
+			tdb := setupBridgeTestDB(t, mode)
 
 			results, err := executor.CollectTuples(tdb.DB.Query(
 				`[:find ?name
@@ -581,20 +537,12 @@ func TestScalarInput_AllExcluded(t *testing.T) {
 func TestScalarInput_SingleEntitySelfExclusion(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			alice := datalog.NewIdentity("person:alice")
 			tx := db.NewTransaction()
 			tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice")
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -623,8 +571,15 @@ func TestScalarInput_SingleEntitySelfExclusion(t *testing.T) {
 // TestPlanner_ConstantBindableDetection verifies the planner preserves scalar
 // input semantics for values used only by predicates.
 func TestPlanner_ConstantBindableDetection(t *testing.T) {
-	tdb := setupBridgeTestDB(t, nil)
-	defer tdb.cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testPlannerConstantBindableDetection(t, mode)
+		})
+	}
+}
+
+func testPlannerConstantBindableDetection(t *testing.T, mode optimizerMode) {
+	tdb := setupBridgeTestDB(t, mode)
 
 	plan, err := tdb.DB.Explain(
 		`[:find ?e
@@ -660,8 +615,15 @@ func TestPlanner_ConstantBindableDetection(t *testing.T) {
 // TestPlanner_ScalarInPatternNotConstantBindable verifies the planner does NOT
 // preserve a scalar input as constant-only when it appears in a data pattern.
 func TestPlanner_ScalarInPatternNotConstantBindable(t *testing.T) {
-	tdb := setupBridgeTestDB(t, nil)
-	defer tdb.cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testPlannerScalarInPatternNotConstantBindable(t, mode)
+		})
+	}
+}
+
+func testPlannerScalarInPatternNotConstantBindable(t *testing.T, mode optimizerMode) {
+	tdb := setupBridgeTestDB(t, mode)
 
 	plan, err := tdb.DB.Explain(
 		`[:find ?name

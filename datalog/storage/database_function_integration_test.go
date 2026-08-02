@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -17,15 +16,7 @@ import (
 func TestGetElseBasic(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			// Add test data - some entities have :person/nickname, some don't
 			tx := db.NewTransaction()
@@ -43,7 +34,7 @@ func TestGetElseBasic(t *testing.T) {
 			// Charlie has name but no nickname
 			tx.Add(charlie, datalog.NewKeyword(":person/name"), "Charlie Brown")
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -121,15 +112,7 @@ func TestGetElseBasic(t *testing.T) {
 func TestGetElseNumericDefault(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 			prod1 := datalog.NewIdentity("product-1")
@@ -142,7 +125,7 @@ func TestGetElseNumericDefault(t *testing.T) {
 			// Product 2 has no discount
 			tx.Add(prod2, datalog.NewKeyword(":product/name"), "Gadget")
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -184,15 +167,7 @@ func TestGetElseNumericDefault(t *testing.T) {
 func TestMissingAsPredicate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 			alice := datalog.NewIdentity("alice")
@@ -210,7 +185,7 @@ func TestMissingAsPredicate(t *testing.T) {
 			tx.Add(charlie, datalog.NewKeyword(":user/name"), "Charlie")
 			tx.Add(charlie, datalog.NewKeyword(":user/email"), "charlie@example.com")
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -250,16 +225,9 @@ func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 			// asserts on the contents, so events from the whole test are welcome
 			// in the dump.
 			var events []annotations.Event
-			popts := mode.plannerOptions()
-			popts.Handler = func(event annotations.Event) { events = append(events, event) }
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
+				AnnotationHandler: func(event annotations.Event) { events = append(events, event) },
 			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
 
 			tx := db.NewTransaction()
 			alice := datalog.NewIdentity("alice")
@@ -352,15 +320,7 @@ func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 func TestMissingAsExpression(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 			alice := datalog.NewIdentity("alice")
@@ -372,7 +332,7 @@ func TestMissingAsExpression(t *testing.T) {
 			tx.Add(bob, datalog.NewKeyword(":user/name"), "Bob")
 			// Bob is not verified
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -415,15 +375,7 @@ func TestMissingAsExpression(t *testing.T) {
 func TestMissingMultipleAttributes(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 			p1 := datalog.NewIdentity("p1")
@@ -447,7 +399,7 @@ func TestMissingMultipleAttributes(t *testing.T) {
 			// p4: has neither
 			tx.Add(p4, datalog.NewKeyword(":contact/name"), "Person4")
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -480,15 +432,7 @@ func TestMissingMultipleAttributes(t *testing.T) {
 func TestGetSomeBasic(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 			user1 := datalog.NewIdentity("user1")
@@ -510,7 +454,7 @@ func TestGetSomeBasic(t *testing.T) {
 			tx.Add(user3, datalog.NewKeyword(":user/id"), "U003")
 			tx.Add(user3, datalog.NewKeyword(":user/email"), "anon@example.com")
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -558,15 +502,7 @@ func TestGetSomeBasic(t *testing.T) {
 func TestGetSomeNoMatch(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 			user1 := datalog.NewIdentity("user1")
@@ -580,7 +516,7 @@ func TestGetSomeNoMatch(t *testing.T) {
 			tx.Add(user2, datalog.NewKeyword(":user/id"), "U002")
 			// No nickname, fullname, or displayname
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -614,15 +550,7 @@ func TestGetSomeNoMatch(t *testing.T) {
 func TestCombinedDatabaseFunctions(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 			alice := datalog.NewIdentity("alice")
@@ -637,7 +565,7 @@ func TestCombinedDatabaseFunctions(t *testing.T) {
 			tx.Add(bob, datalog.NewKeyword(":person/name"), "Bob")
 			tx.Add(bob, datalog.NewKeyword(":person/email"), "bob@example.com")
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -688,15 +616,7 @@ func TestCombinedDatabaseFunctions(t *testing.T) {
 func TestDatabaseFunctionWithAggregation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 			for i := 1; i <= 5; i++ {
@@ -708,7 +628,7 @@ func TestDatabaseFunctionWithAggregation(t *testing.T) {
 				}
 			}
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -746,15 +666,7 @@ func TestDatabaseFunctionWithAggregation(t *testing.T) {
 func TestDatabaseFunctionWithOrderBy(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 			p1 := datalog.NewIdentity("p1")
@@ -770,7 +682,7 @@ func TestDatabaseFunctionWithOrderBy(t *testing.T) {
 			tx.Add(p3, datalog.NewKeyword(":person/name"), "Charlie")
 			tx.Add(p3, datalog.NewKeyword(":person/score"), int64(95))
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -813,16 +725,7 @@ func TestGetElseWithVectorDefault(t *testing.T) {
 				t.Fatalf("Failed to build schema: %v", err)
 			}
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			tx := db.NewTransaction()
 			room1 := datalog.NewIdentity("room1")
@@ -910,15 +813,7 @@ func TestGetElseWithVectorDefault(t *testing.T) {
 func TestGetElseWithNullishValues(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 			e1 := datalog.NewIdentity("e1")
@@ -931,7 +826,7 @@ func TestGetElseWithNullishValues(t *testing.T) {
 			// e2 has no description at all
 			tx.Add(e2, datalog.NewKeyword(":entity/name"), "Entity2")
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -967,15 +862,7 @@ func TestGetElseWithNullishValues(t *testing.T) {
 func TestDatabaseFunctionWithInputParameters(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			tx := db.NewTransaction()
 			alice := datalog.NewIdentity("alice")
@@ -987,7 +874,7 @@ func TestDatabaseFunctionWithInputParameters(t *testing.T) {
 			tx.Add(bob, datalog.NewKeyword(":user/name"), "Bob")
 			// No status
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			if err != nil {
 				t.Fatalf("Failed to commit: %v", err)
 			}
@@ -1028,16 +915,7 @@ func TestGetElseWithPopulatedVectorDefault(t *testing.T) {
 				t.Fatalf("Failed to build schema: %v", err)
 			}
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-			defer db.Close()
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			tx := db.NewTransaction()
 			hasData := datalog.NewIdentity("has-data")
@@ -1096,70 +974,63 @@ func TestGetElseWithPopulatedVectorDefault(t *testing.T) {
 
 func TestLookupAttributeDirectly(t *testing.T) {
 	// Test the LookupAttribute method directly on PatternMatcher
-	dir, err := os.MkdirTemp("", "lookup-attr-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
-	defer db.Close()
+			tx := db.NewTransaction()
+			alice := datalog.NewIdentity("alice")
 
-	tx := db.NewTransaction()
-	alice := datalog.NewIdentity("alice")
+			tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice Smith")
+			tx.Add(alice, datalog.NewKeyword(":person/age"), int64(30))
+			tx.Add(alice, datalog.NewKeyword(":person/active"), true)
 
-	tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice Smith")
-	tx.Add(alice, datalog.NewKeyword(":person/age"), int64(30))
-	tx.Add(alice, datalog.NewKeyword(":person/active"), true)
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit: %v", err)
+			}
 
-	_, err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Failed to commit: %v", err)
-	}
+			matcher := db.Matcher()
+			patternMatcher, ok := matcher.(*PatternMatcher)
+			if !ok {
+				t.Fatalf("Expected PatternMatcher, got %T", matcher)
+			}
 
-	matcher := db.Matcher()
-	badgerMatcher, ok := matcher.(*PatternMatcher)
-	if !ok {
-		t.Fatalf("Expected PatternMatcher, got %T", matcher)
-	}
+			// Test string attribute
+			val, found := requireAttributeLookup(t, patternMatcher, alice, datalog.NewKeyword(":person/name"))
+			if !found {
+				t.Error(":person/name should be found")
+			} else if val != "Alice Smith" {
+				t.Errorf("Expected 'Alice Smith', got %v", val)
+			}
 
-	// Test string attribute
-	val, found := requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/name"))
-	if !found {
-		t.Error(":person/name should be found")
-	} else if val != "Alice Smith" {
-		t.Errorf("Expected 'Alice Smith', got %v", val)
-	}
+			// Test int64 attribute
+			val, found = requireAttributeLookup(t, patternMatcher, alice, datalog.NewKeyword(":person/age"))
+			if !found {
+				t.Error(":person/age should be found")
+			} else if val != int64(30) {
+				t.Errorf("Expected 30, got %v", val)
+			}
 
-	// Test int64 attribute
-	val, found = requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/age"))
-	if !found {
-		t.Error(":person/age should be found")
-	} else if val != int64(30) {
-		t.Errorf("Expected 30, got %v", val)
-	}
+			// Test bool attribute
+			val, found = requireAttributeLookup(t, patternMatcher, alice, datalog.NewKeyword(":person/active"))
+			if !found {
+				t.Error(":person/active should be found")
+			} else if val != true {
+				t.Errorf("Expected true, got %v", val)
+			}
 
-	// Test bool attribute
-	val, found = requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/active"))
-	if !found {
-		t.Error(":person/active should be found")
-	} else if val != true {
-		t.Errorf("Expected true, got %v", val)
-	}
+			// Test missing attribute
+			val, found = requireAttributeLookup(t, patternMatcher, alice, datalog.NewKeyword(":person/email"))
+			if found {
+				t.Errorf(":person/email should NOT be found, got %v", val)
+			}
 
-	// Test missing attribute
-	val, found = requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/email"))
-	if found {
-		t.Errorf(":person/email should NOT be found, got %v", val)
-	}
-
-	// Test non-existent entity
-	noone := datalog.NewIdentity("noone")
-	val, found = requireAttributeLookup(t, badgerMatcher, noone, datalog.NewKeyword(":person/name"))
-	if found {
-		t.Errorf("Non-existent entity should return not found, got %v", val)
+			// Test non-existent entity
+			noone := datalog.NewIdentity("noone")
+			val, found = requireAttributeLookup(t, patternMatcher, noone, datalog.NewKeyword(":person/name"))
+			if found {
+				t.Errorf("Non-existent entity should return not found, got %v", val)
+			}
+		})
 	}
 }

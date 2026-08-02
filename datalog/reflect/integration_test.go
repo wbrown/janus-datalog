@@ -1,7 +1,6 @@
 package reflect_test
 
 import (
-	"os"
 	"sort"
 	"testing"
 
@@ -91,7 +90,7 @@ func TestSaveStruct_KeywordField(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -150,7 +149,7 @@ func TestSaveStructAndPullInto_Simple(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -204,7 +203,7 @@ func TestSaveStructAndPullInto_CardinalityMany(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -269,14 +268,19 @@ func TestGeneratePullPattern_Nested(t *testing.T) {
 }
 
 func TestSaveStruct_WithExistingID(t *testing.T) {
-	// Create temp database
-	tmpDir, err := os.MkdirTemp("", "reflect-test-existing-id")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testSaveStructWithExistingID(t, mode)
+		})
 	}
-	defer os.RemoveAll(tmpDir)
+}
 
-	db, err := storage.NewDatabase(tmpDir)
+func testSaveStructWithExistingID(t *testing.T, mode optimizerMode) {
+	popts := mode.plannerOptions()
+	db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+		Store:          mustOpenStore(t, mode.backend),
+		PlannerOptions: &popts,
+	})
 	if err != nil {
 		t.Fatalf("failed to create database: %v", err)
 	}
@@ -315,7 +319,7 @@ func TestPullIntoMany(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -384,7 +388,7 @@ func TestSaveStructCardinalityOne(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -467,7 +471,7 @@ func TestSaveStructCardinalityMany(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -552,7 +556,7 @@ func TestNilVsEmptySliceSemantics(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -632,7 +636,7 @@ func TestSaveStructUpsertSemantics(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -719,7 +723,7 @@ func TestPullInto_CardinalityManyRefs(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -813,7 +817,7 @@ func TestPullInto_CardinalityManyRefs_ManualSchema(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         manualSchema,
 				PlannerOptions: &popts,
 			})
@@ -897,7 +901,7 @@ func TestLookupAttributeWithStructAPI(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -1065,18 +1069,25 @@ func TestStructReader_NoEventsWhenHandlerNil(t *testing.T) {
 
 // TestStructWriter_AnnotationsEmitted verifies that StructWriter emits annotation events.
 func TestStructWriter_AnnotationsEmitted(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "reflect-writer-annotation-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testStructWriterAnnotationsEmitted(t, mode)
+		})
 	}
-	defer os.RemoveAll(tmpDir)
+}
 
+func testStructWriterAnnotationsEmitted(t *testing.T, mode optimizerMode) {
 	schema, err := dlreflect.SchemaFromStruct(Person{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	db, err := storage.NewDatabaseWithSchema(tmpDir, schema)
+	popts := mode.plannerOptions()
+	db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+		Store:          mustOpenStore(t, mode.backend),
+		Schema:         schema,
+		PlannerOptions: &popts,
+	})
 	if err != nil {
 		t.Fatalf("failed to create database: %v", err)
 	}
@@ -1167,7 +1178,7 @@ func TestSaveStructAndPullInto_WorldEntity(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -1398,7 +1409,7 @@ func TestStructWriter_NoEventsWhenHandlerNil(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -1472,7 +1483,7 @@ func TestPullInto_CardinalityManyStrings_MultipleValues(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -1553,7 +1564,7 @@ func TestCRDTTombstoneReAdd(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})
@@ -1672,7 +1683,7 @@ func TestCRDTTombstoneReAdd_TxSetWorkaround(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         schema,
 				PlannerOptions: &popts,
 			})

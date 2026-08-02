@@ -30,14 +30,9 @@ func TestGetElseWithAnnotationHandler(t *testing.T) {
 				events = append(events, e)
 			}
 
-			popts := mode.plannerOptions()
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:              t.TempDir(),
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{
 				AnnotationHandler: handler,
-				PlannerOptions:    &popts,
 			})
-			require.NoError(t, err)
-			defer db.Close()
 
 			// Create test data
 			tx := db.NewTransaction()
@@ -49,7 +44,7 @@ func TestGetElseWithAnnotationHandler(t *testing.T) {
 			require.NoError(t, tx.Add(bob, datalog.NewKeyword(":person/name"), "Bob"))
 			// Bob has no age — get-else should return the default
 
-			_, err = tx.Commit()
+			_, err := tx.Commit()
 			require.NoError(t, err)
 
 			t.Run("get-else with existing attribute", func(t *testing.T) {

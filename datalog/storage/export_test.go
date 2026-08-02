@@ -16,15 +16,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// createExportTestDB creates a temp BadgerDB database
-func createTempDatabase(t *testing.T) *Database {
-	dir := t.TempDir()
-	db, err := NewDatabase(dir)
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
-	return db
-}
-
 // kw creates keywords
 func kw(s string) datalog.Keyword {
 	return datalog.NewKeyword(s)
@@ -495,89 +486,103 @@ func TestParseDatomEDN_Errors(t *testing.T) {
 // =============================================================================
 
 func TestExport_EmptyDatabase(t *testing.T) {
-	db := createTempDatabase(t)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	var buf bytes.Buffer
-	err := db.Export(&buf)
-	require.NoError(t, err)
+			var buf bytes.Buffer
+			err := db.Export(&buf)
+			require.NoError(t, err)
 
-	assert.Empty(t, buf.String())
+			assert.Empty(t, buf.String())
+		})
+	}
 }
 
 func TestExport_SingleDatom(t *testing.T) {
-	db := createTempDatabase(t)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Add a datom
-	tx := db.NewTransaction()
-	id := datalog.NewIdentity("entity1")
-	require.NoError(t, tx.Add(id, kw(":person/name"), "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add a datom
+			tx := db.NewTransaction()
+			id := datalog.NewIdentity("entity1")
+			require.NoError(t, tx.Add(id, kw(":person/name"), "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	var buf bytes.Buffer
-	err = db.Export(&buf)
-	require.NoError(t, err)
+			var buf bytes.Buffer
+			err = db.Export(&buf)
+			require.NoError(t, err)
 
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	// Expect 2 lines: user datom + :db/txInstant transaction metadata
-	assert.Equal(t, 2, len(lines))
+			lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+			// Expect 2 lines: user datom + :db/txInstant transaction metadata
+			assert.Equal(t, 2, len(lines))
 
-	// Verify our datom is present
-	found := false
-	for _, line := range lines {
-		if strings.Contains(line, ":person/name") && strings.Contains(line, `"Alice"`) {
-			found = true
-			break
-		}
+			// Verify our datom is present
+			found := false
+			for _, line := range lines {
+				if strings.Contains(line, ":person/name") && strings.Contains(line, `"Alice"`) {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "expected to find :person/name datom")
+		})
 	}
-	assert.True(t, found, "expected to find :person/name datom")
 }
 
 func TestExport_MultipleDatoms(t *testing.T) {
-	db := createTempDatabase(t)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Add multiple datoms with various types
-	tx := db.NewTransaction()
-	id := datalog.NewIdentity("entity1")
-	require.NoError(t, tx.Add(id, kw(":test/string"), "hello"))
-	require.NoError(t, tx.Add(id, kw(":test/int"), int64(42)))
-	require.NoError(t, tx.Add(id, kw(":test/float"), 3.14))
-	require.NoError(t, tx.Add(id, kw(":test/bool"), true))
-	require.NoError(t, tx.Add(id, kw(":test/time"), time.Now().UTC()))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add multiple datoms with various types
+			tx := db.NewTransaction()
+			id := datalog.NewIdentity("entity1")
+			require.NoError(t, tx.Add(id, kw(":test/string"), "hello"))
+			require.NoError(t, tx.Add(id, kw(":test/int"), int64(42)))
+			require.NoError(t, tx.Add(id, kw(":test/float"), 3.14))
+			require.NoError(t, tx.Add(id, kw(":test/bool"), true))
+			require.NoError(t, tx.Add(id, kw(":test/time"), time.Now().UTC()))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	var buf bytes.Buffer
-	err = db.Export(&buf)
-	require.NoError(t, err)
+			var buf bytes.Buffer
+			err = db.Export(&buf)
+			require.NoError(t, err)
 
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	// Expect 6 lines: 5 user datoms + 1 :db/txInstant
-	assert.Equal(t, 6, len(lines))
+			lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+			// Expect 6 lines: 5 user datoms + 1 :db/txInstant
+			assert.Equal(t, 6, len(lines))
 
-	// Verify each line is parseable
-	for _, line := range lines {
-		_, err := ParseDatomEDN(line)
-		require.NoError(t, err, "failed to parse: %s", line)
+			// Verify each line is parseable
+			for _, line := range lines {
+				_, err := ParseDatomEDN(line)
+				require.NoError(t, err, "failed to parse: %s", line)
+			}
+		})
 	}
 }
 
 func TestImport_EmptyFile(t *testing.T) {
-	db := createTempDatabase(t)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	err := db.Import(strings.NewReader(""))
-	require.NoError(t, err)
+			err := db.Import(strings.NewReader(""))
+			require.NoError(t, err)
 
-	// Verify database is empty
-	var buf bytes.Buffer
-	err = db.Export(&buf)
-	require.NoError(t, err)
-	assert.Empty(t, buf.String())
+			// Verify database is empty
+			var buf bytes.Buffer
+			err = db.Export(&buf)
+			require.NoError(t, err)
+			assert.Empty(t, buf.String())
+		})
+	}
 }
 
 func TestImport_WithComments(t *testing.T) {
-	db := createTempDatabase(t)
-
 	id := datalog.NewIdentity("test")
 	l85 := id.L85()
 
@@ -588,36 +593,40 @@ func TestImport_WithComments(t *testing.T) {
 [#identity "` + l85 + `" :test/name "Alice" 1]
 `
 
-	err := db.Import(strings.NewReader(input))
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	var buf bytes.Buffer
-	err = db.Export(&buf)
-	require.NoError(t, err)
+			err := db.Import(strings.NewReader(input))
+			require.NoError(t, err)
 
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	// We imported 2 datoms, but the database already had a tx, so we may have
-	// additional :db/txInstant datoms. Just verify our datoms are present.
-	assert.GreaterOrEqual(t, len(lines), 2)
+			var buf bytes.Buffer
+			err = db.Export(&buf)
+			require.NoError(t, err)
 
-	// Verify our datoms are present
-	foundVal := false
-	foundName := false
-	for _, line := range lines {
-		if strings.Contains(line, ":test/val") {
-			foundVal = true
-		}
-		if strings.Contains(line, ":test/name") {
-			foundName = true
-		}
+			lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+			// We imported 2 datoms, but the database already had a tx, so we may have
+			// additional :db/txInstant datoms. Just verify our datoms are present.
+			assert.GreaterOrEqual(t, len(lines), 2)
+
+			// Verify our datoms are present
+			foundVal := false
+			foundName := false
+			for _, line := range lines {
+				if strings.Contains(line, ":test/val") {
+					foundVal = true
+				}
+				if strings.Contains(line, ":test/name") {
+					foundName = true
+				}
+			}
+			assert.True(t, foundVal, "expected :test/val datom")
+			assert.True(t, foundName, "expected :test/name datom")
+		})
 	}
-	assert.True(t, foundVal, "expected :test/val datom")
-	assert.True(t, foundName, "expected :test/name datom")
 }
 
 func TestImport_BatchBoundary(t *testing.T) {
-	db := createTempDatabase(t)
-
 	// Generate exactly 5001 datoms (triggers second batch)
 	var sb strings.Builder
 	id := datalog.NewIdentity("entity")
@@ -628,13 +637,17 @@ func TestImport_BatchBoundary(t *testing.T) {
 		sb.WriteString("\n")
 	}
 
-	err := db.Import(strings.NewReader(sb.String()))
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			err := db.Import(strings.NewReader(sb.String()))
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestImport_LargeFile(t *testing.T) {
-	db := createTempDatabase(t)
-
 	// Generate 10000 datoms
 	var sb strings.Builder
 	for i := 0; i < 10000; i++ {
@@ -646,160 +659,182 @@ func TestImport_LargeFile(t *testing.T) {
 		sb.WriteString("\n")
 	}
 
-	err := db.Import(strings.NewReader(sb.String()))
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			err := db.Import(strings.NewReader(sb.String()))
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestImport_Errors(t *testing.T) {
 	validID := datalog.NewIdentity("test").L85()
 
-	t.Run("malformed EDN", func(t *testing.T) {
-		db := createTempDatabase(t)
-		input := `[#identity "` + validID + `" :test/val 1 1]
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Run("malformed EDN", func(t *testing.T) {
+				db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				input := `[#identity "` + validID + `" :test/val 1 1]
 [#identity "` + validID + `" :test/val 2 1]
 not valid EDN
 [#identity "` + validID + `" :test/val 3 1]
 `
-		err := db.Import(strings.NewReader(input))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "line 3")
-	})
+				err := db.Import(strings.NewReader(input))
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "line 3")
+			})
 
-	t.Run("wrong element count", func(t *testing.T) {
-		db := createTempDatabase(t)
-		input := `[#identity "` + validID + `" :test/val]`
-		err := db.Import(strings.NewReader(input))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "expected 4-6 elements")
-	})
+			t.Run("wrong element count", func(t *testing.T) {
+				db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				input := `[#identity "` + validID + `" :test/val]`
+				err := db.Import(strings.NewReader(input))
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "expected 4-6 elements")
+			})
 
-	t.Run("invalid L85 identity", func(t *testing.T) {
-		db := createTempDatabase(t)
-		input := `[#identity "abc" :test/val 42 1]`
-		err := db.Import(strings.NewReader(input))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid L85")
-	})
+			t.Run("invalid L85 identity", func(t *testing.T) {
+				db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				input := `[#identity "abc" :test/val 42 1]`
+				err := db.Import(strings.NewReader(input))
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "invalid L85")
+			})
+		})
+	}
 }
 
 func TestDatabaseRoundTrip(t *testing.T) {
-	db1 := createTempDatabase(t)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Add diverse data
-	tx := db1.NewTransaction()
-	id1 := datalog.NewIdentity("person1")
-	id2 := datalog.NewIdentity("person2")
-	now := time.Now().UTC().Truncate(time.Nanosecond)
+			// Add diverse data
+			tx := db1.NewTransaction()
+			id1 := datalog.NewIdentity("person1")
+			id2 := datalog.NewIdentity("person2")
+			now := time.Now().UTC().Truncate(time.Nanosecond)
 
-	require.NoError(t, tx.Add(id1, kw(":person/name"), "Alice"))
-	require.NoError(t, tx.Add(id1, kw(":person/age"), int64(30)))
-	require.NoError(t, tx.Add(id1, kw(":person/score"), 95.5))
-	require.NoError(t, tx.Add(id1, kw(":person/active"), true))
-	require.NoError(t, tx.Add(id1, kw(":person/created"), now))
-	require.NoError(t, tx.Add(id1, kw(":person/data"), []byte{1, 2, 3}))
-	require.NoError(t, tx.Add(id1, kw(":person/friend"), id2))
-	require.NoError(t, tx.Add(id2, kw(":person/name"), "Bob"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			require.NoError(t, tx.Add(id1, kw(":person/name"), "Alice"))
+			require.NoError(t, tx.Add(id1, kw(":person/age"), int64(30)))
+			require.NoError(t, tx.Add(id1, kw(":person/score"), 95.5))
+			require.NoError(t, tx.Add(id1, kw(":person/active"), true))
+			require.NoError(t, tx.Add(id1, kw(":person/created"), now))
+			require.NoError(t, tx.Add(id1, kw(":person/data"), []byte{1, 2, 3}))
+			require.NoError(t, tx.Add(id1, kw(":person/friend"), id2))
+			require.NoError(t, tx.Add(id2, kw(":person/name"), "Bob"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Export
-	var buf bytes.Buffer
-	err = db1.Export(&buf)
-	require.NoError(t, err)
+			// Export
+			var buf bytes.Buffer
+			err = db1.Export(&buf)
+			require.NoError(t, err)
 
-	// Import into fresh database
-	db2 := createTempDatabase(t)
-	err = db2.Import(strings.NewReader(buf.String()))
-	require.NoError(t, err)
+			// Import into fresh database
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			err = db2.Import(strings.NewReader(buf.String()))
+			require.NoError(t, err)
 
-	// Export db2
-	var buf2 bytes.Buffer
-	err = db2.Export(&buf2)
-	require.NoError(t, err)
+			// Export db2
+			var buf2 bytes.Buffer
+			err = db2.Export(&buf2)
+			require.NoError(t, err)
 
-	// Compare exports
-	lines1 := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	lines2 := strings.Split(strings.TrimSpace(buf2.String()), "\n")
-	assert.Equal(t, len(lines1), len(lines2))
+			// Compare exports
+			lines1 := strings.Split(strings.TrimSpace(buf.String()), "\n")
+			lines2 := strings.Split(strings.TrimSpace(buf2.String()), "\n")
+			assert.Equal(t, len(lines1), len(lines2))
+		})
+	}
 }
 
 func TestDatabaseRoundTrip_Deterministic(t *testing.T) {
-	db1 := createTempDatabase(t)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Add data
-	tx := db1.NewTransaction()
-	id := datalog.NewIdentity("entity1")
-	require.NoError(t, tx.Add(id, kw(":test/a"), "value-a"))
-	require.NoError(t, tx.Add(id, kw(":test/b"), "value-b"))
-	require.NoError(t, tx.Add(id, kw(":test/c"), "value-c"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			// Add data
+			tx := db1.NewTransaction()
+			id := datalog.NewIdentity("entity1")
+			require.NoError(t, tx.Add(id, kw(":test/a"), "value-a"))
+			require.NoError(t, tx.Add(id, kw(":test/b"), "value-b"))
+			require.NoError(t, tx.Add(id, kw(":test/c"), "value-c"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	// Export → file1
-	var buf1 bytes.Buffer
-	err = db1.Export(&buf1)
-	require.NoError(t, err)
+			// Export → file1
+			var buf1 bytes.Buffer
+			err = db1.Export(&buf1)
+			require.NoError(t, err)
 
-	// Import → db2
-	db2 := createTempDatabase(t)
-	err = db2.Import(strings.NewReader(buf1.String()))
-	require.NoError(t, err)
+			// Import → db2
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			err = db2.Import(strings.NewReader(buf1.String()))
+			require.NoError(t, err)
 
-	// Export db2 → file2
-	var buf2 bytes.Buffer
-	err = db2.Export(&buf2)
-	require.NoError(t, err)
+			// Export db2 → file2
+			var buf2 bytes.Buffer
+			err = db2.Export(&buf2)
+			require.NoError(t, err)
 
-	// Compare byte-for-byte
-	assert.Equal(t, buf1.String(), buf2.String())
+			// Compare byte-for-byte
+			assert.Equal(t, buf1.String(), buf2.String())
+		})
+	}
 }
 
 func TestExportImport_PreservesTxIDs(t *testing.T) {
-	db1 := createTempDatabase(t)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Create datoms with specific tx IDs by doing multiple commits
-	id := datalog.NewIdentity("entity1")
+			// Create datoms with specific tx IDs by doing multiple commits
+			id := datalog.NewIdentity("entity1")
 
-	tx1 := db1.NewTransaction()
-	require.NoError(t, tx1.Add(id, kw(":test/a"), "value-a"))
-	txID1, err := tx1.Commit()
-	require.NoError(t, err)
+			tx1 := db1.NewTransaction()
+			require.NoError(t, tx1.Add(id, kw(":test/a"), "value-a"))
+			txID1, err := tx1.Commit()
+			require.NoError(t, err)
 
-	tx2 := db1.NewTransaction()
-	require.NoError(t, tx2.Add(id, kw(":test/b"), "value-b"))
-	txID2, err := tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db1.NewTransaction()
+			require.NoError(t, tx2.Add(id, kw(":test/b"), "value-b"))
+			txID2, err := tx2.Commit()
+			require.NoError(t, err)
 
-	// Export
-	var buf bytes.Buffer
-	err = db1.Export(&buf)
-	require.NoError(t, err)
+			// Export
+			var buf bytes.Buffer
+			err = db1.Export(&buf)
+			require.NoError(t, err)
 
-	// Import into fresh database
-	db2 := createTempDatabase(t)
-	err = db2.Import(strings.NewReader(buf.String()))
-	require.NoError(t, err)
+			// Import into fresh database
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			err = db2.Import(strings.NewReader(buf.String()))
+			require.NoError(t, err)
 
-	// Export and verify tx IDs are preserved
-	var buf2 bytes.Buffer
-	err = db2.Export(&buf2)
-	require.NoError(t, err)
+			// Export and verify tx IDs are preserved
+			var buf2 bytes.Buffer
+			err = db2.Export(&buf2)
+			require.NoError(t, err)
 
-	// Parse and check tx IDs
-	lines := strings.Split(strings.TrimSpace(buf2.String()), "\n")
-	var foundTx1, foundTx2 bool
-	for _, line := range lines {
-		datom, err := ParseDatomEDN(line)
-		require.NoError(t, err)
-		if datom.Tx == txID1 {
-			foundTx1 = true
-		}
-		if datom.Tx == txID2 {
-			foundTx2 = true
-		}
+			// Parse and check tx IDs
+			lines := strings.Split(strings.TrimSpace(buf2.String()), "\n")
+			var foundTx1, foundTx2 bool
+			for _, line := range lines {
+				datom, err := ParseDatomEDN(line)
+				require.NoError(t, err)
+				if datom.Tx == txID1 {
+					foundTx1 = true
+				}
+				if datom.Tx == txID2 {
+					foundTx2 = true
+				}
+			}
+			assert.True(t, foundTx1, "txID1 not preserved")
+			assert.True(t, foundTx2, "txID2 not preserved")
+		})
 	}
-	assert.True(t, foundTx1, "txID1 not preserved")
-	assert.True(t, foundTx2, "txID2 not preserved")
 }
 
 // =============================================================================
@@ -1104,65 +1139,65 @@ func TestParseDatomEDN_BackwardCompat(t *testing.T) {
 // =============================================================================
 
 func TestDatabaseRoundTrip_CRDTOps(t *testing.T) {
-	// Create DB with cardinality-many schema
-	s, err := schema.NewBuilder().
-		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
-		Build()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create DB with cardinality-many schema
+			s, err := schema.NewBuilder().
+				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+				Build()
+			require.NoError(t, err)
 
-	db1, err := NewDatabaseWithSchema(t.TempDir(), s)
-	require.NoError(t, err)
-	defer db1.Close()
+			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	id := datalog.NewIdentity("entity1")
-	tags := kw(":person/tags")
+			id := datalog.NewIdentity("entity1")
+			tags := kw(":person/tags")
 
-	// Add values
-	tx := db1.NewTransaction()
-	require.NoError(t, tx.Add(id, tags, "warrior"))
-	require.NoError(t, tx.Add(id, tags, "veteran"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add values
+			tx := db1.NewTransaction()
+			require.NoError(t, tx.Add(id, tags, "warrior"))
+			require.NoError(t, tx.Add(id, tags, "veteran"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Remove one
-	tx2 := db1.NewTransaction()
-	require.NoError(t, tx2.Remove(id, tags, "warrior"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Remove one
+			tx2 := db1.NewTransaction()
+			require.NoError(t, tx2.Remove(id, tags, "warrior"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// Export
-	var buf bytes.Buffer
-	err = db1.Export(&buf)
-	require.NoError(t, err)
+			// Export
+			var buf bytes.Buffer
+			err = db1.Export(&buf)
+			require.NoError(t, err)
 
-	// Verify exported lines contain Op keywords
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	foundAdd := false
-	foundRemove := false
-	for _, line := range lines {
-		if strings.Contains(line, ":op/add") {
-			foundAdd = true
-		}
-		if strings.Contains(line, ":op/remove") {
-			foundRemove = true
-		}
+			// Verify exported lines contain Op keywords
+			lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+			foundAdd := false
+			foundRemove := false
+			for _, line := range lines {
+				if strings.Contains(line, ":op/add") {
+					foundAdd = true
+				}
+				if strings.Contains(line, ":op/remove") {
+					foundRemove = true
+				}
+			}
+			assert.True(t, foundAdd, "expected :op/add in export")
+			assert.True(t, foundRemove, "expected :op/remove in export")
+
+			// Import into fresh DB with same schema
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
+
+			err = db2.Import(strings.NewReader(buf.String()))
+			require.NoError(t, err)
+
+			// Export db2 and compare byte-for-byte
+			var buf2 bytes.Buffer
+			err = db2.Export(&buf2)
+			require.NoError(t, err)
+			assert.Equal(t, buf.String(), buf2.String())
+		})
 	}
-	assert.True(t, foundAdd, "expected :op/add in export")
-	assert.True(t, foundRemove, "expected :op/remove in export")
-
-	// Import into fresh DB with same schema
-	db2, err := NewDatabaseWithSchema(t.TempDir(), s)
-	require.NoError(t, err)
-	defer db2.Close()
-
-	err = db2.Import(strings.NewReader(buf.String()))
-	require.NoError(t, err)
-
-	// Export db2 and compare byte-for-byte
-	var buf2 bytes.Buffer
-	err = db2.Export(&buf2)
-	require.NoError(t, err)
-	assert.Equal(t, buf.String(), buf2.String())
 }
 
 func TestDatabaseRoundTrip_CRDTSemantics(t *testing.T) {
@@ -1175,14 +1210,7 @@ func TestDatabaseRoundTrip_CRDTSemantics(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			popts := mode.plannerOptions()
-			db1, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db1.Close()
+			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			id := datalog.NewIdentity("entity1")
 			tags := kw(":person/tags")
@@ -1215,13 +1243,7 @@ func TestDatabaseRoundTrip_CRDTSemantics(t *testing.T) {
 			err = db1.Export(&buf)
 			require.NoError(t, err)
 
-			db2, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         s,
-				PlannerOptions: &popts,
-			})
-			require.NoError(t, err)
-			defer db2.Close()
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
 			err = db2.Import(strings.NewReader(buf.String()))
 			require.NoError(t, err)
@@ -1240,55 +1262,55 @@ func TestDatabaseRoundTrip_CRDTSemantics(t *testing.T) {
 }
 
 func TestDatabaseRoundTrip_RGA(t *testing.T) {
-	// Round-trip RGA (cardinality-vector) with insert and tombstone ops
-	s, err := schema.NewBuilder().
-		Attribute(":doc/items").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Round-trip RGA (cardinality-vector) with insert and tombstone ops
+			s, err := schema.NewBuilder().
+				Attribute(":doc/items").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	db1, err := NewDatabaseWithSchema(t.TempDir(), s)
-	require.NoError(t, err)
-	defer db1.Close()
+			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
 
-	id := datalog.NewIdentity("doc1")
-	items := kw(":doc/items")
+			id := datalog.NewIdentity("doc1")
+			items := kw(":doc/items")
 
-	// Add items
-	tx := db1.NewTransaction()
-	require.NoError(t, tx.Add(id, items, "first"))
-	require.NoError(t, tx.Add(id, items, "second"))
-	require.NoError(t, tx.Add(id, items, "third"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add items
+			tx := db1.NewTransaction()
+			require.NoError(t, tx.Add(id, items, "first"))
+			require.NoError(t, tx.Add(id, items, "second"))
+			require.NoError(t, tx.Add(id, items, "third"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Export
-	var buf bytes.Buffer
-	err = db1.Export(&buf)
-	require.NoError(t, err)
+			// Export
+			var buf bytes.Buffer
+			err = db1.Export(&buf)
+			require.NoError(t, err)
 
-	// Verify exported lines contain RGA ops and AfterRef
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	foundRGAInsert := false
-	for _, line := range lines {
-		if strings.Contains(line, ":op/rga-insert") {
-			foundRGAInsert = true
-		}
+			// Verify exported lines contain RGA ops and AfterRef
+			lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+			foundRGAInsert := false
+			for _, line := range lines {
+				if strings.Contains(line, ":op/rga-insert") {
+					foundRGAInsert = true
+				}
+			}
+			assert.True(t, foundRGAInsert, "expected :op/rga-insert in export")
+
+			// Import into fresh DB with same schema
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
+
+			err = db2.Import(strings.NewReader(buf.String()))
+			require.NoError(t, err)
+
+			// Export db2 and compare byte-for-byte
+			var buf2 bytes.Buffer
+			err = db2.Export(&buf2)
+			require.NoError(t, err)
+			assert.Equal(t, buf.String(), buf2.String())
+		})
 	}
-	assert.True(t, foundRGAInsert, "expected :op/rga-insert in export")
-
-	// Import into fresh DB with same schema
-	db2, err := NewDatabaseWithSchema(t.TempDir(), s)
-	require.NoError(t, err)
-	defer db2.Close()
-
-	err = db2.Import(strings.NewReader(buf.String()))
-	require.NoError(t, err)
-
-	// Export db2 and compare byte-for-byte
-	var buf2 bytes.Buffer
-	err = db2.Export(&buf2)
-	require.NoError(t, err)
-	assert.Equal(t, buf.String(), buf2.String())
 }
 
 // =============================================================================
@@ -1318,41 +1340,45 @@ func parseEDNValue(s string) (*edn.Node, error) {
 // Lamport values than imported data. Without this, Remove on a cardinality-many
 // attribute silently loses to add-wins because its Lamport is lower.
 func TestImport_ClockAdvancedAfterImport(t *testing.T) {
-	db := createTempDatabase(t)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-	// Register cardinality-many attribute
-	s := schema.NewBuilder().
-		Attribute(":entity/state").Type(schema.TypeKeyword).Many().Add().
-		MustBuild()
-	db.SetSchema(s)
+			// Register cardinality-many attribute
+			s := schema.NewBuilder().
+				Attribute(":entity/state").Type(schema.TypeKeyword).Many().Add().
+				MustBuild()
+			db.SetSchema(s)
 
-	// Build EDN with a cardinality-many datom at a high Lamport value
-	entity := datalog.NewIdentity("test-entity")
-	l85 := entity.L85()
-	// Lamport=5000, ReplicaID=1, Op=add
-	ednData := `[#identity "` + l85 + `" :entity/state :entity.state/unconscious [5000 1] :op/add]`
+			// Build EDN with a cardinality-many datom at a high Lamport value
+			entity := datalog.NewIdentity("test-entity")
+			l85 := entity.L85()
+			// Lamport=5000, ReplicaID=1, Op=add
+			ednData := `[#identity "` + l85 + `" :entity/state :entity.state/unconscious [5000 1] :op/add]`
 
-	err := db.Import(strings.NewReader(ednData))
-	require.NoError(t, err)
+			err := db.Import(strings.NewReader(ednData))
+			require.NoError(t, err)
 
-	// Verify the value exists
-	matcher := NewPatternMatcher(db.Store())
-	matcher.SetSchema(db.Schema())
-	vals, err := matcher.LookupAllAttributes(entity, datalog.NewKeyword(":entity/state"))
-	require.NoError(t, err)
-	require.Len(t, vals, 1, "state should exist after import")
-	assert.Equal(t, datalog.NewKeyword(":entity.state/unconscious"), vals[0])
+			// Verify the value exists
+			matcher := NewPatternMatcher(db.Store())
+			matcher.SetSchema(db.Schema())
+			vals, err := matcher.LookupAllAttributes(entity, datalog.NewKeyword(":entity/state"))
+			require.NoError(t, err)
+			require.Len(t, vals, 1, "state should exist after import")
+			assert.Equal(t, datalog.NewKeyword(":entity.state/unconscious"), vals[0])
 
-	// Now Remove it — this must get a Lamport > 5000 to win
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Remove(entity, datalog.NewKeyword(":entity/state"), datalog.NewKeyword(":entity.state/unconscious")))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Now Remove it — this must get a Lamport > 5000 to win
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Remove(entity, datalog.NewKeyword(":entity/state"), datalog.NewKeyword(":entity.state/unconscious")))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Verify the value is gone
-	matcher2 := NewPatternMatcher(db.Store())
-	matcher2.SetSchema(db.Schema())
-	vals, err = matcher2.LookupAllAttributes(entity, datalog.NewKeyword(":entity/state"))
-	require.NoError(t, err)
-	assert.Empty(t, vals, "state should be empty after Remove")
+			// Verify the value is gone
+			matcher2 := NewPatternMatcher(db.Store())
+			matcher2.SetSchema(db.Schema())
+			vals, err = matcher2.LookupAllAttributes(entity, datalog.NewKeyword(":entity/state"))
+			require.NoError(t, err)
+			assert.Empty(t, vals, "state should be empty after Remove")
+		})
+	}
 }

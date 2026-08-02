@@ -265,7 +265,7 @@ func TestSaveStruct_OrderedSet_SchemaVerify(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -341,7 +341,7 @@ func TestSaveStruct_OrderedSet(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -410,7 +410,7 @@ func TestSaveStruct_OrderedSetDuplicates(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -487,7 +487,7 @@ func TestPullInto_OrderedSet(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -558,7 +558,7 @@ func TestSaveStruct_OrderedSetUpdate(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -697,7 +697,7 @@ func TestSaveStruct_OrderedSetEmpty(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
@@ -750,7 +750,7 @@ func TestSaveStruct_OrderedSetRefs(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-				Path:           t.TempDir(),
+				Store:          mustOpenStore(t, mode.backend),
 				Schema:         sch,
 				PlannerOptions: &popts,
 			})
