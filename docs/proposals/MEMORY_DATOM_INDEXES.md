@@ -7,9 +7,9 @@ the backend contract beside `MemoryStore` and Badger, and
 [`MEMORY_BACKENDS_2026-07-31.md`](../perf/MEMORY_BACKENDS_2026-07-31.md)
 measures the pair.
 
-Two modes, not a swap: `MemoryStore` remains the Badger emulator and the wasm
-default. What remains open is the default, which moves on the measurements
-rather than on this document.
+Two modes, not a swap: `MemoryTreeStore` is the js/wasm default, and
+`MemoryStore` remains the Badger emulator. `PERFORMANCE_STATUS.md` carries the
+cross-backend measurements the default moved on.
 
 ## Summary
 
@@ -432,6 +432,71 @@ Both are batch-shaped:
   directly: an owner token on the node, mutate in place when the token matches the
   active builder, copy otherwise. The token is discarded at publication, after
   which every reachable node is immutable again.
+
+### The order-derivation lattice
+
+The eight component orders are permutations of one component set, so a slice
+sorted in one order is partially sorted for the others. `versionFromDatoms`
+(`version_build.go`) exploits that: it sorts once and derives the rest, instead
+of running eight independent `O(n log n)` sorts through the four-component
+comparator. Three lemmas carry every derivation, and all three lean on the same
+preconditions — the input is duplicate-free, the placement loops are stable, and
+every comparator ends with the `[AfterRef?][Op]` tail the orders share.
+
+**Deleting a component.** Stable-bucketing a sorted slice by any one component C
+leaves each bucket holding its datoms in the source order with C deleted — C is
+constant inside a bucket, so every comparison that consulted it falls through to
+the components after it. Concatenating buckets in C's own order yields
+`(C, source∖C)`. Bucketing EAVT by A gives `(A; E,V,Tx,tail)` = AEVT, and EATV
+by A gives AETV — **zero datom comparisons**, one interned-pointer map lookup
+per datom, and the bucket boundaries come out as per-attribute runs reused by
+every later step.
+
+**Resorting below a shared prefix.** Orders sharing a prefix differ only inside
+that prefix's groups. EAVT and EATV share `(E, A)`, so the conversion resorts
+each `(E, A)` group by `(Tx, V, tail)` — and an `(E, A)` group is one
+attribute's history on one entity, which in entity-shaped data is one or two
+datoms. AVET and ATEV resort the per-attribute runs by `(V, E, Tx, tail)` and
+`(Tx, E, V, tail)`; A exists in the comparator's position but is never compared.
+
+**Merging runs.** AVET's per-attribute runs are each V-sorted, and VAET is
+`(V, A, ...)`— a k-way merge keyed `(V, run index)`, k = distinct attributes.
+Run index is A's compare order, so V-ties order by A; a run's datoms enter the
+heap one at a time, so within `(V, A)` the run's own `(E, Tx, tail)` order
+survives untouched. `n log k` comparisons against `n log n`, on the most
+expensive comparator family the build has.
+
+| index | derived from | work | comparator |
+|-------|--------------|------|------------|
+| EAVT | input — presorted on a one-worker import | ~O(n) presorted pass; full sort otherwise | full order |
+| EATV | EAVT, per-`(E,A)` group resort | ~O(n); groups mostly one datom | `(Tx, V, tail)` |
+| AEVT | EAVT, stable bucket by A | O(n), **zero datom comparisons** | — |
+| AETV | EATV, stable bucket by A | O(n), **zero datom comparisons** | — |
+| AVET | per-A run resort | Σ nᵢ log nᵢ | `(V, E, Tx, tail)` — A never compared |
+| ATEV | per-A run resort | Σ nᵢ log nᵢ | `(Tx, E, V, tail)` — Tx near-unique |
+| VAET | k-way merge of AVET's runs | n log k, k = distinct attributes | V, then run index |
+| TAEV | full sort | n log n, cheapest comparator | `(Tx, A, E, V, tail)` — rarely past Tx |
+
+TAEV alone keeps a full sort, and it is the cheapest one available: Tx leads,
+`ElementID` is two uint64s, and Lamports are near-unique, so comparisons rarely
+read a second component. EAVT's own sort is pdqsort's presorted pass on the
+import path — a one-worker JDZL import arrives in EAVT order — and a real sort
+for any other empty-base batch, with every derivation downstream indifferent to
+which it was.
+
+The sequence runs over the gathered slice plus one n-pointer scratch — the
+lattice's whole memory cost. `TestVersionFromDatomsMatchesDirectSorts` holds
+each index pointer-identical to an independent direct sort of the same datoms,
+on a fixture that collides E, A, V and Lamport and includes same-`(E,A,V,Tx)`
+pairs distinguished only by the tail. Measured on the 62 MB / 2.7M-datom import:
+**5.88 s → 2.89 s native, 27.7 s → 12.0 s js/wasm**, sort machinery from ~50%
+to ~27% of import CPU, allocations unchanged but for the scratch slice.
+
+[PRESORTED_INDEX_SECTIONS.md](PRESORTED_INDEX_SECTIONS.md) asks the question one
+level up: whether some orders could arrive off the wire rather than being
+derived at all. The lattice lowers what that would save — the two orders a wire
+format could plausibly carry beyond EAVT are exactly the two the bucket pass
+already derives without comparisons.
 
 ### Cursor
 

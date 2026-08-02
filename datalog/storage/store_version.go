@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -118,24 +117,6 @@ func (b *versionBuilder) mustBeOpen() {
 	if b.done {
 		panic("versionBuilder: used after commit")
 	}
-}
-
-// versionFromDatoms builds a version from scratch: the slice is re-sorted in
-// place per index and each tree built bottom-up, leaves packed full. The datoms
-// must be duplicate-free — the dump format's own property, trusted rather than
-// swept for. A JDZL import at one worker arrives already in EAVT order, so that
-// sort is pdqsort's presorted pass.
-func versionFromDatoms(datoms []*datalog.Datom) *storeVersion {
-	next := &storeVersion{}
-	for _, index := range Indices {
-		t := newDatomTree(index)
-		slices.SortFunc(datoms, func(a, b *datalog.Datom) int {
-			return compareDatomsInOrder(t.order, a, b)
-		})
-		t.buildFromSorted(datoms)
-		next.trees[index] = t
-	}
-	return next
 }
 
 // versionHolder owns the published version. Readers take the current one and
