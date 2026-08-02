@@ -24,7 +24,7 @@ func TestTreeRemoveLeavesTheRestInOrder(t *testing.T) {
 		t.Run(fmt.Sprintf("n=%d", size), func(t *testing.T) {
 			sorted := sortedTreeDatoms(EAVT, size)
 			tree := newDatomTree(EAVT)
-			require.NoError(t, tree.buildFromSorted(sorted))
+			tree.buildFromSorted(sorted)
 
 			var dropped, kept []*datalog.Datom
 			for i, d := range sorted {
@@ -50,7 +50,7 @@ func TestTreeRemoveLeavesTheRestInOrder(t *testing.T) {
 func TestTreeRemoveReportsWhetherItFound(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, 32)
 	tree := newDatomTree(EAVT)
-	require.NoError(t, tree.buildFromSorted(sorted))
+	tree.buildFromSorted(sorted)
 
 	b := tree.transient()
 	require.True(t, b.remove(sorted[7]), "removing a present datom reported it absent")
@@ -69,7 +69,7 @@ func TestTreeRemoveReportsWhetherItFound(t *testing.T) {
 func TestTreeRemoveEverythingEmptiesTheTree(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, branchingFactor*2+5)
 	tree := newDatomTree(EAVT)
-	require.NoError(t, tree.buildFromSorted(sorted))
+	tree.buildFromSorted(sorted)
 
 	empty := removeAll(tree, sorted)
 	require.Zero(t, empty.Len())
@@ -85,7 +85,7 @@ func TestTreeRemoveEverythingEmptiesTheTree(t *testing.T) {
 func TestTreeRemoveCollapsesASingleChildRoot(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, branchingFactor*3)
 	tree := newDatomTree(EAVT)
-	require.NoError(t, tree.buildFromSorted(sorted))
+	tree.buildFromSorted(sorted)
 	require.False(t, tree.root.isLeaf(), "fixture must start branching")
 
 	// Keep only the first leaf's worth, so exactly one subtree survives.
@@ -100,7 +100,7 @@ func TestTreeRemoveCollapsesASingleChildRoot(t *testing.T) {
 func TestTreeRemoveLeavesTheSourceTreeIntact(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, branchingFactor*2)
 	original := newDatomTree(EAVT)
-	require.NoError(t, original.buildFromSorted(sorted))
+	original.buildFromSorted(sorted)
 
 	before := walkTree(t, original)
 	pruned := removeAll(original, sorted[:branchingFactor])
@@ -119,7 +119,7 @@ func TestTreeRemoveLeavesTheSourceTreeIntact(t *testing.T) {
 func TestTreeRemoveThenSeekFindsTheSuccessor(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, branchingFactor*2+11)
 	tree := newDatomTree(EAVT)
-	require.NoError(t, tree.buildFromSorted(sorted))
+	tree.buildFromSorted(sorted)
 
 	// Drop a run from the middle, then seek each removed datom: every one must
 	// land on the first survivor after it.
@@ -141,7 +141,7 @@ func TestTreeRemoveThenSeekFindsTheSuccessor(t *testing.T) {
 func TestTreeRemoveClearsVacatedSlots(t *testing.T) {
 	sorted := sortedTreeDatoms(EAVT, branchingFactor*4)
 	tree := newDatomTree(EAVT)
-	require.NoError(t, tree.buildFromSorted(sorted))
+	tree.buildFromSorted(sorted)
 	pruned := removeAll(tree, sorted[:branchingFactor*2])
 
 	var checked int
@@ -172,7 +172,7 @@ func TestTreeRemoveAcrossEveryIndexOrder(t *testing.T) {
 		t.Run(fmt.Sprintf("%v", index), func(t *testing.T) {
 			sorted := sortedTreeDatoms(index, branchingFactor+17)
 			tree := newDatomTree(index)
-			require.NoError(t, tree.buildFromSorted(sorted))
+			tree.buildFromSorted(sorted)
 
 			pruned := removeAll(tree, sorted[3:9])
 			kept := append(append([]*datalog.Datom{}, sorted[:3]...), sorted[9:]...)

@@ -33,16 +33,20 @@ type MemoryTreeStore struct {
 	metadata map[string]uint64
 	closed   bool
 
-	// batchMu guards pending and serializes the producers writing into it. A
-	// builder is a plain B-tree with no locking of its own, so one writer at a
-	// time is the whole of its concurrency contract.
+	// batchMu guards pending and bulk, and serializes the producers writing into
+	// them. A builder is a plain B-tree with no locking of its own, so one writer
+	// at a time is the whole of its concurrency contract.
 	//
 	// pending is a batch left open across AssertEach calls, holding the version
 	// holder's write lock until FinishBatch publishes it. Readers are unaffected:
 	// they load the last published version through an atomic pointer and never
 	// take that lock.
+	//
+	// bulk carries a batch opened over an empty base: its datoms gather here for
+	// one sorted build per index at FinishBatch, instead of per-datom inserts.
 	batchMu sync.Mutex
 	pending *versionBuilder
+	bulk    []*datalog.Datom
 }
 
 // NewMemoryTreeStore returns an empty typed store.
@@ -87,13 +91,15 @@ func (s *MemoryTreeStore) Assert(datoms []datalog.Datom) error {
 	return s.FinishBatch()
 }
 
-// AssertEach inserts what produce yields straight into the version being built,
-// so the datoms gather nowhere first.
+// AssertEach adds what produce yields to the open batch, leaving the batch open
+// for the next call; FinishBatch publishes it, and until then the run is
+// invisible: readers hold the previously published version.
 //
-// The batch is left open. Successive calls share one builder and one version, so
-// a caller writing in a run — the dump importers — pays a single copy-on-write
-// generation for the run instead of one per call. FinishBatch publishes it, and
-// until then the run is invisible: readers hold the previously published version.
+// A batch over an empty base gathers its datoms — duplicate-free, the dump
+// format's own property, trusted rather than swept for — and builds every index
+// in one sorted pass at FinishBatch, leaves packed full. A batch over existing
+// data inserts per datom into the version being built, paying one copy-on-write
+// generation for the whole run.
 func (s *MemoryTreeStore) AssertEach(produce func(add func(*datalog.Datom) error) error) error {
 	if err := s.checkOpen(); err != nil {
 		return err
@@ -106,17 +112,29 @@ func (s *MemoryTreeStore) AssertEach(produce func(add func(*datalog.Datom) error
 	}
 	b := s.pending
 
-	if err := produce(func(d *datalog.Datom) error {
-		// The trees hold the pointer, so each datom needs one that outlives the
-		// producer's workspace.
-		stored := *d
-		b.addDatom(&stored)
-		return nil
-	}); err != nil {
+	// The trees hold the pointer, so each datom needs one that outlives the
+	// producer's workspace.
+	var add func(*datalog.Datom) error
+	if b.base.datomCount() == 0 {
+		add = func(d *datalog.Datom) error {
+			stored := *d
+			s.bulk = append(s.bulk, &stored)
+			return nil
+		}
+	} else {
+		add = func(d *datalog.Datom) error {
+			stored := *d
+			b.addDatom(&stored)
+			return nil
+		}
+	}
+
+	if err := produce(add); err != nil {
 		// The whole batch goes, not just this call's share of it: a builder is a
 		// tree of edits with no record of which call made which, and abandoning
 		// is what releases the write lock.
 		s.pending = nil
+		s.bulk = nil
 		s.versions.abandon(b)
 		return err
 	}
@@ -134,6 +152,12 @@ func (s *MemoryTreeStore) FinishBatch() error {
 	}
 	b := s.pending
 	s.pending = nil
+	if b.base.datomCount() == 0 {
+		datoms := s.bulk
+		s.bulk = nil
+		s.versions.publishBuilt(b, versionFromDatoms(datoms))
+		return nil
+	}
 	s.versions.publish(b)
 	return nil
 }
@@ -309,6 +333,7 @@ func (s *MemoryTreeStore) Close() error {
 	if s.pending != nil {
 		b := s.pending
 		s.pending = nil
+		s.bulk = nil
 		s.versions.abandon(b)
 	}
 	s.batchMu.Unlock()

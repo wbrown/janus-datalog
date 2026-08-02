@@ -53,7 +53,7 @@ func TestDatomTreeBuildFromSortedRoundTrips(t *testing.T) {
 		t.Run(fmt.Sprintf("n=%d", size), func(t *testing.T) {
 			datoms := sortedTreeDatoms(EAVT, size)
 			tree := newDatomTree(EAVT)
-			require.NoError(t, tree.buildFromSorted(datoms))
+			tree.buildFromSorted(datoms)
 			require.Equal(t, size, tree.Len())
 
 			walked := walkTree(t, tree)
@@ -82,36 +82,17 @@ func TestDatomTreeBuildReachesExpectedDepth(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("n=%d", tc.size), func(t *testing.T) {
 			tree := newDatomTree(EAVT)
-			require.NoError(t, tree.buildFromSorted(sortedTreeDatoms(EAVT, tc.size)))
+			tree.buildFromSorted(sortedTreeDatoms(EAVT, tc.size))
 			require.Equal(t, tc.level, tree.root.level)
 		})
 	}
-}
-
-// TestDatomTreeBuildRejectsBadInput: a bulk build trusts its input's order, so
-// it verifies it. Unsorted or duplicate input would otherwise produce a tree
-// whose seeks silently miss.
-func TestDatomTreeBuildRejectsBadInput(t *testing.T) {
-	t.Run("unsorted", func(t *testing.T) {
-		datoms := sortedTreeDatoms(EAVT, 8)
-		datoms[3], datoms[4] = datoms[4], datoms[3]
-		tree := newDatomTree(EAVT)
-		require.ErrorContains(t, tree.buildFromSorted(datoms), "not sorted")
-	})
-
-	t.Run("duplicate", func(t *testing.T) {
-		datoms := sortedTreeDatoms(EAVT, 8)
-		datoms[4] = datoms[3]
-		tree := newDatomTree(EAVT)
-		require.ErrorContains(t, tree.buildFromSorted(datoms), "duplicate")
-	})
 }
 
 func TestDatomTreeSeek(t *testing.T) {
 	const size = branchingFactor*2 + 7
 	datoms := sortedTreeDatoms(EAVT, size)
 	tree := newDatomTree(EAVT)
-	require.NoError(t, tree.buildFromSorted(datoms))
+	tree.buildFromSorted(datoms)
 
 	t.Run("present target lands on it", func(t *testing.T) {
 		c := tree.cursor()
@@ -164,7 +145,7 @@ func TestDatomTreeSeek(t *testing.T) {
 
 func TestDatomTreeEmpty(t *testing.T) {
 	tree := newDatomTree(EAVT)
-	require.NoError(t, tree.buildFromSorted(nil))
+	tree.buildFromSorted(nil)
 	require.Zero(t, tree.Len())
 
 	c := tree.cursor()
@@ -189,7 +170,7 @@ func TestDatomTreeBuildsEveryIndexOrder(t *testing.T) {
 		t.Run(fmt.Sprintf("%v", index), func(t *testing.T) {
 			datoms := sortedTreeDatoms(index, branchingFactor+13)
 			tree := newDatomTree(index)
-			require.NoError(t, tree.buildFromSorted(datoms))
+			tree.buildFromSorted(datoms)
 
 			walked := walkTree(t, tree)
 			require.Len(t, walked, len(datoms))

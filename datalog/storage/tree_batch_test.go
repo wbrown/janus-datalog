@@ -64,6 +64,56 @@ func TestTreeStoreHoldsOneBatchUntilFinish(t *testing.T) {
 	require.Equal(t, len(datoms), countStoreIndex(t, store, EAVT))
 }
 
+// TestTreeStoreBatchMatchesIncrementalInserts pins that a batch over an empty
+// base and per-datom inserts through a transaction produce the same trees, on
+// input arriving in no index's order and with colliding values.
+func TestTreeStoreBatchMatchesIncrementalInserts(t *testing.T) {
+	attr := datalog.NewKeyword(":batch/value")
+	datoms := make([]datalog.Datom, 600)
+	for i := range datoms {
+		datoms[i] = datalog.Datom{
+			E:  datalog.NewIdentity(fmt.Sprintf("batch:entity:%d", i%37)),
+			A:  attr,
+			V:  int64(i % 7),
+			Tx: datalog.ElementID{Lamport: uint64(len(datoms) - i), ReplicaID: 7},
+		}
+	}
+
+	batched := NewMemoryTreeStore(&BinaryKeyEncoder{})
+	defer batched.Close()
+	assertEachOf(t, batched, datoms)
+	require.NoError(t, batched.FinishBatch())
+
+	incremental := NewMemoryTreeStore(&BinaryKeyEncoder{})
+	defer incremental.Close()
+	tx, err := incremental.BeginTx()
+	require.NoError(t, err)
+	require.NoError(t, tx.Assert(datoms))
+	require.NoError(t, tx.Commit())
+
+	for _, index := range Indices {
+		require.Equal(t,
+			scanIndexDatoms(t, incremental, index),
+			scanIndexDatoms(t, batched, index),
+			"index %v", index)
+	}
+}
+
+func scanIndexDatoms(t *testing.T, store Store, index IndexType) []datalog.Datom {
+	t.Helper()
+	iter, err := store.Scan(ScanBound{Index: index})
+	require.NoError(t, err)
+	defer iter.Close()
+	var datoms []datalog.Datom
+	for iter.Next() {
+		d, err := iter.Datom()
+		require.NoError(t, err)
+		datoms = append(datoms, *d)
+	}
+	require.NoError(t, iter.Error())
+	return datoms
+}
+
 // TestTreeStoreAssertPublishesOnReturn pins that holding a batch open is what
 // AssertEach does, not what every write does: Assert is a complete operation and
 // its datoms are readable when it returns.

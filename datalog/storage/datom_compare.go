@@ -63,24 +63,11 @@ func compareComponent(c keyComponent, a, b *datalog.Datom) int {
 	case componentA:
 		return a.A.Compare(b.A)
 	case componentV:
-		return compareValueKeyForm(a.V, b.V)
+		return datalog.CompareValuesTagOrder(a.V, b.V)
 	case componentTx:
 		return -a.Tx.Compare(b.Tx)
 	}
 	panic(fmt.Sprintf("compareComponent: unknown component %v", c))
-}
-
-// compareValueKeyForm orders values as the key lays them out: the type tag
-// byte, then the payload within that type.
-func compareValueKeyForm(a, b datalog.Value) int {
-	at, bt := datalog.Type(a), datalog.Type(b)
-	switch {
-	case at < bt:
-		return -1
-	case at > bt:
-		return 1
-	}
-	return datalog.CompareValues(a, b)
 }
 
 // compareKeyTail orders the [AfterRef?][Op] suffix. Op decides whether AfterRef

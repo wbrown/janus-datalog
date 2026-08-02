@@ -200,6 +200,83 @@ func CompareValues(left, right interface{}) int {
 	return compareByRank(left, right)
 }
 
+// CompareValuesTagOrder orders two values as a storage key lays them out: by
+// ValueType tag, then by payload within the tag. Same-tag pairs order exactly
+// as CompareValues orders them; different tags order by tag, which is not
+// typeRank's order — the tag ladder separates int from float.
+//
+// One dispatch covers the canonical same-type pairs. Anything else — mixed
+// tags, non-canonical integer widths, values Type refuses — takes the
+// tag-then-CompareValues composition this fuses, so it orders and panics
+// exactly as that composition does.
+func CompareValuesTagOrder(a, b Value) int {
+	switch av := a.(type) {
+	case string:
+		if bv, ok := b.(string); ok {
+			return strings.Compare(av, bv)
+		}
+	case int64:
+		if bv, ok := b.(int64); ok {
+			return compareInt64s(av, bv)
+		}
+	case float64:
+		if bv, ok := b.(float64); ok {
+			return compareFloats(av, bv)
+		}
+	case bool:
+		if bv, ok := b.(bool); ok {
+			switch {
+			case !av && bv:
+				return -1
+			case av && !bv:
+				return 1
+			}
+			return 0
+		}
+	case time.Time:
+		if bv, ok := b.(time.Time); ok {
+			switch {
+			case av.Before(bv):
+				return -1
+			case av.After(bv):
+				return 1
+			}
+			return 0
+		}
+	case []byte:
+		if bv, ok := b.([]byte); ok {
+			return bytes.Compare(av, bv)
+		}
+	case Identity:
+		if bv, ok := b.(Identity); ok {
+			return av.Compare(bv)
+		}
+	case Keyword:
+		if bv, ok := b.(Keyword); ok {
+			return av.Compare(bv)
+		}
+	case Symbol:
+		if bv, ok := b.(Symbol); ok {
+			return av.Compare(bv)
+		}
+	case ElementID, *ElementID:
+		if ea, ok := DerefElementID(a); ok {
+			if eb, ok := DerefElementID(b); ok {
+				return ea.Compare(eb)
+			}
+		}
+	}
+
+	at, bt := Type(a), Type(b)
+	switch {
+	case at < bt:
+		return -1
+	case at > bt:
+		return 1
+	}
+	return CompareValues(a, b)
+}
+
 // isVector reports whether v is the domain's composite. []byte is a Go slice but
 // a domain scalar, with its own rank and its own comparison.
 func isVector(v interface{}) bool {

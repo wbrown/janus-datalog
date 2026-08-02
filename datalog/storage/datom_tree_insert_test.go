@@ -92,7 +92,7 @@ func TestTreeInsertIsASet(t *testing.T) {
 func TestTreeInsertLeavesTheSourceTreeIntact(t *testing.T) {
 	base := sortedTreeDatoms(EAVT, branchingFactor*2)
 	original := newDatomTree(EAVT)
-	require.NoError(t, original.buildFromSorted(base))
+	original.buildFromSorted(base)
 
 	before := walkTree(t, original)
 	beforeCount := original.Len()
@@ -123,7 +123,7 @@ func TestTreeInsertLeavesTheSourceTreeIntact(t *testing.T) {
 func TestTreeInsertSharesUntouchedSubtrees(t *testing.T) {
 	base := sortedTreeDatoms(EAVT, branchingFactor*4)
 	original := newDatomTree(EAVT)
-	require.NoError(t, original.buildFromSorted(base))
+	original.buildFromSorted(base)
 	require.False(t, original.root.isLeaf(), "fixture must produce a branching tree")
 	require.Greater(t, len(original.root.children), 2, "fixture must produce several subtrees")
 
@@ -233,7 +233,7 @@ func TestTreeInsertMatchesBulkBuild(t *testing.T) {
 			sorted := sortedTreeDatoms(index, branchingFactor*2+31)
 
 			built := newDatomTree(index)
-			require.NoError(t, built.buildFromSorted(sorted))
+			built.buildFromSorted(sorted)
 			inserted := insertAll(newDatomTree(index), strided(sorted))
 
 			require.Equal(t, built.Len(), inserted.Len())

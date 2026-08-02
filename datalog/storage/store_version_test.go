@@ -152,6 +152,29 @@ func TestAbandonedBatchPublishesNothing(t *testing.T) {
 	h.publish(next)
 }
 
+// TestPublishBuiltSwapsInTheBuiltVersion: a bulk batch publishes a version the
+// builder never touched, so the swap, the builder's death, and the lock release
+// each have to happen anyway.
+func TestPublishBuiltSwapsInTheBuiltVersion(t *testing.T) {
+	h := newVersionHolder()
+	before := h.read()
+
+	datoms := sortedTreeDatoms(EAVT, 24)
+	b := h.begin()
+	built := versionFromDatoms(datoms)
+	h.publishBuilt(b, built)
+
+	require.Same(t, built, h.read(), "published version is not the built one")
+	require.NotSame(t, before, h.read())
+	require.Equal(t, len(datoms), h.read().datomCount())
+	requireIndexesAgree(t, h.read())
+	require.Panics(t, func() { b.commit() }, "builder survived publishBuilt")
+
+	// The lock is free: this would deadlock if publishBuilt had not released it.
+	next := h.begin()
+	h.publish(next)
+}
+
 // TestConcurrentReadersNeverSeeATornVersion is why the eight roots are one
 // value behind one pointer. A reader takes a version and walks all
 // eight orders; if publication were eight separate swaps, it could catch some

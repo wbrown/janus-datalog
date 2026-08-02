@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -119,6 +120,24 @@ func (b *versionBuilder) mustBeOpen() {
 	}
 }
 
+// versionFromDatoms builds a version from scratch: the slice is re-sorted in
+// place per index and each tree built bottom-up, leaves packed full. The datoms
+// must be duplicate-free — the dump format's own property, trusted rather than
+// swept for. A JDZL import at one worker arrives already in EAVT order, so that
+// sort is pdqsort's presorted pass.
+func versionFromDatoms(datoms []*datalog.Datom) *storeVersion {
+	next := &storeVersion{}
+	for _, index := range Indices {
+		t := newDatomTree(index)
+		slices.SortFunc(datoms, func(a, b *datalog.Datom) int {
+			return compareDatomsInOrder(t.order, a, b)
+		})
+		t.buildFromSorted(datoms)
+		next.trees[index] = t
+	}
+	return next
+}
+
 // versionHolder owns the published version. Readers take the current one and
 // keep it; writers are serialized and swap it when their batch completes.
 //
@@ -161,5 +180,13 @@ func (h *versionHolder) publish(b *versionBuilder) *storeVersion {
 // touched was ever reachable, so there is no undo to apply.
 func (h *versionHolder) abandon(b *versionBuilder) {
 	b.done = true
+	h.writeMu.Unlock()
+}
+
+// publishBuilt swaps in a version constructed outside the builder and releases
+// the write lock. The builder contributed only the exclusion.
+func (h *versionHolder) publishBuilt(b *versionBuilder, next *storeVersion) {
+	b.done = true
+	h.current.Store(next)
 	h.writeMu.Unlock()
 }

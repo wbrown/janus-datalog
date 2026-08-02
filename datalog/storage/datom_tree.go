@@ -77,28 +77,18 @@ func (t *datomTree) compare(a, b *datalog.Datom) int {
 
 func (t *datomTree) Len() int { return t.count }
 
-// buildFromSorted constructs a tree bottom-up from datoms already in this
-// index's order — the JDZL hydration path. Leaves are filled to the packing
-// fraction and each branch level is built in one pass over the level below, so
-// there is no path copying and no comparison beyond the order check.
-//
-// The input must be sorted and free of duplicates under this tree's order.
-// Both are verified rather than assumed: a stale or foreign ordering would
-// otherwise produce a tree whose seeks silently miss.
-func (t *datomTree) buildFromSorted(datoms []*datalog.Datom) error {
-	for i := 1; i < len(datoms); i++ {
-		switch t.compare(datoms[i-1], datoms[i]) {
-		case 0:
-			return fmt.Errorf("buildFromSorted on %v: duplicate datom at position %d", t.index, i)
-		case 1:
-			return fmt.Errorf("buildFromSorted on %v: input not sorted at position %d", t.index, i)
-		}
-	}
-
+// buildFromSorted constructs a tree bottom-up from datoms sorted and
+// duplicate-free under this index's order — the JDZL hydration path. Leaves are
+// filled to the packing fraction and each branch level is built in one pass
+// over the level below: no path copying, no comparisons. The input's order is
+// its caller's doing — versionFromDatoms sorts with this tree's own comparator
+// immediately before calling — and the dump format is duplicate-free by
+// definition, trusted rather than swept for.
+func (t *datomTree) buildFromSorted(datoms []*datalog.Datom) {
 	t.count = len(datoms)
 	if len(datoms) == 0 {
 		t.root = nil
-		return nil
+		return
 	}
 
 	level := buildLeafLevel(datoms)
@@ -106,7 +96,6 @@ func (t *datomTree) buildFromSorted(datoms []*datalog.Datom) error {
 		level = buildBranchLevel(level)
 	}
 	t.root = level[0]
-	return nil
 }
 
 // buildLeafLevel packs the sorted datoms into leaves. The final leaf takes

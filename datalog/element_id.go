@@ -90,13 +90,17 @@ func (a ElementID) String() string {
 	return fmt.Sprintf("L%d@R%d", a.Lamport, a.ReplicaID)
 }
 
-// Compare returns -1 if a < b, 0 if a == b, 1 if a > b.
-// Useful for sorting and comparison operations.
+// Compare returns -1 if a < b, 0 if a == b, 1 if a > b, in the total order
+// Less defines: Lamport, then ReplicaID.
 func (a ElementID) Compare(b ElementID) int {
-	if a.Less(b) {
+	switch {
+	case a.Lamport < b.Lamport:
 		return -1
-	}
-	if b.Less(a) {
+	case a.Lamport > b.Lamport:
+		return 1
+	case a.ReplicaID < b.ReplicaID:
+		return -1
+	case a.ReplicaID > b.ReplicaID:
 		return 1
 	}
 	return 0

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -41,7 +40,9 @@ type BinaryExportOptions struct {
 // BinaryImportOptions configures JDZL binary import.
 type BinaryImportOptions struct {
 	// Workers is the maximum number of chunks decoded and asserted concurrently.
-	// Zero selects GOMAXPROCS.
+	// Zero selects one: chunks then arrive in file order — the EAVT order the
+	// tree store's bulk build takes as given — and the sweep in
+	// BenchmarkDumpImportWorkers measured no throughput return on more.
 	Workers int
 
 	// Finalize runs once after the last chunk is written and the store's own
@@ -189,7 +190,7 @@ func (d *Database) ExportBinary(w io.WriteSeeker, opts ...BinaryExportOptions) e
 // subset of the file in the store. Retrying into the same database is not a
 // safe recovery; use a fresh database (or discard the target) after failure.
 func (d *Database) ImportBinary(r io.ReadSeeker, opts ...BinaryImportOptions) error {
-	workers := runtime.GOMAXPROCS(0)
+	workers := 1
 	var finalize func() error
 	if len(opts) > 0 {
 		if opts[0].Workers > 0 {
