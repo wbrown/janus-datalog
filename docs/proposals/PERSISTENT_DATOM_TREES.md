@@ -76,6 +76,43 @@ order-preserving escape of the V payload from birth means the typed comparator
 and the page order agree everywhere, and `runMembership` has no counterpart
 here at all.
 
+### The arena: pages in one linear byte region
+
+Encoded pages need no individual allocations: they live in one linear byte
+arena, addressed by offset. Three properties fall out, and each is a reason on
+its own.
+
+**The store leaves the garbage collector's world.** An offset arena is `[]byte`
+— pointer-free memory Go's collector neither scans nor moves. The datom-slab
+work cut the resting store's object count; the arena cuts the bytes the
+collector walks to approximately zero for the store proper, leaving only the
+bounded decoded-node cache GC-visible. Mark cost becomes O(cache) rather than
+O(store), for the store's whole lifetime — the difference that matters most
+under wasm's single-threaded collector. A pointer-holding arena was measured
+and declined (`PERFORMANCE_STATUS.md`, 2026-08-02): Go slices carved from
+shared backing arrays strand live pointers under a cap-walk and buy little
+while the datoms stay GC-visible. The hazard and the smallness were both
+properties of the half-measure; an offset arena has no pointers to strand.
+
+**The arena is the file.** Pages append at the arena's tail; commit flushes the
+tail range and flips the meta slot. Natively that is `pwrite` and fsync of
+arena ranges. Under wasm the arena is a contiguous region of linear memory, so
+the OPFS adapter degenerates to persisting byte ranges, and handing the store
+to a JS host is handing an `ArrayBuffer` view — working form, durable form,
+and host-visible form are one representation, with no export step between
+them. JDZL remains the compressed portable interchange above it.
+
+**Offsets are 32-bit where it counts.** Any arena wasm32 can address is
+reachable by a 4-byte offset. This is the parent document's "32-bit handle
+representation" — the one it distinguished from slabs because handles leave
+pointer semantics — arriving as the natural consequence of nodes that are
+already encoded pages rather than as a separate memory project.
+
+The cost the arena adds beyond the page design's own: offset arithmetic
+corrupts silently where a bad pointer faults, which raises the value of the
+differential harness another notch, and the arena needs a growth policy —
+chunked regions or one reservation, a measurement question.
+
 ### Commit is the memory commit plus fsync
 
 The write path is `versionBuilder` as it exists: CoW up the touched paths,
@@ -147,9 +184,11 @@ portable — no mmap dependency, which wasm could not honor anyway.
 ## Open questions
 
 - **Eight trees of full datoms on disk, or a record heap plus reference
-  trees.** Badger stores eight full keys today, so eight full trees is parity;
-  a heap-plus-references layout could approach 1× plus pointers. Sizing is the
-  first measurement task, not an assumption.
+  trees.** Badger stores eight full keys today, so eight full trees is parity —
+  but the arena tilts this: a heap of encoded datoms plus eight trees of 4-byte
+  offsets lands near the typed store's footprint while staying GC-invisible,
+  where eight full encoded trees roughly quintuple it. Record-heap-plus-offsets
+  is the indicated layout; sizing it is still the first measurement task.
 - **Page size versus branching factor** — 256 datoms per node was tuned for
   memory; a page wants alignment with the storage stack.
 - **Group-commit policy** and its latency/durability dial.
