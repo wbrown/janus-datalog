@@ -10,6 +10,8 @@ measures the pair.
 Two modes, not a swap: `MemoryTreeStore` is the js/wasm default, and
 `MemoryStore` remains the Badger emulator. `PERFORMANCE_STATUS.md` carries the
 cross-backend measurements the default moved on.
+[PERSISTENT_DATOM_TREES.md](PERSISTENT_DATOM_TREES.md) is the successor
+question: the same structure, persisted, as the durable backend.
 
 ## Summary
 
