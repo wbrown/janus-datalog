@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -58,6 +59,10 @@ type Database struct {
 	builderCache   *tupleBuilderCache      // Shared tuple-builder population for every matcher this database mints
 	temporalTxID   *datalog.ElementID      // nil = current; set = temporal mode (AsOf/History)
 
+	// removePath, when non-empty, is scratch space this database owns: Close
+	// removes it once the store has released its files.
+	removePath string
+
 	// onCommitWindow, if set, is invoked inside Commit after the storage commit
 	// returns but before the cache is updated — the window where a stale cached
 	// read was once possible. Test-only (nil in production); lets a test run a
@@ -87,30 +92,53 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 	return db, nil
 }
 
-// DatabaseOptions configures database creation
+// DatabaseOptions configures database creation.
+//
+// Where the data lives is one question with one answer: either BackendName and
+// Path name a backend for this constructor to open, or Store supplies one the
+// caller opened already. Setting both is an error rather than a precedence
+// rule — an injected store carries its own backend, location and encoder, so a
+// precedence rule would silently discard whichever of those fields the caller
+// meant something by.
 type DatabaseOptions struct {
-	Path string // Path to the database directory
-	// Store injects an ordered backend. The caller retains ownership: construction
-	// error paths do not Close it, and CompressionThreshold options do not mutate
-	// the injected store's encoder (configure the encoder before injection).
+	// BackendName selects the store to open, from AvailableBackends. Empty means
+	// DefaultBackend for this build. A named persistent backend requires Path; a
+	// named in-process one rejects it, having nowhere to put it.
+	BackendName string
+	// Path is the directory holding a persistent backend's data. The build
+	// default is the one case where a path can go unhonored: under js/wasm
+	// DefaultBackend is the memory store, and portable code that opens by path
+	// gets an in-process database rather than an error, because the caller asked
+	// for a location and the build chose what answers.
+	Path string
+	// Store injects an already-open ordered backend. The caller retains ownership:
+	// construction error paths do not Close it. Mutually exclusive with
+	// BackendName, Path and CompressionThreshold.
 	Store                Store
 	Schema               schema.SchemaProvider   // Optional schema for validation
 	AnnotationHandler    annotations.Handler     // Optional handler for query tracing
 	ReplicaID            uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
 	DisableCache         bool                    // Disable EA cache; queries resolve directly from storage
 	PlannerOptions       *planner.PlannerOptions // Optional override for default planner options
-	CompressionThreshold int                     // Compress string/[]byte values >= this size (0 = default 512; -1 to disable). Applies only when Store is nil.
+	CompressionThreshold int                     // Compress string/[]byte values >= this size (0 = default 512; -1 to disable). Configures the encoder this constructor builds.
+	// RemovePathOnClose hands Path to the database to own: Close removes the
+	// directory once the store has released its files. For a caller that made
+	// scratch space to hold data that came from somewhere else — a dump loaded
+	// into a persistent backend — rather than a location the data lives at.
+	RemovePathOnClose bool
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
 // This is the most flexible constructor, supporting all configuration options.
 //
+// The store comes from exactly one of two places. Either this constructor opens
+// one — BackendName (or the build default) at Path, with an encoder built from
+// CompressionThreshold — or Store supplies one the caller opened already, in
+// which case those three fields are errors rather than ignored inputs. On
+// success Database.Close closes the store either way; on constructor failure
+// only a store this constructor opened is Closed.
+//
 // Options:
-//   - Path: Required for the native default Badger backend when Store is nil.
-//   - Store: Optional injected ordered backend; when set, Path is ignored. The
-//     caller retains ownership on constructor failure (not Closed). On success,
-//     Database.Close closes it. CompressionThreshold does not mutate an injected
-//     encoder — configure the encoder before injection.
 //   - Schema: Optional schema for validation.
 //   - ReplicaID: For CRDT mode. 0 = auto-generate random; non-zero = use specified.
 //   - DisableCache: Disable EA cache; queries resolve directly from storage.
@@ -121,38 +149,60 @@ type DatabaseOptions struct {
 //	    Path: "/path/to/db",
 //	})
 func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
-	if opts.Store == nil && opts.Path == "" {
-		return nil, fmt.Errorf("database path is required")
-	}
-
-	encoder := &BinaryKeyEncoder{}
-	// Default compression threshold is 512 bytes. Use -1 to disable.
-	// Values below ~500 bytes rarely compress due to ~300 bytes of
-	// FSE table + block header overhead in the compressed format.
-	threshold := opts.CompressionThreshold
-	if threshold == 0 {
-		threshold = 512
-	}
-	if threshold > 0 {
-		encoder.CompressionThreshold = threshold
-	}
 	var store Store
-	var err error
+	var encoder *BinaryKeyEncoder
 	// ownsStore is true only when this constructor opened the backend. Injected
 	// stores remain owned by the caller; error paths must not Close them.
 	ownsStore := false
 	if opts.Store != nil {
+		if opts.BackendName != "" {
+			return nil, fmt.Errorf("Store and BackendName %q both set: an injected store is already open on a backend of its own", opts.BackendName)
+		}
+		if opts.Path != "" {
+			return nil, fmt.Errorf("Store and Path %q both set: an injected store already holds its data, so Path would be discarded", opts.Path)
+		}
+		if opts.CompressionThreshold != 0 {
+			return nil, fmt.Errorf("Store and CompressionThreshold both set: compression belongs to the encoder, and an injected store keeps its own — configure the encoder before injection")
+		}
 		store = opts.Store
 		encoder = store.Encoder()
 		if encoder == nil {
 			return nil, fmt.Errorf("injected store returned nil encoder")
 		}
-		// Injected stores own their encoder configuration. CompressionThreshold
-		// options apply only when this constructor creates the store.
 	} else {
-		store, err = openDefaultStore(opts.Path, encoder)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create store: %w", err)
+		backend := DefaultBackend()
+		named := opts.BackendName != ""
+		if named {
+			var err error
+			if backend, err = BackendNamed(opts.BackendName); err != nil {
+				return nil, err
+			}
+		}
+		if backend.Persistent && opts.Path == "" {
+			return nil, fmt.Errorf("backend %q is persistent: Path is required", backend.Name)
+		}
+		// A caller who named an in-process backend and gave a path wrote two
+		// answers to one question. A caller who named none asked for the build's
+		// default and gets whatever this build has — under js/wasm that is the
+		// memory store, and rejecting the path there would break portable code
+		// over a choice the caller never made.
+		if named && !backend.Persistent && opts.Path != "" {
+			return nil, fmt.Errorf("backend %q holds its data in process: Path %q would be discarded and the data lost at Close", backend.Name, opts.Path)
+		}
+		encoder = &BinaryKeyEncoder{}
+		// Default compression threshold is 512 bytes. Use -1 to disable.
+		// Values below ~500 bytes rarely compress due to ~300 bytes of
+		// FSE table + block header overhead in the compressed format.
+		threshold := opts.CompressionThreshold
+		if threshold == 0 {
+			threshold = 512
+		}
+		if threshold > 0 {
+			encoder.CompressionThreshold = threshold
+		}
+		var err error
+		if store, err = backend.Open(opts.Path, encoder); err != nil {
+			return nil, fmt.Errorf("failed to open %s store: %w", backend.Name, err)
 		}
 		ownsStore = true
 	}
@@ -248,6 +298,9 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		replicaID:      replicaID,
 		cache:          cache,
 		builderCache:   newTupleBuilderCache(),
+	}
+	if opts.RemovePathOnClose {
+		d.removePath = opts.Path
 	}
 	d.drainCond = sync.NewCond(&d.mu)
 	return d, nil
@@ -669,7 +722,16 @@ func (d *Database) Close() error {
 		tx.Rollback()
 	}
 
-	return d.store.Close()
+	err := d.store.Close()
+	if d.removePath != "" {
+		// After the store's Close, so its files are released first. A removal
+		// failure is the caller's to see: the scratch directory outliving the
+		// process is a leak, not a detail.
+		if removeErr := os.RemoveAll(d.removePath); err == nil {
+			err = removeErr
+		}
+	}
+	return err
 }
 
 // PlanCache returns the database's query plan cache

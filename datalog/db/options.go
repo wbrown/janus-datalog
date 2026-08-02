@@ -7,7 +7,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
-	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
 type config struct {
@@ -17,7 +16,7 @@ type config struct {
 	disableCache         bool
 	plannerOptions       *planner.PlannerOptions
 	compressionThreshold int
-	store                storage.Store
+	backendName          string
 }
 
 // Option configures a database opened with Open.
@@ -52,16 +51,26 @@ func WithPlannerOptions(opts planner.PlannerOptions) Option {
 // WithCompressionThreshold sets the compression threshold in bytes.
 // Values at or above this size are transparently compressed.
 // Default (when unset / 0) is 512. Use -1 to disable compression.
+//
+// This configures the encoder Open builds for the backend it opens, so it is an
+// error alongside a store passed to Open, which arrives with an encoder already.
 func WithCompressionThreshold(bytes int) Option {
 	return func(c *config) { c.compressionThreshold = bytes }
 }
 
-// WithStore injects the ordered storage backend used by the database.
-// The caller retains ownership of the store: Open/OpenMemory error paths do not
-// Close it. Compression options do not mutate the injected store's encoder —
-// configure the encoder before injection.
-func WithStore(store storage.Store) Option {
-	return func(c *config) { c.store = store }
+// WithBackend selects the storage backend by name — storage.AvailableBackends
+// lists what a given build has, since Badger does not compile under js/wasm.
+// Unset means storage.DefaultBackend for the build: Badger natively, the memory
+// store under wasm.
+//
+// A persistent backend requires a path; an in-process one rejects it, so
+// db.Open("", db.WithBackend("memory-trees")) is the in-process form.
+//
+// With a dump source it names where the dump lands: an in-process backend takes
+// it directly, and a persistent one gets a temporary directory the database
+// removes when it closes.
+func WithBackend(name string) Option {
+	return func(c *config) { c.backendName = name }
 }
 
 // WithoutCompression disables transparent value compression.

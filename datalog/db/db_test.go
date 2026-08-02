@@ -19,7 +19,7 @@ func tempDB(t *testing.T, backend storage.Backend, opts ...db.Option) *db.DB {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 
-	d, err := db.Open("", append([]db.Option{db.WithStore(store)}, opts...)...)
+	d, err := db.Open(store, opts...)
 	require.NoError(t, err)
 	t.Cleanup(func() { d.Close() })
 	return d
@@ -44,7 +44,7 @@ func TestOpenMemory(t *testing.T) {
 			d, err := db.OpenMemory(db.WithReplicaID(42), db.WithPlannerOptions(mode.plannerOptions()))
 			require.NoError(t, err)
 			defer d.Close()
-			_, ok := d.Store().(*storage.MemoryStore)
+			_, ok := d.Store().(*storage.MemoryTreeStore)
 			require.True(t, ok)
 
 			entity := datalog.NewIdentity("memory-public")
@@ -64,9 +64,11 @@ func TestOpenMemory(t *testing.T) {
 	}
 }
 
-func TestOpenWithInjectedStoreDoesNotRequirePath(t *testing.T) {
+// A store the caller opened is one of Open's sources, and the database it backs
+// keeps using that very store rather than a copy or a reopen.
+func TestOpenTakesAStore(t *testing.T) {
 	store := storage.NewMemoryStore(&storage.BinaryKeyEncoder{})
-	database, err := db.Open("", db.WithStore(store), db.WithReplicaID(43))
+	database, err := db.Open(store, db.WithReplicaID(43))
 	require.NoError(t, err)
 	defer database.Close()
 	require.Same(t, store, database.Store())

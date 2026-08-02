@@ -14,7 +14,7 @@ func expectedBackendNames() []string {
 }
 
 // appendNativeReopenCases builds the Badger store explicitly rather than setting
-// opts.Path, so the case named "badger" is Badger whatever openDefaultStore
+// opts.Path, so the case named "badger" is Badger whatever DefaultBackend
 // returns. Owning the store means closing it here: a Database over an injected
 // store does not close it, and the next open would meet Badger's directory lock.
 func appendNativeReopenCases(cases []reopenBackendCase) []reopenBackendCase {
@@ -53,6 +53,8 @@ func appendNativeReopenCases(cases []reopenBackendCase) []reopenBackendCase {
 		require.NoError(t, err)
 		priorStore = store
 
+		// Spent on the encoder above. The store is the single answer from here.
+		opts.CompressionThreshold = 0
 		opts.Store = store
 		db, err := NewDatabaseWithOptions(opts)
 		require.NoError(t, err)

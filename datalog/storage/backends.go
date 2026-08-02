@@ -70,7 +70,3 @@ func DefaultBackend() Backend {
 	}
 	return backend
 }
-
-func openDefaultStore(path string, encoder *BinaryKeyEncoder) (Store, error) {
-	return DefaultBackend().Open(path, encoder)
-}

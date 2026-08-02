@@ -90,6 +90,9 @@ func inProcessReopenCase(backend storeContractCase) reopenBackendCase {
 				backing = backend.open(t, encoder)
 				t.Cleanup(func() { _ = backing.Close() })
 			}
+			// Spent on the encoder above, and on a reopen the store already
+			// carries it. The store is the single answer from here.
+			opts.CompressionThreshold = 0
 			opts.Store = backing
 			db, err := NewDatabaseWithOptions(opts)
 			require.NoError(t, err)
@@ -107,6 +110,9 @@ func openContractDatabase(t testing.TB, testCase storeContractCase, opts Databas
 		}
 		opts.Store = testCase.open(t, encoder)
 	}
+	// Spent on the encoder above, or already carried by a store the caller
+	// supplied. Either way the store is the single answer from here.
+	opts.CompressionThreshold = 0
 	database, err := NewDatabaseWithOptions(opts)
 	if err != nil {
 		t.Fatalf("open %s database: %v", testCase.name, err)

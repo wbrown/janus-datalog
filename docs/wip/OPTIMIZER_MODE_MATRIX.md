@@ -24,7 +24,7 @@ Three selectors now sit on the axis in `tests/`: `eachBackendAndMode`, `eachBack
 
 Open:
 
-- **`cmd/datalog` exposes no backend selector.** `openDatabaseOrEDN` opens by path and dump files load into a temporary database on `DefaultBackend()`, so the CLI's query tests run one backend. Whether the CLI should gain a `-backend` flag is an owner ruling; its axis copy carries no backend field until then.
+- **`cmd/datalog` exposes no backend selector.** `openDatabaseOrEDN` opens by path and dump files load into a temporary database on `DefaultBackend()`, so the CLI's query tests run one backend. The mechanism it lacked now exists — `db.WithBackend(name)` and `DatabaseOptions.BackendName` resolve through `BackendNamed`, so a `-backend` flag would be a pass-through of the flag string — but whether the CLI should have one is an owner ruling; its axis copy carries no backend field until then.
 - **Key-only decode across the value domain is asserted on Badger alone.** `TestKeyOnlyScanningAllTypes` covers nine value types through `ScanKeysOnly`; `TestStoreBackendContract` exercises that method on all three backends with two. Either the nine-type case belongs in the contract or it is a Badger statement — not both.
 - **Nothing measures whether a passing leg asserts anything.** Every finding above was found by reading, and one of them (the blob tier) only because it was asked about directly. The mechanism that would answer it is bounded: break each backend deliberately — `MemoryTreeStore.Scan` returns empty, then `MemoryStore`, then the blob tier — and every test that still passes is vacuous on that backend. Three mutants, three runs, and the output is a list rather than a belief.
 

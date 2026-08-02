@@ -105,7 +105,7 @@ func (m optimizerMode) plannerOptions() planner.PlannerOptions {
 // default planner options carry this mode, so queries through db.Query and the
 // pull APIs run on the mode's path without per-call option plumbing. Callers
 // set schema, cache, compression, the annotation handler and the rest on opts;
-// Store and PlannerOptions come from the mode.
+// BackendName, Path and PlannerOptions come from the mode.
 //
 // An annotation handler must arrive at open: every executor, matcher and
 // relation the database builds is constructed with it.
@@ -126,23 +126,18 @@ func createOptimizerModeDB(t testing.TB, mode optimizerMode, opts DatabaseOption
 func openBackendDB(t testing.TB, backend Backend, opts DatabaseOptions) *Database {
 	t.Helper()
 
-	// An injected store owns its encoder, so a compression threshold has to
-	// reach the encoder here rather than through DatabaseOptions.
-	encoder := &BinaryKeyEncoder{}
-	if opts.CompressionThreshold != 0 {
-		encoder.CompressionThreshold = opts.CompressionThreshold
-	}
-	store, err := backend.Open(t.TempDir(), encoder)
-	if err != nil {
-		t.Fatalf("failed to open %s store: %v", backend.Name, err)
-	}
-	// Registered before the database is built: NewDatabaseWithOptions can fail,
-	// and an open store abandoned by t.Fatalf holds its directory lock for the
-	// rest of the binary.
-	t.Cleanup(func() { _ = store.Close() })
-
+	opts.BackendName = backend.Name
 	opts.Path = ""
-	opts.Store = store
+	if backend.Persistent {
+		opts.Path = t.TempDir()
+	}
+	if opts.CompressionThreshold == 0 {
+		// This harness has always handed its tests a bare BinaryKeyEncoder, so
+		// compression is off unless a test asks for it. The constructor reads an
+		// unset threshold as the 512-byte production default; -1 is how it spells
+		// the encoder these tests have been running on.
+		opts.CompressionThreshold = -1
+	}
 	db, err := NewDatabaseWithOptions(opts)
 	if err != nil {
 		t.Fatalf("failed to create %s database: %v", backend.Name, err)

@@ -86,6 +86,7 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	"rollbackInProgress": fieldZeroed, // rollback coordination (write path)
 	"drainCond":          fieldZeroed,
 	"rollbackMu":         fieldZeroed,
+	"removePath":         fieldZeroed, // parent's scratch dir; a handle holding it would RemoveAll the parent's data
 
 	// builderCache is snapshot-independent (keyed on pattern structure), so
 	// handles share the parent's builder population.
@@ -166,6 +167,9 @@ func testTemporalHandleFieldClassification(t *testing.T, backend Backend) {
 		}
 		if handle.activeTx != nil {
 			t.Errorf("%s: activeTx must be zero on a read-only temporal handle", handleName)
+		}
+		if handle.removePath != "" {
+			t.Errorf("%s: removePath must be zero — it would RemoveAll the parent's directory", handleName)
 		}
 	}
 
