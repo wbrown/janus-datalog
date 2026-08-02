@@ -513,11 +513,17 @@ while below the high bound.
 ### Datom allocation
 
 The tree holds `*datalog.Datom`. Allocating those individually makes one heap
-object per datom — 3M objects for a 3M-datom store. Slab allocation, `[]Datom` in
-chunks with pointers handed out into the chunk, collapses that to a few hundred
-objects while preserving ordinary Go pointers and GC correctness. Import
-allocation cost falls with it, on the path where wasm's transient peak is
-permanent.
+object per datom — 3M objects for a 3M-datom store. `datomSlabs`
+(`datom_slab.go`) collapses that: each version builder owns a slab of chunked
+`[]Datom` backing arrays, `addDatom` copies the caller's workspace into it, and
+chunks double from 64 to 65536 slots, so a small commit stays proportionate
+while a bulk import costs on the order of a hundred chunk objects. A chunk's
+capacity is fixed at creation and a full chunk is never appended to, so
+handed-out pointers are stable; a chunk stays reachable while any of its datoms
+is, which is why slabs belong to batches — published or abandoned whole —
+rather than to the store. On the 2.7M-datom import this removes the 2.7M
+per-datom objects (−31.6% of the import's allocations) and ~18 MB of per-object
+overhead from the resting store.
 
 This is distinct from the 32-bit handle representation: slabs keep pointer
 semantics; handles leave them.

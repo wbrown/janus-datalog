@@ -8,13 +8,20 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-func versionOf(t *testing.T, datoms []*datalog.Datom) *storeVersion {
+// versionOf builds a version holding the datoms and returns it with the
+// version's own stored datoms in EAVT order. addDatom copies into the batch's
+// slab, so pointer-identity assertions — the scan-returns-the-tree's-own-datom
+// contract — compare against the stored datoms, not the fixture.
+func versionOf(t *testing.T, datoms []*datalog.Datom) (*storeVersion, []*datalog.Datom) {
 	t.Helper()
 	b := emptyStoreVersion().transient()
 	for _, d := range datoms {
 		b.addDatom(d)
 	}
-	return b.commit()
+	v := b.commit()
+	stored := walkTree(t, v.tree(EAVT))
+	require.Len(t, stored, len(datoms))
+	return v, stored
 }
 
 func drainScan(t *testing.T, it Iterator) []*datalog.Datom {
@@ -73,9 +80,8 @@ func requireScanYieldsExactly(t *testing.T, v *storeVersion, all []*datalog.Dato
 func TestMemoryScanWholeIndex(t *testing.T) {
 	for _, index := range Indices {
 		t.Run(fmt.Sprintf("%v", index), func(t *testing.T) {
-			all := sortedTreeDatoms(index, branchingFactor*2+5)
-			v := versionOf(t, all)
-			requireScanYieldsExactly(t, v, all, ScanBound{Index: index})
+			v, stored := versionOf(t, sortedTreeDatoms(index, branchingFactor*2+5))
+			requireScanYieldsExactly(t, v, stored, ScanBound{Index: index})
 		})
 	}
 }
@@ -121,7 +127,7 @@ func TestMemoryScanBoundYieldsExactlyItsRun(t *testing.T) {
 			}
 		}
 	}
-	v := versionOf(t, all)
+	v, stored := versionOf(t, all)
 
 	for _, index := range Indices {
 		t.Run(fmt.Sprintf("%v", index), func(t *testing.T) {
@@ -130,7 +136,7 @@ func TestMemoryScanBoundYieldsExactlyItsRun(t *testing.T) {
 
 			// Bind each prefix length using values drawn from a real datom, so
 			// every bound names a run that exists.
-			sample := all[len(all)/2]
+			sample := stored[len(stored)/2]
 			for n := 1; n <= len(order); n++ {
 				prefix := make([]datalog.Value, n)
 				for i := 0; i < n; i++ {
@@ -145,7 +151,7 @@ func TestMemoryScanBoundYieldsExactlyItsRun(t *testing.T) {
 						prefix[i] = sample.Tx
 					}
 				}
-				requireScanYieldsExactly(t, v, all, ScanBound{Index: index, Prefix: prefix})
+				requireScanYieldsExactly(t, v, stored, ScanBound{Index: index, Prefix: prefix})
 			}
 		})
 	}
@@ -170,7 +176,7 @@ func TestMemoryScanDoesNotOverCoverPrefixValues(t *testing.T) {
 		})
 		lamport++
 	}
-	v := versionOf(t, all)
+	v, _ := versionOf(t, all)
 
 	// AVET orders [A][V][E][Tx], so binding A and V names one value's run.
 	bound := ScanBound{Index: AVET, Prefix: []datalog.Value{attr, "abc"}}
@@ -198,7 +204,7 @@ func TestMemoryScanCountsIntake(t *testing.T) {
 			Tx: datalog.ElementID{Lamport: uint64(i + 1), ReplicaID: 1},
 		})
 	}
-	v := versionOf(t, all)
+	v, _ := versionOf(t, all)
 
 	it, err := v.scan(ScanBound{Index: AVET, Prefix: []datalog.Value{attr, "bbb"}})
 	require.NoError(t, err)
@@ -227,7 +233,7 @@ func TestMemoryScanSeekAdoptsTheWholeBound(t *testing.T) {
 			Tx: datalog.ElementID{Lamport: uint64(i + 1), ReplicaID: 1},
 		})
 	}
-	v := versionOf(t, all)
+	v, _ := versionOf(t, all)
 
 	it, err := v.scan(ScanBound{Index: AVET, Prefix: []datalog.Value{attr, "aaa"}})
 	require.NoError(t, err)
@@ -242,7 +248,7 @@ func TestMemoryScanSeekAdoptsTheWholeBound(t *testing.T) {
 }
 
 func TestMemoryScanRejectsBadBounds(t *testing.T) {
-	v := versionOf(t, sortedTreeDatoms(EAVT, 4))
+	v, _ := versionOf(t, sortedTreeDatoms(EAVT, 4))
 
 	t.Run("prefix longer than the order", func(t *testing.T) {
 		_, err := v.scan(ScanBound{

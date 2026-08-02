@@ -132,6 +132,28 @@ func TestTreeStoreAssertPublishesOnReturn(t *testing.T) {
 	require.Equal(t, len(datoms)+len(more), countStoreIndex(t, store, EAVT))
 }
 
+// TestTreeStoreTxAssertCopiesItsArgument pins the workspace contract on the
+// transaction path: a caller may reuse one backing slot across Assert calls,
+// and every datom passed through it is stored.
+func TestTreeStoreTxAssertCopiesItsArgument(t *testing.T) {
+	store := NewMemoryTreeStore(&BinaryKeyEncoder{})
+	defer store.Close()
+
+	datoms := treeBatchDatoms(64)
+	tx, err := store.BeginTx()
+	require.NoError(t, err)
+	var workspace [1]datalog.Datom
+	for i := range datoms {
+		workspace[0] = datoms[i]
+		require.NoError(t, tx.Assert(workspace[:]))
+	}
+	require.NoError(t, tx.Commit())
+
+	for _, index := range Indices {
+		require.Equal(t, len(datoms), countStoreIndex(t, store, index), "index %v", index)
+	}
+}
+
 // TestTreeStoreFailedBatchReleasesTheWriteLock pins that a producer error ends
 // the run rather than leaving it open: the store stays writable and the failed
 // batch's datoms are gone.

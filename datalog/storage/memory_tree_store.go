@@ -112,19 +112,16 @@ func (s *MemoryTreeStore) AssertEach(produce func(add func(*datalog.Datom) error
 	}
 	b := s.pending
 
-	// The trees hold the pointer, so each datom needs one that outlives the
-	// producer's workspace.
+	// d is each call's workspace; the batch's slab takes the copy.
 	var add func(*datalog.Datom) error
 	if b.base.datomCount() == 0 {
 		add = func(d *datalog.Datom) error {
-			stored := *d
-			s.bulk = append(s.bulk, &stored)
+			s.bulk = append(s.bulk, b.slab.put(d))
 			return nil
 		}
 	} else {
 		add = func(d *datalog.Datom) error {
-			stored := *d
-			b.addDatom(&stored)
+			b.addDatom(d)
 			return nil
 		}
 	}
@@ -408,8 +405,7 @@ func (tx *memoryTreeStoreTx) Assert(datoms []datalog.Datom) error {
 		return errors.New("memory tree transaction closed")
 	}
 	for i := range datoms {
-		d := datoms[i]
-		tx.b.addDatom(&d)
+		tx.b.addDatom(&datoms[i])
 	}
 	return nil
 }

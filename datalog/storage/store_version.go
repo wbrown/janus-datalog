@@ -53,6 +53,7 @@ func (v *storeVersion) datomCount() int { return v.trees[EAVT].Len() }
 type versionBuilder struct {
 	base  *storeVersion
 	trees [indexCount]*treeBuilder
+	slab  datomSlabs
 	done  bool
 }
 
@@ -64,7 +65,9 @@ func (v *storeVersion) transient() *versionBuilder {
 	return b
 }
 
-// addDatom inserts into every index and reports whether the datom was new.
+// addDatom copies d into the batch's slab and inserts the copy into every
+// index, reporting whether the datom was new. d is the caller's workspace,
+// unread after the call.
 //
 // The trees must agree. Equality under an index's comparator is all components
 // equal, which is the same relation whatever order the index visits them in, so
@@ -73,9 +76,10 @@ func (v *storeVersion) transient() *versionBuilder {
 func (b *versionBuilder) addDatom(d *datalog.Datom) bool {
 	b.mustBeOpen()
 
-	added := b.trees[Indices[0]].insert(d)
+	stored := b.slab.put(d)
+	added := b.trees[Indices[0]].insert(stored)
 	for _, index := range Indices[1:] {
-		if b.trees[index].insert(d) != added {
+		if b.trees[index].insert(stored) != added {
 			panic(fmt.Sprintf(
 				"versionBuilder: index %v disagreed with %v on whether a datom was new; "+
 					"the trees hold different sets", index, Indices[0]))
