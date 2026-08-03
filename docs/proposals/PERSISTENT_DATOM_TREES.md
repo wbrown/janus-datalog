@@ -69,12 +69,17 @@ stays at the boundaries — with the page as a boundary. What changes against
 Badger is the amortization: decode happens per node (~256 datoms) on cache
 miss, not per key on every read, and the hot working set stays typed with
 interned pointers, which is where the checkpoint numbers come from.
+Decode-on-fault also concentrates load on the intern tables — every cache
+miss re-interns a node's worth of E/A/V — which
+[INTERN_SPECIALIZATION.md](INTERN_SPECIALIZATION.md) prices and specializes.
 
 The page encoding is new format surface, so it starts clean:
 `BUG_V_PAYLOAD_NOT_PREFIX_FREE` does not get imported into it. An
 order-preserving escape of the V payload from birth means the typed comparator
 and the page order agree everywhere, and `runMembership` has no counterpart
-here at all.
+here at all. The header also records the attribute width the file was written
+with (`MaxAttributeBytes` today), so a future width change is a readable
+format version rather than a misparse.
 
 ### The arena: pages in one linear byte region
 

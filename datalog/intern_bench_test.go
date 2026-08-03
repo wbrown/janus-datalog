@@ -36,6 +36,40 @@ func BenchmarkInternKeywordHighContention(b *testing.B) {
 	})
 }
 
+// BenchmarkInternKeywordHit measures the string-keyed hit path alone: keys are
+// prebuilt, so allocs/op is what one warm InternKeyword costs — the boxing
+// question, answered by -benchmem.
+func BenchmarkInternKeywordHit(b *testing.B) {
+	ClearInterns()
+	keys := make([]string, 100)
+	for i := range keys {
+		keys[i] = fmt.Sprintf(":attr/%d", i)
+		InternKeyword(keys[i])
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		InternKeyword(keys[i%100])
+	}
+}
+
+// BenchmarkInternKeywordFromBytesHit is the same measurement for the byte-keyed
+// fast path.
+func BenchmarkInternKeywordFromBytesHit(b *testing.B) {
+	ClearInterns()
+	keys := make([][32]byte, 100)
+	for i := range keys {
+		s := fmt.Sprintf(":attr/%d", i)
+		copy(keys[i][:], s)
+		InternKeywordFromBytes(keys[i])
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		InternKeywordFromBytes(keys[i%100])
+	}
+}
+
 // BenchmarkInternIdentity measures identity interning performance
 func BenchmarkInternIdentity(b *testing.B) {
 	ClearInterns()
