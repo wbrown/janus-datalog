@@ -83,7 +83,7 @@ func nativeBlobKeys(t *testing.T, store Store) ([][]byte, bool) {
 	return keys, true
 }
 
-func deleteNativeBlobKeys(t *testing.T, store Store, keys [][]byte) bool {
+func deleteNativeKeys(t *testing.T, store Store, keys [][]byte) bool {
 	t.Helper()
 	badgerStore, ok := store.(*BadgerStore)
 	if !ok {

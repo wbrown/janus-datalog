@@ -172,6 +172,21 @@ func (e *BinaryKeyEncoder) EncodeValueBytes(v interface{}) (vBytes []byte, blobD
 	return
 }
 
+// VAETHashPrefix returns the VAET key prefix naming every datom whose value is
+// the blob at hash, under one hashed type tag.
+//
+// VAET leads with the value payload, and a tier-3 payload is the fixed-width
+// [type][hash], so this prefix is exact: every key carrying it references that
+// blob, and no key referencing it under this tag lacks it. That is what makes a
+// reference probe one seek rather than a scan. A caller asking whether a blob is
+// referenced at all probes once per datalog.HashedValueTypes entry, because one
+// blob is reachable under either tag.
+func (e *BinaryKeyEncoder) VAETHashPrefix(vType datalog.ValueType, hash [20]byte) []byte {
+	prefix := make([]byte, 0, 2+len(hash))
+	prefix = append(prefix, byte(VAET), byte(vType))
+	return append(prefix, hash[:]...)
+}
+
 func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 	sd := ToStorageDatom(*d)
 	vBytes, _ := e.EncodeValueBytes(sd.V)
