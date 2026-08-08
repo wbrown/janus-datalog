@@ -5,6 +5,7 @@ package storage
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"runtime"
 	"sync"
@@ -355,7 +356,56 @@ func (s *BadgerStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	if err := s.sweepUnreferencedBlobs(); err != nil {
 		return 0, err
 	}
+	if err := s.reconcileDeletedSpace(); err != nil {
+		return 0, err
+	}
 	return len(datoms), nil
+}
+
+// compactionWorkers is how many goroutines Flatten runs per level it compacts,
+// matching the NumCompactors this store opens with.
+const compactionWorkers = 4
+
+// valueLogDiscardRatio is the share of a value-log file that must be reclaimable
+// before a GC pass rewrites it. Badger recommends 0.5, which bounds lifetime
+// value-log write amplification at 2.
+const valueLogDiscardRatio = 0.5
+
+// reconcileDeletedSpace makes the deletes above take effect rather than merely be
+// recorded.
+//
+// A delete in an LSM is an entry, not a removal: every key deleted leaves a
+// tombstone, and reads merge across it until compaction propagates it down far
+// enough to drop the pair. Badger schedules compaction by level size and L0 table
+// count, never by deletions — and index keys are written value-less, so their
+// tombstones are nearly the same size as the entries they shadow. A rewind can
+// therefore double a level's entry count while barely moving its bytes, leaving
+// the score that would schedule the work almost unchanged. Reads stay slower than
+// before the rewind, for as long as that takes to correct itself.
+//
+// Flatten consolidates every table onto one level, which is what drops the
+// tombstones. It stops live compactions for its duration and wants no concurrent
+// writes; TruncateTo, the only production caller of the delete above, drains
+// writers for the whole rewind and gates new ones.
+//
+// The value log is the other half, and it is blobs that put it there: a tier-3
+// value exceeds ValueThreshold, so it lives in the log rather than the LSM, and
+// the keys the sweep removed leave its space behind until a pass rewrites the
+// file. RunValueLogGC handles one file per call and reports ErrNoRewrite when no
+// file is worth rewriting, which is the ordinary outcome and not a failure — so
+// the loop runs until it says so.
+func (s *BadgerStore) reconcileDeletedSpace() error {
+	if err := s.db.Flatten(compactionWorkers); err != nil {
+		return fmt.Errorf("compact after delete: %w", err)
+	}
+	for {
+		switch err := s.db.RunValueLogGC(valueLogDiscardRatio); {
+		case errors.Is(err, badger.ErrNoRewrite):
+			return nil
+		case err != nil:
+			return fmt.Errorf("value log gc after delete: %w", err)
+		}
+	}
 }
 
 // sweepUnreferencedBlobs deletes every blob no datom refers to, leaving none
