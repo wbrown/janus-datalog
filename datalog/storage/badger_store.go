@@ -128,13 +128,60 @@ func (s *BadgerStore) FinishBatch() error { return nil }
 // Retract removes datoms from the store
 func (s *BadgerStore) Retract(datoms []datalog.Datom) error {
 	return s.db.Update(func(txn *badger.Txn) error {
+		candidates := make(map[[20]byte]struct{})
 		for _, d := range datoms {
-			if err := s.retractDatom(txn, &d); err != nil {
+			if err := s.retractDatom(txn, &d, candidates); err != nil {
 				return err
 			}
 		}
-		return nil
+		return s.reclaimBlobsInTxn(txn, candidates)
 	})
+}
+
+// reclaimBlobsInTxn deletes each candidate blob no datom still refers to, inside
+// a transaction someone else owns, so the removal is atomic with the retract
+// that orphaned it. The probe reads that transaction's pending writes, so it
+// counts what survives the retract rather than what preceded it.
+//
+// Unlike the reclamation DeleteDatoms performs, this one is best-effort against
+// concurrent writers. A writer commits a tier-3 value's blob alongside its index
+// keys, and NewBadgerStore disables conflict detection, so a commit landing
+// between this count and this transaction's own commit is invisible here and its
+// datom is left pointing at a blob this transaction removed. Nothing gates the
+// commit path the way TruncateTo gates the rewind. The exposure is accepted:
+// physical retraction is a maintenance primitive rather than an ordinary write,
+// and the alternative is a lock over every tier-3 write. See
+// BUG_BLOBS_ARE_NEVER_RECLAIMED.
+func (s *BadgerStore) reclaimBlobsInTxn(txn *badger.Txn, candidates map[[20]byte]struct{}) error {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	opts := badger.DefaultIteratorOptions
+	opts.PrefetchValues = false
+	opts.Prefix = []byte{byte(VAET)}
+	it := txn.NewIterator(opts)
+	exists := func(prefix []byte) bool {
+		it.Seek(prefix)
+		return it.ValidForPrefix(prefix)
+	}
+	var garbage [][20]byte
+	for hash := range candidates {
+		if !blobIsReferenced(s.encoder, hash, exists) {
+			garbage = append(garbage, hash)
+		}
+	}
+	// Closed before the deletes below, and before any commit: Badger panics on a
+	// transaction committed with an iterator still open.
+	it.Close()
+
+	for _, hash := range garbage {
+		key := blobKey(hash)
+		if err := txn.Delete(key[:]); err != nil {
+			return fmt.Errorf("delete blob %x: %w", hash, err)
+		}
+	}
+	return nil
 }
 
 // retractDatom removes a single datom from current-state indices and optionally
@@ -142,7 +189,11 @@ func (s *BadgerStore) Retract(datoms []datalog.Datom) error {
 // NOTE: The Tx field in the passed datom is ignored for finding stored datoms.
 // We find the actual stored datom(s) matching E+A+V and delete those.
 // In history mode, the Tx from the passed datom is used for the retraction record.
-func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
+//
+// Every stored value that lived out of line records its blob hash in candidates,
+// so the caller can ask, once its transaction is otherwise complete, whether
+// anything still refers to that content.
+func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom, candidates map[[20]byte]struct{}) error {
 	// Convert to storage format for prefix scanning
 	sd := ToStorageDatom(*d)
 
@@ -183,7 +234,10 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 		// Delete from all CRDT indices using the actual stored Tx; one
 		// storage conversion and value encoding for all eight keys
 		sdStored := ToStorageDatom(storedDatom)
-		storedVBytes, _ := s.encoder.EncodeValueBytes(sdStored.V)
+		storedVBytes, blobData := s.encoder.EncodeValueBytes(sdStored.V)
+		if blobData != nil {
+			candidates[blobData.Hash] = struct{}{}
+		}
 		for _, idx := range Indices {
 			key := s.encoder.encodeKeyWithParts(idx, &sdStored, storedVBytes)
 			if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
@@ -256,30 +310,118 @@ func (s *BadgerStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error
 	return datoms, nil
 }
 
-// DeleteDatoms physically removes each given datom from all eight indices in a single
-// transaction, returning the count removed. Unlike Retract (which appends a tombstone at a
+// DeleteDatoms physically removes each given datom from all eight indices,
+// returning the count handed over. Unlike Retract (which appends a tombstone at a
 // higher Tx), this is a true rewind: the keys are gone, so the datoms vanish from
 // History() too.
+//
+// The deletes go through a WriteBatch for the same reason AssertEach's writes do,
+// and it is the delete side that needs it more: a rewind's extent is the whole
+// post-snapshot tail, and at eight index keys per datom the pending-write set is
+// eight times a count the caller has no reason to think is bounded. Badger's
+// per-transaction ceiling arrives around 26,000 datoms. The batch splits at that
+// ceiling itself, so the arithmetic stays Badger's and cannot drift from it.
+//
+// The cost is that this is not atomic: a mid-way failure leaves the datoms
+// already deleted gone, and History() shows a torn tail until the rewind is
+// re-run. Re-running completes it — TruncateTo restores the clock only after
+// every delete succeeds, so a second pass collects exactly the survivors. A
+// reader whose MVCC snapshot lands between chunks can observe a partially
+// deleted tail for the duration.
+//
+// A datom whose value lived out of line takes its blob with it, but only once
+// nothing else refers to that content — see reclaimBlobs. The tier is this
+// store's own answer to values too wide for a key, so nothing above the Store
+// seam hears about it.
 func (s *BadgerStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
-	deleted := 0
-	err := s.db.Update(func(txn *badger.Txn) error {
-		for i := range datoms {
-			sd := ToStorageDatom(datoms[i])
-			vBytes, _ := s.encoder.EncodeValueBytes(sd.V)
-			for _, idx := range Indices {
-				key := s.encoder.encodeKeyWithParts(idx, &sd, vBytes)
-				if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
-					return fmt.Errorf("delete from %v index: %w", idx, err)
-				}
+	candidates := make(map[[20]byte]struct{})
+	wb := s.db.NewWriteBatch()
+	defer wb.Cancel()
+	for i := range datoms {
+		sd := ToStorageDatom(datoms[i])
+		vBytes, blobData := s.encoder.EncodeValueBytes(sd.V)
+		if blobData != nil {
+			candidates[blobData.Hash] = struct{}{}
+		}
+		for _, idx := range Indices {
+			key := s.encoder.encodeKeyWithParts(idx, &sd, vBytes)
+			if err := wb.Delete(key); err != nil {
+				return 0, fmt.Errorf("delete from %v index: %w", idx, err)
 			}
-			deleted++
+		}
+	}
+	if err := wb.Flush(); err != nil {
+		return 0, fmt.Errorf("flush index deletes: %w", err)
+	}
+	if err := s.reclaimBlobs(candidates); err != nil {
+		return 0, err
+	}
+	return len(datoms), nil
+}
+
+// reclaimBlobs deletes each candidate blob that no datom still refers to.
+//
+// Candidates are the blobs this call's datoms referenced — the only content it
+// can have orphaned — and they cost nothing to gather, since the delete already
+// encodes every value and learns which ones went out of line on the way past.
+//
+// The count that decides a blob's fate is taken here, after the index deletes
+// have flushed, so it counts what survives them. It is not the count from before
+// the deletes, and it is not that count minus this call's datoms: the same
+// content can appear on several datoms in one call, and on others the call never
+// touches, so only the settled index knows. Reference is asked of the hash under
+// every hashed tag (see blobIsReferenced), because one blob is shared by every
+// datom holding that content — another entity, or the same entity at an earlier
+// Tx that History still answers from. The probe stops at the first surviving
+// reference, which already settles count > 0, rather than enumerating a
+// reference set that may be large.
+//
+// The caller owns exclusion, and this path inherits whatever its caller holds: a
+// writer commits a tier-3 value's blob alongside its index keys, so a count taken
+// before such a commit would be stale by the time the delete lands. TruncateTo
+// drains writers for the whole rewind, which is what makes the count here final.
+func (s *BadgerStore) reclaimBlobs(candidates map[[20]byte]struct{}) error {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	var garbage [][20]byte
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		opts.Prefix = []byte{byte(VAET)}
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		exists := func(prefix []byte) bool {
+			it.Seek(prefix)
+			return it.ValidForPrefix(prefix)
+		}
+		for hash := range candidates {
+			if !blobIsReferenced(s.encoder, hash, exists) {
+				garbage = append(garbage, hash)
+			}
 		}
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("count blob references: %w", err)
 	}
-	return deleted, nil
+	if len(garbage) == 0 {
+		return nil
+	}
+
+	wb := s.db.NewWriteBatch()
+	defer wb.Cancel()
+	for _, hash := range garbage {
+		key := blobKey(hash)
+		if err := wb.Delete(key[:]); err != nil {
+			return fmt.Errorf("delete blob %x: %w", hash, err)
+		}
+	}
+	if err := wb.Flush(); err != nil {
+		return fmt.Errorf("flush blob deletes: %w", err)
+	}
+	return nil
 }
 
 // Scan returns a workspace-decoded iterator for a range of keys.
@@ -572,6 +714,12 @@ func (i *BadgerIterator) Error() error { return nil }
 type BadgerTx struct {
 	store *BadgerStore
 	txn   *badger.Txn
+
+	// blobCandidates accumulates the out-of-line values this transaction's
+	// retracts removed, for Commit to reclaim. It is asked at commit rather
+	// than per Retract call so the count sees the transaction's final state:
+	// one transaction may retract a value and assert it again.
+	blobCandidates map[[20]byte]struct{}
 }
 
 // Assert adds datoms within a transaction. Unlike BadgerStore.Assert this does
@@ -588,16 +736,24 @@ func (t *BadgerTx) Assert(datoms []datalog.Datom) error {
 
 // Retract removes datoms within a transaction
 func (t *BadgerTx) Retract(datoms []datalog.Datom) error {
+	if t.blobCandidates == nil {
+		t.blobCandidates = make(map[[20]byte]struct{})
+	}
 	for _, d := range datoms {
-		if err := t.store.retractDatom(t.txn, &d); err != nil {
+		if err := t.store.retractDatom(t.txn, &d, t.blobCandidates); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// Commit commits the transaction
+// Commit reclaims any blob this transaction's retracts left unreferenced, then
+// commits. Reclaiming here rather than inside Retract is what lets the count see
+// asserts the same transaction made afterwards.
 func (t *BadgerTx) Commit() error {
+	if err := t.store.reclaimBlobsInTxn(t.txn, t.blobCandidates); err != nil {
+		return err
+	}
 	return t.txn.Commit()
 }
 

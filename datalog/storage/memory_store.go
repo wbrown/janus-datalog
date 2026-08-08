@@ -104,15 +104,21 @@ func (s *MemoryStore) Retract(datoms []datalog.Datom) error {
 	return tx.Commit()
 }
 
+// DeleteDatoms removes each datom's keys from every index, and then any blob
+// those datoms were the last to refer to.
 func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return 0, errMemoryStoreClosed
 	}
+	candidates := make(map[[20]byte]struct{})
 	for i := range datoms {
 		sd := ToStorageDatom(datoms[i])
-		vBytes, _ := s.encoder.EncodeValueBytes(sd.V)
+		vBytes, blobData := s.encoder.EncodeValueBytes(sd.V)
+		if blobData != nil {
+			candidates[blobData.Hash] = struct{}{}
+		}
 		for _, index := range Indices {
 			key := string(s.encoder.encodeKeyWithParts(index, &sd, vBytes))
 			if _, ok := s.entries[key]; !ok {
@@ -122,7 +128,46 @@ func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 			s.keys.Delete(key)
 		}
 	}
+	s.reclaimBlobs(candidates)
 	return len(datoms), nil
+}
+
+// unreferencedBlobs returns the candidates no datom still refers to, counted
+// against the index as it stands — so a caller that has already applied its
+// deletes gets survivors. The caller holds the lock.
+func (s *MemoryStore) unreferencedBlobs(candidates map[[20]byte]struct{}) [][20]byte {
+	var garbage [][20]byte
+	for hash := range candidates {
+		if !blobIsReferenced(s.encoder, hash, s.hasKeyWithPrefix) {
+			garbage = append(garbage, hash)
+		}
+	}
+	return garbage
+}
+
+// reclaimBlobs deletes each candidate blob that no datom still refers to. The
+// count is taken here, against the index the delete loop has already finished
+// mutating, so it counts survivors rather than the population before the delete.
+// Held under the same write lock as those deletes, so nothing can add a
+// reference between the count and the removal.
+func (s *MemoryStore) reclaimBlobs(candidates map[[20]byte]struct{}) {
+	for _, hash := range s.unreferencedBlobs(candidates) {
+		key := blobKey(hash)
+		delete(s.entries, string(key[:]))
+		s.keys.Delete(string(key[:]))
+	}
+}
+
+// hasKeyWithPrefix reports whether any stored key begins with prefix, seeking
+// the key index rather than walking the map. The caller holds the lock.
+func (s *MemoryStore) hasKeyWithPrefix(prefix []byte) bool {
+	pivot := string(prefix)
+	found := false
+	s.keys.AscendGreaterOrEqual(pivot, func(key string) bool {
+		found = strings.HasPrefix(key, pivot)
+		return false
+	})
+	return found
 }
 
 func (s *MemoryStore) Scan(bound ScanBound) (Iterator, error) {
@@ -349,6 +394,7 @@ func (tx *memoryStoreTx) Commit() error {
 	}
 	// Commit already holds the write lock; blob reads must not re-enter the mutex.
 	reader := memoryEntriesBlobReader{entries: tx.store.entries}
+	blobCandidates := make(map[[20]byte]struct{})
 	for i := range tx.ops {
 		op := &tx.ops[i]
 		switch op.kind {
@@ -358,12 +404,19 @@ func (tx *memoryStoreTx) Commit() error {
 			}
 		case memoryTxRetract:
 			for j := range op.datoms {
-				if err := retractMemoryDatom(tx.store, reader, &op.datoms[j], journal); err != nil {
+				if err := retractMemoryDatom(tx.store, reader, &op.datoms[j], journal, blobCandidates); err != nil {
 					restoreMemoryEntries(tx.store, undo)
 					return err
 				}
 			}
 		}
+	}
+	// Every op has been applied, so the count below sees this transaction's final
+	// state — a value retracted and asserted again keeps its blob. The deletes are
+	// journaled like any other, so a rollback restores the blob with the datoms.
+	for _, hash := range tx.store.unreferencedBlobs(blobCandidates) {
+		key := blobKey(hash)
+		deleteMemoryEntry(tx.store, &undo, string(key[:]))
 	}
 	return nil
 }
@@ -467,11 +520,15 @@ func assertMemoryDatom(store *MemoryStore, datom *datalog.Datom, undo *[]memoryE
 	}
 }
 
+// retractMemoryDatom deletes every stored datom matching the given (E, A, V) at
+// any Tx, recording in candidates the blob hash of each value that lived out of
+// line so the commit can ask afterwards whether anything still refers to it.
 func retractMemoryDatom(
 	store *MemoryStore,
 	blobs BlobReader,
 	datom *datalog.Datom,
 	undo *[]memoryEntryUndo,
+	candidates map[[20]byte]struct{},
 ) error {
 	storageDatom := ToStorageDatom(*datom)
 	valueBytes := encodeValueForSearch(storageDatom.V, store.encoder)
@@ -488,7 +545,10 @@ func retractMemoryDatom(
 			return err
 		}
 		sdStored := ToStorageDatom(stored)
-		storedVBytes, _ := store.encoder.EncodeValueBytes(sdStored.V)
+		storedVBytes, blobData := store.encoder.EncodeValueBytes(sdStored.V)
+		if blobData != nil {
+			candidates[blobData.Hash] = struct{}{}
+		}
 		for _, index := range Indices {
 			deleteMemoryEntry(store, undo, string(store.encoder.encodeKeyWithParts(index, &sdStored, storedVBytes)))
 		}
