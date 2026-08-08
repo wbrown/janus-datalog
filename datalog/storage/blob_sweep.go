@@ -29,7 +29,7 @@ func blobKey(hash [20]byte) [blobKeyLen]byte {
 // a writer commits a tier-3 value's blob alongside its index keys, so an answer
 // obtained before that commit is stale the moment it lands.
 func blobIsReferenced(encoder *BinaryKeyEncoder, hash [20]byte, exists func(prefix []byte) bool) bool {
-	for _, vType := range datalog.HashedValueTypes {
+	for vType := range datalog.BlobReferenceTypes {
 		if exists(encoder.VAETHashPrefix(vType, hash)) {
 			return true
 		}

@@ -38,7 +38,7 @@ func deleteStoreBlobs(t *testing.T, store Store) (deleted int, hasBlobTier bool)
 	if !hasBlobTier {
 		return 0, false
 	}
-	if deleteNativeBlobKeys(t, store, keys) {
+	if deleteNativeKeys(t, store, keys) {
 		return len(keys), true
 	}
 	memoryStore := store.(*MemoryStore)

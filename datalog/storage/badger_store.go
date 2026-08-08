@@ -144,11 +144,14 @@ func (s *BadgerStore) Retract(datoms []datalog.Datom) error {
 // counts what survives the retract rather than what preceded it.
 //
 // Unlike the reclamation DeleteDatoms performs, this one is best-effort against
-// concurrent writers. A writer commits a tier-3 value's blob alongside its index
-// keys, and NewBadgerStore disables conflict detection, so a commit landing
-// between this count and this transaction's own commit is invisible here and its
-// datom is left pointing at a blob this transaction removed. Nothing gates the
-// commit path the way TruncateTo gates the rewind. The exposure is accepted:
+// concurrent writers, and the window is the whole transaction rather than the
+// span from the count to the commit. Badger fixes a transaction's read timestamp
+// when it opens, so a writer committing any time after that is invisible to the
+// probe however late the probe runs. That writer commits a tier-3 value's blob
+// alongside its index keys, and NewBadgerStore disables conflict detection, so
+// nothing aborts the transaction whose read set it invalidated: its datom is left
+// pointing at a blob this transaction removed. Nothing gates the commit path the
+// way TruncateTo gates the rewind. The exposure is accepted:
 // physical retraction is a maintenance primitive rather than an ordinary write,
 // and the alternative is a lock over every tier-3 write. See
 // BUG_BLOBS_ARE_NEVER_RECLAIMED.
@@ -325,24 +328,20 @@ func (s *BadgerStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error
 // The cost is that this is not atomic: a mid-way failure leaves the datoms
 // already deleted gone, and History() shows a torn tail until the rewind is
 // re-run. Re-running completes it — TruncateTo restores the clock only after
-// every delete succeeds, so a second pass collects exactly the survivors. A
-// reader whose MVCC snapshot lands between chunks can observe a partially
-// deleted tail for the duration.
+// every delete succeeds, so a second pass collects the datoms that survived, and
+// sweepUnreferencedBlobs below reaches the blobs of those that did not, which no
+// pass could name from the datoms it can still see. A reader whose MVCC snapshot
+// lands between chunks can observe a partially deleted tail for the duration.
 //
-// A datom whose value lived out of line takes its blob with it, but only once
-// nothing else refers to that content — see reclaimBlobs. The tier is this
-// store's own answer to values too wide for a key, so nothing above the Store
-// seam hears about it.
+// When the call returns, no blob without a referring datom remains — including
+// blobs this call never touched. The tier is this store's own answer to values
+// too wide for a key, so nothing above the Store seam hears about it.
 func (s *BadgerStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
-	candidates := make(map[[20]byte]struct{})
 	wb := s.db.NewWriteBatch()
 	defer wb.Cancel()
 	for i := range datoms {
 		sd := ToStorageDatom(datoms[i])
-		vBytes, blobData := s.encoder.EncodeValueBytes(sd.V)
-		if blobData != nil {
-			candidates[blobData.Hash] = struct{}{}
-		}
+		vBytes, _ := s.encoder.EncodeValueBytes(sd.V)
 		for _, idx := range Indices {
 			key := s.encoder.encodeKeyWithParts(idx, &sd, vBytes)
 			if err := wb.Delete(key); err != nil {
@@ -353,40 +352,64 @@ func (s *BadgerStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	if err := wb.Flush(); err != nil {
 		return 0, fmt.Errorf("flush index deletes: %w", err)
 	}
-	if err := s.reclaimBlobs(candidates); err != nil {
+	if err := s.sweepUnreferencedBlobs(); err != nil {
 		return 0, err
 	}
 	return len(datoms), nil
 }
 
-// reclaimBlobs deletes each candidate blob that no datom still refers to.
+// sweepUnreferencedBlobs deletes every blob no datom refers to, leaving none
+// behind when it returns.
 //
-// Candidates are the blobs this call's datoms referenced — the only content it
-// can have orphaned — and they cost nothing to gather, since the delete already
-// encodes every value and learns which ones went out of line on the way past.
+// It asks the blob keyspace what is dead rather than asking this call's datoms
+// what they orphaned, so the answer never depends on knowing which datoms went.
+// A blob whose datom vanished when an earlier rewind stopped part-way is as
+// reclaimable as one this call removed — which is what makes re-running a torn
+// rewind recover, since a retry sees only surviving datoms and could never name
+// the missing ones.
 //
-// The count that decides a blob's fate is taken here, after the index deletes
-// have flushed, so it counts what survives them. It is not the count from before
-// the deletes, and it is not that count minus this call's datoms: the same
-// content can appear on several datoms in one call, and on others the call never
-// touches, so only the settled index knows. Reference is asked of the hash under
-// every hashed tag (see blobIsReferenced), because one blob is shared by every
-// datom holding that content — another entity, or the same entity at an earlier
-// Tx that History still answers from. The probe stops at the first surviving
-// reference, which already settles count > 0, rather than enumerating a
-// reference set that may be large.
+// Reference is asked of the hash under every tag a blob can be named by (see
+// blobIsReferenced), because one blob is shared by every datom holding that
+// content — another entity, or the same entity at an earlier Tx that History
+// still answers from. Each probe stops at the first surviving reference, which
+// already settles the count above zero.
 //
-// The caller owns exclusion, and this path inherits whatever its caller holds: a
-// writer commits a tier-3 value's blob alongside its index keys, so a count taken
-// before such a commit would be stale by the time the delete lands. TruncateTo
-// drains writers for the whole rewind, which is what makes the count here final.
-func (s *BadgerStore) reclaimBlobs(candidates map[[20]byte]struct{}) error {
-	if len(candidates) == 0 {
+// Cost is two seeks per blob. A blob exists only where a compressed value
+// exceeded the key ceiling, so blobs are few and large, and the walk is small
+// against a call already deleting eight index keys for every datom it was given.
+//
+// The caller owns exclusion: a writer commits a tier-3 value's blob alongside its
+// index keys, so a probe that ran before such a commit would strand it.
+// TruncateTo drains writers for the whole rewind.
+func (s *BadgerStore) sweepUnreferencedBlobs() error {
+	var hashes [][20]byte
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		opts.Prefix = []byte{blobKeyPrefix}
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		prefix := []byte{blobKeyPrefix}
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			key := it.Item().Key()
+			if len(key) != blobKeyLen {
+				continue
+			}
+			var hash [20]byte
+			copy(hash[:], key[1:])
+			hashes = append(hashes, hash)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("scan blob keys: %w", err)
+	}
+	if len(hashes) == 0 {
 		return nil
 	}
 
 	var garbage [][20]byte
-	err := s.db.View(func(txn *badger.Txn) error {
+	err = s.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
 		opts.Prefix = []byte{byte(VAET)}
@@ -396,7 +419,7 @@ func (s *BadgerStore) reclaimBlobs(candidates map[[20]byte]struct{}) error {
 			it.Seek(prefix)
 			return it.ValidForPrefix(prefix)
 		}
-		for hash := range candidates {
+		for _, hash := range hashes {
 			if !blobIsReferenced(s.encoder, hash, exists) {
 				garbage = append(garbage, hash)
 			}

@@ -112,13 +112,9 @@ func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	if s.closed {
 		return 0, errMemoryStoreClosed
 	}
-	candidates := make(map[[20]byte]struct{})
 	for i := range datoms {
 		sd := ToStorageDatom(datoms[i])
-		vBytes, blobData := s.encoder.EncodeValueBytes(sd.V)
-		if blobData != nil {
-			candidates[blobData.Hash] = struct{}{}
-		}
+		vBytes, _ := s.encoder.EncodeValueBytes(sd.V)
 		for _, index := range Indices {
 			key := string(s.encoder.encodeKeyWithParts(index, &sd, vBytes))
 			if _, ok := s.entries[key]; !ok {
@@ -128,8 +124,34 @@ func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 			s.keys.Delete(key)
 		}
 	}
-	s.reclaimBlobs(candidates)
+	s.sweepUnreferencedBlobs()
 	return len(datoms), nil
+}
+
+// sweepUnreferencedBlobs deletes every blob no datom refers to, leaving none
+// behind when it returns. It asks the blob keyspace what is dead rather than
+// asking this call's datoms what they orphaned, so a blob stranded by an earlier
+// interrupted removal is reclaimed too — see BadgerStore.sweepUnreferencedBlobs
+// for the full account. The caller holds the write lock.
+func (s *MemoryStore) sweepUnreferencedBlobs() {
+	var hashes [][20]byte
+	for key := range s.entries {
+		raw := []byte(key)
+		if len(raw) != blobKeyLen || raw[0] != blobKeyPrefix {
+			continue
+		}
+		var hash [20]byte
+		copy(hash[:], raw[1:])
+		hashes = append(hashes, hash)
+	}
+	for _, hash := range hashes {
+		if blobIsReferenced(s.encoder, hash, s.hasKeyWithPrefix) {
+			continue
+		}
+		key := blobKey(hash)
+		delete(s.entries, string(key[:]))
+		s.keys.Delete(string(key[:]))
+	}
 }
 
 // unreferencedBlobs returns the candidates no datom still refers to, counted
@@ -411,13 +433,14 @@ func (tx *memoryStoreTx) Commit() error {
 			}
 		}
 	}
-	// Every op has been applied, so the count below sees this transaction's final
-	// state — a value retracted and asserted again keeps its blob. The deletes are
-	// journaled like any other, so a rollback restores the blob with the datoms.
-	for _, hash := range tx.store.unreferencedBlobs(blobCandidates) {
-		key := blobKey(hash)
-		deleteMemoryEntry(tx.store, &undo, string(key[:]))
-	}
+	// Every op has been applied, so the count sees this transaction's final state —
+	// a value retracted and asserted again keeps its blob. Nothing after this point
+	// can fail, so the blob deletes are not journaled: restoreMemoryEntries is
+	// reachable only from the retract loop above, and recording an undo for a
+	// rollback that cannot happen would copy every reclaimed blob's bytes for
+	// nothing — the same reasoning that leaves an assert-only transaction
+	// unjournaled.
+	tx.store.reclaimBlobs(blobCandidates)
 	return nil
 }
 

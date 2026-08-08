@@ -84,39 +84,51 @@ func TestVAETHashPrefixSeparatesTheHashedTags(t *testing.T) {
 		"probing the []byte tag alone misses the string datom's reference")
 	require.False(t, bytes.HasPrefix(bytesKey, stringPrefix),
 		"and the converse")
-
-	// The set the sweep iterates must cover both, or it inherits the miss above.
-	require.ElementsMatch(t,
-		[]datalog.ValueType{datalog.TypeHashedString, datalog.TypeHashedBytes},
-		datalog.HashedValueTypes[:],
-		"HashedValueTypes is the probe set; a tag missing here is a deleted live blob")
 }
 
-// TestBlobIsReferencedProbesEveryHashedTag pins that "unreferenced" is only
-// concluded after every tag has been asked, and that a hit under any one tag is
-// enough to keep the blob. Concluding absence from a single probe is the shape
-// that deletes live blobs; returning early on a hit is just the settled answer.
-func TestBlobIsReferencedProbesEveryHashedTag(t *testing.T) {
-	encoder := &BinaryKeyEncoder{}
-	var hash [20]byte
-	copy(hash[:], "0123456789abcdefghij")
+// TestBlobIsReferencedKeepsABlobHeldUnderAnyTag pins that a reference under one
+// tag keeps the blob even when the other tag has none. Concluding absence from a
+// single tag's probe is the shape that deletes live blobs.
+//
+// The tags come from the encoder's own key for a datom carrying each of the two
+// domain types that can reach a blob, not from a list this test also owns —
+// datalog.TestBlobReferenceTaxonomyMatchesTheMinter holds the set itself to what
+// EncodeValue mints.
+func TestBlobIsReferencedKeepsABlobHeldUnderAnyTag(t *testing.T) {
+	encoder := &BinaryKeyEncoder{CompressionThreshold: 256}
+	payload := makeTier3Data(200000)
+	attr := datalog.NewKeyword(":probe/payload")
 
-	var probed [][]byte
-	nothingExists := func(prefix []byte) bool {
-		probed = append(probed, append([]byte(nil), prefix...))
-		return false
-	}
-	require.False(t, blobIsReferenced(encoder, hash, nothingExists))
-	require.Len(t, probed, len(datalog.HashedValueTypes),
-		"an unreferenced blob is established only by probing every tag")
+	for _, held := range []struct {
+		name  string
+		value datalog.Value
+	}{
+		{"[]byte", payload},
+		{"string", string(payload)},
+	} {
+		t.Run(held.name, func(t *testing.T) {
+			_, _, blobData := datalog.EncodeValue(held.value, 256)
+			require.NotNil(t, blobData, "the case must reach tier 3")
 
-	for _, vType := range datalog.HashedValueTypes {
-		onlyThisTag := func(prefix []byte) bool {
-			return bytes.Equal(prefix, encoder.VAETHashPrefix(vType, hash))
-		}
-		require.True(t, blobIsReferenced(encoder, hash, onlyThisTag),
-			"a reference under %v alone keeps the blob", vType)
+			datom := datalog.Datom{
+				E: datalog.NewIdentity("probe:" + held.name), A: attr, V: held.value,
+				Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
+			}
+			heldKey := encoder.EncodeKey(VAET, &datom)
+
+			onlyThisDatom := func(prefix []byte) bool {
+				return bytes.HasPrefix(heldKey, prefix)
+			}
+			require.True(t, blobIsReferenced(encoder, blobData.Hash, onlyThisDatom),
+				"a reference held only as %s must keep the blob", held.name)
+		})
 	}
+
+	// And with nothing holding it, the same probe reports unreferenced.
+	_, _, blobData := datalog.EncodeValue(payload, 256)
+	require.NotNil(t, blobData)
+	require.False(t, blobIsReferenced(encoder, blobData.Hash,
+		func([]byte) bool { return false }))
 }
 
 // TestBlobKeyLayout pins the content-addressed key the sweep deletes by.

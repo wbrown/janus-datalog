@@ -30,15 +30,6 @@ const (
 	TypeHashedBytes      // 0x0D - content hash of compressed []byte (data in blob store)
 )
 
-// HashedValueTypes are the value types whose key payload is a blob hash rather
-// than the value itself — what compressAndRoute produces when a compressed value
-// is too large for a key. They are the complete set, and both carry the same
-// 20-byte SHA1, so one blob is reachable under either tag: identical bytes stored
-// once as a string and once as a []byte compress identically and share a blob.
-// Anything asking "who references this blob" must ask under every tag here, not
-// only the one it happens to hold.
-var HashedValueTypes = [...]ValueType{TypeHashedString, TypeHashedBytes}
-
 // BlobData holds the compressed bytes for a Tier 3 value (content hash in key,
 // compressed data stored separately in the blob store).
 type BlobData struct {
@@ -170,6 +161,27 @@ func PayloadIsFixedWidth(vType ValueType) bool {
 		return false
 	default:
 		panic(fmt.Sprintf("value type %d is not classified as fixed- or variable-width", vType))
+	}
+}
+
+// PayloadIsBlobReference reports whether a value type's payload is a content
+// hash naming a blob rather than the value's own bytes.
+//
+// Panics on an unclassified tag, for the same reason its sibling above does and
+// with a sharper consequence: reclamation decides a blob is dead by asking, for
+// each tag that can name one, whether any key still carries it. A value type
+// added without a decision here would never be asked about, and a blob its keys
+// still reference would be deleted out from under them.
+func PayloadIsBlobReference(vType ValueType) bool {
+	switch vType {
+	case TypeHashedString, TypeHashedBytes:
+		return true
+	case TypeString, TypeInt, TypeFloat, TypeBool, TypeTime, TypeBytes,
+		TypeReference, TypeKeyword, TypeSymbol, TypeElementID,
+		TypeCompressedString, TypeCompressedBytes:
+		return false
+	default:
+		panic(fmt.Sprintf("value type %d is not classified as blob-referencing or not", vType))
 	}
 }
 
@@ -317,6 +329,22 @@ func EncodeValue(v Value, threshold int) (ValueType, []byte, *BlobData) {
 	default:
 		return Type(v), ValueBytes(v), nil
 	}
+}
+
+// BlobReferenceTypes calls yield once per value type whose payload is a blob
+// hash — the tags the compressAndRoute calls above can mint.
+//
+// It sits beside EncodeValue because that is the only place a blob reference is
+// created: a tier added there is a tag added here, and the pairing is what
+// reclamation walks when it asks whether anything still names a blob. One blob is
+// reachable under more than one tag — identical bytes stored once as a string and
+// once as a []byte compress identically and share a hash — so a caller asking
+// about a blob must ask under every tag this yields, not only the one it holds.
+func BlobReferenceTypes(yield func(ValueType) bool) {
+	if !yield(TypeHashedString) {
+		return
+	}
+	yield(TypeHashedBytes)
 }
 
 // compressAndRoute compresses data and routes to Tier 2 (key) or Tier 3 (blob).

@@ -35,7 +35,7 @@ The size axis lands in the same neighbourhood and moves with the data. `encodeKe
 
 So the practical ceiling is on the order of 25,000 datoms per rewind, falling as values grow. Small tails rewind fine, which is why this did not show earlier.
 
-Blob keys are not part of the arithmetic: `DeleteDatoms` discards the `blobData` return of `EncodeValueBytes`, so out-of-line payloads are left in place and exactly eight keys are charged per datom. That omission is forced — content-addressed blobs are shared, so no delete site can drop one without a reachability answer — and is its own defect, recorded in [BUG_BLOBS_ARE_NEVER_RECLAIMED.md](BUG_BLOBS_ARE_NEVER_RECLAIMED.md), whose fix interacts with the batching below.
+Blob keys are not part of the arithmetic: the batch charges exactly eight index keys per datom and no blob key, because a content-addressed blob is shared and no delete site can drop one without a reachability answer. Computing that answer is its own defect, recorded in [BUG_BLOBS_ARE_NEVER_RECLAIMED.md](BUG_BLOBS_ARE_NEVER_RECLAIMED.md); its fix runs after this flush, and is what makes an interrupted rewind recoverable rather than leaving blobs no later call could name.
 
 **The failure is clean.** `badger.DB.Update` discards the transaction when `fn` returns an error, so no key is deleted. `TruncateTo` calls `Cache.InvalidateRewind(keys)` on that path to close the in-flight window it opened, and returns before `clock.Restore`, so the clock still sits above `markerMax` and the tail is intact. The database is exactly as it was; the rewind is simply unavailable.
 

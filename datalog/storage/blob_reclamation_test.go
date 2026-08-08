@@ -160,6 +160,122 @@ func TestBlobReferenceCountedWithinOneDeleteCall(t *testing.T) {
 	}
 }
 
+// orphanBlobByRemovingIndexKeys removes a datom's index keys directly, leaving
+// its blob in place — the state an interrupted rewind leaves, where a chunk of
+// index deletes has committed and the datom is gone while its blob remains.
+func orphanBlobByRemovingIndexKeys(t *testing.T, store Store, datom datalog.Datom) {
+	t.Helper()
+	encoder := store.Encoder()
+	storageDatom := ToStorageDatom(datom)
+	vBytes, blobData := encoder.EncodeValueBytes(storageDatom.V)
+	require.NotNil(t, blobData, "the datom's value must live out of line")
+
+	keys := make([][]byte, 0, len(Indices))
+	for _, index := range Indices {
+		keys = append(keys, encoder.encodeKeyWithParts(index, &storageDatom, vBytes))
+	}
+	if deleteNativeKeys(t, store, keys) {
+		return
+	}
+	memoryStore, ok := store.(*MemoryStore)
+	require.True(t, ok, "unsupported store %T", store)
+	memoryStore.mu.Lock()
+	defer memoryStore.mu.Unlock()
+	for _, key := range keys {
+		delete(memoryStore.entries, string(key))
+		memoryStore.keys.Delete(string(key))
+	}
+}
+
+// TestDeleteDatomsLeavesNoUnreferencedBlob pins the postcondition: when the call
+// returns, no blob without a referring datom remains in the store.
+//
+// The stranded blob has no datom at all by the time the call begins, so it is
+// reachable only by asking the blob keyspace what is dead, never by asking the
+// call's own datoms what they orphaned.
+func TestDeleteDatomsLeavesNoUnreferencedBlob(t *testing.T) {
+	for _, mode := range byteKeyBackends(t) {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{CompressionThreshold: 256})
+			attr := datalog.NewKeyword(":blob/payload")
+			strandedEntity := datalog.NewIdentity("sweep:stranded")
+			liveEntity := datalog.NewIdentity("sweep:live")
+
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(strandedEntity, attr, tier3Bytes(t, 200000)))
+			require.NoError(t, tx.Add(liveEntity, attr, tier3Bytes(t, 190000)))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+			requireBlobCount(t, db, 2, "two distinct payloads, two blobs")
+
+			stored, err := db.Store().DatomsAfter(datalog.ElementID{})
+			require.NoError(t, err)
+			var stranded, live []datalog.Datom
+			for _, datom := range stored {
+				switch datom.E {
+				case strandedEntity:
+					stranded = append(stranded, datom)
+				case liveEntity:
+					live = append(live, datom)
+				}
+			}
+			require.Len(t, stranded, 1)
+			require.Len(t, live, 1)
+
+			orphanBlobByRemovingIndexKeys(t, db.Store(), stranded[0])
+			requireBlobCount(t, db, 2, "the blob outlives the datom that referred to it")
+
+			_, err = db.Store().DeleteDatoms(live)
+			require.NoError(t, err)
+			requireBlobCount(t, db, 0, "no unreferenced blob remains")
+		})
+	}
+}
+
+// TestStoreRetractReclaimsBlobs covers Store.Retract, the third path that
+// physically removes datoms and the only one that owns its own transaction:
+// Transaction.Retract reaches storage through StoreTx.Retract inside the commit's
+// transaction, and TruncateTo through DeleteDatoms.
+func TestStoreRetractReclaimsBlobs(t *testing.T) {
+	for _, testCase := range storeContractCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := testCase.open(t, &BinaryKeyEncoder{CompressionThreshold: 256})
+			defer store.Close()
+
+			attr := datalog.NewKeyword(":blob/payload")
+			value := tier3Bytes(t, 200000)
+			shared := []datalog.Datom{
+				{E: datalog.NewIdentity("store-retract:a"), A: attr, V: value,
+					Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: datalog.NewIdentity("store-retract:b"), A: attr, V: value,
+					Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+			}
+			require.NoError(t, store.Assert(shared))
+			require.Equal(t, 2, countStoreIndex(t, store, EAVT))
+
+			// A store holding whole datoms keeps no blobs; the datom assertions
+			// still apply to it.
+			_, hasBlobTier := blobKeys(t, store)
+			requireStoreBlobCount := func(want int, why string) {
+				if !hasBlobTier {
+					return
+				}
+				keys, _ := blobKeys(t, store)
+				require.Len(t, keys, want, why)
+			}
+			requireStoreBlobCount(1, "identical content is one blob")
+
+			require.NoError(t, store.Retract(shared[:1]))
+			require.Equal(t, 1, countStoreIndex(t, store, EAVT))
+			requireStoreBlobCount(1, "the surviving datom still refers to the blob")
+
+			require.NoError(t, store.Retract(shared[1:]))
+			require.Zero(t, countStoreIndex(t, store, EAVT))
+			requireStoreBlobCount(0, "the last datom referring to the blob is gone")
+		})
+	}
+}
+
 // TestBlobSurvivesWhileAnotherEntityReferencesIt pins the shared-blob half.
 //
 // Blobs are content-addressed, so one blob serves every datom with that content.

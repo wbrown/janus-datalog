@@ -1,8 +1,13 @@
 # Physically deleted datoms orphan their tier-3 blobs, and nothing ever reclaims them
 
-**Status**: ✅ RESOLVED (2026-08-07, lands with this doc move). Both physical-delete paths now reference-count blobs after their own deletes have landed, inside the store — nothing above the `Store` seam learned that blobs exist. `DeleteDatoms` gathers candidate hashes from the encode it already performs, flushes its index deletes, then deletes each candidate no surviving datom names; `Transaction.Retract` accumulates candidates on the transaction and counts them in `Commit`, so a value retracted and re-asserted in one transaction keeps its blob. Reference is asked of the hash under every tag in `datalog.HashedValueTypes`, via `BinaryKeyEncoder.VAETHashPrefix`. Pinned by `blob_reclamation_test.go` (four behaviours, both backends) and `blob_reference_probe_test.go` (four unit pins), all red-first or written to fail against a too-eager count. Native gate green; the wasm leg is red on the unrelated `BUG_WASM_STORAGE_GC_BAD_POINTER_CRASH` signature (occurrence 41).
+**Status**: ✅ RESOLVED (2026-08-07, lands with this doc move). Reclamation lives inside the store — nothing above the `Store` seam learned that blobs exist, and `TruncateTo` is unchanged. Every physical-delete path reclaims, in one of two shapes:
 
-Two things the fix deliberately does not do, both owner rulings: reclamation on the `Transaction.Retract` path is best-effort rather than guaranteed (see "Concurrency" below), and it is scoped to the blobs each delete touched, so blobs orphaned before this change still need export/reimport.
+- **`DeleteDatoms` sweeps.** After its index deletes flush it walks the blob keyspace and removes every blob no datom refers to, so its postcondition is that none remains — including blobs it never touched. That is what makes an interrupted rewind recoverable: a torn flush leaves datoms gone whose blobs no later call could name from the datoms it can still see, and the sweep does not ask the datoms.
+- **The retract paths count candidates.** `Transaction.Retract` accumulates the hashes its removals touched and counts them in `Commit`, so a value retracted and asserted again in one transaction keeps its blob; `Store.Retract` does the same inside its own transaction. These run on the commit path, where a per-call walk of the blob keyspace would be the wrong trade.
+
+Reference is asked of the hash under every tag `datalog.BlobReferenceTypes` yields, via `BinaryKeyEncoder.VAETHashPrefix`; `datalog.PayloadIsBlobReference` panics on a value type nobody classified, so a new blob-backed tier cannot be added silently. Pinned by `blob_reclamation_test.go` and `blob_reference_probe_test.go` in `datalog/storage`, and `blob_reference_taxonomy_test.go` in `datalog`.
+
+One thing the fix deliberately does not do, by owner ruling: reclamation on the retract paths is best-effort rather than guaranteed against concurrent writers (see "Concurrency" below).
 
 The body below is the original report, retained as the derivation. Its "The fix" section has been rewritten to describe what shipped rather than what was proposed.
 
@@ -49,11 +54,11 @@ The reference set of a blob is derivable from the indices; no bookkeeping keyspa
 
 So "how many datoms still refer to this blob" is a prefix seek per tag, and the delete happens at zero. The probe stops at the first surviving reference, which already settles count > 0, rather than enumerating a reference set that may be large.
 
-The question is keyed on the **hash**, not on a value: `BinaryKeyEncoder.VAETHashPrefix(vType, hash)` builds the 22-byte prefix directly. An earlier draft of this section routed the query through the typed seam instead — `ScanBound{Index: VAET, Prefix: []datalog.Value{v}}`, using the value the deleter happens to hold — to avoid naming an encoding artifact above the seam. That was contortion: `ScanBound`'s typed domain governs the query path, not the store's housekeeping over its own keys, and keying on the value rather than the hash is what makes the two-tag trap below look like a special case instead of "there are two prefixes."
+The question is keyed on the **hash**, not on a value: `BinaryKeyEncoder.VAETHashPrefix(vType, hash)` builds the 22-byte prefix directly. `ScanBound`'s typed domain governs the query path, not the store's housekeeping over its own keys, and keying on the value rather than the hash is what would make the two-tag trap below look like a special case instead of "there are two prefixes."
 
 The whole operation lives below the `Store` interface. Nothing outside `datalog/storage` references blobs — `datalog.BlobData` is produced by `EncodeValue` and consumed only by the store's own `EncodeValueBytes`/`assertDatom` — so exposing reclamation on `Store`, or having `TruncateTo` invoke it, would have been the first time anything above the seam learned the tier exists. `TruncateTo` is unchanged.
 
-Cost is one or two seeks per distinct blob the delete touched — bounded by the deletion, not by the store.
+**Which blobs get asked about is what separates the two shapes.** The retract paths ask about the hashes their own removals touched — the only content they can have orphaned, gathered free because the removal already encodes every value. `DeleteDatoms` asks about all of them, walking the blob keyspace, because the set it could gather from its own datoms is destroyed by the same interruption that makes reclamation necessary: a torn flush takes the datoms with it, and a retry gathers candidates only from datoms it can still see. Two seeks per blob is small against a call already deleting eight index keys for every datom in a post-snapshot tail, and blobs are few and large by construction — one exists only where a compressed value exceeded the key ceiling.
 
 ### The trap: one blob, two type tags
 
@@ -76,13 +81,13 @@ Neither path subtracts its own datoms from a prior count. The same content can a
 
 `TruncateTo` drains in-flight writers and drops new ones for its whole duration, so count-then-delete is final there by construction.
 
-The commit path has no such gate. A concurrent transaction can assert a new reference to the same content between the count and the commit, after which the blob is deleted out from under a datom that references it. `NewBadgerStore` sets `DetectConflicts = false`, so Badger will not abort on the invalidated read set — nothing catches it.
+The commit path has no such gate, and its window is the whole transaction rather than the span from the count to the commit: Badger fixes a transaction's read timestamp when it opens, so a writer committing any time after that is invisible to the probe however late the probe runs. That writer asserts a new reference to the same content, the blob is deleted out from under it, and `NewBadgerStore` sets `DetectConflicts = false`, so Badger will not abort on the invalidated read set — nothing catches it.
 
 The owner ruling is that the retract path reclaims **best-effort** anyway rather than not at all: physical retraction is a maintenance primitive, not an ordinary write on this engine, and the alternative is a lock over every tier-3 write on the hot commit path. The exposure is stated on `reclaimBlobsInTxn`. In Badger the blob delete joins the caller's transaction, so it is at least atomic with the retract that orphaned it; in memory it goes through `deleteMemoryEntry`, so a failed apply restores the blob along with the datoms.
 
 ### What this shape does not cover
 
-Blobs already orphaned by past retracts and rewinds. Reclamation is scoped to the candidates each delete touched — which is what keeps it O(deleted blobs) rather than a scan of the whole blob keyspace — so nothing collects pre-existing garbage. A repair pass would walk the `0xFF` keyspace against the live hash set; export/reimport already performs that, since `ExportBinary` scans EAVT and never sees an orphan.
+Blobs stranded by a retract that raced a concurrent writer, per the ruling above — the one case where reclamation is best-effort. Everything else is collected by the next `DeleteDatoms`, whose sweep walks the blob keyspace rather than the call's own datoms, so orphans from any earlier path or interruption go with it. Export/reimport also drops them, since `ExportBinary` scans EAVT and never sees an orphan.
 
 ## What was verified
 
@@ -106,7 +111,7 @@ Backend scope, closed by the reproducer: `MemoryStore` orphans in the same way �
 
 ## The pin
 
-`blob_reclamation_test.go` (four behaviours, across `byteKeyBackends` — Badger and `MemoryStore`) and `blob_reference_probe_test.go` (four unit pins). All green; gate cost under a second.
+`blob_reclamation_test.go` (behavioural, across Badger and `MemoryStore`), `blob_reference_probe_test.go` (the probe's key layout), and `datalog/blob_reference_taxonomy_test.go` (the tag set). All green; gate cost a few seconds.
 
 **`TestBlobReclaimedWhenLastReferenceDeleted`** — the reproducer, red first on both removal paths and both backends. It writes a 200 KB payload that routes to tier 3, removes the sole referencing datom, and asserts both that the datom is gone and that no key remains under the `0xFF` prefix. Before the fix the first assertion passed and the second reported one surviving blob, which is the defect stated exactly: the keys go, the blob stays. Subtests cover `Transaction.Retract` and `Store.DeleteDatoms` separately, because the two paths reach storage differently and are gated differently against concurrent writers.
 
@@ -116,6 +121,12 @@ Backend scope, closed by the reproducer: `MemoryStore` orphans in the same way �
 
 Neither pin may be relaxed to make a future reclamation change go green — the relaxation is the regression.
 
-The unit pins hold the probe to the key layout it addresses: `TestVAETHashPrefixAddressesTheWrittenKey` (reordering VAET or widening the type tag silently turns every probe into a miss, which reads as "unreferenced"), `TestVAETHashPrefixSeparatesTheHashedTags`, `TestBlobIsReferencedProbesEveryHashedTag` (absence concluded only after every tag is asked), and `TestBlobKeyLayout`.
+**`TestDeleteDatomsLeavesNoUnreferencedBlob`** pins the postcondition rather than a scenario: a blob whose datom is removed behind the store's back, before the call begins, is gone when it returns. Nothing that gathers candidates from the call's own datoms can reach that blob, which is why the postcondition and not a torn-flush reproduction is the thing to assert — the scenario needs storage fault injection, the postcondition needs none.
+
+**`TestStoreRetractReclaimsBlobs`** covers `Store.Retract`, the third removal path, across backends.
+
+The unit pins hold the probe to the key layout it addresses: `TestVAETHashPrefixAddressesTheWrittenKey` (reordering VAET or widening the type tag silently turns every probe into a miss, which reads as "unreferenced"), `TestVAETHashPrefixSeparatesTheHashedTags`, `TestBlobIsReferencedKeepsABlobHeldUnderAnyTag`, and `TestBlobKeyLayout`.
+
+In `datalog`, `TestBlobReferenceTaxonomyMatchesTheMinter` holds the tag set to what `EncodeValue` actually mints, in both directions: it drives the minter over a value table, asserts `PayloadIsBlobReference` agrees with `blobData != nil` for each, and compares the tags minted against the tags `BlobReferenceTypes` yields. A tier added to one and not the other fails it. It caught a live gap on its first run — the repetitive prose the existing `TestEncodeValue_HashedString` uses compresses into the key and never reaches tier 3, so no test had been exercising `TypeHashedString`'s blob path at all.
 
 Not covered: the history case — set a value, change it, set it back, delete the newest datom, and read the oldest through `History()`. Same shared-blob shape as the pins above, reached through time rather than through a second entity.
