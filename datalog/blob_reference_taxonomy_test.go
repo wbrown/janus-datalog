@@ -68,13 +68,40 @@ func TestBlobReferenceTaxonomyMatchesTheMinter(t *testing.T) {
 	}
 	require.NotEmpty(t, minted,
 		"no case reached tier 3 — the table must mint a blob or this pins nothing")
+}
+
+// TestEveryValueTypeIsClassifiedAsBlobReferencing walks the whole value-type
+// space and asks the classifier about each one.
+//
+// This is what the value table above cannot do. That table can only reach tags
+// some value in it happens to produce, so a tier added to EncodeValue and left
+// out of the table is invisible to it — and would be equally invisible to any
+// second list of blob-backed tags, leaving both stale together. Here the range is
+// the type space itself, so a type nobody classified panics rather than passing.
+func TestEveryValueTypeIsClassifiedAsBlobReferencing(t *testing.T) {
+	for vType := ValueType(0); vType < valueTypeCount; vType++ {
+		require.NotPanics(t, func() { PayloadIsBlobReference(vType) },
+			"value type %d is unclassified", vType)
+	}
+}
+
+// TestBlobReferenceTypesYieldsExactlyTheClassifiedTypes pins that the tags the
+// probe walks are the ones the classifier names, with no second list to drift
+// from it.
+func TestBlobReferenceTypesYieldsExactlyTheClassifiedTypes(t *testing.T) {
+	classified := map[ValueType]bool{}
+	for vType := ValueType(0); vType < valueTypeCount; vType++ {
+		if PayloadIsBlobReference(vType) {
+			classified[vType] = true
+		}
+	}
 
 	yielded := map[ValueType]bool{}
 	for vType := range BlobReferenceTypes {
 		yielded[vType] = true
 	}
-	require.Equal(t, minted, yielded,
-		"BlobReferenceTypes must yield exactly the tags EncodeValue mints blobs under")
+	require.Equal(t, classified, yielded)
+	require.NotEmpty(t, yielded, "some type must be blob-backed")
 }
 
 // TestPayloadIsBlobReferencePanicsOnUnclassifiedType pins the loud default. A

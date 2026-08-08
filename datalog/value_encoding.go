@@ -28,6 +28,12 @@ const (
 	TypeCompressedBytes  // 0x0B - compressed []byte (LZ77+FSE, data in key)
 	TypeHashedString     // 0x0C - content hash of compressed string (data in blob store)
 	TypeHashedBytes      // 0x0D - content hash of compressed []byte (data in blob store)
+
+	// valueTypeCount bounds the space above. It is not a value type; it exists so
+	// a walk of the type space stays correct when one is added, since iota moves
+	// it. Anything that must consider every type — the blob-reference walk below —
+	// ranges below it rather than restating the list.
+	valueTypeCount
 )
 
 // BlobData holds the compressed bytes for a Tier 3 value (content hash in key,
@@ -332,19 +338,27 @@ func EncodeValue(v Value, threshold int) (ValueType, []byte, *BlobData) {
 }
 
 // BlobReferenceTypes calls yield once per value type whose payload is a blob
-// hash — the tags the compressAndRoute calls above can mint.
+// hash — the tags reclamation must ask about when deciding whether anything still
+// names a blob. One blob is reachable under more than one tag, since identical
+// bytes stored once as a string and once as a []byte compress identically and
+// share a hash, so a caller must ask under every tag this yields rather than only
+// the one it holds.
 //
-// It sits beside EncodeValue because that is the only place a blob reference is
-// created: a tier added there is a tag added here, and the pairing is what
-// reclamation walks when it asks whether anything still names a blob. One blob is
-// reachable under more than one tag — identical bytes stored once as a string and
-// once as a []byte compress identically and share a hash — so a caller asking
-// about a blob must ask under every tag this yields, not only the one it holds.
+// The set is derived from PayloadIsBlobReference over the whole type space rather
+// than restated here. A second list would go stale in step with any test that
+// enumerated tags the same way, and the failure is silent: a tag nobody walks is
+// a blob deleted while its keys still reference it. Walking the space instead
+// means a value type added without a classification panics here, on the path that
+// needs the answer.
 func BlobReferenceTypes(yield func(ValueType) bool) {
-	if !yield(TypeHashedString) {
-		return
+	for vType := ValueType(0); vType < valueTypeCount; vType++ {
+		if !PayloadIsBlobReference(vType) {
+			continue
+		}
+		if !yield(vType) {
+			return
+		}
 	}
-	yield(TypeHashedBytes)
 }
 
 // compressAndRoute compresses data and routes to Tier 2 (key) or Tier 3 (blob).
