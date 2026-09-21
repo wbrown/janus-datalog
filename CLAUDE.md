@@ -345,6 +345,15 @@ The storage layer connects the query engine to BadgerDB:
 
 ## Implementation Status
 
+### ✅ Recent Updates (Q3 2026)
+1. **`:db/neverZeroValue` schema property** - Per-attribute domain constraint: the value type's Go zero (`""`, `0`, `0.0`, `false`, zero `time.Time`, nil or empty `[]byte`, nil ref/keyword/symbol, zero `ElementID`) is not a value of the attribute
+   - Builder `NeverZeroValue()`; EDN `:db/neverZeroValue true`; requires `ValueType` (parse error, builder error, `Schema.Add` panic)
+   - `Add`/`Set` reject the zero through `ValidateDatom`; `AddEntity`/`AddMap` go through `Add`; on many/vector it governs each element, and a collection holding a zero is rejected, not filtered
+   - The struct writer (`SaveStruct`, `StructWriter.Write`/`WriteAuto`) writes nothing for a zero-valued scalar field, the rule it applies to a nil pointer, so a plain Go field is an exact presence test on read
+   - `Remove` is unconstrained; import and the other replay paths bypass the check; reads are unchanged
+   - `:db/unique-elements` renamed `:db/uniqueElements`, no alias; an unknown or non-keyword key in an EDN attribute definition is a parse error
+   - See [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md), [docs/reference/REFLECT.md](docs/reference/REFLECT.md), and [docs/archive/completed/NEVER_ZERO_VALUE.md](docs/archive/completed/NEVER_ZERO_VALUE.md)
+
 ### ✅ Recent Updates (Q1 2026)
 1. **LZJ Compression Codec** - Custom LZ77+FSE compression for value storage
    - Ratios: 3.6× English prose, 10-13× structured/repetitive data
@@ -425,7 +434,7 @@ The storage layer connects the query engine to BadgerDB:
 20. **Datomic compatibility** - ~80% feature parity (see DATOMIC_COMPATIBILITY.md)
 21. **Relations migration** - Multi-value variable support throughout codebase
 22. **Pull API** - Declarative entity attribute retrieval with nested refs, cycle detection, wildcards (9× faster than queries)
-23. **Schema support** - Type validation, cardinality (one/many), uniqueness constraints; optional and additive
+23. **Schema support** - Type validation, cardinality (one/many/vector), uniqueness (read-time resolution), `:db/uniqueElements` on vectors, `:db/neverZeroValue` (the value type's zero is not a value: `Add`/`Set` reject it, the struct writer omits a field holding it); unknown EDN definition keys are parse errors; optional and additive
 24. **CRDT storage** - LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector; all writes preserved with ElementIDs; `db.History()` for raw datom access, `db.AsOf(elementID)` for point-in-time queries; three-mode `*ElementID` matcher (`nil`=latest, `&ElementID{}`=history, `&ElementID{L,R}`=as-of)
 25. **NOT/OR clauses** - Full support for `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible union semantics; `(or-default ...)`, `(or-default-join ...)` for fallback/default-value patterns (janus extension)
 26. **QueryInto API** - Typed query results via `QueryInto()` and `QueryOneInto()` with struct tag mapping for variables and aggregates

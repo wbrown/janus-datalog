@@ -128,6 +128,17 @@ func (ab *AttributeBuilder) Unique(u datalog.Keyword) *AttributeBuilder {
 	return ab
 }
 
+// NeverZeroValue declares that the zero value of the attribute's value type
+// is not a value of the attribute: "" for a string, 0 for a long, false for a
+// boolean, and so on (IsZeroValue lists them). Add and Set reject it, and
+// SaveStruct writes nothing for a field holding it. On a many or vector
+// attribute it governs each element. Requires Type; Add records its absence
+// as an error for Build to return.
+func (ab *AttributeBuilder) NeverZeroValue() *AttributeBuilder {
+	ab.def.NeverZeroValue = true
+	return ab
+}
+
 // Doc sets the documentation string
 func (ab *AttributeBuilder) Doc(doc string) *AttributeBuilder {
 	ab.def.Doc = doc
@@ -146,6 +157,13 @@ func (ab *AttributeBuilder) Add() *Builder {
 	// Reject attribute names too long to store without truncation/aliasing.
 	if n := len(ab.def.Ident.String()); n > datalog.MaxAttributeBytes {
 		ab.parent.errors = append(ab.parent.errors, fmt.Errorf("attribute %q is %d bytes, exceeds the %d-byte storage limit", ab.def.Ident.String(), n, datalog.MaxAttributeBytes))
+		return ab.parent
+	}
+
+	// Schema.Add panics on this; the builder reports it as an error.
+	if ab.def.NeverZeroValue && ab.def.ValueType == nil {
+		ab.parent.errors = append(ab.parent.errors,
+			fmt.Errorf("attribute %s: NeverZeroValue requires a value type", ab.def.Ident))
 		return ab.parent
 	}
 

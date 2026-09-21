@@ -386,7 +386,7 @@ See [docs/reference/MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md) for the com
 
 ### Schema (Optional)
 
-Schema is **completely optional** but provides type safety and cardinality-many support:
+Schema is **completely optional** but provides type safety, cardinality, and domain constraints:
 
 ```go
 import (
@@ -399,6 +399,7 @@ s, _ := schema.NewBuilder().
     Attribute(":user/name").Type(schema.TypeString).Add().
     Attribute(":user/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
     Attribute(":user/tags").Type(schema.TypeString).Many().Add().
+    Attribute(":user/bio").Type(schema.TypeString).NeverZeroValue().Add().
     Build()
 
 // Create database with schema
@@ -407,10 +408,11 @@ d, _ := db.Open("my.db", db.WithSchema(s))
 
 **What schema gives you:**
 - **Type validation** at `Add()` time – catch type errors immediately
-- **Uniqueness constraints** at `Commit()` time – enforce data integrity
-- **Cardinality-many** – Pull API returns arrays instead of single values
+- **Uniqueness** – a read-time resolution rule: writes always succeed, and `LookupByUnique` answers who owns a value
+- **Cardinality** – `many` (add-wins set) and `vector` (ordered RGA); Pull API returns arrays instead of single values
+- **Never-zero-value** – `:db/neverZeroValue` declares that the type's zero (`""`, `0`, `false`, ...) is not a value: `Add`/`Set` reject it and the struct writer omits a field holding it, so a plain Go field is an exact presence test
 
-**Performance:** <1% write overhead for type checking, ~6% for uniqueness. Reads unaffected.
+**Performance:** type checking is paid at `Add()` time; uniqueness costs nothing at write time. Reads unaffected.
 
 Or define schema via EDN file:
 
@@ -419,7 +421,9 @@ Or define schema via EDN file:
  :user/email  {:db/valueType :db.type/string
                :db/unique    :db.unique/value}
  :user/tags   {:db/valueType   :db.type/string
-               :db/cardinality :db.cardinality/many}}
+               :db/cardinality :db.cardinality/many}
+ :user/bio    {:db/valueType      :db.type/string
+               :db/neverZeroValue true}}
 ```
 
 See [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md) for complete documentation.
@@ -471,7 +475,7 @@ d, _ := db.Open("my.db", db.WithSchema(schema))
 // Write structs directly
 alice := &Person{Name: "Alice", Age: 30, Tags: []string{"dev", "lead"}}
 tx := d.NewTransaction()
-aliceID, _ := tx.AddStructAuto(alice)  // ID auto-generated
+aliceID, _ := tx.SaveStruct(alice)  // ID generated when the ID field is empty
 tx.Commit()
 // alice.ID is now populated
 
@@ -1082,7 +1086,7 @@ Janus implements **~80% of Datomic's feature set** (weighted by typical usage), 
 - Time queries: as-of, time functions
 - History queries: Full audit trail with `d.History().Query()`
 - Pull API: Nested references, cycle detection, wildcards
-- Schema: Type validation, cardinality, uniqueness constraints
+- Schema: Type validation, cardinality (one/many/vector), uniqueness, never-zero-value domain constraint
 - Storage: Persistent BadgerDB backend
 - NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with fallback expressions
 - Multi-source queries: Named sources (`$name`), cross-source joins, in-memory and slice sources

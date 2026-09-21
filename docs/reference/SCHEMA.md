@@ -6,7 +6,7 @@ This document describes janus-datalog's schema support for type validation, card
 
 Schema support is **optional and additive**:
 - Without schema: all existing behavior is preserved
-- With schema: type validation, cardinality-many, and uniqueness constraints are enforced
+- With schema: type validation, cardinality-many, uniqueness constraints, and `:db/neverZeroValue` are enforced
 - Unknown attributes are allowed (additive schema model)
 
 ## Defining a Schema
@@ -28,6 +28,8 @@ Load with:
 ```go
 schema, err := schema.ParseSchemaFile("schema.edn")
 ```
+
+Every key in an attribute definition must be one of those listed under [Supported Attributes](#supported-attributes), and must be a keyword. An unknown key is a parse error, not a skip, so a misspelled or renamed key cannot yield a definition that silently lacks it.
 
 ### Option 2: Go Builder API
 
@@ -70,6 +72,7 @@ d.SetSchema(s)
 | `:db.type/ref` | `datalog.Identity` | `schema.TypeRef` |
 | `:db.type/keyword` | `datalog.Keyword` | `schema.TypeKeyword` |
 | `:db.type/symbol` | `datalog.Symbol` | `schema.TypeSymbol` |
+| `:db.type/tx` | `datalog.ElementID`, `*datalog.ElementID` | `schema.TypeTx` |
 
 ### `:db/cardinality`
 
@@ -81,12 +84,18 @@ d.SetSchema(s)
 
 ### `:db/uniqueElements`
 
-For vector attributes, enforce unique elements (no duplicates):
+A janus extension. For vector attributes, enforce unique elements (no duplicates):
 
 | Value | Description |
 |-------|-------------|
 | `false` | Duplicates allowed (default) |
 | `true` | Duplicates rejected at write time |
+
+```clojure
+{:character/prefs {:db/valueType      :db.type/string
+                   :db/cardinality    :db.cardinality/vector
+                   :db/uniqueElements true}}
+```
 
 ```go
 // Vector with unique elements (OrderedSet)
@@ -95,6 +104,34 @@ builder.Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add()
 // Equivalent to:
 builder.Attribute(":character/prefs").Type(schema.TypeString).Vector().UniqueElements(true).Add()
 ```
+
+### `:db/neverZeroValue`
+
+A janus extension. Declares that the zero value of the attribute's value type is not a value of the attribute: an entity carries a value or it carries no datom, and there is no fact "the bio is the empty string".
+
+| Value type | Zero value |
+|---|---|
+| `:db.type/string` | `""` |
+| `:db.type/long` | `0` |
+| `:db.type/double` | `0.0` |
+| `:db.type/boolean` | `false` |
+| `:db.type/instant` | the zero `time.Time` |
+| `:db.type/bytes` | a nil or zero-length `[]byte` |
+| `:db.type/ref`, `:db.type/keyword`, `:db.type/symbol` | `nil` |
+| `:db.type/tx` | the zero `ElementID` |
+
+`:db/valueType` is required alongside it. A definition carrying the flag without a type is rejected by `ParseSchema`, by the builder, and by `Schema.Add`. On a many or vector attribute the property governs each element, never the collection. The store does not normalize: a string of whitespace is a value.
+
+```clojure
+{:person/bio {:db/valueType      :db.type/string
+              :db/neverZeroValue true}}
+```
+
+```go
+builder.Attribute(":person/bio").Type(schema.TypeString).NeverZeroValue().Add()
+```
+
+Write behavior is under [Zero-Value Rejection](#zero-value-rejection) below.
 
 ### `:db/unique`
 
@@ -139,6 +176,26 @@ tx.Add(alice, kw(":person/name"), "Alice")
 err := tx.Add(alice, kw(":person/name"), 123)
 // err: "schema validation failed for :person/name: expected db.type/string (string), got int"
 ```
+
+### Zero-Value Rejection
+
+For an attribute declared `:db/neverZeroValue`, the zero value lies outside the attribute's domain, and `ValidateDatom` rejects it right after the type check, in the same category as a value of the wrong type:
+
+```go
+// ERROR - "" on a :db/neverZeroValue string attribute
+err := tx.Add(alice, kw(":person/bio"), "")
+// err: "schema validation failed for :person/bio: the :db.type/string zero value is not a value of a NeverZeroValue attribute"
+
+// OK - whitespace is a value
+tx.Add(alice, kw(":person/bio"), " ")
+```
+
+- `Add` and `Set` return the error at the call and buffer nothing. `AddEntity` and `AddMap` add through `Add` and reject through the same check.
+- On a many or vector attribute, a collection containing a zero element is rejected, not filtered.
+- `SaveStruct` writes no datom for a field holding the zero value and leaves the stored value unchanged, the rule it already applies to a nil pointer field. A plain `string` or `int64` field tested against its zero is then an exact presence test.
+- `Remove` is unconstrained, so a zero-valued datom that reached the store before the declaration can be tombstoned.
+- `Import` and the other replay paths apply recorded datoms and bypass the check.
+- Reads are unchanged. `PullInto` yields the zero value for an absent attribute, and under the property that is the only thing the zero can mean.
 
 ### Uniqueness Semantics
 
@@ -393,5 +450,6 @@ schema.ParseSchema(input string)       // Parse EDN schema string
 schema.ParseSchemaFile(path string)    // Parse EDN schema file
 schema.ResolvePullPattern(p, s)        // Resolve pull pattern with schema
 schema.ValidateValue(v, t)             // Validate value against type
+schema.IsZeroValue(v, t)               // Is v the zero value of value type t
 schema.ValidateDatom(s, attr, v)       // Validate datom against schema
 ```

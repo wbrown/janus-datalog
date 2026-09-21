@@ -27,6 +27,9 @@ Documentation for features that have been fully implemented and are now part of 
   - Early filtering optimization (6× speedup)
 - **predicate-pushdown-design.md** - Comprehensive pushdown design and architecture
 
+### Schema
+- **NEVER_ZERO_VALUE.md** - `:db/neverZeroValue` attribute property: the value type's zero is not a value; `:db/unique-elements` renamed `:db/uniqueElements`; unknown EDN definition keys are parse errors (September 2026)
+
 ## Implementation Status
 
 All features in this directory are:

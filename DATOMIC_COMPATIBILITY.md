@@ -427,7 +427,7 @@ defer d.Close()
 // Write struct as datoms
 alice := &Person{Name: "Alice", Age: 30, Tags: []string{"dev"}}
 tx := d.NewTransaction()
-aliceID, _ := tx.AddStructAuto(alice)  // Auto-generate ID
+aliceID, _ := tx.SaveStruct(alice)  // ID generated when the ID field is empty
 tx.Commit()
 
 // Read datoms into struct
@@ -438,10 +438,10 @@ d.PullInto(aliceID, &loaded)
 
 **Key features:**
 - `SchemaFromStruct()` - Generate schema from Go struct definitions
-- `AddStructAuto()` - Write struct with auto-generated unique ID
-- `AddStruct()` - Write struct with explicit entity ID
+- `SaveStruct()` - Write or update a struct with upsert semantics; generates the ID when the ID field is empty, uses it otherwise
 - `PullInto()` - Read entity into struct using Pull API
 - `PullIntoMany()` - Read multiple entities into slice
+- A zero-valued field on a `:db/neverZeroValue` attribute writes no datom
 
 **Tag format:**
 | Tag | Meaning |
@@ -625,10 +625,15 @@ Deep recursion on large graphs can cause stack overflows in Datomic.
 Schema is supported but with limitations vs Datomic:
 
 **Supported schema features:**
-- `:db/valueType` - type constraints (string, long, double, boolean, instant, bytes, ref, keyword)
+- `:db/valueType` - type constraints (string, long, double, boolean, instant, bytes, ref, keyword, symbol, tx)
 - `:db/cardinality` - one or many
 - `:db/unique` - value uniqueness or identity
 - `:db/doc` - documentation strings
+
+**Janus extensions (not in Datomic):**
+- `:db.cardinality/vector` - ordered collection with RGA CRDT semantics; builder `Vector()`
+- `:db/uniqueElements` - a vector rejects duplicate elements (an ordered set); builder `UniqueElements(true)` or `OrderedSet()`
+- `:db/neverZeroValue` - the value type's zero value (`""`, `0`, `0.0`, `false`, the zero instant, an empty `[]byte`, a nil ref) is not a value of the attribute. `Add` and `Set` reject it; `SaveStruct` writes nothing for a struct field holding it. Requires `:db/valueType`. Builder `NeverZeroValue()`. See [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md).
 
 **Schema definition via EDN:**
 ```clojure
@@ -652,9 +657,10 @@ d, _ := db.Open(path, db.WithSchema(s))
 ```
 
 **Schema behavior:**
-- Type validation enforced on transaction `Add()`
-- Uniqueness validation enforced on `Commit()`
+- Type validation and `:db/neverZeroValue` enforced on transaction `Add()` and `Set()`
+- Uniqueness is a read-time CRDT resolution rule: every write to a unique attribute succeeds, and the canonical owner of a value is decided when it is read (see [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md#uniqueness-semantics)). Datomic rejects the conflicting write; janus does not.
 - Unknown attributes allowed (additive schema)
+- Unknown keys inside an EDN attribute definition are parse errors
 - Pull API uses schema for cardinality-many handling
 - Schema is optional - existing behavior preserved without schema
 
@@ -663,16 +669,16 @@ d, _ := db.Open(path, db.WithSchema(s))
 - No `:db/index` - all attributes are indexed by default
 - No `:db/fulltext` - fulltext search not supported
 - No `:db/noHistory` - all datoms are retained
-- No upsert semantics - `:db.unique/identity` behaves like `:db.unique/value`
+- No write-time upsert - `:db.unique/identity` differs from `:db.unique/value` only in declared intent
 - Schema not stored as datoms - schema is in-memory only
 
-**Performance (writes only):** Type validation adds <1% overhead at `Add()` time; uniqueness checking adds ~6% at `Commit()` time. Reads are unaffected. See `PERFORMANCE_STATUS.md` for benchmarks.
+**Performance:** Type validation is paid at `Add()` time; uniqueness costs nothing at write time and is paid by the read that asks. See `PERFORMANCE_STATUS.md` for benchmarks.
 
 ### 3. Transaction Features ⚠️
 
 Partial transaction support:
 - ✅ **CRDT semantics** - LWW, add-wins, and RGA based on attribute cardinality
-- ✅ **Soft removal** - `Remove(e, a, v)` tombstones for cardinality-many
+- ✅ **Soft removal** - `Remove(e, a, v)` writes a tombstone for every cardinality: one (the attribute reads as absent), many (add-wins per value), vector (the most recently added matching element)
 - ✅ **Hard deletion** - `Retract(e, a, v)` for explicit removal (GDPR, cleanup)
 - ❌ **No transaction functions**
 - ❌ **No tempids** for new entities

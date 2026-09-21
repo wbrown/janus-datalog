@@ -241,14 +241,14 @@ func TestParseSchema_CardinalityVector(t *testing.T) {
 	assert.Equal(t, TypeString, skills.ValueType)
 }
 
-// TestParseSchema_UniqueElements verifies :db/unique-elements true
+// TestParseSchema_UniqueElements verifies :db/uniqueElements true
 // round-trips through the EDN parser, matching the Go builder's
 // UniqueElements() / OrderedSet() semantics. Required for OrderedSet
 // attributes to be expressible in EDN schema files.
 func TestParseSchema_UniqueElements(t *testing.T) {
 	input := `{:character/prefs {:db/valueType :db.type/string
 	                             :db/cardinality :db.cardinality/vector
-	                             :db/unique-elements true}}`
+	                             :db/uniqueElements true}}`
 
 	schema, err := ParseSchema(input)
 	require.NoError(t, err)
@@ -257,5 +257,5 @@ func TestParseSchema_UniqueElements(t *testing.T) {
 	require.NotNil(t, prefs)
 	assert.Equal(t, CardinalityVector, prefs.Cardinality)
 	assert.True(t, prefs.UniqueElements,
-		":db/unique-elements true should populate AttributeDefinition.UniqueElements")
+		":db/uniqueElements true should populate AttributeDefinition.UniqueElements")
 }
