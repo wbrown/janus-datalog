@@ -211,3 +211,78 @@ func TestSaveStructRejectsZeroElementInNonEmptySlice(t *testing.T) {
 		})
 	}
 }
+
+type entityWithSteps struct {
+	ID    datalog.Identity `datalog:"-,id"`
+	Steps []string         `datalog:"steps"`
+}
+
+type entityWithPrefs struct {
+	ID    datalog.Identity           `datalog:"-,id"`
+	Prefs datalog.OrderedSet[string] `datalog:"prefs"`
+}
+
+// A vector-declared slice reaches the store through Set with the whole
+// collection, not through per-element Add, so this drives Set's vector arm.
+func TestSaveStructRejectsZeroElementInVector(t *testing.T) {
+	sch, err := schema.NewBuilder().
+		Attribute(":entity-with-steps/steps").Type(schema.TypeString).Vector().NeverZeroValue().Add().
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+				Store:          mustOpenStore(t, mode.backend),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+
+			tx := db.NewTransaction()
+			_, err = tx.SaveStruct(&entityWithSteps{Steps: []string{"ok", ""}})
+			if err == nil {
+				t.Fatal("expected error for zero element in a vector")
+			}
+		})
+	}
+}
+
+func TestSaveStructRejectsZeroElementInOrderedSet(t *testing.T) {
+	sch, err := schema.NewBuilder().
+		Attribute(":entity-with-prefs/prefs").Type(schema.TypeString).OrderedSet().NeverZeroValue().Add().
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+				Store:          mustOpenStore(t, mode.backend),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+
+			prefs := datalog.NewOrderedSet[string]()
+			prefs.Append("ok")
+			prefs.Append("")
+			tx := db.NewTransaction()
+			_, err = tx.SaveStruct(&entityWithPrefs{Prefs: *prefs})
+			if err == nil {
+				t.Fatal("expected error for zero element in an ordered set")
+			}
+		})
+	}
+}

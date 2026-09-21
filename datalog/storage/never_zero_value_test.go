@@ -22,9 +22,54 @@ func neverZeroSchema(t *testing.T) *schema.Schema {
 		Attribute(":test/instant").Type(schema.TypeInstant).NeverZeroValue().Add().
 		Attribute(":test/bytes").Type(schema.TypeBytes).NeverZeroValue().Add().
 		Attribute(":test/tx").Type(schema.TypeTx).NeverZeroValue().Add().
+		Attribute(":test/tags").Type(schema.TypeString).Many().NeverZeroValue().Add().
+		Attribute(":test/steps").Type(schema.TypeString).Vector().NeverZeroValue().Add().
 		Build()
 	require.NoError(t, err)
 	return s
+}
+
+// The many and vector arms of Set validate each element before either
+// diffs against the stored collection, so a collection holding a zero is
+// rejected whole and the prior collection stands.
+func TestNeverZeroValue_SetCollectionRejectsZeroElementAndBuffersNothing(t *testing.T) {
+	// A many attribute binds one member per tuple; a vector binds the whole
+	// vector as one value, so a buffered zero would change the value, not the
+	// tuple count.
+	cases := []struct {
+		attr string
+		want interface{}
+	}{
+		{":test/tags", "ok"},
+		{":test/steps", []string{"ok"}},
+	}
+	for _, tc := range cases {
+		for _, mode := range optimizerModes {
+			t.Run(tc.attr+"/"+mode.name, func(t *testing.T) {
+				db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: neverZeroSchema(t)})
+				e := datalog.NewIdentity("e")
+				attr := datalog.NewKeyword(tc.attr)
+
+				tx := db.NewTransaction()
+				require.NoError(t, tx.Set(e, attr, []string{"ok"}))
+				_, err := tx.Commit()
+				require.NoError(t, err)
+
+				tx = db.NewTransaction()
+				err = tx.Set(e, attr, []string{"fine", ""})
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "schema validation failed")
+				_, err = tx.Commit()
+				require.NoError(t, err)
+
+				got, err := executor.CollectTuples(db.Query(
+					`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`, e, attr))
+				require.NoError(t, err)
+				require.Len(t, got, 1, "the rejected collection must buffer neither its removals nor its adds")
+				require.True(t, datalog.ValuesEqual(got[0][0], tc.want), "got %#v want %#v", got[0][0], tc.want)
+			})
+		}
+	}
 }
 
 func TestNeverZeroValue_AddAndSetRejectZeroAndBufferNothing(t *testing.T) {

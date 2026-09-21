@@ -136,6 +136,12 @@ func TestParseSchemaUnknownKeyIsError(t *testing.T) {
 	assert.Contains(t, err.Error(), ":db/notAKey")
 }
 
+func TestParseSchemaNonKeywordDefinitionKeyIsError(t *testing.T) {
+	_, err := ParseSchema(`{:person/name {"db/valueType" :db.type/string}}`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "attribute definition key must be keyword")
+}
+
 func TestParseSchemaUniqueElementsKebabIsUnknownKey(t *testing.T) {
 	_, err := ParseSchema(`{:character/prefs {:db/valueType :db.type/string
 	                                          :db/cardinality :db.cardinality/vector
