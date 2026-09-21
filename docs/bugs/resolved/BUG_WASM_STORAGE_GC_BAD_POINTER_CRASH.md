@@ -1,6 +1,6 @@
 # BUG: Stochastic `found bad pointer in Go heap` crash in the wasm storage suite
 
-**Status**: Open (2026-07-19). Observed twice, back to back, then not reproduced in seven consecutive runs including a fully green `make test`. Not root-caused; causality with the working tree's diff is not established in either direction. Logged so the signature is recognizable the next time it fires and the evidence is not lost to a green re-run.
+**Status**: Resolved (2026-09-21). Root cause is upstream: `runtime.itabInit` emitting a write barrier for code pointers, fixed by CL 803460 and carried by Go 1.26.8. `go.mod` pins `go 1.26.8`, and `.github/workflows/test.yml` reads the toolchain from `go.mod`, so the local gate and every CI job run on a runtime carrying the fix. Occurrence 42 is the last on 1.26.3; the same tree's wasm storage suite passed on 1.26.8. The rerun sanction below ends with it. Opened 2026-07-19 after two back-to-back crashes not reproduced in seven consecutive runs, logged so the signature stayed recognizable.
 
 ## Observations
 
@@ -48,6 +48,7 @@ Three crashes across eleven runs:
 | 39 | 2026-08-01, full `make test` pipeline, same tree plus the wasm default backend switched to `memory-trees` (`defaultBackendName`, `OpenMemory`, `setDumpDestination`) | **crash** into storage, poison `0x237e0000` — occurrence 38's value recurring in a distinct binary, the runs-13/22/24-25 pattern — same discovery, same goroutine and test. The default switch changes which store every wasm test runs on and did not move either. Full native suite green. Sanctioned `make test-wasm` rerun **crash**, same poison and discovery — this binary is in the near-deterministic window, as runs 14–16, 17–18, 20–21, 26–27 and 28–29 were; reruns stopped per that precedent |
 | 40 | 2026-08-01, `make test-wasm`, darwin/arm64, go1.26.3, binary carrying the store-batch work (`Store.AssertEach`/`FinishBatch`, the tree store holding one builder across a run, `BinaryImportOptions.Finalize`) | **crash** into storage, poison `0x237e0000` — occurrences 38–39's value recurring in a distinct binary, the runs-13/22/24–25 pattern — `wbBufFlush1` discovery, goroutine 11955 under `TestWildcardPullQueryUsesOneBatch`, the map-allocation frame (`makemap` → `NewMap` → `mapassign` → `typedmemmove`) occurrences 37–39 also carried. The full native `go test ./...` was green immediately before, batch and finalizer pins included; every other wasm package green. Sanctioned rerun **crash**, same poison and goroutine, "unused region of span" variant (run 2's shape) — this binary is in the near-deterministic window, as runs 14–16, 17–18, 20–21, 26–27, 28–29 and 37/39 were; reruns stopped per that precedent |
 | 41 | 2026-08-07, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted blob-reclamation and delete-batching work in tree (`DeleteDatoms` through a WriteBatch, hash-keyed blob reference counting on the delete and retract paths) | **crash** into storage, poison `0x237f0000` (new per-binary constant, continuing the `0x237d`–`0x237f` family occurrences 37–40 produced), `wbBufFlush1` discovery plus `gcWriteBarrier` corrupted-return-pc (`called from 0x7f840`), goroutine 11985 under `TestWildcardPullQueryUsesOneBatch` — the detonating test of occurrences 37–40. The full native `go test ./...` in the same pipeline was green, storage included at 114.7s with the arc's eight new blob and batch-size pins; `test-examples` clean; every other wasm package green. Sanctioned rerun **crash**, same poison — this binary is in the near-deterministic window, as runs 14–16, 17–18, 20–21, 26–27, 28–29, 37, 39 and 40 were; reruns stopped per that precedent |
+| 42 | 2026-09-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted `:db/neverZeroValue` schema work in tree (three new storage tests in the wasm binary) | **crash** into storage, poison `0x23820000` (new per-binary constant, extending the `0x237d`–`0x237f` family of occurrences 37–41), `wbBufFlush1` discovery plus `gcWriteBarrier` corrupted-return-pc (`called from 0xe5880`, `gcmarknewobject` in the frame dump), goroutine 12008 under `TestWildcardPullQueryUsesOneBatch`. The full native suite in the same pipeline was green, `test-examples` clean, every other wasm package green. No rerun on 1.26.3: `go.mod` moved to `go 1.26.8`, which carries CL 803460, and the same tree's wasm storage suite passed on it. Last occurrence |
 
 All crashes are the same fatal — the GC write barrier discovering a poisoned pointer slot:
 
@@ -123,14 +124,18 @@ Local corroboration and verification, from the reproducer side:
    (`a583f0a9`) **passes 3/3** `GOGC=1` runs. The patched toolchain remains at
    `~/sdk/gotip` (detached HEAD `a583f0a9`); `gotip download` restores plain tip.
 
-## Remaining next steps
+## Resolution (2026-09-21)
 
-1. **CL 803460 merged into Go master (2026-07-21)** — patch set 2, revision
-   `5141d4e`, the exact revision verified 3/3 against this repo's `GOGC=1`
-   reproducer. The crash class ends at the first Go release (or toolchain
-   update) carrying the merge.
-2. Until the gate's toolchain carries it: the wasm job flakes at a
-   layout-determined rate — some binaries sit in a near-deterministic crash
-   window (runs 14–16, 17–18) and stay red until the next code change shifts
-   the layout. Reruns are sanctioned for this signature only, with this doc
-   as the reference.
+CL 803460 merged into Go master on 2026-07-21 — patch set 2, revision
+`5141d4e`, the exact revision verified 3/3 against this repo's `GOGC=1`
+reproducer — and Go 1.26.8 carries it. `go.mod` pins `go 1.26.8`, and
+`.github/workflows/test.yml` reads the toolchain from `go.mod` on every job,
+so the local gate and CI run the fixed runtime. The occurrence-42 tree's wasm
+storage suite crashed on 1.26.3 and passed on 1.26.8 with no other change.
+
+Between the merge and the pin, the wasm job flaked at a layout-determined
+rate — some binaries sat in a near-deterministic crash window (runs 14–16,
+17–18) and stayed red until the next code change shifted the layout — and
+reruns were sanctioned for this signature alone, with this doc as the
+reference. That sanction ends here. A `found bad pointer in Go heap` fatal
+under js/wasm on Go 1.26.8 or later is a new bug, not this one.

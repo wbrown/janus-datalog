@@ -1,6 +1,6 @@
 module github.com/wbrown/janus-datalog
 
-go 1.25
+go 1.26.8
 
 require (
 	github.com/dgraph-io/badger/v4 v4.2.0
