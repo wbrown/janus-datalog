@@ -149,6 +149,28 @@ id, err := tx.SaveStruct(person)  // Uses provided ID
 tx.Commit()
 ```
 
+### Zero-Valued Fields
+
+A scalar field holding its Go zero value (`""`, `0`, `false`, the zero `time.Time`) is written as that value: the store has a datom `:person/age 0`. Two exceptions:
+
+- A pointer field that is `nil` writes nothing.
+- A field whose attribute the schema declares `:db/neverZeroValue` writes nothing when it holds the zero value. This applies to `SaveStruct` and to `StructWriter.Write` / `WriteAuto` alike, and on `SaveStruct` a stored value stays in place. A plain `string` or `int64` field is then an exact presence test on read: `PullInto` yields the zero for an absent attribute, and under the property that is the only meaning the zero can have.
+
+```go
+s, _ := schema.NewBuilder().
+    Attribute(":person/name").Type(schema.TypeString).Add().
+    Attribute(":person/bio").Type(schema.TypeString).NeverZeroValue().Add().
+    Build()
+
+alice := &Person{Name: "Alice"}   // Bio is ""
+tx.SaveStruct(alice)              // writes :person/name only
+
+var loaded Person
+d.PullInto(alice.ID, &loaded)     // loaded.Bio == "" means no bio
+```
+
+The omission is for scalar fields only. On a many or vector attribute the property governs each element, and a slice or `OrderedSet` containing a zero element is an error from the store, not a filtered write. `SchemaFromStruct` never infers `NeverZeroValue`; declare it in the schema. See [SCHEMA.md](SCHEMA.md#dbneverzerovalue).
+
 ## Updating Structs
 
 `SaveStruct` provides upsert semantics - calling it on an entity that already exists will update it.
@@ -496,6 +518,9 @@ reflect.GenerateSimplePullPattern(v interface{}) string
 
 // Writing/Updating (usually use Transaction methods instead)
 reflect.SaveStruct(tx TransactionUpdater, lookup EntityLookup, v interface{}, s SchemaProvider) (Identity, error)
+reflect.NewStructWriter(v interface{}, s SchemaProvider) (*StructWriter, error)
+(*StructWriter).Write(tx TransactionAdder, entity Identity, v interface{}) error   // Add every field, no lookup
+(*StructWriter).WriteAuto(tx TransactionAdder, v interface{}) (Identity, error)    // Write with a generated ID
 
 // Reading (usually use Database methods instead)
 reflect.ReadStruct(result map[string]interface{}, v interface{}, s SchemaProvider) error

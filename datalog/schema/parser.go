@@ -22,7 +22,8 @@ var (
 	kwDBCardinality    = datalog.WellKnownKeyword(":db/cardinality")
 	kwDBUnique         = datalog.WellKnownKeyword(":db/unique")
 	kwDBDoc            = datalog.WellKnownKeyword(":db/doc")
-	kwDBUniqueElements = datalog.WellKnownKeyword(":db/unique-elements")
+	kwDBUniqueElements = datalog.WellKnownKeyword(":db/uniqueElements")
+	kwDBNeverZeroValue = datalog.WellKnownKeyword(":db/neverZeroValue")
 )
 
 // ParseSchema parses an EDN schema definition string
@@ -106,11 +107,14 @@ func parseAttributeDefinition(ident string, node *edn.Node) (*AttributeDefinitio
 		valueNode := &node.Nodes[i+1]
 
 		if keyNode.Type != edn.NodeKeyword {
-			continue // Skip non-keyword keys
+			return nil, fmt.Errorf("attribute definition key must be keyword at line %d, got %v",
+				keyNode.Line, keyNode.Type)
 		}
 
 		// Intern the map key once and compare against the pre-interned
-		// constants by pointer equality — idiomatic and O(1).
+		// constants by pointer equality — idiomatic and O(1). A key outside
+		// the set is an error, not a skip: skipped, the old spelling of a
+		// renamed key would parse as a definition that silently lacks it.
 		key := datalog.NewKeyword(keyNode.Value)
 		switch key {
 		case kwDBValueType:
@@ -142,10 +146,24 @@ func parseAttributeDefinition(ident string, node *edn.Node) (*AttributeDefinitio
 
 		case kwDBUniqueElements:
 			if valueNode.Type != edn.NodeBool {
-				return nil, fmt.Errorf(":db/unique-elements must be boolean, got %v", valueNode.Type)
+				return nil, fmt.Errorf(":db/uniqueElements must be boolean, got %v", valueNode.Type)
 			}
 			def.UniqueElements = valueNode.Value == "true"
+
+		case kwDBNeverZeroValue:
+			if valueNode.Type != edn.NodeBool {
+				return nil, fmt.Errorf(":db/neverZeroValue must be boolean, got %v", valueNode.Type)
+			}
+			def.NeverZeroValue = valueNode.Value == "true"
+
+		default:
+			return nil, fmt.Errorf("unknown schema key %s", key)
 		}
+	}
+
+	// After the loop, so the two keys may appear in either order.
+	if def.NeverZeroValue && def.ValueType == nil {
+		return nil, fmt.Errorf(":db/neverZeroValue requires :db/valueType")
 	}
 
 	return def, nil

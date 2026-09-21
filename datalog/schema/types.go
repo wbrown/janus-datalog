@@ -127,6 +127,7 @@ type AttributeDefinition struct {
 	Cardinality    datalog.Keyword // Required for Pull API (default: CardinalityOne)
 	Unique         datalog.Keyword // Optional uniqueness constraint; nil is no constraint
 	UniqueElements bool            // If true, collection has set semantics (no duplicate values)
+	NeverZeroValue bool            // If true, the ValueType's zero value is not a value; requires ValueType
 	Doc            string          // Optional documentation
 }
 
@@ -257,6 +258,11 @@ func (s *Schema) Add(def *AttributeDefinition) *Schema {
 	mustBelong(def.Ident, def.ValueType, valueTypes, "a value type")
 	mustBelong(def.Ident, def.Cardinality, cardinalities, "a cardinality")
 	mustBelong(def.Ident, def.Unique, uniques, "a uniqueness constraint")
+	// NeverZeroValue is a statement about the value type's zero, so it has
+	// nothing to say without one.
+	if def.NeverZeroValue && def.ValueType == nil {
+		panic(fmt.Errorf("attribute %s: NeverZeroValue requires a value type", def.Ident))
+	}
 	s.attributes[def.Ident] = def
 	return s
 }

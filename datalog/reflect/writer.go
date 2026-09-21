@@ -262,6 +262,10 @@ func (sw *StructWriter) updateField(tx TransactionUpdater, lookup EntityLookup, 
 		return nil
 	}
 
+	if sw.zeroOfNeverZeroValue(kw, newVal) {
+		return nil
+	}
+
 	// Optimization: skip write if value hasn't changed
 	existingVal, found, err := lookup.LookupAttribute(entity, kw)
 	if err != nil {
@@ -273,6 +277,20 @@ func (sw *StructWriter) updateField(tx TransactionUpdater, lookup EntityLookup, 
 
 	// For cardinality-one, just Add() - LWW semantics handle replacing old value
 	return tx.Add(entity, kw, newVal)
+}
+
+// zeroOfNeverZeroValue reports whether v is the zero value of an attribute the
+// schema declares NeverZeroValue. A scalar struct field holding that zero
+// means "not set": Write and Update assert nothing for it, as they do for a
+// nil pointer field, and an existing stored value stays in place. Collection
+// elements are not passed through here; a zero element reaches Add or Set
+// and is rejected by the store.
+func (sw *StructWriter) zeroOfNeverZeroValue(kw datalog.Keyword, v interface{}) bool {
+	if sw.schema == nil {
+		return false
+	}
+	def := sw.schema.GetAttribute(kw)
+	return def != nil && def.NeverZeroValue && schema.IsZeroValue(v, def.ValueType)
 }
 
 // updateOrderedSetField handles OrderedSet[T] field updates.
@@ -427,6 +445,10 @@ func (sw *StructWriter) writeField(tx TransactionAdder, entity datalog.Identity,
 
 	// Skip zero values for optional types
 	if writeVal == nil {
+		return nil
+	}
+
+	if sw.zeroOfNeverZeroValue(kw, writeVal) {
 		return nil
 	}
 
