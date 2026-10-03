@@ -42,8 +42,7 @@ var (
 	ErrRollbackInProgress = errors.New("write rejected: a rollback (TruncateTo) is in progress")
 )
 
-// SnapshotInfo is the decoded snapshot marker. Fields are additive: the branching round
-// adds Path/Parent without changing existing callers (their absence ⇒ root).
+// SnapshotInfo is the decoded snapshot marker.
 type SnapshotInfo struct {
 	Name    string
 	At      datalog.ElementID // captured high-water point (the AsOf read point)
@@ -168,33 +167,12 @@ func (d *Database) Snapshots() ([]SnapshotInfo, error) {
 	return out, nil
 }
 
-// DeleteSnapshot removes the named snapshot from the registry by retracting its marker,
-// and releases the branches forked from it. The rewindable timeline is untouched; only the
-// registry entry goes away.
-//
-// It serializes against TruncateTo and other deletions (rollbackMu) and holds writers as
-// TruncateTo does: a Fork under way records its branch before the deletion reads the
-// records, and a Fork begun during the deletion is refused with ErrRollbackInProgress.
+// DeleteSnapshot removes the named snapshot from the registry by retracting its marker.
+// The rewindable timeline is untouched; only the registry entry goes away.
 func (d *Database) DeleteSnapshot(name string) error {
 	if d.temporalTxID != nil {
 		return fmt.Errorf("DeleteSnapshot: cannot modify a read-only temporal handle (AsOf/History)")
 	}
-
-	d.rollbackMu.Lock()
-	defer d.rollbackMu.Unlock()
-
-	// The deletion's own transaction opens before writers are held, so it is not turned
-	// away with them.
-	tx := d.NewTransaction()
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-	release := d.holdWriters(tx)
-	defer release()
-
 	info, err := d.lookupSnapshot(name)
 	if err != nil {
 		return err
@@ -204,27 +182,13 @@ func (d *Database) DeleteSnapshot(name string) error {
 	}
 
 	e := snapshotEntity(name)
-	// Deleting a snapshot releases the branches forked from it: the records of
-	// the forks made at its point go with the marker, so none of them stops a
-	// TruncateTo.
-	at, err := d.snapshotMarkerMax(name)
-	if err != nil {
-		return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
-	}
-	type forkRecord struct {
-		Record  datalog.Identity `datalog:"?b"`
-		Replica int64            `datalog:"?replica"`
-	}
-	var forks []forkRecord
-	if err := d.QueryInto(&forks, `[:find ?b ?replica
-		:in $ ?name ?lamport ?atReplica
-		:where [?b :db.branch/snapshot ?name]
-		       [?b :db.branch/at-lamport ?lamport]
-		       [?b :db.branch/at-replica ?atReplica]
-		       [?b :db.branch/replica ?replica]]`,
-		name, int64(at.Lamport), int64(at.ReplicaID)); err != nil {
-		return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
-	}
+	tx := d.NewTransaction()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
 	// Retracting the name attribute is what removes the snapshot from the registry (it
 	// breaks the join in Snapshots/lookupSnapshot). The remaining retracts are cleanup.
@@ -239,20 +203,6 @@ func (d *Database) DeleteSnapshot(name string) error {
 	}
 	if err := tx.Retract(e, snapshotCreatedAttr, info.Created); err != nil {
 		return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
-	}
-	for _, f := range forks {
-		if err := tx.Retract(f.Record, branchSnapshotAttr, name); err != nil {
-			return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
-		}
-		if err := tx.Retract(f.Record, branchAtLamportAttr, int64(at.Lamport)); err != nil {
-			return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
-		}
-		if err := tx.Retract(f.Record, branchAtReplicaAttr, int64(at.ReplicaID)); err != nil {
-			return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
-		}
-		if err := tx.Retract(f.Record, branchReplicaAttr, f.Replica); err != nil {
-			return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
-		}
 	}
 	if _, err := tx.Commit(); err != nil {
 		return fmt.Errorf("DeleteSnapshot %q: commit: %w", name, err)

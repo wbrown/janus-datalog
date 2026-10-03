@@ -16,18 +16,18 @@ import (
 // docs/proposals/BRANCHING_AND_SNAPSHOTS.md §12.1 (Slice B).
 //
 // Concurrency (§12.1, "Rollback safety"): TruncateTo serializes against other rollbacks
-// and snapshot deletions (rollbackMu), drains in-flight write transactions, and drops
-// writes started while it runs (they return ErrRollbackInProgress). An in-flight write
-// opened before the rollback is allowed to commit; its post-snapshot datoms are then erased
-// like any other Tx > markerMax. Reads are never locked — BadgerDB MVCC keeps them
-// consistent, and the cache in-flight window (BeginInFlight → delete → InvalidateRewind)
-// keeps them from caching a soon-to-be-stale value while the rewind is visible mid-flight.
+// (rollbackMu), drains in-flight write transactions, and drops writes started while it runs
+// (they return ErrRollbackInProgress). An in-flight write opened before the rollback is
+// allowed to commit; its post-snapshot datoms are then erased like any other Tx > markerMax.
+// Reads are never locked — BadgerDB MVCC keeps them consistent, and the cache in-flight
+// window (BeginInFlight → delete → InvalidateRewind) keeps them from caching a soon-to-be-
+// stale value while the rewind is visible mid-flight.
 func (d *Database) TruncateTo(name string) error {
 	if d.temporalTxID != nil {
 		return fmt.Errorf("TruncateTo: cannot rewind a read-only temporal handle (AsOf/History)")
 	}
 
-	// Serialize this whole operation against other rollbacks and snapshot deletions.
+	// Serialize this whole operation against other rollbacks.
 	d.rollbackMu.Lock()
 	defer d.rollbackMu.Unlock()
 
@@ -48,14 +48,31 @@ func (d *Database) TruncateTo(name string) error {
 		return err
 	}
 
-	// Hold writers so the clock rewind below cannot collide with a concurrent commit.
-	release := d.holdWriters(nil)
-	defer release()
+	// Gate new writers and drain in-flight ones so the clock rewind below cannot collide
+	// with a concurrent commit. drainCond.Wait releases d.mu while blocked, letting a
+	// draining commit reacquire it to deregister and signal; holding d.mu across the wait
+	// would deadlock against the very commits being waited on.
+	d.mu.Lock()
+	d.rollbackInProgress = true
+	for len(d.activeTx) > 0 {
+		if d.onDrainWait != nil {
+			d.onDrainWait()
+		}
+		d.drainCond.Wait()
+	}
+	d.mu.Unlock()
+
+	// Reopen the gate on every exit path below so writers resume.
+	defer func() {
+		d.mu.Lock()
+		d.rollbackInProgress = false
+		d.mu.Unlock()
+	}()
 
 	// A branch this database forked past the target inherited datoms the rewind would
 	// erase, leaving its fork point off its parent's timeline (§10.7). Fork records the
-	// branch in a transaction it opens before it looks up the snapshot, so a Fork under way
-	// when the rollback began was drained above and its record is read here, and a Fork
+	// branch in a transaction it opens before it looks up the snapshot, so a Fork begun
+	// before writers were held was drained above and its record is read here, and a Fork
 	// begun since is refused.
 	after, err := d.branchesForkedAfter(markerMax)
 	if err != nil {
@@ -65,8 +82,8 @@ func (d *Database) TruncateTo(name string) error {
 		return fmt.Errorf("TruncateTo %q: %w: %q", name, ErrBranchedAfterSnapshot, after)
 	}
 
-	// A fork record written past the floor stays when the point the branch reads as of is
-	// at or below the floor: that is the point of a snapshot the rewind keeps. Every other
+	// A fork record written past the floor stays when the snapshot point it records is at
+	// or below the floor: that is the point of a snapshot the rewind keeps. Every other
 	// record past the floor goes with the snapshot it names.
 	type forkPoint struct {
 		Record  datalog.Identity `datalog:"?b"`
@@ -119,37 +136,6 @@ func (d *Database) TruncateTo(name string) error {
 		d.cache.InvalidateRewind(keys)
 	}
 	return nil
-}
-
-// holdWriters turns away every write transaction opened from now on and waits until each
-// one already in flight, own aside, has committed or rolled back; the function it returns
-// lets writers in again. The caller holds rollbackMu, so no other rollback is holding
-// writers at the same time. drainCond.Wait releases d.mu while blocked, letting a draining
-// commit reacquire it to deregister and signal; holding d.mu across the wait would
-// deadlock against the very commits being waited on.
-func (d *Database) holdWriters(own *Transaction) (release func()) {
-	d.mu.Lock()
-	d.rollbackInProgress = true
-	for {
-		inFlight := len(d.activeTx)
-		if d.activeTx[own] {
-			inFlight--
-		}
-		if inFlight == 0 {
-			break
-		}
-		if d.onDrainWait != nil {
-			d.onDrainWait()
-		}
-		d.drainCond.Wait()
-	}
-	d.mu.Unlock()
-
-	return func() {
-		d.mu.Lock()
-		d.rollbackInProgress = false
-		d.mu.Unlock()
-	}
 }
 
 // touchedCacheKeys returns the deduplicated (E,A) cache keys for a set of datoms.

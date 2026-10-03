@@ -1392,14 +1392,24 @@ type arenaRef struct {
 //   chain []arenaRef   // root..self, each ancestor frozen at its child's fork point
 
 func (d *Database) Fork(name string) (*Database, error) {
+    snapshot, err := d.lookupSnapshot(name) // the named snapshot, with the point it captured
+    if err != nil {
+        return nil, err
+    }
+    if snapshot == nil {
+        return nil, ErrSnapshotNotFound     // a snapshot the database does not hold has nothing to fork
+    }
     forkAt, err := d.snapshotMarkerMax(name) // the named snapshot's point, the one AsOfSnapshot reads: ceiling for d.arena
     if err != nil {
-        return nil, err                     // a snapshot the database does not hold has nothing to fork
+        return nil, err
     }
     child := d.allocateChildPath(d.arena)   // next free ordinal under d.arena (label scheme §9.7)
+    replicaID := rand.Uint64()              // the branch's own write stream (W1, §9.8)
 
-    if err := d.store.putBranchRef(name, child, d.arena); err != nil {
-        return nil, err                     // branch registry (§9.6): a :db.branch/* record of the fork, carrying the child's (path, parent)
+    // branch registry (§9.6): a :db.branch/* record of the fork, carrying the snapshot's name
+    // and captured point, the branch's write identity, and the child's path, parent and fork point
+    if err := d.store.putBranchRef(name, snapshot.At, replicaID, child, d.arena, forkAt); err != nil {
+        return nil, err
     }
 
     // The child's chain = d's chain, but d.arena flips from leaf (unbounded) to a
@@ -1408,7 +1418,6 @@ func (d *Database) Fork(name string) (*Database, error) {
     chain[len(chain)-1].ceiling = forkAt
     chain = append(chain, arenaRef{path: child, ceiling: maxElementID})
 
-    replicaID := rand.Uint64()              // the branch's own write stream (W1, §9.8)
     clock := NewLamportClock(replicaID)
     clock.Restore(forkAt)                   // its writes order after everything it inherits
 
@@ -1579,8 +1588,11 @@ otherwise untouched.
 2. **One `Iterator`-interface addition:** `Key() []byte` — the merge needs raw-key
    ordering; trivial on `BadgerIterator`, which already holds the key.
 3. **Branch metadata as datoms: one `:db.branch/*` entity per fork** (the snapshot's
-   name, the fork point, the branch's write identity, and under C its path and parent),
-   per §9.6 — listed and resolved by query, not a side keyspace.
+   name, the point that snapshot captured, the branch's write identity, and under C its
+   path, parent and fork point), per §9.6 — listed and resolved by query, not a side
+   keyspace. A record counts while a snapshot of its name holds the point it records,
+   so deleting the snapshot, or superseding it with a later take of its name, releases
+   the branch.
 4. **Session handle is a writable `Database` clone** — unlike `AsOf`/`History`, which
    panic on write. `Fork` on an `AsOf` or `History` handle returns an error, as
    `Snapshot` and `TruncateTo` do: a temporal view is read-only, and a fork is a new
@@ -1672,8 +1684,7 @@ func (d *Database) Snapshots() ([]SnapshotInfo, error)
 // only the registry entry goes away.
 func (d *Database) DeleteSnapshot(name string) error
 
-// SnapshotInfo is the decoded marker. Fields are additive: the branching round adds
-// Path/Parent without changing existing callers (their absence ⇒ root).
+// SnapshotInfo is the decoded marker.
 type SnapshotInfo struct {
     Name    string
     At      datalog.ElementID // captured high-water point
@@ -1864,15 +1875,16 @@ prevents:
 | **Name-based API** — snapshots/rollback by `string`; the ref never appears in a signature | Snapshot identity widening `ElementID → (arena, frontier)` would change a return/param type |
 | **Methods on `*Database`, returning `*Database`** | A session handle (tree-path) would otherwise need a new type; instead the same methods work on root and session handles |
 | **All mutators return `error`** | The future descendant-guard (§10.7) is a new error case, not a new signature (vacuous linearly) |
-| **Marker stored as additive datoms** | The branching round adds `:db.snapshot/path` (etc.) attributes; old snapshots stay valid (no path ⇒ root) with no record migration — additivity is what datoms give natively |
+| **Registry stored as additive datoms** | The branching round records a branch's path, parent and fork point on its `:db.branch/*` entity and adds no attribute to a snapshot marker, so existing markers stay valid with no record migration — additivity is what datoms give natively |
 | **`RollbackTo`/`Fork` reserved; destructive op named `TruncateTo`** | No verb ever flips meaning from destructive → non-destructive when branching lands |
 
 **What generalizes underneath the stable surface** (none of it visible in the API):
 - `Snapshot` capture: `store.MaxElementID()` → the handle's `(arena, frontier)`.
-- Stored marker: today `:db.snapshot/at-{lamport,replica}`; under tree-path the same
-  entity gains `:db.snapshot/path` (and parent/fork attributes). Datoms are additive, so
-  old markers stay valid with no migration: a linear snapshot has no path, which the §10
-  ancestor-chain read path already treats as the root — the base of every chain.
+- Stored marker: `:db.snapshot/at-{lamport,replica}`, the same under tree-path. A marker
+  is written in the arena of the handle that took it, and a branch's path, parent and fork
+  point go on its `:db.branch/*` record (§11.4). Datoms are additive, so existing markers
+  stay valid with no migration: a linear snapshot sits in the root arena, the base of every
+  §10 ancestor chain.
 - `AsOfSnapshot` read path: `d.AsOf(eid)` → the §10 ancestor-chain merge; same handle
   type and signature.
 - `TruncateTo` scope: the whole linear timeline → the current branch's subtree, plus the
@@ -1909,12 +1921,13 @@ so the friendly "rollback" name never has to flip from destructive to non-destru
   as of that snapshot, the state `AsOfSnapshot(name)` reads, writing as its own write
   stream (§4.1) and resolving by the parent's schema. Its store is the parent's published
   copy-on-write version as of the snapshot's point (§9.6). Forking records the fork in
-  the parent as a `:db.branch/*` entity (§9.6), which `TruncateTo`'s descendant check
-  reads (§10.7) and `DeleteSnapshot` retracts with the snapshot. `Fork` opens the
-  transaction that records the fork before it looks up the snapshot, so a `TruncateTo` or
-  `DeleteSnapshot` that begins while it runs waits for the record, and a fork begun while
-  one of them runs is refused. It takes no snapshot of its own. The branch contract is a
-  set of tests every backend runs:
+  the parent as a `:db.branch/*` entity (§9.6) carrying the snapshot's name and the point
+  it captured, and `TruncateTo`'s descendant check reads the record (§10.7) while a
+  snapshot of that name holds that point. `Fork` opens the transaction that records the
+  fork before it looks up the snapshot, so a `TruncateTo` that starts holding writers
+  while it runs waits for the record, and a fork begun after a `TruncateTo` starts holding
+  writers is refused. It takes no snapshot of its own. The branch contract is a set of
+  tests every backend runs:
   - A branch holds what its parent holds as of the snapshot it forked from, whatever the
     parent wrote after the snapshot or forked from it before.
   - Neither the parent nor a sibling sees a branch's writes, and the branch does not
@@ -1930,9 +1943,11 @@ so the friendly "rollback" name never has to flip from destructive to non-destru
     parent and siblings unchanged.
   - `TruncateTo` refuses to pass a snapshot a branch was forked from. A rewind that keeps
     that snapshot keeps the record of the branch, and a rewind past it leaves none.
-  - Deleting a snapshot releases every branch forked from it.
-  - A `TruncateTo` or `DeleteSnapshot` that begins during a fork takes effect after it,
-    and a fork that begins during one is refused.
+  - Deleting a snapshot, or superseding it with a later take of its name, releases every
+    branch forked from it.
+  - A `TruncateTo` that begins during a fork takes effect after it, and a fork that begins
+    while a `TruncateTo` holds writers is refused and starts no branch.
+  - A fork under way when its snapshot is deleted completes, and the branch is released.
 
   `Fork` on Badger or `memory` returns an error until Phase B.
 - **Stage 1 (Phase B) — Arena-prefix as the branch axis of Badger and `memory`.** Add the

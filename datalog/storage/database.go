@@ -75,10 +75,9 @@ type Database struct {
 	// not block or touch the database.
 	onDrainWait func()
 
-	// Rollback (TruncateTo) and snapshot deletion coordination: rollbackInProgress and
-	// drainCond are guarded by mu (drainCond signals the drain as activeTx shrinks);
-	// rollbackMu serializes rollbacks and snapshot deletions against each other, each of
-	// which holds writers through holdWriters.
+	// Rollback (TruncateTo) coordination: rollbackInProgress and drainCond are guarded by
+	// mu (drainCond signals the rollback's drain as activeTx shrinks); rollbackMu
+	// serializes one rollback against another.
 	rollbackInProgress bool
 	drainCond          *sync.Cond
 	rollbackMu         sync.Mutex

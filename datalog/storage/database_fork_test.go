@@ -670,53 +670,87 @@ func drainSignal(d *Database) <-chan struct{} {
 }
 
 // TestForkDuringARollbackIsRefused: a Fork started while its parent is
-// rewinding, or deleting a snapshot, is refused like any write started then:
-// it returns ErrRollbackInProgress and records nothing. The operation is held
-// waiting on a transaction opened before it, and completes once that commits.
+// rewinding is refused like any write started then: it returns
+// ErrRollbackInProgress and records nothing. The rewind is held waiting on a
+// transaction opened before it, and completes once that commits.
 func TestForkDuringARollbackIsRefused(t *testing.T) {
 	forking, _ := forkingModes(t)
 	require.NotEmpty(t, forking)
 	for _, mode := range forking {
-		for _, op := range []struct {
-			name      string
-			run       func(d *Database) error
-			snapshots []string
-		}{
-			{"truncate_to", func(d *Database) error { return d.TruncateTo("cp1") }, []string{"cp0", "cp1"}},
-			{"delete_snapshot", func(d *Database) error { return d.DeleteSnapshot("cp1") }, []string{"cp0"}},
-		} {
-			t.Run(mode.name+"/"+op.name, func(t *testing.T) {
-				parent := createOptimizerModeDB(t, mode, DatabaseOptions{})
-				snapTestAddName(t, parent, "alice", "Alice")
-				_, err := parent.Snapshot("cp0")
-				require.NoError(t, err)
-				_, err = parent.Snapshot("cp1")
-				require.NoError(t, err)
-				waiting := drainSignal(parent)
+		t.Run(mode.name, func(t *testing.T) {
+			parent := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			snapTestAddName(t, parent, "alice", "Alice")
+			_, err := parent.Snapshot("cp0")
+			require.NoError(t, err)
+			_, err = parent.Snapshot("cp1")
+			require.NoError(t, err)
+			waiting := drainSignal(parent)
 
-				blocker := parent.NewTransaction()
-				require.NoError(t, blocker.Add(datalog.NewIdentity("bob"), datalog.NewKeyword(":person/name"), "Bob"))
-				done := make(chan error, 1)
-				go func() { done <- op.run(parent) }()
-				select {
-				case <-waiting:
-				case err := <-done:
-					t.Fatalf("%s finished with a transaction opened before it still in flight: %v", op.name, err)
-				}
+			blocker := parent.NewTransaction()
+			require.NoError(t, blocker.Add(datalog.NewIdentity("bob"), datalog.NewKeyword(":person/name"), "Bob"))
+			done := make(chan error, 1)
+			go func() { done <- parent.TruncateTo("cp1") }()
+			select {
+			case <-waiting:
+			case err := <-done:
+				t.Fatalf("TruncateTo finished with a transaction opened before it still in flight: %v", err)
+			}
 
-				_, err = parent.Fork("cp1")
-				require.ErrorIs(t, err, ErrRollbackInProgress)
+			_, err = parent.Fork("cp1")
+			require.ErrorIs(t, err, ErrRollbackInProgress)
 
-				_, err = blocker.Commit()
-				require.NoError(t, err)
-				require.NoError(t, <-done)
+			_, err = blocker.Commit()
+			require.NoError(t, err)
+			require.NoError(t, <-done)
 
-				require.Equal(t, op.snapshots, snapshotNames(t, parent))
-				require.NoError(t, parent.TruncateTo("cp0"))
-				require.Equal(t, []string{"Alice"}, snapTestNames(t, parent))
-			})
-		}
+			require.Equal(t, []string{"cp0", "cp1"}, snapshotNames(t, parent))
+			require.NoError(t, parent.TruncateTo("cp0"))
+			require.Equal(t, []string{"Alice"}, snapTestNames(t, parent))
+		})
 	}
+}
+
+// countingForks is a memory-tree store that counts the branches it starts.
+type countingForks struct {
+	*MemoryTreeStore
+	forks int
+}
+
+func (s *countingForks) Fork(ceiling datalog.ElementID) (Store, error) {
+	s.forks++
+	return s.MemoryTreeStore.Fork(ceiling)
+}
+
+// TestForkRefusedDuringARollbackStartsNoBranch: a Fork refused because its
+// parent is rewinding returns before its store starts a branch.
+func TestForkRefusedDuringARollbackStartsNoBranch(t *testing.T) {
+	store := &countingForks{MemoryTreeStore: NewMemoryTreeStore(nil)}
+	parent, err := NewDatabaseWithOptions(DatabaseOptions{Store: store})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, parent.Close()) })
+	_, err = parent.Snapshot("cp0")
+	require.NoError(t, err)
+	waiting := drainSignal(parent)
+
+	blocker := parent.NewTransaction()
+	require.NoError(t, blocker.Add(datalog.NewIdentity("bob"), datalog.NewKeyword(":person/name"), "Bob"))
+	done := make(chan error, 1)
+	go func() { done <- parent.TruncateTo("cp0") }()
+	select {
+	case <-waiting:
+	case err := <-done:
+		t.Fatalf("TruncateTo finished with a transaction opened before it still in flight: %v", err)
+	}
+
+	_, err = parent.Fork("cp0")
+	require.ErrorIs(t, err, ErrRollbackInProgress)
+	require.Zero(t, store.forks)
+
+	_, err = blocker.Commit()
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+	branchOf(t, parent, "cp0")
+	require.Equal(t, 1, store.forks)
 }
 
 // forkingDuring is a memory-tree store whose Fork, once the branch's store
@@ -748,50 +782,53 @@ func (s *forkingDuring) Fork(ceiling datalog.ElementID) (Store, error) {
 	return forked, nil
 }
 
-// TestForkSerializesWithARewindAndADeletion: a TruncateTo or a DeleteSnapshot
-// started while a Fork is under way takes effect after the Fork, never between
-// its lookup of the snapshot and its record of the branch. The rewind then sees
-// the branch and refuses, and the deletion releases it.
-func TestForkSerializesWithARewindAndADeletion(t *testing.T) {
-	open := func(t *testing.T) (*Database, *forkingDuring) {
-		store := &forkingDuring{
-			MemoryTreeStore: NewMemoryTreeStore(nil),
-			done:            make(chan error, 1),
-		}
-		parent, err := NewDatabaseWithOptions(DatabaseOptions{Store: store})
-		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, parent.Close()) })
-		store.waiting = drainSignal(parent)
-		snapTestAddName(t, parent, "alice", "Alice")
-		_, err = parent.Snapshot("cp0")
-		require.NoError(t, err)
-		snapTestAddName(t, parent, "bob", "Bob")
-		_, err = parent.Snapshot("cp1")
-		require.NoError(t, err)
-		return parent, store
+// openForkingDuring opens a database on a forkingDuring store holding Alice at
+// snapshot cp0 and Alice and Bob at snapshot cp1.
+func openForkingDuring(t *testing.T) (*Database, *forkingDuring) {
+	store := &forkingDuring{
+		MemoryTreeStore: NewMemoryTreeStore(nil),
+		done:            make(chan error, 1),
 	}
+	parent, err := NewDatabaseWithOptions(DatabaseOptions{Store: store})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, parent.Close()) })
+	store.waiting = drainSignal(parent)
+	snapTestAddName(t, parent, "alice", "Alice")
+	_, err = parent.Snapshot("cp0")
+	require.NoError(t, err)
+	snapTestAddName(t, parent, "bob", "Bob")
+	_, err = parent.Snapshot("cp1")
+	require.NoError(t, err)
+	return parent, store
+}
 
-	t.Run("truncate_to", func(t *testing.T) {
-		parent, store := open(t)
-		store.during = func() error { return parent.TruncateTo("cp0") }
-		branch := branchOf(t, parent, "cp1")
+// TestForkSerializesWithARewind: a TruncateTo started while a Fork is under way
+// takes effect after the Fork, never between its lookup of the snapshot and its
+// record of the branch. The rewind then sees the branch and refuses.
+func TestForkSerializesWithARewind(t *testing.T) {
+	parent, store := openForkingDuring(t)
+	store.during = func() error { return parent.TruncateTo("cp0") }
+	branch := branchOf(t, parent, "cp1")
 
-		require.ErrorIs(t, <-store.done, ErrBranchedAfterSnapshot)
-		require.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, parent))
-		require.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, branch))
-	})
-	t.Run("delete_snapshot", func(t *testing.T) {
-		parent, store := open(t)
-		store.during = func() error { return parent.DeleteSnapshot("cp1") }
-		branch := branchOf(t, parent, "cp1")
+	require.ErrorIs(t, <-store.done, ErrBranchedAfterSnapshot)
+	require.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, parent))
+	require.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, branch))
+}
 
-		require.NoError(t, <-store.done)
-		require.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, branch))
-		_, err := parent.Snapshot("cp1")
-		require.NoError(t, err)
-		require.NoError(t, parent.TruncateTo("cp0"))
-		require.Equal(t, []string{"Alice"}, snapTestNames(t, parent))
-	})
+// TestDeletingASnapshotDuringAForkReleasesTheBranch: a DeleteSnapshot that runs
+// between a Fork's lookup of the snapshot and its record of the branch lets the
+// Fork complete with the snapshot's state, and the branch stops no TruncateTo.
+func TestDeletingASnapshotDuringAForkReleasesTheBranch(t *testing.T) {
+	parent, store := openForkingDuring(t)
+	store.during = func() error { return parent.DeleteSnapshot("cp1") }
+	branch := branchOf(t, parent, "cp1")
+
+	require.NoError(t, <-store.done)
+	require.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, branch))
+	_, err := parent.Snapshot("cp1")
+	require.NoError(t, err)
+	require.NoError(t, parent.TruncateTo("cp0"))
+	require.Equal(t, []string{"Alice"}, snapTestNames(t, parent))
 }
 
 // TestDeletingASnapshotReleasesItsBranches: deleting the snapshot branches were
@@ -821,6 +858,63 @@ func TestDeletingASnapshotReleasesItsBranches(t *testing.T) {
 			require.Equal(t, []string{"Alice"}, snapTestNames(t, parent))
 		})
 	}
+}
+
+// pausingTake is a memory-tree store whose MaxElementID, once armed, reports
+// that it was reached and waits for resume before answering. Snapshot reads it
+// between its check of the name and the write of its marker, so an armed store
+// holds one take of a name at that point.
+type pausingTake struct {
+	*MemoryTreeStore
+	arm     chan struct{}
+	reached chan struct{}
+	resume  chan struct{}
+}
+
+func (s *pausingTake) MaxElementID() (datalog.ElementID, error) {
+	select {
+	case <-s.arm:
+		close(s.reached)
+		<-s.resume
+	default:
+	}
+	return s.MemoryTreeStore.MaxElementID()
+}
+
+// TestDeletingASnapshotReleasesABranchOfASupersededTake: two takes of one name
+// that both pass the name check leave one snapshot, and a branch forked from
+// the first take, between the two, is released when that snapshot is deleted.
+func TestDeletingASnapshotReleasesABranchOfASupersededTake(t *testing.T) {
+	store := &pausingTake{
+		MemoryTreeStore: NewMemoryTreeStore(nil),
+		arm:             make(chan struct{}, 1),
+		reached:         make(chan struct{}),
+		resume:          make(chan struct{}),
+	}
+	parent, err := NewDatabaseWithOptions(DatabaseOptions{Store: store})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, parent.Close()) })
+	snapTestAddName(t, parent, "alice", "Alice")
+	_, err = parent.Snapshot("t")
+	require.NoError(t, err)
+	snapTestAddName(t, parent, "bob", "Bob")
+
+	store.arm <- struct{}{}
+	secondTake := make(chan error, 1)
+	go func() {
+		_, err := parent.Snapshot("a")
+		secondTake <- err
+	}()
+	<-store.reached
+	_, err = parent.Snapshot("a")
+	require.NoError(t, err)
+	branchOf(t, parent, "a")
+	close(store.resume)
+	require.NoError(t, <-secondTake)
+
+	require.NoError(t, parent.DeleteSnapshot("a"))
+	require.NoError(t, parent.TruncateTo("t"))
+	require.Equal(t, []string{"Alice"}, snapTestNames(t, parent))
 }
 
 // TestTruncateToRefusesToPassALaterBranchOnABranch: a branch's own TruncateTo
