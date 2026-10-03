@@ -11,7 +11,9 @@ import (
 // tombstoned), so it disappears from History() as well as from current reads; the clock
 // resumes from the snapshot point so the next write does not collide. Snapshots taken after
 // the target are pruned along with the timeline they indexed; the target snapshot and
-// earlier ones survive. See docs/proposals/BRANCHING_AND_SNAPSHOTS.md §12.1 (Slice B).
+// earlier ones survive. The record of a fork from a surviving snapshot survives with it,
+// since a TruncateTo past that snapshot reads the record. See
+// docs/proposals/BRANCHING_AND_SNAPSHOTS.md §12.1 (Slice B).
 //
 // Concurrency (§12.1, "Rollback safety"): TruncateTo serializes against other rollbacks
 // (rollbackMu), drains in-flight write transactions, and drops writes started while it runs
@@ -53,6 +55,9 @@ func (d *Database) TruncateTo(name string) error {
 	d.mu.Lock()
 	d.rollbackInProgress = true
 	for len(d.activeTx) > 0 {
+		if d.onDrainWait != nil {
+			d.onDrainWait()
+		}
 		d.drainCond.Wait()
 	}
 	d.mu.Unlock()
@@ -64,12 +69,52 @@ func (d *Database) TruncateTo(name string) error {
 		d.mu.Unlock()
 	}()
 
+	// A branch this database forked past the target inherited datoms the rewind would
+	// erase, leaving its fork point off its parent's timeline (§10.7). Fork records the
+	// branch in a transaction it opens before it looks up the snapshot, so a Fork begun
+	// before writers were held was drained above and its record is read here, and a Fork
+	// begun since is refused.
+	after, err := d.branchesForkedAfter(markerMax)
+	if err != nil {
+		return fmt.Errorf("TruncateTo %q: %w", name, err)
+	}
+	if len(after) > 0 {
+		return fmt.Errorf("TruncateTo %q: %w: %q", name, ErrBranchedAfterSnapshot, after)
+	}
+
+	// A fork record written past the floor stays when the point the branch holds its
+	// parent's state as of is at or below the floor: that state is on the timeline the
+	// rewind keeps. Every other record past the floor goes with the rest of that timeline.
+	type forkPoint struct {
+		Record  datalog.Identity `datalog:"?b"`
+		Lamport int64            `datalog:"?lamport"`
+		Replica int64            `datalog:"?replica"`
+	}
+	var forks []forkPoint
+	if err := d.QueryInto(&forks, `[:find ?b ?lamport ?replica
+		:where [?b :db.branch/fork-lamport ?lamport]
+		       [?b :db.branch/fork-replica ?replica]]`); err != nil {
+		return fmt.Errorf("TruncateTo %q: %w", name, err)
+	}
+	kept := make(map[datalog.Identity]bool, len(forks))
+	for _, f := range forks {
+		if !markerMax.Less(datalog.ElementID{Lamport: uint64(f.Lamport), ReplicaID: uint64(f.Replica)}) {
+			kept[f.Record] = true
+		}
+	}
+
 	// Collect the datoms to remove and their touched (E,A) keys BEFORE deleting, so the
 	// cache window opens before the delete is visible. The set is stable: writers are
 	// drained and new ones dropped.
-	datoms, err := d.store.DatomsAfter(markerMax)
+	written, err := d.store.DatomsAfter(markerMax)
 	if err != nil {
 		return fmt.Errorf("TruncateTo %q: scan: %w", name, err)
+	}
+	datoms := make([]datalog.Datom, 0, len(written))
+	for _, datom := range written {
+		if !kept[datom.E] {
+			datoms = append(datoms, datom)
+		}
 	}
 	keys := touchedCacheKeys(datoms)
 

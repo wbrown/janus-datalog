@@ -42,8 +42,7 @@ var (
 	ErrRollbackInProgress = errors.New("write rejected: a rollback (TruncateTo) is in progress")
 )
 
-// SnapshotInfo is the decoded snapshot marker. Fields are additive: the branching round
-// adds Path/Parent without changing existing callers (their absence ⇒ root).
+// SnapshotInfo is the decoded snapshot marker.
 type SnapshotInfo struct {
 	Name    string
 	At      datalog.ElementID // captured high-water point (the AsOf read point)

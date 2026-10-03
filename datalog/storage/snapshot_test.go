@@ -10,12 +10,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// snapTestAddName writes a single :person/name fact in its own transaction.
-func snapTestAddName(t *testing.T, d *Database, idStr, name string) {
+// snapTestAddName writes a single :person/name fact in its own transaction and
+// returns the commit's ElementID.
+func snapTestAddName(t *testing.T, d *Database, idStr, name string) datalog.ElementID {
 	tx := d.NewTransaction()
 	require.NoError(t, tx.Add(datalog.NewIdentity(idStr), datalog.NewKeyword(":person/name"), name))
-	_, err := tx.Commit()
+	committed, err := tx.Commit()
 	require.NoError(t, err)
+	return committed
 }
 
 // snapTestNames returns the sorted set of :person/name values visible through a handle.
@@ -139,6 +141,89 @@ func TestDeleteSnapshot(t *testing.T) {
 			require.ErrorIs(t, d.DeleteSnapshot("nope"), ErrSnapshotNotFound)
 		})
 	}
+}
+
+// pausingCommit is a memory-tree store whose BeginTx, once armed, reports that
+// it was reached and waits for resume before answering. Transaction.Commit
+// calls it before writing anything, so an armed store holds one commit there.
+type pausingCommit struct {
+	*MemoryTreeStore
+	arm     chan struct{}
+	reached chan struct{}
+	resume  chan struct{}
+}
+
+func (s *pausingCommit) BeginTx() (StoreTx, error) {
+	select {
+	case <-s.arm:
+		close(s.reached)
+		<-s.resume
+	default:
+	}
+	return s.MemoryTreeStore.BeginTx()
+}
+
+// TestDeletingASnapshotHoldsNoWriteBack: deleting a snapshot is a write like
+// any other. It does not wait for a transaction opened before it, and a
+// transaction opened while it runs commits, so the deletion and the write both
+// land.
+func TestDeletingASnapshotHoldsNoWriteBack(t *testing.T) {
+	t.Run("opened_before", func(t *testing.T) {
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				_, err := d.Snapshot("x")
+				require.NoError(t, err)
+				waiting := drainSignal(d)
+
+				open := d.NewTransaction()
+				require.NoError(t, open.Add(datalog.NewIdentity("alice"), datalog.NewKeyword(":person/name"), "Alice"))
+				deleted := make(chan error, 1)
+				go func() { deleted <- d.DeleteSnapshot("x") }()
+				select {
+				case err := <-deleted:
+					require.NoError(t, err)
+				case <-waiting:
+					require.NoError(t, open.Rollback())
+					require.NoError(t, <-deleted)
+					t.Fatal("DeleteSnapshot waited on a transaction opened before it")
+				}
+
+				_, err = open.Commit()
+				require.NoError(t, err)
+				require.Equal(t, []string{"Alice"}, snapTestNames(t, d))
+				require.Empty(t, snapshotNames(t, d))
+			})
+		}
+	})
+	t.Run("opened_during", func(t *testing.T) {
+		store := &pausingCommit{
+			MemoryTreeStore: NewMemoryTreeStore(nil),
+			arm:             make(chan struct{}, 1),
+			reached:         make(chan struct{}),
+			resume:          make(chan struct{}),
+		}
+		d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, d.Close()) })
+		_, err = d.Snapshot("x")
+		require.NoError(t, err)
+
+		store.arm <- struct{}{}
+		deleted := make(chan error, 1)
+		go func() { deleted <- d.DeleteSnapshot("x") }()
+		<-store.reached
+		during := d.NewTransaction()
+		addErr := during.Add(datalog.NewIdentity("alice"), datalog.NewKeyword(":person/name"), "Alice")
+		_, commitErr := during.Commit()
+		close(store.resume)
+
+		require.NoError(t, <-deleted)
+		require.NoError(t, addErr)
+		require.NoError(t, commitErr)
+		require.Equal(t, []string{"Alice"}, snapTestNames(t, d))
+		require.Empty(t, snapshotNames(t, d))
+	})
 }
 
 func TestTruncateToRemovesLaterWrites(t *testing.T) {

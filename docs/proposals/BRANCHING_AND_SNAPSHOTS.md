@@ -84,15 +84,16 @@ encoding (§9.3) the front-runner over the merge-optimal frontier.
 
 ### Decisions taken (design conversation, 2026-06-26)
 
-- **Scope: full branching**, encoded as the tree-path prefix (C) branch axis
-  composed with `AsOf` for the time axis (§9.4). Frontier (A) is reserved for deferred
+- **Scope: full branching**, encoded as the tree-path prefix (C) branch axis in Badger
+  and `memory`, and as copy-on-write versions in the memory-tree store (§9.6), composed
+  with `AsOf` for the time axis (§9.4). Frontier (A) is reserved for deferred
   merge-back; content-addressed arenas (B) for the distributed future.
 - **Merge semantics: pure CRDT auto-resolve** — highest-Lamport for cardinality-one,
   add-wins for many, RGA for vector, `(A,V)`-LWW for unique; no conflict prompt
   (MV-Register a future opt-in). Merge-back itself is deferred per the use case.
 - **The remaining design/encoding decisions are resolved in the §9.6 register** — key
   encoding, label scheme, fork semantics, rollback default, hard-truncate policy,
-  `History()`, metadata storage, and clock model (all 2026-06-26).
+  `History()`, metadata storage, clock model, and memory-tree branches.
 
 ---
 
@@ -131,13 +132,15 @@ thing, and the scalar basis to a version-vector frontier.
 
 ## 3. Conceptual model and git mapping
 
-A branch is not a copy of data. All branches write into the same append-only
-Badger keyspace and the same eight indices. A branch is a small pair:
+A branch is not a copy of data. In Badger and `memory`, all branches write into the same
+append-only keyspace and the same eight indices. In the memory-tree store, a branch
+shares its parent's copy-on-write version and copies only the nodes it writes beneath
+(§9.6). A branch is a small pair:
 
 ```
 branch := (frontier, writeIdentity)
   frontier     : map[ReplicaID]uint64   // ReplicaID → max visible Lamport
-  writeIdentity: ReplicaID               // new-write stamp (frontier model); under encoding C, identity is the tree-path (§9.1)
+  writeIdentity: ReplicaID               // new-write stamp, one per branch in every encoding (W1, §9.8)
 ```
 
 | Git | Janus |
@@ -193,15 +196,16 @@ frontier a compact encoding of git ancestry:
   earlier writes (in its vector). Component-wise max of two closed frontiers stays
   closed, which is what makes merge clean (§6).
 
-The clock stays one shared counter per Database; writes are stamped with the active
-branch's ReplicaID. Consequences:
+Each branch is its own write stream: a fresh `ReplicaID` and its own Lamport clock,
+started past the newest ElementID the branch inherits. Consequences:
 
-- Single node, many branches ⇒ Lamports are globally unique and monotonic ⇒ no ties,
-  and LWW is "last submitted." Ties (and the arbitrary ReplicaID tiebreak) only appear
-  across multiple physical clocks.
-- A write on branch B advances the shared counter, so branch A's next write gets a
-  later Lamport. This is harmless: visibility is keyed on `(ReplicaID, Lamport)`, not
-  Lamport magnitude, so B's write stays invisible to A regardless.
+- ElementIDs are unique across a parent and all its branches through the `ReplicaID`,
+  whatever each clock reads, and every write on a branch orders after everything the
+  branch inherited.
+- Lamports are not unique across branches. Two branches' writes are compared only where
+  their histories meet, at a merge, and there a Lamport tie breaks on `ReplicaID`:
+  deterministic and arbitrary, as it is across physical clocks.
+- No clock is shared: each branch's clock advances only with that branch's own writes.
 
 ### 4.2 Worked example
 
@@ -349,16 +353,14 @@ whole-frontier merge only; partial / cherry-pick must either be forbidden for ve
 closure of what it grafts. (This is the same closure argument §10.8 relies on to show
 RGA resolves correctly across the ancestor chain.)
 
-**4. Lamport ties are deterministic but arbitrary**, and absent on a single node. When
-two writes carry the same Lamport (only possible across distinct physical clocks), the
-total order breaks the tie by `ReplicaID`. That is stable and deterministic (every
-reader agrees) but not semantically meaningful: the winner is "whichever replica id
-sorts higher," not "whichever happened later in wall-clock time" (Lamport clocks are
-not wall clocks). For the single-node game-engine use case this never arises: one
-shared clock (§4.1) hands out globally unique, monotonic Lamports, so there are no ties
-and LWW is "last submitted." Ties become relevant only if Janus later runs multiple
-physical clocks (the distributed future), at which point "the LWW winner of a true tie
-is arbitrary-but-deterministic" is the contract to document.
+**4. Lamport ties are deterministic but arbitrary.** When two writes carry the same
+Lamport, the total order breaks the tie by `ReplicaID`. That is stable and deterministic
+(every reader agrees) but not semantically meaningful: the winner is "whichever replica
+id sorts higher," not "whichever happened later in wall-clock time" (Lamport clocks are
+not wall clocks). Every branch is its own write stream with its own clock (§4.1), so two
+branches can write the same Lamport on one node. The tie matters only where their
+histories meet, at a merge, exactly as it does across physical clocks, and "the LWW
+winner of a true tie is arbitrary-but-deterministic" is the contract a merge documents.
 
 **5. Uniqueness is not a new hazard.** An earlier framing in the design conversation
 called uniqueness "the unsafe case" for merges. That was wrong, and §7 works through
@@ -600,7 +602,6 @@ filter it.
 - ❌ Read cost ∝ sibling breadth: reading a branch scans the shared keyspace and
   discards other branches' datoms. With many concurrent sessions, every read pays for
   every sibling.
-- ❌ Needs a write-identity per branch (overload `ReplicaID`, or widen `ElementID`).
 
 **B. Content-addressed arena DAG** (256-bit = a hash). Branch = a DAG of immutable,
 content-hashed datom-layers; reads merge-scan the reachable layers.
@@ -618,8 +619,7 @@ ancestry = prefix-match (one masked compare); the prefix is the leading key comp
   cost).
 - ✅ A subtree is a contiguous range: ending/dropping a session = one range delete;
   "everything under `session-42/*`" = one range scan.
-- ✅ Dissolves the write-identity problem: branch identity is the path. Reuses L85
-  sort-preservation (`EncodeFixed32`) and the existing index layout.
+- ✅ Reuses L85 sort-preservation (`EncodeFixed32`) and the existing index layout.
 - ❌ Merge breaks the tree. A path-prefix encodes fork perfectly (parent ⊑ child) but
   cannot encode merge: a merge node has two parents whose path-labels are not prefixes
   of one another, so no single prefix can mean "visible to both lineages." The
@@ -652,7 +652,6 @@ prefix test and a subtree a key range.
 | Drop a session/subtree | scan-all + test | DAG mark-sweep | one range delete |
 | Snapshot identity | a vector (not verifiable) | 32-byte hash (verifiable) | a prefix (positional) |
 | Bounded? | unbounded | unbounded | capped by 256 bits |
-| Write-identity | needs ReplicaID/ElementID change | in the layer hash | in the path (dissolved) |
 
 ### 9.3 Why C fits the game-engine use case
 
@@ -691,7 +690,7 @@ read scope  =  ( WHERE in the branch tree ,  WHEN in that branch's time )
 
 - Adopt C (tree-path prefix) as the branch axis, composed with the existing Lamport-Tx
   `AsOf` as the time axis. Smallest delta that delivers the whole primary use case;
-  reuses sort-preserving L85 + AsOf; dissolves write-identity.
+  reuses sort-preserving L85 + AsOf.
 - Keep depth shallow via periodic materialize-to-fresh-root compaction (rewrite a
   session's current state as a shallow node), reclaiming the 256-bit budget
   ("consolidate saves").
@@ -719,9 +718,17 @@ and a session never mutates it.
 Resolved 2026-06-26 unless marked deferred; trade-offs and full reasoning live in the
 cited sections.
 
-- **Branch-identity encoding (§9.1–§9.4): tree-path prefix (C)** as the branch axis,
-  composed with `AsOf` for the time axis. Frontier (A) reserved for deferred merge-back;
-  content-addressed arenas (B) for the distributed future.
+- **Branch-identity encoding (§9.1–§9.4): tree-path prefix (C)** as the branch axis of
+  the single-keyspace stores, Badger and its emulator `memory`, composed with `AsOf` for
+  the time axis. Frontier (A) reserved for deferred merge-back; content-addressed arenas
+  (B) for the distributed future.
+- **Memory-tree branches: copy-on-write versions, no prefix.** *Resolved 2026-10-02.* A
+  branch starts from its parent's published version and deletes from its own trees
+  everything that version holds past the point of the snapshot it forked from, the
+  rewind `TruncateTo` performs. Its trees then hold the state `AsOfSnapshot` reads and
+  nothing the parent writes after the fork, and siblings are separate roots. Every
+  backend meets one branch contract, run as the same tests. Backends differ only in how
+  they store a branch.
 - **Key encoding (§11.1, §11.5): flat 32-byte tree-path prefix** on every key (69→101
   bytes). The R5 group-id split (§9.7) is held as the escape hatch only if in-key depth
   budget becomes a problem.
@@ -738,8 +745,9 @@ cited sections.
   a possible future opt-in.
 - **`History()` across the chain (§10.11): merged lineage, fork-ceilings applied** — the
   raw datoms the session could have seen (own + ancestors up to fork), unresolved.
-- **Branch/snapshot metadata storage: system-attribute datoms** (`:db.snapshot/*`),
-  listed and resolved via Datalog queries. *Reversed 2026-06-26 from the earlier
+- **Branch/snapshot metadata storage: system-attribute datoms** (snapshot markers in
+  `:db.snapshot/*`, one `:db.branch/*` entity per fork), listed and resolved via Datalog
+  queries. *Reversed 2026-06-26 from the earlier
   "reserved Badger `refs/` keyspace via `GetMetadataUint64`/`SetMetadataUint64`" plan;
   full reasoning in §12.1 Slice A.* The operations the linear slice must support — list
   snapshots, see their causal ordering — are exactly what datoms give for free: a snapshot
@@ -750,8 +758,13 @@ cited sections.
   snapshot and prunes any taken later, leaving no dangling refs. The `refs/` keyspace and
   content-addressed metadata remain available for the branching/distribution rounds;
   dogfooding does not preclude them.
-- **Clock model (§4.1): one shared counter**, stamped per-arena — globally monotonic,
-  tie-free on a single node.
+- **Clock model (§4.1): one write stream per branch** (W1, §9.8) — each branch carries a
+  fresh `ReplicaID` and its own Lamport clock, started past the newest ElementID it
+  inherits. *Reversed 2026-10-02 from the earlier "one shared counter, stamped
+  per-arena".* ElementIDs are stored in every datom, so a `ReplicaID` shared across
+  branches leaves ids no later merge can tell apart (§4.1). With distinct `ReplicaID`s
+  the ids are unique whatever each clock reads, so each branch keeps its own clock and
+  branch databases share no state, as separate physical nodes cannot.
 - **Deferred (axis A only):** cache validity-stamp granularity (§8.4) — relevant only if
   a frontier edge is later introduced for merge-back.
 - **Open (build-time, §11.5):** key-suffix vs. decoded-tuple merge comparison — an
@@ -855,19 +868,21 @@ transient sims in overlays; R2 compaction is the relief valve for any long-lived
 session (run for read-perf anyway). Move to ORDPATH only if real trees prove lopsided
 enough to waste too many fixed-width bits.
 
-### 9.8 Write-identity for the frontier encoding (A)
+### 9.8 Write-identity
 
-Encoding C dissolves the write-identity question (branch identity is the path, §9.1),
-so this matters only for the deferred merge-back path, where a frontier edge (axis A)
-reappears (§9.3, §10.7). It is recorded here because it is the one place the design
-must reconcile with `DISTRIBUTED_JANUS.md`'s `NodeID`, and because the
-frontier-as-ancestry encoding has a precondition: one write-identity per branch (§4.1:
-two sibling branches written under the same `ReplicaID` cannot be separated by a
-scalar-per-replica frontier, because the sibling's higher Lamports subsume the
-other's). Three ways to supply that identity were considered:
+Every encoding stamps a branch's writes with a write identity of its own (§4.1, §9.6).
+Under C the tree-path says where a branch's datoms are stored. The `ReplicaID` in each
+ElementID says which write stream made the write, and that is what a merge, a frontier
+edge (axis A, §9.3, §10.7), and a second physical node all read. It is recorded here
+because it is the one place the design must reconcile with `DISTRIBUTED_JANUS.md`'s
+`NodeID`, and because the frontier-as-ancestry encoding has a precondition: one
+write-identity per branch (§4.1: two sibling branches written under the same
+`ReplicaID` cannot be separated by a scalar-per-replica frontier, because the sibling's
+higher Lamports subsume the other's). Three ways to supply that identity were
+considered:
 
-- **W1 — redefine `ReplicaID` as a "logical write-stream identity" (recommended for
-  A).** A branch allocates a fresh `ReplicaID` (`rand.Uint64()`, exactly as `Database`
+- **W1 — redefine `ReplicaID` as a "logical write-stream identity" (adopted for every
+  encoding, §9.6).** A branch allocates a fresh `ReplicaID` (`rand.Uint64()`, exactly as `Database`
   already mints replica ids) for its writes; the frontier is then a version vector over
   write-streams. A physical node × branch is one write-stream; a branch written by two
   physical nodes contributes two frontier components. No key-format change: it
@@ -890,10 +905,6 @@ other's). Three ways to supply that identity were considered:
   written by the same physical `ReplicaID` are again indistinguishable in the datom's
   stored coordinate, so a version vector cannot separate them. Not viable on its own;
   combining it with W1 is W1.
-
-This whole question is moot under the recommended encoding C and returns only if a
-frontier edge is introduced for O(1) merge-back; **W1 is the answer to reach for
-then.**
 
 ### 9.9 What the content-addressed arena (B) buys, and what it costs
 
@@ -1219,7 +1230,7 @@ The three flavors differ in what (if anything) they destroy:
 > when the rollback variants were first sketched, a gap in the reasoning, not just the
 > writeup.) **Decided (2026-06-26): forbid.** Hard-truncate errors if any descendant's
 > fork-point exceeds `T`; the caller must drop or re-base those children first. This is
-> cheap to enforce: the snapshot/branch registry (`:db.snapshot/*` datoms, §9.6) records each branch's parent and `forkLamport`
+> cheap to enforce: the snapshot/branch registry (`:db.snapshot/*` markers and `:db.branch/*` fork records, §9.6) records each branch's parent and `forkLamport`
 > (§11.2), so descendants past `T` are a direct lookup. Cascade (auto-invalidating
 > descendants) is a possible future opt-in, not the default. Soft rollback and
 > branch-on-rollback carry no such hazard: they delete nothing.
@@ -1380,13 +1391,37 @@ type arenaRef struct {
 //   arena ArenaPath    // this handle's own write target / leaf of the chain
 //   chain []arenaRef   // root..self, each ancestor frozen at its child's fork point
 
-func (d *Database) Fork(name string) (*Database, error) {
-    child := d.allocateChildPath(d.arena)   // next free ordinal under d.arena (label scheme §9.7)
-    forkAt, _ := d.store.MaxElementID()     // committed high-water (not Peek; §10.3): ceiling for d.arena
-
-    if err := d.store.putBranchRef(name, child, d.arena, forkAt); err != nil {
-        return nil, err                     // branch registry (§9.6): a :db.snapshot/* marker — name → (path, parent, forkLamport)
+func (d *Database) Fork(name string) (branch *Database, err error) {
+    tx := d.NewTransaction()                // the record's transaction, opened before the lookup (§12.2)
+    committed := false
+    defer func() {
+        if !committed {
+            err = errors.Join(err, tx.Rollback())
+        }
+    }()
+    snapshot, err := d.lookupSnapshot(name) // the named snapshot, with the point it captured
+    if err != nil {
+        return nil, err
     }
+    if snapshot == nil {
+        return nil, ErrSnapshotNotFound     // a snapshot the database does not hold has nothing to fork
+    }
+    forkAt, err := d.snapshotMarkerMax(name) // the named snapshot's point, the one AsOfSnapshot reads: ceiling for d.arena
+    if err != nil {
+        return nil, err
+    }
+    child := d.allocateChildPath(d.arena)   // next free ordinal under d.arena (label scheme §9.7)
+    replicaID := rand.Uint64()              // the branch's own write stream (W1, §9.8)
+
+    // branch registry (§9.6): a :db.branch/* record of the fork, carrying the snapshot's name
+    // and captured point, the branch's write identity, and the child's path, parent and fork point
+    if err := addBranchRecord(tx, name, snapshot.At, forkAt, replicaID, child, d.arena); err != nil {
+        return nil, err
+    }
+    if _, err := tx.Commit(); err != nil {
+        return nil, err
+    }
+    committed = true
 
     // The child's chain = d's chain, but d.arena flips from leaf (unbounded) to a
     // ceiling-bounded ancestor, and the new child becomes the unbounded leaf.
@@ -1394,8 +1429,11 @@ func (d *Database) Fork(name string) (*Database, error) {
     chain[len(chain)-1].ceiling = forkAt
     chain = append(chain, arenaRef{path: child, ceiling: maxElementID})
 
+    clock := NewLamportClock(replicaID)
+    clock.Restore(forkAt)                   // its writes order after everything it inherits
+
     return &Database{
-        store: d.store, schema: d.schema, clock: d.clock, replicaID: d.replicaID,
+        store: d.store, schema: d.schema, clock: clock, replicaID: replicaID,
         cache: NewCache(),          // own (E,A) cache layer; ancestors served from shared (§10.9)
         arena: child,
         chain: chain,
@@ -1403,10 +1441,10 @@ func (d *Database) Fork(name string) (*Database, error) {
 }
 ```
 
-Writes from `child.NewTransaction()` stamp keys with `child.arena` (the write target);
-Lamports still come from the shared `d.clock`, so they stay globally monotonic and
-tie-free (§4.1). `Reset` / branch-on-rollback (§10.7) is just `Fork` with `forkAt` set
-to a past `T`.
+Writes from `child.NewTransaction()` stamp keys with `child.arena` (the write target)
+and ElementIDs with the child's own `ReplicaID`, from a clock started past `forkAt`
+(§4.1). Every fork is branch-on-rollback (§10.7): `forkAt` is the point of the snapshot
+it names.
 
 ### 11.3 Read path: `ceilingIterator` + `ancestorMergeIterator`
 
@@ -1554,15 +1592,22 @@ otherwise untouched.
 
 ### 11.4 Architectural commitments embedded here (confirm before building)
 
-1. **Key format +32 bytes** in all eight indices, plus the root-arena migration
-   (§11.1) — the largest commitment. Confirmed 2026-06-26 (flat prefix chosen over the
-   R5 split; §11.5).
+1. **Key format +32 bytes** in all eight indices of Badger and `memory`, the stores built
+   on `BinaryKeyEncoder`, plus the root-arena migration (§11.1) — the largest
+   commitment. Confirmed 2026-06-26 (flat prefix chosen over the R5 split; §11.5). The
+   memory-tree store keeps typed datoms in its trees and has no key to widen (§9.6).
 2. **One `Iterator`-interface addition:** `Key() []byte` — the merge needs raw-key
    ordering; trivial on `BadgerIterator`, which already holds the key.
-3. **Branch metadata as `:db.snapshot/*` datoms** (`name → path, parent, forkLamport`),
-   per §9.6 — listed and resolved by query, not a side keyspace.
+3. **Branch metadata as datoms: one `:db.branch/*` entity per fork** (the snapshot's
+   name, the point that snapshot captured, the point the branch holds its parent's state
+   as of, the branch's write identity, and under C its path and parent), per §9.6 —
+   listed and resolved by query, not a side keyspace. A record counts while a snapshot
+   of its name holds the captured point it records, so deleting the snapshot, or a later
+   take of its name that captures another point, releases the branch.
 4. **Session handle is a writable `Database` clone** — unlike `AsOf`/`History`, which
-   panic on write.
+   panic on write. `Fork` on an `AsOf` or `History` handle returns an error, as
+   `Snapshot` and `TruncateTo` do: a temporal view is read-only, and a fork is a new
+   writable timeline.
 
 ### 11.5 Scrutiny points
 
@@ -1585,7 +1630,8 @@ otherwise untouched.
 ## 12. Staged implementation path
 
 Each stage is independently shippable and reuses prior machinery. This path assumes
-the §9.4 recommendation: tree-path axis C now, frontier A / arena B deferred.
+the §9.4 recommendation: tree-path axis C for Badger and `memory`, copy-on-write
+versions for the memory-tree store (§9.6), frontier A / arena B deferred.
 
 ### 12.1 Minimum linear slice (A + B) — ships first
 
@@ -1649,8 +1695,7 @@ func (d *Database) Snapshots() ([]SnapshotInfo, error)
 // only the registry entry goes away.
 func (d *Database) DeleteSnapshot(name string) error
 
-// SnapshotInfo is the decoded marker. Fields are additive: the branching round adds
-// Path/Parent without changing existing callers (their absence ⇒ root).
+// SnapshotInfo is the decoded marker.
 type SnapshotInfo struct {
     Name    string
     At      datalog.ElementID // captured high-water point
@@ -1669,6 +1714,18 @@ namespace, exactly as Datomic's `:db/*` datoms are.
 `AsOfSnapshot` returns a read-only handle: an `AsOf`/`History` handle rejects writes
 (`NewTransaction` panics on a temporal handle). So Slice A is "name a checkpoint;
 query/operate as of it"; it does not change the live, writable DB.
+
+**Snapshotting an `AsOf` view (outside this slice).** `Snapshot` names the current state
+of the handle it is called on, and it rejects an `AsOf` or `History` handle. Naming a past
+point `T` through `d.AsOf(T).Snapshot(name)` needs two things this slice does not have:
+
+- **A writer for the marker.** The temporal handle rejects writes, so the marker is
+  written through the live handle.
+- **A point that precedes its marker.** Semantics (i) places a snapshot at its marker's
+  own high-water, `markerMax`: `TruncateTo` deletes above it and `AsOfSnapshot` reads at
+  it. A marker for `AsOf(T)` is written after `T`, so both would land where the marker
+  was written. Supporting it changes semantics (i) for such a snapshot: `AsOfSnapshot`
+  reads at `T`, and `TruncateTo` removes what was written after `T` and keeps the marker.
 
 **Slice B — destructive rollback (`TruncateTo`).** The only piece with new machinery.
 
@@ -1829,15 +1886,16 @@ prevents:
 | **Name-based API** — snapshots/rollback by `string`; the ref never appears in a signature | Snapshot identity widening `ElementID → (arena, frontier)` would change a return/param type |
 | **Methods on `*Database`, returning `*Database`** | A session handle (tree-path) would otherwise need a new type; instead the same methods work on root and session handles |
 | **All mutators return `error`** | The future descendant-guard (§10.7) is a new error case, not a new signature (vacuous linearly) |
-| **Marker stored as additive datoms** | The branching round adds `:db.snapshot/path` (etc.) attributes; old snapshots stay valid (no path ⇒ root) with no record migration — additivity is what datoms give natively |
+| **Registry stored as additive datoms** | The branching round records a branch's path and parent on its `:db.branch/*` entity and adds no attribute to a snapshot marker, so existing markers stay valid with no record migration — additivity is what datoms give natively |
 | **`RollbackTo`/`Fork` reserved; destructive op named `TruncateTo`** | No verb ever flips meaning from destructive → non-destructive when branching lands |
 
 **What generalizes underneath the stable surface** (none of it visible in the API):
 - `Snapshot` capture: `store.MaxElementID()` → the handle's `(arena, frontier)`.
-- Stored marker: today `:db.snapshot/at-{lamport,replica}`; under tree-path the same
-  entity gains `:db.snapshot/path` (and parent/fork attributes). Datoms are additive, so
-  old markers stay valid with no migration: a linear snapshot has no path, which the §10
-  ancestor-chain read path already treats as the root — the base of every chain.
+- Stored marker: `:db.snapshot/at-{lamport,replica}`, the same under tree-path. A marker
+  is written in the arena of the handle that took it, and a branch's path, parent and fork
+  point go on its `:db.branch/*` record (§11.4). Datoms are additive, so existing markers
+  stay valid with no migration: a linear snapshot sits in the root arena, the base of every
+  §10 ancestor chain.
 - `AsOfSnapshot` read path: `d.AsOf(eid)` → the §10 ancestor-chain merge; same handle
   type and signature.
 - `TruncateTo` scope: the whole linear timeline → the current branch's subtree, plus the
@@ -1869,15 +1927,53 @@ so the friendly "rollback" name never has to flip from destructive to non-destru
 - **Stage 0 — Snapshots (tags) over AsOf.** Persist `name → Tx`; `AsOfSnapshot(name)`
   wraps existing `AsOf`. Pure metadata, no resolution change. Immediately useful and
   independent of the encoding choice.
-- **Stage 1 — Arena-prefix as the branch axis.** Add the leading raw 32-byte tree-path
-  prefix to keys (binary byte order is sort-preserving); scope reads to an ancestor-chain range
-  set; reuse Lamport-Tx `AsOf` as the time axis. The world root is the empty prefix —
-  with one root and no forks, behavior is identical to today (regression-test that
-  equivalence).
-- **Stage 2 — Session/branch handles.** `Fork` allocates a child sub-prefix (O(1));
-  reads merge the ancestor-chain ranges by Tx-descending and run the existing CRDT
-  resolution over the merged stream (full mechanism in §10); writes go to the handle's
-  own range.
+- **Phase A — Branch handles on the memory-tree store.** `Fork(name)` takes the name of a
+  snapshot the database holds and returns a writable handle holding the database's state
+  as of that snapshot, the state `AsOfSnapshot(name)` reads, writing as its own write
+  stream (§4.1) and resolving by the parent's schema. Its store is the parent's published
+  copy-on-write version as of the snapshot's point (§9.6). Forking records the fork in
+  the parent as a `:db.branch/*` entity (§11.4) carrying the snapshot's name, the point it
+  captured, and the point the branch holds the parent's state as of. While a snapshot of
+  that name holds the captured point, `TruncateTo`'s descendant check (§10.7) refuses to
+  rewind below the branch's point. `Fork` opens the transaction that records the fork
+  before it looks up the snapshot, so a `TruncateTo` that starts holding writers while it
+  runs waits for the record, and a fork begun after a `TruncateTo` starts holding writers
+  is refused. It takes no snapshot of its own. The branch contract is a set of tests every
+  backend runs:
+  - A branch holds what its parent holds as of the snapshot it forked from, whatever the
+    parent wrote after the snapshot or forked from it before.
+  - Neither the parent nor a sibling sees a branch's writes, and the branch does not
+    see what the parent writes after the snapshot.
+  - Siblings committing concurrently with each other and with the parent each end with
+    what they inherited plus their own writes.
+  - A branch's writes carry its own `ReplicaID` and order after every datom it inherited.
+  - A branch holds everything imported into it, resolves by its parent's schema, and
+    takes its snapshots at points it holds.
+  - `AsOf` on a branch shows the branch at that point, and `History` shows what it
+    inherited plus its own writes.
+  - `TruncateTo` on a branch returns it to its state at the snapshot and leaves the
+    parent and siblings unchanged.
+  - `TruncateTo` refuses to rewind below the point a branch holds its parent's state as
+    of while the snapshot the branch was forked from holds the point it captured, even
+    when another snapshot was taken between that capture and its marker. A rewind that
+    keeps that state keeps the record of the branch, and a rewind past it leaves none.
+  - Deleting a snapshot, or a later take of its name that captures another point,
+    releases every branch forked from it.
+  - A `TruncateTo` that begins during a fork takes effect after it, and a fork that begins
+    while a `TruncateTo` holds writers is refused and starts no branch.
+  - A fork under way when its snapshot is deleted completes, and the branch is released.
+
+  `Fork` on Badger or `memory` returns an error until Phase B.
+- **Stage 1 (Phase B) — Arena-prefix as the branch axis of Badger and `memory`.** Add the
+  leading raw 32-byte tree-path prefix to keys (binary byte order is sort-preserving);
+  scope reads to an ancestor-chain range set; reuse Lamport-Tx `AsOf` as the time axis.
+  The world root is the empty prefix — with one root and no forks, behavior is identical
+  to today (regression-test that equivalence).
+- **Stage 2 (Phase B) — Session/branch handles on Badger and `memory`.** `Fork`
+  allocates a child sub-prefix (O(1)); reads merge the ancestor-chain ranges by
+  Tx-descending and run the existing CRDT resolution over the merged stream (full
+  mechanism in §10); writes go to the handle's own range. Phase A's contract tests run
+  unchanged against both stores.
   Immutable-ancestor caching (§9.5): shared permanent cache for ancestors + thin
   per-session cache for divergence.
 - **Stage 3 — Rollback + session lifecycle.** Soft rollback = `AsOf(T)` read-point

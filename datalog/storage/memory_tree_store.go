@@ -315,6 +315,39 @@ func (s *MemoryTreeStore) NewReadSession() (ReadSession, error) {
 	return &memoryTreeReadSession{version: s.versions.read()}, nil
 }
 
+// Fork returns a branch store holding what this store's published version held
+// as of ceiling, and writing independently of this store. It starts from the
+// published version and deletes from its own trees every datom written past
+// ceiling, the rewind TruncateTo performs. Neither store sees what the other
+// commits afterward: a version is immutable, and a builder copies every node it
+// did not create, so the two share each node until one of them writes beneath
+// it. A batch AssertEach left open is not published, and the fork does not hold
+// it.
+//
+// The fork starts with no metadata. The replica id is a store's write identity,
+// and a branch writes as a replica of its own, assigned by the Database that
+// opens it. The encoder is shared: it is configuration, read and never written.
+func (s *MemoryTreeStore) Fork(ceiling datalog.ElementID) (Store, error) {
+	if err := s.checkOpen(); err != nil {
+		return nil, err
+	}
+	versions := &versionHolder{}
+	versions.current.Store(s.versions.read())
+	fork := &MemoryTreeStore{
+		versions: versions,
+		encoder:  s.encoder,
+		metadata: make(map[string]uint64),
+	}
+	past, err := fork.DatomsAfter(ceiling)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := fork.DeleteDatoms(past); err != nil {
+		return nil, err
+	}
+	return fork, nil
+}
+
 func (s *MemoryTreeStore) BeginTx() (StoreTx, error) {
 	if err := s.checkOpen(); err != nil {
 		return nil, err

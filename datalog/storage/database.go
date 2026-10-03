@@ -69,6 +69,12 @@ type Database struct {
 	// reader deterministically in that window. See the cache stale-read tests.
 	onCommitWindow func()
 
+	// onDrainWait, if set, is invoked when a rollback finds a write in flight and
+	// is about to wait for it, with mu held. Test-only (nil in production); lets a
+	// test act at the moment the rollback is waiting on an in-flight write. It must
+	// not block or touch the database.
+	onDrainWait func()
+
 	// Rollback (TruncateTo) coordination: rollbackInProgress and drainCond are guarded by
 	// mu (drainCond signals the rollback's drain as activeTx shrinks); rollbackMu
 	// serializes one rollback against another.
@@ -126,6 +132,11 @@ type DatabaseOptions struct {
 	// scratch space to hold data that came from somewhere else — a dump loaded
 	// into a persistent backend — rather than a location the data lives at.
 	RemovePathOnClose bool
+	// schemaAsGiven makes Schema the database's schema exactly as given, nil
+	// included: no schema is inferred from the store. Fork sets it, so a branch
+	// resolves by its parent's schema and a parent with none forks a branch with
+	// none.
+	schemaAsGiven bool
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -262,7 +273,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	// existing database). A supplied schema is authoritative and wins entirely —
 	// no inference. On an empty store this yields an empty schema.
 	effectiveSchema := opts.Schema
-	if effectiveSchema == nil {
+	if effectiveSchema == nil && !opts.schemaAsGiven {
 		inferred, ierr := inferSchemaFromStore(store)
 		if ierr != nil {
 			closeOwnedStore()
