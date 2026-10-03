@@ -10,12 +10,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// snapTestAddName writes a single :person/name fact in its own transaction.
-func snapTestAddName(t *testing.T, d *Database, idStr, name string) {
+// snapTestAddName writes a single :person/name fact in its own transaction and
+// returns the commit's ElementID.
+func snapTestAddName(t *testing.T, d *Database, idStr, name string) datalog.ElementID {
 	tx := d.NewTransaction()
 	require.NoError(t, tx.Add(datalog.NewIdentity(idStr), datalog.NewKeyword(":person/name"), name))
-	_, err := tx.Commit()
+	committed, err := tx.Commit()
 	require.NoError(t, err)
+	return committed
 }
 
 // snapTestNames returns the sorted set of :person/name values visible through a handle.

@@ -11,7 +11,9 @@ import (
 // tombstoned), so it disappears from History() as well as from current reads; the clock
 // resumes from the snapshot point so the next write does not collide. Snapshots taken after
 // the target are pruned along with the timeline they indexed; the target snapshot and
-// earlier ones survive. See docs/proposals/BRANCHING_AND_SNAPSHOTS.md §12.1 (Slice B).
+// earlier ones survive. A branch recorded on a surviving snapshot survives with it, since
+// a TruncateTo past that snapshot reads the record. See
+// docs/proposals/BRANCHING_AND_SNAPSHOTS.md §12.1 (Slice B).
 //
 // Concurrency (§12.1, "Rollback safety"): TruncateTo serializes against other rollbacks
 // (rollbackMu), drains in-flight write transactions, and drops writes started while it runs
@@ -64,12 +66,32 @@ func (d *Database) TruncateTo(name string) error {
 		d.mu.Unlock()
 	}()
 
+	// A branch this database forked past the target inherited datoms the rewind would
+	// erase, leaving its fork point off its parent's timeline (§10.7). The check runs after
+	// the drain: a Fork whose record committed before the rollback is seen here, and one
+	// whose record lands during it is dropped like any other write started then.
+	after, err := d.branchesForkedAfter(markerMax)
+	if err != nil {
+		return fmt.Errorf("TruncateTo %q: %w", name, err)
+	}
+	if len(after) > 0 {
+		return fmt.Errorf("TruncateTo %q: %w: %q", name, ErrBranchedAfterSnapshot, after)
+	}
+
 	// Collect the datoms to remove and their touched (E,A) keys BEFORE deleting, so the
 	// cache window opens before the delete is visible. The set is stable: writers are
-	// drained and new ones dropped.
-	datoms, err := d.store.DatomsAfter(markerMax)
+	// drained and new ones dropped. A branch record written past the floor records a branch
+	// of a snapshot the rewind keeps — one past the floor would have stopped it above — so
+	// the record stays.
+	written, err := d.store.DatomsAfter(markerMax)
 	if err != nil {
 		return fmt.Errorf("TruncateTo %q: scan: %w", name, err)
+	}
+	datoms := make([]datalog.Datom, 0, len(written))
+	for _, datom := range written {
+		if datom.A != snapshotBranchReplicaAttr {
+			datoms = append(datoms, datom)
+		}
 	}
 	keys := touchedCacheKeys(datoms)
 

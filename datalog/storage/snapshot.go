@@ -183,6 +183,15 @@ func (d *Database) DeleteSnapshot(name string) error {
 	}
 
 	e := snapshotEntity(name)
+	// A branch's record also names the branch's write stream. Its retract is not
+	// cleanup: a snapshot that takes the name later reuses this entity, and the
+	// attribute left behind would make that snapshot read as a branch.
+	var branchReplica int64
+	isBranch, err := d.QueryOneInto(&branchReplica, queryGetAttr, e, snapshotBranchReplicaAttr)
+	if err != nil {
+		return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
+	}
+
 	tx := d.NewTransaction()
 	committed := false
 	defer func() {
@@ -204,6 +213,11 @@ func (d *Database) DeleteSnapshot(name string) error {
 	}
 	if err := tx.Retract(e, snapshotCreatedAttr, info.Created); err != nil {
 		return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
+	}
+	if isBranch {
+		if err := tx.Retract(e, snapshotBranchReplicaAttr, branchReplica); err != nil {
+			return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
+		}
 	}
 	if _, err := tx.Commit(); err != nil {
 		return fmt.Errorf("DeleteSnapshot %q: commit: %w", name, err)
@@ -241,17 +255,32 @@ func (d *Database) lookupSnapshot(name string) (*SnapshotInfo, error) {
 	}, nil
 }
 
-// snapshotMarkerMax returns the highest Tx of a snapshot's marker entity — the snapshot's
-// effective point. AsOfSnapshot reads there and TruncateTo truncates there. It is always
-// non-zero (a marker always has datoms), which keeps an empty-database snapshot from
-// resolving to the zero ElementID the matcher reserves for History mode.
+// snapshotMarkerMax returns the highest Tx of a snapshot's marker — the snapshot's
+// effective point. AsOfSnapshot reads there, TruncateTo truncates there, and a branch
+// forked from the snapshot reads its parent as of there. The marker is the snapshot's
+// name, captured point and creation time; a branch recorded on the marker entity later is
+// not part of it, so recording one leaves the point where it was. It is always non-zero
+// (a marker always has datoms), which keeps an empty-database snapshot from resolving to
+// the zero ElementID the matcher reserves for History mode.
 func (d *Database) snapshotMarkerMax(name string) (datalog.ElementID, error) {
-	mm, ok, err := d.store.MaxTxForEntity(snapshotEntity(name))
+	type markerWrite struct {
+		Tx datalog.ElementID `datalog:"?tx"`
+	}
+	var written []markerWrite
+	err := d.QueryInto(&written, `[:find ?tx :in $ ?s [?a ...] :where [?s ?a _ ?tx]]`,
+		snapshotEntity(name),
+		[]datalog.Keyword{snapshotNameAttr, snapshotAtLamportAttr, snapshotAtReplicaAttr, snapshotCreatedAttr})
 	if err != nil {
 		return datalog.ElementID{}, fmt.Errorf("snapshot %q: locate marker: %w", name, err)
 	}
-	if !ok {
+	if len(written) == 0 {
 		return datalog.ElementID{}, fmt.Errorf("snapshot %q: marker entity has no datoms", name)
 	}
-	return mm, nil
+	newest := written[0].Tx
+	for _, w := range written[1:] {
+		if newest.Less(w.Tx) {
+			newest = w.Tx
+		}
+	}
+	return newest, nil
 }

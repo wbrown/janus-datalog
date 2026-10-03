@@ -25,6 +25,10 @@ var errMemoryTreeStoreClosed = errors.New("memory tree store is closed")
 type MemoryTreeStore struct {
 	versions *versionHolder
 
+	// lineage is the forks that made this store a branch, oldest first, and is
+	// empty for a store that is no one's branch. Every read goes through it.
+	lineage lineage
+
 	// encoder serves the boundaries only — JDZL and EDN export and import.
 	// Nothing on the read or write path consults it, which is the point.
 	encoder *BinaryKeyEncoder
@@ -47,6 +51,68 @@ type MemoryTreeStore struct {
 	batchMu sync.Mutex
 	pending *versionBuilder
 	bulk    []*datalog.Datom
+}
+
+// forkCeiling is one fork in a branch store's lineage: the point the branch
+// reads its parent's trees as of, and the newest ElementID those trees held
+// when it forked. A datom newer than held was written on the branch's side of
+// the fork.
+type forkCeiling struct {
+	ceiling datalog.ElementID
+	held    datalog.ElementID
+}
+
+// lineage is the forks that made a store a branch, oldest first.
+type lineage []forkCeiling
+
+// forkedAt is the lineage of a branch forked, as of ceiling, from a store with
+// this lineage whose trees held nothing newer than held.
+func (l lineage) forkedAt(ceiling, held datalog.ElementID) lineage {
+	return append(append(lineage(nil), l...), forkCeiling{ceiling: ceiling, held: held})
+}
+
+// reads reports whether a store with this lineage reads the datom written at
+// tx. Walking back from the newest fork: a datom newer than what the trees held
+// at a fork was written after it, on this side, and is read; one past the
+// fork's ceiling was written before the fork but after the point the branch
+// reads its parent at, and is not; one at or below the ceiling is inherited,
+// and the fork before decides it.
+func (l lineage) reads(tx datalog.ElementID) bool {
+	for i := len(l) - 1; i >= 0; i-- {
+		if l[i].held.Less(tx) {
+			return true
+		}
+		if l[i].ceiling.Less(tx) {
+			return false
+		}
+	}
+	return true
+}
+
+// scan opens a scan of version as a store with this lineage reads it.
+func (l lineage) scan(version *storeVersion, bound ScanBound) (Iterator, error) {
+	iter, err := version.scan(bound)
+	if err != nil || len(l) == 0 {
+		return iter, err
+	}
+	return &lineageIterator{Iterator: iter, lineage: l}, nil
+}
+
+// lineageIterator walks a branch store's scan, passing over the datoms its
+// lineage does not read. The datom, its ElementID, Seek and the intake count
+// are the inner scan's.
+type lineageIterator struct {
+	Iterator
+	lineage lineage
+}
+
+func (it *lineageIterator) Next() bool {
+	for it.Iterator.Next() {
+		if it.lineage.reads(it.Iterator.ElementID()) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewMemoryTreeStore returns an empty typed store.
@@ -229,7 +295,7 @@ func (s *MemoryTreeStore) Scan(bound ScanBound) (Iterator, error) {
 	if err := s.checkOpen(); err != nil {
 		return nil, err
 	}
-	return s.versions.read().scan(bound)
+	return s.lineage.scan(s.versions.read(), bound)
 }
 
 // ScanKeysOnly is Scan. The distinction exists for a backend whose values live
@@ -239,11 +305,14 @@ func (s *MemoryTreeStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
 	return s.Scan(bound)
 }
 
+// MaxElementID is the newest ElementID the trees hold, counting a datom the
+// lineage does not read: a branch's clock restores from it, so everything the
+// branch writes orders after everything its trees hold.
 func (s *MemoryTreeStore) MaxElementID() (datalog.ElementID, error) {
 	if err := s.checkOpen(); err != nil {
 		return datalog.ElementID{}, err
 	}
-	return maxElementIDByScan(s)
+	return maxElementIDByScan(&memoryTreeReadSession{version: s.versions.read()})
 }
 
 func (s *MemoryTreeStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {
@@ -312,7 +381,40 @@ func (s *MemoryTreeStore) NewReadSession() (ReadSession, error) {
 	if err := s.checkOpen(); err != nil {
 		return nil, err
 	}
-	return &memoryTreeReadSession{version: s.versions.read()}, nil
+	return &memoryTreeReadSession{version: s.versions.read(), lineage: s.lineage}, nil
+}
+
+// Fork returns a branch store: it starts from the current published version,
+// reads what that version holds as of ceiling, and writes independently of this
+// store. Neither store sees what the other commits afterward: a version is
+// immutable, and a builder copies every node it did not create, so the two
+// share each node until one of them writes beneath it. A batch AssertEach left
+// open is not published, and the fork does not hold it.
+//
+// What the version holds past ceiling stays in the shared trees, and the
+// branch does not read it. The branch records ceiling with the newest ElementID
+// the version holds: whatever is newer than that, the branch wrote itself.
+//
+// The fork starts with no metadata. The replica id is a store's write identity,
+// and a branch writes as a replica of its own, assigned by the Database that
+// opens it. The encoder is shared: it is configuration, read and never written.
+func (s *MemoryTreeStore) Fork(ceiling datalog.ElementID) (Store, error) {
+	if err := s.checkOpen(); err != nil {
+		return nil, err
+	}
+	version := s.versions.read()
+	held, err := maxElementIDByScan(&memoryTreeReadSession{version: version})
+	if err != nil {
+		return nil, err
+	}
+	versions := &versionHolder{}
+	versions.current.Store(version)
+	return &MemoryTreeStore{
+		versions: versions,
+		lineage:  s.lineage.forkedAt(ceiling, held),
+		encoder:  s.encoder,
+		metadata: make(map[string]uint64),
+	}, nil
 }
 
 func (s *MemoryTreeStore) BeginTx() (StoreTx, error) {
@@ -341,11 +443,12 @@ func (s *MemoryTreeStore) Close() error {
 	return nil
 }
 
-// memoryTreeReadSession is a retained version. It needs no close-time release:
-// dropping the reference is what frees the state, once no other session or
-// iterator holds it.
+// memoryTreeReadSession is a retained version, read through its store's
+// lineage. It needs no close-time release: dropping the reference is what
+// frees the state, once no other session or iterator holds it.
 type memoryTreeReadSession struct {
 	version *storeVersion
+	lineage lineage
 	closed  bool
 }
 
@@ -362,15 +465,20 @@ func (s *memoryTreeReadSession) Scan(bound ScanBound) (Iterator, error) {
 	if s.closed {
 		return nil, errReadSessionClosed
 	}
-	return s.version.scan(bound)
+	return s.lineage.scan(s.version, bound)
 }
 
 func (s *memoryTreeReadSession) ScanKeysOnly(bound ScanBound) (Iterator, error) {
 	return s.Scan(bound)
 }
 
+// MaxElementID is the newest ElementID the retained version holds, counting a
+// datom the lineage does not read, as the store's own MaxElementID does.
 func (s *memoryTreeReadSession) MaxElementID() (datalog.ElementID, error) {
-	return maxElementIDByScan(s)
+	if s.closed {
+		return datalog.ElementID{}, errReadSessionClosed
+	}
+	return maxElementIDByScan(&memoryTreeReadSession{version: s.version})
 }
 
 func (s *memoryTreeReadSession) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {
