@@ -15,14 +15,19 @@ import (
 // docs/proposals/BRANCHING_AND_SNAPSHOTS.md §10.7 and §12.2.
 
 // A fork's record: the name of the snapshot the branch was forked from, the
-// point that snapshot captured, and the ReplicaID the branch writes as. A record
+// point that snapshot captured, the point the branch holds its parent's state
+// as of, and the ReplicaID the branch writes as. The captured point ties the
+// record to the snapshot while the snapshot holds that point, and the fork
+// point is where the branch's state ends on its parent's timeline. A record
 // holds one value of each, so it resolves without a schema declaring them.
 // Well-known for the reason the snapshot marker's attributes are.
 var (
-	branchSnapshotAttr  = datalog.WellKnownKeyword(":db.branch/snapshot")
-	branchAtLamportAttr = datalog.WellKnownKeyword(":db.branch/at-lamport")
-	branchAtReplicaAttr = datalog.WellKnownKeyword(":db.branch/at-replica")
-	branchReplicaAttr   = datalog.WellKnownKeyword(":db.branch/replica")
+	branchSnapshotAttr    = datalog.WellKnownKeyword(":db.branch/snapshot")
+	branchAtLamportAttr   = datalog.WellKnownKeyword(":db.branch/at-lamport")
+	branchAtReplicaAttr   = datalog.WellKnownKeyword(":db.branch/at-replica")
+	branchForkLamportAttr = datalog.WellKnownKeyword(":db.branch/fork-lamport")
+	branchForkReplicaAttr = datalog.WellKnownKeyword(":db.branch/fork-replica")
+	branchReplicaAttr     = datalog.WellKnownKeyword(":db.branch/replica")
 )
 
 // ErrBranchedAfterSnapshot is returned by TruncateTo when the database forked a
@@ -46,14 +51,15 @@ type forker interface {
 // it makes orders after everything it inherited.
 //
 // Fork records the fork in this database: the snapshot's name, the point the
-// snapshot captured, and the branch's ReplicaID. While a snapshot of that name
-// holds that point, TruncateTo refuses to pass it; deleting the snapshot, or a
-// later take of its name, releases the branch. Fork opens the transaction that
-// records the branch before it looks up the snapshot, so a TruncateTo that
-// starts holding writers while the Fork runs waits for the record. A Fork begun
-// after a TruncateTo starts holding writers is refused with
-// ErrRollbackInProgress. An AsOf or History handle is read-only and cannot
-// fork, and neither can a store with no way to start a branch.
+// snapshot captured, the point the branch holds this database's state as of,
+// and the branch's ReplicaID. While a snapshot of that name holds the captured
+// point, TruncateTo refuses to pass the branch's point; deleting the snapshot,
+// or a later take of its name that captures another point, releases the branch.
+// Fork opens the transaction that records the branch before it looks up the
+// snapshot, so a TruncateTo that starts holding writers while the Fork runs
+// waits for the record. A Fork begun after a TruncateTo starts holding writers
+// is refused with ErrRollbackInProgress. An AsOf or History handle is read-only
+// and cannot fork, and neither can a store with no way to start a branch.
 func (d *Database) Fork(name string) (branch *Database, err error) {
 	if d.temporalTxID != nil {
 		return nil, fmt.Errorf("Fork: cannot fork a read-only temporal handle (AsOf/History)")
@@ -103,7 +109,7 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("Fork %q: %w", name, err), forked.Close())
 	}
-	if err := addBranchRecord(tx, name, snapshot.At, branch.ReplicaID()); err != nil {
+	if err := addBranchRecord(tx, name, snapshot.At, ceiling, branch.ReplicaID()); err != nil {
 		return nil, errors.Join(err, branch.Close())
 	}
 	if _, err := tx.Commit(); err != nil {
@@ -114,10 +120,10 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 }
 
 // addBranchRecord adds to tx the record that a branch writing as branchReplica
-// was forked from the snapshot named name, which captured the point at. The
-// record's ElementIDs carry the database's ReplicaID, which is what makes it a
-// branch that database forked.
-func addBranchRecord(tx *Transaction, name string, at datalog.ElementID, branchReplica uint64) error {
+// was forked from the snapshot named name, which captured the point at, and
+// holds the database's state as of forkAt. The record's ElementIDs carry the
+// database's ReplicaID, which is what makes it a branch that database forked.
+func addBranchRecord(tx *Transaction, name string, at, forkAt datalog.ElementID, branchReplica uint64) error {
 	b := datalog.NewIdentity(fmt.Sprintf("db.branch/%d", branchReplica))
 	if err := tx.Add(b, branchSnapshotAttr, name); err != nil {
 		return fmt.Errorf("Fork %q: %w", name, err)
@@ -128,31 +134,40 @@ func addBranchRecord(tx *Transaction, name string, at datalog.ElementID, branchR
 	if err := tx.Add(b, branchAtReplicaAttr, int64(at.ReplicaID)); err != nil {
 		return fmt.Errorf("Fork %q: %w", name, err)
 	}
+	if err := tx.Add(b, branchForkLamportAttr, int64(forkAt.Lamport)); err != nil {
+		return fmt.Errorf("Fork %q: %w", name, err)
+	}
+	if err := tx.Add(b, branchForkReplicaAttr, int64(forkAt.ReplicaID)); err != nil {
+		return fmt.Errorf("Fork %q: %w", name, err)
+	}
 	if err := tx.Add(b, branchReplicaAttr, int64(branchReplica)); err != nil {
 		return fmt.Errorf("Fork %q: %w", name, err)
 	}
 	return nil
 }
 
-// branchesForkedAfter names the snapshots d forked a branch from that captured a
-// point past point: the snapshots whose branches a TruncateTo to point would cut
-// beneath. A record counts while a snapshot of the name it records holds the
-// point it records, so a snapshot that was deleted, or superseded by a later
-// take of its name, holds no branch. A record d inherited from its own parent
-// was written under another ReplicaID and is not one of them.
+// branchesForkedAfter names the snapshots d forked a branch from whose fork
+// point is past point: the snapshots whose branches a TruncateTo to point would
+// cut beneath. A record counts while a snapshot of the name it records holds
+// the point that snapshot captured, so deleting the snapshot, or a later take
+// of its name that captures another point, releases the branch. A record d
+// inherited from its own parent was written under another ReplicaID and is not
+// one of them.
 func (d *Database) branchesForkedAfter(point datalog.ElementID) ([]string, error) {
 	type branchRecord struct {
-		Snapshot string            `datalog:"?snapshot"`
-		Lamport  int64             `datalog:"?lamport"`
-		Replica  int64             `datalog:"?replica"`
-		Written  datalog.ElementID `datalog:"?written"`
+		Snapshot    string            `datalog:"?snapshot"`
+		ForkLamport int64             `datalog:"?forkLamport"`
+		ForkReplica int64             `datalog:"?forkReplica"`
+		Written     datalog.ElementID `datalog:"?written"`
 	}
 	var records []branchRecord
-	err := d.QueryInto(&records, `[:find ?snapshot ?lamport ?replica ?written
+	err := d.QueryInto(&records, `[:find ?snapshot ?forkLamport ?forkReplica ?written
 		:where [?b :db.branch/replica _ ?written]
 		       [?b :db.branch/snapshot ?snapshot]
 		       [?b :db.branch/at-lamport ?lamport]
 		       [?b :db.branch/at-replica ?replica]
+		       [?b :db.branch/fork-lamport ?forkLamport]
+		       [?b :db.branch/fork-replica ?forkReplica]
 		       [?s :db.snapshot/name ?snapshot]
 		       [?s :db.snapshot/at-lamport ?lamport]
 		       [?s :db.snapshot/at-replica ?replica]]`)
@@ -162,7 +177,7 @@ func (d *Database) branchesForkedAfter(point datalog.ElementID) ([]string, error
 
 	var after []string
 	for _, r := range records {
-		forkPoint := datalog.ElementID{Lamport: uint64(r.Lamport), ReplicaID: uint64(r.Replica)}
+		forkPoint := datalog.ElementID{Lamport: uint64(r.ForkLamport), ReplicaID: uint64(r.ForkReplica)}
 		if r.Written.ReplicaID == d.replicaID && point.Less(forkPoint) {
 			after = append(after, r.Snapshot)
 		}

@@ -82,9 +82,9 @@ func (d *Database) TruncateTo(name string) error {
 		return fmt.Errorf("TruncateTo %q: %w: %q", name, ErrBranchedAfterSnapshot, after)
 	}
 
-	// A fork record written past the floor stays when the snapshot point it records is at
-	// or below the floor: that is the point of a snapshot the rewind keeps. Every other
-	// record past the floor goes with the snapshot it names.
+	// A fork record written past the floor stays when the point the branch holds its
+	// parent's state as of is at or below the floor: that state is on the timeline the
+	// rewind keeps. Every other record past the floor goes with the rest of that timeline.
 	type forkPoint struct {
 		Record  datalog.Identity `datalog:"?b"`
 		Lamport int64            `datalog:"?lamport"`
@@ -92,8 +92,8 @@ func (d *Database) TruncateTo(name string) error {
 	}
 	var forks []forkPoint
 	if err := d.QueryInto(&forks, `[:find ?b ?lamport ?replica
-		:where [?b :db.branch/at-lamport ?lamport]
-		       [?b :db.branch/at-replica ?replica]]`); err != nil {
+		:where [?b :db.branch/fork-lamport ?lamport]
+		       [?b :db.branch/fork-replica ?replica]]`); err != nil {
 		return fmt.Errorf("TruncateTo %q: %w", name, err)
 	}
 	kept := make(map[datalog.Identity]bool, len(forks))

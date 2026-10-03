@@ -917,6 +917,88 @@ func TestDeletingASnapshotReleasesABranchOfASupersededTake(t *testing.T) {
 	require.Equal(t, []string{"Alice"}, snapTestNames(t, parent))
 }
 
+// pausingCapture is a memory-tree store whose MaxElementID, once armed, reads
+// the store, reports that it was reached, and waits for resume before
+// answering with what it read. Snapshot captures its point with it before it
+// writes its marker, so an armed store holds one take between its capture and
+// its marker.
+type pausingCapture struct {
+	*MemoryTreeStore
+	arm     chan struct{}
+	reached chan struct{}
+	resume  chan struct{}
+}
+
+func (s *pausingCapture) MaxElementID() (datalog.ElementID, error) {
+	captured, err := s.MemoryTreeStore.MaxElementID()
+	select {
+	case <-s.arm:
+		close(s.reached)
+		<-s.resume
+	default:
+	}
+	return captured, err
+}
+
+// forkFromAnInterleavedTake opens a parent holding Alice in which snapshot a
+// captures its point, snapshot t is taken and Carol is written, and only then
+// a's marker is written, and forks a branch from a.
+func forkFromAnInterleavedTake(t *testing.T) (*Database, *Database) {
+	store := &pausingCapture{
+		MemoryTreeStore: NewMemoryTreeStore(nil),
+		arm:             make(chan struct{}, 1),
+		reached:         make(chan struct{}),
+		resume:          make(chan struct{}),
+	}
+	parent, err := NewDatabaseWithOptions(DatabaseOptions{Store: store})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, parent.Close()) })
+	snapTestAddName(t, parent, "alice", "Alice")
+
+	store.arm <- struct{}{}
+	taken := make(chan error, 1)
+	go func() {
+		_, err := parent.Snapshot("a")
+		taken <- err
+	}()
+	<-store.reached
+	_, err = parent.Snapshot("t")
+	require.NoError(t, err)
+	snapTestAddName(t, parent, "carol", "Carol")
+	close(store.resume)
+	require.NoError(t, <-taken)
+	return parent, branchOf(t, parent, "a")
+}
+
+// TestTruncateToRefusesToPassABranchOfAnInterleavedTake: a branch forked from a
+// snapshot holds its parent's state as of that snapshot's marker, so a
+// TruncateTo to a snapshot taken between the other's capture and its marker
+// refuses to pass the branch.
+func TestTruncateToRefusesToPassABranchOfAnInterleavedTake(t *testing.T) {
+	parent, branch := forkFromAnInterleavedTake(t)
+
+	err := parent.TruncateTo("t")
+	require.ErrorIs(t, err, ErrBranchedAfterSnapshot)
+	require.Contains(t, err.Error(), `"a"`)
+	require.Equal(t, []string{"Alice", "Carol"}, snapTestNames(t, parent))
+	require.Equal(t, []string{"Alice", "Carol"}, snapTestNames(t, branch))
+}
+
+// TestTruncateToPastADeletedInterleavedTakeLeavesNoRecord: once the snapshot a
+// branch was forked from is deleted, a TruncateTo past the branch's fork point
+// leaves the database as it was at the target, with no record of the branch.
+func TestTruncateToPastADeletedInterleavedTakeLeavesNoRecord(t *testing.T) {
+	parent, _ := forkFromAnInterleavedTake(t)
+	require.NoError(t, parent.DeleteSnapshot("a"))
+	atT, err := parent.AsOfSnapshot("t")
+	require.NoError(t, err)
+	want := factsOf(t, atT)
+
+	require.NoError(t, parent.TruncateTo("t"))
+	require.Equal(t, []string{"Alice"}, snapTestNames(t, parent))
+	require.ElementsMatch(t, want, factsOf(t, parent))
+}
+
 // TestTruncateToRefusesToPassALaterBranchOnABranch: a branch's own TruncateTo
 // refuses to pass a branch it forked from a later snapshot of its own.
 func TestTruncateToRefusesToPassALaterBranchOnABranch(t *testing.T) {
