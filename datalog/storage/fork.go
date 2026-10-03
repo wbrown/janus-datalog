@@ -3,29 +3,35 @@ package storage
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // A branch is a writable database that starts from one of its parent's
 // snapshots and from then on writes independently of it, as a replica of its
-// own: its own ReplicaID and its own Lamport clock. The parent records the
-// branch on that snapshot's marker by the branch's ReplicaID. See
+// own: its own ReplicaID and its own Lamport clock. The parent records each fork
+// as an entity of its own, named for the branch's ReplicaID. See
 // docs/proposals/BRANCHING_AND_SNAPSHOTS.md §10.7 and §12.2.
 
-// snapshotBranchReplicaAttr records on a snapshot's marker the ReplicaID of a
-// branch forked from it. Well-known for the reason the other marker attributes
-// are.
-var snapshotBranchReplicaAttr = datalog.WellKnownKeyword(":db.snapshot/branch-replica")
+// A fork's record: the name of the snapshot the branch was forked from, the
+// point the branch reads its parent as of, and the ReplicaID the branch writes
+// as. Each is a single value, so the record resolves the same under any schema.
+// Well-known for the reason the snapshot marker's attributes are.
+var (
+	branchSnapshotAttr  = datalog.WellKnownKeyword(":db.branch/snapshot")
+	branchAtLamportAttr = datalog.WellKnownKeyword(":db.branch/at-lamport")
+	branchAtReplicaAttr = datalog.WellKnownKeyword(":db.branch/at-replica")
+	branchReplicaAttr   = datalog.WellKnownKeyword(":db.branch/replica")
+)
 
 // ErrBranchedAfterSnapshot is returned by TruncateTo when the database forked a
 // branch from a snapshot after the one it is asked to truncate to.
 var ErrBranchedAfterSnapshot = errors.New("a branch was forked after the snapshot")
 
 // forker is a store that can start a branch: a store of its own holding this
-// one's current published state, reading it as of a ceiling, and writing
-// independently of it.
+// one's current published state as of a ceiling, and writing independently of
+// it.
 type forker interface {
 	Fork(ceiling datalog.ElementID) (Store, error)
 }
@@ -39,17 +45,33 @@ type forker interface {
 // ReplicaID, and a clock started past every ElementID it holds, so every write
 // it makes orders after everything it inherited.
 //
-// Fork records the branch on the snapshot's marker, and TruncateTo refuses to
-// pass a snapshot a branch was forked from. An AsOf or History handle is
-// read-only and cannot fork, and neither can a store with no way to start a
-// branch.
-func (d *Database) Fork(name string) (*Database, error) {
+// Fork records the fork in this database: the snapshot's name, the point the
+// branch reads as of, and the branch's ReplicaID. TruncateTo refuses to pass a
+// point a branch was forked at, and DeleteSnapshot withdraws the records of the
+// branches forked from the snapshot it deletes. Fork opens the transaction that
+// records the branch before it looks up the snapshot, so a TruncateTo or
+// DeleteSnapshot that begins while it runs waits for the record, and a Fork
+// begun while one of them runs is refused with ErrRollbackInProgress. An AsOf
+// or History handle is read-only and cannot fork, and neither can a store with
+// no way to start a branch.
+func (d *Database) Fork(name string) (branch *Database, err error) {
 	if d.temporalTxID != nil {
 		return nil, fmt.Errorf("Fork: cannot fork a read-only temporal handle (AsOf/History)")
 	}
 	if name == "" {
 		return nil, fmt.Errorf("Fork: snapshot name must not be empty")
 	}
+	tx := d.NewTransaction()
+	committed := false
+	defer func() {
+		if !committed {
+			err = errors.Join(err, tx.Rollback())
+		}
+	}()
+	if tx.doomed {
+		return nil, fmt.Errorf("Fork %q: %w", name, ErrRollbackInProgress)
+	}
+
 	snapshot, err := d.lookupSnapshot(name)
 	if err != nil {
 		return nil, err
@@ -71,60 +93,64 @@ func (d *Database) Fork(name string) (*Database, error) {
 		return nil, fmt.Errorf("Fork %q: %w", name, err)
 	}
 	plannerOptions := *d.plannerOptions
-	branch, err := NewDatabaseWithOptions(DatabaseOptions{
+	branch, err = NewDatabaseWithOptions(DatabaseOptions{
 		Store:          forked,
-		Schema:         d.schema,
+		Schema:         d.Schema(),
 		PlannerOptions: &plannerOptions,
 		DisableCache:   d.cache == nil,
+		schemaAsGiven:  true,
 	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("Fork %q: %w", name, err), forked.Close())
 	}
-	if err := d.recordBranch(name, branch.ReplicaID()); err != nil {
+	if err := addBranchRecord(tx, name, ceiling, branch.ReplicaID()); err != nil {
 		return nil, errors.Join(err, branch.Close())
 	}
+	if _, err := tx.Commit(); err != nil {
+		return nil, errors.Join(fmt.Errorf("Fork %q: commit: %w", name, err), branch.Close())
+	}
+	committed = true
 	return branch, nil
 }
 
-// recordBranch records on the marker of the snapshot named name that a branch
-// writing as branchReplica was forked from it. The datom's ElementID carries
-// d's ReplicaID, which is what makes it a branch d forked.
-func (d *Database) recordBranch(name string, branchReplica uint64) (err error) {
-	tx := d.NewTransaction()
-	committed := false
-	defer func() {
-		if !committed {
-			err = errors.Join(err, tx.Rollback())
-		}
-	}()
-
-	if err := tx.Add(snapshotEntity(name), snapshotBranchReplicaAttr, int64(branchReplica)); err != nil {
+// addBranchRecord adds to tx the record that a branch writing as branchReplica
+// was forked from the snapshot named name, reading the database as of at. The
+// record's ElementIDs carry the database's ReplicaID, which is what makes it a
+// branch that database forked.
+func addBranchRecord(tx *Transaction, name string, at datalog.ElementID, branchReplica uint64) error {
+	b := datalog.NewIdentity(fmt.Sprintf("db.branch/%d", branchReplica))
+	if err := tx.Add(b, branchSnapshotAttr, name); err != nil {
 		return fmt.Errorf("Fork %q: %w", name, err)
 	}
-	if _, err := tx.Commit(); err != nil {
-		return fmt.Errorf("Fork %q: commit: %w", name, err)
+	if err := tx.Add(b, branchAtLamportAttr, int64(at.Lamport)); err != nil {
+		return fmt.Errorf("Fork %q: %w", name, err)
 	}
-	committed = true
+	if err := tx.Add(b, branchAtReplicaAttr, int64(at.ReplicaID)); err != nil {
+		return fmt.Errorf("Fork %q: %w", name, err)
+	}
+	if err := tx.Add(b, branchReplicaAttr, int64(branchReplica)); err != nil {
+		return fmt.Errorf("Fork %q: %w", name, err)
+	}
 	return nil
 }
 
-// branchesForkedAfter names the snapshots past point that d forked a branch
-// from: the snapshots whose branches a TruncateTo to point would cut beneath.
-// A branch record d inherited from its own parent was written under another
+// branchesForkedAfter names the snapshots d forked a branch from at a point
+// past point: the snapshots whose branches a TruncateTo to point would cut
+// beneath. A record d inherited from its own parent was written under another
 // ReplicaID and is not one of them.
 func (d *Database) branchesForkedAfter(point datalog.ElementID) ([]string, error) {
 	type branchRecord struct {
-		Name    string            `datalog:"?name"`
-		Lamport int64             `datalog:"?lamport"`
-		Replica int64             `datalog:"?replica"`
-		Written datalog.ElementID `datalog:"?written"`
+		Snapshot string            `datalog:"?snapshot"`
+		Lamport  int64             `datalog:"?lamport"`
+		Replica  int64             `datalog:"?replica"`
+		Written  datalog.ElementID `datalog:"?written"`
 	}
 	var records []branchRecord
-	err := d.QueryInto(&records, `[:find ?name ?lamport ?replica ?written
-		:where [?s :db.snapshot/branch-replica _ ?written]
-		       [?s :db.snapshot/name ?name]
-		       [?s :db.snapshot/at-lamport ?lamport]
-		       [?s :db.snapshot/at-replica ?replica]]`)
+	err := d.QueryInto(&records, `[:find ?snapshot ?lamport ?replica ?written
+		:where [?b :db.branch/replica _ ?written]
+		       [?b :db.branch/snapshot ?snapshot]
+		       [?b :db.branch/at-lamport ?lamport]
+		       [?b :db.branch/at-replica ?replica]]`)
 	if err != nil {
 		return nil, fmt.Errorf("branches forked after %v: %w", point, err)
 	}
@@ -133,9 +159,9 @@ func (d *Database) branchesForkedAfter(point datalog.ElementID) ([]string, error
 	for _, r := range records {
 		forkPoint := datalog.ElementID{Lamport: uint64(r.Lamport), ReplicaID: uint64(r.Replica)}
 		if r.Written.ReplicaID == d.replicaID && point.Less(forkPoint) {
-			after = append(after, r.Name)
+			after = append(after, r.Snapshot)
 		}
 	}
-	sort.Strings(after)
-	return after, nil
+	slices.Sort(after)
+	return slices.Compact(after), nil
 }

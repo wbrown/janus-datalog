@@ -723,11 +723,12 @@ cited sections.
   the time axis. Frontier (A) reserved for deferred merge-back; content-addressed arenas
   (B) for the distributed future.
 - **Memory-tree branches: copy-on-write versions, no prefix.** *Resolved 2026-10-02.* A
-  branch starts from its parent's published version and reads it as of the snapshot it
-  forked from. What the shared trees hold past the snapshot's point stays out of its
-  reads, its trees hold nothing the parent writes after the fork, and siblings are
-  separate roots. Every backend meets one branch contract, run as the same tests.
-  Backends differ only in how they store a branch.
+  branch starts from its parent's published version and deletes from its own trees
+  everything that version holds past the point of the snapshot it forked from, the
+  rewind `TruncateTo` performs. Its trees then hold the state `AsOfSnapshot` reads and
+  nothing the parent writes after the fork, and siblings are separate roots. Every
+  backend meets one branch contract, run as the same tests. Backends differ only in how
+  they store a branch.
 - **Key encoding (§11.1, §11.5): flat 32-byte tree-path prefix** on every key (69→101
   bytes). The R5 group-id split (§9.7) is held as the escape hatch only if in-key depth
   budget becomes a problem.
@@ -744,8 +745,9 @@ cited sections.
   a possible future opt-in.
 - **`History()` across the chain (§10.11): merged lineage, fork-ceilings applied** — the
   raw datoms the session could have seen (own + ancestors up to fork), unresolved.
-- **Branch/snapshot metadata storage: system-attribute datoms** (`:db.snapshot/*`),
-  listed and resolved via Datalog queries. *Reversed 2026-06-26 from the earlier
+- **Branch/snapshot metadata storage: system-attribute datoms** (snapshot markers in
+  `:db.snapshot/*`, one `:db.branch/*` entity per fork), listed and resolved via Datalog
+  queries. *Reversed 2026-06-26 from the earlier
   "reserved Badger `refs/` keyspace via `GetMetadataUint64`/`SetMetadataUint64`" plan;
   full reasoning in §12.1 Slice A.* The operations the linear slice must support — list
   snapshots, see their causal ordering — are exactly what datoms give for free: a snapshot
@@ -1228,7 +1230,7 @@ The three flavors differ in what (if anything) they destroy:
 > when the rollback variants were first sketched, a gap in the reasoning, not just the
 > writeup.) **Decided (2026-06-26): forbid.** Hard-truncate errors if any descendant's
 > fork-point exceeds `T`; the caller must drop or re-base those children first. This is
-> cheap to enforce: the snapshot/branch registry (`:db.snapshot/*` datoms, §9.6) records each branch's parent and `forkLamport`
+> cheap to enforce: the snapshot/branch registry (`:db.snapshot/*` markers and `:db.branch/*` fork records, §9.6) records each branch's parent and `forkLamport`
 > (§11.2), so descendants past `T` are a direct lookup. Cascade (auto-invalidating
 > descendants) is a possible future opt-in, not the default. Soft rollback and
 > branch-on-rollback carry no such hazard: they delete nothing.
@@ -1397,7 +1399,7 @@ func (d *Database) Fork(name string) (*Database, error) {
     child := d.allocateChildPath(d.arena)   // next free ordinal under d.arena (label scheme §9.7)
 
     if err := d.store.putBranchRef(name, child, d.arena); err != nil {
-        return nil, err                     // branch registry (§9.6): the snapshot's marker gains the child's (path, parent)
+        return nil, err                     // branch registry (§9.6): a :db.branch/* record of the fork, carrying the child's (path, parent)
     }
 
     // The child's chain = d's chain, but d.arena flips from leaf (unbounded) to a
@@ -1576,7 +1578,8 @@ otherwise untouched.
    memory-tree store keeps typed datoms in its trees and has no key to widen (§9.6).
 2. **One `Iterator`-interface addition:** `Key() []byte` — the merge needs raw-key
    ordering; trivial on `BadgerIterator`, which already holds the key.
-3. **Branch metadata as `:db.snapshot/*` datoms** (`name → path, parent, forkLamport`),
+3. **Branch metadata as datoms: one `:db.branch/*` entity per fork** (the snapshot's
+   name, the fork point, the branch's write identity, and under C its path and parent),
    per §9.6 — listed and resolved by query, not a side keyspace.
 4. **Session handle is a writable `Database` clone** — unlike `AsOf`/`History`, which
    panic on write. `Fork` on an `AsOf` or `History` handle returns an error, as
@@ -1904,11 +1907,14 @@ so the friendly "rollback" name never has to flip from destructive to non-destru
 - **Phase A — Branch handles on the memory-tree store.** `Fork(name)` takes the name of a
   snapshot the database holds and returns a writable handle holding the database's state
   as of that snapshot, the state `AsOfSnapshot(name)` reads, writing as its own write
-  stream (§4.1). Its store starts from the parent's published copy-on-write version
-  (§9.6) and reads what it inherits as of the snapshot's point. Forking records the
-  branch's `ReplicaID` on the snapshot's marker in the parent, which `TruncateTo`'s
-  descendant check reads (§10.7). It takes no snapshot of its own. The branch contract is
-  a set of tests every backend runs:
+  stream (§4.1) and resolving by the parent's schema. Its store is the parent's published
+  copy-on-write version as of the snapshot's point (§9.6). Forking records the fork in
+  the parent as a `:db.branch/*` entity (§9.6), which `TruncateTo`'s descendant check
+  reads (§10.7) and `DeleteSnapshot` retracts with the snapshot. `Fork` opens the
+  transaction that records the fork before it looks up the snapshot, so a `TruncateTo` or
+  `DeleteSnapshot` that begins while it runs waits for the record, and a fork begun while
+  one of them runs is refused. It takes no snapshot of its own. The branch contract is a
+  set of tests every backend runs:
   - A branch holds what its parent holds as of the snapshot it forked from, whatever the
     parent wrote after the snapshot or forked from it before.
   - Neither the parent nor a sibling sees a branch's writes, and the branch does not
@@ -1916,12 +1922,17 @@ so the friendly "rollback" name never has to flip from destructive to non-destru
   - Siblings committing concurrently with each other and with the parent each end with
     what they inherited plus their own writes.
   - A branch's writes carry its own `ReplicaID` and order after every datom it inherited.
+  - A branch holds everything imported into it, resolves by its parent's schema, and
+    takes its snapshots at points it holds.
   - `AsOf` on a branch shows the branch at that point, and `History` shows what it
     inherited plus its own writes.
   - `TruncateTo` on a branch returns it to its state at the snapshot and leaves the
     parent and siblings unchanged.
-  - `TruncateTo` refuses to pass a snapshot a branch was forked from, and a rewind that
-    keeps that snapshot keeps the record of the branch.
+  - `TruncateTo` refuses to pass a snapshot a branch was forked from. A rewind that keeps
+    that snapshot keeps the record of the branch, and a rewind past it leaves none.
+  - Deleting a snapshot releases every branch forked from it.
+  - A `TruncateTo` or `DeleteSnapshot` that begins during a fork takes effect after it,
+    and a fork that begins during one is refused.
 
   `Fork` on Badger or `memory` returns an error until Phase B.
 - **Stage 1 (Phase B) — Arena-prefix as the branch axis of Badger and `memory`.** Add the

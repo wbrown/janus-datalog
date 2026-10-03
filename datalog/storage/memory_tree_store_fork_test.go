@@ -53,11 +53,10 @@ func TestTreeStoreForkHoldsThePublishedVersion(t *testing.T) {
 	requireSameIndexes(t, treeStoreHolding(t, datoms), fork, "fork")
 }
 
-// TestTreeStoreForkReadsAsOfItsCeiling: a fork reads what its base held as of
-// the ceiling it forked at, though the trees it shares hold more, and reads
-// everything it writes itself, through the store and through a read session.
-// Its newest ElementID counts what it does not read, so a clock restored from
-// it orders the fork's writes after everything the trees hold.
+// TestTreeStoreForkReadsAsOfItsCeiling: a fork holds what its base held as of
+// the ceiling it forked at, though the base holds more, and everything it
+// writes itself, read through the store and through a read session. Its newest
+// ElementID is the newest of the datoms it holds.
 func TestTreeStoreForkReadsAsOfItsCeiling(t *testing.T) {
 	datoms := treeBatchDatoms(forkBaseSize + 32)
 	before := datoms[:forkBaseSize]
@@ -78,7 +77,7 @@ func TestTreeStoreForkReadsAsOfItsCeiling(t *testing.T) {
 
 	newest, err := fork.MaxElementID()
 	require.NoError(t, err)
-	require.Equal(t, past[len(past)-1].Tx, newest)
+	require.Equal(t, before[len(before)-1].Tx, newest)
 
 	require.NoError(t, fork.Assert(written))
 	want := treeStoreHolding(t, before, written)

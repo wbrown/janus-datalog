@@ -83,6 +83,7 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	"mu":                 fieldZeroed, // lock; non-copyable
 	"activeTx":           fieldZeroed, // writes prohibited on temporal handles
 	"onCommitWindow":     fieldZeroed, // test-only commit-window hook (write path)
+	"onDrainWait":        fieldZeroed, // test-only rollback drain hook (write path)
 	"rollbackInProgress": fieldZeroed, // rollback coordination (write path)
 	"drainCond":          fieldZeroed,
 	"rollbackMu":         fieldZeroed,

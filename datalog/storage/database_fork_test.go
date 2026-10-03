@@ -5,7 +5,6 @@ import (
 	"sort"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
@@ -355,6 +354,42 @@ func TestAsOfAndHistoryOnABranch(t *testing.T) {
 	}
 }
 
+// TestBranchSnapshotRecordsAPointItHolds: a snapshot a branch takes records the
+// newest ElementID among the datoms the branch holds, however much its parent
+// wrote past the snapshot it forked from.
+func TestBranchSnapshotRecordsAPointItHolds(t *testing.T) {
+	forking, _ := forkingModes(t)
+	require.NotEmpty(t, forking)
+	for _, mode := range forking {
+		t.Run(mode.name, func(t *testing.T) {
+			parent := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			snapTestAddName(t, parent, "alice", "Alice")
+			_, err := parent.Snapshot("s")
+			require.NoError(t, err)
+			for i := 0; i < 32; i++ {
+				snapTestAddName(t, parent, "bob", fmt.Sprintf("Bob %d", i))
+			}
+			branch := branchOf(t, parent, "s")
+
+			var held []struct {
+				Tx datalog.ElementID `datalog:"?tx"`
+			}
+			require.NoError(t, branch.History().QueryInto(&held, `[:find ?tx :where [_ _ _ ?tx]]`))
+			require.NotEmpty(t, held, "the branch holds what it inherited")
+			newest := held[0].Tx
+			for _, h := range held[1:] {
+				if newest.Less(h.Tx) {
+					newest = h.Tx
+				}
+			}
+
+			info, err := branch.Snapshot("b")
+			require.NoError(t, err)
+			require.Equal(t, newest, info.At)
+		})
+	}
+}
+
 // TestTruncateToOnABranch: TruncateTo on a branch returns the branch to its
 // state at the snapshot — one it took itself, or one it inherited from before
 // the fork — and leaves its parent and siblings unchanged. The branch writes on
@@ -459,7 +494,8 @@ func TestTruncateToRefusesToPassALaterBranch(t *testing.T) {
 // TestTruncateToPassesBranchesItDoesNotPrecede: the branches that do not stop a
 // TruncateTo — one forked from the target itself, one forked from an earlier
 // snapshot, and, on a branch, a branch its parent forked, whose record the
-// branch inherited.
+// branch inherited. A rewind past the snapshot that branch forked from leaves
+// the database as it was at the target, with no record of that branch.
 func TestTruncateToPassesBranchesItDoesNotPrecede(t *testing.T) {
 	forking, _ := forkingModes(t)
 	require.NotEmpty(t, forking)
@@ -500,9 +536,13 @@ func TestTruncateToPassesBranchesItDoesNotPrecede(t *testing.T) {
 			_, err = parent.Snapshot("b")
 			require.NoError(t, err)
 			second := branchOf(t, parent, "b")
+			atT, err := second.AsOfSnapshot("t")
+			require.NoError(t, err)
+			want := factsOf(t, atT)
 
 			require.NoError(t, second.TruncateTo("t"))
 			require.Equal(t, []string{"Alice"}, snapTestNames(t, second))
+			require.ElementsMatch(t, want, factsOf(t, second))
 		})
 	}
 }
@@ -616,52 +656,148 @@ func TestForkOfABranch(t *testing.T) {
 	}
 }
 
-// TestForkDuringATruncateToRecordsNothing: a fork whose record would land while
-// its parent is rewinding is dropped like any write started during the
-// rollback. Fork reports ErrRollbackInProgress, and the parent, once the
-// rewind completes, holds its snapshots and no record of the branch. The
-// rollback is held in its drain by a transaction opened before it.
-func TestForkDuringATruncateToRecordsNothing(t *testing.T) {
+// drainSignal makes d report on the returned channel each time a rollback is
+// about to wait on a write in flight.
+func drainSignal(d *Database) <-chan struct{} {
+	waiting := make(chan struct{}, 1)
+	d.onDrainWait = func() {
+		select {
+		case waiting <- struct{}{}:
+		default:
+		}
+	}
+	return waiting
+}
+
+// TestForkDuringARollbackIsRefused: a Fork started while its parent is
+// rewinding, or deleting a snapshot, is refused like any write started then:
+// it returns ErrRollbackInProgress and records nothing. The operation is held
+// waiting on a transaction opened before it, and completes once that commits.
+func TestForkDuringARollbackIsRefused(t *testing.T) {
 	forking, _ := forkingModes(t)
 	require.NotEmpty(t, forking)
 	for _, mode := range forking {
-		t.Run(mode.name, func(t *testing.T) {
-			parent := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			snapTestAddName(t, parent, "alice", "Alice")
-			_, err := parent.Snapshot("cp0")
-			require.NoError(t, err)
-			_, err = parent.Snapshot("cp1")
-			require.NoError(t, err)
+		for _, op := range []struct {
+			name      string
+			run       func(d *Database) error
+			snapshots []string
+		}{
+			{"truncate_to", func(d *Database) error { return d.TruncateTo("cp1") }, []string{"cp0", "cp1"}},
+			{"delete_snapshot", func(d *Database) error { return d.DeleteSnapshot("cp1") }, []string{"cp0"}},
+		} {
+			t.Run(mode.name+"/"+op.name, func(t *testing.T) {
+				parent := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				snapTestAddName(t, parent, "alice", "Alice")
+				_, err := parent.Snapshot("cp0")
+				require.NoError(t, err)
+				_, err = parent.Snapshot("cp1")
+				require.NoError(t, err)
+				waiting := drainSignal(parent)
 
-			blocker := parent.NewTransaction()
-			require.NoError(t, blocker.Add(datalog.NewIdentity("bob"), datalog.NewKeyword(":person/name"), "Bob"))
-			done := make(chan error, 1)
-			go func() { done <- parent.TruncateTo("cp1") }()
-			require.Eventually(t, func() bool {
-				parent.mu.Lock()
-				defer parent.mu.Unlock()
-				return parent.rollbackInProgress
-			}, 2*time.Second, time.Millisecond, "rollback should enter its drain")
+				blocker := parent.NewTransaction()
+				require.NoError(t, blocker.Add(datalog.NewIdentity("bob"), datalog.NewKeyword(":person/name"), "Bob"))
+				done := make(chan error, 1)
+				go func() { done <- op.run(parent) }()
+				select {
+				case <-waiting:
+				case err := <-done:
+					t.Fatalf("%s finished with a transaction opened before it still in flight: %v", op.name, err)
+				}
 
-			_, err = parent.Fork("cp1")
-			require.ErrorIs(t, err, ErrRollbackInProgress)
+				_, err = parent.Fork("cp1")
+				require.ErrorIs(t, err, ErrRollbackInProgress)
 
-			_, err = blocker.Commit()
-			require.NoError(t, err)
-			require.NoError(t, <-done)
+				_, err = blocker.Commit()
+				require.NoError(t, err)
+				require.NoError(t, <-done)
 
-			require.Equal(t, []string{"cp0", "cp1"}, snapshotNames(t, parent))
-			require.Equal(t, []string{"Alice"}, snapTestNames(t, parent))
-			require.NoError(t, parent.TruncateTo("cp0"))
-		})
+				require.Equal(t, op.snapshots, snapshotNames(t, parent))
+				require.NoError(t, parent.TruncateTo("cp0"))
+				require.Equal(t, []string{"Alice"}, snapTestNames(t, parent))
+			})
+		}
 	}
 }
 
-// TestDeletingABranchRecordReleasesTruncateTo: deleting the snapshot a branch
-// forked from removes the branch's record with it, so the branch no longer
-// stops a TruncateTo, and a snapshot that takes the name afterward is a plain
-// snapshot.
-func TestDeletingABranchRecordReleasesTruncateTo(t *testing.T) {
+// forkingDuring is a memory-tree store whose Fork, once the branch's store
+// exists, starts during on a goroutine of its own and returns when during has
+// finished or has begun waiting on a write in flight, whichever comes first.
+// Unless something holds it off, during runs between Database.Fork's lookup of
+// the snapshot and its record of the branch.
+type forkingDuring struct {
+	*MemoryTreeStore
+	during  func() error
+	waiting <-chan struct{}
+	done    chan error
+}
+
+func (s *forkingDuring) Fork(ceiling datalog.ElementID) (Store, error) {
+	forked, err := s.MemoryTreeStore.Fork(ceiling)
+	if err != nil {
+		return nil, err
+	}
+	finished := make(chan struct{})
+	go func() {
+		s.done <- s.during()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-s.waiting:
+	}
+	return forked, nil
+}
+
+// TestForkSerializesWithARewindAndADeletion: a TruncateTo or a DeleteSnapshot
+// started while a Fork is under way takes effect after the Fork, never between
+// its lookup of the snapshot and its record of the branch. The rewind then sees
+// the branch and refuses, and the deletion releases it.
+func TestForkSerializesWithARewindAndADeletion(t *testing.T) {
+	open := func(t *testing.T) (*Database, *forkingDuring) {
+		store := &forkingDuring{
+			MemoryTreeStore: NewMemoryTreeStore(nil),
+			done:            make(chan error, 1),
+		}
+		parent, err := NewDatabaseWithOptions(DatabaseOptions{Store: store})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, parent.Close()) })
+		store.waiting = drainSignal(parent)
+		snapTestAddName(t, parent, "alice", "Alice")
+		_, err = parent.Snapshot("cp0")
+		require.NoError(t, err)
+		snapTestAddName(t, parent, "bob", "Bob")
+		_, err = parent.Snapshot("cp1")
+		require.NoError(t, err)
+		return parent, store
+	}
+
+	t.Run("truncate_to", func(t *testing.T) {
+		parent, store := open(t)
+		store.during = func() error { return parent.TruncateTo("cp0") }
+		branch := branchOf(t, parent, "cp1")
+
+		require.ErrorIs(t, <-store.done, ErrBranchedAfterSnapshot)
+		require.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, parent))
+		require.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, branch))
+	})
+	t.Run("delete_snapshot", func(t *testing.T) {
+		parent, store := open(t)
+		store.during = func() error { return parent.DeleteSnapshot("cp1") }
+		branch := branchOf(t, parent, "cp1")
+
+		require.NoError(t, <-store.done)
+		require.Equal(t, []string{"Alice", "Bob"}, snapTestNames(t, branch))
+		_, err := parent.Snapshot("cp1")
+		require.NoError(t, err)
+		require.NoError(t, parent.TruncateTo("cp0"))
+		require.Equal(t, []string{"Alice"}, snapTestNames(t, parent))
+	})
+}
+
+// TestDeletingASnapshotReleasesItsBranches: deleting the snapshot branches were
+// forked from releases every one of them, so none stops a TruncateTo, and a
+// snapshot that takes the name afterward is a plain snapshot.
+func TestDeletingASnapshotReleasesItsBranches(t *testing.T) {
 	forking, _ := forkingModes(t)
 	require.NotEmpty(t, forking)
 	for _, mode := range forking {
@@ -673,6 +809,7 @@ func TestDeletingABranchRecordReleasesTruncateTo(t *testing.T) {
 			snapTestAddName(t, parent, "bob", "Bob")
 			_, err = parent.Snapshot("later")
 			require.NoError(t, err)
+			branchOf(t, parent, "later")
 			branchOf(t, parent, "later")
 			require.ErrorIs(t, parent.TruncateTo("s"), ErrBranchedAfterSnapshot)
 

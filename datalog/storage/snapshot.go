@@ -168,12 +168,33 @@ func (d *Database) Snapshots() ([]SnapshotInfo, error) {
 	return out, nil
 }
 
-// DeleteSnapshot removes the named snapshot from the registry by retracting its marker.
-// The rewindable timeline is untouched; only the registry entry goes away.
+// DeleteSnapshot removes the named snapshot from the registry by retracting its marker,
+// and releases the branches forked from it. The rewindable timeline is untouched; only the
+// registry entry goes away.
+//
+// It serializes against TruncateTo and other deletions (rollbackMu) and holds writers as
+// TruncateTo does: a Fork under way records its branch before the deletion reads the
+// records, and a Fork begun during the deletion is refused with ErrRollbackInProgress.
 func (d *Database) DeleteSnapshot(name string) error {
 	if d.temporalTxID != nil {
 		return fmt.Errorf("DeleteSnapshot: cannot modify a read-only temporal handle (AsOf/History)")
 	}
+
+	d.rollbackMu.Lock()
+	defer d.rollbackMu.Unlock()
+
+	// The deletion's own transaction opens before writers are held, so it is not turned
+	// away with them.
+	tx := d.NewTransaction()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	release := d.holdWriters(tx)
+	defer release()
+
 	info, err := d.lookupSnapshot(name)
 	if err != nil {
 		return err
@@ -183,22 +204,27 @@ func (d *Database) DeleteSnapshot(name string) error {
 	}
 
 	e := snapshotEntity(name)
-	// A branch's record also names the branch's write stream. Its retract is not
-	// cleanup: a snapshot that takes the name later reuses this entity, and the
-	// attribute left behind would make that snapshot read as a branch.
-	var branchReplica int64
-	isBranch, err := d.QueryOneInto(&branchReplica, queryGetAttr, e, snapshotBranchReplicaAttr)
+	// Deleting a snapshot releases the branches forked from it: the records of
+	// the forks made at its point go with the marker, so none of them stops a
+	// TruncateTo.
+	at, err := d.snapshotMarkerMax(name)
 	if err != nil {
 		return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
 	}
-
-	tx := d.NewTransaction()
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
+	type forkRecord struct {
+		Record  datalog.Identity `datalog:"?b"`
+		Replica int64            `datalog:"?replica"`
+	}
+	var forks []forkRecord
+	if err := d.QueryInto(&forks, `[:find ?b ?replica
+		:in $ ?name ?lamport ?atReplica
+		:where [?b :db.branch/snapshot ?name]
+		       [?b :db.branch/at-lamport ?lamport]
+		       [?b :db.branch/at-replica ?atReplica]
+		       [?b :db.branch/replica ?replica]]`,
+		name, int64(at.Lamport), int64(at.ReplicaID)); err != nil {
+		return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
+	}
 
 	// Retracting the name attribute is what removes the snapshot from the registry (it
 	// breaks the join in Snapshots/lookupSnapshot). The remaining retracts are cleanup.
@@ -214,8 +240,17 @@ func (d *Database) DeleteSnapshot(name string) error {
 	if err := tx.Retract(e, snapshotCreatedAttr, info.Created); err != nil {
 		return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
 	}
-	if isBranch {
-		if err := tx.Retract(e, snapshotBranchReplicaAttr, branchReplica); err != nil {
+	for _, f := range forks {
+		if err := tx.Retract(f.Record, branchSnapshotAttr, name); err != nil {
+			return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
+		}
+		if err := tx.Retract(f.Record, branchAtLamportAttr, int64(at.Lamport)); err != nil {
+			return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
+		}
+		if err := tx.Retract(f.Record, branchAtReplicaAttr, int64(at.ReplicaID)); err != nil {
+			return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
+		}
+		if err := tx.Retract(f.Record, branchReplicaAttr, f.Replica); err != nil {
 			return fmt.Errorf("DeleteSnapshot %q: %w", name, err)
 		}
 	}
@@ -255,32 +290,17 @@ func (d *Database) lookupSnapshot(name string) (*SnapshotInfo, error) {
 	}, nil
 }
 
-// snapshotMarkerMax returns the highest Tx of a snapshot's marker — the snapshot's
-// effective point. AsOfSnapshot reads there, TruncateTo truncates there, and a branch
-// forked from the snapshot reads its parent as of there. The marker is the snapshot's
-// name, captured point and creation time; a branch recorded on the marker entity later is
-// not part of it, so recording one leaves the point where it was. It is always non-zero
-// (a marker always has datoms), which keeps an empty-database snapshot from resolving to
-// the zero ElementID the matcher reserves for History mode.
+// snapshotMarkerMax returns the highest Tx of a snapshot's marker entity — the snapshot's
+// effective point. AsOfSnapshot reads there and TruncateTo truncates there. It is always
+// non-zero (a marker always has datoms), which keeps an empty-database snapshot from
+// resolving to the zero ElementID the matcher reserves for History mode.
 func (d *Database) snapshotMarkerMax(name string) (datalog.ElementID, error) {
-	type markerWrite struct {
-		Tx datalog.ElementID `datalog:"?tx"`
-	}
-	var written []markerWrite
-	err := d.QueryInto(&written, `[:find ?tx :in $ ?s [?a ...] :where [?s ?a _ ?tx]]`,
-		snapshotEntity(name),
-		[]datalog.Keyword{snapshotNameAttr, snapshotAtLamportAttr, snapshotAtReplicaAttr, snapshotCreatedAttr})
+	mm, ok, err := d.store.MaxTxForEntity(snapshotEntity(name))
 	if err != nil {
 		return datalog.ElementID{}, fmt.Errorf("snapshot %q: locate marker: %w", name, err)
 	}
-	if len(written) == 0 {
+	if !ok {
 		return datalog.ElementID{}, fmt.Errorf("snapshot %q: marker entity has no datoms", name)
 	}
-	newest := written[0].Tx
-	for _, w := range written[1:] {
-		if newest.Less(w.Tx) {
-			newest = w.Tx
-		}
-	}
-	return newest, nil
+	return mm, nil
 }
