@@ -33,7 +33,9 @@ func testComparisonBindingWithOrSubqueryE2E(t *testing.T, db *storage.Database, 
 		ValueType:   schema.TypeRef,
 		Cardinality: schema.CardinalityMany,
 	})
-	db.SetSchema(s)
+	if err := db.SetSchema(s); err != nil {
+		t.Fatal(err)
+	}
 
 	// Insert test data: scenarios with tasks
 	tx := db.NewTransaction()

@@ -54,7 +54,7 @@ func TestDiag_VBound_AfterOverwrite(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")
@@ -106,7 +106,7 @@ func TestDiag_VBound_VIsIrrelevant(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")

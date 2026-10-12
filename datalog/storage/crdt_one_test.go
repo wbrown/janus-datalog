@@ -23,7 +23,9 @@ func TestCardinalityOneCurrentValue(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 
@@ -239,7 +241,9 @@ func TestCardinalityOneNoRead(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 
@@ -306,7 +310,9 @@ func TestSetCardinalityValidation(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 
@@ -337,7 +343,9 @@ func TestCardinalityOneConcurrentWrites(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/name")
@@ -512,7 +520,9 @@ func TestHistoryMode(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 

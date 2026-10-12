@@ -44,14 +44,28 @@ func (d *Database) resolveQuery(q interface{}) (*query.Query, error) {
 
 // Database provides the main API for reading and writing datoms
 type Database struct {
-	store          Store
-	encoder        *BinaryKeyEncoder
-	txCounter      atomic.Uint64
-	mu             sync.RWMutex
-	activeTx       map[*Transaction]bool
-	planCache      *planner.PlanCache      // Shared query plan cache
-	parseCache     *ParseCache             // Shared query parse cache
-	schema         schema.SchemaProvider   // Optional schema for validation
+	store      Store
+	encoder    *BinaryKeyEncoder
+	txCounter  atomic.Uint64
+	mu         sync.RWMutex
+	activeTx   map[*Transaction]bool
+	planCache  *planner.PlanCache // Shared query plan cache
+	parseCache *ParseCache        // Shared query parse cache
+	// installed is the schema the database runs with and the definitions its
+	// store carries as facts, loaded as one value by every reader. It holds a
+	// value from construction on, the empty pair until installSchema publishes.
+	installed atomic.Pointer[installedSchema]
+	// refuseUnknown is the RefuseUnknownAttributes option, read by every
+	// matcher the database mints.
+	refuseUnknown bool
+	// givenSchema is the schema the caller gave, at open or through SetSchema.
+	// installSchema asserts it into the store and re-asserts it after an
+	// import, so it supersedes what a dump carried for the idents it names.
+	givenSchema schema.SchemaProvider
+	// schemaAsGiven makes the given schema the database's schema exactly, nil
+	// included: nothing is read from the store, inferred, or asserted at
+	// construction. Fork sets it and then adopts its parent's declarations.
+	schemaAsGiven  bool
 	plannerOptions *planner.PlannerOptions // Optional planner options override
 	clock          *LamportClock           // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
 	replicaID      uint64                  // CRDT: This database's replica identifier
@@ -90,12 +104,7 @@ func NewDatabase(path string) (*Database, error) {
 
 // NewDatabaseWithSchema creates a database with schema validation
 func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, error) {
-	db, err := NewDatabase(path)
-	if err != nil {
-		return nil, err
-	}
-	db.schema = s
-	return db, nil
+	return NewDatabaseWithOptions(DatabaseOptions{Path: path, Schema: s})
 }
 
 // DatabaseOptions configures database creation.
@@ -120,13 +129,18 @@ type DatabaseOptions struct {
 	// Store injects an already-open ordered backend. The caller retains ownership:
 	// construction error paths do not Close it. Mutually exclusive with
 	// BackendName, Path and CompressionThreshold.
-	Store                Store
-	Schema               schema.SchemaProvider   // Optional schema for validation
-	AnnotationHandler    annotations.Handler     // Optional handler for query tracing
-	ReplicaID            uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
-	DisableCache         bool                    // Disable EA cache; queries resolve directly from storage
-	PlannerOptions       *planner.PlannerOptions // Optional override for default planner options
-	CompressionThreshold int                     // Compress string/[]byte values >= this size (0 = default 512; -1 to disable). Configures the encoder this constructor builds.
+	Store  Store
+	Schema schema.SchemaProvider // Optional schema for validation
+	// RefuseUnknownAttributes makes a query or pull that names an attribute the
+	// schema does not declare an error, where the database otherwise answers it
+	// with no tuple. It requires Schema: with none to check against, the
+	// constructor returns an error.
+	RefuseUnknownAttributes bool
+	AnnotationHandler       annotations.Handler     // Optional handler for query tracing
+	ReplicaID               uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
+	DisableCache            bool                    // Disable EA cache; queries resolve directly from storage
+	PlannerOptions          *planner.PlannerOptions // Optional override for default planner options
+	CompressionThreshold    int                     // Compress string/[]byte values >= this size (0 = default 512; -1 to disable). Configures the encoder this constructor builds.
 	// RemovePathOnClose hands Path to the database to own: Close removes the
 	// directory once the store has released its files. For a caller that made
 	// scratch space to hold data that came from somewhere else — a dump loaded
@@ -267,23 +281,6 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		cache = NewCache()
 	}
 
-	// When the caller supplies no schema, reconstruct one from the CRDT ops
-	// already stored on disk so vector/many attributes resolve correctly instead
-	// of collapsing to a single LWW value (e.g. the `datalog` CLI opening an
-	// existing database). A supplied schema is authoritative and wins entirely —
-	// no inference. On an empty store this yields an empty schema.
-	effectiveSchema := opts.Schema
-	if effectiveSchema == nil && !opts.schemaAsGiven {
-		inferred, ierr := inferSchemaFromStore(store)
-		if ierr != nil {
-			closeOwnedStore()
-			return nil, fmt.Errorf("inferring schema from store: %w", ierr)
-		}
-		if inferred.HasSchema() {
-			effectiveSchema = inferred
-		}
-	}
-
 	// AnnotationHandler is the documented
 	// input and wins when set; a Handler supplied directly on PlannerOptions
 	// stands otherwise. Fixed at construction: nothing attaches an observer to a
@@ -303,7 +300,9 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		activeTx:       make(map[*Transaction]bool),
 		planCache:      planner.NewPlanCache(1000, 0),
 		parseCache:     NewParseCache(1000),
-		schema:         effectiveSchema,
+		givenSchema:    opts.Schema,
+		schemaAsGiven:  opts.schemaAsGiven,
+		refuseUnknown:  opts.RefuseUnknownAttributes,
 		plannerOptions: &plannerOptions,
 		clock:          clock,
 		replicaID:      replicaID,
@@ -314,22 +313,43 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		d.removePath = opts.Path
 	}
 	d.drainCond = sync.NewCond(&d.mu)
+	d.installed.Store(&installedSchema{})
+
+	// A schema taken as given is the database's schema exactly, nil included.
+	// Otherwise the store's definitions are read, a given schema asserted over
+	// them, and the schema the database runs with composed from both.
+	if opts.schemaAsGiven {
+		d.installed.Store(&installedSchema{effective: opts.Schema})
+		return d, nil
+	}
+	if err := d.installSchema(true); err != nil {
+		closeOwnedStore()
+		return nil, fmt.Errorf("installing schema: %w", err)
+	}
 	return d, nil
 }
 
 // Schema returns the current schema (may be nil)
 func (d *Database) Schema() schema.SchemaProvider {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.schema
+	return d.installed.Load().effective
 }
 
-// SetSchema sets or replaces the schema for validation
-// Schema changes take effect for new transactions
-func (d *Database) SetSchema(s schema.SchemaProvider) {
+// SetSchema declares s as the database's schema: its definitions are asserted
+// into the store, superseding the stored ones for the idents it names, and the
+// schema the database runs with is composed from both. A nil s withdraws the
+// given schema, and the database runs with the store's definitions and what
+// the ops of the other attributes infer; a database that refuses unknown
+// attributes keeps a schema to check against and returns an error for nil.
+// Schema changes take effect for new transactions. A read-only temporal
+// handle has no store of its own to assert into and is refused.
+func (d *Database) SetSchema(s schema.SchemaProvider) error {
+	if d.temporalTxID != nil {
+		return fmt.Errorf("SetSchema: cannot declare a schema on a read-only temporal handle (AsOf/History)")
+	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.schema = s
+	d.givenSchema = s
+	d.mu.Unlock()
+	return d.installSchema(true)
 }
 
 // ReplicaID returns this database's replica identifier for CRDT operations.
@@ -371,7 +391,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 	}
 
 	matcher := NewPatternMatcher(d.store)
-	matcher.SetSchema(d.schema)
+	matcher.SetSchema(d.Schema())
 
 	for _, attr := range attributes {
 		// Cache keys carry the storage projection of the attribute, so it is
@@ -431,7 +451,7 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	key := CacheKey{E: eBytes, A: aBytes}
 
 	matcher := NewPatternMatcher(d.store)
-	matcher.SetSchema(d.schema)
+	matcher.SetSchema(d.Schema())
 
 	// Cache is an optimization, not a correctness requirement: when DisableCache
 	// is set (d.cache == nil), resolve the entry directly from storage via
@@ -477,7 +497,7 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	key := CacheKey{E: eBytes, A: aBytes}
 
 	matcher := NewPatternMatcher(d.store)
-	matcher.SetSchema(d.schema)
+	matcher.SetSchema(d.Schema())
 
 	// Cache is an optimization, not a correctness requirement: when DisableCache
 	// is set (d.cache == nil), resolve the entry directly from storage via
@@ -591,7 +611,9 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 	handle := &Database{
 		store:          d.store,
 		encoder:        d.encoder,
-		schema:         d.schema,
+		givenSchema:    d.givenSchema,
+		schemaAsGiven:  d.schemaAsGiven,
+		refuseUnknown:  d.refuseUnknown,
 		planCache:      d.planCache,
 		parseCache:     d.parseCache,
 		plannerOptions: d.plannerOptions,
@@ -601,6 +623,7 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 		replicaID:      d.replicaID,
 		temporalTxID:   &txID,
 	}
+	handle.installed.Store(d.installed.Load())
 	return handle
 }
 
@@ -615,10 +638,12 @@ func (d *Database) History() *Database {
 	// Field dispositions are the ruled contract pinned by
 	// TestTemporalHandleFieldClassification (see AsOf above).
 	empty := datalog.ElementID{}
-	return &Database{
+	handle := &Database{
 		store:          d.store,
 		encoder:        d.encoder,
-		schema:         d.schema,
+		givenSchema:    d.givenSchema,
+		schemaAsGiven:  d.schemaAsGiven,
+		refuseUnknown:  d.refuseUnknown,
 		planCache:      d.planCache,
 		parseCache:     d.parseCache,
 		plannerOptions: d.plannerOptions,
@@ -628,6 +653,8 @@ func (d *Database) History() *Database {
 		replicaID:      d.replicaID,
 		temporalTxID:   &empty,
 	}
+	handle.installed.Store(d.installed.Load())
+	return handle
 }
 
 // DefaultPlannerOptions returns the default planner and executor options for the database
@@ -692,9 +719,10 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.PatternMatcher {
 	matcher := NewPatternMatcherWithOptions(d.store, executor.ExecutorOptionsFromPlanner(opts))
 	matcher.builderCache = d.builderCache
-	if d.schema != nil {
-		matcher.SetSchema(d.schema)
+	if effective := d.installed.Load().effective; effective != nil {
+		matcher.SetSchema(effective)
 	}
+	matcher.refuseUnknown = d.refuseUnknown
 	if d.cache != nil {
 		matcher.SetCache(d.cache)
 	}
@@ -2100,7 +2128,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		key := CacheKey{E: Entity(eBytes), A: aBytes}
 
 		matcher := NewPatternMatcher(t.db.store)
-		matcher.SetSchema(t.db.schema)
+		matcher.SetSchema(t.db.Schema())
 
 		var entry *CacheEntry
 		var err error
@@ -2210,7 +2238,7 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 	cacheKey := CacheKey{E: Entity(eBytes), A: aBytes}
 
 	matcher := NewPatternMatcher(t.db.store)
-	matcher.SetSchema(t.db.schema)
+	matcher.SetSchema(t.db.Schema())
 
 	var entry *CacheEntry
 	var err error
@@ -2778,10 +2806,11 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 // "won," it should call LookupByUnique after the commit and compare the
 // returned Identity to its own.
 func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (datalog.Identity, error) {
-	if d.schema == nil {
+	s := d.Schema()
+	if s == nil {
 		return nil, fmt.Errorf("LookupByUnique requires a schema declaring %s as unique", attr.String())
 	}
-	def := d.schema.GetAttribute(attr)
+	def := s.GetAttribute(attr)
 	if def == nil {
 		return nil, fmt.Errorf("LookupByUnique: attribute %s not found in schema", attr.String())
 	}
@@ -2847,8 +2876,10 @@ func (d *Database) Pull(entityID datalog.Identity, patternStr string) (map[strin
 		return nil, fmt.Errorf("failed to parse pull pattern: %w", err)
 	}
 
-	// Create pull executor with database matcher
-	matcher := d.Matcher()
+	matcher, err := d.pullMatcher(pattern)
+	if err != nil {
+		return nil, err
+	}
 	puller := executor.NewPullExecutor(matcher, d)
 
 	// Execute pull
@@ -2873,12 +2904,27 @@ func (d *Database) PullMany(entityIDs []datalog.Identity, patternStr string) ([]
 		return nil, fmt.Errorf("failed to parse pull pattern: %w", err)
 	}
 
-	// Create pull executor with database matcher
-	matcher := d.Matcher()
+	matcher, err := d.pullMatcher(pattern)
+	if err != nil {
+		return nil, err
+	}
 	puller := executor.NewPullExecutor(matcher, d)
 
 	// Execute pull for all entities
 	return puller.PullMany(entityIDs, pattern)
+}
+
+// pullMatcher mints the default-source matcher for a pull and refuses, before
+// anything executes, the attributes the pattern names that the schema does
+// not declare: the check a query gets at execution entry.
+func (d *Database) pullMatcher(pattern *query.PullPattern) (executor.PatternMatcher, error) {
+	// matcherWithExecOptions constructs *PatternMatcher in both its arms
+	// (fresh, or the AsOf copy for temporal handles).
+	matcher := d.Matcher().(*PatternMatcher)
+	if err := matcher.unknownPullAttributes(pattern); err != nil {
+		return nil, err
+	}
+	return matcher, nil
 }
 
 // ResolveEntityAttributes resolves CRDT values for the requested attributes of an entity.
@@ -2900,14 +2946,13 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 
 	matcher := d.Matcher().(*PatternMatcher)
 	result := make(map[datalog.Keyword]interface{})
+	s := d.Schema()
 
 	// getValueType returns the schema value type for a keyword
 	getValueType := func(kw datalog.Keyword) datalog.Keyword {
-		if d.schema != nil {
-			if s, ok := d.schema.(*schema.Schema); ok {
-				if def := s.GetAttribute(kw); def != nil {
-					return def.ValueType
-				}
+		if s != nil {
+			if def := s.GetAttribute(kw); def != nil {
+				return def.ValueType
 			}
 		}
 		return nil
@@ -2920,8 +2965,8 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 	if d.cache == nil || matcher.isHistoryMode() {
 		for _, kw := range attrs {
 			card := schema.CardinalityOne
-			if d.schema != nil {
-				if def := d.schema.GetAttribute(kw); def != nil {
+			if s != nil {
+				if def := s.GetAttribute(kw); def != nil {
 					card = def.Cardinality
 				}
 			}
@@ -3135,15 +3180,13 @@ func entryToValue(entry *CacheEntry, valueType datalog.Keyword) interface{} {
 //   - CardinalityVector: []interface{} (RGA ordered list)
 func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Keyword]interface{}, error) {
 	// If schema exists, enumerate schema attributes.
-	if d.schema != nil {
-		if s, ok := d.schema.(*schema.Schema); ok && s.HasSchema() {
-			attrs := s.Attributes()
-			keywords := make([]datalog.Keyword, len(attrs))
-			for i, def := range attrs {
-				keywords[i] = def.Ident
-			}
-			return d.ResolveEntityAttributes(entity, keywords)
+	if s := d.Schema(); s != nil && s.HasSchema() {
+		attrs := s.Attributes()
+		keywords := make([]datalog.Keyword, len(attrs))
+		for i, def := range attrs {
+			keywords[i] = def.Ident
 		}
+		return d.ResolveEntityAttributes(entity, keywords)
 	}
 
 	matcher := d.Matcher().(*PatternMatcher)
@@ -3290,8 +3333,10 @@ func (d *Database) PullInto(entityID datalog.Identity, v interface{}) error {
 	// Resolve with schema for proper cardinality handling
 	resolved := schema.ResolvePullPattern(pattern, d.Schema())
 
-	// Create pull executor and execute
-	matcher := d.Matcher()
+	matcher, err := d.pullMatcher(pattern)
+	if err != nil {
+		return err
+	}
 	puller := executor.NewPullExecutor(matcher, d)
 	result, err := puller.PullResolved(entityID, resolved)
 	if err != nil {
@@ -3343,8 +3388,10 @@ func (d *Database) PullIntoMany(entityIDs []datalog.Identity, v interface{}) err
 	// Resolve with schema for proper cardinality handling
 	resolved := schema.ResolvePullPattern(pattern, d.Schema())
 
-	// Create pull executor and execute
-	matcher := d.Matcher()
+	matcher, err := d.pullMatcher(pattern)
+	if err != nil {
+		return err
+	}
 	puller := executor.NewPullExecutor(matcher, d)
 	results, err := puller.PullResolvedMany(entityIDs, resolved)
 	if err != nil {

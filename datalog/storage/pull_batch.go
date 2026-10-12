@@ -213,8 +213,8 @@ func (d *Database) resolveWildcardEntity(
 }
 
 func (d *Database) declaredWildcardAttributes() map[datalog.Keyword]struct{} {
-	s, ok := d.schema.(*schema.Schema)
-	if !ok || !s.HasSchema() {
+	s := d.Schema()
+	if s == nil || !s.HasSchema() {
 		return nil
 	}
 	attrs := s.Attributes()
@@ -266,17 +266,19 @@ func (d *Database) resolveWildcardDatoms(
 }
 
 func (d *Database) isUniqueAttribute(attr datalog.Keyword) bool {
-	if d.schema == nil {
+	s := d.Schema()
+	if s == nil {
 		return false
 	}
-	return d.schema.GetAttribute(attr).HasUniqueConstraint()
+	return s.GetAttribute(attr).HasUniqueConstraint()
 }
 
 func (d *Database) attributeValueType(attr datalog.Keyword) datalog.Keyword {
-	if d.schema == nil {
+	s := d.Schema()
+	if s == nil {
 		return nil
 	}
-	definition := d.schema.GetAttribute(attr)
+	definition := s.GetAttribute(attr)
 	if definition == nil {
 		return nil
 	}

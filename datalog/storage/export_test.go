@@ -1185,8 +1185,9 @@ func TestDatabaseRoundTrip_CRDTOps(t *testing.T) {
 			assert.True(t, foundAdd, "expected :op/add in export")
 			assert.True(t, foundRemove, "expected :op/remove in export")
 
-			// Import into fresh DB with same schema
-			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
+			// Import into a fresh database. The dump carries db1's definitions,
+			// so the restore target declares none of its own.
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			err = db2.Import(strings.NewReader(buf.String()))
 			require.NoError(t, err)
@@ -1298,8 +1299,9 @@ func TestDatabaseRoundTrip_RGA(t *testing.T) {
 			}
 			assert.True(t, foundRGAInsert, "expected :op/rga-insert in export")
 
-			// Import into fresh DB with same schema
-			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
+			// Import into a fresh database. The dump carries db1's definitions,
+			// so the restore target declares none of its own.
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			err = db2.Import(strings.NewReader(buf.String()))
 			require.NoError(t, err)
@@ -1348,7 +1350,7 @@ func TestImport_ClockAdvancedAfterImport(t *testing.T) {
 			s := schema.NewBuilder().
 				Attribute(":entity/state").Type(schema.TypeKeyword).Many().Add().
 				MustBuild()
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Build EDN with a cardinality-many datom at a high Lamport value
 			entity := datalog.NewIdentity("test-entity")

@@ -210,7 +210,7 @@ func TestConstantPatternCacheParity(t *testing.T) {
 				t.Run(omode.name, func(t *testing.T) {
 					assertCacheModesAgree(t, omode,
 						func(t *testing.T, db *Database) {
-							db.SetSchema(constantPatternSchema(t))
+							require.NoError(t, db.SetSchema(constantPatternSchema(t)))
 							tc.write(t, db, datalog.NewIdentity(constantPatternSeed))
 						},
 						func(t *testing.T, db *Database) interface{} {

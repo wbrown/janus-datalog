@@ -123,7 +123,9 @@ func TestPullIntegration_StandaloneAPI(t *testing.T) {
 					ValueType:   schema.TypeString,
 					Cardinality: schema.CardinalityMany,
 				})
-				db.SetSchema(s)
+				if err := db.SetSchema(s); err != nil {
+					t.Fatal(err)
+				}
 
 				// Create entity with multiple tags
 				taggedEntity := datalog.NewIdentity("user:tagged")

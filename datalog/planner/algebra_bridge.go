@@ -142,8 +142,14 @@ func optimizeViaAlgebra(
 		}
 		return nil, fmt.Errorf("algebra decompile: %w", err)
 	}
-	rewritten := *q
-	rewritten.Where = clauses
+	rewritten := &query.Query{
+		Find:         q.Find,
+		In:           q.In,
+		Where:        clauses,
+		OrderBy:      q.OrderBy,
+		Limit:        q.Limit,
+		ScalarReturn: q.ScalarReturn,
+	}
 	if handler != nil {
 		handler(annotations.Event{
 			Name: annotations.AlgebraBridgeComplete,
@@ -157,7 +163,7 @@ func optimizeViaAlgebra(
 		expl.Compiled = compiled
 		expl.Rewrites = sink.Records()
 		expl.Optimized = optimized
-		expl.Rewritten = &rewritten
+		expl.Rewritten = rewritten
 	}
-	return &rewritten, nil
+	return rewritten, nil
 }

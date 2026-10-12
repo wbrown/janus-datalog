@@ -33,7 +33,11 @@ type PatternMatcher struct {
 	options           executor.ExecutorOptions // Options for creating relations
 	forceJoinStrategy *JoinStrategy            // Override join strategy selection for testing
 	schema            schema.SchemaProvider    // Optional schema for cardinality-aware index selection
-	cache             *Cache                   // CRDT resolution cache for O(1) access to resolved views
+	// refuseUnknown is the database's RefuseUnknownAttributes option: a query
+	// or pull naming an attribute the schema does not declare is an error. A
+	// matcher built outside a database refuses nothing.
+	refuseUnknown bool
+	cache         *Cache // CRDT resolution cache for O(1) access to resolved views
 }
 
 // encodeValueForSearch encodes a value for use in index lookups. It is
@@ -153,6 +157,7 @@ func (m *PatternMatcher) AsOf(txID datalog.ElementID) *PatternMatcher {
 		handler:        m.handler,
 		options:        m.options,
 		schema:         m.schema,
+		refuseUnknown:  m.refuseUnknown,
 		cache:          m.cache,
 	}
 }

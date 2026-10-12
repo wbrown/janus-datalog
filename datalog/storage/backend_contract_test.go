@@ -776,7 +776,9 @@ func TestStoreBackendsBinaryRoundTrip(t *testing.T) {
 			var encoded seekBuffer
 			require.NoError(t, source.ExportBinary(&encoded))
 
-			restored := openContractDatabase(t, testCase, DatabaseOptions{Schema: s, ReplicaID: 7})
+			// The dump carries the source's definitions, so the restore target
+			// declares none of its own.
+			restored := openContractDatabase(t, testCase, DatabaseOptions{ReplicaID: 7})
 			require.NoError(t, restored.ImportBinary(&encoded))
 
 			var before, after bytes.Buffer

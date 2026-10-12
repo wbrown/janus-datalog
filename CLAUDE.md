@@ -337,7 +337,7 @@ The storage layer connects the query engine to BadgerDB:
 
 ### Multi-Source Query Architecture
 - **One interface**: `PatternMatcher` is the sole interface for all data sources. No separate `DataSource` type.
-- **SourceRouter**: Routes by `pattern.Source` field via `map[Symbol]PatternMatcher`. Also implements `PredicateAwareMatcher` (delegates predicate pushdown to underlying source) and `EntityLookupMatcher` (delegates to default `$` source for `get-else`, `missing?`, `get-some`).
+- **SourceRouter**: Routes by `pattern.Source` field via `map[Symbol]PatternMatcher`. Also implements `PredicateAwareMatcher` (delegates predicate pushdown to underlying source), `EntityLookupMatcher` (delegates to default `$` source for `get-else`, `missing?`, `get-some`) and `AttributeVocabulary` (delegates the unknown-attribute check to the default `$` source; a named source's patterns are not checked).
 - **Source threading**: Sources are an execution context built once at the top level. `Query()` accepts `WithSources(...)` as a functional option. The `SourceRouter` becomes the executor's `PatternMatcher`, so subqueries inherit access to all sources automatically.
 - **IsSourceSymbol**: Helper `strings.HasPrefix(string(sym), "$")` replacing all hardcoded `sym == "$"` checks.
 - **Adding new source types**: Implement `PatternMatcher`. Optionally implement `PredicateAwareMatcher` for predicate pushdown. Pass via `WithSources`.
@@ -353,6 +353,15 @@ The storage layer connects the query engine to BadgerDB:
    - `Remove` is unconstrained; import and the other replay paths bypass the check; reads are unchanged
    - `:db/unique-elements` renamed `:db/uniqueElements`, no alias; an unknown or non-keyword key in an EDN attribute definition is a parse error
    - See [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md), [docs/reference/REFLECT.md](docs/reference/REFLECT.md), and [docs/archive/completed/NEVER_ZERO_VALUE.md](docs/archive/completed/NEVER_ZERO_VALUE.md)
+2. **Schema as facts** - A schema given to a database is asserted into its store, one entity per attribute on `db.attribute/<ident>` carrying the seven definition words as cardinality-one facts; a dump carries them, an open with no schema reads them back, and inference covers only an attribute with datoms and no definition
+   - `SetSchema` returns an error and refuses a temporal handle
+   - A fork asserts its parent's declared definitions into the branch
+   - `TruncateTo` runs with the definitions that survive the rewind
+   - `DatabaseOptions.RefuseUnknownAttributes` / `db.WithRefuseUnknownAttributes()` refuses a query, pull or `PullInto` naming an attribute the schema does not declare, as `*schema.UnknownAttributeError`
+   - The option requires a schema: opening with it and none, or `SetSchema(nil)` on a refusing database, is an error
+   - A parsed `query.Query` collects the attributes it names once, under a `sync.Once`, so the check is one schema lookup per attribute per execution
+   - A `Query` is never copied by value, and a derived query is built from its parsed parts
+   - See [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md), "Schema as Facts", and [docs/proposals/RULES_WITNESSES_AND_SPECULATIVE_VALUES.md](docs/proposals/RULES_WITNESSES_AND_SPECULATIVE_VALUES.md) §4 and §5
 
 ### ✅ Recent Updates (Q1 2026)
 1. **LZJ Compression Codec** - Custom LZ77+FSE compression for value storage
@@ -434,7 +443,7 @@ The storage layer connects the query engine to BadgerDB:
 20. **Datomic compatibility** - ~80% feature parity (see DATOMIC_COMPATIBILITY.md)
 21. **Relations migration** - Multi-value variable support throughout codebase
 22. **Pull API** - Declarative entity attribute retrieval with nested refs, cycle detection, wildcards (9× faster than queries)
-23. **Schema support** - Type validation, cardinality (one/many/vector), uniqueness (read-time resolution), `:db/uniqueElements` on vectors, `:db/neverZeroValue` (the value type's zero is not a value: `Add`/`Set` reject it, the struct writer omits a field holding it); unknown EDN definition keys are parse errors; optional and additive
+23. **Schema support** - Type validation, cardinality (one/many/vector), uniqueness (read-time resolution), `:db/uniqueElements` on vectors, `:db/neverZeroValue` (the value type's zero is not a value: `Add`/`Set` reject it, the struct writer omits a field holding it); unknown EDN definition keys are parse errors; optional and additive. Declared definitions are stored as facts on `db.attribute/<ident>` entities, carried by dumps and read back at open; a database opened with `RefuseUnknownAttributes`, which requires a schema, refuses a query or pull naming an attribute the schema does not declare (`docs/reference/SCHEMA.md`, "Schema as Facts")
 24. **CRDT storage** - LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector; all writes preserved with ElementIDs; `db.History()` for raw datom access, `db.AsOf(elementID)` for point-in-time queries; three-mode `*ElementID` matcher (`nil`=latest, `&ElementID{}`=history, `&ElementID{L,R}`=as-of)
 25. **NOT/OR clauses** - Full support for `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible union semantics; `(or-default ...)`, `(or-default-join ...)` for fallback/default-value patterns (janus extension)
 26. **QueryInto API** - Typed query results via `QueryInto()` and `QueryOneInto()` with struct tag mapping for variables and aggregates

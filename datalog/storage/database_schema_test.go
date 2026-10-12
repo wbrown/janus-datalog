@@ -126,7 +126,7 @@ func TestSetSchema(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 			assert.NotNil(t, db.Schema())
 
 			// Now validation should be enforced

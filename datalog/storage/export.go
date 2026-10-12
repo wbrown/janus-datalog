@@ -182,7 +182,11 @@ func (d *Database) Import(r io.Reader) error {
 		d.clock.Restore(maxElementID)
 	}
 
-	return nil
+	// The dump carried its writer's definitions. The schema the database runs
+	// with is composed from them, under a given schema if one was declared,
+	// whose facts take ElementIDs past the restored clock and so supersede the
+	// imported ones for the idents it names.
+	return d.installSchema(true)
 }
 
 // FormatCRDTOpEDN formats a CRDTOp as an EDN keyword string.

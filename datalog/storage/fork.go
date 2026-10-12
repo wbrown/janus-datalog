@@ -109,6 +109,12 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("Fork %q: %w", name, err), forked.Close())
 	}
+	// The branch holds the parent's facts as of the snapshot. The parent's
+	// declared definitions are asserted into it, so a declaration the parent
+	// made after the snapshot reaches the branch and its dump describes itself.
+	if err := branch.adoptDeclarations(d.declaredSchema()); err != nil {
+		return nil, errors.Join(fmt.Errorf("Fork %q: %w", name, err), branch.Close())
+	}
 	if err := addBranchRecord(tx, name, snapshot.At, ceiling, branch.ReplicaID()); err != nil {
 		return nil, errors.Join(err, branch.Close())
 	}

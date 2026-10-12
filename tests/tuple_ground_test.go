@@ -83,7 +83,9 @@ func testTupleGroundOrFallback(t *testing.T, db *storage.Database, mode optimize
 		ValueType:   schema.TypeRef,
 		Cardinality: schema.CardinalityMany,
 	})
-	db.SetSchema(s)
+	if err := db.SetSchema(s); err != nil {
+		t.Fatal(err)
+	}
 
 	// Setup: scenarios with tasks (similar to comparison_binding_or_subquery_test.go)
 	tx := db.NewTransaction()

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -338,6 +339,12 @@ type Query struct {
 	OrderBy      []OrderByClause // Optional ordering of results
 	Limit        *int            // Optional cap on result tuples (nil = unbounded); applied after OrderBy and aggregation
 	ScalarReturn bool            // If true, return scalar value (find spec ends with .)
+
+	// attributes is the roster the DefaultSourceAttributes method returns,
+	// collected on its first call. A parsed query is immutable and serves every
+	// execution of its text, so the roster is collected once.
+	attributesOnce sync.Once
+	attributes     []datalog.Keyword
 }
 
 // SingleDataPattern returns the sole data pattern in a physical query fragment.
@@ -474,14 +481,14 @@ func (f FindAggregate) IsAggregate() bool {
 }
 
 // String returns a string representation of the query
-func (q Query) String() string {
+func (q *Query) String() string {
 	// Import cycle prevents using parser.FormatQuery directly
 	// So we implement a simplified version here that matches the parser's format
 	return q.formatWithIndent("")
 }
 
 // formatWithIndent formats the query with proper indentation
-func (q Query) formatWithIndent(indent string) string {
+func (q *Query) formatWithIndent(indent string) string {
 	result := "[:find"
 	for _, elem := range q.Find {
 		result += " " + elem.String()

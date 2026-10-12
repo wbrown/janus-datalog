@@ -33,7 +33,7 @@ func TestMatcherCacheCardinalityOne(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -75,7 +75,7 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -122,7 +122,7 @@ func TestMatcherCacheCardinalityVector(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -163,7 +163,7 @@ func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -210,7 +210,7 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add initial data
 			tx := db.NewTransaction()
@@ -291,7 +291,7 @@ func TestMatcherCacheLWWResolution(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Write multiple values - highest ElementID should win
 			tx1 := db.NewTransaction()
@@ -339,7 +339,7 @@ func TestMatcherCacheAddWinsResolution(t *testing.T) {
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			e := datalog.NewIdentity("person1")
 
@@ -400,7 +400,7 @@ func BenchmarkCachePathTupleBuilding(b *testing.B) {
 	s, _ := schema.NewBuilder().
 		Attribute(":person/name").Type(schema.TypeString).One().Add().
 		Build()
-	db.SetSchema(s)
+	require.NoError(b, db.SetSchema(s))
 
 	// Create 100 entities with names
 	for i := 0; i < 100; i++ {
@@ -439,7 +439,7 @@ func BenchmarkCacheResolutionOverhead(b *testing.B) {
 	s, _ := schema.NewBuilder().
 		Attribute(":person/name").Type(schema.TypeString).One().Add().
 		Build()
-	db.SetSchema(s)
+	require.NoError(b, db.SetSchema(s))
 
 	// Create entity
 	tx := db.NewTransaction()
@@ -505,7 +505,7 @@ func BenchmarkCachePathWithBindings(b *testing.B) {
 		Attribute(":person/name").Type(schema.TypeString).One().Add().
 		Attribute(":person/age").Type(schema.TypeLong).One().Add().
 		Build()
-	db.SetSchema(s)
+	require.NoError(b, db.SetSchema(s))
 
 	// Create 100 entities with name and age
 	for i := 0; i < 100; i++ {

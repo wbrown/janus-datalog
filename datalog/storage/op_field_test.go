@@ -106,7 +106,9 @@ func TestAddMethodUsesOpField(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -173,7 +175,9 @@ func TestRemoveMethodUsesOpField(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -244,7 +248,9 @@ func TestAVETLookupWithOpField(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			// Add tags to multiple entities
 			entity1 := datalog.NewIdentity("entity1")
@@ -310,7 +316,9 @@ func TestBadgerIteratorDecodesOp(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -372,7 +380,9 @@ func TestSetMethodGeneratesCorrectOps(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")

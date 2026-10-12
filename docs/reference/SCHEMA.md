@@ -7,7 +7,8 @@ This document describes janus-datalog's schema support for type validation, card
 Schema support is **optional and additive**:
 - Without schema: all existing behavior is preserved
 - With schema: type validation, cardinality-many, uniqueness constraints, and `:db/neverZeroValue` are enforced
-- Unknown attributes are allowed (additive schema model)
+- A write of an attribute the schema does not declare is accepted (additive schema model)
+- A read of an attribute the schema does not declare is refused on a database opened with `RefuseUnknownAttributes`, which requires a schema (see [Schema as Facts](#schema-as-facts))
 
 ## Defining a Schema
 
@@ -52,10 +53,62 @@ import "github.com/wbrown/janus-datalog/datalog/db"
 // Create database with schema
 d, err := db.Open("/path/to/db", db.WithSchema(s))
 
-// Or add schema to existing database
+// Or declare a schema on an open database
 d, _ := db.Open("/path/to/db")
-d.SetSchema(s)
+if err := d.SetSchema(s); err != nil {
+    log.Fatal(err)
+}
 ```
+
+## Schema as Facts
+
+A schema given to a database is asserted into its store. Each attribute definition is an entity, content-addressed from the ident (`db.attribute/<ident>`), so a definition asserted anywhere converges on the entity it already has. The entity carries one fact per field of the definition:
+
+| Word | Value | Written |
+|------|-------|---------|
+| `:db/ident` | the attribute's keyword | always |
+| `:db/valueType` | a `:db.type/*` keyword | when the definition carries one |
+| `:db/cardinality` | a `:db.cardinality/*` keyword | always |
+| `:db/unique` | a `:db.unique/*` keyword | when the definition carries one |
+| `:db/uniqueElements` | boolean | always |
+| `:db/neverZeroValue` | boolean | always |
+| `:db/doc` | string, `""` included | always |
+
+The facts answer ordinary patterns:
+
+```clojure
+[:find ?ident ?type ?card
+ :where [?a :db/ident ?ident]
+        [?a :db/valueType ?type]
+        [?a :db/cardinality ?card]]
+```
+
+Where the facts are read and asserted:
+
+- **Open with a schema.** The definitions the store holds are read, and the given schema's are asserted over them in one transaction holding only the words that differ. The database runs with the given definitions, and with the stored ones for the idents the given schema does not name. A reopen with an unchanged schema writes nothing. A given schema is authoritative, so nothing is inferred.
+- **Open with no schema.** The stored definitions are read and the database runs with them. An attribute that carries datoms and has no definition is inferred from the ops of its datoms; an inferred definition is in memory only and is never asserted.
+- **A withdrawn word.** A declaration that drops a definition's value type or uniqueness constraint withdraws that fact: the word stops resolving on the definition entity, and `History()` keeps the withdrawn value.
+- **`SetSchema`** declares a schema on an open database the same way. It returns an error, since it writes, and a read-only `AsOf` or `History` handle refuses it.
+- **Import.** A dump carries the schema datoms. An import into a database with no schema ends by reading them, so a set the dump's writer declared resolves as a set. A database opened with a schema re-asserts it after the import, so the given schema supersedes the dump's definitions for the idents it names.
+- **Fork.** A branch carries its parent's declared definitions, asserted into it at the fork, so a dump of the branch describes itself.
+- **TruncateTo.** A definition asserted after the snapshot goes with the rest, and the database runs with what survives.
+
+### Unknown attributes are refused on request
+
+A database opened with `RefuseUnknownAttributes` (`db.WithRefuseUnknownAttributes()`) refuses a query, a pull or a `PullInto` that names an attribute the schema does not declare, whether or not a datom carries it, before it runs:
+
+```
+unknown attribute :person/naem: the schema does not declare it
+```
+
+The error is a `*schema.UnknownAttributeError` carrying the attribute, reachable with `errors.As`. Several unknown attributes in one query are joined, in order of appearance. The check reads data patterns on the default source, the attributes of `get-else`, `get-some` and `missing?`, and pull patterns in `:find` and in the `Pull` family, descending through `not`, `or`, their `-join` forms, the `or-default` forms and subquery bodies. The schema checked is the one the database runs with: the given definitions over the stored ones. The option requires a schema: opening with it and no schema, or withdrawing the schema with `SetSchema(nil)`, is an error.
+
+Not refused:
+
+- A declared attribute with no datoms, or with none at an `AsOf` handle's point, which returns no tuple.
+- A pattern on a named source, which reads that source's attributes.
+- The engine's own words: `:db/txInstant`, `:db/id`, the snapshot and branch records, and the definition words above.
+- Any query on a database opened without the option.
 
 ## Supported Attributes
 
@@ -392,17 +445,23 @@ type SchemaProvider interface {
     HasSchema() bool
     IsRef(attr datalog.Keyword) bool
     IsMany(attr datalog.Keyword) bool
+    Attributes() []*AttributeDefinition
 }
 ```
 
 ## Performance
 
-Schema validation impacts **writes only**. Reads are completely unaffected.
+Schema validation is paid on writes. A read pays the unknown-attribute check once per query or pull when the database refuses unknown attributes (see [Schema as Facts](#schema-as-facts)); otherwise the check is a pointer test. A parsed query collects the attributes it names once, on its first execution, so the check on every later execution is one schema lookup per attribute. Measured on Apple M5 by `BenchmarkUnknownAttributeCheck`, `BenchmarkOpenWithUnchangedSchema` and `BenchmarkImportInferenceAfterLoad` in `datalog/storage`:
 
 | Operation | Overhead | When |
 |-----------|----------|------|
 | Type validation | <0.2% | `Add()` time |
 | Schema resolution | 225ns | Once per Pull pattern |
+| Unknown-attribute check, not refusing | 3–9ns | Once per query or pull |
+| Unknown-attribute check, declared attribute | 9–14ns | Once per query or pull |
+| Unknown-attribute check, undeclared attribute, refused | 36–54ns | Once per query or pull |
+| Reopen with an unchanged schema | within noise of a reopen with none | `Open()` time |
+| Reading the definitions and inferring after an import | 0.6–3% of the import | `Import()` time |
 
 Uniqueness costs nothing at write time — it is a read-time resolution rule, so
 it is paid by the read that asks: the AVET walk behind `LookupByUnique` and
@@ -421,7 +480,6 @@ Current limitations compared to Datomic:
 3. **No `:db/fulltext`** - fulltext search not supported
 4. **No `:db/noHistory`** - all datoms are retained
 5. **No upsert semantics** - `:db.unique/identity` currently behaves like `:db.unique/value`
-6. **Schema not stored as datoms** - schema is in-memory only
 
 ## Package Reference
 
@@ -452,4 +510,5 @@ schema.ResolvePullPattern(p, s)        // Resolve pull pattern with schema
 schema.ValidateValue(v, t)             // Validate value against type
 schema.IsZeroValue(v, t)               // Is v the zero value of value type t
 schema.ValidateDatom(s, attr, v)       // Validate datom against schema
+schema.Overlay(base, top)              // top's definitions over base's
 ```

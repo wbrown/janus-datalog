@@ -93,7 +93,7 @@ results, _ := d.Query(q)
 [["Alice" 30]]
 ```
 
-That's it. One import, one `Open()` call, one `Query()`. No schema required. No connection pools. No query tuning. Typos caught at compile time.
+That's it. One import, one `Open()` call, one `Query()`. No schema required. No connection pools. No query tuning. Typos caught at compile time here, or refused at run time by a database opened with `WithRefuseUnknownAttributes` and a schema.
 
 ## Query Builder vs EDN Strings
 
@@ -126,7 +126,7 @@ results, _ := d.Query(q)
 ```
 
 **Why use it:**
-- Typos in `":person/naem"` silently return empty results; `PersonName` catches typos at compile time
+- A typo like `":person/naem"` returns an empty result, or an error on a database opened with `WithRefuseUnknownAttributes`; `PersonName` catches it at compile time
 - IDE autocomplete shows available attributes
 - Refactoring is safe with find-replace
 - Same `*Var` in multiple patterns = join (no string matching)

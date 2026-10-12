@@ -8,22 +8,28 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/edn"
 )
 
-// Attribute definition map keys, interned so the parse loop compares by
-// pointer. Registered well-known: these are package variables compared by
-// identity, so a ClearInterns that re-interned rather than restored them would
-// leave every parse silently failing to recognise its own map keys.
+// The words of an attribute definition: the keys of its EDN map, and the
+// attributes a definition stored as facts carries. One declaration serves both
+// readers. DBIdent is the word a stored definition carries its ident under; the
+// EDN form carries the ident as the map key, so the parser never reads it.
 //
-// Only the map keys. The value vocabularies — :db.type/string and the rest —
-// are the constants in types.go, and parsing compares against those directly:
+// Interned so the parse loop compares by pointer. Registered well-known: these
+// are package variables compared by identity, so a ClearInterns that re-interned
+// rather than restored them would leave every parse silently failing to
+// recognise its own map keys.
+//
+// Only the words. The value vocabularies — :db.type/string and the rest — are
+// the constants in types.go, and parsing compares against those directly:
 // interning makes the parsed keyword the same instance, so there is nothing to
 // translate and no second copy to keep in step.
 var (
-	kwDBValueType      = datalog.WellKnownKeyword(":db/valueType")
-	kwDBCardinality    = datalog.WellKnownKeyword(":db/cardinality")
-	kwDBUnique         = datalog.WellKnownKeyword(":db/unique")
-	kwDBDoc            = datalog.WellKnownKeyword(":db/doc")
-	kwDBUniqueElements = datalog.WellKnownKeyword(":db/uniqueElements")
-	kwDBNeverZeroValue = datalog.WellKnownKeyword(":db/neverZeroValue")
+	DBIdent          = datalog.WellKnownKeyword(":db/ident")
+	DBValueType      = datalog.WellKnownKeyword(":db/valueType")
+	DBCardinality    = datalog.WellKnownKeyword(":db/cardinality")
+	DBUnique         = datalog.WellKnownKeyword(":db/unique")
+	DBDoc            = datalog.WellKnownKeyword(":db/doc")
+	DBUniqueElements = datalog.WellKnownKeyword(":db/uniqueElements")
+	DBNeverZeroValue = datalog.WellKnownKeyword(":db/neverZeroValue")
 )
 
 // ParseSchema parses an EDN schema definition string
@@ -117,40 +123,40 @@ func parseAttributeDefinition(ident string, node *edn.Node) (*AttributeDefinitio
 		// renamed key would parse as a definition that silently lacks it.
 		key := datalog.NewKeyword(keyNode.Value)
 		switch key {
-		case kwDBValueType:
+		case DBValueType:
 			vt, err := parseValueType(valueNode)
 			if err != nil {
 				return nil, fmt.Errorf(":db/valueType error: %w", err)
 			}
 			def.ValueType = vt
 
-		case kwDBCardinality:
+		case DBCardinality:
 			card, err := parseCardinality(valueNode)
 			if err != nil {
 				return nil, fmt.Errorf(":db/cardinality error: %w", err)
 			}
 			def.Cardinality = card
 
-		case kwDBUnique:
+		case DBUnique:
 			uniq, err := parseUnique(valueNode)
 			if err != nil {
 				return nil, fmt.Errorf(":db/unique error: %w", err)
 			}
 			def.Unique = uniq
 
-		case kwDBDoc:
+		case DBDoc:
 			if valueNode.Type != edn.NodeString {
 				return nil, fmt.Errorf(":db/doc must be string, got %v", valueNode.Type)
 			}
 			def.Doc = valueNode.Value
 
-		case kwDBUniqueElements:
+		case DBUniqueElements:
 			if valueNode.Type != edn.NodeBool {
 				return nil, fmt.Errorf(":db/uniqueElements must be boolean, got %v", valueNode.Type)
 			}
 			def.UniqueElements = valueNode.Value == "true"
 
-		case kwDBNeverZeroValue:
+		case DBNeverZeroValue:
 			if valueNode.Type != edn.NodeBool {
 				return nil, fmt.Errorf(":db/neverZeroValue must be boolean, got %v", valueNode.Type)
 			}

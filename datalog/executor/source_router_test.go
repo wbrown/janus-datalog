@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -148,5 +149,66 @@ func TestSourceRouterImplementsPatternMatcher(t *testing.T) {
 	}
 	if !mockDefault.wasCalled {
 		t.Error("expected default source to be called via PatternMatcher interface")
+	}
+}
+
+// vocabularyMatcher is a PatternMatcher double that also answers the
+// attribute-vocabulary question, recording the query it was asked about and
+// answering with a fixed error.
+type vocabularyMatcher struct {
+	mockPatternMatcher
+	asked  *query.Query
+	answer error
+}
+
+func (m *vocabularyMatcher) UnknownAttributes(q *query.Query) error {
+	m.asked = q
+	return m.answer
+}
+
+var _ AttributeVocabulary = (*vocabularyMatcher)(nil)
+
+// TestSourceRouterUnknownAttributesDelegatesToDefault pins that the router
+// answers the attribute-vocabulary question from its default source alone: a
+// default source with the capability is asked about the very query and its
+// answer is returned as is, a default source without it answers nil, and a
+// named source is never consulted.
+func TestSourceRouterUnknownAttributesDelegatesToDefault(t *testing.T) {
+	q := query.PatternQuery(&query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: datalog.NewKeyword(":t/naem")},
+			query.Variable{Name: datalog.NewSymbol("?v")},
+		},
+	})
+	refusal := errors.New("unknown attribute :t/naem")
+
+	withVocabulary := &vocabularyMatcher{answer: refusal}
+	router := NewSourceRouter(map[query.Symbol]PatternMatcher{
+		datalog.SymDollar: withVocabulary,
+	})
+	if err := router.UnknownAttributes(q); err != refusal {
+		t.Errorf("router answered %v, want the default source's own answer %v", err, refusal)
+	}
+	if withVocabulary.asked != q {
+		t.Error("router must ask the default source about the query it was given")
+	}
+
+	router = NewSourceRouter(map[query.Symbol]PatternMatcher{
+		datalog.SymDollar: &mockPatternMatcher{},
+	})
+	if err := router.UnknownAttributes(q); err != nil {
+		t.Errorf("a default source without a vocabulary refuses nothing, got %v", err)
+	}
+
+	named := &vocabularyMatcher{answer: refusal}
+	router = NewSourceRouter(map[query.Symbol]PatternMatcher{
+		datalog.NewSymbol("$cache"): named,
+	})
+	if err := router.UnknownAttributes(q); err != nil {
+		t.Errorf("a router with no default source refuses nothing, got %v", err)
+	}
+	if named.asked != nil {
+		t.Error("a named source carries no definitions to refuse against and must not be asked")
 	}
 }

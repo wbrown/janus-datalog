@@ -120,6 +120,15 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 		return nil, err
 	}
 
+	// An attribute the schema does not declare is refused before planning, so
+	// both planner modes refuse identically. The matcher owns the schema, so
+	// the decision is its own.
+	if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
+		if err := vocabulary.UnknownAttributes(q); err != nil {
+			return nil, err
+		}
+	}
+
 	// Apply decorator pattern: wrap matcher with annotations if one is registered
 	matcher := e.matcher
 
@@ -983,9 +992,8 @@ func (e *Executor) prepareIteration(plan *planner.RealizedPlan, relationInput qu
 
 	// Rewrite plan.Query's :in clause: replace the RelationInput with one
 	// ScalarInput per RelationInput symbol.
-	modifiedQuery := *plan.Query
-	newIn := make([]query.InputSpec, 0, len(modifiedQuery.In)+len(relationInput.Symbols)-1)
-	for _, input := range modifiedQuery.In {
+	newIn := make([]query.InputSpec, 0, len(plan.Query.In)+len(relationInput.Symbols)-1)
+	for _, input := range plan.Query.In {
 		if _, isRelInput := input.(query.RelationInput); isRelInput {
 			for _, sym := range relationInput.Symbols {
 				newIn = append(newIn, query.ScalarInput{Symbol: sym})
@@ -994,13 +1002,20 @@ func (e *Executor) prepareIteration(plan *planner.RealizedPlan, relationInput qu
 			newIn = append(newIn, input)
 		}
 	}
-	modifiedQuery.In = newIn
+	modifiedQuery := &query.Query{
+		Find:         plan.Query.Find,
+		In:           newIn,
+		Where:        plan.Query.Where,
+		OrderBy:      plan.Query.OrderBy,
+		Limit:        plan.Query.Limit,
+		ScalarReturn: plan.Query.ScalarReturn,
+	}
 
 	p := &preparedIteration{
 		executor:      e,
 		queryExecutor: queryExecutor,
 		plan:          plan,
-		modifiedQuery: &modifiedQuery,
+		modifiedQuery: modifiedQuery,
 	}
 
 	// Try to pre-build the bound relation (fast path). On success,

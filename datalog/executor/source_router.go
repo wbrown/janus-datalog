@@ -120,7 +120,22 @@ func (sr *SourceRouter) TypeDefault(attr datalog.Keyword, defaultVal interface{}
 	return defaultVal
 }
 
+// UnknownAttributes implements AttributeVocabulary by delegating to the
+// default source ($). A named source carries no definitions to refuse
+// against, and a default source without the capability refuses nothing.
+func (sr *SourceRouter) UnknownAttributes(q *query.Query) error {
+	source, ok := sr.sources[datalog.SymDollar]
+	if !ok {
+		return nil
+	}
+	if v, ok := source.(AttributeVocabulary); ok {
+		return v.UnknownAttributes(q)
+	}
+	return nil
+}
+
 // Compile-time verification that SourceRouter implements all matcher interfaces
 var _ PatternMatcher = (*SourceRouter)(nil)
 var _ PredicateAwareMatcher = (*SourceRouter)(nil)
 var _ EntityLookupMatcher = (*SourceRouter)(nil)
+var _ AttributeVocabulary = (*SourceRouter)(nil)

@@ -135,7 +135,11 @@ func (d *Database) TruncateTo(name string) error {
 	if d.cache != nil {
 		d.cache.InvalidateRewind(keys)
 	}
-	return nil
+
+	// The definitions are now what the surviving facts state. A schema given
+	// after the snapshot was withdrawn with the rest of that timeline and is not
+	// re-asserted here.
+	return d.installSchema(false)
 }
 
 // touchedCacheKeys returns the deduplicated (E,A) cache keys for a set of datoms.

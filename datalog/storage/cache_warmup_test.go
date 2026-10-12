@@ -28,7 +28,7 @@ func TestWarmCacheSingleAttribute(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add some data
 			tx := db.NewTransaction()
@@ -84,7 +84,7 @@ func TestWarmCacheMultipleAttributes(t *testing.T) {
 				Attribute(":person/age").Type(schema.TypeLong).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -140,7 +140,7 @@ func TestWarmCacheEmptyAttribute(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Don't add any data - attribute is empty
 
@@ -196,7 +196,7 @@ func TestWarmCacheIdempotent(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()

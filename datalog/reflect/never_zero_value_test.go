@@ -11,9 +11,9 @@ import (
 )
 
 type personWithBio struct {
-	ID    datalog.Identity `datalog:"-,id"`
-	Bio string           `datalog:"bio"`
-	Name  string           `datalog:"name"`
+	ID   datalog.Identity `datalog:"-,id"`
+	Bio  string           `datalog:"bio"`
+	Name string           `datalog:"name"`
 }
 
 type entityWithTags struct {

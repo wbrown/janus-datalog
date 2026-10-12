@@ -124,7 +124,7 @@ func TestCollectionInput_TwoCollections(t *testing.T) {
 				ValueType:   schema.TypeLong,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			entities := []datalog.Identity{
 				datalog.NewIdentity("person-1"),
@@ -179,7 +179,7 @@ func TestCollectionInput_ThreeCollections(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany, // Allow multiple values
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			tags := []string{"alpha", "beta"}
 
@@ -330,7 +330,7 @@ func TestCollectionInput_IntCollection(t *testing.T) {
 				ValueType:   schema.TypeLong,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			entity := datalog.NewIdentity("item-1")
 			scores := []int64{100, 200, 300}
@@ -365,7 +365,7 @@ func TestCollectionInput_StringCollection(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			entity := datalog.NewIdentity("person-1")
 			tags := []string{"developer", "manager", "admin"}

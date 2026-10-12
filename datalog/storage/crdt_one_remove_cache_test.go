@@ -54,7 +54,7 @@ func createCacheRemoveTestDB(t *testing.T, mode optimizerMode) *Database {
 		Attribute(":person/city").Type(schema.TypeString).One().Add().
 		Build()
 	require.NoError(t, err)
-	db.SetSchema(s)
+	require.NoError(t, db.SetSchema(s))
 
 	return db
 }

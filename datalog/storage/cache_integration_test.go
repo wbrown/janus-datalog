@@ -32,7 +32,7 @@ func TestQueryPathUsesCache(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -84,7 +84,7 @@ func TestPullAPIUsesCache(t *testing.T) {
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -135,7 +135,7 @@ func TestCacheInvalidatedOnCommit(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add initial data
 			tx := db.NewTransaction()
@@ -181,7 +181,7 @@ func TestMultipleMatchersShareCache(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -224,7 +224,7 @@ func TestAsOfDoesNotUseCache(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add initial data
 			tx := db.NewTransaction()
@@ -267,7 +267,7 @@ func TestVectorCacheIntegration(t *testing.T) {
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add vector data
 			tx := db.NewTransaction()
@@ -308,7 +308,7 @@ func TestCacheResolverInterface(t *testing.T) {
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -368,7 +368,7 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 				Attribute(":person/age").Type(schema.TypeLong).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -417,7 +417,7 @@ func TestJoinQueryUsesCache(t *testing.T) {
 				Attribute(":person/city").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -478,7 +478,7 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -537,7 +537,7 @@ func TestCacheConcurrency(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()

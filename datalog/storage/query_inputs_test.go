@@ -384,7 +384,9 @@ func TestExecuteQueryWithCollectionInput(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			// Add test data
 			tx := db.NewTransaction()

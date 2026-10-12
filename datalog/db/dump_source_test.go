@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/db"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
@@ -165,4 +166,94 @@ func TestIsDumpPath(t *testing.T) {
 	require.True(t, storage.IsDumpPath("/var/tmp/snapshot.edn"))
 	require.False(t, storage.IsDumpPath("/var/lib/janus.db"))
 	require.False(t, storage.IsDumpPath(""))
+}
+
+var dumpTags = datalog.NewKeyword(":dump/tags")
+
+// declaredDumpSchema declares the set a dump's writer wrote, with the doc
+// string given.
+func declaredDumpSchema(t *testing.T, doc string) *schema.Schema {
+	t.Helper()
+	s, err := schema.NewBuilder().
+		Attribute(":dump/tags").Type(schema.TypeString).Many().Doc(doc).Add().
+		Build()
+	require.NoError(t, err)
+	return s
+}
+
+// writeDeclaredDump exports a database that declared :dump/tags as a set and
+// wrote three members of it, to a file named for the format under test.
+func writeDeclaredDump(t *testing.T, ext string) string {
+	t.Helper()
+	source, err := db.OpenMemory(db.WithSchema(declaredDumpSchema(t, "the subject's tags")))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = source.Close() })
+
+	tx := source.NewTransaction()
+	for _, member := range []string{"a", "b", "c"} {
+		require.NoError(t, tx.Add(dumpEntity, dumpTags, member))
+	}
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "declared"+ext)
+	file, err := os.Create(path)
+	require.NoError(t, err)
+	defer file.Close()
+
+	if ext == ".jdzl" {
+		require.NoError(t, source.ExportBinary(file))
+		return path
+	}
+	require.NoError(t, source.Export(file))
+	return path
+}
+
+// A dump carries its writer's definitions, so a database loaded from one with
+// no schema of its own resolves a set as the set its writer declared.
+func TestOpenDumpResolvesDeclaredSets(t *testing.T) {
+	for _, ext := range []string{".jdzl", ".edn"} {
+		for _, mode := range optimizerModes {
+			t.Run(ext+"/"+mode.name, func(t *testing.T) {
+				d, err := db.Open(writeDeclaredDump(t, ext),
+					db.WithBackend(mode.backend.Name), db.WithPlannerOptions(mode.plannerOptions()))
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = d.Close() })
+
+				var members []string
+				require.NoError(t, d.QueryInto(&members, `[:find ?t :where [?e :dump/tags ?t]]`))
+				require.ElementsMatch(t, []string{"a", "b", "c"}, members)
+
+				def := d.Schema().GetAttribute(dumpTags)
+				require.NotNil(t, def, "the dump's definition of :dump/tags is read at load")
+				require.Same(t, schema.CardinalityMany, def.Cardinality)
+				require.Equal(t, "the subject's tags", def.Doc)
+			})
+		}
+	}
+}
+
+// A schema given at open supersedes the dump's definitions for the idents it
+// names, so the doc the given schema states is the one the store carries.
+func TestOpenDumpWithSchemaSupersedesDumpFacts(t *testing.T) {
+	for _, ext := range []string{".jdzl", ".edn"} {
+		for _, mode := range optimizerModes {
+			t.Run(ext+"/"+mode.name, func(t *testing.T) {
+				d, err := db.Open(writeDeclaredDump(t, ext),
+					db.WithSchema(declaredDumpSchema(t, "given")),
+					db.WithBackend(mode.backend.Name), db.WithPlannerOptions(mode.plannerOptions()))
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = d.Close() })
+
+				var docs []string
+				require.NoError(t, d.QueryInto(&docs, `[:find ?doc :where [?a :db/ident :dump/tags] [?a :db/doc ?doc]]`))
+				require.Equal(t, []string{"given"}, docs)
+				require.Equal(t, "given", d.Schema().GetAttribute(dumpTags).Doc)
+
+				var members []string
+				require.NoError(t, d.QueryInto(&members, `[:find ?t :where [?e :dump/tags ?t]]`))
+				require.ElementsMatch(t, []string{"a", "b", "c"}, members)
+			})
+		}
+	}
 }

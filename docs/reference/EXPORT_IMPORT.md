@@ -158,6 +158,10 @@ Entity identities are always exported as L85-encoded SHA1 hashes (20 bytes = 25 
 
 Transaction IDs are preserved during export/import, allowing exact restoration of database state including the transaction history structure.
 
+### Schema
+
+A database's declared attribute definitions are datoms on `db.attribute/<ident>` entities (see [SCHEMA.md](SCHEMA.md#schema-as-facts)), so the dump carries them with every other datom. An import ends by reading them: a database opened with no schema resolves a set the dump's writer declared as a set. A database opened with a schema re-asserts it after the import, and the given schema supersedes the dump's definitions for the idents it names. The import applies the recorded datoms as they are, with no schema validation.
+
 ### Comments and Blank Lines
 
 During import:
@@ -212,7 +216,6 @@ The import process validates:
 ## Limitations
 
 - **No incremental export** - Always exports the entire database
-- **No schema export** - Schema definitions are not included (schema is optional and additive)
 - **No compression** - Output is plain text (use external compression if needed)
 
 ## Related Documentation

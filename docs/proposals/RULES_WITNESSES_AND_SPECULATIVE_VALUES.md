@@ -38,7 +38,7 @@ Everything below is design. Nothing in it describes what the engine does today u
 - `Transaction.Remove` makes a cardinality-one attribute absent in the current view (`docs/CORE_MODEL.md` §1).
 - A commit writes one `:db/txInstant` datom on its transaction entity. `Transaction` carries no caller attributes, and only `SetTime` touches the transaction entity.
 - A `ReadSession` pins one snapshot for every read a query makes.
-- The schema is declared through the API or an EDN file and is not in the datom store. An exported dump carries no schema.
+- Attribute definitions are facts: a schema given to a database is asserted into its store on `db.attribute/<ident>` entities, a store opened with no schema reads them back, and a dump carries them (§4).
 - `ClauseBlockers` in `datalog/query/clause_ready.go` names the symbols a clause still lacks, and the error that reports an unplannable clause names them.
 - Every query-executing test runs under both optimizer modes, and the optimizer never changes results (`TODO.md`, the matrix ruling).
 
@@ -183,9 +183,9 @@ With witnesses on, each tuple in `added` and `removed` carries its witnesses fro
 
 ## 4. Schema as facts
 
-Each attribute definition becomes an entity written as system datoms, under well-known keywords as the snapshot and branch records are: `:db/ident`, `:db/valueType`, `:db/cardinality`, `:db/unique`, `:db/uniqueElements`, `:db/neverZeroValue`. The entity is content-addressed from the ident, so re-asserting a definition converges.
+This section describes what the engine does. Each attribute definition is an entity, `db.attribute/<ident>`, content-addressed from the ident so a definition asserted anywhere converges on one entity. It carries one fact per field of the definition under the well-known words `:db/ident`, `:db/valueType`, `:db/cardinality`, `:db/unique`, `:db/uniqueElements`, `:db/neverZeroValue` and `:db/doc`; a value type or uniqueness constraint a later declaration drops is withdrawn and stops resolving.
 
-A schema given at open is asserted into the store at open. A store opened with no schema reads its schema facts and runs with them. A dump carries the schema datoms, so a loaded dump resolves cardinality-many and vector attributes as the writer declared them.
+A schema given at open is asserted into the store in one transaction holding only the words that differ from what the store holds, so a reopen with an unchanged schema writes nothing. A store opened with no schema reads its definitions back and runs with them, inferring from the ops only the attributes that carry datoms and no definition. A dump carries the definitions as datoms, and `Import` and `ImportBinary` end by reading them, so `db.Open` on a dump resolves a set as its writer declared it. A database opened with a schema re-asserts it after the import, and the given schema supersedes the dump's definitions for the idents it names (§9). A fork asserts its parent's declared definitions into the branch, and `TruncateTo` runs with the definitions that survive the rewind.
 
 The facts are queryable with patterns:
 
@@ -196,9 +196,11 @@ The facts are queryable with patterns:
         [?a :db/cardinality ?card]]
 ```
 
-The parser reads the schema facts to refuse a pattern or rule naming an attribute no definition carries, with the nearest idents in the error (§5).
+The engine's own words carry no definitions: `:db/txInstant`, `:db/id`, the snapshot and branch records, and the seven words above form a roster in `datalog/storage` that the refusal below treats as known, so the engine's own queries run on a database that refuses unknown attributes and never minted a marker.
 
-Tests: a schema asserted at open, read back by query, exported, and loaded into a fresh store that resolves a many-valued attribute as a set. A definition re-asserted converging to one entity.
+The refusal (§5) is opt-in through the `RefuseUnknownAttributes` database option, which requires a given schema, and runs at execution entry, in `Executor.ExecuteWithRelations` and in the `Pull` family, not in the parser: `ParseQuery` has no database, and the parse cache maps text to a query that does not depend on the store. A parsed query collects the attributes it names once, on its first execution. The matcher owns the schema, so it answers `AttributeVocabulary.UnknownAttributes`, and `SourceRouter` delegates the question to the `$` source; a named source's patterns are not checked.
+
+Tests: `datalog/storage/schema_facts_test.go` and `unknown_attribute_test.go`, the dump tests in `datalog/db/dump_source_test.go` and `cmd/datalog/open_database_test.go`, and `datalog/db/refuse_unknown_test.go`.
 
 ---
 
@@ -209,7 +211,7 @@ Every error a query author can repair names the thing to repair:
 - an unsafe rule: the rule and the symbol
 - an unstratifiable rule set: the predicates on the negative cycle
 - an unknown rule invocation: the invoked name and the rule set's predicate names
-- an unknown attribute, with schema facts present: the attribute and the nearest idents
+- an attribute the schema does not declare, on a database opened to refuse them: the attribute
 - a witness fold refused: the clause or function that blocks it
 - a bound exceeded: the predicate, the cap, and the count reached
 
@@ -265,11 +267,12 @@ Each runs under both optimizer modes. A benchmark that regresses the base query 
 - `With` is an overlay matcher on the `PatternMatcher` seam, on every backend. `Fork` is the persistent form and stays as it is.
 - The commit function reads the marks the commit already writes. No per-datom commit reference is stored.
 - One grammar.
+- A schema given at open supersedes the store's schema facts for the idents it names (ruled 2026-10-11).
+- The unknown-attribute refusal is opt-in through a database option, and the error names the attribute alone (ruled 2026-10-11).
 
 ### Open
 
 - `With` over a `History` handle: whether the overlay's datoms appear unresolved beside the base's history, or `With` refuses a history base.
-- Precedence when a store's schema facts and a schema given at open disagree: refuse to open, or let the given schema supersede by LWW.
 - Recursive aggregation (shortest paths, counts over closures): deferred, with the monotone cases named when reopened.
 - Minimal-witness labels for recursive predicates: deferred.
 - Fork on the Badger store: deferred, per [BRANCHING_AND_SNAPSHOTS.md](BRANCHING_AND_SNAPSHOTS.md).

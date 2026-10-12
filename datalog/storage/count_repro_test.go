@@ -22,7 +22,7 @@ func TestCountRepro_WithVector(t *testing.T) {
 					events = append(events, e)
 				},
 			})
-			db.SetSchema(eaCacheBypassSchema())
+			require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 			person1 := datalog.NewIdentity("person-1")
 			nameAttr := datalog.NewKeyword(":person/name")

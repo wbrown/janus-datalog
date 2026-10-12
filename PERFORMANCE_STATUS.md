@@ -11,6 +11,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
 - ✅ **Pull API**: **9× faster than equivalent queries**, linear scaling (verified 2025-12-17)
 - ✅ **Schema validation**: **<1% overhead** for type checking, **~6% overhead** for uniqueness (verified 2025-12-17)
+- ✅ **Unknown-attribute refusal**: **9–14ns** per query on a declared attribute, **36–54ns** on a refused one, **3–9ns** with the option off (verified 2026-10-11)
 - ✅ **Iterator composition**: **4.06× speedup** (1,259μs → 310μs, 89% memory reduction) (verified 2025-10-25)
 - ✅ **Streaming execution**: **2.22× faster** with low-selectivity filters (1,720ms → 774ms), 52% memory reduction (verified 2025-10-25)
 - ✅ **Parallel subquery execution**: **2.06× speedup** with 8 workers on M3 Max (730ms → 355ms) (verified 2025-10-25)
@@ -427,7 +428,7 @@ for _, entity := range entities {
 **Performance**: Type validation **<1% write overhead**, uniqueness checking **~6% write overhead**
 **Location**: `datalog/schema/`, `datalog/storage/database.go`
 
-**Note**: All schema overhead is on the **write path only**. Reads are completely unaffected.
+**Note**: All schema validation overhead is on the **write path only**. A read is unaffected unless the database refuses unknown attributes, which costs one schema lookup per attribute the query names (see the "Schema as Facts & Unknown-Attribute Refusal" entry below).
 
 **Type Validation Overhead** (Apple M4 Max, write path):
 | Benchmark | ns/op | allocs | Overhead |
@@ -461,7 +462,7 @@ for _, entity := range entities {
 **Key Findings**:
 - **Type validation is essentially free** - just a map lookup and type switch (write path)
 - **Uniqueness checking adds ~6% to writes** - requires database query to check existing values
-- **Reads are unaffected** - schema validation only impacts the write path
+- **Reads are unaffected** - schema validation only impacts the write path; a database that refuses unknown attributes pays the nanoseconds of the "Schema as Facts & Unknown-Attribute Refusal" entry below
 - **Schema resolution is negligible** - 225ns one-time cost per Pull pattern
 - **Cardinality-many scales linearly** - ~370ns per additional value in Pull results
 
@@ -2619,3 +2620,14 @@ above was a controlled alternating-order A/B (each binary run in both a cool and
 hot slot, pooled to n=10). The cumulative was confirmed by direct `benchstat` of
 the saved start/now files, matching the composed product of per-step geomeans to
 within tenths of a percent.
+
+### 2026-10-11: Schema as Facts & Unknown-Attribute Refusal
+- A schema given to a database is asserted into its store as facts on `db.attribute/<ident>` entities, carried by dumps and read back at open; the opt-in `RefuseUnknownAttributes` option refuses a query or pull naming an attribute the schema does not declare
+- A parsed `query.Query` collects the attributes it names once, under a `sync.Once`, so an execution on a refusing database pays one schema lookup per attribute and reads nothing from the store
+- **Measured Results** (`BenchmarkUnknownAttributeCheck`, Apple M5, 2000 iterations, two runs, across the Badger, memory and memory-tree backends):
+  - Check with refusal off: **3–9ns**, 0 allocs (one interface assertion and a flag read)
+  - Check on a declared attribute: **9–14ns**, 0 allocs
+  - Check on an undeclared attribute, refused: **36–54ns**, 4 allocs (the error)
+  - Whole query path on a declared attribute: within noise of refusal off (2.3–3.7µs against 2.4–3.9µs)
+- **Key Finding**: the schema's read-path cost is nanoseconds per query, paid only by a database that opted into refusal; the write-path figures of section 9 are unchanged
+- **Files**: `datalog/storage/schema_facts.go`, `datalog/query/attribute_names.go`, `docs/reference/SCHEMA.md` ("Schema as Facts")

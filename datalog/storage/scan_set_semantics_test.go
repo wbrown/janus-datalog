@@ -86,7 +86,7 @@ func TestScanSetSemantics_DeclaredManyValueWildcard(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			tagged := datalog.NewIdentity("scan:tagged")
 			single := datalog.NewIdentity("scan:single")

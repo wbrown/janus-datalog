@@ -659,10 +659,12 @@ d, _ := db.Open(path, db.WithSchema(s))
 **Schema behavior:**
 - Type validation and `:db/neverZeroValue` enforced on transaction `Add()` and `Set()`
 - Uniqueness is a read-time CRDT resolution rule: every write to a unique attribute succeeds, and the canonical owner of a value is decided when it is read (see [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md#uniqueness-semantics)). Datomic rejects the conflicting write; janus does not.
-- Unknown attributes allowed (additive schema)
+- A write of an attribute the schema does not declare is accepted (additive schema)
+- A read of an attribute the schema does not declare is refused on a database opened with `RefuseUnknownAttributes`, which requires a schema (see [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md#schema-as-facts))
 - Unknown keys inside an EDN attribute definition are parse errors
 - Pull API uses schema for cardinality-many handling
 - Schema is optional - existing behavior preserved without schema
+- Declared definitions are stored as datoms, so a dump carries them and a reopen with no schema reads them back
 
 **Schema limitations vs Datomic:**
 - No `:db/isComponent` - component entity semantics not implemented
@@ -670,7 +672,6 @@ d, _ := db.Open(path, db.WithSchema(s))
 - No `:db/fulltext` - fulltext search not supported
 - No `:db/noHistory` - all datoms are retained
 - No write-time upsert - `:db.unique/identity` differs from `:db.unique/value` only in declared intent
-- Schema not stored as datoms - schema is in-memory only
 
 **Performance:** Type validation is paid at `Add()` time; uniqueness costs nothing at write time and is paid by the read that asks. See `PERFORMANCE_STATUS.md` for benchmarks.
 

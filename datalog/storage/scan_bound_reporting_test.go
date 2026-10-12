@@ -545,7 +545,7 @@ func testCardinalityAnnotationKeyCarriesOnlyAKeyword(t *testing.T, mode optimize
 		Attribute(":person/name").Type(schema.TypeString).One().Add().
 		Build()
 	require.NoError(t, err)
-	db.SetSchema(s)
+	require.NoError(t, db.SetSchema(s))
 
 	name := datalog.NewKeyword(":person/name")
 	alice := datalog.NewIdentity("cardkey:alice")

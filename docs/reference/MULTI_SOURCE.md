@@ -250,6 +250,8 @@ _, err := d.Query(
 
 The default source `$` always resolves to the calling database. You never need to provide it via `WithSources` — it's set up automatically. Patterns without a source prefix resolve against `$`.
 
+The unknown-attribute refusal ([SCHEMA.md](SCHEMA.md#schema-as-facts)) reads the default source's definitions and datoms. A pattern on a named source is not checked: a named source carries no definitions to refuse against.
+
 ## Cross-Source Joins
 
 Cross-source joins work through shared variables. The engine doesn't need special join logic — the standard variable unification handles it:

@@ -27,7 +27,7 @@ func TestAsOfVectorResolution(t *testing.T) {
 				Attribute(":doc/content").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			contentAttr := datalog.NewKeyword(":doc/content")
 			entity := datalog.NewIdentity("doc1")
@@ -82,7 +82,7 @@ func TestAsOfVectorResolution_AddOnly(t *testing.T) {
 				Attribute(":log/entries").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			logAttr := datalog.NewKeyword(":log/entries")
 			entity := datalog.NewIdentity("log1")
@@ -141,7 +141,7 @@ func TestAsOfVectorResolution_PullInto(t *testing.T) {
 				Attribute(":doc/title").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			contentAttr := datalog.NewKeyword(":doc/content")
 			titleAttr := datalog.NewKeyword(":doc/title")

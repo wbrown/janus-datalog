@@ -52,7 +52,7 @@ func TestResolveEntityAttributes_BothCacheModes_CardinalityOne(t *testing.T) {
 						Attribute(":person/age").Type(schema.TypeLong).One().Add().
 						Build()
 					require.NoError(t, err)
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					alice := datalog.NewIdentity("alice")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -95,7 +95,7 @@ func TestResolveEntityAttributes_BothCacheModes_CardinalityMany(t *testing.T) {
 						Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 						Build()
 					require.NoError(t, err)
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					alice := datalog.NewIdentity("alice")
 					tagAttr := datalog.NewKeyword(":person/tags")
@@ -140,7 +140,7 @@ func TestResolveEntityAttributes_BothCacheModes_CardinalityVector(t *testing.T) 
 						Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
 						Build()
 					require.NoError(t, err)
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					alice := datalog.NewIdentity("alice")
 					skillsAttr := datalog.NewKeyword(":person/skills")
@@ -192,7 +192,7 @@ func TestResolveEntityAttributes_BothCacheModes_MissingAttribute(t *testing.T) {
 						Attribute(":person/email").Type(schema.TypeString).One().Add().
 						Build()
 					require.NoError(t, err)
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					alice := datalog.NewIdentity("alice")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -231,7 +231,7 @@ func TestResolveAllAttributes_BothCacheModes_WithSchema(t *testing.T) {
 						Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 						Build()
 					require.NoError(t, err)
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					alice := datalog.NewIdentity("alice")
 
