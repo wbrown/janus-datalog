@@ -13,17 +13,22 @@ import (
 )
 
 // Attribute definitions are facts. A schema given to a database is asserted
-// into its store, one entity per attribute, content-addressed from the ident so
-// a definition asserted anywhere converges on the entity it already has. Each
-// definition entity carries the words of schema.DBIdent and its siblings, one
-// fact of cardinality one per word. A store opened with no schema reads the
-// definitions back, a dump carries them, and a query reads them with ordinary
-// patterns.
+// into its store. A declaration of an attribute is an entity named by its
+// seven words, the words of schema.DBIdent and its siblings, each a fact of
+// cardinality one on it, so the same declaration made anywhere converges on
+// one entity, and a declaration never changes: one that differs in a word is
+// another entity. The definition of an attribute is the entity
+// db.attribute/<ident>, named by the ident, and it carries one ref,
+// :db.attribute/declaration, to its current declaration. A later declaration
+// moves the ref, so the ref's history is the definition's history, and two
+// replicas' declarations of one attribute resolve to one of them whole. A
+// store opened with no schema reads the definitions back, a dump carries
+// them, and a query reads them with ordinary patterns.
 //
 // A schema given at open supersedes the stored definitions for the idents it
 // names and leaves the others as they are. Reopening with an unchanged schema
-// writes nothing: the writer reads what the store holds and asserts only what
-// differs.
+// writes nothing: the writer reads what the store holds and declares only
+// what differs.
 
 // attributeEntityPrefix seeds a definition entity from its ident, as
 // snapshotEntityPrefix seeds a snapshot marker from its name.
@@ -34,11 +39,35 @@ func attributeEntity(ident datalog.Keyword) datalog.Identity {
 	return datalog.NewIdentity(attributeEntityPrefix + ident.String())
 }
 
-// definitionsQuery binds every definition entity. An entity carrying an ident
-// and no cardinality is not a definition.
-const definitionsQuery = `[:find ?a
-	:where [?a :db/ident _]
-	       [?a :db/cardinality _]]`
+// declarationEntityPrefix seeds a declaration entity from its words.
+const declarationEntityPrefix = "db.declaration/"
+
+// declarationEntity is the entity the declaration def states lives on, named
+// by its seven words in order, the doc last since it alone may hold a space.
+// A value type or uniqueness constraint the declaration does not carry is
+// named by an empty word.
+func declarationEntity(def *schema.AttributeDefinition) datalog.Identity {
+	word := func(k datalog.Keyword) string {
+		if k == nil {
+			return ""
+		}
+		return k.String()
+	}
+	return datalog.NewIdentity(fmt.Sprintf("%s%s %s %s %s %t %t %s", declarationEntityPrefix,
+		def.Ident, word(def.ValueType), def.Cardinality, word(def.Unique),
+		def.UniqueElements, def.NeverZeroValue, def.Doc))
+}
+
+// attributeDeclarationAttr is the ref a definition entity carries to its
+// current declaration. Well-known for the reason the snapshot marker's
+// attributes are.
+var attributeDeclarationAttr = datalog.WellKnownKeyword(":db.attribute/declaration")
+
+// definitionsQuery binds every definition entity with its current
+// declaration. An entity carrying the declaration words that no definition
+// entity refers to is not a definition.
+const definitionsQuery = `[:find ?a ?d
+	:where [?a :db.attribute/declaration ?d]]`
 
 // definitionWords is the pull pattern of a definition's seven words.
 const definitionWords = `[:db/ident :db/valueType :db/cardinality :db/unique :db/uniqueElements :db/neverZeroValue :db/doc]`
@@ -54,9 +83,10 @@ type installedSchema struct {
 	declared  *schema.Schema
 }
 
-// readSchemaFacts reads the definitions the store holds: the query names the
-// definition entities, and one pull over them reads each one's words. Both run
-// with no annotation handler, so an open reports no events to the caller's.
+// readSchemaFacts reads the definitions the store holds: the query names each
+// definition entity with its current declaration, and one pull over the
+// declarations reads each one's words. Both run with no annotation handler,
+// so an open reports no events to the caller's.
 func readSchemaFacts(d *Database) (*schema.Schema, error) {
 	planOpts := d.effectivePlannerOptions()
 	planOpts.Handler = nil
@@ -68,25 +98,31 @@ func readSchemaFacts(d *Database) (*schema.Schema, error) {
 	if len(tuples) == 0 {
 		return stored, nil
 	}
-	entities := make([]datalog.Identity, 0, len(tuples))
+	definitions := make([]datalog.Identity, 0, len(tuples))
+	declarations := make([]datalog.Identity, 0, len(tuples))
 	for _, tuple := range tuples {
-		entity, ok := tuple[0].(datalog.Identity)
+		definition, ok := tuple[0].(datalog.Identity)
 		if !ok {
 			return nil, fmt.Errorf("reading schema facts: definition entity is %T, not an identity", tuple[0])
 		}
-		entities = append(entities, entity)
+		declaration, ok := tuple[1].(datalog.Identity)
+		if !ok {
+			return nil, fmt.Errorf("reading schema facts: the declaration of %s is %T, not an identity", definition, tuple[1])
+		}
+		definitions = append(definitions, definition)
+		declarations = append(declarations, declaration)
 	}
 	pattern, err := parser.ParsePullPattern(definitionWords)
 	if err != nil {
 		return nil, fmt.Errorf("reading schema facts: %w", err)
 	}
 	puller := executor.NewPullExecutor(d.matcherWithExecOptions(planOpts), d)
-	pulled, err := puller.PullMany(entities, pattern)
+	pulled, err := puller.PullMany(declarations, pattern)
 	if err != nil {
 		return nil, fmt.Errorf("reading schema facts: %w", err)
 	}
 	for i, facts := range pulled {
-		def, err := definitionFromFacts(entities[i], facts)
+		def, err := definitionFromFacts(definitions[i], facts)
 		if err != nil {
 			return nil, fmt.Errorf("reading schema facts: %w", err)
 		}
@@ -169,99 +205,62 @@ func definitionFromFacts(entity datalog.Identity, facts map[string]interface{}) 
 	return built.GetAttribute(ident), nil
 }
 
-// schemaFactWrite is one word of one definition to assert or withdraw.
-type schemaFactWrite struct {
-	entity   datalog.Identity
-	word     datalog.Keyword
-	value    interface{}
-	withdraw bool
+// declarationWord is one of the words a declaration entity carries.
+type declarationWord struct {
+	word  datalog.Keyword
+	value interface{}
 }
 
-// assertSchemaFacts asserts given's definitions into the store, each word that
-// differs from what stored holds, through one transaction. A word the given
-// definition carries and the stored one does not, or carries differently, is
-// asserted. A value type, uniqueness constraint or doc string the stored
-// definition carries and the given one does not is withdrawn, so it no longer
-// resolves. A definition stored does not hold is asserted whole. Nothing
-// differing opens no transaction: Commit writes a commit mark even for an empty
-// transaction, and an open that changes nothing writes nothing.
+// assertSchemaFacts declares given's definitions into the store, through one
+// transaction, each one that stored does not hold word for word: its seven
+// words on the declaration entity its words name, and the definition entity's
+// ref moved to that declaration. A word a declaration does not carry is absent
+// from its entity, so nothing is withdrawn. Nothing differing opens no
+// transaction: Commit writes a commit mark even for an empty transaction, and
+// an open that changes nothing writes nothing.
 func assertSchemaFacts(d *Database, stored, given schema.SchemaProvider) error {
 	defs := given.Attributes()
 	slices.SortFunc(defs, func(a, b *schema.AttributeDefinition) int { return a.Ident.Compare(b.Ident) })
 
-	var writes []schemaFactWrite
+	var declared []*schema.AttributeDefinition
 	for _, def := range defs {
-		entity := attributeEntity(def.Ident)
-		assert := func(word datalog.Keyword, value interface{}) {
-			writes = append(writes, schemaFactWrite{entity: entity, word: word, value: value})
-		}
-		withdraw := func(word datalog.Keyword, value interface{}) {
-			writes = append(writes, schemaFactWrite{entity: entity, word: word, value: value, withdraw: true})
-		}
-
-		old := stored.GetAttribute(def.Ident)
-		if old == nil {
-			assert(schema.DBIdent, def.Ident)
-			assert(schema.DBCardinality, def.Cardinality)
-			assert(schema.DBUniqueElements, def.UniqueElements)
-			assert(schema.DBNeverZeroValue, def.NeverZeroValue)
-			if def.Doc != "" {
-				assert(schema.DBDoc, def.Doc)
-			}
-			if def.ValueType != nil {
-				assert(schema.DBValueType, def.ValueType)
-			}
-			if def.Unique != nil {
-				assert(schema.DBUnique, def.Unique)
-			}
-			continue
-		}
-		if old.Cardinality != def.Cardinality {
-			assert(schema.DBCardinality, def.Cardinality)
-		}
-		if old.UniqueElements != def.UniqueElements {
-			assert(schema.DBUniqueElements, def.UniqueElements)
-		}
-		if old.NeverZeroValue != def.NeverZeroValue {
-			assert(schema.DBNeverZeroValue, def.NeverZeroValue)
-		}
-		switch {
-		case def.Doc == "" && old.Doc != "":
-			withdraw(schema.DBDoc, old.Doc)
-		case def.Doc != "" && old.Doc != def.Doc:
-			assert(schema.DBDoc, def.Doc)
-		}
-		switch {
-		case def.ValueType == nil && old.ValueType != nil:
-			withdraw(schema.DBValueType, old.ValueType)
-		case def.ValueType != nil && old.ValueType != def.ValueType:
-			assert(schema.DBValueType, def.ValueType)
-		}
-		switch {
-		case def.Unique == nil && old.Unique != nil:
-			withdraw(schema.DBUnique, old.Unique)
-		case def.Unique != nil && old.Unique != def.Unique:
-			assert(schema.DBUnique, def.Unique)
+		if old := stored.GetAttribute(def.Ident); old == nil || *old != *def {
+			declared = append(declared, def)
 		}
 	}
-	if len(writes) == 0 {
+	if len(declared) == 0 {
 		return nil
 	}
 
 	tx := d.NewTransaction()
-	for _, w := range writes {
-		var err error
-		if w.withdraw {
-			err = tx.Remove(w.entity, w.word, w.value)
-		} else {
-			err = tx.Add(w.entity, w.word, w.value)
+	for _, def := range declared {
+		declaration := declarationEntity(def)
+		words := []declarationWord{
+			{schema.DBIdent, def.Ident},
+			{schema.DBCardinality, def.Cardinality},
+			{schema.DBUniqueElements, def.UniqueElements},
+			{schema.DBNeverZeroValue, def.NeverZeroValue},
 		}
-		if err != nil {
-			return errors.Join(fmt.Errorf("asserting schema facts: %s of %s: %w", w.word, w.entity, err), tx.Rollback())
+		if def.Doc != "" {
+			words = append(words, declarationWord{schema.DBDoc, def.Doc})
+		}
+		if def.ValueType != nil {
+			words = append(words, declarationWord{schema.DBValueType, def.ValueType})
+		}
+		if def.Unique != nil {
+			words = append(words, declarationWord{schema.DBUnique, def.Unique})
+		}
+		for _, w := range words {
+			if err := tx.Add(declaration, w.word, w.value); err != nil {
+				return errors.Join(fmt.Errorf("declaring %s: %s: %w", def.Ident, w.word, err), tx.Rollback())
+			}
+		}
+		if err := tx.Add(attributeEntity(def.Ident), attributeDeclarationAttr, declaration); err != nil {
+			return errors.Join(fmt.Errorf("declaring %s: %s: %w", def.Ident, attributeDeclarationAttr, err), tx.Rollback())
 		}
 	}
 	if _, err := tx.Commit(); err != nil {
-		return fmt.Errorf("asserting schema facts: commit: %w", err)
+		return fmt.Errorf("declaring schema facts: commit: %w", err)
 	}
 	return nil
 }
@@ -271,9 +270,15 @@ func assertSchemaFacts(d *Database, stored, given schema.SchemaProvider) error {
 // the option and no schema, and at SetSchema(nil) on such a database.
 var errRefuseUnknownNeedsSchema = errors.New("RefuseUnknownAttributes requires a schema to check attributes against: none was given")
 
-// installSchema reads the definitions the store holds, asserts the given
-// schema's when assertGiven is set, composes the schema the database runs
-// with, and installs it with the declared set.
+// installSchema asserts the given schema's definitions when assertGiven is
+// set, reads the definitions the store holds, composes the schema the
+// database runs with, and installs it with the declared set.
+//
+// The schema the database runs with is composed from what the store states
+// after the write, under the schema given most recently: a call that
+// overlapped a later one publishes what that one declared, so the two agree
+// with each other and with the store. The declared set is what the store
+// states.
 //
 // With a schema given, the effective schema is the given definitions over the
 // stored ones. A supplied schema is authoritative, so nothing is inferred.
@@ -298,20 +303,35 @@ func (d *Database) installSchema(assertGiven bool) error {
 	if d.refuseUnknown && given == nil {
 		return errRefuseUnknownNeedsSchema
 	}
+	if given != nil && assertGiven {
+		stored, err := readSchemaFacts(d)
+		if err != nil {
+			return err
+		}
+		if err := assertSchemaFacts(d, stored, given); err != nil {
+			return err
+		}
+	}
+
+	// The publish reads the store's state after the write and composes the
+	// schema from it, so it runs under schemaInstallMu: of two calls that
+	// both wrote, the one that publishes last read the store after the other
+	// wrote. The write itself runs outside the lock, since a store may hold a
+	// transaction open across a concurrent call.
+	d.schemaInstallMu.Lock()
+	defer d.schemaInstallMu.Unlock()
+
 	stored, err := readSchemaFacts(d)
 	if err != nil {
 		return err
 	}
+	d.mu.RLock()
+	given = d.givenSchema
+	d.mu.RUnlock()
 
-	var declared, effective *schema.Schema
+	declared := stored
+	var effective *schema.Schema
 	if given != nil {
-		declared = stored
-		if assertGiven {
-			if err := assertSchemaFacts(d, stored, given); err != nil {
-				return err
-			}
-			declared = schema.Overlay(stored, given)
-		}
 		effective = schema.Overlay(stored, given)
 	} else {
 		inferred, err := inferSchemaFromStore(d.store)
@@ -401,37 +421,41 @@ func definitionResolvesAlike(a, b *schema.AttributeDefinition) bool {
 // engineAttributes is the roster of the words the engine writes or reads on
 // its own, with no definition stored or in memory: the commit mark, the entity
 // id a pull pattern names, the snapshot marker's words, the branch record's
-// words, and the seven words of a definition. A query naming one of them runs
-// under the refusal whether or not any datom carries it, so the engine's own
-// queries run on a database that refuses unknown attributes and has never
-// minted a marker. The commit mark and the entity id are well-known so their
-// pointer identity survives ClearInterns.
+// words, the definition entity's ref to its declaration, and the seven words
+// of a declaration. A query naming one of them runs under the refusal whether
+// or not any datom carries it, so the engine's own queries run on a database
+// that refuses unknown attributes and has never minted a marker. The commit
+// mark and the entity id are well-known so their pointer identity survives
+// ClearInterns.
 var engineAttributes = []datalog.Keyword{
 	datalog.WellKnownKeyword(":db/txInstant"),
 	datalog.WellKnownKeyword(":db/id"),
 	snapshotNameAttr, snapshotAtLamportAttr, snapshotAtReplicaAttr, snapshotCreatedAttr,
 	branchSnapshotAttr, branchAtLamportAttr, branchAtReplicaAttr,
 	branchForkLamportAttr, branchForkReplicaAttr, branchReplicaAttr,
+	attributeDeclarationAttr,
 	schema.DBIdent, schema.DBValueType, schema.DBCardinality, schema.DBUnique,
 	schema.DBUniqueElements, schema.DBNeverZeroValue, schema.DBDoc,
+}
+
+// RefusesUnknownAttributes implements executor.AttributeVocabulary: the
+// matcher is one source and answers for itself under any name, refusing on a
+// database opened with RefuseUnknownAttributes.
+func (m *PatternMatcher) RefusesUnknownAttributes(_ query.Symbol) bool {
+	return m.refuseUnknown
 }
 
 // UnknownAttributes implements executor.AttributeVocabulary. On a database
 // opened with RefuseUnknownAttributes it refuses every attribute of the
 // roster that the schema does not declare and the engine does not reserve,
 // joined in order. On any other database it refuses nothing, and the roster
-// is not read.
-func (m *PatternMatcher) UnknownAttributes(attrs []datalog.Keyword) error {
+// is not read. The matcher is one source and answers for itself under any
+// name.
+func (m *PatternMatcher) UnknownAttributes(_ query.Symbol, attrs []datalog.Keyword) error {
 	if !m.refuseUnknown {
 		return nil
 	}
-	var refusals []error
-	for _, attr := range attrs {
-		if !m.attributeKnown(attr) {
-			refusals = append(refusals, &schema.UnknownAttributeError{Attribute: attr})
-		}
-	}
-	return errors.Join(refusals...)
+	return unknownAttributes(m.schema, attrs)
 }
 
 // unknownPullAttributes is UnknownAttributes over a pull pattern's roster,
@@ -440,13 +464,26 @@ func (m *PatternMatcher) unknownPullAttributes(p *query.PullPattern) error {
 	if !m.refuseUnknown {
 		return nil
 	}
-	return m.UnknownAttributes(query.PullPatternAttributes(p))
+	return m.UnknownAttributes(datalog.SymDollar, query.PullPatternAttributes(p))
 }
 
-// attributeKnown reports whether the schema declares attr or the engine
-// reserves it. A matcher whose schema declares no attribute has none.
-func (m *PatternMatcher) attributeKnown(attr datalog.Keyword) bool {
-	if m.schema != nil && m.schema.GetAttribute(attr) != nil {
+// unknownAttributes refuses every attribute of the roster that s does not
+// declare and the engine does not reserve, joined in order; nil when every
+// attribute is known.
+func unknownAttributes(s schema.SchemaProvider, attrs []datalog.Keyword) error {
+	var refusals []error
+	for _, attr := range attrs {
+		if !attributeKnown(s, attr) {
+			refusals = append(refusals, &schema.UnknownAttributeError{Attribute: attr})
+		}
+	}
+	return errors.Join(refusals...)
+}
+
+// attributeKnown reports whether s declares attr or the engine reserves it. A
+// nil s declares no attribute.
+func attributeKnown(s schema.SchemaProvider, attr datalog.Keyword) bool {
+	if s != nil && s.GetAttribute(attr) != nil {
 		return true
 	}
 	return slices.Contains(engineAttributes, attr)

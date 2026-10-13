@@ -1,6 +1,7 @@
 package qb
 
 import (
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -113,20 +114,17 @@ func (s *SubqueryBuilder) toClause() query.Clause {
 		panic("subquery build failed: " + err.Error())
 	}
 
-	// Collect all database source inputs from the inner query
-	var dbInputSyms []query.Symbol
-	for _, in := range innerQ.In {
-		if dbIn, ok := in.(query.DatabaseInput); ok {
-			dbInputSyms = append(dbInputSyms, dbIn.Name)
-		}
-	}
-
-	// Convert input variables to pattern elements.
-	// Prepend all database source references from the inner query's :in clause.
+	// The inner query's source and rules references lead the inputs, in the
+	// order its :in declares them, as the parsed form (q [...] $ % ?x) has
+	// them; the caller's variables follow.
 	var inputs []query.PatternElement
-	inputs = make([]query.PatternElement, 0, len(s.inputs)+len(dbInputSyms))
-	for _, sym := range dbInputSyms {
-		inputs = append(inputs, query.Constant{Value: sym})
+	for _, in := range innerQ.In {
+		switch in := in.(type) {
+		case query.DatabaseInput:
+			inputs = append(inputs, query.Constant{Value: in.Name})
+		case query.RulesInput:
+			inputs = append(inputs, query.Constant{Value: datalog.SymRules})
+		}
 	}
 	for _, v := range s.inputs {
 		inputs = append(inputs, query.Variable{Name: v.Symbol()})

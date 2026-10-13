@@ -374,9 +374,7 @@ func TestScopeOfRuleInvocation(t *testing.T) {
 	scope := ScopeOf(inv, nil)
 	assertSymbols(t, "Provides", scope.Provides, "?a")
 	assertSymbols(t, "Correlates", scope.Correlates)
-	if scope.CorrelatesOptional {
-		t.Error("an invocation has no correlates to be optional about")
-	}
+	assertSymbols(t, "Mandatory", scope.Mandatory)
 	assertSymbols(t, "Variables", inv.Variables(), "?a")
 	if got, want := inv.String(), `(follows ?a "x" _ ?a)`; got != want {
 		t.Errorf("String() = %s, want %s", got, want)
@@ -391,9 +389,7 @@ func TestScopeOfRuleInvocation(t *testing.T) {
 	scope = ScopeOf(invoke("succ", "?n", "?m"), rs)
 	assertSymbols(t, "Provides under the rule set", scope.Provides, "?m")
 	assertSymbols(t, "Correlates under the rule set", scope.Correlates, "?n")
-	if scope.CorrelatesOptional {
-		t.Error("a required position must be bound before the invocation runs")
-	}
+	assertSymbols(t, "Mandatory under the rule set", scope.Mandatory, "?n")
 	scope = ScopeOf(invoke("succ", "?n", "?m"), nil)
 	assertSymbols(t, "Provides with no rule set", scope.Provides, "?n", "?m")
 	assertSymbols(t, "Correlates with no rule set", scope.Correlates)
@@ -467,6 +463,146 @@ func TestNewRuleSet_RequiredBindings(t *testing.T) {
 			t.Fatalf("want *UnsafeRuleError naming loose and ?y, got %v", err)
 		}
 	})
+	t.Run("a required predicate recursive with one that is not is refused", func(t *testing.T) {
+		down := defineRule("down", []string{"?x", "?y"}, invoke("up", "?x", "?y"))
+		down.Required = []Symbol{sym("?x")}
+		_, err := NewRuleSet([]*Rule{
+			defineRule("up", []string{"?x", "?y"}, scopePattern("?x", "page/kind", "_"), invoke("down", "?x", "?y")),
+			down,
+		})
+		if err == nil || !strings.Contains(err.Error(), "down") || !strings.Contains(err.Error(), "up") {
+			t.Fatalf("want a refusal naming down and up, got %v", err)
+		}
+	})
+	t.Run("required predicates recursive with each other are accepted", func(t *testing.T) {
+		upBase := defineRule("up", []string{"?n", "?m"}, scopePattern("?n", "page/next", "?m"))
+		upBase.Required = []Symbol{sym("?n")}
+		up := defineRule("up", []string{"?n", "?m"}, scopePattern("?n", "page/next", "?k"), invoke("down", "?k", "?m"))
+		up.Required = []Symbol{sym("?n")}
+		downBase := defineRule("down", []string{"?n", "?m"}, scopePattern("?n", "page/prev", "?m"))
+		downBase.Required = []Symbol{sym("?n")}
+		down := defineRule("down", []string{"?n", "?m"}, scopePattern("?n", "page/prev", "?k"), invoke("up", "?k", "?m"))
+		down.Required = []Symbol{sym("?n")}
+		if _, err := NewRuleSet([]*Rule{upBase, up, downBase, down}); err != nil {
+			t.Fatalf("required predicates recursive with each other evaluate through the rewrite: %v", err)
+		}
+	})
+}
+
+// A symbol a clause consumes is bound before the clause runs, whatever form
+// holds the clause: an input of a predicate, an expression or a subquery, or a
+// required position, that nothing in the rule binds is refused at build under
+// not and or-default as at the top level, naming the rule and the symbol.
+func TestNewRuleSet_RefusesAnUnboundInputUnderNotAndOrDefault(t *testing.T) {
+	below := func(w, v string) *Comparison {
+		return &Comparison{Op: datalog.SymLT, Left: VariableTerm{Symbol: sym(w)}, Right: VariableTerm{Symbol: sym(v)}}
+	}
+	lookup := func(w, v string) *Expression {
+		return &Expression{
+			Function: &GetElseFunction{Entity: VariableTerm{Symbol: sym(w)}, Attr: datalog.NewKeyword(":page/kind"), Default: "none"},
+			Binding:  sym(v),
+		}
+	}
+	subquery := func(w, z string) *SubqueryPattern {
+		return &SubqueryPattern{
+			Query: &Query{
+				Find:  []FindElement{FindVariable{Symbol: sym(z)}},
+				In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, ScalarInput{Symbol: sym(w)}},
+				Where: []Clause{scopePattern(z, "page/kind", w)},
+			},
+			Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}, Variable{Name: sym(w)}},
+			Binding: RelationBinding{Variables: []Symbol{sym(z)}},
+		}
+	}
+	cases := []struct {
+		name   string
+		clause Clause
+		unsafe string
+	}{
+		{"a predicate under not", &NotClause{Clauses: []Clause{scopePattern("?x", "page/n", "?v"), below("?w", "?v")}}, "?w"},
+		{"a predicate under or-default", &OrDefaultClause{Branches: [][]Clause{
+			{scopePattern("?x", "page/n", "?v"), below("?w", "?v")},
+			{scopePattern("?x", "page/kind", "_")},
+		}}, "?w"},
+		{"an expression under not", &NotClause{Clauses: []Clause{lookup("?w", "?v"), scopePattern("?x", "page/n", "?v")}}, "?w"},
+		{"a subquery under or-default", &OrDefaultClause{Branches: [][]Clause{
+			{scopePattern("?x", "page/n", "?v"), subquery("?w", "?z")},
+			{scopePattern("?x", "page/kind", "_")},
+		}}, "?w"},
+		{"a required position under not", &NotClause{Clauses: []Clause{invoke("small", "?z")}}, "?z"},
+		{"a required position under or-default", &OrDefaultClause{Branches: [][]Clause{
+			{invoke("small", "?z")},
+			{scopePattern("?x", "page/kind", "_")},
+		}}, "?z"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := NewRuleSet([]*Rule{
+				smallRule(),
+				defineRule("r", []string{"?x"}, scopePattern("?x", "page/kind", "_"), c.clause),
+			})
+			var unsafe *UnsafeRuleError
+			if !errors.As(err, &unsafe) {
+				t.Fatalf("want *UnsafeRuleError naming r and %s, got %v", c.unsafe, err)
+			}
+			if unsafe.Rule != sym("r") || unsafe.Symbol != sym(c.unsafe) {
+				t.Errorf("UnsafeRuleError = %+v, want rule r and symbol %s", unsafe, c.unsafe)
+			}
+		})
+	}
+}
+
+// A rule's head carries at least one variable, the form Datomic's rule
+// grammar gives it, so a head with none is refused at build, naming the
+// rule, whether or not the rule has a body.
+func TestNewRuleSet_RefusesAHeadWithNoVariable(t *testing.T) {
+	cases := []struct {
+		name string
+		rule *Rule
+	}{
+		{"with a body", defineRule("always", nil, scopePattern("?x", "page/kind", "_"))},
+		{"with no body", defineRule("always", nil)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := NewRuleSet([]*Rule{c.rule})
+			if err == nil || !strings.Contains(err.Error(), "always") {
+				t.Fatalf("want a refusal naming always, got %v", err)
+			}
+		})
+	}
+}
+
+// A predicate's name is a symbol the parser reads as an invocation at the
+// head of a list clause: neither a reserved clause form nor a variable. A
+// rule named for one is refused at build, naming the rule.
+func TestNewRuleSet_RefusesAReservedFormOrVariableAsAPredicateName(t *testing.T) {
+	for _, name := range []string{"not", "not-join", "or", "or-join", "or-default", "or-default-join", "and", "?r"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewRuleSet([]*Rule{
+				defineRule(name, []string{"?x"}, scopePattern("?x", "page/kind", "_")),
+			})
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("want a refusal naming %s, got %v", name, err)
+			}
+		})
+	}
+}
+
+// A query declares % at most once, a rule of the :in clause alone, so every
+// boundary refuses the same shape.
+func TestValidateInputShapes(t *testing.T) {
+	db := DatabaseInput{Name: datalog.SymDollar}
+	if err := ValidateInputShapes([]InputSpec{db, ScalarInput{Symbol: sym("?x")}}); err != nil {
+		t.Errorf("no %% is valid, got %v", err)
+	}
+	if err := ValidateInputShapes([]InputSpec{db, RulesInput{}, ScalarInput{Symbol: sym("?x")}}); err != nil {
+		t.Errorf("one %% is valid, got %v", err)
+	}
+	err := ValidateInputShapes([]InputSpec{db, RulesInput{}, RulesInput{}})
+	if err == nil || !strings.Contains(err.Error(), "%") {
+		t.Fatalf("want a refusal naming %%, got %v", err)
+	}
 }
 
 // TestNewRuleSet_ReturnsTheRulesGiven: a rule set holds the rules it was

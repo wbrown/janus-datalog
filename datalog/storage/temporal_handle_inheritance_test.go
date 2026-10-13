@@ -90,6 +90,7 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	"rollbackInProgress": fieldZeroed, // rollback coordination (write path)
 	"drainCond":          fieldZeroed,
 	"rollbackMu":         fieldZeroed,
+	"schemaInstallMu":    fieldZeroed, // lock; a handle installs no schema
 	"removePath":         fieldZeroed, // parent's scratch dir; a handle holding it would RemoveAll the parent's data
 
 	// builderCache is snapshot-independent (keyed on pattern structure), so

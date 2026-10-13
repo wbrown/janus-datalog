@@ -117,16 +117,42 @@ type RuleSet struct {
 	attributes     []datalog.Keyword
 }
 
+// clauseForms are the symbols the parser reads as a clause form at the head
+// of a list clause, so no predicate is named for one: a list headed by it
+// never parses as an invocation.
+var clauseForms = []Symbol{
+	datalog.NewSymbol("not"),
+	datalog.NewSymbol("not-join"),
+	datalog.NewSymbol("or"),
+	datalog.NewSymbol("or-join"),
+	datalog.NewSymbol("or-default"),
+	datalog.NewSymbol("or-default-join"),
+	datalog.NewSymbol("and"),
+}
+
+// ClauseForm reports whether name heads a clause form.
+func ClauseForm(name Symbol) bool { return ContainsSymbol(clauseForms, name) }
+
 // NewRuleSet validates and stratifies rules. No predicate is named in a
-// namespace the engine mints into; the heads of one predicate agree on arity
-// and are distinct variables; every rule is safe; every invocation names a
-// defined predicate at its arity; no predicates depend on each other through
-// negation; and a predicate invoked by a rule of its own stratum is invoked
-// at the top level of the body, in an or branch, or in an or-join branch.
+// namespace the engine mints into, for a clause form, or as a variable; a
+// head names at least one variable; the heads of one predicate agree on
+// arity and are distinct variables; every rule is safe; every invocation
+// names a defined predicate at its arity; no predicates depend on each other
+// through negation; a predicate invoked by a rule of its own stratum is
+// invoked at the top level of the body, in an or branch, or in an or-join
+// branch; and a predicate with required positions is recursive only with
+// predicates that have them.
 func NewRuleSet(rules []*Rule) (*RuleSet, error) {
 	for _, rule := range rules {
-		if engineNamespace(rule.Name) {
+		switch {
+		case engineNamespace(rule.Name):
 			return nil, fmt.Errorf("rule %s: the namespace %s is the engine's, which names the adorned, magic and delta predicates it mints there", rule.Name, rule.Name.Namespace())
+		case ClauseForm(rule.Name):
+			return nil, fmt.Errorf("rule %s: %s heads a clause form, so a list headed by it never parses as an invocation", rule.Name, rule.Name)
+		case rule.Name.IsVariable():
+			return nil, fmt.Errorf("rule %s: a predicate's name is not a variable", rule.Name)
+		case len(rule.Head) == 0:
+			return nil, fmt.Errorf("rule %s: a head names at least one variable", rule.Name)
 		}
 	}
 	return newRuleSet(rules, nil)
@@ -195,6 +221,28 @@ func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
 	for _, edge := range edges {
 		if edge.form != "" && component[edge.from] == component[edge.to] {
 			return nil, &NestedRecursionError{Rule: edge.from, Predicate: edge.to, Form: edge.form}
+		}
+	}
+	// A predicate with required positions is evaluated at its invocation,
+	// through the rewrite, never whole; one recursive with a predicate the
+	// fixpoint evaluates whole would be drawn into that evaluation without
+	// its bindings.
+	for _, stratum := range strata {
+		if !stratum.Recursive {
+			continue
+		}
+		var requiring, free Symbol
+		for _, p := range stratum.Predicates {
+			if countBound(rs.required[p]) > 0 {
+				if requiring == nil {
+					requiring = p
+				}
+			} else if free == nil {
+				free = p
+			}
+		}
+		if requiring != nil && free != nil {
+			return nil, fmt.Errorf("rule %s: a predicate with required positions is recursive with %s, which has none; a predicate requiring bindings is evaluated at its invocation, never whole with its stratum", requiring, free)
 		}
 	}
 	rs.strata = strata
@@ -316,11 +364,7 @@ func (rs *RuleSet) checkRuleSafety(rule *Rule) error {
 		}
 	}
 	for _, clause := range rule.Body {
-		scope := ScopeOf(clause, rs)
-		if scope.CorrelatesOptional {
-			continue
-		}
-		for _, sym := range scope.Correlates {
+		for _, sym := range ScopeOf(clause, rs).Mandatory {
 			if sym.IsSource() || provided[sym] {
 				continue
 			}

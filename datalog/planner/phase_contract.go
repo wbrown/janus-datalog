@@ -80,7 +80,7 @@ func validatePhaseLiveness(phaseNumber int, phaseQuery *query.Query) error {
 			if symbol.IsSource() || available[symbol] {
 				continue
 			}
-			if scope.CorrelatesOptional {
+			if !query.ContainsSymbol(scope.Mandatory, symbol) {
 				// Existential (plain NOT) or global-fallback (or-default):
 				// a correlate the phase cannot bind is legal.
 				continue

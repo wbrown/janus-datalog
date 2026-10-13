@@ -85,9 +85,10 @@ type Database struct {
 	// installSchema asserts it into the store and re-asserts it after an
 	// import, so it supersedes what a dump carried for the idents it names.
 	givenSchema schema.SchemaProvider
-	// schemaAsGiven makes the given schema the database's schema exactly, nil
-	// included: nothing is read from the store, inferred, or asserted at
-	// construction. Fork sets it and then adopts its parent's declarations.
+	// schemaAsGiven records that the schema the database runs with was
+	// installed exactly at construction, nil included: nothing was read from
+	// the store, inferred, or asserted. Fork sets it and then adopts its
+	// parent's declarations.
 	schemaAsGiven  bool
 	plannerOptions *planner.PlannerOptions // Optional planner options override
 	clock          *LamportClock           // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
@@ -118,6 +119,13 @@ type Database struct {
 	rollbackInProgress bool
 	drainCond          *sync.Cond
 	rollbackMu         sync.Mutex
+
+	// schemaInstallMu serializes installSchema's publish, the read of the
+	// store after the write and the install composed from it, so of two calls
+	// that both wrote, the one that publishes last read the store after the
+	// other wrote. The write runs outside it, since a store may hold a
+	// transaction open across a concurrent call. d.mu guards givenSchema.
+	schemaInstallMu sync.Mutex
 }
 
 // NewDatabase creates a new database with BadgerDB storage
@@ -169,11 +177,15 @@ type DatabaseOptions struct {
 	// scratch space to hold data that came from somewhere else — a dump loaded
 	// into a persistent backend — rather than a location the data lives at.
 	RemovePathOnClose bool
-	// schemaAsGiven makes Schema the database's schema exactly as given, nil
-	// included: no schema is inferred from the store. Fork sets it, so a branch
-	// resolves by its parent's schema and a parent with none forks a branch with
-	// none.
+	// schemaAsGiven installs runningSchema as the database's schema exactly,
+	// nil included: nothing is read from the store, inferred or asserted at
+	// construction. Fork sets it, so a branch resolves as its parent does.
 	schemaAsGiven bool
+	// runningSchema is the schema a database with schemaAsGiven runs with from
+	// construction: its parent's, for a branch. Schema stays what the parent
+	// was given, so a later install asserts the parent's declarations and
+	// never its inferences.
+	runningSchema schema.SchemaProvider
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -338,11 +350,12 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	d.drainCond = sync.NewCond(&d.mu)
 	d.installed.Store(&installedSchema{})
 
-	// A schema taken as given is the database's schema exactly, nil included.
-	// Otherwise the store's definitions are read, a given schema asserted over
-	// them, and the schema the database runs with composed from both.
+	// A running schema taken as given is the database's schema exactly, nil
+	// included. Otherwise the store's definitions are read, a given schema
+	// asserted over them, and the schema the database runs with composed from
+	// both.
 	if opts.schemaAsGiven {
-		d.installed.Store(&installedSchema{effective: opts.Schema})
+		d.installed.Store(&installedSchema{effective: opts.runningSchema})
 		return d, nil
 	}
 	if err := d.installSchema(true); err != nil {
@@ -431,6 +444,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 		if err != nil {
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
+		card := matcher.GetCardinality(aBytes)
 
 		seenEntities := make(map[Entity]bool)
 
@@ -448,7 +462,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 			if !seenEntities[eBytes] {
 				seenEntities[eBytes] = true
 				key := CacheKey{E: eBytes, A: aBytes}
-				if _, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake); err != nil {
+				if _, err := d.cache.GetOrResolve(key, card, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake); err != nil {
 					iter.Close()
 					return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 				}
@@ -484,12 +498,13 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	// is set (d.cache == nil), resolve the entry directly from storage via
 	// ResolveEntry, which produces the same *CacheEntry shape and determines
 	// cardinality the same way (GetCardinality over d.schema).
+	card := matcher.GetCardinality(key.A)
 	var entry *CacheEntry
 	var err error
 	if d.cache != nil {
-		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+		entry, err = d.cache.GetOrResolve(key, card, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 	} else {
-		entry, err = ResolveEntry(key, matcher, DiscardIntake)
+		entry, err = ResolveEntry(key, card, matcher, DiscardIntake)
 	}
 	if err != nil {
 		return nil, err
@@ -530,12 +545,13 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	// is set (d.cache == nil), resolve the entry directly from storage via
 	// ResolveEntry, which produces the same *CacheEntry shape and determines
 	// cardinality the same way (GetCardinality over d.schema).
+	card := matcher.GetCardinality(key.A)
 	var entry *CacheEntry
 	var err error
 	if d.cache != nil {
-		entry, err = d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+		entry, err = d.cache.GetOrResolve(key, card, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 	} else {
-		entry, err = ResolveEntry(key, matcher, DiscardIntake)
+		entry, err = ResolveEntry(key, card, matcher, DiscardIntake)
 	}
 	if err != nil {
 		return 0, err
@@ -616,8 +632,29 @@ func (d *Database) Match(q *query.Query, bindings executor.Relations) (executor.
 	return d.Matcher().Match(q, bindings)
 }
 
-// Compile-time verification that Database implements PatternMatcher
+// RefusesUnknownAttributes implements executor.AttributeVocabulary for a
+// database passed as a named source: it refuses when opened with
+// RefuseUnknownAttributes.
+func (d *Database) RefusesUnknownAttributes(_ query.Symbol) bool {
+	return d.refuseUnknown
+}
+
+// UnknownAttributes implements executor.AttributeVocabulary for a database
+// passed as a named source. Opened with RefuseUnknownAttributes, it refuses
+// every attribute of the roster that the schema it runs with does not declare
+// and the engine does not reserve, joined in order; otherwise it refuses
+// nothing, and the roster is not read.
+func (d *Database) UnknownAttributes(_ query.Symbol, attrs []datalog.Keyword) error {
+	if !d.refuseUnknown {
+		return nil
+	}
+	return unknownAttributes(d.Schema(), attrs)
+}
+
+// Compile-time verification that Database implements PatternMatcher and
+// answers the attribute-vocabulary question as a named source.
 var _ executor.PatternMatcher = (*Database)(nil)
+var _ executor.AttributeVocabulary = (*Database)(nil)
 
 // AsOf returns a read-only Database handle that queries state as of the given
 // transaction. The returned handle uses CRDT resolution filtered to that point
@@ -1157,9 +1194,10 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// Validate and convert inputs.
-	queryOpts, regularInputs := extractQueryOptions(inputs)
-	inputRelations, rules, err := d.convertInputsToRelations(q, regularInputs)
+	// The rule set the inputs carry, for the plan; the query path below
+	// converts the inputs again for execution.
+	_, regularInputs := extractQueryOptions(inputs)
+	_, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
 	}
@@ -1185,21 +1223,18 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 		eventsMu.Unlock()
 	}
 
-	// Create executor (this also creates the planner with proper options)
-	exec := d.NewExecutorWithOptions(opts)
-
-	// Get the query plan from the executor's planner. The handler above captures
-	// execution annotations; planning here is not annotated.
-	queryPlanner := exec.GetPlanner()
-	plan, err := queryPlanner.PlanQuery(q, planner.Bindings{Rules: rules}, nil)
+	// The plan from a planner under the same options. The handler above
+	// captures execution annotations; planning here is not annotated.
+	plan, err := d.NewExecutorWithOptions(opts).GetPlanner().PlanQuery(q, planner.Bindings{Rules: rules}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to plan query: %w", err)
 	}
 
-	// Execute with annotation collection
-	result, err := exec.ExecuteWithRelations(executor.NewContext().WithRules(rules).WithCancellation(queryOpts.ctx), q, inputRelations)
+	// Execute on Query's own path, so every storage read of the evaluation, a
+	// rule fixpoint's iterations included, observes one read session.
+	result, err := d.queryUnderPlannerOptions(opts, q, inputs...)
 	if err != nil {
-		return nil, fmt.Errorf("query execution failed: %w", err)
+		return nil, err
 	}
 
 	// Analyze is EXPLAIN ANALYZE-style: it must reflect ACTUAL execution. The
@@ -1207,8 +1242,9 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 	// iterator errors happen only when the result is iterated. Drive that work
 	// here via ForEach (which enforces the deferred-error contract) so the
 	// captured events, TotalTime, and any error cover the whole query, not just
-	// plan/pipeline construction. The drained tuples become a materialized,
-	// re-iterable relation for the caller.
+	// plan/pipeline construction. Exhausting the session-bound result releases
+	// its session. The drained tuples become a materialized, re-iterable
+	// relation for the caller.
 	symbols := result.Symbols()
 	tuples := make([]executor.Tuple, 0)
 	if err := executor.ForEach(result, func(t executor.Tuple) error {
@@ -2182,14 +2218,15 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 		matcher := NewPatternMatcher(t.db.store)
 		matcher.SetSchema(t.db.Schema())
+		card := matcher.GetCardinality(key.A)
 
 		var entry *CacheEntry
 		var err error
 		if t.db.cache != nil {
-			entry, err = t.db.cache.GetOrResolve(key, matcher, matcher.cacheBound(), t.db.plannerOptions.Handler, DiscardIntake)
+			entry, err = t.db.cache.GetOrResolve(key, card, matcher, matcher.cacheBound(), t.db.plannerOptions.Handler, DiscardIntake)
 		} else {
 			// Cache disabled - resolve directly from storage
-			entry, err = ResolveEntry(key, matcher, DiscardIntake)
+			entry, err = ResolveEntry(key, card, matcher, DiscardIntake)
 		}
 		if err != nil {
 			// The prior vector is what the RGA diff below is computed against.
@@ -2292,13 +2329,14 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 
 	matcher := NewPatternMatcher(t.db.store)
 	matcher.SetSchema(t.db.Schema())
+	card := matcher.GetCardinality(cacheKey.A)
 
 	var entry *CacheEntry
 	var err error
 	if t.db.cache != nil {
-		entry, err = t.db.cache.GetOrResolve(cacheKey, matcher, matcher.cacheBound(), t.db.plannerOptions.Handler, DiscardIntake)
+		entry, err = t.db.cache.GetOrResolve(cacheKey, card, matcher, matcher.cacheBound(), t.db.plannerOptions.Handler, DiscardIntake)
 	} else {
-		entry, err = ResolveEntry(cacheKey, matcher, DiscardIntake)
+		entry, err = ResolveEntry(cacheKey, card, matcher, DiscardIntake)
 	}
 	if err != nil {
 		return false, fmt.Errorf("resolve current vector for %s: %w", a.String(), err)
@@ -3064,7 +3102,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 			if !ok {
 				continue
 			}
-			entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+			entry, err := d.cache.GetOrResolve(key, matcher.GetCardinality(aBytes), matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 			if err != nil {
 				return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 			}
@@ -3091,7 +3129,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		if !ok {
 			continue
 		}
-		entry, err := d.cache.GetOrResolve(key, matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+		entry, err := d.cache.GetOrResolve(key, matcher.GetCardinality(aBytes), matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 		}

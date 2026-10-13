@@ -99,12 +99,17 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 		return nil, fmt.Errorf("Fork %q: %w", name, err)
 	}
 	plannerOptions := *d.plannerOptions
+	d.mu.RLock()
+	given := d.givenSchema
+	d.mu.RUnlock()
 	branch, err = NewDatabaseWithOptions(DatabaseOptions{
-		Store:          forked,
-		Schema:         d.Schema(),
-		PlannerOptions: &plannerOptions,
-		DisableCache:   d.cache == nil,
-		schemaAsGiven:  true,
+		Store:                   forked,
+		Schema:                  given,
+		RefuseUnknownAttributes: d.refuseUnknown,
+		PlannerOptions:          &plannerOptions,
+		DisableCache:            d.cache == nil,
+		schemaAsGiven:           true,
+		runningSchema:           d.Schema(),
 	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("Fork %q: %w", name, err), forked.Close())

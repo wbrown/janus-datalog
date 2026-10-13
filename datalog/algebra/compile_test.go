@@ -321,10 +321,10 @@ func TestCompileRejectsPlainNotWithUnboundOuterRequirement(t *testing.T) {
 	require.NoError(t, err)
 
 	// The body predicate demands ?missing, which neither the body, the outer
-	// query, nor any input binds; the body's compile-order pass rejects it.
+	// query, nor any input binds, so the not clause is never ready and the
+	// compile order rejects it naming the symbol.
 	_, err = Compile(q)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "NOT inner clauses")
 	require.Contains(t, err.Error(), "waits on ?missing (no input or clause binds it)")
 }
 

@@ -153,16 +153,24 @@ func TestSourceRouterImplementsPatternMatcher(t *testing.T) {
 }
 
 // vocabularyMatcher is a PatternMatcher double that also answers the
-// attribute-vocabulary question, recording the roster it was asked about and
-// answering a non-empty roster with a fixed error. An empty roster names
-// nothing to refuse and is answered nil, as the storage matcher answers it.
+// attribute-vocabulary question: whether it refuses, and, for a non-empty
+// roster, a fixed error, recording the source and the roster it was asked
+// about. An empty roster names nothing to refuse and is answered nil, as the
+// storage matcher answers it.
 type vocabularyMatcher struct {
 	mockPatternMatcher
-	asked  []datalog.Keyword
-	answer error
+	refuses     bool
+	askedSource query.Symbol
+	asked       []datalog.Keyword
+	answer      error
 }
 
-func (m *vocabularyMatcher) UnknownAttributes(attrs []datalog.Keyword) error {
+func (m *vocabularyMatcher) RefusesUnknownAttributes(source query.Symbol) bool {
+	return m.refuses
+}
+
+func (m *vocabularyMatcher) UnknownAttributes(source query.Symbol, attrs []datalog.Keyword) error {
+	m.askedSource = source
 	m.asked = attrs
 	if len(attrs) == 0 {
 		return nil
@@ -172,42 +180,131 @@ func (m *vocabularyMatcher) UnknownAttributes(attrs []datalog.Keyword) error {
 
 var _ AttributeVocabulary = (*vocabularyMatcher)(nil)
 
-// TestSourceRouterUnknownAttributesDelegatesToDefault pins that the router
-// answers the attribute-vocabulary question from its default source alone: a
-// default source with the capability is asked about the very roster and its
-// answer is returned as is, a default source without it answers nil, and a
-// named source is never consulted.
-func TestSourceRouterUnknownAttributesDelegatesToDefault(t *testing.T) {
+// TestSourceRouterRoutesTheVocabularyQuestionToTheSourceNamed pins that the
+// router answers the attribute-vocabulary question from the source the
+// question names, which answers for itself under its own name, $: a source
+// with the capability, the default or a named one, is asked about the very
+// roster and its answer returned as is; a source without the capability, and
+// a source the router does not hold, refuse nothing and are not asked.
+func TestSourceRouterRoutesTheVocabularyQuestionToTheSourceNamed(t *testing.T) {
 	roster := []datalog.Keyword{datalog.NewKeyword(":t/naem")}
 	refusal := errors.New("unknown attribute :t/naem")
+	cache := datalog.NewSymbol("$cache")
 
-	withVocabulary := &vocabularyMatcher{answer: refusal}
+	defaultSource := &vocabularyMatcher{refuses: true, answer: refusal}
+	named := &vocabularyMatcher{refuses: true, answer: refusal}
 	router := NewSourceRouter(map[query.Symbol]PatternMatcher{
-		datalog.SymDollar: withVocabulary,
+		datalog.SymDollar: defaultSource,
+		cache:             named,
 	})
-	if err := router.UnknownAttributes(roster); err != refusal {
-		t.Errorf("router answered %v, want the default source's own answer %v", err, refusal)
-	}
-	if len(withVocabulary.asked) != 1 || withVocabulary.asked[0] != roster[0] {
-		t.Errorf("router asked about %v, want the roster it was given %v", withVocabulary.asked, roster)
+	for _, source := range []struct {
+		name    query.Symbol
+		matcher *vocabularyMatcher
+	}{{datalog.SymDollar, defaultSource}, {cache, named}} {
+		if !router.RefusesUnknownAttributes(source.name) {
+			t.Errorf("the router reports %s as refusing nothing, want its source's own answer", source.name)
+		}
+		if err := router.UnknownAttributes(source.name, roster); err != refusal {
+			t.Errorf("router answered %v for %s, want the source's own answer %v", err, source.name, refusal)
+		}
+		if source.matcher.askedSource != datalog.SymDollar {
+			t.Errorf("%s was asked as %s, want asked as itself, $", source.name, source.matcher.askedSource)
+		}
+		if len(source.matcher.asked) != 1 || source.matcher.asked[0] != roster[0] {
+			t.Errorf("router asked %s about %v, want the roster it was given %v", source.name, source.matcher.asked, roster)
+		}
 	}
 
 	router = NewSourceRouter(map[query.Symbol]PatternMatcher{
 		datalog.SymDollar: &mockPatternMatcher{},
 	})
-	if err := router.UnknownAttributes(roster); err != nil {
-		t.Errorf("a default source without a vocabulary refuses nothing, got %v", err)
+	if router.RefusesUnknownAttributes(datalog.SymDollar) {
+		t.Error("a source without a vocabulary refuses nothing")
 	}
+	if err := router.UnknownAttributes(datalog.SymDollar, roster); err != nil {
+		t.Errorf("a source without a vocabulary refuses nothing, got %v", err)
+	}
+	if router.RefusesUnknownAttributes(cache) {
+		t.Error("a source the router does not hold refuses nothing")
+	}
+	if err := router.UnknownAttributes(cache, roster); err != nil {
+		t.Errorf("a source the router does not hold refuses nothing, got %v", err)
+	}
+}
 
-	named := &vocabularyMatcher{answer: refusal}
-	router = NewSourceRouter(map[query.Symbol]PatternMatcher{
+// TestExecuteWithRelationsChecksNamedSourceAttributes pins that the executor
+// asks a named source about the attributes the query names on it, and the
+// source's refusal is the query's.
+func TestExecuteWithRelationsChecksNamedSourceAttributes(t *testing.T) {
+	refusal := errors.New("unknown attribute :t/naem")
+	named := &vocabularyMatcher{refuses: true, answer: refusal}
+	router := NewSourceRouter(map[query.Symbol]PatternMatcher{
+		datalog.SymDollar:           &mockPatternMatcher{},
 		datalog.NewSymbol("$cache"): named,
 	})
-	if err := router.UnknownAttributes(roster); err != nil {
-		t.Errorf("a router with no default source refuses nothing, got %v", err)
+	exec := NewExecutor(router, nil)
+	q := mustParse(t, `[:find ?v :in $ $cache :where [$cache ?e :t/naem ?v]]`)
+	_, err := exec.ExecuteWithRelations(NewContext(), q, nil)
+	if err != refusal {
+		t.Errorf("executor answered %v, want the named source's refusal of the attribute the query names on it", err)
 	}
-	if named.asked != nil {
-		t.Error("a named source carries no definitions to refuse against and must not be asked")
+	if len(named.asked) != 1 || named.asked[0] != datalog.NewKeyword(":t/naem") {
+		t.Errorf("the named source was asked about %v, want the attributes the query names on it", named.asked)
+	}
+}
+
+// TestExecuteWithRelationsAsksNothingOfASourceThatDoesNotRefuse pins that a
+// source that does not refuse is asked about no roster, so none is collected
+// for it, and the query runs.
+func TestExecuteWithRelationsAsksNothingOfASourceThatDoesNotRefuse(t *testing.T) {
+	silent := &vocabularyMatcher{answer: errors.New("a source that does not refuse is never asked")}
+	exec := NewExecutor(silent, nil)
+	q := mustParse(t, `[:find ?v :where [?e :t/naem ?v]]`)
+	if _, err := exec.ExecuteWithRelations(NewContext(), q, nil); err != nil {
+		t.Fatalf("a query on a source that does not refuse runs: %v", err)
+	}
+	if silent.asked != nil {
+		t.Errorf("a source that does not refuse was asked about %v, want never asked", silent.asked)
+	}
+}
+
+// TestExecuteWithRelationsChecksAttributesBoundThroughInputs pins that the
+// executor asks the vocabulary about the attributes the inputs bind to a
+// variable in a pattern's attribute position, through a scalar input and
+// through a collection input, in the order the inputs give them.
+func TestExecuteWithRelationsChecksAttributesBoundThroughInputs(t *testing.T) {
+	naem, aeg := datalog.NewKeyword(":t/naem"), datalog.NewKeyword(":t/aeg")
+	for _, c := range []struct {
+		name  string
+		text  string
+		value interface{}
+		want  []datalog.Keyword
+	}{
+		{"scalar", `[:find ?v :in $ ?a :where [?e ?a ?v]]`, naem, []datalog.Keyword{naem}},
+		{"collection", `[:find ?v :in $ [?a ...] :where [?e ?a ?v]]`, []interface{}{naem, aeg}, []datalog.Keyword{naem, aeg}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			refusal := errors.New("unknown attribute")
+			withVocabulary := &vocabularyMatcher{refuses: true, answer: refusal}
+			exec := NewExecutor(withVocabulary, nil)
+			q := mustParse(t, c.text)
+			inputs, err := createInputRelationsFromValuesWithOptions(q, []interface{}{datalog.SymDollar, c.value}, exec.options)
+			if err != nil {
+				t.Fatalf("binding: %v", err)
+			}
+			_, err = exec.ExecuteWithRelations(NewContext(), q, inputs)
+			if err != refusal {
+				t.Errorf("executor answered %v, want the vocabulary's refusal of the attribute the input binds", err)
+			}
+			if len(withVocabulary.asked) != len(c.want) {
+				t.Fatalf("the vocabulary was asked about %v, want the attributes the input binds %v", withVocabulary.asked, c.want)
+			}
+			for i := range c.want {
+				if withVocabulary.asked[i] != c.want[i] {
+					t.Errorf("attribute %d asked about is %s, want %s", i, withVocabulary.asked[i], c.want[i])
+				}
+			}
+		})
 	}
 }
 
@@ -216,7 +313,7 @@ func TestSourceRouterUnknownAttributesDelegatesToDefault(t *testing.T) {
 // the query's own.
 func TestExecuteWithRelationsChecksRuleBodyAttributes(t *testing.T) {
 	refusal := errors.New("unknown attribute :page/nxet")
-	withVocabulary := &vocabularyMatcher{answer: refusal}
+	withVocabulary := &vocabularyMatcher{refuses: true, answer: refusal}
 	exec := NewExecutor(withVocabulary, nil)
 	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/nxet ?b]]]`)
 	q := mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)

@@ -716,7 +716,7 @@ func (m *PatternMatcher) LookupAttribute(
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler, report)
+		entry, err := m.cache.GetOrResolve(key, card, m, m.cacheBound(), m.handler, report)
 		if err != nil {
 			return nil, false, err
 		}
@@ -954,19 +954,17 @@ func (m *PatternMatcher) LookupAllAttributes(
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler, report)
+		card := schema.CardinalityOne
+		if m.schema != nil {
+			if def := m.schema.GetAttribute(attr); def != nil {
+				card = def.Cardinality
+			}
+		}
+		entry, err := m.cache.GetOrResolve(key, card, m, m.cacheBound(), m.handler, report)
 		if err != nil {
 			return nil, err
 		}
 		if entry != nil {
-			// Determine cardinality
-			card := schema.CardinalityOne
-			if m.schema != nil {
-				if def := m.schema.GetAttribute(attr); def != nil {
-					card = def.Cardinality
-				}
-			}
-
 			switch card {
 			case schema.CardinalityMany:
 				set := entry.ManySet()

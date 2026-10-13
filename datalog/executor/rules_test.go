@@ -839,27 +839,28 @@ func TestExecuteWithRelations_SeededEqualsWhole(t *testing.T) {
 
 // TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole binds an
 // invocation whose rewrite does not stratify: q's magic rule for s reads the
-// negation of t that precedes the invocation, and s invokes q, so the magic
-// predicates close a cycle through that negation. The rewrite is declined,
-// recorded, and the predicate evaluated whole and filtered.
+// recursive invocation of q that precedes the negation of s, so the adorned
+// q depends through that negation on the adorned s, whose magic rule depends
+// on the adorned q. The rewrite is declined, recorded, and the predicate
+// evaluated whole and filtered.
 func TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole(t *testing.T) {
 	pageA, pageB, pageC := datalog.NewKeyword(":page/a"), datalog.NewKeyword(":page/b"), datalog.NewKeyword(":page/c")
 	stamp := func(i int) datalog.ElementID { return datalog.ElementID{Lamport: uint64(i), ReplicaID: 1} }
-	// q(3) holds: a(3,4), t(4) does not hold, s(4) holds by page4's kind.
-	// q(1) does not: a(1,2) but t(2) holds.
+	// q(1, 2) and q(2, 3), q(2, 7) hold by a. q(1, 9) holds through q(2, 3):
+	// s(3) does not hold and b(3, 9). q(1, 8) does not: s(7) holds by page7's
+	// c, so the path through q(2, 7) is cut.
 	matcher := NewMemoryPatternMatcher([]datalog.Datom{
 		{E: page(1), A: pageA, V: page(2), Tx: stamp(1)},
-		{E: page(3), A: pageA, V: page(4), Tx: stamp(2)},
-		{E: page(2), A: pageB, V: page(3), Tx: stamp(3)},
-		{E: page(4), A: pageB, V: page(1), Tx: stamp(4)},
-		{E: page(4), A: pageKind, V: "end", Tx: stamp(5)},
-		{E: page(2), A: pageC, V: "marked", Tx: stamp(6)},
+		{E: page(2), A: pageA, V: page(3), Tx: stamp(2)},
+		{E: page(2), A: pageA, V: page(7), Tx: stamp(3)},
+		{E: page(3), A: pageB, V: page(9), Tx: stamp(4)},
+		{E: page(7), A: pageB, V: page(8), Tx: stamp(5)},
+		{E: page(7), A: pageC, V: "marked", Tx: stamp(6)},
 	})
-	rs := mustRules(t, `[[(q ?x) [?x :page/a ?y] (not (t ?y)) (s ?y)]
-	                     [(s ?y) [?y :page/kind "end"]]
-	                     [(s ?y) [?y :page/b ?z] (q ?z)]
-	                     [(t ?y) [?y :page/c _]]]`)
-	q := mustParse(t, `[:find ?x :in $ % ?x :where (q ?x)]`)
+	rs := mustRules(t, `[[(q ?x ?z) [?x :page/a ?z]]
+	                     [(q ?x ?z) [?x :page/a ?y] (q ?y ?w) (not (s ?w)) [?w :page/b ?z]]
+	                     [(s ?w) [?w :page/c _]]]`)
+	q := mustParse(t, `[:find ?z :in $ % ?x :where (q ?x ?z)]`)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var decisions []annotations.Event
@@ -886,16 +887,23 @@ func TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole(t *testing.T) {
 				}
 				return tuples
 			}
-			if got := run(page(3)); len(got) != 1 || got[0][0] != page(3) {
-				t.Errorf("q bound to page3 = %v, want page3 alone", got)
+			reached := func(tuples []Tuple) *TupleKeyMap {
+				keys := NewTupleKeyMap()
+				for _, tuple := range tuples {
+					keys.PutIfAbsent(NewTupleKeyFull(tuple), struct{}{})
+				}
+				return keys
 			}
-			if got := run(page(1)); len(got) != 0 {
-				t.Errorf("q bound to page1 = %v, want nothing: t holds of page2", got)
+			if got := run(page(1)); len(got) != 2 || !reached(got).Exists(NewTupleKeyFull(Tuple{page(2)})) || !reached(got).Exists(NewTupleKeyFull(Tuple{page(9)})) {
+				t.Errorf("q bound to page1 = %v, want page2 and page9: the path through page7 is cut by s", got)
+			}
+			if got := run(page(2)); len(got) != 2 || !reached(got).Exists(NewTupleKeyFull(Tuple{page(3)})) || !reached(got).Exists(NewTupleKeyFull(Tuple{page(7)})) {
+				t.Errorf("q bound to page2 = %v, want page3 and page7", got)
 			}
 			if len(decisions) != 2 {
 				t.Fatalf("recorded %d rewrite decisions, want one per invocation: %v", len(decisions), decisions)
 			}
-			_, refusal := rs.Magic(datalog.NewSymbol("q"), []bool{true})
+			_, refusal := rs.Magic(datalog.NewSymbol("q"), []bool{true, false})
 			var unstratifiable *query.UnstratifiableError
 			if !errors.As(refusal, &unstratifiable) {
 				t.Fatalf("the rewrite of q under b is refused by the stratifier, got %v", refusal)
@@ -909,6 +917,77 @@ func TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// An invocation under a form evaluates its predicate once per query: the
+// rewrite and the strata an invocation under not runs number what the
+// top-level invocation's do, with the sink of a chain of ten bound.
+func TestExecuteWithRelations_InvocationUnderAFormEvaluatesOnce(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(10))
+	rs := mustRules(t, followsRulesText)
+	top := mustParse(t, `[:find ?x :in $ % ?s :where [?x :page/kind "leaf"] (follows ?x ?s)]`)
+	under := mustParse(t, `[:find ?x :in $ % ?s :where [?x :page/kind "leaf"] (not (follows ?x ?s))]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var rewrites, strata int
+			opts := mode.plannerOptions()
+			opts.Handler = func(e annotations.Event) {
+				switch e.Name {
+				case annotations.RulesMagicSets:
+					rewrites++
+				case annotations.RulesStratumBegin:
+					strata++
+				}
+			}
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			run := func(q *query.Query) int {
+				inputs, err := createInputRelationsFromValuesWithOptions(q,
+					[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), page(10)}, exec.options)
+				if err != nil {
+					t.Fatalf("binding: %v", err)
+				}
+				rel, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, inputs)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var tuples []Tuple
+				if err := collectTuplesInto(&tuples, rel); err != nil {
+					t.Fatal(err)
+				}
+				return len(tuples)
+			}
+			if got := run(top); got != 9 {
+				t.Errorf("top level: %d pages reach page10, want 9", got)
+			}
+			atTop := [2]int{rewrites, strata}
+			rewrites, strata = 0, 0
+			if got := run(under); got != 1 {
+				t.Errorf("under not: %d pages do not reach page10, want page10 alone", got)
+			}
+			if got := [2]int{rewrites, strata}; got != atTop {
+				t.Errorf("under not: %d rewrites and %d strata, want the top level's %d and %d", got[0], got[1], atTop[0], atTop[1])
+			}
+		})
+	}
+}
+
+// A predicate with required positions is evaluated at its invocation under
+// the invoking body's bindings, never whole, so the walk of an invoked
+// predicate's dependencies leaves it out; every other dependency stays in.
+func TestNeededPredicates_LeavesOutARequiredPredicate(t *testing.T) {
+	rs := mustRules(t, `[[(succ [?n] ?m) [(+ ?n 1) ?m]]
+	                     [(next ?x ?y) [?x :page/rank ?k] (succ ?k ?j) [?y :page/rank ?j]]
+	                     [(follows ?x ?y) [?x :page/next ?y]]
+	                     [(chain ?x ?z) (follows ?x ?y) (next ?y ?z)]]`)
+	needed := neededPredicates(rs, datalog.NewSymbol("chain"))
+	for _, name := range []string{"chain", "follows", "next"} {
+		if !needed[datalog.NewSymbol(name)] {
+			t.Errorf("%s is among the predicates chain needs", name)
+		}
+	}
+	if needed[datalog.NewSymbol("succ")] {
+		t.Error("succ requires its first position bound and is not among the predicates chain needs")
 	}
 }
 

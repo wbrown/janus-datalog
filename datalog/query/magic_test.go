@@ -252,27 +252,85 @@ func TestMagic_RequiredPositionLeftFree(t *testing.T) {
 			scopePattern("?x", "page/n", "?n"),
 			invoke("adorned.b/small", "?n")),
 	})
-	if adorned := magic.Rules.Rules(sym("adorned.b/small")); len(adorned) != 1 || len(adorned[0].Required) != 1 {
-		t.Errorf("adorned.b/small keeps small's required run, got %v", adorned)
+	if adorned := magic.Rules.Rules(sym("adorned.b/small")); len(adorned) != 1 || len(adorned[0].Required) != 0 {
+		t.Errorf("adorned.b/small has no required run, its guard binding the position small requires, got %v", adorned)
+	}
+	if required := magic.Rules.Required(sym("adorned.b/small")); countBound(required) != 0 {
+		t.Errorf("Required(adorned.b/small) = %v, want no required position", required)
 	}
 }
 
+// TestMagic_MagicRuleReadsReadyMonotoneClauses: a magic rule reads, of the
+// clauses before the invocation, those the bindings so far make ready and
+// that are monotone. A not-join reading a variable a later clause binds is
+// not read, so the magic rule is safe; an or-default is not read, so the
+// predicate it invokes stays below the recursive stratum.
+func TestMagic_MagicRuleReadsReadyMonotoneClauses(t *testing.T) {
+	t.Run("a clause bound later is not read", func(t *testing.T) {
+		rs := mustRuleSet(t, append(followsRules(),
+			defineRule("t", []string{"?a", "?c"},
+				&NotJoinClause{JoinVars: []Symbol{sym("?w")}, Clauses: []Clause{scopePattern("?w", "page/marked", "_")}},
+				invoke("follows", "?a", "?c"),
+				scopePattern("?w", "page/next", "?c"))))
+		magic := mustMagic(t, rs, "t", true, false)
+		assertRules(t, "magic.bf/follows", magic.Rules.Rules(sym("magic.bf/follows")), []*Rule{
+			defineRule("magic.bf/follows", []string{"?a"},
+				invoke("magic.bf/t", "?a")),
+			defineRule("magic.bf/follows", []string{"?b"},
+				invoke("magic.bf/follows", "?a"),
+				scopePattern("?a", "page/next", "?b")),
+		})
+	})
+
+	t.Run("a fallback form is not read", func(t *testing.T) {
+		rs := mustRuleSet(t, []*Rule{
+			defineRule("marked", []string{"?b"}, scopePattern("?b", "page/marked", "_")),
+			defineRule("walk", []string{"?a", "?c"}, scopePattern("?a", "page/next", "?c")),
+			defineRule("walk", []string{"?a", "?c"},
+				scopePattern("?a", "page/next", "?b"),
+				&OrDefaultClause{Branches: [][]Clause{
+					{invoke("marked", "?b")},
+					{scopePattern("?b", "page/kind", "_")},
+				}},
+				invoke("walk", "?b", "?c")),
+		})
+		magic := mustMagic(t, rs, "walk", true, false)
+		assertRules(t, "magic.bf/walk", magic.Rules.Rules(sym("magic.bf/walk")), []*Rule{
+			defineRule("magic.bf/walk", []string{"?b"},
+				invoke("magic.bf/walk", "?a"),
+				scopePattern("?a", "page/next", "?b")),
+		})
+		stratumOf := func(name string) int {
+			for i, stratum := range magic.Rules.Strata() {
+				if ContainsSymbol(stratum.Predicates, sym(name)) {
+					return i
+				}
+			}
+			t.Fatalf("no stratum holds %s in %+v", name, magic.Rules.Strata())
+			return -1
+		}
+		if marked, walk := stratumOf("adorned.b/marked"), stratumOf("adorned.bf/walk"); marked >= walk {
+			t.Errorf("adorned.b/marked is in stratum %d and adorned.bf/walk in %d; the fallback's predicate sits below the recursive stratum", marked, walk)
+		}
+	})
+}
+
 // TestMagic_DeclinesUnstratifiableRewrite: q's magic rule for s reads the
-// negation of t that precedes the invocation, and s invokes q, so the magic
-// predicates close a cycle through that negation which the original set, a
-// cycle of q and s beside a separate t, does not have.
+// recursive invocation of q that precedes the negation of s, so the adorned
+// q depends through that negation on the adorned s, whose magic rule depends
+// on the adorned q: a cycle through the negation which the original set, q
+// recursive beside a separate s, does not have.
 func TestMagic_DeclinesUnstratifiableRewrite(t *testing.T) {
 	rs := mustRuleSet(t, []*Rule{
-		defineRule("q", []string{"?x"},
+		defineRule("q", []string{"?x", "?z"}, scopePattern("?x", "page/a", "?z")),
+		defineRule("q", []string{"?x", "?z"},
 			scopePattern("?x", "page/a", "?y"),
-			&NotClause{Clauses: []Clause{invoke("t", "?y")}},
-			invoke("s", "?y")),
-		defineRule("s", []string{"?y"},
-			scopePattern("?y", "page/b", "?z"),
-			invoke("q", "?z")),
-		defineRule("t", []string{"?y"}, scopePattern("?y", "page/c", "_")),
+			invoke("q", "?y", "?w"),
+			&NotClause{Clauses: []Clause{invoke("s", "?w")}},
+			scopePattern("?w", "page/b", "?z")),
+		defineRule("s", []string{"?w"}, scopePattern("?w", "page/c", "_")),
 	})
-	_, err := rs.Magic(sym("q"), []bool{true})
+	_, err := rs.Magic(sym("q"), []bool{true, false})
 	var unstratifiable *UnstratifiableError
 	if !errors.As(err, &unstratifiable) {
 		t.Fatalf("want *UnstratifiableError, the decline, got %v", err)

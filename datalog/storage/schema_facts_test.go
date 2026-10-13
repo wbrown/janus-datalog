@@ -3,10 +3,13 @@ package storage
 import (
 	"bytes"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -46,7 +49,8 @@ func schemaFactsFixture(t testing.TB) *schema.Schema {
 	return s
 }
 
-// declaredDefinition is one tuple of the query the proposal's §4 states.
+// declaredDefinition is one tuple of the query the proposal's §4 states: a
+// definition entity, and the words of the declaration it refers to.
 type declaredDefinition struct {
 	Entity datalog.Identity `datalog:"?a"`
 	Ident  datalog.Keyword  `datalog:"?ident"`
@@ -60,9 +64,10 @@ func declaredByQuery(t *testing.T, d *Database) map[datalog.Keyword]declaredDefi
 	t.Helper()
 	var tuples []declaredDefinition
 	require.NoError(t, d.QueryInto(&tuples, `[:find ?a ?ident ?type ?card
-		:where [?a :db/ident ?ident]
-		       [?a :db/valueType ?type]
-		       [?a :db/cardinality ?card]]`))
+		:where [?a :db.attribute/declaration ?d]
+		       [?d :db/ident ?ident]
+		       [?d :db/valueType ?type]
+		       [?d :db/cardinality ?card]]`))
 	byIdent := make(map[datalog.Keyword]declaredDefinition, len(tuples))
 	for _, tuple := range tuples {
 		byIdent[tuple.Ident] = tuple
@@ -70,11 +75,19 @@ func declaredByQuery(t *testing.T, d *Database) map[datalog.Keyword]declaredDefi
 	return byIdent
 }
 
-// attributeFacts pulls the seven words off the definition entity of ident. A
-// word the definition does not carry is absent from the result.
+// attributeFacts pulls the seven words off the declaration the definition
+// entity of ident refers to. A word the declaration does not carry is absent
+// from the result, and an ident with no definition entity has nil.
 func attributeFacts(t *testing.T, d *Database, ident datalog.Keyword) map[string]interface{} {
 	t.Helper()
-	facts, err := d.Pull(schemaFactsEntity(ident),
+	var declarations []datalog.Identity
+	require.NoError(t, d.QueryInto(&declarations,
+		`[:find ?d :in $ ?a :where [?a :db.attribute/declaration ?d]]`, schemaFactsEntity(ident)))
+	if len(declarations) == 0 {
+		return nil
+	}
+	require.Len(t, declarations, 1, "%s refers to one declaration", ident)
+	facts, err := d.Pull(declarations[0],
 		`[:db/ident :db/valueType :db/cardinality :db/unique :db/uniqueElements :db/neverZeroValue :db/doc]`)
 	require.NoError(t, err)
 	return facts
@@ -177,14 +190,16 @@ func TestSchemaFacts_ReassertedDefinitionConvergesToOneEntity(t *testing.T) {
 			require.NoError(t, d.SetSchema(second))
 
 			var entities []datalog.Identity
-			require.NoError(t, d.QueryInto(&entities, `[:find ?a :where [?a :db/ident :t/documented]]`))
+			require.NoError(t, d.QueryInto(&entities,
+				`[:find ?a :where [?a :db.attribute/declaration ?d] [?d :db/ident :t/documented]]`))
 			require.Len(t, entities, 1, "a re-asserted definition converges to one entity")
 			require.Equal(t, "second", attributeFacts(t, d, kw(":t/documented"))["db/doc"])
 
 			var docs []string
 			require.NoError(t, d.History().QueryInto(&docs,
-				`[:find ?doc :in $ ?a :where [?a :db/doc ?doc]]`, schemaFactsEntity(kw(":t/documented"))))
-			require.ElementsMatch(t, []string{"first", "second"}, docs)
+				`[:find ?doc :in $ ?a :where [?a :db.attribute/declaration ?d] [?d :db/doc ?doc]]`,
+				schemaFactsEntity(kw(":t/documented"))))
+			require.ElementsMatch(t, []string{"first", "second"}, docs, "the ref's history is the definition's history")
 		})
 	}
 }
@@ -216,6 +231,47 @@ func TestSchemaFacts_DefinitionConvergesAcrossReplicas(t *testing.T) {
 	}
 }
 
+// Two replicas' declarations of one attribute merge to a definition one of
+// them made.
+func TestSchemaFacts_ReplicaDeclarationsMergeToADeclaredDefinition(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			n := kw(":t/n")
+			base, err := schema.NewBuilder().Attribute(":t/n").Type(schema.TypeLong).Add().Build()
+			require.NoError(t, err)
+			nonzero, err := schema.NewBuilder().Attribute(":t/n").Type(schema.TypeLong).NeverZeroValue().Add().Build()
+			require.NoError(t, err)
+			untyped, err := schema.NewBuilder().Attribute(":t/n").Add().Build()
+			require.NoError(t, err)
+
+			origin := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: base, ReplicaID: 1})
+			var dumpOrigin bytes.Buffer
+			require.NoError(t, origin.Export(&dumpOrigin))
+
+			a := createOptimizerModeDB(t, mode, DatabaseOptions{ReplicaID: 2})
+			require.NoError(t, a.Import(strings.NewReader(dumpOrigin.String())))
+			require.NoError(t, a.SetSchema(nonzero))
+			b := createOptimizerModeDB(t, mode, DatabaseOptions{ReplicaID: 3})
+			require.NoError(t, b.Import(strings.NewReader(dumpOrigin.String())))
+			require.NoError(t, b.SetSchema(untyped))
+
+			var dumpB bytes.Buffer
+			require.NoError(t, b.Export(&dumpB))
+			require.NoError(t, a.Import(strings.NewReader(dumpB.String())), "two replicas' declarations of one attribute merge")
+
+			merged := a.Schema().GetAttribute(n)
+			require.NotNil(t, merged)
+			declared := []schema.AttributeDefinition{*base.GetAttribute(n), *nonzero.GetAttribute(n), *untyped.GetAttribute(n)}
+			require.Contains(t, declared, *merged, "the merged definition is one some declaration made")
+
+			var dumpA bytes.Buffer
+			require.NoError(t, a.Export(&dumpA))
+			c := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			require.NoError(t, c.Import(strings.NewReader(dumpA.String())), "the merged dump opens")
+		})
+	}
+}
+
 func TestSchemaFacts_WithdrawnDocResolvesAbsent(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -233,7 +289,7 @@ func TestSchemaFacts_WithdrawnDocResolvesAbsent(t *testing.T) {
 			docOf := func() []string {
 				var docs []string
 				require.NoError(t, d.QueryInto(&docs,
-					`[:find ?doc :in $ ?a :where [?a :db/doc ?doc]]`, entity))
+					`[:find ?doc :in $ ?a :where [?a :db.attribute/declaration ?d] [?d :db/doc ?doc]]`, entity))
 				return docs
 			}
 			require.Equal(t, []string{"documented"}, docOf())
@@ -244,7 +300,7 @@ func TestSchemaFacts_WithdrawnDocResolvesAbsent(t *testing.T) {
 
 			var history []string
 			require.NoError(t, d.History().QueryInto(&history,
-				`[:find ?doc :in $ ?a :where [?a :db/doc ?doc]]`, entity))
+				`[:find ?doc :in $ ?a :where [?a :db.attribute/declaration ?d] [?d :db/doc ?doc]]`, entity))
 			require.Contains(t, history, "documented", "History keeps the withdrawn doc")
 		})
 	}
@@ -267,7 +323,7 @@ func TestSchemaFacts_WithdrawnWordResolvesAbsent(t *testing.T) {
 			uniqueOf := func() []datalog.Keyword {
 				var constraints []datalog.Keyword
 				require.NoError(t, d.QueryInto(&constraints,
-					`[:find ?u :in $ ?a :where [?a :db/unique ?u]]`, entity))
+					`[:find ?u :in $ ?a :where [?a :db.attribute/declaration ?d] [?d :db/unique ?u]]`, entity))
 				return constraints
 			}
 			require.Equal(t, []datalog.Keyword{schema.UniqueValue}, uniqueOf())
@@ -278,7 +334,7 @@ func TestSchemaFacts_WithdrawnWordResolvesAbsent(t *testing.T) {
 
 			var history []datalog.Keyword
 			require.NoError(t, d.History().QueryInto(&history,
-				`[:find ?u :in $ ?a :where [?a :db/unique ?u]]`, entity))
+				`[:find ?u :in $ ?a :where [?a :db.attribute/declaration ?d] [?d :db/unique ?u]]`, entity))
 			require.Contains(t, history, schema.UniqueValue, "History keeps the withdrawn value")
 		})
 	}
@@ -335,6 +391,32 @@ func TestSchemaFacts_UndeclaredAttributeWithDatomsIsInferred(t *testing.T) {
 	})
 }
 
+// A definition lives on its ident's own entity. An entity elsewhere carrying
+// :db/ident and :db/cardinality is a fact of the application's, not a
+// definition.
+func TestSchemaFacts_IdentOnAnotherEntityIsNotADefinition(t *testing.T) {
+	reopenLegs(t, func(t *testing.T, open func(DatabaseOptions) *Database) {
+		s, err := schema.NewBuilder().
+			Attribute(":person/name").Type(schema.TypeString).Add().
+			Build()
+		require.NoError(t, err)
+		first := open(DatabaseOptions{Schema: s})
+		enum := datalog.NewIdentity("enum/email")
+		tx := first.NewTransaction()
+		require.NoError(t, tx.Add(enum, schema.DBIdent, kw(":person/email")))
+		require.NoError(t, tx.Add(enum, schema.DBCardinality, schema.CardinalityOne))
+		_, err = tx.Commit()
+		require.NoError(t, err)
+		require.NoError(t, first.SetSchema(s), "a schema is declared over a store holding an ident elsewhere")
+
+		second := open(DatabaseOptions{Schema: s})
+		require.Nil(t, second.declaredSchema().GetAttribute(kw(":person/email")), "the ident elsewhere declares nothing")
+		third := open(DatabaseOptions{})
+		require.NotNil(t, third.Schema().GetAttribute(kw(":person/name")), "the stored definition is read")
+		require.Nil(t, third.declaredSchema().GetAttribute(kw(":person/email")))
+	})
+}
+
 func TestSchemaFacts_MalformedFactRefusesOpen(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -347,10 +429,11 @@ func TestSchemaFacts_MalformedFactRefusesOpen(t *testing.T) {
 			t.Cleanup(func() { _ = store.Close() })
 
 			ident := kw(":t/bogus")
-			entity := schemaFactsEntity(ident)
+			declaration := datalog.NewIdentity("db.declaration/bogus")
 			require.NoError(t, store.Assert([]datalog.Datom{
-				{E: entity, A: schema.DBIdent, V: ident, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 7}},
-				{E: entity, A: schema.DBCardinality, V: kw(":db.cardinality/bogus"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 7}},
+				{E: declaration, A: schema.DBIdent, V: ident, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 7}},
+				{E: declaration, A: schema.DBCardinality, V: kw(":db.cardinality/bogus"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 7}},
+				{E: schemaFactsEntity(ident), A: attributeDeclarationAttr, V: declaration, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 7}},
 			}))
 
 			popts := mode.plannerOptions()
@@ -402,6 +485,43 @@ func TestSchemaFacts_ForkAssertsParentDeclarations(t *testing.T) {
 	}
 }
 
+// A branch declares what its parent declares and nothing its parent only
+// inferred.
+func TestSchemaFacts_ForkCarriesDeclarationsAndNotInferences(t *testing.T) {
+	forking, _ := forkingModes(t)
+	require.NotEmpty(t, forking)
+	for _, mode := range forking {
+		t.Run(mode.name, func(t *testing.T) {
+			inferring := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			tx := inferring.NewTransaction()
+			require.NoError(t, tx.Add(datalog.NewIdentity("holder"), kw(":t/plain"), "v"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+			require.NoError(t, inferring.Import(strings.NewReader("")), "an import ends by installing the schema, inferring from the datoms")
+			require.NotNil(t, inferring.Schema(), "the parent infers a schema from its datoms")
+			require.NotNil(t, inferring.Schema().GetAttribute(kw(":t/plain")), "the parent infers the attribute from its datoms")
+			_, err = inferring.Snapshot("s")
+			require.NoError(t, err)
+			branch := branchOf(t, inferring, "s")
+			require.NoError(t, branch.Import(strings.NewReader("")))
+			require.Empty(t, declaredByQuery(t, branch), "an inferred definition is never asserted, in the branch as in the parent")
+			require.NoError(t, inferring.Import(strings.NewReader("")))
+			require.Empty(t, declaredByQuery(t, inferring))
+
+			declared, err := schema.NewBuilder().
+				Attribute(":t/plain").Type(schema.TypeString).Add().
+				Build()
+			require.NoError(t, err)
+			declaring := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: declared})
+			_, err = declaring.Snapshot("s")
+			require.NoError(t, err)
+			branch = branchOf(t, declaring, "s")
+			_, read := declaredByQuery(t, branch)[kw(":t/plain")]
+			require.True(t, read, "the branch carries its parent's declaration")
+		})
+	}
+}
+
 func TestSchemaFacts_ForkWithUnchangedSchemaWritesNothing(t *testing.T) {
 	forking, _ := forkingModes(t)
 	require.NotEmpty(t, forking)
@@ -445,6 +565,187 @@ func TestSchemaFacts_TruncateToRewindsDeclarations(t *testing.T) {
 			require.False(t, read, "a definition asserted past the snapshot is gone from the facts after the rewind")
 			require.NotNil(t, d.Schema().GetAttribute(kw(":t/later")), "the given schema stays in force over the facts that survive")
 			require.NotNil(t, d.Schema().GetAttribute(kw(":t/early")))
+		})
+	}
+}
+
+// A pull after SetSchema reads under the installed schema.
+func TestSchemaFacts_ChangedCardinalityHoldsAgainstAMatcherMintedBefore(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			asSet, err := schema.NewBuilder().
+				Attribute(":t/tags").Type(schema.TypeString).Many().Add().
+				Build()
+			require.NoError(t, err)
+			asOne, err := schema.NewBuilder().
+				Attribute(":t/tags").Type(schema.TypeString).Add().
+				Build()
+			require.NoError(t, err)
+
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: asSet})
+			entity := datalog.NewIdentity("holder")
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Add(entity, kw(":t/tags"), "x"))
+			require.NoError(t, tx.Add(entity, kw(":t/tags"), "y"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			held := d.Matcher()
+			require.NoError(t, d.SetSchema(asOne))
+			pattern, err := parser.ParsePullPattern(`[:t/tags]`)
+			require.NoError(t, err)
+			_, err = executor.NewPullExecutor(held, d).Pull(entity, pattern)
+			require.NoError(t, err)
+
+			pulled, err := d.Pull(entity, `[:t/tags]`)
+			require.NoError(t, err)
+			require.Equal(t, "y", pulled["t/tags"], "under cardinality one the latest member is the value, whatever matcher read the pair before")
+		})
+	}
+}
+
+// A pull in flight across SetSchema leaves the next pull reading under the
+// installed schema.
+func TestSchemaFacts_ChangedCardinalityHoldsAgainstAPullInFlight(t *testing.T) {
+	for _, algebra := range []struct {
+		name string
+		on   bool
+	}{{"algebra_on", true}, {"algebra_off", false}} {
+		t.Run(algebra.name, func(t *testing.T) {
+			asSet, err := schema.NewBuilder().
+				Attribute(":t/tags").Type(schema.TypeString).Many().Add().
+				Build()
+			require.NoError(t, err)
+			asOne, err := schema.NewBuilder().
+				Attribute(":t/tags").Type(schema.TypeString).Add().
+				Build()
+			require.NoError(t, err)
+
+			opts := DefaultPlannerOptions()
+			opts.EnableAlgebraOptimizer = algebra.on
+			store := &scanSignalStore{Store: NewMemoryStore(&BinaryKeyEncoder{})}
+			d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, Schema: asSet, PlannerOptions: &opts})
+			require.NoError(t, err)
+			defer d.Close()
+			entity := datalog.NewIdentity("holder")
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Add(entity, kw(":t/tags"), "x"))
+			require.NoError(t, tx.Add(entity, kw(":t/tags"), "y"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			held := make(chan struct{})
+			release := make(chan struct{})
+			store.arm(func() {
+				close(held)
+				<-release
+			})
+			inFlight := make(chan error, 1)
+			go func() {
+				_, err := d.Pull(entity, `[:t/tags]`)
+				inFlight <- err
+			}()
+			<-held
+			require.NoError(t, d.SetSchema(asOne))
+			close(release)
+			require.NoError(t, <-inFlight)
+
+			pulled, err := d.Pull(entity, `[:t/tags]`)
+			require.NoError(t, err)
+			require.Equal(t, "y", pulled["t/tags"], "under cardinality one the latest member is the value, whatever pull was in flight when it was declared")
+		})
+	}
+}
+
+// commitHoldStore holds the first commit it serves after arming, before its
+// store transaction opens, until the second commit it serves has landed.
+type commitHoldStore struct {
+	Store
+	mu      sync.Mutex
+	begun   int
+	held    chan struct{}
+	release chan struct{}
+}
+
+// arm starts counting commits: the first is held, the second releases it.
+func (s *commitHoldStore) arm() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.begun = 0
+	s.held = make(chan struct{})
+	s.release = make(chan struct{})
+}
+
+func (s *commitHoldStore) BeginTx() (StoreTx, error) {
+	s.mu.Lock()
+	armed := s.held != nil
+	if armed {
+		s.begun++
+	}
+	begun := s.begun
+	s.mu.Unlock()
+	if armed && begun == 1 {
+		close(s.held)
+		<-s.release
+	}
+	stx, err := s.Store.BeginTx()
+	if err != nil {
+		return nil, err
+	}
+	if armed && begun == 2 {
+		return &releasingTx{StoreTx: stx, release: s.release}, nil
+	}
+	return stx, nil
+}
+
+// releasingTx closes release once its commit has landed.
+type releasingTx struct {
+	StoreTx
+	release chan struct{}
+}
+
+func (t *releasingTx) Commit() error {
+	err := t.StoreTx.Commit()
+	close(t.release)
+	return err
+}
+
+// Two SetSchema calls that overlap leave the database running the definition
+// its store states.
+func TestSchemaFacts_OverlappingSetSchemaCallsAgree(t *testing.T) {
+	n := kw(":t/n")
+	base, err := schema.NewBuilder().Attribute(":t/n").Type(schema.TypeLong).Doc("one").Add().Build()
+	require.NoError(t, err)
+	redocumented, err := schema.NewBuilder().Attribute(":t/n").Type(schema.TypeLong).Doc("two").Add().Build()
+	require.NoError(t, err)
+	widened, err := schema.NewBuilder().Attribute(":t/n").Type(schema.TypeLong).Many().Doc("one").Add().Build()
+	require.NoError(t, err)
+	for _, algebra := range []struct {
+		name string
+		on   bool
+	}{{"algebra_on", true}, {"algebra_off", false}} {
+		t.Run(algebra.name, func(t *testing.T) {
+			opts := DefaultPlannerOptions()
+			opts.EnableAlgebraOptimizer = algebra.on
+			store := &commitHoldStore{Store: NewMemoryStore(&BinaryKeyEncoder{})}
+			d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, Schema: base, PlannerOptions: &opts})
+			require.NoError(t, err)
+			defer d.Close()
+
+			store.arm()
+			first := make(chan error, 1)
+			go func() { first <- d.SetSchema(redocumented) }()
+			<-store.held
+			require.NoError(t, d.SetSchema(widened))
+			require.NoError(t, <-first)
+
+			running := d.Schema().GetAttribute(n)
+			require.NotNil(t, running)
+			requireDefinitionFacts(t, d, running)
+			declared := []schema.AttributeDefinition{*redocumented.GetAttribute(n), *widened.GetAttribute(n)}
+			require.Contains(t, declared, *running, "the running definition is one a call declared")
+			require.NoError(t, d.Import(strings.NewReader("")))
+			require.Equal(t, *running, *d.Schema().GetAttribute(n), "an import of nothing changes nothing")
 		})
 	}
 }

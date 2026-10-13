@@ -58,14 +58,19 @@ type AttributeFetchFusable interface {
 	CanFuseAttributeFetch(attr datalog.Keyword) bool
 }
 
-// AttributeVocabulary reports the attributes of a roster that the matcher's
+// AttributeVocabulary reports the attributes of a roster that a source's
 // schema does not declare. The matcher owns the schema, so the decision lives
-// there, and a matcher without the capability refuses nothing. A query's
-// roster, a rule set's and a pull pattern's are checked alike.
-// UnknownAttributes returns nil when every attribute is known, and otherwise
-// the error naming each unknown one.
+// there, and a matcher without the capability refuses nothing. The source is
+// the symbol the query names it by, $ for the default source; a matcher that
+// is one source answers for itself under any name, and a router answers from
+// the source named. A source whose RefusesUnknownAttributes is false is never
+// asked about a roster, so none is collected for it. A query's roster, a rule
+// set's, the attributes the inputs bind and a pull pattern's are checked
+// alike. UnknownAttributes returns nil when every attribute is known, and
+// otherwise the error naming each unknown one.
 type AttributeVocabulary interface {
-	UnknownAttributes(attrs []datalog.Keyword) error
+	RefusesUnknownAttributes(source query.Symbol) bool
+	UnknownAttributes(source query.Symbol, attrs []datalog.Keyword) error
 }
 
 // EntityPrefetcher extends PatternMatcher with batch entity prefetch capability.

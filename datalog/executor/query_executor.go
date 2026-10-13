@@ -1634,7 +1634,13 @@ func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx *Context, bran
 	// only by a branch NOT or predicate — selects its binding group into
 	// the outer relation.
 	outerRel, consumed := e.findOuterRelation(branchFreeVariables(branches, ctx.Rules()), groups)
-	rel := NewOrFallbackRelation(e, ctx, branches, outerRel, e.options, false)
+	// An invocation in a branch derives its predicate once, against the
+	// whole outer relation, and every per-tuple run reads it.
+	branches, hoisted, err := e.hoistBranches(ctx, branches, outerRel)
+	if err != nil {
+		return nil, err
+	}
+	rel := NewOrFallbackRelation(e, hoisted, branches, outerRel, e.options, false)
 	rel.consumedGroups = consumed
 	return rel, nil
 }
@@ -1645,7 +1651,11 @@ func (e *DefaultQueryExecutor) executeOrDefaultClause(ctx *Context, clause *quer
 	// Inference form: outer-group selection by every branch free variable,
 	// as in executeOrClauseCorrelatedUnion above.
 	outerRel, consumed := e.findOuterRelation(branchFreeVariables(clause.Branches, ctx.Rules()), groups)
-	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
+	branches, hoisted, err := e.hoistBranches(ctx, clause.Branches, outerRel)
+	if err != nil {
+		return nil, err
+	}
+	rel := NewOrFallbackRelation(e, hoisted, branches, outerRel, e.options, true)
 	rel.consumedGroups = consumed
 	return rel, nil
 }
@@ -1678,7 +1688,11 @@ func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx *Context, clause *
 	}
 
 	prefetched := false
-	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
+	branches, hoisted, err := e.hoistBranches(ctx, clause.Branches, outerRel)
+	if err != nil {
+		return nil, err
+	}
+	rel := NewOrFallbackRelation(e, hoisted, branches, outerRel, e.options, true)
 	rel.joinSyms = clause.RequiredVars
 	rel.scope = &scope
 	rel.prefetched = prefetched
@@ -1832,17 +1846,26 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx *Context, clause *query.
 		})
 	}
 
+	// An invocation in a branch derives its predicate once, bound by the
+	// groups the branches' free variables select, and the branch run reads
+	// it; the branch itself runs against storage with no prior bindings and
+	// joins the groups at collapse.
+	outerRel, _ := e.findOuterRelation(branchFreeVariables(clause.Branches, ctx.Rules()), groups)
+	branches, hoisted, err := e.hoistBranches(ctx, clause.Branches, outerRel)
+	if err != nil {
+		return nil, err
+	}
+
 	// Execute each branch and collect results
 	var branchResults []Relation
 	var commonSyms []query.Symbol
 
-	for i, branch := range clause.Branches {
+	for i, branch := range branches {
 		var branchStart time.Time
 		if handler != nil {
 			branchStart = time.Now()
 		}
-		// Execute this branch's clauses against storage (no prior bindings)
-		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
+		branchResult, err := e.executeInnerClauses(hoisted, branch, nil)
 		if err != nil {
 			return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
 		}
@@ -1934,7 +1957,11 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx *Context, 
 
 	outerRel, consumed := e.findOuterRelationBySymbols(interfaceSet, groups)
 
-	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, false)
+	branches, hoisted, err := e.hoistBranches(ctx, clause.Branches, outerRel)
+	if err != nil {
+		return nil, err
+	}
+	rel := NewOrFallbackRelation(e, hoisted, branches, outerRel, e.options, false)
 	rel.joinSyms = clause.JoinVars
 	rel.scope = &scope
 	rel.consumedGroups = consumed
@@ -2017,7 +2044,13 @@ func (e *DefaultQueryExecutor) executeNotClause(ctx *Context, clause *query.NotC
 		return nil, fmt.Errorf("not clause variables are bound in no relation group")
 	}
 
-	filtered, err := e.filterWithNotClause(ctx, clause, subject, joinVars)
+	// An invocation in the body derives its predicate once, against the
+	// whole subject, and every per-combination run reads it.
+	body, hoisted, err := e.hoistInvocations(ctx, clause.Clauses, subject)
+	if err != nil {
+		return nil, err
+	}
+	filtered, err := e.filterWithNotClause(hoisted, &query.NotClause{Clauses: body}, subject, joinVars)
 	if err != nil {
 		return nil, err
 	}
@@ -2044,7 +2077,11 @@ func (e *DefaultQueryExecutor) executeNotJoinClause(ctx *Context, clause *query.
 		return nil, fmt.Errorf("not-join header variables are bound in no relation group")
 	}
 
-	filtered, err := e.filterWithNotJoinClause(ctx, clause, subject)
+	body, hoisted, err := e.hoistInvocations(ctx, clause.Clauses, subject)
+	if err != nil {
+		return nil, err
+	}
+	filtered, err := e.filterWithNotJoinClause(hoisted, &query.NotJoinClause{JoinVars: clause.JoinVars, Clauses: body}, subject)
 	if err != nil {
 		return nil, err
 	}

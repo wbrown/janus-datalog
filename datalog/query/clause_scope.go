@@ -10,22 +10,21 @@ import "fmt"
 // scoping definition; the planner's scheduling, the executor's anti-join
 // keys, and the algebra bridge's inference all derive from it.
 //
-// Whether a Correlates variable actually unifies is a property of the
-// enclosing query: those the query can bind must be bound before the clause
-// runs; the rest are existential (Datomic's unification rule). Resolving
-// that is the scheduler's job — ScopeOf reports the interface only.
+// Mandatory is the subset of Correlates the enclosing scope must bind
+// before the clause runs: a predicate's, an expression's or a subquery's
+// inputs, an explicit-join header, an invocation's required positions, and
+// the such inputs of a plain NOT's body or an or-default's branches that
+// nothing in that body or branch binds. One the query cannot bind is a
+// query error the planner must surface. The other correlates tolerate
+// absence: a plain NOT's body variables are existential when unbound
+// (Datomic's unification rule), and an or-default's fall back to global
+// evaluation. Whether one of those actually unifies is a property of the
+// enclosing query, and resolving that is the scheduler's job — ScopeOf
+// reports the interface only.
 type ClauseScope struct {
 	Provides   []Symbol
 	Correlates []Symbol
-
-	// CorrelatesOptional: the form tolerates correlates the enclosing
-	// query cannot bind. A plain NOT's body variables are existential when
-	// unbound (Datomic's unification rule), and or-default forms fall back
-	// to global evaluation. Mandatory-correlate forms — predicates,
-	// expressions, subquery inputs, explicit-join headers — need every
-	// correlate bound before execution; one the query cannot bind is a
-	// query error the planner must surface.
-	CorrelatesOptional bool
+	Mandatory  []Symbol
 }
 
 // ScopeOf returns the scope interface of a clause under the rule set the
@@ -50,16 +49,17 @@ func ScopeOf(clause Clause, rules *RuleSet) ClauseScope {
 		case TupleBinding:
 			provides = b.Variables
 		}
-		return ClauseScope{Provides: provides, Correlates: c.Function.RequiredSymbols()}
+		inputs := c.Function.RequiredSymbols()
+		return ClauseScope{Provides: provides, Correlates: inputs, Mandatory: inputs}
 
 	case *SubqueryPattern:
-		var correlates []Symbol
+		var inputs []Symbol
 		for _, input := range c.Inputs {
 			if v, ok := input.(Variable); ok && !v.Name.IsSource() {
-				correlates = append(correlates, v.Name)
+				inputs = append(inputs, v.Name)
 			}
 		}
-		return ClauseScope{Provides: c.Binding.BoundVariables(), Correlates: correlates}
+		return ClauseScope{Provides: c.Binding.BoundVariables(), Correlates: inputs, Mandatory: inputs}
 
 	case *RuleInvocation:
 		var required []bool
@@ -80,21 +80,24 @@ func ScopeOf(clause Clause, rules *RuleSet) ClauseScope {
 				provides = append(provides, v.Name)
 			}
 		}
-		return ClauseScope{Provides: provides, Correlates: correlates}
+		return ClauseScope{Provides: provides, Correlates: correlates, Mandatory: correlates}
 
 	case *NotClause:
 		// A plain NOT unifies on every free variable of its body that the
-		// enclosing query binds; the rest are existential.
-		return ClauseScope{Correlates: FreeVariables(c.Clauses, rules), CorrelatesOptional: true}
+		// enclosing query binds; the rest are existential. An input of the
+		// body that nothing in the body binds is the enclosing scope's to
+		// bind.
+		_, _, mandatory := branchInterfaces([][]Clause{c.Clauses}, intersectSymbolSets, rules)
+		return ClauseScope{Correlates: FreeVariables(c.Clauses, rules), Mandatory: mandatory}
 
 	case *NotJoinClause:
 		// The header is the complete interface by language contract.
-		return ClauseScope{Correlates: c.JoinVars}
+		return ClauseScope{Correlates: c.JoinVars, Mandatory: c.JoinVars}
 
 	case *OrClause:
 		// Union semantics: only variables every branch binds are provided.
-		provides, externals := branchInterfaces(c.Branches, intersectSymbolSets, rules)
-		return ClauseScope{Provides: provides, Correlates: externals}
+		provides, externals, _ := branchInterfaces(c.Branches, intersectSymbolSets, rules)
+		return ClauseScope{Provides: provides, Correlates: externals, Mandatory: externals}
 
 	case *OrJoinClause:
 		return headerScope(c.JoinVars, c.Branches, intersectSymbolSets, rules)
@@ -106,8 +109,9 @@ func ScopeOf(clause Clause, rules *RuleSet) ClauseScope {
 		// (computeOrBranchOutputSymbols); a union-only symbol never
 		// appears in the relation. Correlation additionally rides the
 		// entity variable of each branch's first pattern (per-tuple
-		// evaluation).
-		provides, externals := branchInterfaces(c.Branches, intersectSymbolSets, rules)
+		// evaluation). A branch input nothing in the branch binds is the
+		// enclosing scope's to bind.
+		provides, externals, mandatory := branchInterfaces(c.Branches, intersectSymbolSets, rules)
 		correlates := externals
 		for _, branch := range c.Branches {
 			for _, clause := range branch {
@@ -121,18 +125,19 @@ func ScopeOf(clause Clause, rules *RuleSet) ClauseScope {
 				}
 			}
 		}
-		return ClauseScope{Provides: provides, Correlates: correlates, CorrelatesOptional: true}
+		return ClauseScope{Provides: provides, Correlates: correlates, Mandatory: mandatory}
 
 	case *OrDefaultJoinClause:
 		// The declared header is the complete interface (Validate enforces
 		// it at the boundaries): required vars correlate — mandatory, they
 		// quantify the per-group fallback decision — and output vars are
 		// bound by every branch. Branch locals never escape.
-		return ClauseScope{Provides: c.OutputVars, Correlates: c.RequiredVars}
+		return ClauseScope{Provides: c.OutputVars, Correlates: c.RequiredVars, Mandatory: c.RequiredVars}
 
 	case Predicate:
 		// Every predicate form: consumes, never binds.
-		return ClauseScope{Correlates: c.RequiredSymbols()}
+		inputs := c.RequiredSymbols()
+		return ClauseScope{Correlates: inputs, Mandatory: inputs}
 
 	default:
 		panic(fmt.Sprintf("BUG: unknown clause type %T in ScopeOf", clause))
@@ -162,48 +167,53 @@ func FreeVariables(clauses []Clause, rules *RuleSet) []Symbol {
 
 // branchInterfaces computes a branch set's combined interface: provides
 // combined across branches by combine (intersection for union semantics,
-// union for fallback semantics), and externals — every branch's Correlates
-// not self-provided within that branch, plus source symbols filtered out.
+// union for fallback semantics); externals — every branch's Correlates not
+// self-provided within that branch, with source symbols filtered out; and
+// mandatory — the externals some branch must have bound before it can run.
 func branchInterfaces(
 	branches [][]Clause,
 	combine func([][]Symbol) []Symbol,
 	rules *RuleSet,
-) (provides, externals []Symbol) {
+) (provides, externals, mandatory []Symbol) {
 	if len(branches) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	branchProvides := make([][]Symbol, len(branches))
 	for i, branch := range branches {
-		// Externals merge both obligation classes: at the enclosing
-		// clause's level the distinction is carried by that clause's own
-		// CorrelatesOptional, not per symbol.
-		provided, mandatory, optional := branchInterface(branch, rules)
+		provided, branchMandatory, branchOptional := branchInterface(branch, rules)
 		branchProvides[i] = provided
-		for _, sym := range mandatory {
-			if !ContainsSymbol(provided, sym) && !sym.IsSource() && !ContainsSymbol(externals, sym) {
+		for _, sym := range branchMandatory {
+			if ContainsSymbol(provided, sym) || sym.IsSource() {
+				continue
+			}
+			if !ContainsSymbol(externals, sym) {
 				externals = append(externals, sym)
 			}
+			if !ContainsSymbol(mandatory, sym) {
+				mandatory = append(mandatory, sym)
+			}
 		}
-		for _, sym := range optional {
+		for _, sym := range branchOptional {
 			if !ContainsSymbol(provided, sym) && !sym.IsSource() && !ContainsSymbol(externals, sym) {
 				externals = append(externals, sym)
 			}
 		}
 	}
 
-	return combine(branchProvides), externals
+	return combine(branchProvides), externals, mandatory
 }
 
 // branchInterface computes one branch's interface: the symbols its clauses
 // provide, and the symbols they correlate on split by obligation. Mandatory
 // correlates must be supplied by the enclosing scope before the clause can
-// run — predicates, expressions, subquery inputs, explicit-join headers.
-// Optional correlates tolerate absence (a plain NOT's body variables are
-// existential when unbound; or-default falls back to global evaluation), so
-// they never create declaration requirements — flattening them into the
-// mandatory set is how legal nested-existential shapes get rejected. Each
-// list deduplicates in first-appearance order; the lists may overlap when
+// run — predicates, expressions, subquery inputs, explicit-join headers,
+// and the such inputs of a nested body nothing in that body binds. Optional
+// correlates tolerate absence (a plain NOT's body variables are existential
+// when unbound; or-default falls back to global evaluation), so they never
+// create declaration requirements — flattening them into the mandatory set
+// is how legal nested-existential shapes get rejected. Each list
+// deduplicates in first-appearance order; the lists may overlap when
 // different clauses need the same symbol with different obligations, and
 // consumers deciding requirements read the mandatory list.
 func branchInterface(branch []Clause, rules *RuleSet) (provided, mandatory, optional []Symbol) {
@@ -215,12 +225,12 @@ func branchInterface(branch []Clause, rules *RuleSet) (provided, mandatory, opti
 			}
 		}
 		for _, sym := range scope.Correlates {
-			if scope.CorrelatesOptional {
-				if !ContainsSymbol(optional, sym) {
-					optional = append(optional, sym)
+			if ContainsSymbol(scope.Mandatory, sym) {
+				if !ContainsSymbol(mandatory, sym) {
+					mandatory = append(mandatory, sym)
 				}
-			} else if !ContainsSymbol(mandatory, sym) {
-				mandatory = append(mandatory, sym)
+			} else if !ContainsSymbol(optional, sym) {
+				optional = append(optional, sym)
 			}
 		}
 	}
@@ -367,6 +377,24 @@ func ValidateStaticClauseShapes(clauses []Clause) error {
 	return validateErr
 }
 
+// ValidateInputShapes validates every static input-shape rule — the checks
+// that depend on the :in clause alone: a query declares % at most once. The
+// user boundaries share it beside ValidateStaticClauseShapes, so a
+// hand-built query gets the same rejection as parsed text.
+func ValidateInputShapes(in []InputSpec) error {
+	declared := false
+	for _, spec := range in {
+		if _, ok := spec.(RulesInput); !ok {
+			continue
+		}
+		if declared {
+			return fmt.Errorf("a query declares %% at most once")
+		}
+		declared = true
+	}
+	return nil
+}
+
 // headerScope computes the scope of an explicit-join form: Provides is the
 // declared header restricted to what the branch combination produces —
 // branch locals never escape — and header variables the branches cannot
@@ -377,7 +405,7 @@ func headerScope(
 	combine func([][]Symbol) []Symbol,
 	rules *RuleSet,
 ) ClauseScope {
-	produced, externals := branchInterfaces(branches, combine, rules)
+	produced, externals, _ := branchInterfaces(branches, combine, rules)
 
 	var provides []Symbol
 	correlates := externals
@@ -388,7 +416,7 @@ func headerScope(
 			correlates = append(correlates, jv)
 		}
 	}
-	return ClauseScope{Provides: provides, Correlates: correlates}
+	return ClauseScope{Provides: provides, Correlates: correlates, Mandatory: correlates}
 }
 
 // intersectSymbolSets returns the symbols present in every set, in the first

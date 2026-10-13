@@ -387,6 +387,21 @@ func TestRules_RulesTextResolvesOnce(t *testing.T) {
 	}
 }
 
+// A query declares % once. A query declaring it twice is refused, naming the
+// input, and neither rule set given is read.
+func TestRules_SecondRulesInputRefused(t *testing.T) {
+	const other = `[[(reach ?a ?b) [?a :type ?b]]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			writeGraph(t, d, chain(3))
+			_, err := d.Query(`[:find ?x ?y :in $ % % :where (reach ?x ?y)]`, mustRuleSet(t, closureRules), mustRuleSet(t, other))
+			require.Error(t, err, "a query declares % once")
+			require.ErrorContains(t, err, "%")
+		})
+	}
+}
+
 func TestRules_RulesInputOfAnotherTypeRefused(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -508,6 +523,458 @@ func TestRules_EvaluatesUnderOneSnapshot(t *testing.T) {
 			require.ElementsMatch(t, chainClosure(6), g.tuples(t, rel))
 		})
 	}
+}
+
+// A rule's variables belong to the rule. A query input that shares a name with
+// one binds nothing inside the body: the invocation's arguments are the only
+// way the query's bindings reach a rule.
+func TestRules_QueryInputSharingARuleVariableNameBindsNothingInTheBody(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			g := writeGraph(t, d, chain(5))
+			rules := mustRuleSet(t, closureRules)
+			for _, input := range []string{"?start", "?a", "?b", "?c"} {
+				text := fmt.Sprintf(`[:find ?y :in $ %% %s :where (reach %s ?y)]`, input, input)
+				rel, err := d.Query(text, rules, nodeID("n1"))
+				require.NoError(t, err)
+				require.ElementsMatch(t, []string{"n2", "n3", "n4", "n5"}, g.tuples(t, rel),
+					"the input %s names the start and nothing inside the rule", input)
+			}
+			rel, err := d.Query(`[:find ?x ?y :in $ % ?b :where (reach ?x ?y)]`, rules, nodeID("n1"))
+			require.NoError(t, err)
+			require.ElementsMatch(t, chainClosure(5), g.tuples(t, rel),
+				"an input the query never reads binds nothing inside the rule")
+		})
+	}
+}
+
+// A rule whose recursion sits inside an or or an or-join branch derives what
+// its other branch states, whole and bound, as the same rule split into two
+// derives it.
+func TestRules_RecursionInsideAnOrBranchDerivesTheOtherBranch(t *testing.T) {
+	sets := []struct{ name, rules string }{
+		{"or", `[[(r ?a ?c) (or [?a :edge ?c] (and [?a :edge ?b] (r ?b ?c)))]]`},
+		{"or-join", `[[(r ?a ?c) (or-join [?a ?c] [?a :edge ?c] (and [?a :edge ?b] (r ?b ?c)))]]`},
+	}
+	for _, set := range sets {
+		for _, mode := range optimizerModes {
+			t.Run(set.name+"/"+mode.name, func(t *testing.T) {
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				g := writeGraph(t, d, chain(4))
+				rules := mustRuleSet(t, set.rules)
+				rel, err := d.Query(`[:find ?x ?y :in $ % :where (r ?x ?y)]`, rules)
+				require.NoError(t, err)
+				require.ElementsMatch(t, chainClosure(4), g.tuples(t, rel), "the whole closure")
+				rel, err = d.Query(`[:find ?y :in $ % ?s :where (r ?s ?y)]`, rules, nodeID("n1"))
+				require.NoError(t, err)
+				require.ElementsMatch(t, []string{"n2", "n3", "n4"}, g.tuples(t, rel), "the closure from n1")
+			})
+		}
+	}
+}
+
+// A bound invocation derives what the whole invocation derives at that
+// binding, when the bound position is one that only a branch of the recursive
+// rule produces: here n4 alone is marked, so n3 reaches :end through the
+// recursive rule's other branch, and n1 and n2 reach :end only through the
+// recursion, while nothing reaches :end through the base rule.
+func TestRules_BoundInvocationKeepsWhatOnlyTheRecursiveRulesOtherBranchProduces(t *testing.T) {
+	const rules = `[[(reach ?a ?b) [?a :edge ?b]]
+	                [(reach ?a ?c) [?a :edge ?b] (or (reach ?b ?c) (and [?b :marked true] [(ground :end) ?c]))]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			g := writeGraph(t, d, chain(4))
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Add(nodeID("n4"), kw(":marked"), true))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+			rs := mustRuleSet(t, rules)
+			rel, err := d.Query(`[:find ?x ?y :in $ % :where (reach ?x ?y)]`, rs)
+			require.NoError(t, err)
+			require.ElementsMatch(t, append(chainClosure(4), "n1>:end", "n2>:end", "n3>:end"), g.tuples(t, rel), "the whole closure")
+			rel, err = d.Query(`[:find ?x :in $ % ?end :where (reach ?x ?end)]`, rs, kw(":end"))
+			require.NoError(t, err)
+			require.ElementsMatch(t, []string{"n1", "n2", "n3"}, g.tuples(t, rel), "the nodes reaching :end, bound at the second position")
+		})
+	}
+}
+
+// scanSignalStore runs the signal it is armed with once, after the first scan
+// it serves from then on returns, whether the scan comes through the store or
+// through a session it opened. A scan before arm runs nothing, and so does a
+// scan the signal itself makes.
+type scanSignalStore struct {
+	Store
+	mu     sync.Mutex
+	signal func()
+}
+
+func (s *scanSignalStore) arm(signal func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.signal = signal
+}
+
+func (s *scanSignalStore) fire() {
+	s.mu.Lock()
+	signal := s.signal
+	s.signal = nil
+	s.mu.Unlock()
+	if signal != nil {
+		signal()
+	}
+}
+
+func (s *scanSignalStore) Scan(bound ScanBound) (Iterator, error) {
+	iter, err := s.Store.Scan(bound)
+	s.fire()
+	return iter, err
+}
+
+func (s *scanSignalStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	iter, err := s.Store.ScanKeysOnly(bound)
+	s.fire()
+	return iter, err
+}
+
+func (s *scanSignalStore) NewReadSession() (ReadSession, error) {
+	session, err := s.Store.NewReadSession()
+	if err != nil {
+		return nil, err
+	}
+	return &scanSignalSession{ReadSession: session, store: s}, nil
+}
+
+type scanSignalSession struct {
+	ReadSession
+	store *scanSignalStore
+}
+
+func (s *scanSignalSession) Scan(bound ScanBound) (Iterator, error) {
+	iter, err := s.ReadSession.Scan(bound)
+	s.store.fire()
+	return iter, err
+}
+
+func (s *scanSignalSession) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+	iter, err := s.ReadSession.ScanKeysOnly(bound)
+	s.store.fire()
+	return iter, err
+}
+
+// Analyze evaluates rules under one snapshot, as Query does: an edge into the
+// chain's head, committed after the evaluation's first scan, is in no
+// iteration's reading, and the next query reads it. An evaluation reading
+// the edge in a later iteration alone would carry every pair from n0 past
+// n1 and no pair (n0, n1).
+func TestRules_AnalyzeEvaluatesUnderOneSnapshot(t *testing.T) {
+	spec := chain(5)
+	spec.nodes = append(spec.nodes, "n0")
+	withHead := append(chainClosure(5), "n0>n1", "n0>n2", "n0>n3", "n0>n4", "n0>n5")
+	for _, algebra := range []bool{false, true} {
+		t.Run(fmt.Sprintf("algebra_%v", algebra), func(t *testing.T) {
+			opts := DefaultPlannerOptions()
+			opts.EnableAlgebraOptimizer = algebra
+			store := &scanSignalStore{Store: NewMemoryStore(&BinaryKeyEncoder{})}
+			d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, PlannerOptions: &opts})
+			require.NoError(t, err)
+			defer d.Close()
+			g := writeGraph(t, d, spec)
+			rules := mustRuleSet(t, closureRules)
+
+			var writeErr error
+			store.arm(func() {
+				tx := d.NewTransaction()
+				if err := tx.Add(nodeID("n0"), kw(":edge"), nodeID("n1")); err != nil {
+					writeErr = err
+					return
+				}
+				_, writeErr = tx.Commit()
+			})
+			analysis, err := d.Analyze(closureQuery, rules)
+			require.NoError(t, err)
+			require.NoError(t, writeErr)
+			require.ElementsMatch(t, chainClosure(5), g.tuples(t, analysis.Result), "the closure of the snapshot the evaluation opened on")
+
+			rel, err := d.Query(closureQuery, rules)
+			require.NoError(t, err)
+			require.ElementsMatch(t, withHead, g.tuples(t, rel))
+		})
+	}
+}
+
+// A bound invocation runs wherever the whole invocation runs. The marked chain
+// is n1 → n2 → n3 → n4 with n2 marked. The first rule set reads a variable in
+// a clause written before the clause binding it; the second reads a lower
+// predicate inside an or-default of a recursive rule.
+func TestRules_BoundInvocationRunsWhereverTheWholeInvocationRuns(t *testing.T) {
+	cases := []struct {
+		name, rules, whole, bound string
+		wantWhole, wantBound      []string
+	}{
+		{
+			"a clause before the invocation reading a later binding",
+			`[[(reach ?a ?b) [?a :edge ?b]]
+			  [(reach ?a ?c) [?a :edge ?b] (reach ?b ?c)]
+			  [(t ?a ?c) (not-join [?w] [?w :marked true]) (reach ?a ?c) [?w :edge ?c]]]`,
+			`[:find ?x ?y :in $ % :where (t ?x ?y)]`,
+			`[:find ?y :in $ % ?s :where (t ?s ?y)]`,
+			[]string{"n1>n2", "n1>n4", "n2>n4", "n3>n4"},
+			[]string{"n2", "n4"},
+		},
+		{
+			"an or-default over a lower predicate in a recursive rule",
+			`[[(marked ?n) [?n :marked true]]
+			  [(walk ?a ?b ?l) [?a :edge ?b] [(ground :e) ?l]]
+			  [(walk ?a ?c ?l) [?a :edge ?b] (or-default (and (marked ?b) [(ground :m) ?l]) [(ground :u) ?l]) (walk ?b ?c _)]]`,
+			`[:find ?x ?y ?l :in $ % :where (walk ?x ?y ?l)]`,
+			`[:find ?y ?l :in $ % ?s :where (walk ?s ?y ?l)]`,
+			[]string{"n1>n2>:e", "n2>n3>:e", "n3>n4>:e", "n1>n3>:m", "n1>n4>:m", "n2>n4>:u"},
+			[]string{"n2>:e", "n3>:m", "n4>:m"},
+		},
+	}
+	for _, c := range cases {
+		for _, mode := range optimizerModes {
+			t.Run(c.name+"/"+mode.name, func(t *testing.T) {
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				g := writeGraph(t, d, chain(4))
+				tx := d.NewTransaction()
+				require.NoError(t, tx.Add(nodeID("n2"), kw(":marked"), true))
+				_, err := tx.Commit()
+				require.NoError(t, err)
+				rs := mustRuleSet(t, c.rules)
+
+				rel, err := d.Query(c.whole, rs)
+				require.NoError(t, err)
+				require.ElementsMatch(t, c.wantWhole, g.tuples(t, rel), "the whole invocation")
+
+				rel, err = d.Query(c.bound, rs, nodeID("n1"))
+				require.NoError(t, err, "the invocation bound to n1 runs as the whole one does")
+				require.ElementsMatch(t, c.wantBound, g.tuples(t, rel), "the invocation bound to n1")
+			})
+		}
+	}
+}
+
+// A predicate that invokes a required-binding predicate evaluates whole: the
+// required position is bound inside the invoking rule's own body. The chain
+// of four carries ranks 1 to 4 with n2 marked. The first case invokes such a
+// predicate free; the second binds a recursive predicate whose rewrite is
+// declined, since the negation of a lower predicate stands before the
+// recursion, so the predicate evaluates whole.
+func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testing.T) {
+	cases := []struct {
+		name, rules, text string
+		inputs            []interface{}
+		want              []string
+	}{
+		{
+			"free invocation",
+			`[[(succ [?n] ?m) [(+ ?n 1) ?m]]
+			  [(next ?a ?r) [?a :rank ?k] (succ ?k ?r)]]`,
+			`[:find ?a ?r :in $ % :where (next ?a ?r)]`,
+			nil,
+			[]string{"n1>2", "n2>3", "n3>4", "n4>5"},
+		},
+		{
+			"bound invocation whose rewrite is declined",
+			`[[(marked ?n) [?n :marked true]]
+			  [(succ [?n] ?m) [(+ ?n 1) ?m]]
+			  [(walk ?a ?b) [?a :edge ?b]]
+			  [(walk ?a ?c) [?a :edge ?b] (not (marked ?b)) [?b :rank ?k] (succ ?k ?j) [(< ?j 100)] (walk ?b ?c)]]`,
+			`[:find ?y :in $ % ?s :where (walk ?s ?y)]`,
+			[]interface{}{nodeID("n2")},
+			[]string{"n3", "n4"},
+		},
+	}
+	for _, c := range cases {
+		for _, mode := range optimizerModes {
+			t.Run(c.name+"/"+mode.name, func(t *testing.T) {
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				g := writeGraph(t, d, chain(4))
+				tx := d.NewTransaction()
+				for i := 1; i <= 4; i++ {
+					require.NoError(t, tx.Add(nodeID(nodeName(i)), kw(":rank"), int64(i)))
+				}
+				require.NoError(t, tx.Add(nodeID("n2"), kw(":marked"), true))
+				_, err := tx.Commit()
+				require.NoError(t, err)
+
+				inputs := append([]interface{}{mustRuleSet(t, c.rules)}, c.inputs...)
+				rel, err := d.Query(c.text, inputs...)
+				require.NoError(t, err, "the predicate evaluates whole")
+				require.ElementsMatch(t, c.want, g.tuples(t, rel))
+			})
+		}
+	}
+}
+
+// Every phase of a plan parses back to itself: a correlated count over an
+// invocation, which the optimizer decorrelates into an aggregate, and a plan
+// with a projection inserted between its joins included.
+func TestRules_EveryPhaseParsesBackToItself(t *testing.T) {
+	queries := []string{
+		`[:find ?x ?n :in $ % :where [?x :edge _] [(q [:find (count ?y) :in $ % ?x :where [?x :edge _] (reach ?x ?y)] $ % ?x) [[?n]]]]`,
+		`[:find ?y :in $ % :where [?x :type :node] (reach ?x ?y) [?y :type ?t]]`,
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.plannerOptions()
+			opts.EnableJoinProjectInsertion = true
+			d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts})
+			writeGraph(t, d, chain(4))
+			rules := mustRuleSet(t, closureRules)
+			for _, text := range queries {
+				plan, err := d.Explain(text, rules)
+				require.NoError(t, err)
+				for i, phase := range plan.Phases {
+					rendered := parser.FormatQuery(phase.Query)
+					back, err := parser.ParseQuery(rendered)
+					require.NoError(t, err, "phase %d of %s parses back:\n%s", i, text, rendered)
+					require.Equal(t, rendered, parser.FormatQuery(back), "phase %d of %s renders the same after a round trip", i, text)
+				}
+			}
+		})
+	}
+}
+
+// Explain's record of an invocation names every argument the clauses before
+// it bind, an or and an or-join among the binders, since execution seeds the
+// rewrite from those bindings.
+func TestRules_ExplainBoundNamesAnArgumentAnOrBinds(t *testing.T) {
+	queries := []struct{ name, text string }{
+		{"or", `[:find ?x ?y :in $ % :where (or [?x :edge ?z] [?z :edge ?x]) (reach ?x ?y)]`},
+		{"or-join", `[:find ?x ?y :in $ % :where (or-join [?x ?z] [?x :edge ?z] [?z :edge ?x]) (reach ?x ?y)]`},
+	}
+	for _, q := range queries {
+		for _, mode := range optimizerModes {
+			t.Run(q.name+"/"+mode.name, func(t *testing.T) {
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				writeGraph(t, d, chain(3))
+				plan, err := d.Explain(q.text, mustRuleSet(t, closureRules))
+				require.NoError(t, err)
+				var invocations int
+				for _, phase := range plan.Phases {
+					for _, inv := range phase.Invocations {
+						invocations++
+						require.True(t, query.ContainsSymbol(inv.Bound, datalog.NewSymbol("?x")),
+							"the %s before the invocation binds ?x:\n%s", q.name, plan)
+					}
+				}
+				require.Equal(t, 1, invocations, "the plan records the one invocation")
+			})
+		}
+	}
+}
+
+// ruleEventCounts counts the rule events a query emits, from the parallel
+// workers the engine does not serialize, and keeps the trail of those
+// events in the order they arrived.
+type ruleEventCounts struct {
+	mu                           sync.Mutex
+	rewrites, strata, iterations int
+	trail                        []string
+}
+
+func (c *ruleEventCounts) handle(e annotations.Event) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch e.Name {
+	case annotations.RulesMagicSets:
+		c.rewrites++
+		c.trail = append(c.trail, fmt.Sprintf("%s %v applied=%v", e.Name, e.Data["predicate"], e.Data["applied"]))
+	case annotations.RulesStratumBegin:
+		c.strata++
+		c.trail = append(c.trail, fmt.Sprintf("%s %v", e.Name, e.Data["predicates"]))
+	case annotations.RulesIteration:
+		c.iterations++
+		c.trail = append(c.trail, fmt.Sprintf("%s %v iteration %v", e.Name, e.Data["predicates"], e.Data["iteration"]))
+	}
+}
+
+func (c *ruleEventCounts) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rewrites, c.strata, c.iterations = 0, 0, 0
+	c.trail = nil
+}
+
+func (c *ruleEventCounts) snapshot() [3]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return [3]int{c.rewrites, c.strata, c.iterations}
+}
+
+// events renders the trail, one event per line.
+func (c *ruleEventCounts) events() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rendered := ""
+	for _, line := range c.trail {
+		rendered += line + "\n"
+	}
+	return rendered
+}
+
+// An invocation evaluates its predicate once per query, whatever clause form
+// holds it: the rewrite and the strata an invocation under not, not-join,
+// or, or-join or or-default runs number what the top-level invocation's do.
+// The chain of ten with its sink bound gives every form the same seed.
+func TestRules_InvocationUnderAFormEvaluatesOncePerQuery(t *testing.T) {
+	const top = `[:find ?x :in $ % ?s :where [?x :type :node] (reach ?x ?s)]`
+	forms := []struct {
+		name, text string
+		want       []string
+	}{
+		{"not", `[:find ?x :in $ % ?s :where [?x :type :node] (not (reach ?x ?s))]`, []string{"n10"}},
+		{"not-join", `[:find ?x :in $ % ?s :where [?x :type :node] (not-join [?x ?s] (reach ?x ?s))]`, []string{"n10"}},
+		{"or", `[:find ?x :in $ % ?s :where [?x :type :node] (or (reach ?x ?s) [?x :marked true])]`, chainReaching(10)},
+		{"or-join", `[:find ?x :in $ % ?s :where [?x :type :node] (or-join [?x ?s] (reach ?x ?s) (and [?x :marked true] [?x :edge ?s]))]`, chainReaching(10)},
+		{"or-default", `[:find ?x ?k :in $ % ?s :where [?x :type :node] (or-default (and (reach ?x ?s) [(ground 1) ?k]) [(ground 0) ?k])]`, append(chainReachingWith(10, ">1"), "n10>0")},
+	}
+	for _, form := range forms {
+		for _, mode := range optimizerModes {
+			t.Run(form.name+"/"+mode.name, func(t *testing.T) {
+				counts := &ruleEventCounts{}
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: counts.handle})
+				g := writeGraph(t, d, chain(10))
+				rules := mustRuleSet(t, closureRules)
+
+				rel, err := d.Query(top, rules, nodeID("n10"))
+				require.NoError(t, err)
+				require.ElementsMatch(t, chainReaching(10), g.tuples(t, rel))
+				atTop := counts.snapshot()
+				require.Equal(t, 1, atTop[0], "the top-level invocation rewrites once")
+
+				counts.reset()
+				rel, err = d.Query(form.text, rules, nodeID("n10"))
+				require.NoError(t, err)
+				require.ElementsMatch(t, form.want, g.tuples(t, rel))
+				require.Equal(t, atTop, counts.snapshot(), "rewrites, strata and iterations under %s, against the top level's; the events:\n%s", form.name, counts.events())
+			})
+		}
+	}
+}
+
+// chainReaching lists the nodes of chain(n) that reach its sink: every node
+// but the sink.
+func chainReaching(n int) []string {
+	var names []string
+	for i := 1; i < n; i++ {
+		names = append(names, nodeName(i))
+	}
+	return names
+}
+
+// chainReachingWith is chainReaching with suffix appended to each name.
+func chainReachingWith(n int, suffix string) []string {
+	names := chainReaching(n)
+	for i := range names {
+		names[i] += suffix
+	}
+	return names
 }
 
 // TestRules_InvocationInsideOrDefaultBranch: an invocation stands in an

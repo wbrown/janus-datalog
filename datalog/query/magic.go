@@ -107,8 +107,9 @@ func (w *magicRewriter) includeOriginal(name Symbol) {
 
 // rewritePredicate emits, for each rule of the predicate, the adorned rule
 // guarded by the magic predicate over the bound head positions, then the
-// magic rules its body's adorned invocations need. The adorned rule keeps
-// the required run.
+// magic rules its body's adorned invocations need. The adorned rule has no
+// required run: its guard binds every position the predicate requires, so
+// the fixpoint evaluates it whole.
 func (w *magicRewriter) rewritePredicate(name Symbol, bound []bool) error {
 	adorned := adornedSymbol(name, bound)
 	magic := magicSymbol(name, bound)
@@ -126,17 +127,19 @@ func (w *magicRewriter) rewritePredicate(name Symbol, bound []bool) error {
 		if err != nil {
 			return err
 		}
-		w.rules = append(w.rules, &Rule{Name: adorned, Head: rule.Head, Required: rule.Required, Body: append(prefix, body...)})
+		w.rules = append(w.rules, &Rule{Name: adorned, Head: rule.Head, Body: append(prefix, body...)})
 		w.rules = append(w.rules, magicRules...)
 	}
 	return nil
 }
 
 // rewriteBody walks the rule's top-level clauses left to right. Each clause
-// is rewritten under the variables bound so far, and the clauses it provides
-// join the bound set for the clauses after it; the prefix a magic rule reads
-// is the guard and the rewritten clauses before the one holding the
-// invocation.
+// is rewritten under the variables bound so far. A clause a magic rule reads
+// joins the prefix, and the variables it provides join the bound set for the
+// clauses after it; the prefix a magic rule reads is the guard and those
+// clauses before the one holding the invocation. A clause left out widens
+// the bindings a magic rule derives and loses no tuple, since the adorned
+// rule applies every clause.
 func (w *magicRewriter) rewriteBody(rule *Rule, boundVars map[Symbol]bool, prefix []Clause) ([]Clause, []*Rule, error) {
 	out := make([]Clause, len(rule.Body))
 	var magicRules []*Rule
@@ -147,12 +150,33 @@ func (w *magicRewriter) rewriteBody(rule *Rule, boundVars map[Symbol]bool, prefi
 		}
 		out[i] = rewritten
 		magicRules = append(magicRules, rules...)
+		if !w.magicRuleReads(rewritten, boundVars) {
+			continue
+		}
 		prefix = append(prefix[:len(prefix):len(prefix)], rewritten)
 		for _, sym := range ScopeOf(rewritten, w.rs).Provides {
 			boundVars[sym] = true
 		}
 	}
 	return out, magicRules, nil
+}
+
+// magicRuleReads reports whether a magic rule reads clause: a monotone
+// clause every mandatory correlate of which the bound set holds. A negation
+// or a fallback form is never read, so no magic rule depends on a predicate
+// through one; a clause reading a variable a later clause binds is not read,
+// so every magic rule is safe.
+func (w *magicRewriter) magicRuleReads(clause Clause, boundVars map[Symbol]bool) bool {
+	switch clause.(type) {
+	case *NotClause, *NotJoinClause, *OrDefaultClause, *OrDefaultJoinClause:
+		return false
+	}
+	for _, sym := range ScopeOf(clause, w.rs).Mandatory {
+		if !sym.IsSource() && !boundVars[sym] {
+			return false
+		}
+	}
+	return true
 }
 
 // rewriteClause adorns the invocations in one clause of the named rule. A

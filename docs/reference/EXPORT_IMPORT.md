@@ -160,7 +160,7 @@ Transaction IDs are preserved during export/import, allowing exact restoration o
 
 ### Schema
 
-A database's declared attribute definitions are datoms on `db.attribute/<ident>` entities (see [SCHEMA.md](SCHEMA.md#schema-as-facts)), so the dump carries them with every other datom. An import ends by reading them: a database opened with no schema resolves a set the dump's writer declared as a set. A database opened with a schema re-asserts it after the import, and the given schema supersedes the dump's definitions for the idents it names. The import applies the recorded datoms as they are, with no schema validation.
+A database's declared attribute definitions are datoms: each declaration's words on an entity named by them, and on each `db.attribute/<ident>` entity a ref to its current declaration (see [SCHEMA.md](SCHEMA.md#schema-as-facts)), so the dump carries them with every other datom. An import ends by reading them: a database opened with no schema resolves a set the dump's writer declared as a set. A database opened with a schema declares it again after the import, and the given schema supersedes the dump's definitions for the idents it names. The import applies the recorded datoms as they are, with no schema validation.
 
 ### Comments and Blank Lines
 

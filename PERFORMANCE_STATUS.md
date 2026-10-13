@@ -2622,8 +2622,8 @@ the saved start/now files, matching the composed product of per-step geomeans to
 within tenths of a percent.
 
 ### 2026-10-11: Schema as Facts & Unknown-Attribute Refusal
-- A schema given to a database is asserted into its store as facts on `db.attribute/<ident>` entities, carried by dumps and read back at open; the opt-in `RefuseUnknownAttributes` option refuses a query or pull naming an attribute the schema does not declare
-- A parsed `query.Query` collects the attributes it names once, under a `sync.Once`, so an execution on a refusing database pays one schema lookup per attribute and reads nothing from the store
+- A schema given to a database is declared into its store as facts, each declaration's words on an entity named by them and on each `db.attribute/<ident>` entity a ref to its current declaration, carried by dumps and read back at open; the opt-in `RefuseUnknownAttributes` option refuses a query or pull naming an attribute the schema does not declare
+- A parsed `query.Query` collects the attributes it names once, under a `sync.Once`, on its first execution on a refusing source, so an execution on a refusing database pays one schema lookup per attribute and reads nothing from the store, and a database that does not refuse collects nothing
 - **Measured Results** (`BenchmarkUnknownAttributeCheck`, Apple M5, 2000 iterations, two runs, across the Badger, memory and memory-tree backends):
   - Check with refusal off: **3–9ns**, 0 allocs (one interface assertion and a flag read)
   - Check on a declared attribute: **9–14ns**, 0 allocs

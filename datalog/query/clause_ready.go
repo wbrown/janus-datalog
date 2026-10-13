@@ -2,13 +2,14 @@ package query
 
 // ClauseBlockers returns the correlates preventing a clause from executing
 // now: every correlate that an input or another clause can bind but that is
-// not yet available. For optional-correlate forms, a correlate nothing else
-// can bind never blocks — it is existential (plain NOT) or global-fallback
-// (or-default), and the clause must not wait on a symbol only it provides.
-// Mandatory-correlate forms wait unconditionally; one that can never become
-// available blocks forever, and the caller's scheduling loop surfaces the
-// invalid query loudly. rules is the rule set the query runs with, which
-// declares an invocation's correlates.
+// not yet available. A correlate the clause does not need bound (see
+// ClauseScope.Mandatory) never blocks when nothing else can bind it — it is
+// existential (plain NOT) or global-fallback (or-default), and the clause
+// must not wait on a symbol only it provides. A mandatory correlate waits
+// unconditionally; one that can never become available blocks forever, and
+// the caller's scheduling loop surfaces the invalid query loudly. rules is
+// the rule set the query runs with, which declares an invocation's
+// correlates.
 //
 // This is the single readiness definition — ClauseReady is its emptiness
 // test. The planner's phasing (clauseSelectable / createPhasesGreedy) and the
@@ -23,7 +24,7 @@ func ClauseBlockers(clause Clause, available, inputs map[Symbol]bool, providerCo
 		if sym.IsSource() || available[sym] {
 			continue
 		}
-		if scope.CorrelatesOptional {
+		if !ContainsSymbol(scope.Mandatory, sym) {
 			if selfProvides == nil {
 				selfProvides = make(map[Symbol]bool, len(scope.Provides))
 				for _, provided := range scope.Provides {

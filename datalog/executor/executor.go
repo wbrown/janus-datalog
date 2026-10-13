@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -109,6 +110,105 @@ func (e *Executor) ExecuteWithContext(ctx *Context, q *query.Query) (Relation, e
 	return e.ExecuteWithRelations(ctx, q, []Relation{})
 }
 
+// boundAttributes is the roster of attributes the input relations bind to a
+// variable standing in the attribute position of a data pattern on the
+// default source: each keyword value in such a variable's column, in order of
+// first appearance and each once. A value that is not a keyword names no
+// attribute. A relation read here is made replayable first, so the execution
+// that follows reads it whole.
+func boundAttributes(q *query.Query, inputRelations []Relation) ([]datalog.Keyword, error) {
+	variables := query.DefaultSourceAttributeVariables(q.Where)
+	if len(variables) == 0 {
+		return nil, nil
+	}
+	seen := make(map[datalog.Keyword]bool)
+	var roster []datalog.Keyword
+	relationIndex := 0
+	for _, input := range q.In {
+		var symbols []query.Symbol
+		switch inp := input.(type) {
+		case query.ScalarInput:
+			symbols = []query.Symbol{inp.Symbol}
+		case query.CollectionInput:
+			symbols = []query.Symbol{inp.Symbol}
+		case query.TupleInput:
+			symbols = inp.Symbols
+		case query.RelationInput:
+			symbols = inp.Symbols
+		default:
+			continue
+		}
+		index := relationIndex
+		relationIndex++
+		if index >= len(inputRelations) {
+			continue
+		}
+		for _, sym := range symbols {
+			if !query.ContainsSymbol(variables, sym) {
+				continue
+			}
+			rel := inputRelations[index].Materialize()
+			inputRelations[index] = rel
+			column := -1
+			for i, s := range rel.Symbols() {
+				if s == sym {
+					column = i
+				}
+			}
+			if column < 0 {
+				continue
+			}
+			err := ForEach(rel, func(t Tuple) error {
+				if attr, ok := t[column].(datalog.Keyword); ok && !seen[attr] {
+					seen[attr] = true
+					roster = append(roster, attr)
+				}
+				return nil
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return roster, nil
+}
+
+// refuseUnknownAttributes asks each source the query names, when that source
+// refuses attributes its schema does not declare, about the attributes the
+// query names on it: on the default source the query's own, the rule bodies'
+// and the ones the inputs bind to a pattern's attribute position; on a named
+// source the patterns' on it. A source that does not refuse is asked about no
+// roster, so none is collected for it. The first refusal is returned.
+func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, q *query.Query, inputRelations []Relation) error {
+	if vocabulary.RefusesUnknownAttributes(datalog.SymDollar) {
+		if err := vocabulary.UnknownAttributes(datalog.SymDollar, q.DefaultSourceAttributes()); err != nil {
+			return err
+		}
+		if ctx.rules != nil {
+			if err := vocabulary.UnknownAttributes(datalog.SymDollar, ctx.rules.DefaultSourceAttributes()); err != nil {
+				return err
+			}
+		}
+		bound, err := boundAttributes(q, inputRelations)
+		if err != nil {
+			return err
+		}
+		if err := vocabulary.UnknownAttributes(datalog.SymDollar, bound); err != nil {
+			return err
+		}
+	}
+	for _, input := range q.In {
+		source, ok := input.(query.DatabaseInput)
+		if !ok || source.Name == datalog.SymDollar || !vocabulary.RefusesUnknownAttributes(source.Name) {
+			continue
+		}
+		if err := vocabulary.UnknownAttributes(source.Name, query.SourceAttributes(q, source.Name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ExecuteWithRelations runs a query with input relations
 // This is the unified query execution method that treats regular queries and subqueries the same way.
 // For regular queries, pass an empty slice for inputRelations.
@@ -119,26 +219,23 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 		return nil, err
 	}
 
-	// Static clause-shape rules are user-boundary contracts: a hand-built
-	// AST entering here gets the same rejection, with the same message, as
-	// parsed text — and before planning, so both planner modes agree on
-	// where and how a static defect surfaces.
+	// Static input-shape and clause-shape rules are user-boundary contracts:
+	// a hand-built AST entering here gets the same rejection, with the same
+	// message, as parsed text — and before planning, so both planner modes
+	// agree on where and how a static defect surfaces.
+	if err := query.ValidateInputShapes(q.In); err != nil {
+		return nil, err
+	}
 	if err := query.ValidateStaticClauseShapes(q.Where); err != nil {
 		return nil, err
 	}
 
-	// An attribute the schema does not declare is refused before planning, so
-	// both planner modes refuse identically. The matcher owns the schema, so
-	// the decision is its own. A rule body's attributes are checked beside
-	// the query's.
+	// An attribute a source's schema does not declare is refused before
+	// planning, so both planner modes refuse identically. The matcher owns
+	// the schema, so the decision is its own.
 	if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
-		if err := vocabulary.UnknownAttributes(q.DefaultSourceAttributes()); err != nil {
+		if err := refuseUnknownAttributes(vocabulary, ctx, q, inputRelations); err != nil {
 			return nil, err
-		}
-		if ctx.rules != nil {
-			if err := vocabulary.UnknownAttributes(ctx.rules.DefaultSourceAttributes()); err != nil {
-				return nil, err
-			}
 		}
 	}
 

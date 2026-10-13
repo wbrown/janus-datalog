@@ -87,9 +87,20 @@ func TestScopeOf(t *testing.T) {
 		scope := ScopeOf(&NotClause{Clauses: []Clause{scopePattern("?d", "seen/val", "?v")}}, nil)
 		assertSymbols(t, "Provides", scope.Provides)
 		assertSymbols(t, "Correlates", scope.Correlates, "?d", "?v")
-		if !scope.CorrelatesOptional {
-			t.Error("a plain NOT's correlates are existential when the query cannot bind them")
-		}
+		assertSymbols(t, "Mandatory", scope.Mandatory)
+	})
+
+	t.Run("not needs a body input nothing in the body binds", func(t *testing.T) {
+		scope := ScopeOf(&NotClause{Clauses: []Clause{
+			scopePattern("?d", "seen/val", "?v"),
+			&Comparison{
+				Op:    datalog.SymLT,
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?w")},
+				Right: VariableTerm{Symbol: datalog.NewSymbol("?v")},
+			},
+		}}, nil)
+		assertSymbols(t, "Correlates", scope.Correlates, "?d", "?v", "?w")
+		assertSymbols(t, "Mandatory", scope.Mandatory, "?w")
 	})
 
 	t.Run("predicate correlates are mandatory", func(t *testing.T) {
@@ -98,9 +109,7 @@ func TestScopeOf(t *testing.T) {
 			Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			Right: ConstantTerm{Value: int64(10)},
 		}, nil)
-		if scope.CorrelatesOptional {
-			t.Error("a predicate needs every correlate bound; an unbindable one is a query error")
-		}
+		assertSymbols(t, "Mandatory", scope.Mandatory, "?x")
 	})
 
 	t.Run("not-join header correlates are mandatory", func(t *testing.T) {
@@ -108,18 +117,14 @@ func TestScopeOf(t *testing.T) {
 			JoinVars: []Symbol{datalog.NewSymbol("?e")},
 			Clauses:  []Clause{scopePattern("?e", "a/b", "?x")},
 		}, nil)
-		if scope.CorrelatesOptional {
-			t.Error("an explicit header is a declaration that the variables are bound outside")
-		}
+		assertSymbols(t, "Mandatory", scope.Mandatory, "?e")
 	})
 
 	t.Run("or-default correlates are optional", func(t *testing.T) {
 		scope := ScopeOf(&OrDefaultClause{Branches: [][]Clause{
 			{scopePattern("?e", "a/b", "?x")},
 		}}, nil)
-		if !scope.CorrelatesOptional {
-			t.Error("or-default falls back to global evaluation when correlation is unbindable")
-		}
+		assertSymbols(t, "Mandatory", scope.Mandatory)
 	})
 
 	t.Run("not sees a nested or-join's header, not its branch locals", func(t *testing.T) {
@@ -207,9 +212,7 @@ func TestScopeOf(t *testing.T) {
 		}, nil)
 		assertSymbols(t, "Provides", scope.Provides, "?out")
 		assertSymbols(t, "Correlates", scope.Correlates, "?e")
-		if scope.CorrelatesOptional {
-			t.Error("declared required vars are mandatory; global fallback is an empty required set, not leniency")
-		}
+		assertSymbols(t, "Mandatory", scope.Mandatory, "?e")
 	})
 
 	t.Run("or-default-join with no required vars is the global form", func(t *testing.T) {

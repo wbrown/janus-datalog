@@ -60,9 +60,9 @@ func TestWarmCacheSingleAttribute(t *testing.T) {
 			// The entries should be populated
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
-			entry1, err1 := db.Cache().GetOrResolve(key1, matcher, nil, nil, DiscardIntake)
+			entry1, err1 := db.Cache().GetOrResolve(key1, matcher.GetCardinality(key1.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err1)
-			entry2, err2 := db.Cache().GetOrResolve(key2, matcher, nil, nil, DiscardIntake)
+			entry2, err2 := db.Cache().GetOrResolve(key2, matcher.GetCardinality(key2.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err2)
 
 			require.NotNil(t, entry1)
@@ -117,9 +117,9 @@ func TestWarmCacheMultipleAttributes(t *testing.T) {
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 
-			nameEntry, nameErr := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: nameAttr}, matcher, nil, nil, DiscardIntake)
+			nameEntry, nameErr := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: nameAttr}, matcher.GetCardinality(nameAttr), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, nameErr)
-			ageEntry, ageErr := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: ageAttr}, matcher, nil, nil, DiscardIntake)
+			ageEntry, ageErr := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: ageAttr}, matcher.GetCardinality(ageAttr), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, ageErr)
 
 			require.NotNil(t, nameEntry)
@@ -221,7 +221,7 @@ func TestWarmCacheIdempotent(t *testing.T) {
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 
-			entry, err := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: a}, matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: a}, matcher.GetCardinality(CacheKey{E: eBytes, A: a}.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, "Alice", entry.OneValue())

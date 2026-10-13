@@ -246,7 +246,8 @@ func TestOpenDumpWithSchemaSupersedesDumpFacts(t *testing.T) {
 				t.Cleanup(func() { _ = d.Close() })
 
 				var docs []string
-				require.NoError(t, d.QueryInto(&docs, `[:find ?doc :where [?a :db/ident :dump/tags] [?a :db/doc ?doc]]`))
+				require.NoError(t, d.QueryInto(&docs,
+					`[:find ?doc :where [?a :db.attribute/declaration ?d] [?d :db/ident :dump/tags] [?d :db/doc ?doc]]`))
 				require.Equal(t, []string{"given"}, docs)
 				require.Equal(t, "given", d.Schema().GetAttribute(dumpTags).Doc)
 

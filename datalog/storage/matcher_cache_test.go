@@ -53,7 +53,7 @@ func TestMatcherCacheCardinalityOne(t *testing.T) {
 			copy(aBytes[:], ":person/name")
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, schema.CardinalityOne, entry.Cardinality())
@@ -97,7 +97,7 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 			copy(aBytes[:], ":person/tags")
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, schema.CardinalityMany, entry.Cardinality())
@@ -144,7 +144,7 @@ func TestMatcherCacheCardinalityVector(t *testing.T) {
 			copy(aBytes[:], ":character/skills")
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, schema.CardinalityVector, entry.Cardinality())
@@ -181,7 +181,7 @@ func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
 			copy(aBytes[:], ":person/name")
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			cachedValue := entry.OneValue()
 
@@ -228,7 +228,7 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 			copy(aBytes[:], ":person/name")
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry1, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			entry1, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			assert.Equal(t, "Alice", entry1.OneValue())
 
@@ -240,7 +240,7 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 			require.NoError(t, err)
 
 			// Cache should be invalidated, next resolve should see new value
-			entry2, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			entry2, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			assert.Equal(t, "Bob", entry2.OneValue())
 		})
@@ -271,7 +271,7 @@ func TestMatcherCacheWithSchemalessAttribute(t *testing.T) {
 			copy(aBytes[:], ":unknown/attr")
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			// Should default to cardinality-one
@@ -321,7 +321,7 @@ func TestMatcherCacheLWWResolution(t *testing.T) {
 			copy(aBytes[:], ":person/name")
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, "Third", entry.OneValue())
@@ -372,7 +372,7 @@ func TestMatcherCacheAddWinsResolution(t *testing.T) {
 			copy(aBytes[:], ":person/tags")
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			_, hasWarrior2 := entry.ManySet()["warrior"]
@@ -458,7 +458,7 @@ func BenchmarkCacheResolutionOverhead(b *testing.B) {
 	b.Run("CacheGetOrResolve", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			entry, err := db.Cache().GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
 			if err != nil {
 				b.Fatal(err)
 			}

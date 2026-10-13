@@ -13,8 +13,9 @@ var (
 )
 
 // BenchmarkGetOrResolve_FreshHit measures the cache-hit hot path, including the
-// entry.inFlight sentinel check. The resolver is never invoked on a fresh hit,
-// so a nil resolver is safe. Alloc-free.
+// entry.inFlight sentinel check and the reader's cardinality read. A fresh hit
+// resolves nothing, so the resolver's resolution count stays at zero.
+// Alloc-free.
 func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
 	c := NewCache()
 	var e Entity
@@ -32,20 +33,50 @@ func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
 		},
 		version: ver,
 	})
+	resolver := &mockCacheResolver{cardinality: schema.CardinalityOne}
 
 	// Prove the fresh-hit path resolves cleanly before measuring it. The check
 	// is here rather than in the loop because the loop exists to measure a
 	// single branch, and a per-iteration error test would be measuring itself.
-	// It also pins that the hit is real: on a miss the nil resolver panics
-	// rather than erroring, so a silent fallthrough to the rebuild path cannot
-	// masquerade as a hit.
-	if _, err := c.GetOrResolve(key, nil, nil, nil, DiscardIntake); err != nil {
+	// It also pins that the hit is real: a fallthrough to the rebuild path
+	// would count a resolution.
+	if _, err := c.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake); err != nil {
 		b.Fatal(err)
+	}
+	if resolver.resolveLWWCalls != 0 {
+		b.Fatalf("the fresh hit resolved %d times, want none", resolver.resolveLWWCalls)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		getResolveSink, getResolveErrSink = c.GetOrResolve(key, nil, nil, nil, DiscardIntake)
+		getResolveSink, getResolveErrSink = c.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
+	}
+}
+
+var getCardinalitySink datalog.Keyword
+
+// BenchmarkPatternMatcherGetCardinality measures the matcher's cardinality
+// read, which a lookup makes once before it asks the cache: the attribute
+// decoded, the keyword interned, the schema consulted. A fresh hit reads none.
+func BenchmarkPatternMatcherGetCardinality(b *testing.B) {
+	s, err := schema.NewBuilder().
+		Attribute(":bench/attr").Type(schema.TypeString).Many().Add().
+		Build()
+	if err != nil {
+		b.Fatal(err)
+	}
+	m := NewPatternMatcher(NewMemoryStore(&BinaryKeyEncoder{}))
+	m.SetSchema(s)
+	var a Attribute
+	copy(a[:], ":bench/attr")
+	if card := m.GetCardinality(a); card != schema.CardinalityMany {
+		b.Fatalf("the matcher reads %s for a declared set", card)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		getCardinalitySink = m.GetCardinality(a)
 	}
 }

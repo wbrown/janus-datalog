@@ -38,7 +38,7 @@ Everything below is design. Nothing in it describes what the engine does today u
 - `Transaction.Remove` makes a cardinality-one attribute absent in the current view (`docs/CORE_MODEL.md` §1).
 - A commit writes one `:db/txInstant` datom on its transaction entity. `Transaction` carries no caller attributes, and only `SetTime` touches the transaction entity.
 - A `ReadSession` pins one snapshot for every read a query makes.
-- Attribute definitions are facts: a schema given to a database is asserted into its store on `db.attribute/<ident>` entities, a store opened with no schema reads them back, and a dump carries them (§4).
+- Attribute definitions are facts: a schema given to a database is declared into its store, each declaration's words on an entity named by them and on each `db.attribute/<ident>` entity a ref to its current declaration; a store opened with no schema reads them back, and a dump carries them (§4).
 - `ClauseBlockers` in `datalog/query/clause_ready.go` names the symbols a clause still lacks, and the error that reports an unplannable clause names them.
 - Every query-executing test runs under both optimizer modes, and the optimizer never changes results (`TODO.md`, the matrix ruling).
 
@@ -189,22 +189,23 @@ With witnesses on, each tuple in `added` and `removed` carries its witnesses fro
 
 ## 4. Schema as facts
 
-This section describes what the engine does. Each attribute definition is an entity, `db.attribute/<ident>`, content-addressed from the ident so a definition asserted anywhere converges on one entity. It carries one fact per field of the definition under the well-known words `:db/ident`, `:db/valueType`, `:db/cardinality`, `:db/unique`, `:db/uniqueElements`, `:db/neverZeroValue` and `:db/doc`; a value type, uniqueness constraint or doc string a later declaration drops is withdrawn and stops resolving.
+This section describes what the engine does. A declaration of an attribute is an entity named by its seven words, so the same declaration made anywhere converges on one entity, and a declaration never changes: one that differs in a word is another entity. It carries one fact per field of the definition under the well-known words `:db/ident`, `:db/valueType`, `:db/cardinality`, `:db/unique`, `:db/uniqueElements`, `:db/neverZeroValue` and `:db/doc`. The definition of an attribute is the entity `db.attribute/<ident>`, named by the ident, and it carries one ref, `:db.attribute/declaration`, to its current declaration. A later declaration moves the ref, so the ref's history is the definition's history, a value type, uniqueness constraint or doc string a later declaration drops stops resolving through the definition, and two replicas' declarations of one attribute resolve to one of them whole.
 
-A schema given at open is asserted into the store in one transaction holding only the words that differ from what the store holds, so a reopen with an unchanged schema writes nothing. A store opened with no schema reads its definitions back and runs with them, inferring from the ops only the attributes that carry datoms and no definition. A dump carries the definitions as datoms, and `Import` and `ImportBinary` end by reading them, so `db.Open` on a dump resolves a set as its writer declared it. A database opened with a schema re-asserts it after the import, and the given schema supersedes the dump's definitions for the idents it names (§9). A fork asserts its parent's declared definitions into the branch, and `TruncateTo` runs with the given schema over the definitions that survive the rewind, writing nothing.
+A schema given at open is declared into the store in one transaction holding each definition the store does not hold word for word, so a reopen with an unchanged schema writes nothing. A store opened with no schema reads its definitions back and runs with them, inferring from the ops only the attributes that carry datoms and no definition. A dump carries the declarations and the refs as datoms, and `Import` and `ImportBinary` end by reading them, so `db.Open` on a dump resolves a set as its writer declared it. A database opened with a schema declares it again after the import, and the given schema supersedes the dump's definitions for the idents it names (§9). A fork declares its parent's declared definitions into the branch, and `TruncateTo` runs with the given schema over the definitions that survive the rewind, writing nothing.
 
 The facts are queryable with patterns:
 
 ```clojure
 [:find ?ident ?type ?card
- :where [?a :db/ident ?ident]
-        [?a :db/valueType ?type]
-        [?a :db/cardinality ?card]]
+ :where [?a :db.attribute/declaration ?d]
+        [?d :db/ident ?ident]
+        [?d :db/valueType ?type]
+        [?d :db/cardinality ?card]]
 ```
 
-The engine's own words carry no definitions: `:db/txInstant`, `:db/id`, the snapshot and branch records, and the seven words above form a roster in `datalog/storage` that the refusal below treats as known, so the engine's own queries run on a database that refuses unknown attributes and never minted a marker.
+The engine's own words carry no definitions: `:db/txInstant`, `:db/id`, the snapshot and branch records, the definition's ref and the seven words above form a roster in `datalog/storage` that the refusal below treats as known, so the engine's own queries run on a database that refuses unknown attributes and never minted a marker.
 
-The refusal (§5) is opt-in through the `RefuseUnknownAttributes` database option, which requires a given schema, and runs at execution entry, in `Executor.ExecuteWithRelations` and in the `Pull` family, not in the parser: `ParseQuery` has no database, and the parse cache maps text to a query that does not depend on the store. A parsed query collects the attributes it names once, on its first execution. The matcher owns the schema, so it answers `AttributeVocabulary.UnknownAttributes`, and `SourceRouter` delegates the question to the `$` source; a named source's patterns are not checked.
+The refusal (§5) is opt-in through the `RefuseUnknownAttributes` database option, which requires a given schema, and runs at execution entry, in `Executor.ExecuteWithRelations` and in the `Pull` family, not in the parser: `ParseQuery` has no database, and the parse cache maps text to a query that does not depend on the store. The executor asks each source the query names whether it refuses, and only a source that does is asked about a roster: the default source about the query's own attributes, the rule bodies' and the ones the inputs bind to a pattern's attribute position, and a named source about the patterns on it. A parsed query collects the attributes it names once, on its first execution on a refusing source. The matcher owns the schema, so it answers `AttributeVocabulary`, and `SourceRouter` routes the question to the source named, which answers for itself; a database passed as a named source refuses as it does as `$`.
 
 Tests: `datalog/storage/schema_facts_test.go` and `unknown_attribute_test.go`, the dump tests in `datalog/db/dump_source_test.go` and `cmd/datalog/open_database_test.go`, and `datalog/db/refuse_unknown_test.go`.
 

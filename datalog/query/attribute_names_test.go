@@ -119,6 +119,119 @@ func TestDefaultSourceAttributesComputedOnce(t *testing.T) {
 	}
 }
 
+// TestDefaultSourceAttributeVariables pins the variables
+// DefaultSourceAttributeVariables collects: every variable in the attribute
+// position of a data pattern on the default source, in order of first
+// appearance and each once, through NOT/NOT-JOIN bodies and
+// OR/OR-JOIN/OR-DEFAULT branches. A pattern on a named source reads that
+// source's attributes, a constant or blank in the attribute position is no
+// variable, and a subquery body's inputs are the subquery's own to check.
+func TestDefaultSourceAttributeVariables(t *testing.T) {
+	entity := Variable{Name: datalog.NewSymbol("?e")}
+	attrVar := func(name string) *DataPattern {
+		return &DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol(name)}, Blank{}}}
+	}
+	clauses := []Clause{
+		attrVar("?top"),
+		&DataPattern{Source: datalog.SymDollar, Elements: []PatternElement{
+			entity, Variable{Name: datalog.NewSymbol("?dollar")}, Blank{},
+		}},
+		&DataPattern{Source: datalog.NewSymbol("$cache"), Elements: []PatternElement{
+			entity, Variable{Name: datalog.NewSymbol("?named")}, Blank{},
+		}},
+		walkPattern("constant"),
+		&DataPattern{Elements: []PatternElement{entity, Blank{}, Blank{}}},
+		attrVar("?top"),
+		&NotClause{Clauses: []Clause{attrVar("?not")}},
+		&NotJoinClause{Clauses: []Clause{attrVar("?notjoin")}},
+		&OrClause{Branches: [][]Clause{{attrVar("?or1")}, {attrVar("?or2")}}},
+		&OrJoinClause{Branches: [][]Clause{{attrVar("?orjoin")}}},
+		&OrDefaultClause{Branches: [][]Clause{{attrVar("?ordefault")}}},
+		&OrDefaultJoinClause{Branches: [][]Clause{{attrVar("?ordefaultjoin")}}},
+		&SubqueryPattern{
+			Query:   &Query{Where: []Clause{attrVar("?sub")}},
+			Binding: ScalarBinding{Variable: datalog.NewSymbol("?s")},
+		},
+	}
+
+	want := []Symbol{
+		datalog.NewSymbol("?top"),
+		datalog.NewSymbol("?dollar"),
+		datalog.NewSymbol("?not"),
+		datalog.NewSymbol("?notjoin"),
+		datalog.NewSymbol("?or1"),
+		datalog.NewSymbol("?or2"),
+		datalog.NewSymbol("?orjoin"),
+		datalog.NewSymbol("?ordefault"),
+		datalog.NewSymbol("?ordefaultjoin"),
+	}
+	got := DefaultSourceAttributeVariables(clauses)
+	if len(got) != len(want) {
+		t.Fatalf("collected %d variables, want %d:\n got  %v\n want %v", len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("variable %d is %s, want %s", i, got[i], want[i])
+		}
+	}
+}
+
+// TestSourceAttributes pins the roster SourceAttributes collects for a named
+// source: every attribute a data pattern on that source names, in order of
+// first appearance and each once, through NOT/NOT-JOIN bodies,
+// OR/OR-JOIN/OR-DEFAULT branches and subquery bodies. A pattern on the
+// default source or on another named source, a database function, which
+// reads the default source, and a pull pattern, which reads it too, name
+// nothing on this source.
+func TestSourceAttributes(t *testing.T) {
+	entity := Variable{Name: datalog.NewSymbol("?e")}
+	entityTerm := VariableTerm{Symbol: datalog.NewSymbol("?e")}
+	cache := datalog.NewSymbol("$cache")
+	on := func(source Symbol, attr string) *DataPattern {
+		return &DataPattern{Source: source, Elements: []PatternElement{entity, Constant{Value: datalog.NewKeyword(attr)}, Blank{}}}
+	}
+	q := &Query{
+		Find: []FindElement{
+			FindPull{Variable: datalog.NewSymbol("?e"), Pattern: &PullPattern{Specs: []PullAttrSpec{
+				&PullAttribute{Attr: datalog.NewKeyword(":t/pulled")},
+			}}},
+		},
+		Where: []Clause{
+			on(cache, ":t/top"),
+			walkPattern("default"),
+			on(datalog.NewSymbol("$other"), ":t/other"),
+			on(cache, ":t/top"),
+			&NotClause{Clauses: []Clause{on(cache, ":t/not")}},
+			&NotJoinClause{Clauses: []Clause{on(cache, ":t/notjoin")}},
+			&OrClause{Branches: [][]Clause{{on(cache, ":t/or1")}, {on(cache, ":t/or2")}}},
+			&OrJoinClause{Branches: [][]Clause{{on(cache, ":t/orjoin")}}},
+			&OrDefaultClause{Branches: [][]Clause{{on(cache, ":t/ordefault")}}},
+			&OrDefaultJoinClause{Branches: [][]Clause{{on(cache, ":t/ordefaultjoin")}}},
+			&SubqueryPattern{
+				Query:   &Query{Where: []Clause{on(cache, ":t/sub"), walkPattern("subdefault")}},
+				Binding: ScalarBinding{Variable: datalog.NewSymbol("?s")},
+			},
+			&Expression{
+				Function: &GetElseFunction{Entity: entityTerm, Attr: datalog.NewKeyword(":t/getelse"), Default: "none"},
+				Binding:  datalog.NewSymbol("?ge"),
+			},
+		},
+	}
+
+	want := []datalog.Keyword{
+		datalog.NewKeyword(":t/top"),
+		datalog.NewKeyword(":t/not"),
+		datalog.NewKeyword(":t/notjoin"),
+		datalog.NewKeyword(":t/or1"),
+		datalog.NewKeyword(":t/or2"),
+		datalog.NewKeyword(":t/orjoin"),
+		datalog.NewKeyword(":t/ordefault"),
+		datalog.NewKeyword(":t/ordefaultjoin"),
+		datalog.NewKeyword(":t/sub"),
+	}
+	assertKeywordsInOrder(t, SourceAttributes(q, cache), want)
+}
+
 // TestPullPatternAttributes pins the roster PullPatternAttributes collects:
 // every attribute a pull pattern names, through nested map specs, in order of
 // first appearance and each once. A wildcard names no attribute.

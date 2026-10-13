@@ -28,7 +28,9 @@ func (it *deferredErrorIterator) Scanned() int                 { return 0 }
 
 // indexScanOverrideStore delegates to a real store but substitutes the
 // iterator returned by ScanKeysOnly for one index — models a failing scan on
-// that index while every other index behaves normally.
+// that index while every other index behaves normally. With no iterator set
+// every scan delegates, so a test arms the failure once the database is open
+// and has read its own definitions back.
 type indexScanOverrideStore struct {
 	Store
 	index IndexType
@@ -36,14 +38,14 @@ type indexScanOverrideStore struct {
 }
 
 func (s *indexScanOverrideStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
-	if bound.Index == s.index {
+	if s.iter != nil && bound.Index == s.index {
 		return s.iter, nil
 	}
 	return s.Store.ScanKeysOnly(bound)
 }
 
 func (s *indexScanOverrideStore) Scan(bound ScanBound) (Iterator, error) {
-	if bound.Index == s.index {
+	if s.iter != nil && bound.Index == s.index {
 		return s.iter, nil
 	}
 	return s.Store.Scan(bound)
@@ -157,8 +159,9 @@ func TestResolveVectorAttributeSurfacesScanErrors(t *testing.T) {
 					}
 					t.Cleanup(func() { _ = store.Close() })
 
+					override := &indexScanOverrideStore{Store: store, index: EATV}
 					db, err := NewDatabaseWithOptions(DatabaseOptions{
-						Store:          &indexScanOverrideStore{Store: store, index: EATV, iter: iter},
+						Store:          override,
 						Schema:         s,
 						DisableCache:   true,
 						PlannerOptions: &popts,
@@ -167,6 +170,7 @@ func TestResolveVectorAttributeSurfacesScanErrors(t *testing.T) {
 						t.Fatalf("failed to create database: %v", err)
 					}
 					t.Cleanup(func() { _ = db.Close() })
+					override.iter = iter
 
 					entity := datalog.NewIdentity("user:alice")
 					attr := datalog.NewKeyword(":user/tags")

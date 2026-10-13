@@ -30,8 +30,12 @@ func ParseQuery(input string) (*query.Query, error) {
 		return nil, err
 	}
 	// Static clause-shape rules (subquery binding arity, not-join header
-	// completeness, or-default-join interface) are enforced at every user
-	// boundary with one message; this is the parse boundary's call.
+	// completeness, or-default-join interface) and input-shape rules (% at
+	// most once) are enforced at every user boundary with one message; this
+	// is the parse boundary's call.
+	if err := query.ValidateInputShapes(q.In); err != nil {
+		return nil, err
+	}
 	if err := query.ValidateStaticClauseShapes(q.Where); err != nil {
 		return nil, err
 	}

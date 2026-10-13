@@ -5,8 +5,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// analyzeClausesForExplain analyzes clauses and populates explain fields in RealizedPhase
-func analyzeClausesForExplain(phase *RealizedPhase, clauses []query.Clause, available map[query.Symbol]bool, stats *Statistics) {
+// analyzeClausesForExplain analyzes clauses and populates explain fields in
+// RealizedPhase. available is what the clauses before each one bind, read
+// under the rule set the query runs with.
+func analyzeClausesForExplain(phase *RealizedPhase, clauses []query.Clause, available map[query.Symbol]bool, rules *query.RuleSet, stats *Statistics) {
 	for _, clause := range clauses {
 		switch c := clause.(type) {
 		case *query.DataPattern:
@@ -53,6 +55,13 @@ func analyzeClausesForExplain(phase *RealizedPhase, clauses []query.Clause, avai
 			}
 			phase.Invocations = append(phase.Invocations, InvocationPlan{Invocation: c, Bound: bound})
 			for _, sym := range c.Variables() {
+				available[sym] = true
+			}
+
+		default:
+			// A not, not-join, or, or-join, or-default or or-default-join
+			// binds what it provides for the clauses after it.
+			for _, sym := range query.ScopeOf(clause, rules).Provides {
 				available[sym] = true
 			}
 		}

@@ -156,32 +156,40 @@ func (it *invocationIterator) Close() error { return it.inner.Close() }
 func (it *invocationIterator) Error() error { return it.inner.Error() }
 
 // invocationSource is the relation an invocation reads. An invocation in a
-// body the fixpoint is running reads the relation the scope holds under the
-// symbol it invokes: a predicate's relation, or the stratum's last delta
-// under the predicate's delta symbol. Any other invocation, the query's own
-// or one in a subquery or an inner form, is evaluated here: whole when
-// nothing binds its arguments, and through the magic-set rewrite seeded by
-// the bound arguments otherwise, so the fixpoint derives only the tuples
-// those arguments reach. A rewrite the stratifier refuses is declined,
-// recorded, and the predicate evaluated whole.
+// body the fixpoint is running, or one a form hoisted, reads the relation
+// the scope holds under the symbol it invokes: a predicate's relation, or
+// the stratum's last delta under the predicate's delta symbol. Any other
+// invocation, the query's own or one in a subquery, is derived here.
 func (e *DefaultQueryExecutor) invocationSource(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, error) {
 	if rel, ok := ctx.Derived(inv.Name); ok {
 		return rel, nil
 	}
+	rel, _, err := e.deriveInvocation(ctx, inv, groups)
+	return rel, err
+}
+
+// deriveInvocation evaluates an invocation's predicate: whole when nothing
+// binds its arguments, and through the magic-set rewrite seeded by the bound
+// arguments otherwise, so the fixpoint derives only the tuples those
+// arguments reach. A rewrite the stratifier refuses is declined, recorded,
+// and the predicate evaluated whole. The relation is returned with the
+// symbol it is the relation of: the predicate's own, or the adorned one the
+// rewrite derives.
+func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, query.Symbol, error) {
 	rs := ctx.Rules()
 	if rs == nil {
-		return nil, fmt.Errorf("rule invocation %s: no rule set was given for %%", inv)
+		return nil, nil, fmt.Errorf("rule invocation %s: no rule set was given for %%", inv)
 	}
 	bound := boundPositions(ctx, inv, groups)
 	if err := rs.CheckRequired(inv.Name, bound, nil); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !anyBound(bound) {
 		derived, err := e.executor.evaluateRules(ctx, rs, inv.Name, nil)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return derived[inv.Name], nil
+		return derived[inv.Name], inv.Name, nil
 	}
 	magic, err := rs.Magic(inv.Name, bound)
 	var unstratifiable *query.UnstratifiableError
@@ -191,25 +199,191 @@ func (e *DefaultQueryExecutor) invocationSource(ctx *Context, inv *query.RuleInv
 		}
 		derived, err := e.executor.evaluateRules(ctx, rs, inv.Name, nil)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return derived[inv.Name], nil
+		return derived[inv.Name], inv.Name, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if e.options.Handler != nil {
 		e.options.Handler(magicSetsEvent(inv.Name, bound, true, ""))
 	}
 	seed, err := e.seedRelation(ctx, inv, bound, magic.Seed, groups)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	derived, err := e.executor.evaluateRules(ctx, magic.Rules, magic.Predicate, map[query.Symbol]Relation{magic.Seed: seed})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return derived[magic.Predicate], nil
+	return derived[magic.Predicate], magic.Predicate, nil
+}
+
+// hoistInvocations derives, once, the predicate of every invocation the
+// clauses of a form hold at any depth outside a subquery, bound by the
+// environment and the outer relation the form runs against per combination,
+// and returns the clauses with each such invocation naming the symbol its
+// relation is held under, and the scope holding those relations. The forms
+// on the path to a replaced invocation are copied; every other clause is
+// shared. An invocation of a predicate the scope already holds stands as it
+// is.
+func (e *DefaultQueryExecutor) hoistInvocations(ctx *Context, clauses []query.Clause, outer Relation) ([]query.Clause, *Context, error) {
+	held := map[query.Symbol]Relation{}
+	out, changed, err := e.hoistWalk(ctx, clauses, outer, held)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(held) == 0 {
+		return clauses, ctx, nil
+	}
+	merged := make(map[query.Symbol]Relation, len(ctx.derived)+len(held))
+	for name, rel := range ctx.derived {
+		merged[name] = rel
+	}
+	for name, rel := range held {
+		merged[name] = rel
+	}
+	if !changed {
+		out = clauses
+	}
+	return out, ctx.WithDerived(merged), nil
+}
+
+// hoistBranches hoists the invocations of each branch of a form, sharing
+// the branches that hold none.
+func (e *DefaultQueryExecutor) hoistBranches(ctx *Context, branches [][]query.Clause, outer Relation) ([][]query.Clause, *Context, error) {
+	held := map[query.Symbol]Relation{}
+	out := make([][]query.Clause, len(branches))
+	changed := false
+	for b, branch := range branches {
+		walked, branchChanged, err := e.hoistWalk(ctx, branch, outer, held)
+		if err != nil {
+			return nil, nil, err
+		}
+		out[b] = branch
+		if branchChanged {
+			out[b] = walked
+			changed = true
+		}
+	}
+	if len(held) == 0 {
+		return branches, ctx, nil
+	}
+	merged := make(map[query.Symbol]Relation, len(ctx.derived)+len(held))
+	for name, rel := range ctx.derived {
+		merged[name] = rel
+	}
+	for name, rel := range held {
+		merged[name] = rel
+	}
+	if !changed {
+		out = branches
+	}
+	return out, ctx.WithDerived(merged), nil
+}
+
+// hoistWalk walks one clause list for hoistInvocations, deriving each
+// invocation into held and reporting whether any clause was replaced. The
+// walk is its own, as markDeltaWalk's is: query.WalkClauses visits clauses
+// and yields no list, and the hoist yields the list with an invocation
+// replaced by one naming the symbol its relation is held under.
+func (e *DefaultQueryExecutor) hoistWalk(ctx *Context, clauses []query.Clause, outer Relation, held map[query.Symbol]Relation) ([]query.Clause, bool, error) {
+	out := make([]query.Clause, len(clauses))
+	changed := false
+	for i, clause := range clauses {
+		out[i] = clause
+		switch c := clause.(type) {
+		case *query.RuleInvocation:
+			if _, ok := ctx.Derived(c.Name); ok {
+				continue
+			}
+			rel, under, err := e.deriveInvocation(ctx, c, []Relation{outer})
+			if err != nil {
+				return nil, false, err
+			}
+			if _, ok := held[under]; !ok {
+				held[under] = rel
+			}
+			if under != c.Name {
+				out[i] = &query.RuleInvocation{Name: under, Args: c.Args}
+				changed = true
+			}
+		case *query.NotClause:
+			inner, innerChanged, err := e.hoistWalk(ctx, c.Clauses, outer, held)
+			if err != nil {
+				return nil, false, err
+			}
+			if innerChanged {
+				out[i] = &query.NotClause{Clauses: inner}
+				changed = true
+			}
+		case *query.NotJoinClause:
+			inner, innerChanged, err := e.hoistWalk(ctx, c.Clauses, outer, held)
+			if err != nil {
+				return nil, false, err
+			}
+			if innerChanged {
+				out[i] = &query.NotJoinClause{JoinVars: c.JoinVars, Clauses: inner}
+				changed = true
+			}
+		case *query.OrClause:
+			branches, branchesChanged, err := e.hoistWalkBranches(ctx, c.Branches, outer, held)
+			if err != nil {
+				return nil, false, err
+			}
+			if branchesChanged {
+				out[i] = &query.OrClause{Branches: branches}
+				changed = true
+			}
+		case *query.OrJoinClause:
+			branches, branchesChanged, err := e.hoistWalkBranches(ctx, c.Branches, outer, held)
+			if err != nil {
+				return nil, false, err
+			}
+			if branchesChanged {
+				out[i] = &query.OrJoinClause{JoinVars: c.JoinVars, Branches: branches}
+				changed = true
+			}
+		case *query.OrDefaultClause:
+			branches, branchesChanged, err := e.hoistWalkBranches(ctx, c.Branches, outer, held)
+			if err != nil {
+				return nil, false, err
+			}
+			if branchesChanged {
+				out[i] = &query.OrDefaultClause{Branches: branches}
+				changed = true
+			}
+		case *query.OrDefaultJoinClause:
+			branches, branchesChanged, err := e.hoistWalkBranches(ctx, c.Branches, outer, held)
+			if err != nil {
+				return nil, false, err
+			}
+			if branchesChanged {
+				out[i] = &query.OrDefaultJoinClause{RequiredVars: c.RequiredVars, OutputVars: c.OutputVars, Branches: branches}
+				changed = true
+			}
+		}
+	}
+	return out, changed, nil
+}
+
+// hoistWalkBranches walks a form's branches for hoistWalk.
+func (e *DefaultQueryExecutor) hoistWalkBranches(ctx *Context, branches [][]query.Clause, outer Relation, held map[query.Symbol]Relation) ([][]query.Clause, bool, error) {
+	out := make([][]query.Clause, len(branches))
+	changed := false
+	for b, branch := range branches {
+		walked, branchChanged, err := e.hoistWalk(ctx, branch, outer, held)
+		if err != nil {
+			return nil, false, err
+		}
+		out[b] = branch
+		if branchChanged {
+			out[b] = walked
+			changed = true
+		}
+	}
+	return out, changed, nil
 }
 
 // magicSetsEvent is the rewrite's decision for one invocation.
@@ -378,14 +552,17 @@ func (e *Executor) evaluateRules(ctx *Context, rs *query.RuleSet, invoked query.
 }
 
 // neededPredicates is the set of predicates the invoked one depends on,
-// itself included: its rules' invocations, transitively.
+// itself included: its rules' invocations, transitively. A predicate with
+// required positions is not among them and is not walked through: it is
+// evaluated at its invocation, under the invoking body's bindings, never
+// whole.
 func neededPredicates(rs *query.RuleSet, invoked query.Symbol) map[query.Symbol]bool {
 	needed := map[query.Symbol]bool{}
 	pending := []query.Symbol{invoked}
 	for len(pending) > 0 {
 		p := pending[len(pending)-1]
 		pending = pending[:len(pending)-1]
-		if needed[p] {
+		if needed[p] || anyBound(rs.Required(p)) {
 			continue
 		}
 		needed[p] = true
@@ -445,7 +622,9 @@ func (s *derivedSet) relation(opts ExecutorOptions) Relation {
 // same-stratum invocation is planned once, with delta false, and runs once to
 // seed the stratum. A body with k such occurrences is planned k times, each
 // with one occurrence invoking its predicate's delta symbol and delta true,
-// and every copy runs each iteration.
+// and every copy runs each iteration. A body whose occurrences all sit inside
+// or and or-join branches is planned once more with delta false, since a
+// branch invoking no same-stratum predicate produces without any delta.
 type plannedBody struct {
 	rule  *query.Rule
 	plan  *planner.RealizedPlan
@@ -486,13 +665,18 @@ func (e *Executor) prepareStratum(ctx *Context, rs *query.RuleSet, stratum query
 					occurrences++
 				}
 			}
-			if occurrences == 0 {
+			topLevel := 0
+			for _, clause := range rule.Body {
+				if inv, ok := clause.(*query.RuleInvocation); ok && inStratum[inv.Name] {
+					topLevel++
+				}
+			}
+			if occurrences == 0 || topLevel == 0 {
 				plan, err := e.planBody(rs, rule, rule.Body)
 				if err != nil {
 					return nil, err
 				}
 				eval.bodies = append(eval.bodies, plannedBody{rule: rule, plan: plan})
-				continue
 			}
 			for j := 0; j < occurrences; j++ {
 				plan, err := e.planBody(rs, rule, markDelta(rule.Body, inStratum, j))
@@ -581,9 +765,10 @@ func markDeltaBranches(branches [][]query.Clause, inStratum map[query.Symbol]boo
 // run executes the bodies whose delta flag equals recursive under a scope
 // holding held, the relations by predicate symbol, and returns each body's
 // result relation by predicate, over the predicate's canonical symbols, for
-// the sets to absorb.
+// the sets to absorb. A body is a query scope of its own, with no bound
+// inputs: the invoking query's environment does not reach it.
 func (s *stratumEvaluation) run(ctx *Context, held map[query.Symbol]Relation, recursive bool) (map[query.Symbol][]Relation, error) {
-	scope := ctx.WithDerived(held)
+	scope := ctx.WithEnvironment(nil).WithDerived(held)
 	results := map[query.Symbol][]Relation{}
 	for _, body := range s.bodies {
 		if body.delta != recursive {

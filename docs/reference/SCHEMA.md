@@ -62,7 +62,7 @@ if err := d.SetSchema(s); err != nil {
 
 ## Schema as Facts
 
-A schema given to a database is asserted into its store. Each attribute definition is an entity, content-addressed from the ident (`db.attribute/<ident>`), so a definition asserted anywhere converges on the entity it already has. The entity carries one fact per field of the definition:
+A schema given to a database is asserted into its store. A declaration of an attribute is an entity named by its seven words, so the same declaration made anywhere converges on one entity, and a declaration never changes: one that differs in a word is another entity. It carries one fact per field of the definition:
 
 | Word | Value | Written |
 |------|-------|---------|
@@ -74,24 +74,25 @@ A schema given to a database is asserted into its store. Each attribute definiti
 | `:db/neverZeroValue` | boolean | always |
 | `:db/doc` | string | when the definition carries one |
 
-The facts answer ordinary patterns:
+The definition of an attribute is the entity `db.attribute/<ident>`, named by the ident. It carries one ref, `:db.attribute/declaration`, to its current declaration. A later declaration moves the ref, so the ref's history is the definition's history, and two replicas' declarations of one attribute resolve to one of them whole. The facts answer ordinary patterns:
 
 ```clojure
 [:find ?ident ?type ?card
- :where [?a :db/ident ?ident]
-        [?a :db/valueType ?type]
-        [?a :db/cardinality ?card]]
+ :where [?a :db.attribute/declaration ?d]
+        [?d :db/ident ?ident]
+        [?d :db/valueType ?type]
+        [?d :db/cardinality ?card]]
 ```
 
 Where the facts are read and asserted:
 
-- **Open with a schema.** The definitions the store holds are read, and the given schema's are asserted over them in one transaction holding only the words that differ. The database runs with the given definitions, and with the stored ones for the idents the given schema does not name. A reopen with an unchanged schema writes nothing. A given schema is authoritative, so nothing is inferred.
+- **Open with a schema.** The definitions the store holds are read, and each given definition the store does not hold word for word is declared in one transaction: its words on the declaration entity, and the definition's ref moved to it. The database runs with the given definitions, and with the stored ones for the idents the given schema does not name. A reopen with an unchanged schema writes nothing. A given schema is authoritative, so nothing is inferred.
 - **Open with no schema.** The stored definitions are read and the database runs with them. An attribute that carries datoms and has no definition is inferred from the ops of its datoms; an inferred definition is in memory only and is never asserted.
-- **A withdrawn word.** A declaration that drops a definition's value type, uniqueness constraint or doc string withdraws that fact: the word stops resolving on the definition entity, and `History()` keeps the withdrawn value.
+- **A withdrawn word.** A declaration that drops a definition's value type, uniqueness constraint or doc string is a declaration without that word. The definition's ref moves to it, so the word stops resolving through the definition, and `History()` of the ref reaches the earlier declaration.
 - **`SetSchema`** declares a schema on an open database the same way. It returns an error, since it writes, and a read-only `AsOf` or `History` handle refuses it.
-- **Import.** A dump carries the schema datoms. An import into a database with no schema ends by reading them, so a set the dump's writer declared resolves as a set. A database opened with a schema re-asserts it after the import, so the given schema supersedes the dump's definitions for the idents it names.
-- **Fork.** A branch carries its parent's declared definitions, asserted into it at the fork, so a dump of the branch describes itself.
-- **TruncateTo.** A definition asserted after the snapshot goes with the rest. The database runs with the given schema, if one was given, over the definitions that survive; nothing is written until the next `SetSchema` or import re-asserts it.
+- **Import.** A dump carries the declarations and the definitions' refs to them. An import into a database with no schema ends by reading them, so a set the dump's writer declared resolves as a set. A database opened with a schema declares it again after the import, so the given schema supersedes the dump's definitions for the idents it names.
+- **Fork.** A branch carries its parent's declared definitions: each the parent declares and the branch does not hold is declared into it at the fork, so a dump of the branch describes itself.
+- **TruncateTo.** A declaration made after the snapshot goes with the rest, and a definition's ref moved to it goes too, so the definition refers to the declaration it referred to at the snapshot. The database runs with the given schema, if one was given, over the definitions that survive; nothing is written until the next `SetSchema` or import declares it again.
 
 ### Unknown attributes are refused on request
 
@@ -101,13 +102,12 @@ A database opened with `RefuseUnknownAttributes` (`db.WithRefuseUnknownAttribute
 unknown attribute :person/naem: the schema does not declare it
 ```
 
-The error is a `*schema.UnknownAttributeError` carrying the attribute, reachable with `errors.As`. Several unknown attributes in one query are joined, in order of appearance. The check reads data patterns on the default source, the attributes of `get-else`, `get-some` and `missing?`, and pull patterns in `:find` and in the `Pull` family, descending through `not`, `or`, their `-join` forms, the `or-default` forms and subquery bodies. The schema checked is the one the database runs with: the given definitions over the stored ones. The option requires a schema: opening with it and no schema, or withdrawing the schema with `SetSchema(nil)`, is an error.
+The error is a `*schema.UnknownAttributeError` carrying the attribute, reachable with `errors.As`. Several unknown attributes in one query are joined, in order of appearance. The check reads data patterns on the default source, the attributes of `get-else`, `get-some` and `missing?`, pull patterns in `:find` and in the `Pull` family, and the attributes an input binds to a variable in a pattern's attribute position, as the typed accessors bind theirs, descending through `not`, `or`, their `-join` forms, the `or-default` forms and subquery bodies. A pattern on a named source is checked by that source: a database passed as a named source refuses as it does as `$`, and a source without the option refuses nothing. The schema checked is the one the database runs with: the given definitions over the stored ones. The option requires a schema: opening with it and no schema, or withdrawing the schema with `SetSchema(nil)`, is an error.
 
 Not refused:
 
 - A declared attribute with no datoms, or with none at an `AsOf` handle's point, which returns no tuple.
-- A pattern on a named source, which reads that source's attributes.
-- The engine's own words: `:db/txInstant`, `:db/id`, the snapshot and branch records, and the definition words above.
+- The engine's own words: `:db/txInstant`, `:db/id`, the snapshot and branch records, a definition's ref to its declaration, and the declaration words above.
 - Any query on a database opened without the option.
 
 ## Supported Attributes
@@ -451,7 +451,7 @@ type SchemaProvider interface {
 
 ## Performance
 
-Schema validation is paid on writes. A read pays the unknown-attribute check once per query or pull when the database refuses unknown attributes (see [Schema as Facts](#schema-as-facts)); otherwise the check is a pointer test. A parsed query collects the attributes it names once, on its first execution, so the check on every later execution is one schema lookup per attribute. Measured on Apple M5 by `BenchmarkUnknownAttributeCheck`, `BenchmarkOpenWithUnchangedSchema` and `BenchmarkImportInferenceAfterLoad` in `datalog/storage`:
+Schema validation is paid on writes. A read pays the unknown-attribute check once per query or pull when the database refuses unknown attributes (see [Schema as Facts](#schema-as-facts)); otherwise the check is a flag read, and no roster is collected. A parsed query collects the attributes it names once, on its first execution on a refusing source, so the check on every later execution is one schema lookup per attribute; the attributes an input binds are read from the input on each execution. Measured on Apple M5 by `BenchmarkUnknownAttributeCheck`, `BenchmarkOpenWithUnchangedSchema` and `BenchmarkImportInferenceAfterLoad` in `datalog/storage`:
 
 | Operation | Overhead | When |
 |-----------|----------|------|

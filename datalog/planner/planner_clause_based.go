@@ -250,7 +250,7 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings Bindings,
 		for _, sym := range phaseAvailable {
 			availableSet[sym] = true
 		}
-		analyzeClausesForExplain(&realizedPhases[i], cp.Clauses, availableSet, p.stats)
+		analyzeClausesForExplain(&realizedPhases[i], cp.Clauses, availableSet, bindings.Rules, p.stats)
 	}
 
 	return &RealizedPlan{

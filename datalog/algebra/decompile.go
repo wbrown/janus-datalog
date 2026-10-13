@@ -48,6 +48,19 @@ func decompileNode(n *Node) ([]query.Clause, error) {
 	}
 }
 
+// subqueryInputs is what a decompiled subquery declares and is passed: the
+// default source, and the rule set after it when its clauses invoke a
+// predicate at any depth.
+func subqueryInputs(where []query.Clause) ([]query.InputSpec, []query.PatternElement) {
+	in := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}}
+	inputs := []query.PatternElement{query.Constant{Value: datalog.SymDollar}}
+	if len(query.Invocations(where)) > 0 {
+		in = append(in, query.RulesInput{})
+		inputs = append(inputs, query.Constant{Value: datalog.SymRules})
+	}
+	return in, inputs
+}
+
 func decompileProject(n *Node) ([]query.Clause, error) {
 	project := n.Data.(*Project)
 	if len(n.Children) == 0 {
@@ -64,13 +77,14 @@ func decompileProject(n *Node) ([]query.Clause, error) {
 	for i, symbol := range project.Symbols {
 		find[i] = query.FindVariable{Symbol: symbol}
 	}
+	in, inputs := subqueryInputs(where)
 	return []query.Clause{&query.SubqueryPattern{
 		Query: &query.Query{
 			Find:  find,
-			In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+			In:    in,
 			Where: where,
 		},
-		Inputs: []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
+		Inputs: inputs,
 		Binding: query.RelationBinding{
 			Variables: append([]query.Symbol(nil), project.Symbols...),
 		},
@@ -463,21 +477,20 @@ func decompileAggregate(n *Node) ([]query.Clause, error) {
 		findElems = append(findElems, fn)
 	}
 
-	// Build the decorrelated query — must include :in $ for the database source
+	in, inputs := subqueryInputs(innerClauses)
 	innerQuery := &query.Query{
 		Find:  findElems,
-		In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+		In:    in,
 		Where: innerClauses,
 	}
 
 	// Build binding with the outer names corresponding positionally to the
 	// grouped keys and aggregate results.
-	// Uses Constant($) for the database source marker (not Variable).
 	// RelationBinding (not TupleBinding) because the decorrelated query
 	// returns multiple tuples (one per distinct group key).
 	sp := &query.SubqueryPattern{
 		Query:   innerQuery,
-		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
+		Inputs:  inputs,
 		Binding: query.RelationBinding{Variables: agg.Bindings},
 	}
 

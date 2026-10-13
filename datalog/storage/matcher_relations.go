@@ -941,7 +941,13 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 		var aAttr Attribute
 		copy(eEnt[:], eBytes[:])
 		copy(aAttr[:], aStorage[:])
-		entry, err := it.matcher.cache.GetOrResolve(CacheKey{E: eEnt, A: aAttr}, it.matcher, it.matcher.cacheBound(), it.matcher.handler, it.report)
+		card := schema.CardinalityOne
+		if it.matcher.schema != nil {
+			if def := it.matcher.schema.GetAttribute(a); def != nil {
+				card = def.Cardinality
+			}
+		}
+		entry, err := it.matcher.cache.GetOrResolve(CacheKey{E: eEnt, A: aAttr}, card, it.matcher, it.matcher.cacheBound(), it.matcher.handler, it.report)
 		if err != nil {
 			return false, err
 		}
@@ -1220,7 +1226,7 @@ func (m *PatternMatcher) matchFromCache(
 		report = &scanReport{}
 		opened = time.Now()
 	}
-	entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler, report)
+	entry, err := m.cache.GetOrResolve(key, card, m, m.cacheBound(), m.handler, report)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1555,7 +1561,7 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		key := CacheKey{E: Entity(eIdent.Hash()), A: tupleAAttr}
 
 		// Get from cache
-		entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler, report)
+		entry, err := m.cache.GetOrResolve(key, tupleCard, m, m.cacheBound(), m.handler, report)
 		if err != nil {
 			return nil, false, err
 		}

@@ -168,8 +168,12 @@ func (b *QueryBuilder) Build() (*query.Query, error) {
 		return nil, fmt.Errorf("query must have at least one where clause")
 	}
 	// Static clause-shape rules (subquery binding arity, not-join header
-	// completeness, or-default-join interface) are enforced at every user
-	// boundary with one message; this is the builder boundary's call.
+	// completeness, or-default-join interface) and input-shape rules (% at
+	// most once) are enforced at every user boundary with one message; this
+	// is the builder boundary's call.
+	if err := query.ValidateInputShapes(b.in); err != nil {
+		return nil, err
+	}
 	if err := query.ValidateStaticClauseShapes(b.where); err != nil {
 		return nil, err
 	}

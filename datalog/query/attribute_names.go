@@ -27,6 +27,42 @@ func (q *Query) DefaultSourceAttributes() []datalog.Keyword {
 	return q.attributes
 }
 
+// DefaultSourceAttributeVariables returns every variable in the attribute
+// position of a data pattern on the default source, in order of first
+// appearance and each once, through NOT/NOT-JOIN bodies and
+// OR/OR-JOIN/OR-DEFAULT branches. A pattern on a named source reads that
+// source's attributes, a constant or blank in the attribute position is no
+// variable, and a subquery body's inputs are the subquery's own to check when
+// it runs.
+func DefaultSourceAttributeVariables(clauses []Clause) []Symbol {
+	seen := make(map[Symbol]bool)
+	var variables []Symbol
+	WalkClauses(clauses, func(clause Clause) bool {
+		pattern, ok := clause.(*DataPattern)
+		if !ok || (pattern.Source != nil && pattern.Source != datalog.SymDollar) {
+			return true
+		}
+		if v, ok := pattern.GetA().(Variable); ok && !seen[v.Name] {
+			seen[v.Name] = true
+			variables = append(variables, v.Name)
+		}
+		return true
+	})
+	return variables
+}
+
+// SourceAttributes returns every attribute the query names on the named
+// source, in order of first appearance and each once: the keyword constant in
+// the attribute position of a data pattern whose Source is the symbol, through
+// NOT/NOT-JOIN bodies, OR/OR-JOIN/OR-DEFAULT branches and subquery bodies. A
+// database function and a pull pattern read the default source, whose roster
+// is DefaultSourceAttributes, and name nothing on a named source.
+func SourceAttributes(q *Query, source Symbol) []datalog.Keyword {
+	roster := &attributeRoster{source: source, seen: map[datalog.Keyword]bool{}}
+	roster.addQuery(q)
+	return roster.order
+}
+
 // PullPatternAttributes returns every attribute a pull pattern names, through
 // nested map specs, in order of first appearance and each once. A wildcard
 // names none.
@@ -36,11 +72,23 @@ func PullPatternAttributes(p *PullPattern) []datalog.Keyword {
 	return roster.order
 }
 
-// attributeRoster accumulates attributes in order of first appearance, each
-// once. Keywords are interned, so the set is keyed on the keyword itself.
+// attributeRoster accumulates the attributes named on one source, the
+// default source when source is nil and the named source otherwise, in order
+// of first appearance and each once. Keywords are interned, so the set is
+// keyed on the keyword itself.
 type attributeRoster struct {
-	seen  map[datalog.Keyword]bool
-	order []datalog.Keyword
+	source Symbol
+	seen   map[datalog.Keyword]bool
+	order  []datalog.Keyword
+}
+
+// reads reports whether a pattern whose Source is patternSource reads the
+// roster's source: a nil or $ Source reads the default source.
+func (r *attributeRoster) reads(patternSource Symbol) bool {
+	if r.source == nil {
+		return patternSource == nil || patternSource == datalog.SymDollar
+	}
+	return patternSource == r.source
 }
 
 func (r *attributeRoster) add(attr datalog.Keyword) {
@@ -51,23 +99,28 @@ func (r *attributeRoster) add(attr datalog.Keyword) {
 	r.order = append(r.order, attr)
 }
 
+// addQuery records the attributes a query names on the roster's source. A
+// pull pattern in :find reads the default source.
 func (r *attributeRoster) addQuery(q *Query) {
-	for _, elem := range q.Find {
-		if pull, ok := elem.(FindPull); ok {
-			r.addPullPattern(pull.Pattern)
+	if r.source == nil {
+		for _, elem := range q.Find {
+			if pull, ok := elem.(FindPull); ok {
+				r.addPullPattern(pull.Pattern)
+			}
 		}
 	}
 	r.addClauses(q.Where)
 }
 
-// addClauses records the attributes clauses name on the default source. The
-// visitor descends into a subquery's body itself, which WalkClauses leaves
-// to its visitors. A query's :where and a rule's body are collected alike.
+// addClauses records the attributes clauses name on the roster's source. A
+// database function reads the default source. The visitor descends into a
+// subquery's body itself, which WalkClauses leaves to its visitors. A query's
+// :where and a rule's body are collected alike.
 func (r *attributeRoster) addClauses(clauses []Clause) {
 	WalkClauses(clauses, func(clause Clause) bool {
 		switch c := clause.(type) {
 		case *DataPattern:
-			if c.Source == nil || c.Source == datalog.SymDollar {
+			if r.reads(c.Source) {
 				if constant, ok := c.GetA().(Constant); ok {
 					if attr, ok := constant.Value.(datalog.Keyword); ok {
 						r.add(attr)
@@ -75,11 +128,13 @@ func (r *attributeRoster) addClauses(clauses []Clause) {
 				}
 			}
 		case *Expression:
-			if f, ok := c.Function.(DatabaseFunction); ok {
+			if f, ok := c.Function.(DatabaseFunction); ok && r.source == nil {
 				r.addDatabaseFunction(f)
 			}
 		case *DatabaseFunctionPredicate:
-			r.addDatabaseFunction(c.Function)
+			if r.source == nil {
+				r.addDatabaseFunction(c.Function)
+			}
 		case *SubqueryPattern:
 			r.addQuery(c.Query)
 		}

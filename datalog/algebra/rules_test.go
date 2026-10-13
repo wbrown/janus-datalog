@@ -71,6 +71,36 @@ func TestCompileRuleInvocationRoundTrips(t *testing.T) {
 		"a constant and a blank argument bind nothing")
 }
 
+// A decompiled subquery whose clauses invoke a predicate declares % after $
+// and passes it, so the phase parses back and the invocation resolves
+// against the rule set.
+func TestDecompile_SubqueryDeclaresRulesWhenItInvokes(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?x ?n
+	                              :in $ %
+	                              :where [?x :page/next _]
+	                                     [(q [:find (count ?y) :in $ % ?x :where [?x :page/next _] (follows ?x ?y)] $ % ?x) [[?n]]]]`)
+	require.NoError(t, err)
+	compiled, err := Compile(q)
+	require.NoError(t, err)
+	optimized, err := NewOptimizer(DefaultPasses(&RewriteSink{})...).Optimize(compiled)
+	require.NoError(t, err)
+	clauses, err := Decompile(optimized)
+	require.NoError(t, err)
+
+	invoking := 0
+	query.WalkClauses(clauses, func(c query.Clause) bool {
+		sp, ok := c.(*query.SubqueryPattern)
+		if !ok || len(query.Invocations(sp.Query.Where)) == 0 {
+			return true
+		}
+		invoking++
+		require.Contains(t, sp.Query.In, query.RulesInput{}, "a subquery invoking a predicate declares %%:\n%v", sp)
+		require.Contains(t, sp.Inputs, query.Constant{Value: datalog.SymRules}, "and passes %% to it:\n%v", sp)
+		return true
+	})
+	require.NotZero(t, invoking, "the decorrelated aggregate decompiles to a subquery invoking follows:\n%v", clauses)
+}
+
 func TestRefreshSchemasDerived(t *testing.T) {
 	inv := &query.RuleInvocation{
 		Name: datalog.NewSymbol("follows"),

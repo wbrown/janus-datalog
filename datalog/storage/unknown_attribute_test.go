@@ -7,6 +7,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -61,6 +62,27 @@ func TestQueryRefusesUnknownAttribute(t *testing.T) {
 	}
 }
 
+// A branch of a refusing database refuses as its parent does.
+func TestForkRefusesUnknownAttributesAsItsParentDoes(t *testing.T) {
+	forking, _ := forkingModes(t)
+	require.NotEmpty(t, forking)
+	for _, mode := range forking {
+		t.Run(mode.name, func(t *testing.T) {
+			d, entity := refusingDB(t, mode)
+			_, err := d.Snapshot("s")
+			require.NoError(t, err)
+			branch := branchOf(t, d, "s")
+			attr := kw(":t/strnig")
+
+			_, err = branch.Query(`[:find ?v :where [?e :t/strnig ?v]]`)
+			requireUnknown(t, err, attr)
+
+			_, err = branch.Pull(entity, `[:t/strnig]`)
+			requireUnknown(t, err, attr)
+		})
+	}
+}
+
 func TestQueryRefusesUnknownAttributeInNestedClauses(t *testing.T) {
 	cases := []struct {
 		name string
@@ -99,6 +121,44 @@ func TestQueryRefusesUnknownAttributeInDatabaseFunctions(t *testing.T) {
 				d, _ := refusingDB(t, mode)
 				_, err := d.Query(c.text)
 				requireUnknown(t, err, kw(":t/strnig"))
+			})
+		}
+	}
+}
+
+func TestQueryRefusesUnknownAttributeBoundThroughInput(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d, _ := refusingDB(t, mode)
+			attr := kw(":t/strnig")
+
+			_, err := d.Query(`[:find ?v :in $ ?a :where [?e ?a ?v]]`, attr)
+			requireUnknown(t, err, attr)
+
+			_, err = d.Query(`[:find ?v :in $ [?a ...] :where [?e ?a ?v]]`, []interface{}{attr})
+			requireUnknown(t, err, attr)
+		})
+	}
+}
+
+func TestTypedAccessorsRefuseUnknownAttribute(t *testing.T) {
+	accessors := []struct {
+		name string
+		get  func(d *Database, e datalog.Identity, a datalog.Keyword) error
+	}{
+		{"GetString", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, _, err := d.GetString(e, a); return err }},
+		{"GetInt", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, _, err := d.GetInt(e, a); return err }},
+		{"GetFloat", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, _, err := d.GetFloat(e, a); return err }},
+		{"GetBool", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, _, err := d.GetBool(e, a); return err }},
+		{"GetRef", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, _, err := d.GetRef(e, a); return err }},
+		{"GetStrings", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, err := d.GetStrings(e, a); return err }},
+	}
+	for _, mode := range optimizerModes {
+		for _, accessor := range accessors {
+			t.Run(mode.name+"/"+accessor.name, func(t *testing.T) {
+				d, entity := refusingDB(t, mode)
+				attr := kw(":t/strnig")
+				requireUnknown(t, accessor.get(d, entity, attr), attr)
 			})
 		}
 	}
@@ -216,6 +276,21 @@ func TestQueryNamedSourcePatternIsNotChecked(t *testing.T) {
 	}
 }
 
+// A refusing database passed as a named source refuses as it does as $.
+func TestNamedSourceDatabaseRefusesUnknownAttribute(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			refusing, _ := refusingDB(t, mode)
+			plain := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			attr := kw(":t/strnig")
+
+			_, err := plain.Query(`[:find ?v :in $ $other :where [$other ?e :t/strnig ?v]]`,
+				WithSources(map[datalog.Symbol]executor.PatternMatcher{datalog.NewSymbol("$other"): refusing}))
+			requireUnknown(t, err, attr)
+		})
+	}
+}
+
 func TestQueryWithoutRefusalOptionIsNotChecked(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -230,6 +305,63 @@ func TestQueryWithoutRefusalOptionIsNotChecked(t *testing.T) {
 			require.Empty(t, tuples)
 		})
 	}
+}
+
+// A database opened without the option collects no roster, so a fresh parsed
+// query allocates what one whose roster was collected beforehand allocates.
+func TestQueryWithoutRefusalOptionCollectsNoRoster(t *testing.T) {
+	const text = `[:find ?n :where [?e :p/name ?n] [?e :p/age ?a] (not [?e :p/x _]) [(get-else $ ?e :p/y "z") ?w]]`
+	for _, algebra := range []struct {
+		name string
+		on   bool
+	}{{"algebra_on", true}, {"algebra_off", false}} {
+		t.Run(algebra.name, func(t *testing.T) {
+			popts := DefaultPlannerOptions()
+			popts.EnableAlgebraOptimizer = algebra.on
+			d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory-trees", PlannerOptions: &popts})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, d.Close()) })
+			person := datalog.NewIdentity("p:1")
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Add(person, kw(":p/name"), "alice"))
+			require.NoError(t, tx.Add(person, kw(":p/age"), int64(30)))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			fresh := queryExecutionAllocs(t, d, text, false)
+			collected := queryExecutionAllocs(t, d, text, true)
+			require.Equal(t, collected, fresh, "with the option off, executing a query collects no roster")
+		})
+	}
+}
+
+// queryExecutionAllocs returns the allocations one execution of text makes on
+// d, each run on a query parsed ahead of the measurement, its roster collected
+// ahead of it too when collected is set.
+func queryExecutionAllocs(t *testing.T, d *Database, text string, collected bool) float64 {
+	t.Helper()
+	const runs = 20
+	queries := make([]*query.Query, 0, runs+1)
+	for i := 0; i <= runs; i++ {
+		q, err := parser.ParseQuery(text)
+		require.NoError(t, err)
+		if collected {
+			q.DefaultSourceAttributes()
+		}
+		queries = append(queries, q)
+	}
+	next := 0
+	return testing.AllocsPerRun(runs, func() {
+		q := queries[next]
+		next++
+		rel, err := d.Query(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := executor.CollectTuples(rel, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestAsOfHandleRefusesBySchema(t *testing.T) {

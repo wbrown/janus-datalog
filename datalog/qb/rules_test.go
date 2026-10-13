@@ -104,6 +104,24 @@ func TestDefineRuleWithRequiredRun(t *testing.T) {
 	}
 }
 
+// A subquery whose inner query declares Rules passes % through, as the
+// parsed form (q [...] $ % ?x) does, so an invocation stands in a built
+// subquery as it stands in a parsed one.
+func TestSubqueryPassesRulesThrough(t *testing.T) {
+	x, y, n := NewVar("x"), NewVar("y"), NewVar("n")
+	inner := Query().Find(Count(y)).In(DB, Rules, Scalar(x)).Where(Rule("reach", x, y))
+	q := Query().Find(x, n).In(DB, Rules).Where(Pat(x, edge, Blank()), Subquery(inner, x).BindTuple(n)).MustBuild()
+	parsed, err := parser.ParseQuery(`[:find ?x ?n :in $ %
+	                                   :where [?x :edge _]
+	                                          [(q [:find (count ?y) :in $ % ?x :where (reach ?x ?y)] $ % ?x) [[?n]]]]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(q.Where, parsed.Where) {
+		t.Errorf("built :where\n%v\ndiffers from parsed\n%v", q.Where, parsed.Where)
+	}
+}
+
 func TestRuleSetValidationErrorsSurface(t *testing.T) {
 	a, b, c := NewVar("a"), NewVar("b"), NewVar("c")
 

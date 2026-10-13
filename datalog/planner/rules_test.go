@@ -141,7 +141,7 @@ func TestAnalyzeClausesForExplainRecordsInvocation(t *testing.T) {
 		Where: []query.Clause{inv},
 	}}
 	available := map[query.Symbol]bool{datalog.NewSymbol("?x"): true}
-	analyzeClausesForExplain(&phase, []query.Clause{inv}, available, nil)
+	analyzeClausesForExplain(&phase, []query.Clause{inv}, available, nil, nil)
 	if len(phase.Invocations) != 1 {
 		t.Fatalf("phase records %d invocations, want 1", len(phase.Invocations))
 	}
@@ -161,5 +161,43 @@ func TestAnalyzeClausesForExplainRecordsInvocation(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Bound: [?x]") {
 		t.Errorf("the phase rendering omits the bound arguments:\n%s", rendered)
+	}
+}
+
+// Explain's record of an invocation names every argument the clauses before
+// it bind, an or and an or-join among the binders: what a form provides is
+// available to the clauses after it.
+func TestAnalyzeClausesForExplainBoundNamesAnArgumentAnOrBinds(t *testing.T) {
+	edge := func(e, v string) *query.DataPattern {
+		return &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol(e)},
+			query.Constant{Value: datalog.NewKeyword(":edge")},
+			query.Variable{Name: datalog.NewSymbol(v)},
+		}}
+	}
+	branches := [][]query.Clause{{edge("?x", "?z")}, {edge("?z", "?x")}}
+	forms := []struct {
+		name   string
+		clause query.Clause
+	}{
+		{"or", &query.OrClause{Branches: branches}},
+		{"or-join", &query.OrJoinClause{JoinVars: []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")}, Branches: branches}},
+	}
+	for _, form := range forms {
+		t.Run(form.name, func(t *testing.T) {
+			inv := invocation("reach", "?x", "?y")
+			clauses := []query.Clause{form.clause, inv}
+			phase := RealizedPhase{Query: &query.Query{
+				Find:  []query.FindElement{query.FindVariable{Symbol: datalog.NewSymbol("?y")}},
+				Where: clauses,
+			}}
+			analyzeClausesForExplain(&phase, clauses, map[query.Symbol]bool{}, nil, nil)
+			if len(phase.Invocations) != 1 {
+				t.Fatalf("phase records %d invocations, want 1", len(phase.Invocations))
+			}
+			if !query.ContainsSymbol(phase.Invocations[0].Bound, datalog.NewSymbol("?x")) {
+				t.Errorf("Bound = %v, want ?x, which the %s before the invocation binds", phase.Invocations[0].Bound, form.name)
+			}
+		})
 	}
 }
