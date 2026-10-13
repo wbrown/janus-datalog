@@ -8,12 +8,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// ParseCache caches parsed *query.Query objects to avoid re-parsing identical
-// query strings. Unlike PlanCache, no TTL is needed — the mapping from a query
-// string to its parsed form is immutable.
+// ParseCache caches the parsed form of the text a query is given: a query
+// string's *query.Query and rule text's *query.RuleSet. Unlike PlanCache, no
+// TTL is needed — the mapping from text to its parsed form is immutable. Each
+// arm holds at most maxSize entries and evicts its oldest beyond that.
 type ParseCache struct {
-	cache map[string]*cachedQuery
-	mu    sync.RWMutex
+	queries textCache[*query.Query]
+	rules   textCache[*query.RuleSet]
+	mu      sync.RWMutex
 
 	// Statistics
 	hits   int64
@@ -23,18 +25,59 @@ type ParseCache struct {
 	maxSize int
 }
 
-type cachedQuery struct {
-	query     *query.Query
+// textCache maps text to the parsed value it names, each entry stamped with
+// the time it was stored for eviction of the oldest.
+type textCache[T any] map[string]*parsed[T]
+
+type parsed[T any] struct {
+	value     T
 	timestamp time.Time // used for LRU eviction only
 }
 
-// NewParseCache creates a new query parse cache.
+// get returns the value stored for text and whether one is.
+func (c textCache[T]) get(text string) (T, bool) {
+	entry, ok := c[text]
+	if !ok {
+		var zero T
+		return zero, false
+	}
+	return entry.value, true
+}
+
+// put stores value for text, evicting the oldest entry first when the cache
+// already holds maxSize entries.
+func (c textCache[T]) put(text string, value T, maxSize int) {
+	if len(c) >= maxSize {
+		c.evictOldest()
+	}
+	c[text] = &parsed[T]{value: value, timestamp: time.Now()}
+}
+
+// evictOldest removes the oldest entry from the cache.
+func (c textCache[T]) evictOldest() {
+	var oldestKey string
+	var oldestTime time.Time
+
+	for key, entry := range c {
+		if oldestKey == "" || entry.timestamp.Before(oldestTime) {
+			oldestKey = key
+			oldestTime = entry.timestamp
+		}
+	}
+
+	if oldestKey != "" {
+		delete(c, oldestKey)
+	}
+}
+
+// NewParseCache creates a new parse cache.
 func NewParseCache(maxSize int) *ParseCache {
 	if maxSize <= 0 {
 		maxSize = 1000
 	}
 	return &ParseCache{
-		cache:   make(map[string]*cachedQuery),
+		queries: textCache[*query.Query]{},
+		rules:   textCache[*query.RuleSet]{},
 		maxSize: maxSize,
 	}
 }
@@ -48,14 +91,14 @@ func (c *ParseCache) Get(queryString string) (*query.Query, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	cached, ok := c.cache[queryString]
+	q, ok := c.queries.get(queryString)
 	if !ok {
 		atomic.AddInt64(&c.misses, 1)
 		return nil, false
 	}
 
 	atomic.AddInt64(&c.hits, 1)
-	return cached.query, true
+	return q, true
 }
 
 // Set stores a parsed *query.Query for the given query string.
@@ -67,18 +110,41 @@ func (c *ParseCache) Set(queryString string, q *query.Query) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Evict oldest if full
-	if len(c.cache) >= c.maxSize {
-		c.evictOldest()
-	}
-
-	c.cache[queryString] = &cachedQuery{
-		query:     q,
-		timestamp: time.Now(),
-	}
+	c.queries.put(queryString, q, c.maxSize)
 }
 
-// Clear removes all cached queries.
+// GetRules retrieves the cached *query.RuleSet for the given rule text.
+func (c *ParseCache) GetRules(text string) (*query.RuleSet, bool) {
+	if c == nil {
+		return nil, false
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	rs, ok := c.rules.get(text)
+	if !ok {
+		atomic.AddInt64(&c.misses, 1)
+		return nil, false
+	}
+
+	atomic.AddInt64(&c.hits, 1)
+	return rs, true
+}
+
+// SetRules stores a parsed *query.RuleSet for the given rule text.
+func (c *ParseCache) SetRules(text string, rs *query.RuleSet) {
+	if c == nil || rs == nil {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.rules.put(text, rs, c.maxSize)
+}
+
+// Clear removes every cached query and rule set.
 func (c *ParseCache) Clear() {
 	if c == nil {
 		return
@@ -87,12 +153,14 @@ func (c *ParseCache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.cache = make(map[string]*cachedQuery)
+	c.queries = textCache[*query.Query]{}
+	c.rules = textCache[*query.RuleSet]{}
 	atomic.StoreInt64(&c.hits, 0)
 	atomic.StoreInt64(&c.misses, 0)
 }
 
-// Stats returns cache statistics.
+// Stats returns cache statistics: the hits and misses across both arms, and
+// the entries both hold.
 func (c *ParseCache) Stats() (hits, misses int64, size int) {
 	if c == nil {
 		return 0, 0, 0
@@ -101,22 +169,5 @@ func (c *ParseCache) Stats() (hits, misses int64, size int) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	return atomic.LoadInt64(&c.hits), atomic.LoadInt64(&c.misses), len(c.cache)
-}
-
-// evictOldest removes the oldest entry from the cache. Must be called with mu held.
-func (c *ParseCache) evictOldest() {
-	var oldestKey string
-	var oldestTime time.Time
-
-	for key, cached := range c.cache {
-		if oldestKey == "" || cached.timestamp.Before(oldestTime) {
-			oldestKey = key
-			oldestTime = cached.timestamp
-		}
-	}
-
-	if oldestKey != "" {
-		delete(c.cache, oldestKey)
-	}
+	return atomic.LoadInt64(&c.hits), atomic.LoadInt64(&c.misses), len(c.queries) + len(c.rules)
 }

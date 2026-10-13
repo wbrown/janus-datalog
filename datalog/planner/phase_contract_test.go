@@ -241,7 +241,7 @@ func TestClauseBasedPlannerEmitsPhysicalPhaseContracts(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			parsed, err := parser.ParseQuery(source)
 			require.NoError(t, err)
-			plan, err := planner.Plan(parsed, nil)
+			plan, err := planner.Plan(parsed, Bindings{}, nil)
 			require.NoError(t, err)
 			require.NoError(t, plan.Validate())
 		})

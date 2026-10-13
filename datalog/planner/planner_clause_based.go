@@ -31,44 +31,40 @@ func NewClauseBasedPlanner(stats *Statistics, options PlannerOptions) *ClauseBas
 	}
 }
 
-// Plan creates an optimized query plan using the clause-based approach. The
-// handler (may be nil) is request-scoped annotation state, threaded through
-// planning rather than stored on the planner, so concurrent queries through a
-// shared planner do not race on it.
-func (p *ClauseBasedPlanner) Plan(q *query.Query, handler annotations.Handler) (*RealizedPlan, error) {
-	// Check cache first
-	if p.cache != nil {
-		if cached, ok := p.cache.GetWithOptions(q, p.options); ok {
+// Plan creates an optimized query plan under the caller's bindings. A plan
+// made with no bound symbol is served from the cache and stored in it; a
+// plan made under bound symbols is not, since the cache keys on the query,
+// the positions the rule set requires of its invocations, and the options,
+// never on the bound symbols. The handler (may be nil) is request-scoped
+// annotation state, threaded through planning rather than stored on the
+// planner, so concurrent queries through a shared planner do not race on it.
+func (p *ClauseBasedPlanner) Plan(q *query.Query, bindings Bindings, handler annotations.Handler) (*RealizedPlan, error) {
+	cacheable := p.cache != nil && len(bindings.Symbols) == 0
+	if cacheable {
+		if cached, ok := p.cache.GetWithOptions(q, bindings.Rules, p.options); ok {
 			return cached, nil
 		}
 	}
 
-	// Plan with no initial bindings
-	plan, err := p.PlanWithBindings(q, nil, handler)
+	plan, err := p.planWithBindings(q, bindings, handler, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Store in cache
-	if p.cache != nil {
-		p.cache.SetWithOptions(q, plan, p.options)
+	if cacheable {
+		p.cache.SetWithOptions(q, bindings.Rules, plan, p.options)
 	}
 
 	return plan, nil
-}
-
-// PlanWithBindings creates an optimized query plan with initial bindings. The
-// handler (may be nil) is passed through to the algebra bridge rather than read
-// from shared planner state.
-func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings map[query.Symbol]bool, handler annotations.Handler) (*RealizedPlan, error) {
-	return p.planWithBindings(q, initialBindings, handler, nil)
 }
 
 // planWithBindings is the planning body. When expl is non-nil the algebra
 // bridge fills its fields with the compiled tree, the rewrite records, the
 // optimized tree, and the rewritten query; the normal paths pass nil and
 // collect nothing.
-func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, initialBindings map[query.Symbol]bool, handler annotations.Handler, expl *AlgebraExplanation) (*RealizedPlan, error) {
+func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings Bindings, handler annotations.Handler, expl *AlgebraExplanation) (*RealizedPlan, error) {
+	initialBindings := bindings.Symbols
+
 	// Extract input symbols from :in clause, tracking scalar inputs separately
 	inputSymbols := make(map[query.Symbol]bool)
 	var scalarInputs []query.Symbol
@@ -143,7 +139,7 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, initialBindings ma
 	constantBindable := findConstantBindableScalars(scalarInputs, clauses)
 
 	// Step 3: Phase the optimized clause list ONCE using greedy algorithm
-	clausePhases, err := createPhasesGreedy(clauses, findSymbols, inputSymbols)
+	clausePhases, err := createPhasesGreedy(clauses, findSymbols, inputSymbols, bindings)
 	if err != nil {
 		return nil, fmt.Errorf("phasing failed: %w", err)
 	}
@@ -163,7 +159,7 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, initialBindings ma
 		}
 
 		// Compute keep symbols
-		keep := computeKeepSymbols(cp, remainingClauses, findSymbols)
+		keep := computeKeepSymbols(cp, remainingClauses, findSymbols, bindings.Rules)
 
 		// Preserve constant-only scalar bindings as ScalarInput entries in the
 		// phase Datalog. Other available symbols flow through RelationInput.
@@ -171,7 +167,7 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, initialBindings ma
 		if len(constantBindable) > 0 {
 			phaseSyms := make(map[query.Symbol]bool)
 			for _, clause := range cp.Clauses {
-				for _, sym := range query.ScopeOf(clause).Correlates {
+				for _, sym := range query.ScopeOf(clause, bindings.Rules).Correlates {
 					phaseSyms[sym] = true
 				}
 			}
@@ -194,10 +190,21 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, initialBindings ma
 
 		phaseFind := buildFindClause(keep, q.Find, isLastPhase, retainedSort)
 
+		// A phase that invokes a predicate declares the rule set it resolves
+		// against. A subquery's invocations are the subquery's own: its inner
+		// query declares its own %.
+		invokes := false
+		query.WalkClauses(cp.Clauses, func(c query.Clause) bool {
+			if _, ok := c.(*query.RuleInvocation); ok {
+				invokes = true
+			}
+			return !invokes
+		})
+
 		// Build the query fragment for this phase.
 		phaseQuery := &query.Query{
 			Find:  phaseFind,
-			In:    buildInClause(phaseAvailable, phaseConstBindable),
+			In:    buildInClause(phaseAvailable, phaseConstBindable, invokes),
 			Where: cp.Clauses,
 		}
 		phaseAvailable = physicalInputSymbols(phaseQuery.In)
@@ -279,9 +286,12 @@ func buildFindClause(provides []query.Symbol, originalFind []query.FindElement, 
 
 // buildInClause preserves the binding modes required by a phase. Scalar inputs
 // are execution-environment constants; all other available symbols flow through
-// the phase relation.
-func buildInClause(available, scalarInputs []query.Symbol) []query.InputSpec {
+// the phase relation. A phase that invokes a predicate declares % after $.
+func buildInClause(available, scalarInputs []query.Symbol, invokes bool) []query.InputSpec {
 	inClause := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}}
+	if invokes {
+		inClause = append(inClause, query.RulesInput{})
+	}
 	scalarSet := make(map[query.Symbol]bool, len(scalarInputs))
 	for _, sym := range scalarInputs {
 		scalarSet[sym] = true

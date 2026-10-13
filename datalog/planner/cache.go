@@ -46,13 +46,14 @@ func NewPlanCache(maxSize int, ttl time.Duration) *PlanCache {
 	}
 }
 
-// GetWithOptions retrieves a cached RealizedPlan if it exists and is not expired
-func (c *PlanCache) GetWithOptions(q *query.Query, opts PlannerOptions) (*RealizedPlan, bool) {
+// GetWithOptions retrieves a cached RealizedPlan for a query under a rule
+// set if it exists and is not expired
+func (c *PlanCache) GetWithOptions(q *query.Query, rules *query.RuleSet, opts PlannerOptions) (*RealizedPlan, bool) {
 	if c == nil {
 		return nil, false
 	}
 
-	key := c.computeKeyWithOptions(q, opts)
+	key := c.computeKeyWithOptions(q, rules, opts)
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -74,13 +75,14 @@ func (c *PlanCache) GetWithOptions(q *query.Query, opts PlannerOptions) (*Realiz
 	return cached.plan, true
 }
 
-// SetWithOptions stores a RealizedPlan in the cache
-func (c *PlanCache) SetWithOptions(q *query.Query, plan *RealizedPlan, opts PlannerOptions) {
+// SetWithOptions stores a RealizedPlan for a query under a rule set in the
+// cache
+func (c *PlanCache) SetWithOptions(q *query.Query, rules *query.RuleSet, plan *RealizedPlan, opts PlannerOptions) {
 	if c == nil || plan == nil {
 		return
 	}
 
-	key := c.computeKeyWithOptions(q, opts)
+	key := c.computeKeyWithOptions(q, rules, opts)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -127,8 +129,9 @@ func (c *PlanCache) Stats() (hits, misses int64, size int) {
 	return atomic.LoadInt64(&c.hits), atomic.LoadInt64(&c.misses), len(c.cache)
 }
 
-// computeKeyWithOptions generates a deterministic key for a query with planner options
-func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) string {
+// computeKeyWithOptions generates a deterministic key for a query under a
+// rule set with planner options
+func (c *PlanCache) computeKeyWithOptions(q *query.Query, rules *query.RuleSet, opts PlannerOptions) string {
 	// Create a string representation that captures the query structure AND options
 	// This needs to be deterministic and capture all relevant aspects
 
@@ -146,6 +149,16 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) s
 		fmt.Fprintf(h, "%v;", clause)
 	}
 
+	// The positions the rule set requires of an invoked predicate decide the
+	// invocation's correlates, and so its phase, and the clause text does not
+	// carry them; each invocation, at any depth, contributes its predicate's
+	// required positions beside the text.
+	if rules != nil {
+		for _, inv := range query.Invocations(q.Where) {
+			fmt.Fprintf(h, "REQUIRED:%v:%v;", inv.Name, rules.Required(inv.Name))
+		}
+	}
+
 	// Hash in clause (but not the actual values, just the structure)
 	fmt.Fprintf(h, "IN:")
 	for _, input := range q.In {
@@ -160,6 +173,8 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) s
 			fmt.Fprintf(h, "TUPLE:%v;", inp.Symbols)
 		case query.RelationInput:
 			fmt.Fprintf(h, "RELATION:%v;", inp.Symbols)
+		case query.RulesInput:
+			fmt.Fprintf(h, "RULES;")
 		}
 	}
 

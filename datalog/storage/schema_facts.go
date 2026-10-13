@@ -180,11 +180,11 @@ type schemaFactWrite struct {
 // assertSchemaFacts asserts given's definitions into the store, each word that
 // differs from what stored holds, through one transaction. A word the given
 // definition carries and the stored one does not, or carries differently, is
-// asserted. A value type or uniqueness constraint the stored definition carries
-// and the given one does not is withdrawn, so it no longer resolves. A
-// definition stored does not hold is asserted whole. Nothing differing opens no
-// transaction: Commit writes a commit mark even for an empty transaction, and
-// an open that changes nothing writes nothing.
+// asserted. A value type, uniqueness constraint or doc string the stored
+// definition carries and the given one does not is withdrawn, so it no longer
+// resolves. A definition stored does not hold is asserted whole. Nothing
+// differing opens no transaction: Commit writes a commit mark even for an empty
+// transaction, and an open that changes nothing writes nothing.
 func assertSchemaFacts(d *Database, stored, given schema.SchemaProvider) error {
 	defs := given.Attributes()
 	slices.SortFunc(defs, func(a, b *schema.AttributeDefinition) int { return a.Ident.Compare(b.Ident) })
@@ -205,7 +205,9 @@ func assertSchemaFacts(d *Database, stored, given schema.SchemaProvider) error {
 			assert(schema.DBCardinality, def.Cardinality)
 			assert(schema.DBUniqueElements, def.UniqueElements)
 			assert(schema.DBNeverZeroValue, def.NeverZeroValue)
-			assert(schema.DBDoc, def.Doc)
+			if def.Doc != "" {
+				assert(schema.DBDoc, def.Doc)
+			}
 			if def.ValueType != nil {
 				assert(schema.DBValueType, def.ValueType)
 			}
@@ -223,7 +225,10 @@ func assertSchemaFacts(d *Database, stored, given schema.SchemaProvider) error {
 		if old.NeverZeroValue != def.NeverZeroValue {
 			assert(schema.DBNeverZeroValue, def.NeverZeroValue)
 		}
-		if old.Doc != def.Doc {
+		switch {
+		case def.Doc == "" && old.Doc != "":
+			withdraw(schema.DBDoc, old.Doc)
+		case def.Doc != "" && old.Doc != def.Doc:
 			assert(schema.DBDoc, def.Doc)
 		}
 		switch {
@@ -261,32 +266,37 @@ func assertSchemaFacts(d *Database, stored, given schema.SchemaProvider) error {
 	return nil
 }
 
+// errRefuseUnknownNeedsSchema is the refusal of a database that refuses
+// unknown attributes and has no schema to check them against: at open with
+// the option and no schema, and at SetSchema(nil) on such a database.
+var errRefuseUnknownNeedsSchema = errors.New("RefuseUnknownAttributes requires a schema to check attributes against: none was given")
+
 // installSchema reads the definitions the store holds, asserts the given
 // schema's when assertGiven is set, composes the schema the database runs
 // with, and installs it with the declared set.
 //
-// With a schema given, the effective schema is the declared set: the stored
-// definitions under the given ones. A supplied schema is authoritative, so
-// nothing is inferred. With none, the effective schema is the stored
-// definitions over the ones inferSchemaFromStore reads off the ops of
-// attributes that have datoms and no definition. Inferred definitions stay in
-// memory: they are a reading of the ops, never a declaration.
+// With a schema given, the effective schema is the given definitions over the
+// stored ones. A supplied schema is authoritative, so nothing is inferred.
+// With none, the effective schema is the stored definitions over the ones
+// inferSchemaFromStore reads off the ops of attributes that have datoms and
+// no definition. Inferred definitions stay in memory: they are a reading of
+// the ops, never a declaration.
 //
-// A rewind passes assertGiven false: the declarations are then what the
-// surviving facts state, and a schema given earlier is not re-asserted past
-// the snapshot it was withdrawn to.
+// A rewind passes assertGiven false: nothing is written, the declared set is
+// what the surviving facts state, and the given schema stays in force over
+// them until the next write of a schema re-asserts it.
 //
 // A database declaring nothing reports no schema, so a store with no
 // definitions and no datoms installs nil.
 //
 // A database that refuses unknown attributes checks them against the given
-// schema, so installing none on it is an error.
+// schema, so installing none on it is errRefuseUnknownNeedsSchema.
 func (d *Database) installSchema(assertGiven bool) error {
 	d.mu.RLock()
 	given := d.givenSchema
 	d.mu.RUnlock()
 	if d.refuseUnknown && given == nil {
-		return errors.New("RefuseUnknownAttributes requires a schema to check attributes against: none was given")
+		return errRefuseUnknownNeedsSchema
 	}
 	stored, err := readSchemaFacts(d)
 	if err != nil {
@@ -302,7 +312,7 @@ func (d *Database) installSchema(assertGiven bool) error {
 			}
 			declared = schema.Overlay(stored, given)
 		}
-		effective = declared
+		effective = schema.Overlay(stored, given)
 	} else {
 		inferred, err := inferSchemaFromStore(d.store)
 		if err != nil {
@@ -407,29 +417,14 @@ var engineAttributes = []datalog.Keyword{
 }
 
 // UnknownAttributes implements executor.AttributeVocabulary. On a database
-// opened with RefuseUnknownAttributes it refuses the attributes the query
-// names on the default source that the schema does not declare and the engine
-// does not reserve. On any other database it refuses nothing, and the query
-// is not walked.
-func (m *PatternMatcher) UnknownAttributes(q *query.Query) error {
+// opened with RefuseUnknownAttributes it refuses every attribute of the
+// roster that the schema does not declare and the engine does not reserve,
+// joined in order. On any other database it refuses nothing, and the roster
+// is not read.
+func (m *PatternMatcher) UnknownAttributes(attrs []datalog.Keyword) error {
 	if !m.refuseUnknown {
 		return nil
 	}
-	return m.unknownAmong(q.DefaultSourceAttributes())
-}
-
-// unknownPullAttributes is UnknownAttributes for a pull pattern, the check the
-// Pull family runs before executing.
-func (m *PatternMatcher) unknownPullAttributes(p *query.PullPattern) error {
-	if !m.refuseUnknown {
-		return nil
-	}
-	return m.unknownAmong(query.PullPatternAttributes(p))
-}
-
-// unknownAmong returns the refusals of every attribute of attrs that is
-// unknown, joined in order, or nil when every one is known.
-func (m *PatternMatcher) unknownAmong(attrs []datalog.Keyword) error {
 	var refusals []error
 	for _, attr := range attrs {
 		if !m.attributeKnown(attr) {
@@ -437,6 +432,15 @@ func (m *PatternMatcher) unknownAmong(attrs []datalog.Keyword) error {
 		}
 	}
 	return errors.Join(refusals...)
+}
+
+// unknownPullAttributes is UnknownAttributes over a pull pattern's roster,
+// the check the Pull family runs before executing.
+func (m *PatternMatcher) unknownPullAttributes(p *query.PullPattern) error {
+	if !m.refuseUnknown {
+		return nil
+	}
+	return m.UnknownAttributes(query.PullPatternAttributes(p))
 }
 
 // attributeKnown reports whether the schema declares attr or the engine

@@ -611,8 +611,15 @@ func readMemoryBlob(entries map[string][]byte, hash [20]byte, read func([]byte) 
 	return read(value)
 }
 
+// memoryScanChunkKeys is how many keys a refill takes from the tree. A consumer
+// that pulls one key, as maxElementIDByScan does for every query's cache bound,
+// pays one chunk, whatever the range holds.
+const memoryScanChunkKeys = 256
+
 type memoryIterator struct {
-	index    IndexType
+	index IndexType
+	// keys is the chunk the cursor walks: every key of the scan's range, or,
+	// when tree is set, the keys of the range from chunkStart up to chunkEnd.
 	keys     [][]byte
 	position int
 	// scanned counts keys taken from the range, including the ones the
@@ -624,10 +631,21 @@ type memoryIterator struct {
 	// start, its end and its membership rule together, and adopting a subset of
 	// the three yields a run nobody asked for.
 	membership runMembership
-	// end is the current run's exclusive upper bound. keys already holds only
-	// the scan's own range, so this is what a seek to a narrower run inside it
-	// stops at.
-	end          []byte
+	// end is the current run's exclusive upper bound, inside the scan's own
+	// range, which keys never leaves. A seek to a narrower run stops here.
+	end []byte
+	// tree, when set, is the cloned key tree the cursor takes its chunks from.
+	// rangeStart and rangeEnd are the scan's own range. The chunk in hand
+	// covers [chunkStart, chunkEnd), a nil chunkEnd meaning the range's end and
+	// a nil chunkStart that no chunk is in hand; the next one starts at resume,
+	// unless exhausted says the range holds no key past the chunk in hand.
+	tree         *btree.BTreeG[string]
+	rangeStart   []byte
+	rangeEnd     string
+	chunkStart   []byte
+	chunkEnd     []byte
+	resume       string
+	exhausted    bool
 	encoder      *BinaryKeyEncoder
 	blobs        BlobReader
 	currentDatom datalog.Datom
@@ -649,6 +667,44 @@ func (i *memoryIterator) positioned() bool {
 	return i.membership.holds(i.keys[i.position])
 }
 
+// refill replaces the chunk in hand with the next chunk of the range, starting
+// at resume, and puts the cursor on its first key. It reports false when there
+// is no tree to take a chunk from, and when the range holds no key past the
+// chunk in hand.
+func (i *memoryIterator) refill() bool {
+	if i.tree == nil || i.exhausted {
+		return false
+	}
+	i.keys = i.keys[:0]
+	i.chunkStart = []byte(i.resume)
+	i.chunkEnd = nil
+	i.exhausted = true
+	i.tree.AscendRange(i.resume, i.rangeEnd, func(encoded string) bool {
+		if len(encoded) == blobKeyLen && encoded[0] == blobKeyPrefix {
+			return true
+		}
+		if len(i.keys) == memoryScanChunkKeys {
+			i.chunkEnd = []byte(encoded)
+			i.resume = encoded
+			i.exhausted = false
+			return false
+		}
+		i.keys = append(i.keys, []byte(encoded))
+		return true
+	})
+	i.position = 0
+	return len(i.keys) > 0
+}
+
+// chunkHolds reports whether the chunk in hand covers start, so a seek there
+// is a search of the chunk.
+func (i *memoryIterator) chunkHolds(start []byte) bool {
+	if i.chunkStart == nil || bytes.Compare(start, i.chunkStart) < 0 {
+		return false
+	}
+	return i.chunkEnd == nil || bytes.Compare(start, i.chunkEnd) < 0
+}
+
 // Next advances to the next key the run holds, stepping over the keys its byte
 // range over-covers.
 func (i *memoryIterator) Next() bool {
@@ -658,7 +714,7 @@ func (i *memoryIterator) Next() bool {
 	i.hasDatom = false
 	for {
 		i.position++
-		if i.position >= len(i.keys) {
+		if i.position >= len(i.keys) && !i.refill() {
 			return false
 		}
 		// Past the run's end ends the iteration; it is not a key to step over.
@@ -735,10 +791,23 @@ func (i *memoryIterator) Seek(bound ScanBound) {
 	// remainder.
 	i.membership = run.Membership
 	i.end = run.End
+	i.hasDatom = false
+	if i.tree != nil && !i.chunkHolds(run.Start) {
+		// The run starts outside the chunk in hand, so the next refill takes
+		// its chunk from the tree at the run's start, inside the scan's range.
+		i.keys = i.keys[:0]
+		i.chunkStart, i.chunkEnd = nil, nil
+		i.resume = string(run.Start)
+		if bytes.Compare(run.Start, i.rangeStart) < 0 {
+			i.resume = string(i.rangeStart)
+		}
+		i.exhausted = false
+		i.position = -1
+		return
+	}
 	i.position = sort.Search(len(i.keys), func(index int) bool {
 		return bytes.Compare(i.keys[index], run.Start) >= 0
 	}) - 1
-	i.hasDatom = false
 }
 
 func (i *memoryIterator) ElementID() datalog.ElementID {

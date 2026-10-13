@@ -150,7 +150,7 @@ func environmentRelationFromInputs(in []query.InputSpec, inputRelations []Relati
 	relationIndex := 0
 	for _, input := range in {
 		switch inp := input.(type) {
-		case query.DatabaseInput:
+		case query.DatabaseInput, query.RulesInput:
 			continue
 		case query.ScalarInput:
 			if relationIndex < len(inputRelations) && inputRelations[relationIndex] != nil {

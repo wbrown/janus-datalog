@@ -96,6 +96,13 @@ type SubqueryPlan struct {
 	Inputs   []query.Symbol         // Symbols this subquery needs from outer query
 }
 
+// InvocationPlan is a planned rule invocation: the clause and the variable
+// arguments available before it, which the derived relation joins on.
+type InvocationPlan struct {
+	Invocation *query.RuleInvocation
+	Bound      []query.Symbol
+}
+
 // BoundMask indicates which elements of a pattern are bound
 type BoundMask struct {
 	E bool // Entity bound
@@ -133,6 +140,11 @@ type PlannerOptions struct {
 	// Executor join/aggregation options
 	EnableStreamingJoins       bool // Return StreamingRelation from joins instead of materializing
 	EnableStreamingAggregation bool // Enable streaming aggregation (default: true)
+
+	// Rule evaluation bounds, each an error naming the predicates and the
+	// count reached when exceeded. Zero is unbounded (default: 0).
+	MaxRuleIterations int // Fixpoint iterations per stratum
+	MaxDerivedTuples  int // Tuples one rule set derives
 
 	// Handler receives annotation events from planning and execution. Nil is
 	// annotations-off and is the default. Registered here, on the options the
@@ -175,6 +187,7 @@ type RealizedPhase struct {
 	Expressions []ExpressionPlan // Expression plans with inputs/outputs
 	Predicates  []PredicatePlan  // Predicate plans with classification
 	Subqueries  []SubqueryPlan   // Subquery plans with nested queries
+	Invocations []InvocationPlan // Rule invocations with their bound arguments
 }
 
 // RealizedPlan is the output of the planner in the realized format.
@@ -250,6 +263,16 @@ func (rp *RealizedPhase) String() string {
 			sb.WriteString(fmt.Sprintf("  %s\n", subq.Subquery.String()))
 			if len(subq.Inputs) > 0 {
 				sb.WriteString(fmt.Sprintf("    Inputs: %v\n", subq.Inputs))
+			}
+		}
+	}
+
+	if len(rp.Invocations) > 0 {
+		sb.WriteString("Invocations:\n")
+		for _, inv := range rp.Invocations {
+			sb.WriteString(fmt.Sprintf("  %s\n", inv.Invocation.String()))
+			if len(inv.Bound) > 0 {
+				sb.WriteString(fmt.Sprintf("    Bound: %v\n", inv.Bound))
 			}
 		}
 	}

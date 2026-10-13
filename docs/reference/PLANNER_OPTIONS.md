@@ -1,6 +1,5 @@
 # Planner Options Reference
 
-**Last Updated**: 2026-07-19
 **Status**: Current with the clause-based planner
 
 ## Overview
@@ -44,6 +43,9 @@ type PlannerOptions struct {
 
     EnableStreamingJoins       bool // opt-in
     EnableStreamingAggregation bool // default-active
+
+    MaxRuleIterations int // opt-in, 0 = unbounded
+    MaxDerivedTuples  int // opt-in, 0 = unbounded
 }
 ```
 
@@ -64,11 +66,13 @@ EnableParallelSubqueries:   true
 MaxSubqueryWorkers:         0      // executor default: 4 workers
 EnableStreamingJoins:       false
 EnableStreamingAggregation: true
+MaxRuleIterations:          0      // unbounded
+MaxDerivedTuples:           0      // unbounded
 ```
 
 So, off by default (opt-in): `EnableJoinProjectInsertion`,
-`EnableScanSharing`, `EnableEntityPrefetch`, `EnableSymmetricHashJoin`, and
-`EnableStreamingJoins`.
+`EnableScanSharing`, `EnableEntityPrefetch`, `EnableSymmetricHashJoin`,
+`EnableStreamingJoins`, `MaxRuleIterations` and `MaxDerivedTuples`.
 
 ---
 
@@ -141,6 +145,24 @@ uses 3.78% more memory, and performs 8.34% more allocations than the default
 #### EnableStreamingAggregation — **default-active**
 Streaming aggregation (no full materialization of the input). Consumed in
 `executor/aggregation.go`.
+
+### Rule evaluation bounds
+
+#### MaxRuleIterations — **opt-in** (default 0)
+The fixpoint iterations one stratum of a rule set may run. `0` is unbounded.
+Exceeded, the query returns `*query.RuleIterationLimitError` naming the
+stratum's predicates, the limit and the iteration reached. Consumed in
+`executor/rules.go`.
+
+#### MaxDerivedTuples — **opt-in** (default 0)
+The tuples one invocation may derive when it is evaluated. A rewritten set's
+magic predicates count too. `0` is unbounded. Exceeded, the query returns
+`*query.DerivedTupleLimitError` naming the predicates, the limit and the
+count reached. Consumed in `executor/rules.go`.
+
+Both bound the evaluation of a rule set the caller does not control. See
+[RULES.md](RULES.md). Cancellation is a query option, `WithContext`, not a
+planner option.
 
 ### Plan cache
 

@@ -55,21 +55,16 @@ func (s *memoryReadSession) scan(bound ScanBound) (Iterator, error) {
 	if closed || keysTree == nil {
 		return nil, errReadSessionClosed
 	}
-	// The cloned tree is never written, so the walk needs no store lock.
-	keys := make([][]byte, 0)
-	keysTree.AscendRange(string(run.Start), string(run.End), func(encoded string) bool {
-		key := []byte(encoded)
-		if len(key) == 21 && key[0] == blobKeyPrefix {
-			return true
-		}
-		keys = append(keys, key)
-		return true
-	})
+	// The cloned tree is never written, so the iterator takes its chunks from
+	// it with no store lock, as its consumer pulls.
 	return &memoryIterator{
 		index:      index,
-		keys:       keys,
 		position:   -1,
 		membership: run.Membership,
+		tree:       keysTree,
+		rangeStart: run.Start,
+		rangeEnd:   string(run.End),
+		resume:     string(run.Start),
 		encoder:    s.store.encoder,
 		blobs:      memoryBlobReader{store: s.store},
 	}, nil

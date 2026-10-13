@@ -60,6 +60,8 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 		switch inp := input.(type) {
 		case query.DatabaseInput:
 			expectedInputs++ // Database REQUIRES explicit $
+		case query.RulesInput:
+			expectedInputs++
 		case query.ScalarInput:
 			expectedInputs++
 		case query.RelationInput:
@@ -89,6 +91,18 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 					valueIndex++
 				} else {
 					return nil, fmt.Errorf("subquery input: expected a database source ($) at position %d "+
+						"of nested :in (%v), got %v", valueIndex, inputs, orderedValues[valueIndex])
+				}
+			}
+
+		case query.RulesInput:
+			// The rule set rides the execution context; the marker at this
+			// position binds no relation.
+			if valueIndex < len(orderedValues) {
+				if sym, ok := orderedValues[valueIndex].(query.Symbol); ok && sym == datalog.SymRules {
+					valueIndex++
+				} else {
+					return nil, fmt.Errorf("subquery input: expected the rules marker (%%) at position %d "+
 						"of nested :in (%v), got %v", valueIndex, inputs, orderedValues[valueIndex])
 				}
 			}

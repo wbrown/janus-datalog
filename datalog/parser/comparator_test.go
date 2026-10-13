@@ -176,7 +176,7 @@ func TestComparatorErrors(t *testing.T) {
 			name: "function not in vector",
 			input: `[:find ?x
                      :where (< ?x 10)]`,
-			error: "unknown list clause type",
+			error: "rule invocation (< ?x 10) requires % in :in",
 		},
 		{
 			name: "empty function",

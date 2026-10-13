@@ -77,7 +77,7 @@ func TestClauseBasedPlannerPlansOptimizedDatalog(t *testing.T) {
 		names = append(names, event.Name)
 	}
 	plan, err := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: true}).
-		Plan(parsed, handler)
+		Plan(parsed, Bindings{}, handler)
 	require.NoError(t, err)
 	require.NoError(t, plan.Validate())
 	require.Contains(t, names, "algebra/bridge-complete")
@@ -99,7 +99,7 @@ func TestClauseBasedPlannerLowersJoinProjectIntoNestedDatalog(t *testing.T) {
 		EnableAlgebraOptimizer:     true,
 		EnableJoinProjectInsertion: true,
 	}).
-		Plan(parsed, nil)
+		Plan(parsed, Bindings{}, nil)
 	require.NoError(t, err)
 	require.NoError(t, plan.Validate())
 	require.Len(t, plan.Phases, 1)
@@ -139,7 +139,7 @@ func TestClauseBasedPlannerKeepsInputSymbolsLiveAcrossJoinPlanning(t *testing.T)
 	require.NoError(t, err)
 
 	plan, err := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: true}).
-		Plan(parsed, nil)
+		Plan(parsed, Bindings{}, nil)
 	require.NoError(t, err)
 	require.NoError(t, plan.Validate())
 	require.Len(t, plan.Phases, 1)

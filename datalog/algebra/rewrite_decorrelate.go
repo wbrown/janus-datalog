@@ -395,7 +395,7 @@ func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]pa
 	// equality correlates on) is not a symbol the grouped result can carry.
 	var provided []query.Symbol
 	for _, c := range q.Where {
-		for _, sym := range query.ScopeOf(c).Provides {
+		for _, sym := range query.ScopeOf(c, nil).Provides {
 			if !query.ContainsSymbol(provided, sym) {
 				provided = append(provided, sym)
 			}
@@ -432,7 +432,7 @@ func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]pa
 				// Compound clauses, expressions, chained comparisons,
 				// nested subqueries, database functions: any mention is a
 				// consumption shape the translation does not cover.
-				if query.ContainsSymbol(query.ScopeOf(c).Correlates, param) {
+				if query.ContainsSymbol(query.ScopeOf(c, nil).Correlates, param) {
 					otherUse = true
 				}
 			}

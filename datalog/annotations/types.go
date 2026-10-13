@@ -122,6 +122,19 @@ const (
 	SubqueryInputRelation     = "subquery/input-relation"
 	SubqueryInputCombinations = "subquery/input-combinations"
 
+	// Rule evaluation: one stratum's fixpoint, begun, iterated and completed.
+	// RulesIteration carries the iteration number and the delta size per
+	// predicate; RulesStratumComplete the iterations run and the tuples
+	// derived.
+	RulesStratumBegin    = "rules/stratum.begin"
+	RulesIteration       = "rules/iteration"
+	RulesStratumComplete = "rules/stratum.complete"
+
+	// RulesMagicSets is the rewrite decision for one invocation with bound
+	// arguments: the predicate, its adornment (bound per position), whether
+	// the rewrite was applied, and the reason when it was declined.
+	RulesMagicSets = "rules/magic-sets"
+
 	// Algebra bridge and rewrites
 	AlgebraBridgeBegin               = "algebra/bridge-begin"
 	AlgebraBridgeComplete            = "algebra/bridge-complete"

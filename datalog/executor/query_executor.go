@@ -35,6 +35,10 @@ type DefaultQueryExecutor struct {
 	matcher        PatternMatcher
 	entityResolver EntityResolver
 	options        ExecutorOptions
+
+	// executor is the executor whose plan this one runs clauses for. An
+	// invocation clause plans and runs a fixpoint through it.
+	executor *Executor
 }
 
 // newQueryExecutor creates a new DefaultQueryExecutor.
@@ -43,7 +47,8 @@ type DefaultQueryExecutor struct {
 // or NewExecutorWithOptions which go through the planner. The only legitimate use
 // of this function in tests is for unit testing internal executor methods like
 // executePattern or executeExpression. End-to-end and integration tests must use
-// the public API to ensure the planner is exercised.
+// the public API to ensure the planner is exercised. It carries no executor, so
+// an invocation clause that must derive its predicate is not reachable through it.
 func newQueryExecutor(matcher PatternMatcher, resolver EntityResolver, options ExecutorOptions) *DefaultQueryExecutor {
 	return &DefaultQueryExecutor{
 		matcher:        matcher,
@@ -95,7 +100,7 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 					patternQuery.OrderBy = q.OrderBy
 					patternQuery.Limit = q.Limit
 				}
-				newRel, err := e.executePattern(ctx, patternQuery, c, groups)
+				newRel, err := e.executePattern(patternQuery, c, groups)
 				if err != nil {
 					return nil, fmt.Errorf("clause %d (pattern) failed: %w", i, err)
 				}
@@ -169,6 +174,16 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 			if newRel != nil {
 				groups = append(groups, newRel)
 			}
+			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(e.options.Handler))
+			}))
+
+		case *query.RuleInvocation:
+			newRel, err := e.executeRuleInvocation(ctx, c, groups)
+			if err != nil {
+				return nil, fmt.Errorf("clause %d (rule invocation) failed: %w", i, err)
+			}
+			groups = append(groups, newRel)
 			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(e.options.Handler))
 			}))
@@ -520,7 +535,6 @@ func (e *DefaultQueryExecutor) renderConstantFindSymbols(env Relation, q *query.
 // executePattern executes a data pattern using the PatternMatcher
 // Patterns produce new relations from storage that get joined with existing groups
 func (e *DefaultQueryExecutor) executePattern(
-	ctx *Context,
 	q *query.Query,
 	pattern *query.DataPattern,
 	groups []Relation,
@@ -533,11 +547,7 @@ func (e *DefaultQueryExecutor) executePattern(
 	// Use PatternMatcher with current groups as bindings
 	// NOTE: bindings are used for pattern selection heuristics (FindBestForPattern)
 	// and potentially for batch scanning - they will also be joined with the result later
-	rel, err := e.matcher.Match(q, bindings)
-	if err != nil {
-		return nil, err
-	}
-	return rel, nil
+	return e.matcher.Match(q, bindings)
 }
 
 type attributeFetchSpec struct {
@@ -1623,7 +1633,7 @@ func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx *Context, bran
 	// rule), so every branch free variable — including correlates consumed
 	// only by a branch NOT or predicate — selects its binding group into
 	// the outer relation.
-	outerRel, consumed := e.findOuterRelation(branchFreeVariables(branches), groups)
+	outerRel, consumed := e.findOuterRelation(branchFreeVariables(branches, ctx.Rules()), groups)
 	rel := NewOrFallbackRelation(e, ctx, branches, outerRel, e.options, false)
 	rel.consumedGroups = consumed
 	return rel, nil
@@ -1634,7 +1644,7 @@ func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx *Context, bran
 func (e *DefaultQueryExecutor) executeOrDefaultClause(ctx *Context, clause *query.OrDefaultClause, groups Relations) (Relation, error) {
 	// Inference form: outer-group selection by every branch free variable,
 	// as in executeOrClauseCorrelatedUnion above.
-	outerRel, consumed := e.findOuterRelation(branchFreeVariables(clause.Branches), groups)
+	outerRel, consumed := e.findOuterRelation(branchFreeVariables(clause.Branches, ctx.Rules()), groups)
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
 	rel.consumedGroups = consumed
 	return rel, nil
@@ -1653,7 +1663,7 @@ func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx *Context, clause *
 	// OutputVars are branch-produced, not unification demands on the outer.
 	// The canonical scope (Provides = OutputVars, Correlates = RequiredVars)
 	// drives branch visibility, matching the declared interface exactly.
-	scope := query.ScopeOf(clause)
+	scope := query.ScopeOf(clause, ctx.Rules())
 	requiredSet := make(map[query.Symbol]bool, len(scope.Correlates))
 	for _, v := range scope.Correlates {
 		requiredSet[v] = true
@@ -1913,7 +1923,7 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx *Context, 
 	// plus branch externals) selects the outer groups it unifies with, so a
 	// correlate consumed only by a branch NOT/predicate pulls its binding
 	// group into the outer relation instead of turning existential.
-	scope := query.ScopeOf(clause)
+	scope := query.ScopeOf(clause, ctx.Rules())
 	interfaceSet := make(map[query.Symbol]bool, len(scope.Provides)+len(scope.Correlates))
 	for _, v := range scope.Provides {
 		interfaceSet[v] = true
@@ -1988,7 +1998,7 @@ func (e *DefaultQueryExecutor) executeNotClause(ctx *Context, clause *query.NotC
 	// interface the planner schedules on. filterWithNotClause intersects
 	// them with the subject's schema: bound variables unify, the rest are
 	// existential (Datomic's unification rule).
-	joinVars := query.FreeVariables(clause.Clauses)
+	joinVars := query.FreeVariables(clause.Clauses, ctx.Rules())
 	if len(joinVars) == 0 {
 		return nil, fmt.Errorf("not clause has no variables to join on")
 	}
@@ -2208,7 +2218,7 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx *Context, clause *que
 		inputSymSet[sym] = true
 	}
 	env := ctx.Environment()
-	bodyVars := query.FreeVariables(clause.Clauses)
+	bodyVars := query.FreeVariables(clause.Clauses, ctx.Rules())
 	var keyVars []query.Symbol
 	for _, v := range clause.JoinVars {
 		if !query.ContainsSymbol(bodyVars, v) {
@@ -2326,7 +2336,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx *Context, clauses []query
 		switch c := clause.(type) {
 		case *query.DataPattern:
 			patternQuery := &query.Query{Where: []query.Clause{c}}
-			newRel, err := e.executePattern(ctx, patternQuery, c, groups)
+			newRel, err := e.executePattern(patternQuery, c, groups)
 			if err != nil {
 				return nil, err
 			}
@@ -2358,6 +2368,14 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx *Context, clauses []query
 			if newRel != nil {
 				groups = append(groups, newRel)
 			}
+			groups = groups.Collapse(e.options.Handler)
+
+		case *query.RuleInvocation:
+			newRel, err := e.executeRuleInvocation(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+			groups = append(groups, newRel)
 			groups = groups.Collapse(e.options.Handler)
 
 		case *query.NotClause:

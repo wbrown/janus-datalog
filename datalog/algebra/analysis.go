@@ -144,6 +144,13 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			copy.Symbols = cloneSymbols(data.Symbols)
 			copy.Values = append([]interface{}(nil), data.Values...)
 			refreshed.Data = &copy
+		case *Derived:
+			if len(children) != 0 {
+				return nil, fmt.Errorf("refresh Derived: expected no children, got %d", len(children))
+			}
+			copy := *data
+			copy.Output = cloneSymbols(data.Output)
+			refreshed.Data = &copy
 		default:
 			return nil, fmt.Errorf("refresh %s: unsupported operator data %T", node.Op, node.Data)
 		}
@@ -215,6 +222,8 @@ func analyzeNode(node *Node, result map[*Node]Analysis) (Analysis, error) {
 		analysis, err = analyzeAggregate(node, children)
 	case RuleConstant:
 		analysis, err = analyzeConstant(node, children)
+	case RuleDerived:
+		analysis, err = analyzeDerived(node, children)
 	default:
 		err = fmt.Errorf("unknown algebra operator %q", node.Op)
 	}
@@ -543,6 +552,23 @@ func analyzeConstant(node *Node, children []Analysis) (Analysis, error) {
 		return Analysis{}, fmt.Errorf("constant symbol arity %d does not match value arity %d", len(data.Symbols), len(data.Values))
 	}
 	return Analysis{Output: data.Symbols}, nil
+}
+
+func analyzeDerived(node *Node, children []Analysis) (Analysis, error) {
+	if err := requireChildCount(node.Op, children, 0); err != nil {
+		return Analysis{}, err
+	}
+	data, ok := node.Data.(*Derived)
+	if !ok {
+		return Analysis{}, dataTypeError(node, "*algebra.Derived")
+	}
+	if data.Invocation == nil {
+		return Analysis{}, fmt.Errorf("derived node has nil invocation")
+	}
+	if !sameSymbolsInOrder(data.Output, data.Invocation.Variables()) {
+		return Analysis{}, fmt.Errorf("derived output %v does not match the invocation's variables %v", data.Output, data.Invocation.Variables())
+	}
+	return Analysis{Output: data.Output}, nil
 }
 
 func requireChildCount(operator string, children []Analysis, expected int) error {

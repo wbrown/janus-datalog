@@ -16,7 +16,7 @@
 
 Six additions, each landing on a seam the engine already has:
 
-1. **Rules and recursion.** Rules passed as `%`, evaluated to a fixpoint with semi-naive iteration, stratified negation, and caller-set bounds. The derived relation joins the rest of the query through the executor's relation inputs.
+1. **Rules and recursion.** Rules passed as `%`, evaluated to a fixpoint with semi-naive iteration, stratified negation, and caller-set bounds. The derived relation joins the rest of the query through the invocation clause.
 2. **Witnesses.** For a result tuple, the base datoms and rules that derived it. For an expected tuple that is absent, the first clause that failed and the bindings reached. For a datom, the commit that asserted it, with the commit carrying caller attributes.
 3. **Speculative values.** `With`, a read-only database value over the base plus an uncommitted overlay of adds and removes, on every backend. `Diff`, a query evaluated against two database values with the two differences of the results returned.
 4. **Schema as facts.** Attribute definitions stored as system datoms, queryable with patterns and carried by dumps.
@@ -46,39 +46,45 @@ Everything below is design. Nothing in it describes what the engine does today u
 
 ## 1. Rules and recursion
 
+This section describes what the engine does.
+
 ### 1.1 Syntax and types
 
-The syntax is [RECURSIVE_RULES.md](RECURSIVE_RULES.md)'s: a rule set is a vector of clauses, each `[(name ?args...) body...]`, passed as the `%` input and invoked as `(name ?args...)` in `:where`. Several clauses for one head are alternatives.
+The syntax is [RECURSIVE_RULES.md](RECURSIVE_RULES.md)'s. A rule set is a vector of rules, each `[(name ?args...) body...]`. It is passed as the `%` input. A predicate is invoked as `(name args...)` in `:where`. An argument is a variable, a constant or `_`. Several rules for one head are alternatives. A head may begin with a vector of variables, the required-binding form `[(rule [?x] ?y) ...]`. The caller binds those positions.
 
-Types in `datalog/query`: `Rule` (head name, head symbols, body clauses), `RuleSet` (rules grouped by head name), and `RuleInvocation` as a clause. The parser accepts `%` in `parseInputSpec` and a list whose head is a rule name in the clause dispatch, which today recognizes a fixed set of keywords.
+Types in `datalog/query`:
+
+- `Rule`: the head name, the head symbols, the required run, and the body clauses.
+- `RuleSet`: the rules grouped by name, each predicate's arity and required positions, the strata, and the attribute roster the bodies name, collected once. `Required` reports a predicate's required positions. `Magic` rewrites the set for a binding pattern.
+- `RuleInvocation`, a clause: the name and the arguments. Its scope is read from the rule set the query runs with: `ScopeOf(clause, rules)` makes the variables at the predicate's required positions mandatory correlates and provides the rest.
+- `RulesInput`: the `%` input spec.
+- The predicates the engine mints are symbols in namespaces of the engine's: `adorned.bf/reach` is `reach` adorned with a binding pattern, `magic.bf/reach` its magic predicate, and `delta/reach` the tuples the last iteration of its stratum added (`DeltaSymbol`). The kind leads the namespace and the predicate's own namespace follows it. `NewRuleSet` refuses a rule set that declares a predicate in one of these namespaces.
+
+`parser.ParseRules` parses a rule set. `parseInputSpec` accepts `%`. A list clause whose head names no reserved form is an invocation. An invocation requires `%` in its query's own `:in`. The query builder has `qb.Rules`, `qb.Rule`, `qb.DefineRule`, `qb.RuleSet`, `qb.MustRuleSet` and `Require`. The CLI reads the `-in` value at the `%` position as rule text.
 
 ### 1.2 Safety and stratification
 
-A rule is safe when every head symbol, and every symbol in a negated or comparison literal, appears in a positive body literal. An unsafe rule is a parse error naming the rule and the symbol.
+A rule is safe when every variable it must bind is bound. The variables it must bind are the head symbols and every symbol a predicate, an expression, a subquery input, an explicit-join header or a body invocation's required position consumes. A symbol is bound by a positive body clause or by the head's required run. An invocation binds its variable arguments at the positions its predicate does not require. `query.NewRuleSet` refuses an unsafe rule as `UnsafeRuleError` naming the rule and the symbol. It refuses an arity disagreement as `RuleArityError`. It refuses an invocation of an undefined predicate as `UnknownRuleError` naming the defined predicates. It refuses a required run that does not lead the head, or that differs between two rules of one predicate, naming the rule.
 
-The stratifier builds the predicate dependency graph, marks an edge through `not` or `not-join` negative, finds the strongly connected components, refuses any component holding a negative edge, and orders the rest. The refusal names the predicates on the cycle. Negation in a body reads only strata already complete. Aggregation inside a recursive component is refused in this round. A rule body may aggregate over a completed stratum through a subquery, as a query can today.
+The stratifier builds the predicate dependency graph. An edge through `not` or `not-join` is negative. The strongly connected components are the strata. A component holding a negative edge is refused as `UnstratifiableError` naming its predicates. The rest are ordered. A same-component invocation stands at the top level of a body or inside an `or` or `or-join` branch, where evaluation is monotone. Under `or-default`, `or-default-join` or a subquery it is refused as `NestedRecursionError` naming the rule, the predicate and the form: fallback is non-monotone, and a subquery is where aggregation over the component would hide. Aggregation inside a recursive component is refused in this round. A rule body aggregates over a completed stratum through a subquery, as a query does.
 
 ### 1.3 Evaluation
 
-Each stratum evaluates bottom-up to a fixpoint. Semi-naive iteration joins only the previous iteration's delta against the full relations, and stops when the delta is empty. The derived relation is a `MaterializedRelation`, since fixpoint detection needs the whole set, and set semantics give the delta for free: a tuple already present is not new.
+The rule set rides the execution context as the environment does. `convertInputsToRelations` consumes the `%` input. `Database.Query` puts the rule set on the `executor.Context`. `ExecuteWithRelations` checks every invocation against the set and plans the query under `planner.Bindings`: the symbols the inputs bind and the rule set. The planner reads an invocation's scope from the rule set, so it orders the invocation after the clauses that bind its required positions. It reads from the invoked predicate's name whether a seed restricts its relation: an invocation of a magic or adorned predicate, or of the delta of one, is scheduled before the patterns, which then seek on what it binds. The planner's input is the query and those bindings, and every phase it returns declares `%` when it invokes a predicate and parses back to itself.
 
-A rule body is an ordinary `query.Query` whose rule invocations are replaced by relation inputs. Each iteration runs the body with the delta bound as the relation input for the invoked predicate and the full relation for the others. The executor plans and runs the body as it plans any query. Base-fact patterns in a body stream from storage through the usual matcher. The whole fixpoint runs inside one `ReadSession`, so every iteration reads one snapshot.
+An invocation evaluates its predicate when its clause runs. Its bound positions are those holding a constant, or a variable the environment or a relation group binds. With none bound, the needed strata evaluate to a fixpoint and the invocation reads the predicate whole. With some bound, the rule set is rewritten for the binding pattern. Each predicate the bindings reach gets an adorned copy (`adorned.bf/reach`) guarded by a magic predicate (`magic.bf/reach`). The bindings pass left to right through each body into the invocations after them. A subquery body is not entered. The bound values, projected from the relation groups, seed the magic predicate. The rewritten set evaluates as any set does. The invocation reads the adorned predicate. A rewrite whose result does not stratify is declined. The predicate is then derived whole, and the decline is recorded as a `rules/magic-sets` event.
 
-The invoking query receives the derived relation as a relation input and joins it on the invocation's symbols. Phasing, selectivity scoring and the Cartesian-product check see a rule invocation as a clause that provides its head symbols.
+A recursive stratum iterates semi-naively. Iteration 0 absorbs the seed, when the stratum has one, and runs the rules with no same-stratum invocation. Each later iteration runs, for each rule and each same-stratum occurrence in its body, a copy of the body in which that occurrence invokes the predicate's delta symbol, `delta/reach`. The scope holds the previous iteration's delta under that symbol, so the occurrence reads it. Every other occurrence reads the full relation. The tuples not yet derived become the next delta. The stratum ends when every delta is empty. A body is an ordinary `query.Query`, planned under the rule set. Its plan enters the plan cache under its own text, which carries `%` and the delta symbols, so the cached plan is the one the fixpoint would make. The executor runs it through its phase executor, so base patterns stream from storage and an invocation's relation joins at collapse. The whole fixpoint runs inside the query's one `ReadSession`, so every iteration reads one snapshot.
+
+The invoking query receives the derived relation through the invocation clause, projected onto its arguments: renamed to the variables, filtered by the constants, the repeated variables and the environment's bindings, with blanks dropped. Phasing and selectivity scoring see an invocation as a data source. It provides its variables. It requires the positions its predicate declares as required.
 
 ### 1.4 Bounds
 
-Two fields on `PlannerOptions`: a maximum iteration count per stratum and a maximum derived-tuple count per rule set. Either exceeded is an error naming the predicate and the count reached.
+Two fields on `PlannerOptions`: `MaxRuleIterations` per stratum, and `MaxDerivedTuples` per evaluation of an invocation, the magic predicates counted. Zero is unbounded. Either exceeded is `RuleIterationLimitError` or `DerivedTupleLimitError` naming the predicates, the limit and the count reached.
 
 ### 1.5 Tests
 
-- A transitive closure on a chain and on a cycle, checked against a closure computed by hand, in both optimizer modes.
-- A stratified rule set with negation over a completed stratum, checked by hand.
-- An unstratifiable rule set refused with the cycle named.
-- An unsafe rule refused with the symbol named.
-- A rule invocation inside a subquery, inside an `or-join` branch, and under a `not-join`.
-- The iteration cap and the tuple cap each tripped on a rule set built to exceed them.
-- A benchmark: closure over edge sets of one thousand, ten thousand and one hundred thousand edges.
+`datalog/query/rules_test.go` (the set and its refusals) and `datalog/query/magic_test.go` (the rewrite), `datalog/parser/rules_test.go`, `datalog/executor/rules_test.go` (the fixpoint, the invocation's projection, the naive step against the semi-naive one, the bound invocation), `datalog/storage/rules_test.go` (the closure on a chain and on a cycle, stratified negation, invocations in a subquery, in `or`, `or-join`, `or-default` and `or-default-join` branches and under `not-join`, bound, constant and blank arguments, the required head, the caps, one snapshot, on the backend and optimizer matrix), `datalog/qb/rules_test.go` and `cmd/datalog/rules_test.go`. `BenchmarkTransitiveClosure` in `datalog/executor` (semi-naive against naive) and in `datalog/storage` measures the closure at a thousand, ten thousand and a hundred thousand edges. `BenchmarkBoundInvocation` beside each measures the closure with its start bound to one node. The numbers are in `PERFORMANCE_STATUS.md`.
 
 ---
 
@@ -183,9 +189,9 @@ With witnesses on, each tuple in `added` and `removed` carries its witnesses fro
 
 ## 4. Schema as facts
 
-This section describes what the engine does. Each attribute definition is an entity, `db.attribute/<ident>`, content-addressed from the ident so a definition asserted anywhere converges on one entity. It carries one fact per field of the definition under the well-known words `:db/ident`, `:db/valueType`, `:db/cardinality`, `:db/unique`, `:db/uniqueElements`, `:db/neverZeroValue` and `:db/doc`; a value type or uniqueness constraint a later declaration drops is withdrawn and stops resolving.
+This section describes what the engine does. Each attribute definition is an entity, `db.attribute/<ident>`, content-addressed from the ident so a definition asserted anywhere converges on one entity. It carries one fact per field of the definition under the well-known words `:db/ident`, `:db/valueType`, `:db/cardinality`, `:db/unique`, `:db/uniqueElements`, `:db/neverZeroValue` and `:db/doc`; a value type, uniqueness constraint or doc string a later declaration drops is withdrawn and stops resolving.
 
-A schema given at open is asserted into the store in one transaction holding only the words that differ from what the store holds, so a reopen with an unchanged schema writes nothing. A store opened with no schema reads its definitions back and runs with them, inferring from the ops only the attributes that carry datoms and no definition. A dump carries the definitions as datoms, and `Import` and `ImportBinary` end by reading them, so `db.Open` on a dump resolves a set as its writer declared it. A database opened with a schema re-asserts it after the import, and the given schema supersedes the dump's definitions for the idents it names (§9). A fork asserts its parent's declared definitions into the branch, and `TruncateTo` runs with the definitions that survive the rewind.
+A schema given at open is asserted into the store in one transaction holding only the words that differ from what the store holds, so a reopen with an unchanged schema writes nothing. A store opened with no schema reads its definitions back and runs with them, inferring from the ops only the attributes that carry datoms and no definition. A dump carries the definitions as datoms, and `Import` and `ImportBinary` end by reading them, so `db.Open` on a dump resolves a set as its writer declared it. A database opened with a schema re-asserts it after the import, and the given schema supersedes the dump's definitions for the idents it names (§9). A fork asserts its parent's declared definitions into the branch, and `TruncateTo` runs with the given schema over the definitions that survive the rewind, writing nothing.
 
 The facts are queryable with patterns:
 
@@ -206,20 +212,23 @@ Tests: `datalog/storage/schema_facts_test.go` and `unknown_attribute_test.go`, t
 
 ## 5. Errors and bounds
 
-Every error a query author can repair names the thing to repair:
+Every error a query author can repair names the thing to repair. The rule and attribute errors exist. The witness error is design:
 
-- an unsafe rule: the rule and the symbol
-- an unstratifiable rule set: the predicates on the negative cycle
-- an unknown rule invocation: the invoked name and the rule set's predicate names
-- an attribute the schema does not declare, on a database opened to refuse them: the attribute
+- an unsafe rule: the rule and the symbol (`query.UnsafeRuleError`)
+- an unstratifiable rule set: the predicates on the negative cycle (`query.UnstratifiableError`)
+- a recursive invocation inside a fallback or a subquery: the rule, the predicate and the form (`query.NestedRecursionError`)
+- an unknown rule invocation: the invoked name and the rule set's predicate names (`query.UnknownRuleError`)
+- an invocation at the wrong arity: the predicate, the arity expected and the arity found (`query.RuleArityError`)
+- a required position left free: the predicate, the variable and the invoking rule (`query.RequiredBindingError`)
+- an attribute the schema does not declare, on a database opened to refuse them: the attribute (`schema.UnknownAttributeError`)
 - a witness fold refused: the clause or function that blocks it
-- a bound exceeded: the predicate, the cap, and the count reached
+- a bound exceeded: the predicates, the cap, and the count reached (`query.RuleIterationLimitError`, `query.DerivedTupleLimitError`)
 
 `ClauseBlockers` is the pattern: the error carries the symbols, not only a sentence.
 
-Bounds: the iteration and tuple caps of §1.4, and query cancellation through a `context.Context` accepted by `Query`, `Explain` and `Diff`, which the roadmap lists as timeout and cancellation. A cancelled query returns the context's error from the iterator's `Error()` at the next `Next()`, through every operator, under the iterator-error contract.
+Bounds: the iteration and tuple caps of §1.4, and query cancellation through `WithContext`. `WithContext` is a query option passed among the inputs of `Query`, `QueryInto`, `QueryOneInto`, `Explain`, `ExplainAlgebra` and `Analyze` (`storage.WithContext`, re-exported as `db.WithContext`). A query whose context is done is refused at entry, before any work. A fixpoint whose context is done stops at its next iteration. The context's error is the query's error. The context is read at entry and once per iteration, never per tuple: the fixpoint is the one loop that can run without bound, and the caps are its primary guard. `Diff` (§3) takes the same option.
 
-Tests: each error above produced by a query built to produce it, and its named parts asserted. A cancelled closure stopping within one iteration.
+Tests: each rule and attribute error above is produced by a query built to produce it, with its named parts asserted, in `datalog/query/rules_test.go`, `datalog/query/magic_test.go` and `datalog/storage/rules_test.go`. A query cancelled before execution returns the context's error from `Query`, `QueryInto` and `Analyze`. A closure cancelled from its first iteration event stops at the next. Those are in `datalog/executor/cancellation_test.go`, `datalog/storage/cancellation_test.go` and `datalog/db/cancellation_test.go`.
 
 ---
 
@@ -260,7 +269,21 @@ Each runs under both optimizer modes. A benchmark that regresses the base query 
 ### Decisions this proposal takes
 
 - Witnesses are computed per query and never stored. The semiring is a fold at the result boundary, chosen by a planner option.
-- A rule invocation is a relation input to its body, and the derived relation is materialized. Base scans stream.
+- A rule invocation is a clause. It evaluates its predicate when it runs. The derived relation is materialized.
+- Base scans in a rule body stream.
+- The rule set rides the execution context as the environment does.
+- Cancellation rides a query option, `WithContext`, among the inputs of `Query` and its siblings. No caller's signature changes.
+- The query builder has rules: `qb.Rules`, `qb.Rule`, `qb.DefineRule`, `qb.RuleSet`.
+- A same-stratum invocation stands at the top level of a body or inside an `or` or `or-join` branch. Under `or-default`, `or-default-join` or a subquery it is refused.
+- A bound invocation evaluates only what its bindings reach, through the magic-set rewrite seeded by the bound values (ruled 2026-10-12). Whole evaluation is the case where nothing is bound.
+- The required-binding head is accepted. Its positions are the invocation's mandatory correlates, and the planner orders the invocation after their providers.
+- Sideways information passing in the rewrite is left to right. It stops at a subquery.
+- A rewrite whose result does not stratify is declined, and the predicate evaluates whole. The decline is recorded as an annotation event.
+- A rule body's plan enters the plan cache under its own text, which carries `%` and the delta symbols, so the cached plan is the one the fixpoint would make.
+- No fact reaches the planner on a clause field the text does not render (ruled 2026-10-12). The planner takes the rule set as input beside the bound symbols, the delta is a predicate with a symbol of its own, and a phase that invokes a predicate declares `%`.
+- The planner reads from an invoked predicate's name whether a seed restricts its relation, and schedules an invocation of a magic or adorned predicate, or of the delta of one, before the patterns (ruled 2026-10-12).
+- The predicates the engine mints are named in namespaces of the engine's, `adorned`, `magic` and `delta`, and a rule set may not declare a predicate there.
+- The naive baseline the benchmark measures is the semi-naive step driven with the full relation at every occurrence. There is no production flag and no second evaluator.
 - Negation is stratified and witnesses stop at a negated body, whose explanation is `Explain`'s.
 - An aggregate's witnesses are its group's witnesses, computed beside the aggregate and paired on the group keys.
 - A recursive predicate's witness is its first derivation. Minimal-witness labels are deferred.

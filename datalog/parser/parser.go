@@ -170,6 +170,10 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 		return nil, fmt.Errorf("scalar find spec (.) is incompatible with :limit %d (limit must be 0 or 1)", *q.Limit)
 	}
 
+	if err := requireRulesInput(q); err != nil {
+		return nil, err
+	}
+
 	if err := validateOrderByClauses(q); err != nil {
 		return nil, err
 	}
@@ -747,13 +751,16 @@ func parseRelationBinding(node *edn.Node) (query.RelationBinding, error) {
 func parseInputSpec(node *edn.Node) (query.InputSpec, error) {
 	switch node.Type {
 	case edn.NodeSymbol:
-		// Either $name (database source) or ?var (scalar input)
+		// $name (database source), % (the rule set) or ?var (scalar input)
 		if strings.HasPrefix(node.Value, "$") {
 			return query.DatabaseInput{Name: datalog.NewSymbol(node.Value)}, nil
 		}
+		if node.Value == "%" {
+			return query.RulesInput{}, nil
+		}
 		sym := datalog.NewSymbol(node.Value)
 		if !sym.IsVariable() {
-			return nil, fmt.Errorf("input must be $name or a variable, got %s", node.Value)
+			return nil, fmt.Errorf("input must be $name, %% or a variable, got %s", node.Value)
 		}
 		return query.ScalarInput{Symbol: sym}, nil
 
@@ -1000,24 +1007,23 @@ func ParseMultipleQueries(input string) ([]*query.Query, error) {
 	return queries, nil
 }
 
-// parseListClause parses a list-form clause: (not ...), (or ...), (not-join ...), (or-join ...)
+// parseListClause parses a list-form clause: (not ...), (not-join ...),
+// (or ...), (or-join ...), (or-default ...), (or-default-join ...), or a rule
+// invocation (name args...) for any other head symbol.
 func parseListClause(node *edn.Node) (query.Clause, error) {
 	if node.Type != edn.NodeList {
 		return nil, fmt.Errorf("list clause must be a list")
 	}
 
-	if len(node.Nodes) < 2 {
-		return nil, fmt.Errorf("list clause must have at least a keyword and one element")
+	if len(node.Nodes) == 0 {
+		return nil, fmt.Errorf("list clause must not be empty")
 	}
 
-	// First element must be a symbol (not, or, not-join, or-join)
 	if node.Nodes[0].Type != edn.NodeSymbol {
 		return nil, fmt.Errorf("list clause must start with a symbol, got %v", node.Nodes[0].Type)
 	}
 
-	keyword := node.Nodes[0].Value
-
-	switch keyword {
+	switch node.Nodes[0].Value {
 	case "not":
 		return parseNotClause(node)
 	case "not-join":
@@ -1031,7 +1037,7 @@ func parseListClause(node *edn.Node) (query.Clause, error) {
 	case "or-default-join":
 		return parseOrDefaultJoinClause(node)
 	default:
-		return nil, fmt.Errorf("unknown list clause type: %s", keyword)
+		return parseRuleInvocation(node)
 	}
 }
 
@@ -1337,6 +1343,14 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 				}
 			}
 			// Note: Input variables are consumed, not provided
+
+		case *query.RuleInvocation:
+			for _, v := range p.Variables() {
+				if !seen[v] {
+					seen[v] = true
+					vars = append(vars, v)
+				}
+			}
 
 		case *query.Expression:
 			// Expression outputs are provided (scalar or tuple binding);

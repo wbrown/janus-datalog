@@ -252,6 +252,39 @@ func (s *symbol) IsSource() bool {
 	return s != nil && len(s.value) > 0 && s.value[0] == '$'
 }
 
+// Namespace returns the namespace part of a qualified symbol.
+// "delta/follows" → "delta"
+// "follows" → "" (unqualified)
+// "/" → "" (slash is the name, not separator)
+func (s *symbol) Namespace() string {
+	if s == nil || s.value == "/" {
+		return ""
+	}
+	idx := strings.Index(s.value, "/")
+	if idx == -1 {
+		return ""
+	}
+	return s.value[:idx]
+}
+
+// Name returns the local name part of a symbol.
+// "delta/follows" → "follows"
+// "follows" → "follows"
+// "/" → "/" (slash is the name)
+func (s *symbol) Name() string {
+	if s == nil {
+		return ""
+	}
+	if s.value == "/" {
+		return "/"
+	}
+	idx := strings.Index(s.value, "/")
+	if idx == -1 {
+		return s.value
+	}
+	return s.value[idx+1:]
+}
+
 // Compare compares two symbols using pointer equality first.
 // Since all Symbols are interned, pointer equality implies value equality.
 // Panics if two different pointers have the same string (indicates interning bug).

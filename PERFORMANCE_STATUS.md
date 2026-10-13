@@ -1,6 +1,5 @@
 # PERFORMANCE_STATUS.md
 
-**Last Updated**: 2026-08-03 (intern-table attribution; previously: datom slab allocation for memory-tree batches, order-derivation lattice for the memory-tree bulk build, memory-tree bulk import + comparator fusion, set semantics at birth: projection dedup elision + scan-boundary restoration, subquery input combinations as projection, string-identity hot paths, add-wins set resolution, single-allocation key encoding, direct point-lookup resolution, single-scan wildcard resolution, database-shared tuple-builder cache, specialized EA-cache trie, positional tuple keys with split-overflow key map, span-grouped or-fallback branch cache, or-fallback direct probe emit, grouped hash-join build rows, per-query read sessions, session-bounded EA-cache reads)
 **Version**: Clause-based planner, QueryExecutor, ready-predicate scheduling, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations including unique-key build specialization, compiled storage hash matching, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, bounded Top-N finalization, typed Relation property propagation including keyed join dedup elision, natural/semi/anti joins, and OR/fallback/union derivation, existing-order scan termination, ATEV/TAEV/AETV/EATV order-aware history matching, branch-wide randomized correctness hardening, the value-semantics correctness campaign (one canonical order and equality, interned-symbol operation dispatch, readiness-ordered algebra compile, dual-mode optimizer test matrix), and string-identity hot paths (structural tuple-builder cache keys, pointer-identity comparisons, span-based add-wins set resolution, single-allocation key encoding).
 
 ## Executive Summary
@@ -12,6 +11,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Pull API**: **9× faster than equivalent queries**, linear scaling (verified 2025-12-17)
 - ✅ **Schema validation**: **<1% overhead** for type checking, **~6% overhead** for uniqueness (verified 2025-12-17)
 - ✅ **Unknown-attribute refusal**: **9–14ns** per query on a declared attribute, **36–54ns** on a refused one, **3–9ns** with the option off (verified 2026-10-11)
+- ✅ **Rules and recursion**: a transitive closure over a hundred thousand edges in chains of ten evaluates in **0.3–1.1s** through `Database.Query`, depending on the backend, and an invocation bound to one start node costs **0.09–0.17 ms** at every graph size on the executor and on every backend. Semi-naive iteration beats the naive step by **2.6–4.2×** in time and **2.1–2.4×** in memory (verified 2026-10-12)
 - ✅ **Iterator composition**: **4.06× speedup** (1,259μs → 310μs, 89% memory reduction) (verified 2025-10-25)
 - ✅ **Streaming execution**: **2.22× faster** with low-selectivity filters (1,720ms → 774ms), 52% memory reduction (verified 2025-10-25)
 - ✅ **Parallel subquery execution**: **2.06× speedup** with 8 workers on M3 Max (730ms → 355ms) (verified 2025-10-25)
@@ -2631,3 +2631,36 @@ within tenths of a percent.
   - Whole query path on a declared attribute: within noise of refusal off (2.3–3.7µs against 2.4–3.9µs)
 - **Key Finding**: the schema's read-path cost is nanoseconds per query, paid only by a database that opted into refusal; the write-path figures of section 9 are unchanged
 - **Files**: `datalog/storage/schema_facts.go`, `datalog/query/attribute_names.go`, `docs/reference/SCHEMA.md` ("Schema as Facts")
+
+### 2026-10-12: Rules and Recursion, Bounds and Cancellation
+- A rule set passed as the `%` input evaluates to a fixpoint per stratum, semi-naively. The derived relation joins the query through the invocation clause. A bound invocation derives only what its bindings reach, through a magic-set rewrite seeded by the bound values. `MaxRuleIterations` and `MaxDerivedTuples` bound an evaluation. `WithContext` refuses a query whose context is done at entry and stops a fixpoint at its next iteration; no tuple is checked, so the option has no per-tuple cost to measure
+- **Measured Results** (Apple M5, at the default benchtime: the executor's hundred-thousand-edge row is the median of five runs, every other cell one run). The graph is chains of ten edges. The closure holds fifty-five pairs per chain. Every stratum ends after ten iterations. The bound invocation starts at one node and reaches ten. Every cell is algebra on / off.
+  - `BenchmarkTransitiveClosure` in `datalog/executor` on `IndexedMemoryMatcher`, semi-naive against naive. The naive step is the same step with every recursive occurrence reading the full relation. Memory is the same in both modes:
+
+| Edges | Semi-naive (ms/op) | Naive (ms/op) | Semi-naive (MB/op) | Naive (MB/op) |
+|---:|---:|---:|---:|---:|
+| 1,000 | 4.2 / 3.8 | 11.5 / 10.3 | 11 | 27 |
+| 10,000 | 41.9 / 38.4 | 108 / 108 | 132 | 293 |
+| 100,000 | 402 / 410 | 1,676 / 1,647 | 1,456 | 3,054 |
+
+  - `BenchmarkTransitiveClosure` in `datalog/storage` through `Database.Query`, per backend:
+
+| Edges | badger (ms/op) | memory-trees (ms/op) | memory (ms/op) |
+|---:|---:|---:|---:|
+| 1,000 | 2.8 / 2.7 | 2.0 / 1.9 | 2.9 / 3.5 |
+| 10,000 | 35.2 / 31.5 | 19.2 / 19.5 | 28.2 / 28.8 |
+| 100,000 | 1,114 / 650 | 299 / 332 | 585 / 620 |
+
+  - `BenchmarkBoundInvocation` in both packages, the same graphs with the start bound to one node:
+
+| Edges | executor (ms/op) | badger (ms/op) | memory-trees (ms/op) | memory (ms/op) |
+|---:|---:|---:|---:|---:|
+| 1,000 | 0.14 / 0.15 | 0.11 / 0.09 | 0.12 / 0.13 | 0.17 / 0.17 |
+| 10,000 | 0.17 / 0.13 | 0.15 / 0.11 | 0.13 / 0.16 | 0.11 / 0.12 |
+| 100,000 | 0.14 / 0.17 | 0.15 / 0.16 | 0.11 / 0.10 | 0.15 / 0.13 |
+
+- **Key Findings**:
+  - Semi-naive beats naive by **2.7×** at a thousand edges, **2.6–2.8×** at ten thousand and **4.0–4.2×** at a hundred thousand, with **2.1–2.4× less memory**.
+  - A bound invocation on the executor and on every backend costs **0.09–0.17 ms and 0.2–0.26 MB at every graph size**. The whole closure at a hundred thousand edges costs 0.3–1.1 s on the backends.
+  - The memory backend's session scan took every key of its range from the cloned tree at open, so the one-key read behind every query's cache bound, `maxElementIDByScan` over TAEV, paid the whole index: the bound invocation at a hundred thousand edges measured 213k allocations and 10.4–13.5 ms. The scan now takes keys from the tree in chunks of 256 as its consumer pulls (`memoryIterator.refill`), and the bound invocation on the memory backend measures 3.2k allocations at every graph size. Re-measured after that change beside the unchanged memory-trees cells, three runs each, the memory closure read 1.1–1.4× the table above and the memory-trees control 1.2–2.3× its own, so the closure cells stand as recorded.
+- **Files**: `datalog/executor/rules.go`, `datalog/query/magic.go`, `datalog/executor/rules_benchmark_test.go`, `datalog/storage/rules_benchmark_test.go`, `docs/reference/RULES.md`

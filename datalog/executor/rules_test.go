@@ -1,0 +1,1160 @@
+package executor
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/planner"
+	"github.com/wbrown/janus-datalog/datalog/query"
+)
+
+var (
+	pageNext = datalog.NewKeyword(":page/next")
+	pageKind = datalog.NewKeyword(":page/kind")
+)
+
+func page(i int) datalog.Identity { return datalog.NewIdentity(fmt.Sprintf("page%d", i)) }
+
+// chainDatoms links page1 through pageN by :page/next and marks every page
+// with :page/kind.
+func chainDatoms(n int) []datalog.Datom {
+	var datoms []datalog.Datom
+	for i := 1; i <= n; i++ {
+		tx := datalog.ElementID{Lamport: uint64(i), ReplicaID: 1}
+		datoms = append(datoms, datalog.Datom{E: page(i), A: pageKind, V: "leaf", Tx: tx})
+		if i < n {
+			datoms = append(datoms, datalog.Datom{E: page(i), A: pageNext, V: page(i + 1), Tx: tx})
+		}
+	}
+	return datoms
+}
+
+const followsRulesText = `[[(follows ?a ?b) [?a :page/next ?b]]
+                          [(follows ?a ?c) [?a :page/next ?b] (follows ?b ?c)]]`
+
+func mustRules(t testing.TB, text string) *query.RuleSet {
+	t.Helper()
+	rs, err := parser.ParseRules(text)
+	if err != nil {
+		t.Fatalf("ParseRules: %v", err)
+	}
+	return rs
+}
+
+func mustParse(t testing.TB, text string) *query.Query {
+	t.Helper()
+	q, err := parser.ParseQuery(text)
+	if err != nil {
+		t.Fatalf("ParseQuery: %v", err)
+	}
+	return q
+}
+
+// identityPairs reads a relation of two identities into a set.
+func identityPairs(t testing.TB, rel Relation) map[[2]datalog.Identity]bool {
+	t.Helper()
+	pairs := map[[2]datalog.Identity]bool{}
+	err := ForEach(rel, func(tuple Tuple) error {
+		a, aok := tuple[0].(datalog.Identity)
+		b, bok := tuple[1].(datalog.Identity)
+		if !aok || !bok {
+			return fmt.Errorf("tuple %v is not a pair of identities", tuple)
+		}
+		pairs[[2]datalog.Identity{a, b}] = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reading pairs: %v", err)
+	}
+	return pairs
+}
+
+// chainClosure is every pair (i, j) with i < j: the transitive closure of a
+// chain of n pages computed by hand.
+func chainClosure(n int) map[[2]datalog.Identity]bool {
+	pairs := map[[2]datalog.Identity]bool{}
+	for i := 1; i <= n; i++ {
+		for j := i + 1; j <= n; j++ {
+			pairs[[2]datalog.Identity{page(i), page(j)}] = true
+		}
+	}
+	return pairs
+}
+
+func requireSamePairs(t *testing.T, got, want map[[2]datalog.Identity]bool) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Errorf("got %d pairs, want %d", len(got), len(want))
+	}
+	for pair := range want {
+		if !got[pair] {
+			t.Errorf("missing %s → %s", pair[0], pair[1])
+		}
+	}
+	for pair := range got {
+		if !want[pair] {
+			t.Errorf("unexpected %s → %s", pair[0], pair[1])
+		}
+	}
+}
+
+func TestRules_TransitiveClosureOnChain(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(6))
+	rs := mustRules(t, followsRulesText)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			if err != nil {
+				t.Fatalf("closure query: %v", err)
+			}
+			requireSamePairs(t, identityPairs(t, result), chainClosure(6))
+		})
+	}
+}
+
+func TestEvaluateRules_SemiNaiveStopsWhenDeltaEmpty(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(5))
+	rs := mustRules(t, followsRulesText)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var iterations []annotations.Event
+			opts := mode.plannerOptions()
+			opts.Handler = func(e annotations.Event) {
+				if e.Name == annotations.RulesIteration {
+					iterations = append(iterations, e)
+				}
+			}
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			if err != nil {
+				t.Fatalf("closure query: %v", err)
+			}
+			requireSamePairs(t, identityPairs(t, result), chainClosure(5))
+			// The longest path has four edges: iteration 0 derives the edges,
+			// iterations 1 to 3 the longer paths, and iteration 4 finds nothing
+			// new and ends the stratum.
+			if len(iterations) != 5 {
+				t.Errorf("observed %d iteration events, want 5 (the longest path's edge count plus the empty one): %v", len(iterations), iterations)
+			}
+		})
+	}
+}
+
+func TestEvaluateRules_TwoRecursiveOccurrences(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(6))
+	rs := mustRules(t, `[[(path ?a ?b) [?a :page/next ?b]]
+	                     [(path ?a ?c) (path ?a ?b) (path ?b ?c)]]`)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (path ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			if err != nil {
+				t.Fatalf("doubling closure: %v", err)
+			}
+			requireSamePairs(t, identityPairs(t, result), chainClosure(6))
+		})
+	}
+}
+
+func TestEvaluateRules_StratifiedNegation(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(4))
+	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/next ?b]]
+	                     [(follows ?a ?c) [?a :page/next ?b] (follows ?b ?c)]
+	                     [(first ?p) [?p :page/kind _] (not (follows _ ?p))]]`)
+	q := mustParse(t, `[:find ?p :in $ % :where (first ?p)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil))
+			if err != nil {
+				t.Fatalf("first query: %v", err)
+			}
+			if len(tuples) != 1 || tuples[0][0] != page(1) {
+				t.Errorf("first = %v, want page1 alone: the one page no page follows", tuples)
+			}
+		})
+	}
+}
+
+func TestEvaluateRules_NaiveStepEqualsSemiNaive(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(6))
+	rs := mustRules(t, followsRulesText)
+	follows := datalog.NewSymbol("follows")
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			ctx := NewContext().WithRules(rs)
+			eval, err := exec.prepareStratum(ctx, rs, rs.Strata()[0], nil)
+			if err != nil {
+				t.Fatalf("prepareStratum: %v", err)
+			}
+			full := map[query.Symbol]*derivedSet{follows: newDerivedSet(eval.symbols[follows])}
+			seed, err := eval.run(ctx, nil, false)
+			if err != nil {
+				t.Fatalf("seeding: %v", err)
+			}
+			for _, rel := range seed[follows] {
+				if _, err := full[follows].absorb(rel); err != nil {
+					t.Fatalf("seeding: %v", err)
+				}
+			}
+			// Naive: every occurrence reads the full relation, the delta
+			// symbol's among them, and the loop ends when a pass derives
+			// nothing new.
+			for grew := true; grew; {
+				whole := full[follows].relation(exec.options)
+				view := map[query.Symbol]Relation{follows: whole, query.DeltaSymbol(follows): whole}
+				got, err := eval.run(ctx, view, true)
+				if err != nil {
+					t.Fatalf("naive pass: %v", err)
+				}
+				grew = false
+				for _, rel := range got[follows] {
+					added, err := full[follows].absorb(rel)
+					if err != nil {
+						t.Fatalf("naive pass: %v", err)
+					}
+					if len(added) > 0 {
+						grew = true
+					}
+				}
+			}
+			requireSamePairs(t, identityPairs(t, full[follows].relation(exec.options)), chainClosure(6))
+		})
+	}
+}
+
+func TestExecuteRuleInvocation_ProjectsDerivedRelation(t *testing.T) {
+	a, b := datalog.NewSymbol("?a"), datalog.NewSymbol("?b")
+	x, y := datalog.NewSymbol("?x"), datalog.NewSymbol("?y")
+	derived := NewMaterializedRelation([]query.Symbol{a, b}, []Tuple{
+		{page(1), page(2)}, {page(1), page(3)}, {page(2), page(3)}, {page(3), page(3)},
+	})
+	delta := NewMaterializedRelation([]query.Symbol{a, b}, []Tuple{{page(2), page(3)}})
+	follows := datalog.NewSymbol("follows")
+	ctx := NewContext().WithDerived(map[query.Symbol]Relation{
+		follows:                   derived,
+		query.DeltaSymbol(follows): delta,
+	})
+	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	invoke := func(args ...query.PatternElement) *query.RuleInvocation {
+		return &query.RuleInvocation{Name: follows, Args: args}
+	}
+	variable := func(s query.Symbol) query.PatternElement { return query.Variable{Name: s} }
+
+	t.Run("renames the positions to the arguments", func(t *testing.T) {
+		rel, err := exec.executeRuleInvocation(ctx, invoke(variable(x), variable(y)), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if syms := rel.Symbols(); len(syms) != 2 || syms[0] != x || syms[1] != y {
+			t.Errorf("symbols = %v, want ?x ?y", syms)
+		}
+		if rel.Size() != 4 {
+			t.Errorf("size = %d, want every derived tuple", rel.Size())
+		}
+	})
+	t.Run("a constant filters its position", func(t *testing.T) {
+		rel, err := exec.executeRuleInvocation(ctx, invoke(variable(x), query.Constant{Value: page(3)}), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tuples, _ := CollectTuples(rel, nil)
+		if len(tuples) != 3 {
+			t.Errorf("got %v, want the three tuples whose second position is page3", tuples)
+		}
+		if syms := rel.Symbols(); len(syms) != 1 || syms[0] != x {
+			t.Errorf("symbols = %v, want ?x alone", syms)
+		}
+	})
+	t.Run("a repeated variable filters to equal positions", func(t *testing.T) {
+		rel, err := exec.executeRuleInvocation(ctx, invoke(variable(x), variable(x)), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tuples, _ := CollectTuples(rel, nil)
+		if len(tuples) != 1 || tuples[0][0] != page(3) {
+			t.Errorf("got %v, want page3 alone", tuples)
+		}
+	})
+	t.Run("a blank is projected away", func(t *testing.T) {
+		rel, err := exec.executeRuleInvocation(ctx, invoke(query.Blank{}, variable(y)), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if syms := rel.Symbols(); len(syms) != 1 || syms[0] != y {
+			t.Errorf("symbols = %v, want ?y alone", syms)
+		}
+		tuples, err := CollectTuples(rel, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tuples) != 2 {
+			t.Errorf("got %v, want the two distinct second positions", tuples)
+		}
+	})
+	t.Run("an environment-bound argument filters to its value", func(t *testing.T) {
+		env := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{page(1)}})
+		rel, err := exec.executeRuleInvocation(ctx.WithEnvironment(env), invoke(variable(x), variable(y)), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tuples, _ := CollectTuples(rel, nil)
+		if len(tuples) != 2 {
+			t.Errorf("got %v, want the two tuples starting at page1", tuples)
+		}
+	})
+	t.Run("an invocation of the delta symbol reads the delta", func(t *testing.T) {
+		inv := &query.RuleInvocation{Name: query.DeltaSymbol(follows), Args: []query.PatternElement{variable(x), variable(y)}}
+		rel, err := exec.executeRuleInvocation(ctx, inv, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rel.Size() != 1 {
+			t.Errorf("size = %d, want the delta's one tuple", rel.Size())
+		}
+	})
+	t.Run("an all-constant invocation is a verdict", func(t *testing.T) {
+		rel, err := exec.executeRuleInvocation(ctx, invoke(query.Constant{Value: page(1)}, query.Constant{Value: page(2)}), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rel.Symbols()) != 0 || rel.Size() != 1 {
+			t.Errorf("a held fact is the zero-symbol unit, got %v with %d tuples", rel.Symbols(), rel.Size())
+		}
+		rel, err = exec.executeRuleInvocation(ctx, invoke(query.Constant{Value: page(2)}, query.Constant{Value: page(1)}), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rel.Symbols()) != 0 || rel.Size() != 0 {
+			t.Errorf("an absent fact is the zero-symbol empty relation, got %v with %d tuples", rel.Symbols(), rel.Size())
+		}
+	})
+	t.Run("a predicate no scope derived and no rule set can derive is an error", func(t *testing.T) {
+		_, err := exec.executeRuleInvocation(NewContext(), invoke(variable(x), variable(y)), nil)
+		if err == nil {
+			t.Error("expected an error naming the invocation and the missing rule set")
+		}
+	})
+}
+
+func TestExecuteRuleInvocation_ReadsThePredicateInPlace(t *testing.T) {
+	a, b := datalog.NewSymbol("?a"), datalog.NewSymbol("?b")
+	x, y := datalog.NewSymbol("?x"), datalog.NewSymbol("?y")
+	follows := datalog.NewSymbol("follows")
+	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	variable := func(s query.Symbol) query.PatternElement { return query.Variable{Name: s} }
+	// derivedOf is a scope whose follows relation holds n pairs, each ending
+	// at page0, so a constant page0 at the second position keeps every pair.
+	derivedOf := func(n int) *Context {
+		tuples := make([]Tuple, n)
+		for i := range tuples {
+			tuples[i] = Tuple{page(i + 1), page(0)}
+		}
+		return NewContext().WithDerived(
+			map[query.Symbol]Relation{follows: NewMaterializedRelation([]query.Symbol{a, b}, tuples)})
+	}
+	allocations := func(ctx *Context, inv *query.RuleInvocation) float64 {
+		return testing.AllocsPerRun(10, func() {
+			if _, err := exec.executeRuleInvocation(ctx, inv, nil); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	small, large := derivedOf(8), derivedOf(8192)
+	cases := map[string]*query.RuleInvocation{
+		"renamed":  {Name: follows, Args: []query.PatternElement{variable(x), variable(y)}},
+		"filtered": {Name: follows, Args: []query.PatternElement{variable(x), query.Constant{Value: page(0)}}},
+	}
+	for name, inv := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, l := allocations(small, inv), allocations(large, inv)
+			if l > s {
+				t.Errorf("invoking over 8192 tuples allocates %v times and over 8 tuples %v times: the invocation copies its predicate instead of reading it in place", l, s)
+			}
+		})
+	}
+}
+
+func TestDerivedSet_AbsorbCopiesOnlyNewTuples(t *testing.T) {
+	a, b := datalog.NewSymbol("?a"), datalog.NewSymbol("?b")
+	symbols := []query.Symbol{a, b}
+	pairs := func(n int) []Tuple {
+		tuples := make([]Tuple, n)
+		for i := range tuples {
+			tuples[i] = Tuple{page(i + 1), page(0)}
+		}
+		return tuples
+	}
+	// streamOf yields the tuples through a relation that, like a body's
+	// result, warrants nothing about its tuples' memory.
+	streamOf := func(tuples []Tuple) Relation {
+		return NewStreamingRelationWithOptions(symbols, &sliceIterator{tuples: tuples, pos: -1}, ExecutorOptions{})
+	}
+
+	t.Run("a tuple the set holds is not copied", func(t *testing.T) {
+		held := pairs(8)
+		allocations := func(repeat int) float64 {
+			set := newDerivedSet(symbols)
+			if _, err := set.absorb(streamOf(held)); err != nil {
+				t.Fatal(err)
+			}
+			var again []Tuple
+			for i := 0; i < repeat; i++ {
+				again = append(again, held...)
+			}
+			return testing.AllocsPerRun(1, func() {
+				if _, err := set.absorb(streamOf(again)); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+		once, many := allocations(1), allocations(1000)
+		if many > once {
+			t.Errorf("absorbing 8000 held tuples allocates %v times and 8 held tuples %v times: a tuple the set holds is copied before it is rejected", many, once)
+		}
+	})
+
+	t.Run("a tuple a stable source yields is held, not copied", func(t *testing.T) {
+		held := pairs(8)
+		set := newDerivedSet(symbols)
+		added, err := set.absorb(NewMaterializedRelation(symbols, held))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(added) != len(held) {
+			t.Fatalf("absorbed %d tuples, want %d", len(added), len(held))
+		}
+		for i := range held {
+			if &added[i][0] != &held[i][0] {
+				t.Errorf("tuple %d was copied on absorbing: a materialized source's tuples are stable and are held as they are", i)
+			}
+		}
+	})
+}
+
+func TestExecuteWithRelations_UnknownRuleAndArity(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(3))
+	rs := mustRules(t, followsRulesText)
+	exec := NewExecutor(matcher, nil)
+
+	_, err := exec.ExecuteWithRelations(NewContext().WithRules(rs),
+		mustParse(t, `[:find ?x ?y :in $ % :where (precedes ?x ?y)]`), nil)
+	var unknown *query.UnknownRuleError
+	if !errors.As(err, &unknown) || unknown.Name != datalog.NewSymbol("precedes") {
+		t.Errorf("want *query.UnknownRuleError naming precedes, got %v", err)
+	}
+
+	_, err = exec.ExecuteWithRelations(NewContext().WithRules(rs),
+		mustParse(t, `[:find ?x :in $ % :where (follows ?x)]`), nil)
+	var arity *query.RuleArityError
+	if !errors.As(err, &arity) || arity.Expected != 2 || arity.Got != 1 {
+		t.Errorf("want *query.RuleArityError expecting 2 and getting 1, got %v", err)
+	}
+
+	_, err = exec.ExecuteWithRelations(NewContext(),
+		mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`), nil)
+	if err == nil {
+		t.Error("an invocation with no rule set on the context must be an error")
+	}
+}
+
+func TestEvaluateRules_IterationLimit(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(6))
+	rs := mustRules(t, followsRulesText)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.plannerOptions()
+			opts.MaxRuleIterations = 2
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			_, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			var limit *query.RuleIterationLimitError
+			if !errors.As(err, &limit) {
+				t.Fatalf("want *query.RuleIterationLimitError, got %v", err)
+			}
+			if len(limit.Predicates) != 1 || limit.Predicates[0] != datalog.NewSymbol("follows") || limit.Limit != 2 || limit.Reached != 3 {
+				t.Errorf("limit error = %+v, want follows, limit 2, reached 3", limit)
+			}
+		})
+	}
+}
+
+func TestEvaluateRules_DerivedTupleLimit(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(6))
+	rs := mustRules(t, followsRulesText)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.plannerOptions()
+			opts.MaxDerivedTuples = 7
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			_, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			var limit *query.DerivedTupleLimitError
+			if !errors.As(err, &limit) {
+				t.Fatalf("want *query.DerivedTupleLimitError, got %v", err)
+			}
+			if len(limit.Predicates) != 1 || limit.Predicates[0] != datalog.NewSymbol("follows") || limit.Limit != 7 || limit.Reached <= 7 {
+				t.Errorf("limit error = %+v, want follows, limit 7, more than 7 reached", limit)
+			}
+		})
+	}
+}
+
+// TestExecuteWithRelations_BoundInvocationDerivesOnlyWhatItReaches binds the
+// start of a closure over ten chains and caps the derived tuples between one
+// chain's closure and the graph's: the invocation derives the chain its start
+// reaches and nothing of the other nine.
+func TestExecuteWithRelations_BoundInvocationDerivesOnlyWhatItReaches(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainsDatoms(100))
+	rs := mustRules(t, followsRulesText)
+	q := mustParse(t, `[:find ?y :in $ % ?x :where (follows ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.plannerOptions()
+			opts.MaxDerivedTuples = 100
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			inputs, err := createInputRelationsFromValuesWithOptions(q,
+				[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), page(0)}, exec.options)
+			if err != nil {
+				t.Fatalf("binding: %v", err)
+			}
+			tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), q, inputs))
+			if err != nil {
+				t.Fatalf("a bound invocation derives only what its start reaches: %v", err)
+			}
+			if len(tuples) != 10 {
+				t.Errorf("got %d pages, want the ten page0 reaches", len(tuples))
+			}
+		})
+	}
+}
+
+func TestRules_SubqueryPassesRulesThrough(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(4))
+	rs := mustRules(t, followsRulesText)
+	q := mustParse(t, `[:find ?x ?w
+	                    :in $ %
+	                    :where [?x :page/kind _]
+	                           [(q [:find ?w :in $ % ?x :where (follows ?x ?w)] $ % ?x) [[?w] ...]]]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			if err != nil {
+				t.Fatalf("subquery invocation: %v", err)
+			}
+			requireSamePairs(t, identityPairs(t, result), chainClosure(4))
+		})
+	}
+}
+
+func TestCreateInputRelationsFromValues_RulesInputConsumesNoRelation(t *testing.T) {
+	q := mustParse(t, `[:find ?y :in $ % ?x :where (follows ?x ?y)]`)
+	relations, err := createInputRelationsFromValuesWithOptions(q,
+		[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), page(1)}, ExecutorOptions{})
+	if err != nil {
+		t.Fatalf("binding: %v", err)
+	}
+	if len(relations) != 1 || relations[0].Symbols()[0] != datalog.NewSymbol("?x") {
+		t.Errorf("relations = %v, want one relation over ?x", relations)
+	}
+	_, err = createInputRelationsFromValuesWithOptions(q,
+		[]interface{}{datalog.SymDollar, page(1), page(2)}, ExecutorOptions{})
+	if err == nil {
+		t.Error("a value other than % at the rules position must be an error")
+	}
+}
+
+// TestMarkDelta_RenamesOneOccurrenceAndCopiesThePath: the target occurrence
+// of a same-stratum predicate becomes a copy invoking the predicate's delta
+// symbol, the forms on its path are copied, and everything else is shared.
+func TestMarkDelta_RenamesOneOccurrenceAndCopiesThePath(t *testing.T) {
+	follows := datalog.NewSymbol("follows")
+	delta := query.DeltaSymbol(follows)
+	inStratum := map[query.Symbol]bool{follows: true}
+	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/next ?b]]
+	                     [(follows ?a ?c) (follows ?a ?b)
+	                                      (or-join [?b ?c]
+	                                        (follows ?b ?c)
+	                                        [?b :page/next ?c])]]`)
+	body := rs.Rules(follows)[1].Body
+	first := markDelta(body, inStratum, 0)
+	if inv := first[0].(*query.RuleInvocation); inv.Name != delta || inv == body[0] || body[0].(*query.RuleInvocation).Name != follows {
+		t.Errorf("marking occurrence 0 replaces the first invocation by a copy invoking %s, got %s with the body's own %s", delta, inv, body[0])
+	}
+	if len(first[0].(*query.RuleInvocation).Args) != 2 {
+		t.Error("the copy keeps the occurrence's arguments")
+	}
+	if first[1] != body[1] {
+		t.Error("an or-join holding no marked occurrence is shared, not copied")
+	}
+	second := markDelta(body, inStratum, 1)
+	if second[0] != body[0] {
+		t.Error("marking occurrence 1 shares the first invocation")
+	}
+	orJoin, ok := second[1].(*query.OrJoinClause)
+	if !ok || orJoin == body[1] {
+		t.Fatal("an or-join holding the marked occurrence is copied")
+	}
+	if inv := orJoin.Branches[0][0].(*query.RuleInvocation); inv.Name != delta {
+		t.Errorf("the or-join branch's invocation invokes %s, got %s", delta, inv)
+	}
+	if orJoin.Branches[1][0] != body[1].(*query.OrJoinClause).Branches[1][0] {
+		t.Error("a branch without the marked occurrence shares its clauses")
+	}
+	if len(markDeltaWalk(body, inStratum, 5, new(int))) != len(body) {
+		t.Error("a target past the last occurrence copies the body with nothing marked")
+	}
+}
+
+func TestNeededPredicates_IsTheTransitiveDependencySet(t *testing.T) {
+	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/next ?b]]
+	                     [(follows ?a ?c) [?a :page/next ?b] (follows ?b ?c)]
+	                     [(first ?p) [?p :page/kind _] (not (follows _ ?p))]
+	                     [(marked ?p) [?p :page/kind "marked"]]]`)
+	needed := neededPredicates(rs, datalog.NewSymbol("first"))
+	if !needed[datalog.NewSymbol("first")] || !needed[datalog.NewSymbol("follows")] {
+		t.Errorf("needed = %v, want first and the follows it invokes", needed)
+	}
+	if needed[datalog.NewSymbol("marked")] {
+		t.Error("a predicate nothing invoked depends on is not needed")
+	}
+}
+
+func TestPlanBody_FindsTheHead(t *testing.T) {
+	rs := mustRules(t, followsRulesText)
+	exec := NewExecutor(NewMemoryPatternMatcher(chainDatoms(3)), nil)
+	rule := rs.Rules(datalog.NewSymbol("follows"))[1]
+	plan, err := exec.planBody(rs, rule, rule.Body)
+	if err != nil {
+		t.Fatalf("planBody: %v", err)
+	}
+	if len(plan.Query.Find) != 2 || plan.Query.Find[0].(query.FindVariable).Symbol != rule.Head[0] {
+		t.Errorf("the body plan finds %v, want the rule's head %v", plan.Query.Find, rule.Head)
+	}
+	if len(plan.Phases) == 0 {
+		t.Error("the body plan has no phases")
+	}
+}
+
+// TestPrepareStratum_BodyInvocationLeadsItsPatterns: a magic body's
+// invocation reads a relation holding only what the seed reaches, so its
+// plan runs it before the patterns.
+func TestPrepareStratum_BodyInvocationLeadsItsPatterns(t *testing.T) {
+	rs := mustRules(t, followsRulesText)
+	magic, err := rs.Magic(datalog.NewSymbol("follows"), []bool{true, false})
+	if err != nil {
+		t.Fatalf("Magic: %v", err)
+	}
+	seed := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?start")}, []Tuple{{page(0)}})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(3)), nil, mode.plannerOptions())
+			stratum := magic.Rules.Strata()[0]
+			if len(stratum.Predicates) != 1 || stratum.Predicates[0] != magic.Seed {
+				t.Fatalf("the first stratum is %v, want the magic predicate %s alone", stratum.Predicates, magic.Seed)
+			}
+			eval, err := exec.prepareStratum(NewContext().WithRules(rs), magic.Rules, stratum, map[query.Symbol]Relation{magic.Seed: seed})
+			if err != nil {
+				t.Fatalf("prepareStratum: %v", err)
+			}
+			if len(eval.bodies) != 1 {
+				t.Fatalf("the magic stratum plans %d bodies, want its one recursive rule", len(eval.bodies))
+			}
+			plan := eval.bodies[0].plan
+			if len(plan.Phases) == 0 || len(plan.Phases[0].Query.Where) == 0 {
+				t.Fatalf("the body plan has no clauses: %v", plan)
+			}
+			first, ok := plan.Phases[0].Query.Where[0].(*query.RuleInvocation)
+			if !ok || first.Name != query.DeltaSymbol(magic.Seed) {
+				t.Errorf("the body's first clause is %v, want the delta occurrence %s leading the edge pattern:\n%s", plan.Phases[0].Query.Where[0], query.DeltaSymbol(magic.Seed), plan)
+			}
+		})
+	}
+}
+
+// TestPrepareStratum_UnguardedBodyKeepsThePatternFirst: a rule no magic
+// predicate guards derives an unrestricted relation, so its plan scans the
+// pattern first and joins the delta afterwards.
+func TestPrepareStratum_UnguardedBodyKeepsThePatternFirst(t *testing.T) {
+	rs := mustRules(t, followsRulesText)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(3)), nil, mode.plannerOptions())
+			eval, err := exec.prepareStratum(NewContext().WithRules(rs), rs, rs.Strata()[0], nil)
+			if err != nil {
+				t.Fatalf("prepareStratum: %v", err)
+			}
+			for _, body := range eval.bodies {
+				if !body.delta {
+					continue
+				}
+				first := body.plan.Phases[0].Query.Where[0]
+				if _, ok := first.(*query.DataPattern); !ok {
+					t.Errorf("the recursive body's first clause is %v, want the edge pattern before the delta occurrence:\n%s", first, body.plan)
+				}
+			}
+		})
+	}
+}
+
+func TestEvaluateRules_DerivesOnlyTheNeededStrata(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(4))
+	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/next ?b]]
+	                     [(follows ?a ?c) [?a :page/next ?b] (follows ?b ?c)]
+	                     [(marked ?p) [?p :page/kind "marked"]]]`)
+	exec := NewExecutor(matcher, nil)
+	derived, err := exec.evaluateRules(NewContext().WithRules(rs), rs, datalog.NewSymbol("follows"), nil)
+	if err != nil {
+		t.Fatalf("evaluateRules: %v", err)
+	}
+	rel, ok := derived[datalog.NewSymbol("follows")]
+	if !ok {
+		t.Fatal("the invoked predicate is derived")
+	}
+	requireSamePairs(t, identityPairs(t, rel), chainClosure(4))
+	if _, ok := derived[datalog.NewSymbol("marked")]; ok {
+		t.Error("a predicate nothing depends on is not derived")
+	}
+
+	total := 0
+	direct := map[query.Symbol]Relation{}
+	if err := exec.evaluateStratum(NewContext().WithRules(rs), rs, rs.Strata()[0], direct, nil, &total); err != nil {
+		t.Fatalf("evaluateStratum: %v", err)
+	}
+	if total != len(chainClosure(4)) {
+		t.Errorf("evaluateStratum counted %d tuples, want %d", total, len(chainClosure(4)))
+	}
+	requireSamePairs(t, identityPairs(t, direct[datalog.NewSymbol("follows")]), chainClosure(4))
+}
+
+func TestEnvironmentRelationFromInputs_SkipsRulesInput(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	in := []query.InputSpec{
+		query.DatabaseInput{Name: datalog.SymDollar},
+		query.RulesInput{},
+		query.ScalarInput{Symbol: x},
+	}
+	env := environmentRelationFromInputs(in, []Relation{
+		NewMaterializedRelation([]query.Symbol{x}, []Tuple{{page(1)}}),
+	})
+	if env == nil || len(env.Symbols()) != 1 || env.Symbols()[0] != x || env.Get(0)[0] != page(1) {
+		t.Errorf("environment = %v, want ?x bound to page1: the rules input consumes no relation", env)
+	}
+}
+
+// TestExecuteWithRelations_SeededEqualsWhole is the rewrite's
+// semantic-preservation test: for every rules fixture and every argument
+// position, the invocation bound at that position through an input returns
+// the whole invocation's tuples carrying that value there.
+func TestExecuteWithRelations_SeededEqualsWhole(t *testing.T) {
+	fixtures := []struct {
+		name, rules, predicate string
+		arity                  int
+	}{
+		{"closure", followsRulesText, "follows", 2},
+		{"doubling", `[[(path ?a ?b) [?a :page/next ?b]]
+		               [(path ?a ?c) (path ?a ?b) (path ?b ?c)]]`, "path", 2},
+		{"negation", `[[(follows ?a ?b) [?a :page/next ?b]]
+		               [(follows ?a ?c) [?a :page/next ?b] (follows ?b ?c)]
+		               [(first ?p) [?p :page/kind _] (not (follows _ ?p))]]`, "first", 1},
+		{"or-join", `[[(follows ?a ?b) [?a :page/next ?b]]
+		              [(follows ?a ?c) [?a :page/next ?b] (or-join [?b ?c] (follows ?b ?c) [?b :page/next ?c])]]`, "follows", 2},
+		{"not-join", `[[(follows ?a ?b) [?a :page/next ?b]]
+		               [(follows ?a ?c) [?a :page/next ?b] (follows ?b ?c)]
+		               [(last ?p) [?p :page/kind _] (not-join [?p] (follows ?p _))]]`, "last", 1},
+	}
+	matcher := NewMemoryPatternMatcher(chainDatoms(6))
+	for _, f := range fixtures {
+		rs := mustRules(t, f.rules)
+		vars := make([]string, f.arity)
+		head := ""
+		for i := range vars {
+			vars[i] = fmt.Sprintf("?v%d", i)
+			if i > 0 {
+				head += " "
+			}
+			head += vars[i]
+		}
+		whole := mustParse(t, fmt.Sprintf(`[:find %s :in $ %% :where (%s %s)]`, head, f.predicate, head))
+		for _, mode := range optimizerModes {
+			t.Run(f.name+"/"+mode.name, func(t *testing.T) {
+				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				all, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), whole, nil))
+				if err != nil {
+					t.Fatalf("whole invocation: %v", err)
+				}
+				if len(all) == 0 {
+					t.Fatal("the fixture derives nothing, so the contract is untestable")
+				}
+				for i := 0; i < f.arity; i++ {
+					bound := mustParse(t, fmt.Sprintf(`[:find %s :in $ %% %s :where (%s %s)]`, head, vars[i], f.predicate, head))
+					values := NewTupleKeyMap()
+					for _, tuple := range all {
+						if values.PutIfAbsent(NewTupleKeyFull(Tuple{tuple[i]}), struct{}{}) {
+							continue
+						}
+						v := tuple[i]
+						want := NewTupleKeyMap()
+						wantCount := 0
+						for _, w := range all {
+							if datalog.ValuesEqual(w[i], v) {
+								want.PutIfAbsent(NewTupleKeyFull(w), struct{}{})
+								wantCount++
+							}
+						}
+						inputs, err := createInputRelationsFromValuesWithOptions(bound,
+							[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), v}, exec.options)
+						if err != nil {
+							t.Fatalf("binding position %d: %v", i, err)
+						}
+						got, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), bound, inputs))
+						if err != nil {
+							t.Fatalf("position %d bound to %v: %v", i, v, err)
+						}
+						if len(got) != wantCount {
+							t.Errorf("position %d bound to %v: got %d tuples, want %d", i, v, len(got), wantCount)
+						}
+						for _, g := range got {
+							if !want.Exists(NewTupleKeyFull(g)) {
+								t.Errorf("position %d bound to %v: %v is not among the whole invocation's tuples", i, v, g)
+							}
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole binds an
+// invocation whose rewrite does not stratify: q's magic rule for s reads the
+// negation of t that precedes the invocation, and s invokes q, so the magic
+// predicates close a cycle through that negation. The rewrite is declined,
+// recorded, and the predicate evaluated whole and filtered.
+func TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole(t *testing.T) {
+	pageA, pageB, pageC := datalog.NewKeyword(":page/a"), datalog.NewKeyword(":page/b"), datalog.NewKeyword(":page/c")
+	stamp := func(i int) datalog.ElementID { return datalog.ElementID{Lamport: uint64(i), ReplicaID: 1} }
+	// q(3) holds: a(3,4), t(4) does not hold, s(4) holds by page4's kind.
+	// q(1) does not: a(1,2) but t(2) holds.
+	matcher := NewMemoryPatternMatcher([]datalog.Datom{
+		{E: page(1), A: pageA, V: page(2), Tx: stamp(1)},
+		{E: page(3), A: pageA, V: page(4), Tx: stamp(2)},
+		{E: page(2), A: pageB, V: page(3), Tx: stamp(3)},
+		{E: page(4), A: pageB, V: page(1), Tx: stamp(4)},
+		{E: page(4), A: pageKind, V: "end", Tx: stamp(5)},
+		{E: page(2), A: pageC, V: "marked", Tx: stamp(6)},
+	})
+	rs := mustRules(t, `[[(q ?x) [?x :page/a ?y] (not (t ?y)) (s ?y)]
+	                     [(s ?y) [?y :page/kind "end"]]
+	                     [(s ?y) [?y :page/b ?z] (q ?z)]
+	                     [(t ?y) [?y :page/c _]]]`)
+	q := mustParse(t, `[:find ?x :in $ % ?x :where (q ?x)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var decisions []annotations.Event
+			opts := mode.plannerOptions()
+			opts.Handler = func(e annotations.Event) {
+				if e.Name == annotations.RulesMagicSets {
+					decisions = append(decisions, e)
+				}
+			}
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			run := func(start datalog.Identity) []Tuple {
+				inputs, err := createInputRelationsFromValuesWithOptions(q,
+					[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), start}, exec.options)
+				if err != nil {
+					t.Fatalf("binding: %v", err)
+				}
+				rel, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, inputs)
+				if err != nil {
+					t.Fatalf("bound to %s: %v", start, err)
+				}
+				var tuples []Tuple
+				if err := collectTuplesInto(&tuples, rel); err != nil {
+					t.Fatalf("bound to %s: %v", start, err)
+				}
+				return tuples
+			}
+			if got := run(page(3)); len(got) != 1 || got[0][0] != page(3) {
+				t.Errorf("q bound to page3 = %v, want page3 alone", got)
+			}
+			if got := run(page(1)); len(got) != 0 {
+				t.Errorf("q bound to page1 = %v, want nothing: t holds of page2", got)
+			}
+			if len(decisions) != 2 {
+				t.Fatalf("recorded %d rewrite decisions, want one per invocation: %v", len(decisions), decisions)
+			}
+			_, refusal := rs.Magic(datalog.NewSymbol("q"), []bool{true})
+			var unstratifiable *query.UnstratifiableError
+			if !errors.As(refusal, &unstratifiable) {
+				t.Fatalf("the rewrite of q under b is refused by the stratifier, got %v", refusal)
+			}
+			for _, d := range decisions {
+				if d.Data["applied"] != false {
+					t.Errorf("decision %v: the rewrite is declined", d.Data)
+				}
+				if reason, _ := d.Data["reason"].(string); reason != unstratifiable.Error() {
+					t.Errorf("decision reason %q, want the stratifier's refusal %q", reason, unstratifiable.Error())
+				}
+			}
+		})
+	}
+}
+
+const successorRulesText = `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`
+
+// TestExecuteWithRelations_RequiredBindingSchedulesAfterItsProvider writes
+// the invocation of a predicate requiring its first position bound before
+// the expression that binds it; the planner orders the invocation after its
+// provider, since the required position is the invocation's correlate.
+func TestExecuteWithRelations_RequiredBindingSchedulesAfterItsProvider(t *testing.T) {
+	rs := mustRules(t, successorRulesText)
+	q := mustParse(t, `[:find ?m :in $ % :where (succ ?n ?m) [(ground 5) ?n]]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(nil), nil, mode.plannerOptions())
+			tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil))
+			if err != nil {
+				t.Fatalf("the invocation runs after its provider: %v", err)
+			}
+			if len(tuples) != 1 || tuples[0][0] != int64(6) {
+				t.Errorf("got %v, want the successor of 5", tuples)
+			}
+		})
+	}
+}
+
+// TestExecuteWithRelations_RequiredBindingNothingBinds: nothing in the
+// query binds the required position, and the error names the predicate and
+// the variable.
+func TestExecuteWithRelations_RequiredBindingNothingBinds(t *testing.T) {
+	rs := mustRules(t, successorRulesText)
+	q := mustParse(t, `[:find ?m :in $ % :where (succ ?n ?m)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(nil), nil, mode.plannerOptions())
+			_, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			if err == nil {
+				t.Fatal("expected an error naming succ and ?n")
+			}
+			if !strings.Contains(err.Error(), "succ") || !strings.Contains(err.Error(), "?n") {
+				t.Errorf("error %q must name the predicate and the required variable", err)
+			}
+		})
+	}
+}
+
+// TestExecuteWithRelations_RequiredBindingInSubqueryBodyNamesTheRepair: a
+// subquery body runs in its written order, so an invocation before the
+// clause binding its required position reaches the clause unbound and is
+// refused naming the predicate, the variable and the repair.
+func TestExecuteWithRelations_RequiredBindingInSubqueryBodyNamesTheRepair(t *testing.T) {
+	rs := mustRules(t, successorRulesText)
+	q := mustParse(t, `[:find ?m
+	                    :in $ %
+	                    :where [(q [:find ?m
+	                                :in $ %
+	                                :where (succ ?n ?m)
+	                                       [(ground 5) ?n]]
+	                               $ %) [[?m] ...]]]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(nil), nil, mode.plannerOptions())
+			_, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+			var required *query.RequiredBindingError
+			if !errors.As(err, &required) {
+				t.Fatalf("want *query.RequiredBindingError, got %v", err)
+			}
+			if required.Name != datalog.NewSymbol("succ") || required.Symbol != datalog.NewSymbol("?n") || required.Rule != nil {
+				t.Errorf("RequiredBindingError = %+v, want predicate succ, variable ?n, no rule: the query's own invocation", required)
+			}
+		})
+	}
+}
+
+// TestEvaluateRules_SeedAbsorbedAtIterationZero seeds a rewritten closure's
+// magic predicate directly: the seed's tuples are the magic stratum's
+// iteration zero, and the adorned closure holds the pairs the seed reaches.
+func TestEvaluateRules_SeedAbsorbedAtIterationZero(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(6))
+	rs := mustRules(t, followsRulesText)
+	magic, err := rs.Magic(datalog.NewSymbol("follows"), []bool{true, false})
+	if err != nil {
+		t.Fatalf("Magic: %v", err)
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var iterations []annotations.Event
+			opts := mode.plannerOptions()
+			opts.Handler = func(e annotations.Event) {
+				if e.Name == annotations.RulesIteration {
+					iterations = append(iterations, e)
+				}
+			}
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			seed := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?start")}, []Tuple{{page(3)}})
+			derived, err := exec.evaluateRules(NewContext().WithRules(rs), magic.Rules, magic.Predicate,
+				map[query.Symbol]Relation{magic.Seed: seed})
+			if err != nil {
+				t.Fatalf("evaluateRules: %v", err)
+			}
+			want := map[[2]datalog.Identity]bool{}
+			for i := 3; i <= 6; i++ {
+				for j := i + 1; j <= 6; j++ {
+					want[[2]datalog.Identity{page(i), page(j)}] = true
+				}
+			}
+			requireSamePairs(t, identityPairs(t, derived[magic.Predicate]), want)
+			if len(iterations) == 0 {
+				t.Fatal("no iteration event was emitted")
+			}
+			first := iterations[0]
+			predicates, _ := first.Data["predicates"].([]query.Symbol)
+			delta, _ := first.Data["delta"].(map[query.Symbol]int)
+			if first.Data["iteration"] != 0 || len(predicates) != 1 || predicates[0] != magic.Seed || delta[magic.Seed] != 1 {
+				t.Errorf("first iteration event = %v, want iteration 0 of %s with the seed's one tuple as its delta", first.Data, magic.Seed)
+			}
+		})
+	}
+}
+
+// TestExecuteWithRelations_VectorConstantArgument: a vector literal is an
+// argument like any constant. It fixes its position to the vector, so the
+// invocation keeps the tuples whose position holds an equal vector; it is a
+// bound position, so the rewrite applies; and it seeds the magic predicate,
+// so the adorned predicate derives the tuple the vector reaches.
+func TestExecuteWithRelations_VectorConstantArgument(t *testing.T) {
+	pageTags := datalog.NewKeyword(":page/tags")
+	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
+	matcher := NewMemoryPatternMatcher([]datalog.Datom{
+		{E: page(1), A: pageTags, V: []interface{}{int64(1), int64(2)}, Tx: tx},
+		{E: page(2), A: pageTags, V: []interface{}{int64(1), int64(2), int64(3)}, Tx: tx},
+		{E: page(3), A: pageTags, V: []interface{}{int64(2), int64(1)}, Tx: tx},
+	})
+	rs := mustRules(t, `[[(tagged ?p ?tags) [?p :page/tags ?tags]]]`)
+	q := mustParse(t, `[:find ?p :in $ % :where (tagged ?p [1 2])]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var rewrites []annotations.Event
+			opts := mode.plannerOptions()
+			opts.Handler = func(e annotations.Event) {
+				if e.Name == annotations.RulesMagicSets {
+					rewrites = append(rewrites, e)
+				}
+			}
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil))
+			if err != nil {
+				t.Fatalf("invocation with a vector argument: %v", err)
+			}
+			if len(tuples) != 1 || len(tuples[0]) != 1 || tuples[0][0] != page(1) {
+				t.Errorf("got %v, want the one page whose tags equal [1 2]", tuples)
+			}
+			if len(rewrites) != 1 {
+				t.Fatalf("observed %d magic-set events, want one for the invocation", len(rewrites))
+			}
+			adornment, _ := rewrites[0].Data["adornment"].([]bool)
+			if rewrites[0].Data["applied"] != true || len(adornment) != 2 || adornment[0] || !adornment[1] {
+				t.Errorf("magic-set event = %v, want the rewrite applied with the vector's position bound", rewrites[0].Data)
+			}
+		})
+	}
+}
+
+// TestPlan_PhasesParseBackToThemselves: the planner's output is a sequence
+// of Datalog queries. Every phase of a query's plan, and every phase of every
+// body plan the fixpoint prepares, is text the parser reads back to itself.
+func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(4))
+	closure := mustRules(t, followsRulesText)
+	successor := mustRules(t, successorRulesText)
+	closureMagic, err := closure.Magic(datalog.NewSymbol("follows"), []bool{true, false})
+	if err != nil {
+		t.Fatalf("Magic(follows): %v", err)
+	}
+	successorMagic, err := successor.Magic(datalog.NewSymbol("succ"), []bool{true, false})
+	if err != nil {
+		t.Fatalf("Magic(succ): %v", err)
+	}
+	start := datalog.NewSymbol("?start")
+
+	queries := []struct {
+		name  string
+		text  string
+		bound []string
+	}{
+		{"plain", `[:find ?x ?k :where [?x :page/next ?y] [?y :page/kind ?k]]`, nil},
+		{"whole", `[:find ?x ?y :in $ % :where (follows ?x ?y)]`, nil},
+		{"bound", `[:find ?y :in $ % ?x :where (follows ?x ?y)]`, []string{"?x"}},
+		{"required", `[:find ?m :in $ % :where (succ ?n ?m) [(ground 5) ?n]]`, nil},
+	}
+	sets := []struct {
+		name  string
+		rules *query.RuleSet
+		seeds map[query.Symbol]Relation
+	}{
+		{"closure", closure, nil},
+		{"closure rewritten", closureMagic.Rules, map[query.Symbol]Relation{
+			closureMagic.Seed: NewMaterializedRelation([]query.Symbol{start}, []Tuple{{page(1)}}),
+		}},
+		{"successor rewritten", successorMagic.Rules, map[query.Symbol]Relation{
+			successorMagic.Seed: NewMaterializedRelation([]query.Symbol{start}, []Tuple{{int64(5)}}),
+		}},
+	}
+	type labelledPlan struct {
+		label string
+		plan  *planner.RealizedPlan
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			var plans []labelledPlan
+			for _, c := range queries {
+				bindings := planner.Bindings{Symbols: map[query.Symbol]bool{}}
+				for _, b := range c.bound {
+					bindings.Symbols[datalog.NewSymbol(b)] = true
+				}
+				plan, err := exec.planner.PlanQuery(mustParse(t, c.text), bindings, nil)
+				if err != nil {
+					t.Fatalf("%s: planning: %v", c.name, err)
+				}
+				plans = append(plans, labelledPlan{c.name, plan})
+			}
+			for _, s := range sets {
+				for _, stratum := range s.rules.Strata() {
+					eval, err := exec.prepareStratum(NewContext().WithRules(s.rules), s.rules, stratum, s.seeds)
+					if err != nil {
+						t.Fatalf("%s: prepareStratum %v: %v", s.name, stratum.Predicates, err)
+					}
+					for _, body := range eval.bodies {
+						plans = append(plans, labelledPlan{s.name + ", body of " + body.rule.Name.String(), body.plan})
+					}
+				}
+			}
+			for _, p := range plans {
+				for i, phase := range p.plan.Phases {
+					text := parser.FormatQuery(phase.Query)
+					parsed, err := parser.ParseQuery(text)
+					if err != nil {
+						t.Errorf("%s: phase %d does not parse: %v\n%s", p.label, i+1, err, text)
+						continue
+					}
+					if got := parsed.String(); got != phase.Query.String() {
+						t.Errorf("%s: phase %d renders differently once parsed back:\nplanned:\n%s\nparsed:\n%s", p.label, i+1, phase.Query.String(), got)
+					}
+				}
+			}
+		})
+	}
+}

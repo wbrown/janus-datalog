@@ -41,6 +41,8 @@ func decompileNode(n *Node) ([]query.Clause, error) {
 		return decompileConstant(n)
 	case RuleProject:
 		return decompileProject(n)
+	case RuleDerived:
+		return []query.Clause{n.Data.(*Derived).Invocation}, nil
 	default:
 		return nil, fmt.Errorf("unknown algebra node: %s", n.Op)
 	}

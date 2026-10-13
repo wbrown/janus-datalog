@@ -86,7 +86,7 @@ func TestExtractOrClauseSymbols(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			syms := query.ScopeOf(tt.orClause)
+			syms := query.ScopeOf(tt.orClause, nil)
 
 			// Check that all expected symbols are provided
 			providedSet := make(map[query.Symbol]bool)
@@ -168,7 +168,7 @@ func TestExtractSubqueryPatternSymbols(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			syms := query.ScopeOf(tt.pattern)
+			syms := query.ScopeOf(tt.pattern, nil)
 
 			// Check provides
 			providedSet := make(map[query.Symbol]bool)
@@ -227,7 +227,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 			},
 		}
 
-		syms := query.ScopeOf(orClause)
+		syms := query.ScopeOf(orClause, nil)
 
 		// Should only have ?x (intersection)
 		if len(syms.Provides) != 1 {
@@ -262,7 +262,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 			},
 		}
 
-		syms := query.ScopeOf(orClause)
+		syms := query.ScopeOf(orClause, nil)
 
 		// Intersection: only ?x is common to both branches
 		providedSet := make(map[query.Symbol]bool)
@@ -302,7 +302,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 			},
 		}
 
-		syms := query.ScopeOf(orDefaultClause)
+		syms := query.ScopeOf(orDefaultClause, nil)
 
 		providedSet := make(map[query.Symbol]bool)
 		for _, sym := range syms.Provides {
@@ -347,7 +347,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 			},
 		}
 
-		syms := query.ScopeOf(orClause)
+		syms := query.ScopeOf(orClause, nil)
 
 		foundOpeningCount := false
 		for _, sym := range syms.Provides {
@@ -393,7 +393,7 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 			},
 		}
 
-		syms := query.ScopeOf(orClause)
+		syms := query.ScopeOf(orClause, nil)
 
 		// The OR clause MUST require ?scenario because the subquery needs it
 		requiresSet := make(map[query.Symbol]bool)
@@ -434,7 +434,7 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 			},
 		}
 
-		syms := query.ScopeOf(orClause)
+		syms := query.ScopeOf(orClause, nil)
 
 		if len(syms.Correlates) != 0 {
 			t.Errorf("OR with only ground expressions should require nothing, got: %v", syms.Correlates)
@@ -466,7 +466,7 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 			},
 		}
 
-		syms := query.ScopeOf(orClause)
+		syms := query.ScopeOf(orClause, nil)
 
 		requiresSet := make(map[query.Symbol]bool)
 		for _, sym := range syms.Correlates {
@@ -507,7 +507,7 @@ func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
 		},
 	}
 
-	syms := query.ScopeOf(orClause)
+	syms := query.ScopeOf(orClause, nil)
 
 	// Both branches provide ?openingCount, so the OR should provide it
 	foundOpeningCount := false
@@ -551,7 +551,7 @@ func TestOrJoinClauseRequiresCorrelatedInputs(t *testing.T) {
 			},
 		}
 
-		syms := query.ScopeOf(orJoin)
+		syms := query.ScopeOf(orJoin, nil)
 
 		requiresSet := make(map[query.Symbol]bool)
 		for _, sym := range syms.Correlates {
@@ -602,7 +602,7 @@ func TestOrJoinClauseJoinVarRequiredNotProvided(t *testing.T) {
 		},
 	}
 
-	syms := query.ScopeOf(orJoin)
+	syms := query.ScopeOf(orJoin, nil)
 
 	requiresSet := make(map[query.Symbol]bool)
 	for _, sym := range syms.Correlates {
@@ -639,7 +639,7 @@ func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 			},
 		}
 
-		syms := query.ScopeOf(notClause)
+		syms := query.ScopeOf(notClause, nil)
 
 		requiresSet := make(map[query.Symbol]bool)
 		for _, sym := range syms.Correlates {
@@ -671,7 +671,7 @@ func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 			},
 		}
 
-		syms := query.ScopeOf(notClause)
+		syms := query.ScopeOf(notClause, nil)
 
 		requiresSet := make(map[query.Symbol]bool)
 		for _, sym := range syms.Correlates {
@@ -723,7 +723,7 @@ func TestExpressionScope(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			syms := query.ScopeOf(tt.expression)
+			syms := query.ScopeOf(tt.expression, nil)
 
 			// Check provides
 			if len(syms.Provides) != len(tt.expectedProvides) {

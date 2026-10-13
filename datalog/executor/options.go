@@ -38,6 +38,12 @@ type ExecutorOptions struct {
 	// separate relation match + hash join. CardinalityOne, latest/as-of only.
 	EnableAttributeFetchFusion bool
 
+	// Rule evaluation bounds. MaxRuleIterations caps the fixpoint iterations
+	// of one stratum, MaxDerivedTuples the tuples one rule set derives; zero
+	// is unbounded.
+	MaxRuleIterations int
+	MaxDerivedTuples  int
+
 	// Handler receives this relation's annotation events. Nil is annotations-off;
 	// every emit site guards on it, so there is no no-op handler to install.
 	// Stamped once per query from the execution context, then inherited by every
@@ -65,5 +71,7 @@ func (o ExecutorOptions) populated() bool {
 		o.EnableScanSharing ||
 		o.EnableEntityPrefetch ||
 		o.EnableAttributeFetchFusion ||
+		o.MaxRuleIterations != 0 ||
+		o.MaxDerivedTuples != 0 ||
 		o.Handler != nil
 }

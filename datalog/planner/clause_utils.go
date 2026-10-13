@@ -13,7 +13,7 @@ import (
 // before low-scoring expressions (~20). When a pattern like [?item :item/color ?color]
 // runs before [(enumerate ?vec) [?idx ?item]], ?item isn't in the accumulated
 // relation, so the join is on ?color alone — producing a cross-product.
-func patternDependsOnPendingExpression(p *query.DataPattern, available map[query.Symbol]bool, remaining []query.Clause, selected map[int]bool) bool {
+func patternDependsOnPendingExpression(p *query.DataPattern, available map[query.Symbol]bool, remaining []query.Clause, selected map[int]bool, rules *query.RuleSet) bool {
 	// Collect variables this pattern references that aren't yet available
 	needed := make(map[query.Symbol]bool)
 	for _, elem := range p.Elements {
@@ -33,7 +33,7 @@ func patternDependsOnPendingExpression(p *query.DataPattern, available map[query
 			continue
 		}
 		if _, ok := clause.(*query.Expression); ok {
-			for _, sym := range query.ScopeOf(clause).Provides {
+			for _, sym := range query.ScopeOf(clause, rules).Provides {
 				if needed[sym] {
 					return true
 				}
@@ -57,18 +57,19 @@ func clauseSelectable(
 	providerCount map[query.Symbol]int,
 	remaining []query.Clause,
 	selected map[int]bool,
+	rules *query.RuleSet,
 ) bool {
 	if p, ok := clause.(*query.DataPattern); ok {
-		if patternDependsOnPendingExpression(p, available, remaining, selected) {
+		if patternDependsOnPendingExpression(p, available, remaining, selected, rules) {
 			return false
 		}
 	}
 	if sp, ok := clause.(*query.SubqueryPattern); ok {
-		if subqueryDependsOnPendingProvider(sp, available, inputs, providerCount, remaining, selected) {
+		if subqueryDependsOnPendingProvider(sp, available, inputs, providerCount, remaining, selected, rules) {
 			return false
 		}
 	}
-	return query.ClauseReady(clause, available, inputs, providerCount)
+	return query.ClauseReady(clause, available, inputs, providerCount, rules)
 }
 
 // subqueryDependsOnPendingProvider checks if a subquery binds a variable
@@ -103,9 +104,10 @@ func subqueryDependsOnPendingProvider(
 	providerCount map[query.Symbol]int,
 	remaining []query.Clause,
 	selected map[int]bool,
+	rules *query.RuleSet,
 ) bool {
 	needed := make(map[query.Symbol]bool)
-	for _, sym := range query.ScopeOf(sp).Provides {
+	for _, sym := range query.ScopeOf(sp, rules).Provides {
 		if !available[sym] {
 			needed[sym] = true
 		}
@@ -121,10 +123,10 @@ func subqueryDependsOnPendingProvider(
 		if _, ok := clause.(*query.SubqueryPattern); ok {
 			continue
 		}
-		if !clauseSelectable(clause, available, inputs, providerCount, remaining, selected) {
+		if !clauseSelectable(clause, available, inputs, providerCount, remaining, selected, rules) {
 			continue
 		}
-		for _, sym := range query.ScopeOf(clause).Provides {
+		for _, sym := range query.ScopeOf(clause, rules).Provides {
 			if needed[sym] {
 				return true
 			}
@@ -148,8 +150,11 @@ func subqueryDependsOnPendingProvider(
 // Constants are weighted 10× more than available variables because:
 // - Constants FILTER data (selectivity is visible in the pattern)
 // - Available variables ENABLE JOINS (don't filter, just connect)
-func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
-	scope := query.ScopeOf(clause)
+//
+// bindings is what the caller holds when it asks for the plan; the rule set
+// among them declares an invocation's scope.
+func scoreClause(clause query.Clause, available map[query.Symbol]bool, bindings Bindings) int {
+	scope := query.ScopeOf(clause, bindings.Rules)
 
 	score := 0
 
@@ -169,6 +174,31 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 	switch clause.(type) {
 	case *query.OrClause, *query.OrJoinClause, *query.OrDefaultClause, *query.OrDefaultJoinClause:
 		score += 80
+	}
+
+	// A rule invocation carries the visible selectivity a pattern's positions
+	// do and schedules beside the patterns that bind its arguments. An
+	// invocation of a predicate the seed restricts, a magic or adorned
+	// predicate or the delta of one, reads a relation holding only what the
+	// seed reaches, so it schedules before every pattern, which then seeks on
+	// what it binds.
+	if inv, ok := clause.(*query.RuleInvocation); ok {
+		score += 80
+		constants, availableVars := 0, 0
+		for _, arg := range inv.Args {
+			switch a := arg.(type) {
+			case query.Constant, query.VectorConstant:
+				constants++
+			case query.Variable:
+				if available[a.Name] {
+					availableVars++
+				}
+			}
+		}
+		score += (constants * 100) + (availableVars * 10)
+		if query.SeedRestricted(inv.Name) {
+			score += 500
+		}
 	}
 
 	// Expressions that produce new symbols are valuable but less than selective patterns

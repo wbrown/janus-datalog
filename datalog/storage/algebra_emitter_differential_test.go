@@ -236,7 +236,7 @@ func runPlannerOptions(
 	if err != nil {
 		return nil, err
 	}
-	relations, err := db.convertInputsToRelations(q, inputs)
+	relations, _, err := db.convertInputsToRelations(q, inputs)
 	if err != nil {
 		return nil, err
 	}

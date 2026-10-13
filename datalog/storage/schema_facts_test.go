@@ -97,7 +97,12 @@ func requireDefinitionFacts(t *testing.T, d *Database, def *schema.AttributeDefi
 	}
 	require.Equal(t, def.UniqueElements, facts["db/uniqueElements"])
 	require.Equal(t, def.NeverZeroValue, facts["db/neverZeroValue"])
-	require.Equal(t, def.Doc, facts["db/doc"])
+	if def.Doc == "" {
+		_, carried := facts["db/doc"]
+		require.False(t, carried, "%s carries no doc", def.Ident)
+	} else {
+		require.Equal(t, def.Doc, facts["db/doc"])
+	}
 }
 
 // reopenLegs is the reopen cases crossed with both optimizer paths, fresh cases
@@ -207,6 +212,40 @@ func TestSchemaFacts_DefinitionConvergesAcrossReplicas(t *testing.T) {
 			require.NotNil(t, many, "an import ends by reading the definitions it carried")
 			require.Same(t, schema.CardinalityMany, many.Cardinality)
 			require.Equal(t, "members", many.Doc)
+		})
+	}
+}
+
+func TestSchemaFacts_WithdrawnDocResolvesAbsent(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			documented, err := schema.NewBuilder().
+				Attribute(":t/documented").Type(schema.TypeString).Doc("documented").Add().
+				Build()
+			require.NoError(t, err)
+			undocumented, err := schema.NewBuilder().
+				Attribute(":t/documented").Type(schema.TypeString).Add().
+				Build()
+			require.NoError(t, err)
+
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: documented})
+			entity := schemaFactsEntity(kw(":t/documented"))
+			docOf := func() []string {
+				var docs []string
+				require.NoError(t, d.QueryInto(&docs,
+					`[:find ?doc :in $ ?a :where [?a :db/doc ?doc]]`, entity))
+				return docs
+			}
+			require.Equal(t, []string{"documented"}, docOf())
+
+			require.NoError(t, d.SetSchema(undocumented))
+			require.Empty(t, docOf(), "a withdrawn doc no longer resolves")
+			require.Equal(t, "", d.Schema().GetAttribute(kw(":t/documented")).Doc)
+
+			var history []string
+			require.NoError(t, d.History().QueryInto(&history,
+				`[:find ?doc :in $ ?a :where [?a :db/doc ?doc]]`, entity))
+			require.Contains(t, history, "documented", "History keeps the withdrawn doc")
 		})
 	}
 }
@@ -402,9 +441,9 @@ func TestSchemaFacts_TruncateToRewindsDeclarations(t *testing.T) {
 			require.NotNil(t, d.Schema().GetAttribute(kw(":t/later")))
 
 			require.NoError(t, d.TruncateTo("s"))
-			require.Nil(t, d.Schema().GetAttribute(kw(":t/later")), "a declaration past the snapshot is gone after the rewind")
 			_, read := declaredByQuery(t, d)[kw(":t/later")]
-			require.False(t, read)
+			require.False(t, read, "a definition asserted past the snapshot is gone from the facts after the rewind")
+			require.NotNil(t, d.Schema().GetAttribute(kw(":t/later")), "the given schema stays in force over the facts that survive")
 			require.NotNil(t, d.Schema().GetAttribute(kw(":t/early")))
 		})
 	}

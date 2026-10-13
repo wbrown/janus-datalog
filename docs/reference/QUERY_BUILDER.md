@@ -360,6 +360,9 @@ qb.Tuple(nameVar, ageVar)
 // Relation input - multiple tuples
 qb.Relation(nameVar, ageVar)
 
+// Rules input - the rule set the query's invocations resolve against
+qb.Rules
+
 // Named source - additional database or PatternMatcher
 qb.Source("$users")
 
@@ -592,6 +595,68 @@ t1, s1 := qb.NewVar("t1"), qb.NewVar("s1")
 t2, s2 := qb.NewVar("t2"), qb.NewVar("s2")
 t3, s3 := qb.NewVar("t3"), qb.NewVar("s3")
 ```
+
+## Rules
+
+A rule set declares predicates. A query invokes a predicate as a clause. A
+rule that invokes itself computes a transitive closure.
+
+`qb.DefineRule(name, head...)` starts a rule. Its `Where` takes the body
+clauses `Query().Where` accepts. `qb.RuleSet` builds the rules into a
+validated, stratified `*query.RuleSet`. `qb.MustRuleSet` does the same and
+panics on error:
+
+```go
+a, b, c := qb.NewVar("a"), qb.NewVar("b"), qb.NewVar("c")
+
+reach := qb.MustRuleSet(
+    qb.DefineRule("reach", a, b).Where(qb.Pat(a, Edge, b)),
+    qb.DefineRule("reach", a, c).Where(qb.Pat(a, Edge, b), qb.Rule("reach", b, c)),
+)
+```
+
+Several rules for one name are alternatives.
+
+`qb.Rule(name, args...)` invokes a predicate. Each argument is a `*Var`,
+`qb.Blank()`, or a value. A value becomes a constant. `qb.Rules` is the `%`
+input the rule set is passed as:
+
+```go
+start, y := qb.NewVar("start"), qb.NewVar("y")
+
+q := qb.Query().
+    Find(y).
+    In(qb.DB, qb.Rules, qb.Scalar(start)).
+    Where(qb.Rule("reach", start, y)).
+    MustBuild()
+
+results, err := d.Query(q, reach, startID)
+```
+
+Equivalent EDN: `[:find ?y :in $ % ?start :where (reach ?start ?y)]` with the
+rule set `[[(reach ?a ?b) [?a :edge ?b]] [(reach ?a ?c) [?a :edge ?b] (reach ?b ?c)]]`.
+
+`Require` names the head variables the caller binds. They are the leading run
+of the head. A rule whose body computes from its arguments needs it:
+
+```go
+n, m := qb.NewVar("n"), qb.NewVar("m")
+
+succ := qb.MustRuleSet(
+    qb.DefineRule("succ", n, m).Require(n).Where(qb.Add(n, int64(1)).As(m)),
+)
+```
+
+Equivalent EDN: `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`.
+
+An invocation stands wherever a pattern stands. That includes `qb.Not`,
+`qb.OrJoin` branches and subqueries.
+
+`qb.RuleSet` returns the errors `query.NewRuleSet` returns: an unsafe rule,
+an arity disagreement, an unknown predicate, a cycle through negation, a
+required run that does not lead the head, or a recursive invocation inside a
+fallback or a subquery. See [RULES.md](RULES.md) for the evaluation, the
+bounds and cancellation.
 
 ## Building Queries
 
@@ -924,6 +989,7 @@ func main() {
 | `qb.Collection(v)` | `[?v ...]` | Multiple values |
 | `qb.Tuple(a, b)` | `[?a ?b]` | Single tuple |
 | `qb.Relation(a, b)` | `[[?a ?b] ...]` | Multiple tuples |
+| `qb.Rules` | `%` | The rule set |
 
 ### Logical Clauses
 
@@ -933,6 +999,14 @@ func main() {
 | `qb.NotJoin(vars, clauses...)` | `(not-join [vars] ...)` |
 | `qb.Or().Branch(...).Branch(...)` | `(or ...)` |
 | `qb.OrJoin(vars...).Branch(...).Branch(...)` | `(or-join [vars] ...)` |
+
+### Rules
+
+| Function | EDN Equivalent |
+|----------|----------------|
+| `qb.Rule("name", a, b)` | `(name ?a ?b)` |
+| `qb.DefineRule("name", a, b).Where(...)` | `[(name ?a ?b) ...]` |
+| `qb.RuleSet(rules...)` | `[[(name ...) ...] ...]` |
 
 ### Ordering
 

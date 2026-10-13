@@ -278,9 +278,9 @@ func TestArithmeticExpressions(t *testing.T) {
 			if !ok {
 				t.Fatalf("Expected *query.Expression, got %T", clause)
 			}
-			arith, ok := expr.Function.(query.ArithmeticFunction)
+			arith, ok := expr.Function.(*query.ArithmeticFunction)
 			if !ok {
-				t.Fatalf("Expected ArithmeticFunction, got %T", expr.Function)
+				t.Fatalf("Expected *ArithmeticFunction, got %T", expr.Function)
 			}
 			if arith.Op != tt.op {
 				t.Errorf("Expected %v, got %v", tt.op, arith.Op)
@@ -302,9 +302,9 @@ func TestStrConcat(t *testing.T) {
 
 	clause := expr.toClause()
 	e := clause.(*query.Expression)
-	_, ok := e.Function.(query.StringConcatFunction)
+	_, ok := e.Function.(*query.StringConcatFunction)
 	if !ok {
-		t.Errorf("Expected StringConcatFunction, got %T", e.Function)
+		t.Errorf("Expected *StringConcatFunction, got %T", e.Function)
 	}
 }
 

@@ -14,6 +14,11 @@ import (
 // in query text carries no meaning, and the fold requires binders before
 // their consumers (see orderClausesForCompile). The query's :in symbols seed
 // the binding environment: an input-bound correlate is bindable.
+//
+// The algebra reads clause scopes with no rule set. A rule invocation's
+// variables are then all outputs of its Derived leaf, which a projection
+// keeps every one of, and the physical planner, which reads the rule set,
+// orders an invocation after the positions its predicate requires are bound.
 func Compile(q *query.Query) (*Node, error) {
 	if len(q.Where) == 0 {
 		return nil, fmt.Errorf("empty WHERE clause")
@@ -60,7 +65,7 @@ func compileClausesFrom(clauses []query.Clause, initial *Node, context []query.S
 	}
 
 	current := initial
-	if current == nil && len(ordered) > 0 && len(query.ScopeOf(ordered[0]).Provides) == 0 {
+	if current == nil && len(ordered) > 0 && len(query.ScopeOf(ordered[0], nil).Provides) == 0 {
 		if env := environmentSymbols(context, inputs); len(env) > 0 {
 			current = &Node{Op: RuleProject, Data: &Project{Symbols: env}}
 		}
@@ -133,6 +138,12 @@ func compileClause(clause query.Clause, current *Node, inputs map[query.Symbol]b
 
 	case *query.SubqueryPattern:
 		return compileSubquery(c, current), nil
+
+	case *query.RuleInvocation:
+		return joinWith(current, &Node{
+			Op:   RuleDerived,
+			Data: &Derived{Invocation: c, Output: c.Variables()},
+		}), nil
 
 	case *query.NotClause:
 		return compileNot(c, current, inputs)
@@ -419,7 +430,7 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node, inputs map[query.Sym
 // against the outer schema and the clause round-trips unchanged.
 func compileOr(oc *query.OrClause, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
 	if branchesRequireOuterContext(oc.Branches) {
-		return compileOrUnionCorrelated(oc.Branches, nil, query.ScopeOf(oc), current, inputs)
+		return compileOrUnionCorrelated(oc.Branches, nil, query.ScopeOf(oc, nil), current, inputs)
 	}
 	return compileOrUnion(oc.Branches, current, inputs)
 }
@@ -429,7 +440,7 @@ func compileOr(oc *query.OrClause, current *Node, inputs map[query.Symbol]bool) 
 // preserves the declared header verbatim.
 func compileOrJoin(oj *query.OrJoinClause, current *Node, inputs map[query.Symbol]bool) (*Node, error) {
 	if branchesRequireOuterContext(oj.Branches) {
-		return compileOrUnionCorrelated(oj.Branches, oj.JoinVars, query.ScopeOf(oj), current, inputs)
+		return compileOrUnionCorrelated(oj.Branches, oj.JoinVars, query.ScopeOf(oj, nil), current, inputs)
 	}
 	return compileOrUnionWithJoinVars(oj.Branches, oj.JoinVars, current, inputs)
 }
@@ -878,6 +889,8 @@ func clauseSymbols(clause query.Clause) []query.Symbol {
 		}
 		syms = append(syms, c.Binding.BoundVariables()...)
 		return syms
+	case *query.RuleInvocation:
+		return c.Variables()
 	default:
 		return nil
 	}

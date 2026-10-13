@@ -212,7 +212,7 @@ func TestParseErrors(t *testing.T) {
 		{
 			name:  "non-vector pattern",
 			input: `[:find ?e :where (?e :foo ?v)]`,
-			error: "unknown list clause type",
+			error: "rule invocation name must be a symbol, not the variable ?e",
 		},
 	}
 

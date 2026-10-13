@@ -34,6 +34,7 @@ func TestNotClauseWithExistentialBodyVariablePlans(t *testing.T) {
 		[]query.Clause{notClause, pattern},
 		[]query.Symbol{v},
 		map[query.Symbol]bool{},
+		Bindings{},
 	)
 	if err != nil {
 		t.Fatalf("phasing failed: %v", err)
@@ -70,6 +71,7 @@ func TestFullyDisjointNotRejectedAtPlanning(t *testing.T) {
 		[]query.Clause{pattern, notClause},
 		[]query.Symbol{v},
 		map[query.Symbol]bool{},
+		Bindings{},
 	)
 	if err == nil {
 		t.Fatal("expected planning to reject a NOT sharing no bindable variable with the enclosing query")
@@ -83,6 +85,7 @@ func TestFullyDisjointNotRejectedAtPlanning(t *testing.T) {
 		[]query.Clause{pattern, notClause},
 		[]query.Symbol{v},
 		map[query.Symbol]bool{w: true},
+		Bindings{},
 	)
 	if err != nil {
 		t.Fatalf("input-bound body variable must keep the NOT plannable: %v", err)
@@ -127,6 +130,7 @@ func TestNotOverOrJoinPlans(t *testing.T) {
 		[]query.Clause{notClause, pattern},
 		[]query.Symbol{v},
 		map[query.Symbol]bool{},
+		Bindings{},
 	)
 	if err != nil {
 		t.Fatalf("phasing failed: %v", err)

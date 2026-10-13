@@ -72,7 +72,7 @@ A schema given to a database is asserted into its store. Each attribute definiti
 | `:db/unique` | a `:db.unique/*` keyword | when the definition carries one |
 | `:db/uniqueElements` | boolean | always |
 | `:db/neverZeroValue` | boolean | always |
-| `:db/doc` | string, `""` included | always |
+| `:db/doc` | string | when the definition carries one |
 
 The facts answer ordinary patterns:
 
@@ -87,11 +87,11 @@ Where the facts are read and asserted:
 
 - **Open with a schema.** The definitions the store holds are read, and the given schema's are asserted over them in one transaction holding only the words that differ. The database runs with the given definitions, and with the stored ones for the idents the given schema does not name. A reopen with an unchanged schema writes nothing. A given schema is authoritative, so nothing is inferred.
 - **Open with no schema.** The stored definitions are read and the database runs with them. An attribute that carries datoms and has no definition is inferred from the ops of its datoms; an inferred definition is in memory only and is never asserted.
-- **A withdrawn word.** A declaration that drops a definition's value type or uniqueness constraint withdraws that fact: the word stops resolving on the definition entity, and `History()` keeps the withdrawn value.
+- **A withdrawn word.** A declaration that drops a definition's value type, uniqueness constraint or doc string withdraws that fact: the word stops resolving on the definition entity, and `History()` keeps the withdrawn value.
 - **`SetSchema`** declares a schema on an open database the same way. It returns an error, since it writes, and a read-only `AsOf` or `History` handle refuses it.
 - **Import.** A dump carries the schema datoms. An import into a database with no schema ends by reading them, so a set the dump's writer declared resolves as a set. A database opened with a schema re-asserts it after the import, so the given schema supersedes the dump's definitions for the idents it names.
 - **Fork.** A branch carries its parent's declared definitions, asserted into it at the fork, so a dump of the branch describes itself.
-- **TruncateTo.** A definition asserted after the snapshot goes with the rest, and the database runs with what survives.
+- **TruncateTo.** A definition asserted after the snapshot goes with the rest. The database runs with the given schema, if one was given, over the definitions that survive; nothing is written until the next `SetSchema` or import re-asserts it.
 
 ### Unknown attributes are refused on request
 

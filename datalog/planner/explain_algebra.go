@@ -94,14 +94,14 @@ func (e *AlgebraExplanation) String() string {
 // algebra explanation alongside the physical plan. It bypasses the plan
 // cache — provenance requires actually running the bridge — and never
 // stores its plan, so explaining a query does not perturb cached execution.
-func (p *ClauseBasedPlanner) ExplainPlan(q *query.Query) (*AlgebraExplanation, error) {
+func (p *ClauseBasedPlanner) ExplainPlan(q *query.Query, bindings Bindings) (*AlgebraExplanation, error) {
 	expl := &AlgebraExplanation{
 		Original:         q,
 		OptimizerEnabled: p.options.EnableAlgebraOptimizer,
 	}
 
 	if p.options.EnableAlgebraOptimizer {
-		plan, err := p.planWithBindings(q, nil, nil, expl)
+		plan, err := p.planWithBindings(q, bindings, nil, expl)
 		if err != nil {
 			return nil, err
 		}
@@ -113,7 +113,7 @@ func (p *ClauseBasedPlanner) ExplainPlan(q *query.Query) (*AlgebraExplanation, e
 	// the algebra view separately — the algebra of a query is a fact about
 	// the query, but this database's queries do not depend on the compile
 	// succeeding, so a failure reports instead of erroring.
-	plan, err := p.planWithBindings(q, nil, nil, nil)
+	plan, err := p.planWithBindings(q, bindings, nil, nil)
 	if err != nil {
 		return nil, err
 	}

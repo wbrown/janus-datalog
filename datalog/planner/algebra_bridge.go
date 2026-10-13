@@ -93,9 +93,11 @@ func optimizeViaAlgebra(
 	if options.EnableJoinProjectInsertion {
 		hasValueInput := false
 		for _, input := range q.In {
-			if _, isDatabase := input.(query.DatabaseInput); !isDatabase {
+			switch input.(type) {
+			case query.DatabaseInput, query.RulesInput:
+				// Execution context, not a value binding.
+			default:
 				hasValueInput = true
-				break
 			}
 		}
 		observing := sink.Recording()

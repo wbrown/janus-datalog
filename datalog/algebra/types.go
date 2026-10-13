@@ -29,6 +29,7 @@ const (
 	RuleLateralJoin  = "LateralJoin"
 	RuleAggregate    = "Aggregate"
 	RuleConstant     = "Constant"
+	RuleDerived      = "Derived"
 )
 
 // JoinKind distinguishes inner joins from left outer joins.
@@ -270,6 +271,17 @@ func (a *Aggregate) String() string {
 	}
 	return fmt.Sprintf("γ(%s)", strings.Join(keys, ", "))
 }
+
+// Derived is a rule invocation: the invoked predicate's derived relation,
+// projected onto the invocation's arguments. A leaf compiled from
+// query.RuleInvocation and decompiled to it unchanged.
+type Derived struct {
+	Invocation *query.RuleInvocation
+	Output     []query.Symbol // The invocation's variable arguments
+}
+
+func (d *Derived) OutputSymbols() []query.Symbol { return d.Output }
+func (d *Derived) String() string                { return d.Invocation.String() }
 
 // Constant injects literal values. Compiled from query.GroundPredicate.
 type Constant struct {

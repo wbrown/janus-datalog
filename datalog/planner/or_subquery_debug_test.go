@@ -69,7 +69,7 @@ func TestOrSubqueryPlannerPhases(t *testing.T) {
 	}
 
 	p := NewClauseBasedPlanner(nil, PlannerOptions{})
-	realized, err := p.Plan(q, nil)
+	realized, err := p.Plan(q, Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("Plan error: %v", err)
 	}

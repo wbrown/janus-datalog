@@ -39,7 +39,7 @@ func orderClausesForCompile(clauses []query.Clause, available, inputs map[query.
 	if len(clauses) < 2 {
 		return clauses, nil
 	}
-	providerCount := query.CountProviders(clauses)
+	providerCount := query.CountProviders(clauses, nil)
 	bound := make(map[query.Symbol]bool, len(available))
 	for sym := range available {
 		bound[sym] = true
@@ -53,10 +53,10 @@ func orderClausesForCompile(clauses []query.Clause, available, inputs map[query.
 			if placed[i] {
 				continue
 			}
-			if !query.ClauseReady(clause, bound, inputs, providerCount) {
+			if !query.ClauseReady(clause, bound, inputs, providerCount, nil) {
 				continue
 			}
-			if len(ordered) > 0 || len(query.ScopeOf(clause).Provides) > 0 {
+			if len(ordered) > 0 || len(query.ScopeOf(clause, nil).Provides) > 0 {
 				picked = i
 				break
 			}
@@ -71,7 +71,7 @@ func orderClausesForCompile(clauses []query.Clause, available, inputs map[query.
 					continue
 				}
 				var waits []string
-				for _, sym := range query.ClauseBlockers(clause, bound, inputs, providerCount) {
+				for _, sym := range query.ClauseBlockers(clause, bound, inputs, providerCount, nil) {
 					if !inputs[sym] && providerCount[sym] == 0 {
 						waits = append(waits, fmt.Sprintf("%s (no input or clause binds it)", sym))
 					} else {
@@ -86,7 +86,7 @@ func orderClausesForCompile(clauses []query.Clause, available, inputs map[query.
 		}
 		placed[picked] = true
 		ordered = append(ordered, clauses[picked])
-		for _, sym := range query.ScopeOf(clauses[picked]).Provides {
+		for _, sym := range query.ScopeOf(clauses[picked], nil).Provides {
 			bound[sym] = true
 		}
 	}

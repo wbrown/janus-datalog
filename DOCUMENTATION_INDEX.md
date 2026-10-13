@@ -32,6 +32,7 @@ Configuration, semantics, and proofs in `docs/reference/`:
 
 **Query system:**
 - **[PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Complete planner options reference with performance guidance
+- **[RULES.md](docs/reference/RULES.md)** - Rules: the `%` input, recursion to a fixpoint, stratified negation, the iteration and tuple bounds, cancellation through `WithContext`
 - **[QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md)** - Type-safe Go query builder (qb package)
 - **[QUERY_INTO.md](docs/reference/QUERY_INTO.md)** - Typed query results into Go structs
 - **[REFLECT.md](docs/reference/REFLECT.md)** - Struct ↔ datom reflection API

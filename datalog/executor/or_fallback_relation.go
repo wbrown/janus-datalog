@@ -344,6 +344,13 @@ func collectBranchOutputSymbols(branch []query.Clause) []query.Symbol {
 					outputs = append(outputs, v)
 				}
 			}
+		case *query.RuleInvocation:
+			for _, v := range clause.Variables() {
+				if !seen[v] {
+					seen[v] = true
+					outputs = append(outputs, v)
+				}
+			}
 		case *query.OrJoinClause:
 			// or-join declares its output symbols as join vars
 			for _, v := range clause.JoinVars {
@@ -422,7 +429,7 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 	// outside that interface is a local, and a name collision with an outer
 	// symbol must not bind (alpha-equivalence). Inference forms unify on
 	// every shared free variable by language rule.
-	branchFree := branchFreeVariables(r.branches)
+	branchFree := branchFreeVariables(r.branches, r.ctx.Rules())
 	interfaceSyms := branchFree
 	if r.scope != nil {
 		interfaceSyms = append(append([]query.Symbol(nil), r.scope.Provides...), r.scope.Correlates...)
@@ -743,11 +750,11 @@ func makeBranchInput(
 // branchFreeVariables returns the union of every branch's free variables
 // (query.FreeVariables), deduplicated in first-appearance order — the
 // canonical answer to "which symbols do these branches consume or produce
-// at their interface."
-func branchFreeVariables(branches [][]query.Clause) []query.Symbol {
+// at their interface." rules is the rule set the query runs with.
+func branchFreeVariables(branches [][]query.Clause, rules *query.RuleSet) []query.Symbol {
 	var free []query.Symbol
 	for _, branch := range branches {
-		for _, sym := range query.FreeVariables(branch) {
+		for _, sym := range query.FreeVariables(branch, rules) {
 			if !query.ContainsSymbol(free, sym) {
 				free = append(free, sym)
 			}

@@ -35,4 +35,6 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 
 	// Numeric defaults.
 	require.Equal(t, 0, opts.MaxSubqueryWorkers, "MaxSubqueryWorkers default is 0 (= 4 executor workers)")
+	require.Equal(t, 0, opts.MaxRuleIterations, "MaxRuleIterations is documented opt-in; 0 is unbounded")
+	require.Equal(t, 0, opts.MaxDerivedTuples, "MaxDerivedTuples is documented opt-in; 0 is unbounded")
 }

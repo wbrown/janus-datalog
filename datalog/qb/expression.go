@@ -61,7 +61,7 @@ func (a *ArithBuilder) As(result *Var) *Expression {
 		terms[i] = toTerm(argument)
 	}
 	return &Expression{
-		fn: query.ArithmeticFunction{
+		fn: &query.ArithmeticFunction{
 			Op:   a.op,
 			Args: terms,
 		},
@@ -92,7 +92,7 @@ func (s *StrBuilder) As(result *Var) *Expression {
 		terms[i] = toTerm(p)
 	}
 	return &Expression{
-		fn:      query.StringConcatFunction{Terms: terms},
+		fn:      &query.StringConcatFunction{Terms: terms},
 		binding: result,
 	}
 }

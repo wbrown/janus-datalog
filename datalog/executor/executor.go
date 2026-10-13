@@ -82,6 +82,8 @@ func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 		EnableScanSharing:          opts.EnableScanSharing,
 		EnableEntityPrefetch:       opts.EnableEntityPrefetch,
 		EnableAttributeFetchFusion: opts.EnableAttributeFetchFusion,
+		MaxRuleIterations:          opts.MaxRuleIterations,
+		MaxDerivedTuples:           opts.MaxDerivedTuples,
 	}
 }
 
@@ -112,6 +114,11 @@ func (e *Executor) ExecuteWithContext(ctx *Context, q *query.Query) (Relation, e
 // For regular queries, pass an empty slice for inputRelations.
 // For subqueries, pass the relations corresponding to the :in clause variables.
 func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelations []Relation) (Relation, error) {
+	// A query whose context is already done is refused before any work.
+	if err := ctx.cancelled(); err != nil {
+		return nil, err
+	}
+
 	// Static clause-shape rules are user-boundary contracts: a hand-built
 	// AST entering here gets the same rejection, with the same message, as
 	// parsed text — and before planning, so both planner modes agree on
@@ -122,10 +129,16 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 
 	// An attribute the schema does not declare is refused before planning, so
 	// both planner modes refuse identically. The matcher owns the schema, so
-	// the decision is its own.
+	// the decision is its own. A rule body's attributes are checked beside
+	// the query's.
 	if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
-		if err := vocabulary.UnknownAttributes(q); err != nil {
+		if err := vocabulary.UnknownAttributes(q.DefaultSourceAttributes()); err != nil {
 			return nil, err
+		}
+		if ctx.rules != nil {
+			if err := vocabulary.UnknownAttributes(ctx.rules.DefaultSourceAttributes()); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -165,6 +178,20 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 			Start: queryStart,
 			Data:  map[string]interface{}{"query": q.String()},
 		})
+	}
+
+	// Every invocation, at any depth, names a defined predicate at its arity.
+	// The predicate is derived when the invocation clause runs, seeded by the
+	// arguments the clause binds.
+	if invoked := query.Invocations(q.Where); len(invoked) > 0 {
+		if ctx.rules == nil {
+			return nil, fmt.Errorf("rule invocation %s: no rule set was given for %%", invoked[0])
+		}
+		for _, inv := range invoked {
+			if err := ctx.rules.CheckInvocation(inv); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Build initial bindings from input relations
@@ -212,13 +239,7 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 	// handler is passed per-query into planning (not stored on the shared
 	// planner), so concurrent annotated queries neither race on it nor
 	// cross-route algebra-bridge events.
-	var realizedPlan *planner.RealizedPlan
-	var err error
-	if len(initialBindings) == 0 {
-		realizedPlan, err = executor.planner.PlanQuery(q, handler)
-	} else {
-		realizedPlan, err = executor.planner.PlanQueryWithBindings(q, initialBindings, handler)
-	}
+	realizedPlan, err := executor.planner.PlanQuery(q, planner.Bindings{Symbols: initialBindings, Rules: ctx.rules}, handler)
 	if err != nil {
 		if handler != nil {
 			handler(annotations.TimedEvent(annotations.QueryComplete, queryStart,
@@ -336,6 +357,18 @@ func (e *Executor) ExecuteRealized(ctx *Context, plan *planner.RealizedPlan, inp
 	return result, nil
 }
 
+// queryExecutor builds the clause executor for this executor's plans. It
+// carries the executor itself, which an invocation clause needs to plan and
+// run a fixpoint.
+func (e *Executor) queryExecutor() *DefaultQueryExecutor {
+	return &DefaultQueryExecutor{
+		matcher:        e.matcher,
+		entityResolver: e.entityResolver,
+		options:        e.options,
+		executor:       e,
+	}
+}
+
 // executeRealizedPlan runs the phase pipeline and returns the assembled result
 // (un-ordered, un-limited). ExecuteRealized applies :order-by and :limit to it.
 func (e *Executor) executeRealizedPlan(ctx *Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
@@ -345,7 +378,7 @@ func (e *Executor) executeRealizedPlan(ctx *Context, plan *planner.RealizedPlan,
 		return e.executeRealizedWithRelationInputIteration(ctx, plan, inputRelations)
 	}
 
-	queryExecutor := newQueryExecutor(e.matcher, e.entityResolver, e.options)
+	queryExecutor := e.queryExecutor()
 
 	var currentGroups []Relation
 
@@ -988,7 +1021,7 @@ type preparedIteration struct {
 // canMutateBindings stays false and Run uses a fallbackSession +
 // BindQueryInputs per call. The session is only allocated when needed.
 func (e *Executor) prepareIteration(plan *planner.RealizedPlan, relationInput query.RelationInput, inputRelations []Relation, iterationIndex int) *preparedIteration {
-	queryExecutor := newQueryExecutor(e.matcher, e.entityResolver, e.options)
+	queryExecutor := e.queryExecutor()
 
 	// Rewrite plan.Query's :in clause: replace the RelationInput with one
 	// ScalarInput per RelationInput symbol.
@@ -1070,8 +1103,8 @@ func (p *preparedIteration) buildBoundRelation(relationInput query.RelationInput
 	relationIndex := 0
 	for _, input := range p.plan.Query.In {
 		switch inp := input.(type) {
-		case query.DatabaseInput:
-			// DatabaseInput doesn't consume an inputRelations slot.
+		case query.DatabaseInput, query.RulesInput:
+			// Neither consumes an inputRelations slot.
 			continue
 		case query.RelationInput:
 			// The RelationInput is the iteration source. It expands to

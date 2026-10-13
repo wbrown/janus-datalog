@@ -63,7 +63,7 @@ func (d *Database) queryUnderPlannerOptions(
 	// Create SourceRouter with full source map
 	router := executor.NewSourceRouter(sources)
 
-	inputRelations, err := d.convertInputsToRelations(q, regularInputs)
+	inputRelations, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		_ = session.Close()
 		return nil, err
@@ -72,7 +72,7 @@ func (d *Database) queryUnderPlannerOptions(
 	// Execute with the SourceRouter as the PatternMatcher
 	planOpts.Cache = d.planCache
 	exec := executor.NewExecutorWithOptions(router, d, planOpts)
-	result, err := exec.ExecuteWithRelations(executor.NewContext(), q, inputRelations)
+	result, err := exec.ExecuteWithRelations(executor.NewContext().WithRules(rules).WithCancellation(opts.ctx), q, inputRelations)
 	if err != nil {
 		_ = session.Close()
 		return nil, fmt.Errorf("query execution failed: %w", err)

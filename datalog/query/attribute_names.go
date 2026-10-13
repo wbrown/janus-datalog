@@ -57,7 +57,14 @@ func (r *attributeRoster) addQuery(q *Query) {
 			r.addPullPattern(pull.Pattern)
 		}
 	}
-	WalkClauses(q.Where, func(clause Clause) bool {
+	r.addClauses(q.Where)
+}
+
+// addClauses records the attributes clauses name on the default source. The
+// visitor descends into a subquery's body itself, which WalkClauses leaves
+// to its visitors. A query's :where and a rule's body are collected alike.
+func (r *attributeRoster) addClauses(clauses []Clause) {
+	WalkClauses(clauses, func(clause Clause) bool {
 		switch c := clause.(type) {
 		case *DataPattern:
 			if c.Source == nil || c.Source == datalog.SymDollar {

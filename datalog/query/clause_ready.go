@@ -7,15 +7,16 @@ package query
 // (or-default), and the clause must not wait on a symbol only it provides.
 // Mandatory-correlate forms wait unconditionally; one that can never become
 // available blocks forever, and the caller's scheduling loop surfaces the
-// invalid query loudly.
+// invalid query loudly. rules is the rule set the query runs with, which
+// declares an invocation's correlates.
 //
 // This is the single readiness definition — ClauseReady is its emptiness
 // test. The planner's phasing (clauseSelectable / createPhasesGreedy) and the
 // algebra bridge's compile-order pass both consume it; a second
 // implementation would diverge exactly where the scope taxonomy is subtle
 // (optional correlates, self-provided symbols, source markers).
-func ClauseBlockers(clause Clause, available, inputs map[Symbol]bool, providerCount map[Symbol]int) []Symbol {
-	scope := ScopeOf(clause)
+func ClauseBlockers(clause Clause, available, inputs map[Symbol]bool, providerCount map[Symbol]int, rules *RuleSet) []Symbol {
+	scope := ScopeOf(clause, rules)
 	var selfProvides map[Symbol]bool
 	var blockers []Symbol
 	for _, sym := range scope.Correlates {
@@ -44,8 +45,8 @@ func ClauseBlockers(clause Clause, available, inputs map[Symbol]bool, providerCo
 
 // ClauseReady reports whether a clause can execute now: no correlate blocks
 // it (see ClauseBlockers).
-func ClauseReady(clause Clause, available, inputs map[Symbol]bool, providerCount map[Symbol]int) bool {
-	return len(ClauseBlockers(clause, available, inputs, providerCount)) == 0
+func ClauseReady(clause Clause, available, inputs map[Symbol]bool, providerCount map[Symbol]int, rules *RuleSet) bool {
+	return len(ClauseBlockers(clause, available, inputs, providerCount, rules)) == 0
 }
 
 // CountProviders returns how many clauses can bind each symbol. An optional
@@ -53,11 +54,11 @@ func ClauseReady(clause Clause, available, inputs map[Symbol]bool, providerCount
 // still bind it; counting providers (deduplicated per clause) lets
 // ClauseBlockers subtract the clause's own contribution, so a clause never
 // waits on itself.
-func CountProviders(clauses []Clause) map[Symbol]int {
+func CountProviders(clauses []Clause, rules *RuleSet) map[Symbol]int {
 	providerCount := make(map[Symbol]int)
 	for _, clause := range clauses {
 		provided := make(map[Symbol]bool)
-		for _, sym := range ScopeOf(clause).Provides {
+		for _, sym := range ScopeOf(clause, rules).Provides {
 			if !provided[sym] {
 				provided[sym] = true
 				providerCount[sym]++

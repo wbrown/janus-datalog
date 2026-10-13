@@ -144,7 +144,6 @@ func TestExecutePattern(t *testing.T) {
 	}
 
 	executor := newQueryExecutor(matcher, nil, ExecutorOptions{})
-	ctx := NewContext()
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -154,7 +153,7 @@ func TestExecutePattern(t *testing.T) {
 		},
 	}
 
-	result, err := executor.executePattern(ctx, query.PatternQuery(pattern), pattern, nil)
+	result, err := executor.executePattern(query.PatternQuery(pattern), pattern, nil)
 	if err != nil {
 		t.Fatalf("executePattern failed: %v", err)
 	}

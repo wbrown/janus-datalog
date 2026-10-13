@@ -356,12 +356,20 @@ The storage layer connects the query engine to BadgerDB:
 2. **Schema as facts** - A schema given to a database is asserted into its store, one entity per attribute on `db.attribute/<ident>` carrying the seven definition words as cardinality-one facts; a dump carries them, an open with no schema reads them back, and inference covers only an attribute with datoms and no definition
    - `SetSchema` returns an error and refuses a temporal handle
    - A fork asserts its parent's declared definitions into the branch
-   - `TruncateTo` runs with the definitions that survive the rewind
+   - `TruncateTo` runs with the given schema over the definitions that survive the rewind, writing nothing
    - `DatabaseOptions.RefuseUnknownAttributes` / `db.WithRefuseUnknownAttributes()` refuses a query, pull or `PullInto` naming an attribute the schema does not declare, as `*schema.UnknownAttributeError`
    - The option requires a schema: opening with it and none, or `SetSchema(nil)` on a refusing database, is an error
    - A parsed `query.Query` collects the attributes it names once, under a `sync.Once`, so the check is one schema lookup per attribute per execution
    - A `Query` is never copied by value, and a derived query is built from its parsed parts
    - See [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md), "Schema as Facts", and [docs/proposals/RULES_WITNESSES_AND_SPECULATIVE_VALUES.md](docs/proposals/RULES_WITNESSES_AND_SPECULATIVE_VALUES.md) §4 and §5
+3. **Rules and recursion, with bounds and cancellation** - A rule set is passed as the `%` input: a `*query.RuleSet` from `parser.ParseRules` or the builder, or its text. It declares predicates a query invokes as `(name args...)` clauses. An invocation evaluates its predicate when its clause runs
+   - An invocation with no bound argument derives the predicate whole. Each needed stratum evaluates to a fixpoint, semi-naively. An invocation with a bound argument rewrites the rule set for the binding (magic sets) and derives only what the binding reaches
+   - The required-binding head, `[(rule [?x] ?y) ...]`, is accepted. The planner orders the invocation after the clauses that bind the required positions
+   - `query.NewRuleSet` refuses an unsafe rule, an arity disagreement, an unknown predicate, a cycle through negation, and a recursive invocation inside a fallback or a subquery. Each is a typed error naming its parts
+   - `PlannerOptions.MaxRuleIterations` and `MaxDerivedTuples` bound an evaluation. Both are opt-in. `storage.WithContext` / `db.WithContext` is a query option. A query whose context is done is refused at entry, and a fixpoint whose context is done stops at its next iteration. The context's error is the query's error
+   - `executor.Context` carries the rule set, the derived relations and the cancellation beside the environment. A rule body's plan enters the plan cache under its own text, which carries `%` and the delta symbols. Every iteration reads the query's one snapshot
+   - The CLI reads the `-in` value at the `%` position as rule text. The builder has `qb.Rules`, `qb.Rule`, `qb.DefineRule`, `qb.RuleSet`, `qb.MustRuleSet` and `Require`
+   - See [docs/reference/RULES.md](docs/reference/RULES.md)
 
 ### ✅ Recent Updates (Q1 2026)
 1. **LZJ Compression Codec** - Custom LZ77+FSE compression for value storage
@@ -451,6 +459,8 @@ The storage layer connects the query engine to BadgerDB:
 28. **Database export/import** - EDN format export/import for backup and migration; CLI flags `-export` and `-import`; preserves all value types and transaction IDs
 29. **LZJ compression** - Custom LZ77+FSE codec; 3.6-13× ratios; deterministic; transparent at the storage layer; `#lzj` EDN tagged literal for export/import
 30. **Tier 3 blob store** - Out-of-line storage for large/compressed values with hash-keyed deduplication; values referenced by hash from index keys
+31. **Rules** - A rule set passed as the `%` input and invoked as `(name args...)` clauses. A recursive predicate evaluates to a fixpoint per stratum, semi-naively, with negation stratified. A bound invocation derives only what its bindings reach, through magic sets. Required-binding heads are accepted. `MaxRuleIterations` and `MaxDerivedTuples` bound an evaluation. CLI and query-builder surfaces (`docs/reference/RULES.md`)
+32. **Query cancellation** - `WithContext` is a query option. A query whose context is done is refused at entry, and a fixpoint whose context is done stops at its next iteration. The context's error is the query's error
 
 ### 📋 TODO (Priority Order)
 

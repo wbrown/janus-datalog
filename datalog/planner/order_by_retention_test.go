@@ -37,7 +37,7 @@ func TestPlanRetainsNonProjectedOrderBySymbols(t *testing.T) {
 	}
 
 	p := NewClauseBasedPlanner(nil, PlannerOptions{})
-	plan, err := p.Plan(q, nil)
+	plan, err := p.Plan(q, Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestPlanRetainsOnlyNonProjectedSortKeys(t *testing.T) {
 	}
 
 	p := NewClauseBasedPlanner(nil, PlannerOptions{})
-	plan, err := p.Plan(q, nil)
+	plan, err := p.Plan(q, Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestPlanDoesNotRetainForAggregates(t *testing.T) {
 	}
 
 	p := NewClauseBasedPlanner(nil, PlannerOptions{})
-	plan, err := p.Plan(q, nil)
+	plan, err := p.Plan(q, Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestPlanDoesNotRetainConstantInputKeys(t *testing.T) {
 	}
 
 	p := NewClauseBasedPlanner(nil, PlannerOptions{})
-	plan, err := p.Plan(q, nil)
+	plan, err := p.Plan(q, Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}

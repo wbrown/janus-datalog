@@ -153,16 +153,20 @@ func TestSourceRouterImplementsPatternMatcher(t *testing.T) {
 }
 
 // vocabularyMatcher is a PatternMatcher double that also answers the
-// attribute-vocabulary question, recording the query it was asked about and
-// answering with a fixed error.
+// attribute-vocabulary question, recording the roster it was asked about and
+// answering a non-empty roster with a fixed error. An empty roster names
+// nothing to refuse and is answered nil, as the storage matcher answers it.
 type vocabularyMatcher struct {
 	mockPatternMatcher
-	asked  *query.Query
+	asked  []datalog.Keyword
 	answer error
 }
 
-func (m *vocabularyMatcher) UnknownAttributes(q *query.Query) error {
-	m.asked = q
+func (m *vocabularyMatcher) UnknownAttributes(attrs []datalog.Keyword) error {
+	m.asked = attrs
+	if len(attrs) == 0 {
+		return nil
+	}
 	return m.answer
 }
 
@@ -170,34 +174,28 @@ var _ AttributeVocabulary = (*vocabularyMatcher)(nil)
 
 // TestSourceRouterUnknownAttributesDelegatesToDefault pins that the router
 // answers the attribute-vocabulary question from its default source alone: a
-// default source with the capability is asked about the very query and its
+// default source with the capability is asked about the very roster and its
 // answer is returned as is, a default source without it answers nil, and a
 // named source is never consulted.
 func TestSourceRouterUnknownAttributesDelegatesToDefault(t *testing.T) {
-	q := query.PatternQuery(&query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: datalog.NewKeyword(":t/naem")},
-			query.Variable{Name: datalog.NewSymbol("?v")},
-		},
-	})
+	roster := []datalog.Keyword{datalog.NewKeyword(":t/naem")}
 	refusal := errors.New("unknown attribute :t/naem")
 
 	withVocabulary := &vocabularyMatcher{answer: refusal}
 	router := NewSourceRouter(map[query.Symbol]PatternMatcher{
 		datalog.SymDollar: withVocabulary,
 	})
-	if err := router.UnknownAttributes(q); err != refusal {
+	if err := router.UnknownAttributes(roster); err != refusal {
 		t.Errorf("router answered %v, want the default source's own answer %v", err, refusal)
 	}
-	if withVocabulary.asked != q {
-		t.Error("router must ask the default source about the query it was given")
+	if len(withVocabulary.asked) != 1 || withVocabulary.asked[0] != roster[0] {
+		t.Errorf("router asked about %v, want the roster it was given %v", withVocabulary.asked, roster)
 	}
 
 	router = NewSourceRouter(map[query.Symbol]PatternMatcher{
 		datalog.SymDollar: &mockPatternMatcher{},
 	})
-	if err := router.UnknownAttributes(q); err != nil {
+	if err := router.UnknownAttributes(roster); err != nil {
 		t.Errorf("a default source without a vocabulary refuses nothing, got %v", err)
 	}
 
@@ -205,10 +203,28 @@ func TestSourceRouterUnknownAttributesDelegatesToDefault(t *testing.T) {
 	router = NewSourceRouter(map[query.Symbol]PatternMatcher{
 		datalog.NewSymbol("$cache"): named,
 	})
-	if err := router.UnknownAttributes(q); err != nil {
+	if err := router.UnknownAttributes(roster); err != nil {
 		t.Errorf("a router with no default source refuses nothing, got %v", err)
 	}
 	if named.asked != nil {
 		t.Error("a named source carries no definitions to refuse against and must not be asked")
+	}
+}
+
+// TestExecuteWithRelationsChecksRuleBodyAttributes pins that the executor
+// asks the vocabulary about the attributes the rule bodies name, not only
+// the query's own.
+func TestExecuteWithRelationsChecksRuleBodyAttributes(t *testing.T) {
+	refusal := errors.New("unknown attribute :page/nxet")
+	withVocabulary := &vocabularyMatcher{answer: refusal}
+	exec := NewExecutor(withVocabulary, nil)
+	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/nxet ?b]]]`)
+	q := mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`)
+	_, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
+	if err != refusal {
+		t.Errorf("executor answered %v, want the vocabulary's refusal of the rule body's attribute", err)
+	}
+	if len(withVocabulary.asked) != 1 || withVocabulary.asked[0] != datalog.NewKeyword(":page/nxet") {
+		t.Errorf("the vocabulary was asked about %v, want the rule body's roster", withVocabulary.asked)
 	}
 }

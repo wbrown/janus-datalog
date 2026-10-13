@@ -47,6 +47,7 @@ func TestCorrelatedSubqueryDefersBehindSimultaneouslyReadySiblings(t *testing.T)
 		[]query.Clause{correlated, notClause, pattern},
 		[]query.Symbol{e, total},
 		map[query.Symbol]bool{},
+		Bindings{},
 	)
 	if err != nil {
 		t.Fatalf("phasing failed: %v", err)
@@ -89,6 +90,7 @@ func TestUncorrelatedSubqueryKeepsDataSourceScheduling(t *testing.T) {
 		[]query.Clause{notClause, uncorrelated, pattern},
 		[]query.Symbol{e, threshold},
 		map[query.Symbol]bool{},
+		Bindings{},
 	)
 	if err != nil {
 		t.Fatalf("phasing failed: %v", err)
@@ -135,6 +137,7 @@ func TestUncorrelatedSubqueryDefersBehindPendingBindingProviders(t *testing.T) {
 		q.Where,
 		[]query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?high")},
 		map[query.Symbol]bool{},
+		Bindings{},
 	)
 	if err != nil {
 		t.Fatalf("phasing failed: %v", err)
@@ -173,6 +176,7 @@ func TestSubqueryDeferralNeverStallsOnGatedProvider(t *testing.T) {
 		q.Where,
 		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		map[query.Symbol]bool{},
+		Bindings{},
 	)
 	if err != nil {
 		t.Fatalf("phasing failed on a valid query: %v", err)

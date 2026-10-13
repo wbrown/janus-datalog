@@ -6,10 +6,11 @@ This guide is for developers familiar with Datomic who want to understand what j
 
 **Estimated feature parity: ~80%** (weighted by typical usage frequency)
 
-Janus-datalog implements most of Datomic's Datalog query language. The core query path — patterns, joins, predicates, expressions, aggregations, subqueries, NOT/OR, Pull API, schema, database functions, time-travel queries — is fully implemented. The main gaps are rules/recursion, transaction functions, and the Entity API (largely superseded by Pull). Go-specific features (Struct Reflection, QueryInto, Query Builder) go beyond what Datomic offers.
+Janus-datalog implements most of Datomic's Datalog query language. The core query path — patterns, joins, predicates, expressions, aggregations, subqueries, rules, NOT/OR, Pull API, schema, database functions, time-travel queries — is fully implemented. The main gaps are transaction functions and the Entity API (largely superseded by Pull). Go-specific features (Struct Reflection, QueryInto, Query Builder) go beyond what Datomic offers.
 
 **Core Features (fully implemented):**
 - ✅ Query patterns, expressions, aggregations, subqueries, order-by
+- ✅ Rules passed as `%`, recursive ones evaluated to a fixpoint with stratified negation
 - ✅ Pull API with nested references, wildcards, defaults, cycle detection
 - ✅ NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)`
 - ✅ Database functions: `get-else`, `missing?`, `get-some`
@@ -27,11 +28,6 @@ Janus-datalog implements most of Datomic's Datalog query language. The core quer
 - ✅ Export/Import to EDN format for backup and migration
 
 **Not Implemented:**
-- ⚠️ Rules: non-recursive rules (named, reusable query fragments) are fully
-  covered by Go functions + Query Builder, but not available through EDN
-  queries. Recursive rules (transitive closure, graph walking) are not
-  supported — though Datomic's own recursion lacks fixed-point evaluation
-  and termination guarantees.
 - ❌ Transaction functions
 - ❌ Entity API (navigation) — largely superseded by Pull API
 - ❌ Distributed queries (single-node only)
@@ -176,6 +172,7 @@ Standard Datomic input patterns:
 
 **Supported inputs:**
 - `$` - database
+- `%` - rule set
 - `?var` - scalar
 - `[?var ...]` - collection
 - `[[?x ?y]]` - tuple
@@ -568,7 +565,7 @@ results, err := d.Query(q)
 - Compile-time safety: attribute typos caught immediately
 - IDE support: autocomplete for attributes and functions
 - Variable identity = join semantics (same `*Var` pointer in multiple patterns)
-- Full Datalog support: patterns, predicates, expressions, aggregations, NOT/OR, subqueries
+- Full Datalog support: patterns, predicates, expressions, aggregations, NOT/OR, subqueries, rules
 
 **Available functions:**
 - Patterns: `Pat()` (2-5 elements), `Blank()` for wildcards
@@ -577,50 +574,52 @@ results, err := d.Query(q)
 - Time: `Year`, `Month`, `Day`, `Hour`, `Minute`, `Second`
 - Aggregates: `Sum`, `Count`, `Avg`, `Min`, `Max`
 - Logic: `Not`, `NotJoin`, `Or`, `OrJoin`
-- Inputs: `DB`, `Scalar`, `Collection`, `Tuple`, `Relation`
+- Inputs: `DB`, `Scalar`, `Collection`, `Tuple`, `Relation`, `Rules`
+- Rules: `DefineRule`, `RuleSet`, `MustRuleSet`, `Rule`
 
 See [docs/reference/QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md) for complete documentation.
 
-## Missing Datomic Features
+### 16. Rules ✅
 
-### 1. Rules ⚠️
-
-**Non-recursive rules** (named, reusable query fragments) are fully supported
-via Go functions + Query Builder. A Go function that returns clauses IS a rule
-— with compile-time safety, IDE support, and parameterization:
-
-```go
-// Equivalent to Datomic rule: [(active-employee ?e ?name) ...]
-func ActiveEmployee(e, name *qb.Var) []interface{} {
-    return []interface{}{
-        qb.Pat(e, EmployeeName, name),
-        qb.Pat(e, EmployeeStatus, qb.V("active")),
-        qb.Not(qb.Pat(e, EmployeeArchived, qb.V(true))),
-    }
-}
-
-// Composed into queries just like Datomic rule invocation
-q := qb.Query().Find(name).Where(ActiveEmployee(e, name)...).MustBuild()
-```
-
-This is not available through the EDN query path — only via Go.
-
-**Recursive rules** (transitive closure, graph walking) are not supported:
+Rules are Datomic's. A rule set is a vector of `[(name ?args...) clause...]`
+rules. It is passed as the `%` input. A predicate is invoked as
+`(name args...)` in `:where`. Several rules for one name are alternatives. A
+recursive rule evaluates to a fixpoint:
 
 ```clojure
-; NOT SUPPORTED — self-referential recursion:
-[[(ancestor ?a ?d)
-  [?a :parent ?d]]
- [(ancestor ?a ?d)
-  [?a :parent ?p]
-  (ancestor ?p ?d)]]
+[[(ancestor ?a ?d) [?a :parent ?d]]
+ [(ancestor ?a ?d) [?a :parent ?p] (ancestor ?p ?d)]]
+
+[:find ?d
+ :in $ % ?a
+ :where (ancestor ?a ?d)]
 ```
 
-Note: Datomic's recursion is also limited — rules can call themselves, but
-there is no automatic fixed-point evaluation or termination guarantees.
-Deep recursion on large graphs can cause stack overflows in Datomic.
+**Differences from Datomic:**
+- Evaluation is bottom-up and semi-naive. A recursive rule terminates on a
+  cyclic graph. Datomic's rules can call themselves but carry no termination
+  guarantee.
+- Negation is stratified. A rule set whose predicates depend on each other
+  through `not` or `not-join` is refused, with the predicates named. A
+  recursive invocation inside `or-default`, `or-default-join` or a subquery
+  is refused too.
+- The required-binding head, `[(rule [?x] ?y) ...]`, has Datomic's meaning.
+  The planner orders an invocation after the clauses that bind the required
+  positions.
+- An invocation with a bound argument derives only what the argument reaches.
+  The rule set is rewritten for the binding (magic sets) and the bound values
+  seed the fixpoint. Datomic does not state how it evaluates one.
+- Two opt-in planner options, `MaxRuleIterations` and `MaxDerivedTuples`,
+  bound an evaluation. The `WithContext` query option cancels a query.
 
-### 2. Schema (Partial Support) ⚠️
+A Go function returning builder clauses is still a way to share a
+non-recursive fragment with compile-time safety. The builder defines a rule
+set with `qb.DefineRule` and `qb.RuleSet`. It invokes a predicate with
+`qb.Rule`. See [docs/reference/RULES.md](docs/reference/RULES.md).
+
+## Missing Datomic Features
+
+### 1. Schema (Partial Support) ⚠️
 
 Schema is supported but with limitations vs Datomic:
 
@@ -675,7 +674,7 @@ d, _ := db.Open(path, db.WithSchema(s))
 
 **Performance:** Type validation is paid at `Add()` time; uniqueness costs nothing at write time and is paid by the read that asks. See `PERFORMANCE_STATUS.md` for benchmarks.
 
-### 3. Transaction Features ⚠️
+### 2. Transaction Features ⚠️
 
 Partial transaction support:
 - ✅ **CRDT semantics** - LWW, add-wins, and RGA based on attribute cardinality
@@ -686,7 +685,7 @@ Partial transaction support:
 - ❌ **No transaction metadata** beyond ElementID (Lamport + ReplicaID)
 - ❌ **No transaction entities**
 
-### 4. Entity API ❌
+### 3. Entity API ❌
 
 No entity navigation:
 
@@ -697,7 +696,7 @@ No entity navigation:
 (touch entity)
 ```
 
-### 5. Advanced Query Features (Partial) ⚠️
+### 4. Advanced Query Features (Partial) ⚠️
 
 **Implemented:**
 - `get-else` - default values for missing attributes ✅
@@ -709,7 +708,7 @@ No entity navigation:
 - `keys` - no map results
 - `with` - no duplicate control
 
-### 6. Time and History Features ✅
+### 5. Time and History Features ✅
 
 **Supported:**
 - CRDT storage inherently preserves all writes with ElementIDs (Lamport + ReplicaID)
@@ -752,7 +751,7 @@ asOf, _ := d.AsOf(tx1).Query(
 **Not supported:**
 - No `since` queries (use `[(tx-between ?tx start ∞)]` instead)
 
-### 7. Database Features ❌
+### 6. Database Features ❌
 
 No advanced database operations:
 - No database branching/forking
@@ -760,7 +759,7 @@ No advanced database operations:
 - No database filters
 - No log API
 
-### 8. Other Missing Features ❌
+### 7. Other Missing Features ❌
 
 - **Nested expressions in predicates**: Cannot do `[(< (- ?t2 ?t1) 300)]`
 - **Distinct in aggregations**: No `(count-distinct ?x)`
@@ -806,13 +805,12 @@ No advanced database operations:
 - Pull API expressions (including nested refs, wildcards, defaults)
 - NOT/OR clauses
 - Subqueries with tuple/relation bindings
+- Rules passed as `%`, recursive ones and required-binding heads included
 - Order-by clauses
 - Time-travel queries via `d.History().Query(...)` and `d.AsOf(elementID).Query(...)`
 - Database functions (get-else, missing?, get-some)
 
 **Require refactoring:**
-- Non-recursive rules → Go functions + Query Builder (compile-time safe, composable)
-- Recursive rules → handle recursion in application code
 - Entity navigation → use Pull API or explicit joins
 
 **Not possible:**
@@ -847,17 +845,16 @@ cardinality handling.
         [?friend :person/name ?friend-name]]
 ```
 
-**Datomic with Rules:**
+**Datomic with Rules (works directly):**
 ```clojure
+; The rule set, passed as the % input
+[[(ancestor ?person ?ancestor) [?person :parent ?ancestor]]
+ [(ancestor ?person ?ancestor) [?person :parent ?p] (ancestor ?p ?ancestor)]]
+
+; The query
 [:find ?person ?ancestor
  :in $ %
  :where (ancestor ?person ?ancestor)]
-```
-
-**Janus-Datalog equivalent (must inline):**
-```clojure
-; Must explicitly write out the recursive logic
-; or handle in application code
 ```
 
 ## Performance Characteristics
@@ -880,17 +877,17 @@ These make it suitable for production workloads with substantial Datomic feature
 - Applications needing Datalog's expressiveness with Go's performance
 - Entity retrieval using Pull API (9× faster than equivalent queries)
 - Applications requiring NOT/OR logic and subqueries
+- Recursive and graph queries through rules, with a termination guarantee
 - Single-node deployments with BadgerDB persistence
 
 **Consider alternatives for:**
-- Recursive/graph queries requiring rules (no rule support)
 - Distributed/multi-node requirements (single-node only)
 
 ## Getting Started
 
 For Datomic users, the transition is straightforward:
 
-1. Most queries port directly, including Pull expressions and NOT/OR clauses
+1. Most queries port directly, including Pull expressions, NOT/OR clauses and rules
 2. Use subqueries for complex aggregations with proper scoping
 3. Define schema for type validation and cardinality support (one/many/vector)
 4. Use Pull API for efficient entity navigation (replaces Entity API)

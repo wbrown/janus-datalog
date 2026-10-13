@@ -26,7 +26,7 @@ Most databases make you choose:
 
 **Janus gives you all five:**
 
-- **Datomic-style queries**: Joins, aggregations, subqueries, time-travel, history
+- **Datomic-style queries**: Joins, aggregations, subqueries, recursive rules, time-travel, history
 - **Single Go binary**: No JVM, no external dependencies, just `go get`
 - **No surprises**: Greedy planning without statistics, explicit error handling, predictable performance
 - **CRDT storage**: Automatic conflict resolution, multi-replica ready, history is inherent
@@ -1018,6 +1018,7 @@ See [docs/papers/README.md](docs/papers/README.md) for complete details.
 
 ### Deep Dives
 
+- **[docs/reference/RULES.md](docs/reference/RULES.md)** - Rules: the `%` input, recursion to a fixpoint, stratified negation, bounds and cancellation
 - **[docs/reference/MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md)** - Multi-source queries: cross-database joins, in-memory sources, Go slices
 - **[RELATIONAL_ALGEBRA_OVERVIEW.md](RELATIONAL_ALGEBRA_OVERVIEW.md)** - How queries become algebra
 - **[PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)** - Measured performance and benchmarks
@@ -1089,11 +1090,11 @@ Janus implements **~80% of Datomic's feature set** (weighted by typical usage), 
 - Schema: Type validation, cardinality (one/many/vector), uniqueness, never-zero-value domain constraint
 - Storage: Persistent BadgerDB backend
 - NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with fallback expressions
+- Rules: passed as `%`, recursive ones evaluated to a fixpoint with stratified negation, bounded and cancellable
 - Multi-source queries: Named sources (`$name`), cross-source joins, in-memory and slice sources
 - Go-specific: Struct reflection API, QueryInto for typed results
 
 **Not implemented:**
-- Rules and recursive queries
 - Full-text search
 - Distributed transactions
 

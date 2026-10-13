@@ -153,7 +153,8 @@ func TestQueryReportsEveryUnknownAttribute(t *testing.T) {
 	}
 }
 
-// A refusing database always has a given schema to check against.
+// A refusing database always has a given schema to check against, and a
+// refused declaration of none leaves the given schema as it was.
 func TestRefusalRequiresSchema(t *testing.T) {
 	for _, backend := range AvailableBackends() {
 		t.Run(backend.Name, func(t *testing.T) {
@@ -161,7 +162,12 @@ func TestRefusalRequiresSchema(t *testing.T) {
 			require.Error(t, err, "the option names no schema to check against")
 
 			d := openBackendDB(t, backend, DatabaseOptions{Schema: schemaFactsFixture(t), RefuseUnknownAttributes: true})
+			_, err = d.Snapshot("s")
+			require.NoError(t, err)
 			require.Error(t, d.SetSchema(nil), "the option names no schema to check against")
+
+			require.NoError(t, d.TruncateTo("s"), "a refused declaration leaves the given schema in place, so the rewind installs it")
+			require.NotNil(t, d.Schema().GetAttribute(kw(":t/string")), "the given schema is still the one the database runs with")
 		})
 	}
 }

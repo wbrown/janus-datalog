@@ -268,7 +268,7 @@ func TestNotOrParseErrors(t *testing.T) {
 		{
 			name:  "not without clauses",
 			input: `[:find ?e :where [?e :foo ?v] (not)]`,
-			error: "list clause must have at least a keyword and one element",
+			error: "not clause must have at least one inner clause",
 		},
 		{
 			name:  "not-join without inner clauses",
@@ -278,7 +278,12 @@ func TestNotOrParseErrors(t *testing.T) {
 		{
 			name:  "or without branches",
 			input: `[:find ?e :where [?e :foo ?v] (or)]`,
-			error: "list clause must have at least a keyword and one element",
+			error: "or clause must have at least two branches",
+		},
+		{
+			name:  "empty list",
+			input: `[:find ?e :where [?e :foo ?v] ()]`,
+			error: "list clause must not be empty",
 		},
 		{
 			name:  "or-join without enough elements",

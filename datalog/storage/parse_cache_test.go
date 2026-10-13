@@ -140,6 +140,68 @@ func TestParseCacheClear(t *testing.T) {
 	}
 }
 
+// The rules arm carries rule text to its parsed set under the cache's bound
+// and statistics.
+func TestParseCacheRulesHitMiss(t *testing.T) {
+	c := NewParseCache(100)
+	const text = `[[(reach ?a ?b) [?a :edge ?b]]]`
+	rs, err := parser.ParseRules(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := c.GetRules(text)
+	if ok || got != nil {
+		t.Fatal("expected a miss on an empty cache")
+	}
+
+	c.SetRules(text, rs)
+
+	got, ok = c.GetRules(text)
+	if !ok {
+		t.Fatal("expected a hit after SetRules")
+	}
+	if got != rs {
+		t.Fatal("expected the same *query.RuleSet pointer")
+	}
+
+	if _, ok := c.GetRules(`[[(reach ?a ?b) [?a :link ?b]]]`); ok {
+		t.Fatal("expected a miss for different rule text")
+	}
+
+	hits, misses, size := c.Stats()
+	if hits != 1 || misses != 2 || size != 1 {
+		t.Errorf("stats = %d hits, %d misses, size %d; want 1, 2, 1: the rules arm counts in the cache's statistics", hits, misses, size)
+	}
+}
+
+func TestParseCacheRulesEvictionAndClear(t *testing.T) {
+	c := NewParseCache(2)
+	texts := []string{
+		`[[(a ?x) [?x :a _]]]`,
+		`[[(b ?x) [?x :b _]]]`,
+		`[[(c ?x) [?x :c _]]]`,
+	}
+	for _, text := range texts {
+		rs, err := parser.ParseRules(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.SetRules(text, rs)
+	}
+	if _, _, size := c.Stats(); size != 2 {
+		t.Errorf("size = %d after three rule sets under a bound of 2, want 2", size)
+	}
+
+	c.Clear()
+	if _, ok := c.GetRules(texts[2]); ok {
+		t.Error("Clear empties the rules arm")
+	}
+	if _, _, size := c.Stats(); size != 0 {
+		t.Errorf("size = %d after Clear, want 0", size)
+	}
+}
+
 func TestParseCacheConcurrent(t *testing.T) {
 	c := NewParseCache(100)
 	q, _ := parser.ParseQuery(`[:find ?e :where [?e :a ?v]]`)

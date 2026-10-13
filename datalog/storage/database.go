@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -39,6 +40,28 @@ func (d *Database) resolveQuery(q interface{}) (*query.Query, error) {
 		return v, nil
 	default:
 		return nil, fmt.Errorf("query must be string or *query.Query, got %T", q)
+	}
+}
+
+// resolveRules converts the value given for the % input (string or
+// *query.RuleSet) to *query.RuleSet. String inputs are cached in
+// d.parseCache to avoid re-parsing identical rule text.
+func (d *Database) resolveRules(v interface{}) (*query.RuleSet, error) {
+	switch v := v.(type) {
+	case string:
+		if cached, ok := d.parseCache.GetRules(v); ok {
+			return cached, nil
+		}
+		parsed, err := parser.ParseRules(v)
+		if err != nil {
+			return nil, fmt.Errorf("rules input: %w", err)
+		}
+		d.parseCache.SetRules(v, parsed)
+		return parsed, nil
+	case *query.RuleSet:
+		return v, nil
+	default:
+		return nil, fmt.Errorf("expected a *query.RuleSet or rule text for the %% input, got %T", v)
 	}
 }
 
@@ -339,12 +362,16 @@ func (d *Database) Schema() schema.SchemaProvider {
 // schema the database runs with is composed from both. A nil s withdraws the
 // given schema, and the database runs with the store's definitions and what
 // the ops of the other attributes infer; a database that refuses unknown
-// attributes keeps a schema to check against and returns an error for nil.
+// attributes keeps a schema to check against and refuses nil before anything
+// changes, so a refused call leaves the given schema as it was.
 // Schema changes take effect for new transactions. A read-only temporal
 // handle has no store of its own to assert into and is refused.
 func (d *Database) SetSchema(s schema.SchemaProvider) error {
 	if d.temporalTxID != nil {
 		return fmt.Errorf("SetSchema: cannot declare a schema on a read-only temporal handle (AsOf/History)")
+	}
+	if s == nil && d.refuseUnknown {
+		return errRefuseUnknownNeedsSchema
 	}
 	d.mu.Lock()
 	d.givenSchema = s
@@ -805,6 +832,8 @@ type QueryOption func(*queryOptions)
 
 type queryOptions struct {
 	sources map[query.Symbol]executor.PatternMatcher
+	// ctx is the cancellation the caller gave, nil when none was given.
+	ctx context.Context
 }
 
 // WithSources adds additional data sources for multi-source queries.
@@ -814,6 +843,23 @@ func WithSources(sources map[query.Symbol]executor.PatternMatcher) QueryOption {
 		for k, v := range sources {
 			o.sources[k] = v
 		}
+	}
+}
+
+// WithContext cancels the query with ctx. A query whose ctx is done is refused
+// at entry, before any work, and a rule evaluation whose ctx is done stops at
+// its next iteration. ctx's error is the error Query, QueryInto, QueryOneInto
+// and Analyze return. Explain and ExplainAlgebra accept the option and plan
+// without executing.
+//
+// Example:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+//	defer cancel()
+//	rel, err := db.Query(q, storage.WithContext(ctx))
+func WithContext(ctx context.Context) QueryOption {
+	return func(o *queryOptions) {
+		o.ctx = ctx
 	}
 }
 
@@ -887,8 +933,11 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// Validate inputs match :in clause (same validation as Query)
-	_, err = d.convertInputsToRelations(q, inputs)
+	// Validate inputs match :in clause (same validation as Query). The options
+	// among the inputs carry nothing to plan with; the rule set declares the
+	// invocations' required positions, which decide their phases.
+	_, regularInputs := extractQueryOptions(inputs)
+	_, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
 	}
@@ -899,7 +948,7 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 	// Get the query plan from the executor's planner (planning is not annotated
 	// on this plan-only path).
 	queryPlanner := exec.GetPlanner()
-	return queryPlanner.PlanQuery(q, nil)
+	return queryPlanner.PlanQuery(q, planner.Bindings{Rules: rules}, nil)
 }
 
 // ExplainAlgebra returns, without executing, the full record of what planning
@@ -929,15 +978,18 @@ func (d *Database) ExplainAlgebra(queryInput interface{}, inputs ...interface{})
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// Validate inputs match :in clause (same validation as Query)
-	_, err = d.convertInputsToRelations(q, inputs)
+	// Validate inputs match :in clause (same validation as Query). The options
+	// among the inputs carry nothing to plan with; the rule set declares the
+	// invocations' required positions, which decide their phases.
+	_, regularInputs := extractQueryOptions(inputs)
+	_, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create executor to get its planner (ensures same options as execution)
 	exec := d.NewExecutor()
-	return exec.GetPlanner().ExplainPlan(q)
+	return exec.GetPlanner().ExplainPlan(q, planner.Bindings{Rules: rules})
 }
 
 // AnalyzeResult contains the query plan and execution statistics from Analyze().
@@ -1105,8 +1157,9 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// Validate and convert inputs
-	inputRelations, err := d.convertInputsToRelations(q, inputs)
+	// Validate and convert inputs.
+	queryOpts, regularInputs := extractQueryOptions(inputs)
+	inputRelations, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
 	}
@@ -1138,13 +1191,13 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 	// Get the query plan from the executor's planner. The handler above captures
 	// execution annotations; planning here is not annotated.
 	queryPlanner := exec.GetPlanner()
-	plan, err := queryPlanner.PlanQuery(q, nil)
+	plan, err := queryPlanner.PlanQuery(q, planner.Bindings{Rules: rules}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to plan query: %w", err)
 	}
 
 	// Execute with annotation collection
-	result, err := exec.ExecuteWithRelations(executor.NewContext(), q, inputRelations)
+	result, err := exec.ExecuteWithRelations(executor.NewContext().WithRules(rules).WithCancellation(queryOpts.ctx), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
 	}
@@ -2664,9 +2717,13 @@ func validateValueStorable(a datalog.Keyword, v interface{}) error {
 	return nil
 }
 
-// convertInputsToRelations converts Go values to executor.Relation based on the :in clause
-func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}) ([]executor.Relation, error) {
+// convertInputsToRelations converts Go values to executor.Relation based on
+// the :in clause. The % input consumes one value, a *query.RuleSet or the text
+// of one, and contributes no relation; the rule set is returned beside the
+// relations, nil when the query declares no %.
+func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}) ([]executor.Relation, *query.RuleSet, error) {
 	inputRelations := make([]executor.Relation, 0, len(inputs))
+	var rules *query.RuleSet
 	inputIdx := 0
 	entityBound, attrBound := query.PositionSymbols(q)
 
@@ -2677,7 +2734,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 		}
 
 		if inputIdx >= len(inputs) {
-			return nil, fmt.Errorf("not enough inputs: expected input for %v (have %d inputs, need %d)", inputSpecSymbols(inputSpec), len(inputs), inputIdx+1)
+			return nil, nil, fmt.Errorf("not enough inputs: expected input for %v (have %d inputs, need %d)", inputSpecSymbols(inputSpec), len(inputs), inputIdx+1)
 		}
 		input := inputs[inputIdx]
 
@@ -2689,6 +2746,15 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 		var bound [][]interface{}
 
 		switch spec := inputSpec.(type) {
+		case query.RulesInput:
+			resolved, err := d.resolveRules(input)
+			if err != nil {
+				return nil, nil, err
+			}
+			rules = resolved
+			inputIdx++
+			continue
+
 		case query.ScalarInput:
 			symbols = []query.Symbol{spec.Symbol}
 			bound = [][]interface{}{{input}}
@@ -2696,7 +2762,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 		case query.CollectionInput:
 			slice := reflect.ValueOf(input)
 			if slice.Kind() != reflect.Slice && slice.Kind() != reflect.Array {
-				return nil, fmt.Errorf("expected slice or array for collection input %s, got %T", spec.Symbol, input)
+				return nil, nil, fmt.Errorf("expected slice or array for collection input %s, got %T", spec.Symbol, input)
 			}
 			symbols = []query.Symbol{spec.Symbol}
 			bound = make([][]interface{}, slice.Len())
@@ -2707,7 +2773,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 		case query.TupleInput:
 			slice := reflect.ValueOf(input)
 			if slice.Kind() != reflect.Slice && slice.Kind() != reflect.Array {
-				return nil, fmt.Errorf("expected slice or array for tuple input, got %T", input)
+				return nil, nil, fmt.Errorf("expected slice or array for tuple input, got %T", input)
 			}
 			symbols = spec.Symbols
 			bound = [][]interface{}{reflectValues(slice)}
@@ -2715,7 +2781,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 		case query.RelationInput:
 			outerSlice := reflect.ValueOf(input)
 			if outerSlice.Kind() != reflect.Slice && outerSlice.Kind() != reflect.Array {
-				return nil, fmt.Errorf("expected slice of slices for relation input, got %T", input)
+				return nil, nil, fmt.Errorf("expected slice of slices for relation input, got %T", input)
 			}
 			symbols = spec.Symbols
 			bound = make([][]interface{}, outerSlice.Len())
@@ -2731,13 +2797,13 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 					innerSlice = innerSlice.Elem()
 				}
 				if innerSlice.Kind() != reflect.Slice && innerSlice.Kind() != reflect.Array {
-					return nil, fmt.Errorf("expected slice for relation tuple %d, got %T", i, innerSlice.Interface())
+					return nil, nil, fmt.Errorf("expected slice for relation tuple %d, got %T", i, innerSlice.Interface())
 				}
 				bound[i] = reflectValues(innerSlice)
 			}
 
 		default:
-			return nil, fmt.Errorf("unsupported input spec %T", inputSpec)
+			return nil, nil, fmt.Errorf("unsupported input spec %T", inputSpec)
 		}
 
 		// One conversion path for every form: arity against the symbol list,
@@ -2746,13 +2812,13 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 		tuples := make([]executor.Tuple, len(bound))
 		for i, values := range bound {
 			if len(values) != len(symbols) {
-				return nil, fmt.Errorf("input tuple %d for %v: expected %d values, got %d", i, symbols, len(symbols), len(values))
+				return nil, nil, fmt.Errorf("input tuple %d for %v: expected %d values, got %d", i, symbols, len(symbols), len(values))
 			}
 			tuple := make(executor.Tuple, len(values))
 			for j, val := range values {
 				v, err := convertInputValue(entityBound, attrBound, symbols[j], val)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				tuple[j] = v
 			}
@@ -2764,10 +2830,10 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 
 	// Check we used all inputs
 	if inputIdx < len(inputs) {
-		return nil, fmt.Errorf("too many inputs: query expects %d inputs but got %d", inputIdx, len(inputs))
+		return nil, nil, fmt.Errorf("too many inputs: query expects %d inputs but got %d", inputIdx, len(inputs))
 	}
 
-	return inputRelations, nil
+	return inputRelations, rules, nil
 }
 
 // Pull retrieves entity data according to a pull pattern

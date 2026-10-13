@@ -31,7 +31,7 @@ func TestPhaserSymbolExtraction(t *testing.T) {
 
 	t.Logf("Decompiled %d clauses:", len(clauses))
 	for i, c := range clauses {
-		scope := query.ScopeOf(c)
+		scope := query.ScopeOf(c, nil)
 		t.Logf("  [%d] %T provides=%v correlates=%v", i, c, scope.Provides, scope.Correlates)
 	}
 }
@@ -100,7 +100,7 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	}
 	t.Logf("Decompiled %d clauses:", len(clauses))
 	for i, c := range clauses {
-		scope := query.ScopeOf(c)
+		scope := query.ScopeOf(c, nil)
 		t.Logf("  [%d] %T provides=%v correlates=%v", i, c, scope.Provides, scope.Correlates)
 	}
 
@@ -113,7 +113,7 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	}
 	inputSymbols := map[query.Symbol]bool{}
 
-	phases, err := createPhasesGreedy(clauses, findSymbols, inputSymbols)
+	phases, err := createPhasesGreedy(clauses, findSymbols, inputSymbols, Bindings{})
 	if err != nil {
 		t.Fatalf("phasing failed: %v", err)
 	}

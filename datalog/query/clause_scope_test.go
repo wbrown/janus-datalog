@@ -36,10 +36,11 @@ func assertSymbols(t *testing.T, label string, got []Symbol, want ...string) {
 // are the variables a clause can bind in its enclosing scope, Correlates its
 // free variables that unify with the enclosing scope when bound there, and
 // scoped-away variables (explicit-join bodies, subquery inner queries)
-// appear in neither.
+// appear in neither. These forms carry no invocation, so they are read with
+// no rule set.
 func TestScopeOf(t *testing.T) {
 	t.Run("data pattern provides its variables", func(t *testing.T) {
-		scope := ScopeOf(scopePattern("?e", "a/b", "?v"))
+		scope := ScopeOf(scopePattern("?e", "a/b", "?v"), nil)
 		assertSymbols(t, "Provides", scope.Provides, "?e", "?v")
 		assertSymbols(t, "Correlates", scope.Correlates)
 	})
@@ -49,7 +50,7 @@ func TestScopeOf(t *testing.T) {
 			Op:    datalog.SymLT,
 			Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			Right: ConstantTerm{Value: int64(10)},
-		})
+		}, nil)
 		assertSymbols(t, "Provides", scope.Provides)
 		assertSymbols(t, "Correlates", scope.Correlates, "?x")
 	})
@@ -64,7 +65,7 @@ func TestScopeOf(t *testing.T) {
 				},
 			},
 			Binding: datalog.NewSymbol("?sum"),
-		})
+		}, nil)
 		assertSymbols(t, "Provides", scope.Provides, "?sum")
 		assertSymbols(t, "Correlates", scope.Correlates, "?a", "?b")
 	})
@@ -77,13 +78,13 @@ func TestScopeOf(t *testing.T) {
 				Variable{Name: datalog.NewSymbol("?in")},
 			},
 			Binding: TupleBinding{Variables: []Symbol{datalog.NewSymbol("?out")}},
-		})
+		}, nil)
 		assertSymbols(t, "Provides", scope.Provides, "?out")
 		assertSymbols(t, "Correlates", scope.Correlates, "?in")
 	})
 
 	t.Run("not correlates on its body's free variables", func(t *testing.T) {
-		scope := ScopeOf(&NotClause{Clauses: []Clause{scopePattern("?d", "seen/val", "?v")}})
+		scope := ScopeOf(&NotClause{Clauses: []Clause{scopePattern("?d", "seen/val", "?v")}}, nil)
 		assertSymbols(t, "Provides", scope.Provides)
 		assertSymbols(t, "Correlates", scope.Correlates, "?d", "?v")
 		if !scope.CorrelatesOptional {
@@ -96,7 +97,7 @@ func TestScopeOf(t *testing.T) {
 			Op:    datalog.SymLT,
 			Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			Right: ConstantTerm{Value: int64(10)},
-		})
+		}, nil)
 		if scope.CorrelatesOptional {
 			t.Error("a predicate needs every correlate bound; an unbindable one is a query error")
 		}
@@ -106,7 +107,7 @@ func TestScopeOf(t *testing.T) {
 		scope := ScopeOf(&NotJoinClause{
 			JoinVars: []Symbol{datalog.NewSymbol("?e")},
 			Clauses:  []Clause{scopePattern("?e", "a/b", "?x")},
-		})
+		}, nil)
 		if scope.CorrelatesOptional {
 			t.Error("an explicit header is a declaration that the variables are bound outside")
 		}
@@ -115,7 +116,7 @@ func TestScopeOf(t *testing.T) {
 	t.Run("or-default correlates are optional", func(t *testing.T) {
 		scope := ScopeOf(&OrDefaultClause{Branches: [][]Clause{
 			{scopePattern("?e", "a/b", "?x")},
-		}})
+		}}, nil)
 		if !scope.CorrelatesOptional {
 			t.Error("or-default falls back to global evaluation when correlation is unbindable")
 		}
@@ -127,7 +128,7 @@ func TestScopeOf(t *testing.T) {
 				JoinVars: []Symbol{datalog.NewSymbol("?v")},
 				Branches: [][]Clause{{scopePattern("?local", "seen/val", "?v")}},
 			},
-		}})
+		}}, nil)
 		assertSymbols(t, "Correlates", scope.Correlates, "?v")
 	})
 
@@ -135,7 +136,7 @@ func TestScopeOf(t *testing.T) {
 		scope := ScopeOf(&NotJoinClause{
 			JoinVars: []Symbol{datalog.NewSymbol("?e")},
 			Clauses:  []Clause{scopePattern("?e", "user/blocked", "?why")},
-		})
+		}, nil)
 		assertSymbols(t, "Provides", scope.Provides)
 		assertSymbols(t, "Correlates", scope.Correlates, "?e")
 	})
@@ -144,7 +145,7 @@ func TestScopeOf(t *testing.T) {
 		scope := ScopeOf(&OrClause{Branches: [][]Clause{
 			{scopePattern("?e", "a/b", "?x")},
 			{scopePattern("?e", "a/c", "?y")},
-		}})
+		}}, nil)
 		assertSymbols(t, "Provides", scope.Provides, "?e")
 	})
 
@@ -155,7 +156,7 @@ func TestScopeOf(t *testing.T) {
 				{scopePattern("?e", "a/b", "?local1")},
 				{scopePattern("?e", "a/c", "?local2")},
 			},
-		})
+		}, nil)
 		assertSymbols(t, "Provides", scope.Provides, "?e")
 		assertSymbols(t, "Correlates", scope.Correlates)
 	})
@@ -167,7 +168,7 @@ func TestScopeOf(t *testing.T) {
 				{scopePattern("?e", "a/b", "?x")},
 				{scopePattern("?e", "a/c", "?other")},
 			},
-		})
+		}, nil)
 		assertSymbols(t, "Provides", scope.Provides, "?e")
 		assertSymbols(t, "Correlates", scope.Correlates, "?x")
 	})
@@ -183,7 +184,7 @@ func TestScopeOf(t *testing.T) {
 				Function: &GroundFunction{Value: int64(0)},
 				Binding:  datalog.NewSymbol("?x"),
 			}},
-		}})
+		}}, nil)
 		assertSymbols(t, "Provides", scope.Provides, "?x")
 		assertSymbols(t, "Correlates", scope.Correlates, "?e")
 	})
@@ -203,7 +204,7 @@ func TestScopeOf(t *testing.T) {
 					Binding:  datalog.NewSymbol("?out"),
 				}},
 			},
-		})
+		}, nil)
 		assertSymbols(t, "Provides", scope.Provides, "?out")
 		assertSymbols(t, "Correlates", scope.Correlates, "?e")
 		if scope.CorrelatesOptional {
@@ -221,7 +222,7 @@ func TestScopeOf(t *testing.T) {
 					Binding:  datalog.NewSymbol("?out"),
 				}},
 			},
-		})
+		}, nil)
 		assertSymbols(t, "Provides", scope.Provides, "?out")
 		assertSymbols(t, "Correlates", scope.Correlates)
 	})
@@ -343,6 +344,6 @@ func TestFreeVariables(t *testing.T) {
 			Left:  VariableTerm{Symbol: datalog.NewSymbol("?v")},
 			Right: ConstantTerm{Value: int64(3)},
 		},
-	})
+	}, nil)
 	assertSymbols(t, "FreeVariables", free, "?e", "?v")
 }

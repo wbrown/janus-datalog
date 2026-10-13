@@ -208,7 +208,7 @@ func TestParseInputClauseErrors(t *testing.T) {
 			input: `[:find ?e
 			         :in foo
 			         :where [?e :bar ?v]]`,
-			error: "input must be $name or a variable",
+			error: "input must be $name, % or a variable",
 		},
 		{
 			name: "empty input vector",

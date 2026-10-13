@@ -213,8 +213,13 @@ func reseedWellKnown() {
 	}
 }
 
-// Pre-interned common symbols for hot paths
-var SymDollar = wellKnownSymbol("$")
+// Pre-interned common symbols for hot paths. SymDollar is the default source
+// marker and SymRules the rule-set marker, %, in :in and in a subquery's
+// arguments.
+var (
+	SymDollar = wellKnownSymbol("$")
+	SymRules  = wellKnownSymbol("%")
+)
 
 // Pre-interned aggregate function symbols. FindAggregate.Function carries one
 // of these; resolution is pointer equality against them.

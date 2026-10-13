@@ -65,7 +65,7 @@ func benchmarkCheck(b *testing.B, db *Database, q *query.Query, refused bool) {
 	matcher := db.Matcher().(*PatternMatcher)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		err := matcher.UnknownAttributes(q)
+		err := matcher.UnknownAttributes(q.DefaultSourceAttributes())
 		if refused && err == nil {
 			b.Fatal("the check accepted a query it refuses")
 		}

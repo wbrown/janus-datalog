@@ -39,7 +39,7 @@ func WalkClauses(clauses []Clause, visit func(Clause) bool) {
 			for _, branch := range c.Branches {
 				WalkClauses(branch, visit)
 			}
-		case *DataPattern, *Expression, *SubqueryPattern,
+		case *DataPattern, *Expression, *SubqueryPattern, *RuleInvocation,
 			*Comparison, *ChainedComparison, *NotEqualPredicate,
 			*GroundPredicate, *MissingPredicate, *StrStartsWithPredicate,
 			*FunctionPredicate, *DatabaseFunctionPredicate, *TxRangePredicate:

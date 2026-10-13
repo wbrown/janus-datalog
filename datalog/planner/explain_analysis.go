@@ -43,6 +43,18 @@ func analyzeClausesForExplain(phase *RealizedPhase, clauses []query.Clause, avai
 			for _, sym := range c.Binding.BoundVariables() {
 				available[sym] = true
 			}
+
+		case *query.RuleInvocation:
+			var bound []query.Symbol
+			for _, sym := range c.Variables() {
+				if available[sym] {
+					bound = append(bound, sym)
+				}
+			}
+			phase.Invocations = append(phase.Invocations, InvocationPlan{Invocation: c, Bound: bound})
+			for _, sym := range c.Variables() {
+				available[sym] = true
+			}
 		}
 	}
 }

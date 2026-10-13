@@ -22,6 +22,8 @@
 - Relation collapsing algorithm (prevents memory explosion)
 - **CRDT storage: LWW for cardinality-one, add-wins for cardinality-many, RGA for vectors**
 - **NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible semantics**
+- **Rules passed as `%`: a recursive predicate evaluates to a fixpoint per stratum, semi-naively, with stratified negation. A bound invocation derives only what its bindings reach (magic sets). `MaxRuleIterations` and `MaxDerivedTuples` bound an evaluation**
+- **Query cancellation through the `WithContext` query option: a query whose context is done is refused at entry, and a fixpoint whose context is done stops at its next iteration**
 - **History/time-travel queries: `db.History()` and `db.AsOf(elementID)` API**
 - **Multi-source queries: named sources, SourceRouter, cross-source joins**
 - **QueryInto API: typed query results via struct tag mapping**
@@ -89,6 +91,10 @@ These items have been completed and are preserved for historical context:
 **Status**: ✅ COMPLETE
 **Result**: Parser and executor wired through subqueries, OR fallback, and `:in` input handling.
 
+### ✅ Rules and Recursion, Bounds and Cancellation
+**Status**: ✅ COMPLETE
+**Result**: A rule set rides the `%` input. Each stratum evaluates to a fixpoint, semi-naively, with negation stratified. A bound invocation derives only what its bindings reach, through magic sets. Required-binding heads are accepted. `MaxRuleIterations` and `MaxDerivedTuples` bound an evaluation. `WithContext` cancels a query. The benchmarks are in `PERFORMANCE_STATUS.md`, the rules entry of its session history. Reference: `docs/reference/RULES.md`. Design: `docs/proposals/RULES_WITNESSES_AND_SPECULATIVE_VALUES.md` §1 and §5.
+
 ## Medium Term (1-2 Months)
 
 ### Query Engine Enhancements
@@ -99,6 +105,7 @@ These items have been completed and are preserved for historical context:
 2. **Subquery result collection binding `(q ...) [?coll ...]` — supported primitive**: the input side of `[?x ...]` is complete (see Completed above); the result-side arm currently errors `"collection binding not yet implemented"` (`applyBindingForm`, `datalog/executor/subquery.go`). Implement it: collects the subquery's single-attribute result into one collection value per outer combination. Set semantics fall out of existing invariants — a single-attribute Relation is already a distinct-value set — with the same canonical-ordering encoding as item 1. Static rule (inner find arity ≡ 1) joins the boundary-validation story (`BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS`). Open semantic choice: empty subquery result drops the outer tuple (binding-family consistency; `or-default` with `[(ground [])]` as the explicit rescue) vs binds `[]`.
 3. **Distinct Aggregation**: `(count-distinct ?x)` and a `distinct` modifier on existing aggregates
 4. **Subquery `:limit`/`:order-by` (per-invocation) — after the collection work for the top-N use case**: top-level `:limit` is done; inside a subquery it is currently a **parse error** (would otherwise be silently ignored). Supporting it requires per-invocation finalization, disabling batching when a cap is present, and guarding decorrelation (per-group limit is non-monotone; decorrelation must skip limited subqueries or learn grouped top-N). Forward-compatible tests already assert correctness once the parse rejection is removed (`datalog/executor/limit_edge_test.go`). Full design: [docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md](docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md).
+5. **Recursive aggregation — deferred from the rules stage**: an aggregate over a recursive predicate inside its own stratum (shortest paths, counts over closures) is refused today. The monotone cases are to be named when reopened. `docs/reference/RULES.md`, "Deferred".
 
 ### Performance Optimizations
 1. **Parallel Pattern Execution**: For independent patterns (complex dependency analysis)
@@ -109,15 +116,12 @@ These items have been completed and are preserved for historical context:
 ## Long Term (3-6 Months)
 
 ### Major Features
-1. **Rules System**: Named, reusable query fragments
-2. **Recursive Queries**: Graph algorithms
-3. **Transaction Functions**: Custom transaction logic
+1. **Transaction Functions**: Custom transaction logic
 
 ### Infrastructure
 1. **WASM persistence adapters**: OPFS / host IndexedDB backends on top of `OpenMemory` + Export/Import
 2. **Distributed Execution**: Multi-node queries
 3. **Incremental View Maintenance**: Real-time aggregations
-4. **Query Timeout/Cancellation**: Resource limits
 
 ## ~~Won't Do~~ (I Lied)
 

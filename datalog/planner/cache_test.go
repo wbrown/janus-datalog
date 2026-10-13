@@ -40,7 +40,7 @@ func TestPlanCache(t *testing.T) {
 	}
 
 	// Test miss
-	cached, ok := cache.GetWithOptions(q, opts)
+	cached, ok := cache.GetWithOptions(q, nil, opts)
 	if ok {
 		t.Error("Expected cache miss, got hit")
 	}
@@ -49,10 +49,10 @@ func TestPlanCache(t *testing.T) {
 	}
 
 	// Store the plan
-	cache.SetWithOptions(q, plan, opts)
+	cache.SetWithOptions(q, nil, plan, opts)
 
 	// Test hit
-	cached, ok = cache.GetWithOptions(q, opts)
+	cached, ok = cache.GetWithOptions(q, nil, opts)
 	if !ok {
 		t.Error("Expected cache hit, got miss")
 	}
@@ -82,7 +82,7 @@ func TestPlanCache(t *testing.T) {
 	}
 
 	// Getting after clear should miss
-	_, ok = cache.GetWithOptions(q, opts)
+	_, ok = cache.GetWithOptions(q, nil, opts)
 	if ok {
 		t.Error("Expected cache miss after clear")
 	}
@@ -124,31 +124,31 @@ func TestPlanCacheEviction(t *testing.T) {
 	}
 
 	// Add first two queries
-	cache.SetWithOptions(queries[0], plans[0], opts)
+	cache.SetWithOptions(queries[0], nil, plans[0], opts)
 	time.Sleep(10 * time.Millisecond) // Ensure different timestamps
-	cache.SetWithOptions(queries[1], plans[1], opts)
+	cache.SetWithOptions(queries[1], nil, plans[1], opts)
 
 	// Both should be in cache
-	if _, ok := cache.GetWithOptions(queries[0], opts); !ok {
+	if _, ok := cache.GetWithOptions(queries[0], nil, opts); !ok {
 		t.Error("Expected first query to be cached")
 	}
-	if _, ok := cache.GetWithOptions(queries[1], opts); !ok {
+	if _, ok := cache.GetWithOptions(queries[1], nil, opts); !ok {
 		t.Error("Expected second query to be cached")
 	}
 
 	// Add third query, should evict oldest (first)
-	cache.SetWithOptions(queries[2], plans[2], opts)
+	cache.SetWithOptions(queries[2], nil, plans[2], opts)
 
 	// First should be evicted
-	if _, ok := cache.GetWithOptions(queries[0], opts); ok {
+	if _, ok := cache.GetWithOptions(queries[0], nil, opts); ok {
 		t.Error("Expected first query to be evicted")
 	}
 
 	// Second and third should still be cached
-	if _, ok := cache.GetWithOptions(queries[1], opts); !ok {
+	if _, ok := cache.GetWithOptions(queries[1], nil, opts); !ok {
 		t.Error("Expected second query to still be cached")
 	}
-	if _, ok := cache.GetWithOptions(queries[2], opts); !ok {
+	if _, ok := cache.GetWithOptions(queries[2], nil, opts); !ok {
 		t.Error("Expected third query to be cached")
 	}
 }
@@ -183,10 +183,10 @@ func TestPlanCacheTTL(t *testing.T) {
 	}
 
 	// Set the plan
-	cache.SetWithOptions(q, plan, opts)
+	cache.SetWithOptions(q, nil, plan, opts)
 
 	// Should be in cache immediately
-	if _, ok := cache.GetWithOptions(q, opts); !ok {
+	if _, ok := cache.GetWithOptions(q, nil, opts); !ok {
 		t.Error("Expected query to be cached")
 	}
 
@@ -194,7 +194,7 @@ func TestPlanCacheTTL(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 
 	// Should be expired now
-	if _, ok := cache.GetWithOptions(q, opts); ok {
+	if _, ok := cache.GetWithOptions(q, nil, opts); ok {
 		t.Error("Expected query to be expired")
 	}
 }
@@ -211,8 +211,8 @@ func TestPlanCacheSeparatesJoinProjectInsertionOption(t *testing.T) {
 	enabled := disabled
 	enabled.EnableJoinProjectInsertion = true
 
-	cache.SetWithOptions(q, plan, disabled)
-	if _, ok := cache.GetWithOptions(q, enabled); ok {
+	cache.SetWithOptions(q, nil, plan, disabled)
+	if _, ok := cache.GetWithOptions(q, nil, enabled); ok {
 		t.Fatal("join-project insertion option must produce a distinct plan cache key")
 	}
 }
@@ -241,7 +241,7 @@ func TestPlannerWithCache(t *testing.T) {
 	}
 
 	// First plan should be a miss
-	_, err := planner.Plan(q, nil)
+	_, err := planner.Plan(q, Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("Failed to plan query: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestPlannerWithCache(t *testing.T) {
 	}
 
 	// Second plan should be a hit
-	_, err = planner.Plan(q, nil)
+	_, err = planner.Plan(q, Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("Failed to plan query: %v", err)
 	}

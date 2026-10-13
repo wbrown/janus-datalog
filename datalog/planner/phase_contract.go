@@ -62,18 +62,20 @@ func (plan *RealizedPlan) Validate() error {
 
 func validatePhaseLiveness(phaseNumber int, phaseQuery *query.Query) error {
 	// After the first loop, available is the phase's full binding closure:
-	// its inputs plus everything its clauses provide.
+	// its inputs plus everything its clauses provide. The scopes are read
+	// with no rule set: the check holds a plan's phases as data, with no
+	// program in hand, so an invocation counts as providing every variable.
 	available := make(map[query.Symbol]bool)
 	for _, symbol := range physicalInputSymbols(phaseQuery.In) {
 		available[symbol] = true
 	}
 	for _, clause := range phaseQuery.Where {
-		for _, symbol := range query.ScopeOf(clause).Provides {
+		for _, symbol := range query.ScopeOf(clause, nil).Provides {
 			available[symbol] = true
 		}
 	}
 	for _, clause := range phaseQuery.Where {
-		scope := query.ScopeOf(clause)
+		scope := query.ScopeOf(clause, nil)
 		for _, symbol := range scope.Correlates {
 			if symbol.IsSource() || available[symbol] {
 				continue
