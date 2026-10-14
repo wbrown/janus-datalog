@@ -176,6 +176,179 @@ func TestQueryRefusesUnknownAttributeBoundThroughInput(t *testing.T) {
 	}
 }
 
+// A variable a nested form's branch binds outside the form's interface is
+// the branch's own: a ground in the enclosing query binding a variable of the
+// same name reaches the enclosing query's patterns and not the branch's.
+func TestQueryRunsALocalAttributeVariableBesideAGround(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":t/tag").Type(schema.TypeKeyword).One().Add().
+				Attribute(":t/other").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s, RefuseUnknownAttributes: true})
+			tagged, both := datalog.NewIdentity("tagged"), datalog.NewIdentity("both")
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Set(tagged, kw(":t/tag"), kw(":t/kind")))
+			require.NoError(t, tx.Set(both, kw(":t/tag"), kw(":t/kind")))
+			require.NoError(t, tx.Set(both, kw(":t/other"), "x"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			tuples, err := executor.CollectTuples(d.Query(`[:find ?q :where [(ground :t/kind) ?a] [?q :t/tag ?a] (or-join [?q] [?q ?a ?v] [?q :t/other _])]`))
+			require.NoError(t, err, "the branch's ?a is its own, so :t/kind reaches no attribute position")
+			var got []datalog.Identity
+			for _, tuple := range tuples {
+				got = append(got, tuple[0].(datalog.Identity))
+			}
+			require.ElementsMatch(t, []datalog.Identity{tagged, both}, got, "the branch's pattern reads every attribute of each tagged entity")
+		})
+	}
+}
+
+// taggedPair opens a refusing database on mode declaring :t/tag keyword and
+// :t/n long, holding one entity tagged :t/kind with :t/n 5 and one entity
+// with :t/n 50 alone.
+func taggedPair(t *testing.T, mode optimizerMode) (*Database, datalog.Identity, datalog.Identity) {
+	t.Helper()
+	s, err := schema.NewBuilder().
+		Attribute(":t/tag").Type(schema.TypeKeyword).One().Add().
+		Attribute(":t/n").Type(schema.TypeLong).One().Add().
+		Build()
+	require.NoError(t, err)
+	d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s, RefuseUnknownAttributes: true})
+	tagged, untagged := datalog.NewIdentity("tagged"), datalog.NewIdentity("untagged")
+	tx := d.NewTransaction()
+	require.NoError(t, tx.Set(tagged, kw(":t/tag"), kw(":t/kind")))
+	require.NoError(t, tx.Set(tagged, kw(":t/n"), int64(5)))
+	require.NoError(t, tx.Set(untagged, kw(":t/n"), int64(50)))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+	return d, tagged, untagged
+}
+
+// queriedEntities runs text on d and returns the identities its tuples carry.
+func queriedEntities(t *testing.T, d *Database, text string, inputs ...interface{}) []datalog.Identity {
+	t.Helper()
+	tuples, err := executor.CollectTuples(d.Query(text, inputs...))
+	require.NoError(t, err)
+	var got []datalog.Identity
+	for _, tuple := range tuples {
+		got = append(got, tuple[0].(datalog.Identity))
+	}
+	return got
+}
+
+// requireSameEntities asserts that got holds the entities want holds and no
+// other, in any order, naming each identity by its rendering on failure.
+func requireSameEntities(t *testing.T, want, got []datalog.Identity, msg string) {
+	t.Helper()
+	wanted := make(map[datalog.Identity]bool, len(want))
+	for _, id := range want {
+		wanted[id] = true
+	}
+	seen := make(map[datalog.Identity]bool, len(got))
+	same := len(got) == len(wanted)
+	for _, id := range got {
+		if !wanted[id] || seen[id] {
+			same = false
+		}
+		seen[id] = true
+	}
+	if same {
+		return
+	}
+	var wantNames, gotNames []string
+	for _, id := range want {
+		wantNames = append(wantNames, id.String())
+	}
+	for _, id := range got {
+		gotNames = append(gotNames, id.String())
+	}
+	t.Fatalf("%s: got %v, want %v", msg, gotNames, wantNames)
+}
+
+// A variable at a predicate's required position is bound by the enclosing
+// query inside a branch as outside it, so a keyword a ground binds it to
+// reaches the predicate's attribute position; at a free position the
+// variable is the branch's own and the predicate derives whole.
+func TestQueryRefusesUnknownAttributeAtARequiredPositionInsideABranch(t *testing.T) {
+	const required = `[[(has [?a] ?e) [?e ?a _]]]`
+	const free = `[[(has ?a ?e) [?e ?a _]]]`
+	const typo = `[:find ?e :in $ % :where [(ground :t/strnig) ?a] [?e :t/n _] (or-join [?e] (has ?a ?e) [?e :t/tag :t/none])]`
+	const declared = `[:find ?e :in $ % :where [(ground :t/tag) ?a] [?e :t/n _] (or-join [?e] (has ?a ?e) [?e :t/tag :t/none])]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name+"/required, typo", func(t *testing.T) {
+			d, _, _ := taggedPair(t, mode)
+			_, err := d.Query(typo, mustRuleSet(t, required))
+			requireUnknown(t, err, kw(":t/strnig"))
+		})
+		t.Run(mode.name+"/required, declared keyword", func(t *testing.T) {
+			d, tagged, _ := taggedPair(t, mode)
+			requireSameEntities(t, []datalog.Identity{tagged}, queriedEntities(t, d, declared, mustRuleSet(t, required)),
+				"the required position is bound from the ground, so the predicate reads :t/tag")
+		})
+		t.Run(mode.name+"/free, typo", func(t *testing.T) {
+			d, tagged, untagged := taggedPair(t, mode)
+			requireSameEntities(t, []datalog.Identity{tagged, untagged}, queriedEntities(t, d, typo, mustRuleSet(t, free)),
+				"a free position is the branch's own, so the predicate derives whole and the ground's keyword reaches no attribute position")
+		})
+		t.Run(mode.name+"/free, declared keyword", func(t *testing.T) {
+			d, tagged, untagged := taggedPair(t, mode)
+			requireSameEntities(t, []datalog.Identity{tagged, untagged}, queriedEntities(t, d, declared, mustRuleSet(t, free)),
+				"a free position is the branch's own, so the predicate derives whole")
+		})
+	}
+}
+
+// An or's branches unify with the enclosing query on every variable they
+// share with it, so a ground outside the form binds a branch's attribute
+// variable: a declared keyword reads the one entity carrying it, and a typo
+// is refused, on the union path, on the correlated path, and under
+// or-default alike.
+func TestQueryBindsAOneBranchVariableOfAnOrFromTheEnclosingQuery(t *testing.T) {
+	cases := []struct {
+		name     string
+		declared string
+		typo     string
+		inputs   []interface{}
+	}{
+		{
+			"union path",
+			`[:find ?q :where [(ground :t/tag) ?a] [?q :t/n _] (or [?q ?a ?v] [?q :t/tag :t/none])]`,
+			`[:find ?q :where [(ground :t/strnig) ?a] [?q :t/n _] (or [?q ?a ?v] [?q :t/tag :t/none])]`,
+			nil,
+		},
+		{
+			"correlated path",
+			`[:find ?q :in $ ?lim :where [(ground :t/tag) ?a] [?q :t/n ?n] (or (and [?q ?a ?v] [(< ?n ?lim)]) [?q :t/tag :t/none])]`,
+			`[:find ?q :in $ ?lim :where [(ground :t/strnig) ?a] [?q :t/n ?n] (or (and [?q ?a ?v] [(< ?n ?lim)]) [?q :t/tag :t/none])]`,
+			[]interface{}{int64(100)},
+		},
+		{
+			"or-default",
+			`[:find ?q :where [(ground :t/tag) ?a] [?q :t/n _] (or-default [?q ?a ?v] [?q :t/tag :t/none])]`,
+			`[:find ?q :where [(ground :t/strnig) ?a] [?q :t/n _] (or-default [?q ?a ?v] [?q :t/tag :t/none])]`,
+			nil,
+		},
+	}
+	for _, mode := range optimizerModes {
+		for _, c := range cases {
+			t.Run(mode.name+"/"+c.name+", declared keyword", func(t *testing.T) {
+				d, tagged, _ := taggedPair(t, mode)
+				requireSameEntities(t, []datalog.Identity{tagged}, queriedEntities(t, d, c.declared, c.inputs...),
+					"the branch's ?a is bound from the ground, so its pattern reads :t/tag")
+			})
+			t.Run(mode.name+"/"+c.name+", typo", func(t *testing.T) {
+				d, _, _ := taggedPair(t, mode)
+				_, err := d.Query(c.typo, c.inputs...)
+				requireUnknown(t, err, kw(":t/strnig"))
+			})
+		}
+	}
+}
+
 // A literal keyword reaches a pattern's attribute position through a variable
 // the clause text binds: a ground or identity expression in the query, a
 // constant argument of an invocation at a position the predicate reads as an
@@ -192,6 +365,7 @@ func TestQueryRefusesUnknownAttributeReachingThroughABinding(t *testing.T) {
 		rules bool
 	}{
 		{"ground", `[:find ?v :where [(ground :t/strnig) ?a] [?e ?a ?v]]`, false},
+		{"ground vector", `[:find ?e :where [(ground [:t/strnig :t/x]) [?a ?b]] [?e ?a ?b]]`, false},
 		{"identity", `[:find ?v :where [(identity :t/strnig) ?a] [?e ?a ?v]]`, false},
 		{"invocation constant", `[:find ?e :in $ % :where (has ?e :t/strnig)]`, true},
 		{"invocation constant through a body invocation", `[:find ?e :in $ % :where (has2 ?e :t/strnig)]`, true},

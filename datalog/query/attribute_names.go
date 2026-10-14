@@ -183,20 +183,41 @@ func (r *attributeRoster) addQuery(q *Query, outer bool) {
 	r.addClauses(q.Where, outer)
 }
 
-// addClauses records what one clause scope names: a pattern's attribute on
-// its source, a pattern's attribute variable on the default source when outer
-// holds, a database function's attributes on the default source, and the
-// keywords a rule invocation passes by position. At the scope's end it
-// resolves the variables the scope's expressions bind to a keyword: one
-// standing in a default-source pattern's attribute position names the
-// keyword, and one passed to an invocation is a keyword passed there. The
-// visitor descends into a subquery's body itself, which WalkClauses leaves to
-// its visitors, as a scope of its own. A query's :where and a rule's body are
-// collected alike.
+// addClauses records what a query's :where or a rule's body names, as a tree
+// of scopes: the clause list itself, and under it each branch or body of a
+// nested form, which shares with its enclosing scope the variables the form's
+// interface names and no other. At the end of the walk every scope resolves
+// its variables bound to a keyword: one standing in a default-source
+// pattern's attribute position names the keyword, and one passed to an
+// invocation is a keyword passed there. A subquery's body is a tree of its
+// own.
 func (r *attributeRoster) addClauses(clauses []Clause, outer bool) {
-	var bound keywordBindings
-	var attributeVariables []Symbol
-	var passed []passedVariable
+	root := &clauseScope{}
+	r.walkScope(root, clauses, outer)
+	r.resolve(root)
+}
+
+// clauseScope is one scope of the walk: a query's :where, a rule's body, or a
+// branch or body of a nested form. A nested scope reads its parent's bindings
+// for the variables the form's interface shares with the enclosing scope, the
+// provides and correlates ScopeOf reports, and for no other.
+type clauseScope struct {
+	parent             *clauseScope
+	shared             map[Symbol]bool
+	bound              keywordBindings
+	attributeVariables []Symbol
+	passed             []passedVariable
+	children           []*clauseScope
+}
+
+// walkScope records what the clauses of one scope name: a pattern's attribute
+// on its source, a pattern's attribute variable on the default source when
+// outer holds, a database function's attributes on the default source, the
+// keywords a rule invocation passes by position, and what the scope's
+// expressions bind. Each nested form's branches are walked as scopes of
+// their own, and the visitor descends into a subquery's body itself, which
+// WalkClauses leaves to its visitors.
+func (r *attributeRoster) walkScope(s *clauseScope, clauses []Clause, outer bool) {
 	WalkClauses(clauses, func(clause Clause) bool {
 		switch c := clause.(type) {
 		case *DataPattern:
@@ -217,13 +238,13 @@ func (r *attributeRoster) addClauses(clauses []Clause, outer bool) {
 				if outer {
 					r.addVariable(a.Name)
 				}
-				attributeVariables = append(attributeVariables, a.Name)
+				s.attributeVariables = append(s.attributeVariables, a.Name)
 			}
 		case *Expression:
 			if f, ok := c.Function.(DatabaseFunction); ok {
 				r.addDatabaseFunction(f)
 			}
-			bound.bind(c)
+			s.bound.bind(c)
 		case *DatabaseFunctionPredicate:
 			r.addDatabaseFunction(c.Function)
 		case *RuleInvocation:
@@ -234,24 +255,94 @@ func (r *attributeRoster) addClauses(clauses []Clause, outer bool) {
 						r.addInvocationConstant(InvocationConstant{Name: c.Name, Position: i, Attr: attr})
 					}
 				case Variable:
-					passed = append(passed, passedVariable{name: c.Name, position: i, variable: a.Name})
+					s.passed = append(s.passed, passedVariable{name: c.Name, position: i, variable: a.Name})
 				}
 			}
 		case *SubqueryPattern:
 			r.addQuery(c.Query, false)
+		case *NotClause:
+			r.walkBranches(s, c, [][]Clause{c.Clauses}, outer)
+			return false
+		case *NotJoinClause:
+			r.walkBranches(s, c, [][]Clause{c.Clauses}, outer)
+			return false
+		case *OrClause:
+			r.walkBranches(s, c, c.Branches, outer)
+			return false
+		case *OrJoinClause:
+			r.walkBranches(s, c, c.Branches, outer)
+			return false
+		case *OrDefaultClause:
+			r.walkBranches(s, c, c.Branches, outer)
+			return false
+		case *OrDefaultJoinClause:
+			r.walkBranches(s, c, c.Branches, outer)
+			return false
 		}
 		return true
 	})
-	for _, v := range attributeVariables {
-		if attr, ok := bound.keyword(v); ok {
+}
+
+// walkBranches walks each branch of form as a scope under s, sharing with s
+// the variables form's interface names: the provides and correlates ScopeOf
+// reports for the form, read with no rule set, under which an invocation
+// provides every variable argument.
+func (r *attributeRoster) walkBranches(s *clauseScope, form Clause, branches [][]Clause, outer bool) {
+	scope := ScopeOf(form, nil)
+	shared := make(map[Symbol]bool, len(scope.Provides)+len(scope.Correlates))
+	for _, v := range scope.Provides {
+		shared[v] = true
+	}
+	for _, v := range scope.Correlates {
+		shared[v] = true
+	}
+	for _, branch := range branches {
+		child := &clauseScope{parent: s, shared: shared}
+		s.children = append(s.children, child)
+		r.walkScope(child, branch, outer)
+	}
+}
+
+// resolve records what the variables of s, and then of each scope under it,
+// resolve to: a keyword an attribute variable is bound to names an attribute
+// on the default source, and a keyword a passed variable is bound to is a
+// keyword passed at its position.
+func (r *attributeRoster) resolve(s *clauseScope) {
+	for _, v := range s.attributeVariables {
+		if attr, ok := s.keyword(v); ok {
 			r.add(attr)
 		}
 	}
-	for _, p := range passed {
-		if attr, ok := bound.keyword(p.variable); ok {
+	for _, p := range s.passed {
+		if attr, ok := s.keyword(p.variable); ok {
 			r.addInvocationConstant(InvocationConstant{Name: p.name, Position: p.position, Attr: attr})
 		}
 	}
+	for _, child := range s.children {
+		r.resolve(child)
+	}
+}
+
+// keyword returns the keyword sym is bound to in s: by s's own expressions,
+// following identity aliases, or, for a variable the form shares with the
+// enclosing scope, by the enclosing scope's. A chain is followed at most one
+// step per alias the scope records, so a cycle of identities, which the text
+// admits, resolves to nothing.
+func (s *clauseScope) keyword(sym Symbol) (datalog.Keyword, bool) {
+	for steps := 0; steps <= len(s.bound.aliases); steps++ {
+		if attr, ok := s.bound.keywords[sym]; ok {
+			return attr, true
+		}
+		if next, ok := s.bound.aliases[sym]; ok {
+			sym = next
+			continue
+		}
+		if s.parent != nil && s.shared[sym] {
+			return s.parent.keyword(sym)
+		}
+		return nil, false
+	}
+	return nil, false
 }
 
 // passedVariable is a variable a rule invocation passes at a position.
@@ -264,22 +355,20 @@ type passedVariable struct {
 // keywordBindings is what one clause scope binds through its expressions: a
 // variable bound to a keyword by ground with a keyword or identity of a
 // keyword, and a variable bound to another variable by identity of it. The
-// bindings are read at the scope's end, so the order of the clauses does not
-// decide what resolves. The maps are allocated when the first binding is
+// bindings are read at the end of the walk, so the order of the clauses does
+// not decide what resolves. The maps are allocated when the first binding is
 // recorded.
 type keywordBindings struct {
 	keywords map[Symbol]datalog.Keyword
 	aliases  map[Symbol]Symbol
 }
 
-// bind records what e binds its variable to, when e is ground or identity.
-// The parser builds both as pointers and a query literal builds them as
-// values, so both forms are read.
+// bind records what e binds its variables to, when e is ground or identity:
+// a symbol to the ground's value, or to identity's constant, or as an alias
+// of identity's variable; a tuple's variables each to the element of the
+// ground's vector at its position. The parser builds both functions as
+// pointers and a query literal builds them as values, so both forms are read.
 func (b *keywordBindings) bind(e *Expression) {
-	sym, ok := e.Binding.(Symbol)
-	if !ok {
-		return
-	}
 	var value interface{}
 	var identity *IdentityFunction
 	switch f := e.Function.(type) {
@@ -294,41 +383,45 @@ func (b *keywordBindings) bind(e *Expression) {
 	default:
 		return
 	}
-	if identity != nil {
-		switch arg := identity.Arg.(type) {
-		case ConstantTerm:
-			value = arg.Value
-		case VariableTerm:
-			if b.aliases == nil {
-				b.aliases = map[Symbol]Symbol{}
+	switch binding := e.Binding.(type) {
+	case Symbol:
+		if identity != nil {
+			switch arg := identity.Arg.(type) {
+			case ConstantTerm:
+				value = arg.Value
+			case VariableTerm:
+				if b.aliases == nil {
+					b.aliases = map[Symbol]Symbol{}
+				}
+				b.aliases[binding] = arg.Symbol
+				return
 			}
-			b.aliases[sym] = arg.Symbol
+		}
+		b.bindKeyword(binding, value)
+	case TupleBinding:
+		values, ok := value.([]interface{})
+		if !ok {
 			return
 		}
-	}
-	if attr, ok := value.(datalog.Keyword); ok {
-		if b.keywords == nil {
-			b.keywords = map[Symbol]datalog.Keyword{}
+		for i, sym := range binding.Variables {
+			if i < len(values) {
+				b.bindKeyword(sym, values[i])
+			}
 		}
-		b.keywords[sym] = attr
 	}
 }
 
-// keyword returns the keyword sym is bound to, following identity aliases. A
-// chain is followed at most one step per alias recorded, so a cycle of
-// identities, which the text admits, resolves to nothing.
-func (b *keywordBindings) keyword(sym Symbol) (datalog.Keyword, bool) {
-	for steps := 0; steps <= len(b.aliases); steps++ {
-		if attr, ok := b.keywords[sym]; ok {
-			return attr, true
-		}
-		next, ok := b.aliases[sym]
-		if !ok {
-			return nil, false
-		}
-		sym = next
+// bindKeyword records sym as bound to value when value is a keyword; a value
+// of any other type binds no attribute.
+func (b *keywordBindings) bindKeyword(sym Symbol, value interface{}) {
+	attr, ok := value.(datalog.Keyword)
+	if !ok {
+		return
 	}
-	return nil, false
+	if b.keywords == nil {
+		b.keywords = map[Symbol]datalog.Keyword{}
+	}
+	b.keywords[sym] = attr
 }
 
 // addDatabaseFunction records the attributes a database function reads. The

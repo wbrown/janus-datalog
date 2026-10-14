@@ -26,10 +26,14 @@ func assertKeywordsInOrder(t *testing.T, got, want []datalog.Keyword) {
 // functions as an expression and as a predicate, through the :find pull
 // pattern, and, at the scope's end, through a variable in the attribute
 // position that ground, identity of a keyword, or identity of such a
-// variable binds to a keyword. A pattern on a named source reads that
-// source's attributes, a blank or a variable nothing binds to a keyword in
-// the attribute position names none, and a ground whose variable stands in
-// no attribute position names none.
+// variable binds to a keyword. A variable a nested form's branch binds
+// outside the form's interface is the branch's own, so a ground outside the
+// form does not reach it; a variable the interface shares, an or-join header
+// variable or a variable of a not body, resolves against the enclosing
+// scope. A pattern on a named source reads that source's attributes, a blank
+// or a variable nothing binds to a keyword in the attribute position names
+// none, and a ground whose variable stands in no attribute position names
+// none.
 func TestDefaultSourceAttributes(t *testing.T) {
 	entity := Variable{Name: datalog.NewSymbol("?e")}
 	entityTerm := VariableTerm{Symbol: datalog.NewSymbol("?e")}
@@ -92,6 +96,21 @@ func TestDefaultSourceAttributes(t *testing.T) {
 			&Expression{Function: IdentityFunction{Arg: VariableTerm{Symbol: datalog.NewSymbol("?ga")}}, Binding: datalog.NewSymbol("?aa")},
 			&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?aa")}, Blank{}}},
 			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/unused")}, Binding: datalog.NewSymbol("?gu")},
+			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/local")}, Binding: datalog.NewSymbol("?la")},
+			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/shared")}, Binding: datalog.NewSymbol("?sh")},
+			&OrJoinClause{JoinVars: []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?sh")}, Branches: [][]Clause{
+				{&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?la")}, Variable{Name: datalog.NewSymbol("?sh")}}}},
+				{&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?sh")}, Blank{}}}},
+			}},
+			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/negated")}, Binding: datalog.NewSymbol("?na")},
+			&NotClause{Clauses: []Clause{
+				&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?na")}, Blank{}}},
+			}},
+			&Expression{
+				Function: GroundFunction{Value: []interface{}{datalog.NewKeyword(":t/tuple"), datalog.NewKeyword(":t/x")}},
+				Binding:  TupleBinding{Variables: []Symbol{datalog.NewSymbol("?ta"), datalog.NewSymbol("?tb")}},
+			},
+			&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?ta")}, Variable{Name: datalog.NewSymbol("?tb")}}},
 		},
 	}
 
@@ -115,6 +134,9 @@ func TestDefaultSourceAttributes(t *testing.T) {
 		datalog.NewKeyword(":t/missingpred"),
 		datalog.NewKeyword(":t/ground"),
 		datalog.NewKeyword(":t/identity"),
+		datalog.NewKeyword(":t/tuple"),
+		datalog.NewKeyword(":t/shared"),
+		datalog.NewKeyword(":t/negated"),
 	}
 	assertKeywordsInOrder(t, q.DefaultSourceAttributes(), want)
 }
@@ -123,8 +145,10 @@ func TestDefaultSourceAttributes(t *testing.T) {
 // every rule invocation at any depth, subquery bodies included, each keyword
 // constant argument with its predicate and position, in order of first
 // appearance and each once, and, at the end of each scope, each variable
-// argument the scope binds to a keyword through ground or identity. A
-// constant of another type and a variable nothing binds name nothing.
+// argument the scope binds to a keyword through ground or identity, or that
+// the form's interface shares with an enclosing scope binding it. A constant
+// of another type, a variable nothing binds, and a variable a branch binds
+// outside its form's interface name nothing.
 func TestInvocationConstants(t *testing.T) {
 	entity := Variable{Name: datalog.NewSymbol("?e")}
 	has := datalog.NewSymbol("has")
@@ -144,12 +168,21 @@ func TestInvocationConstants(t *testing.T) {
 		},
 		&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/ground")}, Binding: datalog.NewSymbol("?ga")},
 		&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/direct")}}},
+		&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/local")}, Binding: datalog.NewSymbol("?la")},
+		&OrJoinClause{JoinVars: []Symbol{datalog.NewSymbol("?e")}, Branches: [][]Clause{{
+			&RuleInvocation{Name: has, Args: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?la")}}},
+		}}},
+		&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/shared")}, Binding: datalog.NewSymbol("?sh")},
+		&OrJoinClause{JoinVars: []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?sh")}, Branches: [][]Clause{{
+			&RuleInvocation{Name: has, Args: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?sh")}}},
+		}}},
 	}}
 	want := []InvocationConstant{
 		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/direct")},
 		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/branch")},
 		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/sub")},
 		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/ground")},
+		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/shared")},
 	}
 	got := q.InvocationConstants()
 	if len(got) != len(want) {
