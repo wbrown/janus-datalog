@@ -117,21 +117,20 @@ func parseRuleInvocation(node *edn.Node) (*query.RuleInvocation, error) {
 	return inv, nil
 }
 
-// requireRulesInput reports the first invocation in the query's :where when
-// its :in declares no % input. A subquery's body is its own query's scope,
-// checked when that query parses, so the walk does not descend into it.
+// requireRulesInput reports the first use of % in the query's :where, as
+// query.RulesUse finds it, when its :in declares no % input. A subquery's
+// body is its own query's scope, checked when that query parses.
 func requireRulesInput(q *query.Query) error {
 	for _, input := range q.In {
 		if _, ok := input.(query.RulesInput); ok {
 			return nil
 		}
 	}
-	var err error
-	query.WalkClauses(q.Where, func(clause query.Clause) bool {
-		if inv, ok := clause.(*query.RuleInvocation); ok && err == nil {
-			err = fmt.Errorf("rule invocation %s requires %% in :in, the rule set the invocation resolves against", inv)
-		}
-		return err == nil
-	})
-	return err
+	switch use := query.RulesUse(q.Where).(type) {
+	case *query.RuleInvocation:
+		return fmt.Errorf("rule invocation %s requires %% in :in, the rule set the invocation resolves against", use)
+	case *query.SubqueryPattern:
+		return fmt.Errorf("subquery %s passes %% through and requires %% in :in, the rule set it passes", use)
+	}
+	return nil
 }

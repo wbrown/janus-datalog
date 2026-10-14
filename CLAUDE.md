@@ -355,8 +355,9 @@ The storage layer connects the query engine to BadgerDB:
    - See [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md), [docs/reference/REFLECT.md](docs/reference/REFLECT.md), and [docs/archive/completed/NEVER_ZERO_VALUE.md](docs/archive/completed/NEVER_ZERO_VALUE.md)
 2. **Schema as facts** - A schema given to a database is declared into its store: a declaration's seven words are cardinality-one facts on an entity named by them, and `db.attribute/<ident>` carries one ref, `:db.attribute/declaration`, to the attribute's current declaration; a dump carries them, an open with no schema reads them back, and inference covers only an attribute with datoms and no definition
    - `SetSchema` returns an error and refuses a temporal handle
-   - A fork asserts its parent's declared definitions into the branch
-   - `TruncateTo` runs with the given schema over the definitions that survive the rewind, writing nothing
+   - A fork opens the branch as any database, on its store as of the snapshot, and asserts its parent's declared definitions into it
+   - `TruncateTo` leaves the database running with the declarations that survive the rewind, writing nothing
+   - The running schema has one home: the database runs with what its store states
    - `DatabaseOptions.RefuseUnknownAttributes` / `db.WithRefuseUnknownAttributes()` refuses a query, pull or `PullInto` naming an attribute the schema does not declare, as `*schema.UnknownAttributeError`
    - The option requires a schema: opening with it and none, or `SetSchema(nil)` on a refusing database, is an error
    - A parsed `query.Query` collects the attributes it names once, under a `sync.Once`, so the check is one schema lookup per attribute per execution

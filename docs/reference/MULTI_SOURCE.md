@@ -250,7 +250,7 @@ _, err := d.Query(
 
 The default source `$` always resolves to the calling database. You never need to provide it via `WithSources` — it's set up automatically. Patterns without a source prefix resolve against `$`.
 
-The unknown-attribute refusal ([SCHEMA.md](SCHEMA.md#schema-as-facts)) asks each source the query names about the attributes the query names on it. A source refuses when it was opened with `RefuseUnknownAttributes`: a `*db.DB` passed as a named source refuses a pattern on it as it does as `$`. A source without the option, and a source that is no database, refuse nothing.
+The unknown-attribute refusal ([SCHEMA.md](SCHEMA.md#schema-as-facts)) asks each source the query names about the attributes the query names on it. A source refuses when it carries the option: a `*db.DB` opened with `RefuseUnknownAttributes`, or the matcher such a database mints, refuses a pattern on it as a named source as it does as `$`. Any other source refuses nothing.
 
 ## Cross-Source Joins
 

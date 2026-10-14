@@ -176,6 +176,25 @@ func (m *ScanSharingMatcher) PrefetchEntities(entities []datalog.Identity) error
 	return nil
 }
 
+// RefusesUnknownAttributes implements AttributeVocabulary from the inner
+// matcher, so a source refuses under scan sharing as it does without it; a
+// matcher without a vocabulary refuses nothing.
+func (m *ScanSharingMatcher) RefusesUnknownAttributes(source query.Symbol) bool {
+	if v, ok := m.inner.(AttributeVocabulary); ok {
+		return v.RefusesUnknownAttributes(source)
+	}
+	return false
+}
+
+// UnknownAttributes implements AttributeVocabulary from the inner matcher; a
+// matcher without a vocabulary refuses nothing.
+func (m *ScanSharingMatcher) UnknownAttributes(source query.Symbol, attrs []datalog.Keyword) error {
+	if v, ok := m.inner.(AttributeVocabulary); ok {
+		return v.UnknownAttributes(source, attrs)
+	}
+	return nil
+}
+
 // remapSymbols creates a new symbol list by mapping the shared scan's
 // symbols to the requesting pattern's variable names positionally.
 // Constants in the pattern (e.g., :task/root) are skipped — only variable

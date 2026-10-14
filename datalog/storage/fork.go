@@ -45,8 +45,10 @@ type forker interface {
 //
 // The branch holds what this database held as of the snapshot, the state
 // AsOfSnapshot reads, and neither sees what the other commits afterward. It
-// validates against this database's schema, plans with its planner options,
-// and carries its own EA cache. It writes as a replica of its own: a fresh
+// opens as any database does, with this database's given schema declared
+// into it where its store lacks it, and runs with the schema its store
+// states; it plans with this database's planner options and carries its own
+// EA cache. It writes as a replica of its own: a fresh
 // ReplicaID, and a clock started past every ElementID it holds, so every write
 // it makes orders after everything it inherited.
 //
@@ -108,8 +110,6 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 		RefuseUnknownAttributes: d.refuseUnknown,
 		PlannerOptions:          &plannerOptions,
 		DisableCache:            d.cache == nil,
-		schemaAsGiven:           true,
-		runningSchema:           d.Schema(),
 	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("Fork %q: %w", name, err), forked.Close())

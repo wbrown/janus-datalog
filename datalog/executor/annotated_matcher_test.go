@@ -372,6 +372,30 @@ func TestWrapMatcher_TransparentForAllInterfaces(t *testing.T) {
 	}
 }
 
+// TestWrapMatcher_ForwardsTheVocabularyQuestion pins that a source refuses
+// through the annotation wrapper as it does without one: the wrapper answers
+// the attribute-vocabulary question from the underlying matcher, and refuses
+// nothing over a matcher without a vocabulary.
+func TestWrapMatcher_ForwardsTheVocabularyQuestion(t *testing.T) {
+	refusal := errors.New("unknown attribute :t/naem")
+	roster := []datalog.Keyword{datalog.NewKeyword(":t/naem")}
+	wrapped := WrapMatcher(&vocabularyMatcher{refuses: true, answer: refusal}, func(annotations.Event) {})
+	vocabulary, ok := wrapped.(AttributeVocabulary)
+	if !ok {
+		t.Fatal("the wrapper does not answer the vocabulary question")
+	}
+	if !vocabulary.RefusesUnknownAttributes(datalog.SymDollar) {
+		t.Error("the wrapper reports the source as refusing nothing, want the underlying matcher's answer")
+	}
+	if err := vocabulary.UnknownAttributes(datalog.SymDollar, roster); err != refusal {
+		t.Errorf("the wrapper answered %v, want the underlying matcher's refusal", err)
+	}
+	plain := WrapMatcher(&testMatcher{}, func(annotations.Event) {})
+	if vocabulary, ok := plain.(AttributeVocabulary); ok && vocabulary.RefusesUnknownAttributes(datalog.SymDollar) {
+		t.Error("a wrapper over a matcher without a vocabulary refuses nothing")
+	}
+}
+
 func BenchmarkWrapMatcher_Overhead(b *testing.B) {
 	// Measure the overhead of decoration
 	mock := &testMatcher{

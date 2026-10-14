@@ -837,26 +837,72 @@ func TestExecuteWithRelations_SeededEqualsWhole(t *testing.T) {
 	}
 }
 
-// TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole binds an
-// invocation whose rewrite does not stratify: q's magic rule for s reads the
-// recursive invocation of q that precedes the negation of s, so the adorned
-// q depends through that negation on the adorned s, whose magic rule depends
-// on the adorned q. The rewrite is declined, recorded, and the predicate
-// evaluated whole and filtered.
-func TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole(t *testing.T) {
+// markedPageGraph links page1 to page2 and page2 to page3 and page7 by
+// :page/a, page3 to page9 and page7 to page8 by :page/b, and marks page7 by
+// :page/c, so a predicate s over the mark holds of page7 alone: a path
+// through page7 that a negation of s guards is cut, and one a positive s
+// guards is the only one kept.
+func markedPageGraph() []datalog.Datom {
 	pageA, pageB, pageC := datalog.NewKeyword(":page/a"), datalog.NewKeyword(":page/b"), datalog.NewKeyword(":page/c")
 	stamp := func(i int) datalog.ElementID { return datalog.ElementID{Lamport: uint64(i), ReplicaID: 1} }
-	// q(1, 2) and q(2, 3), q(2, 7) hold by a. q(1, 9) holds through q(2, 3):
-	// s(3) does not hold and b(3, 9). q(1, 8) does not: s(7) holds by page7's
-	// c, so the path through q(2, 7) is cut.
-	matcher := NewMemoryPatternMatcher([]datalog.Datom{
+	return []datalog.Datom{
 		{E: page(1), A: pageA, V: page(2), Tx: stamp(1)},
 		{E: page(2), A: pageA, V: page(3), Tx: stamp(2)},
 		{E: page(2), A: pageA, V: page(7), Tx: stamp(3)},
 		{E: page(3), A: pageB, V: page(9), Tx: stamp(4)},
 		{E: page(7), A: pageB, V: page(8), Tx: stamp(5)},
 		{E: page(7), A: pageC, V: "marked", Tx: stamp(6)},
-	})
+	}
+}
+
+// tuplesBoundTo runs a query whose one scalar input binds an invocation's
+// argument to start, and returns its tuples.
+func tuplesBoundTo(t *testing.T, exec *Executor, rs *query.RuleSet, q *query.Query, start datalog.Identity) []Tuple {
+	t.Helper()
+	inputs, err := createInputRelationsFromValuesWithOptions(q,
+		[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), start}, exec.options)
+	if err != nil {
+		t.Fatalf("binding: %v", err)
+	}
+	rel, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, inputs)
+	if err != nil {
+		t.Fatalf("bound to %s: %v", start, err)
+	}
+	var tuples []Tuple
+	if err := collectTuplesInto(&tuples, rel); err != nil {
+		t.Fatalf("bound to %s: %v", start, err)
+	}
+	return tuples
+}
+
+// requireSamePages asserts that a single-column result holds exactly the
+// pages given.
+func requireSamePages(t *testing.T, label string, got []Tuple, want ...datalog.Identity) {
+	t.Helper()
+	have := NewTupleKeyMap()
+	for _, tuple := range got {
+		have.PutIfAbsent(NewTupleKeyFull(tuple), struct{}{})
+	}
+	if len(got) != len(want) {
+		t.Errorf("%s = %v, want %v", label, got, want)
+		return
+	}
+	for _, p := range want {
+		if !have.Exists(NewTupleKeyFull(Tuple{p})) {
+			t.Errorf("%s = %v, want %v", label, got, want)
+			return
+		}
+	}
+}
+
+// TestExecuteWithRelations_NegationAfterARecursiveInvocationRewrites binds an
+// invocation of q whose recursive rule negates s after the recursive
+// invocation of q. The binding that invocation provides does not reach the
+// negation, so the magic rule of s reads no adorned q, the rewritten set
+// stratifies, and each query records one applied rewrite and derives what
+// the whole predicate filtered to its start holds.
+func TestExecuteWithRelations_NegationAfterARecursiveInvocationRewrites(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(markedPageGraph())
 	rs := mustRules(t, `[[(q ?x ?z) [?x :page/a ?z]]
 	                     [(q ?x ?z) [?x :page/a ?y] (q ?y ?w) (not (s ?w)) [?w :page/b ?z]]
 	                     [(s ?w) [?w :page/c _]]]`)
@@ -871,42 +917,57 @@ func TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole(t *testing.T) {
 				}
 			}
 			exec := NewExecutorWithOptions(matcher, nil, opts)
-			run := func(start datalog.Identity) []Tuple {
-				inputs, err := createInputRelationsFromValuesWithOptions(q,
-					[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), start}, exec.options)
-				if err != nil {
-					t.Fatalf("binding: %v", err)
-				}
-				rel, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, inputs)
-				if err != nil {
-					t.Fatalf("bound to %s: %v", start, err)
-				}
-				var tuples []Tuple
-				if err := collectTuplesInto(&tuples, rel); err != nil {
-					t.Fatalf("bound to %s: %v", start, err)
-				}
-				return tuples
-			}
-			reached := func(tuples []Tuple) *TupleKeyMap {
-				keys := NewTupleKeyMap()
-				for _, tuple := range tuples {
-					keys.PutIfAbsent(NewTupleKeyFull(tuple), struct{}{})
-				}
-				return keys
-			}
-			if got := run(page(1)); len(got) != 2 || !reached(got).Exists(NewTupleKeyFull(Tuple{page(2)})) || !reached(got).Exists(NewTupleKeyFull(Tuple{page(9)})) {
-				t.Errorf("q bound to page1 = %v, want page2 and page9: the path through page7 is cut by s", got)
-			}
-			if got := run(page(2)); len(got) != 2 || !reached(got).Exists(NewTupleKeyFull(Tuple{page(3)})) || !reached(got).Exists(NewTupleKeyFull(Tuple{page(7)})) {
-				t.Errorf("q bound to page2 = %v, want page3 and page7", got)
-			}
+			// q(1, 9) holds through q(2, 3), since s(3) does not hold and
+			// b(3, 9); q(1, 8) does not, since s(7) holds.
+			requireSamePages(t, "q bound to page1", tuplesBoundTo(t, exec, rs, q, page(1)), page(2), page(9))
+			requireSamePages(t, "q bound to page2", tuplesBoundTo(t, exec, rs, q, page(2)), page(3), page(7))
 			if len(decisions) != 2 {
 				t.Fatalf("recorded %d rewrite decisions, want one per invocation: %v", len(decisions), decisions)
 			}
-			_, refusal := rs.Magic(datalog.NewSymbol("q"), []bool{true, false})
-			var unstratifiable *query.UnstratifiableError
-			if !errors.As(refusal, &unstratifiable) {
-				t.Fatalf("the rewrite of q under b is refused by the stratifier, got %v", refusal)
+			for _, d := range decisions {
+				if d.Data["applied"] != true {
+					t.Errorf("decision %v: the rewrite is applied, since the binding the recursion provides does not reach the negation", d.Data)
+				}
+			}
+		})
+	}
+}
+
+// TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole binds an
+// invocation whose rewrite does not stratify: q's second rule invokes s
+// after the recursive invocation of q, so the magic rule of s reads the
+// adorned q, and q's third rule negates s, so the adorned q depends through
+// that negation on the adorned s. The rewrite is declined, recorded, and the
+// predicate evaluated whole and filtered.
+func TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(markedPageGraph())
+	rs := mustRules(t, `[[(q ?x ?z) [?x :page/a ?z]]
+	                     [(q ?x ?z) [?x :page/a ?y] (q ?y ?w) (s ?w) [?w :page/b ?z]]
+	                     [(q ?x ?z) [?x :page/a ?w] (not (s ?w)) [?w :page/b ?z]]
+	                     [(s ?w) [?w :page/c _]]]`)
+	q := mustParse(t, `[:find ?z :in $ % ?x :where (q ?x ?z)]`)
+	_, refusal := rs.Magic(datalog.NewSymbol("q"), []bool{true, false})
+	var unstratifiable *query.UnstratifiableError
+	if !errors.As(refusal, &unstratifiable) {
+		t.Fatalf("the rewrite of q under bf is refused by the stratifier, got %v", refusal)
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var decisions []annotations.Event
+			opts := mode.plannerOptions()
+			opts.Handler = func(e annotations.Event) {
+				if e.Name == annotations.RulesMagicSets {
+					decisions = append(decisions, e)
+				}
+			}
+			exec := NewExecutorWithOptions(matcher, nil, opts)
+			// q(1, 8) holds through q(2, 7), since s(7) holds and b(7, 8);
+			// q(2, 9) holds by the third rule, since s(3) does not hold and
+			// b(3, 9).
+			requireSamePages(t, "q bound to page1", tuplesBoundTo(t, exec, rs, q, page(1)), page(2), page(8))
+			requireSamePages(t, "q bound to page2", tuplesBoundTo(t, exec, rs, q, page(2)), page(3), page(7), page(9))
+			if len(decisions) != 2 {
+				t.Fatalf("recorded %d rewrite decisions, want one per invocation: %v", len(decisions), decisions)
 			}
 			for _, d := range decisions {
 				if d.Data["applied"] != false {
@@ -915,6 +976,44 @@ func TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole(t *testing.T) {
 				if reason, _ := d.Data["reason"].(string); reason != unstratifiable.Error() {
 					t.Errorf("decision reason %q, want the stratifier's refusal %q", reason, unstratifiable.Error())
 				}
+			}
+		})
+	}
+}
+
+// TestExecuteWithRelations_DeclinedRewriteOfARequiredPredicateIsAnError
+// binds a predicate with a required position whose rewrite does not
+// stratify: the shape of TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole
+// with path requiring its first position. A predicate requiring bindings is
+// never evaluated whole, so the decline has nothing to fall back to, and the
+// query returns an error naming the predicate and carrying the stratifier's
+// refusal.
+func TestExecuteWithRelations_DeclinedRewriteOfARequiredPredicateIsAnError(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(markedPageGraph())
+	rs := mustRules(t, `[[(path [?x] ?z) [?x :page/a ?z]]
+	                     [(path [?x] ?z) [?x :page/a ?y] (path ?y ?w) (s ?w) [?w :page/b ?z]]
+	                     [(path [?x] ?z) [?x :page/a ?w] (not (s ?w)) [?w :page/b ?z]]
+	                     [(s ?w) [?w :page/c _]]]`)
+	q := mustParse(t, `[:find ?z :in $ % ?x :where (path ?x ?z)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			inputs, err := createInputRelationsFromValuesWithOptions(q,
+				[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), page(1)}, exec.options)
+			if err != nil {
+				t.Fatalf("binding: %v", err)
+			}
+			rel, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, inputs)
+			if err == nil {
+				var tuples []Tuple
+				err = collectTuplesInto(&tuples, rel)
+			}
+			var unstratifiable *query.UnstratifiableError
+			if !errors.As(err, &unstratifiable) {
+				t.Fatalf("path bound to page1: got %v, want an error carrying the stratifier's refusal", err)
+			}
+			if !strings.Contains(err.Error(), "path") {
+				t.Errorf("error %q does not name the predicate path", err)
 			}
 		})
 	}
@@ -967,6 +1066,40 @@ func TestExecuteWithRelations_InvocationUnderAFormEvaluatesOnce(t *testing.T) {
 			}
 			if got := [2]int{rewrites, strata}; got != atTop {
 				t.Errorf("under not: %d rewrites and %d strata, want the top level's %d and %d", got[0], got[1], atTop[0], atTop[1])
+			}
+		})
+	}
+}
+
+// Two invocations of one predicate under one form, bound at the same position
+// to different values, each read the tuples their own binding reaches: on the
+// chain of ten, page 5 and page 2 both reach page 6, and page 2 is not
+// reached from page 5, so a not over both invocations excludes the pair
+// only when the second invocation reads what its own binding reaches.
+func TestExecuteWithRelations_TwoInvocationsUnderAFormKeepTheirOwnSeeds(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(10))
+	rs := mustRules(t, followsRulesText)
+	q := mustParse(t, `[:find ?x ?z :in $ % ?x ?z
+	                     :where [?x :page/kind "leaf"] [?z :page/kind "leaf"]
+	                            (not (follows ?x ?w) (follows ?z ?w))]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			inputs, err := createInputRelationsFromValuesWithOptions(q,
+				[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), page(5), page(2)}, exec.options)
+			if err != nil {
+				t.Fatalf("binding: %v", err)
+			}
+			rel, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, inputs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var tuples []Tuple
+			if err := collectTuplesInto(&tuples, rel); err != nil {
+				t.Fatal(err)
+			}
+			if len(tuples) != 0 {
+				t.Errorf("page 5 and page 2 both reach page 6, so the not excludes the pair; got %v", tuples)
 			}
 		})
 	}

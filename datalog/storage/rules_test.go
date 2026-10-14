@@ -131,13 +131,24 @@ func writeGraph(t testing.TB, d *Database, spec graphSpec) graph {
 // each value a node's name where it is an identity of the graph.
 func (g graph) tuples(t testing.TB, rel executor.Relation) []string {
 	t.Helper()
+	rendered, err := g.render(rel)
+	require.NoError(t, err)
+	return rendered
+}
+
+// render reads a result into one string per tuple, its values joined by ">",
+// each value a node's name where it is an identity of the graph. An identity
+// of no node is an error, so a goroutine that is not the test's can render.
+func (g graph) render(rel executor.Relation) ([]string, error) {
 	var rendered []string
-	require.NoError(t, executor.ForEach(rel, func(tuple executor.Tuple) error {
+	err := executor.ForEach(rel, func(tuple executor.Tuple) error {
 		parts := make([]string, len(tuple))
 		for i, v := range tuple {
 			if id, ok := v.(datalog.Identity); ok {
 				name, named := g.names[id]
-				require.True(t, named, "result identity %s names no node of the fixture", id)
+				if !named {
+					return fmt.Errorf("result identity %s names no node of the fixture", id)
+				}
 				parts[i] = name
 			} else {
 				parts[i] = fmt.Sprint(v)
@@ -145,8 +156,11 @@ func (g graph) tuples(t testing.TB, rel executor.Relation) []string {
 		}
 		rendered = append(rendered, strings.Join(parts, ">"))
 		return nil
-	}))
-	return rendered
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rendered, nil
 }
 
 func TestRules_TransitiveClosureOnChain(t *testing.T) {
@@ -761,13 +775,17 @@ func TestRules_BoundInvocationRunsWhereverTheWholeInvocationRuns(t *testing.T) {
 // A predicate that invokes a required-binding predicate evaluates whole: the
 // required position is bound inside the invoking rule's own body. The chain
 // of four carries ranks 1 to 4 with n2 marked. The first case invokes such a
-// predicate free; the second binds a recursive predicate whose rewrite is
-// declined, since the negation of a lower predicate stands before the
-// recursion, so the predicate evaluates whole.
+// predicate free. The second binds a recursive predicate whose rewrite the
+// stratifier refuses: one rule invokes a lower predicate after the recursion,
+// so that predicate's magic rule reads the adorned recursion, and another
+// rule negates it, so the adorned recursion depends through the negation on
+// the adorned lower predicate. The decline falls back to the whole
+// evaluation, each body binding the required position itself.
 func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testing.T) {
 	cases := []struct {
 		name, rules, text string
 		inputs            []interface{}
+		declined          string
 		want              []string
 	}{
 		{
@@ -776,6 +794,7 @@ func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testi
 			  [(next ?a ?r) [?a :rank ?k] (succ ?k ?r)]]`,
 			`[:find ?a ?r :in $ % :where (next ?a ?r)]`,
 			nil,
+			"",
 			[]string{"n1>2", "n2>3", "n3>4", "n4>5"},
 		},
 		{
@@ -783,9 +802,11 @@ func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testi
 			`[[(marked ?n) [?n :marked true]]
 			  [(succ [?n] ?m) [(+ ?n 1) ?m]]
 			  [(walk ?a ?b) [?a :edge ?b]]
+			  [(walk ?a ?c) [?a :edge ?b] (walk ?b ?c) (marked ?b) [?b :rank ?k] (succ ?k ?j) [(< ?j 100)]]
 			  [(walk ?a ?c) [?a :edge ?b] (not (marked ?b)) [?b :rank ?k] (succ ?k ?j) [(< ?j 100)] (walk ?b ?c)]]`,
 			`[:find ?y :in $ % ?s :where (walk ?s ?y)]`,
 			[]interface{}{nodeID("n2")},
+			"walk",
 			[]string{"n3", "n4"},
 		},
 	}
@@ -802,7 +823,13 @@ func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testi
 				_, err := tx.Commit()
 				require.NoError(t, err)
 
-				inputs := append([]interface{}{mustRuleSet(t, c.rules)}, c.inputs...)
+				rs := mustRuleSet(t, c.rules)
+				if c.declined != "" {
+					_, refusal := rs.Magic(datalog.NewSymbol(c.declined), []bool{true, false})
+					var unstratifiable *query.UnstratifiableError
+					require.ErrorAs(t, refusal, &unstratifiable, "the rewrite of %s under bf is refused by the stratifier", c.declined)
+				}
+				inputs := append([]interface{}{rs}, c.inputs...)
 				rel, err := d.Query(c.text, inputs...)
 				require.NoError(t, err, "the predicate evaluates whole")
 				require.ElementsMatch(t, c.want, g.tuples(t, rel))
@@ -975,6 +1002,25 @@ func chainReachingWith(n int, suffix string) []string {
 		names[i] += suffix
 	}
 	return names
+}
+
+// Two invocations of one predicate under one form, bound at the same position
+// to different nodes, each read what their own node reaches: on the chain of
+// six, n5 and n2 both reach n6, and n2 is not reached from n5, so a not over
+// both invocations excludes the pair.
+func TestRules_TwoInvocationsUnderAFormKeepTheirOwnSeeds(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			g := writeGraph(t, d, chain(6))
+			rel, err := d.Query(`[:find ?x ?z :in $ % ?x ?z
+			                      :where [?x :type :node] [?z :type :node]
+			                             (not (reach ?x ?w) (reach ?z ?w))]`,
+				mustRuleSet(t, closureRules), nodeID("n5"), nodeID("n2"))
+			require.NoError(t, err)
+			require.Empty(t, g.tuples(t, rel), "n5 and n2 both reach n6, so the not excludes the pair")
+		})
+	}
 }
 
 // TestRules_InvocationInsideOrDefaultBranch: an invocation stands in an

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/codec"
 )
 
 // FormatValueEDN formats a Go value as a parseable EDN string.
@@ -54,7 +55,7 @@ func FormatValueEDN(v interface{}) string {
 	case time.Time:
 		return `#inst "` + val.UTC().Format(time.RFC3339Nano) + `"`
 	case []byte:
-		return fmt.Sprintf("#bytes \"%x\"", val)
+		return `#bytes "` + codec.EncodeL85(val) + `"`
 	default:
 		return fmt.Sprintf("%v", v)
 	}
@@ -340,11 +341,12 @@ type Query struct {
 	Limit        *int            // Optional cap on result tuples (nil = unbounded); applied after OrderBy and aggregation
 	ScalarReturn bool            // If true, return scalar value (find spec ends with .)
 
-	// attributes is the roster the DefaultSourceAttributes method returns,
-	// collected on its first call. A parsed query is immutable and serves every
-	// execution of its text, so the roster is collected once.
-	attributesOnce sync.Once
-	attributes     []datalog.Keyword
+	// rosters is what the query names, the rosters DefaultSourceAttributes,
+	// DefaultSourceAttributeVariables and SourceAttributes return, collected in
+	// one walk on the first call of any of them. A parsed query is immutable
+	// and serves every execution of its text, so the walk runs once.
+	rostersOnce sync.Once
+	rosters     *attributeRoster
 }
 
 // SingleDataPattern returns the sole data pattern in a physical query fragment.

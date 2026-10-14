@@ -114,19 +114,28 @@ func (s *SubqueryBuilder) toClause() query.Clause {
 		panic("subquery build failed: " + err.Error())
 	}
 
-	// The inner query's source and rules references lead the inputs, in the
-	// order its :in declares them, as the parsed form (q [...] $ % ?x) has
-	// them; the caller's variables follow.
+	// The inputs follow the inner query's :in in order: a source reference at
+	// a source position, % at the rules position, and the caller's variables
+	// at the value positions, as the parsed form (q [...] $ ?x %) has them. A
+	// caller variable beyond the value positions is passed through, so Build
+	// refuses the count as the static shape it is.
 	var inputs []query.PatternElement
+	callers := s.inputs
 	for _, in := range innerQ.In {
 		switch in := in.(type) {
 		case query.DatabaseInput:
 			inputs = append(inputs, query.Constant{Value: in.Name})
 		case query.RulesInput:
 			inputs = append(inputs, query.Constant{Value: datalog.SymRules})
+		default:
+			if len(callers) == 0 {
+				continue
+			}
+			inputs = append(inputs, query.Variable{Name: callers[0].Symbol()})
+			callers = callers[1:]
 		}
 	}
-	for _, v := range s.inputs {
+	for _, v := range callers {
 		inputs = append(inputs, query.Variable{Name: v.Symbol()})
 	}
 

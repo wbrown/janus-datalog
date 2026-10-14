@@ -13,11 +13,13 @@ import (
 // every backend: the check alone, through the matcher, and the whole query
 // path. Each runs on a database declaring the fixture schema: opened without
 // the option, where the gate is off; opened with it, for a query naming a
-// declared attribute, which runs; and opened with it, for a query naming an
-// attribute the store carries but the schema does not declare, which is
-// refused.
+// declared attribute, which runs; opened with it, for a query whose subquery
+// names a declared attribute and runs once per outer tuple; and opened with
+// it, for a query naming an attribute the store carries but the schema does
+// not declare, which is refused.
 func BenchmarkUnknownAttributeCheck(b *testing.B) {
 	const declared = `[:find ?v :where [?e :t/string ?v]]`
+	const declaredInSubquery = `[:find ?e ?n :where [?e :t/string ?v] [(q [:find (count ?x) :in $ ?e :where [?e :t/string ?x]] $ ?e) [[?n]]]]`
 	const undeclared = `[:find ?v :where [?e :t/loose ?v]]`
 	cases := []struct {
 		name    string
@@ -27,6 +29,7 @@ func BenchmarkUnknownAttributeCheck(b *testing.B) {
 	}{
 		{"gate-off", false, declared, false},
 		{"declared", true, declared, false},
+		{"declared-in-subquery", true, declaredInSubquery, false},
 		{"undeclared-written", true, undeclared, true},
 	}
 	for _, backend := range AvailableBackends() {

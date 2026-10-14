@@ -68,15 +68,38 @@ func BenchmarkPatternMatcherGetCardinality(b *testing.B) {
 	}
 	m := NewPatternMatcher(NewMemoryStore(&BinaryKeyEncoder{}))
 	m.SetSchema(s)
-	var a Attribute
-	copy(a[:], ":bench/attr")
-	if card := m.GetCardinality(a); card != schema.CardinalityMany {
+	attr := datalog.NewKeyword(":bench/attr")
+	if card := m.GetCardinality(attr); card != schema.CardinalityMany {
 		b.Fatalf("the matcher reads %s for a declared set", card)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		getCardinalitySink = m.GetCardinality(a)
+		getCardinalitySink = m.GetCardinality(attr)
+	}
+}
+
+// TestPatternMatcherGetCardinalityAllocatesNothing pins that the matcher's
+// cardinality read is a schema lookup and nothing else: it allocates
+// nothing, so a cache call site pays no decode on a hit.
+func TestPatternMatcherGetCardinalityAllocatesNothing(t *testing.T) {
+	s, err := schema.NewBuilder().
+		Attribute(":bench/attr").Type(schema.TypeString).Many().Add().
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewPatternMatcher(NewMemoryStore(&BinaryKeyEncoder{}))
+	m.SetSchema(s)
+	attr := datalog.NewKeyword(":bench/attr")
+	allocs := testing.AllocsPerRun(100, func() {
+		getCardinalitySink = m.GetCardinality(attr)
+	})
+	if allocs != 0 {
+		t.Errorf("the cardinality read allocates %v per call, want none", allocs)
+	}
+	if getCardinalitySink != schema.CardinalityMany {
+		t.Errorf("the matcher reads %s for a declared set", getCardinalitySink)
 	}
 }

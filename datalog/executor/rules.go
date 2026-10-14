@@ -172,9 +172,10 @@ func (e *DefaultQueryExecutor) invocationSource(ctx *Context, inv *query.RuleInv
 // binds its arguments, and through the magic-set rewrite seeded by the bound
 // arguments otherwise, so the fixpoint derives only the tuples those
 // arguments reach. A rewrite the stratifier refuses is declined, recorded,
-// and the predicate evaluated whole. The relation is returned with the
-// symbol it is the relation of: the predicate's own, or the adorned one the
-// rewrite derives.
+// and the predicate evaluated whole; a predicate with required positions is
+// never evaluated whole, so its decline is the refusal, returned naming the
+// invocation. The relation is returned with the symbol it is the relation
+// of: the predicate's own, or the adorned one the rewrite derives.
 func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, query.Symbol, error) {
 	rs := ctx.Rules()
 	if rs == nil {
@@ -196,6 +197,9 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 	if errors.As(err, &unstratifiable) {
 		if e.options.Handler != nil {
 			e.options.Handler(magicSetsEvent(inv.Name, bound, false, unstratifiable.Error()))
+		}
+		if anyBound(rs.Required(inv.Name)) {
+			return nil, nil, fmt.Errorf("rule invocation %s: the rewrite for its bindings is declined, %w, and a predicate requiring bindings has no whole evaluation to fall back to", inv, err)
 		}
 		derived, err := e.executor.evaluateRules(ctx, rs, inv.Name, nil)
 		if err != nil {
@@ -302,9 +306,15 @@ func (e *DefaultQueryExecutor) hoistWalk(ctx *Context, clauses []query.Clause, o
 			if err != nil {
 				return nil, false, err
 			}
-			if _, ok := held[under]; !ok {
-				held[under] = rel
+			// An adorned symbol names the predicate and its binding pattern,
+			// and the relation held under it is a function of the seed as
+			// well, so two invocations adorned alike but seeded from
+			// different variables hold the union of their relations, which
+			// each invocation's projection narrows to its own bound values.
+			if prior, ok := held[under]; ok {
+				rel = unionRelations([]Relation{prior, rel}, rel.Symbols(), e.options)
 			}
+			held[under] = rel
 			if under != c.Name {
 				out[i] = &query.RuleInvocation{Name: under, Args: c.Args}
 				changed = true

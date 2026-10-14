@@ -8,25 +8,18 @@ import (
 // Ensure PatternMatcher implements CacheResolver
 var _ CacheResolver = (*PatternMatcher)(nil)
 
-// GetCardinality returns the cardinality for an attribute
-// Defaults to CardinalityOne if schema is not set or attribute not found
-func (m *PatternMatcher) GetCardinality(a Attribute) datalog.Keyword {
+// GetCardinality returns the cardinality an attribute resolves under: the
+// one its definition declares, and CardinalityOne for an attribute the
+// schema does not declare or a matcher with no schema.
+func (m *PatternMatcher) GetCardinality(attr datalog.Keyword) datalog.Keyword {
 	if m.schema == nil {
 		return schema.CardinalityOne
 	}
-
-	// Convert Attribute to Keyword
-	kw := decodeAttribute(a)
-	if kw == "" {
+	def := m.schema.GetAttribute(attr)
+	if def == nil {
 		return schema.CardinalityOne
 	}
-
-	attr := m.schema.GetAttribute(datalog.NewKeyword(kw))
-	if attr == nil {
-		return schema.CardinalityOne
-	}
-
-	return attr.Cardinality
+	return def.Cardinality
 }
 
 // ResolveLWW returns the current value for cardinality-one (highest

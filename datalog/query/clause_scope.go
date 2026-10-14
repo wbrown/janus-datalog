@@ -279,9 +279,10 @@ func (o *OrDefaultJoinClause) Validate() error {
 }
 
 // Validate enforces the subquery clause's static shape: the binding form's
-// arity must match the inner query's :find arity. This is a property of the
-// clause text alone — no data, planning, or mode is needed to check it — so
-// the parser, the qb builder, and the executor entry enforce it with one
+// arity must match the inner query's :find arity, and the call passes one
+// input per position of the inner :in. Each is a property of the clause
+// text alone — no data, planning, or mode is needed to check it — so the
+// parser, the qb builder, and the executor entry enforce it with one
 // message; the execution paths' deeper checks remain as backstops for
 // internally constructed plans. Result cardinality (tuple/scalar bindings
 // demanding exactly one tuple) is data-dependent and stays at execution.
@@ -294,6 +295,9 @@ func (p *SubqueryPattern) Validate() error {
 	}
 	if p.Binding == nil {
 		return fmt.Errorf("subquery has no binding form")
+	}
+	if arity := InputArity(p.Query.In); len(p.Inputs) != arity {
+		return fmt.Errorf("subquery passes %d input(s), but its inner :in binds %d value(s): one per source, %%, scalar and collection input, one per symbol of a tuple or relation input, and one for the $ an omitted :in defaults to", len(p.Inputs), arity)
 	}
 	arity := len(p.Query.Find)
 	switch b := p.Binding.(type) {
@@ -375,6 +379,29 @@ func ValidateStaticClauseShapes(clauses []Clause) error {
 		return validateErr == nil
 	})
 	return validateErr
+}
+
+// InputArity is the number of values a call supplies for an :in clause: one
+// per source, rules, scalar and collection input, one per symbol of a tuple
+// or relation input, and one for the $ an omitted :in defaults to. A
+// subquery's call is checked against it as a static shape, and the executor
+// binds a call's values by it.
+func InputArity(in []InputSpec) int {
+	if len(in) == 0 {
+		return 1
+	}
+	arity := 0
+	for _, spec := range in {
+		switch spec := spec.(type) {
+		case RelationInput:
+			arity += len(spec.Symbols)
+		case TupleInput:
+			arity += len(spec.Symbols)
+		default:
+			arity++
+		}
+	}
+	return arity
 }
 
 // ValidateInputShapes validates every static input-shape rule — the checks

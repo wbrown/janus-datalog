@@ -1288,6 +1288,15 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.Subquer
 		if err != nil {
 			return nil, fmt.Errorf("subquery input binding failed: %w", err)
 		}
+		// An attribute the subquery's inputs bind to a pattern's attribute
+		// position exists only here, so the subquery asks the vocabulary
+		// about it; the enclosing query's check covered the attributes the
+		// body names.
+		if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
+			if err := refuseBoundAttributes(vocabulary, subq.Query, inputRelations); err != nil {
+				return nil, err
+			}
+		}
 		// The subquery is its own query scope: its environment comes from its
 		// own :in bindings, never the enclosing scope's (whose parameters an
 		// inner name collision must not capture).
@@ -1384,6 +1393,14 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.Subquer
 			}
 		}
 
+		// An attribute this combination binds to a pattern's attribute
+		// position exists only here, so the subquery asks the vocabulary
+		// about it.
+		if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
+			if err := refuseBoundAttributes(vocabulary, subq.Query, inputRelations); err != nil {
+				return nil, err
+			}
+		}
 		// Execute the nested query recursively using QueryExecutor. The
 		// subquery is its own query scope: its environment comes from its own
 		// :in bindings for this combination, never the enclosing scope's.

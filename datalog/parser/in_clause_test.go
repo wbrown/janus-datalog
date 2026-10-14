@@ -299,7 +299,7 @@ func TestSubqueryWithInputClause(t *testing.T) {
 	                         [?p :price/time ?t]
 	                         [(same-date? ?t ?date)]
 	                         [?p :price/high ?h]]
-	                 ?s ?date) [[?high]]]]`
+	                 $ ?s ?date) [[?high]]]]`
 
 	q, err := ParseQuery(input)
 	if err != nil {

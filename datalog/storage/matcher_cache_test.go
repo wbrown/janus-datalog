@@ -36,9 +36,10 @@ func TestMatcherCacheCardinalityOne(t *testing.T) {
 			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			name := datalog.NewKeyword(":person/name")
 			tx := db.NewTransaction()
 			e := datalog.NewIdentity("person1")
-			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			err = tx.Set(e, name, "Alice")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -50,10 +51,10 @@ func TestMatcherCacheCardinalityOne(t *testing.T) {
 			// Verify cache returns correct LWW value
 			eBytes := Entity(e.Hash())
 			var aBytes Attribute
-			copy(aBytes[:], ":person/name")
+			copy(aBytes[:], name.String())
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, schema.CardinalityOne, entry.Cardinality())
@@ -78,11 +79,12 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			tags := datalog.NewKeyword(":person/tags")
 			tx := db.NewTransaction()
 			e := datalog.NewIdentity("person1")
-			err = tx.Add(e, datalog.NewKeyword(":person/tags"), "warrior")
+			err = tx.Add(e, tags, "warrior")
 			require.NoError(t, err)
-			err = tx.Add(e, datalog.NewKeyword(":person/tags"), "veteran")
+			err = tx.Add(e, tags, "veteran")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -94,10 +96,10 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 			// Verify cache returns correct set
 			eBytes := Entity(e.Hash())
 			var aBytes Attribute
-			copy(aBytes[:], ":person/tags")
+			copy(aBytes[:], tags.String())
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(tags), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, schema.CardinalityMany, entry.Cardinality())
@@ -125,11 +127,12 @@ func TestMatcherCacheCardinalityVector(t *testing.T) {
 			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			skills := datalog.NewKeyword(":character/skills")
 			tx := db.NewTransaction()
 			e := datalog.NewIdentity("character1")
-			err = tx.Add(e, datalog.NewKeyword(":character/skills"), "stealth")
+			err = tx.Add(e, skills, "stealth")
 			require.NoError(t, err)
-			err = tx.Add(e, datalog.NewKeyword(":character/skills"), "archery")
+			err = tx.Add(e, skills, "archery")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -141,10 +144,10 @@ func TestMatcherCacheCardinalityVector(t *testing.T) {
 			// Verify cache returns correct vector
 			eBytes := Entity(e.Hash())
 			var aBytes Attribute
-			copy(aBytes[:], ":character/skills")
+			copy(aBytes[:], skills.String())
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(skills), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, schema.CardinalityVector, entry.Cardinality())
@@ -166,9 +169,10 @@ func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
 			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			name := datalog.NewKeyword(":person/name")
 			tx := db.NewTransaction()
 			e := datalog.NewIdentity("person1")
-			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			err = tx.Set(e, name, "Alice")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -178,20 +182,15 @@ func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
 			matcher.SetSchema(s)
 			eBytes := Entity(e.Hash())
 			var aBytes Attribute
-			copy(aBytes[:], ":person/name")
+			copy(aBytes[:], name.String())
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			cachedValue := entry.OneValue()
 
 			// Get value via direct lookup (LookupAttribute)
-			directValue, found := requireAttributeLookup(
-				t,
-				matcher,
-				e,
-				datalog.NewKeyword(":person/name"),
-			)
+			directValue, found := requireAttributeLookup(t, matcher, e, name)
 			require.True(t, found)
 
 			// Both should return the same value
@@ -213,9 +212,10 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 			require.NoError(t, db.SetSchema(s))
 
 			// Add initial data
+			name := datalog.NewKeyword(":person/name")
 			tx := db.NewTransaction()
 			e := datalog.NewIdentity("person1")
-			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			err = tx.Set(e, name, "Alice")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -225,22 +225,22 @@ func TestMatcherCacheInvalidationOnWrite(t *testing.T) {
 			matcher.SetSchema(s)
 			eBytes := Entity(e.Hash())
 			var aBytes Attribute
-			copy(aBytes[:], ":person/name")
+			copy(aBytes[:], name.String())
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry1, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+			entry1, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			assert.Equal(t, "Alice", entry1.OneValue())
 
 			// Update data
 			tx2 := db.NewTransaction()
-			err = tx2.Set(e, datalog.NewKeyword(":person/name"), "Bob")
+			err = tx2.Set(e, name, "Bob")
 			require.NoError(t, err)
 			_, err = tx2.Commit()
 			require.NoError(t, err)
 
 			// Cache should be invalidated, next resolve should see new value
-			entry2, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+			entry2, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			assert.Equal(t, "Bob", entry2.OneValue())
 		})
@@ -255,10 +255,11 @@ func TestMatcherCacheWithSchemalessAttribute(t *testing.T) {
 			// No schema set - should default to cardinality-one
 
 			// Add data
+			unknown := datalog.NewKeyword(":unknown/attr")
 			tx := db.NewTransaction()
 			e := datalog.NewIdentity("entity1")
 			// Set works without schema (defaults to cardinality-one)
-			err := tx.Set(e, datalog.NewKeyword(":unknown/attr"), "value")
+			err := tx.Set(e, unknown, "value")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -268,10 +269,10 @@ func TestMatcherCacheWithSchemalessAttribute(t *testing.T) {
 
 			eBytes := Entity(e.Hash())
 			var aBytes Attribute
-			copy(aBytes[:], ":unknown/attr")
+			copy(aBytes[:], unknown.String())
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(unknown), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			// Should default to cardinality-one
@@ -294,21 +295,22 @@ func TestMatcherCacheLWWResolution(t *testing.T) {
 			require.NoError(t, db.SetSchema(s))
 
 			// Write multiple values - highest ElementID should win
+			name := datalog.NewKeyword(":person/name")
 			tx1 := db.NewTransaction()
 			e := datalog.NewIdentity("person1")
-			err = tx1.Set(e, datalog.NewKeyword(":person/name"), "First")
+			err = tx1.Set(e, name, "First")
 			require.NoError(t, err)
 			_, err = tx1.Commit()
 			require.NoError(t, err)
 
 			tx2 := db.NewTransaction()
-			err = tx2.Set(e, datalog.NewKeyword(":person/name"), "Second")
+			err = tx2.Set(e, name, "Second")
 			require.NoError(t, err)
 			_, err = tx2.Commit()
 			require.NoError(t, err)
 
 			tx3 := db.NewTransaction()
-			err = tx3.Set(e, datalog.NewKeyword(":person/name"), "Third")
+			err = tx3.Set(e, name, "Third")
 			require.NoError(t, err)
 			_, err = tx3.Commit()
 			require.NoError(t, err)
@@ -318,10 +320,10 @@ func TestMatcherCacheLWWResolution(t *testing.T) {
 			matcher.SetSchema(s)
 			eBytes := Entity(e.Hash())
 			var aBytes Attribute
-			copy(aBytes[:], ":person/name")
+			copy(aBytes[:], name.String())
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, "Third", entry.OneValue())
@@ -342,24 +344,25 @@ func TestMatcherCacheAddWinsResolution(t *testing.T) {
 			require.NoError(t, db.SetSchema(s))
 
 			e := datalog.NewIdentity("person1")
+			tags := datalog.NewKeyword(":person/tags")
 
 			// Add a tag
 			tx1 := db.NewTransaction()
-			err = tx1.Add(e, datalog.NewKeyword(":person/tags"), "warrior")
+			err = tx1.Add(e, tags, "warrior")
 			require.NoError(t, err)
 			_, err = tx1.Commit()
 			require.NoError(t, err)
 
 			// Remove the tag
 			tx2 := db.NewTransaction()
-			err = tx2.Remove(e, datalog.NewKeyword(":person/tags"), "warrior")
+			err = tx2.Remove(e, tags, "warrior")
 			require.NoError(t, err)
 			_, err = tx2.Commit()
 			require.NoError(t, err)
 
 			// Add it back
 			tx3 := db.NewTransaction()
-			err = tx3.Add(e, datalog.NewKeyword(":person/tags"), "warrior")
+			err = tx3.Add(e, tags, "warrior")
 			require.NoError(t, err)
 			_, err = tx3.Commit()
 			require.NoError(t, err)
@@ -369,10 +372,10 @@ func TestMatcherCacheAddWinsResolution(t *testing.T) {
 			matcher.SetSchema(s)
 			eBytes := Entity(e.Hash())
 			var aBytes Attribute
-			copy(aBytes[:], ":person/tags")
+			copy(aBytes[:], tags.String())
 			key := CacheKey{E: eBytes, A: aBytes}
 
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(tags), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			_, hasWarrior2 := entry.ManySet()["warrior"]
@@ -442,9 +445,10 @@ func BenchmarkCacheResolutionOverhead(b *testing.B) {
 	require.NoError(b, db.SetSchema(s))
 
 	// Create entity
+	name := datalog.NewKeyword(":person/name")
 	tx := db.NewTransaction()
 	e := datalog.NewIdentity("person1")
-	tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+	tx.Set(e, name, "Alice")
 	tx.Commit()
 
 	matcher := NewPatternMatcher(db.Store())
@@ -452,13 +456,13 @@ func BenchmarkCacheResolutionOverhead(b *testing.B) {
 
 	eBytes := Entity(e.Hash())
 	var aBytes Attribute
-	copy(aBytes[:], ":person/name")
+	copy(aBytes[:], name.String())
 	key := CacheKey{E: eBytes, A: aBytes}
 
 	b.Run("CacheGetOrResolve", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			if err != nil {
 				b.Fatal(err)
 			}

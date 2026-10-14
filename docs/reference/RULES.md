@@ -170,6 +170,11 @@ This is the magic-set rewrite:
   holds the bindings the predicate is asked with.
 - The bindings pass left to right through each body into the invocations
   after them.
+- An invocation under `not` or `not-join` receives the bindings of the
+  clauses before the first that invokes a predicate of the rule's own
+  stratum. A binding that invocation provides would make the negated
+  predicate's magic rule depend on the adorned predicate, which depends on
+  the negated one through the negation.
 - A body invocation that nothing before it binds keeps the original rules.
 - A subquery body is not entered. Its own invocations evaluate at their own
   clauses.
@@ -177,10 +182,13 @@ This is the magic-set rewrite:
 The invocation's bound values seed the magic predicate. The rewritten set
 evaluates as any set does. The invocation reads the adorned predicate.
 
-The rewrite is declined when its result does not stratify. The magic rule of
-a predicate invoked under a negation can bring that about. The predicate is
-then derived whole. The decline is recorded as a `rules/magic-sets` event
-with its reason.
+The rewrite is declined when its result does not stratify. A predicate
+invoked after a same-stratum invocation in one rule and negated in another
+brings that about: its magic rule reads the adorned predicate, which depends
+on it through the negation. The predicate is then derived whole. The decline
+is recorded as a `rules/magic-sets` event with its reason. A predicate with
+required positions is never derived whole, so its declined rewrite is an
+error naming the invocation and carrying the refusal.
 
 A recursive stratum iterates semi-naively. The seeding run executes the rules
 with no recursive invocation. Each later iteration executes each rule once

@@ -2,14 +2,49 @@ package qb
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
+
+// A constant argument of each value type the builder accepts renders
+// through FormatQuery to text the parser reads back as the same clause, and
+// that clause renders to the same text: an identity, a string carrying
+// escapes, a float, a bool, an int, a keyword, an instant and bytes.
+func TestRuleConstantArgumentsRoundTrip(t *testing.T) {
+	x := NewVar("x")
+	for _, value := range []interface{}{
+		datalog.NewIdentity("e1"),
+		"a\"b\\c\n",
+		1.5,
+		true,
+		int64(7),
+		datalog.NewKeyword(":k/w"),
+		time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC),
+		[]byte{1, 2},
+	} {
+		t.Run(fmt.Sprintf("%T", value), func(t *testing.T) {
+			q := Query().Find(x).In(DB, Rules).Where(Pat(x, Kw(":a"), Blank()), Rule("r", x, value)).MustBuild()
+			text := parser.FormatQuery(q)
+			parsed, err := parser.ParseQuery(text)
+			if err != nil {
+				t.Fatalf("ParseQuery(%q): %v", text, err)
+			}
+			if !reflect.DeepEqual(parsed.Where[1], q.Where[1]) {
+				t.Errorf("built %#v, parsed %#v from %q", q.Where[1], parsed.Where[1], text)
+			}
+			if again := parser.FormatQuery(parsed); again != text {
+				t.Errorf("the text changed on a second render:\n%s\n--\n%s", text, again)
+			}
+		})
+	}
+}
 
 // The rule builders produce what the parser produces: Rules is the % input,
 // Rule an invocation clause, and DefineRule with RuleSet a rule set equal to
@@ -119,6 +154,30 @@ func TestSubqueryPassesRulesThrough(t *testing.T) {
 	}
 	if !reflect.DeepEqual(q.Where, parsed.Where) {
 		t.Errorf("built :where\n%v\ndiffers from parsed\n%v", q.Where, parsed.Where)
+	}
+}
+
+// A subquery's inputs follow the inner query's :in in order, a source or %
+// at its own position and the caller's variables at the value positions, as
+// the parsed form (q [...] $ ?x %) has them; a caller variable count that
+// differs from the inner query's value positions is refused at Build.
+func TestSubqueryInputsFollowTheInnerDeclaration(t *testing.T) {
+	x, y, n := NewVar("x"), NewVar("y"), NewVar("n")
+	inner := Query().Find(Count(y)).In(DB, Scalar(x), Rules).Where(Rule("reach", x, y))
+	q := Query().Find(x, n).In(DB, Rules).Where(Pat(x, edge, Blank()), Subquery(inner, x).BindTuple(n)).MustBuild()
+	parsed, err := parser.ParseQuery(`[:find ?x ?n :in $ %
+	                                   :where [?x :edge _]
+	                                          [(q [:find (count ?y) :in $ ?x % :where (reach ?x ?y)] $ ?x %) [[?n]]]]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(q.Where, parsed.Where) {
+		t.Errorf("built :where\n%v\ndiffers from parsed\n%v", q.Where, parsed.Where)
+	}
+
+	_, err = Query().Find(x, n).In(DB, Rules).Where(Pat(x, edge, Blank()), Subquery(inner, x, y).BindTuple(n)).Build()
+	if err == nil || !strings.Contains(err.Error(), "subquery") {
+		t.Errorf("two caller variables for one value position are refused naming the subquery, got %v", err)
 	}
 }
 

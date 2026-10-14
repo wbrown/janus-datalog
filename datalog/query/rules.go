@@ -314,6 +314,16 @@ func equalMasks(a, b []bool) bool {
 // bodies invoke is in that stratum or an earlier one.
 func (rs *RuleSet) Strata() []Stratum { return rs.strata }
 
+// sameStratum reports whether two predicates are in one stratum.
+func (rs *RuleSet) sameStratum(a, b Symbol) bool {
+	for _, stratum := range rs.strata {
+		if ContainsSymbol(stratum.Predicates, a) {
+			return ContainsSymbol(stratum.Predicates, b)
+		}
+	}
+	return false
+}
+
 // CheckInvocation reports an invocation of a predicate the set does not
 // define, or one at the wrong arity.
 func (rs *RuleSet) CheckInvocation(inv *RuleInvocation) error {
@@ -332,10 +342,10 @@ func (rs *RuleSet) CheckInvocation(inv *RuleInvocation) error {
 // as Query.DefaultSourceAttributes collects a query's.
 func (rs *RuleSet) DefaultSourceAttributes() []datalog.Keyword {
 	rs.attributesOnce.Do(func() {
-		roster := &attributeRoster{seen: map[datalog.Keyword]bool{}}
+		roster := newAttributeRoster()
 		for _, name := range rs.order {
 			for _, rule := range rs.rules[name] {
-				roster.addClauses(rule.Body)
+				roster.addClauses(rule.Body, false)
 			}
 		}
 		rs.attributes = roster.order
@@ -382,6 +392,28 @@ type invocationEdge struct {
 	from, to Symbol
 	negative bool
 	form     string
+}
+
+// RulesUse returns the first clause in clauses that uses the query's % in
+// the query's own scope, nil when none does: a rule invocation at any depth
+// short of a subquery body, or a subquery call passing % through. A subquery
+// body's invocations use the inner query's %, which its own :in declares.
+func RulesUse(clauses []Clause) Clause {
+	var use Clause
+	WalkClauses(clauses, func(clause Clause) bool {
+		switch c := clause.(type) {
+		case *RuleInvocation:
+			use = c
+		case *SubqueryPattern:
+			for _, input := range c.Inputs {
+				if constant, ok := input.(Constant); ok && constant.Value == datalog.SymRules {
+					use = c
+				}
+			}
+		}
+		return use == nil
+	})
+	return use
 }
 
 // Invocations returns every rule invocation in clauses at any depth, in

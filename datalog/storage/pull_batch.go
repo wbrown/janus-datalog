@@ -232,7 +232,7 @@ func (d *Database) resolveWildcardDatoms(
 	datoms []datalog.Datom,
 ) (interface{}, bool) {
 	storageDatom := ToStorageDatom(datalog.Datom{E: entity, A: attr})
-	cardinality := matcher.GetCardinality(storageDatom.A)
+	cardinality := matcher.GetCardinality(attr)
 	if d.cache != nil {
 		if key, ok := matcher.cacheKey(storageDatom.E, storageDatom.A); ok {
 			d.cache.PopulateFromDatoms(key, cardinality, datoms)

@@ -3,7 +3,6 @@ package storage
 import (
 	"bytes"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -302,6 +301,11 @@ func TestSchemaFacts_WithdrawnDocResolvesAbsent(t *testing.T) {
 			require.NoError(t, d.History().QueryInto(&history,
 				`[:find ?doc :in $ ?a :where [?a :db.attribute/declaration ?d] [?d :db/doc ?doc]]`, entity))
 			require.Contains(t, history, "documented", "History keeps the withdrawn doc")
+
+			require.NoError(t, d.SetSchema(nil))
+			require.Equal(t, "", d.Schema().GetAttribute(kw(":t/documented")).Doc,
+				"with no given schema the database runs with the stored declaration, which carries no doc")
+			require.Empty(t, docOf())
 		})
 	}
 }
@@ -522,6 +526,32 @@ func TestSchemaFacts_ForkCarriesDeclarationsAndNotInferences(t *testing.T) {
 	}
 }
 
+// A branch runs with the schema its own store states: what the parent's
+// declarations and its store's ops say as of the snapshot, whatever the
+// parent published at its last install.
+func TestSchemaFacts_ForkDerivesItsSchemaFromItsStore(t *testing.T) {
+	forking, _ := forkingModes(t)
+	require.NotEmpty(t, forking)
+	for _, mode := range forking {
+		t.Run(mode.name, func(t *testing.T) {
+			parent := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			holder := datalog.NewIdentity("holder")
+			tags := kw(":t/tags")
+			require.NoError(t, parent.Store().Assert([]datalog.Datom{
+				{E: holder, A: tags, V: "x", Tx: parent.clock.Next(), Op: datalog.OpCRDTAdd},
+				{E: holder, A: tags, V: "y", Tx: parent.clock.Next(), Op: datalog.OpCRDTAdd},
+			}))
+			_, err := parent.Snapshot("s")
+			require.NoError(t, err)
+
+			branch := branchOf(t, parent, "s")
+			members, err := branch.GetStrings(holder, tags)
+			require.NoError(t, err)
+			require.ElementsMatch(t, []string{"x", "y"}, members, "the branch resolves the set its store's ops state")
+		})
+	}
+}
+
 func TestSchemaFacts_ForkWithUnchangedSchemaWritesNothing(t *testing.T) {
 	forking, _ := forkingModes(t)
 	require.NotEmpty(t, forking)
@@ -562,9 +592,14 @@ func TestSchemaFacts_TruncateToRewindsDeclarations(t *testing.T) {
 
 			require.NoError(t, d.TruncateTo("s"))
 			_, read := declaredByQuery(t, d)[kw(":t/later")]
-			require.False(t, read, "a definition asserted past the snapshot is gone from the facts after the rewind")
-			require.NotNil(t, d.Schema().GetAttribute(kw(":t/later")), "the given schema stays in force over the facts that survive")
+			require.False(t, read, "a definition declared past the snapshot is gone from the facts after the rewind")
+			require.Nil(t, d.Schema().GetAttribute(kw(":t/later")), "the database runs with the declarations that survive the rewind")
 			require.NotNil(t, d.Schema().GetAttribute(kw(":t/early")))
+
+			require.NoError(t, d.SetSchema(after))
+			require.NotNil(t, d.Schema().GetAttribute(kw(":t/later")), "a schema declared again after the rewind is in force")
+			_, read = declaredByQuery(t, d)[kw(":t/later")]
+			require.True(t, read, "the declaration made again after the rewind is in the facts")
 		})
 	}
 }
@@ -591,15 +626,23 @@ func TestSchemaFacts_ChangedCardinalityHoldsAgainstAMatcherMintedBefore(t *testi
 			require.NoError(t, err)
 
 			held := d.Matcher()
+			heldExecutor := d.NewExecutor()
 			require.NoError(t, d.SetSchema(asOne))
 			pattern, err := parser.ParsePullPattern(`[:t/tags]`)
 			require.NoError(t, err)
 			_, err = executor.NewPullExecutor(held, d).Pull(entity, pattern)
 			require.NoError(t, err)
+			q, err := parser.ParseQuery(`[:find ?t :where [?e :t/tags ?t]]`)
+			require.NoError(t, err)
+			_, err = executor.CollectTuples(heldExecutor.Execute(q))
+			require.NoError(t, err, "an executor minted before SetSchema still runs")
 
 			pulled, err := d.Pull(entity, `[:t/tags]`)
 			require.NoError(t, err)
 			require.Equal(t, "y", pulled["t/tags"], "under cardinality one the latest member is the value, whatever matcher read the pair before")
+			tuples, err := executor.CollectTuples(d.Query(`[:find ?t :where [?e :t/tags ?t]]`))
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"y"}}, tuples, "a fresh query reads the one value, whatever executor read the pair before")
 		})
 	}
 }
@@ -657,61 +700,10 @@ func TestSchemaFacts_ChangedCardinalityHoldsAgainstAPullInFlight(t *testing.T) {
 	}
 }
 
-// commitHoldStore holds the first commit it serves after arming, before its
-// store transaction opens, until the second commit it serves has landed.
-type commitHoldStore struct {
-	Store
-	mu      sync.Mutex
-	begun   int
-	held    chan struct{}
-	release chan struct{}
-}
-
-// arm starts counting commits: the first is held, the second releases it.
-func (s *commitHoldStore) arm() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.begun = 0
-	s.held = make(chan struct{})
-	s.release = make(chan struct{})
-}
-
-func (s *commitHoldStore) BeginTx() (StoreTx, error) {
-	s.mu.Lock()
-	armed := s.held != nil
-	if armed {
-		s.begun++
-	}
-	begun := s.begun
-	s.mu.Unlock()
-	if armed && begun == 1 {
-		close(s.held)
-		<-s.release
-	}
-	stx, err := s.Store.BeginTx()
-	if err != nil {
-		return nil, err
-	}
-	if armed && begun == 2 {
-		return &releasingTx{StoreTx: stx, release: s.release}, nil
-	}
-	return stx, nil
-}
-
-// releasingTx closes release once its commit has landed.
-type releasingTx struct {
-	StoreTx
-	release chan struct{}
-}
-
-func (t *releasingTx) Commit() error {
-	err := t.StoreTx.Commit()
-	close(t.release)
-	return err
-}
-
 // Two SetSchema calls that overlap leave the database running the definition
-// its store states.
+// its store states, and installs are serialized: the first call is held at
+// its first scan, under the install's lock, so the second call declares
+// after it and the second's definition is the one in force.
 func TestSchemaFacts_OverlappingSetSchemaCallsAgree(t *testing.T) {
 	n := kw(":t/n")
 	base, err := schema.NewBuilder().Attribute(":t/n").Type(schema.TypeLong).Doc("one").Add().Build()
@@ -727,23 +719,30 @@ func TestSchemaFacts_OverlappingSetSchemaCallsAgree(t *testing.T) {
 		t.Run(algebra.name, func(t *testing.T) {
 			opts := DefaultPlannerOptions()
 			opts.EnableAlgebraOptimizer = algebra.on
-			store := &commitHoldStore{Store: NewMemoryStore(&BinaryKeyEncoder{})}
+			store := &scanSignalStore{Store: NewMemoryStore(&BinaryKeyEncoder{})}
 			d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, Schema: base, PlannerOptions: &opts})
 			require.NoError(t, err)
 			defer d.Close()
 
-			store.arm()
+			held := make(chan struct{})
+			release := make(chan struct{})
+			store.arm(func() {
+				close(held)
+				<-release
+			})
 			first := make(chan error, 1)
 			go func() { first <- d.SetSchema(redocumented) }()
-			<-store.held
-			require.NoError(t, d.SetSchema(widened))
+			<-held
+			second := make(chan error, 1)
+			go func() { second <- d.SetSchema(widened) }()
+			close(release)
 			require.NoError(t, <-first)
+			require.NoError(t, <-second)
 
 			running := d.Schema().GetAttribute(n)
 			require.NotNil(t, running)
 			requireDefinitionFacts(t, d, running)
-			declared := []schema.AttributeDefinition{*redocumented.GetAttribute(n), *widened.GetAttribute(n)}
-			require.Contains(t, declared, *running, "the running definition is one a call declared")
+			require.Equal(t, *widened.GetAttribute(n), *running, "the call held under the lock declares first and the other declares last")
 			require.NoError(t, d.Import(strings.NewReader("")))
 			require.Equal(t, *running, *d.Schema().GetAttribute(n), "an import of nothing changes nothing")
 		})

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -314,6 +315,24 @@ func TestScanSharingMatcherPreservesAndRemapsProperties(t *testing.T) {
 		Ordering: []query.OrderByClause{{Variable: renamedEntity, Descending: false}},
 		Keys:     [][]query.Symbol{{renamedEntity}},
 	}, hit.Properties())
+}
+
+// TestScanSharingMatcherForwardsTheVocabularyQuestion pins that a source
+// refuses through the scan-sharing wrapper as it does without one: the
+// wrapper answers the attribute-vocabulary question from the inner matcher,
+// and refuses nothing over a matcher without a vocabulary.
+func TestScanSharingMatcherForwardsTheVocabularyQuestion(t *testing.T) {
+	refusal := errors.New("unknown attribute :t/naem")
+	roster := []datalog.Keyword{datalog.NewKeyword(":t/naem")}
+	var wrapped PatternMatcher = NewScanSharingMatcher(&vocabularyMatcher{refuses: true, answer: refusal}, NewScanRegistry(), nil)
+	vocabulary, ok := wrapped.(AttributeVocabulary)
+	require.True(t, ok, "the wrapper does not answer the vocabulary question")
+	require.True(t, vocabulary.RefusesUnknownAttributes(datalog.SymDollar), "the wrapper reports the source as refusing nothing, want the inner matcher's answer")
+	require.Same(t, refusal, vocabulary.UnknownAttributes(datalog.SymDollar, roster), "want the inner matcher's refusal")
+	var plain PatternMatcher = NewScanSharingMatcher(&fixedMatcher{}, NewScanRegistry(), nil)
+	if vocabulary, ok := plain.(AttributeVocabulary); ok {
+		require.False(t, vocabulary.RefusesUnknownAttributes(datalog.SymDollar), "a wrapper over a matcher without a vocabulary refuses nothing")
+	}
 }
 
 func TestScanSharingMatcherConcurrentSameFingerprintUsesOneScan(t *testing.T) {

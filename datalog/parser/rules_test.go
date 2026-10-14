@@ -71,6 +71,8 @@ func TestParseRules_RefusesMalformedRules(t *testing.T) {
 		{"empty body", `[[(follows ?a ?b)]]`, "at least one body clause"},
 		{"unsafe", `[[(follows ?a ?b) [?a :page/next _]]]`, "is unsafe"},
 		{"name in the engine's namespace", `[[(delta/follows ?a ?b) [?a :page/next ?b]]]`, "delta/follows"},
+		{"name in the magic namespace", `[[(magic.bf/reach ?a) [(ground 1) ?a]]]`, "magic.bf/reach"},
+		{"name in the adorned namespace", `[[(adorned.bf/e ?a ?b) [?x :edge/from ?a] [?x :edge/to ?b]]]`, "adorned.bf/e"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -174,6 +176,11 @@ func TestParseQuery_InvocationRequiresRulesInput(t *testing.T) {
 		                               :in $ %
 		                               :where [?y :page/kind _]
 		                                      [(q [:find ?z :in $ ?y :where (follows ?y ?z)] $ ?y) [[?z] ...]]]`},
+		{"inside an or branch", `[:find ?x :where [?x :page/kind _] (or (follows ?x _) [?x :page/next _])]`},
+		{"subquery passing % the outer query lacks", `[:find ?z
+		                                             :in $
+		                                             :where [?y :page/kind _]
+		                                                    [(q [:find ?z :in $ % ?y :where (follows ?y ?z)] $ % ?y) [[?z] ...]]]`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -293,5 +300,133 @@ func TestExtractVariablesRuleInvocation(t *testing.T) {
 	vars := ExtractVariables(q.Where)
 	if len(vars) != 1 || vars[0] != datalog.NewSymbol("?y") {
 		t.Errorf("ExtractVariables = %v, want ?y once", vars)
+	}
+}
+
+// The strata of a set mixing recursion with negation and or-join: a chain
+// of non-recursive predicates is one stratum per predicate in dependency
+// order; a mutually recursive pair, a predicate negating one of them, and a
+// self-recursive predicate over that are three strata in that order; and a
+// negation inside an or-join that the negated predicate invokes back through
+// an or closes a negative cycle, which is refused.
+func TestParseRules_StrataOfMixedSets(t *testing.T) {
+	stratumOf := func(t *testing.T, rs *query.RuleSet, name string) (int, bool) {
+		t.Helper()
+		for i, stratum := range rs.Strata() {
+			if query.ContainsSymbol(stratum.Predicates, datalog.NewSymbol(name)) {
+				return i, stratum.Recursive
+			}
+		}
+		t.Fatalf("no stratum holds %s in %+v", name, rs.Strata())
+		return -1, false
+	}
+	before := func(t *testing.T, rs *query.RuleSet, earlier, later string) {
+		t.Helper()
+		e, _ := stratumOf(t, rs, earlier)
+		l, _ := stratumOf(t, rs, later)
+		if e >= l {
+			t.Errorf("%s (stratum %d) must come before %s (stratum %d)", earlier, e, later, l)
+		}
+	}
+
+	chain, err := ParseRules(`[[(p ?x) (q ?x) (s ?x)] [(q ?x) (s ?x)] [(s ?x) [?x :a _]]]`)
+	if err != nil {
+		t.Fatalf("ParseRules(chain): %v", err)
+	}
+	if len(chain.Strata()) != 3 {
+		t.Fatalf("the chain has %d strata, want one per predicate: %+v", len(chain.Strata()), chain.Strata())
+	}
+	for _, name := range []string{"p", "q", "s"} {
+		if _, recursive := stratumOf(t, chain, name); recursive {
+			t.Errorf("%s is marked recursive; nothing in the chain invokes itself", name)
+		}
+	}
+	before(t, chain, "s", "q")
+	before(t, chain, "q", "p")
+
+	mixed, err := ParseRules(`[[(p ?x) (q ?x)] [(q ?x) (p ?x)] [(q ?x) [?x :a _]]
+	                           [(u ?x) [?x :a _] (not (p ?x))]
+	                           [(w ?x) (u ?x) (w ?x)] [(w ?x) [?x :b _]]]`)
+	if err != nil {
+		t.Fatalf("ParseRules(mixed): %v", err)
+	}
+	if len(mixed.Strata()) != 3 {
+		t.Fatalf("the mixed set has %d strata, want the pair, the negation and the self-recursion: %+v", len(mixed.Strata()), mixed.Strata())
+	}
+	pStratum, pRecursive := stratumOf(t, mixed, "p")
+	qStratum, _ := stratumOf(t, mixed, "q")
+	if pStratum != qStratum || !pRecursive {
+		t.Errorf("p and q invoke each other, so they share one recursive stratum; p is in %d and q in %d", pStratum, qStratum)
+	}
+	if _, recursive := stratumOf(t, mixed, "u"); recursive {
+		t.Error("u invokes nothing in its own stratum and is marked recursive")
+	}
+	if _, recursive := stratumOf(t, mixed, "w"); !recursive {
+		t.Error("w invokes itself and is not marked recursive")
+	}
+	before(t, mixed, "p", "u")
+	before(t, mixed, "u", "w")
+
+	_, err = ParseRules(`[[(p ?x) [?x :a _] (or-join [?x] (and (not (q ?x)) [?x :b _]) [?x :c _])]
+	                      [(q ?x) [?x :a _] (or (p ?x) [?x :d _])]]`)
+	var cycle *query.UnstratifiableError
+	if !errors.As(err, &cycle) {
+		t.Fatalf("p negates q inside its or-join and q invokes p inside its or: want *query.UnstratifiableError, got %v", err)
+	}
+	for _, name := range []string{"p", "q"} {
+		if !query.ContainsSymbol(cycle.Predicates, datalog.NewSymbol(name)) {
+			t.Errorf("the refusal names %v, want %s among them", cycle.Predicates, name)
+		}
+	}
+}
+
+// An invocation's arguments are variables, constants of every literal type,
+// vector literals, blanks and entity literals, in a predicate whose name may
+// carry a namespace, and the parsed query renders back to itself.
+func TestParseQuery_InvocationArguments(t *testing.T) {
+	q, err := ParseQuery(`[:find ?x :in $ % :where (my.ns/r ?x :k "s" 1 2.5 true _ #id "e1")]`)
+	if err != nil {
+		t.Fatalf("ParseQuery: %v", err)
+	}
+	inv, ok := q.Where[0].(*query.RuleInvocation)
+	if !ok {
+		t.Fatalf("Where[0] is %T, want *RuleInvocation", q.Where[0])
+	}
+	if inv.Name != datalog.NewSymbol("my.ns/r") {
+		t.Errorf("the predicate is %s, want my.ns/r", inv.Name)
+	}
+	want := []query.PatternElement{
+		query.Variable{Name: datalog.NewSymbol("?x")},
+		query.Constant{Value: datalog.NewKeyword(":k")},
+		query.Constant{Value: "s"},
+		query.Constant{Value: int64(1)},
+		query.Constant{Value: 2.5},
+		query.Constant{Value: true},
+		query.Blank{},
+		query.Constant{Value: datalog.NewIdentity("e1")},
+	}
+	if len(inv.Args) != len(want) {
+		t.Fatalf("the invocation has %d arguments, want %d: %v", len(inv.Args), len(want), inv.Args)
+	}
+	for i := range want {
+		if inv.Args[i] != want[i] {
+			t.Errorf("argument %d is %#v, want %#v", i, inv.Args[i], want[i])
+		}
+	}
+	again, err := ParseQuery(FormatQuery(q))
+	if err != nil {
+		t.Fatalf("ParseQuery(FormatQuery(q)) failed on %q: %v", FormatQuery(q), err)
+	}
+	if again.String() != q.String() {
+		t.Errorf("round trip changed the query:\n%s\n--\n%s", q.String(), again.String())
+	}
+
+	withVector, err := ParseQuery(`[:find ?x :in $ % :where (r ?x [1 2])]`)
+	if err != nil {
+		t.Fatalf("ParseQuery with a vector argument: %v", err)
+	}
+	vector, ok := withVector.Where[0].(*query.RuleInvocation).Args[1].(query.VectorConstant)
+	if !ok || len(vector.Values) != 2 || vector.Values[0] != int64(1) || vector.Values[1] != int64(2) {
+		t.Errorf("the vector argument parsed as %#v, want the vector constant [1 2]", withVector.Where[0].(*query.RuleInvocation).Args[1])
 	}
 }

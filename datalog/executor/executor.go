@@ -117,7 +117,7 @@ func (e *Executor) ExecuteWithContext(ctx *Context, q *query.Query) (Relation, e
 // attribute. A relation read here is made replayable first, so the execution
 // that follows reads it whole.
 func boundAttributes(q *query.Query, inputRelations []Relation) ([]datalog.Keyword, error) {
-	variables := query.DefaultSourceAttributeVariables(q.Where)
+	variables := q.DefaultSourceAttributeVariables()
 	if len(variables) == 0 {
 		return nil, nil
 	}
@@ -177,8 +177,8 @@ func boundAttributes(q *query.Query, inputRelations []Relation) ([]datalog.Keywo
 // refuses attributes its schema does not declare, about the attributes the
 // query names on it: on the default source the query's own, the rule bodies'
 // and the ones the inputs bind to a pattern's attribute position; on a named
-// source the patterns' on it. A source that does not refuse is asked about no
-// roster, so none is collected for it. The first refusal is returned.
+// source the patterns' on it. A source that does not refuse is asked about
+// nothing. The first refusal is returned.
 func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, q *query.Query, inputRelations []Relation) error {
 	if vocabulary.RefusesUnknownAttributes(datalog.SymDollar) {
 		if err := vocabulary.UnknownAttributes(datalog.SymDollar, q.DefaultSourceAttributes()); err != nil {
@@ -189,24 +189,36 @@ func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, q *qu
 				return err
 			}
 		}
-		bound, err := boundAttributes(q, inputRelations)
-		if err != nil {
-			return err
-		}
-		if err := vocabulary.UnknownAttributes(datalog.SymDollar, bound); err != nil {
-			return err
-		}
+	}
+	if err := refuseBoundAttributes(vocabulary, q, inputRelations); err != nil {
+		return err
 	}
 	for _, input := range q.In {
 		source, ok := input.(query.DatabaseInput)
 		if !ok || source.Name == datalog.SymDollar || !vocabulary.RefusesUnknownAttributes(source.Name) {
 			continue
 		}
-		if err := vocabulary.UnknownAttributes(source.Name, query.SourceAttributes(q, source.Name)); err != nil {
+		if err := vocabulary.UnknownAttributes(source.Name, q.SourceAttributes(source.Name)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// refuseBoundAttributes asks the default source, when it refuses attributes
+// its schema does not declare, about the attributes the input relations bind
+// to a pattern's attribute position. A query's inputs are asked about once,
+// before planning; a subquery's are asked about when it runs, per
+// combination of the outer values, since the attribute exists only then.
+func refuseBoundAttributes(vocabulary AttributeVocabulary, q *query.Query, inputRelations []Relation) error {
+	if !vocabulary.RefusesUnknownAttributes(datalog.SymDollar) {
+		return nil
+	}
+	bound, err := boundAttributes(q, inputRelations)
+	if err != nil {
+		return err
+	}
+	return vocabulary.UnknownAttributes(datalog.SymDollar, bound)
 }
 
 // ExecuteWithRelations runs a query with input relations

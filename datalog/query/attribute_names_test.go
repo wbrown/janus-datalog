@@ -107,15 +107,40 @@ func TestDefaultSourceAttributes(t *testing.T) {
 	assertKeywordsInOrder(t, q.DefaultSourceAttributes(), want)
 }
 
-// A query's roster is computed once, on the first call, and every later call
-// returns it.
+// A query's rosters are collected on the first call of any accessor, and
+// every later call of each accessor returns the roster that call built: the
+// default source's attributes, its attribute variables, and each named
+// source's attributes. A source no pattern names has no roster.
 func TestDefaultSourceAttributesComputedOnce(t *testing.T) {
-	q := &Query{Where: []Clause{walkPattern("top"), walkPattern("other")}}
-	first := q.DefaultSourceAttributes()
-	second := q.DefaultSourceAttributes()
-	assertKeywordsInOrder(t, first, []datalog.Keyword{datalog.NewKeyword(":t/top"), datalog.NewKeyword(":t/other")})
-	if &first[0] != &second[0] {
-		t.Errorf("every call returns the roster the first call built; got two rosters")
+	entity := Variable{Name: datalog.NewSymbol("?e")}
+	cache := datalog.NewSymbol("$cache")
+	q := &Query{Where: []Clause{
+		walkPattern("top"),
+		&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?a")}, Blank{}}},
+		&DataPattern{Source: cache, Elements: []PatternElement{
+			entity, Constant{Value: datalog.NewKeyword(":t/named")}, Blank{},
+		}},
+		walkPattern("other"),
+	}}
+	attributes := q.DefaultSourceAttributes()
+	variables := q.DefaultSourceAttributeVariables()
+	named := q.SourceAttributes(cache)
+	assertKeywordsInOrder(t, attributes, []datalog.Keyword{datalog.NewKeyword(":t/top"), datalog.NewKeyword(":t/other")})
+	if len(variables) != 1 || variables[0] != datalog.NewSymbol("?a") {
+		t.Fatalf("collected variables %v, want [?a]", variables)
+	}
+	assertKeywordsInOrder(t, named, []datalog.Keyword{datalog.NewKeyword(":t/named")})
+	if &q.DefaultSourceAttributes()[0] != &attributes[0] {
+		t.Errorf("every call returns the attribute roster the first call built; got two rosters")
+	}
+	if &q.DefaultSourceAttributeVariables()[0] != &variables[0] {
+		t.Errorf("every call returns the variable roster the first call built; got two rosters")
+	}
+	if &q.SourceAttributes(cache)[0] != &named[0] {
+		t.Errorf("every call returns the named-source roster the first call built; got two rosters")
+	}
+	if got := q.SourceAttributes(datalog.NewSymbol("$absent")); got != nil {
+		t.Errorf("a source no pattern names has no roster, got %v", got)
 	}
 }
 
@@ -165,7 +190,7 @@ func TestDefaultSourceAttributeVariables(t *testing.T) {
 		datalog.NewSymbol("?ordefault"),
 		datalog.NewSymbol("?ordefaultjoin"),
 	}
-	got := DefaultSourceAttributeVariables(clauses)
+	got := (&Query{Where: clauses}).DefaultSourceAttributeVariables()
 	if len(got) != len(want) {
 		t.Fatalf("collected %d variables, want %d:\n got  %v\n want %v", len(got), len(want), got, want)
 	}
@@ -229,7 +254,7 @@ func TestSourceAttributes(t *testing.T) {
 		datalog.NewKeyword(":t/ordefaultjoin"),
 		datalog.NewKeyword(":t/sub"),
 	}
-	assertKeywordsInOrder(t, SourceAttributes(q, cache), want)
+	assertKeywordsInOrder(t, q.SourceAttributes(cache), want)
 }
 
 // TestPullPatternAttributes pins the roster PullPatternAttributes collects:

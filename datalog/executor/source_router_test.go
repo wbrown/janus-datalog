@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -305,6 +306,50 @@ func TestExecuteWithRelationsChecksAttributesBoundThroughInputs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestExecuteWithRelationsChecksAttributesASubqueryInputBinds pins that a
+// subquery asks the vocabulary, when it runs, about the attributes its own
+// inputs bind to a variable in a pattern's attribute position, and that the
+// question reaches the vocabulary through the annotation and scan-sharing
+// wrappers the executor puts around its matcher.
+func TestExecuteWithRelationsChecksAttributesASubqueryInputBinds(t *testing.T) {
+	naem := datalog.NewKeyword(":t/naem")
+	const text = `[:find ?v :in $ ?a :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`
+	for _, mode := range optimizerModes {
+		for _, wrapper := range []struct {
+			name      string
+			annotated bool
+			sharing   bool
+		}{
+			{"unwrapped", false, false},
+			{"annotated", true, false},
+			{"scan-sharing", false, true},
+		} {
+			t.Run(mode.name+"/"+wrapper.name, func(t *testing.T) {
+				refusal := errors.New("unknown attribute :t/naem")
+				withVocabulary := &vocabularyMatcher{refuses: true, answer: refusal}
+				opts := mode.plannerOptions()
+				if wrapper.annotated {
+					opts.Handler = func(annotations.Event) {}
+				}
+				opts.EnableScanSharing = wrapper.sharing
+				exec := NewExecutorWithOptions(withVocabulary, nil, opts)
+				q := mustParse(t, text)
+				inputs, err := createInputRelationsFromValuesWithOptions(q, []interface{}{datalog.SymDollar, naem}, exec.options)
+				if err != nil {
+					t.Fatalf("binding: %v", err)
+				}
+				_, err = exec.ExecuteWithRelations(NewContext(), q, inputs)
+				if !errors.Is(err, refusal) {
+					t.Errorf("executor answered %v, want the vocabulary's refusal of the attribute the subquery's input binds", err)
+				}
+				if len(withVocabulary.asked) != 1 || withVocabulary.asked[0] != naem {
+					t.Errorf("the vocabulary was asked about %v, want the attribute the subquery's input binds", withVocabulary.asked)
+				}
+			})
+		}
 	}
 }
 

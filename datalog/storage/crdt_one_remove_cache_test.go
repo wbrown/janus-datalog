@@ -563,7 +563,7 @@ func TestCacheRemove_CacheRebuild(t *testing.T) {
 
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(db.Schema())
-			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(a), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 
 			// Entry should either be nil or have nil OneValue
@@ -1212,7 +1212,7 @@ func cacheRebuildOneValue(t *testing.T, db *Database, e datalog.Identity, a data
 	key := CacheKey{E: eStorage, A: aStorage}
 	matcher := NewPatternMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+	entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(a), matcher, nil, nil, DiscardIntake)
 	require.NoError(t, err)
 	if entry == nil {
 		return nil

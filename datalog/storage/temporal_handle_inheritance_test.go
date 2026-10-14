@@ -77,7 +77,6 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	"installed":      fieldInherited, // the schema in force and the store's definitions, one value the handle shares with the parent
 	"refuseUnknown":  fieldInherited, // the RefuseUnknownAttributes option; a handle refuses what its parent refuses
 	"givenSchema":    fieldInherited, // the parent's declaration; a handle declares nothing of its own
-	"schemaAsGiven":  fieldInherited,
 	"plannerOptions": fieldInherited, // carries the handler; the handle inherits both together
 	"clock":          fieldInherited,
 	"replicaID":      fieldInherited,

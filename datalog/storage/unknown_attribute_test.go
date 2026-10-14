@@ -137,6 +137,11 @@ func TestQueryRefusesUnknownAttributeBoundThroughInput(t *testing.T) {
 
 			_, err = d.Query(`[:find ?v :in $ [?a ...] :where [?e ?a ?v]]`, []interface{}{attr})
 			requireUnknown(t, err, attr)
+
+			// A subquery's input binds the attribute one scope deeper, and
+			// the subquery checks it when it runs.
+			_, err = d.Query(`[:find ?v :in $ ?a :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`, attr)
+			requireUnknown(t, err, attr)
 		})
 	}
 }
@@ -336,9 +341,9 @@ func TestQueryWithoutRefusalOptionCollectsNoRoster(t *testing.T) {
 }
 
 // queryExecutionAllocs returns the allocations one execution of text makes on
-// d, each run on a query parsed ahead of the measurement, its roster collected
-// ahead of it too when collected is set.
-func queryExecutionAllocs(t *testing.T, d *Database, text string, collected bool) float64 {
+// d with the inputs given, each run on a query parsed ahead of the
+// measurement, its rosters collected ahead of it too when collected is set.
+func queryExecutionAllocs(t *testing.T, d *Database, text string, collected bool, inputs ...interface{}) float64 {
 	t.Helper()
 	const runs = 20
 	queries := make([]*query.Query, 0, runs+1)
@@ -354,7 +359,7 @@ func queryExecutionAllocs(t *testing.T, d *Database, text string, collected bool
 	return testing.AllocsPerRun(runs, func() {
 		q := queries[next]
 		next++
-		rel, err := d.Query(q)
+		rel, err := d.Query(q, inputs...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -362,6 +367,52 @@ func queryExecutionAllocs(t *testing.T, d *Database, text string, collected bool
 			t.Fatal(err)
 		}
 	})
+}
+
+// A refusing database collects every roster a parsed query names once, on
+// the query's first execution, so with the rosters collected ahead an
+// execution on it allocates what the same execution allocates on a database
+// without the option: for a query naming attributes on the default source,
+// one naming them on a named source, and one naming them in a subquery body.
+func TestQueryWithRefusalOptionCollectsRostersOnce(t *testing.T) {
+	for _, algebra := range []struct {
+		name string
+		on   bool
+	}{{"algebra_on", true}, {"algebra_off", false}} {
+		t.Run(algebra.name, func(t *testing.T) {
+			popts := DefaultPlannerOptions()
+			popts.EnableAlgebraOptimizer = algebra.on
+			open := func(refuse bool) *Database {
+				d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory-trees", PlannerOptions: &popts, Schema: schemaFactsFixture(t), RefuseUnknownAttributes: refuse})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, d.Close()) })
+				tx := d.NewTransaction()
+				require.NoError(t, tx.Add(datalog.NewIdentity("holder"), kw(":t/string"), "held"))
+				_, err = tx.Commit()
+				require.NoError(t, err)
+				return d
+			}
+			refusing, refusingOther := open(true), open(true)
+			plain, plainOther := open(false), open(false)
+			other := datalog.NewSymbol("$other")
+			for _, shape := range []struct {
+				name string
+				text string
+			}{
+				{"default source", `[:find ?v :where [?e :t/string ?v]]`},
+				{"named source", `[:find ?v :in $ $other :where [$other ?e :t/string ?v]]`},
+				{"subquery body", `[:find ?e ?n :where [?e :t/string ?v] [(q [:find (count ?x) :in $ ?e :where [?e :t/long ?x]] $ ?e) [[?n]]]]`},
+			} {
+				t.Run(shape.name, func(t *testing.T) {
+					collected := queryExecutionAllocs(t, refusing, shape.text, true,
+						WithSources(map[datalog.Symbol]executor.PatternMatcher{other: refusingOther}))
+					baseline := queryExecutionAllocs(t, plain, shape.text, true,
+						WithSources(map[datalog.Symbol]executor.PatternMatcher{other: plainOther}))
+					require.Equal(t, baseline, collected, "with its rosters collected, an execution on a refusing database collects nothing more")
+				})
+			}
+		})
+	}
 }
 
 func TestAsOfHandleRefusesBySchema(t *testing.T) {

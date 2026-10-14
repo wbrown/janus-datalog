@@ -190,16 +190,11 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings Bindings,
 
 		phaseFind := buildFindClause(keep, q.Find, isLastPhase, retainedSort)
 
-		// A phase that invokes a predicate declares the rule set it resolves
-		// against. A subquery's invocations are the subquery's own: its inner
-		// query declares its own %.
-		invokes := false
-		query.WalkClauses(cp.Clauses, func(c query.Clause) bool {
-			if _, ok := c.(*query.RuleInvocation); ok {
-				invokes = true
-			}
-			return !invokes
-		})
+		// A phase that uses % in its own scope, invoking a predicate or
+		// passing % to a subquery, declares the rule set it resolves against.
+		// A subquery body's invocations are the inner query's own, which
+		// declares its own %.
+		invokes := query.RulesUse(cp.Clauses) != nil
 
 		// Build the query fragment for this phase.
 		phaseQuery := &query.Query{

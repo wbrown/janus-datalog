@@ -54,25 +54,10 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 		inputs = []query.InputSpec{query.DatabaseInput{Name: datalog.NewSymbol("$")}}
 	}
 
-	// Check if we have the correct number of inputs
-	expectedInputs := 0
-	for _, input := range inputs {
-		switch inp := input.(type) {
-		case query.DatabaseInput:
-			expectedInputs++ // Database REQUIRES explicit $
-		case query.RulesInput:
-			expectedInputs++
-		case query.ScalarInput:
-			expectedInputs++
-		case query.RelationInput:
-			expectedInputs += len(inp.Symbols)
-		case query.TupleInput:
-			expectedInputs += len(inp.Symbols)
-		case query.CollectionInput:
-			expectedInputs++
-		}
-	}
-
+	// The call supplies one value per position of the :in, the $ an omitted
+	// :in defaults to included; SubqueryPattern.Validate checks a subquery's
+	// call against the same count as a static shape.
+	expectedInputs := query.InputArity(q.In)
 	if len(orderedValues) != expectedInputs {
 		return nil, fmt.Errorf("subquery input arity mismatch: nested query :in declares %d required value(s) (%v) "+
 			"but the call supplied %d (%v)", expectedInputs, inputs, len(orderedValues), orderedValues)

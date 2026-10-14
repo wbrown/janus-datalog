@@ -55,7 +55,7 @@ func resolveOne(db *Database, e datalog.Identity, a datalog.Keyword) (any, error
 	key := CacheKey{E: Entity(e.Hash()), A: aBytes}
 	matcher := NewPatternMatcher(db.store)
 	matcher.SetSchema(db.Schema())
-	entry, err := db.cache.GetOrResolve(key, matcher.GetCardinality(key.A), matcher, nil, nil, DiscardIntake)
+	entry, err := db.cache.GetOrResolve(key, matcher.GetCardinality(a), matcher, nil, nil, DiscardIntake)
 	if err != nil {
 		return nil, err
 	}

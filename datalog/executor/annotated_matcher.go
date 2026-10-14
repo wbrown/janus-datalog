@@ -209,3 +209,22 @@ func (m *AnnotatedMatcher) PrefetchEntities(entities []datalog.Identity) error {
 	}
 	return nil
 }
+
+// RefusesUnknownAttributes implements AttributeVocabulary from the underlying
+// matcher, so a source refuses through the annotation wrapper as it does
+// without one; a matcher without a vocabulary refuses nothing.
+func (m *AnnotatedMatcher) RefusesUnknownAttributes(source query.Symbol) bool {
+	if v, ok := m.underlying.(AttributeVocabulary); ok {
+		return v.RefusesUnknownAttributes(source)
+	}
+	return false
+}
+
+// UnknownAttributes implements AttributeVocabulary from the underlying
+// matcher; a matcher without a vocabulary refuses nothing.
+func (m *AnnotatedMatcher) UnknownAttributes(source query.Symbol, attrs []datalog.Keyword) error {
+	if v, ok := m.underlying.(AttributeVocabulary); ok {
+		return v.UnknownAttributes(source, attrs)
+	}
+	return nil
+}

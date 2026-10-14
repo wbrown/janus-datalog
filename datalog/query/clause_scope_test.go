@@ -231,6 +231,55 @@ func TestScopeOf(t *testing.T) {
 	})
 }
 
+// TestSubqueryPatternValidateInputCount pins that a subquery passes as many
+// inputs as its inner :in declares, one per source, % and value position in
+// that order, so a call with more or fewer is refused as a static shape at
+// every user boundary.
+func TestSubqueryPatternValidateInputCount(t *testing.T) {
+	inner := &Query{
+		Find:  []FindElement{FindVariable{Symbol: datalog.NewSymbol("?v")}},
+		In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, ScalarInput{Symbol: datalog.NewSymbol("?x")}},
+		Where: []Clause{scopePattern("?x", "a/b", "?v")},
+	}
+	call := func(inputs ...PatternElement) *SubqueryPattern {
+		return &SubqueryPattern{Query: inner, Inputs: inputs, Binding: ScalarBinding{Variable: datalog.NewSymbol("?out")}}
+	}
+	dollar := Constant{Value: datalog.SymDollar}
+	x, y := Variable{Name: datalog.NewSymbol("?x")}, Variable{Name: datalog.NewSymbol("?y")}
+	if err := call(dollar, x).Validate(); err != nil {
+		t.Errorf("one input per :in position is valid, got %v", err)
+	}
+	if err := call(dollar, x, y).Validate(); err == nil {
+		t.Error("three inputs for two :in positions are refused")
+	}
+	if err := call(dollar).Validate(); err == nil {
+		t.Error("one input for two :in positions is refused")
+	}
+
+	// An omitted :in is [$], and a tuple or relation input takes one value
+	// per symbol, as the executor binds them.
+	implicit := &SubqueryPattern{
+		Query:   &Query{Find: inner.Find, Where: inner.Where},
+		Inputs:  []PatternElement{dollar},
+		Binding: ScalarBinding{Variable: datalog.NewSymbol("?out")},
+	}
+	if err := implicit.Validate(); err != nil {
+		t.Errorf("$ for an omitted :in is valid, got %v", err)
+	}
+	pairs := &SubqueryPattern{
+		Query: &Query{
+			Find:  inner.Find,
+			In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, RelationInput{Symbols: []Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?w")}}},
+			Where: inner.Where,
+		},
+		Inputs:  []PatternElement{dollar, x, y},
+		Binding: ScalarBinding{Variable: datalog.NewSymbol("?out")},
+	}
+	if err := pairs.Validate(); err != nil {
+		t.Errorf("one value per symbol of a relation input is valid, got %v", err)
+	}
+}
+
 // TestOrDefaultJoinValidate pins the declared-interface enforcement: every
 // branch binds every output, branch externals must be declared required,
 // required and output sets are disjoint, and the degenerate forms error.

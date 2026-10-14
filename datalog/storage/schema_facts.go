@@ -270,33 +270,42 @@ func assertSchemaFacts(d *Database, stored, given schema.SchemaProvider) error {
 // the option and no schema, and at SetSchema(nil) on such a database.
 var errRefuseUnknownNeedsSchema = errors.New("RefuseUnknownAttributes requires a schema to check attributes against: none was given")
 
-// installSchema asserts the given schema's definitions when assertGiven is
+// installSchema declares the given schema's definitions when assertGiven is
 // set, reads the definitions the store holds, composes the schema the
-// database runs with, and installs it with the declared set.
+// database runs with from them, and installs it with the declared set, all
+// under schemaInstallMu.
 //
-// The schema the database runs with is composed from what the store states
-// after the write, under the schema given most recently: a call that
-// overlapped a later one publishes what that one declared, so the two agree
-// with each other and with the store. The declared set is what the store
-// states.
+// The schema the database runs with is what the store states. The given
+// schema is the writer's input: it is declared into the store, and the store
+// is read back after the write. Installs are serialized, so the last reads
+// after every write, and SetSchema records the given schema under the same
+// hold, so the order the given schemas are recorded in is the order their
+// declarations are added in.
 //
-// With a schema given, the effective schema is the given definitions over the
-// stored ones. A supplied schema is authoritative, so nothing is inferred.
-// With none, the effective schema is the stored definitions over the ones
+// With a schema given, the effective schema is the stored definitions. A
+// supplied schema is authoritative, so nothing is inferred. With none, the
+// effective schema is the stored definitions over the ones
 // inferSchemaFromStore reads off the ops of attributes that have datoms and
 // no definition. Inferred definitions stay in memory: they are a reading of
 // the ops, never a declaration.
 //
-// A rewind passes assertGiven false: nothing is written, the declared set is
-// what the surviving facts state, and the given schema stays in force over
-// them until the next write of a schema re-asserts it.
+// A rewind passes assertGiven false: nothing is written, and the database
+// runs with the declarations that survive, until SetSchema or an import
+// declares again.
 //
 // A database declaring nothing reports no schema, so a store with no
 // definitions and no datoms installs nil.
 //
-// A database that refuses unknown attributes checks them against the given
-// schema, so installing none on it is errRefuseUnknownNeedsSchema.
+// A database that refuses unknown attributes needs a schema to check them
+// against, so installing none on it is errRefuseUnknownNeedsSchema.
 func (d *Database) installSchema(assertGiven bool) error {
+	d.schemaInstallMu.Lock()
+	defer d.schemaInstallMu.Unlock()
+	return d.installLocked(assertGiven)
+}
+
+// installLocked is installSchema with schemaInstallMu held by the caller.
+func (d *Database) installLocked(assertGiven bool) error {
 	d.mu.RLock()
 	given := d.givenSchema
 	d.mu.RUnlock()
@@ -313,32 +322,17 @@ func (d *Database) installSchema(assertGiven bool) error {
 		}
 	}
 
-	// The publish reads the store's state after the write and composes the
-	// schema from it, so it runs under schemaInstallMu: of two calls that
-	// both wrote, the one that publishes last read the store after the other
-	// wrote. The write itself runs outside the lock, since a store may hold a
-	// transaction open across a concurrent call.
-	d.schemaInstallMu.Lock()
-	defer d.schemaInstallMu.Unlock()
-
 	stored, err := readSchemaFacts(d)
 	if err != nil {
 		return err
 	}
-	d.mu.RLock()
-	given = d.givenSchema
-	d.mu.RUnlock()
 
-	declared := stored
-	var effective *schema.Schema
-	if given != nil {
-		effective = schema.Overlay(stored, given)
-	} else {
+	effective := stored
+	if given == nil {
 		inferred, err := inferSchemaFromStore(d.store)
 		if err != nil {
 			return fmt.Errorf("inferring schema from store: %w", err)
 		}
-		declared = stored
 		effective = schema.Overlay(inferred, stored)
 	}
 
@@ -347,7 +341,7 @@ func (d *Database) installSchema(assertGiven bool) error {
 		installed = effective
 	}
 	previous := d.installed.Load().effective
-	d.installed.Store(&installedSchema{effective: installed, declared: declared})
+	d.installed.Store(&installedSchema{effective: installed, declared: stored})
 	d.invalidateChangedDefinitions(previous, installed)
 	return nil
 }

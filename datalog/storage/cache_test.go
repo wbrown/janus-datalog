@@ -37,10 +37,6 @@ type mockCacheResolver struct {
 	absent bool
 }
 
-func (m *mockCacheResolver) GetCardinality(a Attribute) datalog.Keyword {
-	return m.cardinality
-}
-
 func (m *mockCacheResolver) ResolveLWW(e Entity, a Attribute, report *scanReport) (any, datalog.ElementID, bool, error) {
 	m.resolveLWWCalls++
 	if report != nil {

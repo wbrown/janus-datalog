@@ -264,8 +264,26 @@ func TestMagic_RequiredPositionLeftFree(t *testing.T) {
 // clauses before the invocation, those the bindings so far make ready and
 // that are monotone. A not-join reading a variable a later clause binds is
 // not read, so the magic rule is safe; an or-default is not read, so the
-// predicate it invokes stays below the recursive stratum.
+// predicate it invokes stays below the recursive stratum; a comparison
+// reading a variable a later pattern binds is not read, so the magic rule is
+// safe where the body's order is not the binding order.
 func TestMagic_MagicRuleReadsReadyMonotoneClauses(t *testing.T) {
+	t.Run("a comparison reading a variable bound later is not read", func(t *testing.T) {
+		rs := mustRuleSet(t, append(followsRules(),
+			defineRule("t", []string{"?a", "?c"},
+				&Comparison{Op: datalog.SymLT, Left: VariableTerm{Symbol: sym("?n")}, Right: ConstantTerm{Value: int64(3)}},
+				invoke("follows", "?a", "?c"),
+				scopePattern("?c", "page/n", "?n"))))
+		magic := mustMagic(t, rs, "t", true, false)
+		assertRules(t, "magic.bf/follows", magic.Rules.Rules(sym("magic.bf/follows")), []*Rule{
+			defineRule("magic.bf/follows", []string{"?a"},
+				invoke("magic.bf/t", "?a")),
+			defineRule("magic.bf/follows", []string{"?b"},
+				invoke("magic.bf/follows", "?a"),
+				scopePattern("?a", "page/next", "?b")),
+		})
+	})
+
 	t.Run("a clause bound later is not read", func(t *testing.T) {
 		rs := mustRuleSet(t, append(followsRules(),
 			defineRule("t", []string{"?a", "?c"},
@@ -315,17 +333,122 @@ func TestMagic_MagicRuleReadsReadyMonotoneClauses(t *testing.T) {
 	})
 }
 
-// TestMagic_DeclinesUnstratifiableRewrite: q's magic rule for s reads the
-// recursive invocation of q that precedes the negation of s, so the adorned
-// q depends through that negation on the adorned s, whose magic rule depends
-// on the adorned q: a cycle through the negation which the original set, q
-// recursive beside a separate s, does not have.
+// A binding reaches an invocation under not or not-join from the head's
+// bound positions and the clauses before the first invocation of the rule's
+// own stratum, and its magic rule reads those clauses. A clause after that
+// invocation is adorned under what it binds, so a magic rule reading it
+// would depend on the adorned predicate, which depends through the negation
+// on the negated one: a cycle the original set does not have.
+func TestMagic_NegationAfterARecursiveInvocationRewrites(t *testing.T) {
+	t.Run("a binding the recursion provides does not reach the negation", func(t *testing.T) {
+		rs := mustRuleSet(t, []*Rule{
+			defineRule("q", []string{"?x", "?z"}, scopePattern("?x", "page/a", "?z")),
+			defineRule("q", []string{"?x", "?z"},
+				scopePattern("?x", "page/a", "?y"),
+				invoke("q", "?y", "?w"),
+				&NotClause{Clauses: []Clause{invoke("s", "?w")}},
+				scopePattern("?w", "page/b", "?z")),
+			defineRule("s", []string{"?w"}, scopePattern("?w", "page/c", "_")),
+		})
+		magic := mustMagic(t, rs, "q", true, false)
+		assertRules(t, "adorned.bf/q", magic.Rules.Rules(sym("adorned.bf/q")), []*Rule{
+			defineRule("adorned.bf/q", []string{"?x", "?z"},
+				invoke("magic.bf/q", "?x"),
+				scopePattern("?x", "page/a", "?z")),
+			defineRule("adorned.bf/q", []string{"?x", "?z"},
+				invoke("magic.bf/q", "?x"),
+				scopePattern("?x", "page/a", "?y"),
+				invoke("adorned.bf/q", "?y", "?w"),
+				&NotClause{Clauses: []Clause{invoke("s", "?w")}},
+				scopePattern("?w", "page/b", "?z")),
+		})
+		assertRules(t, "magic.bf/q", magic.Rules.Rules(sym("magic.bf/q")), []*Rule{
+			defineRule("magic.bf/q", []string{"?y"},
+				invoke("magic.bf/q", "?x"),
+				scopePattern("?x", "page/a", "?y")),
+		})
+		assertRules(t, "s", magic.Rules.Rules(sym("s")), rs.Rules(sym("s")))
+		assertRules(t, "magic.b/s", magic.Rules.Rules(sym("magic.b/s")), nil)
+	})
+
+	t.Run("a binding a clause before the recursion provides reaches the negation", func(t *testing.T) {
+		rs := mustRuleSet(t, []*Rule{
+			defineRule("q", []string{"?x", "?z"}, scopePattern("?x", "page/a", "?z")),
+			defineRule("q", []string{"?x", "?z"},
+				scopePattern("?x", "page/a", "?y"),
+				invoke("q", "?y", "?w"),
+				&NotClause{Clauses: []Clause{invoke("s", "?y")}},
+				scopePattern("?w", "page/b", "?z")),
+			defineRule("s", []string{"?w"}, scopePattern("?w", "page/c", "_")),
+		})
+		magic := mustMagic(t, rs, "q", true, false)
+		assertRules(t, "adorned.bf/q", magic.Rules.Rules(sym("adorned.bf/q")), []*Rule{
+			defineRule("adorned.bf/q", []string{"?x", "?z"},
+				invoke("magic.bf/q", "?x"),
+				scopePattern("?x", "page/a", "?z")),
+			defineRule("adorned.bf/q", []string{"?x", "?z"},
+				invoke("magic.bf/q", "?x"),
+				scopePattern("?x", "page/a", "?y"),
+				invoke("adorned.bf/q", "?y", "?w"),
+				&NotClause{Clauses: []Clause{invoke("adorned.b/s", "?y")}},
+				scopePattern("?w", "page/b", "?z")),
+		})
+		assertRules(t, "magic.b/s", magic.Rules.Rules(sym("magic.b/s")), []*Rule{
+			defineRule("magic.b/s", []string{"?y"},
+				invoke("magic.bf/q", "?x"),
+				scopePattern("?x", "page/a", "?y")),
+		})
+		assertRules(t, "adorned.b/s", magic.Rules.Rules(sym("adorned.b/s")), []*Rule{
+			defineRule("adorned.b/s", []string{"?w"},
+				invoke("magic.b/s", "?w"),
+				scopePattern("?w", "page/c", "_")),
+		})
+	})
+
+	t.Run("a binding a clause after the recursion provides does not reach the negation", func(t *testing.T) {
+		rs := mustRuleSet(t, []*Rule{
+			defineRule("q", []string{"?x", "?z"}, scopePattern("?x", "page/a", "?z")),
+			defineRule("q", []string{"?x", "?z"},
+				scopePattern("?x", "page/a", "?y"),
+				invoke("q", "?y", "?w"),
+				scopePattern("?w", "page/d", "?u"),
+				&NotClause{Clauses: []Clause{invoke("s", "?u")}},
+				scopePattern("?w", "page/b", "?z")),
+			defineRule("s", []string{"?w"}, scopePattern("?w", "page/c", "_")),
+		})
+		magic := mustMagic(t, rs, "q", true, false)
+		assertRules(t, "adorned.bf/q", magic.Rules.Rules(sym("adorned.bf/q")), []*Rule{
+			defineRule("adorned.bf/q", []string{"?x", "?z"},
+				invoke("magic.bf/q", "?x"),
+				scopePattern("?x", "page/a", "?z")),
+			defineRule("adorned.bf/q", []string{"?x", "?z"},
+				invoke("magic.bf/q", "?x"),
+				scopePattern("?x", "page/a", "?y"),
+				invoke("adorned.bf/q", "?y", "?w"),
+				scopePattern("?w", "page/d", "?u"),
+				&NotClause{Clauses: []Clause{invoke("s", "?u")}},
+				scopePattern("?w", "page/b", "?z")),
+		})
+		assertRules(t, "s", magic.Rules.Rules(sym("s")), rs.Rules(sym("s")))
+		assertRules(t, "magic.b/s", magic.Rules.Rules(sym("magic.b/s")), nil)
+	})
+}
+
+// TestMagic_DeclinesUnstratifiableRewrite: q's second rule invokes s after
+// the recursive invocation of q, so the magic rule of s reads the adorned q,
+// and q's third rule negates s, so the adorned q depends through that
+// negation on the adorned s: a cycle through the negation which the original
+// set, q recursive beside a separate s, does not have.
 func TestMagic_DeclinesUnstratifiableRewrite(t *testing.T) {
 	rs := mustRuleSet(t, []*Rule{
 		defineRule("q", []string{"?x", "?z"}, scopePattern("?x", "page/a", "?z")),
 		defineRule("q", []string{"?x", "?z"},
 			scopePattern("?x", "page/a", "?y"),
 			invoke("q", "?y", "?w"),
+			invoke("s", "?w"),
+			scopePattern("?w", "page/b", "?z")),
+		defineRule("q", []string{"?x", "?z"},
+			scopePattern("?x", "page/a", "?w"),
 			&NotClause{Clauses: []Clause{invoke("s", "?w")}},
 			scopePattern("?w", "page/b", "?z")),
 		defineRule("s", []string{"?w"}, scopePattern("?w", "page/c", "_")),

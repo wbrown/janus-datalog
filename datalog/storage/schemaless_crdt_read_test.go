@@ -325,7 +325,7 @@ func testSchemalessPrefetchVectorNotCollapsed(t *testing.T, c reopenBackendCase)
 	copy(aAttr[:], aStorage[:])
 	key, ok := m.cacheKey(eEnt, aAttr)
 	require.True(t, ok)
-	entry, err := db.cache.GetOrResolve(key, m.GetCardinality(key.A), m, nil, nil, DiscardIntake)
+	entry, err := db.cache.GetOrResolve(key, m.GetCardinality(attr), m, nil, nil, DiscardIntake)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	require.Equal(t, schema.CardinalityVector, entry.Cardinality(),

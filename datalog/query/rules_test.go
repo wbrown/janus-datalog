@@ -319,6 +319,50 @@ func TestInvocationsDescendsEveryForm(t *testing.T) {
 	}
 }
 
+// RulesUse finds the first clause using the query's own %: an invocation at
+// any depth short of a subquery body, or a subquery call passing % through.
+// A subquery call passing no % uses nothing of the outer query's, whatever
+// its body does with the inner query's own %.
+func TestRulesUse(t *testing.T) {
+	inner := invoke("follows", "?b", "?c")
+	passing := &SubqueryPattern{
+		Query: &Query{
+			In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, RulesInput{}},
+			Where: []Clause{invoke("follows", "?c", "?d")},
+		},
+		Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}, Constant{Value: datalog.SymRules}},
+		Binding: RelationBinding{Variables: []Symbol{sym("?d")}},
+	}
+	own := &SubqueryPattern{
+		Query: &Query{
+			In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}},
+			Where: []Clause{scopePattern("?c", "page/next", "?d")},
+		},
+		Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}},
+		Binding: RelationBinding{Variables: []Symbol{sym("?d")}},
+	}
+	cases := []struct {
+		name    string
+		clauses []Clause
+		want    Clause
+	}{
+		{"an invocation in an or-join branch", []Clause{
+			scopePattern("?a", "page/next", "?b"),
+			&OrJoinClause{JoinVars: []Symbol{sym("?b")}, Branches: [][]Clause{{inner}}},
+		}, inner},
+		{"a subquery call passing %", []Clause{scopePattern("?a", "page/next", "?b"), passing}, passing},
+		{"a subquery call passing no %", []Clause{scopePattern("?a", "page/next", "?b"), own}, nil},
+		{"patterns alone", []Clause{scopePattern("?a", "page/next", "?b")}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := RulesUse(c.clauses); got != c.want {
+				t.Errorf("RulesUse = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 func TestRuleSetDefaultSourceAttributes(t *testing.T) {
 	rs, err := NewRuleSet([]*Rule{
 		defineRule("follows", []string{"?a", "?b"},
@@ -586,6 +630,15 @@ func TestNewRuleSet_RefusesAReservedFormOrVariableAsAPredicateName(t *testing.T)
 				t.Fatalf("want a refusal naming %s, got %v", name, err)
 			}
 		})
+	}
+}
+
+// A rule with no name is refused at build with an error saying so, as every
+// other malformed rule is.
+func TestNewRuleSet_RefusesARuleWithNoName(t *testing.T) {
+	_, err := NewRuleSet([]*Rule{{Head: []Symbol{sym("?x")}, Body: []Clause{scopePattern("?x", "page/kind", "_")}}})
+	if err == nil || !strings.Contains(err.Error(), "name") {
+		t.Fatalf("want a refusal saying the rule has no name, got %v", err)
 	}
 }
 

@@ -555,6 +555,8 @@ Binding forms:
 - `BindRelation(vars...)` - multiple tuples `[[?a ?b] ...]`
 - `BindCollection(v)` - single symbol `[?a ...]`
 
+The call's inputs follow the inner query's `:in` in order: a source reference at a source position, `%` at the rules position, and the variables given to `Subquery` at the value positions, one per scalar or collection input and one per symbol of a tuple or relation input. An inner query that declares no `:in` takes `$`. `Build` refuses a variable count that differs from the value positions, as the parser refuses a call with the wrong number of inputs.
+
 ### Variable Scoping in Subqueries
 
 Datalog subqueries have **lexical scoping** - variables inside a subquery are independent of variables in other subqueries, even if they have the same name. This means you can reuse natural variable names like `?t` and `?s` across subqueries:

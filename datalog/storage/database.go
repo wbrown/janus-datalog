@@ -84,12 +84,7 @@ type Database struct {
 	// givenSchema is the schema the caller gave, at open or through SetSchema.
 	// installSchema asserts it into the store and re-asserts it after an
 	// import, so it supersedes what a dump carried for the idents it names.
-	givenSchema schema.SchemaProvider
-	// schemaAsGiven records that the schema the database runs with was
-	// installed exactly at construction, nil included: nothing was read from
-	// the store, inferred, or asserted. Fork sets it and then adopts its
-	// parent's declarations.
-	schemaAsGiven  bool
+	givenSchema    schema.SchemaProvider
 	plannerOptions *planner.PlannerOptions // Optional planner options override
 	clock          *LamportClock           // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
 	replicaID      uint64                  // CRDT: This database's replica identifier
@@ -120,11 +115,11 @@ type Database struct {
 	drainCond          *sync.Cond
 	rollbackMu         sync.Mutex
 
-	// schemaInstallMu serializes installSchema's publish, the read of the
-	// store after the write and the install composed from it, so of two calls
-	// that both wrote, the one that publishes last read the store after the
-	// other wrote. The write runs outside it, since a store may hold a
-	// transaction open across a concurrent call. d.mu guards givenSchema.
+	// schemaInstallMu serializes every install: SetSchema's record of the
+	// given schema, the write of its declarations, the read of the store
+	// after it and the publish, so the order the given schemas are recorded
+	// in is the order their declarations are added in, and the last install
+	// reads after every write. d.mu guards givenSchema's reads.
 	schemaInstallMu sync.Mutex
 }
 
@@ -177,15 +172,6 @@ type DatabaseOptions struct {
 	// scratch space to hold data that came from somewhere else — a dump loaded
 	// into a persistent backend — rather than a location the data lives at.
 	RemovePathOnClose bool
-	// schemaAsGiven installs runningSchema as the database's schema exactly,
-	// nil included: nothing is read from the store, inferred or asserted at
-	// construction. Fork sets it, so a branch resolves as its parent does.
-	schemaAsGiven bool
-	// runningSchema is the schema a database with schemaAsGiven runs with from
-	// construction: its parent's, for a branch. Schema stays what the parent
-	// was given, so a later install asserts the parent's declarations and
-	// never its inferences.
-	runningSchema schema.SchemaProvider
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -336,7 +322,6 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		planCache:      planner.NewPlanCache(1000, 0),
 		parseCache:     NewParseCache(1000),
 		givenSchema:    opts.Schema,
-		schemaAsGiven:  opts.schemaAsGiven,
 		refuseUnknown:  opts.RefuseUnknownAttributes,
 		plannerOptions: &plannerOptions,
 		clock:          clock,
@@ -350,14 +335,8 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	d.drainCond = sync.NewCond(&d.mu)
 	d.installed.Store(&installedSchema{})
 
-	// A running schema taken as given is the database's schema exactly, nil
-	// included. Otherwise the store's definitions are read, a given schema
-	// asserted over them, and the schema the database runs with composed from
-	// both.
-	if opts.schemaAsGiven {
-		d.installed.Store(&installedSchema{effective: opts.runningSchema})
-		return d, nil
-	}
+	// The store's definitions are read, a given schema declared into them, and
+	// the schema the database runs with composed from what the store states.
 	if err := d.installSchema(true); err != nil {
 		closeOwnedStore()
 		return nil, fmt.Errorf("installing schema: %w", err)
@@ -386,10 +365,12 @@ func (d *Database) SetSchema(s schema.SchemaProvider) error {
 	if s == nil && d.refuseUnknown {
 		return errRefuseUnknownNeedsSchema
 	}
+	d.schemaInstallMu.Lock()
+	defer d.schemaInstallMu.Unlock()
 	d.mu.Lock()
 	d.givenSchema = s
 	d.mu.Unlock()
-	return d.installSchema(true)
+	return d.installLocked(true)
 }
 
 // ReplicaID returns this database's replica identifier for CRDT operations.
@@ -444,7 +425,7 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 		if err != nil {
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
-		card := matcher.GetCardinality(aBytes)
+		card := matcher.GetCardinality(attr)
 
 		seenEntities := make(map[Entity]bool)
 
@@ -498,7 +479,7 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	// is set (d.cache == nil), resolve the entry directly from storage via
 	// ResolveEntry, which produces the same *CacheEntry shape and determines
 	// cardinality the same way (GetCardinality over d.schema).
-	card := matcher.GetCardinality(key.A)
+	card := matcher.GetCardinality(a)
 	var entry *CacheEntry
 	var err error
 	if d.cache != nil {
@@ -545,7 +526,7 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	// is set (d.cache == nil), resolve the entry directly from storage via
 	// ResolveEntry, which produces the same *CacheEntry shape and determines
 	// cardinality the same way (GetCardinality over d.schema).
-	card := matcher.GetCardinality(key.A)
+	card := matcher.GetCardinality(a)
 	var entry *CacheEntry
 	var err error
 	if d.cache != nil {
@@ -676,7 +657,6 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 		store:          d.store,
 		encoder:        d.encoder,
 		givenSchema:    d.givenSchema,
-		schemaAsGiven:  d.schemaAsGiven,
 		refuseUnknown:  d.refuseUnknown,
 		planCache:      d.planCache,
 		parseCache:     d.parseCache,
@@ -706,7 +686,6 @@ func (d *Database) History() *Database {
 		store:          d.store,
 		encoder:        d.encoder,
 		givenSchema:    d.givenSchema,
-		schemaAsGiven:  d.schemaAsGiven,
 		refuseUnknown:  d.refuseUnknown,
 		planCache:      d.planCache,
 		parseCache:     d.parseCache,
@@ -2218,7 +2197,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 		matcher := NewPatternMatcher(t.db.store)
 		matcher.SetSchema(t.db.Schema())
-		card := matcher.GetCardinality(key.A)
+		card := matcher.GetCardinality(a)
 
 		var entry *CacheEntry
 		var err error
@@ -2329,7 +2308,7 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 
 	matcher := NewPatternMatcher(t.db.store)
 	matcher.SetSchema(t.db.Schema())
-	card := matcher.GetCardinality(cacheKey.A)
+	card := matcher.GetCardinality(a)
 
 	var entry *CacheEntry
 	var err error
@@ -3102,7 +3081,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 			if !ok {
 				continue
 			}
-			entry, err := d.cache.GetOrResolve(key, matcher.GetCardinality(aBytes), matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+			entry, err := d.cache.GetOrResolve(key, matcher.GetCardinality(kw), matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 			if err != nil {
 				return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 			}
@@ -3129,7 +3108,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		if !ok {
 			continue
 		}
-		entry, err := d.cache.GetOrResolve(key, matcher.GetCardinality(aBytes), matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
+		entry, err := d.cache.GetOrResolve(key, matcher.GetCardinality(kw), matcher, matcher.cacheBound(), d.plannerOptions.Handler, DiscardIntake)
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s: %w", kw.String(), err)
 		}

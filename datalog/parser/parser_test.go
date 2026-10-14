@@ -477,32 +477,33 @@ func TestParseSubqueryPatterns(t *testing.T) {
 			           [?s :symbol/ticker "AAPL"]
 			           [(ground "2025-06-02") ?date]
 			           [(q [:find (avg ?v)
+			                :in $ ?sym ?date
 			                :where [?p :price/symbol ?sym]
 			                       [?p :price/time ?t]
 			                       [(= ?t ?date)]
 			                       [?p :price/value ?v]]
-			               ?s ?date) [[?result]]]]`,
+			               $ ?s ?date) [[?result]]]]`,
 			check: func(q *query.Query) error {
 				subq, ok := q.Where[2].(*query.SubqueryPattern)
 				if !ok {
 					return fmt.Errorf("expected SubqueryPattern")
 				}
 
-				// Check multiple inputs
-				if len(subq.Inputs) != 2 {
-					return fmt.Errorf("expected 2 inputs, got %d", len(subq.Inputs))
+				// The source and the two variables, one input per :in position
+				if len(subq.Inputs) != 3 {
+					return fmt.Errorf("expected 3 inputs, got %d", len(subq.Inputs))
 				}
 
-				// First input should be variable ?s
-				v1, ok := subq.Inputs[0].(query.Variable)
+				// The variable ?s follows the source
+				v1, ok := subq.Inputs[1].(query.Variable)
 				if !ok || v1.Name != datalog.NewSymbol("?s") {
-					return fmt.Errorf("expected ?s as first input")
+					return fmt.Errorf("expected ?s as the input after the source")
 				}
 
-				// Second input should be variable ?date
-				v2, ok := subq.Inputs[1].(query.Variable)
+				// The variable ?date follows it
+				v2, ok := subq.Inputs[2].(query.Variable)
 				if !ok || v2.Name != datalog.NewSymbol("?date") {
-					return fmt.Errorf("expected ?date as second input")
+					return fmt.Errorf("expected ?date as the last input")
 				}
 
 				return nil
