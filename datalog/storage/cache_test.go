@@ -10,55 +10,95 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// mockCacheResolver is a test mock for CacheResolver
-type mockCacheResolver struct {
-	cardinality     datalog.Keyword
-	lwwValue        any
-	lwwMaxID        datalog.ElementID
-	lwwScanned      int
-	lwwErr          error
-	addWinsSet      map[any]any
-	addWinsMaxID    datalog.ElementID
-	addWinsScanned  int
-	addWinsErr      error
-	rgaElements     []any
-	rgaPositions    []datalog.ElementID
-	rgaMaxID        datalog.ElementID
-	rgaScanned      int
-	rgaErr          error
-	resolveLWWCalls int
-	resolveAddCalls int
-	resolveRGACalls int
+// The cache resolves an (E, A) through a CacheResolver, and the resolver is
+// the pattern matcher over the database's store. Each test writes the datoms
+// its case needs through the database, resolves them through the matcher into
+// the cache under test, and reads the entry back.
 
-	// absent arranges an (E, A) carrying no datoms, so every resolve method
-	// reports present=false and the cache stores no key for it. Zero-valued
-	// because every fixture below arranges a resolvable value; a test that
-	// wants absence says so.
-	absent bool
+// cacheFixture is a database on the mode's backend declaring :person/name
+// (one), :person/tags (many) and :character/skills (vector), a matcher over
+// its store, and the entity the tests write.
+type cacheFixture struct {
+	db      *Database
+	matcher *PatternMatcher
+	entity  datalog.Identity
+	name    datalog.Keyword
+	tags    datalog.Keyword
+	skills  datalog.Keyword
 }
 
-func (m *mockCacheResolver) ResolveLWW(e Entity, a Attribute, report *scanReport) (any, datalog.ElementID, bool, error) {
-	m.resolveLWWCalls++
-	if report != nil {
-		report.scanned += m.lwwScanned
+func newCacheFixture(t *testing.T, mode optimizerMode) *cacheFixture {
+	t.Helper()
+	db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+	s, err := schema.NewBuilder().
+		Attribute(":person/name").Type(schema.TypeString).One().Add().
+		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+	require.NoError(t, db.SetSchema(s))
+	return &cacheFixture{
+		db:      db,
+		matcher: db.Matcher().(*PatternMatcher),
+		entity:  datalog.NewIdentity("person1"),
+		name:    datalog.NewKeyword(":person/name"),
+		tags:    datalog.NewKeyword(":person/tags"),
+		skills:  datalog.NewKeyword(":character/skills"),
 	}
-	return m.lwwValue, m.lwwMaxID, !m.absent, m.lwwErr
 }
 
-func (m *mockCacheResolver) ResolveAddWins(e Entity, a Attribute, report *scanReport) (map[any]any, datalog.ElementID, bool, error) {
-	m.resolveAddCalls++
-	if report != nil {
-		report.scanned += m.addWinsScanned
-	}
-	return m.addWinsSet, m.addWinsMaxID, !m.absent, m.addWinsErr
+// key is the cache key of the fixture's entity under attr.
+func (f *cacheFixture) key(attr datalog.Keyword) CacheKey {
+	var a Attribute
+	copy(a[:], attr.String())
+	return CacheKey{E: Entity(f.entity.Hash()), A: a}
 }
 
-func (m *mockCacheResolver) ResolveRGA(e Entity, a Attribute, report *scanReport) ([]any, []datalog.ElementID, datalog.ElementID, bool, error) {
-	m.resolveRGACalls++
-	if report != nil {
-		report.scanned += m.rgaScanned
+// set writes value as the current value of attr on the entity.
+func (f *cacheFixture) set(t *testing.T, attr datalog.Keyword, value string) {
+	t.Helper()
+	tx := f.db.NewTransaction()
+	require.NoError(t, tx.Set(f.entity, attr, value))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+}
+
+// add adds values to attr on the entity, in order, in one transaction.
+func (f *cacheFixture) add(t *testing.T, attr datalog.Keyword, values ...string) {
+	t.Helper()
+	tx := f.db.NewTransaction()
+	for _, value := range values {
+		require.NoError(t, tx.Add(f.entity, attr, value))
 	}
-	return m.rgaElements, m.rgaPositions, m.rgaMaxID, !m.absent, m.rgaErr
+	_, err := tx.Commit()
+	require.NoError(t, err)
+}
+
+// remove removes value from attr on the entity.
+func (f *cacheFixture) remove(t *testing.T, attr datalog.Keyword, value string) {
+	t.Helper()
+	tx := f.db.NewTransaction()
+	require.NoError(t, tx.Remove(f.entity, attr, value))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+}
+
+// resolve resolves attr on the entity through the fixture's matcher into
+// cache, accruing the intake into report.
+func (f *cacheFixture) resolve(cache *Cache, attr datalog.Keyword, report *scanReport) (*CacheEntry, error) {
+	return cache.GetOrResolve(f.key(attr), f.matcher.GetCardinality(attr), f.matcher, nil, nil, report)
+}
+
+// version is the ElementID of the datom the matcher resolves attr on the
+// entity to under last-writer-wins, the version a writer reports to the cache
+// through UpdateMaxVersion.
+func (f *cacheFixture) version(t *testing.T, attr datalog.Keyword) datalog.ElementID {
+	t.Helper()
+	key := f.key(attr)
+	_, maxID, present, err := f.matcher.ResolveLWW(key.E, key.A, DiscardIntake)
+	require.NoError(t, err)
+	require.True(t, present, "the entity carries %s", attr)
+	return maxID
 }
 
 // TestCacheEntryCarriesResolutionIntake pins that the index intake a resolution
@@ -72,58 +112,48 @@ func (m *mockCacheResolver) ResolveRGA(e Entity, a Attribute, report *scanReport
 // hit reads no index. Reporting entry.scanned on a hit would make a trace of a
 // thousand hits claim a thousand index reads that never happened.
 func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
-	var e Entity
-	copy(e[:], "entity1")
+	for _, mode := range optimizerModes {
+		for _, tc := range []struct {
+			name  string
+			write func(t *testing.T, f *cacheFixture) datalog.Keyword
+		}{
+			{"one", func(t *testing.T, f *cacheFixture) datalog.Keyword {
+				f.set(t, f.name, "Alice")
+				return f.name
+			}},
+			{"many", func(t *testing.T, f *cacheFixture) datalog.Keyword {
+				f.add(t, f.tags, "dev")
+				return f.tags
+			}},
+			{"vector", func(t *testing.T, f *cacheFixture) datalog.Keyword {
+				f.add(t, f.skills, "a")
+				return f.skills
+			}},
+		} {
+			t.Run(mode.name+"/"+tc.name, func(t *testing.T) {
+				f := newCacheFixture(t, mode)
+				attr := tc.write(t, f)
 
-	for _, tc := range []struct {
-		name     string
-		resolver *mockCacheResolver
-		attr     string
-	}{
-		{"one", &mockCacheResolver{
-			cardinality: schema.CardinalityOne,
-			lwwValue:    "Alice",
-			lwwScanned:  7,
-		}, ":person/name"},
-		{"many", &mockCacheResolver{
-			cardinality:    schema.CardinalityMany,
-			addWinsSet:     map[any]any{"dev": "dev"},
-			addWinsScanned: 11,
-		}, ":person/tag"},
-		{"vector", &mockCacheResolver{
-			cardinality:  schema.CardinalityVector,
-			rgaElements:  []any{"a"},
-			rgaPositions: []datalog.ElementID{{Lamport: 1, ReplicaID: 1}},
-			rgaScanned:   13,
-		}, ":person/skill"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var a Attribute
-			copy(a[:], tc.attr)
-			key := CacheKey{E: e, A: a}
+				cache := NewCache()
+				build := &scanReport{}
+				entry, err := f.resolve(cache, attr, build)
+				require.NoError(t, err)
+				require.NotNil(t, entry)
+				require.Positive(t, build.scanned, "resolution read the index")
+				require.Equal(t, build.scanned, entry.scanned,
+					"the entry must carry what its resolution read")
 
-			cache := NewCache()
-			build := &scanReport{}
-			entry, err := cache.GetOrResolve(key, tc.resolver.cardinality, tc.resolver, nil, nil, build)
-			require.NoError(t, err)
-			require.NotNil(t, entry)
-
-			want := tc.resolver.lwwScanned + tc.resolver.addWinsScanned + tc.resolver.rgaScanned
-			require.Equal(t, want, entry.scanned,
-				"the entry must carry what its resolution read")
-			require.Equal(t, want, build.scanned,
-				"the call that built the entry spent the build cost")
-
-			// A hit rebuilds nothing, so it reads no index: it accrues nothing,
-			// while the entry keeps the cost of the build it came from.
-			onHit := &scanReport{}
-			hit, err := cache.GetOrResolve(key, tc.resolver.cardinality, tc.resolver, nil, nil, onHit)
-			require.NoError(t, err)
-			require.Same(t, entry, hit, "second call must be a hit, not a rebuild")
-			require.Equal(t, 0, onHit.scanned, "a hit reads no index")
-			require.Equal(t, want, hit.scanned,
-				"the entry still carries what building it read")
-		})
+				// A hit rebuilds nothing, so it reads no index: it accrues nothing,
+				// while the entry keeps the cost of the build it came from.
+				onHit := &scanReport{}
+				hit, err := f.resolve(cache, attr, onHit)
+				require.NoError(t, err)
+				require.Same(t, entry, hit, "second call must be a hit, not a rebuild")
+				require.Equal(t, 0, onHit.scanned, "a hit reads no index")
+				require.Equal(t, build.scanned, hit.scanned,
+					"the entry still carries what building it read")
+			})
+		}
 	}
 }
 
@@ -132,25 +162,32 @@ func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
 // reader under cardinality one is served the latest member, never the set's
 // view, whatever reader resolved the pair before.
 func TestCacheEntryUnderAnotherCardinalityIsNotAHit(t *testing.T) {
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":t/tags")
-	key := CacheKey{E: e, A: a}
-	version := datalog.ElementID{Lamport: 2, ReplicaID: 1}
-	asSet := &mockCacheResolver{cardinality: schema.CardinalityMany, addWinsSet: map[any]any{"x": "x", "y": "y"}, addWinsMaxID: version}
-	asOne := &mockCacheResolver{cardinality: schema.CardinalityOne, lwwValue: "y", lwwMaxID: version}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.add(t, f.tags, "x")
+			f.add(t, f.tags, "y")
+			asSet := f.matcher
+			asOneSchema, err := schema.NewBuilder().
+				Attribute(":person/tags").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			require.NoError(t, f.db.SetSchema(asOneSchema))
+			asOne := f.db.Matcher().(*PatternMatcher)
+			key := f.key(f.tags)
 
-	cache := NewCache()
-	set, err := cache.GetOrResolve(key, asSet.cardinality, asSet, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.Same(t, schema.CardinalityMany, set.Cardinality())
+			cache := NewCache()
+			set, err := cache.GetOrResolve(key, asSet.GetCardinality(f.tags), asSet, nil, nil, DiscardIntake)
+			require.NoError(t, err)
+			require.Same(t, schema.CardinalityMany, set.Cardinality())
+			require.Len(t, set.ManySet(), 2)
 
-	one, err := cache.GetOrResolve(key, asOne.cardinality, asOne, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.Same(t, schema.CardinalityOne, one.Cardinality(), "a reader under cardinality one is served no set's view")
-	require.Equal(t, "y", one.OneValue())
-	require.Equal(t, 1, asOne.resolveLWWCalls, "the reader resolved the pair under its own cardinality")
+			one, err := cache.GetOrResolve(key, asOne.GetCardinality(f.tags), asOne, nil, nil, DiscardIntake)
+			require.NoError(t, err)
+			require.Same(t, schema.CardinalityOne, one.Cardinality(), "a reader under cardinality one is served no set's view")
+			require.Equal(t, "y", one.OneValue(), "the reader resolved the pair under its own cardinality")
+		})
+	}
 }
 
 // TestCacheEntryValueCountsWhatResolutionProduced pins what a cache-resolved
@@ -206,171 +243,107 @@ func TestCacheNewCache(t *testing.T) {
 	require.NotNil(t, cache, "NewCache should return non-nil cache")
 }
 
+// A second resolve of a fresh entry is a hit: the same entry, with no index
+// read.
 func TestCacheFreshness(t *testing.T) {
-	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityOne,
-		lwwValue:    "Alice",
-		lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.set(t, f.name, "Alice")
+			cache := NewCache()
+
+			entry1, err := f.resolve(cache, f.name, DiscardIntake)
+			require.NoError(t, err)
+			require.NotNil(t, entry1)
+			assert.Equal(t, "Alice", entry1.OneValue())
+
+			onHit := &scanReport{}
+			entry2, err := f.resolve(cache, f.name, onHit)
+			require.NoError(t, err)
+			require.Same(t, entry1, entry2, "a fresh entry is served again")
+			assert.Equal(t, 0, onHit.scanned, "a hit reads no index")
+		})
 	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
-
-	// First call should resolve from storage
-	entry1, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.NotNil(t, entry1)
-	assert.Equal(t, "Alice", entry1.OneValue())
-	assert.Equal(t, 1, resolver.resolveLWWCalls)
-
-	// Second call should return cached entry (no additional resolve)
-	entry2, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.NotNil(t, entry2)
-	assert.Equal(t, "Alice", entry2.OneValue())
-	assert.Equal(t, 1, resolver.resolveLWWCalls, "should not call resolver again when fresh")
 }
 
+// An invalidated entry is rebuilt from the store once the key's version moves
+// past it.
 func TestCacheInvalidation(t *testing.T) {
-	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityOne,
-		lwwValue:    "Alice",
-		lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.set(t, f.name, "Alice")
+			cache := NewCache()
+			key := f.key(f.name)
+
+			entry1, err := f.resolve(cache, f.name, DiscardIntake)
+			require.NoError(t, err)
+			assert.Equal(t, "Alice", entry1.OneValue())
+
+			cache.Invalidate([]CacheKey{key})
+			f.set(t, f.name, "Bob")
+			cache.UpdateMaxVersion(key, f.version(t, f.name))
+
+			entry2, err := f.resolve(cache, f.name, DiscardIntake)
+			require.NoError(t, err)
+			require.NotNil(t, entry2)
+			require.NotSame(t, entry1, entry2, "the entry is rebuilt after invalidation")
+			assert.Equal(t, "Bob", entry2.OneValue())
+		})
 	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
-
-	// Populate cache
-	_, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	assert.Equal(t, 1, resolver.resolveLWWCalls)
-
-	// Invalidate
-	cache.Invalidate([]CacheKey{key})
-
-	// Update resolver to return different value
-	resolver.lwwValue = "Bob"
-	resolver.lwwMaxID = datalog.ElementID{Lamport: 200, ReplicaID: 1}
-
-	// Update maxVersions to trigger rebuild
-	cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: 200, ReplicaID: 1})
-
-	// Next call should resolve again
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-	assert.Equal(t, "Bob", entry.OneValue())
-	assert.Equal(t, 2, resolver.resolveLWWCalls, "should call resolver after invalidation")
 }
 
+// An entry behind the key's version is rebuilt from the store, and the rebuilt
+// entry carries the version of the datom it resolved.
 func TestCacheRebuildWhenStale(t *testing.T) {
-	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityOne,
-		lwwValue:    "Alice",
-		lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.set(t, f.name, "Alice")
+			cache := NewCache()
+			key := f.key(f.name)
+
+			entry1, err := f.resolve(cache, f.name, DiscardIntake)
+			require.NoError(t, err)
+			assert.Equal(t, f.version(t, f.name), entry1.Version())
+
+			f.set(t, f.name, "Carol")
+			carol := f.version(t, f.name)
+			cache.UpdateMaxVersion(key, carol)
+
+			entry2, err := f.resolve(cache, f.name, DiscardIntake)
+			require.NoError(t, err)
+			require.NotSame(t, entry1, entry2, "a stale entry is rebuilt")
+			assert.Equal(t, "Carol", entry2.OneValue())
+			assert.Equal(t, carol, entry2.Version())
+		})
 	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
-
-	// Populate cache
-	entry1, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	assert.Equal(t, datalog.ElementID{Lamport: 100, ReplicaID: 1}, entry1.Version())
-
-	// Update maxVersions to make cache stale
-	cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: 200, ReplicaID: 1})
-
-	// Update resolver
-	resolver.lwwValue = "Carol"
-	resolver.lwwMaxID = datalog.ElementID{Lamport: 200, ReplicaID: 1}
-
-	// Next call should rebuild
-	entry2, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	assert.Equal(t, "Carol", entry2.OneValue())
-	assert.Equal(t, datalog.ElementID{Lamport: 200, ReplicaID: 1}, entry2.Version())
-	assert.Equal(t, 2, resolver.resolveLWWCalls, "should rebuild when stale")
-}
-
-// TestCacheMockThreadSafety tests that Cache itself is thread-safe using a
-// stateless mock. For real concurrency testing with storage, see
-// TestCacheConcurrency in cache_integration_test.go.
-func TestCacheMockThreadSafety(t *testing.T) {
-	cache := NewCache()
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
-
-	// Run concurrent GetOrResolve calls with per-goroutine resolvers
-	// Each goroutine gets its own resolver to avoid shared mutable state
-	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			// Each goroutine creates its own stateless resolver
-			resolver := &mockCacheResolver{
-				cardinality: schema.CardinalityOne,
-				lwwValue:    "Alice",
-				lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
-			}
-			entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-			assert.NoError(t, err)
-			assert.NotNil(t, entry)
-			assert.Equal(t, "Alice", entry.OneValue())
-		}()
-	}
-	wg.Wait()
-
-	// All should have completed without panic
 }
 
 func TestUpdateMaxVersion(t *testing.T) {
-	cache := NewCache()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.set(t, f.name, "test")
+			cache := NewCache()
+			key := f.key(f.name)
 
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
+			// Initial update
+			cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: 100, ReplicaID: 1})
 
-	// Initial update
-	cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: 100, ReplicaID: 1})
+			// Lower value should not update
+			cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: 50, ReplicaID: 1})
 
-	// Lower value should not update
-	cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: 50, ReplicaID: 1})
+			// Higher value should update
+			cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: 200, ReplicaID: 1})
 
-	// Higher value should update
-	cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: 200, ReplicaID: 1})
-
-	// Verify by checking if a cached entry at version 100 would be considered stale
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityOne,
-		lwwValue:    "test",
-		lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
+			// Nothing is cached for the key yet, so the first resolve builds the
+			// entry whatever version the key is at.
+			entry, err := f.resolve(cache, f.name, DiscardIntake)
+			require.NoError(t, err)
+			assert.NotNil(t, entry)
+		})
 	}
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	// Entry should be at version 100, but maxVersion is 200, so it should rebuild
-	// Actually the entry is nil initially, so it will resolve
-	assert.NotNil(t, entry)
 }
 
 func TestUpdateMaxVersionConcurrency(t *testing.T) {
@@ -397,254 +370,183 @@ func TestUpdateMaxVersionConcurrency(t *testing.T) {
 }
 
 func TestCacheRebuildCardinalityOne(t *testing.T) {
-	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityOne,
-		lwwValue:    "Alice",
-		lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.set(t, f.name, "Alice")
+			cache := NewCache()
+
+			entry, err := f.resolve(cache, f.name, DiscardIntake)
+			require.NoError(t, err)
+			require.NotNil(t, entry)
+			assert.Equal(t, schema.CardinalityOne, entry.Cardinality())
+			assert.Equal(t, "Alice", entry.OneValue())
+			assert.Nil(t, entry.ManySet())
+			assert.Nil(t, entry.VectorList())
+		})
 	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
-
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-	assert.Equal(t, schema.CardinalityOne, entry.Cardinality())
-	assert.Equal(t, "Alice", entry.OneValue())
-	assert.Nil(t, entry.ManySet())
-	assert.Nil(t, entry.VectorList())
 }
 
 func TestCacheRebuildCardinalityMany(t *testing.T) {
-	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality:  schema.CardinalityMany,
-		addWinsSet:   map[any]any{"warrior": "warrior", "veteran": "veteran"},
-		addWinsMaxID: datalog.ElementID{Lamport: 100, ReplicaID: 1},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.add(t, f.tags, "warrior", "veteran")
+			cache := NewCache()
+
+			entry, err := f.resolve(cache, f.tags, DiscardIntake)
+			require.NoError(t, err)
+			require.NotNil(t, entry)
+			assert.Equal(t, schema.CardinalityMany, entry.Cardinality())
+			assert.Nil(t, entry.OneValue())
+			_, hasWarrior := entry.ManySet()["warrior"]
+			_, hasVeteran := entry.ManySet()["veteran"]
+			assert.True(t, hasWarrior)
+			assert.True(t, hasVeteran)
+			assert.Nil(t, entry.VectorList())
+		})
 	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/tags")
-	key := CacheKey{E: e, A: a}
-
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-	assert.Equal(t, schema.CardinalityMany, entry.Cardinality())
-	assert.Nil(t, entry.OneValue())
-	_, hasWarrior := entry.ManySet()["warrior"]
-	_, hasVeteran := entry.ManySet()["veteran"]
-	assert.True(t, hasWarrior)
-	assert.True(t, hasVeteran)
-	assert.Nil(t, entry.VectorList())
 }
 
 func TestCacheRebuildCardinalityVector(t *testing.T) {
-	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality:  schema.CardinalityVector,
-		rgaElements:  []any{"stealth", "archery", "lockpicking"},
-		rgaPositions: []datalog.ElementID{{Lamport: 1}, {Lamport: 2}, {Lamport: 3}},
-		rgaMaxID:     datalog.ElementID{Lamport: 100, ReplicaID: 1},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.add(t, f.skills, "stealth", "archery", "lockpicking")
+			cache := NewCache()
+
+			entry, err := f.resolve(cache, f.skills, DiscardIntake)
+			require.NoError(t, err)
+			require.NotNil(t, entry)
+			assert.Equal(t, schema.CardinalityVector, entry.Cardinality())
+			assert.Nil(t, entry.OneValue())
+			assert.Nil(t, entry.ManySet())
+			assert.Equal(t, []any{"stealth", "archery", "lockpicking"}, entry.VectorList())
+			assert.Len(t, entry.VectorIndex(), 3)
+		})
 	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":character/skills")
-	key := CacheKey{E: e, A: a}
-
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-	assert.Equal(t, schema.CardinalityVector, entry.Cardinality())
-	assert.Nil(t, entry.OneValue())
-	assert.Nil(t, entry.ManySet())
-	assert.Equal(t, []any{"stealth", "archery", "lockpicking"}, entry.VectorList())
-	assert.Len(t, entry.VectorIndex(), 3)
 }
 
 func TestCacheManySetMembership(t *testing.T) {
-	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality:  schema.CardinalityMany,
-		addWinsSet:   map[any]any{"a": "a", "b": "b", "c": "c"},
-		addWinsMaxID: datalog.ElementID{Lamport: 100, ReplicaID: 1},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.add(t, f.tags, "a", "b", "c")
+			cache := NewCache()
+
+			entry, err := f.resolve(cache, f.tags, DiscardIntake)
+			require.NoError(t, err)
+			require.NotNil(t, entry)
+
+			// O(1) membership check via map
+			set := entry.ManySet()
+			_, hasA := set["a"]
+			_, hasB := set["b"]
+			_, hasC := set["c"]
+			_, hasD := set["d"]
+			assert.True(t, hasA)
+			assert.True(t, hasB)
+			assert.True(t, hasC)
+			assert.False(t, hasD)
+		})
 	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":tags")
-	key := CacheKey{E: e, A: a}
-
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-
-	// O(1) membership check via map
-	set := entry.ManySet()
-	_, hasA := set["a"]
-	_, hasB := set["b"]
-	_, hasC := set["c"]
-	_, hasD := set["d"]
-	assert.True(t, hasA)
-	assert.True(t, hasB)
-	assert.True(t, hasC)
-	assert.False(t, hasD)
 }
 
 func TestCacheManyEmptyAfterRemoves(t *testing.T) {
-	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality:  schema.CardinalityMany,
-		addWinsSet:   map[any]any{}, // Empty set after all removes
-		addWinsMaxID: datalog.ElementID{Lamport: 100, ReplicaID: 1},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.add(t, f.tags, "a")
+			f.remove(t, f.tags, "a")
+			cache := NewCache()
+
+			entry, err := f.resolve(cache, f.tags, DiscardIntake)
+			require.NoError(t, err)
+			require.NotNil(t, entry)
+			assert.Equal(t, 0, len(entry.ManySet()))
+		})
 	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":tags")
-	key := CacheKey{E: e, A: a}
-
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-	assert.Equal(t, 0, len(entry.ManySet()))
 }
 
 func TestCacheClear(t *testing.T) {
-	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityOne,
-		lwwValue:    "Alice",
-		lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.set(t, f.name, "Alice")
+			cache := NewCache()
+			key := f.key(f.name)
+
+			entry1, err := f.resolve(cache, f.name, DiscardIntake)
+			require.NoError(t, err)
+			assert.Equal(t, "Alice", entry1.OneValue())
+
+			cache.Clear()
+			f.set(t, f.name, "Bob")
+			cache.UpdateMaxVersion(key, f.version(t, f.name))
+
+			entry2, err := f.resolve(cache, f.name, DiscardIntake)
+			require.NoError(t, err)
+			require.NotSame(t, entry1, entry2, "the entry is rebuilt after a clear")
+			assert.Equal(t, "Bob", entry2.OneValue())
+		})
 	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
-
-	// Populate cache
-	_, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	assert.Equal(t, 1, resolver.resolveLWWCalls)
-
-	// Clear cache
-	cache.Clear()
-
-	// Update maxVersions to trigger rebuild
-	cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: 200, ReplicaID: 1})
-
-	// Next call should resolve again
-	resolver.lwwValue = "Bob"
-	resolver.lwwMaxID = datalog.ElementID{Lamport: 200, ReplicaID: 1}
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	assert.Equal(t, "Bob", entry.OneValue())
-	assert.Equal(t, 2, resolver.resolveLWWCalls)
 }
 
+// A cache with nothing in it, as after a restart, resolves the first access
+// from the store and serves the second from the entry.
 func TestCacheAfterRestart(t *testing.T) {
-	// Simulate cold start: maxVersions is empty, entries is empty
-	cache := NewCache()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newCacheFixture(t, mode)
+			f.set(t, f.name, "Alice")
+			cache := NewCache()
 
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityOne,
-		lwwValue:    "Alice",
-		lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
+			entry, err := f.resolve(cache, f.name, DiscardIntake)
+			require.NoError(t, err)
+			require.NotNil(t, entry)
+			assert.Equal(t, "Alice", entry.OneValue())
+
+			entry2, err := f.resolve(cache, f.name, DiscardIntake)
+			require.NoError(t, err)
+			require.Same(t, entry, entry2, "the second access is a hit")
+		})
 	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
-
-	// First access after restart should resolve
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-	assert.Equal(t, "Alice", entry.OneValue())
-	assert.Equal(t, 1, resolver.resolveLWWCalls)
-
-	// maxVersions should now be populated
-	// Second access should use cache
-	entry2, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.NoError(t, err)
-	require.NotNil(t, entry2)
-	assert.Equal(t, 1, resolver.resolveLWWCalls)
 }
 
+// A resolver whose index read fails reaches the caller as the error, with no
+// entry, for all three cardinalities.
 func TestCacheRebuildStoreError(t *testing.T) {
-	cache := NewCache()
+	for _, mode := range optimizerModes {
+		for _, tc := range []struct {
+			name  string
+			write func(t *testing.T, f *cacheFixture) datalog.Keyword
+		}{
+			{"one", func(t *testing.T, f *cacheFixture) datalog.Keyword {
+				f.set(t, f.name, "Alice")
+				return f.name
+			}},
+			{"many", func(t *testing.T, f *cacheFixture) datalog.Keyword {
+				f.add(t, f.tags, "dev")
+				return f.tags
+			}},
+			{"vector", func(t *testing.T, f *cacheFixture) datalog.Keyword {
+				f.add(t, f.skills, "a")
+				return f.skills
+			}},
+		} {
+			t.Run(mode.name+"/"+tc.name, func(t *testing.T) {
+				f := newCacheFixture(t, mode)
+				attr := tc.write(t, f)
+				store := &scanFaultStore{Store: f.db.Store()}
+				store.arm()
+				faulting := NewPatternMatcher(store)
+				faulting.SetSchema(f.db.Schema())
+				cache := NewCache()
 
-	// Resolver that returns errors
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityOne,
-		lwwErr:      assert.AnError,
+				entry, err := cache.GetOrResolve(f.key(attr), faulting.GetCardinality(attr), faulting, nil, nil, DiscardIntake)
+				require.ErrorIs(t, err, errInjectedScanFault)
+				assert.Nil(t, entry)
+			})
+		}
 	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
-
-	// The resolver's error reaches the caller. A nil entry means the attribute
-	// has no value, so a dropped error would make a failed read and an absent
-	// attribute the same answer.
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.ErrorIs(t, err, assert.AnError)
-	assert.Nil(t, entry)
-	assert.Equal(t, 1, resolver.resolveLWWCalls)
-}
-
-func TestCacheRebuildAddWinsError(t *testing.T) {
-	cache := NewCache()
-
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityMany,
-		addWinsErr:  assert.AnError,
-	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":tags")
-	key := CacheKey{E: e, A: a}
-
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.ErrorIs(t, err, assert.AnError)
-	assert.Nil(t, entry)
-	assert.Equal(t, 1, resolver.resolveAddCalls)
-}
-
-func TestCacheRebuildRGAError(t *testing.T) {
-	cache := NewCache()
-
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityVector,
-		rgaErr:      assert.AnError,
-	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":skills")
-	key := CacheKey{E: e, A: a}
-
-	entry, err := cache.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
-	require.ErrorIs(t, err, assert.AnError)
-	assert.Nil(t, entry)
-	assert.Equal(t, 1, resolver.resolveRGACalls)
 }

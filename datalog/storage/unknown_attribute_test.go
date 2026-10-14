@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -126,23 +128,88 @@ func TestQueryRefusesUnknownAttributeInDatabaseFunctions(t *testing.T) {
 	}
 }
 
+// The attribute an input binds to a variable in a pattern's attribute
+// position is refused: bound through a scalar input, a collection input, and
+// a subquery's input, which the subquery checks when it runs. The subquery's
+// check reaches the matcher through the annotation wrapper, when the database
+// carries a handler, and through the scan-sharing wrapper, when scan sharing
+// is on, as it does through neither.
 func TestQueryRefusesUnknownAttributeBoundThroughInput(t *testing.T) {
+	wrappers := []struct {
+		name      string
+		annotated bool
+		sharing   bool
+	}{
+		{"unwrapped", false, false},
+		{"annotated", true, false},
+		{"scan-sharing", false, true},
+	}
 	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			d, _ := refusingDB(t, mode)
-			attr := kw(":t/strnig")
+		for _, wrapper := range wrappers {
+			t.Run(mode.name+"/"+wrapper.name, func(t *testing.T) {
+				popts := mode.plannerOptions()
+				popts.EnableScanSharing = wrapper.sharing
+				opts := DatabaseOptions{Schema: schemaFactsFixture(t), RefuseUnknownAttributes: true, PlannerOptions: &popts}
+				var events atomic.Int64
+				if wrapper.annotated {
+					opts.AnnotationHandler = func(annotations.Event) { events.Add(1) }
+				}
+				d := openBackendDB(t, mode.backend, opts)
+				attr := kw(":t/strnig")
 
-			_, err := d.Query(`[:find ?v :in $ ?a :where [?e ?a ?v]]`, attr)
-			requireUnknown(t, err, attr)
+				_, err := d.Query(`[:find ?v :in $ ?a :where [?e ?a ?v]]`, attr)
+				requireUnknown(t, err, attr)
 
-			_, err = d.Query(`[:find ?v :in $ [?a ...] :where [?e ?a ?v]]`, []interface{}{attr})
-			requireUnknown(t, err, attr)
+				_, err = d.Query(`[:find ?v :in $ [?a ...] :where [?e ?a ?v]]`, []interface{}{attr})
+				requireUnknown(t, err, attr)
 
-			// A subquery's input binds the attribute one scope deeper, and
-			// the subquery checks it when it runs.
-			_, err = d.Query(`[:find ?v :in $ ?a :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`, attr)
-			requireUnknown(t, err, attr)
-		})
+				// A subquery's input binds the attribute one scope deeper, and
+				// the subquery checks it when it runs, through the wrappers the
+				// execution put around the matcher.
+				_, err = d.Query(`[:find ?v :in $ ?a :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`, attr)
+				requireUnknown(t, err, attr)
+				if wrapper.annotated {
+					require.Positive(t, events.Load(), "the handler the database carries saw the execution, so the annotation wrapper stood around the matcher")
+				}
+			})
+		}
+	}
+}
+
+// A literal keyword reaches a pattern's attribute position through a variable
+// the clause text binds: a ground or identity expression in the query, a
+// constant argument of an invocation at a position the predicate reads as an
+// attribute, directly or through a body invocation, a ground bound to a
+// variable passed at such a position, or a ground inside a rule body. Each is
+// refused as the same literal in a pattern is.
+func TestQueryRefusesUnknownAttributeReachingThroughABinding(t *testing.T) {
+	const rules = `[[(has ?e ?a) [?e ?a _]]
+	                [(has2 ?e ?a) (has ?e ?a)]
+	                [(typo ?e) [(ground :t/strnig) ?a] [?e ?a _]]]`
+	cases := []struct {
+		name  string
+		text  string
+		rules bool
+	}{
+		{"ground", `[:find ?v :where [(ground :t/strnig) ?a] [?e ?a ?v]]`, false},
+		{"identity", `[:find ?v :where [(identity :t/strnig) ?a] [?e ?a ?v]]`, false},
+		{"invocation constant", `[:find ?e :in $ % :where (has ?e :t/strnig)]`, true},
+		{"invocation constant through a body invocation", `[:find ?e :in $ % :where (has2 ?e :t/strnig)]`, true},
+		{"ground into an invocation", `[:find ?e :in $ % :where [(ground :t/strnig) ?a] (has ?e ?a)]`, true},
+		{"ground inside a rule body", `[:find ?e :in $ % :where (typo ?e)]`, true},
+	}
+	for _, mode := range optimizerModes {
+		for _, c := range cases {
+			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
+				d, _ := refusingDB(t, mode)
+				var inputs []interface{}
+				if c.rules {
+					inputs = append(inputs, mustRuleSet(t, rules))
+				}
+				_, err := d.Query(c.text, inputs...)
+				requireUnknown(t, err, kw(":t/strnig"))
+			})
+		}
 	}
 }
 

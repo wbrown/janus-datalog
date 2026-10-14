@@ -23,10 +23,13 @@ func assertKeywordsInOrder(t *testing.T, got, want []datalog.Keyword) {
 // collects: every attribute the query names on the default source, in order
 // of first appearance and each once, through NOT/NOT-JOIN bodies,
 // OR/OR-JOIN/OR-DEFAULT branches and subquery bodies, through the database
-// functions as an expression and as a predicate, and through the :find pull
-// pattern. A pattern on a named source reads that source's attributes, a
-// variable or blank in the attribute position names none, and an expression
-// that is not a database function names none.
+// functions as an expression and as a predicate, through the :find pull
+// pattern, and, at the scope's end, through a variable in the attribute
+// position that ground, identity of a keyword, or identity of such a
+// variable binds to a keyword. A pattern on a named source reads that
+// source's attributes, a blank or a variable nothing binds to a keyword in
+// the attribute position names none, and a ground whose variable stands in
+// no attribute position names none.
 func TestDefaultSourceAttributes(t *testing.T) {
 	entity := Variable{Name: datalog.NewSymbol("?e")}
 	entityTerm := VariableTerm{Symbol: datalog.NewSymbol("?e")}
@@ -82,6 +85,13 @@ func TestDefaultSourceAttributes(t *testing.T) {
 			&DatabaseFunctionPredicate{
 				Function: &MissingFunction{Entity: entityTerm, Attr: datalog.NewKeyword(":t/missingpred")},
 			},
+			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/ground")}, Binding: datalog.NewSymbol("?ga")},
+			&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?ga")}, Blank{}}},
+			&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?ia")}, Blank{}}},
+			&Expression{Function: IdentityFunction{Arg: ConstantTerm{Value: datalog.NewKeyword(":t/identity")}}, Binding: datalog.NewSymbol("?ia")},
+			&Expression{Function: IdentityFunction{Arg: VariableTerm{Symbol: datalog.NewSymbol("?ga")}}, Binding: datalog.NewSymbol("?aa")},
+			&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?aa")}, Blank{}}},
+			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/unused")}, Binding: datalog.NewSymbol("?gu")},
 		},
 	}
 
@@ -103,8 +113,56 @@ func TestDefaultSourceAttributes(t *testing.T) {
 		datalog.NewKeyword(":t/some2"),
 		datalog.NewKeyword(":t/missingexpr"),
 		datalog.NewKeyword(":t/missingpred"),
+		datalog.NewKeyword(":t/ground"),
+		datalog.NewKeyword(":t/identity"),
 	}
 	assertKeywordsInOrder(t, q.DefaultSourceAttributes(), want)
+}
+
+// TestInvocationConstants pins the roster InvocationConstants collects: for
+// every rule invocation at any depth, subquery bodies included, each keyword
+// constant argument with its predicate and position, in order of first
+// appearance and each once, and, at the end of each scope, each variable
+// argument the scope binds to a keyword through ground or identity. A
+// constant of another type and a variable nothing binds name nothing.
+func TestInvocationConstants(t *testing.T) {
+	entity := Variable{Name: datalog.NewSymbol("?e")}
+	has := datalog.NewSymbol("has")
+	q := &Query{Where: []Clause{
+		&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/direct")}}},
+		&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: "text"}}},
+		&RuleInvocation{Name: has, Args: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?ga")}}},
+		&RuleInvocation{Name: has, Args: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?free")}}},
+		&OrClause{Branches: [][]Clause{{
+			&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/branch")}}},
+		}}},
+		&SubqueryPattern{
+			Query: &Query{Where: []Clause{
+				&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/sub")}}},
+			}},
+			Binding: ScalarBinding{Variable: datalog.NewSymbol("?s")},
+		},
+		&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/ground")}, Binding: datalog.NewSymbol("?ga")},
+		&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/direct")}}},
+	}}
+	want := []InvocationConstant{
+		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/direct")},
+		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/branch")},
+		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/sub")},
+		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/ground")},
+	}
+	got := q.InvocationConstants()
+	if len(got) != len(want) {
+		t.Fatalf("collected %d invocation constants, want %d:\n got  %v\n want %v", len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("invocation constant %d is %v, want %v", i, got[i], want[i])
+		}
+	}
+	if &q.InvocationConstants()[0] != &got[0] {
+		t.Errorf("every call returns the roster the first call built; got two rosters")
+	}
 }
 
 // A query's rosters are collected on the first call of any accessor, and

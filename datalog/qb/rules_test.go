@@ -159,7 +159,9 @@ func TestSubqueryPassesRulesThrough(t *testing.T) {
 
 // A subquery's inputs follow the inner query's :in in order, a source or %
 // at its own position and the caller's variables at the value positions, as
-// the parsed form (q [...] $ ?x %) has them; a caller variable count that
+// the parsed form (q [...] $ ?x %) has them. A tuple or relation input takes
+// one caller per symbol, so a % after one follows every caller it takes, as
+// the parsed form (q [...] $ ?a ?b %) has them. A caller variable count that
 // differs from the inner query's value positions is refused at Build.
 func TestSubqueryInputsFollowTheInnerDeclaration(t *testing.T) {
 	x, y, n := NewVar("x"), NewVar("y"), NewVar("n")
@@ -173,6 +175,19 @@ func TestSubqueryInputsFollowTheInnerDeclaration(t *testing.T) {
 	}
 	if !reflect.DeepEqual(q.Where, parsed.Where) {
 		t.Errorf("built :where\n%v\ndiffers from parsed\n%v", q.Where, parsed.Where)
+	}
+
+	a, b, c := NewVar("a"), NewVar("b"), NewVar("c")
+	pairs := Query().Find(Count(c)).In(DB, Relation(a, b), Rules).Where(Rule("reach", a, c), Rule("reach", b, c))
+	q = Query().Find(a, b, n).In(DB, Rules).Where(Pat(a, edge, b), Subquery(pairs, a, b).BindTuple(n)).MustBuild()
+	parsed, err = parser.ParseQuery(`[:find ?a ?b ?n :in $ %
+	                                  :where [?a :edge ?b]
+	                                         [(q [:find (count ?c) :in $ [[?a ?b] ...] % :where (reach ?a ?c) (reach ?b ?c)] $ ?a ?b %) [[?n]]]]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(q.Where, parsed.Where) {
+		t.Errorf("a relation input takes both callers before the %% that follows it: built :where\n%v\ndiffers from parsed\n%v", q.Where, parsed.Where)
 	}
 
 	_, err = Query().Find(x, n).In(DB, Rules).Where(Pat(x, edge, Blank()), Subquery(inner, x, y).BindTuple(n)).Build()

@@ -136,8 +136,8 @@ func (d *Database) TruncateTo(name string) error {
 		d.cache.InvalidateRewind(keys)
 	}
 
-	// The declared set is now what the surviving facts state, and the given
-	// schema stays in force over them; nothing is written here.
+	// The database runs with the declarations that survive the rewind, until
+	// SetSchema or an import declares again; nothing is written here.
 	return d.installSchema(false)
 }
 

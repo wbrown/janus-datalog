@@ -67,9 +67,12 @@ rel, err := d.Query(`[:find ?y :in $ % ?start :where (reach ?start ?y)]`, rulesT
 A value of any other Go type at the `%` position is an error naming the type.
 `Explain`, `ExplainAlgebra` and `Analyze` take the rule set the same way.
 
-A query that invokes a predicate declares `%` in its own `:in`. An invocation
-with no `%` is a parse error naming the invocation. A subquery that invokes a
-predicate declares `%` in its `:in` and is passed `%`:
+A clause uses the query's own `%` when it invokes a predicate, at any depth
+short of a subquery body, or when it is a subquery call passing `%`. A query
+holding such a clause declares `%` in its own `:in`. A query that declares
+none is a parse error naming the clause. A subquery that invokes a predicate
+declares `%` in its `:in` and is passed `%`, and the call passing it is a use
+of the enclosing query's `%`:
 
 ```clojure
 [:find ?x ?n

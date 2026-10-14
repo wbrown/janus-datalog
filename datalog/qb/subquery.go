@@ -116,9 +116,11 @@ func (s *SubqueryBuilder) toClause() query.Clause {
 
 	// The inputs follow the inner query's :in in order: a source reference at
 	// a source position, % at the rules position, and the caller's variables
-	// at the value positions, as the parsed form (q [...] $ ?x %) has them. A
-	// caller variable beyond the value positions is passed through, so Build
-	// refuses the count as the static shape it is.
+	// at the value positions, one per value the entry takes under
+	// query.InputArity, so a tuple or relation input takes one caller per
+	// symbol, as the parsed forms (q [...] $ ?x %) and (q [...] $ ?a ?b %)
+	// have them. A caller variable beyond the value positions is passed
+	// through, so Build refuses the count as the static shape it is.
 	var inputs []query.PatternElement
 	callers := s.inputs
 	for _, in := range innerQ.In {
@@ -128,11 +130,10 @@ func (s *SubqueryBuilder) toClause() query.Clause {
 		case query.RulesInput:
 			inputs = append(inputs, query.Constant{Value: datalog.SymRules})
 		default:
-			if len(callers) == 0 {
-				continue
+			for values := query.InputArity([]query.InputSpec{in}); values > 0 && len(callers) > 0; values-- {
+				inputs = append(inputs, query.Variable{Name: callers[0].Symbol()})
+				callers = callers[1:]
 			}
-			inputs = append(inputs, query.Variable{Name: callers[0].Symbol()})
-			callers = callers[1:]
 		}
 	}
 	for _, v := range callers {

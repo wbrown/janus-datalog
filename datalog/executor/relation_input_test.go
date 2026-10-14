@@ -133,6 +133,57 @@ func TestRelationInputIteration(t *testing.T) {
 					t.Logf("Results:\n%s", result.Table())
 				}
 			})
+
+			// A tuple input binds one value per symbol from the call, so the
+			// subquery reads the one entity whose name and year the outer
+			// query bound, and each person-year pair carries its own age.
+			t.Run("subquery with TupleInput", func(t *testing.T) {
+				q := `[:find ?name ?year ?age
+				          :where [?p :name ?name]
+				                 [?p :year ?year]
+				                 [(q [:find ?a
+				                      :in $ [[?n ?y]]
+				                      :where [?e :name ?n]
+				                             [?e :year ?y]
+				                             [?e :age ?a]]
+				                     $ ?name ?year) [[?age]]]]`
+
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
+
+				result, err := exec.ExecuteWithContext(ctx, parsed)
+				if err != nil {
+					t.Fatalf("Query failed: %v", err)
+				}
+
+				want := map[string]int64{
+					"Alice-2020": 25,
+					"Alice-2021": 26,
+					"Bob-2020":   30,
+					"Bob-2021":   31,
+				}
+				got := map[string]int64{}
+				it := result.Iterator()
+				for it.Next() {
+					tuple := it.Tuple()
+					if len(tuple) != 3 {
+						t.Errorf("Expected 3 symbols, got %d", len(tuple))
+						continue
+					}
+					got[fmt.Sprintf("%s-%d", tuple[0].(string), tuple[1].(int64))] = tuple[2].(int64)
+				}
+				it.Close()
+				if len(got) != len(want) {
+					t.Errorf("Expected %d results, got %d:\n%s", len(want), len(got), result.Table())
+				}
+				for key, age := range want {
+					if got[key] != age {
+						t.Errorf("%s: expected age %d, got %d", key, age, got[key])
+					}
+				}
+			})
 		})
 	}
 }

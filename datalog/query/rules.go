@@ -110,6 +110,11 @@ type RuleSet struct {
 	required map[Symbol][]bool
 	strata   []Stratum
 
+	// attributePositions marks, per predicate and head position, whether a
+	// body pattern on the default source reads the head symbol there as its
+	// attribute, directly or through a body invocation (AttributePositions).
+	attributePositions map[Symbol][]bool
+
 	// attributes is the roster DefaultSourceAttributes returns, collected on
 	// its first call. A rule set is immutable and serves every query that
 	// passes it, so the roster is collected once.
@@ -246,7 +251,53 @@ func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
 		}
 	}
 	rs.strata = strata
+	rs.attributePositions = attributePositionsOf(rs, rules)
 	return rs, nil
+}
+
+// attributePositionsOf computes, to a fixpoint over the rules, the head
+// positions each predicate reads as an attribute: a body pattern on the
+// default source whose attribute is the head symbol, or a body invocation
+// passing the head symbol at a position the invoked predicate reads as one.
+// The walk stops at a subquery body, whose inputs are bound when it runs and
+// checked then. A seed predicate, with no rules, reads none.
+func attributePositionsOf(rs *RuleSet, rules []*Rule) map[Symbol][]bool {
+	positions := make(map[Symbol][]bool, len(rs.order))
+	for _, name := range rs.order {
+		positions[name] = make([]bool, rs.arity[name])
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, rule := range rules {
+			mask := positions[rule.Name]
+			mark := func(sym Symbol) {
+				if i := SymbolIndex(rule.Head, sym); i >= 0 && !mask[i] {
+					mask[i] = true
+					changed = true
+				}
+			}
+			WalkClauses(rule.Body, func(clause Clause) bool {
+				switch c := clause.(type) {
+				case *DataPattern:
+					if c.Source != nil && c.Source != datalog.SymDollar {
+						return true
+					}
+					if a, ok := c.GetA().(Variable); ok {
+						mark(a.Name)
+					}
+				case *RuleInvocation:
+					invoked := positions[c.Name]
+					for j, arg := range c.Args {
+						if v, ok := arg.(Variable); ok && j < len(invoked) && invoked[j] {
+							mark(v.Name)
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+	return positions
 }
 
 // Predicates returns the defined predicates in first-appearance order.
@@ -339,7 +390,8 @@ func (rs *RuleSet) CheckInvocation(inv *RuleInvocation) error {
 
 // DefaultSourceAttributes returns every attribute the rule bodies name on
 // the default source, in order of first appearance and each once, collected
-// as Query.DefaultSourceAttributes collects a query's.
+// as Query.DefaultSourceAttributes collects a query's, then the keywords the
+// bodies' invocations pass at attribute positions (InvocationAttributes).
 func (rs *RuleSet) DefaultSourceAttributes() []datalog.Keyword {
 	rs.attributesOnce.Do(func() {
 		roster := newAttributeRoster()
@@ -348,9 +400,40 @@ func (rs *RuleSet) DefaultSourceAttributes() []datalog.Keyword {
 				roster.addClauses(rule.Body, false)
 			}
 		}
+		for _, attr := range rs.InvocationAttributes(roster.invocations) {
+			roster.add(attr)
+		}
 		rs.attributes = roster.order
 	})
 	return rs.attributes
+}
+
+// AttributePositions reports, per head position of a predicate, whether a
+// body pattern on the default source reads the head symbol at that position
+// as its attribute: in the predicate's own bodies at any depth short of a
+// subquery body, or through a body invocation in the bodies of the predicate
+// invoked. A keyword an invocation passes at such a position names an
+// attribute (InvocationAttributes). Nil for a predicate the set does not
+// define.
+func (rs *RuleSet) AttributePositions(name Symbol) []bool {
+	return rs.attributePositions[name]
+}
+
+// InvocationAttributes returns, from a roster of invocation constants, the
+// keywords passed at the positions the invoked predicate reads as an
+// attribute, in order and each once. A keyword at a value position, or
+// passed to a predicate the set does not define, names nothing.
+func (rs *RuleSet) InvocationAttributes(constants []InvocationConstant) []datalog.Keyword {
+	if len(constants) == 0 {
+		return nil
+	}
+	roster := newAttributeRoster()
+	for _, c := range constants {
+		if mask := rs.attributePositions[c.Name]; c.Position < len(mask) && mask[c.Position] {
+			roster.add(c.Attr)
+		}
+	}
+	return roster.order
 }
 
 // checkRuleSafety reports the first symbol neither the rule's positive body

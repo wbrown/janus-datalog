@@ -413,6 +413,104 @@ func TestRuleSetDefaultSourceAttributes(t *testing.T) {
 	}
 }
 
+// attrVarPattern builds [?e ?a _] on the default source: a pattern whose
+// attribute is the variable named.
+func attrVarPattern(e, a string) *DataPattern {
+	return &DataPattern{Elements: []PatternElement{Variable{Name: sym(e)}, Variable{Name: sym(a)}, Blank{}}}
+}
+
+// AttributePositions reports, per head position of a predicate, whether a
+// body pattern on the default source reads the head symbol at that position
+// as its attribute: in the predicate's own bodies at any depth short of a
+// subquery body, or through a body invocation in the bodies of the predicate
+// invoked. A predicate the set does not define has none.
+func TestRuleSetAttributePositions(t *testing.T) {
+	rs, err := NewRuleSet([]*Rule{
+		defineRule("has", []string{"?e", "?a"}, attrVarPattern("?e", "?a")),
+		defineRule("has2", []string{"?e", "?a"}, invoke("has", "?e", "?a")),
+		defineRule("swap", []string{"?a", "?e"}, invoke("has2", "?e", "?a")),
+		defineRule("val", []string{"?e", "?v"}, scopePattern("?e", "page/kind", "?v")),
+		defineRule("branch", []string{"?e", "?a"},
+			scopePattern("?e", "page/kind", "_"),
+			&OrJoinClause{JoinVars: []Symbol{sym("?e"), sym("?a")}, Branches: [][]Clause{
+				{attrVarPattern("?e", "?a")},
+				{invoke("val", "?e", "?a")},
+			}}),
+	})
+	if err != nil {
+		t.Fatalf("NewRuleSet: %v", err)
+	}
+	cases := []struct {
+		name string
+		want []bool
+	}{
+		{"has", []bool{false, true}},
+		{"has2", []bool{false, true}},
+		{"swap", []bool{true, false}},
+		{"val", []bool{false, false}},
+		{"branch", []bool{false, true}},
+	}
+	for _, c := range cases {
+		if got := rs.AttributePositions(sym(c.name)); !equalMasks(got, c.want) {
+			t.Errorf("AttributePositions(%s) = %v, want %v", c.name, got, c.want)
+		}
+	}
+	if got := rs.AttributePositions(sym("absent")); got != nil {
+		t.Errorf("AttributePositions of an undefined predicate = %v, want nil", got)
+	}
+}
+
+// A rule body's invocation names, on the default source, the keyword it
+// passes at a position the invoked predicate reads as an attribute, and the
+// keyword a ground in the body binds to a variable it passes there, after
+// the attributes the bodies' patterns and functions name. A keyword passed at
+// a value position names nothing.
+func TestRuleSetDefaultSourceAttributesThroughInvocations(t *testing.T) {
+	rs, err := NewRuleSet([]*Rule{
+		defineRule("has", []string{"?e", "?a"}, attrVarPattern("?e", "?a")),
+		defineRule("val", []string{"?e", "?v"}, scopePattern("?e", "page/kind", "?v")),
+		defineRule("marked", []string{"?e"},
+			&RuleInvocation{Name: sym("has"), Args: []PatternElement{Variable{Name: sym("?e")}, Constant{Value: datalog.NewKeyword(":page/marked")}}}),
+		defineRule("grounded", []string{"?e"},
+			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":page/grounded")}, Binding: sym("?g")},
+			invoke("has", "?e", "?g")),
+		defineRule("valued", []string{"?e"},
+			&RuleInvocation{Name: sym("val"), Args: []PatternElement{Variable{Name: sym("?e")}, Constant{Value: datalog.NewKeyword(":page/value")}}}),
+	})
+	if err != nil {
+		t.Fatalf("NewRuleSet: %v", err)
+	}
+	assertKeywordsInOrder(t, rs.DefaultSourceAttributes(), []datalog.Keyword{
+		datalog.NewKeyword(":page/kind"),
+		datalog.NewKeyword(":page/marked"),
+		datalog.NewKeyword(":page/grounded"),
+	})
+}
+
+// InvocationAttributes returns, from a roster of invocation constants, the
+// keywords passed at the positions the invoked predicate reads as an
+// attribute, in order and each once. A keyword at a value position, or
+// passed to a predicate the set does not define, names nothing.
+func TestRuleSetInvocationAttributes(t *testing.T) {
+	rs, err := NewRuleSet([]*Rule{
+		defineRule("has", []string{"?e", "?a"}, attrVarPattern("?e", "?a")),
+		defineRule("has2", []string{"?e", "?a"}, invoke("has", "?e", "?a")),
+		defineRule("val", []string{"?e", "?v"}, scopePattern("?e", "page/kind", "?v")),
+	})
+	if err != nil {
+		t.Fatalf("NewRuleSet: %v", err)
+	}
+	got := rs.InvocationAttributes([]InvocationConstant{
+		{Name: sym("has"), Position: 1, Attr: datalog.NewKeyword(":t/a")},
+		{Name: sym("has"), Position: 0, Attr: datalog.NewKeyword(":t/entity")},
+		{Name: sym("val"), Position: 1, Attr: datalog.NewKeyword(":t/value")},
+		{Name: sym("has2"), Position: 1, Attr: datalog.NewKeyword(":t/b")},
+		{Name: sym("absent"), Position: 0, Attr: datalog.NewKeyword(":t/c")},
+		{Name: sym("has"), Position: 1, Attr: datalog.NewKeyword(":t/a")},
+	})
+	assertKeywordsInOrder(t, got, []datalog.Keyword{datalog.NewKeyword(":t/a"), datalog.NewKeyword(":t/b")})
+}
+
 func TestScopeOfRuleInvocation(t *testing.T) {
 	inv := invoke("follows", "?a", "x", "_", "?a")
 	scope := ScopeOf(inv, nil)

@@ -33,24 +33,25 @@ func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
 		},
 		version: ver,
 	})
-	resolver := &mockCacheResolver{cardinality: schema.CardinalityOne}
+	resolver := NewPatternMatcher(NewMemoryStore(&BinaryKeyEncoder{}))
 
 	// Prove the fresh-hit path resolves cleanly before measuring it. The check
 	// is here rather than in the loop because the loop exists to measure a
 	// single branch, and a per-iteration error test would be measuring itself.
 	// It also pins that the hit is real: a fallthrough to the rebuild path
-	// would count a resolution.
-	if _, err := c.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake); err != nil {
+	// would read the index.
+	hit := &scanReport{}
+	if _, err := c.GetOrResolve(key, schema.CardinalityOne, resolver, nil, nil, hit); err != nil {
 		b.Fatal(err)
 	}
-	if resolver.resolveLWWCalls != 0 {
-		b.Fatalf("the fresh hit resolved %d times, want none", resolver.resolveLWWCalls)
+	if hit.scanned != 0 {
+		b.Fatalf("the fresh hit read %d index entries, want none", hit.scanned)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		getResolveSink, getResolveErrSink = c.GetOrResolve(key, resolver.cardinality, resolver, nil, nil, DiscardIntake)
+		getResolveSink, getResolveErrSink = c.GetOrResolve(key, schema.CardinalityOne, resolver, nil, nil, DiscardIntake)
 	}
 }
 

@@ -278,6 +278,22 @@ func TestSubqueryPatternValidateInputCount(t *testing.T) {
 	if err := pairs.Validate(); err != nil {
 		t.Errorf("one value per symbol of a relation input is valid, got %v", err)
 	}
+	tuple := &SubqueryPattern{
+		Query: &Query{
+			Find:  inner.Find,
+			In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, TupleInput{Symbols: []Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?w")}}},
+			Where: inner.Where,
+		},
+		Inputs:  []PatternElement{dollar, x, y},
+		Binding: ScalarBinding{Variable: datalog.NewSymbol("?out")},
+	}
+	if err := tuple.Validate(); err != nil {
+		t.Errorf("one value per symbol of a tuple input is valid, got %v", err)
+	}
+	tuple.Inputs = []PatternElement{dollar, x}
+	if err := tuple.Validate(); err == nil {
+		t.Error("one value for a tuple input of two symbols is refused")
+	}
 }
 
 // TestOrDefaultJoinValidate pins the declared-interface enforcement: every

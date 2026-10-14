@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -317,21 +316,38 @@ func TestScanSharingMatcherPreservesAndRemapsProperties(t *testing.T) {
 	}, hit.Properties())
 }
 
-// TestScanSharingMatcherForwardsTheVocabularyQuestion pins that a source
-// refuses through the scan-sharing wrapper as it does without one: the
-// wrapper answers the attribute-vocabulary question from the inner matcher,
-// and refuses nothing over a matcher without a vocabulary.
-func TestScanSharingMatcherForwardsTheVocabularyQuestion(t *testing.T) {
-	refusal := errors.New("unknown attribute :t/naem")
-	roster := []datalog.Keyword{datalog.NewKeyword(":t/naem")}
-	var wrapped PatternMatcher = NewScanSharingMatcher(&vocabularyMatcher{refuses: true, answer: refusal}, NewScanRegistry(), nil)
-	vocabulary, ok := wrapped.(AttributeVocabulary)
-	require.True(t, ok, "the wrapper does not answer the vocabulary question")
-	require.True(t, vocabulary.RefusesUnknownAttributes(datalog.SymDollar), "the wrapper reports the source as refusing nothing, want the inner matcher's answer")
-	require.Same(t, refusal, vocabulary.UnknownAttributes(datalog.SymDollar, roster), "want the inner matcher's refusal")
-	var plain PatternMatcher = NewScanSharingMatcher(&fixedMatcher{}, NewScanRegistry(), nil)
-	if vocabulary, ok := plain.(AttributeVocabulary); ok {
-		require.False(t, vocabulary.RefusesUnknownAttributes(datalog.SymDollar), "a wrapper over a matcher without a vocabulary refuses nothing")
+// A matcher without a vocabulary refuses nothing under the wrappers the
+// execution puts around it. A subquery whose input binds a pattern's attribute
+// position asks the executor's matcher, wrapped for scan sharing and for
+// annotation, before it runs; over a memory matcher, which answers no
+// vocabulary question, the subquery runs and reads the datoms the attribute
+// carries.
+func TestScanSharingMatcherOverAMatcherWithoutAVocabularyRefusesNothing(t *testing.T) {
+	name := datalog.NewKeyword(":t/name")
+	datoms := []datalog.Datom{
+		{E: datalog.NewIdentity("e1"), A: name, V: "alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("e2"), A: name, V: "bob", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+	}
+	const text = `[:find ?v :in $ ?a :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.plannerOptions()
+			opts.EnableScanSharing = true
+			opts.Handler = func(annotations.Event) {}
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts)
+			q := mustParse(t, text)
+			inputs, err := createInputRelationsFromValuesWithOptions(q, []interface{}{datalog.SymDollar, name}, exec.options)
+			require.NoError(t, err)
+			rel, err := exec.ExecuteWithRelations(NewContext(), q, inputs)
+			require.NoError(t, err, "a subquery over a matcher without a vocabulary runs under the wrappers")
+			var tuples []Tuple
+			require.NoError(t, collectTuplesInto(&tuples, rel))
+			var values []string
+			for _, tuple := range tuples {
+				values = append(values, tuple[0].(string))
+			}
+			require.ElementsMatch(t, []string{"alice", "bob"}, values, "the subquery read the datoms the bound attribute carries")
+		})
 	}
 }
 
