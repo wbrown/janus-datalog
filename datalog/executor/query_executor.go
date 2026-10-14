@@ -1609,10 +1609,13 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx *Context, clause *query.OrCla
 	var err error
 	var semantics string
 
-	// Route to correlated union only when branches have expression clauses
-	// that require outer bindings. Pattern-only branches work fine in
-	// uncorrelated union — the join with outer context happens during collapse.
-	if branchesNeedCorrelatedExecution(clause.Branches) {
+	// The union path runs each branch against storage alone and joins the
+	// groups at collapse on the branches' common symbols, so it serves only
+	// when every branch free variable the enclosing scope binds is a common
+	// one. A branch with an expression consuming an outer binding, or a
+	// variable one branch alone reads that a group or the environment binds,
+	// runs per outer tuple instead, where the branch sees the binding.
+	if branchesNeedCorrelatedExecution(clause.Branches) || scopeBindsABranchLocal(ctx, clause.Branches, groups) {
 		semantics = "correlated-union"
 		result, err = e.executeOrClauseCorrelatedUnion(ctx, clause.Branches, groups)
 	} else {
@@ -1642,6 +1645,27 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx *Context, clause *query.OrCla
 	}
 
 	return result, err
+}
+
+// scopeBindsABranchLocal reports whether a group or the environment binds a
+// free variable of some branch that the branches' common output does not
+// carry: a binding the union path would project away before the collapse
+// joins it.
+func scopeBindsABranchLocal(ctx *Context, branches [][]query.Clause, groups Relations) bool {
+	common := computeOrBranchOutputSymbols(branches)
+	var bound []query.Symbol
+	for _, group := range groups {
+		bound = append(bound, group.Symbols()...)
+	}
+	if env := ctx.Environment(); env != nil {
+		bound = append(bound, env.Symbols()...)
+	}
+	for _, sym := range branchFreeVariables(branches, ctx.Rules()) {
+		if !query.ContainsSymbol(common, sym) && query.ContainsSymbol(bound, sym) {
+			return true
+		}
+	}
+	return false
 }
 
 // executeOrClauseCorrelatedUnion evaluates all branches per outer tuple and unions results.

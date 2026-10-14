@@ -466,8 +466,11 @@ func TestRuleSetAttributePositions(t *testing.T) {
 // the attributes the bodies' patterns and functions name. A keyword passed at
 // a value position names nothing.
 func TestRuleSetDefaultSourceAttributesThroughInvocations(t *testing.T) {
+	needs := defineRule("needs", []string{"?a", "?e"}, attrVarPattern("?e", "?a"))
+	needs.Required = []Symbol{sym("?a")}
 	rs, err := NewRuleSet([]*Rule{
 		defineRule("has", []string{"?e", "?a"}, attrVarPattern("?e", "?a")),
+		needs,
 		defineRule("val", []string{"?e", "?v"}, scopePattern("?e", "page/kind", "?v")),
 		defineRule("marked", []string{"?e"},
 			&RuleInvocation{Name: sym("has"), Args: []PatternElement{Variable{Name: sym("?e")}, Constant{Value: datalog.NewKeyword(":page/marked")}}}),
@@ -476,6 +479,12 @@ func TestRuleSetDefaultSourceAttributesThroughInvocations(t *testing.T) {
 			invoke("has", "?e", "?g")),
 		defineRule("valued", []string{"?e"},
 			&RuleInvocation{Name: sym("val"), Args: []PatternElement{Variable{Name: sym("?e")}, Constant{Value: datalog.NewKeyword(":page/value")}}}),
+		defineRule("widened", []string{"?e"},
+			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":page/widened")}, Binding: sym("?w")},
+			&OrJoinClause{JoinVars: []Symbol{sym("?e")}, Branches: [][]Clause{
+				{invoke("needs", "?w", "?e")},
+				{scopePattern("?e", "page/kind", "_")},
+			}}),
 	})
 	if err != nil {
 		t.Fatalf("NewRuleSet: %v", err)
@@ -484,6 +493,7 @@ func TestRuleSetDefaultSourceAttributesThroughInvocations(t *testing.T) {
 		datalog.NewKeyword(":page/kind"),
 		datalog.NewKeyword(":page/marked"),
 		datalog.NewKeyword(":page/grounded"),
+		datalog.NewKeyword(":page/widened"),
 	})
 }
 

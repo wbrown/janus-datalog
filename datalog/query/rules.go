@@ -390,14 +390,15 @@ func (rs *RuleSet) CheckInvocation(inv *RuleInvocation) error {
 
 // DefaultSourceAttributes returns every attribute the rule bodies name on
 // the default source, in order of first appearance and each once, collected
-// as Query.DefaultSourceAttributes collects a query's, then the keywords the
-// bodies' invocations pass at attribute positions (InvocationAttributes).
+// as Query.DefaultSourceAttributes collects a query's under the rule set
+// itself, then the keywords the bodies' invocations pass at attribute
+// positions (InvocationAttributes).
 func (rs *RuleSet) DefaultSourceAttributes() []datalog.Keyword {
 	rs.attributesOnce.Do(func() {
 		roster := newAttributeRoster()
 		for _, name := range rs.order {
 			for _, rule := range rs.rules[name] {
-				roster.addClauses(rule.Body, false)
+				roster.addClauses(rule.Body, false, rs)
 			}
 		}
 		for _, attr := range rs.InvocationAttributes(roster.invocations) {

@@ -592,7 +592,7 @@ func queryExecutionAllocs(t *testing.T, d *Database, text string, collected bool
 		q, err := parser.ParseQuery(text)
 		require.NoError(t, err)
 		if collected {
-			q.DefaultSourceAttributes()
+			q.DefaultSourceAttributes(nil)
 		}
 		queries = append(queries, q)
 	}

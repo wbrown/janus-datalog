@@ -14,23 +14,30 @@ import (
 // path. Each runs on a database declaring the fixture schema: opened without
 // the option, where the gate is off; opened with it, for a query naming a
 // declared attribute, which runs; opened with it, for a query whose subquery
-// names a declared attribute and runs once per outer tuple; and opened with
-// it, for a query naming an attribute the store carries but the schema does
-// not declare, which is refused.
+// names a declared attribute and runs once per outer tuple; opened with it,
+// for a query under a rule set whose or-join branch passes, at a position the
+// rule set requires, a variable the enclosing scope binds to a declared
+// attribute, so the roster resolves under the rule set; and opened with it,
+// for a query naming an attribute the store carries but the schema does not
+// declare, which is refused.
 func BenchmarkUnknownAttributeCheck(b *testing.B) {
 	const declared = `[:find ?v :where [?e :t/string ?v]]`
 	const declaredInSubquery = `[:find ?e ?n :where [?e :t/string ?v] [(q [:find (count ?x) :in $ ?e :where [?e :t/string ?x]] $ ?e) [[?n]]]]`
+	const declaredThroughRules = `[:find ?e :in $ % :where [(ground :t/string) ?a] (or-join [?e] (held ?a ?e) [?e :t/string _])]`
+	const requiringRules = `[[(held [?a] ?e) [?e ?a _]]]`
 	const undeclared = `[:find ?v :where [?e :t/loose ?v]]`
 	cases := []struct {
 		name    string
 		refuse  bool
 		text    string
+		rules   string
 		refused bool
 	}{
-		{"gate-off", false, declared, false},
-		{"declared", true, declared, false},
-		{"declared-in-subquery", true, declaredInSubquery, false},
-		{"undeclared-written", true, undeclared, true},
+		{"gate-off", false, declared, "", false},
+		{"declared", true, declared, "", false},
+		{"declared-in-subquery", true, declaredInSubquery, "", false},
+		{"declared-through-rules", true, declaredThroughRules, requiringRules, false},
+		{"undeclared-written", true, undeclared, "", true},
 	}
 	for _, backend := range AvailableBackends() {
 		for _, c := range cases {
@@ -51,24 +58,33 @@ func BenchmarkUnknownAttributeCheck(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
+			var rules *query.RuleSet
+			var inputs []interface{}
+			if c.rules != "" {
+				rules, err = parser.ParseRules(c.rules)
+				if err != nil {
+					b.Fatal(err)
+				}
+				inputs = []interface{}{rules}
+			}
 
 			b.Run("check/"+backend.Name+"/"+c.name, func(b *testing.B) {
-				benchmarkCheck(b, db, q, c.refused)
+				benchmarkCheck(b, db, q, rules, c.refused)
 			})
 			b.Run("query/"+backend.Name+"/"+c.name, func(b *testing.B) {
-				benchmarkQuery(b, db, q, c.refused)
+				benchmarkQuery(b, db, q, inputs, c.refused)
 			})
 		}
 	}
 }
 
-// benchmarkCheck times the matcher's check alone, which refuses q when refused
-// is set and accepts it otherwise.
-func benchmarkCheck(b *testing.B, db *Database, q *query.Query, refused bool) {
+// benchmarkCheck times the matcher's check alone on the attributes q names
+// under rules, which refuses q when refused is set and accepts it otherwise.
+func benchmarkCheck(b *testing.B, db *Database, q *query.Query, rules *query.RuleSet, refused bool) {
 	matcher := db.Matcher().(*PatternMatcher)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		err := matcher.UnknownAttributes(datalog.SymDollar, q.DefaultSourceAttributes())
+		err := matcher.UnknownAttributes(datalog.SymDollar, q.DefaultSourceAttributes(rules))
 		if refused && err == nil {
 			b.Fatal("the check accepted a query it refuses")
 		}
@@ -78,12 +94,13 @@ func benchmarkCheck(b *testing.B, db *Database, q *query.Query, refused bool) {
 	}
 }
 
-// benchmarkQuery times the whole query path, the check included. An accepted
-// query returns the holder's one value; a refused one returns the refusal.
-func benchmarkQuery(b *testing.B, db *Database, q *query.Query, refused bool) {
+// benchmarkQuery times the whole query path, the check included, with inputs
+// bound to the query's :in. An accepted query returns the holder's one value;
+// a refused one returns the refusal.
+func benchmarkQuery(b *testing.B, db *Database, q *query.Query, inputs []interface{}, refused bool) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		tuples, err := executor.CollectTuples(db.Query(q))
+		tuples, err := executor.CollectTuples(db.Query(q, inputs...))
 		if refused {
 			if err == nil {
 				b.Fatal("the query ran where it is refused")

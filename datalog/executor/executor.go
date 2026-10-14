@@ -175,21 +175,19 @@ func boundAttributes(q *query.Query, inputRelations []Relation) ([]datalog.Keywo
 
 // refuseUnknownAttributes asks each source the query names, when that source
 // refuses attributes its schema does not declare, about the attributes the
-// query names on it: on the default source the query's own, the rule bodies',
-// the keywords the query's invocations pass at the positions the rule set
-// reads as attributes, and the ones the inputs bind to a pattern's attribute
-// position; on a named source the patterns' on it. A source that does not
-// refuse is asked about nothing. The first refusal is returned.
+// query names on it: on the default source the query's own under the rule set
+// it runs with, the keywords its invocations pass at the positions the rule
+// set reads as attributes among them, the rule bodies', and the ones the
+// inputs bind to a pattern's attribute position; on a named source the
+// patterns' on it. A source that does not refuse is asked about nothing. The
+// first refusal is returned.
 func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, q *query.Query, inputRelations []Relation) error {
 	if vocabulary.RefusesUnknownAttributes(datalog.SymDollar) {
-		if err := vocabulary.UnknownAttributes(datalog.SymDollar, q.DefaultSourceAttributes()); err != nil {
+		if err := vocabulary.UnknownAttributes(datalog.SymDollar, q.DefaultSourceAttributes(ctx.rules)); err != nil {
 			return err
 		}
 		if ctx.rules != nil {
 			if err := vocabulary.UnknownAttributes(datalog.SymDollar, ctx.rules.DefaultSourceAttributes()); err != nil {
-				return err
-			}
-			if err := vocabulary.UnknownAttributes(datalog.SymDollar, ctx.rules.InvocationAttributes(q.InvocationConstants())); err != nil {
 				return err
 			}
 		}

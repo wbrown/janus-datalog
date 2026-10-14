@@ -26,14 +26,14 @@ func assertKeywordsInOrder(t *testing.T, got, want []datalog.Keyword) {
 // functions as an expression and as a predicate, through the :find pull
 // pattern, and, at the scope's end, through a variable in the attribute
 // position that ground, identity of a keyword, or identity of such a
-// variable binds to a keyword. A variable a nested form's branch binds
-// outside the form's interface is the branch's own, so a ground outside the
-// form does not reach it; a variable the interface shares, an or-join header
-// variable or a variable of a not body, resolves against the enclosing
-// scope. A pattern on a named source reads that source's attributes, a blank
-// or a variable nothing binds to a keyword in the attribute position names
-// none, and a ground whose variable stands in no attribute position names
-// none.
+// variable binds to a keyword. A variable an or-join branch binds outside
+// the header is the branch's own, so a ground outside the form does not
+// reach it; a variable the header shares, and every variable of an or,
+// or-default or not branch, resolves against the enclosing scope, through an
+// identity alias the branch records to it too. A pattern on a named source
+// reads that source's attributes, a blank or a variable nothing binds to a
+// keyword in the attribute position names none, and a ground whose variable
+// stands in no attribute position names none.
 func TestDefaultSourceAttributes(t *testing.T) {
 	entity := Variable{Name: datalog.NewSymbol("?e")}
 	entityTerm := VariableTerm{Symbol: datalog.NewSymbol("?e")}
@@ -111,6 +111,21 @@ func TestDefaultSourceAttributes(t *testing.T) {
 				Binding:  TupleBinding{Variables: []Symbol{datalog.NewSymbol("?ta"), datalog.NewSymbol("?tb")}},
 			},
 			&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?ta")}, Variable{Name: datalog.NewSymbol("?tb")}}},
+			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/inferred")}, Binding: datalog.NewSymbol("?oa")},
+			&OrClause{Branches: [][]Clause{
+				{&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?oa")}, Blank{}}}},
+				{&DataPattern{Elements: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/orother")}, Blank{}}}},
+			}},
+			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/fallen")}, Binding: datalog.NewSymbol("?fa")},
+			&OrDefaultClause{Branches: [][]Clause{
+				{&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?fa")}, Blank{}}}},
+				{&DataPattern{Elements: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/fallback")}, Blank{}}}},
+			}},
+			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/aliased")}, Binding: datalog.NewSymbol("?sa")},
+			&OrJoinClause{JoinVars: []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?sa")}, Branches: [][]Clause{{
+				&Expression{Function: IdentityFunction{Arg: VariableTerm{Symbol: datalog.NewSymbol("?sa")}}, Binding: datalog.NewSymbol("?al")},
+				&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?al")}, Blank{}}},
+			}}},
 		},
 	}
 
@@ -132,31 +147,45 @@ func TestDefaultSourceAttributes(t *testing.T) {
 		datalog.NewKeyword(":t/some2"),
 		datalog.NewKeyword(":t/missingexpr"),
 		datalog.NewKeyword(":t/missingpred"),
+		datalog.NewKeyword(":t/orother"),
+		datalog.NewKeyword(":t/fallback"),
 		datalog.NewKeyword(":t/ground"),
 		datalog.NewKeyword(":t/identity"),
 		datalog.NewKeyword(":t/tuple"),
 		datalog.NewKeyword(":t/shared"),
 		datalog.NewKeyword(":t/negated"),
+		datalog.NewKeyword(":t/inferred"),
+		datalog.NewKeyword(":t/fallen"),
+		datalog.NewKeyword(":t/aliased"),
 	}
-	assertKeywordsInOrder(t, q.DefaultSourceAttributes(), want)
+	assertKeywordsInOrder(t, q.DefaultSourceAttributes(nil), want)
 }
 
-// TestInvocationConstants pins the roster InvocationConstants collects: for
-// every rule invocation at any depth, subquery bodies included, each keyword
-// constant argument with its predicate and position, in order of first
-// appearance and each once, and, at the end of each scope, each variable
-// argument the scope binds to a keyword through ground or identity, or that
-// the form's interface shares with an enclosing scope binding it. A constant
-// of another type, a variable nothing binds, and a variable a branch binds
-// outside its form's interface name nothing.
-func TestInvocationConstants(t *testing.T) {
+// TestDefaultSourceAttributesThroughInvocations pins what a query names on
+// the default source through its rule invocations under a rule set reading a
+// position as an attribute: for every invocation at any depth, subquery
+// bodies included, each keyword constant argument at such a position, after
+// the patterns' attributes, in order of first appearance and each once, and,
+// at the end of each scope, each variable argument the scope binds to a
+// keyword through ground or identity, or that the form's interface shares
+// with an enclosing scope binding it. Read under a rule set requiring
+// nothing, an invocation provides every variable argument, so a variable
+// passed inside an explicit-header branch outside the header is the branch's
+// own and names nothing, as does a variable a pattern of the branch provides;
+// TestDefaultSourceAttributesUnderARuleSet carries the rule set that widens
+// the interface. A constant of another type, a variable nothing binds, and a
+// keyword at a position the rule set reads as a value name nothing. Under no
+// rule set the query names the patterns' attributes alone, and a resolution
+// under a rule set leaves that roster as it is.
+func TestDefaultSourceAttributesThroughInvocations(t *testing.T) {
 	entity := Variable{Name: datalog.NewSymbol("?e")}
-	has := datalog.NewSymbol("has")
+	has, also := datalog.NewSymbol("has"), datalog.NewSymbol("also")
 	q := &Query{Where: []Clause{
 		&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/direct")}}},
 		&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: "text"}}},
 		&RuleInvocation{Name: has, Args: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?ga")}}},
 		&RuleInvocation{Name: has, Args: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?free")}}},
+		&RuleInvocation{Name: also, Args: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/value")}}},
 		&OrClause{Branches: [][]Clause{{
 			&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/branch")}}},
 		}}},
@@ -176,25 +205,157 @@ func TestInvocationConstants(t *testing.T) {
 		&OrJoinClause{JoinVars: []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?sh")}, Branches: [][]Clause{{
 			&RuleInvocation{Name: has, Args: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?sh")}}},
 		}}},
+		&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/provided")}, Binding: datalog.NewSymbol("?pa")},
+		&OrJoinClause{JoinVars: []Symbol{datalog.NewSymbol("?e")}, Branches: [][]Clause{{
+			&RuleInvocation{Name: has, Args: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?pa")}}},
+			&DataPattern{Elements: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/x")}, Variable{Name: datalog.NewSymbol("?pa")}}},
+		}}},
 	}}
-	want := []InvocationConstant{
-		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/direct")},
-		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/branch")},
-		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/sub")},
-		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/ground")},
-		{Name: has, Position: 1, Attr: datalog.NewKeyword(":t/shared")},
+	rules := mustRuleSet(t, []*Rule{
+		defineRule("has", []string{"?e", "?a"}, attrVarPattern("?e", "?a")),
+		defineRule("also", []string{"?e", "?p"}, scopePattern("?e", "t/kind", "?p")),
+	})
+	patterns := []datalog.Keyword{datalog.NewKeyword(":t/x")}
+	assertKeywordsInOrder(t, q.DefaultSourceAttributes(rules), []datalog.Keyword{
+		datalog.NewKeyword(":t/x"),
+		datalog.NewKeyword(":t/direct"),
+		datalog.NewKeyword(":t/branch"),
+		datalog.NewKeyword(":t/sub"),
+		datalog.NewKeyword(":t/ground"),
+		datalog.NewKeyword(":t/shared"),
+	})
+	assertKeywordsInOrder(t, q.DefaultSourceAttributes(nil), patterns)
+}
+
+// headerPassingQuery builds a query whose explicit-header forms pass, inside
+// a branch and outside the header, variables the enclosing scope binds to
+// keywords: one passed to an invocation alone, one passed to two invocations,
+// one a pattern of the branch provides, one passed inside an or nested in the
+// branch, one a pattern of the other branch reads in the attribute position,
+// one passed inside a not-join body, and, in a subquery body, a tree of its
+// own, one passed inside an or-join whose other branch reads it in the
+// attribute position. The predicates has and also take the passed variable at
+// position 0.
+func headerPassingQuery() *Query {
+	entity := Variable{Name: datalog.NewSymbol("?e")}
+	has, also := datalog.NewSymbol("has"), datalog.NewSymbol("also")
+	header := []Symbol{datalog.NewSymbol("?e")}
+	ground := func(attr, v string) *Expression {
+		return &Expression{Function: GroundFunction{Value: datalog.NewKeyword(attr)}, Binding: datalog.NewSymbol(v)}
 	}
-	got := q.InvocationConstants()
-	if len(got) != len(want) {
-		t.Fatalf("collected %d invocation constants, want %d:\n got  %v\n want %v", len(got), len(want), got, want)
+	passing := func(name Symbol, v string) *RuleInvocation {
+		return &RuleInvocation{Name: name, Args: []PatternElement{Variable{Name: datalog.NewSymbol(v)}, entity}}
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("invocation constant %d is %v, want %v", i, got[i], want[i])
+	other := &DataPattern{Elements: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/other")}, Blank{}}}
+	return &Query{Where: []Clause{
+		ground(":t/direct", "?da"),
+		passing(has, "?da"),
+		ground(":t/local", "?la"),
+		&OrJoinClause{JoinVars: header, Branches: [][]Clause{{passing(has, "?la")}, {other}}},
+		ground(":t/paired", "?pa"),
+		&OrJoinClause{JoinVars: header, Branches: [][]Clause{{passing(has, "?pa"), passing(also, "?pa")}, {other}}},
+		ground(":t/provided", "?pv"),
+		&OrJoinClause{JoinVars: header, Branches: [][]Clause{{
+			passing(has, "?pv"),
+			&DataPattern{Elements: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/x")}, Variable{Name: datalog.NewSymbol("?pv")}}},
+		}, {other}}},
+		ground(":t/nested", "?na"),
+		&OrJoinClause{JoinVars: header, Branches: [][]Clause{{
+			&OrClause{Branches: [][]Clause{{passing(has, "?na")}, {other}}},
+		}, {other}}},
+		ground(":t/widened", "?wa"),
+		&OrJoinClause{JoinVars: header, Branches: [][]Clause{{passing(has, "?wa")}, {
+			&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?wa")}, Blank{}}},
+		}}},
+		ground(":t/negated", "?nj"),
+		&NotJoinClause{JoinVars: header, Clauses: []Clause{passing(has, "?nj")}},
+		&SubqueryPattern{
+			Query: &Query{Where: []Clause{
+				ground(":t/inner", "?ia"),
+				&OrJoinClause{JoinVars: header, Branches: [][]Clause{{passing(has, "?ia")}, {
+					&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?ia")}, Blank{}}},
+				}}},
+			}},
+			Binding: ScalarBinding{Variable: datalog.NewSymbol("?s")},
+		},
+	}}
+}
+
+// requiringRuleSet builds the rule set headerPassingQuery runs under: has,
+// reading its position 0 as an attribute, and also, reading its position 0
+// as a value, each requiring position 0 bound when named in required.
+func requiringRuleSet(t *testing.T, required ...string) *RuleSet {
+	t.Helper()
+	has := defineRule("has", []string{"?a", "?e"}, attrVarPattern("?e", "?a"))
+	also := defineRule("also", []string{"?p", "?x"}, scopePattern("?x", "t/kind", "?p"))
+	for _, name := range required {
+		switch name {
+		case "has":
+			has.Required = []Symbol{sym("?a")}
+		case "also":
+			also.Required = []Symbol{sym("?p")}
+		default:
+			t.Fatalf("requiringRuleSet: no predicate %s", name)
 		}
 	}
-	if &q.InvocationConstants()[0] != &got[0] {
-		t.Errorf("every call returns the roster the first call built; got two rosters")
+	return mustRuleSet(t, []*Rule{has, also})
+}
+
+// Under the rule set the query runs with, an explicit-header form shares with
+// its branches the variables its interface names under that rule set, the
+// interface the executor joins the enclosing scope on. A variable passed
+// inside a branch outside the header, at a position the rule set requires, is
+// a mandatory correlate of the branch, and when no clause of the branch
+// provides it, it is an external the form reads from the enclosing scope, so
+// the keyword the enclosing scope binds it to is passed at every position of
+// the branch passing it, and a pattern of another branch reading the variable
+// in the attribute position names it. A position the rule set does not
+// require provides the variable, as a pattern of the branch does, and under
+// either the variable is the branch's own. The widening reaches an invocation
+// inside an or nested in the branch, whose externals are the branch's
+// correlates, and stops at a not-join, whose header is its whole interface.
+// The attributes a resolution under a rule set adds follow the ones the query
+// names under no rule set, and the keywords the invocations pass at the
+// positions the rule set reads as attributes follow those; a keyword passed
+// at a position the rule set reads as a value names nothing.
+func TestDefaultSourceAttributesUnderARuleSet(t *testing.T) {
+	q := headerPassingQuery()
+	named := []datalog.Keyword{datalog.NewKeyword(":t/other"), datalog.NewKeyword(":t/x")}
+	cases := []struct {
+		name  string
+		rules *RuleSet
+		want  []datalog.Keyword
+	}{
+		{"no rule set", nil, named},
+		{"nothing required", requiringRuleSet(t), []datalog.Keyword{
+			datalog.NewKeyword(":t/other"),
+			datalog.NewKeyword(":t/x"),
+			datalog.NewKeyword(":t/direct"),
+		}},
+		{"has requires its position", requiringRuleSet(t, "has"), []datalog.Keyword{
+			datalog.NewKeyword(":t/other"),
+			datalog.NewKeyword(":t/x"),
+			datalog.NewKeyword(":t/inner"),
+			datalog.NewKeyword(":t/widened"),
+			datalog.NewKeyword(":t/direct"),
+			datalog.NewKeyword(":t/local"),
+			datalog.NewKeyword(":t/nested"),
+		}},
+		{"has and also require their positions", requiringRuleSet(t, "has", "also"), []datalog.Keyword{
+			datalog.NewKeyword(":t/other"),
+			datalog.NewKeyword(":t/x"),
+			datalog.NewKeyword(":t/inner"),
+			datalog.NewKeyword(":t/widened"),
+			datalog.NewKeyword(":t/direct"),
+			datalog.NewKeyword(":t/local"),
+			datalog.NewKeyword(":t/paired"),
+			datalog.NewKeyword(":t/nested"),
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assertKeywordsInOrder(t, q.DefaultSourceAttributes(c.rules), c.want)
+		})
 	}
 }
 
@@ -213,7 +374,7 @@ func TestDefaultSourceAttributesComputedOnce(t *testing.T) {
 		}},
 		walkPattern("other"),
 	}}
-	attributes := q.DefaultSourceAttributes()
+	attributes := q.DefaultSourceAttributes(nil)
 	variables := q.DefaultSourceAttributeVariables()
 	named := q.SourceAttributes(cache)
 	assertKeywordsInOrder(t, attributes, []datalog.Keyword{datalog.NewKeyword(":t/top"), datalog.NewKeyword(":t/other")})
@@ -221,7 +382,7 @@ func TestDefaultSourceAttributesComputedOnce(t *testing.T) {
 		t.Fatalf("collected variables %v, want [?a]", variables)
 	}
 	assertKeywordsInOrder(t, named, []datalog.Keyword{datalog.NewKeyword(":t/named")})
-	if &q.DefaultSourceAttributes()[0] != &attributes[0] {
+	if &q.DefaultSourceAttributes(nil)[0] != &attributes[0] {
 		t.Errorf("every call returns the attribute roster the first call built; got two rosters")
 	}
 	if &q.DefaultSourceAttributeVariables()[0] != &variables[0] {

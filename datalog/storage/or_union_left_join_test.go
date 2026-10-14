@@ -169,12 +169,12 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 				assert.Equal(t, 1, byName["Bob"])
 			})
 
-			// Test 4: Decorrelated subquery with TupleBinding.
-			// TupleBinding [[?a ?b]] binds a single tuple. A decorrelated subquery
-			// returns multiple tuples, so this should use RelationBinding [[?a ?b] ...]
-			// instead. This test documents the current behavior.
+			// Test 4: Decorrelated subquery with TupleBinding. A tuple binding
+			// [[?a ?b]] binds one tuple, and a decorrelated subquery returns one
+			// per parent, so the query is refused; several tuples bind through a
+			// relation binding [[?a ?b] ...], which test 3 carries.
 			t.Run("decorrelated_tuple_binding", func(t *testing.T) {
-				results, err := executor.CollectTuples(db.Query(`
+				_, err := executor.CollectTuples(db.Query(`
 			[:find ?name ?count
 			 :where [?p :entity/type :type/parent]
 			        [?p :parent/name ?name]
@@ -182,12 +182,8 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 			             :in $
 			             :where [?c :child/parent ?p]]
 			            $) [[?p ?count]]]]`))
-				if err != nil {
-					t.Logf("TupleBinding with multi-tuple result: %v", err)
-					t.Log("Use RelationBinding [[?p ?count] ...] for multi-tuple subquery results")
-					t.Skip("TupleBinding only handles single-tuple results per Datomic spec")
-				}
-				t.Logf("Tuple binding results: %v", results)
+				require.ErrorContains(t, err, "tuple binding expects exactly 1 result, got more than 1",
+					"a tuple binding over a subquery returning several tuples is refused")
 			})
 		})
 	}

@@ -45,11 +45,11 @@ func patternDependsOnPendingExpression(p *query.DataPattern, available map[query
 
 // clauseSelectable is the single definition of "the greedy selection loop
 // may choose this clause this iteration": every scheduling gate admits it
-// and it is ready. The selection loop and the subquery deferral gate both
-// consume this function — a gate that waits on a clause the loop itself
-// would skip deadlocks the phase, which is exactly the divergence that
-// occurs when the gate checks readiness alone (a DataPattern can be ready
-// yet skipped because it depends on a pending expression).
+// and it is ready. The selection loop and the deferral gates for subqueries
+// and inference forms consume this function — a gate that waits on a clause
+// the loop itself would skip deadlocks the phase, which is exactly the
+// divergence that occurs when the gate checks readiness alone (a DataPattern
+// can be ready yet skipped because it depends on a pending expression).
 func clauseSelectable(
 	clause query.Clause,
 	available map[query.Symbol]bool,
@@ -69,7 +69,85 @@ func clauseSelectable(
 			return false
 		}
 	}
+	if branches, ok := inferenceFormBranches(clause); ok {
+		if inferenceFormDependsOnPendingProvider(clause, branches, available, inputs, providerCount, remaining, selected, rules) {
+			return false
+		}
+	}
 	return query.ClauseReady(clause, available, inputs, providerCount, rules)
+}
+
+// inferenceFormBranches returns the branches of an inference form, or,
+// or-default or not, whose branches unify with the enclosing scope on every
+// free variable they share with it, and false for any other clause.
+func inferenceFormBranches(clause query.Clause) ([][]query.Clause, bool) {
+	switch c := clause.(type) {
+	case *query.OrClause:
+		return c.Branches, true
+	case *query.OrDefaultClause:
+		return c.Branches, true
+	case *query.NotClause:
+		return [][]query.Clause{c.Clauses}, true
+	}
+	return nil, false
+}
+
+// inferenceFormDependsOnPendingProvider checks if a branch of an inference
+// form reads a variable the form does not provide that a pending,
+// currently-selectable pattern, expression or invocation provides and that
+// isn't yet available. The form unifies with the enclosing scope on every
+// free variable its branches share with it, and a variable outside the
+// form's provides leaves the form's output, so a binding that arrives after
+// the form has nothing to unify with: the form runs after the clauses
+// binding such a variable, as a pattern runs after the expression binding
+// one of its variables. The provider scan carries the subquery gate's two
+// restrictions, selectable providers only, and no forms or subqueries among
+// them, so no gate waits on a clause whose own gate waits on it.
+func inferenceFormDependsOnPendingProvider(
+	form query.Clause,
+	branches [][]query.Clause,
+	available map[query.Symbol]bool,
+	inputs map[query.Symbol]bool,
+	providerCount map[query.Symbol]int,
+	remaining []query.Clause,
+	selected map[int]bool,
+	rules *query.RuleSet,
+) bool {
+	provided := make(map[query.Symbol]bool)
+	for _, sym := range query.ScopeOf(form, rules).Provides {
+		provided[sym] = true
+	}
+	needed := make(map[query.Symbol]bool)
+	for _, branch := range branches {
+		for _, sym := range query.FreeVariables(branch, rules) {
+			if !available[sym] && !provided[sym] {
+				needed[sym] = true
+			}
+		}
+	}
+	if len(needed) == 0 {
+		return false
+	}
+
+	for i, clause := range remaining {
+		if selected[i] {
+			continue
+		}
+		switch clause.(type) {
+		case *query.DataPattern, *query.Expression, *query.RuleInvocation:
+		default:
+			continue
+		}
+		if !clauseSelectable(clause, available, inputs, providerCount, remaining, selected, rules) {
+			continue
+		}
+		for _, sym := range query.ScopeOf(clause, rules).Provides {
+			if needed[sym] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // subqueryDependsOnPendingProvider checks if a subquery binds a variable

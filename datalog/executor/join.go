@@ -224,9 +224,6 @@ func HashJoinWithOptions(
 	joinSyms []query.Symbol,
 	opts ExecutorOptions,
 ) Relation {
-	// Default capacity for unknown sizes (-1)
-	const defaultCapacity = 1000
-
 	// Check if we should use symmetric hash join for streaming relations
 	if opts.EnableSymmetricHashJoin {
 		strategy := ChooseJoinStrategy(left, right, joinSyms, opts)
@@ -454,14 +451,11 @@ func HashJoinWithOptions(
 		// Return streaming relation with lazy evaluation
 		var resultSeen *TupleKeyMap
 		if len(resultProperties.Keys) == 0 {
-			// Handle unknown sizes (-1) with reasonable default.
-			expectedResults := probeRel.Size()
-			if expectedResults < 0 {
-				expectedResults = defaultCapacity
-			}
-			buildSize := buildRel.Size()
-			if buildSize > 0 && buildSize < expectedResults {
-				expectedResults = buildSize
+			// The build tuples are in hand and size the map, the probe side
+			// when its size is known and smaller; the map grows past either.
+			expectedResults := buildCount
+			if probeSize := probeRel.Size(); probeSize >= 0 && probeSize < expectedResults {
+				expectedResults = probeSize
 			}
 			resultSeen = NewTupleKeyMapWithCapacity(expectedResults)
 		}
@@ -492,15 +486,11 @@ func HashJoinWithOptions(
 	// Use efficient TupleKeyMap for deduplication
 	var seen *TupleKeyMap
 	if len(resultProperties.Keys) == 0 {
-		// Pre-size seen map - worst case is probe size, but likely smaller due
-		// to filtering. Use min(probeSize, buildSize) as estimate.
-		expectedResults := probeRel.Size()
-		if expectedResults < 0 {
-			expectedResults = defaultCapacity
-		}
-		probeBuildSize := buildRel.Size()
-		if probeBuildSize > 0 && probeBuildSize < expectedResults {
-			expectedResults = probeBuildSize
+		// The build tuples are in hand and size the map, the probe side when
+		// its size is known and smaller; the map grows past either.
+		expectedResults := buildCount
+		if probeSize := probeRel.Size(); probeSize >= 0 && probeSize < expectedResults {
+			expectedResults = probeSize
 		}
 		seen = NewTupleKeyMapWithCapacity(expectedResults)
 	}
