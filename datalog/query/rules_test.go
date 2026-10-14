@@ -497,7 +497,7 @@ func TestRuleSetDefaultSourceAttributesThroughInvocations(t *testing.T) {
 	})
 }
 
-// InvocationAttributes returns, from a roster of invocation constants, the
+// invocationAttributes returns, from a roster of invocation constants, the
 // keywords passed at the positions the invoked predicate reads as an
 // attribute, in order and each once. A keyword at a value position, or
 // passed to a predicate the set does not define, names nothing.
@@ -510,7 +510,7 @@ func TestRuleSetInvocationAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRuleSet: %v", err)
 	}
-	got := rs.InvocationAttributes([]InvocationConstant{
+	got := rs.invocationAttributes([]invocationConstant{
 		{Name: sym("has"), Position: 1, Attr: datalog.NewKeyword(":t/a")},
 		{Name: sym("has"), Position: 0, Attr: datalog.NewKeyword(":t/entity")},
 		{Name: sym("val"), Position: 1, Attr: datalog.NewKeyword(":t/value")},

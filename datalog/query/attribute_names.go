@@ -36,7 +36,7 @@ import (
 // interface widens to that variable, and the attributes a resolution under
 // the rule set so names come first. Then come the keywords the query's
 // invocations pass at the positions the rule set reads as attributes
-// (RuleSet.InvocationAttributes): a keyword constant argument, or, at the end
+// (RuleSet.invocationAttributes): a keyword constant argument, or, at the end
 // of the invocation's scope, a variable argument bound to a keyword as an
 // attribute variable is.
 func (q *Query) DefaultSourceAttributes(rules *RuleSet) []datalog.Keyword {
@@ -49,7 +49,7 @@ func (q *Query) DefaultSourceAttributes(rules *RuleSet) []datalog.Keyword {
 	if added != nil {
 		constants = append(constants[:len(constants):len(constants)], added.invocations...)
 	}
-	invoked := rules.InvocationAttributes(constants)
+	invoked := rules.invocationAttributes(constants)
 	if added == nil && len(invoked) == 0 {
 		return rosters.order
 	}
@@ -91,10 +91,10 @@ func (q *Query) SourceAttributes(source Symbol) []datalog.Keyword {
 	return nil
 }
 
-// InvocationConstant is a keyword a rule invocation passes at a position: the
+// invocationConstant is a keyword a rule invocation passes at a position: the
 // predicate, the position and the keyword. The rule set decides whether the
-// position reads the keyword as an attribute (RuleSet.InvocationAttributes).
-type InvocationConstant struct {
+// position reads the keyword as an attribute (RuleSet.invocationAttributes).
+type invocationConstant struct {
 	Name     Symbol
 	Position int
 	Attr     datalog.Keyword
@@ -137,8 +137,8 @@ type attributeRoster struct {
 	seenVars        map[Symbol]bool
 	variables       []Symbol
 	sources         map[Symbol]*sourceRoster
-	seenInvocations map[InvocationConstant]bool
-	invocations     []InvocationConstant
+	seenInvocations map[invocationConstant]bool
+	invocations     []invocationConstant
 	trees           []*clauseScope
 	headerPassed    []passedVariable
 }
@@ -194,12 +194,12 @@ func (r *attributeRoster) addOn(source Symbol, attr datalog.Keyword) {
 
 // addInvocationConstant records a keyword a rule invocation passes at a
 // position.
-func (r *attributeRoster) addInvocationConstant(c InvocationConstant) {
+func (r *attributeRoster) addInvocationConstant(c invocationConstant) {
 	if r.seenInvocations[c] {
 		return
 	}
 	if r.seenInvocations == nil {
-		r.seenInvocations = map[InvocationConstant]bool{}
+		r.seenInvocations = map[invocationConstant]bool{}
 	}
 	r.seenInvocations[c] = true
 	r.invocations = append(r.invocations, c)
@@ -304,7 +304,7 @@ func (r *attributeRoster) walkScope(s *clauseScope, clauses []Clause, outer, und
 				switch a := arg.(type) {
 				case Constant:
 					if attr, ok := a.Value.(datalog.Keyword); ok {
-						r.addInvocationConstant(InvocationConstant{Name: c.Name, Position: i, Attr: attr})
+						r.addInvocationConstant(invocationConstant{Name: c.Name, Position: i, Attr: attr})
 					}
 				case Variable:
 					passed := passedVariable{name: c.Name, position: i, variable: a.Name}
@@ -377,7 +377,7 @@ func (r *attributeRoster) resolve(f *scopeFrame, rules *RuleSet) {
 	}
 	for _, p := range f.scope.passed {
 		if attr, ok := f.keyword(p.variable); ok {
-			r.addInvocationConstant(InvocationConstant{Name: p.name, Position: p.position, Attr: attr})
+			r.addInvocationConstant(invocationConstant{Name: p.name, Position: p.position, Attr: attr})
 		}
 	}
 	for _, form := range f.scope.forms {

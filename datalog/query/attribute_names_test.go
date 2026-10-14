@@ -174,14 +174,16 @@ func TestDefaultSourceAttributes(t *testing.T) {
 // own and names nothing, as does a variable a pattern of the branch provides;
 // TestDefaultSourceAttributesUnderARuleSet carries the rule set that widens
 // the interface. A constant of another type, a variable nothing binds, and a
-// keyword at a position the rule set reads as a value name nothing. Under no
-// rule set the query names the patterns' attributes alone, and a resolution
-// under a rule set leaves that roster as it is.
+// keyword at a position the rule set reads as a value name nothing, and a
+// keyword a pattern also names is named once, at the pattern's position.
+// Under no rule set the query names the patterns' attributes alone, and a
+// resolution under a rule set leaves that roster as it is.
 func TestDefaultSourceAttributesThroughInvocations(t *testing.T) {
 	entity := Variable{Name: datalog.NewSymbol("?e")}
 	has, also := datalog.NewSymbol("has"), datalog.NewSymbol("also")
 	q := &Query{Where: []Clause{
 		&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/direct")}}},
+		&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/x")}}},
 		&RuleInvocation{Name: has, Args: []PatternElement{entity, Constant{Value: "text"}}},
 		&RuleInvocation{Name: has, Args: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?ga")}}},
 		&RuleInvocation{Name: has, Args: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?free")}}},

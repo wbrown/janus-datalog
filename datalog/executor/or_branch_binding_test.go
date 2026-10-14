@@ -40,6 +40,16 @@ func TestOrBranchReadsAVariableTheEnclosingScopeBinds(t *testing.T) {
 			`[:find ?q :where [(ground :t/tag) ?b] [(identity ?b) ?a] [?q :t/n _] (or [?q ?a ?v] [?q :t/tag :t/none])]`,
 			[]datalog.Identity{tagged},
 		},
+		{
+			"bound by a subquery",
+			`[:find ?q :where [(q [:find ?a :where [(ground :t/tag) ?a]] $) [[?a]]] [?q :t/n _] (or [?q ?a ?v] [?q :t/tag :t/none])]`,
+			[]datalog.Identity{tagged},
+		},
+		{
+			"bound by an or-join",
+			`[:find ?q :where (or-join [?a] [(ground :t/tag) ?a] [(ground :t/other) ?a]) [?q :t/n _] (or [?q ?a ?v] [?q :t/tag :t/none])]`,
+			[]datalog.Identity{tagged},
+		},
 	}
 	for _, mode := range optimizerModes {
 		for _, c := range cases {

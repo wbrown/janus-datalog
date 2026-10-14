@@ -392,7 +392,7 @@ func (rs *RuleSet) CheckInvocation(inv *RuleInvocation) error {
 // the default source, in order of first appearance and each once, collected
 // as Query.DefaultSourceAttributes collects a query's under the rule set
 // itself, then the keywords the bodies' invocations pass at attribute
-// positions (InvocationAttributes).
+// positions (invocationAttributes).
 func (rs *RuleSet) DefaultSourceAttributes() []datalog.Keyword {
 	rs.attributesOnce.Do(func() {
 		roster := newAttributeRoster()
@@ -401,7 +401,7 @@ func (rs *RuleSet) DefaultSourceAttributes() []datalog.Keyword {
 				roster.addClauses(rule.Body, false, rs)
 			}
 		}
-		for _, attr := range rs.InvocationAttributes(roster.invocations) {
+		for _, attr := range rs.invocationAttributes(roster.invocations) {
 			roster.add(attr)
 		}
 		rs.attributes = roster.order
@@ -414,17 +414,17 @@ func (rs *RuleSet) DefaultSourceAttributes() []datalog.Keyword {
 // as its attribute: in the predicate's own bodies at any depth short of a
 // subquery body, or through a body invocation in the bodies of the predicate
 // invoked. A keyword an invocation passes at such a position names an
-// attribute (InvocationAttributes). Nil for a predicate the set does not
+// attribute (invocationAttributes). Nil for a predicate the set does not
 // define.
 func (rs *RuleSet) AttributePositions(name Symbol) []bool {
 	return rs.attributePositions[name]
 }
 
-// InvocationAttributes returns, from a roster of invocation constants, the
+// invocationAttributes returns, from a roster of invocation constants, the
 // keywords passed at the positions the invoked predicate reads as an
 // attribute, in order and each once. A keyword at a value position, or
 // passed to a predicate the set does not define, names nothing.
-func (rs *RuleSet) InvocationAttributes(constants []InvocationConstant) []datalog.Keyword {
+func (rs *RuleSet) invocationAttributes(constants []invocationConstant) []datalog.Keyword {
 	if len(constants) == 0 {
 		return nil
 	}

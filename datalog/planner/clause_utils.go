@@ -45,11 +45,11 @@ func patternDependsOnPendingExpression(p *query.DataPattern, available map[query
 
 // clauseSelectable is the single definition of "the greedy selection loop
 // may choose this clause this iteration": every scheduling gate admits it
-// and it is ready. The selection loop and the deferral gates for subqueries
-// and inference forms consume this function — a gate that waits on a clause
-// the loop itself would skip deadlocks the phase, which is exactly the
-// divergence that occurs when the gate checks readiness alone (a DataPattern
-// can be ready yet skipped because it depends on a pending expression).
+// and it is ready. The selection loop and the subquery deferral gate both
+// consume this function — a gate that waits on a clause the loop itself
+// would skip deadlocks the phase, which is exactly the divergence that
+// occurs when the gate checks readiness alone (a DataPattern can be ready
+// yet skipped because it depends on a pending expression).
 func clauseSelectable(
 	clause query.Clause,
 	available map[query.Symbol]bool,
@@ -92,17 +92,21 @@ func inferenceFormBranches(clause query.Clause) ([][]query.Clause, bool) {
 	return nil, false
 }
 
-// inferenceFormDependsOnPendingProvider checks if a branch of an inference
-// form reads a variable the form does not provide that a pending,
-// currently-selectable pattern, expression or invocation provides and that
-// isn't yet available. The form unifies with the enclosing scope on every
-// free variable its branches share with it, and a variable outside the
-// form's provides leaves the form's output, so a binding that arrives after
-// the form has nothing to unify with: the form runs after the clauses
-// binding such a variable, as a pattern runs after the expression binding
-// one of its variables. The provider scan carries the subquery gate's two
-// restrictions, selectable providers only, and no forms or subqueries among
-// them, so no gate waits on a clause whose own gate waits on it.
+// inferenceFormDependsOnPendingProvider reports whether a branch of an
+// inference form reads a variable the form does not provide that the other
+// unselected clauses can bind before the form runs: a variable in the closure
+// of what those clauses provide, each becoming ready as the ones before it
+// bind its inputs, from the available symbols with the form left out. The
+// form unifies with the enclosing scope on every free variable its branches
+// share with it, and a variable outside the form's provides leaves the
+// form's output, so a binding that arrives after the form has nothing to
+// unify with: the form runs after the clauses binding such a variable,
+// whether a pattern, an expression, an invocation, a subquery or an
+// explicit-header form, and however many steps away the binding is. A clause
+// that needs the form's own output never enters the closure, so the form
+// never waits on a clause that waits on it. Another inference form is left
+// out of the closure, since two forms each reading what the other provides
+// would each wait on the other through this gate.
 func inferenceFormDependsOnPendingProvider(
 	form query.Clause,
 	branches [][]query.Clause,
@@ -129,22 +133,33 @@ func inferenceFormDependsOnPendingProvider(
 		return false
 	}
 
-	for i, clause := range remaining {
-		if selected[i] {
-			continue
-		}
-		switch clause.(type) {
-		case *query.DataPattern, *query.Expression, *query.RuleInvocation:
-		default:
-			continue
-		}
-		if !clauseSelectable(clause, available, inputs, providerCount, remaining, selected, rules) {
-			continue
-		}
-		for _, sym := range query.ScopeOf(clause, rules).Provides {
-			if needed[sym] {
-				return true
+	reach := make(map[query.Symbol]bool, len(available))
+	for sym := range available {
+		reach[sym] = true
+	}
+	for grown := true; grown; {
+		grown = false
+		for i, clause := range remaining {
+			if selected[i] {
+				continue
 			}
+			if _, inference := inferenceFormBranches(clause); inference {
+				continue
+			}
+			if !query.ClauseReady(clause, reach, inputs, providerCount, rules) {
+				continue
+			}
+			for _, sym := range query.ScopeOf(clause, rules).Provides {
+				if !reach[sym] {
+					reach[sym] = true
+					grown = true
+				}
+			}
+		}
+	}
+	for sym := range needed {
+		if reach[sym] {
+			return true
 		}
 	}
 	return false
