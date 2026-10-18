@@ -24,19 +24,19 @@ func invocation(name string, args ...string) *query.RuleInvocation {
 
 func TestScoreClauseRuleInvocation(t *testing.T) {
 	none := map[query.Symbol]bool{}
-	unbound := scoreClause(invocation("follows", "?x", "?y"), none, Bindings{})
-	bound := scoreClause(invocation("follows", "?x", "?y"), map[query.Symbol]bool{datalog.NewSymbol("?x"): true}, Bindings{})
+	unbound := scoreClause(invocation("follows", "?x", "?y"), none, query.Bindings{})
+	bound := scoreClause(invocation("follows", "?x", "?y"), map[query.Symbol]bool{datalog.NewSymbol("?x"): true}, query.Bindings{})
 	if bound <= unbound {
 		t.Errorf("an invocation with a bound argument scores %d, not above the unbound %d", bound, unbound)
 	}
-	constant := scoreClause(invocation("follows", "?x", "end"), none, Bindings{})
+	constant := scoreClause(invocation("follows", "?x", "end"), none, query.Bindings{})
 	if constant <= unbound {
 		t.Errorf("an invocation with a constant argument scores %d, not above the unbound %d", constant, unbound)
 	}
 	vector := scoreClause(&query.RuleInvocation{Name: datalog.NewSymbol("follows"), Args: []query.PatternElement{
 		query.Variable{Name: datalog.NewSymbol("?x")},
 		query.VectorConstant{Values: []interface{}{int64(1), int64(2)}},
-	}}, none, Bindings{})
+	}}, none, query.Bindings{})
 	if vector <= unbound {
 		t.Errorf("an invocation with a vector constant argument scores %d, not above the unbound %d: the executor binds that position, so the planner counts it as a constant", vector, unbound)
 	}
@@ -44,7 +44,7 @@ func TestScoreClauseRuleInvocation(t *testing.T) {
 		query.Variable{Name: datalog.NewSymbol("?x")},
 		query.Constant{Value: datalog.NewKeyword(":page/next")},
 		query.Variable{Name: datalog.NewSymbol("?y")},
-	}}, none, Bindings{})
+	}}, none, query.Bindings{})
 	if unbound >= pattern {
 		t.Errorf("an unbound invocation scores %d, not below a pattern with a constant attribute at %d", unbound, pattern)
 	}
@@ -55,7 +55,7 @@ func TestScoreClauseRuleInvocation(t *testing.T) {
 	// what it binds, and after a ready predicate, which narrows the relation
 	// first. The delta of a user predicate is unrestricted and keeps a
 	// pattern's place.
-	restricted := scoreClause(invocation("delta.magic.bf/follows", "?x"), none, Bindings{})
+	restricted := scoreClause(invocation("delta.magic.bf/follows", "?x"), none, query.Bindings{})
 	if restricted <= pattern {
 		t.Errorf("an invocation of a seed-restricted predicate scores %d, not above a pattern with a constant attribute at %d", restricted, pattern)
 	}
@@ -63,13 +63,21 @@ func TestScoreClauseRuleInvocation(t *testing.T) {
 		Op:    datalog.SymLT,
 		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 		Right: query.ConstantTerm{Value: int64(10)},
-	}, map[query.Symbol]bool{datalog.NewSymbol("?x"): true}, Bindings{})
+	}, map[query.Symbol]bool{datalog.NewSymbol("?x"): true}, query.Bindings{})
 	if restricted >= ready {
 		t.Errorf("an invocation of a seed-restricted predicate scores %d, not below a ready predicate at %d", restricted, ready)
 	}
-	unrestricted := scoreClause(invocation("delta/follows", "?x", "?y"), none, Bindings{})
+	unrestricted := scoreClause(invocation("delta/follows", "?x", "?y"), none, query.Bindings{})
 	if unrestricted >= pattern {
 		t.Errorf("an invocation of a user predicate's delta scores %d, not below a pattern with a constant attribute at %d", unrestricted, pattern)
+	}
+
+	// A scope's required run enters its query as a relation held under
+	// scope/required, which holds only the tuples the scope runs over, so its
+	// invocation leads the patterns as a seed-restricted predicate's does.
+	scoped := scoreClause(invocation("scope/required", "?x"), none, query.Bindings{})
+	if scoped <= pattern {
+		t.Errorf("an invocation of scope/required scores %d, not above a pattern with a constant attribute at %d", scoped, pattern)
 	}
 }
 
@@ -127,7 +135,7 @@ func TestPlanCacheKeyDistinguishesRequiredPositions(t *testing.T) {
 	}
 
 	branch := &query.Query{Find: find, In: in, Where: []query.Clause{
-		&query.OrJoinClause{JoinVars: []query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?m")}, Branches: [][]query.Clause{{invocation("succ", "?n", "?m")}}},
+		&query.OrJoinClause{OutputVars: []query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?m")}, Branches: [][]query.Clause{{invocation("succ", "?n", "?m")}}},
 	}}
 	if cache.computeKeyWithOptions(branch, free, PlannerOptions{}) == cache.computeKeyWithOptions(branch, requiring, PlannerOptions{}) {
 		t.Error("an invocation inside an or-join branch shares its plan-cache key across rule sets requiring different positions")
@@ -181,17 +189,20 @@ func TestAnalyzeClausesForExplainBoundNamesAnArgumentAnOrBinds(t *testing.T) {
 		clause query.Clause
 	}{
 		{"or", &query.OrClause{Branches: branches}},
-		{"or-join", &query.OrJoinClause{JoinVars: []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")}, Branches: branches}},
+		{"or-join", &query.OrJoinClause{OutputVars: []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")}, Branches: branches}},
 	}
 	for _, form := range forms {
 		t.Run(form.name, func(t *testing.T) {
 			inv := invocation("reach", "?x", "?y")
-			clauses := []query.Clause{form.clause, inv}
-			phase := RealizedPhase{Query: &query.Query{
+			inferred, err := query.InferHeaders(&query.Query{
 				Find:  []query.FindElement{query.FindVariable{Symbol: datalog.NewSymbol("?y")}},
-				Where: clauses,
-			}}
-			analyzeClausesForExplain(&phase, clauses, map[query.Symbol]bool{}, nil, nil)
+				Where: []query.Clause{form.clause, inv},
+			}, nil)
+			if err != nil {
+				t.Fatalf("InferHeaders: %v", err)
+			}
+			phase := RealizedPhase{Query: inferred}
+			analyzeClausesForExplain(&phase, inferred.Where, map[query.Symbol]bool{}, nil, nil)
 			if len(phase.Invocations) != 1 {
 				t.Fatalf("phase records %d invocations, want 1", len(phase.Invocations))
 			}

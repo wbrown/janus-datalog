@@ -237,13 +237,14 @@ func TestNewRuleSet_OrdersStrata(t *testing.T) {
 func TestNewRuleSet_RefusesRecursionUnderFallbackAndSubquery(t *testing.T) {
 	cases := []struct {
 		form   string
+		want   string
 		clause Clause
 	}{
-		{"or-default", &OrDefaultClause{Branches: [][]Clause{
+		{"or-default", "or-default-join", &OrDefaultClause{Branches: [][]Clause{
 			{invoke("follows", "?b", "?c")},
 			{&Expression{Function: &GroundFunction{Value: "end"}, Binding: sym("?c")}},
 		}}},
-		{"or-default-join", &OrDefaultJoinClause{
+		{"or-default-join", "or-default-join", &OrDefaultJoinClause{
 			RequiredVars: []Symbol{sym("?b")},
 			OutputVars:   []Symbol{sym("?c")},
 			Branches: [][]Clause{
@@ -251,7 +252,7 @@ func TestNewRuleSet_RefusesRecursionUnderFallbackAndSubquery(t *testing.T) {
 				{&Expression{Function: &GroundFunction{Value: "end"}, Binding: sym("?c")}},
 			},
 		}},
-		{"subquery", &SubqueryPattern{
+		{"subquery", "subquery", &SubqueryPattern{
 			Query: &Query{
 				Find:  []FindElement{FindVariable{Symbol: sym("?c")}},
 				In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, RulesInput{}, ScalarInput{Symbol: sym("?b")}},
@@ -275,8 +276,8 @@ func TestNewRuleSet_RefusesRecursionUnderFallbackAndSubquery(t *testing.T) {
 			if !errors.As(err, &nested) {
 				t.Fatalf("want *NestedRecursionError, got %v", err)
 			}
-			if nested.Rule != sym("follows") || nested.Predicate != sym("follows") || nested.Form != c.form {
-				t.Errorf("NestedRecursionError = %+v, want rule follows, predicate follows, form %s", nested, c.form)
+			if nested.Rule != sym("follows") || nested.Predicate != sym("follows") || nested.Form != c.want {
+				t.Errorf("NestedRecursionError = %+v, want rule follows, predicate follows, form %s", nested, c.want)
 			}
 		})
 	}
@@ -287,7 +288,7 @@ func TestNewRuleSet_RefusesRecursionUnderFallbackAndSubquery(t *testing.T) {
 			defineRule("follows", []string{"?a", "?c"},
 				scopePattern("?a", "page/next", "?b"),
 				&OrJoinClause{
-					JoinVars: []Symbol{sym("?b"), sym("?c")},
+					OutputVars: []Symbol{sym("?b"), sym("?c")},
 					Branches: [][]Clause{
 						{invoke("follows", "?b", "?c")},
 						{scopePattern("?b", "page/next", "?c")},
@@ -308,7 +309,7 @@ func TestInvocationsDescendsEveryForm(t *testing.T) {
 	sub := invoke("follows", "?c", "?d")
 	found := Invocations([]Clause{
 		scopePattern("?a", "page/next", "?b"),
-		&OrJoinClause{JoinVars: []Symbol{sym("?b")}, Branches: [][]Clause{{inner}}},
+		&OrJoinClause{OutputVars: []Symbol{sym("?b")}, Branches: [][]Clause{{inner}}},
 		&SubqueryPattern{
 			Query:   &Query{Where: []Clause{sub}},
 			Binding: RelationBinding{Variables: []Symbol{sym("?d")}},
@@ -348,7 +349,7 @@ func TestRulesUse(t *testing.T) {
 	}{
 		{"an invocation in an or-join branch", []Clause{
 			scopePattern("?a", "page/next", "?b"),
-			&OrJoinClause{JoinVars: []Symbol{sym("?b")}, Branches: [][]Clause{{inner}}},
+			&OrJoinClause{OutputVars: []Symbol{sym("?b")}, Branches: [][]Clause{{inner}}},
 		}, inner},
 		{"a subquery call passing %", []Clause{scopePattern("?a", "page/next", "?b"), passing}, passing},
 		{"a subquery call passing no %", []Clause{scopePattern("?a", "page/next", "?b"), own}, nil},
@@ -432,7 +433,7 @@ func TestRuleSetAttributePositions(t *testing.T) {
 		defineRule("val", []string{"?e", "?v"}, scopePattern("?e", "page/kind", "?v")),
 		defineRule("branch", []string{"?e", "?a"},
 			scopePattern("?e", "page/kind", "_"),
-			&OrJoinClause{JoinVars: []Symbol{sym("?e"), sym("?a")}, Branches: [][]Clause{
+			&OrJoinClause{OutputVars: []Symbol{sym("?e"), sym("?a")}, Branches: [][]Clause{
 				{attrVarPattern("?e", "?a")},
 				{invoke("val", "?e", "?a")},
 			}}),
@@ -479,9 +480,9 @@ func TestRuleSetDefaultSourceAttributesThroughInvocations(t *testing.T) {
 			invoke("has", "?e", "?g")),
 		defineRule("valued", []string{"?e"},
 			&RuleInvocation{Name: sym("val"), Args: []PatternElement{Variable{Name: sym("?e")}, Constant{Value: datalog.NewKeyword(":page/value")}}}),
-		defineRule("widened", []string{"?e"},
-			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":page/widened")}, Binding: sym("?w")},
-			&OrJoinClause{JoinVars: []Symbol{sym("?e")}, Branches: [][]Clause{
+		defineRule("required", []string{"?e"},
+			&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":page/required")}, Binding: sym("?w")},
+			&OrJoinClause{RequiredVars: []Symbol{sym("?w")}, OutputVars: []Symbol{sym("?e")}, Branches: [][]Clause{
 				{invoke("needs", "?w", "?e")},
 				{scopePattern("?e", "page/kind", "_")},
 			}}),
@@ -493,7 +494,7 @@ func TestRuleSetDefaultSourceAttributesThroughInvocations(t *testing.T) {
 		datalog.NewKeyword(":page/kind"),
 		datalog.NewKeyword(":page/marked"),
 		datalog.NewKeyword(":page/grounded"),
-		datalog.NewKeyword(":page/widened"),
+		datalog.NewKeyword(":page/required"),
 	})
 }
 
@@ -766,14 +767,33 @@ func TestValidateInputShapes(t *testing.T) {
 	}
 }
 
-// TestNewRuleSet_ReturnsTheRulesGiven: a rule set holds the rules it was
-// given, the pointers themselves, a rule whose body invokes a predicate with
-// required positions included.
-func TestNewRuleSet_ReturnsTheRulesGiven(t *testing.T) {
-	holds := defineRule("holds", []string{"?x"}, scopePattern("?x", "page/n", "?n"), invoke("small", "?n"))
-	rs := mustRuleSet(t, []*Rule{smallRule(), holds})
-	if got := rs.Rules(sym("holds")); len(got) != 1 || got[0] != holds {
+// TestNewRuleSet_HoldsInferredBodies: a rule set holds each rule with its
+// body's forms inferred, as a query finding the head with the required run
+// as its inputs, the rule given untouched; a rule whose body is header forms
+// is held as the pointer given.
+func TestNewRuleSet_HoldsInferredBodies(t *testing.T) {
+	plain := defineRule("tagged", []string{"?e", "?x"},
+		scopePattern("?e", "page/n", "_"),
+		&OrClause{Branches: [][]Clause{{scopePattern("?e", "page/p", "?x")}, {scopePattern("?e", "page/q", "?x")}}})
+	given := defineRule("holds", []string{"?x"}, scopePattern("?x", "page/n", "?n"), invoke("small", "?n"))
+	rs := mustRuleSet(t, []*Rule{smallRule(), plain, given})
+
+	if got := rs.Rules(sym("holds")); len(got) != 1 || got[0] != given {
 		t.Errorf("Rules(holds) = %v, want the rule given, itself", got)
+	}
+	got := rs.Rules(sym("tagged"))
+	if len(got) != 1 || got[0] == plain {
+		t.Fatalf("Rules(tagged) = %v, want one rule, a copy of the given with its body inferred", got)
+	}
+	if got[0].Name != plain.Name || len(got[0].Head) != 2 || got[0].Head[0] != plain.Head[0] || got[0].Head[1] != plain.Head[1] {
+		t.Errorf("the inferred rule's head is %s %v, want the given %s %v", got[0].Name, got[0].Head, plain.Name, plain.Head)
+	}
+	want := "(or-join [?e ?x] [?e :page/p ?x] [?e :page/q ?x])"
+	if len(got[0].Body) != 2 || got[0].Body[1].String() != want {
+		t.Errorf("the inferred body's or = %v, want %s, ?x shared through the head", got[0].Body, want)
+	}
+	if _, isOr := plain.Body[1].(*OrClause); !isOr {
+		t.Errorf("the rule given is rewritten in place: its or is %s", plain.Body[1])
 	}
 }
 
@@ -781,7 +801,7 @@ func TestWalkClausesVisitsRuleInvocation(t *testing.T) {
 	inv := invoke("follows", "?a", "?b")
 	var visited []Clause
 	WalkClauses([]Clause{
-		&OrJoinClause{JoinVars: []Symbol{sym("?a")}, Branches: [][]Clause{{inv}}},
+		&OrJoinClause{OutputVars: []Symbol{sym("?a")}, Branches: [][]Clause{{inv}}},
 	}, func(c Clause) bool {
 		visited = append(visited, c)
 		return true

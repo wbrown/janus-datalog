@@ -204,6 +204,17 @@ delta. The stratum ends when an iteration adds nothing.
 Every iteration reads the one snapshot the query reads. A write committed
 while a closure is under evaluation is invisible to it.
 
+An invocation inside an `or-join` or `or-default-join` branch is evaluated
+once per execution of the form, continued across the windows of the form's
+subject. The branch runs over each window's keys. A window's keys enter the
+seed predicate's stratum as a delta, the sets of every stratum and the
+derived-tuple count are carried from window to window, and the strata run
+again from the lowest one that changed, so each derived tuple is derived in
+one window. `rules/stratum.begin` fires at the first window and
+`rules/stratum.complete` at the last, and `rules/iteration` numbers each
+window's iterations from zero. An invocation inside a `not-join` body is
+evaluated once, over the body's one run.
+
 A rule body is planned by the query planner as a query of its own, under the
 database's planner options. Its plan enters the plan cache under its own
 text, which carries `%` and the delta symbol. An invocation of a predicate
@@ -221,10 +232,12 @@ own.
 Two planner options bound an evaluation. Both are opt-in. Both are zero by
 default, and zero is unbounded:
 
-- `MaxRuleIterations`: the iterations one stratum may run. Exceeded, the
-  query returns `*query.RuleIterationLimitError` naming the stratum's
-  predicates, the limit and the iteration reached.
-- `MaxDerivedTuples`: the tuples one invocation's evaluation may derive. A
+- `MaxRuleIterations`: the iterations one stratum may run, counted per window
+  for an invocation inside a form's branch. Exceeded, the query returns
+  `*query.RuleIterationLimitError` naming the stratum's predicates, the limit
+  and the iteration reached.
+- `MaxDerivedTuples`: the tuples one invocation's evaluation may derive,
+  carried across the windows for an invocation inside a form's branch. A
   rewritten set's magic predicates count too. Exceeded, the query returns
   `*query.DerivedTupleLimitError` naming the predicates, the limit and the
   count reached.

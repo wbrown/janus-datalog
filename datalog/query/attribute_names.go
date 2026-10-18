@@ -18,50 +18,35 @@ import (
 // keyword, or identity of a variable so bound, or, for a variable the scope
 // shares with the enclosing one, by the enclosing scope's. A branch of an or,
 // or-default or not shares every variable with the enclosing scope; a branch
-// of an or-join, or-default-join or not-join shares the variables the form's
-// interface names under the rule set, the provides and correlates ScopeOf
-// reports. The walk descends through NOT/NOT-JOIN bodies, OR/OR-JOIN/OR-DEFAULT
-// branches and subquery bodies, a subquery body being a scope of its own. A
-// pattern on a named source reads that source's attributes, not the
-// database's, and a blank, or a variable nothing binds to a keyword, names
-// none in the attribute position.
+// of an or-join, or-default-join or not-join shares the variables its header
+// names, and every other variable of the branch is its own. The walk descends
+// through NOT/NOT-JOIN bodies, OR/OR-JOIN/OR-DEFAULT branches and subquery
+// bodies, a subquery body being a scope of its own. A pattern on a named
+// source reads that source's attributes, not the database's, and a blank, or
+// a variable nothing binds to a keyword, names none in the attribute position.
 //
 // The attributes named under no rule set are collected in one walk on the
 // first call of this method or its siblings and returned on every later one;
 // they are the query's own, and a caller reads them and does not change them.
-// Under a rule set the result carries, after them, what the query names under
-// that rule set, in a slice of the call's own. When the rule set requires a
-// position at which an invocation inside an explicit-header form's branches
-// passes a variable no other clause of the branch provides, the form's
-// interface widens to that variable, and the attributes a resolution under
-// the rule set so names come first. Then come the keywords the query's
+// Under a rule set the result carries, after them, the keywords the query's
 // invocations pass at the positions the rule set reads as attributes
-// (RuleSet.invocationAttributes): a keyword constant argument, or, at the end
-// of the invocation's scope, a variable argument bound to a keyword as an
-// attribute variable is.
+// (RuleSet.invocationAttributes), in a slice of the call's own: a keyword
+// constant argument, or, at the end of the invocation's scope, a variable
+// argument bound to a keyword as an attribute variable is.
 func (q *Query) DefaultSourceAttributes(rules *RuleSet) []datalog.Keyword {
 	rosters := q.collectRosters()
 	if rules == nil {
 		return rosters.order
 	}
-	added := rosters.under(rules)
-	constants := rosters.invocations
-	if added != nil {
-		constants = append(constants[:len(constants):len(constants)], added.invocations...)
-	}
-	invoked := rules.invocationAttributes(constants)
-	if added == nil && len(invoked) == 0 {
+	invoked := rules.invocationAttributes(rosters.invocations)
+	if len(invoked) == 0 {
 		return rosters.order
 	}
 	order := rosters.order[:len(rosters.order):len(rosters.order)]
-	if added != nil {
-		order = append(order, added.order...)
-	}
 	for _, attr := range invoked {
-		if rosters.seen[attr] || (added != nil && added.seen[attr]) {
-			continue
+		if !rosters.seen[attr] {
+			order = append(order, attr)
 		}
-		order = append(order, attr)
 	}
 	return order
 }
@@ -100,12 +85,12 @@ type invocationConstant struct {
 	Attr     datalog.Keyword
 }
 
-// collectRosters walks the query on the first call, under no rule set, and
-// returns what it names.
+// collectRosters walks the query on the first call and returns what it
+// names.
 func (q *Query) collectRosters() *attributeRoster {
 	q.rostersOnce.Do(func() {
 		roster := newAttributeRoster()
-		roster.addQuery(q, true, nil)
+		roster.addQuery(q, true)
 		q.rosters = roster
 	})
 	return q.rosters
@@ -126,11 +111,7 @@ func PullPatternAttributes(p *PullPattern) []datalog.Keyword {
 // attributes on each named source, and the keywords rule invocations pass by
 // position. Keywords and symbols are interned, so each set is keyed on the
 // value itself. The variable set, the named-source map and the invocation set
-// are allocated when the first of their kind is recorded. The scope tree of
-// each clause list walked, the query's and each subquery body's, is kept in
-// trees for a resolution under a rule set (under), and the positions
-// invocations under an explicit-header form pass a variable at are kept in
-// headerPassed to gate that resolution (widenedBy).
+// are allocated when the first of their kind is recorded.
 type attributeRoster struct {
 	seen            map[datalog.Keyword]bool
 	order           []datalog.Keyword
@@ -139,8 +120,6 @@ type attributeRoster struct {
 	sources         map[Symbol]*sourceRoster
 	seenInvocations map[invocationConstant]bool
 	invocations     []invocationConstant
-	trees           []*clauseScope
-	headerPassed    []passedVariable
 }
 
 // sourceRoster accumulates the attributes named on one named source.
@@ -205,32 +184,30 @@ func (r *attributeRoster) addInvocationConstant(c invocationConstant) {
 	r.invocations = append(r.invocations, c)
 }
 
-// addQuery records what a query names under rules.
+// addQuery records what a query names.
 // A pull pattern in :find reads the default source.
 // When outer holds, the query's inputs may bind a variable in an attribute
 // position, so its attribute variables are recorded; a subquery's inputs are
 // its own to check when it runs, so its are not.
-func (r *attributeRoster) addQuery(q *Query, outer bool, rules *RuleSet) {
+func (r *attributeRoster) addQuery(q *Query, outer bool) {
 	for _, elem := range q.Find {
 		if pull, ok := elem.(FindPull); ok {
 			r.addPullPattern(pull.Pattern)
 		}
 	}
-	r.addClauses(q.Where, outer, rules)
+	r.addClauses(q.Where, outer)
 }
 
 // addClauses records what a query's :where or a rule's body names, as a tree
 // of scopes: the clause list itself, and under it each branch or body of a
-// nested form. At the end of the walk the tree resolves under rules: every
-// scope's variables bound to a keyword, one standing in a default-source
-// pattern's attribute position naming the keyword and one passed to an
-// invocation being a keyword passed there. The tree is kept for a resolution
-// under another rule set (under). A subquery's body is a tree of its own.
-func (r *attributeRoster) addClauses(clauses []Clause, outer bool, rules *RuleSet) {
+// nested form. At the end of the walk the tree resolves: every scope's
+// variables bound to a keyword, one standing in a default-source pattern's
+// attribute position naming the keyword and one passed to an invocation being
+// a keyword passed there. A subquery's body is a tree of its own.
+func (r *attributeRoster) addClauses(clauses []Clause, outer bool) {
 	root := &clauseScope{}
-	r.walkScope(root, clauses, outer, false, rules)
-	r.resolve(&scopeFrame{scope: root}, rules)
-	r.trees = append(r.trees, root)
+	r.walkScope(root, clauses, outer)
+	r.resolve(&scopeFrame{scope: root})
 }
 
 // clauseScope is one scope of the walk: a query's :where, a rule's body, or a
@@ -250,10 +227,10 @@ type clauseScope struct {
 // of its own. A branch of an inference form, or, or-default or not, shares
 // every variable with the enclosing scope and reads its bindings for all of
 // them. A branch of an explicit-header form, or-join, or-default-join or
-// not-join, shares the variables the form's interface names under the rule
-// set the resolution runs with, the provides and correlates ScopeOf reports,
-// and reads the enclosing scope's bindings for those alone. header is the
-// explicit-header form, and nil for an inference form.
+// not-join, shares the variables its header names, the provides and
+// correlates ScopeOf reports, and reads the enclosing scope's bindings for
+// those alone. header is the explicit-header form, and nil for an inference
+// form.
 type nestedForm struct {
 	header   Clause
 	branches []*clauseScope
@@ -264,12 +241,10 @@ type nestedForm struct {
 // outer holds, a database function's attributes on the default source, the
 // keywords a rule invocation passes by position, and what the scope's
 // expressions bind. A variable an invocation passes is the scope's to
-// resolve, and under an explicit-header form it is recorded for the gate on
-// a resolution under a rule set too, since the form's interface widens only
-// at a position the rule set requires. Each nested form's branches are walked as
-// scopes of their own, and the visitor descends into a subquery's body
-// itself, which WalkClauses leaves to its visitors.
-func (r *attributeRoster) walkScope(s *clauseScope, clauses []Clause, outer, underHeader bool, rules *RuleSet) {
+// resolve. Each nested form's branches are walked as scopes of their own, and
+// the visitor descends into a subquery's body itself, which WalkClauses
+// leaves to its visitors.
+func (r *attributeRoster) walkScope(s *clauseScope, clauses []Clause, outer bool) {
 	WalkClauses(clauses, func(clause Clause) bool {
 		switch c := clause.(type) {
 		case *DataPattern:
@@ -307,32 +282,28 @@ func (r *attributeRoster) walkScope(s *clauseScope, clauses []Clause, outer, und
 						r.addInvocationConstant(invocationConstant{Name: c.Name, Position: i, Attr: attr})
 					}
 				case Variable:
-					passed := passedVariable{name: c.Name, position: i, variable: a.Name}
-					s.passed = append(s.passed, passed)
-					if underHeader {
-						r.headerPassed = append(r.headerPassed, passed)
-					}
+					s.passed = append(s.passed, passedVariable{name: c.Name, position: i, variable: a.Name})
 				}
 			}
 		case *SubqueryPattern:
-			r.addQuery(c.Query, false, rules)
+			r.addQuery(c.Query, false)
 		case *NotClause:
-			r.walkForm(s, nil, [][]Clause{c.Clauses}, outer, underHeader, rules)
+			r.walkForm(s, nil, [][]Clause{c.Clauses}, outer)
 			return false
 		case *NotJoinClause:
-			r.walkForm(s, c, [][]Clause{c.Clauses}, outer, underHeader, rules)
+			r.walkForm(s, c, [][]Clause{c.Clauses}, outer)
 			return false
 		case *OrClause:
-			r.walkForm(s, nil, c.Branches, outer, underHeader, rules)
+			r.walkForm(s, nil, c.Branches, outer)
 			return false
 		case *OrJoinClause:
-			r.walkForm(s, c, c.Branches, outer, underHeader, rules)
+			r.walkForm(s, c, c.Branches, outer)
 			return false
 		case *OrDefaultClause:
-			r.walkForm(s, nil, c.Branches, outer, underHeader, rules)
+			r.walkForm(s, nil, c.Branches, outer)
 			return false
 		case *OrDefaultJoinClause:
-			r.walkForm(s, c, c.Branches, outer, underHeader, rules)
+			r.walkForm(s, c, c.Branches, outer)
 			return false
 		}
 		return true
@@ -340,24 +311,23 @@ func (r *attributeRoster) walkScope(s *clauseScope, clauses []Clause, outer, und
 }
 
 // walkForm walks each branch or body of a nested form as a scope of its own
-// under s. header is the explicit-header form whose interface the branches
+// under s. header is the explicit-header form whose header the branches
 // share, and nil for an inference form.
-func (r *attributeRoster) walkForm(s *clauseScope, header Clause, branches [][]Clause, outer, underHeader bool, rules *RuleSet) {
+func (r *attributeRoster) walkForm(s *clauseScope, header Clause, branches [][]Clause, outer bool) {
 	form := &nestedForm{header: header}
 	s.forms = append(s.forms, form)
 	for _, branch := range branches {
 		child := &clauseScope{}
 		form.branches = append(form.branches, child)
-		r.walkScope(child, branch, outer, underHeader || header != nil, rules)
+		r.walkScope(child, branch, outer)
 	}
 }
 
 // scopeFrame is one scope in a resolution: the scope, the frame of the
-// enclosing scope, and what the scope shares with it under the rule set the
-// resolution runs with: every variable for a branch of an inference form,
-// the form's interface for a branch of an explicit-header form. A resolution
-// reads the tree and writes nothing into it, so resolutions under different
-// rule sets run on one tree together.
+// enclosing scope, and what the scope shares with it: every variable for a
+// branch of an inference form, the header's variables for a branch of an
+// explicit-header form. A resolution reads the tree and writes nothing into
+// it.
 type scopeFrame struct {
 	scope     *clauseScope
 	parent    *scopeFrame
@@ -366,10 +336,10 @@ type scopeFrame struct {
 }
 
 // resolve records what the variables of f's scope, and then of each scope
-// under it, resolve to under rules: a keyword an attribute variable is bound
-// to names an attribute on the default source, and a keyword a passed
-// variable is bound to is a keyword passed at its position.
-func (r *attributeRoster) resolve(f *scopeFrame, rules *RuleSet) {
+// under it, resolve to: a keyword an attribute variable is bound to names an
+// attribute on the default source, and a keyword a passed variable is bound
+// to is a keyword passed at its position.
+func (r *attributeRoster) resolve(f *scopeFrame) {
 	for _, v := range f.scope.attributeVariables {
 		if attr, ok := f.keyword(v); ok {
 			r.add(attr)
@@ -383,18 +353,19 @@ func (r *attributeRoster) resolve(f *scopeFrame, rules *RuleSet) {
 	for _, form := range f.scope.forms {
 		var shared map[Symbol]bool
 		if form.header != nil {
-			shared = interfaceVariables(form.header, rules)
+			shared = interfaceVariables(form.header)
 		}
 		for _, branch := range form.branches {
-			r.resolve(&scopeFrame{scope: branch, parent: f, sharesAll: form.header == nil, shared: shared}, rules)
+			r.resolve(&scopeFrame{scope: branch, parent: f, sharesAll: form.header == nil, shared: shared})
 		}
 	}
 }
 
-// interfaceVariables returns the variables an explicit-header form's
-// interface names under rules: the provides and correlates ScopeOf reports.
-func interfaceVariables(form Clause, rules *RuleSet) map[Symbol]bool {
-	scope := ScopeOf(form, rules)
+// interfaceVariables returns the variables an explicit-header form's header
+// names: the provides and correlates ScopeOf reports, which on a header form
+// are the header alone.
+func interfaceVariables(form Clause) map[Symbol]bool {
+	scope := ScopeOf(form, nil)
 	shared := make(map[Symbol]bool, len(scope.Provides)+len(scope.Correlates))
 	for _, v := range scope.Provides {
 		shared[v] = true
@@ -426,48 +397,6 @@ func (f *scopeFrame) keyword(sym Symbol) (datalog.Keyword, bool) {
 		return nil, false
 	}
 	return nil, false
-}
-
-// under returns what the trees name under rules beyond what they named under
-// none: nil when rules is nil or widens no form's interface, otherwise a
-// roster of the attributes and invocation constants a resolution under rules
-// adds, in the order that resolution meets them.
-func (r *attributeRoster) under(rules *RuleSet) *attributeRoster {
-	if rules == nil || !r.widenedBy(rules) {
-		return nil
-	}
-	again := newAttributeRoster()
-	for _, tree := range r.trees {
-		again.resolve(&scopeFrame{scope: tree}, rules)
-	}
-	added := again.order[:0]
-	for _, attr := range again.order {
-		if !r.seen[attr] {
-			added = append(added, attr)
-		}
-	}
-	again.order = added
-	constants := again.invocations[:0]
-	for _, c := range again.invocations {
-		if !r.seenInvocations[c] {
-			constants = append(constants, c)
-		}
-	}
-	again.invocations = constants
-	return again
-}
-
-// widenedBy reports whether rules requires a position an invocation under an
-// explicit-header form passes a variable at. Read with a rule set, ScopeOf
-// differs from its reading with none at such a position alone, so no other
-// rule set names a form's interface differently.
-func (r *attributeRoster) widenedBy(rules *RuleSet) bool {
-	for _, p := range r.headerPassed {
-		if required := rules.Required(p.name); p.position < len(required) && required[p.position] {
-			return true
-		}
-	}
-	return false
 }
 
 // passedVariable is a variable a rule invocation passes at a position.

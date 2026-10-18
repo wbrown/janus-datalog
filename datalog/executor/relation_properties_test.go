@@ -308,9 +308,9 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 	joined := HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
 	require.Equal(t, RelationProperties{Keys: [][]query.Symbol{{id}}}, joined.Properties())
 	joinIterator := joined.(*StreamingRelation).iterator.(*hashJoinIterator)
-	require.True(t, joinIterator.buildIndex.keysUnique(),
+	require.True(t, joinIterator.buildIndex.KeysUnique(),
 		"the candidate-key proof must hold in the grouped build tuples")
-	require.Len(t, joinIterator.buildIndex.probe(Tuple{int64(1)}), 1,
+	require.Len(t, joinIterator.buildIndex.Probe(Tuple{int64(1)}), 1,
 		"a unique build key groups exactly one tuple")
 	require.Nil(t, joinIterator.seen,
 		"a proven result key makes internal full-tuple join deduplication redundant")
@@ -376,9 +376,9 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 	joined := HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
 	require.Empty(t, joined.Properties().Keys)
 	joinIterator := joined.(*StreamingRelation).iterator.(*hashJoinIterator)
-	require.False(t, joinIterator.buildIndex.keysUnique(),
+	require.False(t, joinIterator.buildIndex.KeysUnique(),
 		"a fanout key must be visible in the grouped build tuples")
-	require.Len(t, joinIterator.buildIndex.probe(Tuple{int64(1)}), 2,
+	require.Len(t, joinIterator.buildIndex.Probe(Tuple{int64(1)}), 2,
 		"a non-unique build key must retain every fanout tuple")
 	require.NotNil(t, joinIterator.seen,
 		"an unkeyed join must retain internal full-tuple deduplication")

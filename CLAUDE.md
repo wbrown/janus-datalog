@@ -422,8 +422,7 @@ The storage layer connects the query engine to BadgerDB:
    - Threshold-based activation in matcher_relations.go
    - Modest performance impact, cleaner code structure
    - **Removed in v0.15.0**: the scanner had no caller. Binding-driven scans
-     go through `hash_join_matcher.go` (HashJoinScan, or MergeJoin for large
-     high-selectivity entity-position sets).
+     go through `hash_join_matcher.go`.
 3. **Predicate Infrastructure** - Classification and constraints
    - PredicateClassifier for analyzing pushdown candidates
    - StorageConstraint infrastructure in place
@@ -531,6 +530,10 @@ Relational invariants:
 - Set-preserving operators must not defensively deduplicate again.
 - `Materialize` guarantees replayability; it does not require eager realization
   when the Relation is already replayable.
+- A binding is always a Relation. A subquery's result enters its scope as the
+  relation over the binding's symbols, joined on them, whatever the binding's
+  spelling. A cardinality assertion is an aggregate, written in the inner
+  `:find`, never carried by a binding's shape.
 
 **DO (Go idioms):**
 - Simple functions for stateless operations
@@ -567,6 +570,7 @@ func (p RelationProperties) project(symbols []query.Symbol) RelationProperties
 - **Parallel processing**: Leverage Go's concurrency for pattern matching and joins
 - **Caching hierarchy**: Pattern compilation, tuple deduplication, query plans
 - **Early termination**: Stop execution immediately on empty intermediate results
+- **Measure on memory-trees or badger.** A benchmark, a before-and-after comparison, or any number a decision rests on names one of those two backends. The memory backend is not a measurement target, and a number taken on it decides nothing. The tell: a report whose comparison column is the memory backend's because that is the number on hand.
 
 ### CRITICAL: Profile, Don't Theorize
 
@@ -683,7 +687,7 @@ d, _ := db.Open("path/to/db", db.WithAnnotationHandler(handler))
 
 **Event Types**. `datalog/annotations/types.go` is the authority — every event the engine emits is named there and every producer emits through one of those constants rather than writing the string. Do not add an event by writing a literal; the two halves have to stay together or a sweep for dead names can only see one of them. The same applies to a payload key more than one producer writes: it is declared beside the names, and one key carries one meaning (`index` is one of the eight physical orderings, never an ordinal). Values go into the payload **typed** — an `IndexType`, a `*query.DataPattern`, a `Keyword` — because the formatter is the renderer; flattening at the producer spends an allocation per emit to hand the consumer a string to parse. The families:
 - **Pattern matching**: index selection, and the scan funnel — `datoms.scanned` (intake from the index, counted before any narrowing), `datoms.resolved` (what CRDT resolution produced), `datoms.matched` (what survived the pattern and its constraints)
-- **Binding-driven scans**: one completion event per strategy `chooseJoinStrategy` picks — hash-join, merge-join, per-binding, each carrying the same funnel
+- **Binding-driven scans**: one completion event per strategy the matcher takes — the per-key seek, hash-join, merge-join, per-binding — each carrying the same funnel; the per-key seek and the per-binding path carry the scans they opened in place of a run
 - **Joins**: hash-join timing and sizes, build/probe completion, strategy selection
 - **Phase execution**: begin and complete, with the phase's duration and tuple count (`-1` where a streaming group declines to size itself rather than be consumed for the number)
 - **V-bound validation, OR and fallback branches, subqueries, algebra rewrites, pull, reflection, cache rebuilds, unique-attribute lookups**

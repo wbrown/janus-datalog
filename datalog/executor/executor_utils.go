@@ -35,6 +35,23 @@ func extractFindSymbols(findElements []query.FindElement) []query.Symbol {
 	return symbols
 }
 
+// consumedFindSymbols is the symbols a find clause reads from the relation
+// groups: a variable, an aggregate's argument, a pull's entity variable.
+func consumedFindSymbols(findElements []query.FindElement) []query.Symbol {
+	var symbols []query.Symbol
+	for _, elem := range findElements {
+		switch e := elem.(type) {
+		case query.FindVariable:
+			symbols = append(symbols, e.Symbol)
+		case query.FindAggregate:
+			symbols = append(symbols, e.Arg)
+		case query.FindPull:
+			symbols = append(symbols, e.Variable)
+		}
+	}
+	return symbols
+}
+
 // SortRelation sorts a relation according to the order-by clauses.
 // This is a pure function that performs multi-symbol sorting with configurable direction.
 // It materializes the relation if not already materialized.

@@ -128,7 +128,7 @@ func TestMagic_ConstantAndRepeatedArguments(t *testing.T) {
 }
 
 func TestMagic_InvocationInsideOrJoinBranch(t *testing.T) {
-	orJoin := &OrJoinClause{JoinVars: []Symbol{sym("?b"), sym("?c")}, Branches: [][]Clause{
+	orJoin := &OrJoinClause{OutputVars: []Symbol{sym("?b"), sym("?c")}, Branches: [][]Clause{
 		{invoke("follows", "?b", "?c")},
 		{scopePattern("?b", "page/next", "?c")},
 	}}
@@ -145,7 +145,7 @@ func TestMagic_InvocationInsideOrJoinBranch(t *testing.T) {
 		defineRule("adorned.bf/follows", []string{"?a", "?c"},
 			invoke("magic.bf/follows", "?a"),
 			scopePattern("?a", "page/next", "?b"),
-			&OrJoinClause{JoinVars: []Symbol{sym("?b"), sym("?c")}, Branches: [][]Clause{
+			&OrJoinClause{OutputVars: []Symbol{sym("?b"), sym("?c")}, Branches: [][]Clause{
 				{invoke("adorned.bf/follows", "?b", "?c")},
 				{scopePattern("?b", "page/next", "?c")},
 			}}),
@@ -287,7 +287,7 @@ func TestMagic_MagicRuleReadsReadyMonotoneClauses(t *testing.T) {
 	t.Run("a clause bound later is not read", func(t *testing.T) {
 		rs := mustRuleSet(t, append(followsRules(),
 			defineRule("t", []string{"?a", "?c"},
-				&NotJoinClause{JoinVars: []Symbol{sym("?w")}, Clauses: []Clause{scopePattern("?w", "page/marked", "_")}},
+				&NotJoinClause{RequiredVars: []Symbol{sym("?w")}, Clauses: []Clause{scopePattern("?w", "page/marked", "_")}},
 				invoke("follows", "?a", "?c"),
 				scopePattern("?w", "page/next", "?c"))))
 		magic := mustMagic(t, rs, "t", true, false)
@@ -359,7 +359,7 @@ func TestMagic_NegationAfterARecursiveInvocationRewrites(t *testing.T) {
 				invoke("magic.bf/q", "?x"),
 				scopePattern("?x", "page/a", "?y"),
 				invoke("adorned.bf/q", "?y", "?w"),
-				&NotClause{Clauses: []Clause{invoke("s", "?w")}},
+				&NotJoinClause{RequiredVars: []Symbol{sym("?w")}, Clauses: []Clause{invoke("s", "?w")}},
 				scopePattern("?w", "page/b", "?z")),
 		})
 		assertRules(t, "magic.bf/q", magic.Rules.Rules(sym("magic.bf/q")), []*Rule{
@@ -390,7 +390,7 @@ func TestMagic_NegationAfterARecursiveInvocationRewrites(t *testing.T) {
 				invoke("magic.bf/q", "?x"),
 				scopePattern("?x", "page/a", "?y"),
 				invoke("adorned.bf/q", "?y", "?w"),
-				&NotClause{Clauses: []Clause{invoke("adorned.b/s", "?y")}},
+				&NotJoinClause{RequiredVars: []Symbol{sym("?y")}, Clauses: []Clause{invoke("adorned.b/s", "?y")}},
 				scopePattern("?w", "page/b", "?z")),
 		})
 		assertRules(t, "magic.b/s", magic.Rules.Rules(sym("magic.b/s")), []*Rule{
@@ -426,7 +426,7 @@ func TestMagic_NegationAfterARecursiveInvocationRewrites(t *testing.T) {
 				scopePattern("?x", "page/a", "?y"),
 				invoke("adorned.bf/q", "?y", "?w"),
 				scopePattern("?w", "page/d", "?u"),
-				&NotClause{Clauses: []Clause{invoke("s", "?u")}},
+				&NotJoinClause{RequiredVars: []Symbol{sym("?u")}, Clauses: []Clause{invoke("s", "?u")}},
 				scopePattern("?w", "page/b", "?z")),
 		})
 		assertRules(t, "s", magic.Rules.Rules(sym("s")), rs.Rules(sym("s")))

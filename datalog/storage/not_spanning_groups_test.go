@@ -118,12 +118,15 @@ func TestNotBodyConsumesInBoundParameter(t *testing.T) {
 	}
 }
 
-// The tests below pin the ruling of NOTJOIN_HEADER_ENV_BINDING_DERIVATION
-// (docs/wip): an :in-bound environment symbol is an ordinary bound variable
-// in every not/not-join binding domain — declaring it in a not-join header is
-// valid (Datomic compatibility), and a body consuming it only through a
-// predicate is valid with the header declaring it. The binding domain at
-// every home is outer-relation symbols ∪ environment.
+// The tests below pin the header rule of
+// docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.2 on a not-join reading a
+// query input. The binding domain of a not-join body is its header alone,
+// the variables the enclosing scope binds under the names the header lists,
+// and the environment is not in it: the body reads an input only when the
+// header names it, and a variable the body binds that shares an input's
+// name, with the header not naming it, is the body's own. A plain not's
+// domain is the header the text infers, which names an input its body
+// reads.
 
 // notSpanningExpected is the correct anti-join answer on notSpanningFixture
 // with the probe value "hot": the hot-flagged entity is excluded, the
@@ -211,16 +214,14 @@ func TestNotBodyPredicateConsumesInBoundParameter(t *testing.T) {
 	}
 }
 
-// TestNotJoinOmittedHeaderBodyProvidesInBoundParameter pins shape 3: the
-// header omits the :in-bound symbol, the body pattern provides it, and the
-// executor's environment bridging correlates it. This shape is unaffected
-// by the header-env-binding ruling — a header may omit a symbol the body
-// itself binds.
-func TestNotJoinOmittedHeaderBodyProvidesInBoundParameter(t *testing.T) {
+// TestNotJoinBodySeesOnlyItsHeader pins a not-join body variable sharing the
+// name of an input the header does not name as the body's own: the body
+// excludes every flagged entity, whatever the input holds.
+func TestNotJoinBodySeesOnlyItsHeader(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			_, unflagged, otherFlag := notSpanningFixture(t, d)
+			_, unflagged, _ := notSpanningFixture(t, d)
 
 			rel, err := d.Query(`[:find ?e
 			                      :in $ ?flag
@@ -231,17 +232,17 @@ func TestNotJoinOmittedHeaderBodyProvidesInBoundParameter(t *testing.T) {
 				"hot")
 			require.NoError(t, err)
 			got := collectEntityResults(t, rel)
-			require.Equal(t, notSpanningExpected(unflagged, otherFlag), got,
-				"an omitted-header not-join with a body-provided :in-bound symbol keeps working")
+			require.Equal(t, map[string]bool{unflagged.String(): true}, got,
+				"a body variable the header does not name is the body's own, so every flagged entity is excluded")
 		})
 	}
 }
 
-// TestNotJoinOmittedHeaderPredicateConsumptionRejected pins shape 4 and the
-// header-declaration language rule (query/clause_scope.go): a body consuming
-// an outer requirement only through a predicate must declare it in the
-// header. This holds for environment symbols too — shape 2 is the valid
-// spelling — and the rejection is mode-independent (it happens at parse).
+// TestNotJoinOmittedHeaderPredicateConsumptionRejected pins shape 4 under
+// the header rule (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.4): a
+// variable a not-join body reads and neither binds nor names in its header
+// is refused at preparation naming the form and the variable, a query input
+// sharing the name included, on both modes.
 func TestNotJoinOmittedHeaderPredicateConsumptionRejected(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -257,19 +258,19 @@ func TestNotJoinOmittedHeaderPredicateConsumptionRejected(t *testing.T) {
 			                      [(= ?f ?flag)])]`,
 				"hot")
 			require.Error(t, err,
-				"a not-join header must declare predicate-only outer requirements, environment or not")
-			require.Contains(t, err.Error(), "must declare every outer requirement")
+				"a not-join body reading a variable outside its header is refused, environment or not")
+			require.Contains(t, err.Error(), "(not-join [?e]")
+			require.Contains(t, err.Error(), "?flag")
 		})
 	}
 }
 
 // TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors pins the over-declaration
-// rule for environment symbols: a header symbol the body neither produces
-// nor consumes declares a correlation that does not exist — rejected on
-// both modes, mirroring the or-join family's rule that every declared
-// header symbol must be bound by the branches. The shape's likely origin
-// is a body pattern edited into a literal with the header left behind;
-// silent tolerance would hide that authoring error.
+// rule for environment symbols: a not-join header variable the body neither
+// binds nor reads is refused at preparation naming the form and the
+// variable, on both modes. The shape's likely origin is a body pattern
+// edited into a literal with the header left behind; silent tolerance would
+// hide that authoring error.
 func TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -285,7 +286,8 @@ func TestNotJoinDeclaredEnvSymbolUnusedByBodyErrors(t *testing.T) {
 				"hot")
 			require.Error(t, err,
 				"a declared header symbol the body never mentions must reject, not silently drop")
-			require.Contains(t, err.Error(), "neither produced nor consumed")
+			require.Contains(t, err.Error(), "(not-join [?e ?flag]")
+			require.Contains(t, err.Error(), "?flag")
 		})
 	}
 }
@@ -307,14 +309,16 @@ func TestNotJoinDeclaredOuterSymbolUnusedByBodyErrors(t *testing.T) {
 			                      [?e :entity/flag "hot"])]`)
 			require.Error(t, err,
 				"a declared header symbol the body never mentions must reject on both modes")
-			require.Contains(t, err.Error(), "neither produced nor consumed")
+			require.Contains(t, err.Error(), "(not-join [?e ?outer]")
+			require.Contains(t, err.Error(), "?outer")
 		})
 	}
 }
 
-// TestNotJoinHeaderSymbolBoundNowhereErrors is the negative control for the
-// widened binding domain: a header symbol bound neither by the outer
-// relation nor by :in is still an error, not a vacuous match.
+// TestNotJoinHeaderSymbolBoundNowhereErrors pins the refusal of a not-join
+// whose header names a variable nothing in the enclosing scope binds
+// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.4): the planner refuses it
+// on both paths, naming the variable.
 func TestNotJoinHeaderSymbolBoundNowhereErrors(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -326,11 +330,9 @@ func TestNotJoinHeaderSymbolBoundNowhereErrors(t *testing.T) {
 			                    [?e :entity/kind "thing"]
 			                    (not-join [?e ?nowhere]
 			                      [?e :entity/flag ?nowhere])]`)
-			// The rejection layer differs by mode (algebra compile names the
-			// symbol; the baseline planner rejects at phasing) — the pinned
-			// behavior is that rejection survives the widened binding domain.
 			require.Error(t, err,
-				"a not-join header symbol bound nowhere must stay an error under the widened domain")
+				"a not-join header variable nothing binds is refused")
+			require.Contains(t, err.Error(), "?nowhere")
 		})
 	}
 }

@@ -115,7 +115,7 @@ func compileProjectLivenessQuery(t *testing.T) *Node {
 		         [?entity :item/payload ?payload]]`,
 	)
 	require.NoError(t, err)
-	root, err := Compile(parsed)
+	root, err := Compile(parsed, nil)
 	require.NoError(t, err)
 	return root
 }

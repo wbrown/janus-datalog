@@ -197,11 +197,17 @@ func TestAlgebraIntegration_OrFallbackWithSubquery(t *testing.T) {
 			db.ClearPlanCache()
 			// Debug: show rewritten clauses
 			{
-				parsed, _ := db.resolveQuery(q)
-				root, _ := algebra.Compile(&query.Query{Where: parsed.Where})
+				parsed, err := db.resolveQuery(q)
+				require.NoError(t, err)
+				prepared, err := query.Prepare(parsed, nil)
+				require.NoError(t, err)
+				root, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
+				require.NoError(t, err)
 				opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
-				optimized, _ := opt.Optimize(root)
-				rewritten, _ := algebra.Decompile(optimized)
+				optimized, err := opt.Optimize(root)
+				require.NoError(t, err)
+				rewritten, err := algebra.Decompile(optimized)
+				require.NoError(t, err)
 				t.Logf("Rewritten %d clauses:", len(rewritten))
 				for i, c := range rewritten {
 					t.Logf("  [%d] %T: %s", i, c, c.String())
@@ -396,11 +402,17 @@ func TestAlgebraIntegration_MultipleOrFallbacks(t *testing.T) {
 			db.ClearPlanCache()
 			// Log rewritten clauses for debugging
 			{
-				parsed, _ := db.resolveQuery(q)
-				root, _ := algebra.Compile(&query.Query{Where: parsed.Where})
+				parsed, err := db.resolveQuery(q)
+				require.NoError(t, err)
+				prepared, err := query.Prepare(parsed, nil)
+				require.NoError(t, err)
+				root, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
+				require.NoError(t, err)
 				opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
-				optimized, _ := opt.Optimize(root)
-				rewritten, _ := algebra.Decompile(optimized)
+				optimized, err := opt.Optimize(root)
+				require.NoError(t, err)
+				rewritten, err := algebra.Decompile(optimized)
+				require.NoError(t, err)
 				t.Logf("Rewritten %d clauses:", len(rewritten))
 				for i, c := range rewritten {
 					t.Logf("  [%d] %T: %s", i, c, c.String())

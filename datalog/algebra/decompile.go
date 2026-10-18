@@ -49,12 +49,12 @@ func decompileNode(n *Node) ([]query.Clause, error) {
 }
 
 // subqueryInputs is what a decompiled subquery declares and is passed: the
-// default source, and the rule set after it when its clauses invoke a
-// predicate at any depth.
+// default source, and the rule set after it when a clause of its own scope
+// uses % (query.RulesUse).
 func subqueryInputs(where []query.Clause) ([]query.InputSpec, []query.PatternElement) {
 	in := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}}
 	inputs := []query.PatternElement{query.Constant{Value: datalog.SymDollar}}
-	if len(query.Invocations(where)) > 0 {
+	if query.RulesUse(where) != nil {
 		in = append(in, query.RulesInput{})
 		inputs = append(inputs, query.Constant{Value: datalog.SymRules})
 	}
@@ -277,8 +277,8 @@ func decompileAntiJoin(n *Node) ([]query.Clause, error) {
 	var notClause query.Clause
 	if aj.ExplicitJoin {
 		notClause = &query.NotJoinClause{
-			JoinVars: aj.JoinSymbols,
-			Clauses:  rightClauses,
+			RequiredVars: aj.JoinSymbols,
+			Clauses:      rightClauses,
 		}
 	} else {
 		notClause = &query.NotClause{
@@ -302,9 +302,16 @@ func decompileUnion(n *Node) ([]query.Clause, error) {
 		branches = append(branches, branch)
 	}
 	if len(u.JoinVars) > 0 {
+		var outputs []query.Symbol
+		for _, symbol := range u.JoinVars {
+			if !query.ContainsSymbol(u.RequiredVars, symbol) {
+				outputs = append(outputs, symbol)
+			}
+		}
 		return []query.Clause{&query.OrJoinClause{
-			JoinVars: u.JoinVars,
-			Branches: branches,
+			RequiredVars: u.RequiredVars,
+			OutputVars:   outputs,
+			Branches:     branches,
 		}}, nil
 	}
 	return []query.Clause{&query.OrClause{Branches: branches}}, nil
@@ -435,19 +442,12 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 		}
 	}
 
-	if len(joinVars) > 0 {
-		orDefaultJoinClause := &query.OrDefaultJoinClause{
-			RequiredVars: joinVars,
-			OutputVars:   defaultSyms,
-			Branches:     [][]query.Clause{subqueryBranch, defaultBranch},
-		}
-		clauses = append(clauses, orDefaultJoinClause)
-	} else {
-		orDefaultClause := &query.OrDefaultClause{
-			Branches: [][]query.Clause{subqueryBranch, defaultBranch},
-		}
-		clauses = append(clauses, orDefaultClause)
+	orDefaultJoinClause := &query.OrDefaultJoinClause{
+		RequiredVars: joinVars,
+		OutputVars:   defaultSyms,
+		Branches:     [][]query.Clause{subqueryBranch, defaultBranch},
 	}
+	clauses = append(clauses, orDefaultJoinClause)
 	return clauses, nil
 }
 

@@ -146,6 +146,14 @@ type PlannerOptions struct {
 	MaxRuleIterations int // Fixpoint iterations per stratum
 	MaxDerivedTuples  int // Tuples one rule set derives
 
+	// The window a form's branches run over
+	// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.2). Every subject,
+	// sized or streaming, is read into windows of one tuple, then
+	// ScopeWindowGrowth times the last, up to ScopeWindowCap tuples. Zero
+	// takes the executor's default.
+	ScopeWindowCap    int
+	ScopeWindowGrowth int
+
 	// Handler receives annotation events from planning and execution. Nil is
 	// annotations-off and is the default. Registered here, on the options the
 	// caller already builds, so it reaches the executor and every matcher and

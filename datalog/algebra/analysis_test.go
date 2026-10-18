@@ -502,7 +502,9 @@ func TestDefaultPassesPreserveAnalyzedSchemaAndAreIdempotent(t *testing.T) {
 		    [(ground 0) ?count])]`,
 	)
 	require.NoError(t, err)
-	root, err := Compile(parsed)
+	prepared, err := query.Prepare(parsed, nil)
+	require.NoError(t, err)
+	root, err := Compile(prepared, nil)
 	require.NoError(t, err)
 	before := root.String()
 	beforeAnalysis, err := Analyze(root)

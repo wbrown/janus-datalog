@@ -116,17 +116,15 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			copy := *data
 			copy.CorrelationVars = cloneSymbols(data.CorrelationVars)
 			copy.DefaultValues = append([]interface{}(nil), data.DefaultValues...)
-			var output []query.Symbol
+			var outer []query.Symbol
 			if len(children) == 1 {
-				output = cloneSymbols(children[0].Symbols())
-			} else {
-				output = cloneSymbols(data.CorrelationVars)
+				outer = children[0].Symbols()
 			}
 			binding, ok := data.Binding.(query.BindingForm)
 			if !ok {
 				return nil, fmt.Errorf("refresh LateralJoin: binding has type %T", data.Binding)
 			}
-			copy.Output = mergeSymbols(output, binding.BoundVariables())
+			copy.Output = lateralJoinOutput(outer, len(children) == 1, data.CorrelationVars, binding.BoundVariables())
 			refreshed.Data = &copy
 		case *Aggregate:
 			copy := *data
@@ -496,11 +494,7 @@ func analyzeLateralJoin(node *Node, children []Analysis) (Analysis, error) {
 	if len(bound) != len(data.InnerQuery.Find) {
 		return Analysis{}, fmt.Errorf("lateral binding arity %d does not match inner find arity %d", len(bound), len(data.InnerQuery.Find))
 	}
-	expected := cloneSymbols(outer)
-	if len(children) == 0 {
-		expected = mergeSymbols(expected, data.CorrelationVars)
-	}
-	expected = mergeSymbols(expected, bound)
+	expected := lateralJoinOutput(outer, len(children) == 1, data.CorrelationVars, bound)
 	if !sameSymbolsInOrder(data.Output, expected) {
 		return Analysis{}, fmt.Errorf("lateral output %v does not match outer and binding output %v", data.Output, expected)
 	}

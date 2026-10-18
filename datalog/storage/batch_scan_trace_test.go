@@ -13,8 +13,9 @@ import (
 func TestBatchScanTrace(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// 200 entities. At that size chooseJoinStrategy returns HashJoinScan: one
-			// scan of the attribute plus a hash probe, not a seek per binding.
+			// 200 entities. At that size chooseJoinStrategy returns HashJoinScan,
+			// and at or below executor.SmallBindingBoundary the hash join seeks
+			// each of the 200 keys by its own scan and probes the hash set.
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
 			symbolEntity := datalog.NewIdentity("SYM")

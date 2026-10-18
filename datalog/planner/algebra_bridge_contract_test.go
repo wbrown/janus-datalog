@@ -28,14 +28,15 @@ func TestOptimizeViaAlgebraReturnsNestedDatalogWithoutMutatingInput(t *testing.T
 		eventNames = append(eventNames, event.Name)
 	}
 	optimized, err := optimizeViaAlgebra(
-		parsed,
+		parsed, query.Bindings{},
+
 		PlannerOptions{
 			EnableAlgebraOptimizer:     true,
 			EnableJoinProjectInsertion: true,
 		},
 		handler,
-		nil,
-	)
+		nil)
+
 	require.NoError(t, err)
 	require.NotSame(t, parsed, optimized)
 	require.Equal(t, before, parsed.String(), "optimization must not mutate its Datalog input")
@@ -77,7 +78,7 @@ func TestClauseBasedPlannerPlansOptimizedDatalog(t *testing.T) {
 		names = append(names, event.Name)
 	}
 	plan, err := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: true}).
-		Plan(parsed, Bindings{}, handler)
+		Plan(parsed, query.Bindings{}, handler)
 	require.NoError(t, err)
 	require.NoError(t, plan.Validate())
 	require.Contains(t, names, "algebra/bridge-complete")
@@ -99,7 +100,7 @@ func TestClauseBasedPlannerLowersJoinProjectIntoNestedDatalog(t *testing.T) {
 		EnableAlgebraOptimizer:     true,
 		EnableJoinProjectInsertion: true,
 	}).
-		Plan(parsed, Bindings{}, nil)
+		Plan(parsed, query.Bindings{}, nil)
 	require.NoError(t, err)
 	require.NoError(t, plan.Validate())
 	require.Len(t, plan.Phases, 1)
@@ -139,7 +140,7 @@ func TestClauseBasedPlannerKeepsInputSymbolsLiveAcrossJoinPlanning(t *testing.T)
 	require.NoError(t, err)
 
 	plan, err := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: true}).
-		Plan(parsed, Bindings{}, nil)
+		Plan(parsed, query.Bindings{}, nil)
 	require.NoError(t, err)
 	require.NoError(t, plan.Validate())
 	require.Len(t, plan.Phases, 1)

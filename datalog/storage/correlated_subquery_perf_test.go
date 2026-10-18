@@ -391,11 +391,17 @@ func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, backend Backend) {
 		db.ClearPlanCache()
 
 		// Log the rewritten clauses
-		q, _ := db.resolveQuery(queryStr)
-		root, _ := algebra.Compile(&query.Query{Where: q.Where})
+		q, err := db.resolveQuery(queryStr)
+		require.NoError(t, err)
+		prepared, err := query.Prepare(q, nil)
+		require.NoError(t, err)
+		root, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
+		require.NoError(t, err)
 		optimizer := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
-		optimized, _ := optimizer.Optimize(root)
-		rewritten, _ := algebra.Decompile(optimized)
+		optimized, err := optimizer.Optimize(root)
+		require.NoError(t, err)
+		rewritten, err := algebra.Decompile(optimized)
+		require.NoError(t, err)
 		t.Logf("Rewritten %d clauses:", len(rewritten))
 		for i, c := range rewritten {
 			t.Logf("  [%d] %T: %s", i, c, c.String())

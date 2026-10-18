@@ -198,7 +198,7 @@ func TestEvaluateRules_NaiveStepEqualsSemiNaive(t *testing.T) {
 				t.Fatalf("prepareStratum: %v", err)
 			}
 			full := map[query.Symbol]*derivedSet{follows: newDerivedSet(eval.symbols[follows])}
-			seed, err := eval.run(ctx, nil, false)
+			seed, err := eval.run(ctx, nil, eval.plain)
 			if err != nil {
 				t.Fatalf("seeding: %v", err)
 			}
@@ -213,7 +213,7 @@ func TestEvaluateRules_NaiveStepEqualsSemiNaive(t *testing.T) {
 			for grew := true; grew; {
 				whole := full[follows].relation(exec.options)
 				view := map[query.Symbol]Relation{follows: whole, query.DeltaSymbol(follows): whole}
-				got, err := eval.run(ctx, view, true)
+				got, err := eval.run(ctx, view, eval.delta)
 				if err != nil {
 					t.Fatalf("naive pass: %v", err)
 				}
@@ -242,7 +242,7 @@ func TestExecuteRuleInvocation_ProjectsDerivedRelation(t *testing.T) {
 	delta := NewMaterializedRelation([]query.Symbol{a, b}, []Tuple{{page(2), page(3)}})
 	follows := datalog.NewSymbol("follows")
 	ctx := NewContext().WithDerived(map[query.Symbol]Relation{
-		follows:                   derived,
+		follows:                    derived,
 		query.DeltaSymbol(follows): delta,
 	})
 	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
@@ -668,10 +668,10 @@ func TestPrepareStratum_BodyInvocationLeadsItsPatterns(t *testing.T) {
 			if err != nil {
 				t.Fatalf("prepareStratum: %v", err)
 			}
-			if len(eval.bodies) != 1 {
-				t.Fatalf("the magic stratum plans %d bodies, want its one recursive rule", len(eval.bodies))
+			if len(eval.delta) != 1 || len(eval.plain) != 0 || len(eval.lower) != 0 {
+				t.Fatalf("the magic stratum plans %d plain, %d delta and %d lower bodies, want its one recursive rule's delta copy alone", len(eval.plain), len(eval.delta), len(eval.lower))
 			}
-			plan := eval.bodies[0].plan
+			plan := eval.delta[0].plan
 			if len(plan.Phases) == 0 || len(plan.Phases[0].Query.Where) == 0 {
 				t.Fatalf("the body plan has no clauses: %v", plan)
 			}
@@ -695,10 +695,7 @@ func TestPrepareStratum_UnguardedBodyKeepsThePatternFirst(t *testing.T) {
 			if err != nil {
 				t.Fatalf("prepareStratum: %v", err)
 			}
-			for _, body := range eval.bodies {
-				if !body.delta {
-					continue
-				}
+			for _, body := range eval.delta {
 				first := body.plan.Phases[0].Query.Where[0]
 				if _, ok := first.(*query.DataPattern); !ok {
 					t.Errorf("the recursive body's first clause is %v, want the edge pattern before the delta occurrence:\n%s", first, body.plan)
@@ -714,28 +711,22 @@ func TestEvaluateRules_DerivesOnlyTheNeededStrata(t *testing.T) {
 	                     [(follows ?a ?c) [?a :page/next ?b] (follows ?b ?c)]
 	                     [(marked ?p) [?p :page/kind "marked"]]]`)
 	exec := NewExecutor(matcher, nil)
-	derived, err := exec.evaluateRules(NewContext().WithRules(rs), rs, datalog.NewSymbol("follows"), nil)
-	if err != nil {
-		t.Fatalf("evaluateRules: %v", err)
+	ev := newRuleEvaluation(exec, rs, datalog.NewSymbol("follows"), nil)
+	if _, err := ev.extend(NewContext().WithRules(rs), nil); err != nil {
+		t.Fatalf("extend: %v", err)
 	}
-	rel, ok := derived[datalog.NewSymbol("follows")]
+	ev.complete()
+	rel, ok := ev.derived[datalog.NewSymbol("follows")]
 	if !ok {
 		t.Fatal("the invoked predicate is derived")
 	}
 	requireSamePairs(t, identityPairs(t, rel), chainClosure(4))
-	if _, ok := derived[datalog.NewSymbol("marked")]; ok {
+	if _, ok := ev.derived[datalog.NewSymbol("marked")]; ok {
 		t.Error("a predicate nothing depends on is not derived")
 	}
-
-	total := 0
-	direct := map[query.Symbol]Relation{}
-	if err := exec.evaluateStratum(NewContext().WithRules(rs), rs, rs.Strata()[0], direct, nil, &total); err != nil {
-		t.Fatalf("evaluateStratum: %v", err)
+	if ev.total != len(chainClosure(4)) {
+		t.Errorf("the evaluation counted %d tuples, want %d: the needed stratum's alone", ev.total, len(chainClosure(4)))
 	}
-	if total != len(chainClosure(4)) {
-		t.Errorf("evaluateStratum counted %d tuples, want %d", total, len(chainClosure(4)))
-	}
-	requireSamePairs(t, identityPairs(t, direct[datalog.NewSymbol("follows")]), chainClosure(4))
 }
 
 func TestEnvironmentRelationFromInputs_SkipsRulesInput(t *testing.T) {
@@ -1216,18 +1207,18 @@ func TestEvaluateRules_SeedAbsorbedAtIterationZero(t *testing.T) {
 			}
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 			seed := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?start")}, []Tuple{{page(3)}})
-			derived, err := exec.evaluateRules(NewContext().WithRules(rs), magic.Rules, magic.Predicate,
-				map[query.Symbol]Relation{magic.Seed: seed})
-			if err != nil {
-				t.Fatalf("evaluateRules: %v", err)
+			ev := newRuleEvaluation(exec, magic.Rules, magic.Predicate, magic.Seed)
+			if _, err := ev.extend(NewContext().WithRules(rs), seed); err != nil {
+				t.Fatalf("extend: %v", err)
 			}
+			ev.complete()
 			want := map[[2]datalog.Identity]bool{}
 			for i := 3; i <= 6; i++ {
 				for j := i + 1; j <= 6; j++ {
 					want[[2]datalog.Identity{page(i), page(j)}] = true
 				}
 			}
-			requireSamePairs(t, identityPairs(t, derived[magic.Predicate]), want)
+			requireSamePairs(t, identityPairs(t, ev.derived[magic.Predicate]), want)
 			if len(iterations) == 0 {
 				t.Fatal("no iteration event was emitted")
 			}
@@ -1333,7 +1324,7 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			var plans []labelledPlan
 			for _, c := range queries {
-				bindings := planner.Bindings{Symbols: map[query.Symbol]bool{}}
+				bindings := query.Bindings{Symbols: map[query.Symbol]bool{}}
 				for _, b := range c.bound {
 					bindings.Symbols[datalog.NewSymbol(b)] = true
 				}
@@ -1349,8 +1340,10 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 					if err != nil {
 						t.Fatalf("%s: prepareStratum %v: %v", s.name, stratum.Predicates, err)
 					}
-					for _, body := range eval.bodies {
-						plans = append(plans, labelledPlan{s.name + ", body of " + body.rule.Name.String(), body.plan})
+					for _, bodies := range [][]plannedBody{eval.plain, eval.delta, eval.lower} {
+						for _, body := range bodies {
+							plans = append(plans, labelledPlan{s.name + ", body of " + body.rule.Name.String(), body.plan})
+						}
 					}
 				}
 			}

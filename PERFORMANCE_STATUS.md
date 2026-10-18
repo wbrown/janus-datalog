@@ -12,6 +12,20 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Schema validation**: **<1% overhead** for type checking, **~6% overhead** for uniqueness (verified 2025-12-17)
 - ✅ **Unknown-attribute refusal**: **9–14ns** per query on a declared attribute, **36–54ns** on a refused one, **3–9ns** with the option off (verified 2026-10-11)
 - ✅ **Rules and recursion**: a transitive closure over a hundred thousand edges in chains of ten evaluates in **0.3–1.1s** through `Database.Query`, depending on the backend, and an invocation bound to one start node costs **0.09–0.17 ms** at every graph size on the executor and on every backend. Semi-naive iteration beats the naive step by **2.6–4.2×** in time and **2.1–2.4×** in memory (verified 2026-10-12)
+- ✅ **Query preparation**: `query.Prepare` runs once per execution, before planning, and infers every headerless form's header from the text. A query holding a plain `or` over a branch holding a plain `not` prepares in **0.73–0.94 µs** with **44 allocs** and **792 B** per call, and the same query written as the header forms the inference writes for it, which `Prepare` returns as it is, in **0.29–0.34 µs** with **13 allocs** and **136 B** (`BenchmarkPrepare`, n=5; verified 2026-10-15, Apple M5)
+- ✅ **Scope forms under the window, with the per-key seek**: an `or-join` or `or-default-join` reads its subject into windows of one tuple doubling to a cap of 1000 (`executor.SmallBindingBoundary`), runs each branch once per window and probes the window's index per tuple; a `not-join` runs its body once over its subject's projection onto the header and anti-joins the subject with the result (`executeNotJoinClause`); and a binding of several keys at or below that boundary is served by one narrowed scan per key (`matchWithHashJoin`, reported as `annotations.ScanPerKeySeek`), where the merge-base scanned the attribute's whole extent once for any binding of two keys or more. `BenchmarkOrJoinScope`, `BenchmarkOrDefaultJoinScope` and `BenchmarkNotJoinScope` (`datalog/storage/scope_benchmark_test.go`) measure the branch at the default cap against its merge-base `841caf8`, both optimizer modes pooled since they agree within the run-to-run spread. The streaming subject is a data pattern. The materialized subject is a subquery's relation binding, which the executor materializes before the form runs over it; `docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2 and §4.4 have nothing materialize a subject, so those legs measure a path the design removes and not a number to recover. Every cell is the five runs' range per query:
+
+  | form, size, subject | merge-base memory-trees (ms) | branch memory-trees (ms) | merge-base badger (ms) | branch badger (ms) |
+  |---|---|---|---|---|
+  | or-join, 1000, streaming | 2.15–2.21 | 0.93–0.99 | 2.45–2.51 | 1.35–1.38 |
+  | or-join, 1000, materialized | 0.32–0.33 | 0.95–1.12 | 0.57–0.59 | 1.51–1.66 |
+  | or-join, 100000, streaming | 277–288 | 154–168 | 510–527 | 367–495 |
+  | or-join, 100000, materialized | 62–68 | 168–223 | 101–157 | 386–657 |
+  | or-default-join, 100000, streaming | 123–144 | 100–112 | 209–449 | 205–343 |
+  | not-join, 1000, streaming | 1.42–1.46 | 0.44–0.45 | 1.47–2.66 | 0.71–0.75 |
+  | not-join, 100000, streaming | 181–347 | 80–113 | 277–353 | 183–396 |
+
+  On memory-trees the branch is faster on every streaming leg, by **1.1× to 4.3×** across the ranges, with **1.7× to 4.5× fewer allocations**. On badger it is faster on every streaming leg at a thousand tuples, by **1.8× to 3.7×**, and on the or-join at a hundred thousand; the or-default-join and not-join ranges at a hundred thousand overlap on badger, and allocations fall **1.3× to 2.4×** on every badger streaming leg. The or-join over a materialized subject is the one class the branch loses: three times the merge-base's time at a thousand tuples on both backends, two and a half to four times at a hundred thousand, with three to nine times the allocations. The merge-base built that branch once over the whole subject with one scan of the attribute; the branch seeks each key of each window, and at a thousand tuples the subject's keys are the attribute's whole extent, so a thousand seeks replace one scan of a thousand datoms (n=5; verified 2026-10-18, Apple M5).
 - ✅ **Iterator composition**: **4.06× speedup** (1,259μs → 310μs, 89% memory reduction) (verified 2025-10-25)
 - ✅ **Streaming execution**: **2.22× faster** with low-selectivity filters (1,720ms → 774ms), 52% memory reduction (verified 2025-10-25)
 - ✅ **Parallel subquery execution**: **2.06× speedup** with 8 workers on M3 Max (730ms → 355ms) (verified 2025-10-25)
@@ -121,6 +135,7 @@ The Janus Datalog engine delivers production-ready performance through architect
   The design to spend the lead — identity trie with slab payloads, the keyword length bound enforced at the constructor, one keyword table, and the `ValueFromBytes` keyword arm on the byte path — is `docs/proposals/INTERN_SPECIALIZATION.md` (measured 2026-08-03, Apple M5).
 
 ### Claims Requiring Qualification
+- ⚠️ **js/wasm `datalog/storage` run**: the package's js/wasm run rose from **258 s** to **613 s** between the round-1 and round-2 reviews of PR 120, past `go test`'s ten-minute default. The rise is `TestRules_ConcurrentQueriesDeriveWhatSerialQueriesDerive`, introduced at `12e8930`: a 40-node graph of 53 edges and, per optimizer leg, four serial queries then sixteen goroutines each running twenty closure or complement queries, about two thousand fixpoint evaluations across the legs. The test alone takes **1m11s** natively at its birth commit, **1m3s** natively on the current tree, and **3m19s** in total under js/wasm; no commit between `5697a7d` and `5b152c9` made it slower (measured 2026-10-15, Apple M5).
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
 - ⚠️ **In-memory indexing**: "49-4802×" not reproducible (optimizations became pervasive, both paths now fast)
 - ⚠️ **Streaming joins**: On the production-shaped complex checkpoint,
@@ -164,9 +179,9 @@ exec := executor.NewExecutorWithOptions(matcher, opts)
 
 ### 2. Binding-Driven Scan Strategy (ACTIVE)
 **Status**: ✅ Implemented, chosen per pattern with a binding relation
-**Location**: `chooseJoinStrategy` in `datalog/storage/hash_join_matcher.go`
-**Threshold**: `HashJoinScan` at or below 1000 bindings, and above it whenever selectivity is under 50% or the join key is not the entity position; `MergeJoin` only for high-selectivity entity-position sets, where scan order and `CompareValues` order provably agree
-**Result**: One scan plus a hash probe, rather than one seek per binding
+**Location**: `chooseJoinStrategy` and `matchWithHashJoin` in `datalog/storage/hash_join_matcher.go`
+**Threshold**: the boundary is `executor.SmallBindingBoundary`, 1000 bindings. At or below it the hash join seeks the binding's distinct keys one by one, each by the narrowed scan one key alone would get, when the index binds every key; a key at the attribute position is sought per key at any count, since the attribute is the prefix of its own index; keys the index cannot bind, a value that is not a reference at the value position, take one scan of the pattern's extent at any count. Above the boundary `HashJoinScan` scans the extent once whenever selectivity is under 50% or the join key is not the entity position, and `MergeJoin` serves high-selectivity entity-position sets, where scan order and `CompareValues` order provably agree
+**Result**: one narrowed scan per distinct key at or below the boundary, reported as the `per-key-seek` strategy; above it one scan plus a hash probe, or a merge join
 
 *(This entry described "Batch Scanning with Iterator Reuse" until 2026-07-26. Both mechanisms were removed in v0.15.0 — `simple_batch_scanner.go` and `matcher_iterator_reusing.go` each had no live caller — and the 100-binding threshold it cited no longer exists. What occupies that decision point is the strategy choice above.)*
 

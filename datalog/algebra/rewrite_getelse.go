@@ -108,6 +108,15 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 		return rebuildWithChildren(node, children)
 	}
 
+	// A scope's required run is the scope's input, as :in is a query's, so
+	// an entity it alone provides is an input parameter too. The default
+	// branch the rewrite's own join decompiles to runs as a scope over the
+	// entities the scan did not match, and its get-else is such a candidate.
+	if originatesAtRequiredRunAlone(childNode, entityVar.Symbol) {
+		decline("entity variable is provided by the scope's required run alone")
+		return rebuildWithChildren(node, children)
+	}
+
 	// Build: Scan([?entity :attr ?result])
 	scanPattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -156,4 +165,24 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 	}
 
 	return wrapAsParseNode(joinNode)
+}
+
+// originatesAtRequiredRunAlone reports whether every node of the tree at
+// which sym originates, outputting it while no child of the node does, is
+// the invocation of the scope's required run. root outputs sym.
+func originatesAtRequiredRunAlone(root *Node, sym query.Symbol) bool {
+	fromChild := false
+	for _, child := range root.Children {
+		if query.ContainsSymbol(child.Symbols(), sym) {
+			fromChild = true
+			if !originatesAtRequiredRunAlone(child, sym) {
+				return false
+			}
+		}
+	}
+	if fromChild {
+		return true
+	}
+	derived, ok := root.Data.(*Derived)
+	return ok && derived.Invocation.Name == query.ScopeRequired
 }

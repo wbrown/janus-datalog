@@ -232,8 +232,10 @@ Logical negation and disjunction for complex query patterns:
                   [?e :deleted true])]
 ```
 
-The header must include every outer variable consumed by the body, including
-variables used only by predicates or expressions:
+The header is the form's whole interface, and every variable in it is
+required: bound by the enclosing scope before the form runs, and read bound by
+the body. It must name every outer variable the body reads, including one
+used only by a predicate or an expression:
 
 ```clojure
 [:find ?goal
@@ -245,10 +247,12 @@ variables used only by predicates or expressions:
    [(!= ?eventType ?goalSet)])]
 ```
 
-Here `?goal` is produced by both sides and acts as an equality key.
-`?goalSet` is supplied by the outer tuple and consumed only by the body
-predicate. Omitting it from the header is invalid. Plain `not` infers both
-right-produced equality keys and predicate/expression correlation inputs.
+Here `?goal` is bound by both sides and `?goalSet` is supplied by the outer
+tuple and read only by the body's predicate. Omitting either from the header is
+refused, naming the form and the variable; so is a header variable the body
+neither binds nor reads. A plain `not` gets its header from the text: every
+variable it shares with its scope is required, and a variable only the body
+names, such as `?event` above, is the body's own.
 
 **OR - Union of branches:**
 ```clojure
@@ -258,7 +262,7 @@ right-produced equality keys and predicate/expression correlation inputs.
             [?e :status "pending"])]
 ```
 
-**OR-JOIN - Union with explicit join variables:**
+**OR-JOIN - Union with a declared interface:**
 ```clojure
 [:find ?name
  :where [?e :person/name ?name]
@@ -267,15 +271,47 @@ right-produced equality keys and predicate/expression correlation inputs.
                  [?e :admin/status "enabled"])]
 ```
 
-Every `or-join` branch must bind every header variable. The header is the shared
-branch output interface, not a list of branch-specific filter inputs:
+The header has two halves, `(or-join [[?required ...] ?output ...] branch ...)`.
+The required run names the variables the enclosing scope binds before the form
+runs, and every branch reads them bound. The outputs name the variables every
+branch binds and the form provides to the enclosing scope; a flat header is all
+outputs. Every other variable inside a branch is that branch's own:
 
 ```clojure
-;; Valid: both branches bind ?e.
+;; Valid: both branches bind ?e, and ?crawl and ?world are each branch's own.
 (or-join [?e]
   [?e :entity/crawl ?crawl]
   [?e :entity/world ?world])
 ```
+
+An output some branch does not bind is refused, naming the form, the branch by
+its position counted from one and the variable, with the repair of moving the
+variable into the required run.
+
+A plain `or` gets its header from the text by the same rule as `not`, so an
+`or` whose branches bind different variables is legal, where Datomic refuses
+it. A variable inside the form is shared when it occurs elsewhere in its scope.
+A shared variable every branch binds is an output, every other shared variable
+is required, and every other variable is local to the branch that holds it:
+
+```clojure
+[:find ?q
+ :where [?q :t/n _]
+        (or [?q ?a ?v] [?q :t/tag :t/none])
+        [(ground :t/tag) ?a]]
+```
+
+`?q` is shared and every branch binds it, so it is an output. `?a` is shared
+and the second branch does not bind it, so it is required; the ground binds it
+before the form in every written order. `?v` occurs only inside the form, so it
+is the first branch's own. The header is `[[?a] ?q]`, and the query has one
+answer. The interface of a headerless form is therefore read with its scope,
+which `or-join` states in the text. The trade: a clause added elsewhere in the
+scope that names a variable a branch held as its own makes it shared, and the
+form's answer changes with no edit to the form. That falls only on a variable
+some branch does not bind, the forms Datomic's rule refuses, and `or-join`
+states the interface wherever the scope would leave it unclear. A form whose
+variables occur nowhere else in its scope is refused, naming the form.
 
 **OR semantics (Datomic-compatible):**
 

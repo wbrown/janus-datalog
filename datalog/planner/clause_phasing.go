@@ -19,7 +19,7 @@ type ClausePhase struct {
 // This operates on the optimized clause list and phases it ONCE. The
 // bindings are what the caller holds when it asks for the plan; the rule set
 // among them declares an invocation's scope.
-func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inputSymbols map[query.Symbol]bool, bindings Bindings) ([]ClausePhase, error) {
+func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inputSymbols map[query.Symbol]bool, bindings query.Bindings) ([]ClausePhase, error) {
 	if len(clauses) == 0 {
 		return nil, nil
 	}
@@ -33,34 +33,6 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 	// How many clauses can bind each symbol — see query.CountProviders and
 	// query.ClauseReady for the self-provider subtraction this feeds.
 	providerCount := query.CountProviders(clauses, bindings.Rules)
-
-	// A NOT body must unify with the enclosing query through at least one
-	// variable the query can bind — by input or by some clause. With zero
-	// unifiable variables the anti-join has no keys and the clause's
-	// quantification would silently turn global; reject here, before any
-	// execution, naming the clause (Datomic's insufficient-binding rule).
-	for _, clause := range clauses {
-		nc, ok := clause.(*query.NotClause)
-		if !ok {
-			continue
-		}
-		unifiable := false
-		for _, sym := range query.FreeVariables(nc.Clauses, bindings.Rules) {
-			if sym.IsSource() {
-				continue
-			}
-			if available[sym] || providerCount[sym] > 0 {
-				unifiable = true
-				break
-			}
-		}
-		if !unifiable {
-			return nil, fmt.Errorf(
-				"NOT clause %s shares no variable the enclosing query can bind; a NOT body must unify with the enclosing query through at least one variable",
-				nc,
-			)
-		}
-	}
 
 	var phases []ClausePhase
 	remaining := clauses
@@ -101,7 +73,7 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 }
 
 // selectPhaseClauses greedily selects clauses for the next phase
-func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]bool, findSymbols []query.Symbol, inputs map[query.Symbol]bool, providerCount map[query.Symbol]int, bindings Bindings) (ClausePhase, []query.Clause, error) {
+func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]bool, findSymbols []query.Symbol, inputs map[query.Symbol]bool, providerCount map[query.Symbol]int, bindings query.Bindings) (ClausePhase, []query.Clause, error) {
 	var selectedClauses []query.Clause
 	var providedSymbols []query.Symbol
 	providedSet := make(map[query.Symbol]bool)
@@ -112,6 +84,14 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 
 	// Track which clauses we've selected
 	selected := make(map[int]bool)
+	sel := selection{
+		remaining:     remaining,
+		selected:      selected,
+		available:     available,
+		inputs:        inputs,
+		providerCount: providerCount,
+		rules:         bindings.Rules,
+	}
 
 	// Greedy selection: keep selecting best clause until no more can execute
 	for {
@@ -130,7 +110,7 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 			// providers of their binding variables), and readiness. The
 			// subquery gate consumes the same predicate, so it can never
 			// wait on a clause this loop would skip.
-			if !clauseSelectable(clause, available, inputs, providerCount, remaining, selected, bindings.Rules) {
+			if !sel.clauseSelectable(clause) {
 				continue
 			}
 

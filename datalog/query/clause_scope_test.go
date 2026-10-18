@@ -1,6 +1,7 @@
 package query
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -83,24 +84,32 @@ func TestScopeOf(t *testing.T) {
 		assertSymbols(t, "Correlates", scope.Correlates, "?in")
 	})
 
-	t.Run("not correlates on its body's free variables", func(t *testing.T) {
-		scope := ScopeOf(&NotClause{Clauses: []Clause{scopePattern("?d", "seen/val", "?v")}}, nil)
+	t.Run("not-join header of two variables, every one mandatory", func(t *testing.T) {
+		scope := ScopeOf(&NotJoinClause{
+			RequiredVars: []Symbol{datalog.NewSymbol("?d"), datalog.NewSymbol("?v")},
+			Clauses:      []Clause{scopePattern("?d", "seen/val", "?v")},
+		}, nil)
 		assertSymbols(t, "Provides", scope.Provides)
 		assertSymbols(t, "Correlates", scope.Correlates, "?d", "?v")
-		assertSymbols(t, "Mandatory", scope.Mandatory)
+		assertSymbols(t, "Mandatory", scope.Mandatory, "?d", "?v")
 	})
 
-	t.Run("not needs a body input nothing in the body binds", func(t *testing.T) {
-		scope := ScopeOf(&NotClause{Clauses: []Clause{
-			scopePattern("?d", "seen/val", "?v"),
-			&Comparison{
-				Op:    datalog.SymLT,
-				Left:  VariableTerm{Symbol: datalog.NewSymbol("?w")},
-				Right: VariableTerm{Symbol: datalog.NewSymbol("?v")},
+	t.Run("not-join header variable the body reads by a predicate alone is mandatory", func(t *testing.T) {
+		// The header is read whole; which of its variables the body binds is
+		// InferHeaders' check at preparation.
+		scope := ScopeOf(&NotJoinClause{
+			RequiredVars: []Symbol{datalog.NewSymbol("?d"), datalog.NewSymbol("?v"), datalog.NewSymbol("?w")},
+			Clauses: []Clause{
+				scopePattern("?d", "seen/val", "?v"),
+				&Comparison{
+					Op:    datalog.SymLT,
+					Left:  VariableTerm{Symbol: datalog.NewSymbol("?w")},
+					Right: VariableTerm{Symbol: datalog.NewSymbol("?v")},
+				},
 			},
-		}}, nil)
+		}, nil)
 		assertSymbols(t, "Correlates", scope.Correlates, "?d", "?v", "?w")
-		assertSymbols(t, "Mandatory", scope.Mandatory, "?w")
+		assertSymbols(t, "Mandatory", scope.Mandatory, "?d", "?v", "?w")
 	})
 
 	t.Run("predicate correlates are mandatory", func(t *testing.T) {
@@ -114,49 +123,66 @@ func TestScopeOf(t *testing.T) {
 
 	t.Run("not-join header correlates are mandatory", func(t *testing.T) {
 		scope := ScopeOf(&NotJoinClause{
-			JoinVars: []Symbol{datalog.NewSymbol("?e")},
-			Clauses:  []Clause{scopePattern("?e", "a/b", "?x")},
+			RequiredVars: []Symbol{datalog.NewSymbol("?e")},
+			Clauses:      []Clause{scopePattern("?e", "a/b", "?x")},
 		}, nil)
 		assertSymbols(t, "Mandatory", scope.Mandatory, "?e")
 	})
 
-	t.Run("or-default correlates are optional", func(t *testing.T) {
-		scope := ScopeOf(&OrDefaultClause{Branches: [][]Clause{
-			{scopePattern("?e", "a/b", "?x")},
-		}}, nil)
-		assertSymbols(t, "Mandatory", scope.Mandatory)
+	t.Run("or-default-join reads its header without re-checking the branches", func(t *testing.T) {
+		// Whether every branch binds every output is InferHeaders' check at
+		// preparation; ScopeOf reads the declaration as written.
+		scope := ScopeOf(&OrDefaultJoinClause{
+			RequiredVars: []Symbol{datalog.NewSymbol("?e")},
+			OutputVars:   []Symbol{datalog.NewSymbol("?x")},
+			Branches: [][]Clause{
+				{scopePattern("?e", "a/b", "?x")},
+				{scopePattern("?e", "a/c", "?other")},
+			},
+		}, nil)
+		assertSymbols(t, "Provides", scope.Provides, "?x")
+		assertSymbols(t, "Correlates", scope.Correlates, "?e")
 	})
 
-	t.Run("not sees a nested or-join's header, not its branch locals", func(t *testing.T) {
-		scope := ScopeOf(&NotClause{Clauses: []Clause{
-			&OrJoinClause{
-				JoinVars: []Symbol{datalog.NewSymbol("?v")},
-				Branches: [][]Clause{{scopePattern("?local", "seen/val", "?v")}},
+	t.Run("not-join over a nested or-join reads its own header, the branch local invisible", func(t *testing.T) {
+		scope := ScopeOf(&NotJoinClause{
+			RequiredVars: []Symbol{datalog.NewSymbol("?v")},
+			Clauses: []Clause{
+				&OrJoinClause{
+					OutputVars: []Symbol{datalog.NewSymbol("?v")},
+					Branches:   [][]Clause{{scopePattern("?local", "seen/val", "?v")}},
+				},
 			},
-		}}, nil)
+		}, nil)
+		assertSymbols(t, "Provides", scope.Provides)
 		assertSymbols(t, "Correlates", scope.Correlates, "?v")
 	})
 
 	t.Run("not-join correlates on exactly its header", func(t *testing.T) {
 		scope := ScopeOf(&NotJoinClause{
-			JoinVars: []Symbol{datalog.NewSymbol("?e")},
-			Clauses:  []Clause{scopePattern("?e", "user/blocked", "?why")},
+			RequiredVars: []Symbol{datalog.NewSymbol("?e")},
+			Clauses:      []Clause{scopePattern("?e", "user/blocked", "?why")},
 		}, nil)
 		assertSymbols(t, "Provides", scope.Provides)
 		assertSymbols(t, "Correlates", scope.Correlates, "?e")
 	})
 
-	t.Run("or provides the intersection of branch provides", func(t *testing.T) {
-		scope := ScopeOf(&OrClause{Branches: [][]Clause{
-			{scopePattern("?e", "a/b", "?x")},
-			{scopePattern("?e", "a/c", "?y")},
-		}}, nil)
-		assertSymbols(t, "Provides", scope.Provides, "?e")
+	t.Run("or-join with a required run and no outputs provides nothing", func(t *testing.T) {
+		scope := ScopeOf(&OrJoinClause{
+			RequiredVars: []Symbol{datalog.NewSymbol("?e")},
+			Branches: [][]Clause{
+				{scopePattern("?e", "a/b", "?x")},
+				{scopePattern("?e", "a/c", "?y")},
+			},
+		}, nil)
+		assertSymbols(t, "Provides", scope.Provides)
+		assertSymbols(t, "Correlates", scope.Correlates, "?e")
+		assertSymbols(t, "Mandatory", scope.Mandatory, "?e")
 	})
 
 	t.Run("or-join provides its header, branch locals invisible", func(t *testing.T) {
 		scope := ScopeOf(&OrJoinClause{
-			JoinVars: []Symbol{datalog.NewSymbol("?e")},
+			OutputVars: []Symbol{datalog.NewSymbol("?e")},
 			Branches: [][]Clause{
 				{scopePattern("?e", "a/b", "?local1")},
 				{scopePattern("?e", "a/c", "?local2")},
@@ -166,32 +192,34 @@ func TestScopeOf(t *testing.T) {
 		assertSymbols(t, "Correlates", scope.Correlates)
 	})
 
-	t.Run("or-join header var not produced by all branches correlates", func(t *testing.T) {
+	t.Run("or-join reads its header without re-checking the branches", func(t *testing.T) {
+		// Whether every branch binds every output is InferHeaders' check at
+		// preparation; ScopeOf reads the declaration as written.
 		scope := ScopeOf(&OrJoinClause{
-			JoinVars: []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?x")},
+			OutputVars: []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?x")},
 			Branches: [][]Clause{
 				{scopePattern("?e", "a/b", "?x")},
 				{scopePattern("?e", "a/c", "?other")},
 			},
 		}, nil)
-		assertSymbols(t, "Provides", scope.Provides, "?e")
-		assertSymbols(t, "Correlates", scope.Correlates, "?x")
+		assertSymbols(t, "Provides", scope.Provides, "?e", "?x")
+		assertSymbols(t, "Correlates", scope.Correlates)
 	})
 
-	t.Run("or-default provides the intersection of branch provides", func(t *testing.T) {
-		// The executor's output schema is outer ∪ branch intersection
-		// (computeOrBranchOutputSymbols): a symbol only one branch binds
-		// is absent when the other branch fires and never appears in the
-		// relation. Union-provides was a schema hole.
-		scope := ScopeOf(&OrDefaultClause{Branches: [][]Clause{
-			{scopePattern("?e", "a/b", "?x")},
-			{&Expression{
-				Function: &GroundFunction{Value: int64(0)},
-				Binding:  datalog.NewSymbol("?x"),
-			}},
-		}}, nil)
-		assertSymbols(t, "Provides", scope.Provides, "?x")
+	t.Run("or-default-join with a required run and no outputs provides nothing", func(t *testing.T) {
+		scope := ScopeOf(&OrDefaultJoinClause{
+			RequiredVars: []Symbol{datalog.NewSymbol("?e")},
+			Branches: [][]Clause{
+				{scopePattern("?e", "a/b", "?x")},
+				{&Expression{
+					Function: &GroundFunction{Value: int64(0)},
+					Binding:  datalog.NewSymbol("?x"),
+				}},
+			},
+		}, nil)
+		assertSymbols(t, "Provides", scope.Provides)
 		assertSymbols(t, "Correlates", scope.Correlates, "?e")
+		assertSymbols(t, "Mandatory", scope.Mandatory, "?e")
 	})
 
 	t.Run("or-default-join provides its outputs, correlates on its required vars", func(t *testing.T) {
@@ -229,6 +257,27 @@ func TestScopeOf(t *testing.T) {
 		assertSymbols(t, "Provides", scope.Provides, "?out")
 		assertSymbols(t, "Correlates", scope.Correlates)
 	})
+}
+
+// An or-join's header is its whole interface: the required run is its
+// mandatory correlates, its outputs are provided, and a variable a branch
+// reads outside the header is the branch's own, in neither set.
+func TestScopeOf_OrJoinReadsItsHeaderAlone(t *testing.T) {
+	scope := ScopeOf(&OrJoinClause{
+		RequiredVars: []Symbol{datalog.NewSymbol("?a")},
+		OutputVars:   []Symbol{datalog.NewSymbol("?e")},
+		Branches: [][]Clause{
+			{scopePattern("?e", "?a", "?v")},
+			{scopePattern("?e", "t/tag", "?x"), &Comparison{
+				Op:    datalog.SymGT,
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
+				Right: VariableTerm{Symbol: datalog.NewSymbol("?n")},
+			}},
+		},
+	}, nil)
+	assertSymbols(t, "Provides", scope.Provides, "?e")
+	assertSymbols(t, "Correlates", scope.Correlates, "?a")
+	assertSymbols(t, "Mandatory", scope.Mandatory, "?a")
 }
 
 // TestSubqueryPatternValidateInputCount pins that a subquery passes as many
@@ -296,14 +345,32 @@ func TestSubqueryPatternValidateInputCount(t *testing.T) {
 	}
 }
 
-// TestOrDefaultJoinValidate pins the declared-interface enforcement: every
-// branch binds every output, branch externals must be declared required,
-// required and output sets are disjoint, and the degenerate forms error.
+// TestOrDefaultJoinValidate pins the shape checks the text alone decides,
+// Validate's: at least one header variable, at least two branches, and
+// required and output sets disjoint. The header's binding checks are
+// InferHeaders', read under the rule set: every branch binds every output,
+// and a branch reads nothing outside the header.
 func TestOrDefaultJoinValidate(t *testing.T) {
 	ground := func(sym string) Clause {
 		return &Expression{
 			Function: &GroundFunction{Value: int64(0)},
 			Binding:  datalog.NewSymbol(sym),
+		}
+	}
+	refused := func(t *testing.T, clause Clause, parts ...string) {
+		t.Helper()
+		q := &Query{
+			Find:  []FindElement{FindVariable{Symbol: datalog.NewSymbol("?e")}},
+			Where: []Clause{scopePattern("?e", "a/n", "_"), clause},
+		}
+		_, err := InferHeaders(q, nil)
+		if err == nil {
+			t.Fatalf("the query is inferred; it is refused naming %q", parts)
+		}
+		for _, part := range parts {
+			if !strings.Contains(err.Error(), part) {
+				t.Errorf("the refusal %q does not carry %q", err, part)
+			}
 		}
 	}
 
@@ -321,37 +388,29 @@ func TestOrDefaultJoinValidate(t *testing.T) {
 		}
 	})
 
-	t.Run("branch missing an output errors", func(t *testing.T) {
-		clause := &OrDefaultJoinClause{
+	t.Run("a branch missing an output is refused at inference", func(t *testing.T) {
+		refused(t, &OrDefaultJoinClause{
 			RequiredVars: []Symbol{datalog.NewSymbol("?e")},
 			OutputVars:   []Symbol{datalog.NewSymbol("?out")},
 			Branches: [][]Clause{
 				{scopePattern("?e", "a/b", "?out")},
 				{scopePattern("?e", "a/c", "?other")},
 			},
-		}
-		if err := clause.Validate(); err == nil {
-			t.Error("expected error: branch 2 does not bind ?out")
-		}
+		}, "(or-default-join [[?e] ?out]", "branch 2 does not bind ?out", "move ?out into the required run")
 	})
 
-	t.Run("old correlation-key header errors loudly", func(t *testing.T) {
-		// A flat header declares outputs only; the ground branch here
-		// does not bind ?e, so validation must reject it.
-		clause := &OrDefaultJoinClause{
+	t.Run("a flat header output the ground branch does not bind is refused at inference", func(t *testing.T) {
+		refused(t, &OrDefaultJoinClause{
 			OutputVars: []Symbol{datalog.NewSymbol("?e")},
 			Branches: [][]Clause{
 				{scopePattern("?e", "a/b", "?out")},
 				{ground("?out")},
 			},
-		}
-		if err := clause.Validate(); err == nil {
-			t.Error("expected error: ground branch does not bind ?e")
-		}
+		}, "(or-default-join [?e]", "branch 2 does not bind ?e", "move ?e into the required run")
 	})
 
-	t.Run("undeclared branch external errors", func(t *testing.T) {
-		clause := &OrDefaultJoinClause{
+	t.Run("a branch reading a variable outside the header is refused at inference", func(t *testing.T) {
+		refused(t, &OrDefaultJoinClause{
 			OutputVars: []Symbol{datalog.NewSymbol("?out")},
 			Branches: [][]Clause{
 				{scopePattern("?d", "a/b", "?out")},
@@ -364,10 +423,7 @@ func TestOrDefaultJoinValidate(t *testing.T) {
 					Binding: datalog.NewSymbol("?out"),
 				}},
 			},
-		}
-		if err := clause.Validate(); err == nil {
-			t.Error("expected error: branch 2 consumes ?e, which is not declared required")
-		}
+		}, "(or-default-join [?out]", "?e")
 	})
 
 	t.Run("required and output overlap errors", func(t *testing.T) {
@@ -384,7 +440,7 @@ func TestOrDefaultJoinValidate(t *testing.T) {
 		}
 	})
 
-	t.Run("no outputs errors", func(t *testing.T) {
+	t.Run("a header of required variables alone is a per-group filter", func(t *testing.T) {
 		clause := &OrDefaultJoinClause{
 			RequiredVars: []Symbol{datalog.NewSymbol("?e")},
 			Branches: [][]Clause{
@@ -392,10 +448,95 @@ func TestOrDefaultJoinValidate(t *testing.T) {
 				{ground("?out")},
 			},
 		}
-		if err := clause.Validate(); err == nil {
-			t.Error("expected error: no output variables declared")
+		if err := clause.Validate(); err != nil {
+			t.Errorf("a header declaring required variables and no output is refused: %v", err)
 		}
 	})
+
+	t.Run("an empty header errors", func(t *testing.T) {
+		clause := &OrDefaultJoinClause{
+			Branches: [][]Clause{
+				{scopePattern("?e", "a/b", "?out")},
+				{ground("?out")},
+			},
+		}
+		if err := clause.Validate(); err == nil {
+			t.Error("expected error: no variable declared in the header")
+		}
+	})
+}
+
+func TestOrJoinClauseValidate(t *testing.T) {
+	branches := [][]Clause{
+		{scopePattern("?e", "a/b", "?v")},
+		{scopePattern("?e", "a/c", "?v")},
+	}
+
+	t.Run("a header of a required run and outputs over two branches is valid", func(t *testing.T) {
+		clause := &OrJoinClause{RequiredVars: []Symbol{datalog.NewSymbol("?e")}, OutputVars: []Symbol{datalog.NewSymbol("?v")}, Branches: branches}
+		if err := clause.Validate(); err != nil {
+			t.Errorf("expected valid, got: %v", err)
+		}
+	})
+
+	t.Run("a header of a required run alone is valid", func(t *testing.T) {
+		clause := &OrJoinClause{RequiredVars: []Symbol{datalog.NewSymbol("?e")}, Branches: branches}
+		if err := clause.Validate(); err != nil {
+			t.Errorf("expected valid, got: %v", err)
+		}
+	})
+
+	t.Run("an empty header errors", func(t *testing.T) {
+		clause := &OrJoinClause{Branches: branches}
+		if err := clause.Validate(); err == nil {
+			t.Error("expected error: no variable declared in the header")
+		}
+	})
+
+	t.Run("a header over one branch is valid", func(t *testing.T) {
+		clause := &OrJoinClause{OutputVars: []Symbol{datalog.NewSymbol("?e")}, Branches: branches[:1]}
+		if err := clause.Validate(); err != nil {
+			t.Errorf("expected valid, got: %v", err)
+		}
+	})
+
+	t.Run("no branch errors", func(t *testing.T) {
+		clause := &OrJoinClause{OutputVars: []Symbol{datalog.NewSymbol("?e")}}
+		if err := clause.Validate(); err == nil {
+			t.Error("expected error: an or-join has at least one branch")
+		}
+	})
+
+	t.Run("required and output overlap errors", func(t *testing.T) {
+		clause := &OrJoinClause{RequiredVars: []Symbol{datalog.NewSymbol("?v")}, OutputVars: []Symbol{datalog.NewSymbol("?v")}, Branches: branches}
+		if err := clause.Validate(); err == nil {
+			t.Error("expected error: ?v is both required and output")
+		}
+	})
+}
+
+// ScopeOf reads a header. A headerless form, an or, a not or an or-default,
+// is refused as an unknown clause is: InferHeaders rewrites every one before
+// a reader of the scope sees the query (design §5.1).
+func TestScopeOf_RefusesAHeaderlessForm(t *testing.T) {
+	branch := []Clause{scopePattern("?e", "a/b", "?v")}
+	for _, form := range []struct {
+		name   string
+		clause Clause
+	}{
+		{"or", &OrClause{Branches: [][]Clause{branch, branch}}},
+		{"not", &NotClause{Clauses: branch}},
+		{"or-default", &OrDefaultClause{Branches: [][]Clause{branch, branch}}},
+	} {
+		t.Run(form.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("ScopeOf returned a scope for the headerless %s; a headerless form is refused as an unknown clause", form.name)
+				}
+			}()
+			ScopeOf(form.clause, nil)
+		})
+	}
 }
 
 // TestFreeVariables pins the clause-list union: every Provides and
@@ -404,8 +545,8 @@ func TestFreeVariables(t *testing.T) {
 	free := FreeVariables([]Clause{
 		scopePattern("?e", "a/b", "?v"),
 		&OrJoinClause{
-			JoinVars: []Symbol{datalog.NewSymbol("?v")},
-			Branches: [][]Clause{{scopePattern("?local", "c/d", "?v")}},
+			OutputVars: []Symbol{datalog.NewSymbol("?v")},
+			Branches:   [][]Clause{{scopePattern("?local", "c/d", "?v")}},
 		},
 		&Comparison{
 			Op:    datalog.SymLT,

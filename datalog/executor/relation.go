@@ -260,6 +260,17 @@ func (i *CountingIterator) IsDone() bool {
 	return i.done
 }
 
+// completeCache reads an iterator filling a replay cache to its end, so that
+// closing it leaves its relation replayable whole; a cache closed before its
+// end leaves the relation unreadable. Any other iterator is left where it
+// stands.
+func completeCache(it Iterator) {
+	if _, caching := it.(*CachingIterator); caching {
+		for it.Next() {
+		}
+	}
+}
+
 // CachingIterator wraps an iterator and caches tuples as a side effect
 // It signals completion via a channel when iteration finishes
 // This implements lazy-seq semantics for concurrent access to streaming relations
@@ -1723,19 +1734,19 @@ func (pi *ProductIterator) Next() bool {
 		return false
 	}
 
-	// Initialize all iterators on first call
+	// On the first call, open each relation in turn and take its first
+	// tuple. An empty one ends the product: the relations after it stay
+	// unopened, and the iterators before it, pulled once, are read to their
+	// ends so that a replay cache they fill is complete when Close closes
+	// them.
 	if pi.first {
 		pi.first = false
-
-		// Create iterators for all relations
 		for i, rel := range pi.relations {
 			pi.iterators[i] = rel.Iterator()
-		}
-
-		// Get first tuple from each relation
-		for i := range pi.iterators {
 			if !pi.iterators[i].Next() {
-				// Empty relation - product is empty
+				for _, opened := range pi.iterators[:i] {
+					completeCache(opened)
+				}
 				pi.done = true
 				return false
 			}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 func TestSinglePatternPhaseCarriesSafeOrderAndLimit(t *testing.T) {
@@ -14,7 +15,7 @@ func TestSinglePatternPhaseCarriesSafeOrderAndLimit(t *testing.T) {
 	                              :limit 10]`)
 	require.NoError(t, err)
 
-	plan, err := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: true}).Plan(q, Bindings{}, nil)
+	plan, err := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: true}).Plan(q, query.Bindings{}, nil)
 	require.NoError(t, err)
 	require.Len(t, plan.Phases, 1)
 	require.Equal(t, q.OrderBy, plan.Phases[0].Query.OrderBy)
@@ -38,7 +39,7 @@ func TestPatternPhaseDeclinesUnsafeOrderAndLimitPushdown(t *testing.T) {
 	for _, queryText := range tests {
 		q, err := parser.ParseQuery(queryText)
 		require.NoError(t, err)
-		plan, err := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: true}).Plan(q, Bindings{}, nil)
+		plan, err := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: true}).Plan(q, query.Bindings{}, nil)
 		require.NoError(t, err)
 		for _, phase := range plan.Phases {
 			require.Empty(t, phase.Query.OrderBy)

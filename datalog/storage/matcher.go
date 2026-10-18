@@ -632,7 +632,9 @@ func (m *PatternMatcher) valuesEqual(v1, v2 interface{}) bool {
 // history mode — the two conditions under which LookupAttribute returns the
 // single value a matched pattern would. Returns false for schemaless,
 // CardinalityMany/Vector, or history-mode matchers (raw multi-version reads).
-func (m *PatternMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
+// The matcher is one source and answers for itself under any name, so the
+// source is not read.
+func (m *PatternMatcher) CanFuseAttributeFetch(_ query.Symbol, attr datalog.Keyword) bool {
 	if m.schema == nil || m.txID != nil {
 		return false
 	}

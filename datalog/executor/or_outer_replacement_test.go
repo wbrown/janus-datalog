@@ -100,7 +100,9 @@ func TestOrDefaultReplacesEveryConsumedOuterGroup(t *testing.T) {
 		[]Tuple{{int64(3)}},
 		options,
 	)
-	q := &query.Query{Where: []query.Clause{&query.OrDefaultClause{
+	q := &query.Query{Where: []query.Clause{&query.OrDefaultJoinClause{
+		RequiredVars: []query.Symbol{x, y},
+		OutputVars:   []query.Symbol{sum},
 		Branches: [][]query.Clause{
 			{&query.Expression{
 				Function: query.ArithmeticFunction{
@@ -196,13 +198,65 @@ func TestOrFallbackDoesNotTreatBranchErrorAsNoMatch(t *testing.T) {
 	relation := NewOrFallbackRelation(
 		exec,
 		NewContext(),
+		[]query.Symbol{entity},
+		[]query.Symbol{value},
 		branches,
 		outer,
 		ExecutorOptions{},
 		true,
 	)
-	relation.joinSyms = []query.Symbol{entity}
 
 	require.ErrorIs(t, driveErr(relation), errInjectedIterator,
 		"a failed preferred branch must not fall through to the default branch")
+}
+
+// A form's result stands in the place of the groups its subject consumed,
+// at the first consumed position, with every other group kept in order, and
+// the replacement is reported once with the consumed and remaining counts.
+// A result whose subject consumed no group is appended as a new group, as
+// is a relation that is not a form's result, with no report.
+func TestReplaceConsumedOrGroupsStandsInForTheConsumedGroups(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	value := datalog.NewSymbol("?value")
+	unrelated := datalog.NewSymbol("?unrelated")
+	var replacements []annotations.Event
+	options := ExecutorOptions{Handler: func(event annotations.Event) {
+		if event.Name == annotations.OrOuterReplaced {
+			replacements = append(replacements, event)
+		}
+	}}
+	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
+	first := NewMaterializedRelationWithOptions([]query.Symbol{entity}, []Tuple{{int64(1)}}, options)
+	other := NewMaterializedRelationWithOptions([]query.Symbol{unrelated}, []Tuple{{"kept"}}, options)
+	last := NewMaterializedRelationWithOptions([]query.Symbol{value}, []Tuple{{int64(2)}}, options)
+	branches := [][]query.Clause{{&query.Expression{
+		Function: &query.GroundFunction{Value: "selected"},
+		Binding:  value,
+	}}}
+	form := func(consumed []int) *OrFallbackRelation {
+		rel := NewOrFallbackRelation(exec, NewContext(), []query.Symbol{entity}, []query.Symbol{value}, branches, first, options, true)
+		rel.consumedGroups = consumed
+		return rel
+	}
+
+	consuming := form([]int{0, 2})
+	replaced := replaceConsumedOrGroups(Relations{first, other, last}, consuming)
+	require.Len(t, replaced, 2)
+	require.Same(t, consuming, replaced[0], "the result stands at the first consumed position")
+	require.Same(t, other, replaced[1], "the group the subject did not consume is kept")
+	require.Len(t, replacements, 1)
+	require.Equal(t, 2, replacements[0].Data["consumed_groups"])
+	require.Equal(t, 2, replacements[0].Data["remaining_groups"])
+
+	unconsuming := form(nil)
+	appended := replaceConsumedOrGroups(Relations{other}, unconsuming)
+	require.Len(t, appended, 2)
+	require.Same(t, other, appended[0])
+	require.Same(t, unconsuming, appended[1], "a result over the unit relation is a new group")
+	require.Len(t, replacements, 1, "a result that consumed no group reports no replacement")
+
+	plain := replaceConsumedOrGroups(Relations{other}, last)
+	require.Len(t, plain, 2)
+	require.Same(t, last, plain[1], "a relation that is not a form's result is appended")
+	require.Len(t, replacements, 1)
 }

@@ -93,16 +93,18 @@ func (sr *SourceRouter) LookupAttribute(
 	return nil, false, fmt.Errorf("entity lookup unavailable: default source %T does not support attribute lookup", source)
 }
 
-// CanFuseAttributeFetch implements AttributeFetchFusable by delegating to the
-// default source ($), so the executor's attribute-fetch fusion can consult the
-// schema and temporal mode through the router.
-func (sr *SourceRouter) CanFuseAttributeFetch(attr datalog.Keyword) bool {
-	source, ok := sr.sources[datalog.SymDollar]
+// CanFuseAttributeFetch implements AttributeFetchFusable by asking the source
+// named, so the executor's attribute-fetch fusion and the at-most-one
+// judgment of a pattern branch consult that source's schema and temporal
+// mode through the router. A source the router does not hold, or one
+// without the capability, answers false.
+func (sr *SourceRouter) CanFuseAttributeFetch(source query.Symbol, attr datalog.Keyword) bool {
+	named, ok := sr.sources[source]
 	if !ok {
 		return false
 	}
-	if f, ok := source.(AttributeFetchFusable); ok {
-		return f.CanFuseAttributeFetch(attr)
+	if f, ok := named.(AttributeFetchFusable); ok {
+		return f.CanFuseAttributeFetch(source, attr)
 	}
 	return false
 }

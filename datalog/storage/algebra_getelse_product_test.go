@@ -480,7 +480,9 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 			}
 
 			// Print algebra bridge output
-			bridged, err := algebra.Compile(&query.Query{Where: q.Where})
+			prepared, err := query.Prepare(q, nil)
+			require.NoError(t, err)
+			bridged, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
 			require.NoError(t, err)
 			t.Logf("Compiled tree:\n%s", bridged.String())
 			opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)

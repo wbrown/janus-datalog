@@ -184,9 +184,10 @@ func (a *AntiJoin) String() string {
 // Compiled from query.OrClause or query.OrJoinClause with union semantics.
 // Branches are evaluated independently (no outer context).
 type Union struct {
-	Output   []query.Symbol // Shared output symbols across branches
-	JoinVars []query.Symbol // Explicit join variables from or-join (nil for plain or)
-	Required []query.Symbol // Correlation keys supplied by the outer relation
+	Output       []query.Symbol // Shared output symbols across branches
+	JoinVars     []query.Symbol // Explicit join variables from or-join (nil for plain or)
+	Required     []query.Symbol // Correlation keys supplied by the outer relation
+	RequiredVars []query.Symbol // The or-join header's required run, bound before the union runs
 }
 
 // LateralUnion combines branches with per-tuple evaluation against the outer relation.
@@ -204,11 +205,20 @@ type LateralUnion struct {
 func (u *Union) OutputSymbols() []query.Symbol { return u.Output }
 func (u *Union) String() string {
 	if len(u.JoinVars) > 0 {
-		syms := make([]string, len(u.JoinVars))
-		for i, s := range u.JoinVars {
-			syms[i] = s.String()
+		var outputs []string
+		for _, s := range u.JoinVars {
+			if !query.ContainsSymbol(u.RequiredVars, s) {
+				outputs = append(outputs, s.String())
+			}
 		}
-		return fmt.Sprintf("∪_join(%s)", strings.Join(syms, ", "))
+		if len(u.RequiredVars) > 0 {
+			required := make([]string, len(u.RequiredVars))
+			for i, s := range u.RequiredVars {
+				required[i] = s.String()
+			}
+			return fmt.Sprintf("∪_join([%s] %s)", strings.Join(required, ", "), strings.Join(outputs, ", "))
+		}
+		return fmt.Sprintf("∪_join(%s)", strings.Join(outputs, ", "))
 	}
 	return "∪"
 }
@@ -239,6 +249,7 @@ type LateralJoin struct {
 	Binding       interface{}    // query.Symbol, query.TupleBinding, etc.
 	Output        []query.Symbol // Combined output (outer + binding symbols)
 	DefaultValues []interface{}  // Fallback values when inner produces no results (from OR-fallback ground)
+	Rules         *query.RuleSet // The rule set the call's % argument binds; nil when the call passes no %
 }
 
 func (l *LateralJoin) OutputSymbols() []query.Symbol { return l.Output }

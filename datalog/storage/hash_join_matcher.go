@@ -14,7 +14,10 @@ import (
 type JoinStrategy int
 
 const (
-	// HashJoinScan builds hash set and does single scan (good for medium selectivity 1-50%)
+	// HashJoinScan builds a hash set from the bindings and probes it against
+	// the keys' datoms: sought one by one for a binding at or below
+	// executor.SmallBindingBoundary, or read by one scan of the pattern's
+	// extent above it (matchWithHashJoin).
 	HashJoinScan JoinStrategy = iota
 
 	// MergeJoin merges sorted streams (good for large sets >50% selectivity)
@@ -51,8 +54,10 @@ func (m *PatternMatcher) chooseJoinStrategy(
 	// Calculate selectivity: what % of pattern matches are in the binding set?
 	selectivity := float64(bindingSize) / float64(patternCard)
 
-	// For small to medium-sized binding sets (1-1000), use hash join
-	if bindingSize <= 1000 {
+	// A small binding set, at or below the boundary, takes the hash join,
+	// which seeks its keys one by one. A streaming relation reports -1 and
+	// is small here.
+	if bindingSize <= executor.SmallBindingBoundary {
 		return HashJoinScan
 	}
 
@@ -81,24 +86,19 @@ func (m *PatternMatcher) chooseJoinStrategy(
 	return HashJoinScan
 }
 
-// estimatePatternCardinality estimates total datoms matching pattern's constant parts
+// estimatePatternCardinality is the extent chooseJoinStrategy weighs a large
+// binding set against: ten thousand datoms for a pattern with a constant
+// attribute, a million otherwise. The engine carries no statistic of an
+// attribute's extent (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.6),
+// so the two numbers are fixed, and the one choice they decide, the hash join
+// against the merge join, is read above executor.SmallBindingBoundary alone.
 func (m *PatternMatcher) estimatePatternCardinality(pattern *query.DataPattern) int {
-	// TODO: Implement proper cardinality estimation using statistics
-	// For now, use simple heuristics based on what's bound
-
-	// Check if attribute is constant (most common case)
 	if c, ok := pattern.GetA().(query.Constant); ok {
-		if kw, ok := c.Value.(datalog.Keyword); ok {
-			// Estimate based on attribute
-			// For now, return a conservative estimate
-			// TODO: Track actual counts per attribute in BadgerStore
-			_ = kw       // Future: m.store.GetAttributeCardinality(kw)
-			return 10000 // Conservative estimate: 10K datoms per attribute
+		if _, ok := c.Value.(datalog.Keyword); ok {
+			return 10000
 		}
 	}
-
-	// If no attribute bound, could be any datom - very large estimate
-	return 1000000 // 1M datoms as default estimate
+	return 1000000
 }
 
 // matchWithHashJoin performs a hash join between binding relation and pattern
@@ -143,44 +143,67 @@ func (m *PatternMatcher) matchWithHashJoin(
 	}
 
 	// Build hash set using symbol index (not datom position)
-	hashSet, counts, boundValue, err := m.buildHashSet(
+	hashSet, keys, tuples, err := m.buildHashSet(
 		bindingRel, symbolIndex, typedPositionBindingCheck(pattern, bindingRel.Symbols()))
 	if err != nil {
 		return nil, fmt.Errorf("hash join bindings failed: %w", err)
 	}
 
-	if counts.tuples == 0 {
+	if tuples == 0 {
 		// No bindings - return empty result
 		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
 	}
 
-	// PHASE 2: Determine scan range for the pattern
-	// One key means every binding tuple carries the same value at this
-	// position, so that value is a constant for the scan and narrows it. More
-	// than one, and no single value bounds the run.
-	if counts.keys != 1 {
-		boundValue = nil
+	// PHASE 2: the run, or the runs. One key means every binding tuple
+	// carries the same value at this position, so that value is a constant
+	// for the scan and narrows it. Several keys at or below
+	// executor.SmallBindingBoundary, or at the attribute position at any
+	// count since an attribute is the prefix of its own index, are sought one
+	// by one, each by the bound the one-key narrowing produces, when the index
+	// binds every key (keyScanBounds). More keys than that, or keys the index
+	// cannot bind, are probed against one scan of the pattern's own extent,
+	// whose bound is also what each key's bound is measured against
+	// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.6).
+	var bound ScanBound
+	var seeks []ScanBound
+	if len(keys) == 1 {
+		bound = m.patternScanBoundWithBinding(pattern, index, position, keys[0])
+	} else {
+		bound = m.patternScanBound(pattern, index)
+		if position == 1 || len(keys) <= executor.SmallBindingBoundary {
+			seeks = m.keyScanBounds(pattern, index, position, keys, len(bound.Prefix))
+		}
 	}
-	bound := m.patternScanBoundWithBinding(pattern, index, position, boundValue)
 
 	report := DiscardIntake
 	if m.handler != nil {
 		report = &scanReport{
-			handler:  m.handler,
-			opened:   time.Now(),
-			strategy: annotations.ScanHashJoin,
+			handler: m.handler,
+			opened:  time.Now(),
 			cause: map[string]interface{}{
 				annotations.KeyPattern:     pattern,
-				annotations.KeyBindingSize: counts.tuples,
+				annotations.KeyBindingSize: tuples,
 			},
-			run: &bound,
+		}
+		if seeks != nil {
+			// One run per key and no single one: the count of scans opened
+			// stands in the bound's place.
+			report.strategy = annotations.ScanPerKeySeek
+		} else {
+			report.strategy = annotations.ScanHashJoin
+			report.run = &bound
 		}
 	}
 
 	// PHASE 3: Create storage iterator
-	storageIter, err := OpenKeyScan(m.reader, report, bound)
-	if err != nil {
-		return nil, fmt.Errorf("hash join scan failed: %w", err)
+	var storageIter Iterator
+	if seeks != nil {
+		storageIter = &perKeySeekIterator{reader: m.reader, report: report, bounds: seeks}
+	} else {
+		storageIter, err = OpenKeyScan(m.reader, report, bound)
+		if err != nil {
+			return nil, fmt.Errorf("hash join scan failed: %w", err)
+		}
 	}
 
 	// PHASE 3.5: Wrap with CRDT resolution unless in history mode
@@ -208,6 +231,28 @@ func (m *PatternMatcher) matchWithHashJoin(
 
 	// Return streaming relation
 	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
+}
+
+// keyScanBounds is one bound per key, each the bound the one-key narrowing
+// produces, when every key extends the pattern's own bound past its extent
+// components. It is nil when some key does not: the index cannot bind that
+// key, a string at the value position of an AVET run, so its seek would read
+// the whole extent, and one scan of the extent serves every key.
+func (m *PatternMatcher) keyScanBounds(
+	pattern *query.DataPattern,
+	index IndexType,
+	position int,
+	keys []interface{},
+	extent int,
+) []ScanBound {
+	bounds := make([]ScanBound, len(keys))
+	for i, key := range keys {
+		bounds[i] = m.patternScanBoundWithBinding(pattern, index, position, key)
+		if len(bounds[i].Prefix) <= extent {
+			return nil
+		}
+	}
+	return bounds
 }
 
 // patternScanBound determines the scan bound for a pattern
@@ -343,39 +388,31 @@ func (m *PatternMatcher) scanBoundForValues(index IndexType, e, a, v, tx interfa
 	return ScanBound{Index: index, Prefix: prefix}
 }
 
-// bindingCounts is what a binding relation put into a hash set, counted two
-// ways because the two answer different questions. keys decides whether one
-// bound value can narrow the storage scan — that is a property of the key
-// space, and it is exactly one only when every tuple carries the same key.
-// tuples is the size of the binding set, which is what binding.size reports and
-// what chooseJoinStrategy selects on.
-type bindingCounts struct {
-	keys   int
-	tuples int
-}
-
 // buildHashSet creates a typed hash set from the binding relation. It returns
-// all tuples per key, the counts above, and the sole key value when exactly one
-// key exists, so a single binding can narrow the storage scan. Tuples failing
-// the typed-position check (non-Identity entity, non-Keyword attribute — see
+// all tuples per key, the distinct keys in the order the relation first yields
+// each, and the tuple count. The keys decide the scan: one key narrows one
+// scan to its value, and several are sought one by one or probed against one
+// scan of the extent (matchWithHashJoin). The tuple count is the size of the
+// binding set, which binding.size reports. Tuples failing the typed-position
+// check (non-Identity entity, non-Keyword attribute — see
 // filterTypedPositionBindings) are dropped here: they are typed non-matches,
 // and dropping them at construction keeps them away from the probe's
-// full-tuple verification. They are dropped from both counts with it — a tuple
-// that joins no tuples by construction is not part of the binding set the scan
-// was driven by, and merge join's filterTypedPositionBindings drops them before
-// its own count for the same reason.
+// full-tuple verification. They are dropped from the keys and the count with
+// it — a tuple that joins no tuples by construction is not part of the binding
+// set the scan was driven by, and merge join's filterTypedPositionBindings
+// drops them before its own count for the same reason.
 func (m *PatternMatcher) buildHashSet(
 	bindingRel executor.Relation,
 	position int,
 	typed func(executor.Tuple) bool,
-) (*executor.TupleKeyMap, bindingCounts, interface{}, error) {
+) (*executor.TupleKeyMap, []interface{}, int, error) {
 	capacity := bindingRel.Size()
 	if capacity < 0 {
 		capacity = 0
 	}
 	hashSet := executor.NewTupleKeyMapWithCapacity(capacity)
-	var counts bindingCounts
-	var soleValue interface{}
+	var keys []interface{}
+	tuples := 0
 
 	iter := bindingRel.Iterator()
 	for iter.Next() {
@@ -391,7 +428,7 @@ func (m *PatternMatcher) buildHashSet(
 			continue
 		}
 
-		counts.tuples++
+		tuples++
 		value := tuple[position]
 		if existing, found := hashSet.GetValue(value); found {
 			hashSet.PutValue(value, append(existing.([]executor.Tuple), tuple))
@@ -400,8 +437,7 @@ func (m *PatternMatcher) buildHashSet(
 			// (materializeRelationsForPattern), and sliceIterator returns
 			// distinct slice references without reusing storage.
 			hashSet.PutValue(value, []executor.Tuple{tuple})
-			counts.keys++
-			soleValue = value
+			keys = append(keys, value)
 		}
 	}
 	iterErr := iter.Error()
@@ -409,9 +445,9 @@ func (m *PatternMatcher) buildHashSet(
 		iterErr = closeErr
 	}
 	if iterErr != nil {
-		return nil, bindingCounts{}, nil, iterErr
+		return nil, nil, 0, iterErr
 	}
-	return hashSet, counts, soleValue, nil
+	return hashSet, keys, tuples, nil
 }
 
 // extractProbeKey extracts the value from datom at the specified position.

@@ -114,7 +114,7 @@ func TestNotClauseWithOrJoinBody(t *testing.T) {
 			}},
 			&query.NotClause{Clauses: []query.Clause{
 				&query.OrJoinClause{
-					JoinVars: []query.Symbol{v},
+					OutputVars: []query.Symbol{v},
 					Branches: [][]query.Clause{{
 						&query.DataPattern{Elements: []query.PatternElement{
 							query.Variable{Name: datalog.NewSymbol("?d")},
@@ -339,7 +339,7 @@ func TestOrJoinBranchLocalAlphaEquivalence(t *testing.T) {
 					query.Variable{Name: v},
 				}},
 				&query.OrJoinClause{
-					JoinVars: []query.Symbol{v},
+					OutputVars: []query.Symbol{v},
 					Branches: [][]query.Clause{
 						{&query.DataPattern{Elements: []query.PatternElement{
 							query.Variable{Name: local},
@@ -552,7 +552,7 @@ func TestNotJoinClause(t *testing.T) {
 						},
 					},
 					&query.NotJoinClause{
-						JoinVars: []query.Symbol{datalog.NewSymbol("?e")},
+						RequiredVars: []query.Symbol{datalog.NewSymbol("?e")},
 						Clauses: []query.Clause{
 							&query.DataPattern{
 								Elements: []query.PatternElement{
@@ -715,7 +715,7 @@ func TestOrJoinClause(t *testing.T) {
 						},
 					},
 					&query.OrJoinClause{
-						JoinVars: []query.Symbol{datalog.NewSymbol("?e")},
+						OutputVars: []query.Symbol{datalog.NewSymbol("?e")},
 						Branches: [][]query.Clause{
 							{
 								&query.DataPattern{

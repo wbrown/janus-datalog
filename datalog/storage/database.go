@@ -957,6 +957,10 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 	if err != nil {
 		return nil, err
 	}
+	prepared, err := query.Prepare(q, rules)
+	if err != nil {
+		return nil, err
+	}
 
 	// Create executor to get its planner (ensures same options as execution)
 	exec := d.NewExecutor()
@@ -964,7 +968,7 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 	// Get the query plan from the executor's planner (planning is not annotated
 	// on this plan-only path).
 	queryPlanner := exec.GetPlanner()
-	return queryPlanner.PlanQuery(q, planner.Bindings{Rules: rules}, nil)
+	return queryPlanner.PlanQuery(prepared, query.Bindings{Rules: rules}, nil)
 }
 
 // ExplainAlgebra returns, without executing, the full record of what planning
@@ -1002,10 +1006,14 @@ func (d *Database) ExplainAlgebra(queryInput interface{}, inputs ...interface{})
 	if err != nil {
 		return nil, err
 	}
+	prepared, err := query.Prepare(q, rules)
+	if err != nil {
+		return nil, err
+	}
 
 	// Create executor to get its planner (ensures same options as execution)
 	exec := d.NewExecutor()
-	return exec.GetPlanner().ExplainPlan(q, planner.Bindings{Rules: rules})
+	return exec.GetPlanner().ExplainPlan(prepared, query.Bindings{Rules: rules})
 }
 
 // AnalyzeResult contains the query plan and execution statistics from Analyze().
@@ -1180,6 +1188,10 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 	if err != nil {
 		return nil, err
 	}
+	prepared, err := query.Prepare(q, rules)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare query: %w", err)
+	}
 
 	// Accumulate every event: AnalyzeResult.Events is what this method returns,
 	// so here the accumulation is the product rather than a way to look one event
@@ -1204,7 +1216,7 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 
 	// The plan from a planner under the same options. The handler above
 	// captures execution annotations; planning here is not annotated.
-	plan, err := d.NewExecutorWithOptions(opts).GetPlanner().PlanQuery(q, planner.Bindings{Rules: rules}, nil)
+	plan, err := d.NewExecutorWithOptions(opts).GetPlanner().PlanQuery(prepared, query.Bindings{Rules: rules}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to plan query: %w", err)
 	}

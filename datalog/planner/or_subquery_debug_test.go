@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // TestOrSubqueryPlannerPhases debugs how the planner handles the production query
@@ -67,9 +68,13 @@ func TestOrSubqueryPlannerPhases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
+	prepared, err := query.Prepare(q, nil)
+	if err != nil {
+		t.Fatalf("Prepare error: %v", err)
+	}
 
 	p := NewClauseBasedPlanner(nil, PlannerOptions{})
-	realized, err := p.Plan(q, Bindings{}, nil)
+	realized, err := p.Plan(prepared, query.Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("Plan error: %v", err)
 	}

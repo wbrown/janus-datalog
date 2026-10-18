@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -327,12 +328,12 @@ func BenchmarkComplexQueryCheckpoint(b *testing.B) {
 // TestComplexQuerySubqueryExecutionCounts pins the algebra path's plan
 // structure. Every counter asserted below is an optimizer artifact: one
 // global execution per subquery body (4 total), or-fallback cache builds,
-// fused constraints, replaced outer groups, narrowed materializations. The
-// baseline path executes correlated subqueries once per outer combination
-// by definition (10 scenarios × 4 subquery bodies = 40 executions), so the
-// counts cannot hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test
-// declares its mode explicitly. Cross-mode result equivalence for the same
-// query body is covered by TestOptimizationMatrix.
+// fused constraints, replaced outer groups. The baseline path executes
+// correlated subqueries once per outer combination by definition (10
+// scenarios × 4 subquery bodies = 40 executions), so the counts cannot hold
+// there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its mode
+// explicitly. Cross-mode result equivalence for the same query body is
+// covered by TestOptimizationMatrix.
 func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 	for _, mode := range pinnedOptimizerModes(true) {
 		t.Run(mode.name, func(t *testing.T) {
@@ -343,11 +344,11 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 
 func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 	var subqueryExecutions atomic.Int64
-	var fallbackCacheBuilds atomic.Int64
+	var builtMu sync.Mutex
+	var builtBranches [][]query.Symbol
 	var fusedConstraints atomic.Int64
 	var uniqueJoinBuilds atomic.Int64
 	var replacedOuterGroups atomic.Int64
-	var narrowedOuterMaterializations atomic.Int64
 	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema: optimizationMatrixSchema(),
 		AnnotationHandler: func(event annotations.Event) {
@@ -355,7 +356,9 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 			case "subquery/executor-path":
 				subqueryExecutions.Add(1)
 			case "or-fallback/cache-build":
-				fallbackCacheBuilds.Add(1)
+				builtMu.Lock()
+				builtBranches = append(builtBranches, event.Data["branch_syms"].([]query.Symbol))
+				builtMu.Unlock()
 			case annotations.PatternFusedConstraint:
 				fusedConstraints.Add(1)
 			case annotations.JoinStrategy:
@@ -364,8 +367,6 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 				}
 			case "or/outer-replaced":
 				replacedOuterGroups.Add(1)
-			case "or-fallback/outer.materialized":
-				narrowedOuterMaterializations.Add(1)
 			}
 		},
 	})
@@ -377,11 +378,30 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 	require.NoError(t, err)
 	require.Len(t, tuples, 10)
 	require.Equal(t, int64(4), subqueryExecutions.Load())
-	require.Equal(t, int64(5), fallbackCacheBuilds.Load())
+	sym := datalog.NewSymbol
+	// Every branch of the fallbacks is built, once per window of its subject,
+	// and nothing else is built: the two get-else rewrites' pattern branches
+	// keyed on the task, and each or-default's decorrelated subquery branch
+	// keyed on the scenario beside its ground default, which reads nothing.
+	fallbackBranches := [][]query.Symbol{
+		{sym("?t"), sym("?tok")},
+		{sym("?t"), sym("?dur")},
+		{sym("?scenario"), sym("?taskCount"), sym("?totalTokens"), sym("?totalDuration")},
+		{sym("?taskCount"), sym("?totalTokens"), sym("?totalDuration")},
+		{sym("?scenario"), sym("?openingCount")},
+		{sym("?openingCount")},
+		{sym("?scenario"), sym("?lastKey"), sym("?lastUpdatedAt")},
+		{sym("?lastKey"), sym("?lastUpdatedAt")},
+	}
+	for _, branch := range fallbackBranches {
+		require.Contains(t, builtBranches, branch, "the branch %v is built; the builds: %v", branch, builtBranches)
+	}
+	for _, built := range builtBranches {
+		require.Contains(t, fallbackBranches, built, "the build %v is a branch of the fallbacks; the builds: %v", built, builtBranches)
+	}
 	require.Equal(t, int64(5), fusedConstraints.Load())
 	require.Zero(t, uniqueJoinBuilds.Load())
 	require.Equal(t, int64(5), replacedOuterGroups.Load())
-	require.Equal(t, int64(1), narrowedOuterMaterializations.Load())
 }
 
 // TestComplexQueryCheckpointCacheSteadyState observes the EA cache's rebuild

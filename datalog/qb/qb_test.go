@@ -538,8 +538,8 @@ func TestNotJoinClause(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected *query.NotJoinClause, got %T", clause)
 	}
-	if len(njc.JoinVars) != 1 {
-		t.Errorf("Expected 1 join var, got %d", len(njc.JoinVars))
+	if len(njc.RequiredVars) != 1 {
+		t.Errorf("Expected 1 join var, got %d", len(njc.RequiredVars))
 	}
 }
 
@@ -577,8 +577,8 @@ func TestOrJoinClause(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected *query.OrJoinClause, got %T", clause)
 	}
-	if len(ojc.JoinVars) != 1 {
-		t.Errorf("Expected 1 join var, got %d", len(ojc.JoinVars))
+	if len(ojc.OutputVars) != 1 {
+		t.Errorf("Expected 1 join var, got %d", len(ojc.OutputVars))
 	}
 	if len(ojc.Branches) != 2 {
 		t.Errorf("Expected 2 branches, got %d", len(ojc.Branches))

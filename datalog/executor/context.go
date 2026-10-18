@@ -8,7 +8,8 @@ import (
 
 // Context carries the per-query execution state that is not configuration: the
 // scope's environment, the scan registry, the rule set with the relations
-// derived from it, and the cancellation the caller gave.
+// derived from it, the rule evaluations a form execution continues across its
+// windows, and the cancellation the caller gave.
 //
 // It does not carry the annotation handler. The handler is registered on the
 // options (planner.PlannerOptions.Handler, derived into ExecutorOptions), which
@@ -32,6 +33,12 @@ type Context struct {
 	// invocation reads the relation held under the symbol it invokes.
 	derived map[query.Symbol]Relation
 
+	// continued holds the rule evaluations the enclosing form execution
+	// continues across its windows, by the invocation clause each evaluates,
+	// nil outside a form execution, where an invocation's evaluation runs its
+	// one window and completes.
+	continued *ruleContinuations
+
 	// cancellation is the context the caller gave to cancel the query, nil
 	// when none was given.
 	cancellation context.Context
@@ -52,6 +59,7 @@ func forkContext(ctx *Context) *Context {
 		env:          ctx.env,
 		rules:        ctx.rules,
 		derived:      ctx.derived,
+		continued:    ctx.continued,
 		cancellation: ctx.cancellation,
 	}
 }
@@ -107,6 +115,15 @@ func (c *Context) Derived(name query.Symbol) (Relation, bool) {
 	return rel, ok
 }
 
+// WithContinuations derives a context whose invocations continue the
+// evaluations continued holds, by clause, across the windows of the form
+// execution that owns them.
+func (c *Context) WithContinuations(continued *ruleContinuations) *Context {
+	next := c.WithEnvironment(c.env)
+	next.continued = continued
+	return next
+}
+
 // ScanRegistry returns the per-query scan registry for sharing unbound scan
 // results across subqueries, initializing it lazily.
 func (c *Context) ScanRegistry() *ScanRegistry {
@@ -138,6 +155,7 @@ func (c *Context) WithEnvironment(env Relation) *Context {
 		env:          env,
 		rules:        c.rules,
 		derived:      c.derived,
+		continued:    c.continued,
 		cancellation: c.cancellation,
 	}
 }

@@ -171,7 +171,8 @@ func TestOrFallbackIteratorCopiesFromUnsafeOuter(t *testing.T) {
 
 	// Create an unsafe outer relation with [?e, ?name]
 	// This simulates what BadgerDB returns - workspace reuse
-	outerSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")}
+	entity, priority := datalog.NewSymbol("?e"), datalog.NewSymbol("?p")
+	outerSymbols := []query.Symbol{entity, datalog.NewSymbol("?name")}
 	outerData := [][]interface{}{
 		{datalog.NewIdentity("e1"), "item1"},
 		{datalog.NewIdentity("e2"), "item2"},
@@ -179,24 +180,22 @@ func TestOrFallbackIteratorCopiesFromUnsafeOuter(t *testing.T) {
 	}
 	outerRel := newMockUnsafeRelation(outerSymbols, outerData)
 
-	// Create OR clause: [?e :item/priority ?p]
+	// The form over the entity with one branch: [?e :item/priority ?p]
 	// This branch will match entities with priority
-	orClause := &query.OrClause{
-		Branches: [][]query.Clause{
-			{
-				&query.DataPattern{
-					Elements: []query.PatternElement{
-						query.Variable{Name: datalog.NewSymbol("?e")},
-						query.Constant{Value: datalog.NewKeyword(":item/priority")},
-						query.Variable{Name: datalog.NewSymbol("?p")},
-					},
+	branches := [][]query.Clause{
+		{
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: entity},
+					query.Constant{Value: datalog.NewKeyword(":item/priority")},
+					query.Variable{Name: priority},
 				},
 			},
 		},
 	}
 
 	// Create OrFallbackRelation directly
-	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, orClause.Branches, outerRel, ExecutorOptions{}, true)
+	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{priority}, branches, outerRel, ExecutorOptions{}, true)
 
 	t.Logf("OrFallbackRelation RequiresCopy: %v", orFallbackRel.RequiresCopy())
 	t.Logf("Outer relation RequiresCopy: %v", outerRel.RequiresCopy())
@@ -253,16 +252,14 @@ func TestOrFallbackIteratorCopiesFromUnsafeOuter(t *testing.T) {
 }
 
 // =============================================================================
-// Test 4: OrFallbackIterator with unsafe branch result (direct test)
+// Test 4: a branch result that reuses its workspace is copied when retained
 //
-// This tests the OrFallbackIterator directly by wrapping an unsafe relation
-// as the branch result. This bypasses the execution pipeline that masks the bug.
+// collectBranch is the boundary at which a branch's result is kept for the
+// branch's index, so a tuple from a source whose RequiresCopy() is true is
+// copied there, once.
 // =============================================================================
 
-func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
-	// Create an unsafe relation that will be returned by the "branch"
-	// This simulates what would happen if a branch returned a StreamingRelation
-	// with workspace reuse
+func TestCollectBranchCopiesFromAnUnsafeBranchResult(t *testing.T) {
 	branchSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	unsafeBranchData := [][]interface{}{
 		{1, "a"},
@@ -273,36 +270,16 @@ func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
 	}
 	unsafeBranch := newMockUnsafeRelation(branchSymbols, unsafeBranchData)
 
-	// Test projectedIterator - this is what OrFallbackIterator wraps the branch with.
-	// projectedIterator.Tuple() must copy when source.RequiresCopy() = true.
-	branchIt := unsafeBranch.Iterator()
-	projIt := &projectedIterator{
-		inner:          branchIt,
-		branchRelation: unsafeBranch, // This has RequiresCopy() = true
-		// Same symbols, no projection needed — identity plan
-		plan: newProjectionPlan(branchSymbols, branchSymbols, nil),
+	storedTuples, err := collectBranch(unsafeBranch)
+	if err != nil {
+		t.Fatalf("collectBranch: %v", err)
 	}
-
-	var storedTuples []Tuple
-	for projIt.Next() {
-		// projectedIterator.Tuple() should copy because branchRelation.RequiresCopy() = true
-		tuple := projIt.Tuple()
-		storedTuples = append(storedTuples, tuple)
-	}
-	projIt.Close()
-
-	t.Logf("Got %d tuples", len(storedTuples))
-	for i, tuple := range storedTuples {
-		t.Logf("  tuple %d: %v", i, tuple)
-	}
-
-	// Should have 5 tuples
 	if len(storedTuples) != 5 {
 		t.Fatalf("expected 5 tuples, got %d", len(storedTuples))
 	}
 
-	// CRITICAL: If projectedIterator doesn't copy from unsafe source, all stored tuples
-	// will have the LAST value
+	// Without the copy every kept tuple is the workspace, holding the last
+	// value.
 	values := make(map[string]bool)
 	for _, tuple := range storedTuples {
 		if len(tuple) >= 2 {
@@ -311,10 +288,12 @@ func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
 			}
 		}
 	}
-
 	if len(values) != 5 {
 		t.Errorf("expected 5 unique values, got %d (TUPLE CORRUPTION DETECTED)", len(values))
 		t.Logf("values: %v", values)
+	}
+	if &storedTuples[0][0] == &storedTuples[1][0] {
+		t.Error("kept tuples share memory")
 	}
 }
 
@@ -342,31 +321,30 @@ func TestOrFallbackIteratorMultipleBranchResultsIntegration(t *testing.T) {
 	ctx := NewContext()
 
 	// Create an outer relation with 2 entities
-	outerSymbols := []query.Symbol{datalog.NewSymbol("?e")}
+	entity, tag := datalog.NewSymbol("?e"), datalog.NewSymbol("?tag")
+	outerSymbols := []query.Symbol{entity}
 	outerData := [][]interface{}{
 		{datalog.NewIdentity("e1")},
 		{datalog.NewIdentity("e2")},
 	}
 	outerRel := newMockUnsafeRelation(outerSymbols, outerData)
 
-	// Create OR clause: [?e :item/tag ?tag]
+	// The form over the entity with one branch: [?e :item/tag ?tag]
 	// This will return MULTIPLE tuples per outer tuple
-	orClause := &query.OrClause{
-		Branches: [][]query.Clause{
-			{
-				&query.DataPattern{
-					Elements: []query.PatternElement{
-						query.Variable{Name: datalog.NewSymbol("?e")},
-						query.Constant{Value: datalog.NewKeyword(":item/tag")},
-						query.Variable{Name: datalog.NewSymbol("?tag")},
-					},
+	branches := [][]query.Clause{
+		{
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: entity},
+					query.Constant{Value: datalog.NewKeyword(":item/tag")},
+					query.Variable{Name: tag},
 				},
 			},
 		},
 	}
 
 	// Create OrFallbackRelation directly
-	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, orClause.Branches, outerRel, options, true)
+	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{tag}, branches, outerRel, options, true)
 
 	// Iterate and store tuple references WITHOUT copying
 	var storedTuples []Tuple
@@ -432,7 +410,8 @@ func TestOrFallbackIteratorWithFallbackBranch(t *testing.T) {
 	ctx := NewContext()
 
 	// Create an unsafe outer relation with 3 items
-	outerSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")}
+	entity, priority := datalog.NewSymbol("?e"), datalog.NewSymbol("?p")
+	outerSymbols := []query.Symbol{entity, datalog.NewSymbol("?name")}
 	outerData := [][]interface{}{
 		{datalog.NewIdentity("e1"), "item1"},
 		{datalog.NewIdentity("e2"), "item2"},
@@ -440,29 +419,27 @@ func TestOrFallbackIteratorWithFallbackBranch(t *testing.T) {
 	}
 	outerRel := newMockUnsafeRelation(outerSymbols, outerData)
 
-	// Create OR clause with fallback: [?e :item/priority ?p] or [(ground 0) ?p]
-	orClause := &query.OrClause{
-		Branches: [][]query.Clause{
-			{
-				&query.DataPattern{
-					Elements: []query.PatternElement{
-						query.Variable{Name: datalog.NewSymbol("?e")},
-						query.Constant{Value: datalog.NewKeyword(":item/priority")},
-						query.Variable{Name: datalog.NewSymbol("?p")},
-					},
+	// The form over the entity with a fallback: [?e :item/priority ?p] or [(ground 0) ?p]
+	branches := [][]query.Clause{
+		{
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: entity},
+					query.Constant{Value: datalog.NewKeyword(":item/priority")},
+					query.Variable{Name: priority},
 				},
 			},
-			{
-				&query.Expression{
-					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  datalog.NewSymbol("?p"),
-				},
+		},
+		{
+			&query.Expression{
+				Function: &query.GroundFunction{Value: int64(0)},
+				Binding:  priority,
 			},
 		},
 	}
 
 	// Create OrFallbackRelation directly
-	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, orClause.Branches, outerRel, ExecutorOptions{}, true)
+	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{priority}, branches, outerRel, ExecutorOptions{}, true)
 
 	// Iterate and store tuple references WITHOUT copying
 	var storedTuples []Tuple

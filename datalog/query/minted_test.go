@@ -43,12 +43,12 @@ func TestAdornment(t *testing.T) {
 }
 
 func TestEngineNamespace(t *testing.T) {
-	for _, name := range []string{"delta/follows", "delta.adorned.bf/follows", "magic.b/follows", "adorned.bf/follows"} {
+	for _, name := range []string{"delta/follows", "delta.adorned.bf/follows", "magic.b/follows", "adorned.bf/follows", "scope/required"} {
 		if !engineNamespace(sym(name)) {
 			t.Errorf("%s lies in a namespace the engine mints into", name)
 		}
 	}
-	for _, name := range []string{"follows", "mine/follows", "deltas/follows", "mine.delta/follows"} {
+	for _, name := range []string{"follows", "mine/follows", "deltas/follows", "mine.delta/follows", "scopes/required"} {
 		if engineNamespace(sym(name)) {
 			t.Errorf("%s lies in no namespace the engine mints into", name)
 		}
@@ -56,12 +56,12 @@ func TestEngineNamespace(t *testing.T) {
 }
 
 func TestSeedRestricted(t *testing.T) {
-	for _, name := range []string{"magic.bf/follows", "adorned.bf/follows", "delta.magic.bf/follows", "delta.adorned.bf/follows", "adorned.bf.mine/follows"} {
+	for _, name := range []string{"magic.bf/follows", "adorned.bf/follows", "delta.magic.bf/follows", "delta.adorned.bf/follows", "adorned.bf.mine/follows", "scope/required"} {
 		if !SeedRestricted(sym(name)) {
 			t.Errorf("%s holds only what a seed reaches", name)
 		}
 	}
-	for _, name := range []string{"follows", "mine/follows", "delta/follows", "delta.mine/follows", "magical/follows"} {
+	for _, name := range []string{"follows", "mine/follows", "delta/follows", "delta.mine/follows", "magical/follows", "scopes/required"} {
 		if SeedRestricted(sym(name)) {
 			t.Errorf("%s is not restricted by a seed", name)
 		}
@@ -69,7 +69,7 @@ func TestSeedRestricted(t *testing.T) {
 }
 
 func TestNewRuleSet_RefusesEngineNamespaces(t *testing.T) {
-	for _, name := range []string{"delta/follows", "delta.adorned.bf/follows", "magic.b/follows", "adorned.bf/follows"} {
+	for _, name := range []string{"delta/follows", "delta.adorned.bf/follows", "magic.b/follows", "adorned.bf/follows", "scope/required"} {
 		_, err := NewRuleSet([]*Rule{defineRule(name, []string{"?a", "?b"}, scopePattern("?a", "page/next", "?b"))})
 		if err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("a rule named %s: want a refusal naming it, got %v", name, err)

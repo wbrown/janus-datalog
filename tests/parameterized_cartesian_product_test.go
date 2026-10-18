@@ -7,7 +7,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
@@ -106,7 +105,7 @@ func testParameterizedQueryCartesianProduct(t *testing.T, db *storage.Database) 
 		}
 
 		// Debug: Check what plan is created
-		plan, err := exec.GetPlanner().PlanQuery(q, planner.Bindings{}, nil)
+		plan, err := exec.GetPlanner().PlanQuery(q, query.Bindings{}, nil)
 		if err != nil {
 			t.Fatalf("Failed to create plan: %v", err)
 		}

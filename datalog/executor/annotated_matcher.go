@@ -195,9 +195,9 @@ func (m *AnnotatedMatcher) LookupAttribute(
 // CanFuseAttributeFetch implements AttributeFetchFusable if the underlying
 // matcher supports it, so same-entity attribute fusion still applies when an
 // annotation handler is attached.
-func (m *AnnotatedMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
+func (m *AnnotatedMatcher) CanFuseAttributeFetch(source query.Symbol, attr datalog.Keyword) bool {
 	if f, ok := m.underlying.(AttributeFetchFusable); ok {
-		return f.CanFuseAttributeFetch(attr)
+		return f.CanFuseAttributeFetch(source, attr)
 	}
 	return false
 }

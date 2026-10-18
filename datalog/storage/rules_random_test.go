@@ -620,3 +620,455 @@ func TestRules_QueryLevelShapesOnRandomGraphsMatchTheReference(t *testing.T) {
 		})
 	}
 }
+
+// coloredGraph is a random graph whose nodes carry a colour and a value,
+// with its edges as a set and its closure by Warshall's algorithm.
+type coloredGraph struct {
+	spec   graphSpec
+	colors map[string]int64
+	vals   map[string]int64
+	edge   map[[2]string]bool
+	reach  map[[2]string]bool
+}
+
+// randomColoredGraph draws a coloredGraph from seed: five to ten nodes, each
+// with a colour below three and its index as its value, and between n and
+// 2n-1 draws of a directed edge, each kept once.
+func randomColoredGraph(seed int64) coloredGraph {
+	r := rand.New(rand.NewSource(seed))
+	n := 5 + r.Intn(6)
+	g := coloredGraph{colors: map[string]int64{}, vals: map[string]int64{}, edge: map[[2]string]bool{}}
+	for i := 0; i < n; i++ {
+		name := nodeName(i)
+		g.spec.nodes = append(g.spec.nodes, name)
+		g.colors[name] = int64(r.Intn(3))
+		g.vals[name] = int64(i)
+	}
+	draws := n + r.Intn(n)
+	for k := 0; k < draws; k++ {
+		edge := [2]string{g.spec.nodes[r.Intn(n)], g.spec.nodes[r.Intn(n)]}
+		if g.edge[edge] {
+			continue
+		}
+		g.edge[edge] = true
+		g.spec.edges = append(g.spec.edges, edge)
+	}
+	g.reach = closureOf(g.spec)
+	return g
+}
+
+// coloredGraphSchema declares graphSchema's attributes and :color and :val,
+// each a long.
+func coloredGraphSchema() *schema.Schema {
+	return schema.NewBuilder().
+		Attribute(":edge").Type(schema.TypeRef).Many().Add().
+		Attribute(":type").Type(schema.TypeKeyword).Add().
+		Attribute(":name").Type(schema.TypeString).Add().
+		Attribute(":color").Type(schema.TypeLong).Add().
+		Attribute(":val").Type(schema.TypeLong).Add().
+		MustBuild()
+}
+
+// writeColoredGraph commits g into d: writeGraph's nodes and edges,
+// writeNames' names, and each node's colour and value.
+func writeColoredGraph(t testing.TB, d *Database, g coloredGraph) graph {
+	t.Helper()
+	names := writeGraph(t, d, g.spec)
+	writeNames(t, d, g.spec)
+	tx := d.NewTransaction()
+	for _, name := range g.spec.nodes {
+		require.NoError(t, tx.Add(nodeID(name), kw(":color"), g.colors[name]))
+		require.NoError(t, tx.Add(nodeID(name), kw(":val"), g.vals[name]))
+	}
+	_, err := tx.Commit()
+	require.NoError(t, err)
+	return names
+}
+
+// reaches reports whether y is in the closure from x.
+func (g coloredGraph) reaches(x, y string) bool { return g.reach[[2]string{x, y}] }
+
+// hasSuccessor reports whether some node is in the closure from x.
+func (g coloredGraph) hasSuccessor(x string) bool {
+	for _, y := range g.spec.nodes {
+		if g.reaches(x, y) {
+			return true
+		}
+	}
+	return false
+}
+
+// edgeToColor reports whether an edge leaves x for a node of colour c.
+func (g coloredGraph) edgeToColor(x string, c int64) bool {
+	for _, w := range g.spec.nodes {
+		if g.edge[[2]string{x, w}] && g.colors[w] == c {
+			return true
+		}
+	}
+	return false
+}
+
+// reachesColor reports whether a node of colour c is in the closure from x.
+func (g coloredGraph) reachesColor(x string, c int64) bool {
+	for _, w := range g.spec.nodes {
+		if g.reaches(x, w) && g.colors[w] == c {
+			return true
+		}
+	}
+	return false
+}
+
+// commonReach reports whether some node is in the closure from both x and y.
+func (g coloredGraph) commonReach(x, y string) bool {
+	for _, z := range g.spec.nodes {
+		if g.reaches(x, z) && g.reaches(y, z) {
+			return true
+		}
+	}
+	return false
+}
+
+// edgeBackToSelf reports whether an edge leaves x for a node whose closure
+// holds x.
+func (g coloredGraph) edgeBackToSelf(x string) bool {
+	for _, m := range g.spec.nodes {
+		if g.edge[[2]string{x, m}] && g.reaches(m, x) {
+			return true
+		}
+	}
+	return false
+}
+
+// nodesWhere is each node for which pred holds, rendered as the graph
+// renders a one-column result.
+func (g coloredGraph) nodesWhere(pred func(x string) bool) []string {
+	var out []string
+	for _, x := range g.spec.nodes {
+		if pred(x) {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// nodesWithValue is every node beside the value fn gives it, rendered as the
+// graph renders a node and a long.
+func (g coloredGraph) nodesWithValue(fn func(x string) int64) []string {
+	var out []string
+	for _, x := range g.spec.nodes {
+		out = append(out, fmt.Sprintf("%s>%d", x, fn(x)))
+	}
+	return out
+}
+
+// pairsWhere is each ordered pair of nodes, equal pairs included, for which
+// pred holds, rendered as the graph renders a two-column result.
+func (g coloredGraph) pairsWhere(pred func(x, y string) bool) []string {
+	var out []string
+	for _, x := range g.spec.nodes {
+		for _, y := range g.spec.nodes {
+			if pred(x, y) {
+				out = append(out, x+">"+y)
+			}
+		}
+	}
+	return out
+}
+
+// scopeCase is one query shape over a coloured graph, its rule set, whether
+// ?s is bound to the node n3 through an input, and the rows the reference
+// computes for it. The reference reads each nested scope by the rule the
+// language states: a not-join, or-join or or-default-join shares its header
+// with the enclosing scope and nothing else, so a body variable outside the
+// header binds in the body whatever the enclosing scope binds under the same
+// name; an or, not or or-default shares every variable that occurs elsewhere
+// in its enclosing scope, and a variable occurring only inside it is local; a
+// shared variable an or or or-default binds in every branch is its output,
+// and every other shared variable is required.
+type scopeCase struct {
+	name, rules, text string
+	env               bool
+	want              func(g coloredGraph) []string
+}
+
+const (
+	rClosure = `[(r ?a ?b) [?a :edge ?b]] [(r ?a ?c) [?a :edge ?b] (r ?b ?c)]`
+	succRule = `[(succ [?n] ?m) [(+ ?n 1) ?m]]`
+)
+
+// sameColor reports whether x and y share a colour.
+func sameColor(g coloredGraph, x, y string) bool { return g.colors[x] == g.colors[y] }
+
+// shadowedLocalCases name a body-local ?y, under a header that does not carry
+// it, beside an outer column ?y.
+var shadowedLocalCases = []scopeCase{
+	{"notjoin-shadow", rClosure,
+		`[:find ?x ?y :in $ % :where [?x :color ?c] [?y :color ?c] (not-join [?x] (r ?x ?y))]`, false,
+		func(g coloredGraph) []string {
+			return g.pairsWhere(func(x, y string) bool { return sameColor(g, x, y) && !g.hasSuccessor(x) })
+		}},
+	{"orjoin-shadow", rClosure,
+		`[:find ?x ?y :in $ % :where [?x :color ?c] [?y :color ?c] (or-join [?x] (r ?x ?y) [?x :name "zz"])]`, false,
+		func(g coloredGraph) []string {
+			return g.pairsWhere(func(x, y string) bool { return sameColor(g, x, y) && g.hasSuccessor(x) })
+		}},
+	{"ordefjoin-shadow", rClosure,
+		`[:find ?x ?y ?k :in $ % :where [?x :color ?c] [?y :color ?c] (or-default-join [[?x] ?k] (and (r ?x ?y) [(ground 1) ?k]) [(ground 0) ?k])]`, false,
+		func(g coloredGraph) []string {
+			var out []string
+			for _, x := range g.spec.nodes {
+				for _, y := range g.spec.nodes {
+					if !sameColor(g, x, y) {
+						continue
+					}
+					k := 0
+					if g.hasSuccessor(x) {
+						k = 1
+					}
+					out = append(out, fmt.Sprintf("%s>%s>%d", x, y, k))
+				}
+			}
+			return out
+		}},
+	{"nested-notjoin-shadow", rClosure,
+		`[:find ?x ?y :in $ % :where [?x :color ?c] [?y :color ?c] (not [?x :type :node] (not-join [?x] (r ?x ?y)))]`, false,
+		func(g coloredGraph) []string {
+			return g.pairsWhere(func(x, y string) bool { return sameColor(g, x, y) && g.hasSuccessor(x) })
+		}},
+	{"nested-orjoin-in-not-shadow", rClosure,
+		`[:find ?x ?y :in $ % :where [?x :color ?c] [?y :color ?c] (not (or-join [?x] (r ?x ?y) [?x :name "zz"]))]`, false,
+		func(g coloredGraph) []string {
+			return g.pairsWhere(func(x, y string) bool { return sameColor(g, x, y) && !g.hasSuccessor(x) })
+		}},
+	{"rulebody-notjoin-shadow", rClosure + ` [(p ?x ?y) [?x :color ?c] [?y :color ?c] (not-join [?x] (r ?x ?y))]`,
+		`[:find ?x ?y :in $ % :where (p ?x ?y)]`, false,
+		func(g coloredGraph) []string {
+			return g.pairsWhere(func(x, y string) bool { return sameColor(g, x, y) && !g.hasSuccessor(x) })
+		}},
+}
+
+// branchBoundCases invoke succ, whose first position must be bound, from a
+// clause of the invocation's own branch or body, beside one case bound from
+// the enclosing scope.
+var branchBoundCases = []scopeCase{
+	{"req-inner-bound-not", succRule,
+		`[:find ?x :in $ % :where [?x :val ?v] (not [(+ ?v 1) ?w] (succ ?w ?u) [(> ?u 5)])]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool { return !(g.vals[x]+2 > 5) })
+		}},
+	{"req-inner-bound-orjoin", succRule,
+		`[:find ?x ?u :in $ % :where [?x :val ?v] (or-join [?x ?u] (and [?x :val ?w] (succ ?w ?u)) (and [?x :color 9] [(ground 0) ?u]))]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWithValue(func(x string) int64 { return g.vals[x] + 1 })
+		}},
+	{"req-outer-bound-not", succRule,
+		`[:find ?x :in $ % :where [?x :val ?v] (not (succ ?v ?u) [(> ?u 5)])]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool { return !(g.vals[x]+1 > 5) })
+		}},
+	{"req-inner-bound-or", succRule,
+		`[:find ?x ?u :in $ % :where [?x :val ?v] (or (and [(+ ?v 2) ?w] (succ ?w ?u)) (and [?x :color 9] [(ground 0) ?u]))]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWithValue(func(x string) int64 { return g.vals[x] + 3 })
+		}},
+	{"req-inner-bound-ordefault", succRule,
+		`[:find ?x ?u :in $ % :where [?x :val ?v] (or-default (and [(+ ?v 2) ?w] (succ ?w ?u)) [(ground 0) ?u])]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWithValue(func(x string) int64 { return g.vals[x] + 3 })
+		}},
+}
+
+// scopeShapeCases are the other shapes a query invokes a rule in under a
+// nested form: an input or a pattern binding a body variable, two alike
+// invocations, locals under nested negations, empty outers, and a negation
+// in a rule body.
+var scopeShapeCases = []scopeCase{
+	{"not-inner-bound", rClosure,
+		`[:find ?x :in $ % :where [?x :type :node] (not [?x :edge ?m] (r ?m ?x))]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool { return !g.edgeBackToSelf(x) })
+		}},
+	{"not-env", rClosure,
+		`[:find ?x :in $ % ?s :where [?x :type :node] (not (r ?x ?s))]`, true,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool { return !g.reaches(x, nodeName(3)) })
+		}},
+	{"notjoin-env", rClosure,
+		`[:find ?x :in $ % ?s :where [?x :type :node] (not-join [?x] (r ?x ?s))]`, true,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool { return !g.hasSuccessor(x) })
+		}},
+	{"or-env", rClosure,
+		`[:find ?x :in $ % ?s :where [?x :type :node] (or (r ?x ?s) [?x :color 2])]`, true,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool { return g.reaches(x, nodeName(3)) || g.colors[x] == 2 })
+		}},
+	{"not-const-via-outer", rClosure,
+		`[:find ?x :in $ % :where [?x :type :node] [?t :name "n3"] (not (r ?x ?t))]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool { return !g.reaches(x, nodeName(3)) })
+		}},
+	{"not-two-alike", rClosure,
+		`[:find ?x ?y :in $ % :where [?x :color 0] [?y :color 1] (not (r ?x ?z) (r ?y ?z))]`, false,
+		func(g coloredGraph) []string {
+			return g.pairsWhere(func(x, y string) bool {
+				return g.colors[x] == 0 && g.colors[y] == 1 && !g.commonReach(x, y)
+			})
+		}},
+	{"orjoin-two-alike", rClosure,
+		`[:find ?x ?y :in $ % :where [?x :color 0] [?y :color 1] (or-join [?x ?y] (and (r ?x ?z) (r ?y ?z)) (and [?x :edge ?y]))]`, false,
+		func(g coloredGraph) []string {
+			return g.pairsWhere(func(x, y string) bool {
+				return g.colors[x] == 0 && g.colors[y] == 1 && (g.commonReach(x, y) || g.edge[[2]string{x, y}])
+			})
+		}},
+	{"or-mixed", rClosure,
+		`[:find ?x ?z :in $ % :where [?x :color 0] (or (and [?x :edge ?m] (r ?m ?z)) (and (r ?x ?z) [?z :color 1]))]`, false,
+		func(g coloredGraph) []string {
+			return g.pairsWhere(func(x, z string) bool {
+				if g.colors[x] != 0 {
+					return false
+				}
+				throughEdge := false
+				for _, m := range g.spec.nodes {
+					if g.edge[[2]string{x, m}] && g.reaches(m, z) {
+						throughEdge = true
+					}
+				}
+				return throughEdge || (g.reaches(x, z) && g.colors[z] == 1)
+			})
+		}},
+	{"or-diffvars", rClosure,
+		`[:find ?x ?y :in $ % :where [?x :color 0] [?x :edge ?y] (or (r ?y ?x) (and [?x :color 0] (r ?x ?y) [?y :color 1]))]`, false,
+		func(g coloredGraph) []string {
+			return g.pairsWhere(func(x, y string) bool {
+				return g.colors[x] == 0 && g.edge[[2]string{x, y}] && (g.reaches(y, x) || (g.reaches(x, y) && g.colors[y] == 1))
+			})
+		}},
+	{"orjoin-diffvars", rClosure,
+		`[:find ?x ?y :in $ % :where [?x :color 0] [?x :edge ?y] (or-join [?x ?y] (r ?y ?x) (and [?y :color 1] (r ?x ?y)))]`, false,
+		func(g coloredGraph) []string {
+			return g.pairsWhere(func(x, y string) bool {
+				return g.colors[x] == 0 && g.edge[[2]string{x, y}] && (g.reaches(y, x) || (g.colors[y] == 1 && g.reaches(x, y)))
+			})
+		}},
+	{"nested-not-or-not", rClosure,
+		`[:find ?x :in $ % :where [?x :type :node] (not (or (r ?x ?x) (and [?x :color 2] (not (r ?x ?w) [?w :color 0]))))]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool {
+				return !(g.reaches(x, x) || (g.colors[x] == 2 && !g.reachesColor(x, 0)))
+			})
+		}},
+	{"ordefault-env", rClosure,
+		`[:find ?x ?k :in $ % ?s :where [?x :type :node] (or-default (and (r ?x ?s) [(ground 1) ?k]) [(ground 0) ?k])]`, true,
+		func(g coloredGraph) []string {
+			return g.nodesWithValue(func(x string) int64 {
+				if g.reaches(x, nodeName(3)) {
+					return 1
+				}
+				return 0
+			})
+		}},
+	{"empty-outer-not", rClosure,
+		`[:find ?x :in $ % :where [?x :color 7] (not (r ?x ?y))]`, false,
+		func(g coloredGraph) []string { return nil }},
+	{"empty-outer-orjoin", rClosure,
+		`[:find ?x :in $ % :where [?x :color 7] (or-join [?x] (r ?x ?y) [?x :name "zz"])]`, false,
+		func(g coloredGraph) []string { return nil }},
+	{"rulebody-not-lower", rClosure + ` [(sink ?a) [?a :type :node] (not (r ?a ?b))]`,
+		`[:find ?x :in $ % :where [?x :color 0] (sink ?x)]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool { return g.colors[x] == 0 && !g.hasSuccessor(x) })
+		}},
+	{"rulebody-not-lower-whole", rClosure + ` [(sink ?a) [?a :type :node] (not (r ?a ?b))]`,
+		`[:find ?x :in $ % :where (sink ?x)]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool { return !g.hasSuccessor(x) })
+		}},
+	{"norule-or-not-local", rClosure,
+		`[:find ?x :in $ % :where [?x :type :node] (or [?x :color 1] (and [?x :color 2] (not [?x :edge ?w] [?w :color 0])))]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool {
+				return g.colors[x] == 1 || (g.colors[x] == 2 && !g.edgeToColor(x, 0))
+			})
+		}},
+	{"norule-not-or-not-local", rClosure,
+		`[:find ?x :in $ % :where [?x :type :node] (not (or [?x :color 1] (and [?x :color 2] (not [?x :edge ?w] [?w :color 0]))))]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool {
+				return !(g.colors[x] == 1 || (g.colors[x] == 2 && !g.edgeToColor(x, 0)))
+			})
+		}},
+	{"norule-not-not-local", rClosure,
+		`[:find ?x :in $ % :where [?x :type :node] (not [?x :color 2] (not [?x :edge ?w] [?w :color 0]))]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool {
+				return !(g.colors[x] == 2 && !g.edgeToColor(x, 0))
+			})
+		}},
+	{"notjoin-const", rClosure,
+		`[:find ?x :in $ % :where [?x :type :node] (not-join [?x] (r ?x ?t) [?t :name "n3"])]`, false,
+		func(g coloredGraph) []string {
+			return g.nodesWhere(func(x string) bool { return !g.reaches(x, nodeName(3)) })
+		}},
+}
+
+// runScopeCases runs each case on twenty-five random coloured graphs in every
+// mode and reports every case whose rows, or whose error, differ from the
+// reference's, naming the trial, the case, the graph's edges and colours.
+func runScopeCases(t *testing.T, cases []scopeCase) {
+	t.Helper()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for trial := 0; trial < 25; trial++ {
+				cg := randomColoredGraph(int64(trial))
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: coloredGraphSchema()})
+				g := writeColoredGraph(t, d, cg)
+				for _, c := range cases {
+					label := fmt.Sprintf("trial %d, %s, edges %v, colours %v", trial, c.name, cg.spec.edges, cg.colors)
+					inputs := []interface{}{mustRuleSet(t, "["+c.rules+"]")}
+					if c.env {
+						inputs = append(inputs, nodeID(nodeName(3)))
+					}
+					want := c.want(cg)
+					sort.Strings(want)
+					rel, err := d.Query(c.text, inputs...)
+					if err != nil {
+						t.Errorf("%s: error %q, reference rows %v", label, err, want)
+						continue
+					}
+					got, err := g.render(rel)
+					if err != nil {
+						t.Errorf("%s: error %q, reference rows %v", label, err, want)
+						continue
+					}
+					sort.Strings(got)
+					if !equalStrings(got, want) {
+						t.Errorf("%s: rows %v, reference rows %v", label, got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
+// Every shape with a body-local variable that shares an outer column's name,
+// under not-join, or-join and or-default-join, in a query and in a rule body,
+// derives on a random coloured graph what the reference computes.
+func TestRules_ShadowedLocalsOnRandomGraphsMatchTheReference(t *testing.T) {
+	runScopeCases(t, shadowedLocalCases)
+}
+
+// An invocation of a predicate whose first position must be bound derives on
+// a random coloured graph what the reference computes when a clause of its
+// own branch or body binds that position, under not, or-join, or and
+// or-default, as it does when the enclosing scope binds it.
+func TestRules_InvocationBoundByItsBranchOnRandomGraphs(t *testing.T) {
+	runScopeCases(t, branchBoundCases)
+}
+
+// Every other shape a query invokes a rule in under a nested form derives on
+// a random coloured graph what the reference computes.
+func TestRules_ScopeShapesOnRandomGraphsMatchTheReference(t *testing.T) {
+	runScopeCases(t, scopeShapeCases)
+}

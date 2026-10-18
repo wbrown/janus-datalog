@@ -17,9 +17,11 @@ const joinProjectPassName = "join-project-insertion"
 // the configured equivalence passes without flattening the optimized tree. The
 // full query goes to Compile — its :in symbols seed the bridge's clause
 // ordering (an input-bound correlate is bindable), so stripping them here
-// would reject valid queries. Both trees return so provenance consumers can
-// hold the before and after.
-func optimizeAlgebra(q *query.Query, handler annotations.Handler, sink *algebra.RewriteSink) (compiled *algebra.Node, optimized *algebra.Node, err error) {
+// would reject valid queries. The bindings are what the caller holds when it
+// asks for the plan; the rule set among them is what the compiler and the
+// passes fold under. Both trees return so provenance consumers can hold the
+// before and after.
+func optimizeAlgebra(q *query.Query, bindings query.Bindings, handler annotations.Handler, sink *algebra.RewriteSink) (compiled *algebra.Node, optimized *algebra.Node, err error) {
 	// The guard is the caller's, never the emitter's: `tree` is a whole-tree
 	// walk through algebra.formatNode, and Go evaluates it before the call, so a
 	// check inside emit would render both trees and discard them on every plan.
@@ -33,7 +35,7 @@ func optimizeAlgebra(q *query.Query, handler annotations.Handler, sink *algebra.
 		})
 	}
 
-	compiled, err = algebra.Compile(q)
+	compiled, err = algebra.Compile(q, bindings.Rules)
 	if err != nil {
 		if handler != nil {
 			emit(annotations.AlgebraCompileError, map[string]interface{}{
@@ -78,6 +80,7 @@ func optimizeAlgebra(q *query.Query, handler annotations.Handler, sink *algebra.
 // collects nothing.
 func optimizeViaAlgebra(
 	q *query.Query,
+	bindings query.Bindings,
 	options PlannerOptions,
 	handler annotations.Handler,
 	expl *AlgebraExplanation,
@@ -86,7 +89,7 @@ func optimizeViaAlgebra(
 		return nil, fmt.Errorf("algebra optimize: nil query")
 	}
 	sink := &algebra.RewriteSink{Handler: handler, Collect: expl != nil}
-	compiled, optimized, err := optimizeAlgebra(q, handler, sink)
+	compiled, optimized, err := optimizeAlgebra(q, bindings, handler, sink)
 	if err != nil {
 		return nil, err
 	}

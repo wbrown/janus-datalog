@@ -84,11 +84,11 @@ func TestParseNotJoinClause(t *testing.T) {
 				if !ok {
 					t.Fatalf("expected NotJoinClause, got %T", q.Where[1])
 				}
-				if len(notJoinClause.JoinVars) != 1 {
-					t.Fatalf("expected 1 join var, got %d", len(notJoinClause.JoinVars))
+				if len(notJoinClause.RequiredVars) != 1 {
+					t.Fatalf("expected 1 join var, got %d", len(notJoinClause.RequiredVars))
 				}
-				if notJoinClause.JoinVars[0] != datalog.NewSymbol("?e") {
-					t.Fatalf("expected join var ?e, got %s", notJoinClause.JoinVars[0])
+				if notJoinClause.RequiredVars[0] != datalog.NewSymbol("?e") {
+					t.Fatalf("expected join var ?e, got %s", notJoinClause.RequiredVars[0])
 				}
 				if len(notJoinClause.Clauses) != 1 {
 					t.Fatalf("expected 1 inner clause, got %d", len(notJoinClause.Clauses))
@@ -110,8 +110,8 @@ func TestParseNotJoinClause(t *testing.T) {
 				if !ok {
 					t.Fatalf("expected NotJoinClause, got %T", q.Where[2])
 				}
-				if len(notJoinClause.JoinVars) != 2 {
-					t.Fatalf("expected 2 join vars, got %d", len(notJoinClause.JoinVars))
+				if len(notJoinClause.RequiredVars) != 2 {
+					t.Fatalf("expected 2 join vars, got %d", len(notJoinClause.RequiredVars))
 				}
 			},
 		},
@@ -235,11 +235,11 @@ func TestParseOrJoinClause(t *testing.T) {
 				if !ok {
 					t.Fatalf("expected OrJoinClause, got %T", q.Where[1])
 				}
-				if len(orJoinClause.JoinVars) != 1 {
-					t.Fatalf("expected 1 join var, got %d", len(orJoinClause.JoinVars))
+				if len(orJoinClause.OutputVars) != 1 {
+					t.Fatalf("expected 1 join var, got %d", len(orJoinClause.OutputVars))
 				}
-				if orJoinClause.JoinVars[0] != datalog.NewSymbol("?e") {
-					t.Fatalf("expected join var ?e, got %s", orJoinClause.JoinVars[0])
+				if orJoinClause.OutputVars[0] != datalog.NewSymbol("?e") {
+					t.Fatalf("expected join var ?e, got %s", orJoinClause.OutputVars[0])
 				}
 				if len(orJoinClause.Branches) != 2 {
 					t.Fatalf("expected 2 branches, got %d", len(orJoinClause.Branches))
@@ -288,7 +288,7 @@ func TestNotOrParseErrors(t *testing.T) {
 		{
 			name:  "or-join without enough elements",
 			input: `[:find ?e :where [?e :foo ?v] (or-join [?e])]`,
-			error: "or-join clause must have join vars and at least two branches",
+			error: "or-join clause must have a header vector and at least two branches",
 		},
 	}
 
@@ -427,18 +427,28 @@ func TestParseOrDefaultJoinClause(t *testing.T) {
 		}
 	})
 
-	t.Run("old correlation-key flat header errors loudly", func(t *testing.T) {
-		// Migration: a flat header names ?e as an output the ground branch
-		// cannot bind — an error pointing at the required-vars form, never
-		// a silent meaning change.
+	t.Run("old correlation-key flat header is refused at inference", func(t *testing.T) {
+		// A flat header names ?e as an output the ground branch cannot bind:
+		// the parse accepts the shape, and the inference refuses it naming
+		// the form, the branch and the variable, with the repair of moving
+		// ?e into the required run, never a silent meaning change.
 		input := `[:find ?v
 	               :where [?e :user/name ?name]
 	                      (or-default-join [?e ?v]
 	                        [?e :user/score ?v]
 	                        [(ground 0) ?v])]`
-		_, err := ParseQuery(input)
+		q, err := ParseQuery(input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		_, err = query.InferHeaders(q, nil)
 		if err == nil {
-			t.Fatal("expected error: ground branch does not bind ?e")
+			t.Fatal("expected error: branch 2 does not bind ?e")
+		}
+		for _, part := range []string{"(or-default-join [?e ?v]", "branch 2 does not bind ?e", "move ?e into the required run"} {
+			if !strings.Contains(err.Error(), part) {
+				t.Errorf("the refusal %q does not carry %q", err, part)
+			}
 		}
 	})
 

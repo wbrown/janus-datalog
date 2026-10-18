@@ -6,11 +6,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-func TestFindOuterRelationBySymbolsLeavesSingleStreamLazy(t *testing.T) {
+func TestFindOuterRelationLeavesSingleStreamLazy(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	base := NewMaterializedRelation(
 		[]query.Symbol{entity},
@@ -22,8 +21,8 @@ func TestFindOuterRelationBySymbolsLeavesSingleStreamLazy(t *testing.T) {
 	)
 	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
 
-	selected, consumed := exec.findOuterRelationBySymbols(
-		map[query.Symbol]bool{entity: true},
+	selected, consumed := exec.findOuterRelation(
+		[]query.Symbol{entity},
 		Relations{stream},
 	)
 	require.Same(t, stream, selected)
@@ -51,130 +50,9 @@ func TestFindOuterRelationCombinesMultipleStreamsReusably(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(2), int64(3)}}, tuples)
 }
 
-func TestOrFallbackAnnotatesDeferredOuterMaterialization(t *testing.T) {
-	entitySymbol := datalog.NewSymbol("?entity")
-	valueSymbol := datalog.NewSymbol("?value")
-	entity := datalog.NewIdentity("outer-materialization")
-	attr := datalog.NewKeyword(":item/value")
-	var materializations int
-	handler := func(event annotations.Event) {
-		if event.Name == "or-fallback/outer.materialized" {
-			materializations++
-			require.Equal(t, "join-key-narrowing", event.Data["reason"])
-		}
-	}
-	ctx := NewContext()
-	options := ExecutorOptions{Handler: handler}
-	exec := newQueryExecutor(
-		NewMemoryPatternMatcher([]datalog.Datom{{E: entity, A: attr, V: "present"}}),
-		nil,
-		options,
-	)
-	outerBase := NewMaterializedRelation(
-		[]query.Symbol{entitySymbol},
-		[]Tuple{{entity}},
-	)
-	outer := NewStreamingRelation(
-		[]query.Symbol{entitySymbol},
-		outerBase.Iterator(),
-	)
-	relation := NewOrFallbackRelation(
-		exec,
-		ctx,
-		[][]query.Clause{{&query.DataPattern{Elements: []query.PatternElement{
-			query.Variable{Name: entitySymbol},
-			query.Constant{Value: attr},
-			query.Variable{Name: valueSymbol},
-		}}}},
-		outer,
-		options,
-		true,
-	)
-	relation.joinSyms = []query.Symbol{entitySymbol}
-
-	tuples, err := CollectTuples(relation, nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{entity, "present"}}, tuples)
-	require.Equal(t, 1, materializations)
-}
-
-func TestOrFallbackSinglePassBranchKeepsOuterStreaming(t *testing.T) {
-	entity := datalog.NewSymbol("?entity")
-	value := datalog.NewSymbol("?value")
-	var materializations int
-	handler := func(event annotations.Event) {
-		if event.Name == "or-fallback/outer.materialized" {
-			materializations++
-		}
-	}
-	ctx := NewContext()
-	options := ExecutorOptions{Handler: handler}
-	base := NewMaterializedRelation(
-		[]query.Symbol{entity},
-		[]Tuple{{int64(1)}, {int64(2)}},
-	)
-	outer := NewStreamingRelation([]query.Symbol{entity}, base.Iterator())
-	relation := NewOrFallbackRelation(
-		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options),
-		ctx,
-		[][]query.Clause{{&query.Expression{
-			Function: &query.GroundFunction{Value: "default"},
-			Binding:  value,
-		}}},
-		outer,
-		options,
-		true,
-	)
-
-	tuples, err := CollectTuples(relation, nil)
-	require.NoError(t, err)
-	require.ElementsMatch(t, [][]interface{}{
-		{int64(1), "default"},
-		{int64(2), "default"},
-	}, tuples)
-	require.Zero(t, materializations)
-}
-
-func TestOuterJoinKeysProducesSetWithJoinKey(t *testing.T) {
-	entity := datalog.NewSymbol("?entity")
-	name := datalog.NewSymbol("?name")
-	value := datalog.NewSymbol("?value")
-	e1 := datalog.NewIdentity("join-key-e1")
-	e2 := datalog.NewIdentity("join-key-e2")
-	outer := NewMaterializedRelation(
-		[]query.Symbol{entity, name},
-		[]Tuple{
-			{e1, "first"},
-			{e1, "second"},
-			{e2, "third"},
-		},
-	)
-	relation := NewOrFallbackRelation(
-		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(),
-		[][]query.Clause{{&query.DataPattern{Elements: []query.PatternElement{
-			query.Variable{Name: entity},
-			query.Constant{Value: datalog.NewKeyword(":item/value")},
-			query.Variable{Name: value},
-		}}}},
-		outer,
-		ExecutorOptions{},
-		true,
-	)
-	relation.joinSyms = []query.Symbol{entity}
-	iterator := relation.Iterator().(*OrFallbackIterator)
-
-	keys := iterator.outerJoinKeys()
-	tuples, err := CollectTuples(keys, nil)
-	require.NoError(t, err)
-	require.ElementsMatch(t, [][]interface{}{{e1}, {e2}}, tuples)
-	require.Equal(t,
-		RelationProperties{Keys: [][]query.Symbol{{entity}}},
-		keys.Properties(),
-	)
-}
-
-func TestFilterBranchToOuterTuplePreservesIteratorAndCloseErrors(t *testing.T) {
+// collectBranch, the boundary at which a branch's result is kept for its
+// index, surfaces the result's iteration error and its close error.
+func TestCollectBranchPreservesIteratorAndCloseErrors(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	value := datalog.NewSymbol("?value")
 	branch := NewMaterializedRelation(
@@ -182,23 +60,17 @@ func TestFilterBranchToOuterTuplePreservesIteratorAndCloseErrors(t *testing.T) {
 		[]Tuple{{int64(1), "one"}, {int64(2), "two"}},
 	)
 
-	iterationFailure := filterBranchToOuterTuple(
-		failingRelation{Relation: branch, failAfter: 1},
-		Tuple{int64(1)},
-		[]query.Symbol{entity},
-	)
-	require.ErrorIs(t, driveErr(iterationFailure), errInjectedIterator)
+	_, iterationFailure := collectBranch(failingRelation{Relation: branch, failAfter: 1})
+	require.ErrorIs(t, iterationFailure, errInjectedIterator)
 
-	closeFailure := errors.New("filter branch close failure")
-	closeResult := filterBranchToOuterTuple(
-		failingRelation{Relation: branch, failAfter: 100, closeErr: closeFailure},
-		Tuple{int64(1)},
-		[]query.Symbol{entity},
-	)
-	require.ErrorIs(t, driveErr(closeResult), closeFailure)
+	closeFailure := errors.New("collect branch close failure")
+	_, closeResult := collectBranch(failingRelation{Relation: branch, failAfter: 100, closeErr: closeFailure})
+	require.ErrorIs(t, closeResult, closeFailure)
 }
 
-func TestOuterJoinKeysPreservesOuterIteratorAndCloseErrors(t *testing.T) {
+// A subject's iteration error and its close error are the result's: the
+// first surfaces when the result is driven, the second when it is closed.
+func TestOrFallbackSurfacesTheSubjectsIteratorAndCloseErrors(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	value := datalog.NewSymbol("?value")
 	base := NewMaterializedRelation(
@@ -218,8 +90,8 @@ func TestOuterJoinKeysPreservesOuterIteratorAndCloseErrors(t *testing.T) {
 		},
 		{
 			name:     "close",
-			outer:    failingRelation{Relation: base, failAfter: 100, closeErr: errors.New("outer join keys close failure")},
-			expected: errors.New("outer join keys close failure"),
+			outer:    failingRelation{Relation: base, failAfter: 100, closeErr: errors.New("subject close failure")},
+			expected: errors.New("subject close failure"),
 		},
 	}
 
@@ -228,6 +100,8 @@ func TestOuterJoinKeysPreservesOuterIteratorAndCloseErrors(t *testing.T) {
 			relation := NewOrFallbackRelation(
 				newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 				NewContext(),
+				[]query.Symbol{entity},
+				[]query.Symbol{value},
 				[][]query.Clause{{&query.Expression{
 					Function: &query.GroundFunction{Value: "fallback"},
 					Binding:  value,
@@ -236,16 +110,22 @@ func TestOuterJoinKeysPreservesOuterIteratorAndCloseErrors(t *testing.T) {
 				ExecutorOptions{},
 				true,
 			)
-			relation.joinSyms = []query.Symbol{entity}
-			iterator := relation.Iterator().(*OrFallbackIterator)
-
-			require.Nil(t, iterator.outerJoinKeys())
-			require.EqualError(t, iterator.err, testCase.expected.Error())
+			iterator := relation.Iterator()
+			for iterator.Next() {
+			}
+			err := iterator.Error()
+			if closeErr := iterator.Close(); err == nil {
+				err = closeErr
+			}
+			require.EqualError(t, err, testCase.expected.Error())
 		})
 	}
 }
 
-func TestBuildBranchFromEACachePreservesOuterIteratorAndCloseErrors(t *testing.T) {
+// With the EA arm serving the branch, a subject's iteration error and its
+// close error are still the result's: the arm reads the window's run, and
+// the subject is read by the fill.
+func TestOrFallbackSurfacesTheSubjectsErrorsUnderTheEAArm(t *testing.T) {
 	entitySymbol := datalog.NewSymbol("?entity")
 	valueSymbol := datalog.NewSymbol("?value")
 	entity := datalog.NewIdentity("ea-cache-outer-error")
@@ -285,15 +165,22 @@ func TestBuildBranchFromEACachePreservesOuterIteratorAndCloseErrors(t *testing.T
 			relation := NewOrFallbackRelation(
 				newQueryExecutor(matcher, nil, ExecutorOptions{}),
 				NewContext(),
+				[]query.Symbol{entitySymbol},
+				[]query.Symbol{valueSymbol},
 				[][]query.Clause{branch},
 				testCase.outer,
 				ExecutorOptions{},
 				true,
 			)
-			iterator := relation.Iterator().(*OrFallbackIterator)
-
-			require.Nil(t, iterator.buildBranchFromEACache(branch))
-			require.EqualError(t, iterator.err, testCase.expected.Error())
+			relation.prefetched = true
+			iterator := relation.Iterator()
+			for iterator.Next() {
+			}
+			err := iterator.Error()
+			if closeErr := iterator.Close(); err == nil {
+				err = closeErr
+			}
+			require.EqualError(t, err, testCase.expected.Error())
 		})
 	}
 }

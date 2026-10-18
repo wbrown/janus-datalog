@@ -25,23 +25,23 @@ import (
 // selective-child lowerings. The fold's requires-prior-relation guards
 // remain for clause lists containing no generator at all.
 //
-// available seeds the bound set: the query's :in symbols plus whatever the
-// enclosing context supplies (an outer relation for NOT bodies, a schema
-// placeholder for or-branches). inputs is the :in symbol set alone —
-// ClauseReady distinguishes a correlate an input can bind from one nothing
-// can bind.
+// scope's symbols seed the bound set: what is bound around the clause list,
+// the query's :in symbols and the caller's at the top level, a header's bound
+// variables inside a header form. ClauseReady reads them as the inputs, so it
+// distinguishes a correlate the scope binds from one nothing can bind. scope's
+// rule set is read by every clause scope, so an invocation consumes the
+// variables at its predicate's required positions and waits for their
+// binders.
 //
 // A stall — no remaining clause ready — means some clause's mandatory
 // correlates are bindable by no input and no clause: an invalid query,
 // rejected loudly naming the stuck clauses (the planner's phasing loop
 // rejects the same queries with its no-progress error).
-func orderClausesForCompile(clauses []query.Clause, available, inputs map[query.Symbol]bool) ([]query.Clause, error) {
-	if len(clauses) < 2 {
-		return clauses, nil
-	}
-	providerCount := query.CountProviders(clauses, nil)
-	bound := make(map[query.Symbol]bool, len(available))
-	for sym := range available {
+func orderClausesForCompile(clauses []query.Clause, scope query.Bindings) ([]query.Clause, error) {
+	inputs := scope.Symbols
+	providerCount := query.CountProviders(clauses, scope.Rules)
+	bound := make(map[query.Symbol]bool, len(inputs))
+	for sym := range inputs {
 		bound[sym] = true
 	}
 
@@ -53,10 +53,10 @@ func orderClausesForCompile(clauses []query.Clause, available, inputs map[query.
 			if placed[i] {
 				continue
 			}
-			if !query.ClauseReady(clause, bound, inputs, providerCount, nil) {
+			if !query.ClauseReady(clause, bound, inputs, providerCount, scope.Rules) {
 				continue
 			}
-			if len(ordered) > 0 || len(query.ScopeOf(clause, nil).Provides) > 0 {
+			if len(ordered) > 0 || len(query.ScopeOf(clause, scope.Rules).Provides) > 0 {
 				picked = i
 				break
 			}
@@ -71,7 +71,7 @@ func orderClausesForCompile(clauses []query.Clause, available, inputs map[query.
 					continue
 				}
 				var waits []string
-				for _, sym := range query.ClauseBlockers(clause, bound, inputs, providerCount, nil) {
+				for _, sym := range query.ClauseBlockers(clause, bound, inputs, providerCount, scope.Rules) {
 					if !inputs[sym] && providerCount[sym] == 0 {
 						waits = append(waits, fmt.Sprintf("%s (no input or clause binds it)", sym))
 					} else {

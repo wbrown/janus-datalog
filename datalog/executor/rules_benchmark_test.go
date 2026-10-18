@@ -106,7 +106,7 @@ func benchmarkNaiveClosure(b *testing.B, matcher PatternMatcher, rs *query.RuleS
 			b.Fatal(err)
 		}
 		full := newDerivedSet(eval.symbols[follows])
-		seed, err := eval.run(ctx, nil, false)
+		seed, err := eval.run(ctx, nil, eval.plain)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -118,7 +118,7 @@ func benchmarkNaiveClosure(b *testing.B, matcher PatternMatcher, rs *query.RuleS
 		for grew := true; grew; {
 			whole := full.relation(exec.options)
 			view := map[query.Symbol]Relation{follows: whole, query.DeltaSymbol(follows): whole}
-			got, err := eval.run(ctx, view, true)
+			got, err := eval.run(ctx, view, eval.delta)
 			if err != nil {
 				b.Fatal(err)
 			}

@@ -33,7 +33,7 @@ func TestCompileRuleInvocationRoundTrips(t *testing.T) {
 	                                     [(> ?k 1)]]`)
 	require.NoError(t, err)
 
-	compiled, err := Compile(q)
+	compiled, err := Compile(q, nil)
 	require.NoError(t, err)
 	analysis, err := Analyze(compiled)
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestDecompile_SubqueryDeclaresRulesWhenItInvokes(t *testing.T) {
 	                              :where [?x :page/next _]
 	                                     [(q [:find (count ?y) :in $ % ?x :where [?x :page/next _] (follows ?x ?y)] $ % ?x) [[?n]]]]`)
 	require.NoError(t, err)
-	compiled, err := Compile(q)
+	compiled, err := Compile(q, nil)
 	require.NoError(t, err)
 	optimized, err := NewOptimizer(DefaultPasses(&RewriteSink{})...).Optimize(compiled)
 	require.NoError(t, err)

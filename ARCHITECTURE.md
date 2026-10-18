@@ -29,6 +29,12 @@ All query paths converge on the same planner and executor. The difference is how
 ┌──────────────┐                ┌───────────────┐
 │ Query Builder │──MustBuild()──▶  *query.Query  │
 └──────────────┘                └───────┬───────┘
+                                        │ query.Prepare()
+                                        ▼
+                                ┌───────────────┐
+                                │ *query.Query  │
+                                │  (prepared)   │
+                                └───────┬───────┘
                                         │ planner.PlanQuery()
                                         ▼
                                 ┌───────────────┐
@@ -47,15 +53,17 @@ All query paths converge on the same planner and executor. The difference is how
                   (raw tuples)     (struct mapping)  (no planner)
 ```
 
+Preparation, `query.Prepare(q, rules)`, runs once per execution at the executor's entry, after the `QueryInvoked` event and before planning, and `Explain`, `ExplainAlgebra` and `Analyze` call it before they plan. It composes the four static steps, each a function of the text and the rule set bound to `%`: `ValidateInputShapes` on `:in`, `ValidateStaticClauseShapes` on `:where`, `InferHeaders`, which rewrites every `or`, `not` and `or-default` at any depth as the header form stating its interface, and the check that every invocation names a predicate the rule set defines at its arity. Nothing after preparation sees a headerless form: `ScopeOf` reads a nested form's header alone and panics on a headerless one, so a skipped preparation surfaces at once.
+
 ### Entry Point 1: EDN String
 
-The most direct path. An EDN string is parsed, planned, and executed:
+The most direct path. An EDN string is parsed, prepared, planned, and executed:
 
 ```go
 results, err := d.Query(`[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`)
 ```
 
-**Call chain**: `Query` → `resolveQuery` (detects string → calls `parser.ParseQuery`) → planner → executor → `executor.Relation` (streaming)
+**Call chain**: `Query` → `resolveQuery` (detects string → calls `parser.ParseQuery`) → `query.Prepare` → planner → executor → `executor.Relation` (streaming)
 
 ### Entry Point 2: Query Builder (`qb/`)
 
@@ -137,8 +145,8 @@ The planner is the bridge between a declarative query (an unordered set of claus
 
 **Algebra-preserving logical optimization.** Before physical planning, the optimizer builds and validates a relational-algebra tree:
 
-- **Algebra IR optimization** (`EnableAlgebraOptimizer`, default-active): clauses are compiled to a relational-algebra tree and passed through transform passes (subquery decorrelation, predicate pushdown, conditional aggregate rewriting, scan rewrites for `get-else` with vector defaults). A schema-aware immutable rebuild refreshes derived outputs after every pass.
-- **Nested Datalog lowering**: the optimized tree is lowered back into a cloned `query.Query`. `Project` becomes a relation-binding subquery; aggregate/OR/NOT/lateral scope remains explicit in Datalog. The optimizer contract is therefore `Query → Query`.
+- **Algebra IR optimization** (`EnableAlgebraOptimizer`, default-active): `algebra.Compile(q, rules)` takes the prepared query and the rule set its invocations are ordered under, compiles the clauses to a relational-algebra tree, and the tree passes through transform passes (subquery decorrelation, predicate pushdown, conditional aggregate rewriting, scan rewrites for `get-else` with vector defaults). The engine infers nothing: every nested form arrives as a header form, and the header is where each operator's keys come from. A schema-aware immutable rebuild refreshes derived outputs after every pass.
+- **Nested Datalog lowering**: the optimized tree is lowered back into a cloned `query.Query`. `Project` becomes a relation-binding subquery; aggregate/OR/NOT/lateral scope remains explicit in Datalog, each nested form decompiled with its header. The optimizer contract is therefore `Query → Query`, an optional rewrite from a prepared query to an equivalent one, and the two planner paths phase the same prepared text.
 
 - **Constant-bindable scalar detection**: Scalar inputs that only appear in predicates/expressions (not data patterns) are flagged in phase metadata. The executor resolves these as constants rather than creating separate relation groups, avoiding unnecessary joins.
 
@@ -175,11 +183,11 @@ If two patterns share no symbols and no expression bridges them, the executor er
 | Clause Type | Base Score | Rationale |
 |-------------|-----------|-----------|
 | DataPattern | +100 | Produces data, highest priority |
-| OR clause | +80 | Data source (union of branches) |
+| OR-JOIN clause | +80 | Data source (union of branches over its header) |
 | Rule invocation | +80 | Data source (the predicate's derived relation), constants and bound arguments weighted as a pattern's; an invocation of a predicate the seed restricts, a magic or adorned predicate or the delta of one, takes a further +500 and leads every pattern |
 | Expression | +10 | Needs inputs bound first |
 | Predicate | +5 | Filter, needs inputs bound |
-| NOT clause | +2 | Anti-join, needs all inner symbols |
+| NOT-JOIN clause | +2 | Anti-join, needs its header bound |
 | Subquery | -50 | Expensive, defer as long as possible |
 
 This ensures cheap filtering happens early, and expensive subqueries only execute after the result set has been narrowed.
@@ -397,8 +405,15 @@ Current propagation rules:
 - Projection preserves the valid ordering prefix and fully retained keys
 - Sort establishes ordering; grouped aggregation establishes its group key
 - Fresh expression outputs preserve properties
-- Joins, unions, products, and fallback relations clear properties until a
-  proof rule exists
+- Natural joins preserve one side's candidate keys when the opposite join
+  symbols contain a candidate key; semi-joins and anti-joins preserve every
+  left property
+- An `or-join` or `or-default-join` result derives its properties from its
+  subject's and its header (`orProperties`): the subject's ordering survives
+  both forms, its keys survive a fallback whose every branch answers at most
+  one tuple per subject tuple, and otherwise the result's key is the composite
+  of each subject key and the outputs
+- Products clear properties
 - A retained candidate key lets streaming projection skip redundant
   deduplication
 
@@ -552,7 +567,7 @@ Core types in the top-level package:
 
 ### Query Planning (`datalog/planner/`)
 
-Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` into a `RealizedPlan` (ordered phases with physical symbol-flow contracts). The default logical path compiles and optimizes algebra, validates exact schemas and free requirements, then lowers back to nested Datalog before the planner constructs phases.
+Single planner: `ClauseBasedPlanner`. Converts a prepared `*query.Query` (see Preparation under the query path overview) into a `RealizedPlan` (ordered phases with physical symbol-flow contracts). The default logical path compiles and optimizes algebra under the rule set, validates exact schemas and free requirements, then lowers back to nested Datalog before the planner constructs phases. The planner computes no interface: `ScopeOf` reads a nested form's header alone, the required run as mandatory correlates and the outputs as provided, and `PlanQuery` panics as `ScopeOf` does on a headerless form.
 
 **Algebra lowering**: `EnableAlgebraOptimizer` (on by default) runs Query → algebra IR → transform passes → schema refresh/validation → Query. Non-linear children remain nested Datalog (`q`, OR/fallback, and NOT forms); `Project` lowers to a relation-binding subquery. A rule invocation compiles to a `Derived` leaf the passes carry through and decompile back to the invocation. Algebra never constructs `RealizedPlan`.
 
@@ -585,7 +600,7 @@ inactive logical-rewrite experiment.
 
 **Explain support** (`explain_analysis.go`): Optional population of per-phase `Patterns`, `Expressions`, `Predicates`, `Subqueries`, `Invocations` with index selection, selectivity scores, and binding analysis for plan inspection.
 
-**NOT/OR/Subquery/invocation handling**: All treated as first-class clauses in the greedy algorithm. NOT requires all inner symbols bound (score +2, naturally deferred). OR provides the intersection of all branch outputs in union mode, or the union in fallback mode. A rule invocation provides its variable arguments (score +80). It requires the positions its predicate declares as required bindings, and nothing else. Subqueries require all `:in` correlation symbols (score -50, executed last).
+**NOT/OR/Subquery/invocation handling**: All treated as first-class clauses in the greedy algorithm. Every nested form reaches the planner as a header form, and the planner reads its header alone. A not-join requires its header bound and provides nothing (score +2, naturally deferred). An or-join or or-default-join requires its required run and provides its outputs (score +80). A rule invocation provides its variable arguments (score +80). It requires the positions its predicate declares as required bindings, and nothing else. Subqueries require all `:in` correlation symbols (score -50, executed last).
 
 ### Query Execution (`datalog/executor/`)
 

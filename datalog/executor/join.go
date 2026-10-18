@@ -15,7 +15,7 @@ import (
 // by concurrent access. Each goroutine must create its own iterator by calling
 // Relation.Iterator(), which returns independent iterator instances.
 type hashJoinIterator struct {
-	buildIndex  *groupedTupleIndex
+	buildIndex  *JoinIndex
 	probeIt     Iterator
 	buildErr    error // deferred error captured from the (eagerly consumed) build relation
 	seen        *TupleKeyMap
@@ -115,9 +115,9 @@ func (it *hashJoinIterator) Next() bool {
 			it.currentProbeTuple = tupleCopy
 		}
 
-		// Look up matches in the grouped build tuples — a positional probe, so
-		// no key materializes, and a hit is a subslice of the shared backing.
-		if matches := it.buildIndex.probe(it.currentProbeTuple); len(matches) > 0 {
+		// Look up matches in the build index — a positional probe, so no key
+		// materializes, and a hit is the key's group of held tuples.
+		if matches := it.buildIndex.Probe(it.currentProbeTuple); len(matches) > 0 {
 			it.matches = matches
 			it.matchIdx = 0
 			if it.metrics != nil {
@@ -323,12 +323,11 @@ func HashJoinWithOptions(
 		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, mode, buildSide, buildKeysUnique)
 	}
 
-	// Build phase - collect the build tuples once, then group them by join-key
-	// hash into contiguous spans of one shared backing (groupedTupleIndex).
+	// Build phase - hold each build tuple in the index under its join key.
 	// This is a pure relational join: every build tuple is preserved. CRDT/temporal
 	// resolution is the storage layer's responsibility (EATV ordering), never
 	// inferred here from a symbol's name.
-	// Pre-size based on build relation size to avoid slice growth
+	// Pre-size based on build relation size to avoid growth
 	collectCap := buildRel.Size()
 	if collectCap < 0 {
 		// Unknown size (streaming), use configurable default
@@ -339,7 +338,7 @@ func HashJoinWithOptions(
 			collectCap = 256 // Default if not configured
 		}
 	}
-	buildTuples := make([]Tuple, 0, collectCap)
+	buildIndex := NewJoinIndex(probeIndices, buildIndices, collectCap)
 
 	// CRITICAL: Check if build relation was already consumed
 	// This should never happen - it indicates a bug in the executor
@@ -390,9 +389,9 @@ func HashJoinWithOptions(
 		} else if trackCopy {
 			passthruCount++
 		}
-		buildTuples = append(buildTuples, tuple)
+		buildIndex.Add(tuple)
 	}
-	buildCount := len(buildTuples)
+	buildCount := buildIndex.Len()
 
 	// Capture any deferred error from the build scan before closing it, so a
 	// build-side failure isn't lost (it propagates onto the join result).
@@ -409,11 +408,7 @@ func HashJoinWithOptions(
 		buildEnd = time.Now()
 	}
 
-	// Group the build tuples by join-key hash. The tuples carry their own key
-	// values, so no key materializes per tuple and fanout needs no per-key
-	// slices — probes verify against the tuples in place.
-	buildIndex := groupTuples(buildTuples, probeIndices, buildIndices)
-	if buildKeysUnique && !buildIndex.keysUnique() {
+	if buildKeysUnique && !buildIndex.KeysUnique() {
 		panic("hash join build relation violated its candidate-key guarantee")
 	}
 
@@ -518,9 +513,9 @@ func HashJoinWithOptions(
 		probeTuple := probeIt.Tuple()
 		probeCount++
 
-		// Positional probe against the grouped build tuples — no key
-		// materializes, and the hit is a subslice of the shared backing.
-		matches := buildIndex.probe(probeTuple)
+		// Positional probe against the build index — no key materializes,
+		// and the hit is the key's group of held tuples.
+		matches := buildIndex.Probe(probeTuple)
 		if len(matches) == 0 {
 			continue
 		}

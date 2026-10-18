@@ -23,7 +23,7 @@ func TestReadyPredicateScheduledBeforeUnrelatedScan(t *testing.T) {
 		q.Where,
 		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?payload")},
 		map[query.Symbol]bool{},
-		Bindings{},
+		query.Bindings{},
 	)
 	require.NoError(t, err)
 	require.Len(t, phases, 1)
@@ -53,7 +53,7 @@ func TestPredicateSpanningTwoScansWaitsForBothInputs(t *testing.T) {
 		q.Where,
 		[]query.Symbol{datalog.NewSymbol("?e")},
 		map[query.Symbol]bool{},
-		Bindings{},
+		query.Bindings{},
 	)
 	require.NoError(t, err)
 	require.Len(t, phases, 1)
@@ -143,7 +143,7 @@ func TestReadyPredicateSchedulingExhaustiveDependencyInvariant(t *testing.T) {
 			clauses,
 			[]query.Symbol{entity, payload, adjusted, category},
 			map[query.Symbol]bool{minimum: true},
-			Bindings{},
+			query.Bindings{},
 		)
 		require.NoError(t, err, "case %d", caseIndex)
 

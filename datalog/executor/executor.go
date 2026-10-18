@@ -85,6 +85,8 @@ func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 		EnableAttributeFetchFusion: opts.EnableAttributeFetchFusion,
 		MaxRuleIterations:          opts.MaxRuleIterations,
 		MaxDerivedTuples:           opts.MaxDerivedTuples,
+		ScopeWindowCap:             opts.ScopeWindowCap,
+		ScopeWindowGrowth:          opts.ScopeWindowGrowth,
 	}
 }
 
@@ -233,26 +235,6 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 		return nil, err
 	}
 
-	// Static input-shape and clause-shape rules are user-boundary contracts:
-	// a hand-built AST entering here gets the same rejection, with the same
-	// message, as parsed text — and before planning, so both planner modes
-	// agree on where and how a static defect surfaces.
-	if err := query.ValidateInputShapes(q.In); err != nil {
-		return nil, err
-	}
-	if err := query.ValidateStaticClauseShapes(q.Where); err != nil {
-		return nil, err
-	}
-
-	// An attribute a source's schema does not declare is refused before
-	// planning, so both planner modes refuse identically. The matcher owns
-	// the schema, so the decision is its own.
-	if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
-		if err := refuseUnknownAttributes(vocabulary, ctx, q, inputRelations); err != nil {
-			return nil, err
-		}
-	}
-
 	// Apply decorator pattern: wrap matcher with annotations if one is registered
 	matcher := e.matcher
 
@@ -291,17 +273,34 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 		})
 	}
 
-	// Every invocation, at any depth, names a defined predicate at its arity.
-	// The predicate is derived when the invocation clause runs, seeded by the
-	// arguments the clause binds.
-	if invoked := query.Invocations(q.Where); len(invoked) > 0 {
-		if ctx.rules == nil {
-			return nil, fmt.Errorf("rule invocation %s: no rule set was given for %%", invoked[0])
+	// A query refused after it was invoked completes with its error.
+	refused := func(err error) (Relation, error) {
+		if handler != nil {
+			handler(annotations.TimedEvent(annotations.QueryComplete, queryStart,
+				map[string]interface{}{
+					"relations.count":      0,
+					"tuples.count":         0,
+					annotations.KeySuccess: false,
+					"error":                err.Error(),
+				}))
 		}
-		for _, inv := range invoked {
-			if err := ctx.rules.CheckInvocation(inv); err != nil {
-				return nil, err
-			}
+		return nil, err
+	}
+
+	// The query is prepared once, before planning: its shapes checked, every
+	// nested form stating its header, every invocation resolved under the
+	// rule set. Nothing after this point sees a headerless form.
+	prepared, err := query.Prepare(q, ctx.rules)
+	if err != nil {
+		return refused(err)
+	}
+
+	// An attribute a source's schema does not declare is refused before
+	// planning, so both planner modes refuse identically. The matcher owns
+	// the schema, so the decision is its own.
+	if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
+		if err := refuseUnknownAttributes(vocabulary, ctx, prepared, inputRelations); err != nil {
+			return refused(err)
 		}
 	}
 
@@ -350,18 +349,9 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 	// handler is passed per-query into planning (not stored on the shared
 	// planner), so concurrent annotated queries neither race on it nor
 	// cross-route algebra-bridge events.
-	realizedPlan, err := executor.planner.PlanQuery(q, planner.Bindings{Symbols: initialBindings, Rules: ctx.rules}, handler)
+	realizedPlan, err := executor.planner.PlanQuery(prepared, query.Bindings{Symbols: initialBindings, Rules: ctx.rules}, handler)
 	if err != nil {
-		if handler != nil {
-			handler(annotations.TimedEvent(annotations.QueryComplete, queryStart,
-				map[string]interface{}{
-					"relations.count":      0,
-					"tuples.count":         0,
-					annotations.KeySuccess: false,
-					"error":                err.Error(),
-				}))
-		}
-		return nil, fmt.Errorf("query planning failed: %w", err)
+		return refused(fmt.Errorf("query planning failed: %w", err))
 	}
 	// realizedPlan.String() renders the whole plan, so the guard is here.
 	if handler != nil {
@@ -489,8 +479,6 @@ func (e *Executor) executeRealizedPlan(ctx *Context, plan *planner.RealizedPlan,
 		return e.executeRealizedWithRelationInputIteration(ctx, plan, inputRelations)
 	}
 
-	queryExecutor := e.queryExecutor()
-
 	var currentGroups []Relation
 
 	// If we have input relations, bind them before the first phase
@@ -588,20 +576,32 @@ func (e *Executor) executeRealizedPlan(ctx *Context, plan *planner.RealizedPlan,
 		}
 	}
 
+	return e.runPhases(ctx, plan, currentGroups, e.options.Handler)
+}
+
+// runPhases runs a plan's phases over the groups that enter the first and
+// returns the last phase's one relation, reporting the plan's conditional
+// aggregates and each phase's begin and completion to handler. A query's run
+// reports to the executor's handler. A scope's run reports to none: the
+// form's own events report a branch's execution, and a phase event per
+// subject tuple would be a handler call per tuple on the per-tuple path.
+func (e *Executor) runPhases(ctx *Context, plan *planner.RealizedPlan, currentGroups []Relation, handler annotations.Handler) (Relation, error) {
+	queryExecutor := e.queryExecutor()
+
 	// Count conditional aggregates directly from the Datalog phase fragments.
-	var condAggCount int
-	for _, phase := range plan.Phases {
-		if phase.Query == nil {
-			continue
-		}
-		for _, findElement := range phase.Query.Find {
-			if aggregate, ok := findElement.(query.FindAggregate); ok && aggregate.IsConditional() {
-				condAggCount++
+	if handler != nil {
+		var condAggCount int
+		for _, phase := range plan.Phases {
+			if phase.Query == nil {
+				continue
+			}
+			for _, findElement := range phase.Query.Find {
+				if aggregate, ok := findElement.(query.FindAggregate); ok && aggregate.IsConditional() {
+					condAggCount++
+				}
 			}
 		}
-	}
-	if condAggCount > 0 {
-		if handler := e.options.Handler; handler != nil {
+		if condAggCount > 0 {
 			handler(annotations.Event{
 				Name: annotations.QueryRewriteConditionalAggregates,
 				Data: map[string]interface{}{
@@ -619,7 +619,6 @@ func (e *Executor) executeRealizedPlan(ctx *Context, plan *planner.RealizedPlan,
 
 		// One question, asked once: its answer governs both the clock read and
 		// the two emits below.
-		handler := e.options.Handler
 		var phaseStart time.Time
 		if handler != nil {
 			phaseStart = time.Now()
@@ -635,12 +634,8 @@ func (e *Executor) executeRealizedPlan(ctx *Context, plan *planner.RealizedPlan,
 			})
 		}
 
-		// Execute phase query
-		groups, err := queryExecutor.Execute(ctx, phase.Query, currentGroups)
+		groups, err := queryExecutor.executePhase(ctx, phaseIndex+1, phase, currentGroups)
 		if err != nil {
-			return nil, fmt.Errorf("phase %d failed: %w", phaseIndex+1, err)
-		}
-		if err := validatePhaseOutput(phaseIndex+1, phase, groups); err != nil {
 			return nil, err
 		}
 
@@ -1344,11 +1339,8 @@ func (p *preparedIteration) Run(ctx *Context, iterationTuple Tuple) (Relation, e
 		phaseIndex := i
 		isLastPhase := (i == len(p.plan.Phases)-1)
 
-		groups, err := p.queryExecutor.Execute(ctx, phase.Query, currentGroups)
+		groups, err := p.queryExecutor.executePhase(ctx, phaseIndex+1, phase, currentGroups)
 		if err != nil {
-			return nil, fmt.Errorf("phase %d failed: %w", phaseIndex+1, err)
-		}
-		if err := validatePhaseOutput(phaseIndex+1, phase, groups); err != nil {
 			return nil, err
 		}
 
@@ -1402,6 +1394,29 @@ func declaredTupleCount(groups []Relation) int {
 		total += size
 	}
 	return total
+}
+
+// executePhase runs one phase's fragment over the groups entering it and
+// returns the groups the phase provides, checked against its Provides. A
+// fragment finding nothing yields the existence verdict over its result,
+// the schema a phase providing nothing declares; otherwise the phase
+// provides the fragment's own result. A failure of the fragment or of the
+// verdict is named by the phase's number.
+func (e *DefaultQueryExecutor) executePhase(ctx *Context, phaseNumber int, phase planner.RealizedPhase, groups []Relation) ([]Relation, error) {
+	result, err := e.Execute(ctx, phase.Query, groups)
+	if err != nil {
+		return nil, fmt.Errorf("phase %d failed: %w", phaseNumber, err)
+	}
+	if len(phase.Query.Find) == 0 {
+		result, err = existenceVerdict(result, e.options)
+		if err != nil {
+			return nil, fmt.Errorf("phase %d failed: %w", phaseNumber, err)
+		}
+	}
+	if err := validatePhaseOutput(phaseNumber, phase, result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func validatePhaseOutput(phaseNumber int, phase planner.RealizedPhase, groups []Relation) error {

@@ -230,11 +230,13 @@ func (f *OutputFormatter) Format(event Event) string {
 				event.Data[KeyPattern], index, bound, event.Data[KeyBindingSize],
 				renderScanFunnel(event.Data))
 
-		case ScanPerBinding:
-			// One scan per binding, reported once. No index: chooseIndex runs
-			// per binding and can pick a different one each time, so a single
-			// index here would name whichever happened to be last. The count of
-			// scans is the datum this path owes its reader.
+		case ScanPerBinding, ScanPerKeySeek:
+			// One scan per binding, or one per distinct key, reported once. No
+			// index: the per-binding path runs chooseIndex per binding and can
+			// pick a different one each time, so a single index here would name
+			// whichever happened to be last, and the per-key path addresses one
+			// run per key and no single run. The count of scans is the datum
+			// these paths owe their reader.
 			return fmt.Sprintf("%s %s([%v], %v scans over %v bindings) → %s",
 				latency, strategy,
 				event.Data[KeyPattern], event.Data[KeyScansOpened], event.Data[KeyBindingSize],

@@ -247,12 +247,12 @@ func (w *magicRewriter) rewriteClause(rule Symbol, clause Clause, before, negate
 		}
 		return &NotClause{Clauses: inner}, rules, nil
 	case *NotJoinClause:
-		inside := negated.within(c.JoinVars)
+		inside := negated.within(c.RequiredVars)
 		inner, rules, changed, err := w.rewriteNested(rule, c.Clauses, inside, inside)
 		if err != nil || !changed {
 			return c, nil, err
 		}
-		return &NotJoinClause{JoinVars: c.JoinVars, Clauses: inner}, rules, nil
+		return &NotJoinClause{RequiredVars: c.RequiredVars, Clauses: inner}, rules, nil
 	case *OrClause:
 		branches, rules, changed, err := w.rewriteBranches(rule, c.Branches, before, negated)
 		if err != nil || !changed {
@@ -260,11 +260,12 @@ func (w *magicRewriter) rewriteClause(rule Symbol, clause Clause, before, negate
 		}
 		return &OrClause{Branches: branches}, rules, nil
 	case *OrJoinClause:
-		branches, rules, changed, err := w.rewriteBranches(rule, c.Branches, before.within(c.JoinVars), negated.within(c.JoinVars))
+		header := append(append([]Symbol(nil), c.RequiredVars...), c.OutputVars...)
+		branches, rules, changed, err := w.rewriteBranches(rule, c.Branches, before.within(header), negated.within(header))
 		if err != nil || !changed {
 			return c, nil, err
 		}
-		return &OrJoinClause{JoinVars: c.JoinVars, Branches: branches}, rules, nil
+		return &OrJoinClause{RequiredVars: c.RequiredVars, OutputVars: c.OutputVars, Branches: branches}, rules, nil
 	case *OrDefaultClause:
 		branches, rules, changed, err := w.rewriteBranches(rule, c.Branches, before, negated)
 		if err != nil || !changed {

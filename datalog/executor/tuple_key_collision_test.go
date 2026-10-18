@@ -232,7 +232,7 @@ func TestNotJoinClause_PipeInValue_E2E(t *testing.T) {
 				query.Variable{Name: datalog.NewSymbol("?tag")},
 			}},
 			&query.NotJoinClause{
-				JoinVars: []query.Symbol{
+				RequiredVars: []query.Symbol{
 					datalog.NewSymbol("?name"),
 					datalog.NewSymbol("?tag"),
 				},

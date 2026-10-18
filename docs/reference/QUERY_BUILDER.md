@@ -510,10 +510,18 @@ qb.Or().
     Branch(qb.Pat(e, PersonCity, qb.V("NYC"))).
     Branch(qb.Pat(e, PersonCity, qb.V("LA")))
 
-// OR with join variables
+// OR-JOIN: the header is the form's whole interface. OrJoin names the
+// outputs, bound by every branch and provided to the enclosing query.
 qb.OrJoin(e, city).
     Branch(qb.Pat(e, PersonCity, city), qb.Eq(city, "NYC")).
     Branch(qb.Pat(e, PersonCity, city), qb.Eq(city, "LA"))
+
+// Require names the required run: bound by the enclosing query before the
+// form runs, and read bound by every branch. Here ?city is bound outside,
+// and the first branch reads it.
+qb.OrJoin(e).Require(city).
+    Branch(qb.Pat(e, PersonCity, city)).
+    Branch(qb.Pat(e, PersonActive, qb.V(true)))
 ```
 
 ## Ordering
@@ -1000,7 +1008,8 @@ func main() {
 | `qb.Not(clauses...)` | `(not ...)` |
 | `qb.NotJoin(vars, clauses...)` | `(not-join [vars] ...)` |
 | `qb.Or().Branch(...).Branch(...)` | `(or ...)` |
-| `qb.OrJoin(vars...).Branch(...).Branch(...)` | `(or-join [vars] ...)` |
+| `qb.OrJoin(outputs...).Branch(...).Branch(...)` | `(or-join [outputs] ...)` |
+| `qb.OrJoin(outputs...).Require(required...).Branch(...)` | `(or-join [[required] outputs] ...)` |
 
 ### Rules
 

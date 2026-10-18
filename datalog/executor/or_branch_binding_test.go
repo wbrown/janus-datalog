@@ -5,7 +5,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // A branch of an or unifies with the enclosing scope on every free variable
@@ -66,32 +65,5 @@ func TestOrBranchReadsAVariableTheEnclosingScopeBinds(t *testing.T) {
 				require.ElementsMatch(t, c.want, got, "the branch's ?a reads what the enclosing scope binds")
 			})
 		}
-	}
-}
-
-// scopeBindsABranchLocal reports a binding the union path would lose: a
-// group, or the environment, binding a variable one branch alone reads. A
-// binding of a variable every branch provides is carried by the union's
-// output, and a branch variable nothing binds is lost to nothing.
-func TestScopeBindsABranchLocal(t *testing.T) {
-	q, a, v := datalog.NewSymbol("?q"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")
-	branches := [][]query.Clause{
-		{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: q}, query.Variable{Name: a}, query.Variable{Name: v}}}},
-		{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: q}, query.Constant{Value: datalog.NewKeyword(":t/tag")}, query.Constant{Value: datalog.NewKeyword(":t/none")}}}},
-	}
-	binding := func(symbols ...query.Symbol) Relation {
-		return NewMaterializedRelation(symbols, nil)
-	}
-	if !scopeBindsABranchLocal(NewContext(), branches, Relations{binding(q, a)}) {
-		t.Error("a group binding ?a, which the first branch alone reads, is a binding the union path would lose")
-	}
-	if scopeBindsABranchLocal(NewContext(), branches, Relations{binding(q)}) {
-		t.Error("a group binding ?q, which every branch provides, is carried by the union's output")
-	}
-	if scopeBindsABranchLocal(NewContext(), branches, nil) {
-		t.Error("with nothing bound, the union path loses nothing")
-	}
-	if !scopeBindsABranchLocal(NewContext().WithEnvironment(binding(a)), branches, nil) {
-		t.Error("the environment binding ?a, which the first branch alone reads, is a binding the union path would lose")
 	}
 }

@@ -74,8 +74,8 @@ func (n *NotJoinClause) toClause() query.Clause {
 	}
 
 	return &query.NotJoinClause{
-		JoinVars: joinSyms,
-		Clauses:  qclauses,
+		RequiredVars: joinSyms,
+		Clauses:      qclauses,
 	}
 }
 
@@ -119,12 +119,13 @@ func (o *OrBuilder) toClause() query.Clause {
 
 // OrJoinBuilder accumulates branches for an OR-JOIN clause.
 type OrJoinBuilder struct {
+	required []*Var
 	joinVars []*Var
 	branches [][]interface{}
 }
 
-// OrJoin starts building an OR-JOIN clause with explicit join variables.
-// Only the specified variables are exposed from the union.
+// OrJoin starts building an OR-JOIN clause with explicit output variables:
+// the variables every branch binds and the union exposes.
 //
 // Example:
 //
@@ -135,6 +136,13 @@ func OrJoin(joinVars ...*Var) *OrJoinBuilder {
 	return &OrJoinBuilder{joinVars: joinVars}
 }
 
+// Require declares the or-join's required variables: bound by the enclosing
+// query before the clause runs, and read bound by every branch.
+func (o *OrJoinBuilder) Require(vars ...*Var) *OrJoinBuilder {
+	o.required = append(o.required, vars...)
+	return o
+}
+
 // Branch adds a branch with one or more clauses.
 func (o *OrJoinBuilder) Branch(clauses ...interface{}) *OrJoinBuilder {
 	o.branches = append(o.branches, clauses)
@@ -142,6 +150,10 @@ func (o *OrJoinBuilder) Branch(clauses ...interface{}) *OrJoinBuilder {
 }
 
 func (o *OrJoinBuilder) toClause() query.Clause {
+	var requiredSyms []query.Symbol
+	for _, v := range o.required {
+		requiredSyms = append(requiredSyms, v.Symbol())
+	}
 	joinSyms := make([]query.Symbol, len(o.joinVars))
 	for i, v := range o.joinVars {
 		joinSyms[i] = v.Symbol()
@@ -160,8 +172,9 @@ func (o *OrJoinBuilder) toClause() query.Clause {
 	}
 
 	return &query.OrJoinClause{
-		JoinVars: joinSyms,
-		Branches: qbranches,
+		RequiredVars: requiredSyms,
+		OutputVars:   joinSyms,
+		Branches:     qbranches,
 	}
 }
 

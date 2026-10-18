@@ -1096,7 +1096,7 @@ func parseNotJoinClause(node *edn.Node) (*query.NotJoinClause, error) {
 		return nil, fmt.Errorf("not-join clause must have at least one inner clause")
 	}
 
-	return &query.NotJoinClause{JoinVars: joinVars, Clauses: clauses}, nil
+	return &query.NotJoinClause{RequiredVars: joinVars, Clauses: clauses}, nil
 }
 
 // parseOrClause parses (or branch1 branch2 ...)
@@ -1118,21 +1118,22 @@ func parseOrClause(node *edn.Node) (*query.OrClause, error) {
 	return &query.OrClause{Branches: branches}, nil
 }
 
-// parseOrJoinClause parses (or-join [?x] branch1 branch2 ...)
+// parseOrJoinClause parses an or-join with a declared interface:
+//
+//	(or-join [[?required ...] ?output ...] branch1 branch2 ...)
+//	(or-join [?output ...] branch1 branch2 ...)
+//
+// A nested vector as the header's first element declares the variables the
+// enclosing query binds before the clause runs; the remaining symbols are the
+// outputs every branch binds. A flat header declares outputs only.
 func parseOrJoinClause(node *edn.Node) (*query.OrJoinClause, error) {
 	if len(node.Nodes) < 4 {
-		return nil, fmt.Errorf("or-join clause must have join vars and at least two branches")
+		return nil, fmt.Errorf("or-join clause must have a header vector and at least two branches")
 	}
 
-	// Second element must be join vars vector
-	if node.Nodes[1].Type != edn.NodeVector {
-		return nil, fmt.Errorf("or-join second element must be a vector of join variables, got %v", node.Nodes[1].Type)
-	}
-
-	// Parse join variables
-	joinVars, err := parseJoinVars(&node.Nodes[1])
+	requiredVars, joinVars, err := parseInterfaceHeader(&node.Nodes[1], "or-join")
 	if err != nil {
-		return nil, fmt.Errorf("error parsing or-join vars: %w", err)
+		return nil, err
 	}
 
 	// Parse remaining elements as branches
@@ -1149,7 +1150,45 @@ func parseOrJoinClause(node *edn.Node) (*query.OrJoinClause, error) {
 		return nil, fmt.Errorf("or-join clause must have at least two branches")
 	}
 
-	return &query.OrJoinClause{JoinVars: joinVars, Branches: branches}, nil
+	return &query.OrJoinClause{RequiredVars: requiredVars, OutputVars: joinVars, Branches: branches}, nil
+}
+
+// parseInterfaceHeader parses the header of an or-join or an or-default-join:
+// an optional nested vector of required variables as its first element, then
+// the output variables, every one a symbol starting with ?. form names the
+// clause in the errors.
+func parseInterfaceHeader(header *edn.Node, form string) (required, outputs []query.Symbol, err error) {
+	if header.Type != edn.NodeVector {
+		return nil, nil, fmt.Errorf("%s second element must be a header vector, got %v", form, header.Type)
+	}
+	if len(header.Nodes) == 0 {
+		return nil, nil, fmt.Errorf("%s header cannot be empty", form)
+	}
+
+	outputStart := 0
+	if header.Nodes[0].Type == edn.NodeVector {
+		required, err = parseJoinVars(&header.Nodes[0])
+		if err != nil {
+			return nil, nil, fmt.Errorf("error parsing %s required vars: %w", form, err)
+		}
+		outputStart = 1
+	}
+
+	for i := outputStart; i < len(header.Nodes); i++ {
+		elem := &header.Nodes[i]
+		if elem.Type == edn.NodeVector {
+			return nil, nil, fmt.Errorf("%s header may declare required vars only as its first element", form)
+		}
+		if elem.Type != edn.NodeSymbol {
+			return nil, nil, fmt.Errorf("%s output variable %d must be a symbol, got %v", form, i, elem.Type)
+		}
+		sym := datalog.NewSymbol(elem.Value)
+		if !sym.IsVariable() {
+			return nil, nil, fmt.Errorf("%s output variable %d must start with ?, got %s", form, i, sym)
+		}
+		outputs = append(outputs, sym)
+	}
+	return required, outputs, nil
 }
 
 // parseOrDefaultClause parses (or-default branch1 branch2 ...)
@@ -1185,39 +1224,9 @@ func parseOrDefaultJoinClause(node *edn.Node) (*query.OrDefaultJoinClause, error
 		return nil, fmt.Errorf("or-default-join clause must have a header vector and at least two branches")
 	}
 
-	header := &node.Nodes[1]
-	if header.Type != edn.NodeVector {
-		return nil, fmt.Errorf("or-default-join second element must be a header vector, got %v", header.Type)
-	}
-	if len(header.Nodes) == 0 {
-		return nil, fmt.Errorf("or-default-join header cannot be empty")
-	}
-
-	var requiredVars []query.Symbol
-	outputStart := 0
-	if header.Nodes[0].Type == edn.NodeVector {
-		var err error
-		requiredVars, err = parseJoinVars(&header.Nodes[0])
-		if err != nil {
-			return nil, fmt.Errorf("error parsing or-default-join required vars: %w", err)
-		}
-		outputStart = 1
-	}
-
-	var outputVars []query.Symbol
-	for i := outputStart; i < len(header.Nodes); i++ {
-		elem := &header.Nodes[i]
-		if elem.Type == edn.NodeVector {
-			return nil, fmt.Errorf("or-default-join header may declare required vars only as its first element")
-		}
-		if elem.Type != edn.NodeSymbol {
-			return nil, fmt.Errorf("or-default-join output variable %d must be a symbol, got %v", i, elem.Type)
-		}
-		sym := datalog.NewSymbol(elem.Value)
-		if !sym.IsVariable() {
-			return nil, fmt.Errorf("or-default-join output variable %d must start with ?, got %s", i, sym)
-		}
-		outputVars = append(outputVars, sym)
+	requiredVars, outputVars, err := parseInterfaceHeader(&node.Nodes[1], "or-default-join")
+	if err != nil {
+		return nil, err
 	}
 
 	var branches [][]query.Clause
@@ -1387,7 +1396,7 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 
 		case *query.NotJoinClause:
 			// NOT-JOIN only exposes join vars
-			for _, v := range p.JoinVars {
+			for _, v := range p.RequiredVars {
 				if !seen[v] {
 					seen[v] = true
 					vars = append(vars, v)
@@ -1464,7 +1473,7 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 
 		case *query.OrJoinClause:
 			// OR-JOIN only exposes join vars
-			for _, v := range p.JoinVars {
+			for _, v := range p.OutputVars {
 				if !seen[v] {
 					seen[v] = true
 					vars = append(vars, v)

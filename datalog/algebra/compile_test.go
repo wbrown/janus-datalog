@@ -41,11 +41,12 @@ func TestCompileDecompileRoundTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			q, err := parser.ParseQuery(tt.query)
+			parsed, err := parser.ParseQuery(tt.query)
 			require.NoError(t, err)
+			q := mustPrepare(t, parsed, nil)
 
 			// Compile
-			root, err := Compile(q)
+			root, err := Compile(q, nil)
 			require.NoError(t, err)
 			require.NotNil(t, root)
 
@@ -84,7 +85,7 @@ func TestRoundTrip_CorrelatedOrJoinPreservesClauseType(t *testing.T) {
 	    [?e :x/b ?v])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	clauses, err := Decompile(root)
 	require.NoError(t, err)
@@ -98,7 +99,7 @@ func TestRoundTrip_CorrelatedOrJoinPreservesClauseType(t *testing.T) {
 	require.NotNil(t, orJoin, "correlated or-join must decompile as or-join, got %v", clauses)
 	require.Equal(t,
 		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")},
-		orJoin.JoinVars,
+		orJoin.OutputVars,
 	)
 	require.Len(t, orJoin.Branches, 2)
 	// The bridge normalizes plain not to not-join with statically resolved
@@ -111,12 +112,15 @@ func TestRoundTrip_CorrelatedOrJoinPreservesClauseType(t *testing.T) {
 		}
 	}
 	require.NotNil(t, branchNot, "correlated branch must keep its NOT clause")
-	require.Equal(t, []query.Symbol{datalog.NewSymbol("?e")}, branchNot.JoinVars)
+	require.Equal(t, []query.Symbol{datalog.NewSymbol("?e")}, branchNot.RequiredVars)
 }
 
-// TestRoundTrip_CorrelatedOrPreservesClauseType pins the same identity
-// round-trip for plain (or ...) with a correlated predicate branch.
-func TestRoundTrip_CorrelatedOrPreservesClauseType(t *testing.T) {
+// TestRoundTrip_CorrelatedOrStatesItsInferredHeader: a plain (or ...) with a
+// correlated predicate branch shares ?e and ?v with the pattern and the
+// find, and every branch binds both, so it decompiles as the or-join whose
+// flat header [?e ?v] its text states. The branch's not shares ?e with the
+// branch and decompiles as a not-join on ?e.
+func TestRoundTrip_CorrelatedOrStatesItsInferredHeader(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?v
 	  :where
 	  [?e :x/tag ?tag]
@@ -125,19 +129,32 @@ func TestRoundTrip_CorrelatedOrPreservesClauseType(t *testing.T) {
 	      [?e :x/b ?v])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	clauses, err := Decompile(root)
 	require.NoError(t, err)
 
-	var or *query.OrClause
+	var orJoin *query.OrJoinClause
 	for _, c := range clauses {
-		if oc, ok := c.(*query.OrClause); ok {
-			or = oc
+		if oj, ok := c.(*query.OrJoinClause); ok {
+			orJoin = oj
 		}
 	}
-	require.NotNil(t, or, "correlated or must decompile as or, got %v", clauses)
-	require.Len(t, or.Branches, 2)
+	require.NotNil(t, orJoin, "the correlated or decompiles as an or-join, got %v", clauses)
+	require.Empty(t, orJoin.RequiredVars)
+	require.Equal(t,
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")},
+		orJoin.OutputVars,
+	)
+	require.Len(t, orJoin.Branches, 2)
+	var branchNot *query.NotJoinClause
+	for _, c := range orJoin.Branches[0] {
+		if nc, ok := c.(*query.NotJoinClause); ok {
+			branchNot = nc
+		}
+	}
+	require.NotNil(t, branchNot, "the correlated branch keeps its not as a not-join, got %v", orJoin.Branches[0])
+	require.Equal(t, []query.Symbol{datalog.NewSymbol("?e")}, branchNot.RequiredVars)
 }
 
 // TestCompileOrFallback verifies that OR-fallback with subquery compiles
@@ -154,7 +171,7 @@ func TestCompileOrFallback(t *testing.T) {
 	      [(ground 0) ?count])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	require.NotNil(t, root)
 
@@ -181,8 +198,9 @@ func TestCompileDecompileNotAtEnd(t *testing.T) {
 		       [?scenario :entity/tag ?tag]
 		       (not [?scenario :entity/deleted true])]`)
 	require.NoError(t, err)
+	q = mustPrepare(t, q, nil)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 	t.Logf("Compiled:\n%s", root.String())
 
@@ -209,8 +227,9 @@ func TestCompileDecompileWithNot(t *testing.T) {
 		       (not [?e :entity/deleted true])
 		       [?e :entity/tag ?tag]]`)
 	require.NoError(t, err)
+	q = mustPrepare(t, q, nil)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 	t.Logf("Compiled:\n%s", root.String())
 
@@ -245,7 +264,7 @@ func TestCompileCorrelatedNotJoinSeparatesKeysAndRequirements(t *testing.T) {
 			[(!= ?termType ?goalSet)])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 	antiNode := findAlgebraNode(root, RuleAntiJoin)
 	require.NotNil(t, antiNode)
@@ -266,51 +285,42 @@ func TestCompileCorrelatedNotJoinSeparatesKeysAndRequirements(t *testing.T) {
 	require.NoError(t, err)
 	notJoin, ok := clauses[len(clauses)-1].(*query.NotJoinClause)
 	require.True(t, ok)
-	require.Equal(t, anti.JoinSymbols, notJoin.JoinVars)
+	require.Equal(t, anti.JoinSymbols, notJoin.RequiredVars)
 }
 
+// TestCompileRejectsInvalidNotJoinHeaders: the header demands ?missing,
+// which the body reads and no input or clause binds; the compile-order pass
+// rejects it before the fold reaches compileNotJoin's own header checks.
 func TestCompileRejectsInvalidNotJoinHeaders(t *testing.T) {
-	testCases := []struct {
-		name  string
-		query string
-		want  string
-	}{
-		{
-			// The header demands ?missing, which no input or clause binds;
-			// the compile-order pass rejects it before the fold reaches
-			// compileNotJoin's own header checks.
-			name: "header symbol not bound outside",
-			query: `[:find ?goal
-				:where
-				[?goal :entity/type :type/goal]
-				(not-join [?goal ?missing]
-					[?event :event/goal ?goal])]`,
-			want: "waits on ?missing (no input or clause binds it)",
-		},
-		{
-			name: "header symbol unused by body",
-			query: `[:find ?goal
-				:where
-				[?goal :entity/type :type/goal]
-				[?goal :entity/name ?name]
-				(not-join [?goal ?name]
-					[?event :event/goal ?goal])]`,
-			want: "header symbol ?name is neither produced nor consumed by the body",
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			q, err := parser.ParseQuery(testCase.query)
-			require.NoError(t, err)
-			_, err = Compile(q)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), testCase.want)
-		})
-	}
+	q, err := parser.ParseQuery(`[:find ?goal
+		:where
+		[?goal :entity/type :type/goal]
+		(not-join [?goal ?missing]
+			[?event :event/goal ?goal]
+			[?event :event/type ?missing])]`)
+	require.NoError(t, err)
+	_, err = Compile(q, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "waits on ?missing (no input or clause binds it)")
 }
 
-func TestCompileRejectsPlainNotWithUnboundOuterRequirement(t *testing.T) {
+// TestPrepareRejectsAnUnreadNotJoinHeader: the header names ?name, which the
+// body neither binds nor reads; preparation refuses the header, before any
+// fold sees the query.
+func TestPrepareRejectsAnUnreadNotJoinHeader(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?goal
+		:where
+		[?goal :entity/type :type/goal]
+		[?goal :entity/name ?name]
+		(not-join [?goal ?name]
+			[?event :event/goal ?goal])]`)
+	require.NoError(t, err)
+	_, err = query.Prepare(q, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "the header names ?name, which the body neither binds nor reads")
+}
+
+func TestPrepareRefusesPlainNotWithUnboundOuterRequirement(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?goal
 		:where
 		[?goal :entity/type :type/goal]
@@ -320,32 +330,13 @@ func TestCompileRejectsPlainNotWithUnboundOuterRequirement(t *testing.T) {
 			[(!= ?termType ?missing)])]`)
 	require.NoError(t, err)
 
-	// The body predicate demands ?missing, which neither the body, the outer
-	// query, nor any input binds, so the not clause is never ready and the
-	// compile order rejects it naming the symbol.
-	_, err = Compile(q)
+	// The body predicate reads ?missing, which neither the body nor the
+	// outer query binds, so preparation refuses the query naming the form
+	// and the symbol.
+	_, err = query.Prepare(q, nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "waits on ?missing (no input or clause binds it)")
-}
-
-func TestOrJoinSchemaDiagnosticExplainsHeaderContract(t *testing.T) {
-	q, err := parser.ParseQuery(`[:find ?entity
-		:in $ ?room ?crawl ?world
-		:where
-		[?entity :entity/location ?room]
-		(or-join [?entity ?crawl ?world]
-			[?entity :entity/crawl ?crawl]
-			[?entity :entity/world ?world])]`)
-	require.NoError(t, err)
-	root, err := Compile(q)
-	require.NoError(t, err)
-
-	optimizer := NewOptimizer(DefaultPasses(nil)...)
-	_, err = optimizer.Optimize(root)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "or-join header declares ?world")
-	require.Contains(t, err.Error(), "every branch must bind every header variable")
-	require.Contains(t, err.Error(), "remove it from the header")
+	require.Contains(t, err.Error(), "(not ")
+	require.Contains(t, err.Error(), "?missing")
 }
 
 // TestCompileDecompileWithGetElse verifies get-else survives the pipeline.
@@ -355,8 +346,9 @@ func TestCompileDecompileWithGetElse(t *testing.T) {
 		       (not [?e :entity/deleted true])
 		       [(get-else $ ?e :scenario/title "") ?title]]`)
 	require.NoError(t, err)
+	q = mustPrepare(t, q, nil)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	optimizer := NewOptimizer(DefaultPasses(nil)...)
@@ -381,7 +373,7 @@ func TestCompileNormalizesUnionOutputsAndOuterJoinKeys(t *testing.T) {
 		             [(ground 0) ?value])]`,
 	)
 	require.NoError(t, err)
-	root, err := Compile(parsed)
+	root, err := Compile(mustPrepare(t, parsed, nil), nil)
 	require.NoError(t, err)
 
 	unionNode := findAlgebraNode(root, RuleUnion)
@@ -399,6 +391,10 @@ func TestCompileNormalizesUnionOutputsAndOuterJoinKeys(t *testing.T) {
 		[]query.Symbol{datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")},
 		union.Output,
 	)
+	require.Equal(t,
+		[]query.Symbol{datalog.NewSymbol("?entity")},
+		union.RequiredVars,
+	)
 }
 
 func TestCompileNormalizesLateralUnionBranchLocalSymbols(t *testing.T) {
@@ -411,7 +407,7 @@ func TestCompileNormalizesLateralUnionBranchLocalSymbols(t *testing.T) {
 		           [(ground 0) ?value])]`,
 	)
 	require.NoError(t, err)
-	root, err := Compile(parsed)
+	root, err := Compile(mustPrepare(t, parsed, nil), nil)
 	require.NoError(t, err)
 
 	unionNode := findAlgebraNode(root, RuleLateralUnion)
@@ -467,7 +463,7 @@ func TestRoundTrip_Scan(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?v :where [?e :attr ?v]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	// Single pattern compiles to a Scan
@@ -488,7 +484,7 @@ func TestRoundTrip_Constant(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?x :where [(ground 42) ?x]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	// Ground compiles to a Map wrapping a Constant (or directly to Constant)
@@ -514,7 +510,7 @@ func TestRoundTrip_ConstantTuple(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?a ?b :where [(ground [1 2]) [[?a ?b]]]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 	t.Logf("Tree: %s", root.String())
 
@@ -536,7 +532,7 @@ func TestRoundTrip_Select(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?age :where [?e :person/age ?age] [(> ?age 21)]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	// Pattern + predicate → Select wrapping Scan
@@ -559,7 +555,7 @@ func TestRoundTrip_Map(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?total :where [?e :item/price ?p] [(+ ?p 10) ?total]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	// Pattern + expression → Map wrapping Scan
@@ -583,7 +579,7 @@ func TestRoundTrip_Map_GetElse(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?title :where [?e :entity/type :scenario] [(get-else $ ?e :title "") ?title]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 	t.Logf("Tree: %s", root.String())
 
@@ -605,7 +601,7 @@ func TestRoundTrip_JoinInner(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	// Two patterns sharing ?e → Join(Inner)
@@ -628,7 +624,7 @@ func TestRoundTrip_AntiJoin(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e :where [?e :person/name ?name] (not [?e :person/fired true])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 
 	// Pattern + NOT → AntiJoin with explicit join vars (not → not-join conversion)
@@ -646,14 +642,14 @@ func TestRoundTrip_AntiJoin(t *testing.T) {
 	assert.True(t, isPattern, "first clause is DataPattern")
 	notJoin, isNotJoin := clauses[1].(*query.NotJoinClause)
 	assert.True(t, isNotJoin, "NOT decompiles to NotJoinClause (explicit join vars)")
-	assert.Contains(t, notJoin.JoinVars, datalog.NewSymbol("?e"), "join var is ?e")
+	assert.Contains(t, notJoin.RequiredVars, datalog.NewSymbol("?e"), "join var is ?e")
 }
 
 func TestRoundTrip_AntiJoinExplicit(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e :where [?e :person/name ?name] (not-join [?e] [?e :person/fired true])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, RuleAntiJoin, root.Op, "NOT-JOIN → AntiJoin")
@@ -678,7 +674,7 @@ func TestRoundTrip_OrUnion(t *testing.T) {
 	      [?e :item/weight ?val])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	t.Logf("Tree:\n%s", root.String())
 
@@ -710,7 +706,7 @@ func TestRoundTrip_OrUnion(t *testing.T) {
 	require.True(t, isOrJoin, "OR round-trips to OrJoinClause")
 	require.Equal(t,
 		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?val")},
-		orJoin.JoinVars,
+		orJoin.OutputVars,
 	)
 }
 
@@ -726,7 +722,7 @@ func TestRoundTrip_LateralJoin(t *testing.T) {
 	      [(ground 0) ?count])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	t.Logf("Tree:\n%s", root.String())
 
@@ -773,7 +769,7 @@ func TestRoundTrip_LateralJoinNoDefaults(t *testing.T) {
 	      $ ?e) [[?count]]]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 	t.Logf("Tree:\n%s", root.String())
 
@@ -808,7 +804,7 @@ func TestCompileAdapterRoundTrip(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?name :where [?e :person/name ?name] [?e :person/age ?age] [(> ?age 21)]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	// Adapt to parse tree and back

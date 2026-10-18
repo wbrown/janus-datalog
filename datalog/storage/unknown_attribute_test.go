@@ -176,6 +176,30 @@ func TestQueryRefusesUnknownAttributeBoundThroughInput(t *testing.T) {
 	}
 }
 
+// A subquery's argument bound to an attribute position is checked against
+// the vocabulary once, over the relation of its combinations: two
+// combinations each binding a keyword no definition declares are refused
+// together, naming both.
+func TestSubqueryChecksItsBoundAttributesOnceOverItsCombinations(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d, _ := refusingDB(t, mode)
+			strnig, lnog := kw(":t/strnig"), kw(":t/lnog")
+			_, err := d.Query(`[:find ?v :in $ [?a ...] :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`, []interface{}{strnig, lnog})
+
+			var joined interface{ Unwrap() []error }
+			require.ErrorAs(t, err, &joined, "the unknown attributes of both combinations are reported together, got %v", err)
+			var named []datalog.Keyword
+			for _, member := range joined.Unwrap() {
+				var unknown *schema.UnknownAttributeError
+				require.ErrorAs(t, member, &unknown, "each member names an attribute, got %v", member)
+				named = append(named, unknown.Attribute)
+			}
+			require.ElementsMatch(t, []datalog.Keyword{strnig, lnog}, named)
+		})
+	}
+}
+
 // A variable a nested form's branch binds outside the form's interface is
 // the branch's own: a ground in the enclosing query binding a variable of the
 // same name reaches the enclosing query's patterns and not the branch's.
@@ -269,25 +293,28 @@ func requireSameEntities(t *testing.T, want, got []datalog.Identity, msg string)
 	t.Fatalf("%s: got %v, want %v", msg, gotNames, wantNames)
 }
 
-// A variable at a predicate's required position is bound by the enclosing
-// query inside a branch as outside it, so a keyword a ground binds it to
-// reaches the predicate's attribute position; at a free position the
-// variable is the branch's own and the predicate derives whole.
+// A variable at a predicate's required position that the or-join's required
+// run names is bound by the enclosing query inside the branch as outside it,
+// so a keyword a ground binds it to reaches the predicate's attribute
+// position; under a header that does not name it, the variable is the
+// branch's own and a free predicate derives whole.
 func TestQueryRefusesUnknownAttributeAtARequiredPositionInsideABranch(t *testing.T) {
 	const required = `[[(has [?a] ?e) [?e ?a _]]]`
 	const free = `[[(has ?a ?e) [?e ?a _]]]`
 	const typo = `[:find ?e :in $ % :where [(ground :t/strnig) ?a] [?e :t/n _] (or-join [?e] (has ?a ?e) [?e :t/tag :t/none])]`
 	const declared = `[:find ?e :in $ % :where [(ground :t/tag) ?a] [?e :t/n _] (or-join [?e] (has ?a ?e) [?e :t/tag :t/none])]`
+	const typoThroughHeader = `[:find ?e :in $ % :where [(ground :t/strnig) ?a] [?e :t/n _] (or-join [[?a] ?e] (has ?a ?e) [?e :t/tag :t/none])]`
+	const declaredThroughHeader = `[:find ?e :in $ % :where [(ground :t/tag) ?a] [?e :t/n _] (or-join [[?a] ?e] (has ?a ?e) [?e :t/tag :t/none])]`
 	for _, mode := range optimizerModes {
 		t.Run(mode.name+"/required, typo", func(t *testing.T) {
 			d, _, _ := taggedPair(t, mode)
-			_, err := d.Query(typo, mustRuleSet(t, required))
+			_, err := d.Query(typoThroughHeader, mustRuleSet(t, required))
 			requireUnknown(t, err, kw(":t/strnig"))
 		})
 		t.Run(mode.name+"/required, declared keyword", func(t *testing.T) {
 			d, tagged, _ := taggedPair(t, mode)
-			requireSameEntities(t, []datalog.Identity{tagged}, queriedEntities(t, d, declared, mustRuleSet(t, required)),
-				"the required position is bound from the ground, so the predicate reads :t/tag")
+			requireSameEntities(t, []datalog.Identity{tagged}, queriedEntities(t, d, declaredThroughHeader, mustRuleSet(t, required)),
+				"the required run carries ?a from the ground, so the predicate reads :t/tag")
 		})
 		t.Run(mode.name+"/free, typo", func(t *testing.T) {
 			d, tagged, untagged := taggedPair(t, mode)
@@ -392,12 +419,30 @@ func TestTypedAccessorsRefuseUnknownAttribute(t *testing.T) {
 		name string
 		get  func(d *Database, e datalog.Identity, a datalog.Keyword) error
 	}{
-		{"GetString", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, _, err := d.GetString(e, a); return err }},
-		{"GetInt", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, _, err := d.GetInt(e, a); return err }},
-		{"GetFloat", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, _, err := d.GetFloat(e, a); return err }},
-		{"GetBool", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, _, err := d.GetBool(e, a); return err }},
-		{"GetRef", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, _, err := d.GetRef(e, a); return err }},
-		{"GetStrings", func(d *Database, e datalog.Identity, a datalog.Keyword) error { _, err := d.GetStrings(e, a); return err }},
+		{"GetString", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
+			_, _, err := d.GetString(e, a)
+			return err
+		}},
+		{"GetInt", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
+			_, _, err := d.GetInt(e, a)
+			return err
+		}},
+		{"GetFloat", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
+			_, _, err := d.GetFloat(e, a)
+			return err
+		}},
+		{"GetBool", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
+			_, _, err := d.GetBool(e, a)
+			return err
+		}},
+		{"GetRef", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
+			_, _, err := d.GetRef(e, a)
+			return err
+		}},
+		{"GetStrings", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
+			_, err := d.GetStrings(e, a)
+			return err
+		}},
 	}
 	for _, mode := range optimizerModes {
 		for _, accessor := range accessors {

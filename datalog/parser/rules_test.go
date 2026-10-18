@@ -73,6 +73,7 @@ func TestParseRules_RefusesMalformedRules(t *testing.T) {
 		{"name in the engine's namespace", `[[(delta/follows ?a ?b) [?a :page/next ?b]]]`, "delta/follows"},
 		{"name in the magic namespace", `[[(magic.bf/reach ?a) [(ground 1) ?a]]]`, "magic.bf/reach"},
 		{"name in the adorned namespace", `[[(adorned.bf/e ?a ?b) [?x :edge/from ?a] [?x :edge/to ?b]]]`, "adorned.bf/e"},
+		{"name in the scope namespace", `[[(scope/required ?a) [(ground 1) ?a]]]`, "scope/required"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

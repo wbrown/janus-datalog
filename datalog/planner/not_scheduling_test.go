@@ -9,10 +9,9 @@ import (
 )
 
 // TestNotClauseWithExistentialBodyVariablePlans pins the Correlates
-// scheduling rule: (not [?d :seen/val ?v]) correlates on {?d ?v}, but only
-// ?v is bindable by the rest of the query — ?d is existential and must not
-// block phasing. Before the fix, every body variable was a hard scheduling
-// requirement and this query could not plan at all.
+// scheduling rule: (not-join [?v] [?d :seen/val ?v]), the header form the
+// inference writes for a not reading ?v from its scope, correlates on ?v
+// alone — ?d is the body's own and must not block phasing.
 func TestNotClauseWithExistentialBodyVariablePlans(t *testing.T) {
 	e := datalog.NewSymbol("?e")
 	v := datalog.NewSymbol("?v")
@@ -22,7 +21,7 @@ func TestNotClauseWithExistentialBodyVariablePlans(t *testing.T) {
 		query.Constant{Value: datalog.NewKeyword(":item/val")},
 		query.Variable{Name: v},
 	}}
-	notClause := &query.NotClause{Clauses: []query.Clause{
+	notClause := &query.NotJoinClause{RequiredVars: []query.Symbol{v}, Clauses: []query.Clause{
 		&query.DataPattern{Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?d")},
 			query.Constant{Value: datalog.NewKeyword(":seen/val")},
@@ -34,7 +33,7 @@ func TestNotClauseWithExistentialBodyVariablePlans(t *testing.T) {
 		[]query.Clause{notClause, pattern},
 		[]query.Symbol{v},
 		map[query.Symbol]bool{},
-		Bindings{},
+		query.Bindings{},
 	)
 	if err != nil {
 		t.Fatalf("phasing failed: %v", err)
@@ -44,12 +43,12 @@ func TestNotClauseWithExistentialBodyVariablePlans(t *testing.T) {
 		"the NOT must schedule after the pattern that binds its bindable correlate ?v")
 }
 
-// TestFullyDisjointNotRejectedAtPlanning pins the disjoint-NOT ruling: a NOT
-// body sharing no variable the query can bind (by clause or by input) has no
-// anti-join keys, and its quantification would silently become global —
-// rejected at planning with a message naming the clause. A body variable
-// bindable via :in keeps the clause correlated and planning succeeds.
-func TestFullyDisjointNotRejectedAtPlanning(t *testing.T) {
+// TestFullyDisjointNotRefusedAtPreparation pins the disjoint-NOT ruling: a
+// NOT body sharing no variable with the enclosing scope has no anti-join
+// keys, and its quantification would silently become global — refused at
+// preparation with a message naming the clause. A body variable the query's
+// inputs bind keeps the clause correlated, and the prepared query plans.
+func TestFullyDisjointNotRefusedAtPreparation(t *testing.T) {
 	e := datalog.NewSymbol("?e")
 	v := datalog.NewSymbol("?v")
 	w := datalog.NewSymbol("?w")
@@ -67,27 +66,28 @@ func TestFullyDisjointNotRejectedAtPlanning(t *testing.T) {
 		}},
 	}}
 
-	_, err := createPhasesGreedy(
-		[]query.Clause{pattern, notClause},
-		[]query.Symbol{v},
-		map[query.Symbol]bool{},
-		Bindings{},
-	)
+	_, err := query.Prepare(&query.Query{
+		Find:  []query.FindElement{query.FindVariable{Symbol: v}},
+		In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+		Where: []query.Clause{pattern, notClause},
+	}, nil)
 	if err == nil {
-		t.Fatal("expected planning to reject a NOT sharing no bindable variable with the enclosing query")
+		t.Fatal("expected preparation to refuse a NOT sharing no variable with the enclosing scope")
 	}
-	if !containsAll(err.Error(), "(not ", "?w", "unify") {
-		t.Fatalf("rejection must name the clause and state the unification rule, got: %v", err)
+	if !containsAll(err.Error(), "(not ", "?w", "shares no variable") {
+		t.Fatalf("refusal must name the clause and state the sharing rule, got: %v", err)
 	}
 
-	// The same body is correlated when an input can bind ?w.
-	_, err = createPhasesGreedy(
-		[]query.Clause{pattern, notClause},
-		[]query.Symbol{v},
-		map[query.Symbol]bool{w: true},
-		Bindings{},
-	)
+	// The same body is correlated when an input binds ?w.
+	prepared, err := query.Prepare(&query.Query{
+		Find:  []query.FindElement{query.FindVariable{Symbol: v}},
+		In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.ScalarInput{Symbol: w}},
+		Where: []query.Clause{pattern, notClause},
+	}, nil)
 	if err != nil {
+		t.Fatalf("input-bound body variable must keep the NOT preparable: %v", err)
+	}
+	if _, err := NewClauseBasedPlanner(nil, PlannerOptions{}).PlanQuery(prepared, query.Bindings{}, nil); err != nil {
 		t.Fatalf("input-bound body variable must keep the NOT plannable: %v", err)
 	}
 }
@@ -102,7 +102,8 @@ func containsAll(s string, subs ...string) bool {
 }
 
 // TestNotOverOrJoinPlans pins the or-join composition: the or-join's header
-// is its complete interface, so (not (or-join [?v] ...)) correlates on ?v
+// is its complete interface, so (not-join [?v] (or-join [?v] ...)), the
+// header form the inference writes for a not over it, correlates on ?v
 // alone — branch locals must neither leak nor block.
 func TestNotOverOrJoinPlans(t *testing.T) {
 	e := datalog.NewSymbol("?e")
@@ -113,9 +114,9 @@ func TestNotOverOrJoinPlans(t *testing.T) {
 		query.Constant{Value: datalog.NewKeyword(":item/val")},
 		query.Variable{Name: v},
 	}}
-	notClause := &query.NotClause{Clauses: []query.Clause{
+	notClause := &query.NotJoinClause{RequiredVars: []query.Symbol{v}, Clauses: []query.Clause{
 		&query.OrJoinClause{
-			JoinVars: []query.Symbol{v},
+			OutputVars: []query.Symbol{v},
 			Branches: [][]query.Clause{{
 				&query.DataPattern{Elements: []query.PatternElement{
 					query.Variable{Name: datalog.NewSymbol("?d")},
@@ -130,7 +131,7 @@ func TestNotOverOrJoinPlans(t *testing.T) {
 		[]query.Clause{notClause, pattern},
 		[]query.Symbol{v},
 		map[query.Symbol]bool{},
-		Bindings{},
+		query.Bindings{},
 	)
 	if err != nil {
 		t.Fatalf("phasing failed: %v", err)

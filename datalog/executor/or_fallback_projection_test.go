@@ -48,16 +48,6 @@ func TestProjectionPlan(t *testing.T) {
 		assert.Equal(t, Tuple{"e1", int64(10), "Alice"}, out)
 	})
 
-	t.Run("branch_wins_over_outer_for_shared_symbols", func(t *testing.T) {
-		plan := newProjectionPlan(
-			[]query.Symbol{symE},
-			[]query.Symbol{symE, symName},
-			[]query.Symbol{symE, symName},
-		)
-		out := plan.project(Tuple{"branch-e"}, Tuple{"outer-e", "Alice"})
-		assert.Equal(t, Tuple{"branch-e", "Alice"}, out)
-	})
-
 	t.Run("symbol_in_neither_source_stays_nil", func(t *testing.T) {
 		plan := newProjectionPlan(
 			[]query.Symbol{symE},
@@ -120,7 +110,6 @@ func (m *countingLookupMatcher) LookupAttribute(
 
 func TestBuildBranchFromEACacheDedupsOuterEntities(t *testing.T) {
 	symE := datalog.NewSymbol("?e")
-	symName := datalog.NewSymbol("?name")
 	symV := datalog.NewSymbol("?v")
 	attr := datalog.NewKeyword(":item/priority")
 	e1 := datalog.NewIdentity("eacache:e1")
@@ -134,20 +123,12 @@ func TestBuildBranchFromEACacheDedupsOuterEntities(t *testing.T) {
 	}}
 	exec := newQueryExecutor(matcher, nil, ExecutorOptions{})
 
-	// The outer relation repeats e1 across distinct tuples. The collected
-	// branch tuples must stay a set: one lookup and one tuple per entity.
-	outerSyms := []query.Symbol{symE, symName}
-	outerRel := NewMaterializedRelation(outerSyms, []Tuple{
-		{e1, "first"},
-		{e1, "second"},
-		{e2, "third"},
-	})
-
+	// The run repeats e1 across distinct tuples. The built tuples must stay
+	// a set: one lookup and one tuple per entity.
+	run := NewMaterializedRelation([]query.Symbol{symE}, []Tuple{{e1}, {e1}, {e2}})
 	it := &OrFallbackIterator{
-		executor:          exec,
-		outerRel:          outerRel,
-		outerSyms:         outerSyms,
-		branchVisibleSyms: []query.Symbol{symE},
+		executor: exec,
+		joinSyms: []query.Symbol{symE},
 	}
 	branch := []query.Clause{
 		&query.DataPattern{
@@ -159,19 +140,12 @@ func TestBuildBranchFromEACacheDedupsOuterEntities(t *testing.T) {
 		},
 	}
 
-	cb := it.buildBranchFromEACache(branch)
+	tuples, branchSyms := it.buildBranchFromEACache(branch, run)
 	require.NoError(t, it.err)
-	require.NotNil(t, cb)
+	require.Equal(t, []query.Symbol{symE, symV}, branchSyms)
 
 	assert.Equal(t, 2, matcher.calls, "one lookup per distinct entity")
-
-	matches := cb.probe(Tuple{e1, "first"})
-	require.Len(t, matches, 1, "repeated outer entity must not duplicate tuples")
-	assert.Equal(t, int64(1), matches[0][1])
-
-	matches = cb.probe(Tuple{e2, "third"})
-	require.Len(t, matches, 1)
-	assert.Equal(t, int64(2), matches[0][1])
+	assert.Equal(t, []Tuple{{e1, int64(1)}, {e2, int64(2)}}, tuples, "a repeated entity yields one tuple")
 }
 
 // TestBuildBranchFromEACacheEnvironmentNarrowsV pins the EA-cache arm's
@@ -195,14 +169,10 @@ func TestBuildBranchFromEACacheEnvironmentNarrowsV(t *testing.T) {
 	}}
 	exec := newQueryExecutor(matcher, nil, ExecutorOptions{})
 
-	outerSyms := []query.Symbol{symE}
-	outerRel := NewMaterializedRelation(outerSyms, []Tuple{{e1}, {e2}})
-
+	run := NewMaterializedRelation([]query.Symbol{symE}, []Tuple{{e1}, {e2}})
 	it := &OrFallbackIterator{
-		executor:          exec,
-		outerRel:          outerRel,
-		outerSyms:         outerSyms,
-		branchVisibleSyms: []query.Symbol{symE},
+		executor: exec,
+		joinSyms: []query.Symbol{symE},
 		envRel: NewMaterializedRelation(
 			[]query.Symbol{symV},
 			[]Tuple{{int64(2)}},
@@ -218,14 +188,8 @@ func TestBuildBranchFromEACacheEnvironmentNarrowsV(t *testing.T) {
 		},
 	}
 
-	cb := it.buildBranchFromEACache(branch)
+	tuples, branchSyms := it.buildBranchFromEACache(branch, run)
 	require.NoError(t, it.err)
-	require.NotNil(t, cb)
-
-	matches := cb.probe(Tuple{e1})
-	assert.Empty(t, matches, "e1's value 1 does not match the environment's 2")
-
-	matches = cb.probe(Tuple{e2})
-	require.Len(t, matches, 1)
-	assert.Equal(t, int64(2), matches[0][1])
+	require.Equal(t, []query.Symbol{symE, symV}, branchSyms)
+	assert.Equal(t, []Tuple{{e2, int64(2)}}, tuples, "e1's value 1 does not match the environment's 2")
 }

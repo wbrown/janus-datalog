@@ -9,15 +9,17 @@ import (
 // The engine mints predicates beside a rule set's own, each a symbol in a
 // namespace of the engine's: a predicate adorned with a binding pattern, the
 // magic predicate holding the bindings an adorned predicate is asked with,
-// and the delta of a predicate under semi-naive evaluation. The kind leads
-// the namespace, the predicate's own namespace follows it, and the name is
-// the predicate's, so the derivation reads off the symbol and the text of a
-// body that invokes it is Datalog the parser reads. NewRuleSet refuses a rule
-// set that declares a predicate in one of these namespaces.
+// the delta of a predicate under semi-naive evaluation, and scope/required,
+// the required run a nested scope runs over. The kind leads the namespace,
+// the predicate's own namespace follows it, and the name is the predicate's,
+// so the derivation reads off the symbol and the text of a body that invokes
+// it is Datalog the parser reads. NewRuleSet refuses a rule set that declares
+// a predicate in one of these namespaces.
 const (
 	adornedNamespace = "adorned"
 	magicNamespace   = "magic"
 	deltaNamespace   = "delta"
+	scopeNamespace   = "scope"
 )
 
 // mint names the predicate derived from name under kind: kind leads the
@@ -62,16 +64,23 @@ func DeltaSymbol(name Symbol) Symbol {
 	return mint(deltaNamespace, name)
 }
 
+// ScopeRequired names the predicate a nested scope's required run enters
+// its query under: the executor holds the projection of the enclosing scope
+// onto the required run under it, and the scope's query opens with its
+// invocation over the required run.
+var ScopeRequired = mint(scopeNamespace, datalog.NewSymbol("required"))
+
 // SeedRestricted reports whether a predicate's relation holds only what a
-// seed reaches: the magic and adorned predicates the rewrite mints, and
-// their deltas. A body's invocation of one reads a relation the seed
-// restricts, so the planner schedules it before the patterns.
+// seed reaches: the magic and adorned predicates the rewrite mints, their
+// deltas, and scope/required, the tuples a nested scope runs over. A body's
+// invocation of one reads a relation the seed restricts, so the planner
+// schedules it before the patterns.
 func SeedRestricted(name Symbol) bool {
 	kind, rest, _ := strings.Cut(name.Namespace(), ".")
 	if kind == deltaNamespace {
 		kind, _, _ = strings.Cut(rest, ".")
 	}
-	return kind == adornedNamespace || kind == magicNamespace
+	return kind == adornedNamespace || kind == magicNamespace || kind == scopeNamespace
 }
 
 // engineNamespace reports whether a predicate name lies in a namespace the
@@ -81,5 +90,5 @@ func engineNamespace(name Symbol) bool {
 	if i := strings.Index(ns, "."); i >= 0 {
 		ns = ns[:i]
 	}
-	return ns == adornedNamespace || ns == magicNamespace || ns == deltaNamespace
+	return ns == adornedNamespace || ns == magicNamespace || ns == deltaNamespace || ns == scopeNamespace
 }

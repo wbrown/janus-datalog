@@ -150,9 +150,9 @@ func (m *ScanSharingMatcher) LookupAttribute(
 
 // CanFuseAttributeFetch forwards to inner matcher if it supports fusion, so
 // same-entity attribute fusion still applies under scan sharing.
-func (m *ScanSharingMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
+func (m *ScanSharingMatcher) CanFuseAttributeFetch(source query.Symbol, attr datalog.Keyword) bool {
 	if f, ok := m.inner.(AttributeFetchFusable); ok {
-		return f.CanFuseAttributeFetch(attr)
+		return f.CanFuseAttributeFetch(source, attr)
 	}
 	return false
 }

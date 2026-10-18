@@ -38,7 +38,7 @@ func NewClauseBasedPlanner(stats *Statistics, options PlannerOptions) *ClauseBas
 // never on the bound symbols. The handler (may be nil) is request-scoped
 // annotation state, threaded through planning rather than stored on the
 // planner, so concurrent queries through a shared planner do not race on it.
-func (p *ClauseBasedPlanner) Plan(q *query.Query, bindings Bindings, handler annotations.Handler) (*RealizedPlan, error) {
+func (p *ClauseBasedPlanner) Plan(q *query.Query, bindings query.Bindings, handler annotations.Handler) (*RealizedPlan, error) {
 	cacheable := p.cache != nil && len(bindings.Symbols) == 0
 	if cacheable {
 		if cached, ok := p.cache.GetWithOptions(q, bindings.Rules, p.options); ok {
@@ -62,7 +62,7 @@ func (p *ClauseBasedPlanner) Plan(q *query.Query, bindings Bindings, handler ann
 // bridge fills its fields with the compiled tree, the rewrite records, the
 // optimized tree, and the rewritten query; the normal paths pass nil and
 // collect nothing.
-func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings Bindings, handler annotations.Handler, expl *AlgebraExplanation) (*RealizedPlan, error) {
+func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings query.Bindings, handler annotations.Handler, expl *AlgebraExplanation) (*RealizedPlan, error) {
 	initialBindings := bindings.Symbols
 
 	// Extract input symbols from :in clause, tracking scalar inputs separately
@@ -114,19 +114,19 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings Bindings,
 		}
 	}
 
-	// Stage C Architecture: Optimize FIRST, then phase ONCE
-
-	// Step 1: Start with the clause list from the query
+	// Stage C Architecture: optimize, then phase ONCE. The query arrives
+	// prepared: every nested form states its interface in its header, so both
+	// paths phase the same clauses and every phase parses back to itself.
 	clauses := q.Where
 
-	// Step 2: Optimize Datalog through the algebra IR, then return to Datalog
+	// Step 1: Optimize Datalog through the algebra IR, then return to Datalog
 	// before physical phase planning.
 	if p.options.EnableAlgebraOptimizer {
 		options := p.options
 		if len(initialBindings) > 0 {
 			options.EnableJoinProjectInsertion = false
 		}
-		optimized, err := optimizeViaAlgebra(q, options, handler, expl)
+		optimized, err := optimizeViaAlgebra(q, bindings, options, handler, expl)
 		if err != nil {
 			return nil, fmt.Errorf("algebra optimization failed: %w", err)
 		}

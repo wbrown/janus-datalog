@@ -109,13 +109,17 @@ const (
 	OrOuterReplaced        = "or/outer-replaced"
 
 	// OR fallback evaluation
-	OrFallbackOuterMaterialized = "or-fallback/outer.materialized"
-	OrFallbackIteratorCreated   = "or-fallback/iterator.created"
-	OrFallbackOuterExhausted    = "or-fallback/outer.exhausted"
-	OrFallbackOuterTuple        = "or-fallback/outer.tuple"
-	OrFallbackBranchNarrowed    = "or-fallback/branch.narrowed"
-	OrFallbackBranchSuccess     = "or-fallback/branch.success"
-	OrFallbackCacheBuild        = "or-fallback/cache-build"
+	OrFallbackIteratorCreated = "or-fallback/iterator.created"
+	OrFallbackOuterExhausted  = "or-fallback/outer.exhausted"
+	OrFallbackOuterTuple      = "or-fallback/outer.tuple"
+	OrFallbackBranchNarrowed  = "or-fallback/branch.narrowed"
+	OrFallbackBranchSuccess   = "or-fallback/branch.success"
+	OrFallbackCacheBuild      = "or-fallback/cache-build"
+
+	// OrFallbackWindow is one window of the subject a form's branches run
+	// over: its ordinal, counted from one, its tuple count, and the count of
+	// distinct keys it projects onto the header's required run.
+	OrFallbackWindow = "or-fallback/window"
 
 	// Subquery execution
 	SubqueryExecutorPath      = "subquery/executor-path"
@@ -308,6 +312,11 @@ const (
 
 	// ScanMergeJoin merges the sorted binding stream against index order.
 	ScanMergeJoin ScanStrategy = "merge-join"
+
+	// ScanPerKeySeek opens one narrowed scan per distinct key of the bindings
+	// and probes the hash set against the keys' datoms as one stream, so it
+	// addresses one run per key and no single run.
+	ScanPerKeySeek ScanStrategy = "per-key-seek"
 
 	// ScanPerBinding opens one scan per binding tuple, so it addresses no
 	// single run.

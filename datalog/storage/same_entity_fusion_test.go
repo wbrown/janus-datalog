@@ -403,23 +403,23 @@ func testFusionGateModeAndCardinality(t *testing.T, mode optimizerMode) {
 
 	latest, ok := db.Matcher().(*PatternMatcher)
 	require.True(t, ok)
-	assert.True(t, latest.CanFuseAttributeFetch(datalog.NewKeyword(":place/code")),
+	assert.True(t, latest.CanFuseAttributeFetch(datalog.SymDollar, datalog.NewKeyword(":place/code")),
 		"latest-mode CardinalityOne is fusable")
-	assert.False(t, latest.CanFuseAttributeFetch(datalog.NewKeyword(":place/tags")),
+	assert.False(t, latest.CanFuseAttributeFetch(datalog.SymDollar, datalog.NewKeyword(":place/tags")),
 		"CardinalityMany is not fusable")
-	assert.False(t, latest.CanFuseAttributeFetch(datalog.NewKeyword(":place/steps")),
+	assert.False(t, latest.CanFuseAttributeFetch(datalog.SymDollar, datalog.NewKeyword(":place/steps")),
 		"CardinalityVector is not fusable")
-	assert.False(t, latest.CanFuseAttributeFetch(datalog.NewKeyword(":place/unknown")),
+	assert.False(t, latest.CanFuseAttributeFetch(datalog.SymDollar, datalog.NewKeyword(":place/unknown")),
 		"schemaless attribute is not fusable")
 
 	hist, ok := db.History().Matcher().(*PatternMatcher)
 	require.True(t, ok)
-	assert.False(t, hist.CanFuseAttributeFetch(datalog.NewKeyword(":place/code")),
+	assert.False(t, hist.CanFuseAttributeFetch(datalog.SymDollar, datalog.NewKeyword(":place/code")),
 		"history mode is never fusable (raw multi-version reads)")
 
 	asOf, ok := db.AsOf(datalog.ElementID{Lamport: 1, ReplicaID: 1}).Matcher().(*PatternMatcher)
 	require.True(t, ok)
-	assert.False(t, asOf.CanFuseAttributeFetch(datalog.NewKeyword(":place/code")),
+	assert.False(t, asOf.CanFuseAttributeFetch(datalog.SymDollar, datalog.NewKeyword(":place/code")),
 		"as-of mode must use snapshot CRDT resolution, not latest-value fusion")
 }
 

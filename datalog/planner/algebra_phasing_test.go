@@ -22,9 +22,11 @@ func TestPhaserSymbolExtraction(t *testing.T) {
 	                      $ ?e) [[?count]]]
 	                  [(ground 0) ?count])]`)
 	require.NoError(t, err)
+	prepared, err := query.Prepare(q, nil)
+	require.NoError(t, err)
 
 	// Compile + decorrelate
-	root, _ := algebra.Compile(q)
+	root, _ := algebra.Compile(prepared, nil)
 	opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
 	optimized, _ := opt.Optimize(root)
 	clauses, _ := algebra.Decompile(optimized)
@@ -79,9 +81,13 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+	prepared, err := query.Prepare(q, nil)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
 
 	// Compile + decorrelate
-	root, err := algebra.Compile(q)
+	root, err := algebra.Compile(prepared, nil)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -113,7 +119,7 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	}
 	inputSymbols := map[query.Symbol]bool{}
 
-	phases, err := createPhasesGreedy(clauses, findSymbols, inputSymbols, Bindings{})
+	phases, err := createPhasesGreedy(clauses, findSymbols, inputSymbols, query.Bindings{})
 	if err != nil {
 		t.Fatalf("phasing failed: %v", err)
 	}

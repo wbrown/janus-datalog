@@ -332,18 +332,25 @@ func testGetElseMultiEntityScanNarrowed(t *testing.T, mode optimizerMode) {
 	// attribute-primary index-selection on :repro/note still means the scan
 	// was not narrowed to the bound entities — it means matchUnboundAsRelation
 	// ran, which is the full attribute scan.
-	// Primary, direct assertion: the or-fallback branch reports it narrowed the
-	// scan to the bound join keys (one per kind-bearing entity), rather than
-	// silently falling back to a full attribute scan.
-	ev := narrowingEvent(events)
-	if ev == nil {
+	// Primary, direct assertion: the or-fallback branch reports, for each
+	// window of the subject, that it narrowed the scan to the window's bound
+	// join keys rather than falling back to a full attribute scan, and every
+	// kind-bearing entity is narrowed to in one window, so the join keys of the
+	// narrowing events sum to the bound entities.
+	narrowings := narrowingEvents(events)
+	if len(narrowings) == 0 {
 		t.Fatalf("expected an or-fallback/branch.narrowed annotation; none emitted")
 	}
-	if narrowed, _ := ev.Data["narrowed"].(bool); !narrowed {
-		t.Fatalf("get-else branch was NOT narrowed to the bound entities (fell back to a full scan): %v", ev.Data)
+	joinKeys := 0
+	for _, ev := range narrowings {
+		if narrowed, _ := ev.Data["narrowed"].(bool); !narrowed {
+			t.Fatalf("get-else branch was NOT narrowed to the bound entities (fell back to a full scan): %v", ev.Data)
+		}
+		jk, _ := ev.Data["join_keys"].(int)
+		joinKeys += jk
 	}
-	if jk, _ := ev.Data["join_keys"].(int); jk != len(want) {
-		t.Errorf("expected join_keys=%d (one per bound entity), got %v", len(want), ev.Data["join_keys"])
+	if joinKeys != len(want) {
+		t.Errorf("expected join_keys summing to %d over the windows (one per bound entity), got %d over %d narrowing events", len(want), joinKeys, len(narrowings))
 	}
 
 	// Defense in depth: a narrowed branch takes the bound matcher path (cache /
@@ -358,17 +365,17 @@ func testGetElseMultiEntityScanNarrowed(t *testing.T, mode optimizerMode) {
 	}
 }
 
-// narrowingEvent returns the or-fallback/branch.narrowed annotation emitted when
-// a cacheable DataPattern-only or-join branch (the get-else scan branch) decides
-// whether to narrow its single evaluation to the outer join keys. Returns nil if
-// no such event was emitted.
-func narrowingEvent(events []annotations.Event) *annotations.Event {
-	for i := range events {
-		if events[i].Name == "or-fallback/branch.narrowed" {
-			return &events[i]
+// narrowingEvents returns every or-fallback/branch.narrowed annotation, one per
+// window in which a DataPattern-only fallback branch (the get-else scan branch)
+// decided whether to narrow its evaluation to the window's join keys.
+func narrowingEvents(events []annotations.Event) []annotations.Event {
+	var narrowings []annotations.Event
+	for _, e := range events {
+		if e.Name == "or-fallback/branch.narrowed" {
+			narrowings = append(narrowings, e)
 		}
 	}
-	return nil
+	return narrowings
 }
 
 // TestGetElseScanNarrowing_SemanticPreservation is the differential / structural

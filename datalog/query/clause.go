@@ -58,15 +58,19 @@ func (n *NotClause) String() string {
 }
 
 // NotJoinClause represents a not-join clause: (not-join [vars] [clauses...])
-// Like NotClause but with explicit join variables
+//
+// The header is the clause's whole interface, and every variable in it is
+// required: bound by the enclosing scope before the clause runs, and read
+// bound by the body. A not provides nothing, so the header has no outputs,
+// and every other variable of the body is the body's own.
 type NotJoinClause struct {
-	JoinVars []Symbol // Variables to join on (must be bound before this clause)
-	Clauses  []Clause // Inner clauses
+	RequiredVars []Symbol
+	Clauses      []Clause // Inner clauses
 }
 
 func (n *NotJoinClause) String() string {
 	result := "(not-join ["
-	for i, v := range n.JoinVars {
+	for i, v := range n.RequiredVars {
 		if i > 0 {
 			result += " "
 		}
@@ -103,16 +107,37 @@ func (o *OrClause) String() string {
 	return result
 }
 
-// OrJoinClause represents an or-join clause with explicit variable binding
-// (or-join [vars] branch1 branch2 ...)
+// OrJoinClause represents an or-join with a declared interface:
+//
+//	(or-join [[?required ...] ?output ...] branch1 branch2 ...)
+//	(or-join [?output ...] branch1 branch2 ...)
+//
+// RequiredVars are bound by the enclosing query before the clause runs, and
+// every branch reads them bound. OutputVars are the outputs, bound by every
+// branch and provided to the enclosing query. The header is the complete
+// interface: branch locals never escape.
 type OrJoinClause struct {
-	JoinVars []Symbol   // Variables to expose from union
-	Branches [][]Clause // Each branch is a list of clauses
+	RequiredVars []Symbol
+	OutputVars   []Symbol
+	Branches     [][]Clause // Each branch is a list of clauses
 }
 
 func (o *OrJoinClause) String() string {
 	result := "(or-join ["
-	for i, v := range o.JoinVars {
+	if len(o.RequiredVars) > 0 {
+		result += "["
+		for i, v := range o.RequiredVars {
+			if i > 0 {
+				result += " "
+			}
+			result += v.String()
+		}
+		result += "]"
+		if len(o.OutputVars) > 0 {
+			result += " "
+		}
+	}
+	for i, v := range o.OutputVars {
 		if i > 0 {
 			result += " "
 		}

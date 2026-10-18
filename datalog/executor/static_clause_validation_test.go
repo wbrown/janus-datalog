@@ -71,9 +71,10 @@ func TestNotJoinAcceptsNestedExistentialNot(t *testing.T) {
 // doors with one message: the parser (EDN text), the qb builder (Go
 // construction), and the executor entry (hand-built ASTs). This pins the
 // executor door: a hand-built statically-invalid query is rejected before
-// planning, identically under both planner modes. See
-// BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md and
-// BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md.
+// planning, identically under both planner modes. A not-join body reading a
+// variable outside its header is the inference's refusal, which the executor
+// reaches on both modes too. See
+// BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md.
 func TestExecutorEntryRejectsStaticallyInvalidClauses(t *testing.T) {
 	valAttr := datalog.NewKeyword(":item/val")
 	matcher := NewMemoryPatternMatcher([]datalog.Datom{
@@ -104,18 +105,18 @@ func TestExecutorEntryRejectsStaticallyInvalidClauses(t *testing.T) {
 			},
 			wantErr: "subquery tuple binding declares 2 symbol(s), but the inner :find has 1 element(s)",
 		},
-		"not-join header completeness": {
+		"not-join body reads outside its header": {
 			clause: &query.NotJoinClause{
-				JoinVars: []query.Symbol{e},
+				RequiredVars: []query.Symbol{e},
 				Clauses: []query.Clause{
 					&query.Comparison{
 						Op:    datalog.SymEQ,
 						Left:  query.VariableTerm{Symbol: e},
-						Right: query.VariableTerm{Symbol: other}, // consumed, unbound, undeclared
+						Right: query.VariableTerm{Symbol: other}, // read, bound by neither the body nor the header
 					},
 				},
 			},
-			wantErr: "not-join header",
+			wantErr: "a branch reads ?other, which neither the branch nor the header binds",
 		},
 		"unregistered predicate function": {
 			// Hand-built AST bypassing the parser: the boundary walk must

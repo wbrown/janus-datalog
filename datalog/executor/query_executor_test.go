@@ -343,32 +343,51 @@ func TestExecuteAggregates(t *testing.T) {
 		}
 	})
 
-	t.Run("error on multiple disjoint groups with aggregates", func(t *testing.T) {
-		// This should error because we can't aggregate over disjoint relations
-		q := &query.Query{
-			Find: []query.FindElement{
-				query.FindAggregate{
-					Function: datalog.SymSum,
-					Arg:      datalog.NewSymbol("?value"),
-				},
-			},
-			Where: []query.Clause{
-				&query.DataPattern{Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?e1")},
-					query.Constant{Value: ":person/name"},
-					query.Variable{Name: datalog.NewSymbol("?n")},
-				}},
-			},
+	// The pattern's group holds ?value, and the two groups given hold ?x
+	// and ?y, sharing nothing with it.
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: datalog.NewSymbol("?e1")},
+		query.Constant{Value: ":person/name"},
+		query.Variable{Name: datalog.NewSymbol("?n")},
+	}}
+	sum := query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?value")}
+	disjoint := func() []Relation {
+		return []Relation{
+			NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?x")}, []Tuple{{int64(1)}}),
+			NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?y")}, []Tuple{{int64(2)}}),
 		}
+	}
 
-		// Manually set up disjoint groups (this simulates the error case)
-		r1 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?x")}, []Tuple{{int64(1)}})
-		r2 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?y")}, []Tuple{{int64(2)}})
-
-		// Try to aggregate with pre-existing disjoint groups
-		_, err := executor.Execute(ctx, q, []Relation{r1, r2})
+	t.Run("error on multiple disjoint groups with aggregates", func(t *testing.T) {
+		// The find reads ?x from one group and sums ?value from another,
+		// and an aggregate runs over one relation.
+		q := &query.Query{
+			Find:  []query.FindElement{query.FindVariable{Symbol: datalog.NewSymbol("?x")}, sum},
+			Where: []query.Clause{pattern},
+		}
+		_, err := executor.Execute(ctx, q, disjoint())
 		if err == nil {
 			t.Error("Expected error for aggregating over disjoint relations")
+		}
+	})
+
+	t.Run("a group the find does not read stands beside the aggregate", func(t *testing.T) {
+		// The find reads ?value alone, so the groups holding ?x and ?y are
+		// asked for one tuple each and dropped, and the sum runs over the
+		// pattern's group.
+		q := &query.Query{
+			Find:  []query.FindElement{sum},
+			Where: []query.Clause{pattern},
+		}
+		groups, err := executor.Execute(ctx, q, disjoint())
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+		if len(groups) != 1 {
+			t.Fatalf("Expected 1 result group, got %d", len(groups))
+		}
+		if got := groups[0].Get(0)[0]; got != int64(450) {
+			t.Errorf("Expected the sum 450 over the pattern's group, got %v", got)
 		}
 	})
 }

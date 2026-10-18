@@ -17,7 +17,7 @@ func TestGetElseScanRewrite_Simple(t *testing.T) {
 	  [(get-else $ ?e :project/title "") ?title]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 	t.Logf("Before:\n%s", root.String())
 
@@ -61,7 +61,7 @@ func TestGetElseScanRewrite_Multiple(t *testing.T) {
 	  [(get-else $ ?e :project/notes "") ?notes]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	mapsBefore := countNodes(root, RuleMap)
@@ -93,7 +93,7 @@ func TestGetElseScanRewrite_NonGetElsePreserved(t *testing.T) {
 	  [(+ ?p 10) ?total]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	mapsBefore := countNodes(root, RuleMap)
@@ -118,7 +118,7 @@ func TestGetElseScanRewrite_VectorDefaultRewritten(t *testing.T) {
 	  [(get-else $ ?e :entity/lore []) ?lore]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	mapsBefore := countNodes(root, RuleMap)
@@ -166,7 +166,7 @@ func TestGetElseScanRewrite_InputParamEntitySkipped(t *testing.T) {
 	  [(get-else $ ?entity :person/nickname "none") ?nick]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	mapsBefore := countNodes(root, RuleMap)
@@ -180,6 +180,40 @@ func TestGetElseScanRewrite_InputParamEntitySkipped(t *testing.T) {
 	assert.Equal(t, 1, mapsAfter, "get-else with input param entity should NOT be rewritten")
 }
 
+// A scope's required run is the scope's input, as :in is a query's: a
+// get-else over an entity the required run alone provides stays an
+// expression, and one over an entity a scan also provides is rewritten.
+func TestGetElseScanRewrite_RequiredRunEntitySkipped(t *testing.T) {
+	cases := []struct {
+		name      string
+		text      string
+		mapsAfter int
+	}{
+		{
+			"the required run alone provides the entity",
+			`[:find ?e ?nick :in $ % :where (scope/required ?e) [(get-else $ ?e :person/nickname "none") ?nick]]`,
+			1,
+		},
+		{
+			"a scan provides the entity beside the required run",
+			`[:find ?e ?nick :in $ % :where (scope/required ?e) [?e :person/name _] [(get-else $ ?e :person/nickname "none") ?nick]]`,
+			0,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q, err := parser.ParseQuery(c.text)
+			require.NoError(t, err)
+			root, err := Compile(q, nil)
+			require.NoError(t, err)
+			require.Equal(t, 1, countNodes(root, RuleMap))
+			optimized, err := NewOptimizer(GetElseScanRewritePass(nil)).Optimize(root)
+			require.NoError(t, err)
+			assert.Equal(t, c.mapsAfter, countNodes(optimized, RuleMap))
+		})
+	}
+}
+
 // TestCompileMissingPredicateInOr verifies that missing? inside an OR
 // clause compiles successfully to an AntiJoin (not an error).
 func TestCompileMissingPredicateInOr(t *testing.T) {
@@ -190,7 +224,7 @@ func TestCompileMissingPredicateInOr(t *testing.T) {
 	              [?e :entity/lore []])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err, "OR with missing? should compile (missing? → Select predicate)")
 	t.Logf("Compiled:\n%s", root.String())
 

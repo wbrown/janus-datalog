@@ -37,4 +37,6 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 	require.Equal(t, 0, opts.MaxSubqueryWorkers, "MaxSubqueryWorkers default is 0 (= 4 executor workers)")
 	require.Equal(t, 0, opts.MaxRuleIterations, "MaxRuleIterations is documented opt-in; 0 is unbounded")
 	require.Equal(t, 0, opts.MaxDerivedTuples, "MaxDerivedTuples is documented opt-in; 0 is unbounded")
+	require.Equal(t, 0, opts.ScopeWindowCap, "ScopeWindowCap is documented 0; the executor's default is SmallBindingBoundary")
+	require.Equal(t, 0, opts.ScopeWindowGrowth, "ScopeWindowGrowth is documented 0; the executor's default is 2")
 }

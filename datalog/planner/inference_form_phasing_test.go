@@ -100,7 +100,7 @@ func TestInferenceFormSchedulesAfterTheClausesBindingItsBranchVariable(t *testin
 			},
 		}},
 		{"an or-join", []query.Clause{
-			&query.OrJoinClause{JoinVars: []query.Symbol{a}, Branches: [][]query.Clause{
+			&query.OrJoinClause{OutputVars: []query.Symbol{a}, Branches: [][]query.Clause{
 				{&query.Expression{Function: &query.GroundFunction{Value: datalog.NewKeyword(":t/tag")}, Binding: a}},
 				{&query.Expression{Function: &query.GroundFunction{Value: datalog.NewKeyword(":t/other")}, Binding: a}},
 			}},
@@ -131,7 +131,11 @@ func TestInferenceFormSchedulesAfterTheClausesBindingItsBranchVariable(t *testin
 						In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
 						Where: where,
 					}
-					plan, err := NewClauseBasedPlanner(nil, path.options).PlanQuery(q, Bindings{}, nil)
+					prepared, err := query.Prepare(q, nil)
+					if err != nil {
+						t.Fatalf("Prepare: %v", err)
+					}
+					plan, err := NewClauseBasedPlanner(nil, path.options).PlanQuery(prepared, query.Bindings{}, nil)
 					if err != nil {
 						t.Fatalf("PlanQuery: %v", err)
 					}
@@ -156,10 +160,9 @@ func TestInferenceFormSchedulesAfterTheClausesBindingItsBranchVariable(t *testin
 }
 
 // A clause that binds a variable a branch alone reads, and that itself needs
-// a variable only the form provides, can never run before the form, so the
-// form does not wait on it: the plan carries the form, then the clause, and
-// the phase never stalls with each waiting on the other.
-func TestInferenceFormDoesNotWaitOnAClauseThatNeedsItsOutput(t *testing.T) {
+// a variable only the form provides, leaves no order binding the variable
+// before the form, and the plan is refused naming the form and the variable.
+func TestInferenceFormWhoseRequiredVariableNoOrderBindsIsRefused(t *testing.T) {
 	e, a, x := datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?x")
 	pattern := func(elements ...query.PatternElement) *query.DataPattern {
 		return &query.DataPattern{Elements: elements}
@@ -185,18 +188,16 @@ func TestInferenceFormDoesNotWaitOnAClauseThatNeedsItsOutput(t *testing.T) {
 				In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
 				Where: []query.Clause{anchor, form, needing},
 			}
-			plan, err := NewClauseBasedPlanner(nil, path.options).PlanQuery(q, Bindings{}, nil)
+			prepared, err := query.Prepare(q, nil)
 			if err != nil {
-				t.Fatalf("PlanQuery: %v", err)
+				t.Fatalf("Prepare: %v", err)
 			}
-			formPhase, formIndex := formPosition(plan, read)
-			needingPhase, needingIndex := clausePosition(plan, needing)
-			if formPhase < 0 || needingPhase < 0 {
-				t.Fatalf("the plan carries the or at phase %d and the identity at phase %d:\n%s", formPhase, needingPhase, plan)
+			plan, err := NewClauseBasedPlanner(nil, path.options).PlanQuery(prepared, query.Bindings{}, nil)
+			if err == nil {
+				t.Fatalf("the plan carries the or whose required ?a no order binds:\n%s", plan)
 			}
-			if needingPhase < formPhase || (needingPhase == formPhase && needingIndex < formIndex) {
-				t.Errorf("the identity needing ?x runs at phase %d clause %d, before the or providing ?x at phase %d clause %d:\n%s",
-					needingPhase, needingIndex, formPhase, formIndex, plan)
+			if !containsAll(err.Error(), "(or-join [[?a] ?e ?x]", "?a") {
+				t.Errorf("the refusal names the form and ?a, got: %v", err)
 			}
 		})
 	}

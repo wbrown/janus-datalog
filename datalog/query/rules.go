@@ -1,6 +1,7 @@
 package query
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -207,9 +208,16 @@ func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
 			return nil, fmt.Errorf("rule %s: its required run %v differs from an earlier rule's of the same predicate", rule.Name, rule.Required)
 		}
 	}
-	for _, rule := range rules {
-		rs.rules[rule.Name] = append(rs.rules[rule.Name], rule)
+	inferred := make([]*Rule, len(rules))
+	for i, rule := range rules {
+		body, err := rs.inferBody(rule)
+		if err != nil {
+			return nil, err
+		}
+		inferred[i] = body
+		rs.rules[rule.Name] = append(rs.rules[rule.Name], body)
 	}
+	rules = inferred
 	edges, err := rs.dependencies(rules)
 	if err != nil {
 		return nil, err
@@ -253,6 +261,33 @@ func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
 	rs.strata = strata
 	rs.attributePositions = attributePositionsOf(rs, rules)
 	return rs, nil
+}
+
+// inferBody returns rule with its body's forms inferred under the set, as a
+// query finding the head with the required run as its inputs: the rule
+// itself when its body is header forms already, otherwise a copy holding the
+// inferred body. A branch input the inference finds nothing binds is an
+// UnsafeRuleError naming the rule and the variable.
+func (rs *RuleSet) inferBody(rule *Rule) (*Rule, error) {
+	scope := &Query{In: []InputSpec{DatabaseInput{Name: datalog.SymDollar}, RulesInput{}}, Where: rule.Body}
+	for _, head := range rule.Head {
+		scope.Find = append(scope.Find, FindVariable{Symbol: head})
+	}
+	for _, sym := range rule.Required {
+		scope.In = append(scope.In, ScalarInput{Symbol: sym})
+	}
+	inferred, err := InferHeaders(scope, rs)
+	if err != nil {
+		var unbound *UnboundBranchInputError
+		if errors.As(err, &unbound) {
+			return nil, &UnsafeRuleError{Rule: rule.Name, Symbol: unbound.Variable}
+		}
+		return nil, fmt.Errorf("rule %s: %w", rule.Name, err)
+	}
+	if inferred == scope {
+		return rule, nil
+	}
+	return &Rule{Name: rule.Name, Head: rule.Head, Required: rule.Required, Body: inferred.Where}, nil
 }
 
 // attributePositionsOf computes, to a fixpoint over the rules, the head
@@ -390,15 +425,15 @@ func (rs *RuleSet) CheckInvocation(inv *RuleInvocation) error {
 
 // DefaultSourceAttributes returns every attribute the rule bodies name on
 // the default source, in order of first appearance and each once, collected
-// as Query.DefaultSourceAttributes collects a query's under the rule set
-// itself, then the keywords the bodies' invocations pass at attribute
-// positions (invocationAttributes).
+// as Query.DefaultSourceAttributes collects a query's, then the keywords the
+// bodies' invocations pass at the positions the set reads as attributes
+// (invocationAttributes).
 func (rs *RuleSet) DefaultSourceAttributes() []datalog.Keyword {
 	rs.attributesOnce.Do(func() {
 		roster := newAttributeRoster()
 		for _, name := range rs.order {
 			for _, rule := range rs.rules[name] {
-				roster.addClauses(rule.Body, false, rs)
+				roster.addClauses(rule.Body, false)
 			}
 		}
 		for _, attr := range rs.invocationAttributes(roster.invocations) {
@@ -440,8 +475,9 @@ func (rs *RuleSet) invocationAttributes(constants []invocationConstant) []datalo
 // checkRuleSafety reports the first symbol neither the rule's positive body
 // clauses nor its required run binds: a head symbol, or a mandatory
 // correlate of a body clause, an invocation's required positions among
-// them, read from the set's own declarations. A source symbol is execution
-// context, never a binding.
+// them, read from the set's own declarations. It reads the inferred body
+// (inferBody), whose nested forms are header forms, so a form's Mandatory is
+// its required run. A source symbol is execution context, never a binding.
 func (rs *RuleSet) checkRuleSafety(rule *Rule) error {
 	provided := map[Symbol]bool{}
 	for _, sym := range rule.Required {

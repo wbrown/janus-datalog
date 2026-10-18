@@ -112,6 +112,24 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		return rebuildWithChildren(node, children)
 	}
 
+	// The outer relation, recovered from the children. The decorrelated
+	// result joins it on the correlation variables, and a join keys only on
+	// symbols both sides produce, so a correlation variable the outer
+	// relation does not carry, one the enclosing scope binds, keeps the
+	// subquery on per-combination execution.
+	var outerNode *Node
+	if len(children) > 0 {
+		outerNode = recoverChild(children[0])
+	}
+	if outerNode != nil {
+		for _, cv := range lj.CorrelationVars {
+			if !query.ContainsSymbol(outerNode.Symbols(), cv) {
+				decline(fmt.Sprintf("correlation variable %s is bound by the enclosing scope, not the outer relation", cv))
+				return rebuildWithChildren(node, children)
+			}
+		}
+	}
+
 	innerParams := mapCorrelationToInnerParams(lj.InnerQuery, lj.CorrelationVars)
 	if len(innerParams) == 0 {
 		decline("cannot map correlation to inner params")
@@ -153,12 +171,6 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 	output = append(output, lj.CorrelationVars...)
 	output = append(output, originalBindingSyms...)
 
-	// Recover the outer relation from children.
-	var outerNode *Node
-	if len(children) > 0 {
-		outerNode = recoverChild(children[0])
-	}
-
 	var innerResultNode *Node
 
 	if hasAggregates(lj.InnerQuery) {
@@ -174,7 +186,9 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 			}
 		}
 
-		innerNode, compileErr := Compile(decorrelated)
+		// The inner query compiles in its own scope: its :in, and the rule set
+		// the call's % binds, which the lateral join carries.
+		innerNode, compileErr := Compile(decorrelated, lj.Rules)
 		if compileErr != nil || innerNode == nil {
 			return node
 		}
@@ -194,7 +208,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		// Compile the inner WHERE, recursively optimize to decorrelate nested
 		// subqueries (e.g., the max subquery in the argmax pattern), then
 		// decompile back to produce optimized WHERE clauses.
-		innerNode, compileErr := Compile(decorrelated)
+		innerNode, compileErr := Compile(decorrelated, lj.Rules)
 		if compileErr != nil || innerNode == nil {
 			return rebuildWithChildren(node, children)
 		}
@@ -251,6 +265,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 				Binding:         query.RelationBinding{Variables: output},
 				Output:          output,
 				DefaultValues:   nil,
+				Rules:           lj.Rules,
 			},
 		}
 	}
