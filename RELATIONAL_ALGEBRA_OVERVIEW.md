@@ -280,7 +280,7 @@ propagate rather than being interpreted as a missing branch.
 Outer selection leaves a single relation streaming. A form's branches run over
 windows of the subject, one tuple doubling to the cap, so the subject is read
 once and never held whole, and the first result follows one pull. Each window
-is observable through `or-fallback/window`, which carries its ordinal, its
+is observable through `scope/window`, which carries the form, its ordinal, its
 tuple count and its distinct key count. A window's keys bind the branch's
 patterns. At or below the matcher's boundary, `executor.SmallBindingBoundary`,
 which is also the cap's default, a binding of several keys is served by one

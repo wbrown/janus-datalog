@@ -94,7 +94,13 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 					fusedCount = count
 				}
 			}
-			if fusedCount == 0 {
+			if fusedCount == 0 && streamsThroughAPattern(c, groups) {
+				var err error
+				groups, err = e.executeBoundPattern(ctx, c, groups)
+				if err != nil {
+					return nil, fmt.Errorf("clause %d (pattern) failed: %w", i, err)
+				}
+			} else if fusedCount == 0 {
 				patternQuery := &query.Query{
 					Find:  q.Find,
 					In:    q.In,
@@ -171,12 +177,10 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 			}
 
 		case *query.SubqueryPattern:
-			newRel, err := e.executeSubquery(ctx, c, groups)
+			var err error
+			groups, err = e.executeSubquery(ctx, c, groups)
 			if err != nil {
 				return nil, fmt.Errorf("clause %d (subquery) failed: %w", i, err)
-			}
-			if newRel != nil {
-				groups = append(groups, newRel)
 			}
 			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(e.options.Handler))
@@ -552,22 +556,21 @@ func replaceGroups(groups Relations, consumed []int, replacement Relation) Relat
 	return result
 }
 
-// replaceConsumedOrGroups puts a form's result in the place of the groups
-// its subject was joined from, so the collapse that follows joins nothing
-// the result already carries, and reports the replacement. A result whose
-// subject consumed no group, the unit relation's, is appended as a new
-// group.
-func replaceConsumedOrGroups(groups Relations, relation Relation) Relations {
-	orRelation, ok := relation.(*OrFallbackRelation)
-	if !ok || len(orRelation.consumedGroups) == 0 {
+// replaceConsumedGroups puts a form's result in the place of the groups its
+// subject was joined from, consumed, so the collapse that follows joins
+// nothing the result already carries, and reports the replacement through
+// handler. A result whose subject consumed no group, the unit relation's,
+// is appended as a new group, with no report.
+func replaceConsumedGroups(groups Relations, consumed []int, relation Relation, handler annotations.Handler) Relations {
+	if len(consumed) == 0 {
 		return append(groups, relation)
 	}
-	result := replaceGroups(groups, orRelation.consumedGroups, relation)
-	if orRelation.options.Handler != nil {
-		orRelation.options.Handler(annotations.Event{
+	result := replaceGroups(groups, consumed, relation)
+	if handler != nil {
+		handler(annotations.Event{
 			Name: annotations.OrOuterReplaced,
 			Data: map[string]interface{}{
-				"consumed_groups":  len(orRelation.consumedGroups),
+				"consumed_groups":  len(consumed),
 				"remaining_groups": len(result),
 			},
 		})
@@ -1191,256 +1194,178 @@ func (e *DefaultQueryExecutor) executePredicate(ctx *Context, pred query.Predica
 	return append([]Relation{result}, otherRels...), nil
 }
 
-// executeSubquery executes a nested subquery
-// Subqueries produce new relations from nested query execution
-func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.SubqueryPattern, groups []Relation) (result Relation, resultErr error) {
-	// Record the per-input-combination execution path.
-	if e.options.Handler != nil {
-		e.options.Handler(annotations.Event{
-			Name: annotations.SubqueryExecutorPath,
-			Data: map[string]interface{}{
-				"path":         "Per-combination QueryExecutor",
-				"query":        subq.Query,
-				"input_count":  len(subq.Inputs),
-				"groups_count": len(groups),
-			},
-		})
+// executeSubquery runs the subquery composed over the modules: the inner
+// query is one body under the call's substitution, framed over its data
+// inputs with the inner :find as written, aggregates included, and the
+// subject is the groups holding an argument's symbol or a binding symbol,
+// joined into one, or the unit relation when none holds one. The result, a
+// streaming relation over the subject's symbols and the binding symbols the
+// subject lacks, yields each subject tuple joined with the body's answers for
+// its combination, and stands in the place of the groups it consumed. A
+// constant argument and an argument the environment alone binds ride the
+// frames' environment relation under the inner symbol, so every combination
+// carries the value; a collection input expands in the frame's key to one
+// combination per member; a binding symbol the subject or the environment
+// binds is a carried output, joined after the probe and never bound into the
+// inner query. An argument nothing binds and a refusal of the body's plan are
+// the clause's errors, and a failure of the body's scan is the result's,
+// surfacing when it is driven.
+func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.SubqueryPattern, groups Relations) (Relations, error) {
+	inner := query.InputSymbols(subq.Query.In)
+	bound := subq.Binding.BoundVariables()
+
+	// The call's substitution, read from the text: each inner :in symbol
+	// stands for the variable argument at its place, and each inner :find
+	// element's symbol for the binding variable at its place. A constant
+	// argument's symbol stands for nothing, so the presentation drops it.
+	var from, to, given, members []query.Symbol
+	for position, sym := range inner {
+		if sym == nil {
+			continue
+		}
+		given = append(given, sym)
+		if arg, ok := subq.Inputs[position].(query.Variable); ok {
+			from = append(from, sym)
+			to = append(to, arg.Name)
+		}
+	}
+	for _, spec := range subq.Query.In {
+		if collection, ok := spec.(query.CollectionInput); ok {
+			members = append(members, collection.Symbol)
+		}
+	}
+	from = append(from, extractFindSymbols(subq.Query.Find)...)
+	to = append(to, bound...)
+	subst, err := query.SubstitutionOf(from, to)
+	if err != nil {
+		return nil, err
 	}
 
-	// Extract which input symbols we need from the outer query
-	var inputSymbols []query.Symbol
-	for _, input := range subq.Inputs {
-		switch inp := input.(type) {
-		case query.Variable:
-			inputSymbols = append(inputSymbols, inp.Name)
+	// The subject: the groups holding an argument's symbol or a binding
+	// symbol.
+	var needed []query.Symbol
+	for _, sym := range to {
+		if !query.ContainsSymbol(needed, sym) {
+			needed = append(needed, sym)
+		}
+	}
+	subject, consumed := e.findOuterRelation(needed, groups)
+	outerSyms := subject.Symbols()
+
+	// What the body is given, ordered against the subject: the inner symbols
+	// standing for a subject symbol lead, in the subject's order, and the
+	// rest follow. The key is the subject's symbols an argument or the
+	// binding names, in the subject's order.
+	var runSyms, key []query.Symbol
+	for _, outerSym := range outerSyms {
+		for _, sym := range given {
+			if standsFor, ok := subst.Of(sym); ok && standsFor == outerSym && !query.ContainsSymbol(runSyms, sym) {
+				runSyms = append(runSyms, sym)
+			}
+		}
+		if query.ContainsSymbol(needed, outerSym) {
+			key = append(key, outerSym)
+		}
+	}
+	for _, sym := range given {
+		if !query.ContainsSymbol(runSyms, sym) {
+			runSyms = append(runSyms, sym)
+		}
+	}
+
+	// The frames' environment relation: one tuple over the inner symbols the
+	// subject lacks, a constant argument's value and the enclosing
+	// environment's value of an argument it alone binds.
+	var enclosingSyms []query.Symbol
+	var enclosing Tuple
+	if env := ctx.Environment(); env != nil {
+		enclosingSyms, enclosing = environmentTuple(env)
+	}
+	var environmentSyms []query.Symbol
+	var environmentValues Tuple
+	for position, sym := range inner {
+		if sym == nil {
+			continue
+		}
+		switch arg := subq.Inputs[position].(type) {
 		case query.Constant:
-			// Check if it's a source marker
-			if sym, ok := inp.Value.(query.Symbol); ok && sym.IsSource() {
-				inputSymbols = append(inputSymbols, sym)
+			environmentSyms = append(environmentSyms, sym)
+			environmentValues = append(environmentValues, arg.Value)
+		case query.Variable:
+			if query.ContainsSymbol(outerSyms, arg.Name) {
+				continue
 			}
-			// Other constants don't need extraction
-		}
-	}
-
-	// Mark groups cacheable before extracting input combinations so the outer
-	// query can replay them later. Materialize() on StreamingRelation enables
-	// lazy caching; it does not drain the iterator here.
-	materializedGroups := make([]Relation, len(groups))
-	for i, g := range groups {
-		materializedGroups[i] = g.Materialize()
-	}
-
-	// Combine all groups into a single relation for extracting input combinations
-	var combinedRel Relation
-	if len(materializedGroups) == 0 {
-		// No input groups - check if subquery has variable inputs that need outer bindings
-		hasVariableInputs := false
-		for _, input := range subq.Inputs {
-			if _, ok := input.(query.Variable); ok {
-				hasVariableInputs = true
-				break
+			pos := query.SymbolIndex(enclosingSyms, arg.Name)
+			if pos < 0 {
+				return nil, fmt.Errorf("subquery input %s is not bound in the enclosing scope", arg.Name)
 			}
-		}
-		if hasVariableInputs {
-			return nil, fmt.Errorf("no input groups for subquery with variable inputs")
-		}
-		// No variable inputs - execute subquery once with empty input combination
-		inputRelations, err := subqueryInputRelations(subq, nil, nil, e.options)
-		if err != nil {
-			return nil, fmt.Errorf("subquery input binding failed: %w", err)
-		}
-		// An attribute the subquery's inputs bind to a pattern's attribute
-		// position exists only here, so the subquery asks the vocabulary
-		// about it; the enclosing query's check covered the attributes the
-		// body names.
-		if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
-			if err := refuseBoundAttributes(vocabulary, subq.Query, inputRelations); err != nil {
-				return nil, err
-			}
-		}
-		// The subquery is its own query scope: its environment comes from its
-		// own :in bindings, never the enclosing scope's (whose parameters an
-		// inner name collision must not capture).
-		innerCtx := ctx.WithEnvironment(environmentRelationFromInputs(subq.Query.In, inputRelations))
-		nestedGroups, err := e.Execute(innerCtx, subq.Query, inputRelations)
-		if err != nil {
-			return nil, fmt.Errorf("nested query execution failed: %w", err)
-		}
-		if len(nestedGroups) == 0 {
-			// Empty result - return empty relation with binding symbols
-			return NewMaterializedRelationWithOptions(subq.Binding.BoundVariables(), nil, e.options), nil
-		}
-		if len(nestedGroups) > 1 {
-			return nil, fmt.Errorf("subquery returned %d disjoint groups - expected 1", len(nestedGroups))
-		}
-		// Apply binding form (no outer input values to join with)
-		boundResult, err := applyBindingForm(nestedGroups[0], subq.Binding, nil, nil)
-		if err != nil {
-			return nil, fmt.Errorf("binding form application failed: %w", err)
-		}
-		return boundResult, nil
-	} else if len(materializedGroups) == 1 {
-		combinedRel = materializedGroups[0]
-	} else {
-		// Multiple groups - need to combine them
-		combinedRel = Relations(materializedGroups).Product()
-	}
-
-	// The unique input combinations ARE a relation: the outer relation
-	// projected onto the data input symbols (source markers are execution
-	// context, not data). Projection's set semantics is the dedup — typed
-	// value identity, never string rendering. With no data inputs the
-	// zero-symbol unit is the one (empty) combination.
-	dataSymbols := filterSourceSymbols(inputSymbols)
-	var combos Relation
-	if len(dataSymbols) == 0 {
-		combos = NewUnitRelation(e.options)
-	} else {
-		projected, err := combinedRel.Project(dataSymbols)
-		if err != nil {
-			return nil, fmt.Errorf("subquery input projection failed: %w", err)
-		}
-		combos = projected
-	}
-	// Execute subquery for each combination — each tuple of the projected
-	// relation. Projection over a product streams, so the combination count
-	// is known only after the pass; the annotation is emitted once the
-	// combinations have been consumed.
-	var allResults []Relation
-	combinationCount := 0
-	combosRequireCopy := combos.RequiresCopy()
-
-	comboIter := combos.Iterator()
-	// A failed Close must not present a clean result: capture the Close error
-	// on every path, without double-closing.
-	defer func() {
-		if closeErr := comboIter.Close(); closeErr != nil && resultErr == nil {
-			result = nil
-			resultErr = fmt.Errorf("subquery input combinations failed: %w", closeErr)
-		}
-	}()
-	for comboIter.Next() {
-		combo := comboIter.Tuple()
-		// Each combination outlives its iteration (applyBindingForm carries it
-		// into the bound result), so copy when the source iterator reuses its
-		// tuple workspace.
-		if combosRequireCopy {
-			combo = copyTuple(combo)
-		}
-		combinationCount++
-		// Create input relations for this combination
-		inputRelations, err := subqueryInputRelations(subq, dataSymbols, combo, e.options)
-		if err != nil {
-			return nil, fmt.Errorf("subquery input binding failed: %w", err)
-		}
-
-		// One event per input relation, naming where it sits in the list.
-		//
-		// "relation.position", not "index": in this engine an index is one of the
-		// eight physical orderings, and annotations.KeyIndex carries an
-		// IndexType. A second meaning under the same key would reach
-		// Database.Analyze, which prints Data[KeyIndex] for every event it traces
-		// and would render this ordinal as though it named a run.
-		if e.options.Handler != nil {
-			for i, rel := range inputRelations {
-				e.options.Handler(annotations.Event{
-					Name: annotations.SubqueryInputRelation,
-					Data: map[string]interface{}{
-						"relation.position": i,
-						"symbols":           rel.Symbols(),
-						"size":              rel.Size(),
-					},
-				})
-			}
-		}
-
-		// An attribute this combination binds to a pattern's attribute
-		// position exists only here, so the subquery asks the vocabulary
-		// about it.
-		if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
-			if err := refuseBoundAttributes(vocabulary, subq.Query, inputRelations); err != nil {
-				return nil, err
-			}
-		}
-		// Execute the nested query recursively using QueryExecutor. The
-		// subquery is its own query scope: its environment comes from its own
-		// :in bindings for this combination, never the enclosing scope's.
-		innerCtx := ctx.WithEnvironment(environmentRelationFromInputs(subq.Query.In, inputRelations))
-		nestedGroups, err := e.Execute(innerCtx, subq.Query, inputRelations)
-		if err != nil {
-			return nil, fmt.Errorf("nested query execution failed: %w", err)
-		}
-
-		// For subqueries, we expect a single result group (aggregations should have collapsed)
-		var nestedResult Relation
-		if len(nestedGroups) == 0 {
-			// No result groups — create empty relation with the subquery's output symbols
-			// so applyBindingForm can produce a properly-typed empty result.
-			nestedResult = NewMaterializedRelation(subq.Binding.BoundVariables(), []Tuple{})
-		} else if len(nestedGroups) > 1 {
-			return nil, fmt.Errorf("subquery returned %d disjoint groups - expected 1", len(nestedGroups))
-		} else {
-			nestedResult = nestedGroups[0]
-		}
-
-		// Apply binding form to join results with outer query values
-		boundResult, err := applyBindingForm(nestedResult, subq.Binding, dataSymbols, combo)
-		if err != nil {
-			return nil, fmt.Errorf("binding form application failed: %w", err)
-		}
-
-		allResults = append(allResults, boundResult)
-	}
-	if err := comboIter.Error(); err != nil {
-		return nil, fmt.Errorf("subquery input combinations failed: %w", err)
-	}
-	if e.options.Handler != nil {
-		e.options.Handler(annotations.Event{
-			Name: annotations.SubqueryInputCombinations,
-			Data: map[string]interface{}{
-				"relation_groups":    len(materializedGroups),
-				"product":            len(materializedGroups) > 1,
-				"eager_materialized": false,
-				"combination_count":  combinationCount,
-			},
-		})
-	}
-
-	// Combine all results
-	if len(allResults) == 0 {
-		// No results - return empty relation with appropriate symbols
-		return NewMaterializedRelation(subq.Binding.BoundVariables(), []Tuple{}), nil
-	}
-
-	// Union all results (they should have the same schema)
-	return combineSubqueryResultsSimple(allResults), nil
-}
-
-// combineSubqueryResultsSimple combines multiple subquery results into a single relation
-func combineSubqueryResultsSimple(results []Relation) Relation {
-	if len(results) == 0 {
-		return nil
-	}
-	if len(results) == 1 {
-		return results[0]
-	}
-
-	// Collect all tuples
-	symbols := results[0].Symbols()
-	var allTuples []Tuple
-
-	var collectErr error
-	for _, result := range results {
-		if err := collectTuplesInto(&allTuples, result); err != nil && collectErr == nil {
-			collectErr = err
+			environmentSyms = append(environmentSyms, sym)
+			environmentValues = append(environmentValues, enclosing[pos])
+		default:
+			return nil, fmt.Errorf("unsupported subquery input element %T", arg)
 		}
 	}
-
-	mat := NewMaterializedRelation(symbols, allTuples)
-	if collectErr != nil {
-		mat.err = collectErr
+	var environment Relation
+	if len(environmentSyms) > 0 {
+		environment = NewMaterializedRelation(environmentSyms, []Tuple{environmentValues})
 	}
-	return mat
+
+	// The carried outputs: the binding symbols the subject or the environment
+	// binds, joined with the body's answer after the probe.
+	var carried []carriedOutput
+	for _, sym := range bound {
+		outerPos := query.SymbolIndex(outerSyms, sym)
+		envPos := query.SymbolIndex(enclosingSyms, sym)
+		if outerPos < 0 && envPos < 0 {
+			continue
+		}
+		output := carriedOutput{symbol: sym, outerPos: outerPos}
+		if outerPos < 0 {
+			output.envValue = enclosing[envPos]
+		}
+		carried = append(carried, output)
+	}
+
+	// The result's symbols: the subject's, then the binding symbols the
+	// subject lacks. The subject's keys survive when the body answers at most
+	// one tuple per subject tuple, every plain find variable a binding symbol
+	// the subject carries and the rest aggregates.
+	symbols := append([]query.Symbol(nil), outerSyms...)
+	for _, sym := range bound {
+		if !query.ContainsSymbol(outerSyms, sym) {
+			symbols = append(symbols, sym)
+		}
+	}
+	carriedSet := make(map[query.Symbol]bool, len(outerSyms))
+	for _, sym := range outerSyms {
+		carriedSet[sym] = true
+	}
+	atMostOne := relationBindingGroupsAreOuterBound(subq.Query, bound, carriedSet)
+	properties := orProperties(subject.Properties(), bound, nil, symbols, true, atMostOne)
+
+	f := framing{
+		form:        "subquery",
+		subject:     subject,
+		required:    given,
+		find:        subq.Query.Find,
+		given:       given,
+		runSyms:     runSyms,
+		key:         key,
+		environment: environment,
+		subst:       subst,
+		members:     members,
+	}
+	plans, err := frameBranches(e, ctx, [][]query.Clause{subq.Query.Where}, f)
+	if err != nil {
+		return nil, err
+	}
+	it := &subqueryIterator{
+		windowedIterator: newWindowedIterator(e, ctx, f, plans, e.options),
+		matchEmit:        matchEmit{outerSyms: outerSyms, outputSyms: symbols, carried: carried},
+	}
+	it.policy = formPolicy{answer: it.answer}
+	result := NewStreamingRelationWithProperties(symbols, it, e.options, properties)
+	return replaceConsumedGroups(groups, consumed, result, e.options.Handler), nil
 }
 
 // hasPulls checks if any find element is a pull expression

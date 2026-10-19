@@ -213,9 +213,9 @@ func TestOrFallbackDoesNotTreatBranchErrorAsNoMatch(t *testing.T) {
 // A form's result stands in the place of the groups its subject consumed,
 // at the first consumed position, with every other group kept in order, and
 // the replacement is reported once with the consumed and remaining counts.
-// A result whose subject consumed no group is appended as a new group, as
-// is a relation that is not a form's result, with no report.
-func TestReplaceConsumedOrGroupsStandsInForTheConsumedGroups(t *testing.T) {
+// A result whose subject consumed no group is appended as a new group, with
+// no report, whatever the result's type.
+func TestReplaceConsumedGroupsStandsInForTheConsumedGroups(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	value := datalog.NewSymbol("?value")
 	unrelated := datalog.NewSymbol("?unrelated")
@@ -233,30 +233,24 @@ func TestReplaceConsumedOrGroupsStandsInForTheConsumedGroups(t *testing.T) {
 		Function: &query.GroundFunction{Value: "selected"},
 		Binding:  value,
 	}}}
-	form := func(consumed []int) *OrFallbackRelation {
-		rel := NewOrFallbackRelation(exec, NewContext(), []query.Symbol{entity}, []query.Symbol{value}, branches, first, options, true)
-		rel.consumedGroups = consumed
-		return rel
-	}
+	form := NewOrFallbackRelation(exec, NewContext(), []query.Symbol{entity}, []query.Symbol{value}, branches, first, options, true)
 
-	consuming := form([]int{0, 2})
-	replaced := replaceConsumedOrGroups(Relations{first, other, last}, consuming)
+	replaced := replaceConsumedGroups(Relations{first, other, last}, []int{0, 2}, form, options.Handler)
 	require.Len(t, replaced, 2)
-	require.Same(t, consuming, replaced[0], "the result stands at the first consumed position")
+	require.Same(t, form, replaced[0], "the result stands at the first consumed position")
 	require.Same(t, other, replaced[1], "the group the subject did not consume is kept")
 	require.Len(t, replacements, 1)
 	require.Equal(t, 2, replacements[0].Data["consumed_groups"])
 	require.Equal(t, 2, replacements[0].Data["remaining_groups"])
 
-	unconsuming := form(nil)
-	appended := replaceConsumedOrGroups(Relations{other}, unconsuming)
+	appended := replaceConsumedGroups(Relations{other}, nil, form, options.Handler)
 	require.Len(t, appended, 2)
 	require.Same(t, other, appended[0])
-	require.Same(t, unconsuming, appended[1], "a result over the unit relation is a new group")
+	require.Same(t, form, appended[1], "a result over the unit relation is a new group")
 	require.Len(t, replacements, 1, "a result that consumed no group reports no replacement")
 
-	plain := replaceConsumedOrGroups(Relations{other}, last)
+	plain := replaceConsumedGroups(Relations{other}, nil, last, options.Handler)
 	require.Len(t, plain, 2)
-	require.Same(t, last, plain[1], "a relation that is not a form's result is appended")
+	require.Same(t, last, plain[1], "a result of any type is appended")
 	require.Len(t, replacements, 1)
 }

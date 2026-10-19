@@ -331,7 +331,7 @@ func TestAgreeingComparesVectorValues(t *testing.T) {
 	vector := datalog.NewSymbol("?vector")
 	id := datalog.NewIdentity("vector-filter")
 	value := []interface{}{int64(1), "two"}
-	it := &OrFallbackIterator{carried: []carriedOutput{{symbol: vector, outerPos: 1}}}
+	it := &matchEmit{carried: []carriedOutput{{symbol: vector, outerPos: 1}}}
 
 	require.NotPanics(t, func() {
 		kept := it.agreeing(

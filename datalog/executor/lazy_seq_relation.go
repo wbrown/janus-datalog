@@ -47,6 +47,20 @@ func (r *LazySeqRelation) Symbols() []query.Symbol { return r.symbols }
 func (r *LazySeqRelation) Properties() RelationProperties {
 	return r.properties
 }
+
+// Rename is the relation under the substitution, over the same shared seq.
+func (r *LazySeqRelation) Rename(subst query.Substitution) (Relation, error) {
+	symbols, err := subst.Rename(r.symbols)
+	if err != nil {
+		return nil, err
+	}
+	return &LazySeqRelation{
+		seq:        r.seq,
+		symbols:    symbols,
+		options:    r.options,
+		properties: r.properties.renameSymbols(subst),
+	}, nil
+}
 func (r *LazySeqRelation) Size() int                { return -1 } // streaming
 func (r *LazySeqRelation) RequiresCopy() bool       { return false }
 func (r *LazySeqRelation) Options() ExecutorOptions { return r.options }

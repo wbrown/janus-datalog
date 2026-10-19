@@ -322,65 +322,15 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	return NewMaterializedRelationWithProperties(newSymbols, newTuples, opts, properties), nil
 }
 
-// projectToSymbols projects a relation to the specified symbols
-func projectToSymbols(rel Relation, syms []query.Symbol, opts ExecutorOptions) (result Relation) {
-	relSyms := rel.Symbols()
-
-	// Build symbol index mapping
-	symIndices := query.SymbolIndexTable(relSyms, syms)
-	for _, idx := range symIndices {
-		if idx < 0 {
-			// Symbol not found - return empty relation
-			return NewMaterializedRelationWithOptions(syms, nil, opts)
-		}
-	}
-
-	// Failed iteration surfaces via result.err — replayed at the next public
-	// boundary by Iterator().Error(). Named return + closure so iter.Close runs
-	// on panic without losing the Close error.
-	var iterErr error
-	var projected []Tuple
-	iter := rel.Iterator()
-	defer func() {
-		if closeErr := iter.Close(); closeErr != nil && iterErr == nil {
-			iterErr = closeErr
-		}
-		if iterErr == nil || result == nil {
-			return
-		}
-		if m, ok := result.(*MaterializedRelation); ok && m.err == nil {
-			m.err = iterErr
-		}
-	}()
-
-	for iter.Next() {
-		tuple := iter.Tuple()
-		newTuple := make(Tuple, len(syms))
-		for i, idx := range symIndices {
-			newTuple[i] = tuple[idx]
-		}
-		projected = append(projected, newTuple)
-	}
-	if e := iter.Error(); iterErr == nil {
-		iterErr = e
-	}
-
-	result = NewMaterializedRelationWithOptions(syms, projected, opts)
-	return
-}
-
 // getUniqueCombinations extracts unique value combinations for the given symbols.
 func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, resultErr error) {
 	if rel == nil || len(syms) == 0 {
 		return nil, nil
 	}
 
-	relSyms := rel.Symbols()
-	symIndices := query.SymbolIndexTable(relSyms, syms)
-	for _, idx := range symIndices {
-		if idx < 0 {
-			return nil, nil
-		}
+	symIndices, err := query.SymbolIndexTable(rel.Symbols(), syms)
+	if err != nil {
+		return nil, fmt.Errorf("unique combinations: %w", err)
 	}
 
 	seen := NewTupleKeyMap()
@@ -433,17 +383,11 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 	var firstErr error
 
 	for _, rel := range relations {
-		// Build symbol index mapping
-		symIndices := query.SymbolIndexTable(rel.Symbols(), syms)
-		valid := true
-		for _, idx := range symIndices {
-			if idx < 0 {
-				valid = false
-				break
+		symIndices, err := query.SymbolIndexTable(rel.Symbols(), syms)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("union: %w", err)
 			}
-		}
-
-		if !valid {
 			continue
 		}
 

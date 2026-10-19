@@ -165,9 +165,12 @@ func TestSubqueryFindClauseBugWithAnnotations(t *testing.T) {
 			matcher.options = ExecutorOptionsFromPlanner(opts)
 			exec := NewExecutorWithOptions(matcher, nil, opts)
 
-			_, err := exec.Execute(q)
+			result, err := exec.Execute(q)
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
+			}
+			if _, err := CollectTuples(result, nil); err != nil {
+				t.Fatalf("Failed to read the result: %v", err)
 			}
 
 			if len(aggregationEvents) == 0 {

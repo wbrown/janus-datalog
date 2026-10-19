@@ -40,8 +40,7 @@ func TestProductPreservesDisjointSymbols(t *testing.T) {
 	mat := product.Materialize()
 	assert.Equal(t, 2, mat.Size())
 
-	dataSymbols := filterSourceSymbols([]query.Symbol{datalog.NewSymbol("?config")})
-	combos, err := mat.Project(dataSymbols)
+	combos, err := mat.Project([]query.Symbol{datalog.NewSymbol("?config")})
 	require.NoError(t, err)
 	assert.Equal(t, 1, combos.Size(), "should find 1 unique ?config value")
 }

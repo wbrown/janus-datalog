@@ -35,7 +35,7 @@ func windowItems(n int, attr datalog.Keyword) ([]datalog.Datom, []Tuple) {
 // window's ordinal, tuple count and distinct key count.
 func windowEvents(events []annotations.Event) (ordinals, tupleCounts, distinctKeys []int) {
 	for _, e := range events {
-		if e.Name != annotations.OrFallbackWindow {
+		if e.Name != annotations.ScopeWindow {
 			continue
 		}
 		ordinals = append(ordinals, e.Data["ordinal"].(int))
@@ -168,7 +168,7 @@ func TestFixpointContinuedAcrossWindowsDerivesEachTupleOnce(t *testing.T) {
 					for _, size := range e.Data["delta"].(map[query.Symbol]int) {
 						derived += size
 					}
-				case annotations.OrFallbackWindow:
+				case annotations.ScopeWindow:
 					windows++
 				}
 			}

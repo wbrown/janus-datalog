@@ -212,8 +212,10 @@ func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, q *qu
 // refuseBoundAttributes asks the default source, when it refuses attributes
 // its schema does not declare, about the attributes the input relations bind
 // to a pattern's attribute position. A query's inputs are asked about once,
-// before planning; a subquery's are asked about when it runs, per
-// combination of the outer values, since the attribute exists only then.
+// before planning, and the variables read are the attribute variables
+// DefaultSourceAttributeVariables collects, a variable a subquery's call
+// passes at the place of an inner :in symbol in an attribute position among
+// them.
 func refuseBoundAttributes(vocabulary AttributeVocabulary, q *query.Query, inputRelations []Relation) error {
 	if !vocabulary.RefusesUnknownAttributes(datalog.SymDollar) {
 		return nil

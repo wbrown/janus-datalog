@@ -71,13 +71,15 @@ func boundClosure(t *testing.T, text string, matcher PatternMatcher, opts planne
 	return NewExecutorWithOptions(matcher, nil, opts), magic.Rules, magic.Predicate, magic.Seed, NewContext().WithRules(rs)
 }
 
-// seedOf is a seed relation of the pages given, over one symbol.
-func seedOf(pages ...int) Relation {
+// seedOf is a seed relation of the pages given, over the seed predicate's
+// head under the rule set.
+func seedOf(rs *query.RuleSet, seed query.Symbol, pages ...int) Relation {
+	head, _ := rs.Head(seed)
 	tuples := make([]Tuple, len(pages))
 	for i, p := range pages {
 		tuples[i] = Tuple{page(p)}
 	}
-	return NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?start")}, tuples)
+	return NewMaterializedRelation(head, tuples)
 }
 
 // pairsFrom is every pair (i, j) with from ≤ i < j ≤ n: the closure of the
@@ -104,19 +106,19 @@ func TestRuleEvaluation_ALaterSeedDerivesTheNewKeysAlone(t *testing.T) {
 			exec, rules, predicate, seed, ctx := boundClosure(t, followsRulesText, NewMemoryPatternMatcher(chainDatoms(6)), opts)
 			ev := newRuleEvaluation(exec, rules, predicate, seed)
 
-			rel, err := ev.extend(ctx, seedOf(4))
+			rel, err := ev.extend(ctx, seedOf(rules, seed, 4))
 			require.NoError(t, err)
 			requireSamePairs(t, identityPairs(t, rel), pairsFrom(4, 6))
 			require.Equal(t, 3+3, events.entered(), "the magic facts of pages four to six and the three pairs from them")
 
 			events.events = nil
-			rel, err = ev.extend(ctx, seedOf(2))
+			rel, err = ev.extend(ctx, seedOf(rules, seed, 2))
 			require.NoError(t, err)
 			requireSamePairs(t, identityPairs(t, rel), pairsFrom(2, 6))
 			require.Equal(t, 2+7, events.entered(), "the magic facts of pages two and three and the seven pairs from them; the held facts enter no delta again")
 
 			events.events = nil
-			rel, err = ev.extend(ctx, seedOf(4))
+			rel, err = ev.extend(ctx, seedOf(rules, seed, 4))
 			require.NoError(t, err)
 			requireSamePairs(t, identityPairs(t, rel), pairsFrom(2, 6))
 			require.Zero(t, events.count(annotations.RulesIteration), "a window of keys the sets hold runs no iteration")
@@ -183,7 +185,7 @@ func TestRuleEvaluation_ALaterWindowReadsALowerStratumsNewTuplesAlone(t *testing
 				return want
 			}
 
-			rel, err := ev.extend(ctx, seedOf(4))
+			rel, err := ev.extend(ctx, seedOf(rules, seed, 4))
 			require.NoError(t, err)
 			pairs := identityPairs(t, rel)
 			requireSamePairs(t, pairs, closureFrom(4))
@@ -191,7 +193,7 @@ func TestRuleEvaluation_ALaterWindowReadsALowerStratumsNewTuplesAlone(t *testing
 			require.Equal(t, 1, matcher.keys[a], "the first window seeks the edge of page four")
 
 			matcher.keys = map[query.Symbol]int{}
-			rel, err = ev.extend(ctx, seedOf(2))
+			rel, err = ev.extend(ctx, seedOf(rules, seed, 2))
 			require.NoError(t, err)
 			requireSamePairs(t, identityPairs(t, rel), closureFrom(4, 2))
 			require.Equal(t, 1, matcher.keys[a], "the second window seeks the edge of page two alone, the magic fact it added, and not of page four")
@@ -210,7 +212,7 @@ func TestRuleEvaluation_CompleteReportsEachStratumOnce(t *testing.T) {
 			opts.Handler = events.handle
 			exec, rules, predicate, seed, ctx := boundClosure(t, followsRulesText, NewMemoryPatternMatcher(chainDatoms(6)), opts)
 			ev := newRuleEvaluation(exec, rules, predicate, seed)
-			for _, s := range []Relation{seedOf(4), seedOf(2)} {
+			for _, s := range []Relation{seedOf(rules, seed, 4), seedOf(rules, seed, 2)} {
 				_, err := ev.extend(ctx, s)
 				require.NoError(t, err)
 			}
@@ -272,16 +274,16 @@ func TestRuleEvaluation_RunStratumReturnsWhatTheWindowAdded(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec, rules, predicate, seed, ctx := boundClosure(t, followsRulesText, NewMemoryPatternMatcher(chainDatoms(6)), mode.plannerOptions())
 			ev := newRuleEvaluation(exec, rules, predicate, seed)
-			_, err := ev.extend(ctx, seedOf(4))
+			_, err := ev.extend(ctx, seedOf(rules, seed, 4))
 			require.NoError(t, err)
 			magic := ev.strata[0]
 			require.Equal(t, []query.Symbol{seed}, magic.stratum.Predicates, "the magic stratum is the lowest")
 
-			added, err := ev.runStratum(ctx, magic, seedOf(2), nil)
+			added, err := ev.runStratum(ctx, magic, seedOf(rules, seed, 2), nil)
 			require.NoError(t, err)
 			require.Len(t, added[seed], 2, "page two, the seed, and page three, the fact it reaches before the held ones")
 
-			added, err = ev.runStratum(ctx, magic, seedOf(5), nil)
+			added, err = ev.runStratum(ctx, magic, seedOf(rules, seed, 5), nil)
 			require.NoError(t, err)
 			require.Empty(t, added, "a seed the set holds adds nothing")
 		})
@@ -405,7 +407,7 @@ func TestFormInsideAFormContinuesOneEvaluationAcrossTheOuterWindows(t *testing.T
 			collected, err := CollectTuples(rel, nil)
 			require.NoError(t, err)
 			require.Len(t, collected, pages*(pages-1)/2+1+pages, "every reachable pair, the sink's end, and each page's none")
-			require.Greater(t, events.count(annotations.OrFallbackWindow), 1, "the subject spans several windows")
+			require.Greater(t, events.count(annotations.ScopeWindow), 1, "the subject spans several windows")
 			require.Equal(t, 2, events.count(annotations.RulesStratumBegin), "the magic stratum and the adorned stratum each begin once across the outer and the inner windows")
 			require.Equal(t, 2, events.count(annotations.RulesStratumComplete), "each stratum completes once, with the outer execution")
 			require.Equal(t, pages+pages*(pages-1)/2, events.entered(), "six magic facts and fifteen pairs, each entering a delta once")

@@ -76,9 +76,9 @@ func TestProjectionForMemoizesPerBranch(t *testing.T) {
 	symV := datalog.NewSymbol("?v")
 	symName := datalog.NewSymbol("?name")
 
-	it := &OrFallbackIterator{
-		outputSyms: []query.Symbol{symE, symV, symName},
+	it := &matchEmit{
 		outerSyms:  []query.Symbol{symE, symName},
+		outputSyms: []query.Symbol{symE, symV, symName},
 	}
 	branchSyms := []query.Symbol{symE, symV}
 
@@ -126,10 +126,10 @@ func TestBuildBranchFromEACacheDedupsOuterEntities(t *testing.T) {
 	// The run repeats e1 across distinct tuples. The built tuples must stay
 	// a set: one lookup and one tuple per entity.
 	run := NewMaterializedRelation([]query.Symbol{symE}, []Tuple{{e1}, {e1}, {e2}})
-	it := &OrFallbackIterator{
+	it := &OrFallbackIterator{windowedIterator: windowedIterator{
 		executor: exec,
-		joinSyms: []query.Symbol{symE},
-	}
+		framing:  framing{key: []query.Symbol{symE}},
+	}}
 	branch := []query.Clause{
 		&query.DataPattern{
 			Elements: []query.PatternElement{
@@ -170,14 +170,13 @@ func TestBuildBranchFromEACacheEnvironmentNarrowsV(t *testing.T) {
 	exec := newQueryExecutor(matcher, nil, ExecutorOptions{})
 
 	run := NewMaterializedRelation([]query.Symbol{symE}, []Tuple{{e1}, {e2}})
-	it := &OrFallbackIterator{
+	it := &OrFallbackIterator{windowedIterator: windowedIterator{
 		executor: exec,
-		joinSyms: []query.Symbol{symE},
-		envRel: NewMaterializedRelation(
-			[]query.Symbol{symV},
-			[]Tuple{{int64(2)}},
-		),
-	}
+		framing: framing{
+			key:         []query.Symbol{symE},
+			environment: NewMaterializedRelation([]query.Symbol{symV}, []Tuple{{int64(2)}}),
+		},
+	}}
 	branch := []query.Clause{
 		&query.DataPattern{
 			Elements: []query.PatternElement{

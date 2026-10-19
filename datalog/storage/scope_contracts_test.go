@@ -284,7 +284,7 @@ func TestEveryWindowSizeAnswersTheSameTuples(t *testing.T) {
 				opts.ScopeWindowCap = windowCap
 				d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
 					switch e.Name {
-					case annotations.OrFallbackCacheBuild:
+					case annotations.ScopeBranchBuild:
 						if e.Data["branch"].(int) == 1 {
 							invocationBuilds.Add(1)
 						}
@@ -315,16 +315,16 @@ func TestBranchIsEvaluatedOncePerWindowAndProbedPerTuple(t *testing.T) {
 			var invocationBuilds, groundBuilds, outerTuples, windows atomic.Int64
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: func(e annotations.Event) {
 				switch e.Name {
-				case annotations.OrFallbackCacheBuild:
+				case annotations.ScopeBranchBuild:
 					switch e.Data["branch"].(int) {
 					case 0:
 						invocationBuilds.Add(1)
 					case 1:
 						groundBuilds.Add(1)
 					}
-				case annotations.OrFallbackOuterTuple:
+				case annotations.ScopeSubjectTuple:
 					outerTuples.Add(1)
-				case annotations.OrFallbackWindow:
+				case annotations.ScopeWindow:
 					windows.Add(1)
 				}
 			}})
@@ -359,11 +359,11 @@ func TestOuterTupleEventFiresPerSubjectTuple(t *testing.T) {
 				opts.ScopeWindowCap = windowCap
 				d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
 					switch e.Name {
-					case annotations.OrFallbackOuterTuple:
+					case annotations.ScopeSubjectTuple:
 						outerTuples.Add(1)
-					case annotations.OrFallbackCacheBuild:
+					case annotations.ScopeBranchBuild:
 						cacheBuilds.Add(1)
-					case annotations.OrFallbackWindow:
+					case annotations.ScopeWindow:
 						windows.Add(1)
 					}
 				}})
@@ -542,20 +542,30 @@ func TestSubqueryAfterAFormAnswersOverItsStreamingResult(t *testing.T) {
 	}
 }
 
-// A subquery whose inner query holds an invocation is built once over the
-// run: the invocation seeds one rewrite and one fixpoint from every node at
-// once, whatever the number of nodes, and each node is answered beside the
-// count of nodes it reaches, grouped by the input; the sink, reaching none,
-// takes no tuple.
-func TestSubqueryHoldingAnInvocationIsBuiltOnceOverTheRun(t *testing.T) {
+// A subquery whose inner query holds an invocation is built once per window
+// and rewritten once over the run: under a cap of two tuples the five nodes
+// are three windows, the inner query is built once over each, and the
+// invocation seeds one rewrite from every node at once, its fixpoint
+// continued across the windows. Each node is answered beside the count of
+// nodes it reaches, grouped by the input; the sink, reaching none, takes no
+// tuple.
+func TestSubqueryHoldingAnInvocationIsBuiltOncePerWindow(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			counts := &ruleEventCounts{}
-			var cacheBuilds atomic.Int64
-			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: func(e annotations.Event) {
+			var builds, windows atomic.Int64
+			opts := mode.plannerOptions()
+			opts.ScopeWindowCap = 2
+			d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
 				counts.handle(e)
-				if e.Name == annotations.OrFallbackCacheBuild {
-					cacheBuilds.Add(1)
+				if e.Data[annotations.KeyForm] != "subquery" {
+					return
+				}
+				switch e.Name {
+				case annotations.ScopeBranchBuild:
+					builds.Add(1)
+				case annotations.ScopeWindow:
+					windows.Add(1)
 				}
 			}})
 			g := writeGraph(t, d, chain(5))
@@ -563,7 +573,8 @@ func TestSubqueryHoldingAnInvocationIsBuiltOnceOverTheRun(t *testing.T) {
 			require.NoError(t, err)
 			require.ElementsMatch(t, []string{"n1>4", "n2>3", "n3>2", "n4>1"}, g.tuples(t, rel))
 			require.Equal(t, 1, counts.snapshot()[0], "the invocation inside the inner query rewrites once, seeded from every node; the events:\n%s", counts.events())
-			require.Equal(t, int64(1), cacheBuilds.Load(), "the inner query holding the invocation is built once over the run")
+			require.Equal(t, int64(3), windows.Load(), "under a cap of two the five nodes are three windows")
+			require.Equal(t, int64(3), builds.Load(), "the inner query holding the invocation is built once per window")
 		})
 	}
 }
@@ -645,6 +656,286 @@ func TestAggregateNotReadingTheInputIsPairedWithEveryRunTuple(t *testing.T) {
 			rel, err := d.Query(`[:find ?e ?k :where [?e :t/n _] [(q [:find (count ?s) :in $ ?e :where [?s :t/s _]] $ ?e) [[?k] ...]]]`)
 			require.NoError(t, err)
 			require.Equal(t, []string{"e1 3", "e2 3"}, renderedRows(t, rel, names))
+		})
+	}
+}
+
+// A subquery whose inputs span two groups reads their product once: each
+// pair of an :t/x holder and a :t/y holder is answered beside the holder of
+// their sum, in every written order on both planner paths.
+func TestSubqueryInputsSpanningTwoGroupsAreReadAsTheirProduct(t *testing.T) {
+	entities := map[string][]fact{
+		"a1":  {{":t/x", int64(1)}},
+		"a2":  {{":t/x", int64(2)}},
+		"b1":  {{":t/y", int64(10)}},
+		"h11": {{":t/sum", int64(11)}},
+		"h12": {{":t/sum", int64(12)}},
+	}
+	clauses := []string{
+		`[?a :t/x ?x]`,
+		`[?b :t/y ?y]`,
+		`[(q [:find ?h :in $ ?x ?y :where [(+ ?x ?y) ?s] [?h :t/sum ?s]] $ ?x ?y) [[?h] ...]]`,
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			everyOrder(t, d, names, "?a ?b ?h", clauses, []string{"a1 b1 h11", "a2 b1 h12"})
+		})
+	}
+}
+
+// A binding symbol the scope already binds is joined with the subquery's
+// result and never superseded, under a non-aggregating inner query and an
+// aggregating one: an entity is kept when its :t/n equals its :t/m, and when
+// its :t/n equals its count of :t/s referrers.
+func TestSubqueryBindingSymbolTheScopeBindsIsJoined(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/n", int64(1)}, {":t/m", int64(1)}},
+		"e2": {{":t/n", int64(2)}, {":t/m", int64(3)}},
+		"r1": {{":t/s", ref("e1")}},
+	}
+	inner := []struct {
+		name    string
+		clauses []string
+	}{
+		{"non-aggregating", []string{`[?e :t/n ?c]`, `[(q [:find ?c :in $ ?e :where [?e :t/m ?c]] $ ?e) [[?c] ...]]`}},
+		{"aggregating", []string{`[?e :t/n ?c]`, `[(q [:find (count ?s) :in $ ?e :where [?s :t/s ?e]] $ ?e) [[?c] ...]]`}},
+	}
+	for _, mode := range optimizerModes {
+		for _, q := range inner {
+			t.Run(mode.name+"/"+q.name, func(t *testing.T) {
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				names := namedEntities(t, d, entities)
+				everyOrder(t, d, names, "?e ?c", q.clauses, []string{"e1 1"})
+			})
+		}
+	}
+}
+
+// A subquery over an empty combination relation yields nothing: with no
+// entity carrying :t/absent, the inner query is given no combination, and the
+// query answers no tuple and no error.
+func TestSubqueryOverAnEmptyCombinationRelationYieldsNothing(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/n", int64(1)}},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			rel, err := d.Query(`[:find ?e ?k :where [?e :t/absent _] [(q [:find ?k :in $ ?e :where [?e :t/n ?k]] $ ?e) [[?k] ...]]]`)
+			require.NoError(t, err)
+			require.Empty(t, renderedRows(t, rel, names))
+		})
+	}
+}
+
+// A subquery answers under the enclosing names whatever the inner query's
+// names: the inner :in symbol stands for the call's argument and the inner
+// :find element for the binding's variable, and an inner name that is an
+// enclosing name in another role is the inner query's own. Each entity
+// carrying :t/n is answered beside its :t/m, in every written order on both
+// planner paths.
+func TestSubqueryAnswersUnderTheEnclosingNamesWhateverTheInnerNames(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/n", int64(1)}, {":t/m", int64(10)}},
+		"e2": {{":t/n", int64(2)}, {":t/m", int64(20)}},
+	}
+	inner := []struct {
+		name    string
+		clauses []string
+	}{
+		{"names of its own", []string{`[?e :t/n _]`, `[(q [:find ?v :in $ ?x :where [?x :t/m ?v]] $ ?e) [[?c] ...]]`}},
+		{"the enclosing names in other roles", []string{`[?e :t/n _]`, `[(q [:find ?e :in $ ?c :where [?c :t/m ?e]] $ ?e) [[?c] ...]]`}},
+	}
+	for _, mode := range optimizerModes {
+		for _, q := range inner {
+			t.Run(mode.name+"/"+q.name, func(t *testing.T) {
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				names := namedEntities(t, d, entities)
+				everyOrder(t, d, names, "?e ?c", q.clauses, []string{"e1 10", "e2 20"})
+			})
+		}
+	}
+}
+
+// One enclosing variable passed at two :in places equates the inner symbols
+// it stands for: an entity is answered its :t/a when its :t/b equals it, and
+// the entity whose two differ takes no tuple.
+func TestSubqueryPassingOneVariableAtTwoPlacesEquatesThem(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/a", int64(1)}, {":t/b", int64(1)}},
+		"e2": {{":t/a", int64(2)}, {":t/b", int64(3)}},
+	}
+	clauses := []string{`[?e :t/a _]`, `[(q [:find ?v :in $ ?x ?y :where [?x :t/a ?v] [?y :t/b ?v]] $ ?e ?e) [[?v] ...]]`}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			everyOrder(t, d, names, "?e ?v", clauses, []string{"e1 1"})
+		})
+	}
+}
+
+// A constant argument is a selection on its value: the inner query reads the
+// constant at its :in symbol, and the entity whose :t/n is the constant is
+// the one the binding, a symbol the scope binds, is joined with.
+func TestSubqueryWithAConstantArgumentSelectsOnItsValue(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/n", int64(1)}},
+		"e2": {{":t/n", int64(2)}},
+	}
+	clauses := []string{`[?e :t/n _]`, `[(q [:find ?h :in $ ?k :where [?h :t/n ?k]] $ 2) [[?e] ...]]`}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			everyOrder(t, d, names, "?e", clauses, []string{"e2"})
+		})
+	}
+}
+
+// A combination a later window carries again is read from the index and not
+// run: under a cap of one tuple, three entities over two groups are three
+// windows, and the inner query is built twice, once per group, the second
+// sight of a group answered from the build its first sight made. Each entity
+// is answered its group's tuples.
+func TestSubqueryRepeatedCombinationIsReadFromTheIndexNotRun(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/g", int64(1)}},
+		"e2": {{":t/g", int64(1)}},
+		"e3": {{":t/g", int64(2)}},
+		"m1": {{":t/in", int64(1)}, {":t/v", "a"}},
+		"m2": {{":t/in", int64(2)}, {":t/v", "b"}},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var builds, windows atomic.Int64
+			opts := mode.plannerOptions()
+			opts.ScopeWindowCap = 1
+			d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
+				if e.Data[annotations.KeyForm] != "subquery" {
+					return
+				}
+				switch e.Name {
+				case annotations.ScopeBranchBuild:
+					builds.Add(1)
+				case annotations.ScopeWindow:
+					windows.Add(1)
+				}
+			}})
+			names := namedEntities(t, d, entities)
+			rel, err := d.Query(`[:find ?e ?v :where [?e :t/g ?g] [(q [:find ?v :in $ ?g :where [?m :t/in ?g] [?m :t/v ?v]] $ ?g) [[?v] ...]]]`)
+			require.NoError(t, err)
+			require.ElementsMatch(t, []string{"e1 a", "e2 a", "e3 b"}, renderedRows(t, rel, names))
+			require.Equal(t, int64(3), windows.Load(), "under a cap of one each subject tuple is a window")
+			require.Equal(t, int64(2), builds.Load(), "the inner query is built once per group, and a group a later window carries again is read from the index")
+		})
+	}
+}
+
+// The collection spelling of a binding answers the relation over its symbol:
+// each entity carrying :t/n is answered beside its :t/m, as under the
+// relation spelling.
+func TestSubqueryCollectionBindingAnswersTheRelationOverItsSymbol(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/n", int64(1)}, {":t/m", int64(10)}},
+		"e2": {{":t/n", int64(2)}, {":t/m", int64(20)}},
+	}
+	clauses := []string{`[?e :t/n _]`, `[(q [:find ?v :in $ ?x :where [?x :t/m ?v]] $ ?e) [?c ...]]`}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			everyOrder(t, d, names, "?e ?c", clauses, []string{"e1 10", "e2 20"})
+		})
+	}
+}
+
+// A subquery inside a branch runs over the branch's window: the count with a
+// zero default answers each category its count or zero under every cap from
+// one tuple to the subject's size.
+func TestSubqueryInsideABranchRunsOverTheBranchsWindow(t *testing.T) {
+	entities := map[string][]fact{
+		"c1": {{":category/name", "books"}},
+		"c2": {{":category/name", "tools"}},
+		"c3": {{":category/name", "wire"}},
+		"p1": {{":product/category", ref("c1")}},
+		"p2": {{":product/category", ref("c1")}},
+		"p3": {{":product/category", ref("c3")}},
+	}
+	const text = `[:find ?category ?count :where [?c :category/name ?category] (or-default [(q [:find (count ?p) :in $ ?c :where [?p :product/category ?c]] $ ?c) [[?count] ...]] [(ground 0) ?count])]`
+	for _, mode := range optimizerModes {
+		for windowCap := 1; windowCap <= 3; windowCap++ {
+			t.Run(mode.name+"/"+windowCapNames[windowCap], func(t *testing.T) {
+				opts := mode.plannerOptions()
+				opts.ScopeWindowCap = windowCap
+				d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts})
+				names := namedEntities(t, d, entities)
+				rel, err := d.Query(text)
+				require.NoError(t, err)
+				require.ElementsMatch(t, []string{"books 2", "tools 0", "wire 1"}, renderedRows(t, rel, names))
+			})
+		}
+	}
+}
+
+// A count subquery inside a union branch, under a header whose output an
+// earlier clause binds, runs over the branch's window of the streaming
+// subject: the form's result stands in the subject's place and the subject
+// is read once, in every written order on both planner paths. The branch
+// holding the subquery binds the output to another value and answers
+// nothing, and an entity carrying :t/r and :t/q is kept when a :t/p referrer
+// reaches it through the other branch.
+func TestSubqueryInsideAUnionBranchUnderACarriedOutputReadsTheSubjectOnce(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/r", int64(1)}, {":t/q", int64(1)}},
+		"e2": {{":t/r", int64(1)}, {":t/q", int64(1)}},
+		"e3": {{":t/r", int64(1)}},
+		"l1": {{":t/p", ref("e1")}},
+	}
+	clauses := []string{
+		`[?e :t/r ?n]`,
+		`[?e ?a _]`,
+		`[(ground :t/q) ?a]`,
+		`(or (and [(ground :t/r) ?a] [(q [:find (count ?s) :in $ ?e :where [?s :t/p ?e]] $ ?e) [[?c] ...]]) (and [?l :t/p ?e] [?e ?a ?m]))`,
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			everyOrder(t, d, names, "?e", clauses, []string{"e1"})
+		})
+	}
+}
+
+// A not reading two required variables followed by an or whose branches
+// read the same groups runs each form over the streaming result of the
+// clauses before it: each form's result stands in its subject's place and
+// is read once, in every written order on both planner paths. A referrer's
+// target is answered beside every other referrer, since the not drops the
+// pair of a referrer with itself and the or's first branch holds for every
+// pair.
+func TestANotThenAnOrOverTheSameGroupsReadEachSubjectOnce(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {},
+		"e2": {},
+		"x1": {{":t/p", ref("e1")}},
+		"x2": {{":t/p", ref("e2")}},
+	}
+	clauses := []string{
+		`[?x :t/p ?e]`,
+		`[?y ?a _]`,
+		`[(ground :t/p) ?a]`,
+		`(not [(identity ?x) ?y] [(ground :t/p) ?a])`,
+		`(or [?m ?a ?l] (and [?m ?a ?x] [?e :t/p ?x]))`,
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			everyOrder(t, d, names, "?e ?y", clauses, []string{"e1 x2", "e2 x1"})
 		})
 	}
 }

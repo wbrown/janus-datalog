@@ -521,10 +521,10 @@ func testIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T, mode optimizerMo
 	_, err = executor.CollectTuples(result, nil)
 	require.NoError(t, err)
 
-	var sawIndex, sawSubqueryInput bool
+	var sawIndex, sawSubqueryBuild bool
 	for _, e := range events {
-		if e.Name == annotations.SubqueryInputRelation {
-			sawSubqueryInput = true
+		if e.Name == annotations.ScopeBranchBuild && e.Data[annotations.KeyForm] == "subquery" {
+			sawSubqueryBuild = true
 		}
 		raw, ok := e.Data[annotations.KeyIndex]
 		if !ok {
@@ -536,8 +536,8 @@ func testIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T, mode optimizerMo
 				"eight physical orderings and nothing else", e.Name, raw)
 	}
 	require.True(t, sawIndex, "the trace must contain an event naming the run it walked")
-	require.True(t, sawSubqueryInput,
-		"the subquery family must be in the trace, or this pins nothing")
+	require.True(t, sawSubqueryBuild,
+		"the subquery's build must be in the trace, or this pins nothing")
 }
 
 // TestCardinalityAnnotationKeyCarriesOnlyAKeyword is the sibling pin on

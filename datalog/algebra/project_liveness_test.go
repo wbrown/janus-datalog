@@ -106,6 +106,43 @@ func TestInsertJoinProjectsAcceptsExpressionOnlyRoot(t *testing.T) {
 	require.Equal(t, root.String(), rewritten.String())
 }
 
+// A join child whose projection onto the live symbols would be the join's
+// own output projection, beside a partner carrying nothing beyond the join
+// symbols, is left as it is: the projection above the join already projects
+// its output, and under a scope's framing the child's projection would
+// decompile to the scope's own body. A partner carrying a symbol of its own
+// keeps the child's projection.
+func TestInsertJoinProjectsLeavesAChildWhoseProjectionIsTheJoinsOwn(t *testing.T) {
+	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
+	cases := []struct {
+		name     string
+		text     string
+		terminal []query.Symbol
+	}{
+		{"no required run", `[:find ?entity :in $ % :where (scope/required) [?entity :item/tag ?tag]]`, []query.Symbol{entity}},
+		{"a required run", `[:find ?entity :in $ % :where (scope/required ?entity) [?entity :item/tag ?tag]]`, []query.Symbol{entity}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := parser.ParseQuery(tc.text)
+			require.NoError(t, err)
+			root, err := Compile(parsed, nil)
+			require.NoError(t, err)
+			rewritten, err := InsertJoinProjects(root, tc.terminal)
+			require.NoError(t, err)
+			require.Equal(t, root.String(), rewritten.String(), "the body's projection onto the live symbols is the join's own")
+		})
+	}
+
+	parsed, err := parser.ParseQuery(`[:find ?entity ?value :where [?entity :item/value ?value] [?entity :item/tag ?tag]]`)
+	require.NoError(t, err)
+	root, err := Compile(parsed, nil)
+	require.NoError(t, err)
+	rewritten, err := InsertJoinProjects(root, []query.Symbol{entity, value})
+	require.NoError(t, err)
+	require.NotEqual(t, root.String(), rewritten.String(), "the partner carries ?value of its own, so the tag scan is projected onto ?entity")
+}
+
 func compileProjectLivenessQuery(t *testing.T) *Node {
 	t.Helper()
 	parsed, err := parser.ParseQuery(

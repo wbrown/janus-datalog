@@ -101,7 +101,7 @@ func benchmarkNaiveClosure(b *testing.B, matcher PatternMatcher, rs *query.RuleS
 	ctx := NewContext().WithRules(rs)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		eval, err := exec.prepareStratum(ctx, rs, rs.Strata()[0], nil)
+		eval, err := exec.prepareStratum(ctx, rs, rs.Strata()[0])
 		if err != nil {
 			b.Fatal(err)
 		}

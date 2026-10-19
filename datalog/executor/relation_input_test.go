@@ -127,10 +127,13 @@ func TestRelationInputIteration(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Query failed: %v", err)
 				}
+				tuples, err := CollectTuples(result, nil)
+				if err != nil {
+					t.Fatalf("Failed to read the result: %v", err)
+				}
 
-				if result.Size() != 2 { // Alice and Bob
-					t.Errorf("Expected 2 results, got %d", result.Size())
-					t.Logf("Results:\n%s", result.Table())
+				if len(tuples) != 2 { // Alice and Bob
+					t.Errorf("Expected 2 results, got %d: %v", len(tuples), tuples)
 				}
 			})
 

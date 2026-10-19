@@ -21,9 +21,13 @@ import (
 // of an or-join, or-default-join or not-join shares the variables its header
 // names, and every other variable of the branch is its own. The walk descends
 // through NOT/NOT-JOIN bodies, OR/OR-JOIN/OR-DEFAULT branches and subquery
-// bodies, a subquery body being a scope of its own. A pattern on a named
-// source reads that source's attributes, not the database's, and a blank, or
-// a variable nothing binds to a keyword, names none in the attribute position.
+// bodies, a subquery body being a scope of its own. A subquery's call names,
+// at the place of an inner :in symbol standing in an attribute position of
+// the inner query, a keyword constant argument, and a variable argument the
+// scope binds to a keyword as it binds a pattern's attribute variable. A
+// pattern on a named source reads that source's attributes, not the
+// database's, and a blank, or a variable nothing binds to a keyword, names
+// none in the attribute position.
 //
 // The attributes named under no rule set are collected in one walk on the
 // first call of this method or its siblings and returned on every later one;
@@ -54,10 +58,11 @@ func (q *Query) DefaultSourceAttributes(rules *RuleSet) []datalog.Keyword {
 // DefaultSourceAttributeVariables returns every variable in the attribute
 // position of a data pattern on the default source, in order of first
 // appearance and each once, through NOT/NOT-JOIN bodies and
-// OR/OR-JOIN/OR-DEFAULT branches. A pattern on a named source reads that
+// OR/OR-JOIN/OR-DEFAULT branches, and every variable a subquery's call passes
+// at the place of an inner :in symbol that stands in such a position of the
+// inner query, at any depth of calls. A pattern on a named source reads that
 // source's attributes, a constant or blank in the attribute position is no
-// variable, and a subquery body's inputs are the subquery's own to check when
-// it runs, so its variables are the inner query's.
+// variable, and the inner query's other attribute variables are its own.
 func (q *Query) DefaultSourceAttributeVariables() []Symbol {
 	return q.collectRosters().variables
 }
@@ -187,8 +192,9 @@ func (r *attributeRoster) addInvocationConstant(c invocationConstant) {
 // addQuery records what a query names.
 // A pull pattern in :find reads the default source.
 // When outer holds, the query's inputs may bind a variable in an attribute
-// position, so its attribute variables are recorded; a subquery's inputs are
-// its own to check when it runs, so its are not.
+// position, so its attribute variables are recorded; an inner query's are
+// not, and the variables its call passes at its attribute-position :in
+// symbols are the enclosing scope's, which addCall records.
 func (r *attributeRoster) addQuery(q *Query, outer bool) {
 	for _, elem := range q.Find {
 		if pull, ok := elem.(FindPull); ok {
@@ -287,6 +293,7 @@ func (r *attributeRoster) walkScope(s *clauseScope, clauses []Clause, outer bool
 			}
 		case *SubqueryPattern:
 			r.addQuery(c.Query, false)
+			r.addCall(s, c, outer)
 		case *NotClause:
 			r.walkForm(s, nil, [][]Clause{c.Clauses}, outer)
 			return false
@@ -320,6 +327,35 @@ func (r *attributeRoster) walkForm(s *clauseScope, header Clause, branches [][]C
 		child := &clauseScope{}
 		form.branches = append(form.branches, child)
 		r.walkScope(child, branch, outer)
+	}
+}
+
+// addCall records what a subquery's call names through its inner :in. An
+// inner :in symbol standing in an attribute position of the inner query, at
+// any depth of calls, reads the argument at its place: a keyword constant is
+// an attribute the query names, and a variable is an attribute variable of
+// the enclosing scope, recorded when outer holds, which the scope resolves at
+// its end as it resolves a pattern's.
+func (r *attributeRoster) addCall(s *clauseScope, c *SubqueryPattern, outer bool) {
+	inner := c.Query.DefaultSourceAttributeVariables()
+	if len(inner) == 0 {
+		return
+	}
+	for position, sym := range InputSymbols(c.Query.In) {
+		if sym == nil || !ContainsSymbol(inner, sym) {
+			continue
+		}
+		switch a := c.Inputs[position].(type) {
+		case Constant:
+			if attr, ok := a.Value.(datalog.Keyword); ok {
+				r.add(attr)
+			}
+		case Variable:
+			if outer {
+				r.addVariable(a.Name)
+			}
+			s.attributeVariables = append(s.attributeVariables, a.Name)
+		}
 	}
 }
 

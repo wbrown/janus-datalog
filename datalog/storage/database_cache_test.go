@@ -49,40 +49,42 @@ func TestDatabasePlanCache(t *testing.T) {
 			// Clear cache to start fresh
 			db.ClearPlanCache()
 
-			// First execution should miss the cache
-			result1, err := exec1.Execute(q)
+			// First execution should miss the cache: the query's plan and the
+			// plan of the scope its second pattern runs over the first's
+			// streaming group, each planned under its own text.
+			tuples1, err := executor.CollectTuples(exec1.Execute(q))
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
 			}
-			if result1.Size() != 2 {
-				t.Errorf("Expected 2 results, got %d", result1.Size())
+			if len(tuples1) != 2 {
+				t.Errorf("Expected 2 results, got %d", len(tuples1))
 			}
 
-			// Check cache stats - should have 1 miss
+			// Check cache stats - should have 2 misses, the query's and the scope's
 			hits, misses, size := db.PlanCache().Stats()
-			if misses != 1 {
-				t.Errorf("Expected 1 miss, got %d", misses)
+			if misses != 2 {
+				t.Errorf("Expected 2 misses, got %d", misses)
 			}
-			if size != 1 {
-				t.Errorf("Expected cache size 1, got %d", size)
+			if size != 2 {
+				t.Errorf("Expected cache size 2, got %d", size)
 			}
 
 			// Second execution from different executor should hit the cache
-			result2, err := exec2.Execute(q)
+			tuples2, err := executor.CollectTuples(exec2.Execute(q))
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
 			}
-			if result2.Size() != 2 {
-				t.Errorf("Expected 2 results, got %d", result2.Size())
+			if len(tuples2) != 2 {
+				t.Errorf("Expected 2 results, got %d", len(tuples2))
 			}
 
-			// Check cache stats - should now have 1 hit
+			// Check cache stats - should now have 2 hits
 			hits, misses, size = db.PlanCache().Stats()
-			if hits != 1 {
-				t.Errorf("Expected 1 hit, got %d", hits)
+			if hits != 2 {
+				t.Errorf("Expected 2 hits, got %d", hits)
 			}
-			if misses != 1 {
-				t.Errorf("Expected 1 miss (unchanged), got %d", misses)
+			if misses != 2 {
+				t.Errorf("Expected 2 misses (unchanged), got %d", misses)
 			}
 
 			// Test 2: Clearing database cache affects all executors
@@ -94,14 +96,14 @@ func TestDatabasePlanCache(t *testing.T) {
 			}
 
 			// Next execution should miss again
-			_, err = exec1.Execute(q)
+			_, err = executor.CollectTuples(exec1.Execute(q))
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
 			}
 
 			hits, misses, size = db.PlanCache().Stats()
-			if misses != 1 {
-				t.Errorf("Expected 1 miss after clear, got %d", misses)
+			if misses != 2 {
+				t.Errorf("Expected 2 misses after clear, got %d", misses)
 			}
 		})
 	}

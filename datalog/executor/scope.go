@@ -11,35 +11,45 @@ import (
 )
 
 // A scope is a nested form's body as the executor runs it: a header, the
-// required run and the outputs, over a clause list. Each branch of an
-// or-join or an or-default-join is one scope under the form's header, and a
-// not-join's body is one under its all-required header. A scope reads the
-// header and nothing else of the enclosing scope.
+// required run and the find beyond it, over a clause list. Each branch of an
+// or-join or an or-default-join is one scope under the form's header, its
+// find the outputs as variables; a not-join's body is one under its
+// all-required header; and a subquery's inner query is one under its data
+// inputs, its find the inner :find as written, aggregates included. A scope
+// reads the header and nothing else of the enclosing scope.
 type scope struct {
 	required []query.Symbol
-	outputs  []query.Symbol
+	find     []query.FindElement
 	clauses  []query.Clause
+}
+
+// outputs is the symbols the scope's find binds beyond the required run, a
+// variable's own and an aggregate's by its display form.
+func (s scope) outputs() []query.Symbol {
+	return extractFindSymbols(s.find)
 }
 
 // header is the required run followed by the outputs: the symbols the
 // scope's query finds and its result carries.
 func (s scope) header() []query.Symbol {
-	header := make([]query.Symbol, 0, len(s.required)+len(s.outputs))
+	outputs := s.outputs()
+	header := make([]query.Symbol, 0, len(s.required)+len(outputs))
 	header = append(header, s.required...)
-	return append(header, s.outputs...)
+	return append(header, outputs...)
 }
 
 // query frames the scope as the query the executor plans: it finds the
-// header, declares $ and %, and opens with the invocation of scope/required
-// over the required run, followed by the scope's clauses. The planner leads
-// with the invocation, since scope/required is a seed-restricted predicate,
-// and the text carries the binding, so the plan caches under it.
+// required run as variables followed by the scope's find, declares $ and %,
+// and opens with the invocation of scope/required over the required run,
+// followed by the scope's clauses. The planner leads with the invocation,
+// since scope/required is a seed-restricted predicate, and the text carries
+// the binding, so the plan caches under it.
 func (s scope) query() *query.Query {
-	header := s.header()
-	find := make([]query.FindElement, len(header))
-	for i, sym := range header {
-		find[i] = query.FindVariable{Symbol: sym}
+	find := make([]query.FindElement, 0, len(s.required)+len(s.find))
+	for _, sym := range s.required {
+		find = append(find, query.FindVariable{Symbol: sym})
 	}
+	find = append(find, s.find...)
 	args := make([]query.PatternElement, len(s.required))
 	for i, sym := range s.required {
 		args[i] = query.Variable{Name: sym}
@@ -148,7 +158,7 @@ func (e *DefaultQueryExecutor) scopeResult(ctx *Context, form scope, results []R
 		return result, nil
 	}
 	var shared []query.Symbol
-	for _, sym := range form.outputs {
+	for _, sym := range form.outputs() {
 		if query.ContainsSymbol(env.Symbols(), sym) {
 			shared = append(shared, sym)
 		}
@@ -226,7 +236,11 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx *Context, clause *query.O
 		})
 	}
 
-	form := scope{required: clause.RequiredVars, outputs: clause.OutputVars}
+	find := make([]query.FindElement, len(clause.OutputVars))
+	for i, sym := range clause.OutputVars {
+		find[i] = query.FindVariable{Symbol: sym}
+	}
+	form := scope{required: clause.RequiredVars, find: find}
 	subject, consumed := e.findOuterRelation(form.header(), groups)
 	var result Relation
 	var err error
@@ -252,7 +266,7 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx *Context, clause *query.O
 			}
 			var branchResult Relation
 			var answered *MaterializedRelation
-			branchResult, err = e.runScope(ctx, scope{required: form.required, outputs: form.outputs, clauses: clause.Branches[i]}, run)
+			branchResult, err = e.runScope(ctx, scope{required: form.required, find: form.find, clauses: clause.Branches[i]}, run)
 			if err == nil {
 				answered, err = e.materialized(branchResult)
 			}
@@ -288,9 +302,8 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx *Context, clause *query.O
 		}
 	} else {
 		rel := NewOrFallbackRelation(e, ctx, clause.RequiredVars, clause.OutputVars, clause.Branches, subject, e.options, false)
-		rel.consumedGroups = consumed
 		result = rel
-		groups = replaceConsumedOrGroups(groups, rel)
+		groups = replaceConsumedGroups(groups, consumed, rel, e.options.Handler)
 	}
 
 	if handler != nil {
@@ -329,51 +342,43 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx *Context, clause *query.O
 func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx *Context, clause *query.OrDefaultJoinClause, groups Relations) (Relations, error) {
 	subject, consumed := e.findOuterRelation(clause.RequiredVars, groups)
 	rel := NewOrFallbackRelation(e, ctx, clause.RequiredVars, clause.OutputVars, clause.Branches, subject, e.options, true)
-	rel.consumedGroups = consumed
-	return replaceConsumedOrGroups(groups, rel), nil
+	return replaceConsumedGroups(groups, consumed, rel, e.options.Handler), nil
 }
 
-// executeNotJoinClause runs the body as a scope over the header and
-// anti-joins the subject, the groups holding the header, with the body's
-// result on the header variables the subject carries; the result's other
-// header variables hold the environment's values. A header the environment
-// alone binds has the unit relation as its subject, and the body's result
-// decides the whole scope: a result empties every group, keeping its
-// symbols, and none leaves the groups as they are.
+// executeNotJoinClause runs the not-join composed over the modules: its body
+// is framed under the all-required header as the fallback frames a branch,
+// the subject is the groups holding a header symbol, and the result, a
+// streaming relation over the subject's symbols with its properties, yields
+// the subject's tuples with no match in the subject's order and stands in
+// the place of the groups it consumed. A header the environment alone binds
+// has the unit relation as its subject: the body is built once over the
+// environment's tuple, and the result's one tuple over no symbol is kept
+// when the body has none and dropped when it has a result, which the find
+// boundary's verdict then reads. A refusal of the body's plan is the
+// clause's error, and a failure of the body's scan is the result's,
+// surfacing when it is driven.
 func (e *DefaultQueryExecutor) executeNotJoinClause(ctx *Context, clause *query.NotJoinClause, groups Relations) (Relations, error) {
-	run, subject, consumed, err := e.requiredRun(ctx, clause.RequiredVars, groups)
+	subject, consumed := e.findOuterRelation(clause.RequiredVars, groups)
+	runSyms, joinSyms := runSymbols(clause.RequiredVars, subject.Symbols())
+	environment, err := environmentRelation(ctx, runSyms, subject.Symbols())
 	if err != nil {
 		return nil, err
 	}
-	if run.Size() == 0 {
-		return groups, nil
+	f := framing{
+		form:        "not-join",
+		subject:     subject,
+		required:    clause.RequiredVars,
+		given:       clause.RequiredVars,
+		runSyms:     runSyms,
+		key:         joinSyms,
+		environment: environment,
 	}
-	result, err := e.runScope(ctx, scope{required: clause.RequiredVars, clauses: clause.Clauses}, run)
+	plans, err := frameBranches(e, ctx, [][]query.Clause{clause.Clauses}, f)
 	if err != nil {
 		return nil, err
 	}
-	var keys []query.Symbol
-	for _, sym := range clause.RequiredVars {
-		if query.ContainsSymbol(subject.Symbols(), sym) {
-			keys = append(keys, sym)
-		}
-	}
-	if len(keys) > 0 {
-		return replaceGroups(groups, consumed, AntiJoin(subject, result, keys)), nil
-	}
-	has, err := hasTuple(result)
-	if err != nil {
-		return nil, err
-	}
-	if !has {
-		return groups, nil
-	}
-	if len(groups) == 0 {
-		return Relations{}, nil
-	}
-	emptied := make(Relations, len(groups))
-	for i, rel := range groups {
-		emptied[i] = NewMaterializedRelationWithProperties(rel.Symbols(), nil, rel.Options(), rel.Properties())
-	}
-	return emptied, nil
+	it := &notJoinIterator{windowedIterator: newWindowedIterator(e, ctx, f, plans, e.options)}
+	it.policy = formPolicy{answer: it.answer}
+	result := NewStreamingRelationWithProperties(subject.Symbols(), it, e.options, subject.Properties())
+	return replaceConsumedGroups(groups, consumed, result, e.options.Handler), nil
 }

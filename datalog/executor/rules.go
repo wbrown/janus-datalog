@@ -3,7 +3,6 @@ package executor
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -13,19 +12,27 @@ import (
 )
 
 // executeRuleInvocation evaluates an invocation clause: the invoked
-// predicate's relation, read or derived as invocationSource says, projected
-// onto the arguments. A variable argument names its position, a repeated
-// variable equates its positions, a constant filters its position to the
-// value, a blank drops it, and a variable the environment binds filters its
-// position to the environment's value. The projection is applied as the
-// consumer pulls. An invocation whose arguments are distinct free variables
-// reads a materialized predicate in place, under the arguments' names. With
-// no variable left the result is the zero-symbol verdict: one empty tuple
-// when a tuple passes, none otherwise.
+// predicate's relation, read or derived as invocationSource says, under the
+// invocation's arguments. Each argument unifies with the head symbol at its
+// position, and the head's symbols are found in the source by symbol, once,
+// at construction; a source lacking one is the invocation's error. A variable
+// argument renames its head symbol, a repeated variable selects the tuples
+// whose two head positions agree, a constant selects on its value, a
+// variable the environment binds selects on the environment's value, and a
+// blank projects its head symbol away. The selection and projection are
+// applied as the consumer pulls. An invocation whose arguments are distinct
+// free variables is a rename of a materialized predicate: a relation over
+// its tuples under the arguments' names. With no variable left the result is
+// the zero-symbol verdict: one empty tuple when a tuple passes, none
+// otherwise.
 func (e *DefaultQueryExecutor) executeRuleInvocation(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, error) {
-	source, err := e.invocationSource(ctx, inv, groups)
+	source, head, err := e.invocationSource(ctx, inv, groups)
 	if err != nil {
 		return nil, err
+	}
+	positions, err := query.SymbolIndexTable(source.Symbols(), head)
+	if err != nil {
+		return nil, fmt.Errorf("rule invocation %s: %w", inv, err)
 	}
 	envSymbols, envTuple := environmentTuple(ctx.Environment())
 
@@ -35,23 +42,24 @@ func (e *DefaultQueryExecutor) executeRuleInvocation(ctx *Context, inv *query.Ru
 	var fixings []positionFixing
 	blankDropped := false
 	for i, arg := range inv.Args {
+		position := positions[i]
 		switch a := arg.(type) {
 		case query.Variable:
 			if j := query.SymbolIndex(symbols, a.Name); j >= 0 {
-				equalities = append(equalities, positionEquality{keep[j], i})
+				equalities = append(equalities, positionEquality{keep[j], position})
 				continue
 			}
 			if k := query.SymbolIndex(envSymbols, a.Name); k >= 0 {
-				fixings = append(fixings, positionFixing{i, envTuple[k]})
+				fixings = append(fixings, positionFixing{position, envTuple[k]})
 			}
 			symbols = append(symbols, a.Name)
-			keep = append(keep, i)
+			keep = append(keep, position)
 		case query.Blank:
 			blankDropped = true
 		case query.Constant:
-			fixings = append(fixings, positionFixing{i, a.Value})
+			fixings = append(fixings, positionFixing{position, a.Value})
 		case query.VectorConstant:
-			fixings = append(fixings, positionFixing{i, a.Values})
+			fixings = append(fixings, positionFixing{position, a.Values})
 		default:
 			return nil, fmt.Errorf("rule invocation %s: argument %d is %T", inv, i+1, arg)
 		}
@@ -90,11 +98,21 @@ func (e *DefaultQueryExecutor) executeRuleInvocation(ctx *Context, inv *query.Ru
 
 	renames := len(keep) == len(inv.Args)
 	if mat, ok := source.(*MaterializedRelation); ok && renames && len(fixings) == 0 {
-		view := newMaterializedRelationFromSet(symbols, mat.tuples, e.options, mat.properties.renameSymbols(mat.symbols, symbols))
-		view.err = mat.err
+		subst, err := query.SubstitutionOf(head, symbols)
+		if err != nil {
+			return nil, fmt.Errorf("rule invocation %s: %w", inv, err)
+		}
+		view, err := mat.Rename(subst)
+		if err != nil {
+			return nil, fmt.Errorf("rule invocation %s: %w", inv, err)
+		}
 		return view, nil
 	}
-	var it Iterator = &invocationIterator{inner: source.Iterator(), passes: passes, keep: keep, renames: renames}
+	asIs := renames && len(source.Symbols()) == len(head)
+	for i := 0; asIs && i < len(positions); i++ {
+		asIs = positions[i] == i
+	}
+	var it Iterator = &invocationIterator{inner: source.Iterator(), passes: passes, keep: keep, asIs: asIs}
 	if blankDropped {
 		// Dropping a free position can fold two tuples into one. A dropped
 		// constant, environment-bound or repeated position cannot, since the
@@ -104,28 +122,29 @@ func (e *DefaultQueryExecutor) executeRuleInvocation(ctx *Context, inv *query.Ru
 	return NewStreamingRelationWithProperties(symbols, it, e.options, deduplicatedProperties(symbols)), nil
 }
 
-// positionFixing fixes an invocation position to a value: a constant
+// positionFixing fixes a position of the source to a value: a constant
 // argument's, or the environment's for a variable it binds.
 type positionFixing struct {
 	position int
 	value    interface{}
 }
 
-// positionEquality equates two positions one variable names.
+// positionEquality equates two positions of the source one variable names.
 type positionEquality struct{ a, b int }
 
 // errInvocationHeld stops a verdict's pull at the first passing tuple.
 var errInvocationHeld = errors.New("rule invocation: a tuple passed")
 
-// invocationIterator projects the predicate's relation onto the invocation
-// as the consumer pulls: a tuple that passes the fixings and equalities is
-// read out at the kept positions, in the arguments' order. When every
-// position is kept in place the source's tuple is yielded as it is.
+// invocationIterator selects and projects the predicate's relation under the
+// invocation as the consumer pulls: a tuple that passes the fixings and
+// equalities is read out at the kept positions, in the arguments' order.
+// When the source's layout is the head's and every position is kept, the
+// source's tuple is yielded as it is.
 type invocationIterator struct {
 	inner   Iterator
 	passes  func(Tuple) bool
 	keep    []int
-	renames bool
+	asIs    bool
 	current Tuple
 }
 
@@ -135,7 +154,7 @@ func (it *invocationIterator) Next() bool {
 		if !it.passes(tuple) {
 			continue
 		}
-		if it.renames {
+		if it.asIs {
 			it.current = tuple
 			return true
 		}
@@ -155,17 +174,36 @@ func (it *invocationIterator) Close() error { return it.inner.Close() }
 
 func (it *invocationIterator) Error() error { return it.inner.Error() }
 
-// invocationSource is the relation an invocation reads. An invocation in a
-// body the fixpoint is running, or one a form hoisted, reads the relation
-// the scope holds under the symbol it invokes: a predicate's relation, or
-// the stratum's last delta under the predicate's delta symbol. Any other
-// invocation, the query's own or one in a subquery, is derived here.
-func (e *DefaultQueryExecutor) invocationSource(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, error) {
-	if rel, ok := ctx.Derived(inv.Name); ok {
-		return rel, nil
+// invocationSource is the relation an invocation reads, with its head, the
+// symbols the invocation's arguments unify with by position. An invocation
+// in a body the fixpoint is running, or one a form hoisted, reads the
+// relation the scope holds under the symbol it invokes: the required run
+// under scope/required, held over the required symbols by name, so its head
+// is the invocation's own arguments; or a predicate's relation, or the
+// stratum's last delta under the predicate's delta symbol, whose head is the
+// rule set's. Any other invocation, the query's own or one in a subquery, is
+// derived here.
+func (e *DefaultQueryExecutor) invocationSource(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, []query.Symbol, error) {
+	rel, held := ctx.Derived(inv.Name)
+	if !held {
+		return e.deriveInvocation(ctx, inv, groups)
 	}
-	rel, _, err := e.deriveInvocation(ctx, inv, groups)
-	return rel, err
+	if inv.Name == query.ScopeRequired {
+		head := make([]query.Symbol, len(inv.Args))
+		for i, arg := range inv.Args {
+			head[i] = arg.(query.Variable).Name
+		}
+		return rel, head, nil
+	}
+	rs := ctx.Rules()
+	if rs == nil {
+		return nil, nil, fmt.Errorf("rule invocation %s: no rule set was given for %%", inv)
+	}
+	head, ok := rs.Head(inv.Name)
+	if !ok {
+		return nil, nil, fmt.Errorf("rule invocation %s: the rule set declares no predicate %s", inv, inv.Name)
+	}
+	return rel, head, nil
 }
 
 // deriveInvocation evaluates an invocation's predicate at its clause: the
@@ -174,9 +212,10 @@ func (e *DefaultQueryExecutor) invocationSource(ctx *Context, inv *query.RuleInv
 // continuations, and otherwise an evaluation of this one run, completed at
 // once. The evaluation is created at the clause's first run through
 // invocationEvaluation and extended by every run with the seed the run's
-// bindings give. The relation is returned with the symbol it is the
-// relation of: the predicate's own, or the adorned one the rewrite derives.
-func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, query.Symbol, error) {
+// bindings give. The relation is returned with its head, the evaluation's
+// set's for the predicate it derives: the predicate's own, or the adorned
+// one the rewrite derives.
+func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, []query.Symbol, error) {
 	rs := ctx.Rules()
 	if rs == nil {
 		return nil, nil, fmt.Errorf("rule invocation %s: no rule set was given for %%", inv)
@@ -200,8 +239,9 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 	}
 	var seed Relation
 	if eval.seed != nil {
+		seedHead, _ := eval.rs.Head(eval.seed)
 		var err error
-		if seed, err = e.seedRelation(ctx, inv, bound, eval.seed, groups); err != nil {
+		if seed, err = e.seedRelation(ctx, inv, bound, seedHead, groups); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -212,7 +252,8 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 	if ctx.continued == nil {
 		eval.complete()
 	}
-	return rel, eval.predicate, nil
+	head, _ := eval.rs.Head(eval.predicate)
+	return rel, head, nil
 }
 
 // invocationEvaluation is the evaluation an invocation runs: its predicate
@@ -302,12 +343,12 @@ func groupBinding(groups []Relation, sym query.Symbol) int {
 	return -1
 }
 
-// seedRelation builds the seed of a rewritten set's magic predicate: one
-// tuple per combination of the bound variables' values, the environment's
-// value for a variable it binds and a group's values otherwise, with a
-// constant at its position. Its symbols name the seed predicate's positions,
-// which are its canonical symbols when no rule derives into it.
-func (e *DefaultQueryExecutor) seedRelation(ctx *Context, inv *query.RuleInvocation, bound []bool, seed query.Symbol, groups []Relation) (Relation, error) {
+// seedRelation builds the seed of a rewritten set's magic predicate, over
+// the seed predicate's head: one tuple per combination of the bound
+// variables' values, the environment's value for a variable it binds and a
+// group's values otherwise, with a constant at its position, each bound
+// position's value at the head position the rewrite gave it.
+func (e *DefaultQueryExecutor) seedRelation(ctx *Context, inv *query.RuleInvocation, bound []bool, head []query.Symbol, groups []Relation) (Relation, error) {
 	envSymbols, envTuple := environmentTuple(ctx.Environment())
 	byGroup := map[int][]query.Symbol{}
 	var groupOrder []int
@@ -354,15 +395,9 @@ func (e *DefaultQueryExecutor) seedRelation(ctx *Context, inv *query.RuleInvocat
 		combos = next
 		comboSymbols = append(comboSymbols, projected.Symbols()...)
 	}
-	var symbols []query.Symbol
-	for i := range inv.Args {
-		if bound[i] {
-			symbols = append(symbols, datalog.NewSymbol("?"+seed.String()+"."+strconv.Itoa(i)))
-		}
-	}
 	tuples := make([]Tuple, 0, len(combos))
 	for _, c := range combos {
-		t := make(Tuple, 0, len(symbols))
+		t := make(Tuple, 0, len(head))
 		for i, arg := range inv.Args {
 			if !bound[i] {
 				continue
@@ -382,7 +417,7 @@ func (e *DefaultQueryExecutor) seedRelation(ctx *Context, inv *query.RuleInvocat
 		}
 		tuples = append(tuples, t)
 	}
-	return newMaterializedRelationFromSet(symbols, tuples, e.options, deduplicatedProperties(symbols)), nil
+	return newMaterializedRelationFromSet(head, tuples, e.options, deduplicatedProperties(head)), nil
 }
 
 // ruleEvaluation is an invocation's evaluation continued across the windows
@@ -435,10 +470,6 @@ func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) 
 	ev.windows++
 	if ev.windows == 1 {
 		needed := neededPredicates(ev.rs, ev.predicate)
-		var seeds map[query.Symbol]Relation
-		if ev.seed != nil {
-			seeds = map[query.Symbol]Relation{ev.seed: seed}
-		}
 		for _, stratum := range ev.rs.Strata() {
 			wanted := false
 			for _, p := range stratum.Predicates {
@@ -450,7 +481,7 @@ func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) 
 			if !wanted {
 				continue
 			}
-			eval, err := ev.executor.prepareStratum(ctx, ev.rs, stratum, seeds)
+			eval, err := ev.executor.prepareStratum(ctx, ev.rs, stratum)
 			if err != nil {
 				return nil, err
 			}
@@ -529,18 +560,36 @@ func newDerivedSet(symbols []query.Symbol) *derivedSet {
 }
 
 // absorb adds the tuples of rel the set does not hold, as they are pulled,
-// and returns them. Each tuple is probed before anything else, so a tuple
-// the set holds is rejected without a copy. A tuple a stable source yields
-// is held as it is; one a reusing source yields is copied once, on
-// admission, and the key holds that copy by reference.
+// and returns them, each held over the set's symbols. rel carries the set's
+// symbols in any layout, found by symbol once; a relation lacking one is the
+// set's error. A tuple in the set's layout is probed before anything else,
+// so one the set holds is rejected without a copy, and is held as it is from
+// a stable source or copied once, on admission, from a reusing one. A tuple
+// in another layout is read out at the set's positions into a copy before it
+// is probed. Every key holds the held tuple by reference.
 func (s *derivedSet) absorb(rel Relation) ([]Tuple, error) {
+	positions, err := query.SymbolIndexTable(rel.Symbols(), s.symbols)
+	if err != nil {
+		return nil, fmt.Errorf("absorbing into %v: %w", s.symbols, err)
+	}
+	sameLayout := len(rel.Symbols()) == len(s.symbols)
+	for i := 0; sameLayout && i < len(positions); i++ {
+		sameLayout = positions[i] == i
+	}
 	copies := rel.RequiresCopy()
 	var added []Tuple
-	err := ForEach(rel, func(tuple Tuple) error {
+	err = ForEach(rel, func(tuple Tuple) error {
+		if !sameLayout {
+			held := make(Tuple, len(positions))
+			for j, position := range positions {
+				held[j] = tuple[position]
+			}
+			tuple = held
+		}
 		if s.keys.Exists(NewTupleKeyFull(tuple)) {
 			return nil
 		}
-		if copies {
+		if sameLayout && copies {
 			tuple = copyTuple(tuple)
 		}
 		s.keys.PutIfAbsent(NewTupleKeyFull(tuple), struct{}{})
@@ -565,21 +614,22 @@ type plannedBody struct {
 	lower query.Symbol
 }
 
-// stratumEvaluation is a stratum's planned bodies, in three kinds, and the
-// canonical symbols of each of its predicates: the first rule's head, or the
-// seed relation's symbols for a predicate no rule derives. plain holds each
-// body with no same-stratum invocation at its top level, planned once and
-// run at the first window's iteration zero over the view; a body whose
-// same-stratum occurrences all sit inside or and or-join branches is among
-// them, since a branch invoking no same-stratum predicate produces without
-// any delta. delta holds, per same-stratum occurrence of a body, the copy
-// whose occurrence invokes the predicate's delta symbol, run each iteration
-// after the first. lower holds, per occurrence of a seed-restricted predicate
-// of a lower stratum, the copy whose occurrence invokes that predicate's
-// delta symbol, run at a later window's iteration zero over the tuples the
-// window added to that predicate.
+// stratumEvaluation is a stratum's planned bodies, in three kinds, under the
+// rule set they were planned with, and the canonical symbols of each of its
+// predicates, the set's head for it. plain holds each body with no
+// same-stratum invocation at its top level, planned once and run at the
+// first window's iteration zero over the view; a body whose same-stratum
+// occurrences all sit inside or and or-join branches is among them, since a
+// branch invoking no same-stratum predicate produces without any delta.
+// delta holds, per same-stratum occurrence of a body, the copy whose
+// occurrence invokes the predicate's delta symbol, run each iteration after
+// the first. lower holds, per occurrence of a seed-restricted predicate of a
+// lower stratum, the copy whose occurrence invokes that predicate's delta
+// symbol, run at a later window's iteration zero over the tuples the window
+// added to that predicate.
 type stratumEvaluation struct {
 	executor *Executor
+	rs       *query.RuleSet
 	stratum  query.Stratum
 	symbols  map[query.Symbol][]query.Symbol
 	plain    []plannedBody
@@ -591,20 +641,16 @@ type stratumEvaluation struct {
 // plan is a query's plan under its own text, which carries % and the delta
 // symbols, so the planner serves and stores it through the plan cache as it
 // does any query's.
-func (e *Executor) prepareStratum(ctx *Context, rs *query.RuleSet, stratum query.Stratum, seeds map[query.Symbol]Relation) (*stratumEvaluation, error) {
+func (e *Executor) prepareStratum(ctx *Context, rs *query.RuleSet, stratum query.Stratum) (*stratumEvaluation, error) {
 	inStratum := map[query.Symbol]bool{}
 	for _, p := range stratum.Predicates {
 		inStratum[p] = true
 	}
-	eval := &stratumEvaluation{executor: e, stratum: stratum, symbols: map[query.Symbol][]query.Symbol{}}
+	eval := &stratumEvaluation{executor: e, rs: rs, stratum: stratum, symbols: map[query.Symbol][]query.Symbol{}}
 	for _, p := range stratum.Predicates {
-		rules := rs.Rules(p)
-		if len(rules) == 0 {
-			eval.symbols[p] = seeds[p].Symbols()
-			continue
-		}
-		eval.symbols[p] = rules[0].Head
-		for _, rule := range rules {
+		head, _ := rs.Head(p)
+		eval.symbols[p] = head
+		for _, rule := range rs.Rules(p) {
 			occurrences := 0
 			var lowerOrder []query.Symbol
 			lowerCount := map[query.Symbol]int{}
@@ -729,17 +775,28 @@ func markDeltaBranches(branches [][]query.Clause, marked map[query.Symbol]bool, 
 }
 
 // run executes bodies under a scope holding held, the relations by predicate
-// symbol, and returns each body's result relation by predicate, over the
-// predicate's canonical symbols, for the sets to absorb. A body is a query
-// scope of its own, with no bound inputs: the invoking query's environment
-// does not reach it.
+// symbol, under the rule set the bodies were planned with, whose heads the
+// held relations are over, and returns each body's result relation by
+// predicate, renamed under the predicate's canonical symbols through the
+// substitution of the rule's head for them, for the sets to absorb. A body
+// is a query scope of its own, with no bound inputs: the invoking query's
+// environment does not reach it.
 func (s *stratumEvaluation) run(ctx *Context, held map[query.Symbol]Relation, bodies []plannedBody) (map[query.Symbol][]Relation, error) {
-	scope := ctx.WithEnvironment(nil).WithDerived(held)
+	scope := ctx.WithEnvironment(nil).WithRules(s.rs).WithDerived(held)
 	results := map[query.Symbol][]Relation{}
 	for _, body := range bodies {
 		rel, err := s.executor.executeRealizedPlan(scope, body.plan, nil)
 		if err != nil {
 			return nil, fmt.Errorf("rule %s: %w", body.rule.Name, err)
+		}
+		if canonical := s.symbols[body.rule.Name]; !symbolsMatch(body.rule.Head, canonical) {
+			subst, err := query.SubstitutionOf(body.rule.Head, canonical)
+			if err != nil {
+				return nil, fmt.Errorf("rule %s: %w", body.rule.Name, err)
+			}
+			if rel, err = rel.Rename(subst); err != nil {
+				return nil, fmt.Errorf("rule %s: %w", body.rule.Name, err)
+			}
 		}
 		results[body.rule.Name] = append(results[body.rule.Name], rel)
 	}

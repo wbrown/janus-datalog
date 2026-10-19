@@ -1,6 +1,7 @@
 package query
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -43,6 +44,11 @@ func TestContainsSymbol(t *testing.T) {
 	}
 }
 
+// SymbolIndexTable gives each wanted symbol's position in the symbols, and
+// a wanted symbol the symbols lack is an error naming it and the symbols,
+// never a position the caller may read past: an attribute is addressed by
+// its symbol, and a relation lacking one it must carry is an error, never
+// a misread (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §7).
 func TestSymbolIndexTable(t *testing.T) {
 	a := datalog.NewSymbol("?a")
 	b := datalog.NewSymbol("?b")
@@ -50,8 +56,11 @@ func TestSymbolIndexTable(t *testing.T) {
 	absent := datalog.NewSymbol("?absent")
 	symbols := []Symbol{a, b, c}
 
-	table := SymbolIndexTable(symbols, []Symbol{c, absent, a})
-	want := []int{2, -1, 0}
+	table, err := SymbolIndexTable(symbols, []Symbol{c, a})
+	if err != nil {
+		t.Fatalf("every wanted symbol is present, got error %v", err)
+	}
+	want := []int{2, 0}
 	if len(table) != len(want) {
 		t.Fatalf("table length = %d, want %d", len(table), len(want))
 	}
@@ -61,7 +70,21 @@ func TestSymbolIndexTable(t *testing.T) {
 		}
 	}
 
-	if got := SymbolIndexTable(symbols, nil); len(got) != 0 {
+	_, err = SymbolIndexTable(symbols, []Symbol{c, absent, a})
+	if err == nil {
+		t.Fatal("a wanted symbol the symbols lack is an error")
+	}
+	for _, named := range []string{"?absent", "?a", "?b", "?c"} {
+		if !strings.Contains(err.Error(), named) {
+			t.Errorf("the error names the absent symbol and the symbols searched; %q lacks %s", err.Error(), named)
+		}
+	}
+
+	got, err := SymbolIndexTable(symbols, nil)
+	if err != nil {
+		t.Fatalf("no wanted symbol is no error, got %v", err)
+	}
+	if len(got) != 0 {
 		t.Errorf("empty targets must produce an empty table, got %v", got)
 	}
 }

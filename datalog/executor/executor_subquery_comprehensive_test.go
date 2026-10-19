@@ -286,11 +286,14 @@ func TestSubqueryWithTwoInputs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
 			}
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("Failed to read the result: %v", err)
+			}
 
 			// Check results
 			resultMap := make(map[string]float64)
-			for i := 0; i < result.Size(); i++ {
-				tuple := result.Get(i)
+			for _, tuple := range tuples {
 				category := tuple[0].(string)
 				total := tuple[1].(float64)
 				resultMap[category] = total
@@ -448,15 +451,18 @@ func TestSubqueryErrorHandling(t *testing.T) {
 		wantErr  string
 	}{
 		{
-			name: "TupleBindingMultipleResults",
+			// The tuple spelling names a single value, which a binding never
+			// is: it is refused at the boundaries, naming the relation form
+			// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.5).
+			name: "TupleBindingIsRefusedNamingTheRelationForm",
 			queryStr: `[:find ?category ?count
-			           :where 
+			           :where
 			           [?p :product/category ?category]
 			           [(q [:find ?prod
 			                :in $ ?cat
 			                :where [?prod :product/category ?cat]]
-			               $ ?category) [[?count]]]]`, // Tuple binding but returns multiple products
-			wantErr: "tuple binding expects exactly 1 result",
+			               $ ?category) [[?count]]]]`,
+			wantErr: "[[?count] ...]",
 		},
 		{
 			name: "RelationBindingSymbolMismatch",

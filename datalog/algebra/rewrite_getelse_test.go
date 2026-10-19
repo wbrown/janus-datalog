@@ -182,7 +182,9 @@ func TestGetElseScanRewrite_InputParamEntitySkipped(t *testing.T) {
 
 // A scope's required run is the scope's input, as :in is a query's: a
 // get-else over an entity the required run alone provides stays an
-// expression, and one over an entity a scan also provides is rewritten.
+// expression, whether the run is the scope/required invocation or the
+// placeholder a header form's branch is compiled over, and one over an
+// entity a scan also provides is rewritten.
 func TestGetElseScanRewrite_RequiredRunEntitySkipped(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -198,6 +200,11 @@ func TestGetElseScanRewrite_RequiredRunEntitySkipped(t *testing.T) {
 			"a scan provides the entity beside the required run",
 			`[:find ?e ?nick :in $ % :where (scope/required ?e) [?e :person/name _] [(get-else $ ?e :person/nickname "none") ?nick]]`,
 			0,
+		},
+		{
+			"a fallback's header alone provides the entity to its default branch",
+			`[:find ?e ?nick :where [?e :person/name _] (or-default-join [[?e] ?nick] [?e :person/nickname ?nick] [(get-else $ ?e :person/nickname "none") ?nick])]`,
+			1,
 		},
 	}
 	for _, c := range cases {

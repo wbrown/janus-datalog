@@ -111,6 +111,10 @@ type RuleSet struct {
 	required map[Symbol][]bool
 	strata   []Stratum
 
+	// heads holds each predicate's head (Head): its first rule's, or the
+	// minted per-position variables of a seed predicate no rule derives.
+	heads map[Symbol][]Symbol
+
 	// attributePositions marks, per predicate and head position, whether a
 	// body pattern on the default source reads the head symbol there as its
 	// attribute, directly or through a body invocation (AttributePositions).
@@ -164,6 +168,23 @@ func NewRuleSet(rules []*Rule) (*RuleSet, error) {
 	return newRuleSet(rules, nil)
 }
 
+// Head is the symbols a predicate's relation carries, which an invocation's
+// arguments unify with by position: the first rule's head for a predicate
+// with rules, the minted per-position variables for a seed predicate no rule
+// derives, and the predicate's own head under its delta symbol. The second
+// value is false for a name the set does not declare.
+func (rs *RuleSet) Head(name Symbol) ([]Symbol, bool) {
+	head, ok := rs.heads[name]
+	return head, ok
+}
+
+// declareHead records a predicate's head under its symbol and under its
+// delta symbol, whose relation is over the same head.
+func (rs *RuleSet) declareHead(name Symbol, head []Symbol) {
+	rs.heads[name] = head
+	rs.heads[DeltaSymbol(name)] = head
+}
+
 // seedPredicate is a predicate declared by arity with no rules of its own:
 // the relation a caller fills, the magic predicate of a rewritten set.
 type seedPredicate struct {
@@ -175,7 +196,7 @@ type seedPredicate struct {
 // given, are the relations a caller fills (Magic). A seed is a stratum of
 // its own unless a rule derives into it.
 func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
-	rs := &RuleSet{rules: map[Symbol][]*Rule{}, arity: map[Symbol]int{}, required: map[Symbol][]bool{}}
+	rs := &RuleSet{rules: map[Symbol][]*Rule{}, arity: map[Symbol]int{}, required: map[Symbol][]bool{}, heads: map[Symbol][]Symbol{}}
 	for _, seed := range seeds {
 		rs.order = append(rs.order, seed.name)
 		rs.arity[seed.name] = seed.arity
@@ -198,6 +219,9 @@ func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
 				return nil, fmt.Errorf("rule %s: head variable %s is repeated", rule.Name, head)
 			}
 		}
+		if _, derived := rs.heads[rule.Name]; !derived {
+			rs.declareHead(rule.Name, rule.Head)
+		}
 		required, err := requiredRun(rule)
 		if err != nil {
 			return nil, err
@@ -206,6 +230,11 @@ func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
 			rs.required[rule.Name] = required
 		} else if !equalMasks(earlier, required) {
 			return nil, fmt.Errorf("rule %s: its required run %v differs from an earlier rule's of the same predicate", rule.Name, rule.Required)
+		}
+	}
+	for _, seed := range seeds {
+		if _, derived := rs.heads[seed.name]; !derived {
+			rs.declareHead(seed.name, seedHead(seed.name, seed.arity))
 		}
 	}
 	inferred := make([]*Rule, len(rules))

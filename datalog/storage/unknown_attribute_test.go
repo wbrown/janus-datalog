@@ -176,26 +176,35 @@ func TestQueryRefusesUnknownAttributeBoundThroughInput(t *testing.T) {
 	}
 }
 
-// A subquery's argument bound to an attribute position is checked against
-// the vocabulary once, over the relation of its combinations: two
-// combinations each binding a keyword no definition declares are refused
-// together, naming both.
-func TestSubqueryChecksItsBoundAttributesOnceOverItsCombinations(t *testing.T) {
+// A keyword that reaches an attribute position through a subquery's input is
+// evaluated as data: on a refusing database the entity whose :t/tag names
+// :t/n is answered its :t/n, and the entity whose :t/tag names an attribute
+// no definition declares yields no datom, which the fallback answers with
+// zero. The refusal of an attribute the query names is decided at entry,
+// which TestQueryRefusesUnknownAttributeAtARequiredPositionInsideABranch
+// pins.
+func TestKeywordReachingAnAttributePositionThroughASubqueryInputIsData(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d, _ := refusingDB(t, mode)
-			strnig, lnog := kw(":t/strnig"), kw(":t/lnog")
-			_, err := d.Query(`[:find ?v :in $ [?a ...] :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`, []interface{}{strnig, lnog})
+			s, err := schema.NewBuilder().
+				Attribute(":t/tag").Type(schema.TypeKeyword).One().Add().
+				Attribute(":t/n").Type(schema.TypeLong).One().Add().
+				Build()
+			require.NoError(t, err)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s, RefuseUnknownAttributes: true})
+			declared, undeclared := datalog.NewIdentity("declared"), datalog.NewIdentity("undeclared")
+			names := map[datalog.Identity]string{declared: "declared", undeclared: "undeclared"}
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Set(declared, kw(":t/tag"), kw(":t/n")))
+			require.NoError(t, tx.Set(declared, kw(":t/n"), int64(5)))
+			require.NoError(t, tx.Set(undeclared, kw(":t/tag"), kw(":t/strnig")))
+			require.NoError(t, tx.Set(undeclared, kw(":t/n"), int64(50)))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-			var joined interface{ Unwrap() []error }
-			require.ErrorAs(t, err, &joined, "the unknown attributes of both combinations are reported together, got %v", err)
-			var named []datalog.Keyword
-			for _, member := range joined.Unwrap() {
-				var unknown *schema.UnknownAttributeError
-				require.ErrorAs(t, member, &unknown, "each member names an attribute, got %v", member)
-				named = append(named, unknown.Attribute)
-			}
-			require.ElementsMatch(t, []datalog.Keyword{strnig, lnog}, named)
+			rel, err := d.Query(`[:find ?e ?v :where [?e :t/tag ?a] (or-default [(q [:find ?v :in $ ?e ?attr :where [?e ?attr ?v]] $ ?e ?a) [[?v] ...]] [(ground 0) ?v])]`)
+			require.NoError(t, err, "a keyword the data binds into an attribute position is evaluated, never checked against the vocabulary")
+			require.ElementsMatch(t, []string{"declared 5", "undeclared 0"}, renderedRows(t, rel, names))
 		})
 	}
 }

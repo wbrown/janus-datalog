@@ -8,7 +8,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-func BenchmarkSubqueryInputCombinationExtraction(b *testing.B) {
+// The distinct combinations of a product over two symbols, read through the
+// product's projection, streamed and materialized.
+func BenchmarkProductProjectionDistinctCombinations(b *testing.B) {
 	x := datalog.NewSymbol("?x")
 	y := datalog.NewSymbol("?y")
 	leftIdentity := datalog.NewSymbol("?left-identity")
@@ -47,7 +49,7 @@ func BenchmarkSubqueryInputCombinationExtraction(b *testing.B) {
 				}
 				b.Run(mode, func(b *testing.B) {
 					b.ReportAllocs()
-					dataSymbols := filterSourceSymbols([]query.Symbol{x, y})
+					dataSymbols := []query.Symbol{x, y}
 					for b.Loop() {
 						var input Relation = NewProductRelation([]Relation{left, right})
 						if eager {

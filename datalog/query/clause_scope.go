@@ -316,6 +316,34 @@ func InputArity(in []InputSpec) int {
 	return arity
 }
 
+// InputSymbols is the symbol a call's value at each position of an :in
+// clause binds, in call order: nil at a source's or the rule set's position,
+// the symbol of a scalar or collection input, and each symbol of a tuple or
+// relation input in turn. The length is InputArity's. A subquery's frame and
+// the attribute roster read a call's substitution from it against the call's
+// arguments.
+func InputSymbols(in []InputSpec) []Symbol {
+	if len(in) == 0 {
+		return []Symbol{nil}
+	}
+	symbols := make([]Symbol, 0, len(in))
+	for _, spec := range in {
+		switch spec := spec.(type) {
+		case ScalarInput:
+			symbols = append(symbols, spec.Symbol)
+		case CollectionInput:
+			symbols = append(symbols, spec.Symbol)
+		case RelationInput:
+			symbols = append(symbols, spec.Symbols...)
+		case TupleInput:
+			symbols = append(symbols, spec.Symbols...)
+		default:
+			symbols = append(symbols, nil)
+		}
+	}
+	return symbols
+}
+
 // ValidateInputShapes validates every static input-shape rule — the checks
 // that depend on the :in clause alone: a query declares % at most once. The
 // user boundaries share it beside ValidateStaticClauseShapes, so a

@@ -33,7 +33,7 @@ func (f NthFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error) 
 		return nil, fmt.Errorf("nth: cannot resolve index argument %s", f.IndexTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("nth: first argument must be a vector, got %T", vecVal)
 	}
@@ -74,7 +74,7 @@ func (f FirstFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error
 		return nil, fmt.Errorf("first: cannot resolve vector argument %s", f.VecTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("first: argument must be a vector, got %T", vecVal)
 	}
@@ -111,7 +111,7 @@ func (f LastFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error)
 		return nil, fmt.Errorf("last: cannot resolve vector argument %s", f.VecTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("last: argument must be a vector, got %T", vecVal)
 	}
@@ -147,7 +147,7 @@ func (f LengthFunction) Eval(bindings map[Symbol]interface{}) (interface{}, erro
 		return nil, fmt.Errorf("length: cannot resolve vector argument %s", f.VecTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("length: argument must be a vector, got %T", vecVal)
 	}
@@ -187,7 +187,7 @@ func (f ContainsFunction) Eval(bindings map[Symbol]interface{}) (interface{}, er
 		return nil, fmt.Errorf("contains?: cannot resolve value argument %s", f.ValueTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("contains?: first argument must be a vector, got %T", vecVal)
 	}
@@ -232,7 +232,7 @@ func (f IndexOfFunction) Eval(bindings map[Symbol]interface{}) (interface{}, err
 		return nil, fmt.Errorf("index-of: cannot resolve value argument %s", f.ValueTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("index-of: first argument must be a vector, got %T", vecVal)
 	}
@@ -285,7 +285,7 @@ func (f SubvecFunction) Eval(bindings map[Symbol]interface{}) (interface{}, erro
 		return nil, fmt.Errorf("subvec: cannot resolve end argument %s", f.EndTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("subvec: first argument must be a vector, got %T", vecVal)
 	}
@@ -342,7 +342,7 @@ func (f EnumerateFunction) Eval(bindings map[Symbol]interface{}) (interface{}, e
 		return nil, fmt.Errorf("enumerate: cannot resolve vector argument %s", f.VecTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("enumerate: argument must be a vector, got %T", vecVal)
 	}
@@ -366,8 +366,10 @@ func (f EnumerateFunction) ReturnType() string {
 
 // Vector operation functions
 
-// toSlice converts a value to []interface{} if possible.
-func toSlice(val interface{}) ([]interface{}, bool) {
+// VectorElements is the elements of a vector value, and whether the value is
+// one: a []interface{} as it is, a typed slice of strings, integers, floats
+// or booleans as values, and any other value no vector.
+func VectorElements(val interface{}) ([]interface{}, bool) {
 	switch v := val.(type) {
 	case []interface{}:
 		return v, true

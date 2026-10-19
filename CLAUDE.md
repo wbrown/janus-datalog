@@ -530,6 +530,21 @@ Relational invariants:
 - Set-preserving operators must not defensively deduplicate again.
 - `Materialize` guarantees replayability; it does not require eager realization
   when the Relation is already replayable.
+- A tuple is a map from symbols to values. An attribute is addressed by its
+  symbol. A tuple position is looked up from a symbol in the relation in hand,
+  once per operation at construction, never assumed from a list held
+  elsewhere, and a relation that lacks a symbol it must carry is an error,
+  never a misread. No reader depends on a relation's layout, and "column" is
+  not vocabulary.
+- A tuple key is an ordered list of values whose order is the key-symbol
+  list's, one list shared within one operation and resolved to positions on
+  each side. It is never a relation's layout.
+- A call unifies a variable of one scope with a variable of another. The map
+  a call gives, which of a scope's variables stand for which of the enclosing
+  scope's, is a substitution, read from the text. Applying a substitution to
+  a relation is a rename: a new relation over shared tuples under the new
+  symbols, its input untouched. None of these is a projection, and nothing is
+  changed "in place".
 - A binding is always a Relation. A subquery's result enters its scope as the
   relation over the binding's symbols, joined on them, whatever the binding's
   spelling. A cardinality assertion is an aggregate, written in the inner
@@ -690,6 +705,7 @@ d, _ := db.Open("path/to/db", db.WithAnnotationHandler(handler))
 - **Binding-driven scans**: one completion event per strategy the matcher takes — the per-key seek, hash-join, merge-join, per-binding — each carrying the same funnel; the per-key seek and the per-binding path carry the scans they opened in place of a run
 - **Joins**: hash-join timing and sizes, build/probe completion, strategy selection
 - **Phase execution**: begin and complete, with the phase's duration and tuple count (`-1` where a streaming group declines to size itself rather than be consumed for the number)
+- **Windowed scopes** (`scope/*`): the modules a windowed form runs on report under every form, each event carrying the form under `KeyForm` — a subject tuple read into a window, a window with its ordinal, tuple count and distinct keys, the subject's exhaustion, and a branch's build with its symbols and tuple count (`docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.9)
 - **V-bound validation, OR and fallback branches, subqueries, algebra rewrites, pull, reflection, cache rebuilds, unique-attribute lookups**
 
 ### Critical Performance Insights

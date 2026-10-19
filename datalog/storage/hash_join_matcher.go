@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -70,7 +71,7 @@ func (m *PatternMatcher) chooseJoinStrategy(
 
 	// High selectivity (>50%): merge join, but only for entity-position keys.
 	// The merge advance is correct only when three orders agree: the binding
-	// sort (CompareValues via Sorted()), the advance comparator (CompareValues),
+	// sort by the key (CompareValues), the advance comparator (CompareValues),
 	// and the storage scan order of the probe stream. That agreement is provable
 	// for E-position keys — probe datoms arrive in hash-byte order, which is
 	// exactly Identity's CompareValues order, and every binding key is an
@@ -110,37 +111,18 @@ func (m *PatternMatcher) matchWithHashJoin(
 	index IndexType,
 	constraints []executor.StorageConstraint,
 ) (executor.Relation, error) {
-	// PHASE 1: Build hash set from binding relation
-	// Find which variable is at the datom position, then find its symbol index
-	var joinSymbol query.Symbol
-	switch position {
-	case 0:
-		if v, ok := pattern.GetE().(query.Variable); ok {
-			joinSymbol = v.Name
-		}
-	case 1:
-		if v, ok := pattern.GetA().(query.Variable); ok {
-			joinSymbol = v.Name
-		}
-	case 2:
-		if v, ok := pattern.GetV().(query.Variable); ok {
-			joinSymbol = v.Name
-		}
-	case 3:
-		if len(pattern.Elements) > 3 {
-			if v, ok := pattern.GetT().(query.Variable); ok {
-				joinSymbol = v.Name
-			}
-		}
+	// PHASE 1: Build hash set from binding relation. The variable at the datom
+	// position is the join key, found in the binding relation by symbol; a
+	// binding lacking it is the match's error.
+	key, ok := pattern.Elements[position].(query.Variable)
+	if !ok {
+		return nil, fmt.Errorf("hash join on %s: position %d holds %v, not a variable", pattern, position, pattern.Elements[position])
 	}
-
-	// Find the symbol index of joinSymbol in bindingRel
-	symbolIndex := query.SymbolIndex(bindingRel.Symbols(), joinSymbol)
-
-	if symbolIndex == -1 {
-		// Variable not in binding relation - shouldn't happen if strategy is correct
-		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
+	keyPositions, err := query.SymbolIndexTable(bindingRel.Symbols(), []query.Symbol{key.Name})
+	if err != nil {
+		return nil, fmt.Errorf("hash join on %s: %w", pattern, err)
 	}
+	symbolIndex := keyPositions[0]
 
 	// Build hash set using symbol index (not datom position)
 	hashSet, keys, tuples, err := m.buildHashSet(
@@ -596,16 +578,37 @@ func (m *PatternMatcher) matchWithMergeJoin(
 	index IndexType,
 	constraints []executor.StorageConstraint,
 ) (executor.Relation, error) {
-	// PHASE 1: Sort binding relation by join key
-	// Sorted() will auto-materialize if needed
-	sortedTuples, err := bindingRel.Sorted()
+	// PHASE 1: Find the join key in the binding relation and sort the binding
+	// tuples by it. The variable at the datom position is the key, found in
+	// the binding by symbol; a binding lacking it is the match's error.
+	key, ok := pattern.Elements[position].(query.Variable)
+	if !ok {
+		return nil, fmt.Errorf("merge join on %s: position %d holds %v, not a variable", pattern, position, pattern.Elements[position])
+	}
+	keyPositions, err := query.SymbolIndexTable(bindingRel.Symbols(), []query.Symbol{key.Name})
 	if err != nil {
+		return nil, fmt.Errorf("merge join on %s: %w", pattern, err)
+	}
+	keyPos := keyPositions[0]
+	copies := bindingRel.RequiresCopy()
+	var sortedTuples []executor.Tuple
+	if err := executor.ForEach(bindingRel, func(tuple executor.Tuple) error {
+		if copies {
+			held := make(executor.Tuple, len(tuple))
+			copy(held, tuple)
+			tuple = held
+		}
+		sortedTuples = append(sortedTuples, tuple)
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	// Typed non-matches join no tuples by definition; drop them before
-	// merging, exactly as the seek paths do. Filtering preserves the sorted
-	// order.
+	// merging, exactly as the seek paths do.
 	sortedTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), sortedTuples)
+	sort.SliceStable(sortedTuples, func(i, j int) bool {
+		return datalog.CompareValues(sortedTuples[i][keyPos], sortedTuples[j][keyPos]) < 0
+	})
 
 	if len(sortedTuples) == 0 {
 		// No bindings - return empty result
@@ -649,6 +652,7 @@ func (m *PatternMatcher) matchWithMergeJoin(
 		bindingRel:   bindingRel,
 		symbols:      symbols,
 		position:     position,
+		keyPos:       keyPos,
 		constraints:  constraints,
 		sortedTuples: sortedTuples,
 		bindingIdx:   0,
@@ -660,14 +664,6 @@ func (m *PatternMatcher) matchWithMergeJoin(
 
 	// Return streaming relation
 	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
-}
-
-// extractBindingKey extracts the join key from a binding tuple at the specified position
-func extractBindingKey(tuple executor.Tuple, position int) interface{} {
-	if position >= len(tuple) {
-		return nil
-	}
-	return tuple[position]
 }
 
 // hashJoinIterator performs lazy hash join iteration
@@ -788,9 +784,10 @@ type mergeJoinIterator struct {
 	pattern      *query.DataPattern
 	bindingRel   executor.Relation
 	symbols      []query.Symbol
-	position     int
+	position     int                            // The key's datom position (0=E, 1=A, 2=V, 3=T)
+	keyPos       int                            // The key's position in a binding tuple, found by symbol
 	constraints  []executor.StorageConstraint
-	sortedTuples []executor.Tuple // Sorted binding tuples
+	sortedTuples []executor.Tuple // Binding tuples sorted by the key
 	bindingIdx   int              // Start of the current key group in sortedTuples
 	groupDatom   *datalog.Datom   // Datom being paired with its key group; nil = pull the next datom
 	groupOffset  int              // Next tuple within the key group to try against groupDatom
@@ -825,7 +822,7 @@ func (it *mergeJoinIterator) Next() bool {
 			probeKey := extractProbeKey(it.groupDatom, it.position)
 			for it.bindingIdx+it.groupOffset < len(it.sortedTuples) {
 				tuple := it.sortedTuples[it.bindingIdx+it.groupOffset]
-				if datalog.CompareValues(extractBindingKey(tuple, it.position), probeKey) != 0 {
+				if datalog.CompareValues(tuple[it.keyPos], probeKey) != 0 {
 					break // past the key group
 				}
 				it.groupOffset++
@@ -870,7 +867,7 @@ func (it *mergeJoinIterator) Next() bool {
 
 		// Advance past binding key groups below the datom's key.
 		for it.bindingIdx < len(it.sortedTuples) &&
-			datalog.CompareValues(extractBindingKey(it.sortedTuples[it.bindingIdx], it.position), probeKey) < 0 {
+			datalog.CompareValues(it.sortedTuples[it.bindingIdx][it.keyPos], probeKey) < 0 {
 			it.bindingIdx++
 		}
 		if it.bindingIdx >= len(it.sortedTuples) {
@@ -878,7 +875,7 @@ func (it *mergeJoinIterator) Next() bool {
 			break
 		}
 
-		if datalog.CompareValues(extractBindingKey(it.sortedTuples[it.bindingIdx], it.position), probeKey) == 0 {
+		if datalog.CompareValues(it.sortedTuples[it.bindingIdx][it.keyPos], probeKey) == 0 {
 			// Constraints depend only on the datom; evaluate once before
 			// pairing it with the group.
 			satisfiesAll := true

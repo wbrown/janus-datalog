@@ -169,7 +169,9 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 
 // originatesAtRequiredRunAlone reports whether every node of the tree at
 // which sym originates, outputting it while no child of the node does, is
-// the invocation of the scope's required run. root outputs sym.
+// the scope's required run: the scope/required invocation, or the childless
+// placeholder a header form's branch is compiled over, which provides the
+// form's required run. root outputs sym.
 func originatesAtRequiredRunAlone(root *Node, sym query.Symbol) bool {
 	fromChild := false
 	for _, child := range root.Children {
@@ -181,6 +183,9 @@ func originatesAtRequiredRunAlone(root *Node, sym query.Symbol) bool {
 		}
 	}
 	if fromChild {
+		return true
+	}
+	if _, placeholder := root.Data.(*Project); placeholder && len(root.Children) == 0 {
 		return true
 	}
 	derived, ok := root.Data.(*Derived)

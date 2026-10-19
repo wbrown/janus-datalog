@@ -1,6 +1,7 @@
 package query
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -62,6 +63,16 @@ func magicSymbol(name Symbol, bound []bool) Symbol {
 // delta of the adorned predicate adorned.bf/reach is delta.adorned.bf/reach.
 func DeltaSymbol(name Symbol) Symbol {
 	return mint(deltaNamespace, name)
+}
+
+// seedHead is the head of a seed predicate no rule derives: one minted
+// variable per position, ?magic.bf/reach.0 and so on.
+func seedHead(name Symbol, arity int) []Symbol {
+	head := make([]Symbol, arity)
+	for i := range head {
+		head[i] = datalog.NewSymbol("?" + name.String() + "." + strconv.Itoa(i))
+	}
+	return head
 }
 
 // ScopeRequired names the predicate a nested scope's required run enters

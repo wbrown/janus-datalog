@@ -38,6 +38,12 @@ A required variable that only a query input binds is legal for every form. The r
 
 §2.4 of `NESTED_SCOPES_AS_QUERIES.md` stands. Each refusal names the form, the branch by its position counted from one where a branch is at fault, the variable, and the repair. The header checks run at every boundary through one function, under the rule set at `Prepare` and with none at the text boundaries (§6).
 
+The refusal of a variable a branch reads that neither the branch nor the header binds is one where a branch is at fault. It therefore names the branch by its position, and its repair, binding the variable in the branch or naming it in the header. The alternative, the form and the variable alone, leaves the author of a form with several branches to find the one at fault by reading each.
+
+The refusal of a required run no order binds has two cases with two repairs. In the first, no input and no clause binds the variable, and the repair is binding it. In the second, some clause binds the variable and no order places that clause before the form, as when two forms each bind in one branch a variable nothing else binds, and the repair is the order. The compile order's refusal tells the two apart: `orderClausesForCompile` (`datalog/algebra/compile_order.go`) appends "(no input or clause binds it)" to a variable with no input and no provider, and nothing to one with a provider. The clause-based planner's does not: `createPhasesGreedy` (`datalog/planner/clause_phasing.go`) says "waits on ?x, which nothing in the query binds" in both cases. §9 step 8 brings the second message to the first: `Prepare` leaves this refusal to the planner (`NESTED_SCOPES_AS_QUERIES.md` §5.1), and goal 5 binds the two paths to one message for one text. The alternative, one message saying nothing binds the variable, is false in the second case.
+
+A refusal the planner raises names the prepared form, the header the inference wrote included. A header's provenance is not a fact the engine holds (`NESTED_SCOPES_AS_QUERIES.md` §5.3), so the alternative, naming the written headerless form, has no input past `Prepare`. The header in the message is the inference's decision shown to the author, beside `Explain`, which plans the prepared query (`NESTED_SCOPES_AS_QUERIES.md` §5.1, pinned by `TestExplain_PlansThePreparedQuery`). The refusals `InferHeaders` itself raises name the written form, since they are raised on it.
+
 ## 3. The find boundary
 
 One rule for both find kinds. A group the find does not read is an existence verdict: a group with no tuple empties the result, and a group with a tuple leaves the others as they are. The verdict is taken by one pull of the group's iterator, and an iterator filling a replay cache is read to its end before it is closed. With set semantics the projection of a product onto one factor's symbols is that factor when the other factor is non-empty and empty otherwise, so the verdict is the projection's own answer, and goal 3 of `NESTED_SCOPES_AS_QUERIES.md` ranks one rule for both find kinds over the merge-base's two.
@@ -63,7 +69,7 @@ A scope is a header and a clause list. Each branch of an `or-join` or `or-defaul
 The primitive has two operations:
 
 - `plan(scope)` frames the scope as the query `[:find <header> :in $ % :where (scope/required <required run>) <clauses>]` and plans it through `QueryPlanner.PlanQuery` under the rule set. The text carries the binding, so the plan is cached under the text and made once per distinct scope text. The planner leads with `(scope/required …)`, and no rule set declares into `scope`. The readers of the `scope` kind are `RULES_WITNESSES_AND_SPECULATIVE_VALUES.md` §1.1's.
-- `run(plan, run)` executes the plan with `run`, a relation of the required run's symbols, held under `scope/required` in a context that carries every relation the enclosing context holds, with `scope/required` rebound to this scope's run, and no environment. It returns a relation of the header's symbols.
+- `run(plan, run)` executes the plan with `run`, a relation carrying the required run's symbols by name, held under `scope/required` in a context that carries every relation the enclosing context holds, with `scope/required` rebound to this scope's run, and no environment. `(scope/required …)` binds each required symbol by finding it in the run's own symbols, never by its place in the run's layout, and a run lacking a required symbol is the query's error. It returns a relation of the header's symbols, by name. The alternative is the run read by position against the required list, which is correct only while one list builds both sides and is checked by nothing: a run laid out otherwise binds each value to the wrong variable and returns tuples, not an error.
 
 The planner is the one orderer. No clause of a scope runs in written order, and no loop beside the planner orders a branch's clauses. The alternative is the merge-base's `executeInnerClauses`, which ran a branch's clauses in written order. There an expression written before its binder was skipped: `executeExpression` returns the groups unchanged when no group carries the expression's symbols. The branch of the query §2.1 quotes ran without its expression, and the merge-base answered the five tuples because that expression binds a local nothing reads. The failure the one orderer removes is at `5b152c9`, where the clause-based path panicked on that query when a tuple holding a nil value reached the fallback's tuple key.
 
@@ -116,6 +122,22 @@ Nothing materializes the subject. A subject of several groups is joined into one
   - An output the environment alone binds is joined with the environment's tuple by the carried-output filter after the probe, under both forms.
   - One set of visible symbols for every branch of the form, the required run with every carried output, seeds an invocation inside a branch at a position the header does not name, which §4.5 excludes.
 
+The evaluation is four modules every windowed form shares and a policy per form, the decomposition `OR_FALLBACK_RELATION_PROOF.md` derives. Each module is one lemma of that proof, reads nothing of the form, and is pinned by the lemma's tests:
+
+- **The window reader** (the proof's L1) reads the subject's iterator into the windows of §4.2, yields each window with its ordinal, reports the subject's exhaustion, copies a tuple whose source reuses its workspace, and surfaces the subject's failure. It owns the subject-tuple, exhaustion and window events of §4.9.
+- **The frames** (L2) are one frame per distinct required list among the branches' plans, each resolved against the subject's symbols and the environment's tuple. A frame's run over a window is the window's distinct keys less those an earlier window ran, and a frame of no subject symbol runs once over the environment's tuple or the unit relation.
+- **The kept branch** (L3a, L3b) is the branch cache of §4.6 over a branch's result symbols, keyed on the header symbols the subject carries, built from a plan and a run through `run` and read whole, grown by every window's build and probed per window tuple. The EA arm of §4.6 is a second build under its own conditions. It owns the build event of §4.9.
+- **The continuations** (L6) are the evaluations the branches' invocations continue across windows, owned by the outermost windowed form's iterator and shared by every form inside it.
+
+A form composes them: a window is read, each frame's run is computed, each branch is built over its run, and each window tuple is answered by probing the built branches. The form's own policy has four parts:
+
+- the framing of its branches (`planBranches` and `givenSymbols`): the union's seek and its plan over the required run alone, the fallback's required run alone, the `not-join`'s all-required header over one body, and the subquery's inputs with its find shape (§4.4);
+- the emit rule: every branch's matches under the union, the first branch's under the fallback, the window tuple with no match under the `not-join`, and the one body's matches under the subquery, with the carried-output filter and the output projection shared by the three forms with outputs;
+- the fallback's narrowing of a branch's run to the keys the earlier branches left unanswered and its record of the keys a build answered (L3c), applied between the frame's run and the build;
+- the deduplication rule of the bullet above and the properties of §4.7.
+
+Two alternatives are excluded. One relation with a mode per form puts the subquery's framing seams and the fallback's answered keys inside the one loop, where a defect in the shared part reaches every form and a green test of one mode can mask another's, and reports a `not-join` or a subquery under the fallback's names. A relation per form each carrying the window writes the window reader, the frames, the kept index and the continuation ownership once per form. The proof's F1 names which lemmas read the form, and the split follows that line.
+
 Where the merge-base's `OrFallbackRelation` computed an interface from what it held, the reader `NESTED_SCOPES_AS_QUERIES.md` §4 names as the defect, this design reads the header:
 
 - The branch's visible symbols are the required run. Under the fallback form an output the subject carries is joined after the branch runs, never bound into it, since an output bound in before the decision changes the decision. Under the union a branch holding no invocation binds it as its seek and a branch holding one has it joined through the index's key, which §4.4 states.
@@ -142,26 +164,28 @@ Where the merge-base's `OrFallbackRelation` computed an interface from what it h
 - **`or-default-join`.** The same `OrFallbackRelation` with short-circuit: per key of the window, the first branch with a result answers, and a later branch runs over the keys the earlier branches left unanswered (§4.2). The subject is the groups holding the required run, and the carried outputs are filtered after the decision, since an output bound into a branch before a non-monotone decision would change the decision.
 - **`not-join`.**
   - The subject is the groups holding a header symbol.
-  - The body runs once per window over the window's distinct projection onto the header variables the subject carries.
-  - The window's tuples are anti-joined with the body's result on those variables through `AntiJoin`, which keeps the subject's keys and ordering.
+  - The body is one branch under the all-required header, composed over the modules of §4.3: its frame's run per window is the window's distinct projection onto the header variables the subject carries, less the keys an earlier window ran; the body is built over that run; a window tuple whose probe returns nothing is yielded, and one whose probe returns a tuple is dropped.
+  - The result is the subject's tuples with no match, in the subject's order, so it keeps the subject's keys and ordering, and it replaces the consumed groups (§4.8).
   - The subject is read once, and nothing of it is held beyond the window.
   - A header variable the environment alone binds is a constant on both sides and is no key.
-  - A header the environment alone binds has the environment's one tuple as its run and the unit relation as its subject: the body runs once and decides the whole scope (§2.2).
-  - An empty subject yields an empty run and leaves the groups as they are.
-  - A failure of the body's scan is the form's error, never an anti-join over nothing.
+  - A header the environment alone binds has the environment's one tuple as its run and the unit relation as its subject: the body is built once over that tuple, the unit relation's one tuple is dropped when the body has a result and kept when it has none, and the find boundary's verdict of §3 then empties the result or leaves it (§2.2).
+  - An empty subject yields no window, builds nothing and yields nothing, which is the subject's own answer.
+  - A failure of the body's scan is the form's error, surfacing when the result is driven.
   - The body is never run per combination: one run per window, the fixpoint of an invocation in the body continued across windows, is what keeps that invocation at one evaluation (goal 2).
 - **Subquery.**
-  - The inner query is a scope under §4.2's window over the relation of its argument combinations: it runs once per window over the window's distinct combinations not already in the kept index, and a repeated combination reads the index.
+  - The inner query is one branch composed over the modules of §4.3, under §4.2's window over the relation of its argument combinations: the subject is the groups holding an input symbol, joined into one; the branch is framed over the data inputs as its required run with the binding symbols as its outputs; its frame's run per window is the window's distinct projection onto the inputs, less the keys an earlier window ran; the body is built over that run, and each window tuple's matches are yielded joined with the tuple. A repeated combination reads the kept branch and is not run again.
+  - The call's substitution is the frame's own, read once from the text: each inner `:in` symbol stands for the argument at its place, and each inner `:find` element for the binding variable at its place, the unification `NESTED_SCOPES_AS_QUERIES.md` §5.5 states. The frame presents the run under the inner `:in` symbols, found in the subject by symbol. The scope is the inner query as written, its variables renamed apart from the enclosing scope's. The answer enters the kept branch under the enclosing names through `Relation`'s rename by symbol, so the probe, the carried-output filter and the emit, shared with the branch forms, read the enclosing names only, and the subquery's policy is its framing and nothing else of its own. The alternative is a rename inside the emit by position, against a find the frame composed, which holds only while the composed list and the answer's layout agree and is checked by nothing.
   - An aggregating inner query whose body reads an input is framed with its inputs as group keys.
-  - One whose body reads no input is a pure aggregate: it is aggregated once and paired with every run tuple, since adding group keys to a pure aggregate changes its kind (the janus `CLAUDE.md`, "Decorrelation Pure Aggregation Bug").
+  - One whose body reads no input is a pure aggregate: it is the frame of no subject symbol, built once at the first window and probed with no key, so it is aggregated once and paired with every run tuple, since adding group keys to a pure aggregate changes its kind (the janus `CLAUDE.md`, "Decorrelation Pure Aggregation Bug").
   - The binding names the inner query's outputs in the enclosing scope, and the result enters the scope as the relation over them, joined with the run. A binding asserts nothing about cardinality. The alternative is a one-tuple check under a tuple or scalar binding, a count over the result that the binding's spelling hides: an aggregate the inner `:find` does not show, non-monotone where the inner query reads the rule's own stratum, and taken only with the run grouped. A count is written in the inner `:find` as one.
-  - A binding symbol the scope already binds is joined with the result after the run and never bound into the inner query, whose inputs are its `:in` alone (`NESTED_SCOPES_AS_QUERIES.md` §2.5). Bound in before an aggregating inner query runs, it changes the aggregate.
+  - A binding symbol the scope already binds is a carried output: the carried-output filter joins it with the result after the probe, and it is never bound into the inner query, whose inputs are its `:in` alone (`NESTED_SCOPES_AS_QUERIES.md` §2.5). Bound in before an aggregating inner query runs, it changes the aggregate.
   - A keyword that reaches an attribute position through an input is evaluated as data: the pattern seeks the attribute, and an entity that lacks it yields no datom, which a fallback form answers.
   - An entity carries any attribute, and the schema declares nothing about which attributes an entity may carry.
   - The refusal of an attribute the query names is an option decided at entry (`RULES_WITNESSES_AND_SPECULATIVE_VALUES.md` §4), never a rule of evaluation.
   - A scalar or tuple input is a position of the run.
-  - A collection or relation input expands into the run, one run tuple per member or per inner tuple beside the outer combination's values, so an invocation in the body is seeded once from every combination.
+  - A collection or relation input expands in the frame's key: one run tuple per member or per inner tuple beside the window tuple's values, so an invocation in the body is seeded once from every combination.
   - Inside a branch the combination relation is the branch's window (§4.2).
+- **A data pattern over a streaming group.** The pattern is one body under the header of the variables it shares with the group, composed over the modules of §4.3 under the subquery's emit rule: the subject is the groups holding a shared variable, joined into one; the body is built once per window over the window's distinct keys less those an earlier window ran, each key sought by the matcher (§4.6); each window tuple is answered with its matches joined, the pattern's other variables as the outputs; the result stands in the consumed groups' place (§4.8), reports no size, and reads the subject once; and its keys survive when the pattern answers at most one tuple per subject tuple (§4.7). A group held in memory binds the pattern through the matcher, which reads it as bindings and joins the matches at the collapse, since nothing is copied to read it twice. The alternative is the matcher's bindings over a copy of the streaming group, joined back at the collapse, which §4.2 excludes: the copy is read once and discarded, and the collapse opens the consumed original a second time.
 - **Rule bodies.** `planBody` runs a body on the primitive as it does today.
 
 ### 4.5 Rules inside scopes
@@ -187,7 +211,7 @@ The `OrFallbackRelation` derives the result's properties through `orProperties` 
 - The derivation emits `OrPropertiesDerived`.
 - Every reader of the properties, the projection's dedup elision, the join's strategy and build side, and the scan-boundary restoration, takes the decision it takes on the merge-base for a result the `OrFallbackRelation` produces.
 - A union over the unit relation (§4.4) is a new group with the full-header key and no ordering, and no subject property reaches it.
-- The `not-join` keeps its subject's properties through `AntiJoin`.
+- The `not-join` keeps its subject's properties, since it yields a subset of the subject's tuples in the subject's order (§4.4).
 
 ### 4.8 Group replacement and read-once
 
@@ -195,13 +219,15 @@ The form's result replaces the consumed groups through `replaceConsumedOrGroups`
 
 ### 4.9 The events
 
-Every name in `datalog/annotations/types.go` whose fact this mechanism produces emits with `main`'s payload: `OrClauseBegin` and `OrClauseComplete` from the or-join handler, `OrClauseUnion` and `OrClauseBranchComplete` from the unit-run route, `OrPropertiesDerived` from the derivation, `OrOuterReplaced` from the replacement, and `OrFallbackIteratorCreated`, `OrFallbackOuterTuple`, `OrFallbackOuterExhausted`, `OrFallbackBranchNarrowed`, `OrFallbackBranchSuccess` and `OrFallbackCacheBuild` from the `OrFallbackRelation`. `OrFallbackOuterMaterialized` has no fact to report, since nothing materializes the subject (§4.2). A window is a fact of its own: one event per window, named in `datalog/annotations/types.go` beside the fallback family, carrying the window's ordinal, its tuple count and its distinct key count, and `OrFallbackCacheBuild` reports each window's build. The handlers' own contract:
+Every name in `datalog/annotations/types.go` whose fact this mechanism produces emits with `main`'s payload: `OrClauseBegin` and `OrClauseComplete` from the or-join handler, `OrClauseUnion` and `OrClauseBranchComplete` from the unit-run route, `OrPropertiesDerived` from the derivation, `OrOuterReplaced` from the replacement, and `OrFallbackIteratorCreated`, `OrFallbackBranchNarrowed` and `OrFallbackBranchSuccess` from the `OrFallbackRelation`. `OrFallbackOuterMaterialized` has no fact to report, since nothing materializes the subject (§4.2). The modules of §4.3 report their own facts under every form: the window reader reports each subject tuple read, the subject's exhaustion, and each window with its ordinal, its tuple count and its distinct key count over the required run's symbols the subject carries, and the kept branch reports each window's build with the branch, its symbols and the tuples built. Those four events are named in `datalog/annotations/types.go` for the module under the `scope` family, each carrying the form it fired under. The alternative, the `or-fallback` names for them, records a fallback under a `not-join` or a subquery that ran none, and a reader of `Analyze` cannot tell the form from the name. The handlers' own contract:
 
 - The fallback handler emits its `OrFallbackRelation`'s events and no or-clause event.
 - The completion event of a streaming form fires at construction with size -1, and a branch failure surfaces when the result is driven.
 - A scope's run emits no `PhaseBegin` and no `PhaseComplete`: the form's own events report a branch's execution, and a phase event per window would be a handler call per window beside the window's own event.
 - A stratum continued across windows emits `RulesStratumBegin` at the first window and `RulesStratumComplete` at the last, and its `RulesIteration` events number each window's iterations from zero (§4.2).
-- §7's counts of branch executions read the `OrFallbackRelation`'s events.
+- §7's counts of branch executions read the kept branch's build events.
+
+Preparation is a fact of its own. The executor's entry emits `QueryInvoked` with the query as received and `QueryPlanCreated` with the plan (`ExecuteWithRelations`, `datalog/executor/executor.go`), and `Prepare` runs between them with no event, so a handler sees what the inference wrote only by comparing those two renderings, neither of which is the prepared query, and `Analyze`, which sums latency per event name, attributes preparation's time to no event. One event, named in `datalog/annotations/types.go` beside `QueryInvoked`, is emitted after `Prepare` under the same call-site guard, carrying the prepared query's rendering, whether the inference rewrote a form, which `InferHeaders` computes when it returns the query it was given, and preparation's time. A query with no handler pays nothing for it, as for `QueryInvoked` (goal 7). The alternative, the prepared text as a payload of `QueryPlanCreated`, puts two facts under one name where `Analyze` reads one fact per name, and reports nothing when planning refuses the prepared query, since that event fires after planning.
 
 ### 4.10 Prefetch
 
@@ -211,18 +237,18 @@ One option, `EnableEntityPrefetch`, governs every prefetch trigger, so a query w
 
 §5.3 of `NESTED_SCOPES_AS_QUERIES.md` stands, with these statements, each true of the tree or landing at the step of §9 named beside it:
 
-- A union of one branch is legal, in `parseOrClause`, `parseOrJoinClause` and `compileOrUnionCorrelated` (§9 step 6).
+- A union of one branch is legal, in `parseOrClause`, `parseOrJoinClause` and `compileOrUnionCorrelated` (§9 step 8).
 - `orderClausesForCompile` checks every list's readiness, a lone clause's included, with no early return for a one-clause list. The refusal of a one-clause branch reading outside the header is `Prepare`'s, pinned by `TestPrepare_OrJoinBranchOfOneClauseReadingOutsideTheHeaderIsRefused`, and §7 adds the pin of the fold's own check.
-- `analyzeUnionBranches` keeps its header check, the analyzer's contract on the union node that every pass must keep, and `TestOrJoinSchemaDiagnosticExplainsHeaderContract`, restored from the merge-base at §9 step 6, is its test.
-- `compileNotJoin` carries no check of a header symbol the body never mentions (§9 step 6): `Compile` takes a prepared query (`NESTED_SCOPES_AS_QUERIES.md` §5.3), `Prepare` refuses the shape, and a check nothing reaches is a branch no test can drive. A test that compiles written text calls `Prepare` first.
-- The decompiler has no arm for `OrClause`, `NotClause` or `OrDefaultClause` (§9 step 6).
-- The executor's entry order is the one `NESTED_SCOPES_AS_QUERIES.md` §5.1 states, with the vocabulary check moving after `PlanQuery` at §9 step 8.
+- `analyzeUnionBranches` keeps its header check, the analyzer's contract on the union node that every pass must keep, and `TestOrJoinSchemaDiagnosticExplainsHeaderContract`, restored from the merge-base at §9 step 8, is its test.
+- `compileNotJoin` carries no check of a header symbol the body never mentions (§9 step 8): `Compile` takes a prepared query (`NESTED_SCOPES_AS_QUERIES.md` §5.3), `Prepare` refuses the shape, and a check nothing reaches is a branch no test can drive. A test that compiles written text calls `Prepare` first.
+- The decompiler has no arm for `OrClause`, `NotClause` or `OrDefaultClause` (§9 step 8).
+- The executor's entry order is the one `NESTED_SCOPES_AS_QUERIES.md` §5.1 states, with the preparation event of §4.9 after `Prepare` at §9 step 8 and the vocabulary check moving after `PlanQuery` at §9 step 10.
 
 ## 6. Boundary parity
 
 The header checks, whether every branch binds every output and whether a body reads outside its header, run at `ParseQuery`, `qb.Build` and the executor's entry alike, as they did at the merge-base. `NESTED_SCOPES_AS_QUERIES.md` §5.5 states that fact and the alternative it excludes. One function computes them: it infers a written form's branches under the form's header and runs `checkHeader`. The `Validate` methods call it with no rule set, under which an invocation provides every variable argument, so a text boundary refuses a subset of what `Prepare` refuses and never what the rule set would accept. `Prepare` calls it with the rule set. One message per fact carries `main`'s phrase and the parts `NESTED_SCOPES_AS_QUERIES.md` §2.4 names: the form, the branch counted from one, the variable, the repair.
 
-Goal 5 binds the builder and the formatter the same way. `qb.Build` accepts an inner query with no `:in`, as the parser does, and `FormatQuery` renders a byte constant and an instant constant in the form the parser reads, so every phase the planner emits parses back (§9 step 9).
+Goal 5 binds the builder and the formatter the same way. `qb.Build` accepts an inner query with no `:in`, as the parser does, and `FormatQuery` renders a byte constant and an instant constant in the form the parser reads, so every phase the planner emits parses back (§9 step 11).
 
 ## 7. The contracts the tests pin
 
@@ -233,6 +259,8 @@ Goal 5 binds the builder and the formatter the same way. `qb.Build` accepts an i
 - A branch is evaluated once per window and probed per tuple of the window.
 - A key an earlier window answered is probed and never evaluated again.
 - The grouped index holds its contracts.
+- Each module of §4.3 answers its lemma of `OR_FALLBACK_RELATION_PROOF.md` under every form. That the split changes no tuple is an inference from the proof, unrun, which §9's step for the split settles by the random-graph differential and the suite before and after it.
+- The window reader's and the kept branch's events carry the form they fired under, and a `not-join` or a subquery fires no event of the `or-fallback` family (§4.9).
 - Every window size answers the same tuples, and a later fallback branch never runs for a key an earlier branch answered.
 - The fallback decision for a run tuple reads the branch's result before the carried-output filter: a subject tuple whose carried output disagrees with branch 1's answer is answered by branch 1 and dropped, never passed to branch 2.
 - The result's keys and ordering follow §4.7, and each reader of them decides as on `main` for a result the `OrFallbackRelation` produces.
@@ -256,6 +284,7 @@ Goal 5 binds the builder and the formatter the same way. `qb.Build` accepts an i
 - A required-only header runs and filters.
 - An environment-only header runs and decides the scope, over a data-pattern body and over a predicate-only body.
 - A headerless `not` reading only an input reaches the answer its inferred header gives.
+- A `not-join` composed over the modules yields the subject's tuples with no match in the subject's order, with the subject's keys, over a subject of several windows, with a key an earlier window ran not run again and an invocation in the body continued across the windows.
 - A failure of a `not-join` body's scan is the query's error.
 - The find boundary's rule of §3 holds for projection and aggregation.
 - The three text boundaries refuse a subset of what `Prepare` refuses, with the same message for each shape they refuse.
@@ -269,6 +298,15 @@ Goal 5 binds the builder and the formatter the same way. `qb.Build` accepts an i
 - A rule whose only invocation of its own stratum sits inside a subquery whose inner query does not aggregate derives the closure on both planner paths, and a bound invocation of it derives only what its bindings reach.
 - An invocation of the rule's own stratum under an aggregating inner query, or under a fallback form enclosing an admitted subquery, is refused at build naming the rule, the predicate and the form.
 - A subquery binding answers the relation over its symbols: `[?a ...]` and `[[?a ?b] ...]` bind the inner result whatever its size, and `?a` and `[[?a ?b]]` are refused naming the relation form at the boundaries goal 5 names.
+- The refusal of a variable a branch reads that neither the branch nor the header binds names the form, the branch counted from one, the variable and the repair (§2.3).
+- The refusal of a required run no order binds says whether no input and no clause binds the variable or a clause binds it that no order places before the form, with the same message on both planner paths (§2.3).
+- A handler sees, in one event after `Prepare`, the prepared query, whether the inference rewrote a form, and preparation's time, and a query with no handler pays nothing for it (§4.9).
+- An invocation finds each head symbol in its source by symbol: a derived relation held under a predicate's name with its symbols in another order than the head's binds each argument to the attribute the head pairs it with, and a source lacking a head symbol is the query's error, never a misread.
+- A scope's run carries its required symbols by name, `(scope/required …)` finds each in the run by symbol, and a run lacking one is the query's error (§4.1).
+- A union over a header is the query's error when a member lacks a header symbol, and a combination over symbols a relation lacks is the query's error; neither answers with silence.
+- The derived set of a fixpoint absorbs a body's result by symbol: a result laid out in another order than the predicate's canonical symbols is held under the right attributes.
+- A relation renamed under a substitution yields the same tuples under the new symbols whatever its layout, leaves its input unchanged, carries its copy contract, renames its properties through the same substitution, and errors on a symbol the substitution names that the relation lacks.
+- A data pattern over a streaming group reads the group once, its first tuple follows one pull of the group, and its result stands in the group's place and reports no size; a pattern after a form over a streaming subject answers over the form's result, and a pattern over a group held in memory binds through the matcher (§4.4).
 
 ## 8. Measurement
 
@@ -299,18 +337,20 @@ Each step is its tests, then its code, then the same tests, then the differentia
 1. The algebra-path differences of the random-graph differential (`TestQueryShapesOnRandomGraphsMatchTheReference`): a `not` body holding a count subquery over a header variable its pattern does not bind, with the compile test that pins the shape, so every later gate starts clean.
 2. The gate tests of §7 that the tree lacks, written as reds or pins before any executor code: the streaming read-once, the invocation-once count, the branch-local and branch-binding tests, the output join, the fallback per required group, the anti-join on the header, the plan served from the cache, the scope inside a body reading the stratum, the fallback decision's point, every window size's sameness and the unanswered-key rule, the flat `or-join`'s properties and replacement, the flat-header fallback's global decision, the `not-join` body scan failure, the one-form `:where`, and the prefetch option's isolation.
 3. The primitive and the `OrFallbackRelation` (§4.1 to §4.3, §4.6 to §4.9): the `OrFallbackRelation` restored from the merge-base onto the primitive with the header reads of §4.3, the window of §4.2 in place of the merge-base's gate and its two paths, the events, the properties, the replacement, the read-once, the branch cache kept across windows with the grouped index's pins restored, the EA arm under §4.6's conditions, what a branch sees decided per branch (§4.3), the branch cache keyed on the shared header symbols (§4.6), the at-most-one judgment through the matcher's capability asked for the pattern's source (§4.7), the fallback's deduplication only over a keyless subject (§4.3), the fixpoint continued across windows with the delta copies extended to the lower strata (§4.2), and the matcher's per-key seek strategy at or below its boundary (§4.6). The merge-base's deleted tests restored and retargeted, each dropped assertion named with §2.3 of `NESTED_SCOPES_AS_QUERIES.md` where the join replaces supersession.
-4. The `not-join` handler (§4.4).
-5. The subquery on the primitive under §4.2's window, with a binding symbol the scope already binds joined after the run (§4.4), the subquery as a scope of the rewrite and of the semi-naive step with the narrowed refusal (`NESTED_SCOPES_AS_QUERIES.md` §2.5 and §5.5), and the rewrite on planned scopes (`NESTED_SCOPES_AS_QUERIES.md` §5.5).
-6. The language amendments (§2) and the binding spellings (`NESTED_SCOPES_AS_QUERIES.md` §2.5), the find boundary (§3), boundary parity (§6), the algebra facts (§5), and the rest of the algebra targets `NESTED_SCOPES_AS_QUERIES.md` §6 lists against the merge-base, each with its compile test.
-7. The fallback's prefetch trigger under the option (§4.10), measured.
-8. The contracts weakened since the merge-base:
+4. The split of §4.3: the window reader, the frames, the kept branch and the continuations as the modules `OR_FALLBACK_RELATION_PROOF.md` names, the two branch forms composed over them with their policies, the fallback's narrowing and record of answered keys moved out of the build to the fallback's policy, the module events named for the module with the form in their payload (§4.9), and the module tests retargeted from the iterator to the module they pin. The step's gate is the random-graph differential and the suite run before and after it, which settle the proof's inference that no tuple changes.
+5. The `not-join` composed over the modules (§4.4).
+6. The symbol-addressed executor (§4.1, §4.4, §7), each item with its red test of §7 before its code: the substitution as a value of the language package, read from a head against an invocation's arguments and from a subquery call's `:in` and `:find` against its arguments and its binding; rename as a method on `Relation`, each kind answering with its own kind under a substitution, its properties renamed through the same one, `RelationProperties.renameSymbols` taking the substitution in place of two paired lists; the required-positions lookup beside `SymbolIndexTable`, a miss its error, through which every site that keys, joins, projects, unions, absorbs or renames by symbol derives its positions; the invocation reading its source by symbol, its head the rule set's for a rule and the scope's required list for `scope/required`, with `BenchmarkBoundInvocation` and the closure benchmark before and after on memory-trees or badger; the derived set absorbing by symbol; the union and the combinations erroring on a missing symbol; `ProjectFromPattern`'s promise of an order withdrawn, with every reader that depended on it corrected; the relation binding's positional rename replaced by the substitution and the rename, its positional test replaced by the contract of §7 as a specification change.
+7. The subquery composed over the modules (§4.4): the call's substitution held at the frame, the run presented under the inner `:in` symbols, the answer renamed at the kept branch's boundary, the framing of the inner query over its data inputs with its find shape, the collection input in the frame's key, the binding symbol the scope already binds as a carried output joined after the probe, the result replacing the consumed groups (§4.8), the subquery as a scope of the rewrite and of the semi-naive step with the narrowed refusal (`NESTED_SCOPES_AS_QUERIES.md` §2.5 and §5.5), and the rewrite on planned scopes (`NESTED_SCOPES_AS_QUERIES.md` §5.5).
+8. The language amendments (§2) and the binding spellings (`NESTED_SCOPES_AS_QUERIES.md` §2.5), the refusals of §2.3 with a test of each message on both planner paths, the preparation event of §4.9 with a test of its payload through a handler, the find boundary (§3), boundary parity (§6), the algebra facts (§5), and the rest of the algebra targets `NESTED_SCOPES_AS_QUERIES.md` §6 lists against the merge-base, each with its compile test.
+9. The fallback's prefetch trigger under the option (§4.10), measured.
+10. The contracts weakened since the merge-base:
    - the roster on headers;
    - the engine's vocabulary;
    - the overlap test of two `SetSchema` calls, made to wait for the second call;
    - the cache contracts;
    - the schema-retention contract;
    - the parse-cache contract.
-9. The remaining language and builder items:
+11. The remaining language and builder items:
    - the builder's `%` rule;
    - the builder's acceptance of an inner query with no `:in` (§6);
    - the formatter's byte and instant rendering (§6);
@@ -318,22 +358,26 @@ Each step is its tests, then its code, then the same tests, then the differentia
    - the rename of the tuple position in the executor's bound-attribute check;
    - the free invocation of a predicate whose strata hold a required one;
    - the headerless arms of the fixpoint's delta marking and of the magic rewrite's clause copier, which bodies with inferred headers never reach (`NESTED_SCOPES_AS_QUERIES.md` §5.1).
-10. The benchmarks of §8, the reduction of `TestRules_ConcurrentQueriesDeriveWhatSerialQueriesDerive`'s evaluations with the wasm run's time after it, and the acceptance tests.
-11. The records of §10.
-12. `make test`, native and wasm.
+12. The benchmarks of §8, the reduction of `TestRules_ConcurrentQueriesDeriveWhatSerialQueriesDerive`'s evaluations with the wasm run's time after it, and the acceptance tests.
+13. The records of §10.
+14. `make test`, native and wasm.
 
 ## 10. Records
 
-- `NESTED_SCOPES_AS_QUERIES.md` §5.4 states the runner's framing and points at §4.2 to §4.4 for the window a scope's plan runs over and for the two branch forms' evaluation.
-- `NESTED_SCOPES_AS_QUERIES.md` §7 points at §4.2 to §4.4 for the evaluation and at §8 for the measurements, which land at step 10.
-- `RULES_WITNESSES_AND_SPECULATIVE_VALUES.md` §1.2, §1.3, §4 and §5 state the narrowed refusal, the rewrite's order and its reading of a subquery, the negated invocation, the decline, the engine's vocabulary and the roster as `NESTED_SCOPES_AS_QUERIES.md` §2.5, §5.5 and §8 state them, in place of the sentences that cite `NestedRecursionError` for a subquery, `magicRewriter.rewriteBody`, `deriveInvocation`, `engineAttributes` and `Query.collectRosters`, once steps 5, 8 and 9 land.
+- `OR_FALLBACK_RELATION_PROOF.md` states the lemma each module of §4.3 answers; a change to a module's contract is a change to its lemma.
+- `NESTED_SCOPES_AS_QUERIES.md` §5.4 states the runner's framing and points at §4.2 to §4.4 for the window a scope's plan runs over and for the forms' evaluation over the modules.
+- `NESTED_SCOPES_AS_QUERIES.md` §7 points at §4.2 to §4.4 for the evaluation and at §8 for the measurements, which land at step 12.
+- `RULES_WITNESSES_AND_SPECULATIVE_VALUES.md` §1.2, §1.3, §4 and §5 state the narrowed refusal, the rewrite's order and its reading of a subquery, the negated invocation, the decline, the engine's vocabulary and the roster as `NESTED_SCOPES_AS_QUERIES.md` §2.5, §5.5 and §8 state them, in place of the sentences that cite `NestedRecursionError` for a subquery, `magicRewriter.rewriteBody`, `deriveInvocation`, `engineAttributes` and `Query.collectRosters`, once steps 7, 10 and 11 land.
 - `RULES_WITNESSES_AND_SPECULATIVE_VALUES.md` §2.1: under the window the recorded derivation of a derived tuple is the least of minimum depth from the seeds of the windows up to the tuple's own, since a tuple an earlier window derived is not derived again from a later seed. The record lands with the witnesses.
 - `docs/reference/OR_FALLBACK_SEMANTICS.md`: the required-only header, the environment-bound required variable, and the union and correlated routes by the header.
-- `docs/ALGEBRA.md`: "OR-Fallback Branch Caching" states the window of §4.2 and the index kept across windows of §4.6, and Rule 6's "What needs to exist" names the fallback trigger under the option.
+- `docs/ALGEBRA.md`: "OR-Fallback Branch Caching" states the window of §4.2, the index kept across windows of §4.6 and the modules of §4.3, and Rule 6's "What needs to exist" names the fallback trigger under the option.
+- The janus `CLAUDE.md`'s event families: the module events of §4.9 under the `scope` family, once §9 step 4 lands.
 - `docs/reference/PLANNER_OPTIONS.md` and the `EnableEntityPrefetch` comment in `datalog/storage/database.go`: one option, every trigger.
 - `docs/reference/PLANNER_OPTIONS.md`: the window's cap and growth as executor options (§4.2).
 - `docs/reference/SCHEMA.md`: the refusal covers the attributes a query names and the keywords its inputs bind into attribute positions, decided at entry, and a keyword that reaches an attribute position from data is evaluated as data (§4.4).
 - `docs/reference/RULES.md`: an invocation inside a scope evaluates once per scope execution, continued across windows, and the sentences on a subquery body's order, the passing, the decline and the refusals of building the set follow `NESTED_SCOPES_AS_QUERIES.md` §2.5 and §5.5.
-- `README.md`, `DATOMIC_COMPATIBILITY.md`, `docs/reference/QUERY_BUILDER.md`, `docs/reference/OR_FALLBACK_SEMANTICS.md`, `docs/reference/RULES.md`, `docs/reference/TUPLE_GROUND.md` and `TODO.md`'s collection-binding item: the relation and collection spellings as the binding grammar, the collection form a relation of one symbol, and every example's binding in one of them, once step 6 lands.
+- `README.md`, `DATOMIC_COMPATIBILITY.md`, `docs/reference/QUERY_BUILDER.md`, `docs/reference/OR_FALLBACK_SEMANTICS.md`, `docs/reference/RULES.md`, `docs/reference/TUPLE_GROUND.md` and `TODO.md`'s collection-binding item: the relation and collection spellings as the binding grammar, the collection form a relation of one symbol, and every example's binding in one of them, once step 8 lands.
 - `RELATIONAL_ALGEBRA_OVERVIEW.md` and `PERFORMANCE_STATUS.md`: the mechanism and the numbers.
 - The janus `CLAUDE.md`: "Handling Disjoint Relations in Query Execution" states §3.
+- The janus `CLAUDE.md`'s event families and `ARCHITECTURE.md`'s preparation paragraph: the preparation event of §4.9, once §9 step 8 lands.
+- The janus `CLAUDE.md`'s relational invariants: an attribute addressed by its symbol, a tuple position looked up from a symbol in the relation in hand, a tuple key ordered by its key-symbol list and never by a layout, and the three words, unification for the fact a call states, substitution for the map read from the text, rename for a substitution applied to a relation (§4.1, §4.4, §7).

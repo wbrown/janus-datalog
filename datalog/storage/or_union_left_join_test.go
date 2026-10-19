@@ -168,23 +168,6 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 				assert.Equal(t, 3, byName["Alice"])
 				assert.Equal(t, 1, byName["Bob"])
 			})
-
-			// Test 4: Decorrelated subquery with TupleBinding. A tuple binding
-			// [[?a ?b]] binds one tuple, and a decorrelated subquery returns one
-			// per parent, so the query is refused; several tuples bind through a
-			// relation binding [[?a ?b] ...], which test 3 carries.
-			t.Run("decorrelated_tuple_binding", func(t *testing.T) {
-				_, err := executor.CollectTuples(db.Query(`
-			[:find ?name ?count
-			 :where [?p :entity/type :type/parent]
-			        [?p :parent/name ?name]
-			        [(q [:find ?p (count ?c)
-			             :in $
-			             :where [?c :child/parent ?p]]
-			            $) [[?p ?count]]]]`))
-				require.ErrorContains(t, err, "tuple binding expects exactly 1 result, got more than 1",
-					"a tuple binding over a subquery returning several tuples is refused")
-			})
 		})
 	}
 }

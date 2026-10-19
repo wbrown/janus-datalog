@@ -128,8 +128,9 @@ type Relation interface {
 	// Table returns a formatted markdown table representation
 	Table() string
 
-	// Project creates a new Relation with only the symbols from the pattern
-	// that exist in this Relation, in the order they appear in the pattern
+	// ProjectFromPattern is the projection onto the symbols of this relation
+	// the pattern names. Its layout is its own, and a reader finds a symbol's
+	// position in it by symbol.
 	ProjectFromPattern(pattern *query.DataPattern) Relation
 
 	// Sorted returns tuples sorted by the relation's symbols
@@ -141,6 +142,15 @@ type Relation interface {
 	// Project returns a new relation with only the specified symbols
 	// Returns an error if any requested symbol doesn't exist
 	Project(symbols []query.Symbol) (Relation, error)
+
+	// Rename returns the relation under a substitution: the same tuples
+	// under the new symbols, each symbol the substitution names replaced at
+	// its position and every other kept, the input untouched, the
+	// properties renamed through the same substitution, and the copy
+	// contract the input's. A symbol the substitution names that the
+	// relation lacks is an error. A single-use relation's rename owns its
+	// one iterator.
+	Rename(subst query.Substitution) (Relation, error)
 
 	// Materialize returns a replayable Relation. Implementations may establish
 	// replay through lazy caching; a Relation that is already replayable returns
@@ -657,8 +667,8 @@ func (r *MaterializedRelation) Table() string {
 	return formatter.FormatRelation(r)
 }
 
-// ProjectFromPattern creates a new Relation with only the symbols from the pattern
-// that exist in this Relation, in the order they appear in the pattern
+// ProjectFromPattern is the projection onto the symbols of this relation the
+// pattern names.
 func (r *MaterializedRelation) ProjectFromPattern(pattern *query.DataPattern) Relation {
 	// Find which symbols from this relation are used in the pattern
 	neededSymbols := []query.Symbol{}
@@ -736,6 +746,19 @@ func (r *MaterializedRelation) Sorted() ([]Tuple, error) {
 	return sorted, nil
 }
 
+// Rename is the relation under the substitution: the same tuples, shared,
+// under the renamed symbols, since a rename changes no position and a
+// materialized tuple is never written after it is made.
+func (r *MaterializedRelation) Rename(subst query.Substitution) (Relation, error) {
+	symbols, err := subst.Rename(r.symbols)
+	if err != nil {
+		return nil, err
+	}
+	renamed := newMaterializedRelationFromSet(symbols, r.tuples, r.options, r.properties.renameSymbols(subst))
+	renamed.err = r.err
+	return renamed, nil
+}
+
 // Project returns a new relation with only the specified symbols
 func (r *MaterializedRelation) Project(symbols []query.Symbol) (Relation, error) {
 	// Empty projection is invalid in Datalog - must have at least one find element
@@ -743,13 +766,9 @@ func (r *MaterializedRelation) Project(symbols []query.Symbol) (Relation, error)
 		return nil, fmt.Errorf("cannot project empty symbol list - invalid query")
 	}
 
-	// Find symbol indices
-	indices := query.SymbolIndexTable(r.symbols, symbols)
-	for i, idx := range indices {
-		if idx < 0 {
-			// Symbol not found - this is a query error in Datalog
-			return nil, fmt.Errorf("cannot project: symbol %s not found in relation (has symbols: %v)", symbols[i], r.symbols)
-		}
+	indices, err := query.SymbolIndexTable(r.symbols, symbols)
+	if err != nil {
+		return nil, fmt.Errorf("cannot project: %w", err)
 	}
 
 	// Project tuples - directly access our tuples field
@@ -1024,6 +1043,18 @@ func (r *StreamingRelation) Properties() RelationProperties {
 	return r.properties
 }
 
+// Rename is the relation under the substitution, over this relation's one
+// iterator, which it owns from here on.
+func (r *StreamingRelation) Rename(subst query.Substitution) (Relation, error) {
+	symbols, err := subst.Rename(r.symbols)
+	if err != nil {
+		return nil, err
+	}
+	renamed := NewStreamingRelationWithProperties(symbols, r.Iterator(), r.options, r.properties.renameSymbols(subst))
+	renamed.size = r.size
+	return renamed, nil
+}
+
 func (r *StreamingRelation) Iterator() Iterator {
 	r.mu.Lock()
 
@@ -1238,8 +1269,8 @@ func (r *StreamingRelation) Table() string {
 	return formatter.FormatRelation(r)
 }
 
-// ProjectFromPattern creates a new Relation with only the symbols from the pattern
-// that exist in this Relation, in the order they appear in the pattern
+// ProjectFromPattern is the projection onto the symbols of this relation the
+// pattern names.
 func (r *StreamingRelation) ProjectFromPattern(pattern *query.DataPattern) Relation {
 	// Find which symbols from this relation are used in the pattern
 	neededSymbols := []query.Symbol{}
@@ -1575,6 +1606,24 @@ func (p *ProductRelation) Symbols() []query.Symbol {
 
 func (p *ProductRelation) Properties() RelationProperties {
 	return RelationProperties{}
+}
+
+// Rename is the product of the members each under the part of the
+// substitution naming its own symbols, since a rename distributes over the
+// product.
+func (p *ProductRelation) Rename(subst query.Substitution) (Relation, error) {
+	if _, err := subst.Rename(p.symbols); err != nil {
+		return nil, err
+	}
+	members := make([]Relation, len(p.relations))
+	for i, member := range p.relations {
+		renamed, err := member.Rename(subst.Over(member.Symbols()))
+		if err != nil {
+			return nil, err
+		}
+		members[i] = renamed
+	}
+	return NewProductRelation(members), nil
 }
 
 func (p *ProductRelation) Iterator() Iterator {

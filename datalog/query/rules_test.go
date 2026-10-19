@@ -252,11 +252,11 @@ func TestNewRuleSet_RefusesRecursionUnderFallbackAndSubquery(t *testing.T) {
 				{&Expression{Function: &GroundFunction{Value: "end"}, Binding: sym("?c")}},
 			},
 		}},
-		{"subquery", "subquery", &SubqueryPattern{
+		{"aggregating subquery", "subquery", &SubqueryPattern{
 			Query: &Query{
-				Find:  []FindElement{FindVariable{Symbol: sym("?c")}},
+				Find:  []FindElement{FindAggregate{Function: datalog.SymCount, Arg: sym("?w")}},
 				In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, RulesInput{}, ScalarInput{Symbol: sym("?b")}},
-				Where: []Clause{invoke("follows", "?b", "?c")},
+				Where: []Clause{invoke("follows", "?b", "?w")},
 			},
 			Inputs: []PatternElement{
 				Constant{Value: datalog.SymDollar},
@@ -297,6 +297,33 @@ func TestNewRuleSet_RefusesRecursionUnderFallbackAndSubquery(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("a recursive invocation inside an or-join branch distributes over union: %v", err)
+		}
+		if strata := rs.Strata(); len(strata) != 1 || !strata[0].Recursive {
+			t.Errorf("strata = %+v, want one recursive stratum", strata)
+		}
+	})
+
+	t.Run("a non-aggregating subquery is monotone and accepted", func(t *testing.T) {
+		rs, err := NewRuleSet([]*Rule{
+			defineRule("follows", []string{"?a", "?b"}, scopePattern("?a", "page/next", "?b")),
+			defineRule("follows", []string{"?a", "?c"},
+				scopePattern("?a", "page/next", "?b"),
+				&SubqueryPattern{
+					Query: &Query{
+						Find:  []FindElement{FindVariable{Symbol: sym("?c")}},
+						In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, RulesInput{}, ScalarInput{Symbol: sym("?b")}},
+						Where: []Clause{invoke("follows", "?b", "?c")},
+					},
+					Inputs: []PatternElement{
+						Constant{Value: datalog.SymDollar},
+						Constant{Value: datalog.NewSymbol("%")},
+						Variable{Name: sym("?b")},
+					},
+					Binding: RelationBinding{Variables: []Symbol{sym("?c")}},
+				}),
+		})
+		if err != nil {
+			t.Fatalf("a recursive invocation inside a non-aggregating inner query joins its result with the scope over the combinations, monotone as a branch: %v", err)
 		}
 		if strata := rs.Strata(); len(strata) != 1 || !strata[0].Recursive {
 			t.Errorf("strata = %+v, want one recursive stratum", strata)
@@ -808,5 +835,71 @@ func TestWalkClausesVisitsRuleInvocation(t *testing.T) {
 	})
 	if len(visited) != 2 || visited[1] != Clause(inv) {
 		t.Errorf("visited %v, want the or-join then the invocation it holds", visited)
+	}
+}
+
+// A rule set is the one home of a predicate's head, the symbols its relation
+// carries and an invocation's arguments unify with by position: the first
+// rule's head for a predicate with rules, the magic rule's head for a seed
+// predicate a magic rule derives into, the minted per-position symbols for a
+// seed no rule derives, the predicate's own head for a delta symbol, and
+// absent for a name the set does not declare.
+func TestRuleSetHead(t *testing.T) {
+	bf := []bool{true, false}
+	closure, err := NewRuleSet(followsRules())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten, err := closure.Magic(sym("follows"), bf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := NewRuleSet([]*Rule{defineRule("edge", []string{"?a", "?b"}, scopePattern("?a", "page/next", "?b"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edgesRewritten, err := edges.Magic(sym("edge"), bf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		label string
+		rs    *RuleSet
+		name  Symbol
+		want  []string
+	}{
+		{"a predicate with rules", closure, sym("follows"), []string{"?a", "?b"}},
+		{"the delta of a predicate with rules", closure, DeltaSymbol(sym("follows")), []string{"?a", "?b"}},
+		{"the adorned predicate", rewritten.Rules, rewritten.Predicate, []string{"?a", "?b"}},
+		{"a seed predicate a magic rule derives into", rewritten.Rules, rewritten.Seed, []string{"?b"}},
+		{"the delta of a seed predicate a magic rule derives into", rewritten.Rules, DeltaSymbol(rewritten.Seed), []string{"?b"}},
+		{"a seed predicate no rule derives", edgesRewritten.Rules, edgesRewritten.Seed, []string{"?magic.bf/edge.0"}},
+		{"the delta of a seed predicate no rule derives", edgesRewritten.Rules, DeltaSymbol(edgesRewritten.Seed), []string{"?magic.bf/edge.0"}},
+	}
+	for _, c := range cases {
+		got, ok := c.rs.Head(c.name)
+		if !ok {
+			t.Errorf("%s: Head(%s) reports no head", c.label, c.name)
+			continue
+		}
+		want := make([]Symbol, len(c.want))
+		for i, name := range c.want {
+			want[i] = sym(name)
+		}
+		if len(got) != len(want) {
+			t.Errorf("%s: Head(%s) = %v, want %v", c.label, c.name, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%s: Head(%s) = %v, want %v", c.label, c.name, got, want)
+				break
+			}
+		}
+	}
+	for _, name := range []Symbol{sym("absent"), DeltaSymbol(sym("absent")), ScopeRequired} {
+		if got, ok := closure.Head(name); ok {
+			t.Errorf("Head(%s) = %v, true, want no head for a name the set does not declare", name, got)
+		}
 	}
 }

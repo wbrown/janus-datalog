@@ -76,14 +76,12 @@ func testStorageBackedPureAggregation(t *testing.T, db *Database, mode optimizer
 		q, err := parser.ParseQuery(queryStr)
 		assert.NoError(t, err)
 
-		result, err := exec.Execute(q)
+		tuples, err := executor.CollectTuples(exec.Execute(q))
 		assert.NoError(t, err)
-		assert.NotNil(t, result)
-		assert.Equal(t, 500, result.Size(), "Should find 500 price bars")
+		assert.Len(t, tuples, 500, "Should find 500 price bars")
 
 		// Verify we got actual values
-		for i := 0; i < result.Size(); i++ {
-			tuple := result.Get(i)
+		for _, tuple := range tuples {
 			assert.NotNil(t, tuple[0], "Price high should not be nil")
 		}
 	})

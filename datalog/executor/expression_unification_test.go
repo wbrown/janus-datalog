@@ -118,14 +118,14 @@ func TestExpressionOntoBoundVariableUnifies(t *testing.T) {
 func TestEvaluateExpressionUnifyPassThroughCopiesFromUnsafeSource(t *testing.T) {
 	xSym := datalog.NewSymbol("?x")
 	ySym := datalog.NewSymbol("?y")
-	src := newMockUnsafeRelation(
-		[]query.Symbol{xSym, ySym},
+	srcSymbols := []query.Symbol{xSym, ySym}
+	src := NewStreamingRelation(srcSymbols, newWorkspaceReusingIterator(len(srcSymbols),
 		[][]interface{}{
 			{int64(1), int64(2)},
 			{int64(2), int64(3)},
 			{int64(3), int64(4)},
 		}, // every tuple unifies: ?y = ?x + 1
-	)
+	))
 
 	q, err := parser.ParseQuery(`[:find ?x ?y
 	  :where [?e :test/x ?x]

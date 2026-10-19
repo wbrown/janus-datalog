@@ -110,21 +110,24 @@ const (
 
 	// OR fallback evaluation
 	OrFallbackIteratorCreated = "or-fallback/iterator.created"
-	OrFallbackOuterExhausted  = "or-fallback/outer.exhausted"
-	OrFallbackOuterTuple      = "or-fallback/outer.tuple"
 	OrFallbackBranchNarrowed  = "or-fallback/branch.narrowed"
 	OrFallbackBranchSuccess   = "or-fallback/branch.success"
-	OrFallbackCacheBuild      = "or-fallback/cache-build"
 
-	// OrFallbackWindow is one window of the subject a form's branches run
-	// over: its ordinal, counted from one, its tuple count, and the count of
-	// distinct keys it projects onto the header's required run.
-	OrFallbackWindow = "or-fallback/window"
-
-	// Subquery execution
-	SubqueryExecutorPath      = "subquery/executor-path"
-	SubqueryInputRelation     = "subquery/input-relation"
-	SubqueryInputCombinations = "subquery/input-combinations"
+	// The modules a windowed form runs on
+	// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.3, §4.9), reporting
+	// under every form, each event carrying the form under KeyForm.
+	//
+	// ScopeSubjectTuple is one subject tuple read into a window, rendered;
+	// ScopeSubjectExhausted is the subject read to its end; ScopeWindow is
+	// one window of the subject the branches run over: its ordinal, counted
+	// from one, its tuple count, and the count of distinct keys it projects
+	// onto the header's required run; ScopeBranchBuild is one window's build
+	// of a branch: the branch, its result symbols, the subject's symbols and
+	// the tuples built.
+	ScopeSubjectTuple     = "scope/subject.tuple"
+	ScopeSubjectExhausted = "scope/subject.exhausted"
+	ScopeWindow           = "scope/window"
+	ScopeBranchBuild      = "scope/branch.build"
 
 	// Rule evaluation: one stratum's fixpoint, begun, iterated and completed.
 	// RulesIteration carries the iteration number and the delta size per
@@ -264,6 +267,12 @@ const (
 	// ran, and the reads it performed unaccounted. QueryComplete, PullComplete,
 	// the reflect contexts and the annotated matcher already answer it this way.
 	KeySuccess = "success"
+
+	// The form a windowed module's event fired under: or-join,
+	// or-default-join, not-join or subquery. The window reader's and the
+	// kept branch's events carry it, since the modules report under every
+	// form and the name alone cannot tell which.
+	KeyForm = "form"
 
 	// The funnel, narrowest last: intake from the index, what CRDT resolution
 	// produced from it, what survived the pattern and its constraints.

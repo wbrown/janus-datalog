@@ -1,5 +1,7 @@
 package query
 
+import "fmt"
+
 // SymbolIndex returns the position of target within symbols, or -1 when
 // absent. Symbols are interned pointers, so each comparison is pointer
 // equality.
@@ -18,12 +20,18 @@ func ContainsSymbol(symbols []Symbol, target Symbol) bool {
 }
 
 // SymbolIndexTable returns, for each target in order, its position within
-// symbols (-1 when absent). Hoist this out of per-tuple loops: one pass over
+// symbols. A target the symbols lack is an error naming it and the symbols:
+// an attribute is addressed by its symbol, and no caller reads past one the
+// relation does not carry. Hoist this out of per-tuple loops: one pass over
 // the symbol list per target at setup replaces a rescan per tuple.
-func SymbolIndexTable(symbols, targets []Symbol) []int {
+func SymbolIndexTable(symbols, targets []Symbol) ([]int, error) {
 	table := make([]int, len(targets))
 	for i, target := range targets {
-		table[i] = SymbolIndex(symbols, target)
+		pos := SymbolIndex(symbols, target)
+		if pos < 0 {
+			return nil, fmt.Errorf("symbol %s not found among the symbols %v", target, symbols)
+		}
+		table[i] = pos
 	}
-	return table
+	return table, nil
 }

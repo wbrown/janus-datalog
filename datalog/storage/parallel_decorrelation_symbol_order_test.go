@@ -135,21 +135,14 @@ func TestStorageBackedParallelDecorrelationSymbolOrder(t *testing.T) {
 			matcher := db.Matcher()
 			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
-			result, err := exec.Execute(parsedQuery)
+			tuples, err := executor.CollectTuples(exec.Execute(parsedQuery))
 			if err != nil {
 				t.Fatalf("Query execution failed: %v", err)
 			}
-
-			if result.Size() != 1 {
-				t.Fatalf("Expected 1 result, got %d", result.Size())
+			if len(tuples) != 1 {
+				t.Fatalf("Expected 1 result, got %d", len(tuples))
 			}
-
-			it := result.Iterator()
-			defer it.Close()
-			if !it.Next() {
-				t.Fatal("No results returned")
-			}
-			tuple := it.Tuple()
+			tuple := tuples[0]
 
 			t.Logf("OHLC result: %v", tuple)
 			for i, val := range tuple {

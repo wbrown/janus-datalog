@@ -459,6 +459,76 @@ func TestDefaultSourceAttributeVariables(t *testing.T) {
 	}
 }
 
+// A subquery's call names what its inner query reads at an attribute
+// position through its :in. An inner :in symbol standing in the attribute
+// position of a pattern of the inner query, at any depth of calls, makes the
+// call's variable argument at its place an attribute variable of the
+// enclosing scope, and a keyword constant argument at that place an attribute
+// the query names; a keyword the enclosing scope binds to such an argument
+// through ground is named at the scope's end. An argument whose inner symbol
+// stands in a value position names nothing, and the inner query's own
+// attribute variables are its own.
+func TestDefaultSourceAttributesThroughASubqueryCall(t *testing.T) {
+	entity := Variable{Name: datalog.NewSymbol("?e")}
+	symbol := datalog.NewSymbol
+	call := func(inner *Query, argument PatternElement, bound string) *SubqueryPattern {
+		return &SubqueryPattern{
+			Query:   inner,
+			Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}, argument},
+			Binding: RelationBinding{Variables: []Symbol{symbol(bound)}},
+		}
+	}
+	// reading is an inner query whose :in symbol stands in the attribute
+	// position of its pattern.
+	reading := func(in string) *Query {
+		return &Query{
+			Find:  []FindElement{FindVariable{Symbol: symbol("?v")}},
+			In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, ScalarInput{Symbol: symbol(in)}},
+			Where: []Clause{&DataPattern{Elements: []PatternElement{entity, Variable{Name: symbol(in)}, Variable{Name: symbol("?v")}}}},
+		}
+	}
+	// nested is an inner query passing its :in symbol to a call of reading.
+	nested := &Query{
+		Find:  []FindElement{FindVariable{Symbol: symbol("?w")}},
+		In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, ScalarInput{Symbol: symbol("?middle")}},
+		Where: []Clause{call(reading("?deepest"), Variable{Name: symbol("?middle")}, "?w")},
+	}
+	// valued is an inner query whose :in symbol stands in the value position
+	// of its pattern.
+	valued := &Query{
+		Find:  []FindElement{FindVariable{Symbol: symbol("?e")}},
+		In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, ScalarInput{Symbol: symbol("?k")}},
+		Where: []Clause{&DataPattern{Elements: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/kind")}, Variable{Name: symbol("?k")}}}},
+	}
+	q := &Query{Where: []Clause{
+		call(reading("?attr"), Variable{Name: symbol("?passed")}, "?pv"),
+		call(reading("?attr"), Constant{Value: datalog.NewKeyword(":t/constant")}, "?cv"),
+		&Expression{Function: GroundFunction{Value: datalog.NewKeyword(":t/grounded")}, Binding: symbol("?ga")},
+		call(reading("?attr"), Variable{Name: symbol("?ga")}, "?gv"),
+		call(nested, Variable{Name: symbol("?deep")}, "?nv"),
+		call(valued, Variable{Name: symbol("?value")}, "?vv"),
+	}}
+	inferred, err := InferHeaders(q, nil)
+	if err != nil {
+		t.Fatalf("InferHeaders: %v", err)
+	}
+	variables := inferred.DefaultSourceAttributeVariables()
+	wantVariables := []Symbol{symbol("?passed"), symbol("?ga"), symbol("?deep")}
+	if len(variables) != len(wantVariables) {
+		t.Fatalf("collected %d attribute variables, want %d:\n got  %v\n want %v", len(variables), len(wantVariables), variables, wantVariables)
+	}
+	for i := range wantVariables {
+		if variables[i] != wantVariables[i] {
+			t.Errorf("attribute variable %d is %s, want %s", i, variables[i], wantVariables[i])
+		}
+	}
+	assertKeywordsInOrder(t, inferred.DefaultSourceAttributes(nil), []datalog.Keyword{
+		datalog.NewKeyword(":t/constant"),
+		datalog.NewKeyword(":t/kind"),
+		datalog.NewKeyword(":t/grounded"),
+	})
+}
+
 // TestSourceAttributes pins the roster SourceAttributes collects for a named
 // source: every attribute a data pattern on that source names, in order of
 // first appearance and each once, through NOT/NOT-JOIN bodies,

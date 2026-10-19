@@ -1081,6 +1081,29 @@ func chainReachingWith(n int, suffix string) []string {
 	return names
 }
 
+// A rule whose only invocation of its own stratum sits inside a subquery
+// whose inner query does not aggregate derives the closure on both planner
+// paths: the subquery joins the inner query's result with the scope over its
+// combinations, monotone as a branch is. Bound at a node, the invocation
+// derives what that node reaches.
+func TestRules_InvocationOfTheOwnStratumInsideANonAggregatingSubqueryDerivesTheClosure(t *testing.T) {
+	const rules = `[[(reach ?x ?y) [?x :edge ?y]]
+	                [(reach ?x ?z) [?x :edge ?y] [(q [:find ?w :in $ % ?y :where (reach ?y ?w)] $ % ?y) [[?z] ...]]]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			g := writeGraph(t, d, chain(4))
+			rs := mustRuleSet(t, rules)
+			rel, err := d.Query(`[:find ?x ?z :in $ % :where (reach ?x ?z)]`, rs)
+			require.NoError(t, err)
+			require.ElementsMatch(t, chainClosure(4), g.tuples(t, rel))
+			rel, err = d.Query(`[:find ?z :in $ % ?x :where (reach ?x ?z)]`, rs, nodeID("n2"))
+			require.NoError(t, err)
+			require.ElementsMatch(t, []string{"n3", "n4"}, g.tuples(t, rel))
+		})
+	}
+}
+
 // Two invocations of one predicate under one form, bound at the same position
 // to different nodes, each read what their own node reaches: on the chain of
 // six, n5 and n2 both reach n6, and n2 is not reached from n5, so a not over

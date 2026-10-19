@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
@@ -343,7 +344,7 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 }
 
 func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
-	var subqueryExecutions atomic.Int64
+	var subqueryBuilds atomic.Int64
 	var builtMu sync.Mutex
 	var builtBranches [][]query.Symbol
 	var fusedConstraints atomic.Int64
@@ -353,9 +354,11 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 		Schema: optimizationMatrixSchema(),
 		AnnotationHandler: func(event annotations.Event) {
 			switch event.Name {
-			case "subquery/executor-path":
-				subqueryExecutions.Add(1)
-			case "or-fallback/cache-build":
+			case annotations.ScopeBranchBuild:
+				if event.Data[annotations.KeyForm] == "subquery" {
+					subqueryBuilds.Add(1)
+					return
+				}
 				builtMu.Lock()
 				builtBranches = append(builtBranches, event.Data["branch_syms"].([]query.Symbol))
 				builtMu.Unlock()
@@ -365,7 +368,7 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 				if unique, _ := event.Data["build_key_unique"].(bool); unique {
 					uniqueJoinBuilds.Add(1)
 				}
-			case "or/outer-replaced":
+			case annotations.OrOuterReplaced:
 				replacedOuterGroups.Add(1)
 			}
 		},
@@ -377,7 +380,7 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 	tuples, err := executor.CollectTuples(result, nil)
 	require.NoError(t, err)
 	require.Len(t, tuples, 10)
-	require.Equal(t, int64(4), subqueryExecutions.Load())
+	require.Equal(t, int64(4), subqueryBuilds.Load(), "each of the four subquery clauses is built once under the subquery form")
 	sym := datalog.NewSymbol
 	// Every branch of the fallbacks is built, once per window of its subject,
 	// and nothing else is built: the two get-else rewrites' pattern branches
@@ -399,9 +402,9 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 	for _, built := range builtBranches {
 		require.Contains(t, fallbackBranches, built, "the build %v is a branch of the fallbacks; the builds: %v", built, builtBranches)
 	}
-	require.Equal(t, int64(5), fusedConstraints.Load())
+	assert.Equal(t, int64(5), fusedConstraints.Load(), "the five constant-valued patterns inside the subquery bodies are fused")
 	require.Zero(t, uniqueJoinBuilds.Load())
-	require.Equal(t, int64(5), replacedOuterGroups.Load())
+	require.Equal(t, int64(6), replacedOuterGroups.Load(), "the fallbacks, the get-else rewrites and the subquery each stand in the place of the groups they consumed")
 }
 
 // TestComplexQueryCheckpointCacheSteadyState observes the EA cache's rebuild

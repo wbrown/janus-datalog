@@ -74,18 +74,14 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
-			result, err := exec.Execute(q)
+			tuples, err := executor.CollectTuples(exec.Execute(q))
 			assert.NoError(t, err)
 
 			// Should find all 5 price entities
-			assert.Equal(t, 5, result.Size(), "Should find 5 price entities")
+			assert.Len(t, tuples, 5, "Should find 5 price entities")
 
 			// Verify we actually got the right entities
-			it := result.Iterator()
-			defer it.Close()
-			count := 0
-			for it.Next() {
-				tuple := it.Tuple()
+			for _, tuple := range tuples {
 				assert.Len(t, tuple, 2, "Should have 2 symbols: ?e and ?value")
 				// Verify entity is an Identity
 				switch v := tuple[0].(type) {
@@ -99,9 +95,7 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 				assert.True(t, ok, "Second symbol should be float64, got %T", tuple[1])
 				assert.GreaterOrEqual(t, value, 100.0)
 				assert.LessOrEqual(t, value, 104.0)
-				count++
 			}
-			assert.Equal(t, 5, count, "Iterator should return 5 tuples")
 		})
 	}
 }
@@ -150,14 +144,10 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
-			result, err := exec.Execute(q)
+			tuples, err := executor.CollectTuples(exec.Execute(q))
 			assert.NoError(t, err)
-			assert.Equal(t, 1, result.Size(), "Should find one pair")
-
-			it := result.Iterator()
-			defer it.Close()
-			assert.True(t, it.Next())
-			tuple := it.Tuple()
+			assert.Len(t, tuples, 1, "Should find one pair")
+			tuple := tuples[0]
 
 			// Verify we got Identity types (the actual values are hashes, not the original strings)
 			switch v := tuple[0].(type) {
@@ -233,9 +223,9 @@ func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
-			result, err := exec.Execute(parsed)
+			tuples, err := executor.CollectTuples(exec.Execute(parsed))
 			assert.NoError(t, err)
-			assert.Equal(t, 1, result.Size())
+			assert.Len(t, tuples, 1)
 		})
 	}
 }

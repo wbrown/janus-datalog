@@ -44,10 +44,9 @@ func TestRelationPropertiesRenameSymbols(t *testing.T) {
 		Keys: [][]query.Symbol{{innerA}, {innerA, innerB}},
 	}
 
-	renamed := properties.renameSymbols(
-		[]query.Symbol{innerA, innerB},
-		[]query.Symbol{outerA, outerB},
-	)
+	subst, err := query.SubstitutionOf([]query.Symbol{innerA, innerB}, []query.Symbol{outerA, outerB})
+	require.NoError(t, err)
+	renamed := properties.renameSymbols(subst)
 	require.Equal(t,
 		RelationProperties{
 			Ordering: []query.OrderByClause{
@@ -60,10 +59,20 @@ func TestRelationPropertiesRenameSymbols(t *testing.T) {
 	)
 	require.Equal(t, innerA, properties.Ordering[0].Variable,
 		"renaming must not mutate the source properties")
-	require.Empty(t, properties.renameSymbols(
-		[]query.Symbol{innerA},
-		[]query.Symbol{outerA, outerB},
-	))
+
+	partial, err := query.SubstitutionOf([]query.Symbol{innerA}, []query.Symbol{outerA})
+	require.NoError(t, err)
+	require.Equal(t,
+		RelationProperties{
+			Ordering: []query.OrderByClause{
+				{Variable: outerA, Descending: false},
+				{Variable: innerB, Descending: true},
+			},
+			Keys: [][]query.Symbol{{outerA}, {outerA, innerB}},
+		},
+		properties.renameSymbols(partial),
+		"a symbol the substitution does not name keeps its name",
+	)
 }
 
 func TestNewMaterializedRelationFromSetPreservesProofs(t *testing.T) {

@@ -408,18 +408,36 @@ branch's result for the key before the join on the carried outputs filters it
 reads the outer is evaluated over the window's keys, never per tuple.
 
 **Implementation:**
-`OrFallbackIterator` (`datalog/executor/or_fallback_relation.go`) holds one
-`cachedBranch` per branch, a `JoinIndex` over the key symbols plus the branch's
-symbols. `fillWindow` reads the next window of the subject and `reportWindow`
-emits it as `or-fallback/window`; `runWindow` runs each branch over the
-window's unanswered keys through `buildBranch`, which adds the result's tuples
-to the index and records the keys it answered; `nextShortCircuit` and
-`nextCorrelatedUnion` probe the index per window tuple. A branch of one data
-pattern on the default source, whose entity position is the one required
-variable it reads, on a cardinality-one attribute under a non-temporal
-matcher, is built from the EA cache instead (`buildBranchFromEACache`, under
-`EnableEntityPrefetch`): one `LookupAttribute` per distinct entity of the
-window.
+`windowedIterator` (`datalog/executor/windowed_form.go`) is the composition
+of `docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.3 over the modules.
+The window reader (`windowReader`, `datalog/executor/window_reader.go`) reads
+the next window of the subject through `next` and emits it as `scope/window`
+under the form. The frames (`windowFrame`, `datalog/executor/window_frame.go`)
+give each window the run the branches framed alike are built over. The kept
+branch (`cachedBranch`, `datalog/executor/kept_branch.go`), a `JoinIndex` over
+the key symbols plus the branch's symbols, is built through
+`buildBranchTuples`, the plan run over the run and read whole. `runWindow`
+runs each branch over the window's keys its frame has not run, narrowed under
+the form's policy, through `buildBranch`, which adds the built tuples to the
+index, emits `scope/branch.build` and tells the policy of the build. `Next`
+answers each window tuple under the policy. A form supplies its framing,
+`frameBranches` over a `framing`, and its policy, a `formPolicy` of the
+narrowing of a branch's run, a build in place of the plan, a record of each
+build, and the emit rule. The branch forms' `OrFallbackIterator`
+(`datalog/executor/or_fallback_relation.go`) answers through
+`nextShortCircuit` or `nextCorrelatedUnion`, probing the index per window
+tuple. Under the fallback it narrows a branch's run to the keys the earlier
+branches left unanswered (`unanswered`) and records the keys a build answered
+(`recordAnswered`). Its `buildFromCache` builds a branch of one data pattern
+on the default source, whose entity position is the one required variable it
+reads, on a cardinality-one attribute under a non-temporal matcher, from the
+EA cache instead (`buildBranchFromEACache`, under `EnableEntityPrefetch`): one
+`LookupAttribute` per distinct entity of the window. The `not-join`'s
+`notJoinIterator` (`datalog/executor/not_join.go`) frames its one body under
+the all-required header and answers a window tuple whose probe of the body's
+index returns nothing. Its result is a `StreamingRelation` over the subject's
+symbols with the subject's properties, standing in the place of the groups it
+consumed.
 
 ### Rule 4: General Correlated Subquery Decorrelation
 

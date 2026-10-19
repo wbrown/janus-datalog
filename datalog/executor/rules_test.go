@@ -193,7 +193,7 @@ func TestEvaluateRules_NaiveStepEqualsSemiNaive(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			ctx := NewContext().WithRules(rs)
-			eval, err := exec.prepareStratum(ctx, rs, rs.Strata()[0], nil)
+			eval, err := exec.prepareStratum(ctx, rs, rs.Strata()[0])
 			if err != nil {
 				t.Fatalf("prepareStratum: %v", err)
 			}
@@ -241,7 +241,7 @@ func TestExecuteRuleInvocation_ProjectsDerivedRelation(t *testing.T) {
 	})
 	delta := NewMaterializedRelation([]query.Symbol{a, b}, []Tuple{{page(2), page(3)}})
 	follows := datalog.NewSymbol("follows")
-	ctx := NewContext().WithDerived(map[query.Symbol]Relation{
+	ctx := NewContext().WithRules(mustRules(t, followsRulesText)).WithDerived(map[query.Symbol]Relation{
 		follows:                    derived,
 		query.DeltaSymbol(follows): delta,
 	})
@@ -355,12 +355,13 @@ func TestExecuteRuleInvocation_ReadsThePredicateInPlace(t *testing.T) {
 	variable := func(s query.Symbol) query.PatternElement { return query.Variable{Name: s} }
 	// derivedOf is a scope whose follows relation holds n pairs, each ending
 	// at page0, so a constant page0 at the second position keeps every pair.
+	rs := mustRules(t, followsRulesText)
 	derivedOf := func(n int) *Context {
 		tuples := make([]Tuple, n)
 		for i := range tuples {
 			tuples[i] = Tuple{page(i + 1), page(0)}
 		}
-		return NewContext().WithDerived(
+		return NewContext().WithRules(rs).WithDerived(
 			map[query.Symbol]Relation{follows: NewMaterializedRelation([]query.Symbol{a, b}, tuples)})
 	}
 	allocations := func(ctx *Context, inv *query.RuleInvocation) float64 {
@@ -656,7 +657,6 @@ func TestPrepareStratum_BodyInvocationLeadsItsPatterns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Magic: %v", err)
 	}
-	seed := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?start")}, []Tuple{{page(0)}})
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(3)), nil, mode.plannerOptions())
@@ -664,7 +664,7 @@ func TestPrepareStratum_BodyInvocationLeadsItsPatterns(t *testing.T) {
 			if len(stratum.Predicates) != 1 || stratum.Predicates[0] != magic.Seed {
 				t.Fatalf("the first stratum is %v, want the magic predicate %s alone", stratum.Predicates, magic.Seed)
 			}
-			eval, err := exec.prepareStratum(NewContext().WithRules(rs), magic.Rules, stratum, map[query.Symbol]Relation{magic.Seed: seed})
+			eval, err := exec.prepareStratum(NewContext().WithRules(rs), magic.Rules, stratum)
 			if err != nil {
 				t.Fatalf("prepareStratum: %v", err)
 			}
@@ -691,7 +691,7 @@ func TestPrepareStratum_UnguardedBodyKeepsThePatternFirst(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(3)), nil, mode.plannerOptions())
-			eval, err := exec.prepareStratum(NewContext().WithRules(rs), rs, rs.Strata()[0], nil)
+			eval, err := exec.prepareStratum(NewContext().WithRules(rs), rs, rs.Strata()[0])
 			if err != nil {
 				t.Fatalf("prepareStratum: %v", err)
 			}
@@ -1158,11 +1158,11 @@ func TestExecuteWithRelations_RequiredBindingNothingBinds(t *testing.T) {
 	}
 }
 
-// TestExecuteWithRelations_RequiredBindingInSubqueryBodyNamesTheRepair: a
-// subquery body runs in its written order, so an invocation before the
-// clause binding its required position reaches the clause unbound and is
-// refused naming the predicate, the variable and the repair.
-func TestExecuteWithRelations_RequiredBindingInSubqueryBodyNamesTheRepair(t *testing.T) {
+// TestExecuteWithRelations_RequiredBindingInSubqueryBodyIsOrderedAfterItsBinder:
+// a subquery body is ordered like any scope's, so an invocation of a
+// predicate requiring its first position bound, written before the
+// expression binding it, runs after its binder and answers the successor.
+func TestExecuteWithRelations_RequiredBindingInSubqueryBodyIsOrderedAfterItsBinder(t *testing.T) {
 	rs := mustRules(t, successorRulesText)
 	q := mustParse(t, `[:find ?m
 	                    :in $ %
@@ -1174,13 +1174,12 @@ func TestExecuteWithRelations_RequiredBindingInSubqueryBodyNamesTheRepair(t *tes
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(nil), nil, mode.plannerOptions())
-			_, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil)
-			var required *query.RequiredBindingError
-			if !errors.As(err, &required) {
-				t.Fatalf("want *query.RequiredBindingError, got %v", err)
+			tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), q, nil))
+			if err != nil {
+				t.Fatalf("the body's invocation runs after its binder: %v", err)
 			}
-			if required.Name != datalog.NewSymbol("succ") || required.Symbol != datalog.NewSymbol("?n") || required.Rule != nil {
-				t.Errorf("RequiredBindingError = %+v, want predicate succ, variable ?n, no rule: the query's own invocation", required)
+			if len(tuples) != 1 || tuples[0][0] != int64(6) {
+				t.Errorf("got %v, want the successor of 5", tuples)
 			}
 		})
 	}
@@ -1206,7 +1205,8 @@ func TestEvaluateRules_SeedAbsorbedAtIterationZero(t *testing.T) {
 				}
 			}
 			exec := NewExecutorWithOptions(matcher, nil, opts)
-			seed := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?start")}, []Tuple{{page(3)}})
+			seedHead, _ := magic.Rules.Head(magic.Seed)
+			seed := NewMaterializedRelation(seedHead, []Tuple{{page(3)}})
 			ev := newRuleEvaluation(exec, magic.Rules, magic.Predicate, magic.Seed)
 			if _, err := ev.extend(NewContext().WithRules(rs), seed); err != nil {
 				t.Fatalf("extend: %v", err)
@@ -1290,8 +1290,6 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Magic(succ): %v", err)
 	}
-	start := datalog.NewSymbol("?start")
-
 	queries := []struct {
 		name  string
 		text  string
@@ -1305,15 +1303,10 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 	sets := []struct {
 		name  string
 		rules *query.RuleSet
-		seeds map[query.Symbol]Relation
 	}{
-		{"closure", closure, nil},
-		{"closure rewritten", closureMagic.Rules, map[query.Symbol]Relation{
-			closureMagic.Seed: NewMaterializedRelation([]query.Symbol{start}, []Tuple{{page(1)}}),
-		}},
-		{"successor rewritten", successorMagic.Rules, map[query.Symbol]Relation{
-			successorMagic.Seed: NewMaterializedRelation([]query.Symbol{start}, []Tuple{{int64(5)}}),
-		}},
+		{"closure", closure},
+		{"closure rewritten", closureMagic.Rules},
+		{"successor rewritten", successorMagic.Rules},
 	}
 	type labelledPlan struct {
 		label string
@@ -1336,7 +1329,7 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 			}
 			for _, s := range sets {
 				for _, stratum := range s.rules.Strata() {
-					eval, err := exec.prepareStratum(NewContext().WithRules(s.rules), s.rules, stratum, s.seeds)
+					eval, err := exec.prepareStratum(NewContext().WithRules(s.rules), s.rules, stratum)
 					if err != nil {
 						t.Fatalf("%s: prepareStratum %v: %v", s.name, stratum.Predicates, err)
 					}
@@ -1361,5 +1354,207 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// pairsBySymbol reads a relation's ?x and ?y attributes into a set of pairs,
+// each looked up by its symbol in the relation in hand.
+func pairsBySymbol(t *testing.T, rel Relation) map[[2]datalog.Identity]bool {
+	t.Helper()
+	positions, err := query.SymbolIndexTable(rel.Symbols(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")})
+	if err != nil {
+		t.Fatalf("the result's symbols: %v", err)
+	}
+	pairs := map[[2]datalog.Identity]bool{}
+	err = ForEach(rel, func(tuple Tuple) error {
+		pairs[[2]datalog.Identity{tuple[positions[0]].(datalog.Identity), tuple[positions[1]].(datalog.Identity)}] = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reading pairs: %v", err)
+	}
+	return pairs
+}
+
+// An invocation finds each head symbol in its source by symbol
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §7): a relation held under
+// a predicate's name with its symbols in another order than the head's binds
+// each argument to the attribute the head pairs it with, whatever the
+// invocation's shape, and the required run is read by its own symbols.
+func TestInvocationBindsEachArgumentByTheHeadsSymbolWhateverTheSourcesLayout(t *testing.T) {
+	a, b := datalog.NewSymbol("?a"), datalog.NewSymbol("?b")
+	x, y := datalog.NewSymbol("?x"), datalog.NewSymbol("?y")
+	follows := datalog.NewSymbol("follows")
+	rs := mustRules(t, followsRulesText)
+	// The relations are laid out [?b ?a], the reverse of the head (follows ?a ?b):
+	// follows holds page1→page2, page2→page3 and page3→page3, and the delta
+	// holds page2→page3.
+	held := NewMaterializedRelation([]query.Symbol{b, a}, []Tuple{{page(2), page(1)}, {page(3), page(2)}, {page(3), page(3)}})
+	delta := NewMaterializedRelation([]query.Symbol{b, a}, []Tuple{{page(3), page(2)}})
+	ctx := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{follows: held, query.DeltaSymbol(follows): delta})
+	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	variable := func(s query.Symbol) query.PatternElement { return query.Variable{Name: s} }
+	invoke := func(name query.Symbol, args ...query.PatternElement) *query.RuleInvocation {
+		return &query.RuleInvocation{Name: name, Args: args}
+	}
+	every := map[[2]datalog.Identity]bool{{page(1), page(2)}: true, {page(2), page(3)}: true, {page(3), page(3)}: true}
+
+	t.Run("distinct free variables over a materialized source", func(t *testing.T) {
+		rel, err := exec.executeRuleInvocation(ctx, invoke(follows, variable(x), variable(y)), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireSamePairs(t, pairsBySymbol(t, rel), every)
+	})
+	t.Run("distinct free variables over a streaming source", func(t *testing.T) {
+		streaming := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{follows: NewStreamingRelation([]query.Symbol{b, a}, held.Iterator())})
+		rel, err := exec.executeRuleInvocation(streaming, invoke(follows, variable(x), variable(y)), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireSamePairs(t, pairsBySymbol(t, rel), every)
+	})
+	t.Run("a constant fixes the head's position", func(t *testing.T) {
+		rel, err := exec.executeRuleInvocation(ctx, invoke(follows, variable(x), query.Constant{Value: page(3)}), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tuples, err := CollectTuples(rel, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[datalog.Identity]bool{}
+		for _, tuple := range tuples {
+			got[tuple[0].(datalog.Identity)] = true
+		}
+		if len(got) != 2 || !got[page(2)] || !got[page(3)] {
+			t.Errorf("got %v, want page2 and page3, the ?a values whose ?b is page3", tuples)
+		}
+	})
+	t.Run("a repeated variable equates the head's positions", func(t *testing.T) {
+		rel, err := exec.executeRuleInvocation(ctx, invoke(follows, variable(x), variable(x)), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tuples, err := CollectTuples(rel, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tuples) != 1 || tuples[0][0] != page(3) {
+			t.Errorf("got %v, want page3 alone, the one pair whose ?a and ?b agree", tuples)
+		}
+	})
+	t.Run("an all-constant invocation is the verdict on the head's positions", func(t *testing.T) {
+		rel, err := exec.executeRuleInvocation(ctx, invoke(follows, query.Constant{Value: page(1)}, query.Constant{Value: page(2)}), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rel.Size() != 1 {
+			t.Errorf("page1→page2 is held, so the verdict is the unit relation, got %d tuples", rel.Size())
+		}
+		rel, err = exec.executeRuleInvocation(ctx, invoke(follows, query.Constant{Value: page(2)}, query.Constant{Value: page(1)}), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rel.Size() != 0 {
+			t.Errorf("page2→page1 is not held, so the verdict is empty, got %d tuples", rel.Size())
+		}
+	})
+	t.Run("the delta symbol is read by the predicate's head", func(t *testing.T) {
+		rel, err := exec.executeRuleInvocation(ctx, invoke(query.DeltaSymbol(follows), variable(x), variable(y)), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireSamePairs(t, pairsBySymbol(t, rel), map[[2]datalog.Identity]bool{{page(2), page(3)}: true})
+	})
+	t.Run("the required run is read by its own symbols", func(t *testing.T) {
+		run := NewMaterializedRelation([]query.Symbol{y, x}, []Tuple{{page(2), page(1)}})
+		scoped := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{query.ScopeRequired: run})
+		rel, err := exec.executeRuleInvocation(scoped, invoke(query.ScopeRequired, variable(x), variable(y)), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireSamePairs(t, pairsBySymbol(t, rel), map[[2]datalog.Identity]bool{{page(1), page(2)}: true})
+	})
+}
+
+// A source lacking a head symbol is the invocation's error naming the
+// symbol, never a misread (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md
+// §7), for a predicate's relation and for the required run alike.
+func TestInvocationErrorsOnASourceLackingAHeadSymbol(t *testing.T) {
+	p, q := datalog.NewSymbol("?p"), datalog.NewSymbol("?q")
+	x, y := datalog.NewSymbol("?x"), datalog.NewSymbol("?y")
+	follows := datalog.NewSymbol("follows")
+	rs := mustRules(t, followsRulesText)
+	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	args := []query.PatternElement{query.Variable{Name: x}, query.Variable{Name: y}}
+
+	t.Run("a predicate's relation", func(t *testing.T) {
+		held := NewMaterializedRelation([]query.Symbol{p, q}, []Tuple{{page(1), page(2)}})
+		ctx := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{follows: held})
+		_, err := exec.executeRuleInvocation(ctx, &query.RuleInvocation{Name: follows, Args: args}, nil)
+		if err == nil {
+			t.Fatal("a relation over [?p ?q] held under follows, whose head is (follows ?a ?b), lacks ?a: expected an error naming it")
+		}
+		if !strings.Contains(err.Error(), "?a") {
+			t.Errorf("error %q does not name the missing head symbol ?a", err)
+		}
+	})
+	t.Run("the required run", func(t *testing.T) {
+		run := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{page(1)}})
+		ctx := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{query.ScopeRequired: run})
+		_, err := exec.executeRuleInvocation(ctx, &query.RuleInvocation{Name: query.ScopeRequired, Args: args}, nil)
+		if err == nil {
+			t.Fatal("a run over [?x] under (scope/required ?x ?y) lacks ?y: expected an error naming it")
+		}
+		if !strings.Contains(err.Error(), "?y") {
+			t.Errorf("error %q does not name the missing required symbol ?y", err)
+		}
+	})
+}
+
+// The derived set of a fixpoint absorbs a body's result by symbol
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §7): a result laid out in
+// another order than the predicate's canonical symbols is held under the
+// right attributes, one fact under two layouts is one tuple, and a result
+// lacking a canonical symbol is the set's error naming it.
+func TestDerivedSetAbsorbsABodyResultLaidOutInAnotherOrder(t *testing.T) {
+	a, b, c := datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")
+	set := newDerivedSet([]query.Symbol{a, b})
+
+	added, err := set.absorb(NewMaterializedRelation([]query.Symbol{b, a}, []Tuple{{page(2), page(1)}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(added) != 1 {
+		t.Fatalf("added %v, want the one pair", added)
+	}
+	rel := set.relation(ExecutorOptions{})
+	positions, err := query.SymbolIndexTable(rel.Symbols(), []query.Symbol{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tuples, err := CollectTuples(rel, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tuples) != 1 || tuples[0][positions[0]] != page(1) || tuples[0][positions[1]] != page(2) {
+		t.Errorf("the set holds %v over %v, want ?a page1 and ?b page2", tuples, rel.Symbols())
+	}
+
+	added, err = set.absorb(NewMaterializedRelation([]query.Symbol{a, b}, []Tuple{{page(1), page(2)}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(added) != 0 {
+		t.Errorf("the same fact under the canonical layout is held already, got %v added", added)
+	}
+
+	_, err = set.absorb(NewMaterializedRelation([]query.Symbol{a, c}, []Tuple{{page(1), page(3)}}))
+	if err == nil {
+		t.Fatal("a result over [?a ?c] lacks the set's ?b: expected an error naming it")
+	}
+	if !strings.Contains(err.Error(), "?b") {
+		t.Errorf("error %q does not name the missing symbol ?b", err)
 	}
 }

@@ -632,7 +632,7 @@ func testCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T, mod
 
 	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		AnnotationHandler: func(e annotations.Event) {
-			if e.Name == "or-fallback/cache-build" || e.Name == "or-fallback/branch.success" {
+			if e.Name == annotations.ScopeBranchBuild || e.Name == annotations.OrFallbackBranchSuccess {
 				t.Logf("[%s] %v", e.Name, e.Data)
 			}
 			if e.Name == annotations.ScanSharingCacheHit || e.Name == annotations.ScanSharingCacheMiss {

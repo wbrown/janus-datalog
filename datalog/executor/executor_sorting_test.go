@@ -935,11 +935,10 @@ func TestOrderByProjectedKeyDeduplicates(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to parse baseline query: %v", err)
 			}
-			baseResult, err := executor.Execute(baseline)
+			baseTuples, err := CollectTuples(executor.Execute(baseline))
 			if err != nil {
 				t.Fatalf("baseline execution failed: %v", err)
 			}
-			baseCount := baseResult.Size()
 
 			sorted, err := parser.ParseQuery(`[:find ?name
 	                                   :where [?e :user/name ?name]
@@ -948,20 +947,20 @@ func TestOrderByProjectedKeyDeduplicates(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to parse sorted query: %v", err)
 			}
-			sortResult, err := executor.Execute(sorted)
+			sortTuples, err := CollectTuples(executor.Execute(sorted))
 			if err != nil {
 				t.Fatalf("sorted execution failed: %v", err)
 			}
 
-			if sortResult.Size() != baseCount {
-				t.Fatalf("order-by changed result membership: %d tuples without order-by, %d with", baseCount, sortResult.Size())
+			if len(sortTuples) != len(baseTuples) {
+				t.Fatalf("order-by changed result membership: %d tuples without order-by, %d with", len(baseTuples), len(sortTuples))
 			}
 			expected := []string{"Alice", "Bob"}
-			if sortResult.Size() != len(expected) {
-				t.Fatalf("expected %d deduplicated tuples, got %d", len(expected), sortResult.Size())
+			if len(sortTuples) != len(expected) {
+				t.Fatalf("expected %d deduplicated tuples, got %d", len(expected), len(sortTuples))
 			}
-			for i := 0; i < sortResult.Size(); i++ {
-				if name := sortResult.Get(i)[0].(string); name != expected[i] {
+			for i, tuple := range sortTuples {
+				if name := tuple[0].(string); name != expected[i] {
 					t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
 				}
 			}

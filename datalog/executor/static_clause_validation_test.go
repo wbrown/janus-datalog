@@ -54,14 +54,15 @@ func TestNotJoinAcceptsNestedExistentialNot(t *testing.T) {
 			// goalA has an event and no flagger exists, so the body's
 			// nested NOT holds, the body matches, and goalA is excluded.
 			// goalB has no event and survives.
-			if result.Size() != 1 {
-				for i := 0; i < result.Size(); i++ {
-					t.Logf("tuple %d: %v", i, result.Get(i))
-				}
-				t.Fatalf("expected only the event-less goal to survive, got %d tuples", result.Size())
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("reading the result: %v", err)
 			}
-			if !datalog.ValuesEqual(result.Get(0)[0], "b") {
-				t.Fatalf("expected goal b to survive, got %v", result.Get(0))
+			if len(tuples) != 1 {
+				t.Fatalf("expected only the event-less goal to survive, got %d tuples: %v", len(tuples), tuples)
+			}
+			if !datalog.ValuesEqual(tuples[0][0], "b") {
+				t.Fatalf("expected goal b to survive, got %v", tuples[0])
 			}
 		})
 	}
