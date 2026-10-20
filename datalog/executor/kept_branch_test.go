@@ -28,6 +28,41 @@ func TestPresentKeepsACollectionMembersSymbolUnderItsOwnName(t *testing.T) {
 	assert.ElementsMatch(t, [][]interface{}{{"a", "p"}, {"b", "q"}}, tuples)
 }
 
+// An inner symbol a call writes at an :in place and at a :find place stands
+// for two enclosing names, and the presentation carries both: the attribute
+// is renamed to the first name and copied under each further one, and a
+// collection member's attribute is kept under its own name beside the copy.
+func TestPresentCopiesAnAttributeUnderEachFurtherName(t *testing.T) {
+	k, h, n, kk := datalog.NewSymbol("?k"), datalog.NewSymbol("?h"), datalog.NewSymbol("?n"), datalog.NewSymbol("?kk")
+	subst, err := query.SubstitutionOf([]query.Symbol{k, h, k}, []query.Symbol{n, h, kk})
+	require.NoError(t, err)
+	answer := NewMaterializedRelation([]query.Symbol{k, h}, []Tuple{{int64(1), "p"}, {int64(2), "q"}})
+	presented, err := framing{subst: subst}.present(answer)
+	require.NoError(t, err)
+	assert.Equal(t, []query.Symbol{n, h, kk}, presented.Symbols(), "?k renamed to ?n and copied under ?kk")
+	tuples, err := CollectTuples(presented, nil)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, [][]interface{}{{int64(1), "p", int64(1)}, {int64(2), "q", int64(2)}}, tuples)
+
+	m, ks, mm := datalog.NewSymbol("?m"), datalog.NewSymbol("?ks"), datalog.NewSymbol("?mm")
+	subst, err = query.SubstitutionOf([]query.Symbol{m, h, m}, []query.Symbol{ks, h, mm})
+	require.NoError(t, err)
+	answer = NewMaterializedRelation([]query.Symbol{m, h}, []Tuple{{"a", "p"}, {"b", "q"}})
+	presented, err = framing{subst: subst, members: []query.Symbol{m}}.present(answer)
+	require.NoError(t, err)
+	assert.Equal(t, []query.Symbol{m, h, mm}, presented.Symbols(), "the member kept under its own name and copied under ?mm")
+	tuples, err = CollectTuples(presented, nil)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, [][]interface{}{{"a", "p", "a"}, {"b", "q", "b"}}, tuples)
+
+	subst, err = query.SubstitutionOf([]query.Symbol{k, h, k}, []query.Symbol{n, h, h})
+	require.NoError(t, err)
+	answer = NewMaterializedRelation([]query.Symbol{k, h}, []Tuple{{int64(1), "p"}})
+	_, err = framing{subst: subst}.present(answer)
+	require.Error(t, err, "a further name the presented answer carries would name two attributes, a selection on their equality a presentation never performs")
+	assert.Contains(t, err.Error(), "?h")
+}
+
 // The kept branch is keyed probe-side by the subject tuple's positions of
 // the key symbols and stored-side by the branch tuple's positions of the
 // symbols they are stored under: a collection argument's key, stored under

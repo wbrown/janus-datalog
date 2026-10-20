@@ -59,9 +59,10 @@ func TestCorrelatedSubqueryDefersBehindSimultaneouslyReadySiblings(t *testing.T)
 
 // TestUncorrelatedSubqueryKeepsDataSourceScheduling pins the exemption: an
 // uncorrelated subquery executes exactly once wherever it is placed, so
-// deferring it cannot reduce its cost and would forfeit its bindings as
-// early join input. It keeps data-source scoring and schedules ahead of the
-// NOT filter.
+// deferring it cannot reduce its cost, and it keeps data-source scoring,
+// above a correlated subquery's. It reads nothing bound, so the selection
+// takes it after a ready NOT filter, which drops tuples on keys in hand, as
+// it takes a scan of a whole extent (REWRITE_ORDER_PROOF.md §6).
 func TestUncorrelatedSubqueryKeepsDataSourceScheduling(t *testing.T) {
 	e := datalog.NewSymbol("?e")
 	threshold := datalog.NewSymbol("?threshold")
@@ -85,6 +86,20 @@ func TestUncorrelatedSubqueryKeepsDataSourceScheduling(t *testing.T) {
 		},
 		Binding: query.TupleBinding{Variables: []query.Symbol{threshold}},
 	}
+	correlated := &query.SubqueryPattern{
+		Query: &query.Query{},
+		Inputs: []query.PatternElement{
+			query.Constant{Value: datalog.SymDollar},
+			query.Variable{Name: e},
+		},
+		Binding: query.TupleBinding{Variables: []query.Symbol{threshold}},
+	}
+
+	available := map[query.Symbol]bool{e: true}
+	if scoreClause(uncorrelated, available, query.Bindings{}) <= scoreClause(correlated, available, query.Bindings{}) {
+		t.Errorf("an uncorrelated subquery scores %d, not above a correlated one at %d: it executes once wherever placed and is not deferred",
+			scoreClause(uncorrelated, available, query.Bindings{}), scoreClause(correlated, available, query.Bindings{}))
+	}
 
 	phases, err := createPhasesGreedy(
 		[]query.Clause{notClause, uncorrelated, pattern},
@@ -96,8 +111,8 @@ func TestUncorrelatedSubqueryKeepsDataSourceScheduling(t *testing.T) {
 		t.Fatalf("phasing failed: %v", err)
 	}
 
-	assertScheduledAfter(t, phases, notClause, uncorrelated,
-		"uncorrelated subquery keeps data-source scoring and precedes the NOT filter")
+	assertScheduledAfter(t, phases, uncorrelated, notClause,
+		"the ready NOT filter, dropping tuples on keys in hand, precedes the uncorrelated subquery, which reads nothing bound")
 }
 
 // TestUncorrelatedSubqueryDefersBehindPendingBindingProviders pins the limit

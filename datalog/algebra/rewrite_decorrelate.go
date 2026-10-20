@@ -81,7 +81,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 			Subject: lj.InnerQuery,
 		}, annotations.AlgebraDecorrelateCheck, map[string]interface{}{
 			"correlation_vars": lj.CorrelationVars,
-			"has_aggregates":   hasAggregates(lj.InnerQuery),
+			"has_aggregates":   lj.InnerQuery.Aggregates(),
 			"has_defaults":     len(lj.DefaultValues) > 0,
 			"should":           shouldDecorrelate(lj),
 			"inner_query":      lj.InnerQuery,
@@ -154,7 +154,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		}, annotations.AlgebraDecorrelateApply, map[string]interface{}{
 			"correlation_vars": lj.CorrelationVars,
 			"inner_params":     innerParams,
-			"has_aggregates":   hasAggregates(lj.InnerQuery),
+			"has_aggregates":   lj.InnerQuery.Aggregates(),
 		})
 	}
 
@@ -173,7 +173,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 
 	var innerResultNode *Node
 
-	if hasAggregates(lj.InnerQuery) {
+	if lj.InnerQuery.Aggregates() {
 		// Rule 1: aggregate decorrelation — compile inner, wrap in Aggregate
 		var groupBy []query.Symbol
 		var aggFns []query.FindAggregate
@@ -313,7 +313,7 @@ func rebuildWithChildren(node *parse.Node, children []interface{}) *parse.Node {
 // shouldDecorrelate determines whether a LateralJoin should be decorrelated
 // based on structural analysis of the inner query. Per ALGEBRA.md Rule 4.
 func shouldDecorrelate(lj *LateralJoin) bool {
-	if hasAggregates(lj.InnerQuery) {
+	if lj.InnerQuery.Aggregates() {
 		return true // Rule 1: aggregate decorrelation
 	}
 	if hasNestedCorrelatedSubquery(lj.InnerQuery) {
@@ -571,16 +571,6 @@ func mapCorrelationToInnerParams(innerQuery *query.Query, outerVars []query.Symb
 		}
 	}
 	return innerParams
-}
-
-// hasAggregates returns true if the query's :find clause contains aggregates.
-func hasAggregates(q *query.Query) bool {
-	for _, elem := range q.Find {
-		if elem.IsAggregate() {
-			return true
-		}
-	}
-	return false
 }
 
 // recoverChild extracts an algebra Node from a transform result.

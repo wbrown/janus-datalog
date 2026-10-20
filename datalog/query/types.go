@@ -154,7 +154,9 @@ type BindingForm interface {
 	BoundVariables() []Symbol
 }
 
-// TupleBinding binds a single tuple: [[?a ?b]]
+// TupleBinding is the tuple spelling, [[?a ?b]]: it names the inner query's
+// outputs in the enclosing scope, one per element of the inner :find, and
+// the result enters the scope as the relation over them.
 type TupleBinding struct {
 	Variables []Symbol
 }
@@ -175,8 +177,9 @@ func (t TupleBinding) String() string {
 	return result
 }
 
-// CollectionBinding binds a single symbol from all tuples: [?coll ...]
-// This collects all values from a single-symbol result into a collection.
+// CollectionBinding is the collection spelling, [?a ...]: it names the one
+// output of an inner :find of one element, and the result enters the scope
+// as the relation over it.
 type CollectionBinding struct {
 	Variable Symbol
 }
@@ -189,8 +192,9 @@ func (c CollectionBinding) String() string {
 	return "[" + c.Variable.String() + " ...]"
 }
 
-// ScalarBinding binds a single value to a single variable: ?var
-// Expects exactly one tuple with one symbol. Used with scalar find spec (.:find ... .)
+// ScalarBinding is the scalar spelling, ?a: it names the one output of an
+// inner :find of one element, and the result enters the scope as the
+// relation over it.
 type ScalarBinding struct {
 	Variable Symbol
 }
@@ -365,6 +369,30 @@ func (q *Query) SingleDataPattern() (*DataPattern, error) {
 		return nil, fmt.Errorf("pattern query requires a DataPattern, got %T", q.Where[0])
 	}
 	return pattern, nil
+}
+
+// WithWhere is the query derived over where: the same find, inputs,
+// ordering, limit and scalar flag, built from the parsed parts, since a
+// Query is never copied by value. The query it is derived from is unchanged.
+func (q *Query) WithWhere(where []Clause) *Query {
+	return &Query{
+		Find:         q.Find,
+		In:           q.In,
+		Where:        where,
+		OrderBy:      q.OrderBy,
+		Limit:        q.Limit,
+		ScalarReturn: q.ScalarReturn,
+	}
+}
+
+// Aggregates reports whether the query's find holds an aggregate.
+func (q *Query) Aggregates() bool {
+	for _, elem := range q.Find {
+		if elem.IsAggregate() {
+			return true
+		}
+	}
+	return false
 }
 
 // PatternQuery wraps a DataPattern as the minimal Datalog query fragment

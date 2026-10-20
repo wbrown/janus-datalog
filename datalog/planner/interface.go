@@ -12,6 +12,11 @@ type QueryPlanner interface {
 	// through planning; it is not stored.
 	PlanQuery(q *query.Query, bindings query.Bindings, handler annotations.Handler) (*RealizedPlan, error)
 
+	// PlanScope plans a nested scope, a header over a clause list, framed as
+	// the query that finds the header and opens with scope/required over the
+	// required run, under the caller's bindings.
+	PlanScope(s Scope, bindings query.Bindings, handler annotations.Handler) (*RealizedPlan, error)
+
 	// ExplainPlan plans under the caller's bindings without executing and
 	// returns the algebra explanation as values — the compiled tree, every
 	// rewrite decision, the optimized tree, the rewritten query — alongside

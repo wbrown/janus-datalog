@@ -13,9 +13,13 @@ import (
 
 // Executor is the main query execution engine
 type Executor struct {
-	matcher                  PatternMatcher
-	entityResolver           EntityResolver
-	planner                  planner.QueryPlanner
+	matcher        PatternMatcher
+	entityResolver EntityResolver
+	planner        planner.QueryPlanner
+	// rewritePlanner plans the scopes the magic rewrite reads: the query
+	// planner's options with join-project insertion off, so no decompiled
+	// projection stands between a rule's clauses and its invocations.
+	rewritePlanner           planner.QueryPlanner
 	options                  ExecutorOptions
 	enableParallelSubqueries bool
 	maxSubqueryWorkers       int
@@ -34,6 +38,13 @@ func defaultPlannerOptions() planner.PlannerOptions {
 		EnableStreamingAggregation: true,
 		EnableAttributeFetchFusion: true,
 	}
+}
+
+// newRewritePlanner builds the planner the magic rewrite reads scopes
+// through, from the query planner's options with join-project insertion off.
+func newRewritePlanner(opts planner.PlannerOptions) planner.QueryPlanner {
+	opts.EnableJoinProjectInsertion = false
+	return planner.CreatePlanner(nil, opts)
 }
 
 // NewExecutor creates a new query executor with default options
@@ -58,6 +69,7 @@ func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opt
 		matcher:                  matcher,
 		entityResolver:           resolver,
 		planner:                  queryPlanner,
+		rewritePlanner:           newRewritePlanner(opts),
 		options:                  execOpts,
 		enableParallelSubqueries: opts.EnableParallelSubqueries,
 		maxSubqueryWorkers:       opts.MaxSubqueryWorkers,
@@ -114,8 +126,8 @@ func (e *Executor) ExecuteWithContext(ctx *Context, q *query.Query) (Relation, e
 
 // boundAttributes is the roster of attributes the input relations bind to a
 // variable standing in the attribute position of a data pattern on the
-// default source: each keyword value in such a variable's column, in order of
-// first appearance and each once. A value that is not a keyword names no
+// default source: each keyword value at such a variable's position in its
+// relation, in order of first appearance and each once. A value that is not a keyword names no
 // attribute. A relation read here is made replayable first, so the execution
 // that follows reads it whole.
 func boundAttributes(q *query.Query, inputRelations []Relation) ([]datalog.Keyword, error) {
@@ -151,17 +163,17 @@ func boundAttributes(q *query.Query, inputRelations []Relation) ([]datalog.Keywo
 			}
 			rel := inputRelations[index].Materialize()
 			inputRelations[index] = rel
-			column := -1
+			position := -1
 			for i, s := range rel.Symbols() {
 				if s == sym {
-					column = i
+					position = i
 				}
 			}
-			if column < 0 {
+			if position < 0 {
 				continue
 			}
 			err := ForEach(rel, func(t Tuple) error {
-				if attr, ok := t[column].(datalog.Keyword); ok && !seen[attr] {
+				if attr, ok := t[position].(datalog.Keyword); ok && !seen[attr] {
 					seen[attr] = true
 					roster = append(roster, attr)
 				}
@@ -258,6 +270,7 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 		matcher:                  matcher,
 		entityResolver:           e.entityResolver,
 		planner:                  e.planner,
+		rewritePlanner:           e.rewritePlanner,
 		options:                  e.options,
 		enableParallelSubqueries: e.enableParallelSubqueries,
 		maxSubqueryWorkers:       e.maxSubqueryWorkers,
@@ -586,7 +599,7 @@ func (e *Executor) executeRealizedPlan(ctx *Context, plan *planner.RealizedPlan,
 // aggregates and each phase's begin and completion to handler. A query's run
 // reports to the executor's handler. A scope's run reports to none: the
 // form's own events report a branch's execution, and a phase event per
-// subject tuple would be a handler call per tuple on the per-tuple path.
+// window would be a handler call per window beside the window's own event.
 func (e *Executor) runPhases(ctx *Context, plan *planner.RealizedPlan, currentGroups []Relation, handler annotations.Handler) (Relation, error) {
 	queryExecutor := e.queryExecutor()
 
@@ -1438,11 +1451,14 @@ func validatePhaseOutput(phaseNumber int, phase planner.RealizedPhase, groups []
 	return nil
 }
 
-// SetPlanCache sets the plan cache for this executor
+// SetPlanCache sets the plan cache for this executor, on the query's planner
+// and the rewrite's alike, so a scope the rewrite plans is served from the
+// same cache as the scope the executor runs.
 func (e *Executor) SetPlanCache(cache *planner.PlanCache) {
 	if e.planner != nil {
 		e.planner.SetCache(cache)
 	}
+	e.rewritePlanner.SetCache(cache)
 }
 
 // GetPlanner returns the executor's planner for direct access

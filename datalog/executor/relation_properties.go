@@ -185,18 +185,18 @@ func deduplicatedProperties(symbols []query.Symbol) RelationProperties {
 }
 
 // orProperties derives a form's result properties from the subject's and
-// the header: the subject's ordering survives both forms; its keys survive
-// a fallback whose every branch answers at most one tuple per subject tuple,
-// and otherwise the result's key is the composite of each subject key and
-// the produced outputs, under the union always, since two branches can
-// answer one subject tuple.
+// the header: the subject's ordering survives every form; its keys survive
+// a form that answers at most one tuple per subject tuple, answersAtMostOne,
+// which the form's policy decides, a fallback whose every branch answers at
+// most one, a one-body form whose body does, and a union never, since two
+// branches can answer one subject tuple; and otherwise the result's key is
+// the composite of each subject key and the produced outputs.
 func orProperties(
 	outer RelationProperties,
 	producedSymbols []query.Symbol,
 	overwrittenSymbols []query.Symbol,
 	outputSymbols []query.Symbol,
-	shortCircuit bool,
-	branchesEmitAtMostOne bool,
+	answersAtMostOne bool,
 ) RelationProperties {
 	preserved := outer.withoutReboundSymbols(overwrittenSymbols)
 	unaffectedOuterKeys := preserved.Keys
@@ -205,7 +205,7 @@ func orProperties(
 	result := preserved
 	result.Keys = appendDistinctKeys(result.Keys, deduplicatedProperties(outputSymbols).Keys)
 
-	if shortCircuit && branchesEmitAtMostOne {
+	if answersAtMostOne {
 		result.Keys = appendDistinctKeys(result.Keys, unaffectedOuterKeys)
 		return result
 	}
@@ -237,7 +237,6 @@ func expansionProperties(
 		bindingSymbols,
 		bindingSymbols,
 		outputSymbols,
-		false,
 		false,
 	)
 }

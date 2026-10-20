@@ -90,7 +90,7 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 			// binding-driven strategies instead. Those report the same funnel
 			// on a different event, and this table covers both rather than
 			// aiming only where the constant arms live.
-			// No completions column. Every arm reports through
+			// No completions field. Every arm reports through
 			// annotations.StorageScanComplete — the one completion event — so a
 			// per-arm list of names would restate the same constant eight times.
 			// Which strategy an arm picked is not what this table asserts, only

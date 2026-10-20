@@ -185,12 +185,12 @@ If two patterns share no symbols and no expression bridges them, the executor er
 | DataPattern | +100 | Produces data, highest priority |
 | OR-JOIN clause | +80 | Data source (union of branches over its header) |
 | Rule invocation | +80 | Data source (the predicate's derived relation), constants and bound arguments weighted as a pattern's; an invocation of a predicate the seed restricts, a magic or adorned predicate or the delta of one, takes a further +500 and leads every pattern |
-| Expression | +10 | Needs inputs bound first |
-| Predicate | +5 | Filter, needs inputs bound |
-| NOT-JOIN clause | +2 | Anti-join, needs its header bound |
-| Subquery | -50 | Expensive, defer as long as possible |
+| Expression | +10 per symbol it binds | Needs inputs bound first |
+| Predicate | +1000 | Filter; once every input it reads is available it runs before any unrelated data is loaded |
+| NOT-JOIN clause | +7 | Anti-join, needs its header bound: a consumer's +5 and its own +2 |
+| Subquery | −1000 with a variable among its inputs, 0 without, +10 per binding variable | A correlated subquery runs once per input combination, so it follows every ready clause that narrows its input; an uncorrelated one runs once wherever it stands |
 
-This ensures cheap filtering happens early, and expensive subqueries only execute after the result set has been narrowed.
+This ensures cheap filtering happens early, and expensive subqueries only execute after the result set has been narrowed. Within a phase the selection takes a rank before the score: a clause without visible selectivity, a scan of a whole extent, is selected only when no other clause is selectable, and the scores decide among the rest (`docs/proposals/REWRITE_ORDER_PROOF.md` §6).
 
 **Symbol lifetime management.** The planner computes three symbol sets per phase that form the contract with the executor:
 
@@ -584,7 +584,7 @@ inactive logical-rewrite experiment.
 4. Repeat until no more clauses can execute in this phase
 5. Start new phase with remaining clauses (new phase inherits `Keep` from previous)
 
-**Scoring** (`clause_utils.go`): Visibility-based selectivity — constants weight 10x over available variables because they filter storage directly. Patterns scored 100+, OR and rule invocations at 80, expressions at 10, predicates at 5, NOT at 2, subqueries at -50. This naturally orders operations from most-selective data access down to expensive deferred operations.
+**Scoring** (`clause_utils.go`): Visibility-based selectivity — constants weight 10x over available variables because they filter storage directly. The weight per clause type is the table under "Operation deferral" above, and within a phase a clause without visible selectivity is selected only when no other clause is selectable. This naturally orders operations from most-selective data access down to expensive deferred operations.
 
 **Phase boundaries**: A clause that needs symbols not yet available forces a new phase. This is the mechanism that prevents Cartesian products — symbols must flow through explicit `Keep` channels between phases.
 
@@ -637,7 +637,7 @@ Type-safe query construction. Fluent API producing `*query.Query` directly (no E
 
 ### Annotations (`datalog/annotations/`)
 
-Performance monitoring via decorator pattern. `WrapMatcher()` wraps any `PatternMatcher` transparently. Zero overhead when handler is nil. Events for: pattern matching (index selection, scan size), join operations (type, sizes, reduction), expression evaluation, phase timing, rule evaluation (the magic-set rewrite applied or declined, stratum begin and complete, each iteration's delta sizes).
+Performance monitoring via decorator pattern. `WrapMatcher()` wraps any `PatternMatcher` transparently. Zero overhead when handler is nil. Events for: pattern matching (index selection, scan size), join operations (type, sizes, reduction), expression evaluation, phase timing, rule evaluation (the magic-set rewrite made for a bound invocation, stratum begin and complete, each iteration's delta sizes).
 
 ### Parser (`datalog/parser/`)
 

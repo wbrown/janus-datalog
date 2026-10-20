@@ -120,7 +120,7 @@ func complementOf(spec graphSpec, pairs map[[2]string]bool) map[[2]string]bool {
 	return out
 }
 
-// pairsRendered renders pairs as the graph renders a two-column result.
+// pairsRendered renders pairs as the graph renders a result over two symbols.
 func pairsRendered(pairs map[[2]string]bool) []string {
 	var out []string
 	for pair := range pairs {
@@ -740,7 +740,7 @@ func (g coloredGraph) edgeBackToSelf(x string) bool {
 }
 
 // nodesWhere is each node for which pred holds, rendered as the graph
-// renders a one-column result.
+// renders a result over one symbol.
 func (g coloredGraph) nodesWhere(pred func(x string) bool) []string {
 	var out []string
 	for _, x := range g.spec.nodes {
@@ -762,7 +762,7 @@ func (g coloredGraph) nodesWithValue(fn func(x string) int64) []string {
 }
 
 // pairsWhere is each ordered pair of nodes, equal pairs included, for which
-// pred holds, rendered as the graph renders a two-column result.
+// pred holds, rendered as the graph renders a result over two symbols.
 func (g coloredGraph) pairsWhere(pred func(x, y string) bool) []string {
 	var out []string
 	for _, x := range g.spec.nodes {
@@ -800,7 +800,7 @@ const (
 func sameColor(g coloredGraph, x, y string) bool { return g.colors[x] == g.colors[y] }
 
 // shadowedLocalCases name a body-local ?y, under a header that does not carry
-// it, beside an outer column ?y.
+// it, beside an outer symbol ?y.
 var shadowedLocalCases = []scopeCase{
 	{"notjoin-shadow", rClosure,
 		`[:find ?x ?y :in $ % :where [?x :color ?c] [?y :color ?c] (not-join [?x] (r ?x ?y))]`, false,
@@ -1052,7 +1052,7 @@ func runScopeCases(t *testing.T, cases []scopeCase) {
 	}
 }
 
-// Every shape with a body-local variable that shares an outer column's name,
+// Every shape with a body-local variable that shares an outer symbol's name,
 // under not-join, or-join and or-default-join, in a query and in a rule body,
 // derives on a random coloured graph what the reference computes.
 func TestRules_ShadowedLocalsOnRandomGraphsMatchTheReference(t *testing.T) {

@@ -1,6 +1,10 @@
 package executor
 
-import "github.com/wbrown/janus-datalog/datalog/query"
+import (
+	"fmt"
+
+	"github.com/wbrown/janus-datalog/datalog/query"
+)
 
 // The kept branch of a windowed form (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md
 // §4.3, §4.6): a branch's index over its result symbols, keyed on the header
@@ -68,15 +72,20 @@ func buildBranchTuples(executor *DefaultQueryExecutor, ctx *Context, f framing, 
 }
 
 // present is a branch's answer under the enclosing names: the answer
-// projected onto the first of its symbols standing for each enclosing name
-// and renamed through the substitution. A collection member's symbol stands
-// for its argument at the member's grain and for no enclosing name, so it is
-// kept under its own name, the name the kept branch holds a member's key
-// under. A symbol the substitution does not name, a constant argument's, and
+// projected onto the first of its symbols standing for each enclosing name,
+// renamed through the substitution, and extended with a copy of each
+// attribute under every further name standing for its symbol, through the
+// identity expression, since a rename gives an attribute one name. A
+// collection member's symbol stands for its argument at the member's grain
+// and for no enclosing name, so it is kept under its own name, the name the
+// kept branch holds a member's key under, and copied under its further
+// names. A symbol the substitution does not name, a constant argument's, and
 // a later symbol standing for a name an earlier one stands for, a repeated
 // argument's, whose value the run bound equal to the first's, are dropped by
-// the projection. An answer the substitution names nothing of, a branch
-// form's, is returned as it is.
+// the projection. A further name the presented answer carries would name two
+// attributes, a selection on their equality a presentation never performs,
+// and is an error naming it. An answer the substitution names nothing of, a
+// branch form's, is returned as it is.
 func (f framing) present(answer Relation) (Relation, error) {
 	symbols := answer.Symbols()
 	var keep, renamed, named []query.Symbol
@@ -104,7 +113,23 @@ func (f framing) present(answer Relation) (Relation, error) {
 			return nil, err
 		}
 	}
-	return projected.Rename(f.subst.Over(renamed))
+	presented, err := projected.Rename(f.subst.Over(renamed))
+	if err != nil {
+		return nil, err
+	}
+	for _, sym := range keep {
+		presentedAs := sym
+		if to, ok := f.subst.Of(sym); ok && !query.ContainsSymbol(f.members, sym) {
+			presentedAs = to
+		}
+		for _, further := range f.subst.Further(sym) {
+			if query.ContainsSymbol(presented.Symbols(), further) {
+				return nil, fmt.Errorf("present: %s would name both %s and the attribute presented as %s", further, further, presentedAs)
+			}
+			presented = presented.EvaluateFunction(query.IdentityFunction{Arg: query.VariableTerm{Symbol: presentedAs}}, further)
+		}
+	}
+	return presented, nil
 }
 
 // collectBranch reads a branch's result whole. The index retains the tuples

@@ -55,6 +55,15 @@ func followsRules() []*Rule {
 
 func sym(name string) Symbol { return datalog.NewSymbol(name) }
 
+func mustRuleSet(t *testing.T, rules []*Rule) *RuleSet {
+	t.Helper()
+	rs, err := NewRuleSet(rules)
+	if err != nil {
+		t.Fatalf("NewRuleSet: %v", err)
+	}
+	return rs
+}
+
 func TestNewRuleSet_GroupsAlternativesInOrder(t *testing.T) {
 	rules := append(followsRules(),
 		defineRule("page", []string{"?p"}, scopePattern("?p", "page/kind", "_")))
@@ -234,6 +243,33 @@ func TestNewRuleSet_OrdersStrata(t *testing.T) {
 	assertSymbols(t, "Predicates", strata[0].Predicates, "follows")
 }
 
+// A rule body's static shapes are read at the rule set's boundary as a
+// query's are at the text boundaries, through the one walk
+// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §5.1).
+func TestNewRuleSet_RefusesABodyShapeTheTextBoundariesRefuse(t *testing.T) {
+	_, err := NewRuleSet([]*Rule{
+		defineRule("counted", []string{"?a", "?n"},
+			scopePattern("?a", "page/next", "?b"),
+			&SubqueryPattern{
+				Query: &Query{
+					Find:  []FindElement{FindAggregate{Function: datalog.SymCount, Arg: sym("?c")}},
+					In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, ScalarInput{Symbol: sym("?b")}},
+					Where: []Clause{scopePattern("?b", "page/next", "?c")},
+				},
+				Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}, Variable{Name: sym("?b")}},
+				Binding: RelationBinding{Variables: []Symbol{sym("?n"), sym("?m")}},
+			}),
+	})
+	if err == nil {
+		t.Fatal("NewRuleSet accepts the body; its subquery's binding declares two symbols for a find of one")
+	}
+	for _, part := range []string{"rule counted", "subquery relation binding declares 2 symbol(s), but the inner :find has 1 element(s)"} {
+		if !strings.Contains(err.Error(), part) {
+			t.Errorf("the refusal %q does not carry %q", err, part)
+		}
+	}
+}
+
 func TestNewRuleSet_RefusesRecursionUnderFallbackAndSubquery(t *testing.T) {
 	cases := []struct {
 		form   string
@@ -257,6 +293,43 @@ func TestNewRuleSet_RefusesRecursionUnderFallbackAndSubquery(t *testing.T) {
 				Find:  []FindElement{FindAggregate{Function: datalog.SymCount, Arg: sym("?w")}},
 				In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, RulesInput{}, ScalarInput{Symbol: sym("?b")}},
 				Where: []Clause{invoke("follows", "?b", "?w")},
+			},
+			Inputs: []PatternElement{
+				Constant{Value: datalog.SymDollar},
+				Constant{Value: datalog.NewSymbol("%")},
+				Variable{Name: sym("?b")},
+			},
+			Binding: RelationBinding{Variables: []Symbol{sym("?c")}},
+		}},
+		// A fallback enclosing a subquery whose inner query does not
+		// aggregate is refused naming the fallback: the admitted form inside
+		// does not hide the one outside.
+		{"a fallback enclosing a non-aggregating subquery", "or-default-join", &OrDefaultClause{Branches: [][]Clause{
+			{&SubqueryPattern{
+				Query: &Query{
+					Find:  []FindElement{FindVariable{Symbol: sym("?c")}},
+					In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, RulesInput{}, ScalarInput{Symbol: sym("?b")}},
+					Where: []Clause{invoke("follows", "?b", "?c")},
+				},
+				Inputs: []PatternElement{
+					Constant{Value: datalog.SymDollar},
+					Constant{Value: datalog.NewSymbol("%")},
+					Variable{Name: sym("?b")},
+				},
+				Binding: RelationBinding{Variables: []Symbol{sym("?c")}},
+			}},
+			{&Expression{Function: &GroundFunction{Value: "end"}, Binding: sym("?c")}},
+		}}},
+		// An aggregating subquery enclosing a fallback is refused naming the
+		// innermost form whose evaluation is not monotone, the fallback.
+		{"an aggregating subquery enclosing a fallback", "or-default-join", &SubqueryPattern{
+			Query: &Query{
+				Find: []FindElement{FindAggregate{Function: datalog.SymCount, Arg: sym("?w")}},
+				In:   []InputSpec{DatabaseInput{Name: datalog.SymDollar}, RulesInput{}, ScalarInput{Symbol: sym("?b")}},
+				Where: []Clause{&OrDefaultClause{Branches: [][]Clause{
+					{invoke("follows", "?b", "?w")},
+					{&Expression{Function: &GroundFunction{Value: "end"}, Binding: sym("?w")}},
+				}}},
 			},
 			Inputs: []PatternElement{
 				Constant{Value: datalog.SymDollar},
@@ -554,22 +627,20 @@ func TestScopeOfRuleInvocation(t *testing.T) {
 	scope := ScopeOf(inv, nil)
 	assertSymbols(t, "Provides", scope.Provides, "?a")
 	assertSymbols(t, "Correlates", scope.Correlates)
-	assertSymbols(t, "Mandatory", scope.Mandatory)
 	assertSymbols(t, "Variables", inv.Variables(), "?a")
 	if got, want := inv.String(), `(follows ?a "x" _ ?a)`; got != want {
 		t.Errorf("String() = %s, want %s", got, want)
 	}
 
 	// Read with the rule set, an invocation of a predicate with required
-	// positions correlates on the variables there, mandatory, and provides
-	// the rest. Read with no rule set, it provides every variable.
+	// positions correlates on the variables there and provides the rest.
+	// Read with no rule set, it provides every variable.
 	succ := defineRule("succ", []string{"?n", "?m"}, scopePattern("?n", "page/next", "?m"))
 	succ.Required = []Symbol{sym("?n")}
 	rs := mustRuleSet(t, []*Rule{succ})
 	scope = ScopeOf(invoke("succ", "?n", "?m"), rs)
 	assertSymbols(t, "Provides under the rule set", scope.Provides, "?m")
 	assertSymbols(t, "Correlates under the rule set", scope.Correlates, "?n")
-	assertSymbols(t, "Mandatory under the rule set", scope.Mandatory, "?n")
 	scope = ScopeOf(invoke("succ", "?n", "?m"), nil)
 	assertSymbols(t, "Provides with no rule set", scope.Provides, "?n", "?m")
 	assertSymbols(t, "Correlates with no rule set", scope.Correlates)
@@ -845,20 +916,35 @@ func TestWalkClausesVisitsRuleInvocation(t *testing.T) {
 // seed no rule derives, the predicate's own head for a delta symbol, and
 // absent for a name the set does not declare.
 func TestRuleSetHead(t *testing.T) {
-	bf := []bool{true, false}
 	closure, err := NewRuleSet(followsRules())
 	if err != nil {
 		t.Fatal(err)
 	}
-	rewritten, err := closure.Magic(sym("follows"), bf)
+	// The closure rewritten for a bound first position, as the planner's
+	// rewrite builds it: the adorned closure guarded by its magic predicate,
+	// which the recursive rule's magic rule derives into.
+	rewritten, err := NewSeededRuleSet([]*Rule{
+		defineRule("adorned.bf/follows", []string{"?a", "?b"},
+			invoke("magic.bf/follows", "?a"),
+			scopePattern("?a", "page/next", "?b")),
+		defineRule("adorned.bf/follows", []string{"?a", "?c"},
+			invoke("magic.bf/follows", "?a"),
+			scopePattern("?a", "page/next", "?b"),
+			invoke("adorned.bf/follows", "?b", "?c")),
+		defineRule("magic.bf/follows", []string{"?b"},
+			invoke("magic.bf/follows", "?a"),
+			scopePattern("?a", "page/next", "?b")),
+	}, []SeedPredicate{{Name: sym("magic.bf/follows"), Arity: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	edges, err := NewRuleSet([]*Rule{defineRule("edge", []string{"?a", "?b"}, scopePattern("?a", "page/next", "?b"))})
-	if err != nil {
-		t.Fatal(err)
-	}
-	edgesRewritten, err := edges.Magic(sym("edge"), bf)
+	// An edge predicate rewritten the same way: no magic rule derives into
+	// its seed, which the caller alone fills.
+	edgesRewritten, err := NewSeededRuleSet([]*Rule{
+		defineRule("adorned.bf/edge", []string{"?a", "?b"},
+			invoke("magic.bf/edge", "?a"),
+			scopePattern("?a", "page/next", "?b")),
+	}, []SeedPredicate{{Name: sym("magic.bf/edge"), Arity: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -870,11 +956,11 @@ func TestRuleSetHead(t *testing.T) {
 	}{
 		{"a predicate with rules", closure, sym("follows"), []string{"?a", "?b"}},
 		{"the delta of a predicate with rules", closure, DeltaSymbol(sym("follows")), []string{"?a", "?b"}},
-		{"the adorned predicate", rewritten.Rules, rewritten.Predicate, []string{"?a", "?b"}},
-		{"a seed predicate a magic rule derives into", rewritten.Rules, rewritten.Seed, []string{"?b"}},
-		{"the delta of a seed predicate a magic rule derives into", rewritten.Rules, DeltaSymbol(rewritten.Seed), []string{"?b"}},
-		{"a seed predicate no rule derives", edgesRewritten.Rules, edgesRewritten.Seed, []string{"?magic.bf/edge.0"}},
-		{"the delta of a seed predicate no rule derives", edgesRewritten.Rules, DeltaSymbol(edgesRewritten.Seed), []string{"?magic.bf/edge.0"}},
+		{"the adorned predicate", rewritten, sym("adorned.bf/follows"), []string{"?a", "?b"}},
+		{"a seed predicate a magic rule derives into", rewritten, sym("magic.bf/follows"), []string{"?b"}},
+		{"the delta of a seed predicate a magic rule derives into", rewritten, DeltaSymbol(sym("magic.bf/follows")), []string{"?b"}},
+		{"a seed predicate no rule derives", edgesRewritten, sym("magic.bf/edge"), []string{"?magic.bf/edge.0"}},
+		{"the delta of a seed predicate no rule derives", edgesRewritten, DeltaSymbol(sym("magic.bf/edge")), []string{"?magic.bf/edge.0"}},
 	}
 	for _, c := range cases {
 		got, ok := c.rs.Head(c.name)

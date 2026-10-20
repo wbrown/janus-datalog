@@ -19,12 +19,12 @@ func TestMintedPredicateSymbols(t *testing.T) {
 		got   Symbol
 		want  string
 	}{
-		{"adorned", adornedSymbol(sym("follows"), bf), "adorned.bf/follows"},
-		{"magic", magicSymbol(sym("follows"), bf), "magic.bf/follows"},
+		{"adorned", AdornedSymbol(sym("follows"), bf), "adorned.bf/follows"},
+		{"magic", MagicSymbol(sym("follows"), bf), "magic.bf/follows"},
 		{"delta", DeltaSymbol(sym("follows")), "delta/follows"},
-		{"delta of an adorned predicate", DeltaSymbol(adornedSymbol(sym("follows"), bf)), "delta.adorned.bf/follows"},
-		{"delta of a magic predicate", DeltaSymbol(magicSymbol(sym("follows"), bf)), "delta.magic.bf/follows"},
-		{"adorned, the predicate in a namespace of the caller's", adornedSymbol(sym("mine/follows"), bf), "adorned.bf.mine/follows"},
+		{"delta of an adorned predicate", DeltaSymbol(AdornedSymbol(sym("follows"), bf)), "delta.adorned.bf/follows"},
+		{"delta of a magic predicate", DeltaSymbol(MagicSymbol(sym("follows"), bf)), "delta.magic.bf/follows"},
+		{"adorned, the predicate in a namespace of the caller's", AdornedSymbol(sym("mine/follows"), bf), "adorned.bf.mine/follows"},
 	}
 	for _, c := range cases {
 		if c.got != sym(c.want) {

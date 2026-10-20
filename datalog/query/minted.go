@@ -47,13 +47,13 @@ func adornment(bound []bool) string {
 	return sb.String()
 }
 
-// adornedSymbol names a predicate under a binding pattern: adorned.bf/reach.
-func adornedSymbol(name Symbol, bound []bool) Symbol {
+// AdornedSymbol names a predicate under a binding pattern: adorned.bf/reach.
+func AdornedSymbol(name Symbol, bound []bool) Symbol {
 	return mint(adornedNamespace+"."+adornment(bound), name)
 }
 
-// magicSymbol names the magic predicate of an adorned one: magic.bf/reach.
-func magicSymbol(name Symbol, bound []bool) Symbol {
+// MagicSymbol names the magic predicate of an adorned one: magic.bf/reach.
+func MagicSymbol(name Symbol, bound []bool) Symbol {
 	return mint(magicNamespace+"."+adornment(bound), name)
 }
 

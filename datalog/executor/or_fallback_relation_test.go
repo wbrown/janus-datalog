@@ -68,14 +68,21 @@ func TestNarrowableBranchIsDataPatternsAlone(t *testing.T) {
 
 // Whether every branch answers at most one tuple per subject tuple is
 // judged against the header symbols the subject carries: an expression
-// binding one value and a subquery binding one tuple do, a relation binding
-// does when every find variable's binding is carried, and a data pattern
-// does when the matcher serves it by one lookup, which a matcher without
-// the capability never does.
+// binding one value does, a subquery does when every plain find variable's
+// binding symbol is carried and the rest are aggregates, whatever its
+// binding's spelling, and a data pattern does when the matcher serves it by
+// one lookup, which a matcher without the capability never does.
 func TestBranchesEmitAtMostOneJudgedAgainstTheCarriedHeader(t *testing.T) {
 	entity, value, task := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value"), datalog.NewSymbol("?task")
 	ground := branchGround(value, int64(0))
-	tupleBound := &query.SubqueryPattern{Query: &query.Query{}, Binding: query.TupleBinding{Variables: []query.Symbol{value}}}
+	fanning := &query.SubqueryPattern{
+		Query:   &query.Query{Find: []query.FindElement{query.FindVariable{Symbol: task}}},
+		Binding: query.TupleBinding{Variables: []query.Symbol{value}},
+	}
+	counted := &query.SubqueryPattern{
+		Query:   &query.Query{Find: []query.FindElement{query.FindAggregate{Function: datalog.SymCount, Arg: task}}},
+		Binding: query.ScalarBinding{Variable: value},
+	}
 	grouped := &query.SubqueryPattern{
 		Query: &query.Query{Find: []query.FindElement{
 			query.FindVariable{Symbol: entity},
@@ -86,7 +93,8 @@ func TestBranchesEmitAtMostOneJudgedAgainstTheCarriedHeader(t *testing.T) {
 	required := []query.Symbol{entity}
 	carried := []query.Symbol{entity}
 	matcher := NewMemoryPatternMatcher(nil)
-	require.True(t, orBranchesEmitAtMostOne([][]query.Clause{{ground}, {tupleBound}}, required, carried, matcher))
+	require.True(t, orBranchesEmitAtMostOne([][]query.Clause{{ground}, {counted}}, required, carried, matcher), "a scalar-spelled pure count")
+	require.False(t, orBranchesEmitAtMostOne([][]query.Clause{{fanning}, {ground}}, required, carried, matcher), "a tuple-spelled subquery whose find variable the subject does not carry")
 	require.True(t, orBranchesEmitAtMostOne([][]query.Clause{{grouped}, {ground}}, required, carried, matcher))
 	require.False(t, orBranchesEmitAtMostOne([][]query.Clause{{grouped}, {ground}}, required, nil, matcher), "a group key the subject does not carry")
 	require.False(t, orBranchesEmitAtMostOne([][]query.Clause{{branchPattern(entity, value, datalog.NewKeyword(":t/a"))}}, required, carried, matcher), "a matcher without the capability")
@@ -94,9 +102,9 @@ func TestBranchesEmitAtMostOneJudgedAgainstTheCarriedHeader(t *testing.T) {
 	require.False(t, orBranchesEmitAtMostOne(nil, required, carried, matcher))
 
 	carriedSet := map[query.Symbol]bool{entity: true}
-	require.True(t, relationBindingGroupsAreOuterBound(grouped.Query, []query.Symbol{entity, value}, carriedSet))
-	require.False(t, relationBindingGroupsAreOuterBound(grouped.Query, []query.Symbol{value, entity}, carriedSet), "the binding's first variable is not carried")
-	require.False(t, relationBindingGroupsAreOuterBound(grouped.Query, []query.Symbol{entity}, carriedSet), "an arity disagreement")
+	require.True(t, subqueryAnswersAtMostOne(grouped.Query, []query.Symbol{entity, value}, carriedSet))
+	require.False(t, subqueryAnswersAtMostOne(grouped.Query, []query.Symbol{value, entity}, carriedSet), "the binding's first variable is not carried")
+	require.False(t, subqueryAnswersAtMostOne(grouped.Query, []query.Symbol{entity}, carriedSet), "an arity disagreement")
 }
 
 // branchProvides reads what each clause provides under the rule set: a
@@ -176,14 +184,14 @@ func TestPlanBranchesFramesEachBranchUnderTheHeader(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plans, 3)
 	require.False(t, plans[0].readsNothing, "a pattern on the required entity reads it")
-	require.Equal(t, []query.Symbol{entity}, plans[0].frame.required)
-	require.Equal(t, []query.Symbol{value}, plans[0].frame.outputs())
+	require.Equal(t, []query.Symbol{entity}, plans[0].frame.Required)
+	require.Equal(t, []query.Symbol{value}, plans[0].frame.Outputs())
 	require.True(t, plans[1].readsNothing, "an uncorrelated subquery reads nothing")
-	require.Empty(t, plans[1].frame.required)
-	require.Equal(t, []query.Symbol{value}, plans[1].frame.outputs())
+	require.Empty(t, plans[1].frame.Required)
+	require.Equal(t, []query.Symbol{value}, plans[1].frame.Outputs())
 	require.True(t, plans[2].readsNothing, "a lone ground reads nothing")
-	require.Empty(t, plans[2].frame.required)
-	require.Equal(t, []query.Symbol{value}, plans[2].frame.outputs())
+	require.Empty(t, plans[2].frame.Required)
+	require.Equal(t, []query.Symbol{value}, plans[2].frame.Outputs())
 	for i, plan := range plans {
 		require.NotNil(t, plan.plan, "branch %d is planned", i+1)
 	}
@@ -214,8 +222,8 @@ func TestPlanBranchesFramesEachBranchUnderTheHeader(t *testing.T) {
 	plans, err = union.planBranches()
 	require.NoError(t, err)
 	require.False(t, plans[0].readsNothing)
-	require.Equal(t, []query.Symbol{entity}, plans[0].frame.required, "an invocation branch is framed over the required run alone")
-	require.Equal(t, []query.Symbol{value}, plans[0].frame.outputs())
+	require.Equal(t, []query.Symbol{entity}, plans[0].frame.Required, "an invocation branch is framed over the required run alone")
+	require.Equal(t, []query.Symbol{value}, plans[0].frame.Outputs())
 
 	// A branch reading nothing, under a fallback whose required variable the
 	// environment alone binds: framed over that variable, so the run carries
@@ -234,8 +242,8 @@ func TestPlanBranchesFramesEachBranchUnderTheHeader(t *testing.T) {
 	plans, err = given.planBranches()
 	require.NoError(t, err)
 	require.True(t, plans[0].readsNothing)
-	require.Equal(t, []query.Symbol{z}, plans[0].frame.required, "a branch reading nothing is framed over the required symbols the environment alone binds")
-	require.Equal(t, []query.Symbol{value}, plans[0].frame.outputs())
+	require.Equal(t, []query.Symbol{z}, plans[0].frame.Required, "a branch reading nothing is framed over the required symbols the environment alone binds")
+	require.Equal(t, []query.Symbol{value}, plans[0].frame.Outputs())
 }
 
 // frameBranches frames a not-join's body as the fallback frames a branch,
@@ -257,11 +265,11 @@ func TestFrameBranchesFramesANotJoinBodyOverItsHeader(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plans, 2)
 	require.False(t, plans[0].readsNothing, "a body reading the header's entity reads it")
-	require.Equal(t, []query.Symbol{entity}, plans[0].frame.required, "and is framed over it")
-	require.Empty(t, plans[0].frame.outputs(), "an all-required header has no output")
+	require.Equal(t, []query.Symbol{entity}, plans[0].frame.Required, "and is framed over it")
+	require.Empty(t, plans[0].frame.Outputs(), "an all-required header has no output")
 	require.True(t, plans[1].readsNothing, "a ground providing the entity reads nothing of it")
-	require.Empty(t, plans[1].frame.required, "no required symbol is the environment's alone")
-	require.Equal(t, []query.Symbol{entity}, plans[1].frame.outputs(), "the symbol the body provides is its find, so the index keys on it")
+	require.Empty(t, plans[1].frame.Required, "no required symbol is the environment's alone")
+	require.Equal(t, []query.Symbol{entity}, plans[1].frame.Outputs(), "the symbol the body provides is its find, so the index keys on it")
 	for i, plan := range plans {
 		require.NotNil(t, plan.plan, "body %d is planned", i+1)
 	}
@@ -282,9 +290,9 @@ func TestFrameBranchesFramesASubqueryOverItsInputsWithItsFindShape(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, plans, 1)
 	require.False(t, plans[0].readsNothing, "the body reads its input")
-	require.Equal(t, []query.Symbol{x}, plans[0].frame.required)
-	require.Equal(t, []query.FindElement{query.FindVariable{Symbol: v}, count}, plans[0].frame.find, "the inner :find as written")
-	require.Equal(t, []query.Symbol{v, datalog.NewSymbol("(count ?s)")}, plans[0].frame.outputs(), "the variable's symbol and the aggregate's display form")
+	require.Equal(t, []query.Symbol{x}, plans[0].frame.Required)
+	require.Equal(t, []query.FindElement{query.FindVariable{Symbol: v}, count}, plans[0].frame.Find, "the inner :find as written")
+	require.Equal(t, []query.Symbol{v, datalog.NewSymbol("(count ?s)")}, plans[0].frame.Outputs(), "the variable's symbol and the aggregate's display form")
 	require.NotNil(t, plans[0].plan, "the frame plans")
 }
 

@@ -1,6 +1,7 @@
 package qb
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -655,6 +656,72 @@ func TestOrDefaultJoinClauseQB(t *testing.T) {
 			t.Errorf("Expected output var %s, got %v", x.Symbol(), odjc.OutputVars)
 		}
 	})
+}
+
+// Build refuses a written header its branches do not satisfy as an error
+// carrying the message Prepare gives the same shape, never a panic at
+// construction (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §6).
+func TestBuildRefusesABranchOutsideItsHeaderAsPrepareDoes(t *testing.T) {
+	e, v, w, x := NewVar("e"), NewVar("v"), NewVar("w"), NewVar("x")
+	t.Run("a not-join body reading outside its header", func(t *testing.T) {
+		_, err := Query().Find(e).Where(
+			Pat(e, Kw(":t/p"), w),
+			NotJoin([]*Var{e}, Pat(e, Kw(":t/q"), v), Gt(v, w)),
+		).Build()
+		if err == nil {
+			t.Fatal("Build accepts the query; the body reads ?w, which neither the body nor the header binds")
+		}
+		for _, part := range []string{"(not-join [?e]", "branch 1 reads ?w", "bind ?w in the branch or name it in the header"} {
+			if !strings.Contains(err.Error(), part) {
+				t.Errorf("the refusal %q does not carry %q", err, part)
+			}
+		}
+	})
+	t.Run("an or-default-join flat-header output the ground branch does not bind", func(t *testing.T) {
+		_, err := Query().Find(x).Where(
+			Pat(e, Kw(":t/n"), x),
+			OrDefaultJoin(e, x).Branch(Pat(e, Kw(":t/score"), x)).Branch(Ground(int64(0)).As(x)),
+		).Build()
+		if err == nil {
+			t.Fatal("Build accepts the query; branch 2 does not bind ?e")
+		}
+		for _, part := range []string{"(or-default-join [?e ?x]", "branch 2 does not bind ?e", "move ?e into the required run"} {
+			if !strings.Contains(err.Error(), part) {
+				t.Errorf("the refusal %q does not carry %q", err, part)
+			}
+		}
+	})
+}
+
+// A builder's refusal of a branch argument that is no clause names the branch
+// and the argument by their positions counted from one.
+func TestBuilderRefusalNamesTheBranchAndArgumentCountedFromOne(t *testing.T) {
+	e := NewVar("e")
+	cases := []struct {
+		name    string
+		builder Clause
+		want    string
+	}{
+		{"or", Or().Branch(Pat(e, Kw(":t/a"), 1)).Branch(42), "Or: branch 2 argument 1 is not a Clause"},
+		{"or-join", OrJoin(e).Branch(Pat(e, Kw(":t/a"), 1)).Branch(42), "OrJoin: branch 2 argument 1 is not a Clause"},
+		{"or-default", OrDefault().Branch(Pat(e, Kw(":t/a"), 1)).Branch(42), "OrDefault: branch 2 argument 1 is not a Clause"},
+		{"or-default-join", OrDefaultJoin(e).Branch(Pat(e, Kw(":t/a"), 1)).Branch(42), "OrDefaultJoin: branch 2 argument 1 is not a Clause"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatal("the builder accepts 42 as a clause")
+				}
+				msg, _ := r.(string)
+				if !strings.Contains(msg, c.want) {
+					t.Errorf("the refusal %v does not carry %q", r, c.want)
+				}
+			}()
+			c.builder.toClause()
+		})
+	}
 }
 
 // TestOrderSpecs tests ordering specifications

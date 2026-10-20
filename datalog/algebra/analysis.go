@@ -445,12 +445,12 @@ func analyzeUnionBranches(output, joinVars, outerRequired []query.Symbol, childr
 					return Analysis{}, fmt.Errorf(
 						"or-join header declares %s, but branch %d schema %v does not bind it; every branch must bind every header variable; if %s is an input filter rather than an output, remove it from the header",
 						symbol,
-						i,
+						i+1,
 						child.Output,
 						symbol,
 					)
 				}
-				return Analysis{}, fmt.Errorf("union branch %d schema %v does not provide output symbol %s", i, child.Output, symbol)
+				return Analysis{}, fmt.Errorf("union branch %d schema %v does not provide output symbol %s", i+1, child.Output, symbol)
 			}
 		}
 		required = append(required, child.Required...)

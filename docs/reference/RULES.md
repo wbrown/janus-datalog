@@ -83,8 +83,8 @@ of the enclosing query's `%`:
 
 ## Invocation arguments
 
-An argument is a variable, a constant, or `_`. The derived relation is
-projected onto the invocation:
+An argument is a variable, a constant, or `_`. The invocation reads the
+derived relation under its arguments:
 
 - a variable binds the position
 - a variable repeated across positions keeps the tuples whose positions are
@@ -102,12 +102,13 @@ An invocation stands wherever a pattern stands: at the top level of a
 inside `or-default` and `or-default-join` branches, and inside a subquery.
 
 A position the predicate requires bound is the invocation's correlate. The
-planner orders the invocation after the clauses that bind it. When nothing
-binds it, the planner refuses the query naming the invocation and the
-variable. A subquery body runs in its written order. There the invocation
-stands after the clause that binds its required position. Otherwise it is
-refused as `*query.RequiredBindingError` naming the predicate, the variable
-and the repair.
+planner orders the invocation after the clauses that bind it, inside a
+subquery's inner query as at the top level. When nothing binds it, the
+planner refuses the query naming the invocation and the variable. A
+positive invocation inside a rule body whose rewrite leaves a required
+position free, or an invocation evaluated at its clause with the position
+unbound there, is refused as `*query.RequiredBindingError` naming the
+predicate, the variable and the repair.
 
 ## Safety
 
@@ -171,27 +172,32 @@ This is the magic-set rewrite:
   `adorned.bf/reach` is `reach` with its first position bound.
 - The copy's rules are guarded by a magic predicate, `magic.bf/reach`. It
   holds the bindings the predicate is asked with.
-- The bindings pass left to right through each body into the invocations
-  after them.
-- An invocation under `not` or `not-join` receives the bindings of the
+- The bindings pass through each body in the order the planner gives it
+  into the invocations after them, and through each branch of a form in the
+  planner's order under the form's header.
+- An invocation under `not`, `not-join`, `or-default`, `or-default-join` or
+  a subquery whose inner query aggregates receives the bindings of the
   clauses before the first that invokes a predicate of the rule's own
-  stratum. A binding that invocation provides would make the negated
+  stratum. A binding that invocation provides would make the inner
   predicate's magic rule depend on the adorned predicate, which depends on
-  the negated one through the negation.
+  the inner one through the form.
+- Such an invocation keeps the original rules where adorning it would place
+  its adorned predicate in the rule's own stratum, as when the same
+  predicate is invoked positively after the recursion in another rule, or
+  where the bindings it receives leave a position its predicate requires
+  free. The set is rebuilt with that site left as it is, so no rewrite is
+  refused.
 - A body invocation that nothing before it binds keeps the original rules.
-- A subquery body is not entered. Its own invocations evaluate at their own
-  clauses.
+- A subquery's inner query is a scope of the rewrite: its `:in` symbols
+  stand for the call's arguments, and an invocation inside it is adorned by
+  the arguments the clauses before the call bind and the inner clauses
+  before it.
 
 The invocation's bound values seed the magic predicate. The rewritten set
-evaluates as any set does. The invocation reads the adorned predicate.
-
-The rewrite is declined when its result does not stratify. A predicate
-invoked after a same-stratum invocation in one rule and negated in another
-brings that about: its magic rule reads the adorned predicate, which depends
-on it through the negation. The predicate is then derived whole. The decline
-is recorded as a `rules/magic-sets` event with its reason. A predicate with
-required positions is never derived whole, so its declined rewrite is an
-error naming the invocation and carrying the refusal.
+evaluates as any set does. The invocation reads the adorned predicate, and
+an invocation left with its original name reads the predicate derived whole
+in its own stratum, or, for a predicate with required positions, derived at
+the clause under the bindings the branch holds there.
 
 A recursive stratum iterates semi-naively. The seeding run executes the rules
 with no recursive invocation. Each later iteration executes each rule once
@@ -204,16 +210,16 @@ delta. The stratum ends when an iteration adds nothing.
 Every iteration reads the one snapshot the query reads. A write committed
 while a closure is under evaluation is invisible to it.
 
-An invocation inside an `or-join` or `or-default-join` branch is evaluated
-once per execution of the form, continued across the windows of the form's
-subject. The branch runs over each window's keys. A window's keys enter the
-seed predicate's stratum as a delta, the sets of every stratum and the
-derived-tuple count are carried from window to window, and the strata run
-again from the lowest one that changed, so each derived tuple is derived in
-one window. `rules/stratum.begin` fires at the first window and
-`rules/stratum.complete` at the last, and `rules/iteration` numbers each
-window's iterations from zero. An invocation inside a `not-join` body is
-evaluated once, over the body's one run.
+An invocation inside an `or-join` or `or-default-join` branch, a `not-join`
+body or a subquery's inner query is evaluated once per execution of the
+form, continued across the windows of the form's subject. The branch runs
+over each window's keys. A window's keys enter the seed predicate's stratum
+as a delta, the sets of every stratum and the derived-tuple count are
+carried from window to window, and the strata run again from the lowest one
+that changed, so each derived tuple is derived in one window.
+`rules/stratum.begin` fires at the first window and `rules/stratum.complete`
+at the last, and `rules/iteration` numbers each window's iterations from
+zero.
 
 A rule body is planned by the query planner as a query of its own, under the
 database's planner options. Its plan enters the plan cache under its own
@@ -273,7 +279,7 @@ invocation:
 
 | Event | Payload |
 |---|---|
-| `rules/magic-sets` | `predicate`, `adornment` (bound, per position), `applied`, `reason` when declined |
+| `rules/magic-sets` | `predicate`, `adornment` (bound, per position) |
 | `rules/stratum.begin` | `predicates`, `recursive` |
 | `rules/iteration` | `predicates`, `iteration`, `delta` (tuples added, per predicate) |
 | `rules/stratum.complete` | `predicates`, `iterations`, `tuples` |
@@ -334,7 +340,7 @@ panics on them. See [QUERY_BUILDER.md](QUERY_BUILDER.md).
 | `*query.UnknownRuleError` | invoked name, defined names | building the set, executing a query |
 | `*query.UnstratifiableError` | the predicates on the negative cycle | building the set |
 | `*query.NestedRecursionError` | rule, predicate, form | building the set |
-| `*query.RequiredBindingError` | predicate, variable, invoking rule | the rewrite, an invocation in a subquery body |
+| `*query.RequiredBindingError` | predicate, variable, invoking rule | the rewrite at a positive invocation, an invocation evaluated at its clause |
 | `*query.RuleIterationLimitError` | predicates, limit, iteration reached | evaluation |
 | `*query.DerivedTupleLimitError` | predicates, limit, count reached | evaluation |
 

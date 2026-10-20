@@ -137,9 +137,8 @@ const (
 	RulesIteration       = "rules/iteration"
 	RulesStratumComplete = "rules/stratum.complete"
 
-	// RulesMagicSets is the rewrite decision for one invocation with bound
-	// arguments: the predicate, its adornment (bound per position), whether
-	// the rewrite was applied, and the reason when it was declined.
+	// RulesMagicSets is the rewrite made for one invocation with bound
+	// arguments: the predicate and its adornment (bound per position).
 	RulesMagicSets = "rules/magic-sets"
 
 	// Algebra bridge and rewrites

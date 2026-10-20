@@ -288,6 +288,56 @@ func TestCompileCorrelatedNotJoinSeparatesKeysAndRequirements(t *testing.T) {
 	require.Equal(t, anti.JoinSymbols, notJoin.RequiredVars)
 }
 
+// A union of one branch compiles to a Union of one child on the correlated
+// route, the branch holding a not-join
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §5).
+func TestCompileAUnionOfOneBranch(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e :where [?e :t/n ?n] (or-join [?e] (and [?e :t/p ?p] (not-join [?e] [?e :t/q _])))]`)
+	require.NoError(t, err)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
+	require.NoError(t, err)
+	var union *Node
+	var find func(n *Node)
+	find = func(n *Node) {
+		if union != nil || n == nil {
+			return
+		}
+		if n.Op == RuleUnion {
+			union = n
+			return
+		}
+		for _, child := range n.Children {
+			find(child)
+		}
+	}
+	find(root)
+	require.NotNil(t, union, "the or-join compiles to a Union")
+	require.Len(t, union.Children, 1, "the Union has the one branch as its child")
+}
+
+// A fallback branch the fold cannot order is refused naming the branch by its
+// position counted from one (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.4).
+func TestCompileNamesAFailingFallbackBranchCountedFromOne(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] (and (or-join [[?w] ?v] [?w :t/b ?v]) (or-join [[?v] ?w] [?v :t/c ?w])) [(ground 0) ?v])]`)
+	require.NoError(t, err)
+	_, err = Compile(mustPrepare(t, q, nil), nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "OR fallback branch 1:")
+}
+
+// The analyzer's union check names a branch by its position counted from one
+// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.4).
+func TestAnalyzeUnionBranchesNamesTheBranchCountedFromOne(t *testing.T) {
+	e, v := datalog.NewSymbol("?e"), datalog.NewSymbol("?v")
+	children := []Analysis{{Output: []query.Symbol{e}}, {Output: []query.Symbol{e, v}}}
+	_, err := analyzeUnionBranches([]query.Symbol{e, v}, []query.Symbol{v}, nil, children)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "branch 1 schema")
+	_, err = analyzeUnionBranches([]query.Symbol{e, v}, nil, nil, children)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "union branch 1 schema")
+}
+
 // TestCompileRejectsInvalidNotJoinHeaders: the header demands ?missing,
 // which the body reads and no input or clause binds; the compile-order pass
 // rejects it before the fold reaches compileNotJoin's own header checks.

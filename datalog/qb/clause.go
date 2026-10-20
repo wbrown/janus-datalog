@@ -109,7 +109,7 @@ func (o *OrBuilder) toClause() query.Clause {
 		for j, c := range branch {
 			clause, ok := c.(Clause)
 			if !ok {
-				panic(fmt.Sprintf("Or: branch %d argument %d is not a Clause (got %T)", i, j, c))
+				panic(fmt.Sprintf("Or: branch %d argument %d is not a Clause (got %T)", i+1, j+1, c))
 			}
 			qbranches[i][j] = clause.toClause()
 		}
@@ -165,7 +165,7 @@ func (o *OrJoinBuilder) toClause() query.Clause {
 		for j, c := range branch {
 			clause, ok := c.(Clause)
 			if !ok {
-				panic(fmt.Sprintf("OrJoin: branch %d argument %d is not a Clause (got %T)", i, j, c))
+				panic(fmt.Sprintf("OrJoin: branch %d argument %d is not a Clause (got %T)", i+1, j+1, c))
 			}
 			qbranches[i][j] = clause.toClause()
 		}
@@ -202,7 +202,7 @@ func (o *OrDefaultBuilder) toClause() query.Clause {
 		for j, c := range branch {
 			clause, ok := c.(Clause)
 			if !ok {
-				panic(fmt.Sprintf("OrDefault: branch %d argument %d is not a Clause (got %T)", i, j, c))
+				panic(fmt.Sprintf("OrDefault: branch %d argument %d is not a Clause (got %T)", i+1, j+1, c))
 			}
 			qbranches[i][j] = clause.toClause()
 		}
@@ -254,19 +254,15 @@ func (o *OrDefaultJoinBuilder) toClause() query.Clause {
 		for j, c := range branch {
 			clause, ok := c.(Clause)
 			if !ok {
-				panic(fmt.Sprintf("OrDefaultJoin: branch %d argument %d is not a Clause (got %T)", i, j, c))
+				panic(fmt.Sprintf("OrDefaultJoin: branch %d argument %d is not a Clause (got %T)", i+1, j+1, c))
 			}
 			qbranches[i][j] = clause.toClause()
 		}
 	}
 
-	clause := &query.OrDefaultJoinClause{
+	return &query.OrDefaultJoinClause{
 		RequiredVars: requiredSyms,
 		OutputVars:   outputSyms,
 		Branches:     qbranches,
 	}
-	if err := clause.Validate(); err != nil {
-		panic(fmt.Sprintf("OrDefaultJoin: %v", err))
-	}
-	return clause
 }

@@ -114,26 +114,25 @@ func TestCompile_OrdersAnInvocationAfterItsRequiredBinder(t *testing.T) {
 	require.True(t, isInvocation, "the invocation folds after its binder, got %s", clauses[1])
 }
 
-// TestPrepare_OrJoinBranchOfOneClauseReadingOutsideTheHeaderIsRefused: an
+// TestParse_OrJoinBranchOfOneClauseReadingOutsideTheHeaderIsRefused: an
 // or-join branch of one clause that reads a variable outside the header reads
-// a local no clause of the branch binds, so preparation refuses the query
-// naming the form and the variable.
-func TestPrepare_OrJoinBranchOfOneClauseReadingOutsideTheHeaderIsRefused(t *testing.T) {
-	q, err := parser.ParseQuery(`[:find ?e :where [?e :q _] (or-join [?y] [(identity ?e) ?y] [?l ?a ?y])]`)
-	require.NoError(t, err)
-
-	_, err = query.Prepare(q, nil)
+// a local no clause of the branch binds, so the header check, which every
+// boundary runs, refuses the query at the parse naming the form, the branch
+// and the variable.
+func TestParse_OrJoinBranchOfOneClauseReadingOutsideTheHeaderIsRefused(t *testing.T) {
+	_, err := parser.ParseQuery(`[:find ?e :where [?e :q _] (or-join [?y] [(identity ?e) ?y] [?l ?a ?y])]`)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "(or-join [?y]")
-	require.Contains(t, err.Error(), "?e")
+	require.Contains(t, err.Error(), "branch 1 reads ?e")
 }
 
 // TestCompile_NotJoinBodyCompilesUnderItsHeader: a not-join's body sees its
 // header and nothing else of the enclosing scope. A body whose one clause
 // binds nothing starts from the header's variables, so the anti-join keys on
 // the header alone. A body whose predicate reads an input its header does not
-// name reads a local no clause of the body binds, and preparation refuses the
-// query naming the form and the variable.
+// name reads a local no clause of the body binds, and the header check,
+// which every boundary runs, refuses the query at the parse naming the form,
+// the branch and the variable.
 func TestCompile_NotJoinBodyCompilesUnderItsHeader(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e :where [?e :t/n ?v] (not-join [?v] [(> ?v 1)])]`)
 	require.NoError(t, err)
@@ -148,12 +147,10 @@ func TestCompile_NotJoinBodyCompilesUnderItsHeader(t *testing.T) {
 	require.Empty(t, anti.Required)
 	require.Equal(t, []query.Symbol{v}, antiNode.Children[1].Symbols(), "the body carries the header and nothing of the outer relation")
 
-	reading, err := parser.ParseQuery(`[:find ?e :in $ ?limit :where [?e :t/n ?v] (not-join [?v] [?v :t/m ?w] [(> ?w ?limit)])]`)
-	require.NoError(t, err)
-	_, err = query.Prepare(reading, nil)
+	_, err = parser.ParseQuery(`[:find ?e :in $ ?limit :where [?e :t/n ?v] (not-join [?v] [?v :t/m ?w] [(> ?w ?limit)])]`)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "(not-join [?v]")
-	require.Contains(t, err.Error(), "?limit")
+	require.Contains(t, err.Error(), "branch 1 reads ?limit")
 }
 
 // TestCompile_OrDefaultJoinRequiredRunAnInputBinds: an or-default-join whose

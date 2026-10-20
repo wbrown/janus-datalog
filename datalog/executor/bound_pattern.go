@@ -54,7 +54,7 @@ func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.
 		carriedSet[sym] = true
 	}
 	atMostOne := patternAnswersAtMostOne(pattern, required, carriedSet, e.matcher)
-	properties := orProperties(subject.Properties(), outputs, nil, resultSyms, true, atMostOne)
+	properties := orProperties(subject.Properties(), outputs, nil, resultSyms, atMostOne)
 
 	f := framing{
 		form:     "pattern",

@@ -586,7 +586,7 @@ func planScope(list []shapeClause, avail map[string]bool, extra []string) (*scop
 			for b, br := range c.branches {
 				for _, h := range c.header {
 					if !branchBinds(br, h) {
-						return nil, fmt.Errorf("%w: %s: branch %d does not bind %s", errShapeRefused, c, b, h)
+						return nil, fmt.Errorf("%w: %s: branch %d does not bind %s", errShapeRefused, c, b+1, h)
 					}
 				}
 			}

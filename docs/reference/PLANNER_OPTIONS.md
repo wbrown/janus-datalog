@@ -106,8 +106,13 @@ Deduplicates identical unbound scans across subqueries via a shared lazy sequenc
 Benchmarked performance-neutral, hence off. Consumed in `executor/executor.go`.
 
 #### EnableEntityPrefetch — **opt-in** (default false)
-Warms the EA cache after the first data pattern via `PrefetchEntities`.
-Benchmarked performance-neutral, hence off. Consumed in `executor/query_executor.go`.
+Prefetches entities into the EA cache via `PrefetchEntities` at two points:
+after the first data pattern, and before a fallback window's branches are
+built when a branch of one data pattern reads the subject's entity symbol,
+from which window on that branch is built from the cache. Both fire above one
+threshold of 50 entities, and the matcher prefetches nothing under History.
+Benchmarked performance-neutral, hence off. Consumed in
+`executor/query_executor.go` and `executor/or_fallback_relation.go`.
 
 #### EnableAttributeFetchFusion — **default-active**
 Fuses contiguous CardinalityOne patterns sharing an already-bound entity into

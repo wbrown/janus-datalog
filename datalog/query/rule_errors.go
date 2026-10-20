@@ -62,7 +62,8 @@ func (e *UnstratifiableError) Error() string {
 
 // NestedRecursionError reports a rule invoking a predicate of its own stratum
 // inside a form whose evaluation is not monotone: or-default,
-// or-default-join or a subquery. Form names the innermost such form.
+// or-default-join or a subquery whose inner query aggregates, at any depth.
+// Form names the innermost such form.
 type NestedRecursionError struct {
 	Rule      Symbol
 	Predicate Symbol
@@ -70,7 +71,7 @@ type NestedRecursionError struct {
 }
 
 func (e *NestedRecursionError) Error() string {
-	return fmt.Sprintf("rule %s invokes %s, a predicate of its own stratum, inside %s: a recursive invocation stands at the top level of its body, in an or branch, or in an or-join branch", e.Rule, e.Predicate, e.Form)
+	return fmt.Sprintf("rule %s invokes %s, a predicate of its own stratum, inside %s: a recursive invocation stands at the top level of its body, in an or branch, in an or-join branch, or in a subquery whose inner query does not aggregate", e.Rule, e.Predicate, e.Form)
 }
 
 // RequiredBindingError reports an invocation that leaves a position its

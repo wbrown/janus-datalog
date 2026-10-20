@@ -809,17 +809,16 @@ func TestRules_BoundInvocationRunsWhereverTheWholeInvocationRuns(t *testing.T) {
 // A predicate that invokes a required-binding predicate evaluates whole: the
 // required position is bound inside the invoking rule's own body. The chain
 // of four carries ranks 1 to 4 with n2 marked. The first case invokes such a
-// predicate free. The second binds a recursive predicate whose rewrite the
-// stratifier refuses: one rule invokes a lower predicate after the recursion,
-// so that predicate's magic rule reads the adorned recursion, and another
-// rule negates it, so the adorned recursion depends through the negation on
-// the adorned lower predicate. The decline falls back to the whole
-// evaluation, each body binding the required position itself.
+// predicate free. The second binds a recursive predicate one of whose rules
+// invokes a lower predicate after the recursion, so that predicate's magic
+// rule reads the adorned recursion, and another of whose rules negates it,
+// where adorning the negated site would close a cycle through the negation:
+// that site is left unadorned, the rewrite is accepted, and the query
+// answers (NON_MONOTONE_FORMS_PROOF.md T6).
 func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testing.T) {
 	cases := []struct {
 		name, rules, text string
 		inputs            []interface{}
-		declined          string
 		want              []string
 	}{
 		{
@@ -828,11 +827,10 @@ func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testi
 			  [(next ?a ?r) [?a :rank ?k] (succ ?k ?r)]]`,
 			`[:find ?a ?r :in $ % :where (next ?a ?r)]`,
 			nil,
-			"",
 			[]string{"n1>2", "n2>3", "n3>4", "n4>5"},
 		},
 		{
-			"bound invocation whose rewrite is declined",
+			"bound invocation whose negated site is left unadorned",
 			`[[(marked ?n) [?n :marked true]]
 			  [(succ [?n] ?m) [(+ ?n 1) ?m]]
 			  [(walk ?a ?b) [?a :edge ?b]]
@@ -840,7 +838,6 @@ func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testi
 			  [(walk ?a ?c) [?a :edge ?b] (not (marked ?b)) [?b :rank ?k] (succ ?k ?j) [(< ?j 100)] (walk ?b ?c)]]`,
 			`[:find ?y :in $ % ?s :where (walk ?s ?y)]`,
 			[]interface{}{nodeID("n2")},
-			"walk",
 			[]string{"n3", "n4"},
 		},
 	}
@@ -858,11 +855,6 @@ func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testi
 				require.NoError(t, err)
 
 				rs := mustRuleSet(t, c.rules)
-				if c.declined != "" {
-					_, refusal := rs.Magic(datalog.NewSymbol(c.declined), []bool{true, false})
-					var unstratifiable *query.UnstratifiableError
-					require.ErrorAs(t, refusal, &unstratifiable, "the rewrite of %s under bf is refused by the stratifier", c.declined)
-				}
 				inputs := append([]interface{}{rs}, c.inputs...)
 				rel, err := d.Query(c.text, inputs...)
 				require.NoError(t, err, "the predicate evaluates whole")

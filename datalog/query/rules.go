@@ -149,9 +149,10 @@ func ClauseForm(name Symbol) bool { return ContainsSymbol(clauseForms, name) }
 // arity and are distinct variables; every rule is safe; every invocation
 // names a defined predicate at its arity; no predicates depend on each other
 // through negation; a predicate invoked by a rule of its own stratum is
-// invoked at the top level of the body, in an or branch, or in an or-join
-// branch; and a predicate with required positions is recursive only with
-// predicates that have them.
+// invoked at the top level of the body, in an or branch, in an or-join
+// branch, or in a subquery whose inner query does not aggregate; and a
+// predicate with required positions is recursive only with predicates that
+// have them.
 func NewRuleSet(rules []*Rule) (*RuleSet, error) {
 	for _, rule := range rules {
 		switch {
@@ -165,7 +166,7 @@ func NewRuleSet(rules []*Rule) (*RuleSet, error) {
 			return nil, fmt.Errorf("rule %s: a head names at least one variable", rule.Name)
 		}
 	}
-	return newRuleSet(rules, nil)
+	return NewSeededRuleSet(rules, nil)
 }
 
 // Head is the symbols a predicate's relation carries, which an invocation's
@@ -185,21 +186,22 @@ func (rs *RuleSet) declareHead(name Symbol, head []Symbol) {
 	rs.heads[DeltaSymbol(name)] = head
 }
 
-// seedPredicate is a predicate declared by arity with no rules of its own:
+// SeedPredicate is a predicate declared by arity with no rules of its own:
 // the relation a caller fills, the magic predicate of a rewritten set.
-type seedPredicate struct {
-	name  Symbol
-	arity int
+type SeedPredicate struct {
+	Name  Symbol
+	Arity int
 }
 
-// newRuleSet builds a set whose seed predicates, declared in the order
-// given, are the relations a caller fills (Magic). A seed is a stratum of
-// its own unless a rule derives into it.
-func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
+// NewSeededRuleSet builds a set whose seed predicates, declared in the order
+// given, are the relations a caller fills: the magic predicates of a set the
+// planner's rewrite builds. A seed is a stratum of its own unless a rule
+// derives into it.
+func NewSeededRuleSet(rules []*Rule, seeds []SeedPredicate) (*RuleSet, error) {
 	rs := &RuleSet{rules: map[Symbol][]*Rule{}, arity: map[Symbol]int{}, required: map[Symbol][]bool{}, heads: map[Symbol][]Symbol{}}
 	for _, seed := range seeds {
-		rs.order = append(rs.order, seed.name)
-		rs.arity[seed.name] = seed.arity
+		rs.order = append(rs.order, seed.Name)
+		rs.arity[seed.Name] = seed.Arity
 	}
 	for _, rule := range rules {
 		if rule.Name == nil {
@@ -233,8 +235,8 @@ func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
 		}
 	}
 	for _, seed := range seeds {
-		if _, derived := rs.heads[seed.name]; !derived {
-			rs.declareHead(seed.name, seedHead(seed.name, seed.arity))
+		if _, derived := rs.heads[seed.Name]; !derived {
+			rs.declareHead(seed.Name, seedHead(seed.Name, seed.Arity))
 		}
 	}
 	inferred := make([]*Rule, len(rules))
@@ -261,8 +263,11 @@ func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
 		return nil, err
 	}
 	for _, edge := range edges {
-		if edge.form != "" && component[edge.from] == component[edge.to] {
-			return nil, &NestedRecursionError{Rule: edge.from, Predicate: edge.to, Form: edge.form}
+		if component[edge.from] != component[edge.to] {
+			continue
+		}
+		if form, ok := edge.nonMonotone(); ok {
+			return nil, &NestedRecursionError{Rule: edge.from, Predicate: edge.to, Form: form}
 		}
 	}
 	// A predicate with required positions is evaluated at its invocation,
@@ -275,7 +280,7 @@ func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
 		}
 		var requiring, free Symbol
 		for _, p := range stratum.Predicates {
-			if countBound(rs.required[p]) > 0 {
+			if CountBound(rs.required[p]) > 0 {
 				if requiring == nil {
 					requiring = p
 				}
@@ -292,12 +297,28 @@ func newRuleSet(rules []*Rule, seeds []seedPredicate) (*RuleSet, error) {
 	return rs, nil
 }
 
-// inferBody returns rule with its body's forms inferred under the set, as a
-// query finding the head with the required run as its inputs: the rule
-// itself when its body is header forms already, otherwise a copy holding the
-// inferred body. A branch input the inference finds nothing binds is an
-// UnsafeRuleError naming the rule and the variable.
+// CountBound is the number of positions a binding pattern marks as bound.
+func CountBound(bound []bool) int {
+	n := 0
+	for _, b := range bound {
+		if b {
+			n++
+		}
+	}
+	return n
+}
+
+// inferBody returns rule with its body's static shapes walked as at the text
+// boundaries and its forms inferred under the set, as a query finding the
+// head with the required run as its inputs: the rule itself when its body is
+// header forms already, otherwise a copy holding the inferred body. A shape
+// the walk refuses is an error naming the rule, and a branch input the
+// inference finds nothing binds is an UnsafeRuleError naming the rule and
+// the variable.
 func (rs *RuleSet) inferBody(rule *Rule) (*Rule, error) {
+	if err := ValidateStaticClauseShapes(rule.Body); err != nil {
+		return nil, fmt.Errorf("rule %s: %w", rule.Name, err)
+	}
 	scope := &Query{In: []InputSpec{DatabaseInput{Name: datalog.SymDollar}, RulesInput{}}, Where: rule.Body}
 	for _, head := range rule.Head {
 		scope.Find = append(scope.Find, FindVariable{Symbol: head})
@@ -429,8 +450,8 @@ func equalMasks(a, b []bool) bool {
 // bodies invoke is in that stratum or an earlier one.
 func (rs *RuleSet) Strata() []Stratum { return rs.strata }
 
-// sameStratum reports whether two predicates are in one stratum.
-func (rs *RuleSet) sameStratum(a, b Symbol) bool {
+// SameStratum reports whether two predicates are in one stratum.
+func (rs *RuleSet) SameStratum(a, b Symbol) bool {
 	for _, stratum := range rs.strata {
 		if ContainsSymbol(stratum.Predicates, a) {
 			return ContainsSymbol(stratum.Predicates, b)
@@ -502,11 +523,11 @@ func (rs *RuleSet) invocationAttributes(constants []invocationConstant) []datalo
 }
 
 // checkRuleSafety reports the first symbol neither the rule's positive body
-// clauses nor its required run binds: a head symbol, or a mandatory
-// correlate of a body clause, an invocation's required positions among
-// them, read from the set's own declarations. It reads the inferred body
-// (inferBody), whose nested forms are header forms, so a form's Mandatory is
-// its required run. A source symbol is execution context, never a binding.
+// clauses nor its required run binds: a head symbol, or a correlate of a
+// body clause, an invocation's required positions among them, read from the
+// set's own declarations. It reads the inferred body (inferBody), whose
+// nested forms are header forms, so a form's correlates are its required
+// run. A source symbol is execution context, never a binding.
 func (rs *RuleSet) checkRuleSafety(rule *Rule) error {
 	provided := map[Symbol]bool{}
 	for _, sym := range rule.Required {
@@ -523,7 +544,7 @@ func (rs *RuleSet) checkRuleSafety(rule *Rule) error {
 		}
 	}
 	for _, clause := range rule.Body {
-		for _, sym := range ScopeOf(clause, rs).Mandatory {
+		for _, sym := range ScopeOf(clause, rs).Correlates {
 			if sym.IsSource() || provided[sym] {
 				continue
 			}
@@ -533,14 +554,49 @@ func (rs *RuleSet) checkRuleSafety(rule *Rule) error {
 	return nil
 }
 
-// invocationEdge is one dependency: the rule named from invokes to. negative
-// holds when the invocation sits under a not or not-join at any depth, and
-// form names the innermost or-default, or-default-join or subquery enclosing
-// it, "" when none does.
+// pathForm is one form enclosing an invocation: the form's name, and for a
+// subquery body whether its inner query aggregates.
+type pathForm struct {
+	name        string
+	aggregating bool
+}
+
+// invocationEdge is one dependency: the rule named from invokes to, under
+// path, the forms enclosing the invocation from the body's top level inward,
+// each at any depth: not, not-join, or-default, or-default-join and
+// subquery.
 type invocationEdge struct {
 	from, to Symbol
-	negative bool
-	form     string
+	path     []pathForm
+}
+
+// negative reports whether the invocation sits under a not or not-join.
+func (e invocationEdge) negative() bool {
+	for _, form := range e.path {
+		if form.name == "not" || form.name == "not-join" {
+			return true
+		}
+	}
+	return false
+}
+
+// nonMonotone is the innermost form on the path whose evaluation is not
+// monotone, a fallback form or an aggregating inner query, and whether the
+// path holds one. A subquery whose inner query does not aggregate joins its
+// result with the scope over the combinations, monotone as a branch is.
+func (e invocationEdge) nonMonotone() (string, bool) {
+	for i := len(e.path) - 1; i >= 0; i-- {
+		form := e.path[i]
+		switch form.name {
+		case "or-default", "or-default-join":
+			return form.name, true
+		case "subquery":
+			if form.aggregating {
+				return form.name, true
+			}
+		}
+	}
+	return "", false
 }
 
 // RulesUse returns the first clause in clauses that uses the query's % in
@@ -569,43 +625,46 @@ func RulesUse(clauses []Clause) Clause {
 // clause order, subquery bodies included.
 func Invocations(clauses []Clause) []*RuleInvocation {
 	var found []*RuleInvocation
-	forInvocations(clauses, false, "", func(inv *RuleInvocation, _ bool, _ string) {
+	forInvocations(clauses, nil, func(inv *RuleInvocation, _ []pathForm) {
 		found = append(found, inv)
 	})
 	return found
 }
 
-// forInvocations visits every invocation in clauses at any depth with
-// whether it sits under a negation and the innermost non-monotone form
-// enclosing it. It descends into subquery bodies, which WalkClauses leaves
-// to its visitors: a body's invocation is a dependency wherever it sits.
-func forInvocations(clauses []Clause, negative bool, form string, visit func(inv *RuleInvocation, negative bool, form string)) {
+// forInvocations visits every invocation in clauses at any depth with the
+// forms enclosing it, outermost first, path being the forms enclosing
+// clauses. It descends into subquery bodies, which WalkClauses leaves to its
+// visitors: a body's invocation is a dependency wherever it sits.
+func forInvocations(clauses []Clause, path []pathForm, visit func(inv *RuleInvocation, path []pathForm)) {
+	under := func(name string, aggregating bool) []pathForm {
+		return append(path[:len(path):len(path)], pathForm{name: name, aggregating: aggregating})
+	}
 	for _, clause := range clauses {
 		switch c := clause.(type) {
 		case *RuleInvocation:
-			visit(c, negative, form)
+			visit(c, path)
 		case *NotClause:
-			forInvocations(c.Clauses, true, form, visit)
+			forInvocations(c.Clauses, under("not", false), visit)
 		case *NotJoinClause:
-			forInvocations(c.Clauses, true, form, visit)
+			forInvocations(c.Clauses, under("not-join", false), visit)
 		case *OrClause:
 			for _, branch := range c.Branches {
-				forInvocations(branch, negative, form, visit)
+				forInvocations(branch, path, visit)
 			}
 		case *OrJoinClause:
 			for _, branch := range c.Branches {
-				forInvocations(branch, negative, form, visit)
+				forInvocations(branch, path, visit)
 			}
 		case *OrDefaultClause:
 			for _, branch := range c.Branches {
-				forInvocations(branch, negative, "or-default", visit)
+				forInvocations(branch, under("or-default", false), visit)
 			}
 		case *OrDefaultJoinClause:
 			for _, branch := range c.Branches {
-				forInvocations(branch, negative, "or-default-join", visit)
+				forInvocations(branch, under("or-default-join", false), visit)
 			}
 		case *SubqueryPattern:
-			forInvocations(c.Query.Where, negative, "subquery", visit)
+			forInvocations(c.Query.Where, under("subquery", c.Query.Aggregates()), visit)
 		}
 	}
 }
@@ -616,14 +675,14 @@ func (rs *RuleSet) dependencies(rules []*Rule) ([]invocationEdge, error) {
 	var edges []invocationEdge
 	var err error
 	for _, rule := range rules {
-		forInvocations(rule.Body, false, "", func(inv *RuleInvocation, negative bool, form string) {
+		forInvocations(rule.Body, nil, func(inv *RuleInvocation, path []pathForm) {
 			if err != nil {
 				return
 			}
 			if err = rs.CheckInvocation(inv); err != nil {
 				return
 			}
-			edges = append(edges, invocationEdge{from: rule.Name, to: inv.Name, negative: negative, form: form})
+			edges = append(edges, invocationEdge{from: rule.Name, to: inv.Name, path: path})
 		})
 		if err != nil {
 			return nil, err
@@ -707,7 +766,7 @@ func (rs *RuleSet) stratify(edges []invocationEdge) ([]Stratum, map[Symbol]int, 
 		if component[edge.from] != component[edge.to] {
 			continue
 		}
-		if edge.negative {
+		if edge.negative() {
 			return nil, nil, &UnstratifiableError{Predicates: strata[component[edge.from]].Predicates}
 		}
 		strata[component[edge.from]].Recursive = true

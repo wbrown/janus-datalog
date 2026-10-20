@@ -3,75 +3,88 @@ package planner
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// An invocation with a variable argument that a pending clause binds is
-// placed after that clause on both planner paths, whatever the written order
-// and however the scorer ranks the two, so the invocation derives only what
-// the binding reaches.
-func TestInvocationSchedulesAfterTheClauseBindingItsArgument(t *testing.T) {
-	rules, err := parser.ParseRules(`[[(reach ?a ?b) [?a :edge ?b]]
-	                                  [(reach ?a ?c) [?a :edge ?b] (reach ?b ?c)]]`)
-	if err != nil {
-		t.Fatalf("ParseRules: %v", err)
-	}
-	read := &query.DataPattern{Elements: []query.PatternElement{
-		query.Variable{Name: datalog.NewSymbol("?x")},
-		query.Constant{Value: datalog.NewKeyword(":edge")},
-		query.Variable{Name: datalog.NewSymbol("?z")},
-	}}
-	queries := []struct {
-		name string
-		text string
+// orderingRules declares follows, a closure over :page/next, and path, two
+// steps of :page/next, for the scheduling tests below.
+const orderingRules = `[[(follows ?x ?y) [?x :page/next ?y]]
+                        [(follows ?x ?z) [?x :page/next ?y] (follows ?y ?z)]
+                        [(path ?x ?y ?z) [?x :page/next ?y] [?y :page/next ?z]]]`
+
+// A data pattern or an invocation without visible selectivity, a constant
+// beyond the attribute, an available variable or argument, or a predicate the
+// seed restricts, is selected only when no other clause is selectable: a scan
+// of a whole extent follows a pattern seeking on an available variable, an
+// invocation bound by an available argument, and an expression over available
+// inputs, whatever the written order (REWRITE_ORDER_PROOF.md T3).
+func TestCreatePhasesGreedy_AScanOfAWholeExtentIsSelectedLast(t *testing.T) {
+	a := datalog.NewSymbol("?a")
+	rules, err := parser.ParseRules(orderingRules)
+	require.NoError(t, err)
+	cases := []struct {
+		name, text string
+		scan, other int
 	}{
-		{"or written first", `[:find ?x ?y :in $ % :where (or [?x :edge ?z] [?z :edge ?x]) (reach ?x ?y)]`},
-		{"or written after", `[:find ?x ?y :in $ % :where (reach ?x ?y) (or [?x :edge ?z] [?z :edge ?x])]`},
+		{"a pattern seeking on an available variable", `[:find ?b ?v :in $ ?a :where [?e :item/val ?v ?tx] [?a :item/next ?b]]`, 0, 1},
+		{"an invocation bound by an available argument", `[:find ?c ?w :in $ % ?a :where [?x :item/val ?w] (follows ?a ?c)]`, 0, 1},
+		{"an expression over available inputs", `[:find ?e ?w :in $ ?a :where [?e :item/val ?x] [(+ ?a 1) ?w]]`, 0, 1},
 	}
-	paths := []struct {
-		name    string
-		options PlannerOptions
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q, err := parser.ParseQuery(c.text)
+			require.NoError(t, err)
+			phases, err := createPhasesGreedy(q.Where, physicalFindSymbols(q.Find), map[query.Symbol]bool{a: true}, query.Bindings{Rules: rules})
+			require.NoError(t, err)
+			assertScheduledAfter(t, phases, q.Where[c.scan], q.Where[c.other],
+				"the scan of a whole extent is selected after the clause with visible selectivity")
+		})
+	}
+}
+
+// An invocation with no available argument waits on any selectable provider
+// of one of its arguments, and an invocation with an available argument waits
+// on a provider with visible selectivity and on no scan of a whole extent
+// (REWRITE_ORDER_PROOF.md §6).
+func TestCreatePhasesGreedy_AnInvocationWaitsOnAProviderByItsSelectivity(t *testing.T) {
+	a := datalog.NewSymbol("?a")
+	rules, err := parser.ParseRules(orderingRules)
+	require.NoError(t, err)
+	cases := []struct {
+		name, text     string
+		inputs         map[query.Symbol]bool
+		later, earlier int
+		msg            string
 	}{
-		{"clause-based", PlannerOptions{}},
-		{"algebra", PlannerOptions{EnableAlgebraOptimizer: true}},
+		{
+			"no available argument, a scan providing one",
+			`[:find ?c :in $ % :where (follows ?b ?c) [?x :page/next ?b]]`,
+			map[query.Symbol]bool{}, 0, 1,
+			"an invocation with no available argument waits on the scan providing its argument",
+		},
+		{
+			"an available argument, a seek providing the other",
+			`[:find ?c :in $ % ?a :where (path ?a ?b ?c) [?a :item/link ?b]]`,
+			map[query.Symbol]bool{a: true}, 0, 1,
+			"an invocation with an available argument waits on a seek providing its other argument",
+		},
+		{
+			"an available argument, a scan providing the other",
+			`[:find ?c :in $ % ?a :where [?x :page/next ?b] (path ?a ?b ?c)]`,
+			map[query.Symbol]bool{a: true}, 0, 1,
+			"an invocation with an available argument waits on no scan providing its other argument",
+		},
 	}
-	for _, path := range paths {
-		for _, q := range queries {
-			t.Run(path.name+"/"+q.name, func(t *testing.T) {
-				parsed, err := parser.ParseQuery(q.text)
-				if err != nil {
-					t.Fatalf("ParseQuery: %v", err)
-				}
-				prepared, err := query.Prepare(parsed, rules)
-				if err != nil {
-					t.Fatalf("Prepare: %v", err)
-				}
-				plan, err := NewClauseBasedPlanner(nil, path.options).PlanQuery(prepared, query.Bindings{Rules: rules}, nil)
-				if err != nil {
-					t.Fatalf("PlanQuery: %v", err)
-				}
-				formPhase, formIndex := formPosition(plan, read)
-				if formPhase < 0 {
-					t.Fatalf("the plan carries no form reading %s:\n%s", read, plan)
-				}
-				invPhase, invIndex := -1, -1
-				for i, phase := range plan.Phases {
-					for j, c := range phase.Query.Where {
-						if _, ok := c.(*query.RuleInvocation); ok && invPhase < 0 {
-							invPhase, invIndex = i, j
-						}
-					}
-				}
-				if invPhase < 0 {
-					t.Fatalf("the plan carries no invocation:\n%s", plan)
-				}
-				if invPhase < formPhase || (invPhase == formPhase && invIndex < formIndex) {
-					t.Errorf("the invocation runs at phase %d clause %d, before the form binding ?x at phase %d clause %d:\n%s",
-						invPhase, invIndex, formPhase, formIndex, plan)
-				}
-			})
-		}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q, err := parser.ParseQuery(c.text)
+			require.NoError(t, err)
+			phases, err := createPhasesGreedy(q.Where, physicalFindSymbols(q.Find), c.inputs, query.Bindings{Rules: rules})
+			require.NoError(t, err)
+			assertScheduledAfter(t, phases, q.Where[c.later], q.Where[c.earlier], c.msg)
+		})
 	}
 }

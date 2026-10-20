@@ -1859,17 +1859,21 @@ func TestOrCorrelatedUnionWithIdentityBranch(t *testing.T) {
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("reading the result: %v", err)
+			}
 
 			names := make(map[string]bool)
-			for i := 0; i < result.Size(); i++ {
-				name := result.Get(i)[0].(string)
+			for i, tuple := range tuples {
+				name := tuple[0].(string)
 				names[name] = true
 				t.Logf("result[%d]: %s", i, name)
 			}
 
 			// All 3 rooms in the area (including Guard Chamber itself) + the area entity
-			if result.Size() != 4 {
-				t.Errorf("expected 4 results, got %d", result.Size())
+			if len(tuples) != 4 {
+				t.Errorf("expected 4 results, got %d", len(tuples))
 			}
 			if !names["Guard Chamber"] {
 				t.Error("missing 'Guard Chamber' (room in same area)")

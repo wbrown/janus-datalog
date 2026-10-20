@@ -433,10 +433,6 @@ func compileOrUnionWithJoinVars(oj *query.OrJoinClause, current *Node, branchSco
 // decompiles back to the original clause and execution uses the executor's
 // or-join path.
 func compileOrUnionCorrelated(oj *query.OrJoinClause, current *Node, branchScope query.Bindings) (*Node, error) {
-	if len(oj.Branches) < 2 {
-		return nil, fmt.Errorf("OR requires at least 2 branches")
-	}
-
 	var initial *Node
 	if len(oj.RequiredVars) > 0 {
 		initial = &Node{
@@ -588,7 +584,7 @@ func compileOrFallbackExclusive(oj *query.OrDefaultJoinClause, current *Node, br
 	for i, branch := range oj.Branches {
 		node, err := compileClausesFrom(branch, branchSchema, branchScope)
 		if err != nil {
-			return nil, fmt.Errorf("OR fallback branch %d: %w", i, err)
+			return nil, fmt.Errorf("OR fallback branch %d: %w", i+1, err)
 		}
 		compiled[i] = node
 	}

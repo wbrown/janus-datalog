@@ -278,7 +278,7 @@ func TestNotOrParseErrors(t *testing.T) {
 		{
 			name:  "or without branches",
 			input: `[:find ?e :where [?e :foo ?v] (or)]`,
-			error: "or clause must have at least two branches",
+			error: "or clause must have at least one branch",
 		},
 		{
 			name:  "empty list",
@@ -288,7 +288,7 @@ func TestNotOrParseErrors(t *testing.T) {
 		{
 			name:  "or-join without enough elements",
 			input: `[:find ?e :where [?e :foo ?v] (or-join [?e])]`,
-			error: "or-join clause must have a header vector and at least two branches",
+			error: "or-join clause must have a header vector and at least one branch",
 		},
 	}
 
@@ -427,21 +427,17 @@ func TestParseOrDefaultJoinClause(t *testing.T) {
 		}
 	})
 
-	t.Run("old correlation-key flat header is refused at inference", func(t *testing.T) {
+	t.Run("old correlation-key flat header is refused at the parser's boundary", func(t *testing.T) {
 		// A flat header names ?e as an output the ground branch cannot bind:
-		// the parse accepts the shape, and the inference refuses it naming
-		// the form, the branch and the variable, with the repair of moving
-		// ?e into the required run, never a silent meaning change.
+		// the parse refuses it naming the form, the branch and the variable,
+		// with the repair of moving ?e into the required run, never a silent
+		// meaning change.
 		input := `[:find ?v
 	               :where [?e :user/name ?name]
 	                      (or-default-join [?e ?v]
 	                        [?e :user/score ?v]
 	                        [(ground 0) ?v])]`
-		q, err := ParseQuery(input)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		_, err = query.InferHeaders(q, nil)
+		_, err := ParseQuery(input)
 		if err == nil {
 			t.Fatal("expected error: branch 2 does not bind ?e")
 		}
@@ -462,6 +458,87 @@ func TestParseOrDefaultJoinClause(t *testing.T) {
 			t.Fatal("expected error: nested vector not in first position")
 		}
 	})
+}
+
+// A union of one branch is that branch over the header
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §5).
+func TestParseQueryAcceptsAUnionOfOneBranch(t *testing.T) {
+	q, err := ParseQuery(`[:find ?e :where [?e :t/n _] (or-join [?e] [?e :t/p _]) (or [?e :t/q _])]`)
+	if err != nil {
+		t.Fatalf("ParseQuery: %v", err)
+	}
+	orJoin, ok := q.Where[1].(*query.OrJoinClause)
+	if !ok || len(orJoin.Branches) != 1 {
+		t.Errorf("the or-join of one branch parses to %v, want one branch", q.Where[1])
+	}
+	or, ok := q.Where[2].(*query.OrClause)
+	if !ok || len(or.Branches) != 1 {
+		t.Errorf("the or of one branch parses to %v, want one branch", q.Where[2])
+	}
+}
+
+// The parser refuses a written header its branches do not satisfy with the
+// message Prepare gives the same shape
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §6).
+func TestParseQueryRefusesABranchOutsideItsHeaderAsPrepareDoes(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		parts []string
+	}{
+		{
+			"an or-join output a branch does not bind",
+			`[:find ?e :where [?e :t/n _] [(ground :t/tag) ?a] (or-join [?e ?a] [?e ?a ?v] [?e :t/tag :t/none])]`,
+			[]string{"(or-join [?e ?a]", "branch 2 does not bind ?a", "move ?a into the required run"},
+		},
+		{
+			"a not-join body reading outside its header",
+			`[:find ?e :where [?e :t/p ?w] (not-join [?e] [?e :t/q ?x] [(> ?x ?w)])]`,
+			[]string{"(not-join [?e]", "branch 1 reads ?w", "bind ?w in the branch or name it in the header"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := ParseQuery(c.input)
+			if err == nil {
+				t.Fatalf("ParseQuery accepts the query; it is refused naming %q", c.parts)
+			}
+			for _, part := range c.parts {
+				if !strings.Contains(err.Error(), part) {
+					t.Errorf("the refusal %q does not carry %q", err, part)
+				}
+			}
+		})
+	}
+}
+
+// A parse error inside a form names the branch, or the clause of a not or a
+// not-join, by its position counted from one
+// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.4).
+func TestParseErrorNamesTheBranchCountedFromOne(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"or", `[:find ?e :where (or (not) [?e :t/a _])]`, "error parsing or branch 1:"},
+		{"or-join", `[:find ?e :where (or-join [?e] (not) [?e :t/a _])]`, "error parsing or-join branch 1:"},
+		{"or-default", `[:find ?e :where (or-default (not) [?e :t/a _])]`, "error parsing or-default branch 1:"},
+		{"or-default-join", `[:find ?e :where (or-default-join [?e] (not) [?e :t/a _])]`, "error parsing or-default-join branch 1:"},
+		{"not", `[:find ?e :where [?e :t/a _] (not (not))]`, "error parsing not clause element 1:"},
+		{"not-join", `[:find ?e :where [?e :t/a _] (not-join [?e] (not))]`, "error parsing not-join clause element 1:"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := ParseQuery(c.input)
+			if err == nil {
+				t.Fatalf("ParseQuery accepts the query; its first branch holds an empty not")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("the refusal %q does not carry %q", err, c.want)
+			}
+		})
+	}
 }
 
 func TestParseOrDefaultErrors(t *testing.T) {

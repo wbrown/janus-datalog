@@ -12,6 +12,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+// A fallback whose branches each answer at most one tuple per subject tuple,
+// a pure count subquery and a ground, keeps the subject's key and ordering
+// and deduplicates nothing.
 func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 	var events []annotations.Event
 	options := ExecutorOptions{Handler: func(event annotations.Event) {
@@ -20,6 +23,7 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	name := datalog.NewSymbol("?name")
 	value := datalog.NewSymbol("?value")
+	task := datalog.NewSymbol("?task")
 	ordering := []query.OrderByClause{{Variable: entity, Descending: false}}
 	outer := NewMaterializedRelationWithProperties(
 		[]query.Symbol{entity, name},
@@ -33,7 +37,7 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 	branches := [][]query.Clause{
 		{
 			&query.SubqueryPattern{
-				Query:   &query.Query{},
+				Query:   &query.Query{Find: []query.FindElement{query.FindAggregate{Function: datalog.SymCount, Arg: task}}},
 				Binding: query.TupleBinding{Variables: []query.Symbol{value}},
 			},
 		},

@@ -259,44 +259,33 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 // invocationEvaluation is the evaluation an invocation runs: its predicate
 // whole when nothing binds its arguments, and through the magic-set rewrite
 // seeded by the bound arguments otherwise, so the fixpoint derives only the
-// tuples those arguments reach. A rewrite the stratifier refuses is declined,
-// recorded, and the predicate evaluated whole; a predicate with required
-// positions is never evaluated whole, so its decline is the refusal,
-// returned naming the invocation.
+// tuples those arguments reach. The rewrite reads each scope in the order
+// the executor's planner gives it, and every rewrite is accepted: a site
+// under a non-monotone form the rewritten set cannot carry adorned is left
+// unadorned (planner.Rewrite).
 func (e *DefaultQueryExecutor) invocationEvaluation(rs *query.RuleSet, inv *query.RuleInvocation, bound []bool) (*ruleEvaluation, error) {
 	if !anyBound(bound) {
 		return newRuleEvaluation(e.executor, rs, inv.Name, nil), nil
 	}
-	magic, err := rs.Magic(inv.Name, bound)
-	var unstratifiable *query.UnstratifiableError
-	if errors.As(err, &unstratifiable) {
-		if e.options.Handler != nil {
-			e.options.Handler(magicSetsEvent(inv.Name, bound, false, unstratifiable.Error()))
-		}
-		if anyBound(rs.Required(inv.Name)) {
-			return nil, fmt.Errorf("rule invocation %s: the rewrite for its bindings is declined, %w, and a predicate requiring bindings has no whole evaluation to fall back to", inv, err)
-		}
-		return newRuleEvaluation(e.executor, rs, inv.Name, nil), nil
-	}
+	magic, err := planner.Rewrite(e.executor.planner, rs, inv.Name, bound, e.options.Handler)
 	if err != nil {
 		return nil, err
 	}
 	if e.options.Handler != nil {
-		e.options.Handler(magicSetsEvent(inv.Name, bound, true, ""))
+		e.options.Handler(magicSetsEvent(inv.Name, bound))
 	}
 	return newRuleEvaluation(e.executor, magic.Rules, magic.Predicate, magic.Seed), nil
 }
 
-// magicSetsEvent is the rewrite's decision for one invocation.
-func magicSetsEvent(name query.Symbol, bound []bool, applied bool, reason string) annotations.Event {
+// magicSetsEvent is the rewrite made for one invocation: the predicate and
+// its adornment.
+func magicSetsEvent(name query.Symbol, bound []bool) annotations.Event {
 	return annotations.Event{
 		Name:  annotations.RulesMagicSets,
 		Start: time.Now(),
 		Data: map[string]interface{}{
 			"predicate": name,
 			"adornment": bound,
-			"applied":   applied,
-			"reason":    reason,
 		},
 	}
 }
@@ -619,11 +608,12 @@ type plannedBody struct {
 // predicates, the set's head for it. plain holds each body with no
 // same-stratum invocation at its top level, planned once and run at the
 // first window's iteration zero over the view; a body whose same-stratum
-// occurrences all sit inside or and or-join branches is among them, since a
-// branch invoking no same-stratum predicate produces without any delta.
-// delta holds, per same-stratum occurrence of a body, the copy whose
-// occurrence invokes the predicate's delta symbol, run each iteration after
-// the first. lower holds, per occurrence of a seed-restricted predicate of a
+// occurrences all sit inside or and or-join branches or subquery bodies is
+// among them, since a branch or an inner query invoking no same-stratum
+// predicate produces without any delta. delta holds, per same-stratum
+// occurrence of a body, at the top level, in a branch or in a subquery body,
+// the copy whose occurrence invokes the predicate's delta symbol, run each
+// iteration after the first. lower holds, per occurrence of a seed-restricted predicate of a
 // lower stratum, the copy whose occurrence invokes that predicate's delta
 // symbol, run at a later window's iteration zero over the tuples the window
 // added to that predicate.
@@ -723,11 +713,12 @@ func (e *Executor) planBody(rs *query.RuleSet, rule *query.Rule, body []query.Cl
 }
 
 // markDelta copies clauses with the target-th invocation of a predicate in
-// marked, in clause order at the top level and inside or and or-join
-// branches at any depth, replaced by a copy invoking the predicate's delta
-// symbol. The or and or-join forms on the path are copied, and every other
-// clause is shared: a same-stratum invocation stands nowhere else, and an
-// occurrence inside a subquery body is not marked.
+// marked, in clause order at the top level, inside or and or-join branches
+// and inside subquery bodies at any depth, replaced by a copy invoking the
+// predicate's delta symbol. The or and or-join forms and the subqueries on
+// the path are copied, a subquery over its inner query derived over the
+// walked clauses, and every other clause is shared: a same-stratum
+// invocation stands nowhere else.
 func markDelta(clauses []query.Clause, marked map[query.Symbol]bool, target int) []query.Clause {
 	counter := 0
 	return markDeltaWalk(clauses, marked, target, &counter)
@@ -754,6 +745,13 @@ func markDeltaWalk(clauses []query.Clause, marked map[query.Symbol]bool, target 
 			out[i] = c
 			if branches, found := markDeltaBranches(c.Branches, marked, target, counter); found {
 				out[i] = &query.OrJoinClause{RequiredVars: c.RequiredVars, OutputVars: c.OutputVars, Branches: branches}
+			}
+		case *query.SubqueryPattern:
+			out[i] = c
+			before := *counter
+			walked := markDeltaWalk(c.Query.Where, marked, target, counter)
+			if before <= target && target < *counter {
+				out[i] = &query.SubqueryPattern{Query: c.Query.WithWhere(walked), Inputs: c.Inputs, Binding: c.Binding}
 			}
 		default:
 			out[i] = clause

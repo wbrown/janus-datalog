@@ -75,14 +75,8 @@ func validatePhaseLiveness(phaseNumber int, phaseQuery *query.Query) error {
 		}
 	}
 	for _, clause := range phaseQuery.Where {
-		scope := query.ScopeOf(clause, nil)
-		for _, symbol := range scope.Correlates {
+		for _, symbol := range query.ScopeOf(clause, nil).Correlates {
 			if symbol.IsSource() || available[symbol] {
-				continue
-			}
-			if !query.ContainsSymbol(scope.Mandatory, symbol) {
-				// Existential (plain NOT) or global-fallback (or-default):
-				// a correlate the phase cannot bind is legal.
 				continue
 			}
 			return fmt.Errorf("phase %d clause %T requires unavailable symbol %s",

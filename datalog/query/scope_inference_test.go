@@ -413,6 +413,59 @@ func TestInferHeaders_ChecksAWrittenHeaderUnderTheRuleSet(t *testing.T) {
 	})
 }
 
+// A text boundary refuses a subset of what Prepare refuses, through the one
+// header check read with no rule set
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §6).
+func TestValidateReadsTheHeaderChecksWithNoRuleSet(t *testing.T) {
+	succ := defineRule("succ", []string{"?n", "?m"}, scopePattern("?n", "page/next", "?m"))
+	succ.Required = []Symbol{sym("?n")}
+	rs := mustRuleSet(t, []*Rule{succ})
+
+	t.Run("a required position the rule set alone reads", func(t *testing.T) {
+		form := &OrJoinClause{OutputVars: []Symbol{sym("?e"), sym("?w")}, Branches: [][]Clause{
+			{invoke("succ", "?w", "?e")},
+			{scopePattern("?e", "c", "?w")},
+		}}
+		if err := form.Validate(); err != nil {
+			t.Fatalf("Validate = %v; with no rule set the invocation binds ?w, so the header stands", err)
+		}
+		q := findIn([]string{"?e", "?w"}, []InputSpec{RulesInput{}}, scopePattern("?e", "k", "_"), form)
+		if _, err := InferHeaders(q, rs); err == nil {
+			t.Fatal("InferHeaders accepts the form; under the rule set branch 1 reads ?w at a required position and binds it nowhere")
+		}
+	})
+
+	t.Run("a headerless not inside a branch is inferred under the header before the check", func(t *testing.T) {
+		form := &OrJoinClause{OutputVars: []Symbol{sym("?e")}, Branches: [][]Clause{
+			{scopePattern("?e", "p", "_"), &NotClause{Clauses: []Clause{scopePattern("?x", "q", "?e")}}},
+			{scopePattern("?e", "r", "_")},
+		}}
+		if err := form.Validate(); err != nil {
+			t.Fatalf("Validate = %v; the not's ?x is its own and its ?e the header's", err)
+		}
+	})
+
+	t.Run("a not-join body reading outside its header is refused naming the branch and the repair", func(t *testing.T) {
+		notJoin := &NotJoinClause{RequiredVars: []Symbol{sym("?e")}, Clauses: []Clause{
+			scopePattern("?e", "q", "?x"),
+			&Comparison{Op: datalog.SymGT, Left: VariableTerm{Symbol: sym("?x")}, Right: VariableTerm{Symbol: sym("?w")}},
+		}}
+		err := notJoin.Validate()
+		if err == nil {
+			t.Fatal("Validate accepts the not-join; its body reads ?w, which neither the body nor the header binds")
+		}
+		for _, part := range []string{"(not-join [?e]", "branch 1 reads ?w", "bind ?w in the branch or name it in the header"} {
+			if !strings.Contains(err.Error(), part) {
+				t.Errorf("the refusal %q does not carry %q", err, part)
+			}
+		}
+		q := findIn([]string{"?e"}, nil, scopePattern("?e", "p", "?w"), notJoin)
+		if _, inferred := InferHeaders(q, nil); inferred == nil || inferred.Error() != err.Error() {
+			t.Errorf("InferHeaders = %v, want Validate's refusal %v", inferred, err)
+		}
+	})
+}
+
 // A variable a branch's predicate, expression, subquery input or required
 // position reads, which neither the branch nor the header binds, is refused
 // naming the form and the variable, and a form's sharing is checked after

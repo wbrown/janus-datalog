@@ -51,14 +51,7 @@ func InferHeaders(q *Query, rules *RuleSet) (*Query, error) {
 	if !changed {
 		return q, nil
 	}
-	return &Query{
-		Find:         q.Find,
-		In:           q.In,
-		Where:        where,
-		OrderBy:      q.OrderBy,
-		Limit:        q.Limit,
-		ScalarReturn: q.ScalarReturn,
-	}, nil
+	return q.WithWhere(where), nil
 }
 
 // inferList infers the headers of the forms in list, a scope whose enclosing
@@ -123,11 +116,8 @@ func inferClause(list []Clause, i int, occurs map[Symbol]bool, rules *RuleSet) (
 				required = append(required, v)
 			}
 		}
-		branches, _, err := inferBranches(c.Branches, symbolSet(required, outputs), rules)
+		branches, _, err := branchesUnderHeader(c, required, outputs, c.Branches, rules)
 		if err != nil {
-			return nil, err
-		}
-		if err := checkHeader(c, required, outputs, branches, rules); err != nil {
 			return nil, err
 		}
 		if len(shared) == 0 {
@@ -137,17 +127,14 @@ func inferClause(list []Clause, i int, occurs map[Symbol]bool, rules *RuleSet) (
 
 	case *NotClause:
 		shared := sharedVariables(list, i, occurs, rules)
-		body, _, err := inferList(c.Clauses, symbolSet(shared), rules)
+		bodies, _, err := branchesUnderHeader(c, shared, nil, [][]Clause{c.Clauses}, rules)
 		if err != nil {
-			return nil, err
-		}
-		if err := checkHeader(c, shared, nil, [][]Clause{body}, rules); err != nil {
 			return nil, err
 		}
 		if len(shared) == 0 {
 			return nil, sharesNothing(c)
 		}
-		return &NotJoinClause{RequiredVars: shared, Clauses: body}, nil
+		return &NotJoinClause{RequiredVars: shared, Clauses: bodies[0]}, nil
 
 	case *OrDefaultClause:
 		shared := sharedVariables(list, i, occurs, rules)
@@ -159,11 +146,8 @@ func inferClause(list []Clause, i int, occurs map[Symbol]bool, rules *RuleSet) (
 				required = append(required, v)
 			}
 		}
-		branches, _, err := inferBranches(c.Branches, symbolSet(required, outputs), rules)
+		branches, _, err := branchesUnderHeader(c, required, outputs, c.Branches, rules)
 		if err != nil {
-			return nil, err
-		}
-		if err := checkHeader(c, required, outputs, branches, rules); err != nil {
 			return nil, err
 		}
 		if len(shared) == 0 {
@@ -172,11 +156,8 @@ func inferClause(list []Clause, i int, occurs map[Symbol]bool, rules *RuleSet) (
 		return &OrDefaultJoinClause{RequiredVars: required, OutputVars: outputs, Branches: branches}, nil
 
 	case *OrJoinClause:
-		branches, changed, err := inferBranches(c.Branches, symbolSet(c.RequiredVars, c.OutputVars), rules)
+		branches, changed, err := branchesUnderHeader(c, c.RequiredVars, c.OutputVars, c.Branches, rules)
 		if err != nil {
-			return nil, err
-		}
-		if err := checkHeader(c, c.RequiredVars, c.OutputVars, branches, rules); err != nil {
 			return nil, err
 		}
 		if !changed {
@@ -185,29 +166,23 @@ func inferClause(list []Clause, i int, occurs map[Symbol]bool, rules *RuleSet) (
 		return &OrJoinClause{RequiredVars: c.RequiredVars, OutputVars: c.OutputVars, Branches: branches}, nil
 
 	case *NotJoinClause:
-		body, changed, err := inferList(c.Clauses, symbolSet(c.RequiredVars), rules)
+		bodies, changed, err := branchesUnderHeader(c, c.RequiredVars, nil, [][]Clause{c.Clauses}, rules)
 		if err != nil {
 			return nil, err
 		}
-		if err := checkHeader(c, c.RequiredVars, nil, [][]Clause{body}, rules); err != nil {
-			return nil, err
-		}
 		for _, v := range c.RequiredVars {
-			if !ContainsSymbol(FreeVariables(body, rules), v) {
+			if !ContainsSymbol(FreeVariables(bodies[0], rules), v) {
 				return nil, fmt.Errorf("%s: the header names %s, which the body neither binds nor reads", c, v)
 			}
 		}
 		if !changed {
 			return c, nil
 		}
-		return &NotJoinClause{RequiredVars: c.RequiredVars, Clauses: body}, nil
+		return &NotJoinClause{RequiredVars: c.RequiredVars, Clauses: bodies[0]}, nil
 
 	case *OrDefaultJoinClause:
-		branches, changed, err := inferBranches(c.Branches, symbolSet(c.RequiredVars, c.OutputVars), rules)
+		branches, changed, err := branchesUnderHeader(c, c.RequiredVars, c.OutputVars, c.Branches, rules)
 		if err != nil {
-			return nil, err
-		}
-		if err := checkHeader(c, c.RequiredVars, c.OutputVars, branches, rules); err != nil {
 			return nil, err
 		}
 		if !changed {
@@ -228,6 +203,23 @@ func inferClause(list []Clause, i int, occurs map[Symbol]bool, rules *RuleSet) (
 	return list[i], nil
 }
 
+// branchesUnderHeader infers a form's branches under its header, each a
+// scope whose enclosing header exposes the required run and the outputs, and
+// reads the header strictly against them through checkHeader. Read with no
+// rule set, an invocation provides every variable argument, so the check
+// with none refuses a subset of what the check under the rule set refuses.
+// The branches come back as they are when none changes.
+func branchesUnderHeader(form Clause, required, outputs []Symbol, branches [][]Clause, rules *RuleSet) ([][]Clause, bool, error) {
+	inferred, changed, err := inferBranches(branches, symbolSet(required, outputs), rules)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := checkHeader(form, required, outputs, inferred, rules); err != nil {
+		return nil, false, err
+	}
+	return inferred, changed, nil
+}
+
 // checkHeader reads a written header strictly against the form's inferred
 // branches, under the rule set: every branch binds every output, and a
 // variable a branch reads, which neither the branch nor the header binds, is
@@ -236,15 +228,15 @@ func inferClause(list []Clause, i int, occurs map[Symbol]bool, rules *RuleSet) (
 func checkHeader(form Clause, required, outputs []Symbol, branches [][]Clause, rules *RuleSet) error {
 	header := symbolSet(required, outputs)
 	for b, branch := range branches {
-		provided, mandatory, _ := branchInterface(branch, rules)
+		provided, correlates := branchInterface(branch, rules)
 		for _, v := range outputs {
 			if !ContainsSymbol(provided, v) {
 				return fmt.Errorf("%s: branch %d does not bind %s, and every branch binds every output in the header; move %s into the required run", form, b+1, v, v)
 			}
 		}
-		for _, v := range mandatory {
+		for _, v := range correlates {
 			if !v.IsSource() && !ContainsSymbol(provided, v) && !header[v] {
-				return &UnboundBranchInputError{Form: form, Variable: v}
+				return &UnboundBranchInputError{Form: form, Branch: b + 1, Variable: v}
 			}
 		}
 	}
@@ -253,14 +245,15 @@ func checkHeader(form Clause, required, outputs []Symbol, branches [][]Clause, r
 
 // UnboundBranchInputError reports a variable a branch's predicate, expression,
 // subquery input or required position reads, which neither the branch nor
-// the form's header binds.
+// the form's header binds. Branch is the branch's position counted from one.
 type UnboundBranchInputError struct {
 	Form     Clause
+	Branch   int
 	Variable Symbol
 }
 
 func (e *UnboundBranchInputError) Error() string {
-	return fmt.Sprintf("%s: a branch reads %s, which neither the branch nor the header binds", e.Form, e.Variable)
+	return fmt.Sprintf("%s: branch %d reads %s, which neither the branch nor the header binds; bind %s in the branch or name it in the header", e.Form, e.Branch, e.Variable, e.Variable)
 }
 
 // sharesNothing is the refusal of a form whose branches share no variable

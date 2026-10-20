@@ -86,7 +86,7 @@ func windowFrames(plans []branchRun, f framing) ([]windowFrame, []int) {
 	var frames []windowFrame
 	frameOf := make([]int, len(plans))
 	for i, plan := range plans {
-		required := plan.frame.required
+		required := plan.frame.Required
 		found := -1
 		for j := range frames {
 			if symbolsMatch(frames[j].required, required) {

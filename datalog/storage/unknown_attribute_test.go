@@ -129,11 +129,12 @@ func TestQueryRefusesUnknownAttributeInDatabaseFunctions(t *testing.T) {
 }
 
 // The attribute an input binds to a variable in a pattern's attribute
-// position is refused: bound through a scalar input, a collection input, and
-// a subquery's input, which the subquery checks when it runs. The subquery's
-// check reaches the matcher through the annotation wrapper, when the database
-// carries a handler, and through the scan-sharing wrapper, when scan sharing
-// is on, as it does through neither.
+// position is refused at entry: bound through a scalar input, a collection
+// input, and a subquery's input, whose call passes the query's input to the
+// inner :in symbol standing in the attribute position, which the roster
+// records as the enclosing scope's attribute variable. The decision reads the
+// plan's roster and the execution's inputs, so it holds whatever wraps the
+// matcher: a handler, scan sharing, or neither.
 func TestQueryRefusesUnknownAttributeBoundThroughInput(t *testing.T) {
 	wrappers := []struct {
 		name      string
@@ -164,12 +165,12 @@ func TestQueryRefusesUnknownAttributeBoundThroughInput(t *testing.T) {
 				requireUnknown(t, err, attr)
 
 				// A subquery's input binds the attribute one scope deeper, and
-				// the subquery checks it when it runs, through the wrappers the
-				// execution put around the matcher.
+				// the roster records the call's argument as the enclosing
+				// scope's attribute variable, so the entry decides it.
 				_, err = d.Query(`[:find ?v :in $ ?a :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`, attr)
 				requireUnknown(t, err, attr)
 				if wrapper.annotated {
-					require.Positive(t, events.Load(), "the handler the database carries saw the execution, so the annotation wrapper stood around the matcher")
+					require.Positive(t, events.Load(), "the entry reports the query as invoked before it refuses the attribute, so the handler the database carries saw that event")
 				}
 			})
 		}

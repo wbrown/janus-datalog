@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -101,32 +102,32 @@ func frameBranches(executor *DefaultQueryExecutor, ctx *Context, branches [][]qu
 			// branch answers are read at the same positions by the next.
 			for _, sym := range f.runSyms {
 				if query.ContainsSymbol(f.required, sym) {
-					run.frame.required = append(run.frame.required, sym)
+					run.frame.Required = append(run.frame.Required, sym)
 				}
 			}
 		case len(branchReads(branch, f.given, ctx.Rules())) == 0:
-			run.frame.required = fromEnvironment
+			run.frame.Required = fromEnvironment
 			run.readsNothing = true
 		default:
 			if f.planOverRequired {
-				if _, err := executor.planScope(ctx, scope{required: f.required, find: f.find, clauses: branch}); err != nil {
+				if _, err := executor.planScope(ctx, planner.Scope{Required: f.required, Find: f.find, Clauses: branch}); err != nil {
 					return nil, fmt.Errorf("branch %d: %w", i+1, err)
 				}
 			}
-			run.frame.required = f.runSyms
+			run.frame.Required = f.runSyms
 		}
 		for _, sym := range branchProvides(branch, ctx.Rules()) {
-			if query.ContainsSymbol(f.given, sym) && !query.ContainsSymbol(run.frame.required, sym) {
-				run.frame.find = append(run.frame.find, query.FindVariable{Symbol: sym})
+			if query.ContainsSymbol(f.given, sym) && !query.ContainsSymbol(run.frame.Required, sym) {
+				run.frame.Find = append(run.frame.Find, query.FindVariable{Symbol: sym})
 			}
 		}
 		outputs := extractFindSymbols(f.find)
 		for position, elem := range f.find {
-			if sym := outputs[position]; !query.ContainsSymbol(run.frame.required, sym) && !query.ContainsSymbol(run.frame.outputs(), sym) {
-				run.frame.find = append(run.frame.find, elem)
+			if sym := outputs[position]; !query.ContainsSymbol(run.frame.Required, sym) && !query.ContainsSymbol(run.frame.Outputs(), sym) {
+				run.frame.Find = append(run.frame.Find, elem)
 			}
 		}
-		run.frame.clauses = branch
+		run.frame.Clauses = branch
 		plan, err := executor.planScope(ctx, run.frame)
 		if err != nil {
 			return nil, fmt.Errorf("branch %d: %w", i+1, err)
@@ -137,16 +138,20 @@ func frameBranches(executor *DefaultQueryExecutor, ctx *Context, branches [][]qu
 	return plans, nil
 }
 
-// formPolicy is a form's own rules over the composition. narrow is the run
-// a branch is built over, from its frame's run: the fallback leaves out the
-// keys the earlier branches answered; nil takes the run as it is. build is a
-// build of a branch's tuples in place of its plan over the run: the
-// fallback's from the EA cache; nil builds from the plan, as does a build
-// answering with no symbols. built is told of each build: the fallback
-// records the keys it answered; nil tells nothing. answer answers the
-// window's tuples in turn from the built branches, setting the current
-// tuple, and reports false when the window is answered.
+// formPolicy is a form's own rules over the composition. window runs over
+// each window before any branch is built over it: the fallback's prefetch of
+// the window's entities into the EA cache; nil runs nothing, and its error
+// is the iterator's. narrow is the run a branch is built over, from its
+// frame's run: the fallback leaves out the keys the earlier branches
+// answered; nil takes the run as it is. build is a build of a branch's
+// tuples in place of its plan over the run: the fallback's from the EA
+// cache; nil builds from the plan, as does a build answering with no
+// symbols. built is told of each build: the fallback records the keys it
+// answered; nil tells nothing. answer answers the window's tuples in turn
+// from the built branches, setting the current tuple, and reports false when
+// the window is answered.
 type formPolicy struct {
+	window func(window []Tuple) error
 	narrow func(run *MaterializedRelation, branchIdx int) *MaterializedRelation
 	build  func(branchIdx int, run *MaterializedRelation) ([]Tuple, []query.Symbol, error)
 	built  func(branchIdx int, branchSyms []query.Symbol, tuples []Tuple)
@@ -283,12 +288,19 @@ func (it *windowedIterator) nextWindow() bool {
 	return true
 }
 
-// runWindow runs each branch over the window: a branch framed over no
-// subject symbol once, at the first window, over the environment's tuple or
-// the unit relation; every other branch over the window's keys its frame
-// has not run, narrowed under the form's policy. A branch whose run holds no
-// key is not run. Returns false with it.err set when a build fails.
+// runWindow runs the policy's window step over the window, then each branch
+// over it: a branch framed over no subject symbol once, at the first window,
+// over the environment's tuple or the unit relation; every other branch over
+// the window's keys its frame has not run, narrowed under the form's policy.
+// A branch whose run holds no key is not run. Returns false with it.err set
+// when the window step or a build fails.
 func (it *windowedIterator) runWindow() bool {
+	if it.policy.window != nil {
+		if err := it.policy.window(it.reader.window); err != nil {
+			it.err = err
+			return false
+		}
+	}
 	for branchIdx := range it.plans {
 		frame := &it.frames[it.frameOf[branchIdx]]
 		if len(frame.subjectPos) == 0 {

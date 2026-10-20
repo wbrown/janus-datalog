@@ -123,11 +123,9 @@ func TestPendingBlockers(t *testing.T) {
 				t.Fatalf("the query carries no %s", c.of)
 			}
 			sel := selection{
-				remaining:     parsed.Where,
-				selected:      map[int]bool{},
-				available:     map[query.Symbol]bool{},
-				inputs:        map[query.Symbol]bool{},
-				providerCount: query.CountProviders(parsed.Where, nil),
+				remaining: parsed.Where,
+				selected:  map[int]bool{},
+				available: map[query.Symbol]bool{},
 			}
 			got := sel.pendingBlockers(of)
 			if len(got) != len(c.waits) {

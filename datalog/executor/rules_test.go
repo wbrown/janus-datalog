@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/parser"
@@ -653,9 +654,9 @@ func TestPlanBody_FindsTheHead(t *testing.T) {
 // plan runs it before the patterns.
 func TestPrepareStratum_BodyInvocationLeadsItsPatterns(t *testing.T) {
 	rs := mustRules(t, followsRulesText)
-	magic, err := rs.Magic(datalog.NewSymbol("follows"), []bool{true, false})
+	magic, err := planner.Rewrite(planner.CreatePlanner(nil, defaultPlannerOptions()), rs, datalog.NewSymbol("follows"), []bool{true, false}, nil)
 	if err != nil {
-		t.Fatalf("Magic: %v", err)
+		t.Fatalf("Rewrite: %v", err)
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -678,6 +679,66 @@ func TestPrepareStratum_BodyInvocationLeadsItsPatterns(t *testing.T) {
 			first, ok := plan.Phases[0].Query.Where[0].(*query.RuleInvocation)
 			if !ok || first.Name != query.DeltaSymbol(magic.Seed) {
 				t.Errorf("the body's first clause is %v, want the delta occurrence %s leading the edge pattern:\n%s", plan.Phases[0].Query.Where[0], query.DeltaSymbol(magic.Seed), plan)
+			}
+		})
+	}
+}
+
+// A rule body written with its recursive invocation before the pattern that
+// binds the invocation's argument is rewritten in the planner's order, where
+// the pattern seeks on the required run first and the invocation is bound by
+// what it provides, so a bound invocation derives what its binding reaches
+// and never the predicate whole (REWRITE_ORDER_PROOF.md T4, NESTED §5.5).
+func TestDeriveInvocation_ABodyWrittenBeforeItsBinderDerivesWhatTheBindingReaches(t *testing.T) {
+	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/next ?b]]
+	                     [(follows ?a ?c) (follows ?b ?c) [?a :page/next ?b]]]`)
+	q := mustParse(t, `[:find ?y :in $ % ?x :where (follows ?x ?y)]`)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.plannerOptions()
+			opts.MaxDerivedTuples = 100
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainsDatoms(1000)), nil, opts)
+			inputs, err := createInputRelationsFromValuesWithOptions(q, []interface{}{datalog.SymDollar, datalog.NewSymbol("%"), page(0)}, exec.options)
+			require.NoError(t, err)
+			tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), q, inputs))
+			require.NoError(t, err, "the bound invocation derives the chain its start reaches under the cap")
+			require.Len(t, tuples, 10, "the ten pages page0 reaches")
+		})
+	}
+}
+
+// An invocation of the rule's own stratum inside a subquery body is an
+// occurrence of the semi-naive step: the body's delta copy invokes the
+// predicate's delta symbol inside the inner query, and the body is planned
+// plain as well, for iteration zero, as a body whose occurrences all sit
+// inside forms is.
+func TestPrepareStratum_AnOccurrenceInsideASubqueryBodyIsADeltaCopy(t *testing.T) {
+	rs := mustRules(t, `[[(reach ?x ?y) [?x :edge ?y]]
+	                     [(reach ?x ?z) [?x :edge ?y] [(q [:find ?w :in $ % ?y :where (reach ?y ?w)] $ % ?y) [[?z] ...]]]]`)
+	reach := datalog.NewSymbol("reach")
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(nil), nil, mode.plannerOptions())
+			eval, err := exec.prepareStratum(NewContext().WithRules(rs), rs, rs.Strata()[0])
+			if err != nil {
+				t.Fatalf("prepareStratum: %v", err)
+			}
+			if len(eval.plain) != 2 || len(eval.delta) != 1 {
+				t.Fatalf("the stratum plans %d plain and %d delta bodies, want both rules plain and the second's one delta copy", len(eval.plain), len(eval.delta))
+			}
+			var inner []*query.RuleInvocation
+			for _, phase := range eval.delta[0].plan.Phases {
+				for _, clause := range phase.Query.Where {
+					if subq, ok := clause.(*query.SubqueryPattern); ok {
+						inner = append(inner, query.Invocations(subq.Query.Where)...)
+					}
+				}
+			}
+			if len(inner) != 1 || inner[0].Name != query.DeltaSymbol(reach) {
+				t.Errorf("the delta copy's inner query invokes %v, want the one delta occurrence %s:\n%s", inner, query.DeltaSymbol(reach), eval.delta[0].plan)
+			}
+			if original := query.Invocations(rs.Rules(reach)[1].Body); len(original) != 1 || original[0].Name != reach {
+				t.Errorf("the rule's own body is shared and unmarked, got %v", original)
 			}
 		})
 	}
@@ -866,7 +927,7 @@ func tuplesBoundTo(t *testing.T, exec *Executor, rs *query.RuleSet, q *query.Que
 	return tuples
 }
 
-// requireSamePages asserts that a single-column result holds exactly the
+// requireSamePages asserts that a result over one symbol holds exactly the
 // pages given.
 func requireSamePages(t *testing.T, label string, got []Tuple, want ...datalog.Identity) {
 	t.Helper()
@@ -890,8 +951,8 @@ func requireSamePages(t *testing.T, label string, got []Tuple, want ...datalog.I
 // invocation of q whose recursive rule negates s after the recursive
 // invocation of q. The binding that invocation provides does not reach the
 // negation, so the magic rule of s reads no adorned q, the rewritten set
-// stratifies, and each query records one applied rewrite and derives what
-// the whole predicate filtered to its start holds.
+// stratifies, and each query records one rewrite of q under bf and derives
+// what the whole predicate filtered to its start holds.
 func TestExecuteWithRelations_NegationAfterARecursiveInvocationRewrites(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(markedPageGraph())
 	rs := mustRules(t, `[[(q ?x ?z) [?x :page/a ?z]]
@@ -900,11 +961,11 @@ func TestExecuteWithRelations_NegationAfterARecursiveInvocationRewrites(t *testi
 	q := mustParse(t, `[:find ?z :in $ % ?x :where (q ?x ?z)]`)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			var decisions []annotations.Event
+			var rewrites []annotations.Event
 			opts := mode.plannerOptions()
 			opts.Handler = func(e annotations.Event) {
 				if e.Name == annotations.RulesMagicSets {
-					decisions = append(decisions, e)
+					rewrites = append(rewrites, e)
 				}
 			}
 			exec := NewExecutorWithOptions(matcher, nil, opts)
@@ -912,43 +973,40 @@ func TestExecuteWithRelations_NegationAfterARecursiveInvocationRewrites(t *testi
 			// b(3, 9); q(1, 8) does not, since s(7) holds.
 			requireSamePages(t, "q bound to page1", tuplesBoundTo(t, exec, rs, q, page(1)), page(2), page(9))
 			requireSamePages(t, "q bound to page2", tuplesBoundTo(t, exec, rs, q, page(2)), page(3), page(7))
-			if len(decisions) != 2 {
-				t.Fatalf("recorded %d rewrite decisions, want one per invocation: %v", len(decisions), decisions)
+			if len(rewrites) != 2 {
+				t.Fatalf("recorded %d rewrites, want one per invocation: %v", len(rewrites), rewrites)
 			}
-			for _, d := range decisions {
-				if d.Data["applied"] != true {
-					t.Errorf("decision %v: the rewrite is applied, since the binding the recursion provides does not reach the negation", d.Data)
+			for _, r := range rewrites {
+				adornment, _ := r.Data["adornment"].([]bool)
+				if r.Data["predicate"] != datalog.NewSymbol("q") || len(adornment) != 2 || !adornment[0] || adornment[1] {
+					t.Errorf("rewrite %v, want q under bf", r.Data)
 				}
 			}
 		})
 	}
 }
 
-// TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole binds an
-// invocation whose rewrite does not stratify: q's second rule invokes s
-// after the recursive invocation of q, so the magic rule of s reads the
-// adorned q, and q's third rule negates s, so the adorned q depends through
-// that negation on the adorned s. The rewrite is declined, recorded, and the
-// predicate evaluated whole and filtered.
-func TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole(t *testing.T) {
+// A negated site whose adornment would not stratify is left unadorned and
+// the rewrite is accepted: q's second rule invokes s after the recursive
+// invocation of q, so the magic rule of adorned s reads the adorned q, and
+// q's third rule negates s, where adorning it would close a cycle through
+// the negation. The query answers, and the rewrite made for each invocation
+// is recorded with the predicate and its adornment
+// (NON_MONOTONE_FORMS_PROOF.md T6).
+func TestExecuteWithRelations_ANegatedSiteLeftUnadornedAnswers(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(markedPageGraph())
 	rs := mustRules(t, `[[(q ?x ?z) [?x :page/a ?z]]
 	                     [(q ?x ?z) [?x :page/a ?y] (q ?y ?w) (s ?w) [?w :page/b ?z]]
 	                     [(q ?x ?z) [?x :page/a ?w] (not (s ?w)) [?w :page/b ?z]]
 	                     [(s ?w) [?w :page/c _]]]`)
 	q := mustParse(t, `[:find ?z :in $ % ?x :where (q ?x ?z)]`)
-	_, refusal := rs.Magic(datalog.NewSymbol("q"), []bool{true, false})
-	var unstratifiable *query.UnstratifiableError
-	if !errors.As(refusal, &unstratifiable) {
-		t.Fatalf("the rewrite of q under bf is refused by the stratifier, got %v", refusal)
-	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			var decisions []annotations.Event
+			var rewrites []annotations.Event
 			opts := mode.plannerOptions()
 			opts.Handler = func(e annotations.Event) {
 				if e.Name == annotations.RulesMagicSets {
-					decisions = append(decisions, e)
+					rewrites = append(rewrites, e)
 				}
 			}
 			exec := NewExecutorWithOptions(matcher, nil, opts)
@@ -957,29 +1015,23 @@ func TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole(t *testing.T) {
 			// b(3, 9).
 			requireSamePages(t, "q bound to page1", tuplesBoundTo(t, exec, rs, q, page(1)), page(2), page(8))
 			requireSamePages(t, "q bound to page2", tuplesBoundTo(t, exec, rs, q, page(2)), page(3), page(7), page(9))
-			if len(decisions) != 2 {
-				t.Fatalf("recorded %d rewrite decisions, want one per invocation: %v", len(decisions), decisions)
+			if len(rewrites) != 2 {
+				t.Fatalf("recorded %d rewrites, want one per invocation: %v", len(rewrites), rewrites)
 			}
-			for _, d := range decisions {
-				if d.Data["applied"] != false {
-					t.Errorf("decision %v: the rewrite is declined", d.Data)
-				}
-				if reason, _ := d.Data["reason"].(string); reason != unstratifiable.Error() {
-					t.Errorf("decision reason %q, want the stratifier's refusal %q", reason, unstratifiable.Error())
+			for _, r := range rewrites {
+				adornment, _ := r.Data["adornment"].([]bool)
+				if r.Data["predicate"] != datalog.NewSymbol("q") || len(adornment) != 2 || !adornment[0] || adornment[1] {
+					t.Errorf("rewrite %v, want q under bf", r.Data)
 				}
 			}
 		})
 	}
 }
 
-// TestExecuteWithRelations_DeclinedRewriteOfARequiredPredicateIsAnError
-// binds a predicate with a required position whose rewrite does not
-// stratify: the shape of TestExecuteWithRelations_DeclinedRewriteEvaluatesWhole
-// with path requiring its first position. A predicate requiring bindings is
-// never evaluated whole, so the decline has nothing to fall back to, and the
-// query returns an error naming the predicate and carrying the stratifier's
-// refusal.
-func TestExecuteWithRelations_DeclinedRewriteOfARequiredPredicateIsAnError(t *testing.T) {
+// The same shape with path requiring its first position: the rewrite is
+// accepted with the negated site unadorned, and the query answers, where a
+// predicate requiring bindings has no whole evaluation.
+func TestExecuteWithRelations_ARequiredPredicateWithANegatedSiteLeftUnadornedAnswers(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(markedPageGraph())
 	rs := mustRules(t, `[[(path [?x] ?z) [?x :page/a ?z]]
 	                     [(path [?x] ?z) [?x :page/a ?y] (path ?y ?w) (s ?w) [?w :page/b ?z]]
@@ -989,23 +1041,8 @@ func TestExecuteWithRelations_DeclinedRewriteOfARequiredPredicateIsAnError(t *te
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			inputs, err := createInputRelationsFromValuesWithOptions(q,
-				[]interface{}{datalog.SymDollar, datalog.NewSymbol("%"), page(1)}, exec.options)
-			if err != nil {
-				t.Fatalf("binding: %v", err)
-			}
-			rel, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), q, inputs)
-			if err == nil {
-				var tuples []Tuple
-				err = collectTuplesInto(&tuples, rel)
-			}
-			var unstratifiable *query.UnstratifiableError
-			if !errors.As(err, &unstratifiable) {
-				t.Fatalf("path bound to page1: got %v, want an error carrying the stratifier's refusal", err)
-			}
-			if !strings.Contains(err.Error(), "path") {
-				t.Errorf("error %q does not name the predicate path", err)
-			}
+			requireSamePages(t, "path bound to page1", tuplesBoundTo(t, exec, rs, q, page(1)), page(2), page(8))
+			requireSamePages(t, "path bound to page2", tuplesBoundTo(t, exec, rs, q, page(2)), page(3), page(7), page(9))
 		})
 	}
 }
@@ -1191,9 +1228,9 @@ func TestExecuteWithRelations_RequiredBindingInSubqueryBodyIsOrderedAfterItsBind
 func TestEvaluateRules_SeedAbsorbedAtIterationZero(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(chainDatoms(6))
 	rs := mustRules(t, followsRulesText)
-	magic, err := rs.Magic(datalog.NewSymbol("follows"), []bool{true, false})
+	magic, err := planner.Rewrite(planner.CreatePlanner(nil, defaultPlannerOptions()), rs, datalog.NewSymbol("follows"), []bool{true, false}, nil)
 	if err != nil {
-		t.Fatalf("Magic: %v", err)
+		t.Fatalf("Rewrite: %v", err)
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -1268,8 +1305,8 @@ func TestExecuteWithRelations_VectorConstantArgument(t *testing.T) {
 				t.Fatalf("observed %d magic-set events, want one for the invocation", len(rewrites))
 			}
 			adornment, _ := rewrites[0].Data["adornment"].([]bool)
-			if rewrites[0].Data["applied"] != true || len(adornment) != 2 || adornment[0] || !adornment[1] {
-				t.Errorf("magic-set event = %v, want the rewrite applied with the vector's position bound", rewrites[0].Data)
+			if len(adornment) != 2 || adornment[0] || !adornment[1] {
+				t.Errorf("magic-set event = %v, want the rewrite made with the vector's position bound", rewrites[0].Data)
 			}
 		})
 	}
@@ -1282,13 +1319,14 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(chainDatoms(4))
 	closure := mustRules(t, followsRulesText)
 	successor := mustRules(t, successorRulesText)
-	closureMagic, err := closure.Magic(datalog.NewSymbol("follows"), []bool{true, false})
+	rewritePlanner := planner.CreatePlanner(nil, defaultPlannerOptions())
+	closureMagic, err := planner.Rewrite(rewritePlanner, closure, datalog.NewSymbol("follows"), []bool{true, false}, nil)
 	if err != nil {
-		t.Fatalf("Magic(follows): %v", err)
+		t.Fatalf("Rewrite(follows): %v", err)
 	}
-	successorMagic, err := successor.Magic(datalog.NewSymbol("succ"), []bool{true, false})
+	successorMagic, err := planner.Rewrite(rewritePlanner, successor, datalog.NewSymbol("succ"), []bool{true, false}, nil)
 	if err != nil {
-		t.Fatalf("Magic(succ): %v", err)
+		t.Fatalf("Rewrite(succ): %v", err)
 	}
 	queries := []struct {
 		name  string

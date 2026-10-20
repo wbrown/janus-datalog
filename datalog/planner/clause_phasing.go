@@ -30,16 +30,12 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 		available[sym] = true
 	}
 
-	// How many clauses can bind each symbol — see query.CountProviders and
-	// query.ClauseReady for the self-provider subtraction this feeds.
-	providerCount := query.CountProviders(clauses, bindings.Rules)
-
 	var phases []ClausePhase
 	remaining := clauses
 
 	// Keep creating phases until all clauses are assigned
 	for len(remaining) > 0 {
-		phase, newRemaining, err := selectPhaseClauses(remaining, available, findSymbols, inputSymbols, providerCount, bindings)
+		phase, newRemaining, err := selectPhaseClauses(remaining, available, findSymbols, bindings)
 		if err != nil {
 			return nil, err
 		}
@@ -50,7 +46,7 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 			// binds.
 			stuck := make([]string, len(remaining))
 			for i, clause := range remaining {
-				blockers := query.ClauseBlockers(clause, available, inputSymbols, providerCount, bindings.Rules)
+				blockers := query.ClauseBlockers(clause, available, bindings.Rules)
 				if len(blockers) == 0 {
 					stuck[i] = fmt.Sprintf("%s cannot execute", clause)
 					continue
@@ -73,7 +69,7 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 }
 
 // selectPhaseClauses greedily selects clauses for the next phase
-func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]bool, findSymbols []query.Symbol, inputs map[query.Symbol]bool, providerCount map[query.Symbol]int, bindings query.Bindings) (ClausePhase, []query.Clause, error) {
+func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]bool, findSymbols []query.Symbol, bindings query.Bindings) (ClausePhase, []query.Clause, error) {
 	var selectedClauses []query.Clause
 	var providedSymbols []query.Symbol
 	providedSet := make(map[query.Symbol]bool)
@@ -85,18 +81,16 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 	// Track which clauses we've selected
 	selected := make(map[int]bool)
 	sel := selection{
-		remaining:     remaining,
-		selected:      selected,
-		available:     available,
-		inputs:        inputs,
-		providerCount: providerCount,
-		rules:         bindings.Rules,
+		remaining: remaining,
+		selected:  selected,
+		available: available,
+		rules:     bindings.Rules,
 	}
 
 	// Greedy selection: keep selecting best clause until no more can execute
 	for {
 		bestIdx := -1
-		bestScore := -1000
+		bestRank, bestScore := -1, -1000
 
 		// Find the best clause that can execute
 		for i, clause := range remaining {
@@ -114,9 +108,16 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 				continue
 			}
 
+			// A clause scanning a whole extent ranks below every other
+			// clause, and the score decides within a rank, the first in
+			// list order on a tie (REWRITE_ORDER_PROOF.md §6).
+			rank := 1
+			if scansAWholeExtent(clause, available, bindings.Rules) {
+				rank = 0
+			}
 			score := scoreClause(clause, available, bindings)
-			if score > bestScore {
-				bestScore = score
+			if rank > bestRank || (rank == bestRank && score > bestScore) {
+				bestRank, bestScore = rank, score
 				bestIdx = i
 			}
 		}

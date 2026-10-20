@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -24,10 +25,10 @@ func frameFixture() (e, n, z query.Symbol, subject, env Relation) {
 func TestWindowFrames_SharesAFrameAmongBranchesFramedAlike(t *testing.T) {
 	e, _, z, subject, env := frameFixture()
 	plans := []branchRun{
-		{frame: scope{required: []query.Symbol{e}}},
-		{frame: scope{required: []query.Symbol{e}}},
-		{frame: scope{required: []query.Symbol{z, e}}},
-		{frame: scope{}},
+		{frame: planner.Scope{Required: []query.Symbol{e}}},
+		{frame: planner.Scope{Required: []query.Symbol{e}}},
+		{frame: planner.Scope{Required: []query.Symbol{z, e}}},
+		{frame: planner.Scope{}},
 	}
 	frames, frameOf := windowFrames(plans, framing{subject: subject, environment: env})
 	require.Len(t, frames, 3, "three distinct frames among four branches")
@@ -41,7 +42,7 @@ func TestWindowFrames_SharesAFrameAmongBranchesFramedAlike(t *testing.T) {
 // the environment's value when the environment alone binds it.
 func TestWindowFrames_ResolvesEachRequiredSymbolToTheSubjectOrTheEnvironment(t *testing.T) {
 	e, _, z, subject, env := frameFixture()
-	frames, _ := windowFrames([]branchRun{{frame: scope{required: []query.Symbol{z, e}}}}, framing{subject: subject, environment: env})
+	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{z, e}}}}, framing{subject: subject, environment: env})
 	frame := frames[0]
 	assert.Equal(t, []int{1}, frame.subjectPos, "?e is the subject's second symbol")
 	assert.Equal(t, []int{1}, frame.framePos, "?e is the frame's second symbol")
@@ -55,8 +56,8 @@ func TestWindowFrames_ResolvesEachRequiredSymbolToTheSubjectOrTheEnvironment(t *
 func TestWindowFrame_AFrameOfNoSubjectSymbolRunsOverTheEnvironmentsTuple(t *testing.T) {
 	_, _, z, subject, env := frameFixture()
 	frames, _ := windowFrames([]branchRun{
-		{frame: scope{required: []query.Symbol{z}}},
-		{frame: scope{}},
+		{frame: planner.Scope{Required: []query.Symbol{z}}},
+		{frame: planner.Scope{}},
 	}, framing{subject: subject, environment: env})
 	environmentOnly, empty := frames[0], frames[1]
 	assert.Nil(t, environmentOnly.ran)
@@ -78,7 +79,7 @@ func TestWindowFrame_AFrameOfNoSubjectSymbolRunsOverTheEnvironmentsTuple(t *test
 func TestWindowFrame_WindowRunIsTheWindowsDistinctKeysLessThoseRunBefore(t *testing.T) {
 	e, _, z, subject, env := frameFixture()
 	e1, e2, e3 := datalog.NewIdentity("wf:e1"), datalog.NewIdentity("wf:e2"), datalog.NewIdentity("wf:e3")
-	frames, _ := windowFrames([]branchRun{{frame: scope{required: []query.Symbol{z, e}}}}, framing{subject: subject, environment: env})
+	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{z, e}}}}, framing{subject: subject, environment: env})
 	frame := &frames[0]
 	opts := ExecutorOptions{}
 
@@ -111,7 +112,7 @@ func TestWindowFrames_ResolvesAFrameSymbolThroughItsSubstitution(t *testing.T) {
 	subst, err := query.SubstitutionOf([]query.Symbol{x, y}, []query.Symbol{e, e})
 	require.NoError(t, err)
 	frameEnv := NewMaterializedRelation([]query.Symbol{k}, []Tuple{{int64(9)}})
-	frames, _ := windowFrames([]branchRun{{frame: scope{required: []query.Symbol{x, k, y}}}}, framing{subject: subject, environment: frameEnv, subst: subst})
+	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{x, k, y}}}}, framing{subject: subject, environment: frameEnv, subst: subst})
 	frame := &frames[0]
 	assert.Equal(t, []int{1, 1}, frame.subjectPos, "?x and ?y both stand for ?e, the subject's second symbol")
 	assert.Equal(t, []int{0, 2}, frame.framePos)
@@ -133,7 +134,7 @@ func TestWindowFrame_WindowRunExpandsACollectionSymbolToOneKeyPerMember(t *testi
 	e1, e2 := datalog.NewIdentity("wf:members1"), datalog.NewIdentity("wf:members2")
 	subst, err := query.SubstitutionOf([]query.Symbol{m, x}, []query.Symbol{n, e})
 	require.NoError(t, err)
-	frames, _ := windowFrames([]branchRun{{frame: scope{required: []query.Symbol{m, x}}}}, framing{subject: subject, subst: subst, members: []query.Symbol{m}})
+	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{m, x}}}}, framing{subject: subject, subst: subst, members: []query.Symbol{m}})
 	frame := &frames[0]
 	opts := ExecutorOptions{}
 
@@ -165,7 +166,7 @@ func TestWindowFrame_WindowRunDistinguishesKeysByTypedValue(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			frames, _ := windowFrames([]branchRun{{frame: scope{required: []query.Symbol{a, b}}}}, framing{subject: subject})
+			frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{a, b}}}}, framing{subject: subject})
 			run := frames[0].windowRun(tc.window, 1, ExecutorOptions{})
 			require.Equal(t, 2, run.Size(), "two keys distinct under typed value identity, got %s", run.Table())
 		})
@@ -183,13 +184,13 @@ func TestWindowFrame_ProbeKeysExpandASubjectTupleAtItsCollectionPositions(t *tes
 	e1 := datalog.NewIdentity("wf:probe1")
 	subst, err := query.SubstitutionOf([]query.Symbol{m, x}, []query.Symbol{n, e})
 	require.NoError(t, err)
-	frames, _ := windowFrames([]branchRun{{frame: scope{required: []query.Symbol{m, x}}}}, framing{subject: subject, subst: subst, members: []query.Symbol{m}})
+	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{m, x}}}}, framing{subject: subject, subst: subst, members: []query.Symbol{m}})
 	frame := &frames[0]
 	assert.Equal(t, []int{0}, frame.probeExpandPos, "?m reads the subject's first position, which the probe expands")
 	assert.Equal(t, []Tuple{{"a", e1}, {"b", e1}}, frame.probeKeys(Tuple{[]interface{}{"a", "b"}, e1}), "one key per member, the entity beside each")
 	assert.Equal(t, []Tuple{{"c", e1}}, frame.probeKeys(Tuple{"c", e1}), "a scalar is its own one member")
 
-	plain, _ := windowFrames([]branchRun{{frame: scope{required: []query.Symbol{x}}}}, framing{subject: subject, subst: subst})
+	plain, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{x}}}}, framing{subject: subject, subst: subst})
 	assert.Empty(t, plain[0].probeExpandPos, "a frame reading no collection expands no position")
 	assert.Equal(t, []Tuple{{[]interface{}{"a", "b"}, e1}}, plain[0].probeKeys(Tuple{[]interface{}{"a", "b"}, e1}), "the tuple itself is its one key")
 }
@@ -200,7 +201,7 @@ func TestWindowFrame_EnvironmentRunExpandsACollectionSymbol(t *testing.T) {
 	_, _, _, subject, _ := frameFixture()
 	m := datalog.NewSymbol("?m")
 	frameEnv := NewMaterializedRelation([]query.Symbol{m}, []Tuple{{[]interface{}{"a", "b"}}})
-	frames, _ := windowFrames([]branchRun{{frame: scope{required: []query.Symbol{m}}}}, framing{subject: subject, environment: frameEnv, members: []query.Symbol{m}})
+	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{m}}}}, framing{subject: subject, environment: frameEnv, members: []query.Symbol{m}})
 	run := frames[0].environmentRun(ExecutorOptions{})
 	require.NotNil(t, run)
 	tuples, err := CollectTuples(run, nil)

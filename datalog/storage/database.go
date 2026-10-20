@@ -707,7 +707,7 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableAlgebraOptimizer:     true,  // Relational algebra optimization with nested Datalog lowering
 		EnableJoinProjectInsertion: false, // Materialized join narrowing regresses focused workloads; retained for experiments
 		EnableScanSharing:          false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
-		EnableEntityPrefetch:       false, // Warm EA cache after first DataPattern via PrefetchEntities (benchmarked: performance-neutral)
+		EnableEntityPrefetch:       false, // Prefetch entities into the EA cache after the first DataPattern and before a fallback's window above the threshold; one option, every trigger (benchmarked: performance-neutral)
 
 		// Executor streaming options
 		EnableTrueStreaming:     true,  // No auto-materialization

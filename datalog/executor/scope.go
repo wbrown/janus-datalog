@@ -4,75 +4,17 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// A scope is a nested form's body as the executor runs it: a header, the
-// required run and the find beyond it, over a clause list. Each branch of an
-// or-join or an or-default-join is one scope under the form's header, its
-// find the outputs as variables; a not-join's body is one under its
-// all-required header; and a subquery's inner query is one under its data
-// inputs, its find the inner :find as written, aggregates included. A scope
-// reads the header and nothing else of the enclosing scope.
-type scope struct {
-	required []query.Symbol
-	find     []query.FindElement
-	clauses  []query.Clause
-}
-
-// outputs is the symbols the scope's find binds beyond the required run, a
-// variable's own and an aggregate's by its display form.
-func (s scope) outputs() []query.Symbol {
-	return extractFindSymbols(s.find)
-}
-
-// header is the required run followed by the outputs: the symbols the
-// scope's query finds and its result carries.
-func (s scope) header() []query.Symbol {
-	outputs := s.outputs()
-	header := make([]query.Symbol, 0, len(s.required)+len(outputs))
-	header = append(header, s.required...)
-	return append(header, outputs...)
-}
-
-// query frames the scope as the query the executor plans: it finds the
-// required run as variables followed by the scope's find, declares $ and %,
-// and opens with the invocation of scope/required over the required run,
-// followed by the scope's clauses. The planner leads with the invocation,
-// since scope/required is a seed-restricted predicate, and the text carries
-// the binding, so the plan caches under it.
-func (s scope) query() *query.Query {
-	find := make([]query.FindElement, 0, len(s.required)+len(s.find))
-	for _, sym := range s.required {
-		find = append(find, query.FindVariable{Symbol: sym})
-	}
-	find = append(find, s.find...)
-	args := make([]query.PatternElement, len(s.required))
-	for i, sym := range s.required {
-		args[i] = query.Variable{Name: sym}
-	}
-	where := make([]query.Clause, 0, len(s.clauses)+1)
-	where = append(where, &query.RuleInvocation{Name: query.ScopeRequired, Args: args})
-	where = append(where, s.clauses...)
-	return &query.Query{
-		Find:  find,
-		In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}},
-		Where: where,
-	}
-}
-
-// planScope plans the scope's query under the rule set the enclosing query
-// runs with. The plan is served from the plan cache under the query's text,
-// so a scope is planned once however many runs read it.
-func (e *DefaultQueryExecutor) planScope(ctx *Context, s scope) (*planner.RealizedPlan, error) {
-	plan, err := e.executor.planner.PlanQuery(s.query(), query.Bindings{Rules: ctx.Rules()}, e.options.Handler)
-	if err != nil {
-		return nil, fmt.Errorf("planning the scope: %w", err)
-	}
-	return plan, nil
+// planScope plans the scope under the rule set the enclosing query runs
+// with, through the executor's planner. The plan is served from the plan
+// cache under the scope's query text, so a scope is planned once however
+// many runs read it.
+func (e *DefaultQueryExecutor) planScope(ctx *Context, s planner.Scope) (*planner.RealizedPlan, error) {
+	return e.executor.planner.PlanScope(s, query.Bindings{Rules: ctx.Rules()}, e.options.Handler)
 }
 
 // runPlan runs a scope's plan once over run, the relation of its required
@@ -82,8 +24,8 @@ func (e *DefaultQueryExecutor) planScope(ctx *Context, s scope) (*planner.Realiz
 // the fixpoint is deriving reads the stratum's relations. The context
 // carries no environment: a query input reaches a scope only through the
 // header. The run reports no phase: the form's own events report a branch's
-// execution, and a phase event per subject tuple would be a handler call per
-// tuple on the per-tuple path.
+// execution, and a phase event per window would be a handler call per window
+// beside the window's own event.
 func (e *DefaultQueryExecutor) runPlan(ctx *Context, plan *planner.RealizedPlan, run Relation) (Relation, error) {
 	held := make(map[query.Symbol]Relation, len(ctx.derived)+1)
 	for name, rel := range ctx.derived {
@@ -94,7 +36,7 @@ func (e *DefaultQueryExecutor) runPlan(ctx *Context, plan *planner.RealizedPlan,
 }
 
 // runScope plans the scope and runs it once over run.
-func (e *DefaultQueryExecutor) runScope(ctx *Context, s scope, run Relation) (Relation, error) {
+func (e *DefaultQueryExecutor) runScope(ctx *Context, s planner.Scope, run Relation) (Relation, error) {
 	plan, err := e.planScope(ctx, s)
 	if err != nil {
 		return nil, err
@@ -105,9 +47,9 @@ func (e *DefaultQueryExecutor) runScope(ctx *Context, s scope, run Relation) (Re
 // requiredRun is the relation a form's scopes run over: the subject, the
 // groups holding the required run joined into one relation, joined with
 // the environment's tuple on the required variables the environment alone
-// binds, and projected onto the required run. The groups the subject reads
-// are materialized in place, so the join of the form's result with the
-// groups reads them again. A required run no group and no environment
+// binds, and projected onto the required run. Each group the subject reads
+// is replaced in the groups by its materialized form, so the join of the
+// form's result with the groups reads it again. A required run no group and no environment
 // binds a variable of is the unit relation's, over which a scope runs once.
 func (e *DefaultQueryExecutor) requiredRun(ctx *Context, required []query.Symbol, groups Relations) (run *MaterializedRelation, subject Relation, consumed []int, err error) {
 	for i, group := range groups {
@@ -151,14 +93,14 @@ func (e *DefaultQueryExecutor) requiredRun(ctx *Context, required []query.Symbol
 // joins the union with the environment's tuple on the outputs the
 // environment binds: an output another clause binds is joined, never
 // superseded, and the environment is such a binder.
-func (e *DefaultQueryExecutor) scopeResult(ctx *Context, form scope, results []Relation) (Relation, error) {
-	result := unionRelations(results, form.header(), e.options)
+func (e *DefaultQueryExecutor) scopeResult(ctx *Context, form planner.Scope, results []Relation) (Relation, error) {
+	result := unionRelations(results, form.Header(), e.options)
 	env := ctx.Environment()
 	if env == nil {
 		return result, nil
 	}
 	var shared []query.Symbol
-	for _, sym := range form.outputs() {
+	for _, sym := range form.Outputs() {
 		if query.ContainsSymbol(env.Symbols(), sym) {
 			shared = append(shared, sym)
 		}
@@ -215,9 +157,10 @@ func hasTuple(rel Relation) (bool, error) {
 // unit relation's run, the environment's tuple over the required run, each
 // result is read whole, the route reports the union event and one branch
 // completion per branch, and the union joins at the collapse as a new
-// group. Otherwise an OrFallbackRelation streams the subject, runs each
-// branch per subject tuple or probes it when it is built once, and stands
-// in the place of the groups it consumed. Its completion fires at
+// group. Otherwise an OrFallbackRelation streams the subject in windows,
+// runs each branch once per window over the window's keys, probes the kept
+// result per window tuple, and stands in the place of the groups it
+// consumed. Its completion fires at
 // construction with no size, and a branch failure surfaces when the result
 // is driven;
 // on the unit route a branch failure is the completion's error and the
@@ -240,8 +183,8 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx *Context, clause *query.O
 	for i, sym := range clause.OutputVars {
 		find[i] = query.FindVariable{Symbol: sym}
 	}
-	form := scope{required: clause.RequiredVars, find: find}
-	subject, consumed := e.findOuterRelation(form.header(), groups)
+	form := planner.Scope{Required: clause.RequiredVars, Find: find}
+	subject, consumed := e.findOuterRelation(form.Header(), groups)
 	var result Relation
 	var err error
 	semantics := "correlated-union"
@@ -257,7 +200,7 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx *Context, clause *query.O
 			})
 		}
 		var run *MaterializedRelation
-		run, _, _, err = e.requiredRun(ctx, form.required, nil)
+		run, _, _, err = e.requiredRun(ctx, form.Required, nil)
 		results := make([]Relation, 0, len(clause.Branches))
 		for i := 0; err == nil && i < len(clause.Branches); i++ {
 			var branchStart time.Time
@@ -266,7 +209,7 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx *Context, clause *query.O
 			}
 			var branchResult Relation
 			var answered *MaterializedRelation
-			branchResult, err = e.runScope(ctx, scope{required: form.required, find: form.find, clauses: clause.Branches[i]}, run)
+			branchResult, err = e.runScope(ctx, planner.Scope{Required: form.Required, Find: form.Find, Clauses: clause.Branches[i]}, run)
 			if err == nil {
 				answered, err = e.materialized(branchResult)
 			}

@@ -3,11 +3,35 @@ package query
 import "fmt"
 
 // Substitution is what a call states about names: for each symbol of one
-// scope, the symbol of the enclosing scope that stands for it, read once
-// from the text and applied to a relation by symbol.
+// scope, the symbols of the enclosing scope that stand for it, read once
+// from the text and applied to a relation by symbol. A call names a symbol
+// once for each place it writes it, so a symbol written at an :in place and
+// at a :find place has two names standing for it: the first is the name a
+// rename gives its attribute, and the rest are further names for that one
+// attribute, which a rename cannot carry, since a rename gives an attribute
+// one name, and a presentation carries as copies.
 type Substitution struct {
 	from []Symbol
 	to   []Symbol
+}
+
+// Further returns the names standing for sym past the first, each once and
+// none the first: the further names of one attribute.
+func (s Substitution) Further(sym Symbol) []Symbol {
+	firstAt := SymbolIndex(s.from, sym)
+	if firstAt < 0 {
+		return nil
+	}
+	var further []Symbol
+	for i, named := range s.from {
+		if named != sym || i == firstAt {
+			continue
+		}
+		if to := s.to[i]; to != s.to[firstAt] && !ContainsSymbol(further, to) {
+			further = append(further, to)
+		}
+	}
+	return further
 }
 
 // SubstitutionOf pairs each symbol of from with the symbol at its place in

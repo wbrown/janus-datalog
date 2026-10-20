@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -69,6 +71,28 @@ func TestOrJoinOutputIsJoinedWithTheOuter(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			names := namedEntities(t, d, entities)
 			everyOrder(t, d, names, "?e ?q", clauses, []string{"e1 1"})
+		})
+	}
+}
+
+// A subquery branch answers at most one tuple per subject tuple when its
+// find is aggregates and variables the subject carries, whatever the
+// binding's spelling: a tuple-spelled inner query answering every entity
+// sharing the subject's :t/n fans out, so the fallback's result claims no
+// key and the find projection onto ?e yields each entity once.
+func TestFallbackOverAFanningTupleSpelledSubqueryClaimsNoKey(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/n", int64(1)}},
+		"e2": {{":t/n", int64(1)}},
+		"e3": {{":t/n", int64(2)}},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			rel, err := d.Query(`[:find ?e :where [?e :t/n _] (or-default-join [[?e] ?v] [(q [:find ?x :in $ ?e :where [?e :t/n ?n] [?x :t/n ?n]] $ ?e) [[?v]]] [(ground 0) ?v])]`)
+			require.NoError(t, err)
+			require.ElementsMatch(t, []string{"e1", "e2", "e3"}, renderedRows(t, rel, names))
 		})
 	}
 }
@@ -508,6 +532,123 @@ func TestEntityPrefetchOffRunsNoPrefetch(t *testing.T) {
 			require.ElementsMatch(t, []string{"e1 1", "e2 2"}, renderedRows(t, rel, names))
 			require.Zero(t, triggers.Load(), "no prefetch triggers with the option off")
 			require.Zero(t, populated.Load(), "no read populates the cache on another's behalf with the option off")
+		})
+	}
+}
+
+// Under EnableEntityPrefetch a fallback whose branch reads the subject's
+// entity symbol prefetches a window above the threshold and serves the
+// branch from the EA cache, and answers as the scan path does with the
+// option off, on both planner paths
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.10, §7).
+func TestFallbackPrefetchAnswersAsTheScanPath(t *testing.T) {
+	// Under a cap of 128 the subject's 120 entities are read in windows of 1,
+	// 2, 4, 8, 16, 32 and 57 tuples, the last the one window above the
+	// threshold.
+	const subjectSize = 120
+	const lastWindow = 57
+	entities := map[string][]fact{}
+	var want []string
+	for i := 1; i <= subjectSize; i++ {
+		name := fmt.Sprintf("e%d", i)
+		entities[name] = []fact{{":t/n", int64(i)}, {":t/a", int64(i)}}
+		want = append(want, fmt.Sprintf("%s %d", name, i))
+	}
+	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			run := func(t *testing.T, prefetch bool) []annotations.Event {
+				var triggersMu sync.Mutex
+				var triggers []annotations.Event
+				opts := mode.plannerOptions()
+				opts.ScopeWindowCap = 128
+				opts.EnableEntityPrefetch = prefetch
+				d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
+					if e.Name == annotations.PrefetchTrigger {
+						triggersMu.Lock()
+						triggers = append(triggers, e)
+						triggersMu.Unlock()
+					}
+				}})
+				names := namedEntities(t, d, entities)
+				rel, err := d.Query(text)
+				require.NoError(t, err)
+				require.ElementsMatch(t, want, renderedRows(t, rel, names))
+				return triggers
+			}
+			require.Empty(t, run(t, false), "no trigger with the option off")
+			var fallbackTriggers []annotations.Event
+			for _, e := range run(t, true) {
+				if e.Data[annotations.KeyForm] == "or-default-join" {
+					fallbackTriggers = append(fallbackTriggers, e)
+				}
+			}
+			require.Len(t, fallbackTriggers, 1, "the fallback prefetches its one window above the threshold")
+			require.Equal(t, lastWindow, fallbackTriggers[0].Data["entity_count"], "the trigger reports the window's entity count")
+		})
+	}
+}
+
+// Under EnableEntityPrefetch a fallback whose pattern branches read the
+// subject's entity symbol and its value symbol, both required, answers as
+// the scan path does: a tuple is kept when the entity's :t/a is its :t/n, or
+// failing that when its :t/b is, and dropped when neither is, on both
+// planner paths, with the window above the threshold prefetched once
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.6, §7).
+func TestFallbackPrefetchAnswersAsTheScanPathForARequiredValue(t *testing.T) {
+	// Under a cap of 128 the subject's 120 entities are read in windows of 1,
+	// 2, 4, 8, 16, 32 and 57 tuples, the last the one window above the
+	// threshold.
+	const subjectSize = 120
+	const lastWindow = 57
+	entities := map[string][]fact{}
+	var want []string
+	for i := 1; i <= subjectSize; i++ {
+		name := fmt.Sprintf("e%d", i)
+		facts := []fact{{":t/n", int64(i)}}
+		switch {
+		case i%2 == 0:
+			facts = append(facts, fact{":t/a", int64(i)})
+			want = append(want, fmt.Sprintf("%s %d", name, i))
+		case i%4 == 1:
+			facts = append(facts, fact{":t/a", int64(i + 1000)}, fact{":t/b", int64(i)})
+			want = append(want, fmt.Sprintf("%s %d", name, i))
+		default:
+			facts = append(facts, fact{":t/a", int64(i + 1000)})
+		}
+		entities[name] = facts
+	}
+	const text = `[:find ?e ?v :where [?e :t/n ?v] (or-default-join [[?e ?v]] [?e :t/a ?v] [?e :t/b ?v])]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			run := func(t *testing.T, prefetch bool) []annotations.Event {
+				var triggersMu sync.Mutex
+				var triggers []annotations.Event
+				opts := mode.plannerOptions()
+				opts.ScopeWindowCap = 128
+				opts.EnableEntityPrefetch = prefetch
+				d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts, AnnotationHandler: func(e annotations.Event) {
+					if e.Name == annotations.PrefetchTrigger {
+						triggersMu.Lock()
+						triggers = append(triggers, e)
+						triggersMu.Unlock()
+					}
+				}})
+				names := namedEntities(t, d, entities)
+				rel, err := d.Query(text)
+				require.NoError(t, err)
+				require.ElementsMatch(t, want, renderedRows(t, rel, names))
+				return triggers
+			}
+			require.Empty(t, run(t, false), "no trigger with the option off")
+			var fallbackTriggers []annotations.Event
+			for _, e := range run(t, true) {
+				if e.Data[annotations.KeyForm] == "or-default-join" {
+					fallbackTriggers = append(fallbackTriggers, e)
+				}
+			}
+			require.Len(t, fallbackTriggers, 1, "the fallback prefetches its one window above the threshold")
+			require.Equal(t, lastWindow, fallbackTriggers[0].Data["entity_count"], "the trigger reports the window's entity count")
 		})
 	}
 }
@@ -982,6 +1123,52 @@ func TestCollectionInputYieldsOneRunTuplePerMember(t *testing.T) {
 			rel, err := d.Query(`[:find ?e ?h :where [?e :t/ordered ?members] [(q [:find ?h :in $ [?m ...] :where [?h :t/string ?m]] $ ?members) [[?h] ...]]]`)
 			require.NoError(t, err)
 			require.Equal(t, []string{"e1 h1", "e1 h2"}, renderedRows(t, rel, names))
+		})
+	}
+}
+
+// An inner symbol that is both an input and a find element stands for two
+// enclosing names, the argument's and the binding's: the binding names the
+// inner query's outputs, so the enclosing scope reads the input's value under
+// the binding's name beside the argument. Through a scalar input each holder
+// is answered beside the value it holds under the binding's name, and through
+// a collection input the binding's name carries the member the holder holds,
+// one tuple per member held. A binding's name the scope already binds is
+// joined with that value, and a binding's name that is the argument's own is
+// the argument, joined as any binding symbol the subject carries.
+func TestSubqueryBindingNamesAnInputTheFindAlsoNames(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/n", int64(1)}, {":t/also", int64(1)}},
+		"e2": {{":t/n", int64(2)}, {":t/also", int64(3)}},
+		"h1": {{":t/holds", int64(1)}},
+		"h2": {{":t/holds", int64(2)}},
+		"h3": {{":t/holds", int64(2)}},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name+"/scalar input", func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			clauses := []string{`[?e :t/n ?n]`, `[(q [:find ?h ?k :in $ ?k :where [?h :t/holds ?k]] $ ?n) [[?h ?kk] ...]]`}
+			everyOrder(t, d, names, "?e ?h ?kk", clauses, []string{"e1 h1 1", "e2 h2 2", "e2 h3 2"})
+		})
+		t.Run(mode.name+"/binding name the scope binds", func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			clauses := []string{`[?e :t/n ?n]`, `[?e :t/also ?kk]`, `[(q [:find ?h ?k :in $ ?k :where [?h :t/holds ?k]] $ ?n) [[?h ?kk] ...]]`}
+			everyOrder(t, d, names, "?e ?h ?kk", clauses, []string{"e1 h1 1"})
+		})
+		t.Run(mode.name+"/binding name the argument's own", func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			clauses := []string{`[?e :t/n ?n]`, `[(q [:find ?h ?k :in $ ?k :where [?h :t/holds ?k]] $ ?n) [[?h ?n] ...]]`}
+			everyOrder(t, d, names, "?e ?h ?n", clauses, []string{"e1 h1 1", "e2 h2 2", "e2 h3 2"})
+		})
+		t.Run(mode.name+"/collection input", func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			rel, err := d.Query(`[:find ?h ?mm :in $ ?ks :where [(q [:find ?h ?m :in $ [?m ...] :where [?h :t/holds ?m]] $ ?ks) [[?h ?mm] ...]]]`, []interface{}{int64(1), int64(2)})
+			require.NoError(t, err)
+			require.ElementsMatch(t, []string{"h1 1", "h2 2", "h3 2"}, renderedRows(t, rel, names))
 		})
 	}
 }

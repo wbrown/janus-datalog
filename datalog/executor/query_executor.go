@@ -9,6 +9,13 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+// prefetchEntityThreshold is the entity count a relation must exceed before
+// its entities are prefetched into the EA cache under EnableEntityPrefetch:
+// the one threshold every trigger reads, the executor's after the first data
+// pattern and a fallback's per window (Rule 6 in docs/ALGEBRA.md,
+// docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.10).
+const prefetchEntityThreshold = 50
+
 // QueryExecutor executes a single Datalog query with input relations
 // This is the universal interface for query execution at all levels:
 // - Phase execution (multi-phase queries)
@@ -56,6 +63,7 @@ func newQueryExecutor(matcher PatternMatcher, resolver EntityResolver, options E
 		matcher:        matcher,
 		entityResolver: resolver,
 		planner:        planner.CreatePlanner(nil, plannerOptions),
+		rewritePlanner: newRewritePlanner(plannerOptions),
 		options:        options,
 	}
 	return executor.queryExecutor()
@@ -139,7 +147,7 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 					if err != nil {
 						return nil, fmt.Errorf("prefetch entity extraction failed: %w", err)
 					}
-					if len(entities) > 50 {
+					if len(entities) > prefetchEntityThreshold {
 						if e.options.Handler != nil {
 							e.options.Handler(annotations.Event{
 								Name: annotations.PrefetchTrigger,
@@ -1340,8 +1348,8 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.Subquer
 	for _, sym := range outerSyms {
 		carriedSet[sym] = true
 	}
-	atMostOne := relationBindingGroupsAreOuterBound(subq.Query, bound, carriedSet)
-	properties := orProperties(subject.Properties(), bound, nil, symbols, true, atMostOne)
+	atMostOne := subqueryAnswersAtMostOne(subq.Query, bound, carriedSet)
+	properties := orProperties(subject.Properties(), bound, nil, symbols, atMostOne)
 
 	f := framing{
 		form:        "subquery",

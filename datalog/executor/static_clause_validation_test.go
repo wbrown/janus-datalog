@@ -9,13 +9,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// TestNotJoinAcceptsNestedExistentialNot pins that header completeness
-// demands only MANDATORY outer requirements. A plain (not ...) nested inside
-// a not-join body carries optional correlates: its free variables unify when
-// the environment binds them and are existential otherwise (Datomic's
-// unification rule) — they are not requirements the header must declare.
-// This exact shape was wrongly rejected when validation flattened correlates
-// through branchInterface and lost the CorrelatesOptional flag.
+// A plain not nested inside a not-join body is inferred under the body's
+// header before the header check: a variable of the not that occurs nowhere
+// else in the body is the not's own, never a requirement the not-join's
+// header must declare.
 func TestNotJoinAcceptsNestedExistentialNot(t *testing.T) {
 	goalAttr := datalog.NewKeyword(":event/goal")
 	nameAttr := datalog.NewKeyword(":goal/name")
@@ -117,7 +114,7 @@ func TestExecutorEntryRejectsStaticallyInvalidClauses(t *testing.T) {
 					},
 				},
 			},
-			wantErr: "a branch reads ?other, which neither the branch nor the header binds",
+			wantErr: "branch 1 reads ?other, which neither the branch nor the header binds; bind ?other in the branch or name it in the header",
 		},
 		"unregistered predicate function": {
 			// Hand-built AST bypassing the parser: the boundary walk must

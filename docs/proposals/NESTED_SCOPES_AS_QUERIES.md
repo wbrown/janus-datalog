@@ -9,9 +9,8 @@ delivers them, and what each component is against `5b152c9`.
 
 ## 1. Goals
 
-The design answers to these twelve goals. Goals 10 and 11 are product
-choices the others do not settle, each with the alternative's cost beside
-it.
+The design answers to these eleven goals. Goal 10 is a product choice the
+others do not settle, with the alternatives' costs beside it.
 
 1. The most correct fix, not the tactical one: the design question is
    derived to the most correct fix for Janus Datalog.
@@ -30,13 +29,7 @@ it.
     on every nested form, every headerless form in every query is rewritten
     by its author; under the uniform same-set rule, the fourth example of
     §2.3 is refused and written as `not-join`.
-11. An invocation under a negation is not adorned, and its predicate is
-    derived whole in its own stratum. The alternative, adorning through a
-    negation, costs a passing sealed at the first same-stratum invocation
-    and a decline when the rewritten set does not stratify. The choice
-    costs the predicate derived whole whatever its bindings, and the
-    refusal of a rule invoking a required predicate under a negation.
-12. The engine's own queries run on every database it opens, whatever the
+11. The engine's own queries run on every database it opens, whatever the
     user's schema declares and whether or not the database refuses unknown
     attributes.
 
@@ -223,7 +216,10 @@ declares and its call passes, and nothing else of the enclosing scope. Its
 clauses are ordered like any scope's, never run in written order.
 
 A subquery's binding names the inner query's outputs in the enclosing scope,
-and a binding asserts nothing about cardinality (§5.4). Its spellings are
+and a binding asserts nothing about cardinality (§5.4). A name written at two
+places of a binding unifies the two outputs it names, as a variable repeated
+across an invocation's arguments does: the tuples whose two outputs agree
+enter the scope under the one name. Its spellings are
 the relation form, `[[?a ?b] ...]`, and the collection form, `[?a ...]`, a
 relation of one symbol. The scalar form `?a` and the tuple form `[[?a ?b]]`
 are refused, naming the relation form: in the grammar of a query's inputs
@@ -506,9 +502,22 @@ forms' arms of the clause scoring have nothing to read and do not exist.
 
 The planner's scheduling preferences stand. `patternDependsOnPendingExpression`
 holds a pattern back while a pending expression that can run before it binds
-one of its variables, and `subqueryDependsOnPendingProvider` and
-`invocationDependsOnPendingProvider` hold a clause back while a pending
-selectable clause does, so a binder is placed before its consumer. An
+one of its variables, and `subqueryDependsOnPendingProvider` holds a subquery
+back while a pending clause provides one of its binding variables and waits,
+through the pending clauses, on no output of the subquery, so a binder is
+placed before its consumer and no gate waits on the clause it holds
+(`REWRITE_ORDER_PROOF.md` §6). `invocationDependsOnPendingProvider`
+holds an invocation with no available argument back behind any pending
+selectable clause that provides one of its arguments, and an invocation with
+an available argument behind a provider with visible selectivity alone, since
+a scan of a whole extent placed before a bound invocation multiplies its
+magic set by the scan's extent (`REWRITE_ORDER_PROOF.md` T2, T3). The
+selection within a phase takes a rank before the score: a clause without
+visible selectivity, a constant beyond a pattern's attribute or an
+invocation's name, a variable available when the clause is selected, or a
+seed-restricted predicate, is selected only when no other clause is
+selectable, and among the rest the scores stand as they are
+(`REWRITE_ORDER_PROOF.md` §6). An
 expression that waits, through the pending clauses binding what it needs, on
 a variable the pattern itself binds cannot run before it: the pattern runs
 first, and the expression unifies with the variable the pattern bound. They
@@ -725,20 +734,29 @@ error carrying the form and the variable. `NewRuleSet` returns that refusal
 as `UnsafeRuleError` naming the rule and the variable, so a rule holding
 one is refused at build.
 
-The magic rewrite reads headers, and its order comes from its caller:
+The magic rewrite reads headers, and its order is the planner's:
 
-- `Magic` takes a function from a scope, its header and its clauses, to the
-  scope's planned clauses, which the executor implements by planning the
-  scope as the runner frames it (§5.4) and reading the phases' clauses after
-  the `scope/required` invocation that opens them.
+- The rewrite reads each scope's order from the planner, so it lives above
+  the planner, in the planner package, and asks the planner for a scope's
+  clauses in its order (`SCOPE_EXECUTION_AND_CONTRACTS.md` §4.1). The
+  alternative is the rewrite in `query`, handed the order as a function by
+  the executor. The planner is the one orderer (that design's §4.1), and
+  that alternative breaks it twice: the executor chooses which passes the
+  planner runs, and the rewrite's tests in `query`, which cannot import the
+  planner, run under an order of their own that no production path uses.
 - The planned clauses are the plan's own, in phase order, in the
   decompiler's shape under the algebra mode, since the rewritten body is
-  planned again and parses back. The plan the rewrite reads is made with
-  join-project insertion off, so no decompiled projection stands between a
-  rule and its invocations.
-- `rewriteBody` walks the clauses that function returns and computes no
-  order of its own: the planner imports `query`, and the order depends on
-  the optimizer mode.
+  planned again and parses back. The rewrite reads the scope's plan as the
+  planner made it, the phases' clauses less the `scope/required` invocation
+  that opens them. Which passes a plan runs is the planner's decision.
+- What the plan places before an invocation decides its adornment and its
+  magic rule, and the rewrite is correct under every order
+  (`REWRITE_ORDER_PROOF.md` T1, T2).
+- The planner of §5.2 places no scan of a whole extent before an invocation
+  the bound positions reach, so the closure adorns under the planner's order
+  as under the written one (`REWRITE_ORDER_PROOF.md` T3, T4).
+- The rewrite walks the clauses the planner answers and computes no order
+  of its own, so the order depends on the optimizer mode.
 - What is bound at an invocation at a body's top level is the head's bound
   positions and what the planned clauses before it provide. The body is the
   scope whose header is the head, with the bound positions as its required
@@ -786,29 +804,42 @@ The magic rewrite reads headers, and its order comes from its caller:
   occurrence of its stratum is inside a subquery runs at iteration 0 alone
   (`RULES_WITNESSES_AND_SPECULATIVE_VALUES.md` §1.3) and derives nothing
   from a later delta.
-- An invocation under a negation is not adorned: its predicate joins the
-  rewritten set unchanged and is derived whole in its own stratum, so the
-  rewritten set's negative edges are the original's and every rewrite
-  stratifies. The choice over adorning through a negation is goal 11, which
-  states the alternative's cost and the choice's.
+- An invocation under a non-monotone form, a negation, a fallback form or
+  an aggregating inner query, is adorned by the passing sealed at the first
+  clause that invokes a predicate of the rule's own stratum, and its magic
+  rule reads the sealed clauses. The site is left unadorned, its
+  predicate's rules joining the set unchanged, where adorning it would
+  place its adorned predicate in the rule's own stratum or where the sealed
+  passing leaves a required position free. The rewrite rebuilds with such a
+  site excluded when the constructor refuses the set, so every rewrite is
+  accepted and none is declined (`NON_MONOTONE_FORMS_PROOF.md` T6, L4).
+  Two alternatives are excluded. No adornment under a non-monotone form
+  costs the extent of every predicate under one, a number the engine cannot
+  see, and evaluates a required predicate at its clause once per execution
+  of the form at every iteration of the stratum (that proof's T4, T5). The
+  sealed passing alone costs the decline on the shape of its T3, where the
+  rule's own predicate is derived whole, and refuses a required predicate
+  whose position is bound after the recursion, which the evaluation at the
+  clause answers (its T5).
 - The dependency walk records every form on an invocation's path, at any
   depth: `not` and `not-join`, `or-default` and `or-default-join`, an
-  aggregating inner query, and a subquery body. The two refusals below
-  read that record. The alternative is a record of the innermost form
+  aggregating inner query, and a subquery body. The refusal below reads
+  that record. The alternative is a record of the innermost form
   alone, as `forInvocations` keeps it, under which a fallback inside a
   subquery body overwrites the subquery body's mark, and a fallback
   enclosing an admitted subquery reads as the subquery.
-- A predicate with required positions under a negation has no evaluation:
-  a negated invocation is never adorned, and a required predicate is never
-  derived whole. A rule invoking one under `not` or `not-join`, at any
-  depth short of a subquery body, is refused by `NewRuleSet`, since every
-  invocation reaching the rule goes through the rewrite and none can run.
-  The refusal reads the invocation edges the walk collects, each marked
-  negative when its invocation sits under `not` or `not-join` at any
-  depth, against the invoked predicate's required positions, and leaves
-  out an invocation inside a subquery body, since a negation is never read
-  and the subquery's clause evaluates it with the subquery's bindings
-  (§2.5). The refusal is a typed error naming the rule and the predicate.
+- A predicate with required positions under a non-monotone form is adorned
+  when the sealed passing binds every position it requires, and its
+  adorned copy, having no required run, is derived once in the rewritten
+  set's fixpoint. Otherwise the site is left unadorned, and the executor
+  derives the predicate at its clause under the positions the branch binds
+  there, once per execution of the form, since a fixpoint never holds a
+  predicate with required positions (`NON_MONOTONE_FORMS_PROOF.md` T5).
+  The branch binds the required position before the invocation (§2.4,
+  §2.5), so that evaluation answers, and no refusal at `NewRuleSet` and
+  none at the rewrite reads such a site. The alternative, a refusal of the
+  rule, records the rewrite's limitation as the query's error, which goal 6
+  of `SCOPE_EXECUTION_AND_CONTRACTS.md` excludes.
 - `NewRuleSet` refuses an invocation of the rule's own stratum under
   `or-default`, `or-default-join` or an aggregating inner query, at any
   depth, and admits one under a subquery whose inner query does not
@@ -911,7 +942,7 @@ which runs per execution.
 
 ## 8. The engine's vocabulary
 
-This section answers goal 12 of §1, that the engine's own queries run on
+This section answers goal 11 of §1, that the engine's own queries run on
 every database it opens. The principle of §4, applied to the schema,
 delivers it: the engine's words are declared once, into every running
 schema, and every reader reads them there. The engine writes and reads

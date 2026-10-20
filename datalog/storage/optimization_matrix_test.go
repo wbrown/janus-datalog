@@ -326,6 +326,16 @@ func BenchmarkComplexQueryCheckpoint(b *testing.B) {
 	benchmarkComplexQueryCheckpoint(b, nil)
 }
 
+// BenchmarkComplexQueryCheckpointPrefetch is the checkpoint with
+// EnableEntityPrefetch on, the number beside BenchmarkComplexQueryCheckpoint's
+// that prices the option's every trigger
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.10).
+func BenchmarkComplexQueryCheckpointPrefetch(b *testing.B) {
+	options := DefaultPlannerOptions()
+	options.EnableEntityPrefetch = true
+	benchmarkComplexQueryCheckpoint(b, &options)
+}
+
 // TestComplexQuerySubqueryExecutionCounts pins the algebra path's plan
 // structure. Every counter asserted below is an optimizer artifact: one
 // global execution per subquery body (4 total), or-fallback cache builds,
@@ -347,7 +357,14 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 	var subqueryBuilds atomic.Int64
 	var builtMu sync.Mutex
 	var builtBranches [][]query.Symbol
-	var fusedConstraints atomic.Int64
+	// fusion is one same-entity pattern fused into the scan that bound the
+	// entity: the event reporting it and the attribute it read.
+	type fusion struct {
+		event string
+		attr  datalog.Keyword
+	}
+	var fusedMu sync.Mutex
+	var fused []fusion
 	var uniqueJoinBuilds atomic.Int64
 	var replacedOuterGroups atomic.Int64
 	db := createOptimizerModeDB(t, mode, DatabaseOptions{
@@ -362,8 +379,10 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 				builtMu.Lock()
 				builtBranches = append(builtBranches, event.Data["branch_syms"].([]query.Symbol))
 				builtMu.Unlock()
-			case annotations.PatternFusedConstraint:
-				fusedConstraints.Add(1)
+			case annotations.PatternFusedConstraint, annotations.PatternFusedFetch:
+				fusedMu.Lock()
+				fused = append(fused, fusion{event: event.Name, attr: event.Data["attr"].(datalog.Keyword)})
+				fusedMu.Unlock()
 			case annotations.JoinStrategy:
 				if unique, _ := event.Data["build_key_unique"].(bool); unique {
 					uniqueJoinBuilds.Add(1)
@@ -402,7 +421,30 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 	for _, built := range builtBranches {
 		require.Contains(t, fallbackBranches, built, "the build %v is a branch of the fallbacks; the builds: %v", built, builtBranches)
 	}
-	assert.Equal(t, int64(5), fusedConstraints.Load(), "the five constant-valued patterns inside the subquery bodies are fused")
+	// A same-entity pattern following the scan that bound its entity fuses
+	// into it. The scenario's title and created-at fuse into the top-level
+	// type scan. The get-else rewrites' two pattern branches, over the
+	// fallback's window of the two hundred tasks, fuse once per window, and
+	// the tasks are read in eight windows. Each inner query's body is
+	// ordered by the planner, which leads the decorrelated body with a
+	// constant-valued pattern, the scan binding the task: :task/root is
+	// fetched in every body; :task/status is a constraint only in the
+	// opening-count body, where :task/key leads; and the last-key bodies
+	// fetch :task/completed-at and :task/key.
+	kw := datalog.NewKeyword
+	fetch := func(attr string) fusion { return fusion{event: annotations.PatternFusedFetch, attr: kw(attr)} }
+	constraint := func(attr string) fusion { return fusion{event: annotations.PatternFusedConstraint, attr: kw(attr)} }
+	want := []fusion{fetch(":scenario/title"), fetch(":scenario/created-at")}
+	for window := 0; window < 8; window++ {
+		want = append(want, fetch(":task/token-count"), fetch(":task/duration"))
+	}
+	want = append(want,
+		fetch(":task/root"),
+		constraint(":task/status"), fetch(":task/root"),
+		fetch(":task/completed-at"), fetch(":task/key"), fetch(":task/root"),
+		fetch(":task/root"), fetch(":task/completed-at"),
+	)
+	assert.ElementsMatch(t, want, fused, "the fusions of the top-level scan, the get-else branches' windows and each inner body under the planner's order")
 	require.Zero(t, uniqueJoinBuilds.Load())
 	require.Equal(t, int64(6), replacedOuterGroups.Load(), "the fallbacks, the get-else rewrites and the subquery each stand in the place of the groups they consumed")
 }

@@ -4,33 +4,23 @@ import "fmt"
 
 // ClauseScope is a clause's interface to its enclosing scope. Provides are
 // the variables the clause can bind there; Correlates are its free variables
-// that unify with the enclosing scope when bound there. Variables scoped
-// inside a clause — explicit-join bodies, subquery inner queries, or/
-// or-default branch locals — appear in neither. This is the canonical
-// scoping definition; the planner's scheduling, the executor's anti-join
-// keys, and the algebra bridge's inference all derive from it.
-//
-// Mandatory is the subset of Correlates the enclosing scope must bind
-// before the clause runs: a predicate's, an expression's or a subquery's
-// inputs, an explicit-join header, an invocation's required positions, and
-// the such inputs of a plain NOT's body or an or's or an or-default's
-// branches that nothing in that body or branch binds. One the query cannot bind is a
-// query error the planner must surface. The other correlates tolerate
-// absence: a plain NOT's body variables are existential when unbound
-// (Datomic's unification rule), and an or-default's fall back to global
-// evaluation. Whether one of those actually unifies is a property of the
-// enclosing query, and resolving that is the scheduler's job — ScopeOf
-// reports the interface only.
+// that unify with the enclosing scope, which binds every one of them before
+// the clause runs: a predicate's, an expression's or a subquery's inputs, a
+// header form's required run, and an invocation's required positions. One
+// the query cannot bind is a query error the planner surfaces. Variables
+// scoped inside a clause, a header form's branch locals and a subquery's
+// inner variables, appear in neither. This is the canonical scoping
+// definition; the planner's scheduling, the executor's anti-join keys, and
+// the algebra bridge's inference all derive from it.
 type ClauseScope struct {
 	Provides   []Symbol
 	Correlates []Symbol
-	Mandatory  []Symbol
 }
 
 // ScopeOf returns the scope interface of a clause under the rule set the
 // query runs with. A rule invocation's interface is declared by its
 // predicate: the variables at the positions the predicate requires bound are
-// mandatory correlates, and the rest are provided. Read with no rule set, an
+// correlates, and the rest are provided. Read with no rule set, an
 // invocation provides every variable argument. The clause taxonomy is
 // closed; a form without a case here panics rather than silently exposing
 // nothing.
@@ -49,8 +39,7 @@ func ScopeOf(clause Clause, rules *RuleSet) ClauseScope {
 		case TupleBinding:
 			provides = b.Variables
 		}
-		inputs := c.Function.RequiredSymbols()
-		return ClauseScope{Provides: provides, Correlates: inputs, Mandatory: inputs}
+		return ClauseScope{Provides: provides, Correlates: c.Function.RequiredSymbols()}
 
 	case *SubqueryPattern:
 		var inputs []Symbol
@@ -59,7 +48,7 @@ func ScopeOf(clause Clause, rules *RuleSet) ClauseScope {
 				inputs = append(inputs, v.Name)
 			}
 		}
-		return ClauseScope{Provides: c.Binding.BoundVariables(), Correlates: inputs, Mandatory: inputs}
+		return ClauseScope{Provides: c.Binding.BoundVariables(), Correlates: inputs}
 
 	case *RuleInvocation:
 		var required []bool
@@ -80,29 +69,29 @@ func ScopeOf(clause Clause, rules *RuleSet) ClauseScope {
 				provides = append(provides, v.Name)
 			}
 		}
-		return ClauseScope{Provides: provides, Correlates: correlates, Mandatory: correlates}
+		return ClauseScope{Provides: provides, Correlates: correlates}
 
 	case *NotJoinClause:
 		// The header is the complete interface by language contract.
-		return ClauseScope{Correlates: c.RequiredVars, Mandatory: c.RequiredVars}
+		return ClauseScope{Correlates: c.RequiredVars}
 
 	case *OrJoinClause:
-		// The header is the complete interface: the required run correlates,
-		// mandatory, and the outputs are provided. Every other variable of a
-		// branch is the branch's own.
-		return ClauseScope{Provides: c.OutputVars, Correlates: c.RequiredVars, Mandatory: c.RequiredVars}
+		// The header is the complete interface: the required run correlates
+		// and the outputs are provided. Every other variable of a branch is
+		// the branch's own.
+		return ClauseScope{Provides: c.OutputVars, Correlates: c.RequiredVars}
 
 	case *OrDefaultJoinClause:
-		// The declared header is the complete interface (Validate enforces
-		// it at the boundaries): required vars correlate — mandatory, they
-		// quantify the per-group fallback decision — and output vars are
-		// bound by every branch. Branch locals never escape.
-		return ClauseScope{Provides: c.OutputVars, Correlates: c.RequiredVars, Mandatory: c.RequiredVars}
+		// The header is the complete interface: the required run correlates
+		// and quantifies the per-group fallback decision, and the outputs are
+		// provided, every branch binding them, which Validate checks at the
+		// text boundaries and InferHeaders under the rule set. Branch locals
+		// never escape.
+		return ClauseScope{Provides: c.OutputVars, Correlates: c.RequiredVars}
 
 	case Predicate:
 		// Every predicate form: consumes, never binds.
-		inputs := c.RequiredSymbols()
-		return ClauseScope{Correlates: inputs, Mandatory: inputs}
+		return ClauseScope{Correlates: c.RequiredSymbols()}
 
 	default:
 		panic(fmt.Sprintf("BUG: unknown clause type %T in ScopeOf", clause))
@@ -131,18 +120,11 @@ func FreeVariables(clauses []Clause, rules *RuleSet) []Symbol {
 }
 
 // branchInterface computes one branch's interface: the symbols its clauses
-// provide, and the symbols they correlate on split by obligation. Mandatory
-// correlates must be supplied by the enclosing scope before the clause can
-// run — predicates, expressions, subquery inputs, explicit-join headers,
-// and the such inputs of a nested body nothing in that body binds. Optional
-// correlates tolerate absence (a plain NOT's body variables are existential
-// when unbound; or-default falls back to global evaluation), so they never
-// create declaration requirements — flattening them into the mandatory set
-// is how legal nested-existential shapes get rejected. Each list
-// deduplicates in first-appearance order; the lists may overlap when
-// different clauses need the same symbol with different obligations, and
-// consumers deciding requirements read the mandatory list.
-func branchInterface(branch []Clause, rules *RuleSet) (provided, mandatory, optional []Symbol) {
+// provide, and the symbols they correlate on, which the branch or the
+// enclosing header binds before the clause runs. Each list deduplicates in
+// first-appearance order, and the lists overlap where one clause provides a
+// symbol another reads.
+func branchInterface(branch []Clause, rules *RuleSet) (provided, correlates []Symbol) {
 	for _, clause := range branch {
 		scope := ScopeOf(clause, rules)
 		for _, sym := range scope.Provides {
@@ -151,24 +133,22 @@ func branchInterface(branch []Clause, rules *RuleSet) (provided, mandatory, opti
 			}
 		}
 		for _, sym := range scope.Correlates {
-			if ContainsSymbol(scope.Mandatory, sym) {
-				if !ContainsSymbol(mandatory, sym) {
-					mandatory = append(mandatory, sym)
-				}
-			} else if !ContainsSymbol(optional, sym) {
-				optional = append(optional, sym)
+			if !ContainsSymbol(correlates, sym) {
+				correlates = append(correlates, sym)
 			}
 		}
 	}
-	return provided, mandatory, optional
+	return provided, correlates
 }
 
-// Validate enforces the shape of the declared interface: at least one
-// variable in the header, at least one branch, and required and output
-// sets disjoint. The parser, the qb builder, and the executor call this at
-// their boundaries; ScopeOf reads the declaration without re-checking.
-// Whether every branch binds every output, and reads nothing outside the
-// header, is InferHeaders' check, under the rule set.
+// Validate reads the declared interface at a text boundary: at least one
+// variable in the header, at least one branch, required and output sets
+// disjoint, and the header against the branches through
+// branchesUnderHeader with no rule set, under which an invocation provides
+// every variable argument, so the boundary refuses a subset of what Prepare
+// refuses under the rule set, with the same message. The parser, the qb
+// builder, and the executor call this at their boundaries; ScopeOf reads
+// the declaration without re-checking.
 func (o *OrJoinClause) Validate() error {
 	if len(o.RequiredVars)+len(o.OutputVars) == 0 {
 		return fmt.Errorf("or-join must declare at least one variable in its header")
@@ -181,15 +161,18 @@ func (o *OrJoinClause) Validate() error {
 			return fmt.Errorf("or-join variable %s cannot be both required and output", req)
 		}
 	}
-	return nil
+	_, _, err := branchesUnderHeader(o, o.RequiredVars, o.OutputVars, o.Branches, nil)
+	return err
 }
 
-// Validate enforces the shape of the declared interface: at least one
-// variable in the header, at least two branches, and required and output
-// sets disjoint. The parser, the qb builder, and the executor call this at
-// their boundaries; ScopeOf reads the declaration without re-checking.
-// Whether every branch binds every output, and reads nothing outside the
-// header, is InferHeaders' check, under the rule set.
+// Validate reads the declared interface at a text boundary: at least one
+// variable in the header, at least two branches, required and output sets
+// disjoint, and the header against the branches through
+// branchesUnderHeader with no rule set, under which an invocation provides
+// every variable argument, so the boundary refuses a subset of what Prepare
+// refuses under the rule set, with the same message. The parser, the qb
+// builder, and the executor call this at their boundaries; ScopeOf reads
+// the declaration without re-checking.
 func (o *OrDefaultJoinClause) Validate() error {
 	if len(o.RequiredVars)+len(o.OutputVars) == 0 {
 		return fmt.Errorf("or-default-join must declare at least one variable in its header")
@@ -202,7 +185,8 @@ func (o *OrDefaultJoinClause) Validate() error {
 			return fmt.Errorf("or-default-join variable %s cannot be both required and output", req)
 		}
 	}
-	return nil
+	_, _, err := branchesUnderHeader(o, o.RequiredVars, o.OutputVars, o.Branches, nil)
+	return err
 }
 
 // Validate enforces the subquery clause's static shape: the binding form's
@@ -211,8 +195,7 @@ func (o *OrDefaultJoinClause) Validate() error {
 // text alone — no data, planning, or mode is needed to check it — so the
 // parser, the qb builder, and the executor entry enforce it with one
 // message; the execution paths' deeper checks remain as backstops for
-// internally constructed plans. Result cardinality (tuple/scalar bindings
-// demanding exactly one tuple) is data-dependent and stays at execution.
+// internally constructed plans.
 // Nested subqueries inside the inner query are part of this clause's text
 // and validate recursively. See
 // docs/bugs/BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md.
@@ -250,18 +233,25 @@ func (p *SubqueryPattern) Validate() error {
 	return ValidateStaticClauseShapes(p.Query.Where)
 }
 
-// Validate enforces the shape of the not-join's header: it names at least
-// one variable. Enforced at the same boundaries as SubqueryPattern above.
-// Whether the body reads a variable it neither binds nor names in the
-// header, and whether the header names a variable the body never touches,
-// is InferHeaders' check, under the rule set.
+// Validate reads the not-join at a text boundary: the header names at least
+// one variable, the body's nested shapes hold, and the body reads nothing
+// outside the header, through branchesUnderHeader with no rule set, under
+// which an invocation provides every variable argument, so the boundary
+// refuses a subset of what Prepare refuses under the rule set, with the
+// same message. Enforced at the same boundaries as SubqueryPattern above.
+// Whether the header names a variable the body never touches is
+// InferHeaders' check.
 func (n *NotJoinClause) Validate() error {
 	if len(n.RequiredVars) == 0 {
 		// The parser rejects empty headers at parse; this is the backstop
 		// for constructed ASTs.
 		return fmt.Errorf("not-join header cannot be empty")
 	}
-	return ValidateStaticClauseShapes(n.Clauses)
+	if err := ValidateStaticClauseShapes(n.Clauses); err != nil {
+		return err
+	}
+	_, _, err := branchesUnderHeader(n, n.RequiredVars, nil, [][]Clause{n.Clauses}, nil)
+	return err
 }
 
 // ValidateStaticClauseShapes walks clauses and validates every static

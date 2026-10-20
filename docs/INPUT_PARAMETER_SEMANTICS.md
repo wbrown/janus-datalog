@@ -228,13 +228,13 @@ scored as a free variable is what produced the Cartesian product.
 ### Clause Readiness
 
 Whether a clause can run yet has one definition, in `datalog/query/clause_ready.go`.
-`inputs` is a separate argument from `available` precisely because an input
-parameter is bound everywhere, not provided by some earlier phase:
+An input parameter is bound everywhere, not provided by some earlier phase, so
+it is among the available symbols from the first pick, and a clause blocks on
+every correlate that is not yet available:
 
 ```go
-func ClauseBlockers(clause Clause, available, inputs map[Symbol]bool, providerCount map[Symbol]int) []Symbol
-func ClauseReady(clause Clause, available, inputs map[Symbol]bool, providerCount map[Symbol]int) bool
-func CountProviders(clauses []Clause) map[Symbol]int
+func ClauseBlockers(clause Clause, available map[Symbol]bool, rules *RuleSet) []Symbol
+func ClauseReady(clause Clause, available map[Symbol]bool, rules *RuleSet) bool
 ```
 
 Both the planner's greedy phasing (`clauseSelectable`, `datalog/planner/clause_utils.go`)

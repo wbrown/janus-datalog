@@ -76,3 +76,31 @@ func BenchmarkBoundInvocation(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkBoundInvocationThenScan measures the closure through Database.Query
+// with its start bound to the first node and followed by a scan of :edge on
+// what the start reaches, on the same graphs: the rewrite is for the start
+// alone, so the derivation is the chain the start reaches whatever the edge
+// count (REWRITE_ORDER_PROOF.md T5).
+func BenchmarkBoundInvocationThenScan(b *testing.B) {
+	const bound = `[:find ?c :in $ % ?start :where (reach ?start ?b) [?b :edge ?c]]`
+	for _, edges := range []int{1000, 10000, 100000} {
+		for _, mode := range optimizerModes {
+			d := createOptimizerModeDB(b, mode, DatabaseOptions{})
+			writeGraph(b, d, chains(edges))
+			rules := mustRuleSet(b, closureRules)
+			b.Run(fmt.Sprintf("%d-edges/%s", edges, mode.name), func(b *testing.B) {
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					tuples, err := executor.CollectTuples(d.Query(bound, rules, nodeID("n1")))
+					if err != nil {
+						b.Fatal(err)
+					}
+					if len(tuples) != 9 {
+						b.Fatalf("got %d nodes, want the nine n1's chain reaches past its first edge", len(tuples))
+					}
+				}
+			})
+		}
+	}
+}

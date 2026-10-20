@@ -66,7 +66,7 @@ func (r *ruleEvents) entered() int {
 func boundClosure(t *testing.T, text string, matcher PatternMatcher, opts planner.PlannerOptions) (*Executor, *query.RuleSet, query.Symbol, query.Symbol, *Context) {
 	t.Helper()
 	rs := mustRules(t, text)
-	magic, err := rs.Magic(datalog.NewSymbol("follows"), []bool{true, false})
+	magic, err := planner.Rewrite(planner.CreatePlanner(nil, opts), rs, datalog.NewSymbol("follows"), []bool{true, false}, nil)
 	require.NoError(t, err)
 	return NewExecutorWithOptions(matcher, nil, opts), magic.Rules, magic.Predicate, magic.Seed, NewContext().WithRules(rs)
 }

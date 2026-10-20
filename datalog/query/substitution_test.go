@@ -115,6 +115,31 @@ func TestSubstitutionOverKeepsThePairsNamingTheGivenSymbols(t *testing.T) {
 	}
 }
 
+func TestSubstitutionFurtherNamesThePastTheFirst(t *testing.T) {
+	k := datalog.NewSymbol("?k")
+	h := datalog.NewSymbol("?h")
+	n := datalog.NewSymbol("?n")
+	kk := datalog.NewSymbol("?kk")
+	subst, err := SubstitutionOf([]Symbol{k, h, k, k}, []Symbol{n, h, kk, n})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := subst.Of(k); !ok || got != n {
+		t.Errorf("the first name standing for ?k is ?n, got %v %v", got, ok)
+	}
+	further := subst.Further(k)
+	if len(further) != 1 || further[0] != kk {
+		t.Errorf("the further names of ?k are [?kk], the first name and its repeat left out, got %v", further)
+	}
+	if got := subst.Further(h); got != nil {
+		t.Errorf("?h has one name and no further name, got %v", got)
+	}
+	if got := subst.Further(n); got != nil {
+		t.Errorf("the substitution does not name ?n, got %v", got)
+	}
+}
+
 func TestSubstitutionRenameErrorsOnTwoAttributesUnderOneName(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	y := datalog.NewSymbol("?y")

@@ -52,7 +52,7 @@ The required run, the nested vector, names the variables the enclosing scope bin
   [?q :t/tag :t/none])
 ```
 
-An output some branch does not bind is refused, naming the form, the branch by its position counted from one, and the variable, with the repair of moving the variable into the required run. A variable a branch reads through a predicate, an expression, a subquery input or a rule's required position, which neither the branch nor the header binds, is refused naming the form and the variable.
+An output some branch does not bind is refused, naming the form, the branch by its position counted from one, and the variable, with the repair of moving the variable into the required run. A variable a branch reads through a predicate, an expression, a subquery input or a rule's required position, which neither the branch nor the header binds, is refused naming the form, the branch by its position counted from one, and the variable, with the repair of binding the variable in the branch or naming it in the header. Both checks run at every boundary, `ParseQuery`, `qb.Build`, `NewRuleSet` and the executor's entry, with the same message; the text boundaries read them with no rule set, under which an invocation provides every variable argument, and `Prepare` under the rule set the query runs with.
 
 ## Fallback Semantics: `(or-default ...)`
 
@@ -129,8 +129,8 @@ A flat header declares outputs only — the fallback decision is then **global**
 or-default is non-monotone — which variables the fallback decision is grouped by changes the *results*, not just the plan. An `or-default-join` declares the run in its header, and an `or-default` gets it by the inference rule above; neither is read from what happens to be bound at execution. The checks on the written form:
 
 - The shape, checked from the text alone: a non-empty header, at least two branches, and required and output sets disjoint.
-- Every branch binds every output, checked under the rule set the query runs with; a branch that does not is refused naming the form, the branch by its position counted from one and the output, with the repair of moving the output into the required run.
-- A variable a branch reads through a predicate, an expression, a subquery input or a rule's required position, which neither the branch nor the header binds, is refused naming the form and the variable.
+- Every branch binds every output; a branch that does not is refused naming the form, the branch by its position counted from one and the output, with the repair of moving the output into the required run.
+- A variable a branch reads through a predicate, an expression, a subquery input or a rule's required position, which neither the branch nor the header binds, is refused naming the form, the branch by its position counted from one and the variable, with the repair of binding the variable in the branch or naming it in the header.
 - A per-group filter with no outputs is `or-join`'s job — with nothing to output, fallback-filter and union-filter are the same relation.
 
 ## Algebra IR Representation

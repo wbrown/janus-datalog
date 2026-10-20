@@ -1052,7 +1052,7 @@ func parseNotClause(node *edn.Node) (*query.NotClause, error) {
 	for i := 1; i < len(node.Nodes); i++ {
 		clause, err := parseWhereElement(&node.Nodes[i])
 		if err != nil {
-			return nil, fmt.Errorf("error parsing not clause element %d: %w", i, err)
+			return nil, fmt.Errorf("error parsing not clause element %d: %w", len(clauses)+1, err)
 		}
 		clauses = append(clauses, clause)
 	}
@@ -1087,7 +1087,7 @@ func parseNotJoinClause(node *edn.Node) (*query.NotJoinClause, error) {
 	for i := 2; i < len(node.Nodes); i++ {
 		clause, err := parseWhereElement(&node.Nodes[i])
 		if err != nil {
-			return nil, fmt.Errorf("error parsing not-join clause element %d: %w", i, err)
+			return nil, fmt.Errorf("error parsing not-join clause element %d: %w", len(clauses)+1, err)
 		}
 		clauses = append(clauses, clause)
 	}
@@ -1106,13 +1106,13 @@ func parseOrClause(node *edn.Node) (*query.OrClause, error) {
 	for i := 1; i < len(node.Nodes); i++ {
 		branch, err := parseBranch(&node.Nodes[i])
 		if err != nil {
-			return nil, fmt.Errorf("error parsing or branch %d: %w", i, err)
+			return nil, fmt.Errorf("error parsing or branch %d: %w", len(branches)+1, err)
 		}
 		branches = append(branches, branch)
 	}
 
-	if len(branches) < 2 {
-		return nil, fmt.Errorf("or clause must have at least two branches")
+	if len(branches) == 0 {
+		return nil, fmt.Errorf("or clause must have at least one branch")
 	}
 
 	return &query.OrClause{Branches: branches}, nil
@@ -1125,10 +1125,11 @@ func parseOrClause(node *edn.Node) (*query.OrClause, error) {
 //
 // A nested vector as the header's first element declares the variables the
 // enclosing query binds before the clause runs; the remaining symbols are the
-// outputs every branch binds. A flat header declares outputs only.
+// outputs every branch binds. A flat header declares outputs only. A union
+// of one branch is that branch over the header.
 func parseOrJoinClause(node *edn.Node) (*query.OrJoinClause, error) {
-	if len(node.Nodes) < 4 {
-		return nil, fmt.Errorf("or-join clause must have a header vector and at least two branches")
+	if len(node.Nodes) < 3 {
+		return nil, fmt.Errorf("or-join clause must have a header vector and at least one branch")
 	}
 
 	requiredVars, joinVars, err := parseInterfaceHeader(&node.Nodes[1], "or-join")
@@ -1141,13 +1142,9 @@ func parseOrJoinClause(node *edn.Node) (*query.OrJoinClause, error) {
 	for i := 2; i < len(node.Nodes); i++ {
 		branch, err := parseBranch(&node.Nodes[i])
 		if err != nil {
-			return nil, fmt.Errorf("error parsing or-join branch %d: %w", i, err)
+			return nil, fmt.Errorf("error parsing or-join branch %d: %w", len(branches)+1, err)
 		}
 		branches = append(branches, branch)
-	}
-
-	if len(branches) < 2 {
-		return nil, fmt.Errorf("or-join clause must have at least two branches")
 	}
 
 	return &query.OrJoinClause{RequiredVars: requiredVars, OutputVars: joinVars, Branches: branches}, nil
@@ -1197,7 +1194,7 @@ func parseOrDefaultClause(node *edn.Node) (*query.OrDefaultClause, error) {
 	for i := 1; i < len(node.Nodes); i++ {
 		branch, err := parseBranch(&node.Nodes[i])
 		if err != nil {
-			return nil, fmt.Errorf("error parsing or-default branch %d: %w", i, err)
+			return nil, fmt.Errorf("error parsing or-default branch %d: %w", len(branches)+1, err)
 		}
 		branches = append(branches, branch)
 	}
@@ -1233,20 +1230,16 @@ func parseOrDefaultJoinClause(node *edn.Node) (*query.OrDefaultJoinClause, error
 	for i := 2; i < len(node.Nodes); i++ {
 		branch, err := parseBranch(&node.Nodes[i])
 		if err != nil {
-			return nil, fmt.Errorf("error parsing or-default-join branch %d: %w", i, err)
+			return nil, fmt.Errorf("error parsing or-default-join branch %d: %w", len(branches)+1, err)
 		}
 		branches = append(branches, branch)
 	}
 
-	clause := &query.OrDefaultJoinClause{
+	return &query.OrDefaultJoinClause{
 		RequiredVars: requiredVars,
 		OutputVars:   outputVars,
 		Branches:     branches,
-	}
-	if err := clause.Validate(); err != nil {
-		return nil, err
-	}
-	return clause, nil
+	}, nil
 }
 
 // parseJoinVars parses a vector of join variables [?x ?y ...]

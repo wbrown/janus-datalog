@@ -33,7 +33,6 @@ type OrFallbackRelation struct {
 	deduplicate   bool
 	iteratorCount int            // how many iterators have been created, for the created event
 	joinSyms      []query.Symbol // the run symbols the subject carries: a built branch's probe key
-	prefetched    bool           // true when a prefetch has warmed the EA cache for the subject's entities
 	shortCircuit  bool           // true = fallback (first match wins), false = correlated union (all branches)
 
 	// runSyms is what a branch holding no invocation is given, the frame it
@@ -62,7 +61,7 @@ type OrFallbackRelation struct {
 // with no key; every other branch runs once per window over the window's
 // keys.
 type branchRun struct {
-	frame        scope
+	frame        planner.Scope
 	plan         *planner.RealizedPlan
 	readsNothing bool
 }
@@ -141,8 +140,7 @@ func NewOrFallbackRelation(
 		outputs,
 		nil,
 		symbols,
-		shortCircuit,
-		branchesAtMostOne,
+		shortCircuit && branchesAtMostOne,
 	)
 	deduplicate := len(branches) > 1
 	if shortCircuit {
@@ -184,10 +182,10 @@ func NewOrFallbackRelation(
 
 // orBranchesEmitAtMostOne reports whether every branch answers at most one
 // tuple per subject tuple, judged against the header symbols the subject
-// carries: an expression binding one value, a subquery binding one tuple,
-// a relation binding whose find variables the subject carries, grouped by
-// them, and a data pattern the matcher serves by one lookup, which
-// patternAnswersAtMostOne states.
+// carries: an expression binding one value, a subquery whose find is
+// aggregates and variables the subject carries, whatever its binding's
+// spelling, which subqueryAnswersAtMostOne states, and a data pattern the
+// matcher serves by one lookup, which patternAnswersAtMostOne states.
 func orBranchesEmitAtMostOne(
 	branches [][]query.Clause,
 	required []query.Symbol,
@@ -212,13 +210,7 @@ func orBranchesEmitAtMostOne(
 					return false
 				}
 			case *query.SubqueryPattern:
-				switch binding := typed.Binding.(type) {
-				case query.ScalarBinding, query.TupleBinding:
-				case query.RelationBinding:
-					if !relationBindingGroupsAreOuterBound(typed.Query, binding.Variables, carriedSet) {
-						return false
-					}
-				default:
+				if !subqueryAnswersAtMostOne(typed.Query, typed.Binding.BoundVariables(), carriedSet) {
 					return false
 				}
 			case *query.DataPattern:
@@ -233,7 +225,12 @@ func orBranchesEmitAtMostOne(
 	return true
 }
 
-func relationBindingGroupsAreOuterBound(
+// subqueryAnswersAtMostOne reports whether a subquery answers at most one
+// tuple per subject tuple: every plain find variable's binding symbol is one
+// the subject carries, in outerSymbols, and the rest of the find is
+// aggregates, whatever the binding's spelling. A find and a binding of
+// different arity answer false.
+func subqueryAnswersAtMostOne(
 	subquery *query.Query,
 	bindingVariables []query.Symbol,
 	outerSymbols map[query.Symbol]bool,
@@ -443,7 +440,6 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		branches:     r.branches,
 		shortCircuit: r.shortCircuit,
 		answered:     make([]*answeredKeys, len(r.branches)),
-		prefetched:   r.prefetched,
 		seen:         seen,
 	}
 	if setupErr != nil {
@@ -456,8 +452,44 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		it.policy.narrow = it.unanswered
 		it.policy.build = it.buildFromCache
 		it.policy.built = it.recordAnswered
+		if prefetcher, prefetches := r.executor.matcher.(EntityPrefetcher); prefetches && r.options.EnableEntityPrefetch {
+			if positions := r.prefetchPositions(); len(positions) > 0 {
+				it.prefetcher = prefetcher
+				it.prefetchPos = positions
+				it.policy.window = it.prefetchWindow
+			}
+		}
 	}
 	return it
+}
+
+// prefetchPositions is the subject's positions of the entity symbols the
+// branches of the EA arm's shape read, each once, in branch order: the
+// positions a window's prefetch takes its entities from.
+func (r *OrFallbackRelation) prefetchPositions() []int {
+	outerSyms := r.outerRel.Symbols()
+	var positions []int
+	for _, branch := range r.branches {
+		entity, _, _, isArmShape := eaArmShape(branch, r.joinSyms)
+		if !isArmShape {
+			continue
+		}
+		pos := query.SymbolIndex(outerSyms, entity)
+		if pos < 0 {
+			continue
+		}
+		known := false
+		for _, seen := range positions {
+			if seen == pos {
+				known = true
+				break
+			}
+		}
+		if !known {
+			positions = append(positions, pos)
+		}
+	}
+	return positions
 }
 
 func (r *OrFallbackRelation) Symbols() []query.Symbol {
@@ -606,52 +638,118 @@ type OrFallbackIterator struct {
 
 	seen *TupleKeyMap
 
-	prefetched bool // True when PrefetchEntities has warmed the EA cache for outer entities
+	// prefetched is true once a window's entities have been prefetched into
+	// the EA cache, after which a branch of the EA arm's shape is built from
+	// the cache.
+	prefetched bool
+
+	// prefetcher is the matcher's prefetch capability, and prefetchPos the
+	// subject's positions of the entity symbols the branches of the EA arm's
+	// shape read, the entities a window's prefetch takes; both are set only
+	// under EnableEntityPrefetch with such a branch.
+	prefetcher  EntityPrefetcher
+	prefetchPos []int
 
 	// unionBranchIdx is the next branch to probe for the window tuple being
 	// probed under the union.
 	unionBranchIdx int
 }
 
-// buildBranchFromEACache builds a window's tuples for a branch of one data
-// pattern on the default source whose entity position is a run symbol the
-// subject carries and whose attribute the matcher can serve by lookup, from
+// eaArmShape reports whether a branch is one the EA arm builds, one data
+// pattern on the default source whose entity position is a key symbol, whose
+// attribute is a constant keyword and whose value is a variable, naming the
+// entity symbol, the attribute and the value symbol; the fallback's prefetch
+// and its build read the one shape.
+func eaArmShape(branch []query.Clause, key []query.Symbol) (entity query.Symbol, attr datalog.Keyword, value query.Symbol, ok bool) {
+	if len(branch) != 1 {
+		return nil, nil, nil, false
+	}
+	dp, isPattern := branch[0].(*query.DataPattern)
+	if !isPattern || dp.Source != nil {
+		return nil, nil, nil, false
+	}
+	eVar, eIsVar := dp.GetE().(query.Variable)
+	if !eIsVar || !query.ContainsSymbol(key, eVar.Name) {
+		return nil, nil, nil, false
+	}
+	aConst, aIsConst := dp.GetA().(query.Constant)
+	if !aIsConst {
+		return nil, nil, nil, false
+	}
+	aKw, aIsKeyword := aConst.Value.(datalog.Keyword)
+	if !aIsKeyword {
+		return nil, nil, nil, false
+	}
+	vVar, vIsVar := dp.GetV().(query.Variable)
+	if !vIsVar {
+		return nil, nil, nil, false
+	}
+	return eVar.Name, aKw, vVar.Name, true
+}
+
+// prefetchWindow is the fallback's trigger of Rule 6
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.10), the policy's
+// window step: the window's distinct entities at the positions the branches
+// of the EA arm's shape read are prefetched into the EA cache through the
+// matcher when they exceed prefetchEntityThreshold, the trigger is reported
+// under the form, and the arm then builds such a branch from the cache. The
+// matcher keeps its own temporal guard and prefetches nothing under History.
+func (it *OrFallbackIterator) prefetchWindow(window []Tuple) error {
+	seen := make(map[datalog.Identity]struct{}, len(window))
+	entities := make([]datalog.Identity, 0, len(window))
+	for _, tuple := range window {
+		for _, pos := range it.prefetchPos {
+			entity, isEntity := tuple[pos].(datalog.Identity)
+			if !isEntity {
+				continue
+			}
+			if _, dup := seen[entity]; dup {
+				continue
+			}
+			seen[entity] = struct{}{}
+			entities = append(entities, entity)
+		}
+	}
+	if len(entities) <= prefetchEntityThreshold {
+		return nil
+	}
+	if it.options.Handler != nil {
+		outerSyms := it.framing.subject.Symbols()
+		symbols := make([]query.Symbol, len(it.prefetchPos))
+		for i, pos := range it.prefetchPos {
+			symbols[i] = outerSyms[pos]
+		}
+		it.options.Handler(annotations.Event{
+			Name: annotations.PrefetchTrigger,
+			Data: map[string]interface{}{
+				annotations.KeyForm: it.framing.form,
+				"entity_count":      len(entities),
+				"symbols":           symbols,
+			},
+		})
+	}
+	if err := it.prefetcher.PrefetchEntities(entities); err != nil {
+		return fmt.Errorf("entity prefetch failed: %w", err)
+	}
+	it.prefetched = true
+	return nil
+}
+
+// buildBranchFromEACache builds a window's tuples for a branch of the EA
+// arm's shape, one data pattern on the default source whose entity position
+// is a key symbol and whose attribute the matcher can serve by lookup, from
 // the entities of run, the window's keys, through LookupAttribute (EA
 // cache): one lookup per distinct entity, each found value one tuple over
 // the entity and value symbols. Returns the tuples and their symbols, nil
-// symbols when the prerequisites are not met (wrong branch shape, no
+// symbols when the prerequisites are not met (another branch shape, no
 // LookupAttribute, an attribute the matcher cannot serve by lookup), and
 // sets it.err on a failed lookup.
 func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run *MaterializedRelation) ([]Tuple, []query.Symbol) {
-	if len(branch) != 1 || run == nil {
+	if run == nil {
 		return nil, nil
 	}
-	dp, ok := branch[0].(*query.DataPattern)
-	if !ok || dp.Source != nil {
-		return nil, nil
-	}
-
-	// Need E as variable (join key) and A as constant keyword. The E
-	// variable must be a run symbol the subject carries: the branch is keyed
-	// on it.
-	eVar, eIsVar := dp.GetE().(query.Variable)
-	if !eIsVar {
-		return nil, nil
-	}
-	if !query.ContainsSymbol(it.framing.key, eVar.Name) {
-		return nil, nil
-	}
-	var aKw datalog.Keyword
-	if aConst, ok := dp.GetA().(query.Constant); ok {
-		aKw, _ = aConst.Value.(datalog.Keyword)
-	}
-	if aKw == nil {
-		return nil, nil
-	}
-
-	// Need V as variable
-	vVar, vIsVar := dp.GetV().(query.Variable)
-	if !vIsVar {
+	eName, aKw, vName, isArmShape := eaArmShape(branch, it.framing.key)
+	if !isArmShape {
 		return nil, nil
 	}
 
@@ -666,12 +764,12 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run 
 		return nil, nil
 	}
 
-	eIdx := query.SymbolIndex(run.Symbols(), eVar.Name)
+	eIdx := query.SymbolIndex(run.Symbols(), eName)
 	if eIdx < 0 {
 		return nil, nil
 	}
 
-	branchSyms := []query.Symbol{eVar.Name, vVar.Name}
+	branchSyms := []query.Symbol{eName, vName}
 	var collected []Tuple
 	if n := run.Size(); n >= 0 {
 		collected = make([]Tuple, 0, n)
@@ -716,8 +814,8 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run 
 	// environment's value may match, the same narrowing the scan path
 	// receives through the run, expressed as a SemiJoin against the
 	// environment projected onto the V symbol.
-	if environment := it.framing.environment; environment != nil && query.ContainsSymbol(environment.Symbols(), vVar.Name) {
-		vEnv, err := environment.Project([]query.Symbol{vVar.Name})
+	if environment := it.framing.environment; environment != nil && query.ContainsSymbol(environment.Symbols(), vName) {
+		vEnv, err := environment.Project([]query.Symbol{vName})
 		if err != nil {
 			it.err = err
 			return nil, nil
@@ -728,7 +826,7 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause, run 
 			it.options,
 			deduplicatedProperties(branchSyms),
 		)
-		narrowed := SemiJoin(branchRel, vEnv, []query.Symbol{vVar.Name})
+		narrowed := SemiJoin(branchRel, vEnv, []query.Symbol{vName})
 		var filtered []Tuple
 		nit := narrowed.Iterator()
 		for nit.Next() {
