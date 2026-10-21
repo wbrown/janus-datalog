@@ -222,7 +222,7 @@ func TestOrJoinTupleInputEnvironment(t *testing.T) {
 			require.NoError(t, err)
 
 			rel, err := d.Query(`[:find ?e
-			                      :in $ [[?region ?ref]]
+			                      :in $ [?region ?ref]
 			                      :where
 			                      [?e :entity/region ?region]
 			                      (or-join [[?ref] ?e]

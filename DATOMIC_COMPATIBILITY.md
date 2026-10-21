@@ -4,7 +4,7 @@ This guide is for developers familiar with Datomic who want to understand what j
 
 ## Quick Summary
 
-**Estimated feature parity: ~80%** (weighted by typical usage frequency)
+**Estimated feature parity: ~90%** (weighted by typical usage frequency)
 
 Janus-datalog implements most of Datomic's Datalog query language. The core query path — patterns, joins, predicates, expressions, aggregations, subqueries, rules, NOT/OR, Pull API, schema, database functions, time-travel queries — is fully implemented. The main gaps are transaction functions and the Entity API (largely superseded by Pull). Go-specific features (Struct Reflection, QueryInto, Query Builder) go beyond what Datomic offers.
 
@@ -25,11 +25,12 @@ Janus-datalog implements most of Datomic's Datalog query language. The core quer
 
 **Storage:**
 - ✅ BadgerDB persistent storage with CRDT model and 8 indices (EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV)
-- ✅ Export/Import to EDN format for backup and migration
+- ✅ Export/Import to EDN text or JDZL binary dumps for backup and migration
 
 **Not Implemented:**
 - ❌ Transaction functions
 - ❌ Entity API (navigation) — largely superseded by Pull API
+- ❌ Full-text search (no `:db/fulltext`)
 - ❌ Distributed queries (single-node only)
 
 ## Implemented Datomic Features
@@ -46,10 +47,11 @@ Basic Datalog queries work as expected:
 ```
 
 **Supported clauses:**
-- `:find` - with variables and aggregations
+- `:find` - with variables, aggregations, `(pull ...)`, and the scalar form `?x .`, which returns one value
 - `:where` - pattern matching and expressions
-- `:in` - database and parameter inputs
+- `:in` - database, rule set and parameter inputs
 - `:order-by` - result ordering with multi-symbol and direction support
+- `:limit` - bounds the result after ordering and aggregation; not accepted inside a subquery
 
 **Pattern matching:**
 - `[?e ?a ?v]` - basic triple patterns
@@ -175,8 +177,8 @@ Standard Datomic input patterns:
 - `%` - rule set
 - `?var` - scalar
 - `[?var ...]` - collection
-- `[[?x ?y]]` - tuple
-- `[[?x ?y] ...]` - relation
+- `[?x ?y]` - tuple, one tuple over its symbols
+- `[[?x ?y]]` - relation, a set of tuples. `[[?x ?y] ...]` is read the same way, and it is how a query renders the input.
 
 ### 7. Database Functions
 
@@ -325,7 +327,7 @@ variables occur nowhere else in its scope is refused, naming the form.
 
 **OR-DEFAULT (janus extension for fallback/defaults):**
 
-`(or-default ...)` and `(or-default-join ...)` use **fallback semantics**: branches are tried in order, returning the first non-empty result. This enables default values — a pattern not available in Datomic's query language:
+`(or-default ...)` and `(or-default-join ...)` use **fallback semantics**: per tuple of the form's required run, the first branch with a result wins. A headerless `or-default` infers its header, as `or` and `not` do. So its fallback is decided per tuple of the variables it shares with its scope. A flat `or-default-join` header is all outputs with no required run, so the form decides once, globally. This enables default values — a pattern not available in Datomic's query language:
 
 ```clojure
 ;; Return "Unknown" if no name exists
@@ -378,7 +380,7 @@ Every datom includes a full ElementID (Lamport + ReplicaID) for temporal orderin
 - **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV (EATV/AETV use Tx-descending for CRDT resolution; ATEV puts Tx↓ ahead of E for AsOf-by-attribute access)
 - **BadgerDB backend** for persistence
 - **Raw binary encoding** for sortable, compact physical keys
-- **Export/Import** to EDN format for backup and migration (see [docs/reference/EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md))
+- **Export/Import** to EDN text or JDZL binary dumps for backup and migration (see [docs/reference/EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md) and [docs/reference/BINARY_EXPORT.md](docs/reference/BINARY_EXPORT.md))
 
 ### 11. Type System
 
@@ -638,7 +640,8 @@ recursive rule evaluates to a fixpoint:
 - Negation is stratified. A rule set whose predicates depend on each other
   through `not` or `not-join` is refused, with the predicates named. A
   recursive invocation inside `or-default`, `or-default-join` or a subquery
-  is refused too.
+  whose inner query aggregates is refused too. Inside a subquery that does
+  not aggregate it stands, as it does inside an `or` branch.
 - The required-binding head, `[(rule [?x] ?y) ...]`, has Datomic's meaning.
   The planner orders an invocation after the clauses that bind the required
   positions.
@@ -718,8 +721,8 @@ Partial transaction support:
 - ✅ **Hard deletion** - `Retract(e, a, v)` for explicit removal (GDPR, cleanup)
 - ❌ **No transaction functions**
 - ❌ **No tempids** for new entities
-- ❌ **No transaction metadata** beyond ElementID (Lamport + ReplicaID)
-- ❌ **No transaction entities**
+- ✅ **Transaction entity** - each commit writes one `:db/txInstant` datom, the commit's wall-clock time, on an entity named for the commit's high-water Lamport, atomically with the batch. So a commit is an entity a query can read. That mark is the high-water point an as-of read uses.
+- ❌ **No further transaction metadata** - no API attaches other attributes to the transaction entity at commit
 
 ### 3. Entity API ❌
 
@@ -787,13 +790,12 @@ asOf, _ := d.AsOf(tx1).Query(
 **Not supported:**
 - No `since` queries (use `[(tx-between ?tx start ∞)]` instead)
 
-### 6. Database Features ❌
+### 6. Database Features ⚠️
 
-No advanced database operations:
-- No database branching/forking
-- No speculative transactions
-- No database filters
-- No log API
+- ✅ **Snapshots and branches** - `Snapshot(name)` names the current state as a `:db.snapshot/*` entity. `Fork(name)` opens a writable branch holding the state as of a named snapshot, as a replica of its own with the parent's declared schema, and neither sees what the other commits afterward. `TruncateTo(name)` rewinds the writable timeline to a snapshot, physically removing every later datom. There is no merge of a branch into its parent.
+- ❌ No speculative transactions in Datomic's `with` form. A fork written and then discarded is the nearest.
+- ❌ No database filters
+- ❌ No log API
 
 ### 7. Other Missing Features ❌
 
@@ -840,7 +842,7 @@ No advanced database operations:
 - Queries with patterns, expressions, predicates, aggregations
 - Pull API expressions (including nested refs, wildcards, defaults)
 - NOT/OR clauses
-- Subqueries with tuple/relation bindings
+- Subqueries, under the scalar, collection and relation binding forms
 - Rules passed as `%`, recursive ones and required-binding heads included
 - Order-by clauses
 - Time-travel queries via `d.History().Query(...)` and `d.AsOf(elementID).Query(...)`

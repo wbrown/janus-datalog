@@ -1380,7 +1380,7 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 			}
 			for _, p := range plans {
 				for i, phase := range p.plan.Phases {
-					text := parser.FormatQuery(phase.Query)
+					text := phase.Query.String()
 					parsed, err := parser.ParseQuery(text)
 					if err != nil {
 						t.Errorf("%s: phase %d does not parse: %v\n%s", p.label, i+1, err, text)

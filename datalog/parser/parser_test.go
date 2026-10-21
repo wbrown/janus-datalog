@@ -301,7 +301,7 @@ func TestExtractVariables(t *testing.T) {
 	}
 }
 
-func TestFormatQuery(t *testing.T) {
+func TestQueryString(t *testing.T) {
 	input := `[:find ?e ?name :where [?e :person/name ?name]]`
 
 	q, err := ParseQuery(input)
@@ -309,7 +309,7 @@ func TestFormatQuery(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	formatted := FormatQuery(q)
+	formatted := q.String()
 
 	// Parse the formatted output to ensure it's valid
 	q2, err := ParseQuery(formatted)
@@ -596,7 +596,7 @@ func TestFormatSubquery(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	formatted := FormatQuery(q)
+	formatted := q.String()
 
 	// Parse the formatted output to ensure it's valid
 	q2, err := ParseQuery(formatted)
@@ -616,10 +616,9 @@ func TestFormatSubquery(t *testing.T) {
 	}
 }
 
-// A relation binding has one rendering, Datomic's [[?a ?b]], whichever
-// spelling it was written with; the ellipsis form [[?a ?b] ...] is read as
-// the same binding and never written back.
-func TestFormatQueryRendersTheRelationBindingInDatomicsForm(t *testing.T) {
+// A relation binding has one rendering, [[?a ?b] ...], whichever spelling it
+// was written with; Datomic's [[?a ?b]] is read as the same binding.
+func TestQueryStringRendersTheRelationBindingWithTheEllipsis(t *testing.T) {
 	q, err := ParseQuery(`[:find ?symbol ?price ?time
 	                       :where [?s :symbol/ticker ?symbol]
 	                              [(q [:find ?p ?t
@@ -627,18 +626,18 @@ func TestFormatQueryRendersTheRelationBindingInDatomicsForm(t *testing.T) {
 	                                   :where [?x :price/symbol ?sym]
 	                                          [?x :price/value ?p]
 	                                          [?x :price/time ?t]]
-	                                  $ ?s) [[?price ?time] ...]]]`)
+	                                  $ ?s) [[?price ?time]]]]`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	written, ok := q.Where[1].(*query.SubqueryPattern).Binding.(query.RelationBinding)
 	if !ok {
-		t.Fatalf("the ellipsis spelling parses to the relation binding, got %T", q.Where[1].(*query.SubqueryPattern).Binding)
+		t.Fatalf("Datomic's spelling parses to the relation binding, got %T", q.Where[1].(*query.SubqueryPattern).Binding)
 	}
 
-	formatted := FormatQuery(q)
-	if !contains(formatted, "[[?price ?time]]") || contains(formatted, "] ...]") {
-		t.Fatalf("the relation binding renders as [[?price ?time]], got:\n%s", formatted)
+	formatted := q.String()
+	if !contains(formatted, "[[?price ?time] ...]") {
+		t.Fatalf("the relation binding renders as [[?price ?time] ...], got:\n%s", formatted)
 	}
 
 	q2, err := ParseQuery(formatted)

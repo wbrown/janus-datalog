@@ -208,7 +208,7 @@ func (s ScalarBinding) String() string {
 // inner query's outputs in the enclosing scope, one per element of the inner
 // :find, and the result enters the scope as the relation over them. It is
 // read from the spelling [[?a ?b]] and from janus's synonym [[?a ?b] ...],
-// and renders as [[?a ?b]].
+// and renders as [[?a ?b] ...], whose trailing ... says a set of tuples.
 type RelationBinding struct {
 	Variables []Symbol
 }
@@ -225,7 +225,7 @@ func (r RelationBinding) String() string {
 		}
 		result += v.String()
 	}
-	result += "]]"
+	result += "] ...]"
 	return result
 }
 
@@ -427,25 +427,29 @@ type CollectionInput struct {
 func (c CollectionInput) isInputSpec()   {}
 func (c CollectionInput) String() string { return "[" + c.Symbol.String() + " ...]" }
 
-// TupleInput represents a tuple input [[?x ?y]]
+// TupleInput is the tuple input, Datomic's bind-tuple, [?x ?y]: one tuple
+// over its symbols.
 type TupleInput struct {
 	Symbols []Symbol
 }
 
 func (t TupleInput) isInputSpec() {}
 func (t TupleInput) String() string {
-	result := "[["
+	result := "["
 	for i, sym := range t.Symbols {
 		if i > 0 {
 			result += " "
 		}
 		result += sym.String()
 	}
-	result += "]]"
+	result += "]"
 	return result
 }
 
-// RelationInput represents a relation input [[?x ?y] ...]
+// RelationInput is the relation input, Datomic's bind-rel, [[?x ?y]]: a set
+// of tuples over its symbols. It is read from that spelling and from janus's
+// synonym [[?x ?y] ...], and renders as [[?x ?y] ...], whose trailing ...
+// says a set of tuples where [[?x ?y]] alone reads as one.
 type RelationInput struct {
 	Symbols []Symbol
 }
@@ -504,10 +508,9 @@ func (f FindAggregate) IsAggregate() bool {
 	return true
 }
 
-// String returns a string representation of the query
+// String renders the query in the text the parser reads. A query's text is
+// its own to render, and every phase the planner emits parses back to itself.
 func (q *Query) String() string {
-	// Import cycle prevents using parser.FormatQuery directly
-	// So we implement a simplified version here that matches the parser's format
 	return q.formatWithIndent("")
 }
 
@@ -516,6 +519,9 @@ func (q *Query) formatWithIndent(indent string) string {
 	result := "[:find"
 	for _, elem := range q.Find {
 		result += " " + elem.String()
+	}
+	if q.ScalarReturn {
+		result += " ."
 	}
 
 	// Add :in clause if present

@@ -31,7 +31,7 @@ func TestPatternLeadsTheExpressionThatWaitsOnIt(t *testing.T) {
 			`[(identity ?y) ?item]`, `[?item :color ?c]`},
 		{"an expression that can run first",
 			`[:find ?label :where [?c :container/items ?vec] [(enumerate ?vec) [[?idx ?item]]] [?item :item/color :red] [?item :item/label ?label]]`,
-			`[(enumerate ?vec) [[?idx ?item]]]`, `[?item :item/color :red]`},
+			`[(enumerate ?vec) [[?idx ?item] ...]]`, `[?item :item/color :red]`},
 	}
 	paths := []struct {
 		name    string
@@ -105,7 +105,7 @@ func TestPendingBlockers(t *testing.T) {
 			`[(identity ?y) ?item]`, []string{"?y", "?e"}},
 		{"stopping at a pattern no expression holds",
 			`[:find ?label :where [?c :container/items ?vec] [(enumerate ?vec) [[?idx ?item]]] [?item :item/color :red] [?item :item/label ?label]]`,
-			`[(enumerate ?vec) [[?idx ?item]]]`, []string{"?vec"}},
+			`[(enumerate ?vec) [[?idx ?item] ...]]`, []string{"?vec"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

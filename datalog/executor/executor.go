@@ -116,17 +116,18 @@ func (e *Executor) ExecuteWithContext(ctx *Context, q *query.Query) (Relation, e
 // variable of the query's own scope that reaches the attribute position of a
 // data pattern on the default source, the variables the plan's roster names
 // (query.Rosters.AttributeVariables): each keyword value at such a variable's
-// position in its relation, in order of first appearance and each once. A
-// value that is not a keyword names no attribute. A relation read here is
-// made replayable first, so the execution that follows reads it whole.
+// position in its relation, found by symbol, in order of first appearance and
+// each once. A value that is not a keyword names no attribute. A relation
+// lacking a variable its :in entry binds is the query's error. A relation
+// read here is made replayable first, so the execution that follows reads it
+// whole.
 func boundAttributes(q *query.Query, variables []query.Symbol, inputRelations []Relation) ([]datalog.Keyword, error) {
 	if len(variables) == 0 {
 		return nil, nil
 	}
 	seen := make(map[datalog.Keyword]bool)
 	var roster []datalog.Keyword
-	relationIndex := 0
-	for _, input := range q.In {
+	for index, input := range query.BindingInputs(q.In) {
 		var symbols []query.Symbol
 		switch inp := input.(type) {
 		case query.ScalarInput:
@@ -137,13 +138,6 @@ func boundAttributes(q *query.Query, variables []query.Symbol, inputRelations []
 			symbols = inp.Symbols
 		case query.RelationInput:
 			symbols = inp.Symbols
-		default:
-			continue
-		}
-		index := relationIndex
-		relationIndex++
-		if index >= len(inputRelations) {
-			continue
 		}
 		for _, sym := range symbols {
 			if !query.ContainsSymbol(variables, sym) {
@@ -151,16 +145,12 @@ func boundAttributes(q *query.Query, variables []query.Symbol, inputRelations []
 			}
 			rel := inputRelations[index].Materialize()
 			inputRelations[index] = rel
-			position := -1
-			for i, s := range rel.Symbols() {
-				if s == sym {
-					position = i
-				}
+			positions, err := query.SymbolIndexTable(rel.Symbols(), []query.Symbol{sym})
+			if err != nil {
+				return nil, err
 			}
-			if position < 0 {
-				continue
-			}
-			err := ForEach(rel, func(t Tuple) error {
+			position := positions[0]
+			err = ForEach(rel, func(t Tuple) error {
 				if attr, ok := t[position].(datalog.Keyword); ok && !seen[attr] {
 					seen[attr] = true
 					roster = append(roster, attr)
@@ -218,10 +208,11 @@ func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, plan 
 	return nil
 }
 
-// ExecuteWithRelations runs a query with input relations
-// This is the unified query execution method that treats regular queries and subqueries the same way.
-// For regular queries, pass an empty slice for inputRelations.
-// For subqueries, pass the relations corresponding to the :in clause variables.
+// ExecuteWithRelations runs a query with its input relations: one per :in
+// entry that binds variables (a scalar, collection, tuple or relation
+// input), in the :in's order, and none for a source or the rule set. Any
+// other count is refused before planning, naming the count given and the
+// count the :in binds. A query whose :in binds nothing takes an empty slice.
 func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelations []Relation) (Relation, error) {
 	// A query whose context is already done is refused before any work.
 	if err := ctx.cancelled(); err != nil {
@@ -303,44 +294,40 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 			}))
 	}
 
-	// Build initial bindings from input relations
-	initialBindings := make(map[query.Symbol]bool)
+	// The relations given are the relations the :in binds, one per scalar,
+	// collection, tuple or relation input in the :in's order and none for a
+	// source or the rule set. Any other count is refused here, before the
+	// binding walk and before planning, so a short slice never leaves an
+	// input's variables free.
+	bindingInputs := query.BindingInputs(q.In)
+	if len(inputRelations) != len(bindingInputs) {
+		return refused(fmt.Errorf("%d input relations were given, and the query's :in binds %d", len(inputRelations), len(bindingInputs)))
+	}
 
-	// Process :in clause to map relations to variables
-	relationIndex := 0
-	for _, input := range q.In {
+	// Build initial bindings from the input relations: a relation input binds
+	// its symbols whatever its size, and a scalar, tuple or collection input
+	// binds its symbols when its relation holds a tuple.
+	initialBindings := make(map[query.Symbol]bool)
+	for i, input := range bindingInputs {
 		switch inp := input.(type) {
-		case query.DatabaseInput:
-			// Skip database input
-			continue
 		case query.ScalarInput:
-			// For scalar inputs from relations, mark the symbol as bound
-			if relationIndex < len(inputRelations) && inputRelations[relationIndex].Size() > 0 {
+			if inputRelations[i].Size() > 0 {
 				initialBindings[inp.Symbol] = true
 			}
-			relationIndex++
 		case query.RelationInput:
-			// For relation inputs, mark all variables as bound
-			if relationIndex < len(inputRelations) {
-				for _, sym := range inp.Symbols {
-					initialBindings[sym] = true
-				}
+			for _, sym := range inp.Symbols {
+				initialBindings[sym] = true
 			}
-			relationIndex++
 		case query.TupleInput:
-			// For tuple inputs, mark all variables as bound
-			if relationIndex < len(inputRelations) && inputRelations[relationIndex].Size() > 0 {
+			if inputRelations[i].Size() > 0 {
 				for _, sym := range inp.Symbols {
 					initialBindings[sym] = true
 				}
 			}
-			relationIndex++
 		case query.CollectionInput:
-			// For collection inputs, mark the variable as bound
-			if relationIndex < len(inputRelations) && inputRelations[relationIndex].Size() > 0 {
+			if inputRelations[i].Size() > 0 {
 				initialBindings[inp.Symbol] = true
 			}
-			relationIndex++
 		}
 	}
 

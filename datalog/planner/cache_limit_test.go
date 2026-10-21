@@ -40,20 +40,20 @@ func TestPlanCacheDistinguishesLimit(t *testing.T) {
 	q5 := mkQuery(&five)
 
 	plan1 := &RealizedPlan{Query: q1}
-	cache.SetWithOptions(q1, nil, plan1, opts)
+	cache.SetWithOptions(q1, query.Bindings{}, plan1, opts)
 
 	// A query differing only by limit must NOT hit the cached plan.
-	if _, ok := cache.GetWithOptions(q5, nil, opts); ok {
+	if _, ok := cache.GetWithOptions(q5, query.Bindings{}, opts); ok {
 		t.Error("queries differing only by :limit must not share a cache entry")
 	}
 
 	// The same limit must still hit.
-	if _, ok := cache.GetWithOptions(mkQuery(&one), nil, opts); !ok {
+	if _, ok := cache.GetWithOptions(mkQuery(&one), query.Bindings{}, opts); !ok {
 		t.Error("identical query (same :limit) should hit the cache")
 	}
 
 	// No-limit must also be distinct from a limited query.
-	if _, ok := cache.GetWithOptions(mkQuery(nil), nil, opts); ok {
+	if _, ok := cache.GetWithOptions(mkQuery(nil), query.Bindings{}, opts); ok {
 		t.Error("unlimited query must not share a cache entry with a limited one")
 	}
 }

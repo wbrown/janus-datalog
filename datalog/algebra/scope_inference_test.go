@@ -297,7 +297,7 @@ func TestDecompilerDeclaresPercentByRulesUse(t *testing.T) {
 		In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}},
 		Where: clauses,
 	}
-	_, err = parser.ParseQuery(parser.FormatQuery(phase))
+	_, err = parser.ParseQuery(phase.String())
 	require.NoError(t, err)
 }
 
@@ -325,7 +325,7 @@ func TestDecompile_UncorrelatedFallbackStatesItsHeader(t *testing.T) {
 	require.Empty(t, fallback.RequiredVars)
 
 	phase := &query.Query{Find: q.Find, In: q.In, Where: clauses}
-	reparsed, err := parser.ParseQuery(parser.FormatQuery(phase))
+	reparsed, err := parser.ParseQuery(phase.String())
 	require.NoError(t, err)
 	require.Len(t, reparsed.Where, 1)
 	again, ok := reparsed.Where[0].(*query.OrDefaultJoinClause)

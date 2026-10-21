@@ -52,15 +52,15 @@ func TestParseQuery_OrJoinRequiredHeader(t *testing.T) {
 	}
 }
 
-func TestFormatQuery_RoundTripsOrJoinRequiredHeader(t *testing.T) {
+func TestQueryString_RoundTripsOrJoinRequiredHeader(t *testing.T) {
 	text := `[:find ?e :in $ ?a :where [?e :t/n _] (or-join [[?a] ?e] [?e ?a ?v] [?e :t/tag :t/none])]`
 	q, err := ParseQuery(text)
 	if err != nil {
 		t.Fatalf("ParseQuery: %v", err)
 	}
-	reparsed, err := ParseQuery(FormatQuery(q))
+	reparsed, err := ParseQuery(q.String())
 	if err != nil {
-		t.Fatalf("ParseQuery of the formatted query: %v\n%s", err, FormatQuery(q))
+		t.Fatalf("ParseQuery of the formatted query: %v\n%s", err, q.String())
 	}
 	if got, want := reparsed.Where[1].String(), q.Where[1].String(); got != want {
 		t.Errorf("the formatted or-join reparses as %s, want %s", got, want)

@@ -912,10 +912,9 @@ func TestCacheMatrix_AFromTupleInput(t *testing.T) {
 						tx.Commit()
 					}
 
-					// Pattern: E and A from tuple input [[?e ?a]]
-					// Tuple input syntax requires double brackets
+					// Pattern: E and A from the tuple input [?e ?a]
 					results, err := executor.CollectTuples(db.Query(
-						`[:find ?v :in $ [[?e ?a]] :where [?e ?a ?v]]`,
+						`[:find ?v :in $ [?e ?a] :where [?e ?a ?v]]`,
 						[]any{personID, nameAttr}))
 					require.NoError(t, err)
 

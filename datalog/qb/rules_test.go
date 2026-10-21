@@ -14,7 +14,7 @@ import (
 )
 
 // A constant argument of each value type the builder accepts renders
-// through FormatQuery to text the parser reads back as the same clause, and
+// through Query.String to text the parser reads back as the same clause, and
 // that clause renders to the same text: an identity, a string carrying
 // escapes, a float, a bool, an int, a keyword, an instant and bytes.
 func TestRuleConstantArgumentsRoundTrip(t *testing.T) {
@@ -31,7 +31,7 @@ func TestRuleConstantArgumentsRoundTrip(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%T", value), func(t *testing.T) {
 			q := Query().Find(x).In(DB, Rules).Where(Pat(x, Kw(":a"), Blank()), Rule("r", x, value)).MustBuild()
-			text := parser.FormatQuery(q)
+			text := q.String()
 			parsed, err := parser.ParseQuery(text)
 			if err != nil {
 				t.Fatalf("ParseQuery(%q): %v", text, err)
@@ -39,7 +39,7 @@ func TestRuleConstantArgumentsRoundTrip(t *testing.T) {
 			if !reflect.DeepEqual(parsed.Where[1], q.Where[1]) {
 				t.Errorf("built %#v, parsed %#v from %q", q.Where[1], parsed.Where[1], text)
 			}
-			if again := parser.FormatQuery(parsed); again != text {
+			if again := parsed.String(); again != text {
 				t.Errorf("the text changed on a second render:\n%s\n--\n%s", text, again)
 			}
 		})

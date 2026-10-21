@@ -95,7 +95,7 @@ func TestPlanCacheKeyDistinguishesRulesInput(t *testing.T) {
 		Where: []query.Clause{inv},
 	}
 	cache := &PlanCache{}
-	if cache.computeKeyWithOptions(with, nil, PlannerOptions{}) == cache.computeKeyWithOptions(without, nil, PlannerOptions{}) {
+	if cache.computeKeyWithOptions(with, query.Bindings{}, PlannerOptions{}) == cache.computeKeyWithOptions(without, query.Bindings{}, PlannerOptions{}) {
 		t.Error("a query with a rules input shares its plan-cache key with the same query without one")
 	}
 }
@@ -130,14 +130,14 @@ func TestPlanCacheKeyDistinguishesRequiredPositions(t *testing.T) {
 	free, requiring := succ(), succ("?n")
 	cache := &PlanCache{}
 	top := &query.Query{Find: find, In: in, Where: []query.Clause{invocation("succ", "?n", "?m")}}
-	if cache.computeKeyWithOptions(top, free, PlannerOptions{}) == cache.computeKeyWithOptions(top, requiring, PlannerOptions{}) {
+	if cache.computeKeyWithOptions(top, query.Bindings{Rules: free}, PlannerOptions{}) == cache.computeKeyWithOptions(top, query.Bindings{Rules: requiring}, PlannerOptions{}) {
 		t.Error("a query under a rule set requiring the invoked predicate's first position shares its plan-cache key with the query under one requiring nothing")
 	}
 
 	branch := &query.Query{Find: find, In: in, Where: []query.Clause{
 		&query.OrJoinClause{OutputVars: []query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?m")}, Branches: [][]query.Clause{{invocation("succ", "?n", "?m")}}},
 	}}
-	if cache.computeKeyWithOptions(branch, free, PlannerOptions{}) == cache.computeKeyWithOptions(branch, requiring, PlannerOptions{}) {
+	if cache.computeKeyWithOptions(branch, query.Bindings{Rules: free}, PlannerOptions{}) == cache.computeKeyWithOptions(branch, query.Bindings{Rules: requiring}, PlannerOptions{}) {
 		t.Error("an invocation inside an or-join branch shares its plan-cache key across rule sets requiring different positions")
 	}
 }

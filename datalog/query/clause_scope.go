@@ -368,6 +368,20 @@ func InputSymbols(in []InputSpec) []Symbol {
 	return symbols
 }
 
+// BindingInputs is the entries of an :in clause that bind variables, in
+// order: each scalar, collection, tuple or relation input. A source and the
+// rule set bind none. The executor's entry takes one relation per entry.
+func BindingInputs(in []InputSpec) []InputSpec {
+	var binding []InputSpec
+	for _, spec := range in {
+		switch spec.(type) {
+		case ScalarInput, CollectionInput, TupleInput, RelationInput:
+			binding = append(binding, spec)
+		}
+	}
+	return binding
+}
+
 // ValidateInputShapes validates every static input-shape rule — the checks
 // that depend on the :in clause alone: a query declares % at most once. The
 // user boundaries share it beside ValidateStaticClauseShapes, so a

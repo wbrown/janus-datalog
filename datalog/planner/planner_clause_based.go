@@ -31,17 +31,17 @@ func NewClauseBasedPlanner(stats *Statistics, options PlannerOptions) *ClauseBas
 	}
 }
 
-// Plan creates an optimized query plan under the caller's bindings. A plan
-// made with no bound symbol is served from the cache and stored in it; a
-// plan made under bound symbols is not, since the cache keys on the query,
-// the positions the rule set requires of its invocations, and the options,
-// never on the bound symbols. The handler (may be nil) is request-scoped
-// annotation state, threaded through planning rather than stored on the
-// planner, so concurrent queries through a shared planner do not race on it.
+// Plan creates an optimized query plan under the caller's bindings. Every
+// plan is served from the cache and stored in it, under the query, the
+// positions the rule set requires of its invocations, the options, and the
+// symbols bound when the plan is made, so a plan is made once per distinct
+// text and bound set. The handler (may be nil) is request-scoped annotation
+// state, threaded through planning rather than stored on the planner, so
+// concurrent queries through a shared planner do not race on it.
 func (p *ClauseBasedPlanner) Plan(q *query.Query, bindings query.Bindings, handler annotations.Handler) (*RealizedPlan, error) {
-	cacheable := p.cache != nil && len(bindings.Symbols) == 0
+	cacheable := p.cache != nil
 	if cacheable {
-		if cached, ok := p.cache.GetWithOptions(q, bindings.Rules, p.options); ok {
+		if cached, ok := p.cache.GetWithOptions(q, bindings, p.options); ok {
 			return cached, nil
 		}
 	}
@@ -52,7 +52,7 @@ func (p *ClauseBasedPlanner) Plan(q *query.Query, bindings query.Bindings, handl
 	}
 
 	if cacheable {
-		p.cache.SetWithOptions(q, bindings.Rules, plan, p.options)
+		p.cache.SetWithOptions(q, bindings, plan, p.options)
 	}
 
 	return plan, nil

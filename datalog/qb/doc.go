@@ -53,7 +53,7 @@
 //	qb.DB                     // database source
 //	qb.Scalar(v)              // single value
 //	qb.Collection(v)          // iterate values [?v ...]
-//	qb.Tuple(a, b)            // single tuple [[?a ?b]]
+//	qb.Tuple(a, b)            // single tuple [?a ?b]
 //	qb.Relation(a, b)         // multiple tuples [[?a ?b] ...]
 //
 // # Predicates

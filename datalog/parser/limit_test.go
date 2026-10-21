@@ -199,8 +199,8 @@ func TestLimitRejectedInSubquery(t *testing.T) {
 	})
 }
 
-// TestLimitRoundTrip verifies that a query carrying :limit round-trips through
-// both formatters (parser.FormatQuery and query.Query.String()).
+// TestLimitRoundTrip verifies that a query carrying :limit renders through
+// Query.String to text the parser reads back with the same :limit.
 func TestLimitRoundTrip(t *testing.T) {
 	queries := []string{
 		`[:find ?e ?tx
@@ -221,17 +221,16 @@ func TestLimitRoundTrip(t *testing.T) {
 			t.Fatalf("ParseQuery() error = %v", err)
 		}
 
-		for _, formatted := range []string{FormatQuery(q), q.String()} {
-			q2, err := ParseQuery(formatted)
-			if err != nil {
-				t.Fatalf("re-parse of %q error = %v", formatted, err)
-			}
-			if q2.Limit == nil {
-				t.Fatalf("re-parse dropped :limit from %q", formatted)
-			}
-			if *q2.Limit != *q.Limit {
-				t.Errorf("limit mismatch after round-trip: got %d want %d (formatted: %q)", *q2.Limit, *q.Limit, formatted)
-			}
+		formatted := q.String()
+		q2, err := ParseQuery(formatted)
+		if err != nil {
+			t.Fatalf("re-parse of %q error = %v", formatted, err)
+		}
+		if q2.Limit == nil {
+			t.Fatalf("re-parse dropped :limit from %q", formatted)
+		}
+		if *q2.Limit != *q.Limit {
+			t.Errorf("limit mismatch after round-trip: got %d want %d (formatted: %q)", *q2.Limit, *q.Limit, formatted)
 		}
 	}
 }

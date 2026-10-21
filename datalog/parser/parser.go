@@ -720,11 +720,14 @@ func parseRelationBinding(node *edn.Node) (query.RelationBinding, error) {
 	return query.RelationBinding{Variables: vars}, nil
 }
 
-// parseInputSpec parses an input specification from the :in clause
+// parseInputSpec parses an input specification from the :in clause under
+// Datomic's grammar: $name a source, % the rule set, ?x the scalar input,
+// [?x ...] the collection input, [?x ?y] the tuple input, [[?x ?y]] the
+// relation input, and [[?x ?y] ...], janus's own spelling, the relation
+// input as well.
 func parseInputSpec(node *edn.Node) (query.InputSpec, error) {
 	switch node.Type {
 	case edn.NodeSymbol:
-		// $name (database source), % (the rule set) or ?var (scalar input)
 		if strings.HasPrefix(node.Value, "$") {
 			return query.DatabaseInput{Name: datalog.NewSymbol(node.Value)}, nil
 		}
@@ -738,41 +741,23 @@ func parseInputSpec(node *edn.Node) (query.InputSpec, error) {
 		return query.ScalarInput{Symbol: sym}, nil
 
 	case edn.NodeVector:
-		// Could be [?x ...] collection or [[?x ?y]] tuple or [[?x ?y] ...] relation
 		if len(node.Nodes) == 0 {
 			return nil, fmt.Errorf("input vector cannot be empty")
 		}
+		trailing := len(node.Nodes) == 2 && node.Nodes[1].Type == edn.NodeSymbol && node.Nodes[1].Value == "..."
 
-		// Check for tuple or relation input first (they start with a vector)
 		if node.Nodes[0].Type == edn.NodeVector {
-			// It's a tuple [[?x ?y]] or relation [[?x ?y] ...]
-			tupleNode := &node.Nodes[0]
-			vars := make([]query.Symbol, 0, len(tupleNode.Nodes))
-
-			for i, elem := range tupleNode.Nodes {
-				if elem.Type != edn.NodeSymbol {
-					return nil, fmt.Errorf("tuple input element %d must be a symbol", i)
-				}
-				sym := datalog.NewSymbol(elem.Value)
-				if !sym.IsVariable() {
-					return nil, fmt.Errorf("tuple input element %d must be a variable, got %s", i, sym)
-				}
-				vars = append(vars, sym)
+			if len(node.Nodes) != 1 && !trailing {
+				return nil, fmt.Errorf("invalid input specification format")
 			}
-
-			// Check if it's a relation binding [[?x ?y] ...]
-			if len(node.Nodes) == 2 && node.Nodes[1].Type == edn.NodeSymbol && node.Nodes[1].Value == "..." {
-				return query.RelationInput{Symbols: vars}, nil
+			vars, err := inputVariables(node.Nodes[0].Nodes, "relation")
+			if err != nil {
+				return nil, err
 			}
-
-			// Otherwise it's a tuple binding [[?x ?y]]
-			if len(node.Nodes) == 1 {
-				return query.TupleInput{Symbols: vars}, nil
-			}
+			return query.RelationInput{Symbols: vars}, nil
 		}
 
-		// Check for collection input [?x ...]
-		if len(node.Nodes) == 2 && node.Nodes[1].Type == edn.NodeSymbol && node.Nodes[1].Value == "..." {
+		if trailing {
 			if node.Nodes[0].Type != edn.NodeSymbol {
 				return nil, fmt.Errorf("collection input must contain a variable")
 			}
@@ -783,11 +768,33 @@ func parseInputSpec(node *edn.Node) (query.InputSpec, error) {
 			return query.CollectionInput{Symbol: sym}, nil
 		}
 
-		return nil, fmt.Errorf("invalid input specification format")
+		vars, err := inputVariables(node.Nodes, "tuple")
+		if err != nil {
+			return nil, err
+		}
+		return query.TupleInput{Symbols: vars}, nil
 
 	default:
 		return nil, fmt.Errorf("input spec must be a symbol or vector, got %v", node.Type)
 	}
+}
+
+// inputVariables is the variables a tuple or relation input's vector names,
+// in order; an element that is not a variable is refused by its position,
+// naming the input's kind.
+func inputVariables(nodes []edn.Node, kind string) ([]query.Symbol, error) {
+	vars := make([]query.Symbol, 0, len(nodes))
+	for i, elem := range nodes {
+		if elem.Type != edn.NodeSymbol {
+			return nil, fmt.Errorf("%s input element %d must be a symbol", kind, i)
+		}
+		sym := datalog.NewSymbol(elem.Value)
+		if !sym.IsVariable() {
+			return nil, fmt.Errorf("%s input element %d must be a variable, got %s", kind, i, sym)
+		}
+		vars = append(vars, sym)
+	}
+	return vars, nil
 }
 
 // parsePatternElement parses a single pattern element
@@ -1481,215 +1488,4 @@ func ValidateQuery(q *query.Query) error {
 	}
 
 	return nil
-}
-
-// FormatQuery formats a query as a readable string in EDN format
-func FormatQuery(q *query.Query) string {
-	return formatQueryWithIndent(q, "")
-}
-
-// formatQueryWithIndent formats a query with a given indentation prefix
-func formatQueryWithIndent(q *query.Query, indent string) string {
-	var sb strings.Builder
-
-	sb.WriteString("[:find")
-	for _, v := range q.Find {
-		sb.WriteString(" ")
-		sb.WriteString(v.String())
-	}
-
-	// Add :in clause if present
-	if len(q.In) > 0 {
-		sb.WriteString("\n")
-		sb.WriteString(indent)
-		sb.WriteString(" :in")
-		for _, input := range q.In {
-			sb.WriteString(" ")
-			sb.WriteString(input.String())
-		}
-	}
-
-	sb.WriteString("\n")
-	sb.WriteString(indent)
-	sb.WriteString(" :where")
-
-	// For patterns, we want them aligned under :where
-	// The first pattern can go on the same line as :where
-	patternIndent := indent + "        " // 8 spaces to align with :where text
-
-	for i, p := range q.Where {
-		if i == 0 {
-			sb.WriteString(" ")
-		} else {
-			sb.WriteString("\n")
-			sb.WriteString(patternIndent)
-		}
-		formatPatternWithIndent(&sb, p, indent)
-	}
-
-	// Add :order-by clause if present
-	if len(q.OrderBy) > 0 {
-		sb.WriteString("\n")
-		sb.WriteString(indent)
-		sb.WriteString(" :order-by [")
-		for i, clause := range q.OrderBy {
-			if i > 0 {
-				sb.WriteString(" ")
-			}
-			if clause.Descending {
-				sb.WriteString("[")
-				sb.WriteString(clause.Variable.String())
-				sb.WriteString(" :desc]")
-			} else {
-				// For ascending (default), just write the variable
-				sb.WriteString(clause.Variable.String())
-			}
-		}
-		sb.WriteString("]")
-	}
-
-	// Add :limit clause if present
-	if q.Limit != nil {
-		sb.WriteString("\n")
-		sb.WriteString(indent)
-		sb.WriteString(" :limit ")
-		sb.WriteString(strconv.Itoa(*q.Limit))
-	}
-
-	sb.WriteString("]")
-
-	return sb.String()
-}
-
-// formatPattern formats a single pattern in proper EDN format
-func formatPattern(sb *strings.Builder, pattern query.Pattern) {
-	formatPatternWithIndent(sb, pattern, "")
-}
-
-// formatPatternWithIndent formats a pattern with proper indentation
-func formatPatternWithIndent(sb *strings.Builder, pattern query.Pattern, indent string) {
-	// Special handling for complex nested structures that need indentation
-	switch p := pattern.(type) {
-	case *query.SubqueryPattern:
-		// Subqueries need special formatting with indentation
-		formatSubqueryPattern(sb, p, indent)
-		return
-
-	case *query.DataPattern:
-		// DataPattern needs custom formatting for pattern elements
-		sb.WriteString("[")
-		for i, elem := range p.Elements {
-			if i > 0 {
-				sb.WriteString(" ")
-			}
-			formatPatternElement(sb, elem)
-		}
-		sb.WriteString("]")
-		return
-
-	}
-
-	// For everything else (new types with String() methods), just use String()
-	sb.WriteString(pattern.String())
-}
-
-// formatSubqueryPattern formats a subquery with proper indentation
-func formatSubqueryPattern(sb *strings.Builder, p *query.SubqueryPattern, indent string) {
-	sb.WriteString("[(q ")
-	// Format the nested query with proper indentation
-	// The current pattern is indented by 'indent' + 8 spaces (for alignment under :where)
-	// We've written "[(q " which is 4 characters
-	// So the nested query should be indented by: current line indent + 4 spaces for "[(q "
-	baseIndent := indent + "        "   // 8 spaces to match main pattern alignment
-	nestedIndent := baseIndent + "    " // 4 more spaces for "[(q "
-	formattedNested := formatQueryWithIndent(p.Query, nestedIndent)
-	sb.WriteString(formattedNested)
-
-	// Add newline and indent for inputs and binding
-	// They should align with the [ of the query vector
-	sb.WriteString("\n")
-	sb.WriteString(nestedIndent)
-
-	// Format inputs
-	for i, input := range p.Inputs {
-		if i > 0 {
-			sb.WriteString(" ")
-		}
-		formatPatternElement(sb, input)
-	}
-	sb.WriteString(") ")
-
-	// Format binding
-	sb.WriteString(p.Binding.String())
-	sb.WriteString("]")
-}
-
-// formatPatternElement formats a single pattern element in EDN format
-func formatPatternElement(sb *strings.Builder, elem query.PatternElement) {
-	switch e := elem.(type) {
-	case query.Variable:
-		sb.WriteString(e.Name.String())
-
-	case query.Blank:
-		sb.WriteString("_")
-
-	case query.Constant:
-		formatValue(sb, e.Value)
-	}
-}
-
-// formatValue formats a value in proper EDN format
-func formatValue(sb *strings.Builder, v interface{}) {
-	switch val := v.(type) {
-	case datalog.Keyword:
-		sb.WriteString(val.String())
-
-	case datalog.Identity:
-		// Entity references render as the canonical #identity literal, which
-		// the parser reads back to the same hash.
-		sb.WriteString("#identity \"")
-		sb.WriteString(val.L85())
-		sb.WriteString("\"")
-
-	case string:
-		// Properly escape strings for EDN
-		sb.WriteString(`"`)
-		for _, r := range val {
-			switch r {
-			case '"':
-				sb.WriteString(`\"`)
-			case '\\':
-				sb.WriteString(`\\`)
-			case '\n':
-				sb.WriteString(`\n`)
-			case '\r':
-				sb.WriteString(`\r`)
-			case '\t':
-				sb.WriteString(`\t`)
-			default:
-				sb.WriteRune(r)
-			}
-		}
-		sb.WriteString(`"`)
-
-	case int64:
-		sb.WriteString(strconv.FormatInt(val, 10))
-
-	case int:
-		sb.WriteString(strconv.Itoa(val))
-
-	case float64:
-		sb.WriteString(strconv.FormatFloat(val, 'g', -1, 64))
-
-	case bool:
-		if val {
-			sb.WriteString("true")
-		} else {
-			sb.WriteString("false")
-		}
-
-	default:
-		// Fallback to string representation
-		sb.WriteString(fmt.Sprintf("%v", v))
-	}
 }

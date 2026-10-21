@@ -1,6 +1,7 @@
 package query
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -383,6 +384,31 @@ func TestInputSymbolsNameTheSymbolEachCallPositionBinds(t *testing.T) {
 	omitted := InputSymbols(nil)
 	if len(omitted) != 1 || omitted[0] != nil {
 		t.Errorf("an omitted :in is [$], one position binding no symbol, got %v", omitted)
+	}
+}
+
+// BindingInputs names the entries of an :in that bind variables, in the
+// :in's order, one per scalar, collection, tuple or relation input, and
+// none for a source or the rule set; an empty :in names none.
+func TestBindingInputs(t *testing.T) {
+	a, b, c, d, e, f := datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d"), datalog.NewSymbol("?e"), datalog.NewSymbol("?f")
+	scalar := ScalarInput{Symbol: a}
+	collection := CollectionInput{Symbol: b}
+	tuple := TupleInput{Symbols: []Symbol{c, d}}
+	relation := RelationInput{Symbols: []Symbol{e, f}}
+	in := []InputSpec{DatabaseInput{Name: datalog.SymDollar}, RulesInput{}, scalar, collection, tuple, relation}
+	got := BindingInputs(in)
+	want := []InputSpec{scalar, collection, tuple, relation}
+	if len(got) != len(want) {
+		t.Fatalf("BindingInputs names %d entries, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if !reflect.DeepEqual(got[i], want[i]) {
+			t.Errorf("entry %d is %#v, want %#v", i, got[i], want[i])
+		}
+	}
+	if none := BindingInputs(nil); len(none) != 0 {
+		t.Errorf("an empty :in binds no entry, got %v", none)
 	}
 }
 

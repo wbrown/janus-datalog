@@ -154,7 +154,7 @@ func TestOrderByFormatting(t *testing.T) {
 				t.Fatalf("ParseQuery() error = %v", err)
 			}
 
-			formatted := FormatQuery(q)
+			formatted := q.String()
 
 			// Parse the formatted query back
 			q2, err := ParseQuery(formatted)

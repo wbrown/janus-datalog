@@ -40,7 +40,7 @@ func TestPlanCache(t *testing.T) {
 	}
 
 	// Test miss
-	cached, ok := cache.GetWithOptions(q, nil, opts)
+	cached, ok := cache.GetWithOptions(q, query.Bindings{}, opts)
 	if ok {
 		t.Error("Expected cache miss, got hit")
 	}
@@ -49,10 +49,10 @@ func TestPlanCache(t *testing.T) {
 	}
 
 	// Store the plan
-	cache.SetWithOptions(q, nil, plan, opts)
+	cache.SetWithOptions(q, query.Bindings{}, plan, opts)
 
 	// Test hit
-	cached, ok = cache.GetWithOptions(q, nil, opts)
+	cached, ok = cache.GetWithOptions(q, query.Bindings{}, opts)
 	if !ok {
 		t.Error("Expected cache hit, got miss")
 	}
@@ -82,7 +82,7 @@ func TestPlanCache(t *testing.T) {
 	}
 
 	// Getting after clear should miss
-	_, ok = cache.GetWithOptions(q, nil, opts)
+	_, ok = cache.GetWithOptions(q, query.Bindings{}, opts)
 	if ok {
 		t.Error("Expected cache miss after clear")
 	}
@@ -124,31 +124,31 @@ func TestPlanCacheEviction(t *testing.T) {
 	}
 
 	// Add first two queries
-	cache.SetWithOptions(queries[0], nil, plans[0], opts)
+	cache.SetWithOptions(queries[0], query.Bindings{}, plans[0], opts)
 	time.Sleep(10 * time.Millisecond) // Ensure different timestamps
-	cache.SetWithOptions(queries[1], nil, plans[1], opts)
+	cache.SetWithOptions(queries[1], query.Bindings{}, plans[1], opts)
 
 	// Both should be in cache
-	if _, ok := cache.GetWithOptions(queries[0], nil, opts); !ok {
+	if _, ok := cache.GetWithOptions(queries[0], query.Bindings{}, opts); !ok {
 		t.Error("Expected first query to be cached")
 	}
-	if _, ok := cache.GetWithOptions(queries[1], nil, opts); !ok {
+	if _, ok := cache.GetWithOptions(queries[1], query.Bindings{}, opts); !ok {
 		t.Error("Expected second query to be cached")
 	}
 
 	// Add third query, should evict oldest (first)
-	cache.SetWithOptions(queries[2], nil, plans[2], opts)
+	cache.SetWithOptions(queries[2], query.Bindings{}, plans[2], opts)
 
 	// First should be evicted
-	if _, ok := cache.GetWithOptions(queries[0], nil, opts); ok {
+	if _, ok := cache.GetWithOptions(queries[0], query.Bindings{}, opts); ok {
 		t.Error("Expected first query to be evicted")
 	}
 
 	// Second and third should still be cached
-	if _, ok := cache.GetWithOptions(queries[1], nil, opts); !ok {
+	if _, ok := cache.GetWithOptions(queries[1], query.Bindings{}, opts); !ok {
 		t.Error("Expected second query to still be cached")
 	}
-	if _, ok := cache.GetWithOptions(queries[2], nil, opts); !ok {
+	if _, ok := cache.GetWithOptions(queries[2], query.Bindings{}, opts); !ok {
 		t.Error("Expected third query to be cached")
 	}
 }
@@ -183,10 +183,10 @@ func TestPlanCacheTTL(t *testing.T) {
 	}
 
 	// Set the plan
-	cache.SetWithOptions(q, nil, plan, opts)
+	cache.SetWithOptions(q, query.Bindings{}, plan, opts)
 
 	// Should be in cache immediately
-	if _, ok := cache.GetWithOptions(q, nil, opts); !ok {
+	if _, ok := cache.GetWithOptions(q, query.Bindings{}, opts); !ok {
 		t.Error("Expected query to be cached")
 	}
 
@@ -194,7 +194,7 @@ func TestPlanCacheTTL(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 
 	// Should be expired now
-	if _, ok := cache.GetWithOptions(q, nil, opts); ok {
+	if _, ok := cache.GetWithOptions(q, query.Bindings{}, opts); ok {
 		t.Error("Expected query to be expired")
 	}
 }
@@ -211,8 +211,8 @@ func TestPlanCacheSeparatesJoinProjectInsertionOption(t *testing.T) {
 	enabled := disabled
 	enabled.EnableJoinProjectInsertion = true
 
-	cache.SetWithOptions(q, nil, plan, disabled)
-	if _, ok := cache.GetWithOptions(q, nil, enabled); ok {
+	cache.SetWithOptions(q, query.Bindings{}, plan, disabled)
+	if _, ok := cache.GetWithOptions(q, query.Bindings{}, enabled); ok {
 		t.Fatal("join-project insertion option must produce a distinct plan cache key")
 	}
 }
@@ -231,9 +231,53 @@ func TestPlanCacheSeparatesCollectRostersOption(t *testing.T) {
 	with := without
 	with.CollectRosters = true
 
-	cache.SetWithOptions(q, nil, plan, without)
-	if _, ok := cache.GetWithOptions(q, nil, with); ok {
+	cache.SetWithOptions(q, query.Bindings{}, plan, without)
+	if _, ok := cache.GetWithOptions(q, query.Bindings{}, with); ok {
 		t.Fatal("a plan made without the roster option is not served to a request under it")
+	}
+}
+
+// The symbols bound when a plan is made are part of its key: a plan stored
+// under a bound symbol is not served to a request under none and is served
+// under the same symbol, a plan stored under none is a second entry of the
+// text, and the key is a function of the bound set, the same however the
+// set's map iterates.
+func TestPlanCacheKeyDistinguishesBoundSymbols(t *testing.T) {
+	cache := NewPlanCache(10, 0)
+	opts := PlannerOptions{}
+	e := datalog.NewSymbol("?e")
+	q := &query.Query{
+		Find: []query.FindElement{query.FindVariable{Symbol: datalog.NewSymbol("?n")}},
+		In:   []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.ScalarInput{Symbol: e}},
+		Where: []query.Clause{&query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: e},
+			query.Constant{Value: datalog.NewKeyword(":person/name")},
+			query.Variable{Name: datalog.NewSymbol("?n")},
+		}}},
+	}
+	plan := &RealizedPlan{Query: q}
+	bound := query.Bindings{Symbols: map[query.Symbol]bool{e: true}}
+
+	cache.SetWithOptions(q, bound, plan, opts)
+	if _, ok := cache.GetWithOptions(q, query.Bindings{}, opts); ok {
+		t.Fatal("a plan made under a bound symbol is not served to a request under none")
+	}
+	if _, ok := cache.GetWithOptions(q, bound, opts); !ok {
+		t.Fatal("a plan made under a bound symbol is served under the same symbol")
+	}
+	cache.SetWithOptions(q, query.Bindings{}, plan, opts)
+	if _, _, size := cache.Stats(); size != 2 {
+		t.Fatalf("size = %d after a plan under none beside one under the bound symbol; want 2", size)
+	}
+
+	three := query.Bindings{Symbols: map[query.Symbol]bool{
+		e: true, datalog.NewSymbol("?n"): true, datalog.NewSymbol("?m"): true,
+	}}
+	key := cache.computeKeyWithOptions(q, three, opts)
+	for i := 0; i < 20; i++ {
+		if again := cache.computeKeyWithOptions(q, three, opts); again != key {
+			t.Fatalf("the key under three bound symbols differs between two computations: the key depends on the map's iteration order")
+		}
 	}
 }
 
@@ -248,11 +292,11 @@ func TestPlanCacheWithNoTTLServesAnOldEntry(t *testing.T) {
 		},
 	}
 	plan := &RealizedPlan{Query: q}
-	cache.SetWithOptions(q, nil, plan, opts)
+	cache.SetWithOptions(q, query.Bindings{}, plan, opts)
 	for _, cached := range cache.cache {
 		cached.timestamp = time.Now().Add(-time.Hour)
 	}
-	if _, ok := cache.GetWithOptions(q, nil, opts); !ok {
+	if _, ok := cache.GetWithOptions(q, query.Bindings{}, opts); !ok {
 		t.Fatal("an entry stored an hour ago is served under no TTL")
 	}
 }

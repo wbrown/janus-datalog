@@ -240,15 +240,15 @@ func TestParseQuery_VariableHeadedListIsRefused(t *testing.T) {
 	}
 }
 
-func TestFormatQuery_RoundTripsInvocation(t *testing.T) {
+func TestQueryString_RoundTripsInvocation(t *testing.T) {
 	q, err := ParseQuery(`[:find ?y :in $ % ?x :where (follows ?x ?y) (marked ?y "read" _)]`)
 	if err != nil {
 		t.Fatalf("ParseQuery: %v", err)
 	}
-	text := FormatQuery(q)
+	text := q.String()
 	again, err := ParseQuery(text)
 	if err != nil {
-		t.Fatalf("ParseQuery(FormatQuery(q)) failed on %q: %v", text, err)
+		t.Fatalf("ParseQuery(q.String()) failed on %q: %v", text, err)
 	}
 	if again.String() != q.String() {
 		t.Errorf("round trip changed the query:\n%s\n--\n%s", q.String(), again.String())
@@ -414,9 +414,9 @@ func TestParseQuery_InvocationArguments(t *testing.T) {
 			t.Errorf("argument %d is %#v, want %#v", i, inv.Args[i], want[i])
 		}
 	}
-	again, err := ParseQuery(FormatQuery(q))
+	again, err := ParseQuery(q.String())
 	if err != nil {
-		t.Fatalf("ParseQuery(FormatQuery(q)) failed on %q: %v", FormatQuery(q), err)
+		t.Fatalf("ParseQuery(q.String()) failed on %q: %v", q.String(), err)
 	}
 	if again.String() != q.String() {
 		t.Errorf("round trip changed the query:\n%s\n--\n%s", q.String(), again.String())

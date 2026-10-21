@@ -7,11 +7,11 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// An expression renders its binding in Datomic's form
-// (NESTED_SCOPES_AS_QUERIES.md goal 12): the scalar ?a, the tuple form
-// [?a ?b] and the relation form [[?a ?b]], and a vector value as the vector
-// of its rendered elements, so a ground of vectors parses back.
-func TestExpressionRendersItsBindingInDatomicsForm(t *testing.T) {
+// An expression renders its binding by its form (NESTED_SCOPES_AS_QUERIES.md
+// goal 12): the scalar ?a, the tuple form [?a ?b], the collection form
+// [?a ...] and the relation form as [[?a ?b] ...], and a vector value as the
+// vector of its rendered elements, so a ground of vectors parses back.
+func TestExpressionRendersItsBindingForms(t *testing.T) {
 	a, b := datalog.NewSymbol("?a"), datalog.NewSymbol("?b")
 	cases := []struct {
 		name string
@@ -26,7 +26,7 @@ func TestExpressionRendersItsBindingInDatomicsForm(t *testing.T) {
 			`[(ground [1 "x"]) [?a ?b]]`},
 		{"relation",
 			&Expression{Function: GroundFunction{Value: []interface{}{[]interface{}{int64(1), "x"}, []interface{}{int64(2), "y"}}}, Binding: RelationBinding{Variables: []Symbol{a, b}}},
-			`[(ground [[1 "x"] [2 "y"]]) [[?a ?b]]]`},
+			`[(ground [[1 "x"] [2 "y"]]) [[?a ?b] ...]]`},
 		{"collection",
 			&Expression{Function: GroundFunction{Value: []interface{}{int64(1), "x"}}, Binding: CollectionBinding{Variable: a}},
 			`[(ground [1 "x"]) [?a ...]]`},

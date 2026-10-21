@@ -448,7 +448,7 @@ The storage layer connects the query engine to BadgerDB:
 17. **Table formatter** - Markdown table formatting using tablewriter library
 18. **Order-by clause** - Full implementation with multi-symbol sorting and direction control
 19. **Time comparison fix** - Proper time.Time comparison in aggregations and predicates
-20. **Datomic compatibility** - ~80% feature parity (see DATOMIC_COMPATIBILITY.md)
+20. **Datomic compatibility** - ~90% feature parity (see DATOMIC_COMPATIBILITY.md)
 21. **Relations migration** - Multi-value variable support throughout codebase
 22. **Pull API** - Declarative entity attribute retrieval with nested refs, cycle detection, wildcards (9× faster than queries)
 23. **Schema support** - Type validation, cardinality (one/many/vector), uniqueness (read-time resolution), `:db/uniqueElements` on vectors, `:db/neverZeroValue` (the value type's zero is not a value: `Add`/`Set` reject it, the struct writer omits a field holding it); unknown EDN definition keys are parse errors; optional and additive. Declared definitions are stored as facts, each declaration's words on an entity named by them and a ref from `db.attribute/<ident>` to the attribute's current declaration, carried by dumps and read back at open; a database opened with `RefuseUnknownAttributes`, which requires a schema, refuses a query or pull naming an attribute the schema does not declare (`docs/reference/SCHEMA.md`, "Schema as Facts")
@@ -777,7 +777,7 @@ Note: While our planner is explicit and feature-complete, the **information flow
 ## Important Documentation
 
 ### Core Documentation
-- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Comprehensive compatibility guide for Datomic users (~80% feature parity)
+- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Comprehensive compatibility guide for Datomic users (~90% feature parity)
 - **[PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)** - Current performance status, active optimizations, and benchmarks
 - **[TODO.md](TODO.md)** - Active task tracking with completed and pending features
 - **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Complete documentation navigation

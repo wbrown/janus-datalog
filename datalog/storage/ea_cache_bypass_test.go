@@ -284,7 +284,7 @@ func TestEACacheBypass_TupleInput(t *testing.T) {
 					}
 
 					results, err := executor.CollectTuples(db.Query(
-						`[:find ?v :in $ [[?e ?a]] :where [?e ?a ?v]]`,
+						`[:find ?v :in $ [?e ?a] :where [?e ?a ?v]]`,
 						[]any{personID, nameAttr}))
 					require.NoError(t, err)
 					require.Len(t, results, 1, "[%s] Tuple input should return 1 result", mode.name)
@@ -770,7 +770,7 @@ func BenchmarkEACacheBypass(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					e := entities[i%100]
 					results, err := executor.CollectTuples(db.Query(
-						`[:find ?v :in $ [[?e ?a]] :where [?e ?a ?v]]`,
+						`[:find ?v :in $ [?e ?a] :where [?e ?a ?v]]`,
 						[]any{e, nameAttr}))
 					if err != nil {
 						b.Fatal(err)

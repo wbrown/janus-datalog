@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,14 +49,15 @@ func NewPlanCache(maxSize int, ttl time.Duration) *PlanCache {
 	}
 }
 
-// GetWithOptions retrieves a cached RealizedPlan for a query under a rule
-// set if it exists and, under a TTL, is not expired
-func (c *PlanCache) GetWithOptions(q *query.Query, rules *query.RuleSet, opts PlannerOptions) (*RealizedPlan, bool) {
+// GetWithOptions retrieves a cached RealizedPlan for a query under the
+// caller's bindings, the rule set and the symbols bound when the plan is
+// made, if it exists and, under a TTL, is not expired
+func (c *PlanCache) GetWithOptions(q *query.Query, bindings query.Bindings, opts PlannerOptions) (*RealizedPlan, bool) {
 	if c == nil {
 		return nil, false
 	}
 
-	key := c.computeKeyWithOptions(q, rules, opts)
+	key := c.computeKeyWithOptions(q, bindings, opts)
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -77,14 +79,14 @@ func (c *PlanCache) GetWithOptions(q *query.Query, rules *query.RuleSet, opts Pl
 	return cached.plan, true
 }
 
-// SetWithOptions stores a RealizedPlan for a query under a rule set in the
-// cache
-func (c *PlanCache) SetWithOptions(q *query.Query, rules *query.RuleSet, plan *RealizedPlan, opts PlannerOptions) {
+// SetWithOptions stores a RealizedPlan for a query under the caller's
+// bindings in the cache
+func (c *PlanCache) SetWithOptions(q *query.Query, bindings query.Bindings, plan *RealizedPlan, opts PlannerOptions) {
 	if c == nil || plan == nil {
 		return
 	}
 
-	key := c.computeKeyWithOptions(q, rules, opts)
+	key := c.computeKeyWithOptions(q, bindings, opts)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -131,12 +133,13 @@ func (c *PlanCache) Stats() (hits, misses int64, size int) {
 	return atomic.LoadInt64(&c.hits), atomic.LoadInt64(&c.misses), len(c.cache)
 }
 
-// computeKeyWithOptions generates a deterministic key for a query under a
-// rule set with planner options
-func (c *PlanCache) computeKeyWithOptions(q *query.Query, rules *query.RuleSet, opts PlannerOptions) string {
+// computeKeyWithOptions generates a deterministic key for a query under the
+// caller's bindings with planner options
+func (c *PlanCache) computeKeyWithOptions(q *query.Query, bindings query.Bindings, opts PlannerOptions) string {
 	// Create a string representation that captures the query structure AND options
 	// This needs to be deterministic and capture all relevant aspects
 
+	rules := bindings.Rules
 	h := sha256.New()
 
 	// Hash find clause
@@ -178,6 +181,21 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, rules *query.RuleSet, 
 		case query.RulesInput:
 			fmt.Fprintf(h, "RULES;")
 		}
+	}
+
+	// The symbols bound when the plan is made reach the plan: planWithBindings
+	// unions them into the symbols the :in seeds, and any bound symbol turns
+	// join-project insertion off for the algebra bridge, so a plan made under
+	// one bound set is not the plan under another. They hash in one fixed
+	// order, whatever order the caller's map iterates.
+	fmt.Fprintf(h, "BOUND:")
+	bound := make([]query.Symbol, 0, len(bindings.Symbols))
+	for sym := range bindings.Symbols {
+		bound = append(bound, sym)
+	}
+	slices.SortFunc(bound, func(a, b query.Symbol) int { return a.Compare(b) })
+	for _, sym := range bound {
+		fmt.Fprintf(h, "%v;", sym)
 	}
 
 	// Hash order-by clause

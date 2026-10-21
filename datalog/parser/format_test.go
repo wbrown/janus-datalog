@@ -1,14 +1,13 @@
 package parser
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-func TestFormatQueryEDN(t *testing.T) {
+func TestQueryStringEDN(t *testing.T) {
 	tests := []struct {
 		name     string
 		query    *query.Query
@@ -200,15 +199,15 @@ func TestFormatQueryEDN(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FormatQuery(tt.query)
+			got := tt.query.String()
 			if got != tt.expected {
-				t.Errorf("FormatQuery() mismatch:\ngot:\n%s\n\nexpected:\n%s", got, tt.expected)
+				t.Errorf("Query.String() mismatch:\ngot:\n%s\n\nexpected:\n%s", got, tt.expected)
 			}
 		})
 	}
 }
 
-func TestFormatQueryRoundTrip(t *testing.T) {
+func TestQueryStringRoundTrip(t *testing.T) {
 	// Test that parsing and formatting produces equivalent results
 	queries := []string{
 		`[:find ?name :where [?e :user/name ?name]]`,
@@ -229,7 +228,7 @@ func TestFormatQueryRoundTrip(t *testing.T) {
 			}
 
 			// Format it back
-			formatted := FormatQuery(parsed)
+			formatted := parsed.String()
 
 			// Parse the formatted version
 			reparsed, err := ParseQuery(formatted)
@@ -256,37 +255,6 @@ func TestFormatQueryRoundTrip(t *testing.T) {
 					t.Errorf("Where pattern %d differs:\n%v\nvs\n%v",
 						i, parsed.Where[i].String(), reparsed.Where[i].String())
 				}
-			}
-		})
-	}
-}
-
-func TestFormatValue(t *testing.T) {
-	tests := []struct {
-		name     string
-		value    interface{}
-		expected string
-	}{
-		{"keyword", datalog.NewKeyword(":user/name"), ":user/name"},
-		{"string", "hello", `"hello"`},
-		{"string with quotes", `hello "world"`, `"hello \"world\""`},
-		{"string with newline", "line1\nline2", `"line1\nline2"`},
-		{"string with tab", "col1\tcol2", `"col1\tcol2"`},
-		{"string with backslash", `path\to\file`, `"path\\to\\file"`},
-		{"int64", int64(42), "42"},
-		{"int", 42, "42"},
-		{"float64", 3.14, "3.14"},
-		{"bool true", true, "true"},
-		{"bool false", false, "false"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var sb strings.Builder
-			formatValue(&sb, tt.value)
-			got := sb.String()
-			if got != tt.expected {
-				t.Errorf("formatValue(%v) = %q, want %q", tt.value, got, tt.expected)
 			}
 		})
 	}

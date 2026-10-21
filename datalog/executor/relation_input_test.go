@@ -145,7 +145,7 @@ func TestRelationInputIteration(t *testing.T) {
 				          :where [?p :name ?name]
 				                 [?p :year ?year]
 				                 [(q [:find ?a
-				                      :in $ [[?n ?y]]
+				                      :in $ [?n ?y]
 				                      :where [?e :name ?n]
 				                             [?e :year ?y]
 				                             [?e :age ?a]]

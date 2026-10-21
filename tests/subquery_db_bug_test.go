@@ -36,12 +36,9 @@ func TestSubqueryMissingDB(t *testing.T) {
 
 	generated := q.String()
 
-	// The subquery call should include $ before ?scenario
-	// Expected: (q [...] $ ?scenario) [[?taskCount]]
-	// Actual:   (q [...] ?scenario) [[?taskCount]]
-
-	if !strings.Contains(generated, "$ ?scenario) [[?taskCount]]") {
-		t.Errorf("Subquery invocation missing database $\n\nGenerated:\n%s\n\nExpected to contain: $ ?scenario) [[?taskCount]]", generated)
+	// The subquery call includes $ before ?scenario.
+	if !strings.Contains(generated, "$ ?scenario) [[?taskCount] ...]") {
+		t.Errorf("Subquery invocation missing database $\n\nGenerated:\n%s\n\nExpected to contain: $ ?scenario) [[?taskCount] ...]", generated)
 	}
 }
 
@@ -70,7 +67,7 @@ func TestSubqueryWithDBGeneratesCorrectEDN(t *testing.T) {
 
 	generated := q.String()
 
-	if !strings.Contains(generated, "$ ?outer) [[?result]]") {
-		t.Errorf("Subquery invocation missing database $\n\nGenerated:\n%s\n\nExpected to contain: $ ?outer) [[?result]]", generated)
+	if !strings.Contains(generated, "$ ?outer) [[?result] ...]") {
+		t.Errorf("Subquery invocation missing database $\n\nGenerated:\n%s\n\nExpected to contain: $ ?outer) [[?result] ...]", generated)
 	}
 }

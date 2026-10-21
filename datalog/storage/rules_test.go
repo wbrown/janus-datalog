@@ -944,10 +944,10 @@ func TestRules_EveryPhaseParsesBackToItself(t *testing.T) {
 				plan, err := d.Explain(text, rules)
 				require.NoError(t, err)
 				for i, phase := range plan.Phases {
-					rendered := parser.FormatQuery(phase.Query)
+					rendered := phase.Query.String()
 					back, err := parser.ParseQuery(rendered)
 					require.NoError(t, err, "phase %d of %s parses back:\n%s", i, text, rendered)
-					require.Equal(t, rendered, parser.FormatQuery(back), "phase %d of %s renders the same after a round trip", i, text)
+					require.Equal(t, rendered, back.String(), "phase %d of %s renders the same after a round trip", i, text)
 				}
 			}
 		})

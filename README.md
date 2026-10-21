@@ -155,7 +155,7 @@ See [docs/reference/QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md) for compl
 
 ## Running Examples
 
-The `examples/` directory contains 14 working examples covering the full API. Run from the repository root:
+The `examples/` directory contains 15 working examples covering the full API. Run from the repository root:
 
 ```bash
 # Start here
@@ -263,16 +263,7 @@ Available aggregations: `sum`, `count`, `avg`, `min`, `max`
 
 ### Time Travel
 
-Every fact is timestamped. Query historical state:
-
-```go
-[:find ?price
- :in $ ?as-of
- :where [?stock :stock/price ?price]
- :as-of ?as-of]
-```
-
-Or extract time components:
+Every fact is timestamped. Historical state is read through a database handle. `d.AsOf(elementID)` reads the state as of a commit. `d.History()` reads every datom. Both are shown under History Queries below. A query extracts time components:
 
 ```go
 [:find ?stock (max ?price)
@@ -326,17 +317,19 @@ asOf.Query(`[:find ?name :where [_ :user/name ?name]]`)
 When you need scoped aggregations:
 
 ```go
-[:find ?date ?symbol ?daily-max
+[:find ?symbol ?date ?daily-max
  :where [?s :symbol/ticker ?symbol]
+        [?b :bar/symbol ?s]
+        [?b :bar/date ?date]
         [(q [:find (max ?high)
              :in $ ?sym ?d
              :where [?bar :bar/symbol ?sym]
                     [?bar :bar/date ?d]
                     [?bar :bar/high ?high]]
-            ?s ?date) [[?daily-max]]]]
+            $ ?s ?date) [[?daily-max]]]]
 ```
 
-The `q` function runs a sub-query with its own `:find` and `:where` clauses. Results bind to the outer query.
+The `q` function runs a sub-query with its own `:find` and `:where` clauses. The call passes `$` and the inputs the inner `:in` declares, and the results join the outer query under the binding.
 
 ### Multi-Source Queries
 
@@ -579,19 +572,11 @@ See [docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md) for complete do
 
 ## What Makes Janus Different
 
-### Pure Relational Algebra
+### Relational Algebra, and a Fixpoint Only for Rules
 
-Most Datalog engines use semi-naive evaluation or magic sets transformation. Janus uses **pure relational algebra** – just projection (π), selection (σ), and joins (⋈).
+A query with no rule invocation compiles to projection (π), selection (σ), and joins (⋈), and nothing else. It is one sequence of relational operations, which the planner orders and the executor streams. Recursion enters only through a rule set passed as `%`. There each stratum iterates to a fixpoint, semi-naively. An invocation with a bound argument is rewritten by magic sets, so it derives only what the binding reaches. The fixpoint sits on the same algebra. Each iteration plans and runs a rule body as a query of its own.
 
-This means:
-- Simpler implementation (10× less code)
-- Easier to understand and debug
-- Proven performance characteristics
-- No specialized evaluation strategies
-
-Every query compiles to a sequence of relational operations. No magic, just algebra.
-
-See [RELATIONAL_ALGEBRA_OVERVIEW.md](RELATIONAL_ALGEBRA_OVERVIEW.md) for the complete story, or [docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md](docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md) for the research paper proposal.
+See [RELATIONAL_ALGEBRA_OVERVIEW.md](RELATIONAL_ALGEBRA_OVERVIEW.md) for the algebra, [docs/reference/RULES.md](docs/reference/RULES.md) for the fixpoint, or [docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md](docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md) for the research paper proposal on the non-recursive core.
 
 ### Greedy Planning Without Statistics
 
@@ -1000,7 +985,7 @@ Janus has produced several research-worthy contributions. Five paper proposals/o
 
 ### Paper Proposals
 
-3. **[Pure Relational Algebra](docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md)** - Implementing Datalog with only π, σ, ⋈ (no semi-naive evaluation)
+3. **[Pure Relational Algebra](docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md)** - Implementing Datalog's non-recursive core with only π, σ, ⋈
 4. **[Functional Streaming](docs/papers/PAPER_PROPOSAL_3_FUNCTIONAL_STREAMING.md)** - Applying lazy evaluation and immutability to query execution
 
 See [docs/papers/README.md](docs/papers/README.md) for complete details.
@@ -1013,7 +998,7 @@ See [docs/papers/README.md](docs/papers/README.md) for complete details.
 
 - **[docs/reference/QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md)** - Go-native query builder (recommended)
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design decisions
-- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Feature comparison (~80% compatibility)
+- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Feature comparison (~90% compatibility)
 - **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Complete documentation guide
 
 ### Deep Dives
@@ -1031,7 +1016,7 @@ See [docs/papers/README.md](docs/papers/README.md) for complete details.
 
 ## Examples
 
-See [`examples/README.md`](examples/README.md) for the full list of 14 examples with a suggested learning path. Start with:
+See [`examples/README.md`](examples/README.md) for the full list of 15 examples with a suggested learning path. Start with:
 
 ```bash
 go run -tags example examples/getting_started.go
@@ -1040,15 +1025,17 @@ go run -tags example examples/getting_started.go
 ## Running Tests
 
 ```bash
-# All tests
-go test ./...
+# The full gate: the native suite, the examples compile check, and the js/wasm contracts
+make test
 
-# Specific package
+# Specific package, for iteration
 go test ./datalog/executor -v
 
 # With coverage
 go test ./... -cover
 ```
+
+`go test ./...` alone runs the native suite only. The `examples/` files are each a `package main` behind the `example` build tag, so only `make test-examples` compiles them. `make test-wasm` runs the js/wasm contracts.
 
 Test suite includes:
 - Unit tests for all core components
@@ -1063,7 +1050,7 @@ We welcome contributions! Here's how to get started:
 1. **Understand the architecture**: Read [CLAUDE.md](CLAUDE.md) and [ARCHITECTURE.md](ARCHITECTURE.md)
 2. **Check the roadmap**: See [TODO.md](TODO.md) for current priorities
 3. **Review performance lessons**: Read [PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)
-4. **Run the tests**: `go test ./...` should pass
+4. **Run the tests**: `make test` should pass
 5. **Follow Go idioms**: Simple functions over complex abstractions
 
 **Areas where we'd love help:**
@@ -1077,7 +1064,7 @@ We welcome contributions! Here's how to get started:
 
 ## Datomic Compatibility
 
-Janus implements **~80% of Datomic's feature set** (weighted by typical usage), focusing on the most commonly used features:
+Janus implements **~90% of Datomic's feature set** (weighted by typical usage), focusing on the most commonly used features:
 
 **Implemented:**
 - Core queries: Patterns, joins, variables
@@ -1095,8 +1082,10 @@ Janus implements **~80% of Datomic's feature set** (weighted by typical usage), 
 - Go-specific: Struct reflection API, QueryInto for typed results
 
 **Not implemented:**
+- Transaction functions
+- Entity API (navigation), superseded by the Pull API
 - Full-text search
-- Distributed transactions
+- Distributed queries (single-node only)
 
 See [DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md) for the complete compatibility matrix.
 
@@ -1115,7 +1104,7 @@ See [TODO.md](TODO.md) for roadmap and [PERFORMANCE_STATUS.md](PERFORMANCE_STATU
 These principles guided Janus's development:
 
 1. **Correctness First** - Better to fail explicitly than succeed surprisingly
-2. **Simple > Complex** - Pure relational algebra over specialized strategies
+2. **Simple > Complex** - Relational algebra for every query, and a fixpoint only for rules
 3. **Predictable > Optimal** - Greedy planning without statistics surprises
 4. **Debug-Friendly** - Human-readable keys, explicit errors, clear traces
 5. **Production-Ready** - Real workloads, measured performance, comprehensive tests

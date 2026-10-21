@@ -62,7 +62,7 @@ func TestParseExpressionBindings(t *testing.T) {
 			expr := expressionAt(t, q.Where[c.clause])
 			assert.Equal(t, c.binding, expr.Binding)
 
-			formatted := FormatQuery(q)
+			formatted := q.String()
 			assert.Contains(t, formatted, expr.String(), "the clause renders as written")
 			reparsed, err := ParseQuery(formatted)
 			require.NoError(t, err, "the rendering parses:\n%s", formatted)
