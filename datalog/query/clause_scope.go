@@ -385,3 +385,25 @@ func ValidateInputShapes(in []InputSpec) error {
 	}
 	return nil
 }
+
+// ValidateRulesInput refuses the first clause of where that uses the query's
+// % in the query's own scope, as RulesUse finds it, when in declares no %
+// input: a rule invocation names the rule set it resolves against, and a
+// subquery call passing % through names the rule set it passes. A subquery
+// body's invocations use the inner query's %, checked when that query is.
+// ParseQuery, qb.Build and Prepare each run it, so the three boundaries
+// refuse the shape with one message.
+func ValidateRulesInput(in []InputSpec, where []Clause) error {
+	for _, spec := range in {
+		if _, ok := spec.(RulesInput); ok {
+			return nil
+		}
+	}
+	switch use := RulesUse(where).(type) {
+	case *RuleInvocation:
+		return fmt.Errorf("rule invocation %s requires %% in :in, the rule set the invocation resolves against", use)
+	case *SubqueryPattern:
+		return fmt.Errorf("subquery %s passes %% through and requires %% in :in, the rule set it passes", use)
+	}
+	return nil
+}

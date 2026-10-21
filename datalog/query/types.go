@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -346,13 +345,6 @@ type Query struct {
 	OrderBy      []OrderByClause // Optional ordering of results
 	Limit        *int            // Optional cap on result tuples (nil = unbounded); applied after OrderBy and aggregation
 	ScalarReturn bool            // If true, return scalar value (find spec ends with .)
-
-	// rosters is what the query names, the rosters DefaultSourceAttributes,
-	// DefaultSourceAttributeVariables and SourceAttributes return, collected in
-	// one walk on the first call of any of them. A parsed query is immutable
-	// and serves every execution of its text, so the walk runs once.
-	rostersOnce sync.Once
-	rosters     *attributeRoster
 }
 
 // SingleDataPattern returns the sole data pattern in a physical query fragment.

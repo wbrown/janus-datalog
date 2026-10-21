@@ -108,6 +108,13 @@ type Database struct {
 	// not block or touch the database.
 	onDrainWait func()
 
+	// onInstallLock, if set, is invoked by SetSchema when it is about to take
+	// schemaInstallMu, after its refusals and before anything is recorded.
+	// Test-only (nil in production); lets a test know a call has reached the
+	// install, so a call it holds inside one can be released once another is
+	// queued behind it. It must not block or touch the database.
+	onInstallLock func()
+
 	// Rollback (TruncateTo) coordination: rollbackInProgress and drainCond are guarded by
 	// mu (drainCond signals the rollback's drain as activeTx shrinks); rollbackMu
 	// serializes one rollback against another.
@@ -195,6 +202,11 @@ type DatabaseOptions struct {
 //	    Path: "/path/to/db",
 //	})
 func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
+	if opts.Schema != nil {
+		if err := engineWordRedeclared(opts.Schema); err != nil {
+			return nil, err
+		}
+	}
 	var store Store
 	var encoder *BinaryKeyEncoder
 	// ownsStore is true only when this constructor opened the backend. Injected
@@ -333,7 +345,8 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		d.removePath = opts.Path
 	}
 	d.drainCond = sync.NewCond(&d.mu)
-	d.installed.Store(&installedSchema{})
+	// The engine's schema is in force from construction, before any install.
+	d.installed.Store(&installedSchema{effective: engineSchema})
 
 	// The store's definitions are read, a given schema declared into them, and
 	// the schema the database runs with composed from what the store states.
@@ -354,8 +367,9 @@ func (d *Database) Schema() schema.SchemaProvider {
 // schema the database runs with is composed from both. A nil s withdraws the
 // given schema, and the database runs with the store's definitions and what
 // the ops of the other attributes infer; a database that refuses unknown
-// attributes keeps a schema to check against and refuses nil before anything
-// changes, so a refused call leaves the given schema as it was.
+// attributes keeps a schema to check against and refuses nil, and a schema
+// declaring an engine word is refused, each before anything changes, so a
+// refused call leaves the given schema as it was.
 // Schema changes take effect for new transactions. A read-only temporal
 // handle has no store of its own to assert into and is refused.
 func (d *Database) SetSchema(s schema.SchemaProvider) error {
@@ -364,6 +378,14 @@ func (d *Database) SetSchema(s schema.SchemaProvider) error {
 	}
 	if s == nil && d.refuseUnknown {
 		return errRefuseUnknownNeedsSchema
+	}
+	if s != nil {
+		if err := engineWordRedeclared(s); err != nil {
+			return err
+		}
+	}
+	if d.onInstallLock != nil {
+		d.onInstallLock()
 	}
 	d.schemaInstallMu.Lock()
 	defer d.schemaInstallMu.Unlock()
@@ -727,12 +749,10 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 	}
 }
 
-// NewExecutor creates a new query executor that uses the database's plan cache
-// and the database's registered annotation handler.
+// NewExecutor creates a new query executor under the database's effective
+// options, with its plan cache and its registered annotation handler.
 func (d *Database) NewExecutor() *executor.Executor {
-	opts := d.effectivePlannerOptions()
-	opts.Cache = d.planCache // Use database's cache
-	return executor.NewExecutorWithOptions(d.matcherWithExecOptions(opts), d, opts)
+	return d.NewExecutorWithOptions(d.effectivePlannerOptions())
 }
 
 // NewExecutorWithOptions creates a new query executor with custom planner
@@ -742,9 +762,12 @@ func (d *Database) NewExecutor() *executor.Executor {
 // matcherWithExecOptions, so the executor and the matcher's relations agree on
 // the effective options — including opts.Handler, which reaches every relation
 // either constructs — and schema, cache, and temporal mode (AsOf/History) are
-// all applied.
+// all applied. A database that refuses unknown attributes has the executor's
+// plans carry their rosters, which the check at the executor's entry reads
+// against its schema.
 func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor.Executor {
 	opts.Cache = d.planCache
+	opts.CollectRosters = opts.CollectRosters || d.refuseUnknown
 	matcher := d.matcherWithExecOptions(opts)
 	return executor.NewExecutorWithOptions(matcher, d, opts)
 }
@@ -762,9 +785,7 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.PatternMatcher {
 	matcher := NewPatternMatcherWithOptions(d.store, executor.ExecutorOptionsFromPlanner(opts))
 	matcher.builderCache = d.builderCache
-	if effective := d.installed.Load().effective; effective != nil {
-		matcher.SetSchema(effective)
-	}
+	matcher.SetSchema(d.installed.Load().effective)
 	matcher.refuseUnknown = d.refuseUnknown
 	if d.cache != nil {
 		matcher.SetCache(d.cache)
@@ -894,6 +915,19 @@ func buildSourceMap(
 		sources[datalog.SymDollar] = dbMatcher
 	}
 	return sources
+}
+
+// anySourceRefusesUnknownAttributes reports whether a source of the map
+// refuses attributes its schema does not declare, each asked as it answers
+// for itself as $, as the router asks it. A plan for a query over such
+// sources carries its roster, which the check at the executor's entry reads.
+func anySourceRefusesUnknownAttributes(sources map[query.Symbol]executor.PatternMatcher) bool {
+	for _, source := range sources {
+		if v, ok := source.(executor.AttributeVocabulary); ok && v.RefusesUnknownAttributes(datalog.SymDollar) {
+			return true
+		}
+	}
+	return false
 }
 
 // validateQuerySources checks that all sources declared in the query's :in clause
@@ -1650,6 +1684,11 @@ type Transaction struct {
 	txTime            *time.Time                          // Optional custom transaction time
 	lastVectorElement map[entityAttrKey]datalog.ElementID // Track last appended element per (E,A) for RGA chaining
 	doomed            bool                                // born during a rollback; its writes return ErrRollbackInProgress
+	// engine marks a transaction the engine opened for its own writes, the
+	// schema's facts (assertSchemaFacts), a snapshot's marker (Snapshot,
+	// DeleteSnapshot) and a branch's record (Fork), which write the engine's
+	// words (validateAttributeStorable).
+	engine bool
 }
 
 // SetTime sets a custom transaction time for this transaction
@@ -1681,7 +1720,7 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return ErrRollbackInProgress
 	}
 
-	if err := validateAttributeStorable(a); err != nil {
+	if err := validateAttributeStorable(t, a); err != nil {
 		return err
 	}
 
@@ -1822,7 +1861,7 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 		return fmt.Errorf("transaction is closed")
 	}
 
-	if err := validateAttributeStorable(a); err != nil {
+	if err := validateAttributeStorable(t, a); err != nil {
 		return err
 	}
 
@@ -1959,20 +1998,21 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 	return nil
 }
 
-// toAnySlice converts a typed slice (e.g. []string, []int64) to []interface{}
-// using reflection. Returns the converted slice and true, or nil and false if
-// the value is not a slice.
-// validateAttributeStorable rejects attribute keywords whose UTF-8 form is too
-// long to store. The storage Attribute is a fixed [32]byte; a longer name would
-// be silently truncated and alias other attributes sharing its first 32 bytes
-// (see datalog.MaxAttributeBytes). Rejecting at write/schema time turns that
-// silent corruption into a clear error.
-func validateAttributeStorable(a datalog.Keyword) error {
+// validateAttributeStorable rejects an attribute t may not write: a keyword
+// whose UTF-8 form is too long to store, since the storage Attribute is a
+// fixed [32]byte and a longer name would be silently truncated and alias
+// other attributes sharing its first 32 bytes (see datalog.MaxAttributeBytes);
+// and, for any transaction but one the engine opened for its own writes, one
+// of the engine's words (engineSchema), which the engine alone writes.
+func validateAttributeStorable(t *Transaction, a datalog.Keyword) error {
 	if a == nil {
 		return fmt.Errorf("nil attribute")
 	}
 	if n := len(a.String()); n > datalog.MaxAttributeBytes {
 		return fmt.Errorf("attribute %q is %d bytes, exceeds the %d-byte storage limit", a.String(), n, datalog.MaxAttributeBytes)
+	}
+	if !t.engine && engineSchema.GetAttribute(a) != nil {
+		return fmt.Errorf("attribute %s is the engine's: the engine alone writes it", a)
 	}
 	return nil
 }
@@ -1989,6 +2029,9 @@ func memberKey(v interface{}) string {
 	return string(append([]byte{byte(datalog.Type(v))}, datalog.ValueBytes(v)...))
 }
 
+// toAnySlice converts a typed slice (e.g. []string, []int64) to []interface{}
+// using reflection. Returns the converted slice and true, or nil and false if
+// the value is not a slice.
 func toAnySlice(v interface{}) ([]interface{}, bool) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Slice {
@@ -2017,7 +2060,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return fmt.Errorf("transaction is closed")
 	}
 
-	if err := validateAttributeStorable(a); err != nil {
+	if err := validateAttributeStorable(t, a); err != nil {
 		return err
 	}
 
@@ -2356,7 +2399,7 @@ func (t *Transaction) Retract(e datalog.Identity, a datalog.Keyword, v interface
 		return ErrRollbackInProgress
 	}
 
-	if err := validateAttributeStorable(a); err != nil {
+	if err := validateAttributeStorable(t, a); err != nil {
 		return err
 	}
 
@@ -2544,9 +2587,6 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		uniqueAttrsWritten := make(map[Attribute]bool)
 		sch := t.db.Schema()
 		checkUnique := func(a datalog.Keyword, aBytes Attribute) {
-			if sch == nil || !sch.HasSchema() {
-				return
-			}
 			if sch.GetAttribute(a).HasUniqueConstraint() {
 				uniqueAttrsWritten[aBytes] = true
 			}
@@ -3260,8 +3300,9 @@ func entryToValue(entry *CacheEntry, valueType datalog.Keyword) interface{} {
 // resolution.
 //
 // Two paths:
-//   - With schema: enumerate the schema's attributes and resolve each
-//   - Without schema: scan EAVT to discover the entity's attributes, then resolve
+//   - With declarations beyond the engine's words (declaredWildcardAttributes):
+//     enumerate them and resolve each
+//   - Without: scan EAVT to discover the entity's attributes, then resolve
 //
 // Both paths delegate the per-attribute resolution to ResolveEntityAttributes,
 // which handles cache-aware and cache-less modes uniformly. Per the codebase
@@ -3274,12 +3315,10 @@ func entryToValue(entry *CacheEntry, valueType datalog.Keyword) interface{} {
 //   - CardinalityMany: []interface{} (add-wins set)
 //   - CardinalityVector: []interface{} (RGA ordered list)
 func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Keyword]interface{}, error) {
-	// If schema exists, enumerate schema attributes.
-	if s := d.Schema(); s != nil && s.HasSchema() {
-		attrs := s.Attributes()
-		keywords := make([]datalog.Keyword, len(attrs))
-		for i, def := range attrs {
-			keywords[i] = def.Ident
+	if declared := d.declaredWildcardAttributes(); declared != nil {
+		keywords := make([]datalog.Keyword, 0, len(declared))
+		for attr := range declared {
+			keywords = append(keywords, attr)
 		}
 		return d.ResolveEntityAttributes(entity, keywords)
 	}

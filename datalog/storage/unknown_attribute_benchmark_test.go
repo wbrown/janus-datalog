@@ -23,7 +23,7 @@ import (
 func BenchmarkUnknownAttributeCheck(b *testing.B) {
 	const declared = `[:find ?v :where [?e :t/string ?v]]`
 	const declaredInSubquery = `[:find ?e ?n :where [?e :t/string ?v] [(q [:find (count ?x) :in $ ?e :where [?e :t/string ?x]] $ ?e) [[?n]]]]`
-	const declaredThroughRules = `[:find ?e :in $ % :where [(ground :t/string) ?a] (or-join [?e] (held ?a ?e) [?e :t/string _])]`
+	const declaredThroughRules = `[:find ?e :in $ % :where [(ground :t/string) ?a] (or-join [[?a] ?e] (held ?a ?e) [?e :t/string _])]`
 	const requiringRules = `[[(held [?a] ?e) [?e ?a _]]]`
 	const undeclared = `[:find ?v :where [?e :t/loose ?v]]`
 	cases := []struct {
@@ -69,7 +69,7 @@ func BenchmarkUnknownAttributeCheck(b *testing.B) {
 			}
 
 			b.Run("check/"+backend.Name+"/"+c.name, func(b *testing.B) {
-				benchmarkCheck(b, db, q, rules, c.refused)
+				benchmarkCheck(b, db, q, rules, inputs, c.refused)
 			})
 			b.Run("query/"+backend.Name+"/"+c.name, func(b *testing.B) {
 				benchmarkQuery(b, db, q, inputs, c.refused)
@@ -78,13 +78,23 @@ func BenchmarkUnknownAttributeCheck(b *testing.B) {
 	}
 }
 
-// benchmarkCheck times the matcher's check alone on the attributes q names
-// under rules, which refuses q when refused is set and accepts it otherwise.
-func benchmarkCheck(b *testing.B, db *Database, q *query.Query, rules *query.RuleSet, refused bool) {
+// benchmarkCheck times the matcher's check alone on the roster q's plan
+// carries under rules, made once ahead of the loop, which refuses q when
+// refused is set and accepts it otherwise. A database that refuses nothing
+// makes a plan carrying no roster, and its check reads none.
+func benchmarkCheck(b *testing.B, db *Database, q *query.Query, rules *query.RuleSet, inputs []interface{}, refused bool) {
 	matcher := db.Matcher().(*PatternMatcher)
+	plan, err := db.Explain(q, inputs...)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var attrs []datalog.Keyword
+	if plan.Rosters != nil {
+		attrs = plan.Rosters.DefaultSourceAttributes(rules)
+	}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		err := matcher.UnknownAttributes(datalog.SymDollar, q.DefaultSourceAttributes(rules))
+		err := matcher.UnknownAttributes(datalog.SymDollar, attrs)
 		if refused && err == nil {
 			b.Fatal("the check accepted a query it refuses")
 		}

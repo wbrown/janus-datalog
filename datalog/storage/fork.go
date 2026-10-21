@@ -70,6 +70,7 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 		return nil, fmt.Errorf("Fork: snapshot name must not be empty")
 	}
 	tx := d.NewTransaction()
+	tx.engine = true
 	committed := false
 	defer func() {
 		if !committed {

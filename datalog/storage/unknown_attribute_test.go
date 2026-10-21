@@ -126,12 +126,13 @@ func TestQueryRefusesUnknownAttributeInDatabaseFunctions(t *testing.T) {
 	}
 }
 
-// The attribute an input binds to a variable in a pattern's attribute
-// position is refused at entry: bound through a scalar input, a collection
-// input, and a subquery's input, whose call passes the query's input to the
-// inner :in symbol standing in the attribute position, which the roster
-// records as the enclosing scope's attribute variable. The decision reads the
-// plan's roster and the execution's inputs.
+// The attribute an input binds to a variable that reaches a pattern's
+// attribute position is refused at entry: bound through a scalar input, a
+// collection input, a subquery's input, whose call passes the query's input
+// to the inner :in symbol standing in the attribute position, an identity
+// expression aliasing the input into the position, and an invocation passing
+// the input at a position the rule set reads as an attribute. The decision
+// reads the plan's roster and the execution's inputs.
 func TestQueryRefusesUnknownAttributeBoundThroughInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -149,6 +150,27 @@ func TestQueryRefusesUnknownAttributeBoundThroughInput(t *testing.T) {
 			// scope's attribute variable, so the entry decides it.
 			_, err = d.Query(`[:find ?v :in $ ?a :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`, attr)
 			requireUnknown(t, err, attr)
+
+			_, err = d.Query(`[:find ?v :in $ ?in :where [(identity ?in) ?a] [?e ?a ?v]]`, attr)
+			requireUnknown(t, err, attr)
+
+			_, err = d.Query(`[:find ?e :in $ % ?a :where (has ?e ?a)]`, mustRuleSet(t, `[[(has ?e ?a) [?e ?a _]]]`), attr)
+			requireUnknown(t, err, attr)
+		})
+	}
+}
+
+// An input sharing the name of a variable a branch reads in the attribute
+// position outside the form's header is not that variable: the branch's is
+// its own, the input reaches no attribute position, and the query answers
+// every entity the branches admit.
+func TestQueryRunsAnInputSharingABranchLocalsName(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d, tagged, untagged := taggedPair(t, mode)
+			requireSameEntities(t, []datalog.Identity{tagged, untagged},
+				queriedEntities(t, d, `[:find ?e :in $ ?a :where [?e :t/n _] (or-join [?e] [?e ?a _] [?e :t/tag :t/none])]`, kw(":t/strnig")),
+				"the branch's ?a is its own, so the input reaches no attribute position and the branch reads every attribute")
 		})
 	}
 }
@@ -315,6 +337,24 @@ func TestQueryRefusesUnknownAttributeAtARequiredPositionInsideABranch(t *testing
 	}
 }
 
+// A keyword passed at a predicate's position reaches no attribute position
+// when the body reads the head symbol at that position as a value and a
+// branch reads a variable of the same name in the attribute position outside
+// the form's header: the branch's variable is its own, so the keyword is a
+// value, and the invocation answers the entities carrying it.
+func TestQueryRunsAKeywordPassedToABranchLocalsPosition(t *testing.T) {
+	const rules = `[[(r ?e ?a) [?e :t/tag ?a] (or-join [?e] [?e ?a _] [?e :t/n _])]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d, tagged, _ := taggedPair(t, mode)
+			requireSameEntities(t, nil, queriedEntities(t, d, `[:find ?e :in $ % :where (r ?e :t/strnig)]`, mustRuleSet(t, rules)),
+				"no entity's :t/tag is :t/strnig, and the keyword reaches no attribute position")
+			requireSameEntities(t, []datalog.Identity{tagged}, queriedEntities(t, d, `[:find ?e :in $ % :where (r ?e :t/kind)]`, mustRuleSet(t, rules)),
+				"the tagged entity's :t/tag is :t/kind")
+		})
+	}
+}
+
 // An or's branches unify with the enclosing query on every variable they
 // share with it, so a ground outside the form binds a branch's attribute
 // variable: a declared keyword reads the one entity carrying it, and a typo
@@ -364,34 +404,42 @@ func TestQueryBindsAOneBranchVariableOfAnOrFromTheEnclosingQuery(t *testing.T) {
 
 // A literal keyword reaches a pattern's attribute position through a variable
 // the clause text binds: a ground or identity expression in the query, a
-// constant argument of an invocation at a position the predicate reads as an
-// attribute, directly or through a body invocation, a ground bound to a
-// variable passed at such a position, or a ground inside a rule body. Each is
-// refused as the same literal in a pattern is.
+// constant argument of a subquery call whose inner input stands in the
+// position, a constant argument of an invocation at a position the predicate
+// reads as an attribute, directly, through a body invocation or through a
+// body's subquery call whose inner input stands in the position, a ground
+// bound to a variable passed at such a position, or a ground inside a rule
+// body. Each is refused as the same literal in a pattern is.
 func TestQueryRefusesUnknownAttributeReachingThroughABinding(t *testing.T) {
-	const rules = `[[(has ?e ?a) [?e ?a _]]
-	                [(has2 ?e ?a) (has ?e ?a)]
-	                [(typo ?e) [(ground :t/strnig) ?a] [?e ?a _]]]`
+	// Each rules case runs under a rule set whose bodies name no unknown
+	// attribute of their own, so the refusal is the case's; the typo rule's
+	// body is the one body naming :t/strnig, and only its case carries it.
+	const reading = `[[(has ?e ?a) [?e ?a _]]
+	                  [(has2 ?e ?a) (has ?e ?a)]
+	                  [(viacall [?a] ?e) [?e :t/string _] [(q [:find ?v :in $ ?x ?y :where [?x ?y ?v]] $ ?e ?a) [[?v] ...]]]]`
+	const grounding = `[[(typo ?e) [(ground :t/strnig) ?a] [?e ?a _]]]`
 	cases := []struct {
 		name  string
 		text  string
-		rules bool
+		rules string
 	}{
-		{"ground", `[:find ?v :where [(ground :t/strnig) ?a] [?e ?a ?v]]`, false},
-		{"ground vector", `[:find ?e :where [(ground [:t/strnig :t/x]) [?a ?b]] [?e ?a ?b]]`, false},
-		{"identity", `[:find ?v :where [(identity :t/strnig) ?a] [?e ?a ?v]]`, false},
-		{"invocation constant", `[:find ?e :in $ % :where (has ?e :t/strnig)]`, true},
-		{"invocation constant through a body invocation", `[:find ?e :in $ % :where (has2 ?e :t/strnig)]`, true},
-		{"ground into an invocation", `[:find ?e :in $ % :where [(ground :t/strnig) ?a] (has ?e ?a)]`, true},
-		{"ground inside a rule body", `[:find ?e :in $ % :where (typo ?e)]`, true},
+		{"ground", `[:find ?v :where [(ground :t/strnig) ?a] [?e ?a ?v]]`, ""},
+		{"ground vector", `[:find ?e :where [(ground [:t/strnig :t/x]) [?a ?b]] [?e ?a ?b]]`, ""},
+		{"identity", `[:find ?v :where [(identity :t/strnig) ?a] [?e ?a ?v]]`, ""},
+		{"subquery call constant", `[:find ?v :where [?e :t/string _] [(q [:find ?v :in $ ?attr :where [?x ?attr ?v]] $ :t/strnig) [[?v] ...]]]`, ""},
+		{"invocation constant", `[:find ?e :in $ % :where (has ?e :t/strnig)]`, reading},
+		{"invocation constant through a body invocation", `[:find ?e :in $ % :where (has2 ?e :t/strnig)]`, reading},
+		{"invocation constant through a body's subquery call", `[:find ?e :in $ % :where (viacall :t/strnig ?e)]`, reading},
+		{"ground into an invocation", `[:find ?e :in $ % :where [(ground :t/strnig) ?a] (has ?e ?a)]`, reading},
+		{"ground inside a rule body", `[:find ?e :in $ % :where (typo ?e)]`, grounding},
 	}
 	for _, mode := range optimizerModes {
 		for _, c := range cases {
 			t.Run(mode.name+"/"+c.name, func(t *testing.T) {
 				d, _ := refusingDB(t, mode)
 				var inputs []interface{}
-				if c.rules {
-					inputs = append(inputs, mustRuleSet(t, rules))
+				if c.rules != "" {
+					inputs = append(inputs, mustRuleSet(t, c.rules))
 				}
 				_, err := d.Query(c.text, inputs...)
 				requireUnknown(t, err, kw(":t/strnig"))
@@ -568,6 +616,25 @@ func TestNamedSourceDatabaseRefusesUnknownAttribute(t *testing.T) {
 	}
 }
 
+// A query's plan carries its roster when a source the query runs over refuses
+// unknown attributes, whichever source it is: the sources are asked as the
+// router asks them, each as $, and a source without the capability refuses
+// nothing.
+func TestAnySourceRefusesUnknownAttributes(t *testing.T) {
+	mode := optimizerModes[0]
+	refusing, _ := refusingDB(t, mode)
+	plain := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
+	memory := executor.NewMemoryPatternMatcher(nil)
+	other := datalog.NewSymbol("$other")
+
+	require.False(t, anySourceRefusesUnknownAttributes(map[query.Symbol]executor.PatternMatcher{datalog.SymDollar: plain.Matcher(), other: memory}),
+		"a plain database and a matcher without the capability refuse nothing")
+	require.True(t, anySourceRefusesUnknownAttributes(map[query.Symbol]executor.PatternMatcher{datalog.SymDollar: refusing.Matcher(), other: memory}),
+		"the database at $ refuses")
+	require.True(t, anySourceRefusesUnknownAttributes(map[query.Symbol]executor.PatternMatcher{datalog.SymDollar: plain.Matcher(), other: refusing}),
+		"a refusing named source refuses where the database at $ does not")
+}
+
 func TestQueryWithoutRefusalOptionIsNotChecked(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -584,47 +651,38 @@ func TestQueryWithoutRefusalOptionIsNotChecked(t *testing.T) {
 	}
 }
 
-// A database opened without the option collects no roster, so a fresh parsed
-// query allocates what one whose roster was collected beforehand allocates.
+// A database opened without the option collects no roster: the plan it makes
+// carries none, where the plan a refusing database makes for the same text
+// carries the attributes the text names.
 func TestQueryWithoutRefusalOptionCollectsNoRoster(t *testing.T) {
-	const text = `[:find ?n :where [?e :p/name ?n] [?e :p/age ?a] (not [?e :p/x _]) [(get-else $ ?e :p/y "z") ?w]]`
-	for _, algebra := range []struct {
-		name string
-		on   bool
-	}{{"algebra_on", true}, {"algebra_off", false}} {
-		t.Run(algebra.name, func(t *testing.T) {
-			popts := DefaultPlannerOptions()
-			popts.EnableAlgebraOptimizer = algebra.on
-			d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory-trees", PlannerOptions: &popts})
+	const text = `[:find ?n :where [?e :t/string ?n] (not [?e :t/long _]) [(get-else $ ?e :t/double 0.0) ?w]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			plain := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
+			plan, err := plain.Explain(text)
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, d.Close()) })
-			person := datalog.NewIdentity("p:1")
-			tx := d.NewTransaction()
-			require.NoError(t, tx.Add(person, kw(":p/name"), "alice"))
-			require.NoError(t, tx.Add(person, kw(":p/age"), int64(30)))
-			_, err = tx.Commit()
-			require.NoError(t, err)
+			require.Nil(t, plan.Rosters, "a database that refuses nothing collects no roster")
 
-			fresh := queryExecutionAllocs(t, d, text, false)
-			collected := queryExecutionAllocs(t, d, text, true)
-			require.Equal(t, collected, fresh, "with the option off, executing a query collects no roster")
+			refusing, _ := refusingDB(t, mode)
+			plan, err = refusing.Explain(text)
+			require.NoError(t, err)
+			require.NotNil(t, plan.Rosters, "a refusing database's plan carries the roster the check reads")
+			require.Equal(t, []datalog.Keyword{kw(":t/string"), kw(":t/long"), kw(":t/double")}, plan.Rosters.DefaultSourceAttributes(nil))
 		})
 	}
 }
 
 // queryExecutionAllocs returns the allocations one execution of text makes on
 // d with the inputs given, each run on a query parsed ahead of the
-// measurement, its rosters collected ahead of it too when collected is set.
-func queryExecutionAllocs(t *testing.T, d *Database, text string, collected bool, inputs ...interface{}) float64 {
+// measurement. AllocsPerRun runs once unmeasured first, so every measured run
+// executes a plan the cache holds.
+func queryExecutionAllocs(t *testing.T, d *Database, text string, inputs ...interface{}) float64 {
 	t.Helper()
 	const runs = 20
 	queries := make([]*query.Query, 0, runs+1)
 	for i := 0; i <= runs; i++ {
 		q, err := parser.ParseQuery(text)
 		require.NoError(t, err)
-		if collected {
-			q.DefaultSourceAttributes(nil)
-		}
 		queries = append(queries, q)
 	}
 	next := 0
@@ -641,11 +699,12 @@ func queryExecutionAllocs(t *testing.T, d *Database, text string, collected bool
 	})
 }
 
-// A refusing database collects every roster a parsed query names once, on
-// the query's first execution, so with the rosters collected ahead an
-// execution on it allocates what the same execution allocates on a database
-// without the option: for a query naming attributes on the default source,
-// one naming them on a named source, and one naming them in a subquery body.
+// A refusing database collects the rosters a query names once, with the
+// query's plan, so an execution on a plan the cache holds reads them and
+// allocates what the same execution allocates on a database without the
+// option: for a query naming attributes on the default source, one naming
+// them on a named source, one naming them in a subquery body, and one holding
+// a headerless form, whose preparation rewrites it on every execution.
 func TestQueryWithRefusalOptionCollectsRostersOnce(t *testing.T) {
 	for _, algebra := range []struct {
 		name string
@@ -674,13 +733,14 @@ func TestQueryWithRefusalOptionCollectsRostersOnce(t *testing.T) {
 				{"default source", `[:find ?v :where [?e :t/string ?v]]`},
 				{"named source", `[:find ?v :in $ $other :where [$other ?e :t/string ?v]]`},
 				{"subquery body", `[:find ?e ?n :where [?e :t/string ?v] [(q [:find (count ?x) :in $ ?e :where [?e :t/long ?x]] $ ?e) [[?n]]]]`},
+				{"headerless form", `[:find ?v :where [?e :t/string ?v] (not [?e :t/long _])]`},
 			} {
 				t.Run(shape.name, func(t *testing.T) {
-					collected := queryExecutionAllocs(t, refusing, shape.text, true,
+					collected := queryExecutionAllocs(t, refusing, shape.text,
 						WithSources(map[datalog.Symbol]executor.PatternMatcher{other: refusingOther}))
-					baseline := queryExecutionAllocs(t, plain, shape.text, true,
+					baseline := queryExecutionAllocs(t, plain, shape.text,
 						WithSources(map[datalog.Symbol]executor.PatternMatcher{other: plainOther}))
-					require.Equal(t, baseline, collected, "with its rosters collected, an execution on a refusing database collects nothing more")
+					require.Equal(t, baseline, collected, "on a plan the cache holds, an execution on a refusing database reads its rosters and collects nothing")
 				})
 			}
 		})

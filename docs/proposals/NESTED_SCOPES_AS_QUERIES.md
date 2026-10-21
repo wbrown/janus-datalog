@@ -444,13 +444,15 @@ executor                         Relations  running
 
 `query.Prepare(q *Query, rules *RuleSet) (*Query, error)` takes a parsed
 query and the rule set bound to `%` and returns the query ready to plan. It
-composes the four static steps, each a function of the text and the rule
+composes the five static steps, each a function of the text and the rule
 set: `ValidateInputShapes` on `q.In`, `ValidateStaticClauseShapes` on
-`q.Where`, `InferHeaders`, and the check that a rule set was given when the
-query invokes a predicate and that every invocation names a predicate it
-defines at its arity. It runs once per execution,
+`q.Where`, `ValidateRulesInput` on both, the check that a clause using the
+query's own `%` has `%` declared in its `:in`, which `ParseQuery` and
+`qb.Build` run too, `InferHeaders`, and the check that a rule set was given
+when the query invokes a predicate and that every invocation names a
+predicate it defines at its arity. It runs once per execution,
 before planning, and its result is not held on the query. The alternative
-is each caller composing the four steps itself, four copies of one fact the
+is each caller composing the five steps itself, five copies of one fact the
 callers must agree on, under which two boundaries that compose the steps
 differently refuse different queries.
 
@@ -538,6 +540,21 @@ Both optimizer modes phase a prepared query. With the algebra engine on,
 the planner phases the clauses the decompiler returns. With it off, the
 planner phases the prepared clauses.
 
+The plan cache serves a plan under the prepared text, the positions the
+rule set requires of its invocations, the options that shape a plan, and
+the symbols bound when the plan was made, in one fixed order, and every
+plan enters it (goal 10 of `SCOPE_EXECUTION_AND_CONTRACTS.md`). The bound
+symbols reach a plan at two places, `planWithBindings` unioning them into
+the symbols the `:in` seeds and a non-empty set turning
+`EnableJoinProjectInsertion` off for the algebra bridge, so two plans made
+under one key are one plan. A scope's query and a rule body are planned
+under no bound symbol, so their plans are served under the text alone. The
+alternative is a plan made under a bound symbol kept out of the cache: the
+executor's entry binds a symbol for a relation input, and for a scalar,
+tuple or collection input whose relation is non-empty, so a query with a
+non-empty input would be planned on every execution, which goal 10
+excludes.
+
 ### 5.3 The algebra engine
 
 `algebra.Compile(q *query.Query, rules *query.RuleSet) (*Node, error)` takes
@@ -624,14 +641,19 @@ empty group standing beside it is a group the required run does not read.
 `scope` is the fourth of the engine's namespaces
 `RULES_WITNESSES_AND_SPECULATIVE_VALUES.md` §1.1 states, and its §1.3
 states the scheduling that leads with `scope/required`. The text carries
-the binding, so the plan caches under the text. Two alternatives are excluded. The required run as a
+the binding, and the scope is planned under no bound symbol, so its plan
+caches under the text alone (§5.2). Two alternatives are excluded. The required run as a
 `query.RelationInput` in the scope's `:in`:
 `executeRealizedWithRelationInputIteration` (`datalog/executor/executor.go`)
 runs a plan once per tuple of such an input, where a branch holding an
 invocation runs over the window with its fixpoint continued across the
 windows, one evaluation deriving each tuple once
 (`SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2). The required run as the
-planner's bound symbols, which keeps the plan out of the cache.
+planner's bound symbols: a bound symbol tells the planner that the symbol
+is bound and names no relation the run enters by, where the
+`scope/required` invocation is the clause the run enters through, the one
+the planner leads with and the one the magic rewrite reads the scope's
+plan less (`SCOPE_EXECUTION_AND_CONTRACTS.md` §4.1).
 
 The required run enters the scope as a relation:
 
@@ -779,11 +801,22 @@ The magic rewrite reads headers, and its order is the planner's:
 - The magic rule reads the planned clauses before the invocation.
 - The magic rule of an invocation inside a form's branch reads the body's
   planned clauses before the form and the branch's planned clauses before
-  the invocation. `passing.within` keeps the body's prefix alone, so the
-  design adds the branch's clauses to it, with the branch's locals renamed
-  apart from the body's variables: a local sharing a body variable's name
-  outside the header (§2.1) would otherwise unify with it and narrow the
-  magic set below what the adorned rule's guard needs.
+  the invocation, the branch entered as a scope of the rewrite as a
+  subquery's inner query is: the magic rule reads the branch's clauses
+  through a subquery over the header symbols the enclosing scope binds,
+  finding the invocation's bound variables the branch's clauses provide and
+  binding each to the name standing for it in the body, a local under a
+  fresh name, so a local sharing a body variable's name outside the header
+  (§2.1) never unifies with it. A bound variable the header alone binds
+  passes through under its own name, which the body's clauses bind, and a
+  branch whose clauses provide none of the invocation's bound variables
+  contributes no read, since a clause left out widens the magic set and
+  loses no tuple. The alternative is the branch's clauses appended to the
+  body's prefix under renamed locals, a rename of clauses the language has
+  no operation for, where a subquery scopes its inner variables by
+  construction; a local left under its own name would unify with the body's
+  variable and narrow the magic set below what the adorned rule's guard
+  needs.
 - A negation is not read, since it binds nothing, and a form is read with
   each negation at any depth left out.
 - A fallback form is read as the union of its branches over its header,
@@ -868,11 +901,18 @@ The magic rewrite reads headers, and its order is the planner's:
 The roster reads headers: an attribute variable inside a form is the form's
 own unless the header names it. The plan holds the roster the prepared text
 names under no rule set, collected once at planning, and the vocabulary
-check reads it there. The alternative is the roster held on the parsed
-`query.Query`, as `Query.collectRosters` (`datalog/query/attribute_names.go`)
-holds it under `rostersOnce`. `Prepare`'s result is not held on the query
-(§5.1), so a roster collected there reads headerless forms, where this
-roster reads headers. The keywords the query's invocations pass at positions
+check reads it there. The planner collects it under an option,
+`PlannerOptions.CollectRosters`, which a database sets for the executors it
+builds from whether a source the query runs over refuses unknown attributes,
+the database's own at `$` or a named one, so a plan over sources that refuse
+nothing carries none and costs no walk, which goal 7 of
+`SCOPE_EXECUTION_AND_CONTRACTS.md` asks of an option that is off; the option
+is part of the cache's key (§5.2). The alternative is the roster collected
+for every plan, a walk of the prepared text for every plan a database that
+refuses nothing makes. The alternative to the plan as the roster's home is
+the roster held on the parsed `query.Query`, collected once per query value.
+`Prepare`'s result is not held on the query (§5.1), so a roster collected
+there reads headerless forms, where this roster reads headers. The keywords the query's invocations pass at positions
 the rule set reads as attributes are read at the check through
 `RuleSet.invocationAttributes`, which maps the plan's invocation constants
 through the rule set's attribute positions on each execution. The rule
@@ -887,7 +927,7 @@ is the baseline goal 4 names.
 |---|---|---|
 | `query.ScopeOf` | computes a headerless form's interface from its branches | reads a header, with no headerless case |
 | `query.InferHeaders` | absent | the one computation of §2.3 |
-| `query.Prepare` | absent | the four static steps as one function, four callers |
+| `query.Prepare` | absent | the five static steps as one function, four callers |
 | `OrJoinClause` | `JoinVars` | `RequiredVars`, `OutputVars` |
 | planner gate | `inferenceFormDependsOnPendingProvider` over the pending closure | absent |
 | `algebra.Compile` | `Compile(q)`, with `compileOr`, `compileNot` and `compileOrDefault` taking keys from the fold's symbols, and `compileOr`'s correlated route from `ScopeOf` on the form | `Compile(q, rules)`, with three compilers for the header forms |

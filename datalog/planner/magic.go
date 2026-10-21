@@ -21,9 +21,13 @@ type Magic struct {
 }
 
 // Rewrite rewrites the set for an invocation of name whose positions bound
-// marks as bound, at least one of them. Each predicate the bindings reach
-// gets a copy adorned with its binding pattern whose rules are guarded by a
-// magic predicate holding the bindings the predicate is asked with. The
+// marks as bound. Each predicate the bindings reach gets a copy adorned with
+// its binding pattern whose rules are guarded by a magic predicate holding
+// the bindings the predicate is asked with. A root no position of which is
+// bound gets an unguarded copy and no seed, so its rules evaluate whole, and
+// the predicates with required positions its bodies reach are adorned from
+// the clauses before their invocations, one rewrite and one evaluation
+// deriving the predicate (NESTED_SCOPES_AS_QUERIES.md §5.5). The
 // bindings pass through each scope in the order the planner gives it, a
 // body under its head's bound positions, a branch under its form's header,
 // a not-join body under its header and a subquery's inner query under its
@@ -57,7 +61,12 @@ type Magic struct {
 // sees the plans the rewrite makes, as it sees the executor's.
 func Rewrite(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound []bool, handler annotations.Handler) (*Magic, error) {
 	predicate := query.AdornedSymbol(name, bound)
-	seed := query.MagicSymbol(name, bound)
+	var seed query.Symbol
+	var seeds []query.SeedPredicate
+	if query.CountBound(bound) > 0 {
+		seed = query.MagicSymbol(name, bound)
+		seeds = []query.SeedPredicate{{Name: seed, Arity: query.CountBound(bound)}}
+	}
 	excluded := map[nonMonotoneSite]bool{}
 	for {
 		w := &magicRewriter{
@@ -76,7 +85,7 @@ func Rewrite(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound []bool,
 				return nil, err
 			}
 		}
-		rewritten, err := query.NewSeededRuleSet(w.rules, []query.SeedPredicate{{Name: seed, Arity: query.CountBound(bound)}})
+		rewritten, err := query.NewSeededRuleSet(w.rules, seeds)
 		if err == nil {
 			return &Magic{Rules: rewritten, Predicate: predicate, Seed: seed}, nil
 		}
@@ -147,24 +156,32 @@ type nonMonotoneSite struct {
 	rule, target query.Symbol
 }
 
-// scopeCall is the call a subquery's inner query stands in: the inner
-// query's inputs and the call's arguments, over which a magic rule of an
-// invocation inside the inner query reads the inner clauses before it as a
-// subquery of its own.
-type scopeCall struct {
-	in     []query.InputSpec
-	inputs []query.PatternElement
+// scopeLevel is one scope on the path from a rule's body to an invocation, a
+// form's branch or a subquery's inner query, as a magic rule reads it: a
+// subquery of its own whose :in is in and whose call passes inputs, over the
+// clauses the walk has passed at this level, since the level's variables are
+// its own and never unify with the enclosing scope's. For a branch, in and
+// inputs carry the sources, the rule set and the header symbols the
+// enclosing scope binds, and header holds the whole header, each symbol of
+// which stands for the enclosing scope's symbol of the same name. For a
+// subquery, in and inputs are the call's own, names is the call's
+// substitution, under which a bound :in symbol stands for the argument's
+// variable, and constants holds the constant the call passes at an :in
+// symbol, which a magic rule grounds as it grounds a constant argument of
+// the invocation itself.
+type scopeLevel struct {
+	in        []query.InputSpec
+	inputs    []query.PatternElement
+	clauses   []query.Clause
+	header    []query.Symbol
+	names     query.Substitution
+	constants map[query.Symbol]query.PatternElement
 }
 
 // passing is what passes into an invocation: the variables bound before it,
-// and the clauses a magic rule reads to derive them, the guard first. Inside
-// a subquery it also carries the call the inner query stands in; scoped, the
-// inner clauses before the invocation a magic rule reads, which the rule
-// reads as a subquery over that call, since the inner query's variables are
-// its own; names, the call's substitution, under which a magic rule's head
-// names the argument a bound :in symbol stands for; and constants, the
-// constant the call passes at an :in symbol, which a magic rule grounds as
-// it grounds a constant argument of the invocation itself.
+// the body's clauses a magic rule reads to derive them, the guard first, and
+// the scopes entered below the body on the path to the invocation, outermost
+// first, each with the clauses the walk has passed inside it.
 // adornedRule is the adorned rule the walk is rewriting, the rule a
 // refusal names a site under. nonMonotone holds when the passing enters a
 // non-monotone form, a negation, a fallback form or an aggregating inner
@@ -173,25 +190,32 @@ type scopeCall struct {
 type passing struct {
 	bound       map[query.Symbol]bool
 	prefix      []query.Clause
-	call        *scopeCall
-	scoped      []query.Clause
-	names       query.Substitution
-	constants   map[query.Symbol]query.PatternElement
+	levels      []scopeLevel
 	adornedRule query.Symbol
 	nonMonotone bool
 }
 
-// within is what passes into a join form's branches: the header's variables
-// the enclosing scope binds, over the same clauses, since inside the form
-// only the header's variables are the enclosing scope's.
+// within is what passes into a header form's branches: the header's
+// variables the enclosing scope binds, over the same clauses, since inside
+// the form only the header's variables are the enclosing scope's, with the
+// branch entered as a scope a magic rule reads through a subquery over those
+// variables.
 func (p passing) within(header []query.Symbol) passing {
 	inside := p
 	inside.bound = make(map[query.Symbol]bool, len(header))
+	level := scopeLevel{
+		in:     []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}},
+		inputs: []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Constant{Value: datalog.NewSymbol("%")}},
+		header: header,
+	}
 	for _, sym := range header {
 		if p.bound[sym] {
 			inside.bound[sym] = true
+			level.in = append(level.in, query.ScalarInput{Symbol: sym})
+			level.inputs = append(level.inputs, query.Variable{Name: sym})
 		}
 	}
+	inside.levels = append(append([]scopeLevel(nil), p.levels...), level)
 	return inside
 }
 
@@ -237,7 +261,10 @@ func (w *magicRewriter) planned(required []query.Symbol, find []query.FindElemen
 // the scope it is, the bound head positions its required run and the free
 // ones its find, and walked in that order. The adorned rule has no required
 // run: its guard binds every position the predicate requires, so the
-// fixpoint evaluates it whole.
+// fixpoint evaluates it whole. A root with no bound position has no guard:
+// its rules evaluate whole as the original's would, and the predicates with
+// required positions they reach are adorned from the clauses before their
+// invocations (NESTED_SCOPES_AS_QUERIES.md §5.5).
 func (w *magicRewriter) rewritePredicate(name query.Symbol, bound []bool) error {
 	adorned := query.AdornedSymbol(name, bound)
 	magic := query.MagicSymbol(name, bound)
@@ -261,8 +288,12 @@ func (w *magicRewriter) rewritePredicate(name query.Symbol, bound []bool) error 
 		if err != nil {
 			return err
 		}
-		prefix := []query.Clause{&query.RuleInvocation{Name: magic, Args: guardArgs}}
-		body, magicRules, _, err := w.rewriteClauses(rule.Name, planned, passing{bound: boundVars, prefix: prefix, adornedRule: adorned})
+		var prefix []query.Clause
+		if len(guardArgs) > 0 {
+			prefix = []query.Clause{&query.RuleInvocation{Name: magic, Args: guardArgs}}
+		}
+		into := passing{bound: boundVars, prefix: prefix, adornedRule: adorned}
+		body, magicRules, _, err := w.rewriteClauses(rule.Name, planned, into, into, false)
 		if err != nil {
 			return err
 		}
@@ -272,25 +303,28 @@ func (w *magicRewriter) rewritePredicate(name query.Symbol, bound []bool) error 
 	return nil
 }
 
-// rewriteClauses walks a scope's clauses left to right, a rule's body or a
-// subquery's inner query, under what passes into the scope, and reports
-// whether any clause changed. Each clause is rewritten under what passes
-// into it. A clause a magic rule reads joins the clauses the rule reads, the
-// prefix for a body and the scoped clauses inside a subquery, an
-// or-default-join as the union of its branches over its header, which binds
-// what the form binds and holds every tuple it yields, and the variables it
-// provides join the bound set for the clauses after it; the prefix a magic
-// rule reads is the guard and those clauses before the one holding the
-// invocation. A clause left out widens the bindings a magic rule derives and
-// loses no tuple, since the adorned rule applies every clause. What passes
-// into an invocation under a non-monotone form stops at the first clause
-// that invokes a predicate of the rule's own stratum, so no magic rule
-// depends through such a form on that stratum's adorned predicate.
-func (w *magicRewriter) rewriteClauses(rule query.Symbol, clauses []query.Clause, before passing) ([]query.Clause, []*query.Rule, bool, error) {
+// rewriteClauses walks a scope's clauses left to right, a rule's body, a
+// form's branch, a not-join's body or a subquery's inner query, under what
+// passes into the scope, before, and the passing sealed at the first clause
+// that invokes a predicate of the rule's own stratum, negated, which sealed
+// says the walk has already met, and reports whether any clause changed.
+// Each clause is rewritten under what passes into it. A clause a magic rule
+// reads joins the clauses the rule reads, the body's prefix at the body and
+// the innermost scope's clauses below it, an or-default-join as the union of
+// its branches over its header, which binds what the form binds and holds
+// every tuple it yields, and the variables it provides join the bound set
+// for the clauses after it; the clauses a magic rule reads are the guard and
+// those before the one holding the invocation. A clause left out widens the
+// bindings a magic rule derives and loses no tuple, since the adorned rule
+// applies every clause. What passes into an invocation under a non-monotone
+// form stops at the first clause that invokes a predicate of the rule's own
+// stratum, so no magic rule depends through such a form on that stratum's
+// adorned predicate. The bound set is the walk's own copy, so the scopes a
+// caller walks under one passing share nothing of what each binds.
+func (w *magicRewriter) rewriteClauses(rule query.Symbol, clauses []query.Clause, before, negated passing, sealed bool) ([]query.Clause, []*query.Rule, bool, error) {
 	out := make([]query.Clause, len(clauses))
 	var magicRules []*query.Rule
-	negated := before
-	sealed := false
+	before.bound = maps.Clone(before.bound)
 	changed := false
 	for i, clause := range clauses {
 		if !sealed && w.invokesStratumOf(rule, clause) {
@@ -298,7 +332,7 @@ func (w *magicRewriter) rewriteClauses(rule query.Symbol, clauses []query.Clause
 			negated.bound = maps.Clone(before.bound)
 			sealed = true
 		}
-		rewritten, rules, err := w.rewriteClause(rule, clause, before, negated)
+		rewritten, rules, err := w.rewriteClause(rule, clause, before, negated, sealed)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -314,11 +348,7 @@ func (w *magicRewriter) rewriteClauses(rule query.Symbol, clauses []query.Clause
 		if fallback, ok := rewritten.(*query.OrDefaultJoinClause); ok {
 			read = &query.OrJoinClause{RequiredVars: fallback.RequiredVars, OutputVars: fallback.OutputVars, Branches: fallback.Branches}
 		}
-		if before.call != nil {
-			before.scoped = append(before.scoped[:len(before.scoped):len(before.scoped)], read)
-		} else {
-			before.prefix = append(before.prefix[:len(before.prefix):len(before.prefix)], read)
-		}
+		before = before.reading(read)
 		for _, sym := range query.ScopeOf(rewritten, w.rs).Provides {
 			before.bound[sym] = true
 		}
@@ -327,6 +357,22 @@ func (w *magicRewriter) rewriteClauses(rule query.Symbol, clauses []query.Clause
 		}
 	}
 	return out, magicRules, changed, nil
+}
+
+// reading is the passing with clause joined to the clauses a magic rule
+// reads: the innermost scope's when the passing is inside one, the body's
+// prefix otherwise, each list extended on a copy so a sibling scope shares
+// nothing of it.
+func (p passing) reading(clause query.Clause) passing {
+	if n := len(p.levels); n > 0 {
+		levels := append([]scopeLevel(nil), p.levels...)
+		last := &levels[n-1]
+		last.clauses = append(last.clauses[:len(last.clauses):len(last.clauses)], clause)
+		p.levels = levels
+		return p
+	}
+	p.prefix = append(p.prefix[:len(p.prefix):len(p.prefix)], clause)
+	return p
 }
 
 // invokesStratumOf reports whether the clause invokes, at any depth, a
@@ -342,14 +388,12 @@ func (w *magicRewriter) invokesStratumOf(rule query.Symbol, clause query.Clause)
 
 // magicRuleReads reports whether a magic rule reads clause: a monotone
 // clause, or an or-default-join read as the union of its branches over its
-// header, every correlate of which the bound set holds. A negation is never
-// read, so no magic rule depends on a predicate through one, and the
-// headerless or-default is not read, since an inferred body holds none; a
-// clause reading a variable a later clause binds is not read, so every magic
-// rule is safe.
+// header, every correlate of which the bound set holds. A not-join is never
+// read, so no magic rule depends on a predicate through one; a clause
+// reading a variable a later clause binds is not read, so every magic rule
+// is safe.
 func (w *magicRewriter) magicRuleReads(clause query.Clause, boundVars map[query.Symbol]bool) bool {
-	switch clause.(type) {
-	case *query.NotClause, *query.NotJoinClause, *query.OrDefaultClause:
+	if _, negation := clause.(*query.NotJoinClause); negation {
 		return false
 	}
 	for _, sym := range query.ScopeOf(clause, w.rs).Correlates {
@@ -386,59 +430,47 @@ func (w *magicRewriter) plannedBranches(required, outputs []query.Symbol, branch
 // non-monotone form, a not, not-join, or-default or or-default-join form or
 // a subquery whose inner query aggregates, at any depth under it, under the
 // passing sealed at the first invocation of the rule's own stratum, marked
-// as entering such a form. A header form's branches are planned under its
-// header before they are walked, so the clauses before an invocation inside
-// a branch are the planner's; a headerless form is walked as written. A
-// form on the path to an adorned invocation is copied; every other clause
-// is shared. Inside a join form only the header's variables are the
-// enclosing scope's, so what passes into its branches is filtered to the
-// header.
-func (w *magicRewriter) rewriteClause(rule query.Symbol, clause query.Clause, before, negated passing) (query.Clause, []*query.Rule, error) {
+// as entering such a form. A form's branches are planned under its header
+// before they are walked, so the clauses before an invocation inside a
+// branch are the planner's, and each branch is walked as a scope, the
+// branch's clauses passing into the invocations after them. A form on the
+// path to an adorned invocation is copied; every other clause is shared.
+// Inside a form only the header's variables are the enclosing scope's, so
+// what passes into its branches is filtered to the header. An or-join's
+// branches walk under the passing and its sealed twin as the body does,
+// sealed where the body already is; a non-monotone form's branches walk
+// under the sealed passing alone, which holds nothing of the rule's stratum,
+// so the walk inside starts unsealed. Every form the walk meets carries a
+// header, since the bodies and inner queries it walks are inferred
+// (NewRuleSet, InferHeaders).
+func (w *magicRewriter) rewriteClause(rule query.Symbol, clause query.Clause, before, negated passing, sealed bool) (query.Clause, []*query.Rule, error) {
 	under := negated
 	under.nonMonotone = true
 	switch c := clause.(type) {
 	case *query.RuleInvocation:
 		return w.adornInvocation(rule, c, before)
-	case *query.NotClause:
-		inner, rules, changed, err := w.rewriteNested(rule, c.Clauses, under, under)
-		if err != nil || !changed {
-			return c, nil, err
-		}
-		return &query.NotClause{Clauses: inner}, rules, nil
 	case *query.NotJoinClause:
 		planned, err := w.plannedBranches(c.RequiredVars, nil, [][]query.Clause{c.Clauses})
 		if err != nil {
 			return nil, nil, err
 		}
 		inside := under.within(c.RequiredVars)
-		inner, rules, changed, err := w.rewriteNested(rule, planned[0], inside, inside)
+		inner, rules, changed, err := w.rewriteClauses(rule, planned[0], inside, inside, false)
 		if err != nil || !changed {
 			return c, nil, err
 		}
 		return &query.NotJoinClause{RequiredVars: c.RequiredVars, Clauses: inner}, rules, nil
-	case *query.OrClause:
-		branches, rules, changed, err := w.rewriteBranches(rule, c.Branches, before, negated)
-		if err != nil || !changed {
-			return c, nil, err
-		}
-		return &query.OrClause{Branches: branches}, rules, nil
 	case *query.OrJoinClause:
 		planned, err := w.plannedBranches(c.RequiredVars, c.OutputVars, c.Branches)
 		if err != nil {
 			return nil, nil, err
 		}
 		header := append(append([]query.Symbol(nil), c.RequiredVars...), c.OutputVars...)
-		branches, rules, changed, err := w.rewriteBranches(rule, planned, before.within(header), negated.within(header))
+		branches, rules, changed, err := w.rewriteBranches(rule, planned, before.within(header), negated.within(header), sealed)
 		if err != nil || !changed {
 			return c, nil, err
 		}
 		return &query.OrJoinClause{RequiredVars: c.RequiredVars, OutputVars: c.OutputVars, Branches: branches}, rules, nil
-	case *query.OrDefaultClause:
-		branches, rules, changed, err := w.rewriteBranches(rule, c.Branches, under, under)
-		if err != nil || !changed {
-			return c, nil, err
-		}
-		return &query.OrDefaultClause{Branches: branches}, rules, nil
 	case *query.OrDefaultJoinClause:
 		planned, err := w.plannedBranches(c.RequiredVars, c.OutputVars, c.Branches)
 		if err != nil {
@@ -446,16 +478,16 @@ func (w *magicRewriter) rewriteClause(rule query.Symbol, clause query.Clause, be
 		}
 		header := append(append([]query.Symbol(nil), c.RequiredVars...), c.OutputVars...)
 		inside := under.within(header)
-		branches, rules, changed, err := w.rewriteBranches(rule, planned, inside, inside)
+		branches, rules, changed, err := w.rewriteBranches(rule, planned, inside, inside, false)
 		if err != nil || !changed {
 			return c, nil, err
 		}
 		return &query.OrDefaultJoinClause{RequiredVars: c.RequiredVars, OutputVars: c.OutputVars, Branches: branches}, rules, nil
 	case *query.SubqueryPattern:
 		if c.Query.Aggregates() {
-			return w.rewriteSubquery(rule, c, under)
+			return w.rewriteSubquery(rule, c, under, under, false)
 		}
-		return w.rewriteSubquery(rule, c, before)
+		return w.rewriteSubquery(rule, c, before, negated, sealed)
 	default:
 		return clause, nil, nil
 	}
@@ -466,50 +498,25 @@ func (w *magicRewriter) rewriteClause(rule query.Symbol, clause query.Clause, be
 // when its argument is a constant or a variable the bound set holds. The
 // inner query is planned under its data inputs as its required run and its
 // find beyond them, and its clauses are walked in that order as a body's
-// are, under what passes into the scope: the body's prefix, the call, the
-// substitution of the bound :in symbols by the names the arguments they
-// stand for carry in the magic rules, and the constants the call passes. A
-// subquery holding no adorned invocation is shared; one on the path to an
-// adorned invocation is copied over the inner query derived over the
-// rewritten clauses.
-func (w *magicRewriter) rewriteSubquery(rule query.Symbol, c *query.SubqueryPattern, before passing) (query.Clause, []*query.Rule, error) {
-	inside := passing{
-		bound:       map[query.Symbol]bool{},
-		prefix:      before.prefix,
-		call:        &scopeCall{in: c.Query.In, inputs: c.Inputs},
-		constants:   map[query.Symbol]query.PatternElement{},
-		adornedRule: before.adornedRule,
-		nonMonotone: before.nonMonotone,
-	}
-	var from, to, required []query.Symbol
-	for position, sym := range query.InputSymbols(c.Query.In) {
-		if sym == nil {
-			continue
-		}
-		if !query.ContainsSymbol(required, sym) {
-			required = append(required, sym)
-		}
-		switch arg := c.Inputs[position].(type) {
-		case query.Variable:
-			if !before.bound[arg.Name] {
-				continue
-			}
-			name := arg.Name
-			if standsFor, ok := before.names.Of(arg.Name); ok {
-				name = standsFor
-			}
-			from, to = append(from, sym), append(to, name)
-			inside.bound[sym] = true
-		case query.Constant, query.VectorConstant:
-			inside.constants[sym] = arg
-			inside.bound[sym] = true
-		}
-	}
-	subst, err := query.SubstitutionOf(from, to)
+// are, under what passes into the scope and under its sealed twin, each
+// entered through enteringSubquery. A subquery holding no adorned
+// invocation is shared; one on the path to an adorned invocation is copied
+// over the inner query derived over the rewritten clauses.
+func (w *magicRewriter) rewriteSubquery(rule query.Symbol, c *query.SubqueryPattern, before, negated passing, sealed bool) (query.Clause, []*query.Rule, error) {
+	inside, err := before.enteringSubquery(c)
 	if err != nil {
 		return nil, nil, err
 	}
-	inside.names = subst
+	insideNegated, err := negated.enteringSubquery(c)
+	if err != nil {
+		return nil, nil, err
+	}
+	var required []query.Symbol
+	for _, sym := range query.InputSymbols(c.Query.In) {
+		if sym != nil && !query.ContainsSymbol(required, sym) {
+			required = append(required, sym)
+		}
+	}
 	var find []query.FindElement
 	for _, elem := range c.Query.Find {
 		if v, ok := elem.(query.FindVariable); ok && query.ContainsSymbol(required, v.Symbol) {
@@ -521,41 +528,56 @@ func (w *magicRewriter) rewriteSubquery(rule query.Symbol, c *query.SubqueryPatt
 	if err != nil {
 		return nil, nil, err
 	}
-	where, rules, changed, err := w.rewriteClauses(rule, planned, inside)
+	where, rules, changed, err := w.rewriteClauses(rule, planned, inside, insideNegated, sealed)
 	if err != nil || !changed {
 		return c, nil, err
 	}
 	return &query.SubqueryPattern{Query: c.Query.WithWhere(where), Inputs: c.Inputs, Binding: c.Binding}, rules, nil
 }
 
-// rewriteNested rewrites a form's clause list and reports whether any
-// clause changed, in which case the list is a new one.
-func (w *magicRewriter) rewriteNested(rule query.Symbol, clauses []query.Clause, before, negated passing) ([]query.Clause, []*query.Rule, bool, error) {
-	out := make([]query.Clause, len(clauses))
-	var magicRules []*query.Rule
-	changed := false
-	for i, clause := range clauses {
-		rewritten, rules, err := w.rewriteClause(rule, clause, before, negated)
-		if err != nil {
-			return nil, nil, false, err
+// enteringSubquery is what passes into a subquery's inner query: the inner
+// :in symbols whose arguments are constants or variables the passing binds,
+// over the same body clauses, with the call pushed as a scope whose names
+// substitute each bound :in symbol by its argument's variable and whose
+// constants hold the constant each :in symbol stands for.
+func (p passing) enteringSubquery(c *query.SubqueryPattern) (passing, error) {
+	inside := p
+	inside.bound = map[query.Symbol]bool{}
+	level := scopeLevel{in: c.Query.In, inputs: c.Inputs, constants: map[query.Symbol]query.PatternElement{}}
+	var from, to []query.Symbol
+	for position, sym := range query.InputSymbols(c.Query.In) {
+		if sym == nil {
+			continue
 		}
-		out[i] = rewritten
-		magicRules = append(magicRules, rules...)
-		if rewritten != clause {
-			changed = true
+		switch arg := c.Inputs[position].(type) {
+		case query.Variable:
+			if !p.bound[arg.Name] {
+				continue
+			}
+			from, to = append(from, sym), append(to, arg.Name)
+			inside.bound[sym] = true
+		case query.Constant, query.VectorConstant:
+			level.constants[sym] = arg
+			inside.bound[sym] = true
 		}
 	}
-	return out, magicRules, changed, nil
+	names, err := query.SubstitutionOf(from, to)
+	if err != nil {
+		return passing{}, err
+	}
+	level.names = names
+	inside.levels = append(append([]scopeLevel(nil), p.levels...), level)
+	return inside, nil
 }
 
-// rewriteBranches rewrites each branch of a form, sharing the branches that
-// hold no adorned invocation.
-func (w *magicRewriter) rewriteBranches(rule query.Symbol, branches [][]query.Clause, before, negated passing) ([][]query.Clause, []*query.Rule, bool, error) {
+// rewriteBranches rewrites each branch of a form as a scope, sharing the
+// branches that hold no adorned invocation.
+func (w *magicRewriter) rewriteBranches(rule query.Symbol, branches [][]query.Clause, before, negated passing, sealed bool) ([][]query.Clause, []*query.Rule, bool, error) {
 	out := make([][]query.Clause, len(branches))
 	var magicRules []*query.Rule
 	changed := false
 	for b, branch := range branches {
-		rewritten, rules, branchChanged, err := w.rewriteNested(rule, branch, before, negated)
+		rewritten, rules, branchChanged, err := w.rewriteClauses(rule, branch, before, negated, sealed)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -581,30 +603,34 @@ func (w *magicRewriter) rewriteBranches(rule query.Symbol, branches [][]query.Cl
 // rules join the set. Otherwise the invocation names the adorned predicate,
 // which is queued, a site under a non-monotone form is recorded for a
 // refusal to name, and its magic rule derives the bound arguments from the
-// prefix: a bound variable under the name standing for it, a constant
-// through a fresh variable a ground expression binds, named for the magic
-// predicate and the position, and, inside a subquery whose clauses before
-// the invocation a magic rule reads, every bound variable through a subquery
-// over the same call, finding those variables over those clauses and
-// binding each to the name standing for it, an inner local's a fresh
-// variable named the same way.
+// body's prefix and the scopes on the path: a constant through a fresh
+// variable a ground expression binds, named for the magic predicate and
+// the position; a variable bound in the body under its own name; and a
+// variable bound inside a scope through that scope's read, a subquery over
+// the scope's clauses finding the variable under its name there and binding
+// it to the name standing for it one scope out, each read nested inside the
+// next scope's out to the body. A read finds the bound variables the
+// scope's clauses provide, the inner read among them. A bound variable the
+// scope's inputs alone bind has no attribute in the read's result, so it
+// passes through under the name standing for it outside: a header symbol
+// under the enclosing scope's symbol of its name, a bound :in symbol under
+// its argument's variable, and one standing for a constant the call passes
+// as that constant, grounded at the body. A scope whose clauses provide
+// none of the bound variables contributes no read, since a clause left out
+// widens the magic set and loses no tuple. A scope's local stands for a
+// fresh variable named for the magic predicate and the position, which the
+// reads outside carry up unchanged.
 func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvocation, in passing) (query.Clause, []*query.Rule, error) {
-	args := make([]query.PatternElement, len(inv.Args))
-	for i, arg := range inv.Args {
-		args[i] = arg
-		if v, ok := arg.(query.Variable); ok && len(in.scoped) == 0 {
-			if constant, passed := in.constants[v.Name]; passed {
-				args[i] = constant
-			}
-		}
-	}
+	args := append([]query.PatternElement(nil), inv.Args...)
 	bound := make([]bool, len(args))
+	names := make([]query.Symbol, len(args))
 	seen := map[query.Symbol]bool{}
 	for i, arg := range args {
 		switch a := arg.(type) {
 		case query.Constant, query.VectorConstant:
 			bound[i] = true
 		case query.Variable:
+			names[i] = a.Name
 			if in.bound[a.Name] && !seen[a.Name] {
 				bound[i] = true
 			}
@@ -631,44 +657,74 @@ func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvoca
 		w.sites = append(w.sites, site)
 	}
 	magic := query.MagicSymbol(inv.Name, bound)
-	var head []query.Symbol
+	fresh := func(i int) query.Symbol { return datalog.NewSymbol("?" + magic.String() + "." + strconv.Itoa(i)) }
+	var read query.Clause
+	for k := len(in.levels) - 1; k >= 0; k-- {
+		level := in.levels[k]
+		where := level.clauses
+		if read != nil {
+			where = append(where[:len(where):len(where)], read)
+		}
+		provided := map[query.Symbol]bool{}
+		for _, clause := range where {
+			for _, sym := range query.ScopeOf(clause, w.rs).Provides {
+				provided[sym] = true
+			}
+		}
+		var find []query.FindElement
+		var binding []query.Symbol
+		for i, arg := range args {
+			if _, variable := arg.(query.Variable); !variable || !bound[i] {
+				continue
+			}
+			if constant, passed := level.constants[names[i]]; passed && !provided[names[i]] {
+				args[i] = constant
+				continue
+			}
+			outside, named := level.names.Of(names[i])
+			if !named && query.ContainsSymbol(level.header, names[i]) {
+				outside, named = names[i], true
+			}
+			if !named {
+				outside = fresh(i)
+			}
+			if provided[names[i]] {
+				find = append(find, query.FindVariable{Symbol: names[i]})
+				binding = append(binding, outside)
+			}
+			names[i] = outside
+		}
+		read = nil
+		if len(find) > 0 {
+			read = &query.SubqueryPattern{
+				Query:   &query.Query{Find: find, In: level.in, Where: where},
+				Inputs:  level.inputs,
+				Binding: query.RelationBinding{Variables: binding},
+			}
+		}
+	}
 	body := append([]query.Clause(nil), in.prefix...)
-	var found []query.FindElement
-	var foundNames []query.Symbol
 	for i, arg := range args {
 		if !bound[i] {
 			continue
 		}
-		fresh := datalog.NewSymbol("?" + magic.String() + "." + strconv.Itoa(i))
 		switch a := arg.(type) {
-		case query.Variable:
-			name, named := in.names.Of(a.Name)
-			switch {
-			case named:
-			case in.call != nil:
-				name = fresh
-			default:
-				name = a.Name
-			}
-			head = append(head, name)
-			if len(in.scoped) > 0 {
-				found = append(found, query.FindVariable{Symbol: a.Name})
-				foundNames = append(foundNames, name)
-			}
 		case query.Constant:
-			head = append(head, fresh)
-			body = append(body, &query.Expression{Function: &query.GroundFunction{Value: a.Value}, Binding: fresh})
+			names[i] = fresh(i)
+			body = append(body, &query.Expression{Function: &query.GroundFunction{Value: a.Value}, Binding: names[i]})
 		case query.VectorConstant:
-			head = append(head, fresh)
-			body = append(body, &query.Expression{Function: &query.GroundFunction{Value: a.Values}, Binding: fresh})
+			names[i] = fresh(i)
+			body = append(body, &query.Expression{Function: &query.GroundFunction{Value: a.Values}, Binding: names[i]})
 		}
 	}
-	if len(found) > 0 {
-		body = append(body, &query.SubqueryPattern{
-			Query:   &query.Query{Find: found, In: in.call.in, Where: in.scoped},
-			Inputs:  in.call.inputs,
-			Binding: query.RelationBinding{Variables: foundNames},
-		})
+	if read != nil {
+		body = append(body, read)
+	}
+	var head []query.Symbol
+	for i := range args {
+		if bound[i] {
+			head = append(head, names[i])
+		}
 	}
 	w.enqueue(inv.Name, bound)
 	adorned := &query.RuleInvocation{Name: query.AdornedSymbol(inv.Name, bound), Args: inv.Args}

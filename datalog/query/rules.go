@@ -115,9 +115,11 @@ type RuleSet struct {
 	// minted per-position variables of a seed predicate no rule derives.
 	heads map[Symbol][]Symbol
 
-	// attributePositions marks, per predicate and head position, whether a
-	// body pattern on the default source reads the head symbol there as its
-	// attribute, directly or through a body invocation (AttributePositions).
+	// attributePositions marks, per predicate and head position, whether the
+	// head symbol reaches the attribute position of a body pattern on the
+	// default source: through the headers of the body's forms, its identity
+	// aliases and its subquery calls, or through a body invocation
+	// (AttributePositions).
 	attributePositions map[Symbol][]bool
 
 	// attributes is the roster DefaultSourceAttributes returns, collected on
@@ -270,28 +272,11 @@ func NewSeededRuleSet(rules []*Rule, seeds []SeedPredicate) (*RuleSet, error) {
 			return nil, &NestedRecursionError{Rule: edge.from, Predicate: edge.to, Form: form}
 		}
 	}
-	// A predicate with required positions is evaluated at its invocation,
-	// through the rewrite, never whole; one recursive with a predicate the
-	// fixpoint evaluates whole would be drawn into that evaluation without
-	// its bindings.
-	for _, stratum := range strata {
-		if !stratum.Recursive {
-			continue
-		}
-		var requiring, free Symbol
-		for _, p := range stratum.Predicates {
-			if CountBound(rs.required[p]) > 0 {
-				if requiring == nil {
-					requiring = p
-				}
-			} else if free == nil {
-				free = p
-			}
-		}
-		if requiring != nil && free != nil {
-			return nil, fmt.Errorf("rule %s: a predicate with required positions is recursive with %s, which has none; a predicate requiring bindings is evaluated at its invocation, never whole with its stratum", requiring, free)
-		}
-	}
+	// A recursive stratum may hold a predicate with required positions beside
+	// one with none: a free invocation of the latter is rewritten with its
+	// head all free, so the former is adorned from the clauses before each of
+	// its invocations and derived in the rewritten set with its bindings
+	// (NESTED_SCOPES_AS_QUERIES.md §5.5).
 	rs.strata = strata
 	rs.attributePositions = attributePositionsOf(rs, rules)
 	return rs, nil
@@ -341,19 +326,25 @@ func (rs *RuleSet) inferBody(rule *Rule) (*Rule, error) {
 }
 
 // attributePositionsOf computes, to a fixpoint over the rules, the head
-// positions each predicate reads as an attribute: a body pattern on the
-// default source whose attribute is the head symbol, or a body invocation
-// passing the head symbol at a position the invoked predicate reads as one.
-// The walk stops at a subquery body, whose inputs are bound when it runs and
-// checked then. A seed predicate, with no rules, reads none.
+// positions each predicate reads as an attribute: a head symbol the body's
+// root reaches in the attribute position of a pattern on the default source,
+// through the headers of its forms, the identity aliases of its scopes and
+// the calls of its subqueries, as the roster resolves a query's reach, or one
+// the body passes to an invocation at a position the invoked predicate reads
+// as one, directly or through a call. A seed predicate, with no rules, reads
+// none.
 func attributePositionsOf(rs *RuleSet, rules []*Rule) map[Symbol][]bool {
 	positions := make(map[Symbol][]bool, len(rs.order))
 	for _, name := range rs.order {
 		positions[name] = make([]bool, rs.arity[name])
 	}
+	reaches := make([]reach, len(rules))
+	for i, rule := range rules {
+		reaches[i] = newRosters().addClauses(rule.Body)
+	}
 	for changed := true; changed; {
 		changed = false
-		for _, rule := range rules {
+		for i, rule := range rules {
 			mask := positions[rule.Name]
 			mark := func(sym Symbol) {
 				if i := SymbolIndex(rule.Head, sym); i >= 0 && !mask[i] {
@@ -361,25 +352,14 @@ func attributePositionsOf(rs *RuleSet, rules []*Rule) map[Symbol][]bool {
 					changed = true
 				}
 			}
-			WalkClauses(rule.Body, func(clause Clause) bool {
-				switch c := clause.(type) {
-				case *DataPattern:
-					if c.Source != nil && c.Source != datalog.SymDollar {
-						return true
-					}
-					if a, ok := c.GetA().(Variable); ok {
-						mark(a.Name)
-					}
-				case *RuleInvocation:
-					invoked := positions[c.Name]
-					for j, arg := range c.Args {
-						if v, ok := arg.(Variable); ok && j < len(invoked) && invoked[j] {
-							mark(v.Name)
-						}
-					}
+			for _, sym := range reaches[i].variables {
+				mark(sym)
+			}
+			for _, p := range reaches[i].passed {
+				if invoked := positions[p.name]; p.position < len(invoked) && invoked[p.position] {
+					mark(p.variable)
 				}
-				return true
-			})
+			}
 		}
 	}
 	return positions
@@ -475,15 +455,15 @@ func (rs *RuleSet) CheckInvocation(inv *RuleInvocation) error {
 
 // DefaultSourceAttributes returns every attribute the rule bodies name on
 // the default source, in order of first appearance and each once, collected
-// as Query.DefaultSourceAttributes collects a query's, then the keywords the
-// bodies' invocations pass at the positions the set reads as attributes
+// as Rosters.DefaultSourceAttributes collects a query's, then the keywords
+// the bodies' invocations pass at the positions the set reads as attributes
 // (invocationAttributes).
 func (rs *RuleSet) DefaultSourceAttributes() []datalog.Keyword {
 	rs.attributesOnce.Do(func() {
-		roster := newAttributeRoster()
+		roster := newRosters()
 		for _, name := range rs.order {
 			for _, rule := range rs.rules[name] {
-				roster.addClauses(rule.Body, false)
+				roster.addClauses(rule.Body)
 			}
 		}
 		for _, attr := range rs.invocationAttributes(roster.invocations) {
@@ -494,13 +474,15 @@ func (rs *RuleSet) DefaultSourceAttributes() []datalog.Keyword {
 	return rs.attributes
 }
 
-// AttributePositions reports, per head position of a predicate, whether a
-// body pattern on the default source reads the head symbol at that position
-// as its attribute: in the predicate's own bodies at any depth short of a
-// subquery body, or through a body invocation in the bodies of the predicate
-// invoked. A keyword an invocation passes at such a position names an
-// attribute (invocationAttributes). Nil for a predicate the set does not
-// define.
+// AttributePositions reports, per head position of a predicate, whether the
+// head symbol at that position reaches the attribute position of a body
+// pattern on the default source: in the predicate's own bodies, through the
+// headers of their forms, their identity aliases and their subquery calls, or
+// through a body invocation in the bodies of the predicate invoked
+// (attributePositionsOf). A keyword an invocation passes at such a position
+// names an attribute (invocationAttributes), and a variable passed there is
+// an attribute variable (Rosters.AttributeVariables). Nil for a predicate the
+// set does not define.
 func (rs *RuleSet) AttributePositions(name Symbol) []bool {
 	return rs.attributePositions[name]
 }
@@ -513,7 +495,7 @@ func (rs *RuleSet) invocationAttributes(constants []invocationConstant) []datalo
 	if len(constants) == 0 {
 		return nil
 	}
-	roster := newAttributeRoster()
+	roster := newRosters()
 	for _, c := range constants {
 		if mask := rs.attributePositions[c.Name]; c.Position < len(mask) && mask[c.Position] {
 			roster.add(c.Attr)

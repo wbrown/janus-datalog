@@ -258,6 +258,12 @@ func (s *Schema) Add(def *AttributeDefinition) *Schema {
 	mustBelong(def.Ident, def.ValueType, valueTypes, "a value type")
 	mustBelong(def.Ident, def.Cardinality, cardinalities, "a cardinality")
 	mustBelong(def.Ident, def.Unique, uniques, "a uniqueness constraint")
+	// An ident longer than storage holds would be truncated to its first bytes
+	// and alias every attribute sharing them, so a definition of one is never
+	// constructed.
+	if n := len(def.Ident.String()); n > datalog.MaxAttributeBytes {
+		panic(fmt.Errorf("attribute %s is %d bytes, exceeds the %d-byte storage limit", def.Ident, n, datalog.MaxAttributeBytes))
+	}
 	// NeverZeroValue is a statement about the value type's zero, so it has
 	// nothing to say without one.
 	if def.NeverZeroValue && def.ValueType == nil {

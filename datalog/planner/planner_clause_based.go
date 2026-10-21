@@ -248,10 +248,11 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings query.Bin
 		analyzeClausesForExplain(&realizedPhases[i], cp.Clauses, availableSet, bindings.Rules, p.stats)
 	}
 
-	return &RealizedPlan{
-		Query:  q,
-		Phases: realizedPhases,
-	}, nil
+	plan := &RealizedPlan{Query: q, Phases: realizedPhases}
+	if p.options.CollectRosters {
+		plan.Rosters = query.CollectRosters(q)
+	}
+	return plan, nil
 }
 
 // buildFindClause constructs the :find clause for a phase

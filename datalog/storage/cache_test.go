@@ -113,22 +113,27 @@ func (f *cacheFixture) version(t *testing.T, attr datalog.Keyword) datalog.Eleme
 // thousand hits claim a thousand index reads that never happened.
 func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
 	for _, mode := range optimizerModes {
+		// want is the keys the resolution takes from the index: under
+		// cardinality one the group's first key, the current value, and under
+		// many and vector the whole group, one key per datom written.
 		for _, tc := range []struct {
 			name  string
 			write func(t *testing.T, f *cacheFixture) datalog.Keyword
+			want  int
 		}{
 			{"one", func(t *testing.T, f *cacheFixture) datalog.Keyword {
 				f.set(t, f.name, "Alice")
+				f.set(t, f.name, "Alicia")
 				return f.name
-			}},
+			}, 1},
 			{"many", func(t *testing.T, f *cacheFixture) datalog.Keyword {
-				f.add(t, f.tags, "dev")
+				f.add(t, f.tags, "dev", "ops", "qa")
 				return f.tags
-			}},
+			}, 3},
 			{"vector", func(t *testing.T, f *cacheFixture) datalog.Keyword {
-				f.add(t, f.skills, "a")
+				f.add(t, f.skills, "a", "b", "c")
 				return f.skills
-			}},
+			}, 3},
 		} {
 			t.Run(mode.name+"/"+tc.name, func(t *testing.T) {
 				f := newCacheFixture(t, mode)
@@ -139,8 +144,8 @@ func TestCacheEntryCarriesResolutionIntake(t *testing.T) {
 				entry, err := f.resolve(cache, attr, build)
 				require.NoError(t, err)
 				require.NotNil(t, entry)
-				require.Positive(t, build.scanned, "resolution read the index")
-				require.Equal(t, build.scanned, entry.scanned,
+				require.Equal(t, tc.want, build.scanned, "the call that built the entry spent the build cost")
+				require.Equal(t, tc.want, entry.scanned,
 					"the entry must carry what its resolution read")
 
 				// A hit rebuilds nothing, so it reads no index: it accrues nothing,
@@ -514,7 +519,8 @@ func TestCacheAfterRestart(t *testing.T) {
 }
 
 // A resolver whose index read fails reaches the caller as the error, with no
-// entry, for all three cardinalities.
+// entry, for all three cardinalities, and the failing miss opens one scan:
+// the resolver is invoked once and a failed rebuild is not retried.
 func TestCacheRebuildStoreError(t *testing.T) {
 	for _, mode := range optimizerModes {
 		for _, tc := range []struct {
@@ -546,6 +552,7 @@ func TestCacheRebuildStoreError(t *testing.T) {
 				entry, err := cache.GetOrResolve(f.key(attr), faulting.GetCardinality(attr), faulting, nil, nil, DiscardIntake)
 				require.ErrorIs(t, err, errInjectedScanFault)
 				assert.Nil(t, entry)
+				assert.Equal(t, 1, store.scans, "the failing miss opens one scan and is not retried")
 			})
 		}
 	}

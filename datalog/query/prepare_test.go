@@ -49,6 +49,18 @@ func TestPrepare_ComposesTheStaticSteps(t *testing.T) {
 		}
 	})
 
+	t.Run("an invocation under a :in declaring no % gets the rules-input refusal", func(t *testing.T) {
+		q := findIn([]string{"?a", "?b"}, nil, invoke("follows", "?a", "?b"))
+		want := ValidateRulesInput(q.In, q.Where)
+		if want == nil {
+			t.Fatal("the fixture invokes a predicate under a :in declaring no %, which ValidateRulesInput refuses")
+		}
+		_, err := Prepare(q, nil)
+		if err == nil || err.Error() != want.Error() {
+			t.Fatalf("Prepare = %v, want the rules-input refusal %v", err, want)
+		}
+	})
+
 	t.Run("an or sharing nothing with its scope gets the inference's refusal", func(t *testing.T) {
 		q := findIn([]string{"?e"}, nil,
 			scopePattern("?e", "p", "_"),

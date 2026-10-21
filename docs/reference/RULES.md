@@ -141,11 +141,13 @@ satisfies predicates that depend on each other through negation.
 reads a predicate already complete.
 
 A recursive invocation is one of a predicate in the invoking rule's own
-stratum. It stands at the top level of the body or inside an `or` or
-`or-join` branch, where evaluation is monotone. Inside `or-default`,
-`or-default-join` or a subquery it is refused as
-`*query.NestedRecursionError` naming the rule, the predicate and the form. An
-invocation of a predicate from an earlier stratum stands anywhere.
+stratum. It stands at the top level of the body, inside an `or` or `or-join`
+branch, or inside a subquery whose inner query does not aggregate, where
+evaluation is monotone. Inside `or-default` or `or-default-join`, or inside a
+subquery whose inner query aggregates, at any depth, it is refused as
+`*query.NestedRecursionError` naming the rule, the predicate and the
+innermost such form. An invocation of a predicate from an earlier stratum
+stands anywhere.
 
 A rule invoking a predicate the set does not define is refused as
 `*query.UnknownRuleError` naming the invoked name and the defined names. A
@@ -161,7 +163,11 @@ decide what is derived.
 An invocation with no bound argument derives its predicate whole. The strata
 it needs are those holding the predicate or a predicate a needed body
 invokes. They evaluate in order, each to a fixpoint. The invocation reads the
-predicate's materialized relation.
+predicate's materialized relation. One such invocation is rewritten first: a
+free invocation of a predicate one of whose needed bodies invokes a predicate
+with required positions is rewritten with its head all free, so each required
+predicate is adorned from the clauses before its invocation and derived in
+the rewritten set, and a required predicate recursive with a free one builds.
 
 An invocation with a bound argument derives only what the bindings reach. A
 bound argument is a constant, or a variable the query's inputs or earlier
@@ -174,7 +180,10 @@ This is the magic-set rewrite:
   holds the bindings the predicate is asked with.
 - The bindings pass through each body in the order the planner gives it
   into the invocations after them, and through each branch of a form in the
-  planner's order under the form's header.
+  planner's order: an invocation inside a branch is bound by the form's
+  header and the branch's clauses before it, which its magic rule reads as a
+  scope of their own, apart from the body's clauses, so a branch local that
+  shares a body variable's name never unifies with it.
 - An invocation under `not`, `not-join`, `or-default`, `or-default-join` or
   a subquery whose inner query aggregates receives the bindings of the
   clauses before the first that invokes a predicate of the rule's own

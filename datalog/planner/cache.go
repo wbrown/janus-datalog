@@ -30,13 +30,15 @@ type cachedPlan struct {
 	timestamp time.Time
 }
 
-// NewPlanCache creates a new query plan cache
+// NewPlanCache creates a new query plan cache holding at most maxSize plans,
+// a thousand when given no bound. A positive ttl expires an entry of that
+// age; zero or less is no expiry, which is how the database makes its cache.
 func NewPlanCache(maxSize int, ttl time.Duration) *PlanCache {
 	if maxSize <= 0 {
 		maxSize = 1000 // Default to 1000 cached plans
 	}
-	if ttl <= 0 {
-		ttl = 5 * time.Minute // Default to 5 minute TTL
+	if ttl < 0 {
+		ttl = 0
 	}
 
 	return &PlanCache{
@@ -47,7 +49,7 @@ func NewPlanCache(maxSize int, ttl time.Duration) *PlanCache {
 }
 
 // GetWithOptions retrieves a cached RealizedPlan for a query under a rule
-// set if it exists and is not expired
+// set if it exists and, under a TTL, is not expired
 func (c *PlanCache) GetWithOptions(q *query.Query, rules *query.RuleSet, opts PlannerOptions) (*RealizedPlan, bool) {
 	if c == nil {
 		return nil, false
@@ -65,7 +67,7 @@ func (c *PlanCache) GetWithOptions(q *query.Query, rules *query.RuleSet, opts Pl
 	}
 
 	// Check if expired
-	if time.Since(cached.timestamp) > c.ttl {
+	if c.ttl > 0 && time.Since(cached.timestamp) > c.ttl {
 		// Note: We don't delete here to avoid write lock, lazy deletion happens on Set
 		atomic.AddInt64(&c.misses, 1)
 		return nil, false
@@ -193,16 +195,22 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, rules *query.RuleSet, 
 		fmt.Fprintf(h, "LIMIT:%d;", *q.Limit)
 	}
 
-	// Hash planner options that affect the plan
+	// Hash planner options that affect the plan, the roster it carries
+	// among them
 	fmt.Fprintf(h, "OPTIONS:")
 	fmt.Fprintf(h, "AlgebraOptimizer:%v;", opts.EnableAlgebraOptimizer)
 	fmt.Fprintf(h, "JoinProjectInsertion:%v;", opts.EnableJoinProjectInsertion)
+	fmt.Fprintf(h, "CollectRosters:%v;", opts.CollectRosters)
 
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// evictExpired removes expired entries from the cache
+// evictExpired removes the entries older than the TTL; under no TTL nothing
+// has expired and the cache is left as it is.
 func (c *PlanCache) evictExpired() {
+	if c.ttl <= 0 {
+		return
+	}
 	now := time.Now()
 	for key, cached := range c.cache {
 		if now.Sub(cached.timestamp) > c.ttl {

@@ -100,10 +100,15 @@ func (s *SubqueryBuilder) toClause() query.Clause {
 	// at the value positions, one per value the entry takes under
 	// query.InputArity, so a tuple or relation input takes one caller per
 	// symbol, as the parsed forms (q [...] $ ?x %) and (q [...] $ ?a ?b %)
-	// have them. A caller variable beyond the value positions is passed
-	// through, so Build refuses the count as the static shape it is.
+	// have them. An inner query declaring no :in takes the $ an omitted :in
+	// defaults to, as the parsed form (q [...] $) has it. A caller variable
+	// beyond the value positions is passed through, so Build refuses the
+	// count as the static shape it is.
 	var inputs []query.PatternElement
 	callers := s.inputs
+	if len(innerQ.In) == 0 {
+		inputs = append(inputs, query.Constant{Value: datalog.SymDollar})
+	}
 	for _, in := range innerQ.In {
 		switch in := in.(type) {
 		case query.DatabaseInput:

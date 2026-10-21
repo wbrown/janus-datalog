@@ -74,6 +74,49 @@ func TestRulesInputSpec(t *testing.T) {
 	}
 }
 
+// Build refuses a query whose clause uses the query's own % under a :in
+// declaring none, an invocation or a subquery call passing % through, with
+// the message ParseQuery gives the same text, and accepts it under Rules.
+func TestBuildAppliesTheRulesUseRule(t *testing.T) {
+	x, y := NewVar("x"), NewVar("y")
+	parsedRefusal := func(text string) string {
+		t.Helper()
+		_, err := parser.ParseQuery(text)
+		if err == nil {
+			t.Fatalf("ParseQuery accepts %q", text)
+		}
+		return err.Error()
+	}
+	t.Run("an invocation under no Rules input", func(t *testing.T) {
+		_, err := Query().Find(x, y).In(DB).Where(Rule("reach", x, y)).Build()
+		if err == nil {
+			t.Fatal("Build accepts an invocation under a :in declaring no %")
+		}
+		if want := parsedRefusal(`[:find ?x ?y :in $ :where (reach ?x ?y)]`); err.Error() != want {
+			t.Errorf("Build refuses with %q, the parser with %q", err, want)
+		}
+	})
+	t.Run("a subquery call passing % under no Rules input", func(t *testing.T) {
+		inner := Query().Find(y).In(DB, Rules, Scalar(x)).Where(Rule("reach", x, y))
+		_, err := Query().Find(y).In(DB).Where(Pat(x, Kw(":t/a"), Blank()), Subquery(inner, x).BindRelation(y)).Build()
+		if err == nil {
+			t.Fatal("Build accepts a subquery call passing % under a :in declaring no %")
+		}
+		if want := parsedRefusal(`[:find ?y :in $ :where [?x :t/a _] [(q [:find ?y :in $ % ?x :where (reach ?x ?y)] $ % ?x) [[?y]]]]`); err.Error() != want {
+			t.Errorf("Build refuses with %q, the parser with %q", err, want)
+		}
+	})
+	t.Run("both under Rules", func(t *testing.T) {
+		inner := Query().Find(y).In(DB, Rules, Scalar(x)).Where(Rule("reach", x, y))
+		if _, err := Query().Find(x, y).In(DB, Rules).Where(Rule("reach", x, y)).Build(); err != nil {
+			t.Errorf("Build refuses an invocation under Rules: %v", err)
+		}
+		if _, err := Query().Find(y).In(DB, Rules).Where(Pat(x, Kw(":t/a"), Blank()), Subquery(inner, x).BindRelation(y)).Build(); err != nil {
+			t.Errorf("Build refuses a subquery call passing %% under Rules: %v", err)
+		}
+	})
+}
+
 func TestRuleClause(t *testing.T) {
 	x := NewVar("x")
 	clause := Rule("reach", x, "lit", Blank()).toClause()

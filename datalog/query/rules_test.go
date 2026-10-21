@@ -520,11 +520,14 @@ func attrVarPattern(e, a string) *DataPattern {
 	return &DataPattern{Elements: []PatternElement{Variable{Name: sym(e)}, Variable{Name: sym(a)}, Blank{}}}
 }
 
-// AttributePositions reports, per head position of a predicate, whether a
-// body pattern on the default source reads the head symbol at that position
-// as its attribute: in the predicate's own bodies at any depth short of a
-// subquery body, or through a body invocation in the bodies of the predicate
-// invoked. A predicate the set does not define has none.
+// AttributePositions reports, per head position of a predicate, whether the
+// head symbol at that position reaches the attribute position of a body
+// pattern on the default source: directly, through an identity alias, inside
+// a form whose header names it, through a body invocation at a position the
+// invoked predicate reads as an attribute, or through a subquery call at the
+// place of an inner input standing in such a position. A branch variable
+// outside the header is the branch's own, so a head symbol sharing its name
+// is read there as nothing. A predicate the set does not define has none.
 func TestRuleSetAttributePositions(t *testing.T) {
 	rs, err := NewRuleSet([]*Rule{
 		defineRule("has", []string{"?e", "?a"}, attrVarPattern("?e", "?a")),
@@ -537,6 +540,27 @@ func TestRuleSetAttributePositions(t *testing.T) {
 				{attrVarPattern("?e", "?a")},
 				{invoke("val", "?e", "?a")},
 			}}),
+		defineRule("local", []string{"?e", "?a"},
+			scopePattern("?e", "page/kind", "?a"),
+			&OrJoinClause{OutputVars: []Symbol{sym("?e")}, Branches: [][]Clause{
+				{attrVarPattern("?e", "?a")},
+				{scopePattern("?e", "page/other", "_")},
+			}}),
+		defineRule("aliased", []string{"?e", "?a"},
+			scopePattern("?e", "page/tag", "?a"),
+			&Expression{Function: IdentityFunction{Arg: VariableTerm{Symbol: sym("?a")}}, Binding: sym("?b")},
+			attrVarPattern("?e", "?b")),
+		defineRule("called", []string{"?e", "?a"},
+			scopePattern("?e", "page/tag", "?a"),
+			&SubqueryPattern{
+				Query: &Query{
+					Find:  []FindElement{FindVariable{Symbol: sym("?v")}},
+					In:    []InputSpec{DatabaseInput{Name: datalog.SymDollar}, ScalarInput{Symbol: sym("?x")}, ScalarInput{Symbol: sym("?y")}},
+					Where: []Clause{&DataPattern{Elements: []PatternElement{Variable{Name: sym("?x")}, Variable{Name: sym("?y")}, Variable{Name: sym("?v")}}}},
+				},
+				Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}, Variable{Name: sym("?e")}, Variable{Name: sym("?a")}},
+				Binding: RelationBinding{Variables: []Symbol{sym("?v")}},
+			}),
 	})
 	if err != nil {
 		t.Fatalf("NewRuleSet: %v", err)
@@ -550,6 +574,9 @@ func TestRuleSetAttributePositions(t *testing.T) {
 		{"swap", []bool{true, false}},
 		{"val", []bool{false, false}},
 		{"branch", []bool{false, true}},
+		{"local", []bool{false, false}},
+		{"aliased", []bool{false, true}},
+		{"called", []bool{false, true}},
 	}
 	for _, c := range cases {
 		if got := rs.AttributePositions(sym(c.name)); !equalMasks(got, c.want) {
@@ -714,15 +741,15 @@ func TestNewRuleSet_RequiredBindings(t *testing.T) {
 			t.Fatalf("want *UnsafeRuleError naming loose and ?y, got %v", err)
 		}
 	})
-	t.Run("a required predicate recursive with one that is not is refused", func(t *testing.T) {
+	t.Run("a required predicate recursive with one that is not is accepted", func(t *testing.T) {
 		down := defineRule("down", []string{"?x", "?y"}, invoke("up", "?x", "?y"))
 		down.Required = []Symbol{sym("?x")}
 		_, err := NewRuleSet([]*Rule{
 			defineRule("up", []string{"?x", "?y"}, scopePattern("?x", "page/kind", "_"), invoke("down", "?x", "?y")),
 			down,
 		})
-		if err == nil || !strings.Contains(err.Error(), "down") || !strings.Contains(err.Error(), "up") {
-			t.Fatalf("want a refusal naming down and up, got %v", err)
+		if err != nil {
+			t.Fatalf("a free invocation of up is rewritten with its head all free, adorning down from the clauses before it: %v", err)
 		}
 	})
 	t.Run("required predicates recursive with each other are accepted", func(t *testing.T) {
@@ -862,6 +889,49 @@ func TestValidateInputShapes(t *testing.T) {
 	err := ValidateInputShapes([]InputSpec{db, RulesInput{}, RulesInput{}})
 	if err == nil || !strings.Contains(err.Error(), "%") {
 		t.Fatalf("want a refusal naming %%, got %v", err)
+	}
+}
+
+// A clause using the query's own % needs % declared in its :in: an
+// invocation at any depth short of a subquery body, or a subquery call
+// passing % through, is refused naming the clause when the :in declares
+// none, and a subquery body's invocation is the inner query's use.
+func TestValidateRulesInput(t *testing.T) {
+	db := DatabaseInput{Name: datalog.SymDollar}
+	inv := invoke("follows", "?a", "?b")
+	inner := findIn([]string{"?b"}, []InputSpec{db, RulesInput{}, ScalarInput{Symbol: sym("?a")}}, invoke("follows", "?a", "?b"))
+	passing := &SubqueryPattern{
+		Query:   inner,
+		Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}, Constant{Value: datalog.SymRules}, Variable{Name: sym("?a")}},
+		Binding: RelationBinding{Variables: []Symbol{sym("?b")}},
+	}
+	notPassing := &SubqueryPattern{
+		Query:   findIn([]string{"?b"}, []InputSpec{db, ScalarInput{Symbol: sym("?a")}}, scopePattern("?a", "page/next", "?b")),
+		Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}, Variable{Name: sym("?a")}},
+		Binding: RelationBinding{Variables: []Symbol{sym("?b")}},
+	}
+
+	if err := ValidateRulesInput([]InputSpec{db}, []Clause{scopePattern("?a", "page/next", "?b"), notPassing}); err != nil {
+		t.Errorf("a query using no %% is valid, got %v", err)
+	}
+	if err := ValidateRulesInput([]InputSpec{db, RulesInput{}}, []Clause{inv, passing}); err != nil {
+		t.Errorf("a query declaring %% is valid, got %v", err)
+	}
+	err := ValidateRulesInput([]InputSpec{db}, []Clause{scopePattern("?a", "page/next", "?b"), inv})
+	if err == nil || !strings.Contains(err.Error(), inv.String()) || !strings.Contains(err.Error(), ":in") {
+		t.Errorf("want a refusal naming the invocation and the :in, got %v", err)
+	}
+	err = ValidateRulesInput([]InputSpec{db}, []Clause{scopePattern("?a", "page/next", "?b"), passing})
+	if err == nil || !strings.Contains(err.Error(), passing.String()) || !strings.Contains(err.Error(), "passes %") {
+		t.Errorf("want a refusal naming the subquery call that passes %%, got %v", err)
+	}
+	bodyUse := &SubqueryPattern{
+		Query:   inner,
+		Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}, Variable{Name: sym("?rules")}, Variable{Name: sym("?a")}},
+		Binding: RelationBinding{Variables: []Symbol{sym("?b")}},
+	}
+	if err := ValidateRulesInput([]InputSpec{db, ScalarInput{Symbol: sym("?rules")}}, []Clause{scopePattern("?a", "page/next", "?b"), bodyUse}); err != nil {
+		t.Errorf("an invocation inside a subquery body is the inner query's use of its own %%, got %v", err)
 	}
 }
 

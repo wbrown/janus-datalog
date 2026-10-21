@@ -707,6 +707,41 @@ func TestBuildRefusesATupleGroundOfTheWrongArity(t *testing.T) {
 	}
 }
 
+// Build accepts a subquery whose inner query declares no :in, its call
+// passing the $ an omitted :in defaults to, as the parser gives
+// (q [...] $); a caller variable given beside it is one input beyond the
+// value positions and is refused on the count
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §6).
+func TestBuildAcceptsAnInnerQueryWithNoIn(t *testing.T) {
+	e, n, x := NewVar("e"), NewVar("n"), NewVar("x")
+	inner := Query().Find(n).Where(Pat(e, Kw(":t/n"), n))
+	t.Run("no caller variable", func(t *testing.T) {
+		q, err := Query().Find(x, n).Where(Pat(x, Kw(":t/a"), Blank()), Subquery(inner).BindRelation(n)).Build()
+		if err != nil {
+			t.Fatalf("Build refuses a subquery over an inner query with no :in: %v", err)
+		}
+		call, ok := q.Where[1].(*query.SubqueryPattern)
+		if !ok {
+			t.Fatalf("clause 2 is %T, want the subquery", q.Where[1])
+		}
+		if len(call.Inputs) != 1 {
+			t.Fatalf("the call passes %v, want the one $ an omitted :in defaults to", call.Inputs)
+		}
+		if c, isConstant := call.Inputs[0].(query.Constant); !isConstant || c.Value != datalog.SymDollar {
+			t.Errorf("the call passes %v, want $", call.Inputs[0])
+		}
+	})
+	t.Run("a caller variable beyond the value positions", func(t *testing.T) {
+		_, err := Query().Find(x, n).Where(Pat(x, Kw(":t/a"), Blank()), Subquery(inner, x).BindRelation(n)).Build()
+		if err == nil {
+			t.Fatal("Build accepts a caller variable passed to an inner query whose omitted :in binds $ alone")
+		}
+		if !strings.Contains(err.Error(), "subquery passes 2 input(s), but its inner :in binds 1 value(s)") {
+			t.Errorf("the refusal %q does not carry the counts", err)
+		}
+	})
+}
+
 // A builder's refusal of a branch argument that is no clause names the branch
 // and the argument by their positions counted from one.
 func TestBuilderRefusalNamesTheBranchAndArgumentCountedFromOne(t *testing.T) {

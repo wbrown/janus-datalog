@@ -579,6 +579,7 @@ func TestCacheConcurrency(t *testing.T) {
 					entry, err := cache.GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 					assert.NoError(t, err)
 					assert.NotNil(t, entry)
+					assert.Equal(t, "Alice", entry.OneValue(), "every reader is served the value the store holds")
 				}()
 			}
 

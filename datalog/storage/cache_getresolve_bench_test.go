@@ -12,46 +12,95 @@ var (
 	getResolveErrSink error
 )
 
-// BenchmarkGetOrResolve_FreshHit measures the cache-hit hot path, including the
-// entry.inFlight sentinel check and the reader's cardinality read. A fresh hit
-// resolves nothing, so the resolver's resolution count stays at zero.
-// Alloc-free.
-func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
-	c := NewCache()
-	var e Entity
-	copy(e[:], "0123456789abcdef0123")
+// cacheWithOneFreshEntry is a cache holding one fresh entry for the returned
+// key, built through the returned resolver over a store on backend holding the
+// key's one datom, so a rebuild over that store reads the index where a hit
+// reads none.
+func cacheWithOneFreshEntry(tb testing.TB, backend Backend) (*Cache, CacheKey, datalog.Keyword, *PatternMatcher) {
+	tb.Helper()
+	s, err := schema.NewBuilder().
+		Attribute(":bench/attr").Type(schema.TypeLong).One().Add().
+		Build()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	db := openBackendDB(tb, backend, DatabaseOptions{Schema: s})
+	entity := datalog.NewIdentity("bench")
+	attr := datalog.NewKeyword(":bench/attr")
+	tx := db.NewTransaction()
+	if err := tx.Set(entity, attr, int64(42)); err != nil {
+		tb.Fatal(err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		tb.Fatal(err)
+	}
+	resolver := db.Matcher().(*PatternMatcher)
 	var a Attribute
-	copy(a[:], ":bench/attr")
-	key := CacheKey{E: e, A: a}
+	copy(a[:], attr.String())
+	key := CacheKey{E: Entity(entity.Hash()), A: a}
+	card := resolver.GetCardinality(attr)
 
-	ver := datalog.ElementID{}
-	c.slots.Store(key, cacheSlot{
-		entry: &CacheEntry{
-			version:     ver,
-			cardinality: schema.CardinalityOne,
-			oneValue:    int64(42),
-		},
-		version: ver,
-	})
-	resolver := NewPatternMatcher(NewMemoryStore(&BinaryKeyEncoder{}))
-
-	// Prove the fresh-hit path resolves cleanly before measuring it. The check
-	// is here rather than in the loop because the loop exists to measure a
-	// single branch, and a per-iteration error test would be measuring itself.
-	// It also pins that the hit is real: a fallthrough to the rebuild path
-	// would read the index.
-	hit := &scanReport{}
-	if _, err := c.GetOrResolve(key, schema.CardinalityOne, resolver, nil, nil, hit); err != nil {
-		b.Fatal(err)
+	// The build's report shows what a rebuild over this store reads, so a pin
+	// that a hit reads none tells a hit from a fallthrough to the rebuild path.
+	c := NewCache()
+	build := &scanReport{}
+	if _, err := c.GetOrResolve(key, card, resolver, nil, nil, build); err != nil {
+		tb.Fatal(err)
 	}
-	if hit.scanned != 0 {
-		b.Fatalf("the fresh hit read %d index entries, want none", hit.scanned)
+	if build.scanned == 0 {
+		tb.Fatal("the build read no index entry, so a rebuild could pass as a hit")
 	}
+	return c, key, card, resolver
+}
 
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		getResolveSink, getResolveErrSink = c.GetOrResolve(key, schema.CardinalityOne, resolver, nil, nil, DiscardIntake)
+// BenchmarkGetOrResolve_FreshHit measures the cache-hit hot path, including the
+// entry.inFlight sentinel check and the reader's rule checks, one leg per
+// backend. A fresh hit resolves nothing, so the resolver's resolution count
+// stays at zero. Alloc-free, which TestGetOrResolveFreshHitAllocatesNothing
+// pins.
+func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
+	for _, backend := range AvailableBackends() {
+		b.Run(backend.Name, func(b *testing.B) {
+			c, key, card, resolver := cacheWithOneFreshEntry(b, backend)
+
+			// Prove the fresh-hit path resolves cleanly before measuring it. The
+			// check is here rather than in the loop because the loop exists to
+			// measure a single branch, and a per-iteration error test would be
+			// measuring itself.
+			hit := &scanReport{}
+			if _, err := c.GetOrResolve(key, card, resolver, nil, nil, hit); err != nil {
+				b.Fatal(err)
+			}
+			if hit.scanned != 0 {
+				b.Fatalf("the fresh hit read %d index entries, want none", hit.scanned)
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				getResolveSink, getResolveErrSink = c.GetOrResolve(key, card, resolver, nil, nil, DiscardIntake)
+			}
+		})
+	}
+}
+
+// TestGetOrResolveFreshHitAllocatesNothing pins that a fresh hit is the trie
+// walk and the reader's rule checks and nothing else: it allocates nothing,
+// so a reader pays no decode on the cache's hot path.
+func TestGetOrResolveFreshHitAllocatesNothing(t *testing.T) {
+	for _, backend := range AvailableBackends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			c, key, card, resolver := cacheWithOneFreshEntry(t, backend)
+			allocs := testing.AllocsPerRun(100, func() {
+				getResolveSink, getResolveErrSink = c.GetOrResolve(key, card, resolver, nil, nil, DiscardIntake)
+			})
+			if getResolveErrSink != nil {
+				t.Fatal(getResolveErrSink)
+			}
+			if allocs != 0 {
+				t.Errorf("a fresh hit allocates %v per call, want none", allocs)
+			}
+		})
 	}
 }
 

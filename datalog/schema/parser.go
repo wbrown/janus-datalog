@@ -97,6 +97,12 @@ func parseAttributeDefinition(ident string, node *edn.Node) (*AttributeDefinitio
 	if node.Type != edn.NodeMap {
 		return nil, fmt.Errorf("attribute definition must be a map, got %v", node.Type)
 	}
+	// An ident longer than storage holds would be truncated to its first bytes
+	// and alias every attribute sharing them; the parser refuses it where Add
+	// would panic.
+	if n := len(ident); n > datalog.MaxAttributeBytes {
+		return nil, fmt.Errorf("attribute %s is %d bytes, exceeds the %d-byte storage limit", ident, n, datalog.MaxAttributeBytes)
+	}
 
 	def := &AttributeDefinition{
 		Ident:       datalog.NewKeyword(ident),

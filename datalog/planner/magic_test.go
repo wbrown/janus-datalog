@@ -173,6 +173,58 @@ func TestMagic_ClosureBoundFirst(t *testing.T) {
 	assertRules(t, "the original set", rs.Rules(sym("follows")), followsRules())
 }
 
+// A free invocation of a predicate whose rules reach a predicate with
+// required positions is rewritten with its head all free: the rewrite has no
+// seed and the adorned root's rules carry no guard, each required predicate
+// is adorned from the clauses before its invocation, and the recursion back
+// into the root is adorned from the required predicate's guard and the
+// clause before it, so one rewrite and one evaluation derive the predicate
+// whole (NESTED_SCOPES_AS_QUERIES.md §5.5).
+func TestMagic_AFreeRootAdornsTheRequiredPredicatesItReaches(t *testing.T) {
+	hopBase := defineRule("hop", []string{"?x", "?y"}, scopePattern("?x", "page/next", "?y"))
+	hopBase.Required = []query.Symbol{sym("?x")}
+	hopOn := defineRule("hop", []string{"?x", "?y"}, scopePattern("?x", "page/next", "?m"), invoke("walk", "?m", "?y"))
+	hopOn.Required = []query.Symbol{sym("?x")}
+	walk := defineRule("walk", []string{"?a", "?b"}, scopePattern("?a", "page/kind", "_"), invoke("hop", "?a", "?b"))
+	rs := mustRuleSet(t, []*query.Rule{hopBase, hopOn, walk})
+	magic := mustMagic(t, rs, "walk", false, false)
+	if magic.Predicate != sym("adorned.ff/walk") || magic.Seed != nil {
+		t.Errorf("Predicate %s, Seed %v; want adorned.ff/walk and no seed: a free root has nothing to be seeded with", magic.Predicate, magic.Seed)
+	}
+	assertRules(t, "adorned.ff/walk", magic.Rules.Rules(sym("adorned.ff/walk")), []*query.Rule{
+		defineRule("adorned.ff/walk", []string{"?a", "?b"},
+			scopePattern("?a", "page/kind", "_"),
+			invoke("adorned.bf/hop", "?a", "?b")),
+	})
+	assertRules(t, "adorned.bf/hop", magic.Rules.Rules(sym("adorned.bf/hop")), []*query.Rule{
+		defineRule("adorned.bf/hop", []string{"?x", "?y"},
+			invoke("magic.bf/hop", "?x"),
+			scopePattern("?x", "page/next", "?y")),
+		defineRule("adorned.bf/hop", []string{"?x", "?y"},
+			invoke("magic.bf/hop", "?x"),
+			scopePattern("?x", "page/next", "?m"),
+			invoke("adorned.bf/walk", "?m", "?y")),
+	})
+	assertRules(t, "magic.bf/hop", magic.Rules.Rules(sym("magic.bf/hop")), []*query.Rule{
+		defineRule("magic.bf/hop", []string{"?a"},
+			scopePattern("?a", "page/kind", "_")),
+		defineRule("magic.bf/hop", []string{"?a"},
+			invoke("magic.bf/walk", "?a"),
+			scopePattern("?a", "page/kind", "_")),
+	})
+	assertRules(t, "adorned.bf/walk", magic.Rules.Rules(sym("adorned.bf/walk")), []*query.Rule{
+		defineRule("adorned.bf/walk", []string{"?a", "?b"},
+			invoke("magic.bf/walk", "?a"),
+			scopePattern("?a", "page/kind", "_"),
+			invoke("adorned.bf/hop", "?a", "?b")),
+	})
+	assertRules(t, "magic.bf/walk", magic.Rules.Rules(sym("magic.bf/walk")), []*query.Rule{
+		defineRule("magic.bf/walk", []string{"?m"},
+			invoke("magic.bf/hop", "?x"),
+			scopePattern("?x", "page/next", "?m")),
+	})
+}
+
 func TestMagic_ConstantAndRepeatedArguments(t *testing.T) {
 	rs := mustRuleSet(t, []*query.Rule{
 		defineRule("pair", []string{"?x", "?y"}, scopePattern("?x", "page/next", "?y")),
@@ -246,6 +298,346 @@ func TestMagic_InvocationInsideOrJoinBranch(t *testing.T) {
 			t.Error("a branch holding no invocation shares its clauses")
 		}
 	}
+}
+
+// branchRead is the subquery a magic rule reads a branch's clauses through:
+// the clauses under the one header symbol the enclosing scope binds, finding
+// the variable the invocation is bound by and binding it to the name standing
+// for it in the enclosing scope.
+func branchRead(bound string, clauses []query.Clause, find, as string) *query.SubqueryPattern {
+	return subqueryCall(&query.Query{
+		Find:  []query.FindElement{query.FindVariable{Symbol: sym(find)}},
+		In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: sym(bound)}},
+		Where: clauses,
+	}, query.Variable{Name: sym(bound)}, as)
+}
+
+// An invocation inside a form's branch is adorned by the form's required run
+// and what the branch's planned clauses before it provide, and its magic
+// rule reads the body's clauses before the form and the branch's clauses
+// before the invocation, the latter through a subquery over the header
+// symbols the enclosing scope binds, which scopes the branch's locals apart
+// (NESTED_SCOPES_AS_QUERIES.md §5.5). The recursion's argument here is a
+// branch local the branch's pattern binds, under the required run and under
+// a flat header alike, so the recursion is adorned and its magic rule finds
+// the local through the branch's pattern.
+func TestMagic_InvocationInsideABranchIsAdornedByTheBranchsClausesBeforeIt(t *testing.T) {
+	x, y := []query.Symbol{sym("?x")}, []query.Symbol{sym("?y")}
+	branches := func(recursion string) [][]query.Clause {
+		return [][]query.Clause{
+			{scopePattern("?x", "edge", "?y")},
+			{scopePattern("?x", "edge", "?z"), invoke(recursion, "?z", "?y")},
+		}
+	}
+	magicRule := defineRule("magic.bf/reach", []string{"?magic.bf/reach.0"},
+		invoke("magic.bf/reach", "?x"),
+		branchRead("?x", []query.Clause{scopePattern("?x", "edge", "?z")}, "?z", "?magic.bf/reach.0"))
+	cases := []struct {
+		name     string
+		required []query.Symbol
+		header   query.OrJoinClause
+	}{
+		{"the required run named", x, query.OrJoinClause{RequiredVars: x, OutputVars: y}},
+		{"a flat header", nil, query.OrJoinClause{OutputVars: []query.Symbol{sym("?x"), sym("?y")}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			form := func(recursion string) *query.OrJoinClause {
+				return &query.OrJoinClause{RequiredVars: c.header.RequiredVars, OutputVars: c.header.OutputVars, Branches: branches(recursion)}
+			}
+			reach := defineRule("reach", []string{"?x", "?y"}, form("reach"))
+			reach.Required = c.required
+			magic := mustMagic(t, mustRuleSet(t, []*query.Rule{reach}), "reach", true, false)
+			assertRules(t, "adorned.bf/reach", magic.Rules.Rules(sym("adorned.bf/reach")), []*query.Rule{
+				defineRule("adorned.bf/reach", []string{"?x", "?y"}, invoke("magic.bf/reach", "?x"), form("adorned.bf/reach")),
+			})
+			assertRules(t, "magic.bf/reach", magic.Rules.Rules(sym("magic.bf/reach")), []*query.Rule{magicRule})
+			if original := magic.Rules.Rules(sym("reach")); len(original) != 0 {
+				t.Errorf("the recursion is adorned, so reach's original rules stay out of the set, got %v", original)
+			}
+		})
+	}
+}
+
+// A branch local that shares a body variable's name outside the header is
+// the branch's own: the magic rule of an invocation it binds reads the body's
+// clause binding the name and the branch's clause binding the local apart,
+// the latter inside the subquery's scope, so the local never unifies with
+// the body's variable (NESTED_SCOPES_AS_QUERIES.md §2.1, §5.5). The body's
+// ?x is the head's bound position; the branch's ?x is the page the branch's
+// pattern reaches from ?w.
+func TestMagic_BranchLocalSharingABodyNameStaysApart(t *testing.T) {
+	w, y := []query.Symbol{sym("?w")}, []query.Symbol{sym("?y")}
+	form := func(recursion string) *query.OrJoinClause {
+		return &query.OrJoinClause{RequiredVars: w, OutputVars: y, Branches: [][]query.Clause{
+			{scopePattern("?w", "edge", "?y")},
+			{scopePattern("?w", "edge", "?x"), invoke(recursion, "?x", "?y")},
+		}}
+	}
+	reach := defineRule("reach", []string{"?x", "?y"}, scopePattern("?x", "page/next", "?w"), form("reach"))
+	reach.Required = []query.Symbol{sym("?x")}
+	magic := mustMagic(t, mustRuleSet(t, []*query.Rule{reach}), "reach", true, false)
+	assertRules(t, "adorned.bf/reach", magic.Rules.Rules(sym("adorned.bf/reach")), []*query.Rule{
+		defineRule("adorned.bf/reach", []string{"?x", "?y"},
+			invoke("magic.bf/reach", "?x"),
+			scopePattern("?x", "page/next", "?w"),
+			form("adorned.bf/reach")),
+	})
+	assertRules(t, "magic.bf/reach", magic.Rules.Rules(sym("magic.bf/reach")), []*query.Rule{
+		defineRule("magic.bf/reach", []string{"?magic.bf/reach.0"},
+			invoke("magic.bf/reach", "?x"),
+			scopePattern("?x", "page/next", "?w"),
+			branchRead("?w", []query.Clause{scopePattern("?w", "edge", "?x")}, "?x", "?magic.bf/reach.0")),
+	})
+}
+
+// A magic rule reads each scope on the path to the invocation through a read
+// of its own, nested in the enclosing scope's read: a branch inside a
+// branch, a subquery inside a branch, and a branch inside a subquery's inner
+// query each bind the recursion's argument in the innermost scope, and the
+// name it takes is carried out through every read to the magic rule's head
+// (NESTED_SCOPES_AS_QUERIES.md §5.5).
+func TestMagic_InvocationInsideNestedBranchesIsReadThroughEachScope(t *testing.T) {
+	x, y := []query.Symbol{sym("?x")}, []query.Symbol{sym("?y")}
+	const fresh = "?magic.bf/reach.0"
+	guard := invoke("magic.bf/reach", "?x")
+
+	t.Run("a branch inside a branch", func(t *testing.T) {
+		z := []query.Symbol{sym("?z")}
+		inner := func(recursion string) *query.OrJoinClause {
+			return &query.OrJoinClause{RequiredVars: z, OutputVars: y, Branches: [][]query.Clause{
+				{scopePattern("?z", "edge", "?y")},
+				{scopePattern("?z", "edge", "?u"), invoke(recursion, "?u", "?y")},
+			}}
+		}
+		outer := func(recursion string) *query.OrJoinClause {
+			return &query.OrJoinClause{RequiredVars: x, OutputVars: y, Branches: [][]query.Clause{
+				{scopePattern("?x", "edge", "?y")},
+				{scopePattern("?x", "edge", "?z"), inner(recursion)},
+			}}
+		}
+		reach := defineRule("reach", []string{"?x", "?y"}, outer("reach"))
+		reach.Required = x
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{reach}), "reach", true, false)
+		assertRules(t, "adorned.bf/reach", magic.Rules.Rules(sym("adorned.bf/reach")), []*query.Rule{
+			defineRule("adorned.bf/reach", []string{"?x", "?y"}, guard, outer("adorned.bf/reach")),
+		})
+		assertRules(t, "magic.bf/reach", magic.Rules.Rules(sym("magic.bf/reach")), []*query.Rule{
+			defineRule("magic.bf/reach", []string{fresh},
+				guard,
+				branchRead("?x", []query.Clause{
+					scopePattern("?x", "edge", "?z"),
+					branchRead("?z", []query.Clause{scopePattern("?z", "edge", "?u")}, "?u", fresh),
+				}, fresh, fresh)),
+		})
+	})
+
+	t.Run("a subquery inside a branch", func(t *testing.T) {
+		in := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: sym("?p")}}
+		form := func(recursion string) *query.OrJoinClause {
+			return &query.OrJoinClause{RequiredVars: x, OutputVars: y, Branches: [][]query.Clause{
+				{scopePattern("?x", "edge", "?y")},
+				{scopePattern("?x", "edge", "?z"), subqueryCall(&query.Query{
+					Find:  []query.FindElement{query.FindVariable{Symbol: sym("?w")}},
+					In:    in,
+					Where: []query.Clause{invoke(recursion, "?p", "?w")},
+				}, query.Variable{Name: sym("?z")}, "?y")},
+			}}
+		}
+		reach := defineRule("reach", []string{"?x", "?y"}, form("reach"))
+		reach.Required = x
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{reach}), "reach", true, false)
+		assertRules(t, "adorned.bf/reach", magic.Rules.Rules(sym("adorned.bf/reach")), []*query.Rule{
+			defineRule("adorned.bf/reach", []string{"?x", "?y"}, guard, form("adorned.bf/reach")),
+		})
+		assertRules(t, "magic.bf/reach", magic.Rules.Rules(sym("magic.bf/reach")), []*query.Rule{
+			defineRule("magic.bf/reach", []string{fresh},
+				guard,
+				branchRead("?x", []query.Clause{scopePattern("?x", "edge", "?z")}, "?z", fresh)),
+		})
+	})
+
+	t.Run("a branch inside a subquery's inner query", func(t *testing.T) {
+		p, w := []query.Symbol{sym("?p")}, []query.Symbol{sym("?w")}
+		in := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: sym("?p")}}
+		form := func(recursion string) *query.OrJoinClause {
+			return &query.OrJoinClause{RequiredVars: p, OutputVars: w, Branches: [][]query.Clause{
+				{scopePattern("?p", "edge", "?w")},
+				{scopePattern("?p", "edge", "?q"), invoke(recursion, "?q", "?w")},
+			}}
+		}
+		call := func(recursion string) *query.SubqueryPattern {
+			return subqueryCall(&query.Query{
+				Find:  []query.FindElement{query.FindVariable{Symbol: sym("?w")}},
+				In:    in,
+				Where: []query.Clause{form(recursion)},
+			}, query.Variable{Name: sym("?y")}, "?z")
+		}
+		reach := defineRule("reach", []string{"?x", "?z"}, scopePattern("?x", "edge", "?y"), call("reach"))
+		reach.Required = x
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{reach}), "reach", true, false)
+		assertRules(t, "adorned.bf/reach", magic.Rules.Rules(sym("adorned.bf/reach")), []*query.Rule{
+			defineRule("adorned.bf/reach", []string{"?x", "?z"}, guard, scopePattern("?x", "edge", "?y"), call("adorned.bf/reach")),
+		})
+		assertRules(t, "magic.bf/reach", magic.Rules.Rules(sym("magic.bf/reach")), []*query.Rule{
+			defineRule("magic.bf/reach", []string{fresh},
+				guard,
+				scopePattern("?x", "edge", "?y"),
+				subqueryCall(&query.Query{
+					Find:  []query.FindElement{query.FindVariable{Symbol: sym(fresh)}},
+					In:    in,
+					Where: []query.Clause{branchRead("?p", []query.Clause{scopePattern("?p", "edge", "?q")}, "?q", fresh)},
+				}, query.Variable{Name: sym("?y")}, fresh)),
+		})
+	})
+}
+
+// Under a non-monotone form the sealed passing enters the branch, and the
+// branch's own clauses before the invocation pass inside it: a predicate
+// with a required position the branch's pattern binds is adorned from that
+// pattern, its magic rule reading the sealed clauses and the pattern through
+// the branch's read, and its original rules stay out of the set
+// (NON_MONOTONE_FORMS_PROOF.md T6, NESTED_SCOPES_AS_QUERIES.md §5.5).
+func TestMagic_ABranchsClausesPassIntoAnInvocationUnderANonMonotoneForm(t *testing.T) {
+	t.Run("an or-default-join branch", func(t *testing.T) {
+		marked := defineRule("marked", []string{"?k", "?c"}, scopePattern("?k", "page/mark", "?c"))
+		marked.Required = []query.Symbol{sym("?k")}
+		b, c := []query.Symbol{sym("?b")}, []query.Symbol{sym("?c")}
+		form := func(invocation string) *query.OrDefaultJoinClause {
+			return &query.OrDefaultJoinClause{RequiredVars: b, OutputVars: c, Branches: [][]query.Clause{
+				{scopePattern("?b", "page/kind", "?k"), invoke(invocation, "?k", "?c")},
+				{scopePattern("?b", "page/other", "?c")},
+			}}
+		}
+		walk := defineRule("walk", []string{"?a", "?c"}, scopePattern("?a", "page/next", "?b"), form("marked"))
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{marked, walk}), "walk", true, false)
+		assertRules(t, "adorned.bf/walk", magic.Rules.Rules(sym("adorned.bf/walk")), []*query.Rule{
+			defineRule("adorned.bf/walk", []string{"?a", "?c"},
+				invoke("magic.bf/walk", "?a"),
+				scopePattern("?a", "page/next", "?b"),
+				form("adorned.bf/marked")),
+		})
+		assertRules(t, "magic.bf/marked", magic.Rules.Rules(sym("magic.bf/marked")), []*query.Rule{
+			defineRule("magic.bf/marked", []string{"?magic.bf/marked.0"},
+				invoke("magic.bf/walk", "?a"),
+				scopePattern("?a", "page/next", "?b"),
+				branchRead("?b", []query.Clause{scopePattern("?b", "page/kind", "?k")}, "?k", "?magic.bf/marked.0")),
+		})
+		if original := magic.Rules.Rules(sym("marked")); len(original) != 0 {
+			t.Errorf("the site is adorned, so marked's original rules stay out of the set, got %v", original)
+		}
+	})
+
+	t.Run("a not-join body", func(t *testing.T) {
+		z := []query.Symbol{sym("?z")}
+		body := func(invocation string) *query.NotJoinClause {
+			return &query.NotJoinClause{RequiredVars: z, Clauses: []query.Clause{scopePattern("?z", "page/n", "?n"), invoke(invocation, "?n")}}
+		}
+		q := defineRule("q", []string{"?x", "?z"}, scopePattern("?x", "page/a", "?z"), body("small"))
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{smallRule(), q}), "q", true, false)
+		assertRules(t, "adorned.bf/q", magic.Rules.Rules(sym("adorned.bf/q")), []*query.Rule{
+			defineRule("adorned.bf/q", []string{"?x", "?z"},
+				invoke("magic.bf/q", "?x"),
+				scopePattern("?x", "page/a", "?z"),
+				body("adorned.b/small")),
+		})
+		assertRules(t, "magic.b/small", magic.Rules.Rules(sym("magic.b/small")), []*query.Rule{
+			defineRule("magic.b/small", []string{"?magic.b/small.0"},
+				invoke("magic.bf/q", "?x"),
+				scopePattern("?x", "page/a", "?z"),
+				branchRead("?z", []query.Clause{scopePattern("?z", "page/n", "?n")}, "?n", "?magic.b/small.0")),
+		})
+		if original := magic.Rules.Rules(sym("small")); len(original) != 0 {
+			t.Errorf("the site is adorned, so small's original rules stay out of the set, got %v", original)
+		}
+	})
+}
+
+// A scope's read finds what the scope's clauses provide: a bound variable a
+// clause of the read provides is found there and bound to the name standing
+// for it outside, and one the scope's inputs alone bind has no attribute in
+// the read's result, so it passes through under the name standing for it
+// outside, a header symbol under its own name and a constant the call passes
+// grounded under the fresh name. A scope whose clauses provide none of the
+// invocation's bound variables contributes no read: the clauses left out
+// widen the magic set and lose no tuple (NESTED_SCOPES_AS_QUERIES.md §5.5).
+func TestMagic_ABranchReadFindsWhatTheBranchProvides(t *testing.T) {
+	t.Run("a header symbol the body binds passes through the read", func(t *testing.T) {
+		form := func(recursion string) *query.OrJoinClause {
+			return &query.OrJoinClause{OutputVars: []query.Symbol{sym("?a"), sym("?c")}, Branches: [][]query.Clause{
+				{scopePattern("?a", "edge", "?c")},
+				{scopePattern("?a", "edge", "?b"), invoke(recursion, "?b", "?c")},
+			}}
+		}
+		r := defineRule("r", []string{"?a", "?c"}, form("r"))
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{r}), "r", false, true)
+		assertRules(t, "adorned.fb/r", magic.Rules.Rules(sym("adorned.fb/r")), []*query.Rule{
+			defineRule("adorned.fb/r", []string{"?a", "?c"}, invoke("magic.fb/r", "?c"), form("adorned.bb/r")),
+		})
+		assertRules(t, "adorned.bb/r", magic.Rules.Rules(sym("adorned.bb/r")), []*query.Rule{
+			defineRule("adorned.bb/r", []string{"?a", "?c"}, invoke("magic.bb/r", "?a", "?c"), form("adorned.bb/r")),
+		})
+		assertRules(t, "magic.bb/r", magic.Rules.Rules(sym("magic.bb/r")), []*query.Rule{
+			defineRule("magic.bb/r", []string{"?magic.bb/r.0", "?c"},
+				invoke("magic.fb/r", "?c"),
+				branchRead("?c", []query.Clause{scopePattern("?a", "edge", "?b")}, "?b", "?magic.bb/r.0")),
+			defineRule("magic.bb/r", []string{"?magic.bb/r.0", "?c"},
+				invoke("magic.bb/r", "?a", "?c"),
+				&query.SubqueryPattern{
+					Query: &query.Query{
+						Find:  []query.FindElement{query.FindVariable{Symbol: sym("?b")}},
+						In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: sym("?a")}, query.ScalarInput{Symbol: sym("?c")}},
+						Where: []query.Clause{scopePattern("?a", "edge", "?b")},
+					},
+					Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Constant{Value: datalog.NewSymbol("%")}, query.Variable{Name: sym("?a")}, query.Variable{Name: sym("?c")}},
+					Binding: query.RelationBinding{Variables: []query.Symbol{sym("?magic.bb/r.0")}},
+				}),
+		})
+	})
+
+	t.Run("a branch providing none of the bound variables contributes no read", func(t *testing.T) {
+		form := func(recursion string) *query.OrJoinClause {
+			return &query.OrJoinClause{OutputVars: []query.Symbol{sym("?w"), sym("?y")}, Branches: [][]query.Clause{
+				{scopePattern("?w", "edge", "?y")},
+				{scopePattern("?k", "page/root", "_"), invoke(recursion, "?w", "?y")},
+			}}
+		}
+		reach := defineRule("reach", []string{"?x", "?y"}, scopePattern("?x", "edge", "?w"), form("reach"))
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{reach}), "reach", true, false)
+		assertRules(t, "adorned.bf/reach", magic.Rules.Rules(sym("adorned.bf/reach")), []*query.Rule{
+			defineRule("adorned.bf/reach", []string{"?x", "?y"},
+				invoke("magic.bf/reach", "?x"),
+				scopePattern("?x", "edge", "?w"),
+				form("adorned.bf/reach")),
+		})
+		assertRules(t, "magic.bf/reach", magic.Rules.Rules(sym("magic.bf/reach")), []*query.Rule{
+			defineRule("magic.bf/reach", []string{"?w"},
+				invoke("magic.bf/reach", "?x"),
+				scopePattern("?x", "edge", "?w")),
+		})
+	})
+
+	t.Run("a constant the call passes is grounded past a clause that does not provide it", func(t *testing.T) {
+		in := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: sym("?p")}}
+		call := func(recursion string) *query.SubqueryPattern {
+			return subqueryCall(&query.Query{
+				Find:  []query.FindElement{query.FindVariable{Symbol: sym("?v")}},
+				In:    in,
+				Where: []query.Clause{scopePattern("?k", "page/kind", "root"), invoke(recursion, "?p", "?v")},
+			}, query.Constant{Value: int64(7)}, "?y")
+		}
+		reach := defineRule("reach", []string{"?x", "?y"}, scopePattern("?x", "edge", "?y"))
+		reach.Required = []query.Symbol{sym("?x")}
+		walk := defineRule("walk", []string{"?y"}, call("reach"))
+		magic := mustMagic(t, mustRuleSet(t, []*query.Rule{reach, walk}), "walk", false)
+		assertRules(t, "adorned.f/walk", magic.Rules.Rules(sym("adorned.f/walk")), []*query.Rule{
+			defineRule("adorned.f/walk", []string{"?y"}, call("adorned.bf/reach")),
+		})
+		assertRules(t, "magic.bf/reach", magic.Rules.Rules(sym("magic.bf/reach")), []*query.Rule{
+			defineRule("magic.bf/reach", []string{"?magic.bf/reach.0"},
+				&query.Expression{Function: &query.GroundFunction{Value: int64(7)}, Binding: sym("?magic.bf/reach.0")}),
+		})
+	})
 }
 
 // An invocation whose variables no clause of the body provides is bound by
@@ -710,11 +1102,13 @@ func TestMagic_ANegatedSiteWhoseAdornmentWouldNotStratifyIsLeftUnadorned(t *test
 // find, and a subquery's inner query under its data inputs with the inner
 // find. The clauses before an invocation are then the planner's, so an
 // invocation written before the pattern binding its argument is adorned by
-// that pattern and its magic rule reads it, and every rewritten scope holds
-// its clauses in the planned order (NESTED_SCOPES_AS_QUERIES.md §5.5). In
-// each scope below the planner places a pattern seeking on an available
-// variable before an invocation with none, and an invocation with an
-// available argument before a pattern reading nothing available.
+// that pattern and its magic rule reads it, inside a branch through the
+// branch's read over the header symbol the body binds, and every rewritten
+// scope holds its clauses in the planned order
+// (NESTED_SCOPES_AS_QUERIES.md §5.5). In each scope below the planner
+// places a pattern seeking on an available variable before an invocation
+// with none, and an invocation with an available argument before a pattern
+// reading nothing available.
 func TestMagic_EveryScopeIsWalkedInThePlannersOrder(t *testing.T) {
 	next := func() *query.Rule {
 		return defineRule("next", []string{"?a", "?b"}, scopePattern("?a", "page/next", "?b"))
@@ -727,6 +1121,7 @@ func TestMagic_EveryScopeIsWalkedInThePlannersOrder(t *testing.T) {
 		Where: []query.Clause{invoke("next", "?k", "?w"), kind},
 	}
 	x, y := []query.Symbol{sym("?x")}, []query.Symbol{sym("?y")}
+	kindRead := branchRead("?x", []query.Clause{scopePattern("?x", "page/kind", "_")}, "?x", "?x")
 	cases := []struct {
 		name    string
 		rule    *query.Rule
@@ -745,7 +1140,7 @@ func TestMagic_EveryScopeIsWalkedInThePlannersOrder(t *testing.T) {
 				Branches: [][]query.Clause{{invoke("next", "?x", "?y"), scopePattern("?x", "page/kind", "_")}}}),
 			adorned: defineRule("adorned.bf/reached", []string{"?x", "?y"}, invoke("magic.bf/reached", "?x"), scopePattern("?x", "page/root", "_"), &query.OrJoinClause{RequiredVars: x, OutputVars: y,
 				Branches: [][]query.Clause{{scopePattern("?x", "page/kind", "_"), invoke("adorned.bf/next", "?x", "?y")}}}),
-			magic: defineRule("magic.bf/next", []string{"?x"}, invoke("magic.bf/reached", "?x"), scopePattern("?x", "page/root", "_")),
+			magic: defineRule("magic.bf/next", []string{"?x"}, invoke("magic.bf/reached", "?x"), scopePattern("?x", "page/root", "_"), kindRead),
 		},
 		{
 			name: "an or-default-join branch",
@@ -753,7 +1148,7 @@ func TestMagic_EveryScopeIsWalkedInThePlannersOrder(t *testing.T) {
 				Branches: [][]query.Clause{{invoke("next", "?x", "?y"), scopePattern("?x", "page/kind", "_")}, {scopePattern("?x", "page/other", "?y")}}}),
 			adorned: defineRule("adorned.bf/reached", []string{"?x", "?y"}, invoke("magic.bf/reached", "?x"), scopePattern("?x", "page/root", "_"), &query.OrDefaultJoinClause{RequiredVars: x, OutputVars: y,
 				Branches: [][]query.Clause{{scopePattern("?x", "page/kind", "_"), invoke("adorned.bf/next", "?x", "?y")}, {scopePattern("?x", "page/other", "?y")}}}),
-			magic: defineRule("magic.bf/next", []string{"?x"}, invoke("magic.bf/reached", "?x"), scopePattern("?x", "page/root", "_")),
+			magic: defineRule("magic.bf/next", []string{"?x"}, invoke("magic.bf/reached", "?x"), scopePattern("?x", "page/root", "_"), kindRead),
 		},
 		{
 			name: "a not-join body",

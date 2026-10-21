@@ -186,6 +186,11 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 	}
 }
 
+// ohlcBenchmarkDays is the number of days BenchmarkOHLCSubqueries writes bars
+// for. Each of its queries answers one tuple per day, the bar at minute-of-day
+// 570, so it is the tuple count each timed loop asserts.
+const ohlcBenchmarkDays = 20
+
 // BenchmarkOHLCSubqueries measures the performance difference between
 // single vs multiple subqueries accessing the same data
 func BenchmarkOHLCSubqueries(b *testing.B) {
@@ -201,9 +206,9 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
-	// Create 20 days of data, 50 bars per day = 1000 bars
+	// Create ohlcBenchmarkDays days of data, 50 bars per day = 1000 bars
 	barID := 1000
-	for day := 1; day <= 20; day++ {
+	for day := 1; day <= ohlcBenchmarkDays; day++ {
 		dayTime := time.Date(2025, 1, day, 9, 30, 0, 0, time.UTC)
 
 		for minute := 0; minute < 50; minute++ {
@@ -276,9 +281,16 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 
 		q, _ := parser.ParseQuery(queryStr)
 
+		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			exec.Execute(q)
+			tuples, err := CollectTuples(exec.Execute(q))
+			if err != nil {
+				b.Fatalf("execute: %v", err)
+			}
+			if len(tuples) != ohlcBenchmarkDays {
+				b.Fatalf("expected %d tuples, got %d", ohlcBenchmarkDays, len(tuples))
+			}
 		}
 	})
 
@@ -325,9 +337,16 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 
 		q, _ := parser.ParseQuery(queryStr)
 
+		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			exec.Execute(q)
+			tuples, err := CollectTuples(exec.Execute(q))
+			if err != nil {
+				b.Fatalf("execute: %v", err)
+			}
+			if len(tuples) != ohlcBenchmarkDays {
+				b.Fatalf("expected %d tuples, got %d", ohlcBenchmarkDays, len(tuples))
+			}
 		}
 	})
 }

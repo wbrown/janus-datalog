@@ -99,7 +99,8 @@ func TestNoSchemaNoValidation(t *testing.T) {
 			// Create database without schema
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-			assert.Nil(t, db.Schema())
+			require.NotNil(t, db.Schema())
+			assert.Nil(t, db.Schema().GetAttribute(datalog.NewKeyword(":person/age")))
 
 			// Should accept any data without validation
 			alice := datalog.NewIdentity("alice")
@@ -118,7 +119,8 @@ func TestSetSchema(t *testing.T) {
 			// Create database without schema
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
-			assert.Nil(t, db.Schema())
+			require.NotNil(t, db.Schema())
+			assert.Nil(t, db.Schema().GetAttribute(datalog.NewKeyword(":person/age")))
 
 			// Add schema later
 			s, err := schema.NewBuilder().

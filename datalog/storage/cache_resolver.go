@@ -22,49 +22,50 @@ func (m *PatternMatcher) GetCardinality(attr datalog.Keyword) datalog.Keyword {
 	return def.Cardinality
 }
 
+// ResolvesUnique implements CacheResolver: whether this matcher resolves a
+// under the unique rule, the entity's first assertion no other entity's later
+// claim supersedes. It does when the schema declares a unique and the matcher
+// reads current state; in history mode raw assertions are exposed with no
+// resolution, so the walk would produce fallback values corresponding to no
+// datom. A cache entry carries the answer it was resolved under, so a reader
+// whose answer differs rebuilds instead of being served the other rule's
+// value.
+func (m *PatternMatcher) ResolvesUnique(a Attribute) bool {
+	if m.schema == nil || m.isHistoryMode() {
+		return false
+	}
+	return m.schema.GetAttribute(datalog.InternKeywordFromBytes(a)).HasUniqueConstraint()
+}
+
 // ResolveLWW returns the current value for cardinality-one (highest
 // ElementID wins).
 //
 // For non-unique attributes, uses the EATV first-entry shortcut (highest
-// Tx due to descending sort). For attributes declared Unique in the
-// schema, delegates to walkUniqueEntityValue for walk-based resolution:
-// the returned value is the entity's first non-superseded assertion,
-// which may fall back to an older entry if the latest has been claimed
-// by another entity.
-//
-// Exception: in history mode, the walk is bypassed entirely. History
-// mode exposes raw assertions without CRDT resolution; applying the
-// walk would produce fallback values that don't correspond to any
-// single raw datom. ResolveLWW in history mode returns the first-entry
-// (highest-Tx raw Set).
+// Tx due to descending sort). For attributes the matcher resolves under the
+// unique rule (ResolvesUnique), delegates to walkUniqueEntityValue for
+// walk-based resolution: the returned value is the entity's first
+// non-superseded assertion, which may fall back to an older entry if the
+// latest has been claimed by another entity.
 func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (any, datalog.ElementID, bool, error) {
-	// Unique-attribute walk path (applies only when schema declares
-	// the attribute unique AND the matcher is not in history mode;
-	// otherwise falls through to the simple first-entry path below).
-	if m.schema != nil && !m.isHistoryMode() {
-		kw := decodeAttribute(a)
-		if kw != "" {
-			if m.schema.GetAttribute(datalog.NewKeyword(kw)).HasUniqueConstraint() {
-				// The walk acquires through report, so its intake — the
-				// deepest read on this path — reaches the arm whether or not
-				// the walk goes on to fail.
-				v, tx, found, present, err := m.walkUniqueEntityValue(e, a, report)
-				if err != nil {
-					return nil, datalog.ElementID{}, false, err
-				}
-				if !found {
-					// No value survived the unique rule, which is not the same
-					// as no datoms: an entity whose every assertion was
-					// retracted or superseded still has the attribute, holding
-					// nothing. Reporting that as absence would leave no cache
-					// entry, and a caller finding none falls through to the
-					// plain EATV first-entry scan — which never applies the
-					// unique rule and hands back the superseded value.
-					return nil, datalog.ElementID{}, present, nil
-				}
-				return v, tx, true, nil
-			}
+	if m.ResolvesUnique(a) {
+		// The walk acquires through report, so its intake — the deepest read
+		// on this path — reaches the arm whether or not the walk goes on to
+		// fail.
+		v, tx, found, present, err := m.walkUniqueEntityValue(e, a, report)
+		if err != nil {
+			return nil, datalog.ElementID{}, false, err
 		}
+		if !found {
+			// No value survived the unique rule, which is not the same as no
+			// datoms: an entity whose every assertion was retracted or
+			// superseded still has the attribute, holding nothing. Reporting
+			// that as absence would leave no cache entry, and a caller finding
+			// none falls through to the plain EATV first-entry scan — which
+			// never applies the unique rule and hands back the superseded
+			// value.
+			return nil, datalog.ElementID{}, present, nil
+		}
+		return v, tx, true, nil
 	}
 
 	// Scan EATV for the first entry visible in this matcher mode (highest

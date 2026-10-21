@@ -296,6 +296,37 @@ func TestRules_BoundInvocationDerivesOnlyWhatItReaches(t *testing.T) {
 	}
 }
 
+// TestRules_InvocationInsideABranchBoundByTheBranchsClauseDerivesWhatItReaches
+// is the same contract for a closure whose recursion sits inside an or-join
+// branch, bound by the branch's own pattern: the rewrite adorns the
+// recursion from that pattern, so the invocation derives the chain its start
+// reaches and nothing of the other nine, with the rule's required run named
+// and under a flat header (NESTED_SCOPES_AS_QUERIES.md §5.5).
+func TestRules_InvocationInsideABranchBoundByTheBranchsClauseDerivesWhatItReaches(t *testing.T) {
+	shapes := []struct {
+		name  string
+		rules string
+	}{
+		{"the required run named", `[[(reach [?x] ?y) (or-join [[?x] ?y] [?x :edge ?y] (and [?x :edge ?z] (reach ?z ?y)))]]`},
+		{"a flat header", `[[(reach ?x ?y) (or-join [?x ?y] [?x :edge ?y] (and [?x :edge ?z] (reach ?z ?y)))]]`},
+	}
+	for _, shape := range shapes {
+		t.Run(shape.name, func(t *testing.T) {
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					opts := mode.plannerOptions()
+					opts.MaxDerivedTuples = 100
+					d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts})
+					g := writeGraph(t, d, chains(100))
+					rel, err := d.Query(`[:find ?y :in $ % ?start :where (reach ?start ?y)]`, mustRuleSet(t, shape.rules), nodeID("n1"))
+					require.NoError(t, err, "the recursion inside the branch is adorned from the branch's pattern and derives what the start reaches")
+					require.ElementsMatch(t, []string{"n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "n10", "n11"}, g.tuples(t, rel))
+				})
+			}
+		})
+	}
+}
+
 // TestRules_BoundInvocationByConstantDerivesOnlyWhatItReaches is the same
 // contract with the start a constant argument of the invocation.
 func TestRules_BoundInvocationByConstantDerivesOnlyWhatItReaches(t *testing.T) {
@@ -806,20 +837,23 @@ func TestRules_BoundInvocationRunsWhereverTheWholeInvocationRuns(t *testing.T) {
 	}
 }
 
-// A predicate that invokes a required-binding predicate evaluates whole: the
-// required position is bound inside the invoking rule's own body. The chain
+// A predicate that invokes a required-binding predicate evaluates whole
+// through one rewrite: the required position is bound inside the invoking
+// rule's own body, from which the required predicate is adorned. The chain
 // of four carries ranks 1 to 4 with n2 marked. The first case invokes such a
-// predicate free. The second binds a recursive predicate one of whose rules
-// invokes a lower predicate after the recursion, so that predicate's magic
-// rule reads the adorned recursion, and another of whose rules negates it,
-// where adorning the negated site would close a cycle through the negation:
-// that site is left unadorned, the rewrite is accepted, and the query
-// answers (NON_MONOTONE_FORMS_PROOF.md T6).
+// predicate free, rewritten with its head all free
+// (NESTED_SCOPES_AS_QUERIES.md §5.5). The second binds a recursive predicate
+// one of whose rules invokes a lower predicate after the recursion, so that
+// predicate's magic rule reads the adorned recursion, and another of whose
+// rules negates it, where adorning the negated site would close a cycle
+// through the negation: that site is left unadorned, the rewrite is
+// accepted, and the query answers (NON_MONOTONE_FORMS_PROOF.md T6).
 func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testing.T) {
 	cases := []struct {
 		name, rules, text string
 		inputs            []interface{}
 		want              []string
+		rewrites          [][]bool
 	}{
 		{
 			"free invocation",
@@ -828,6 +862,7 @@ func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testi
 			`[:find ?a ?r :in $ % :where (next ?a ?r)]`,
 			nil,
 			[]string{"n1>2", "n2>3", "n3>4", "n4>5"},
+			[][]bool{{false, false}},
 		},
 		{
 			"bound invocation whose negated site is left unadorned",
@@ -839,12 +874,14 @@ func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testi
 			`[:find ?y :in $ % ?s :where (walk ?s ?y)]`,
 			[]interface{}{nodeID("n2")},
 			[]string{"n3", "n4"},
+			[][]bool{{true, false}},
 		},
 	}
 	for _, c := range cases {
 		for _, mode := range optimizerModes {
 			t.Run(c.name+"/"+mode.name, func(t *testing.T) {
-				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				adorned := &rewriteAdornments{}
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: adorned.handle})
 				g := writeGraph(t, d, chain(4))
 				tx := d.NewTransaction()
 				for i := 1; i <= 4; i++ {
@@ -859,8 +896,32 @@ func TestRules_PredicateInvokingARequiredBindingPredicateEvaluatesWhole(t *testi
 				rel, err := d.Query(c.text, inputs...)
 				require.NoError(t, err, "the predicate evaluates whole")
 				require.ElementsMatch(t, c.want, g.tuples(t, rel))
+				require.Equal(t, c.rewrites, adorned.made(), "one rewrite, under the invocation's adornment")
 			})
 		}
+	}
+}
+
+// A free invocation of a predicate whose strata hold a required one is
+// rewritten with its head all free, so one rewrite and one evaluation derive
+// the predicate whole, the required predicate adorned from the clauses before
+// its invocation, and a required predicate recursive with a free one builds
+// (NESTED_SCOPES_AS_QUERIES.md §5.5): walk, free, invokes the required hop
+// after the pattern binding its argument, and hop invokes walk back.
+func TestFreeInvocationRewritesTheRequiredPredicatesOfItsStratum(t *testing.T) {
+	const mutual = `[[(hop [?x] ?y) [?x :edge ?y]]
+	                 [(hop [?x] ?y) [?x :edge ?m] (walk ?m ?y)]
+	                 [(walk ?a ?b) [?a :edge _] (hop ?a ?b)]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			adorned := &rewriteAdornments{}
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: adorned.handle})
+			g := writeGraph(t, d, chain(4))
+			rel, err := d.Query(`[:find ?a ?b :in $ % :where (walk ?a ?b)]`, mustRuleSet(t, mutual))
+			require.NoError(t, err, "the free invocation of walk derives it whole")
+			require.ElementsMatch(t, chainClosure(4), g.tuples(t, rel))
+			require.Equal(t, [][]bool{{false, false}}, adorned.made(), "one rewrite, the free invocation with its head all free")
+		})
 	}
 }
 

@@ -113,13 +113,13 @@ func (e *Executor) ExecuteWithContext(ctx *Context, q *query.Query) (Relation, e
 }
 
 // boundAttributes is the roster of attributes the input relations bind to a
-// variable standing in the attribute position of a data pattern on the
-// default source: each keyword value at such a variable's position in its
-// relation, in order of first appearance and each once. A value that is not a keyword names no
-// attribute. A relation read here is made replayable first, so the execution
-// that follows reads it whole.
-func boundAttributes(q *query.Query, inputRelations []Relation) ([]datalog.Keyword, error) {
-	variables := q.DefaultSourceAttributeVariables()
+// variable of the query's own scope that reaches the attribute position of a
+// data pattern on the default source, the variables the plan's roster names
+// (query.Rosters.AttributeVariables): each keyword value at such a variable's
+// position in its relation, in order of first appearance and each once. A
+// value that is not a keyword names no attribute. A relation read here is
+// made replayable first, so the execution that follows reads it whole.
+func boundAttributes(q *query.Query, variables []query.Symbol, inputRelations []Relation) ([]datalog.Keyword, error) {
 	if len(variables) == 0 {
 		return nil, nil
 	}
@@ -177,15 +177,20 @@ func boundAttributes(q *query.Query, inputRelations []Relation) ([]datalog.Keywo
 
 // refuseUnknownAttributes asks each source the query names, when that source
 // refuses attributes its schema does not declare, about the attributes the
-// query names on it: on the default source the query's own under the rule set
-// it runs with, the keywords its invocations pass at the positions the rule
-// set reads as attributes among them, the rule bodies', and the ones the
-// inputs bind to a pattern's attribute position; on a named source the
-// patterns' on it. A source that does not refuse is asked about nothing. The
-// first refusal is returned.
-func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, q *query.Query, inputRelations []Relation) error {
+// plan's roster names on it: on the default source the query's own under the
+// rule set it runs with, the keywords its invocations pass at the positions
+// the rule set reads as attributes among them, the rule bodies', and the ones
+// this execution's inputs bind to a variable reaching a pattern's attribute
+// position; on a named source the patterns' on it. The roster is the plan's,
+// collected at planning from the prepared query under
+// PlannerOptions.CollectRosters and read here after it, so the check runs on
+// both planner modes alike. A source that does not refuse is asked about
+// nothing, and its roster is not read, so a plan over sources that refuse
+// nothing carries none. The first refusal is returned.
+func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, plan *planner.RealizedPlan, inputRelations []Relation) error {
+	q, rosters := plan.Query, plan.Rosters
 	if vocabulary.RefusesUnknownAttributes(datalog.SymDollar) {
-		if err := vocabulary.UnknownAttributes(datalog.SymDollar, q.DefaultSourceAttributes(ctx.rules)); err != nil {
+		if err := vocabulary.UnknownAttributes(datalog.SymDollar, rosters.DefaultSourceAttributes(ctx.rules)); err != nil {
 			return err
 		}
 		if ctx.rules != nil {
@@ -193,38 +198,24 @@ func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, q *qu
 				return err
 			}
 		}
-	}
-	if err := refuseBoundAttributes(vocabulary, q, inputRelations); err != nil {
-		return err
+		bound, err := boundAttributes(q, rosters.AttributeVariables(ctx.rules), inputRelations)
+		if err != nil {
+			return err
+		}
+		if err := vocabulary.UnknownAttributes(datalog.SymDollar, bound); err != nil {
+			return err
+		}
 	}
 	for _, input := range q.In {
 		source, ok := input.(query.DatabaseInput)
 		if !ok || source.Name == datalog.SymDollar || !vocabulary.RefusesUnknownAttributes(source.Name) {
 			continue
 		}
-		if err := vocabulary.UnknownAttributes(source.Name, q.SourceAttributes(source.Name)); err != nil {
+		if err := vocabulary.UnknownAttributes(source.Name, rosters.SourceAttributes(source.Name)); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// refuseBoundAttributes asks the default source, when it refuses attributes
-// its schema does not declare, about the attributes the input relations bind
-// to a pattern's attribute position. A query's inputs are asked about once,
-// before planning, and the variables read are the attribute variables
-// DefaultSourceAttributeVariables collects, a variable a subquery's call
-// passes at the place of an inner :in symbol in an attribute position among
-// them.
-func refuseBoundAttributes(vocabulary AttributeVocabulary, q *query.Query, inputRelations []Relation) error {
-	if !vocabulary.RefusesUnknownAttributes(datalog.SymDollar) {
-		return nil
-	}
-	bound, err := boundAttributes(q, inputRelations)
-	if err != nil {
-		return err
-	}
-	return vocabulary.UnknownAttributes(datalog.SymDollar, bound)
 }
 
 // ExecuteWithRelations runs a query with input relations
@@ -312,15 +303,6 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 			}))
 	}
 
-	// An attribute a source's schema does not declare is refused before
-	// planning, so both planner modes refuse identically. The matcher owns
-	// the schema, so the decision is its own.
-	if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
-		if err := refuseUnknownAttributes(vocabulary, ctx, prepared, inputRelations); err != nil {
-			return refused(err)
-		}
-	}
-
 	// Build initial bindings from input relations
 	initialBindings := make(map[query.Symbol]bool)
 
@@ -377,6 +359,15 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 			Start: time.Now(),
 			Data:  map[string]interface{}{"plan": realizedPlan.String()},
 		})
+	}
+
+	// An attribute a source's schema does not declare is refused against
+	// the roster the plan holds and this execution's inputs, before any
+	// phase runs. The matcher owns the schema, so the decision is its own.
+	if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
+		if err := refuseUnknownAttributes(vocabulary, ctx, realizedPlan, inputRelations); err != nil {
+			return refused(err)
+		}
 	}
 	return executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
 }

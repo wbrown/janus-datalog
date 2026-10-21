@@ -174,7 +174,7 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 		return nil, fmt.Errorf("scalar find spec (.) is incompatible with :limit %d (limit must be 0 or 1)", *q.Limit)
 	}
 
-	if err := requireRulesInput(q); err != nil {
+	if err := query.ValidateRulesInput(q.In, q.Where); err != nil {
 		return nil, err
 	}
 

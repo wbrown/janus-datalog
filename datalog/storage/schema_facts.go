@@ -73,11 +73,12 @@ const definitionsQuery = `[:find ?a ?d
 const definitionWords = `[:db/ident :db/valueType :db/cardinality :db/unique :db/uniqueElements :db/neverZeroValue :db/doc]`
 
 // installedSchema is what a database runs with, published as one immutable
-// value: the effective schema, nil when the database declares nothing, and
-// the definitions the store carries as facts. installSchema and
-// adoptDeclarations publish a new value, and every reader loads the current
-// one in a single atomic operation, so a reader never pairs one schema's
-// declarations with another's definitions.
+// value: the effective schema, the engine's words over the definitions the
+// store carries as facts and the ones its ops infer, and the stored
+// definitions themselves. installSchema and adoptDeclarations publish a new
+// value, and every reader loads the current one in a single atomic
+// operation, so a reader never pairs one schema's declarations with
+// another's definitions.
 type installedSchema struct {
 	effective schema.SchemaProvider
 	declared  *schema.Schema
@@ -233,6 +234,7 @@ func assertSchemaFacts(d *Database, stored, given schema.SchemaProvider) error {
 	}
 
 	tx := d.NewTransaction()
+	tx.engine = true
 	for _, def := range declared {
 		declaration := declarationEntity(def)
 		words := []declarationWord{
@@ -293,8 +295,9 @@ var errRefuseUnknownNeedsSchema = errors.New("RefuseUnknownAttributes requires a
 // runs with the declarations that survive, until SetSchema or an import
 // declares again.
 //
-// A database declaring nothing reports no schema, so a store with no
-// definitions and no datoms installs nil.
+// The engine's words are declared over the whole, so each resolves by its
+// declaration whatever the store holds, and a database declaring nothing
+// runs with the engine's schema alone.
 //
 // A database that refuses unknown attributes needs a schema to check them
 // against, so installing none on it is errRefuseUnknownNeedsSchema.
@@ -327,31 +330,31 @@ func (d *Database) installLocked(assertGiven bool) error {
 		return err
 	}
 
-	effective := stored
+	effective := schema.Overlay(stored, engineSchema)
 	if given == nil {
 		inferred, err := inferSchemaFromStore(d.store)
 		if err != nil {
 			return fmt.Errorf("inferring schema from store: %w", err)
 		}
-		effective = schema.Overlay(inferred, stored)
+		effective = schema.Overlay(schema.Overlay(inferred, stored), engineSchema)
 	}
 
-	var installed schema.SchemaProvider
-	if effective.HasSchema() {
-		installed = effective
-	}
 	previous := d.installed.Load().effective
-	d.installed.Store(&installedSchema{effective: installed, declared: stored})
-	d.invalidateChangedDefinitions(previous, installed)
+	d.installed.Store(&installedSchema{effective: effective, declared: stored})
+	d.invalidateChangedDefinitions(previous, effective)
 	return nil
 }
 
 // adoptDeclarations asserts a parent's declared definitions into this branch
-// and records the declared set. A branch's store is its parent's as of the
-// snapshot, so a declaration the parent made afterwards is not in it; asserting
-// the parent's declared set, never its inferred one, makes the branch's dump
-// self-describing, and a branch that already carries the facts writes nothing.
+// and composes the schema the branch runs with from what its store states
+// after, as an open composes its own. A branch's store is its parent's as of
+// the snapshot, so a declaration the parent made afterwards is not in it;
+// asserting the parent's declared set, never its inferred one, makes the
+// branch's dump self-describing, and a branch that already carries the facts
+// writes nothing.
 func (d *Database) adoptDeclarations(declared *schema.Schema) error {
+	d.schemaInstallMu.Lock()
+	defer d.schemaInstallMu.Unlock()
 	stored, err := readSchemaFacts(d)
 	if err != nil {
 		return err
@@ -359,9 +362,7 @@ func (d *Database) adoptDeclarations(declared *schema.Schema) error {
 	if err := assertSchemaFacts(d, stored, declared); err != nil {
 		return err
 	}
-	current := d.installed.Load()
-	d.installed.Store(&installedSchema{effective: current.effective, declared: schema.Overlay(stored, declared)})
-	return nil
+	return d.installLocked(false)
 }
 
 // declaredSchema returns the definitions the store carries as facts.
@@ -412,24 +413,54 @@ func definitionResolvesAlike(a, b *schema.AttributeDefinition) bool {
 	return a.Cardinality == b.Cardinality && a.Unique == b.Unique
 }
 
-// engineAttributes is the roster of the words the engine writes or reads on
-// its own, with no definition stored or in memory: the commit mark, the entity
-// id a pull pattern names, the snapshot marker's words, the branch record's
-// words, the definition entity's ref to its declaration, and the seven words
-// of a declaration. A query naming one of them runs under the refusal whether
-// or not any datom carries it, so the engine's own queries run on a database
-// that refuses unknown attributes and has never minted a marker. The commit
-// mark and the entity id are well-known so their pointer identity survives
-// ClearInterns.
-var engineAttributes = []datalog.Keyword{
-	datalog.WellKnownKeyword(":db/txInstant"),
-	datalog.WellKnownKeyword(":db/id"),
-	snapshotNameAttr, snapshotAtLamportAttr, snapshotAtReplicaAttr, snapshotCreatedAttr,
-	branchSnapshotAttr, branchAtLamportAttr, branchAtReplicaAttr,
-	branchForkLamportAttr, branchForkReplicaAttr, branchReplicaAttr,
-	attributeDeclarationAttr,
-	schema.DBIdent, schema.DBValueType, schema.DBCardinality, schema.DBUnique,
-	schema.DBUniqueElements, schema.DBNeverZeroValue, schema.DBDoc,
+// engineSchema declares the words the engine writes or reads on its own, each
+// of cardinality one with its type: the commit mark, the entity id a pull
+// pattern names, the snapshot marker's words, the branch record's words, the
+// definition entity's ref to its declaration, and the seven words of a
+// declaration. It is installed over every running schema and never declared
+// as facts, so each word resolves by its declaration whatever the store
+// holds, and a query naming one runs under the refusal on a database that
+// has never minted a marker. A user's write of one is refused
+// (validateAttributeStorable), and a given schema declaring one is refused
+// (engineWordRedeclared). The commit mark and the entity id are well-known so
+// their pointer identity survives ClearInterns.
+var engineSchema = func() *schema.Schema {
+	one := func(ident, valueType datalog.Keyword) *schema.AttributeDefinition {
+		return &schema.AttributeDefinition{Ident: ident, ValueType: valueType, Cardinality: schema.CardinalityOne}
+	}
+	return schema.NewSchema().
+		Add(one(datalog.WellKnownKeyword(":db/txInstant"), schema.TypeInstant)).
+		Add(one(datalog.WellKnownKeyword(":db/id"), schema.TypeRef)).
+		Add(one(snapshotNameAttr, schema.TypeString)).
+		Add(one(snapshotAtLamportAttr, schema.TypeLong)).
+		Add(one(snapshotAtReplicaAttr, schema.TypeLong)).
+		Add(one(snapshotCreatedAttr, schema.TypeInstant)).
+		Add(one(branchSnapshotAttr, schema.TypeString)).
+		Add(one(branchAtLamportAttr, schema.TypeLong)).
+		Add(one(branchAtReplicaAttr, schema.TypeLong)).
+		Add(one(branchForkLamportAttr, schema.TypeLong)).
+		Add(one(branchForkReplicaAttr, schema.TypeLong)).
+		Add(one(branchReplicaAttr, schema.TypeLong)).
+		Add(one(attributeDeclarationAttr, schema.TypeRef)).
+		Add(one(schema.DBIdent, schema.TypeKeyword)).
+		Add(one(schema.DBValueType, schema.TypeKeyword)).
+		Add(one(schema.DBCardinality, schema.TypeKeyword)).
+		Add(one(schema.DBUnique, schema.TypeKeyword)).
+		Add(one(schema.DBUniqueElements, schema.TypeBoolean)).
+		Add(one(schema.DBNeverZeroValue, schema.TypeBoolean)).
+		Add(one(schema.DBDoc, schema.TypeString))
+}()
+
+// engineWordRedeclared reports the first engine word a given schema declares,
+// which is refused where a schema is given, at open and at SetSchema: the
+// engine's words resolve by the engine's declaration alone.
+func engineWordRedeclared(given schema.SchemaProvider) error {
+	for _, def := range given.Attributes() {
+		if engineSchema.GetAttribute(def.Ident) != nil {
+			return fmt.Errorf("attribute %s is the engine's: a schema cannot declare it", def.Ident)
+		}
+	}
+	return nil
 }
 
 // RefusesUnknownAttributes implements executor.AttributeVocabulary: the
@@ -461,24 +492,15 @@ func (m *PatternMatcher) unknownPullAttributes(p *query.PullPattern) error {
 	return m.UnknownAttributes(datalog.SymDollar, query.PullPatternAttributes(p))
 }
 
-// unknownAttributes refuses every attribute of the roster that s does not
-// declare and the engine does not reserve, joined in order; nil when every
-// attribute is known.
+// unknownAttributes refuses every attribute of the roster that s, a running
+// schema with the engine's words declared in it, does not declare, joined in
+// order; nil when every attribute is known.
 func unknownAttributes(s schema.SchemaProvider, attrs []datalog.Keyword) error {
 	var refusals []error
 	for _, attr := range attrs {
-		if !attributeKnown(s, attr) {
+		if s.GetAttribute(attr) == nil {
 			refusals = append(refusals, &schema.UnknownAttributeError{Attribute: attr})
 		}
 	}
 	return errors.Join(refusals...)
-}
-
-// attributeKnown reports whether s declares attr or the engine reserves it. A
-// nil s declares no attribute.
-func attributeKnown(s schema.SchemaProvider, attr datalog.Keyword) bool {
-	if s != nil && s.GetAttribute(attr) != nil {
-		return true
-	}
-	return slices.Contains(engineAttributes, attr)
 }

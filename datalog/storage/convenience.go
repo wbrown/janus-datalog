@@ -69,8 +69,11 @@ func (d *Database) queryUnderPlannerOptions(
 		return nil, err
 	}
 
-	// Execute with the SourceRouter as the PatternMatcher
+	// Execute with the SourceRouter as the PatternMatcher. A plan over a
+	// source that refuses unknown attributes carries its roster for the check
+	// at the executor's entry.
 	planOpts.Cache = d.planCache
+	planOpts.CollectRosters = planOpts.CollectRosters || anySourceRefusesUnknownAttributes(sources)
 	exec := executor.NewExecutorWithOptions(router, d, planOpts)
 	result, err := exec.ExecuteWithRelations(executor.NewContext().WithRules(rules).WithCancellation(opts.ctx), q, inputRelations)
 	if err != nil {

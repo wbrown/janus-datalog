@@ -202,6 +202,61 @@ func TestParseCacheRulesEvictionAndClear(t *testing.T) {
 	}
 }
 
+// One bound holds across both arms: a cache of three holds three parsed texts
+// of either kind, however they are split between queries and rule sets, and a
+// store into the full cache evicts the entry stored earliest of either arm.
+func TestParseCacheBoundsBothArms(t *testing.T) {
+	c := NewParseCache(3)
+	queries := []string{
+		`[:find ?a :where [?a :x "1"]]`,
+		`[:find ?b :where [?b :x "2"]]`,
+		`[:find ?c :where [?c :x "3"]]`,
+	}
+	rules := []string{
+		`[[(a ?x) [?x :a _]]]`,
+		`[[(b ?x) [?x :b _]]]`,
+	}
+	setQuery := func(text string) {
+		q, err := parser.ParseQuery(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Set(text, q)
+	}
+	setRules := func(text string) {
+		rs, err := parser.ParseRules(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.SetRules(text, rs)
+	}
+
+	setQuery(queries[0])
+	setRules(rules[0])
+	setQuery(queries[1])
+	setRules(rules[1])
+	if _, _, size := c.Stats(); size != 3 {
+		t.Fatalf("size = %d after two queries and two rule sets under a bound of 3, want 3: one bound holds across both arms", size)
+	}
+	if _, ok := c.Get(queries[0]); ok {
+		t.Error("the first query, stored earliest of either arm, is evicted")
+	}
+	if _, ok := c.GetRules(rules[0]); !ok {
+		t.Error("the first rule set, stored after the first query, is kept")
+	}
+
+	setQuery(queries[2])
+	if _, _, size := c.Stats(); size != 3 {
+		t.Fatalf("size = %d after a third query, want 3", size)
+	}
+	if _, ok := c.GetRules(rules[0]); ok {
+		t.Error("the first rule set, stored earliest of either arm, is evicted")
+	}
+	if _, ok := c.Get(queries[1]); !ok {
+		t.Error("the second query, stored after the first rule set, is kept")
+	}
+}
+
 func TestParseCacheConcurrent(t *testing.T) {
 	c := NewParseCache(100)
 	q, _ := parser.ParseQuery(`[:find ?e :where [?e :a ?v]]`)

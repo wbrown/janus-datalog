@@ -109,6 +109,62 @@ func TestDatabasePlanCache(t *testing.T) {
 	}
 }
 
+// A query whose input binds a symbol is planned once per database: its second
+// execution is served from the cache. A query run with an empty collection
+// input and again with a non-empty one holds two entries of its text, one per
+// bound set.
+func TestDatabasePlanCacheServesAPlanMadeUnderABoundInput(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			tx := db.NewTransaction()
+			person := datalog.NewIdentity("person1")
+			if err := tx.Add(person, datalog.NewKeyword(":person/name"), "Alice"); err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.Add(person, datalog.NewKeyword(":person/age"), int64(30)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+
+			scalar := `[:find ?name :in $ ?age :where [?e :person/age ?age] [?e :person/name ?name]]`
+			var names []string
+			if err := db.QueryInto(&names, scalar, int64(30)); err != nil {
+				t.Fatal(err)
+			}
+			_, missesAfterFirst, sizeAfterFirst := db.PlanCache().Stats()
+			names = nil
+			if err := db.QueryInto(&names, scalar, int64(30)); err != nil {
+				t.Fatal(err)
+			}
+			if len(names) != 1 || names[0] != "Alice" {
+				t.Fatalf("names = %v, want Alice", names)
+			}
+			hits, misses, size := db.PlanCache().Stats()
+			if misses != missesAfterFirst || size != sizeAfterFirst || hits == 0 {
+				t.Errorf("stats = %d hits, %d misses, size %d after the second execution; want no new miss, the same size, and a hit: the plan made under the bound input is served again", hits, misses, size)
+			}
+
+			collection := `[:find ?name :in $ [?age ...] :where [?e :person/age ?age] [?e :person/name ?name]]`
+			names = nil
+			if err := db.QueryInto(&names, collection, []int64{}); err != nil {
+				t.Fatal(err)
+			}
+			_, missesAfterEmpty, sizeAfterEmpty := db.PlanCache().Stats()
+			names = nil
+			if err := db.QueryInto(&names, collection, []int64{30}); err != nil {
+				t.Fatal(err)
+			}
+			_, missesAfterBound, sizeAfterBound := db.PlanCache().Stats()
+			if missesAfterBound != missesAfterEmpty+1 || sizeAfterBound != sizeAfterEmpty+1 {
+				t.Errorf("misses %d and size %d after the non-empty input, against %d and %d after the empty one; want one more of each: the plan under the bound symbol is another entry of the text", missesAfterBound, sizeAfterBound, missesAfterEmpty, sizeAfterEmpty)
+			}
+		})
+	}
+}
+
 func TestDatabaseWithoutCache(t *testing.T) {
 	// Parse a query
 	queryStr := `[:find ?e :where [?e :person/name _]]`

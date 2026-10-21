@@ -212,14 +212,18 @@ func (d *Database) resolveWildcardEntity(
 	return result, pending, nil
 }
 
+// declaredWildcardAttributes is the set a wildcard pull resolves: nil when the
+// database declares nothing beyond the engine's words, and a wildcard pull
+// then resolves every attribute the entity carries.
 func (d *Database) declaredWildcardAttributes() map[datalog.Keyword]struct{} {
-	s := d.Schema()
-	if s == nil || !s.HasSchema() {
-		return nil
-	}
-	attrs := s.Attributes()
-	declared := make(map[datalog.Keyword]struct{}, len(attrs))
-	for _, definition := range attrs {
+	var declared map[datalog.Keyword]struct{}
+	for _, definition := range d.Schema().Attributes() {
+		if engineSchema.GetAttribute(definition.Ident) != nil {
+			continue
+		}
+		if declared == nil {
+			declared = make(map[datalog.Keyword]struct{})
+		}
 		declared[definition.Ident] = struct{}{}
 	}
 	return declared
@@ -266,19 +270,11 @@ func (d *Database) resolveWildcardDatoms(
 }
 
 func (d *Database) isUniqueAttribute(attr datalog.Keyword) bool {
-	s := d.Schema()
-	if s == nil {
-		return false
-	}
-	return s.GetAttribute(attr).HasUniqueConstraint()
+	return d.Schema().GetAttribute(attr).HasUniqueConstraint()
 }
 
 func (d *Database) attributeValueType(attr datalog.Keyword) datalog.Keyword {
-	s := d.Schema()
-	if s == nil {
-		return nil
-	}
-	definition := s.GetAttribute(attr)
+	definition := d.Schema().GetAttribute(attr)
 	if definition == nil {
 		return nil
 	}

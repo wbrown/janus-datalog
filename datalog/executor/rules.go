@@ -257,15 +257,34 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 }
 
 // invocationEvaluation is the evaluation an invocation runs: its predicate
-// whole when nothing binds its arguments, and through the magic-set rewrite
-// seeded by the bound arguments otherwise, so the fixpoint derives only the
-// tuples those arguments reach. The rewrite reads each scope in the order
-// the executor's planner gives it, and every rewrite is accepted: a site
-// under a non-monotone form the rewritten set cannot carry adorned is left
-// unadorned (planner.Rewrite).
+// whole when nothing binds its arguments and no body the predicate needs
+// invokes a predicate with required positions, and through the magic-set
+// rewrite otherwise, seeded by the bound arguments when there are any, so
+// the fixpoint derives only the tuples those arguments reach. A free
+// invocation reaching a predicate with required positions is rewritten with
+// its head all free, so that predicate is adorned from the clauses before
+// each of its invocations and derived in the rewritten set, never drawn
+// whole into an evaluation without its bindings and never derived at its
+// clause on every run of the body invoking it
+// (NESTED_SCOPES_AS_QUERIES.md §5.5). The rewrite reads each scope in the
+// order the executor's planner gives it, and every rewrite is accepted: a
+// site under a non-monotone form the rewritten set cannot carry adorned is
+// left unadorned (planner.Rewrite).
 func (e *DefaultQueryExecutor) invocationEvaluation(rs *query.RuleSet, inv *query.RuleInvocation, bound []bool) (*ruleEvaluation, error) {
 	if !anyBound(bound) {
-		return newRuleEvaluation(e.executor, rs, inv.Name, nil), nil
+		requiring := false
+		for p := range neededPredicates(rs, inv.Name) {
+			for _, rule := range rs.Rules(p) {
+				for _, invoked := range query.Invocations(rule.Body) {
+					if anyBound(rs.Required(invoked.Name)) {
+						requiring = true
+					}
+				}
+			}
+		}
+		if !requiring {
+			return newRuleEvaluation(e.executor, rs, inv.Name, nil), nil
+		}
 	}
 	magic, err := planner.Rewrite(e.executor.planner, rs, inv.Name, bound, e.options.Handler)
 	if err != nil {
@@ -713,12 +732,13 @@ func (e *Executor) planBody(rs *query.RuleSet, rule *query.Rule, body []query.Cl
 }
 
 // markDelta copies clauses with the target-th invocation of a predicate in
-// marked, in clause order at the top level, inside or and or-join branches
-// and inside subquery bodies at any depth, replaced by a copy invoking the
-// predicate's delta symbol. The or and or-join forms and the subqueries on
-// the path are copied, a subquery over its inner query derived over the
-// walked clauses, and every other clause is shared: a same-stratum
-// invocation stands nowhere else.
+// marked, in clause order at the top level, inside or-join branches and
+// inside subquery bodies at any depth, replaced by a copy invoking the
+// predicate's delta symbol. The or-join forms and the subqueries on the path
+// are copied, a subquery over its inner query derived over the walked
+// clauses, and every other clause is shared: a same-stratum invocation
+// stands nowhere else, since the bodies walked are the inferred ones the
+// rule set holds, whose every form carries a header.
 func markDelta(clauses []query.Clause, marked map[query.Symbol]bool, target int) []query.Clause {
 	counter := 0
 	return markDeltaWalk(clauses, marked, target, &counter)
@@ -735,11 +755,6 @@ func markDeltaWalk(clauses []query.Clause, marked map[query.Symbol]bool, target 
 					out[i] = &query.RuleInvocation{Name: query.DeltaSymbol(c.Name), Args: c.Args}
 				}
 				*counter++
-			}
-		case *query.OrClause:
-			out[i] = c
-			if branches, found := markDeltaBranches(c.Branches, marked, target, counter); found {
-				out[i] = &query.OrClause{Branches: branches}
 			}
 		case *query.OrJoinClause:
 			out[i] = c

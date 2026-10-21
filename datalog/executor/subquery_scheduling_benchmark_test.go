@@ -62,12 +62,12 @@ func BenchmarkSubqueryDeferralScheduling(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		result, err := exec.Execute(q)
+		tuples, err := CollectTuples(exec.Execute(q))
 		if err != nil {
 			b.Fatalf("execute: %v", err)
 		}
-		if result.Size() != wantTuples {
-			b.Fatalf("expected %d tuples, got %d", wantTuples, result.Size())
+		if len(tuples) != wantTuples {
+			b.Fatalf("expected %d tuples, got %d", wantTuples, len(tuples))
 		}
 	}
 }

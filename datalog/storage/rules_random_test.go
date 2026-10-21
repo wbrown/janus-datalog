@@ -262,8 +262,8 @@ func TestRules_ParityRecursionOnRandomGraphsMatchesTheReference(t *testing.T) {
 
 // Queries run concurrently over one database derive what the same queries
 // derive one at a time: sixteen goroutines each run the closure and its
-// complement, whole and bound, twenty times, and every result is the serial
-// one.
+// complement, whole and bound, once each in a staggered order, so every shape
+// runs beside every other, and every result is the serial one.
 func TestRules_ConcurrentQueriesDeriveWhatSerialQueriesDerive(t *testing.T) {
 	const rules = `[[(r ?a ?b) [?a :edge ?b]]
 	                [(r ?a ?c) [?a :edge ?b] (r ?b ?c)]
@@ -308,7 +308,7 @@ func TestRules_ConcurrentQueriesDeriveWhatSerialQueriesDerive(t *testing.T) {
 				wg.Add(1)
 				go func(w int) {
 					defer wg.Done()
-					for k := 0; k < 20; k++ {
+					for k := 0; k < len(queries); k++ {
 						i := (w + k) % len(queries)
 						rel, err := d.Query(queries[i].text, append([]interface{}{rs}, queries[i].inputs...)...)
 						var got []string

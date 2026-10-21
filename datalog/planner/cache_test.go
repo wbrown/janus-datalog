@@ -217,6 +217,90 @@ func TestPlanCacheSeparatesJoinProjectInsertionOption(t *testing.T) {
 	}
 }
 
+// A plan made under CollectRosters carries a roster and one made without
+// carries none, so the two are two entries of one text.
+func TestPlanCacheSeparatesCollectRostersOption(t *testing.T) {
+	cache := NewPlanCache(10, 0)
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: datalog.NewSymbol("?e")},
+		},
+	}
+	plan := &RealizedPlan{Query: q}
+	without := PlannerOptions{EnableAlgebraOptimizer: true}
+	with := without
+	with.CollectRosters = true
+
+	cache.SetWithOptions(q, nil, plan, without)
+	if _, ok := cache.GetWithOptions(q, nil, with); ok {
+		t.Fatal("a plan made without the roster option is not served to a request under it")
+	}
+}
+
+// A cache made with no TTL expires nothing: an entry stored an hour ago is
+// served as a hit.
+func TestPlanCacheWithNoTTLServesAnOldEntry(t *testing.T) {
+	cache := NewPlanCache(10, 0)
+	opts := PlannerOptions{}
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: datalog.NewSymbol("?e")},
+		},
+	}
+	plan := &RealizedPlan{Query: q}
+	cache.SetWithOptions(q, nil, plan, opts)
+	for _, cached := range cache.cache {
+		cached.timestamp = time.Now().Add(-time.Hour)
+	}
+	if _, ok := cache.GetWithOptions(q, nil, opts); !ok {
+		t.Fatal("an entry stored an hour ago is served under no TTL")
+	}
+}
+
+// A plan made under a bound symbol enters the cache and is served again under
+// the same bound set, and a plan made under none is another entry of the same
+// text.
+func TestPlannerCachesAPlanMadeUnderBoundSymbols(t *testing.T) {
+	cache := NewPlanCache(100, 0)
+	opts := PlannerOptions{}
+	opts.Cache = cache
+	planner := NewClauseBasedPlanner(nil, opts)
+	e := datalog.NewSymbol("?e")
+	q := &query.Query{
+		Find: []query.FindElement{query.FindVariable{Symbol: datalog.NewSymbol("?n")}},
+		In:   []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.ScalarInput{Symbol: e}},
+		Where: []query.Clause{
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: e},
+					query.Constant{Value: datalog.NewKeyword(":person/name")},
+					query.Variable{Name: datalog.NewSymbol("?n")},
+				},
+			},
+		},
+	}
+	bound := query.Bindings{Symbols: map[query.Symbol]bool{e: true}}
+
+	if _, err := planner.Plan(q, bound, nil); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if _, err := planner.Plan(q, bound, nil); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	hits, misses, size := cache.Stats()
+	if hits != 1 || misses != 1 || size != 1 {
+		t.Fatalf("stats = %d hits, %d misses, size %d after two plans under one bound symbol; want 1, 1, 1: the plan made under the bound symbol is served again", hits, misses, size)
+	}
+
+	if _, err := planner.Plan(q, query.Bindings{}, nil); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	hits, misses, size = cache.Stats()
+	if hits != 1 || misses != 2 || size != 2 {
+		t.Fatalf("stats = %d hits, %d misses, size %d after a plan under no bound symbol; want 1, 2, 2: a plan under none is another entry of the text", hits, misses, size)
+	}
+}
+
 func TestPlannerWithCache(t *testing.T) {
 	// Create planner with cache using ClauseBasedPlanner
 	cache := NewPlanCache(100, 0)

@@ -451,7 +451,7 @@ type SchemaProvider interface {
 
 ## Performance
 
-Schema validation is paid on writes. A read pays the unknown-attribute check once per query or pull when the database refuses unknown attributes (see [Schema as Facts](#schema-as-facts)); otherwise the check is a flag read, and no roster is collected. A parsed query collects the attributes it names once, on its first execution on a refusing source, so the check on every later execution is one schema lookup per attribute; the attributes an input binds are read from the input on each execution. Measured on Apple M5 by `BenchmarkUnknownAttributeCheck`, `BenchmarkOpenWithUnchangedSchema` and `BenchmarkImportInferenceAfterLoad` in `datalog/storage`:
+Schema validation is paid on writes. A read pays the unknown-attribute check once per query or pull when the database refuses unknown attributes (see [Schema as Facts](#schema-as-facts)); otherwise the check is a flag read, and no roster is collected. The attributes a query names are collected from the prepared text when its plan is made, under the planner option `CollectRosters` a refusing database sets, and held with the plan (`RealizedPlan.Rosters`, filled by `query.CollectRosters` in the planner), so a plan the cache serves carries its roster and the check on every later execution is one schema lookup per attribute; the attributes an input binds are read from the input on each execution. Measured on Apple M5 by `BenchmarkUnknownAttributeCheck`, `BenchmarkOpenWithUnchangedSchema` and `BenchmarkImportInferenceAfterLoad` in `datalog/storage`:
 
 | Operation | Overhead | When |
 |-----------|----------|------|

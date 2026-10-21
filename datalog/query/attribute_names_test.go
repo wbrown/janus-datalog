@@ -162,7 +162,7 @@ func TestDefaultSourceAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InferHeaders: %v", err)
 	}
-	assertKeywordsInOrder(t, inferred.DefaultSourceAttributes(nil), want)
+	assertKeywordsInOrder(t, CollectRosters(inferred).DefaultSourceAttributes(nil), want)
 }
 
 // TestDefaultSourceAttributesThroughInvocations pins what a query names on
@@ -225,7 +225,8 @@ func TestDefaultSourceAttributesThroughInvocations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InferHeaders: %v", err)
 	}
-	assertKeywordsInOrder(t, inferred.DefaultSourceAttributes(rules), []datalog.Keyword{
+	rosters := CollectRosters(inferred)
+	assertKeywordsInOrder(t, rosters.DefaultSourceAttributes(rules), []datalog.Keyword{
 		datalog.NewKeyword(":t/x"),
 		datalog.NewKeyword(":t/direct"),
 		datalog.NewKeyword(":t/branch"),
@@ -233,7 +234,7 @@ func TestDefaultSourceAttributesThroughInvocations(t *testing.T) {
 		datalog.NewKeyword(":t/ground"),
 		datalog.NewKeyword(":t/shared"),
 	})
-	assertKeywordsInOrder(t, inferred.DefaultSourceAttributes(nil), patterns)
+	assertKeywordsInOrder(t, rosters.DefaultSourceAttributes(nil), patterns)
 }
 
 // headerPassingQuery builds a query whose explicit-header forms pass, inside
@@ -356,60 +357,47 @@ func TestDefaultSourceAttributesThroughAHeader(t *testing.T) {
 			if err != nil {
 				t.Fatalf("InferHeaders: %v", err)
 			}
-			assertKeywordsInOrder(t, inferred.DefaultSourceAttributes(c.rules), c.want)
+			assertKeywordsInOrder(t, CollectRosters(inferred).DefaultSourceAttributes(c.rules), c.want)
 		})
 	}
 }
 
-// A query's rosters are collected on the first call of any accessor, and
-// every later call of each accessor returns the roster that call built: the
-// default source's attributes, its attribute variables, and each named
-// source's attributes. A source no pattern names has no roster.
-func TestDefaultSourceAttributesComputedOnce(t *testing.T) {
+// A source no pattern names has no roster: SourceAttributes answers nil for
+// it, beside the roster of a source a pattern names.
+func TestSourceAttributesOfASourceNoPatternNames(t *testing.T) {
 	entity := Variable{Name: datalog.NewSymbol("?e")}
 	cache := datalog.NewSymbol("$cache")
-	q := &Query{Where: []Clause{
+	rosters := CollectRosters(&Query{Where: []Clause{
 		walkPattern("top"),
-		&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?a")}, Blank{}}},
 		&DataPattern{Source: cache, Elements: []PatternElement{
 			entity, Constant{Value: datalog.NewKeyword(":t/named")}, Blank{},
 		}},
-		walkPattern("other"),
-	}}
-	attributes := q.DefaultSourceAttributes(nil)
-	variables := q.DefaultSourceAttributeVariables()
-	named := q.SourceAttributes(cache)
-	assertKeywordsInOrder(t, attributes, []datalog.Keyword{datalog.NewKeyword(":t/top"), datalog.NewKeyword(":t/other")})
-	if len(variables) != 1 || variables[0] != datalog.NewSymbol("?a") {
-		t.Fatalf("collected variables %v, want [?a]", variables)
-	}
-	assertKeywordsInOrder(t, named, []datalog.Keyword{datalog.NewKeyword(":t/named")})
-	if &q.DefaultSourceAttributes(nil)[0] != &attributes[0] {
-		t.Errorf("every call returns the attribute roster the first call built; got two rosters")
-	}
-	if &q.DefaultSourceAttributeVariables()[0] != &variables[0] {
-		t.Errorf("every call returns the variable roster the first call built; got two rosters")
-	}
-	if &q.SourceAttributes(cache)[0] != &named[0] {
-		t.Errorf("every call returns the named-source roster the first call built; got two rosters")
-	}
-	if got := q.SourceAttributes(datalog.NewSymbol("$absent")); got != nil {
+	}})
+	assertKeywordsInOrder(t, rosters.SourceAttributes(cache), []datalog.Keyword{datalog.NewKeyword(":t/named")})
+	if got := rosters.SourceAttributes(datalog.NewSymbol("$absent")); got != nil {
 		t.Errorf("a source no pattern names has no roster, got %v", got)
 	}
 }
 
-// TestDefaultSourceAttributeVariables pins the variables
-// DefaultSourceAttributeVariables collects: every variable in the attribute
-// position of a data pattern on the default source, in order of first
-// appearance and each once, through NOT/NOT-JOIN bodies and
-// OR/OR-JOIN/OR-DEFAULT branches. A pattern on a named source reads that
-// source's attributes, a constant or blank in the attribute position is no
-// variable, and a subquery body's inputs are the subquery's own to check.
+// TestDefaultSourceAttributeVariables pins the variables the roster
+// collects as the query's attribute variables: every variable of the query's
+// own scope in the attribute position of a data pattern on the default
+// source, in order of first appearance and each once, a variable an identity
+// expression aliases to a root variable counting as that variable, and, inside
+// a form, a variable the form's header names and no other. A variable a
+// branch reads in the attribute position outside the header is the branch's
+// own, whether the header is written or inferred, so no input reaches it. A
+// pattern on a named source reads that source's attributes, a constant or
+// blank in the attribute position is no variable, and a subquery body's
+// variables are the inner query's own.
 func TestDefaultSourceAttributeVariables(t *testing.T) {
 	entity := Variable{Name: datalog.NewSymbol("?e")}
+	header := []Symbol{datalog.NewSymbol("?e")}
+	requiring := func(v string) []Symbol { return []Symbol{datalog.NewSymbol(v)} }
 	attrVar := func(name string) *DataPattern {
 		return &DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol(name)}, Blank{}}}
 	}
+	other := &DataPattern{Elements: []PatternElement{entity, Constant{Value: datalog.NewKeyword(":t/other")}, Blank{}}}
 	clauses := []Clause{
 		attrVar("?top"),
 		&DataPattern{Source: datalog.SymDollar, Elements: []PatternElement{
@@ -421,12 +409,17 @@ func TestDefaultSourceAttributeVariables(t *testing.T) {
 		walkPattern("constant"),
 		&DataPattern{Elements: []PatternElement{entity, Blank{}, Blank{}}},
 		attrVar("?top"),
-		&NotClause{Clauses: []Clause{attrVar("?not")}},
-		&NotJoinClause{Clauses: []Clause{attrVar("?notjoin")}},
+		&Expression{Function: IdentityFunction{Arg: VariableTerm{Symbol: datalog.NewSymbol("?src")}}, Binding: datalog.NewSymbol("?via")},
+		attrVar("?via"),
+		&NotClause{Clauses: []Clause{attrVar("?top"), attrVar("?not")}},
+		&NotJoinClause{RequiredVars: []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?notjoin")}, Clauses: []Clause{attrVar("?notjoin")}},
+		&NotJoinClause{RequiredVars: header, Clauses: []Clause{attrVar("?notlocal")}},
 		&OrClause{Branches: [][]Clause{{attrVar("?or1")}, {attrVar("?or2")}}},
-		&OrJoinClause{Branches: [][]Clause{{attrVar("?orjoin")}}},
-		&OrDefaultClause{Branches: [][]Clause{{attrVar("?ordefault")}}},
-		&OrDefaultJoinClause{Branches: [][]Clause{{attrVar("?ordefaultjoin")}}},
+		&OrJoinClause{RequiredVars: requiring("?orjoin"), OutputVars: header, Branches: [][]Clause{{attrVar("?orjoin")}, {other}}},
+		&OrJoinClause{OutputVars: header, Branches: [][]Clause{{attrVar("?orlocal")}, {other}}},
+		&OrDefaultClause{Branches: [][]Clause{{attrVar("?ordefault")}, {other}}},
+		&OrDefaultJoinClause{RequiredVars: requiring("?ordefaultjoin"), OutputVars: header, Branches: [][]Clause{{attrVar("?ordefaultjoin")}, {other}}},
+		&OrDefaultJoinClause{OutputVars: header, Branches: [][]Clause{{attrVar("?fallocal")}, {other}}},
 		&SubqueryPattern{
 			Query:   &Query{Where: []Clause{attrVar("?sub")}},
 			Binding: ScalarBinding{Variable: datalog.NewSymbol("?s")},
@@ -436,19 +429,16 @@ func TestDefaultSourceAttributeVariables(t *testing.T) {
 	want := []Symbol{
 		datalog.NewSymbol("?top"),
 		datalog.NewSymbol("?dollar"),
-		datalog.NewSymbol("?not"),
+		datalog.NewSymbol("?src"),
 		datalog.NewSymbol("?notjoin"),
-		datalog.NewSymbol("?or1"),
-		datalog.NewSymbol("?or2"),
 		datalog.NewSymbol("?orjoin"),
-		datalog.NewSymbol("?ordefault"),
 		datalog.NewSymbol("?ordefaultjoin"),
 	}
 	inferred, err := InferHeaders(&Query{Where: clauses}, nil)
 	if err != nil {
 		t.Fatalf("InferHeaders: %v", err)
 	}
-	got := inferred.DefaultSourceAttributeVariables()
+	got := CollectRosters(inferred).AttributeVariables(nil)
 	if len(got) != len(want) {
 		t.Fatalf("collected %d variables, want %d:\n got  %v\n want %v", len(got), len(want), got, want)
 	}
@@ -512,7 +502,8 @@ func TestDefaultSourceAttributesThroughASubqueryCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InferHeaders: %v", err)
 	}
-	variables := inferred.DefaultSourceAttributeVariables()
+	rosters := CollectRosters(inferred)
+	variables := rosters.AttributeVariables(nil)
 	wantVariables := []Symbol{symbol("?passed"), symbol("?ga"), symbol("?deep")}
 	if len(variables) != len(wantVariables) {
 		t.Fatalf("collected %d attribute variables, want %d:\n got  %v\n want %v", len(variables), len(wantVariables), variables, wantVariables)
@@ -522,7 +513,7 @@ func TestDefaultSourceAttributesThroughASubqueryCall(t *testing.T) {
 			t.Errorf("attribute variable %d is %s, want %s", i, variables[i], wantVariables[i])
 		}
 	}
-	assertKeywordsInOrder(t, inferred.DefaultSourceAttributes(nil), []datalog.Keyword{
+	assertKeywordsInOrder(t, rosters.DefaultSourceAttributes(nil), []datalog.Keyword{
 		datalog.NewKeyword(":t/constant"),
 		datalog.NewKeyword(":t/kind"),
 		datalog.NewKeyword(":t/grounded"),
@@ -559,7 +550,7 @@ func TestDefaultSourceAttributesThroughARelationGround(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InferHeaders: %v", err)
 	}
-	assertKeywordsInOrder(t, inferred.DefaultSourceAttributes(nil), []datalog.Keyword{
+	assertKeywordsInOrder(t, CollectRosters(inferred).DefaultSourceAttributes(nil), []datalog.Keyword{
 		datalog.NewKeyword(":t/first"),
 		datalog.NewKeyword(":t/second"),
 		datalog.NewKeyword(":t/third"),
@@ -625,7 +616,7 @@ func TestSourceAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InferHeaders: %v", err)
 	}
-	assertKeywordsInOrder(t, inferred.SourceAttributes(cache), want)
+	assertKeywordsInOrder(t, CollectRosters(inferred).SourceAttributes(cache), want)
 }
 
 // TestPullPatternAttributes pins the roster PullPatternAttributes collects:

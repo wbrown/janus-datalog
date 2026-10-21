@@ -292,7 +292,9 @@ func TestPull_Wildcard_CardinalityVector(t *testing.T) {
 }
 
 // TestPullInto_AfterCacheClear verifies that PullInto works correctly
-// after the cache is cleared (simulating a restart).
+// after the cache is cleared (simulating a restart), into a struct whose Age
+// field names an attribute the schema does not declare, on a database that
+// accepts unknown attributes.
 func TestPullInto_AfterCacheClear(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -300,7 +302,6 @@ func TestPullInto_AfterCacheClear(t *testing.T) {
 
 			s, err := schema.NewBuilder().
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
-				Attribute(":person/age").Type(schema.TypeLong).One().Add().
 				Build()
 			require.NoError(t, err)
 			require.NoError(t, db.SetSchema(s))
