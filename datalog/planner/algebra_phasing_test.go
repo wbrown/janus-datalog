@@ -53,7 +53,7 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	                  [(get-else $ ?t :task/token-count 0) ?tok]
 	                  [(get-else $ ?t :task/duration 0) ?dur]]
 	          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-	      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+	      [(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])
 	  (or [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
@@ -76,7 +76,7 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	                      $ ?s) [[?maxCa]]]
 	                  [(= ?ca ?maxCa)]]
 	          $ ?scenario) [[?lastKey ?lastUpdatedAt]]]
-	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 	  :order-by [[?lastUpdatedAt :desc]]]`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)

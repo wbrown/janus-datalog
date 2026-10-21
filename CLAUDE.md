@@ -467,9 +467,8 @@ The storage layer connects the query engine to BadgerDB:
 See `TODO.md` and `PERFORMANCE_STATUS.md` for detailed roadmap.
 
 **Medium Priority**:
-1. **CollectionBinding** - `[?x ...]` binding for set inputs in subqueries
-2. **Distinct aggregation** - Add `(count-distinct ?x)` and `distinct` modifier
-3. **Adaptive streaming strategy** - Auto-choose streaming vs materialized based on data shape
+1. **Distinct aggregation** - Add `(count-distinct ?x)` and `distinct` modifier
+2. **Adaptive streaming strategy** - Auto-choose streaming vs materialized based on data shape
 
 **Long Term**:
 1. **Statistics-based optimization** - Query planning with cardinality estimates
@@ -701,6 +700,7 @@ d, _ := db.Open("path/to/db", db.WithAnnotationHandler(handler))
 - **Type transparency**: Wrapped matcher implements same interface as base matcher
 
 **Event Types**. `datalog/annotations/types.go` is the authority — every event the engine emits is named there and every producer emits through one of those constants rather than writing the string. Do not add an event by writing a literal; the two halves have to stay together or a sweep for dead names can only see one of them. The same applies to a payload key more than one producer writes: it is declared beside the names, and one key carries one meaning (`index` is one of the eight physical orderings, never an ordinal). Values go into the payload **typed** — an `IndexType`, a `*query.DataPattern`, a `Keyword` — because the formatter is the renderer; flattening at the producer spends an allocation per emit to hand the consumer a string to parse. The families:
+- **Query lifecycle**: the query as received (`query/invoked`), the prepared query with whether the inference rewrote a form and preparation's time (`query/prepared`, `docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.9), the plan (`query/plan.created`), and the completion with its counts or its error
 - **Pattern matching**: index selection, and the scan funnel — `datoms.scanned` (intake from the index, counted before any narrowing), `datoms.resolved` (what CRDT resolution produced), `datoms.matched` (what survived the pattern and its constraints)
 - **Binding-driven scans**: one completion event per strategy the matcher takes — the per-key seek, hash-join, merge-join, per-binding — each carrying the same funnel; the per-key seek and the per-binding path carry the scans they opened in place of a run
 - **Joins**: hash-join timing and sizes, build/probe completion, strategy selection

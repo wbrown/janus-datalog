@@ -69,11 +69,11 @@ carries the original DataPattern object; decompilation returns it unchanged.
 
 **Compile:** `[(ground 42) ?x]` → `Constant(symbols=[?x], values=[42])`
 
-For tuple ground: `[(ground [1 2]) [[?a ?b]]]` → `Constant(symbols=[?a, ?b], values=[1, 2])`
+For tuple ground: `[(ground [1 2]) [?a ?b]]` → `Constant(symbols=[?a, ?b], values=[1, 2])`
 
 **Decompile:** `Constant(symbols=[?x], values=[42])` → `[(ground 42) ?x]`
 
-For multiple symbols: `Constant(symbols=[?a, ?b], values=[1, 2])` → `[(ground [1 2]) [[?a ?b]]]`
+For multiple symbols: `Constant(symbols=[?a, ?b], values=[1, 2])` → `[(ground [1 2]) [?a ?b]]`
 
 **Round-trip invariant:** Symbol names and values are preserved exactly.
 
@@ -461,7 +461,7 @@ R ⋈_LeftOuter(x, defaults) S'
 Where S' is S with:
 - Correlation variable `x` removed from `:in`
 - Correlation variable `x` added to `:find`
-- Binding changed from TupleBinding to RelationBinding (includes `x`)
+- Binding the relation form over `x` and the original binding's symbols
 - WHERE clauses unchanged
 
 **Preconditions:**
@@ -543,7 +543,7 @@ with RelationBinding inside an or-join (if defaults exist) or bare (if no defaul
                 [(q [:find ?s (max ?ca) :in $ :where ...] $) [[?s ?maxCa] ...]]
                 [(= ?ca ?maxCa)]]
         $) [[?scenario ?lastKey ?lastUpdatedAt] ...]]
-    [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+    [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 ```
 
 Note: the nested subquery inside the WHERE is ALSO decorrelated — its `:in` changes
@@ -689,7 +689,7 @@ Before any transforms, prove that every operator round-trips correctly.
 
 **Tests needed:**
 - `TestRoundTrip_Scan` — `[?e :attr ?v]`
-- `TestRoundTrip_Constant` — `[(ground 42) ?x]` and `[(ground [1 2]) [[?a ?b]]]`
+- `TestRoundTrip_Constant` — `[(ground 42) ?x]` and `[(ground [1 2]) [?a ?b]]`
 - `TestRoundTrip_Select` — `[?e :attr ?x] [(> ?x 10)]`
 - `TestRoundTrip_Map` — `[?e :attr ?x] [(+ ?x 1) ?y]`
 - `TestRoundTrip_Map_GetElse` — `[?e :type :foo] [(get-else $ ?e :attr default) ?v]`

@@ -172,6 +172,35 @@ func TestAnalyzeClausesForExplainRecordsInvocation(t *testing.T) {
 	}
 }
 
+// What an expression binds is available to the clauses after it under every
+// binding form: the variables of a relation-bound enumerate bind the entity
+// position of the pattern that follows.
+func TestAnalyzeClausesForExplainReadsARelationBoundExpression(t *testing.T) {
+	vec, idx, item, c := datalog.NewSymbol("?vec"), datalog.NewSymbol("?idx"), datalog.NewSymbol("?item"), datalog.NewSymbol("?c")
+	enumerate := &query.Expression{
+		Function: query.EnumerateFunction{VecTerm: query.VariableTerm{Symbol: vec}},
+		Binding:  query.RelationBinding{Variables: []query.Symbol{idx, item}},
+	}
+	color := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: item}, query.Constant{Value: datalog.NewKeyword(":item/color")}, query.Variable{Name: c},
+	}}
+	phase := RealizedPhase{Query: &query.Query{
+		Find:  []query.FindElement{query.FindVariable{Symbol: c}},
+		Where: []query.Clause{enumerate, color},
+	}}
+	available := map[query.Symbol]bool{vec: true}
+	analyzeClausesForExplain(&phase, []query.Clause{enumerate, color}, available, nil, nil)
+	if len(phase.Patterns) != 1 {
+		t.Fatalf("phase records %d patterns, want 1", len(phase.Patterns))
+	}
+	if !phase.Patterns[0].BoundMask.E {
+		t.Errorf("the pattern's entity ?item is unbound in the plan; the relation-bound enumerate before it binds ?idx and ?item")
+	}
+	if !available[idx] || !available[item] {
+		t.Errorf("available = %v, want ?idx and ?item, the relation binding's variables", available)
+	}
+}
+
 // Explain's record of an invocation names every argument the clauses before
 // it bind, an or and an or-join among the binders: what a form provides is
 // available to the clauses after it.

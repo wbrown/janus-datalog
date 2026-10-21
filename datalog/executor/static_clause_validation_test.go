@@ -99,9 +99,9 @@ func TestExecutorEntryRejectsStaticallyInvalidClauses(t *testing.T) {
 					Where: []query.Clause{pattern},
 				},
 				Inputs:  []query.PatternElement{query.Variable{Name: e}},
-				Binding: query.TupleBinding{Variables: []query.Symbol{v, other}},
+				Binding: query.RelationBinding{Variables: []query.Symbol{v, other}},
 			},
-			wantErr: "subquery tuple binding declares 2 symbol(s), but the inner :find has 1 element(s)",
+			wantErr: "subquery relation binding declares 2 symbol(s), but the inner :find has 1 element(s)",
 		},
 		"not-join body reads outside its header": {
 			clause: &query.NotJoinClause{

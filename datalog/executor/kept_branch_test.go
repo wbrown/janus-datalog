@@ -57,10 +57,30 @@ func TestPresentCopiesAnAttributeUnderEachFurtherName(t *testing.T) {
 
 	subst, err = query.SubstitutionOf([]query.Symbol{k, h, k}, []query.Symbol{n, h, h})
 	require.NoError(t, err)
-	answer = NewMaterializedRelation([]query.Symbol{k, h}, []Tuple{{int64(1), "p"}})
-	_, err = framing{subst: subst}.present(answer)
-	require.Error(t, err, "a further name the presented answer carries would name two attributes, a selection on their equality a presentation never performs")
-	assert.Contains(t, err.Error(), "?h")
+	answer = NewMaterializedRelation([]query.Symbol{k, h}, []Tuple{{int64(1), int64(1)}, {int64(2), int64(3)}})
+	presented, err = framing{subst: subst}.present(answer)
+	require.NoError(t, err)
+	assert.Equal(t, []query.Symbol{n, h}, presented.Symbols(), "a further name the presented answer carries unifies the two attributes, and nothing is copied")
+	tuples, err = CollectTuples(presented, nil)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, [][]interface{}{{int64(1), int64(1)}}, tuples, "the tuple whose ?k and ?h agree is kept, once")
+}
+
+// A name written at two places of a binding unifies the two outputs it
+// names, as an invocation's repeated argument does: the presentation selects
+// the tuples whose two outputs are equal and renames them to the one name,
+// and a tuple whose outputs differ is dropped.
+func TestPresentSelectsOnEqualityForANameStandingForTwoSymbols(t *testing.T) {
+	e, x, y, h := datalog.NewSymbol("?e"), datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?h")
+	subst, err := query.SubstitutionOf([]query.Symbol{e, x, y}, []query.Symbol{e, h, h})
+	require.NoError(t, err)
+	answer := NewMaterializedRelation([]query.Symbol{e, x, y}, []Tuple{{"e1", int64(1), int64(1)}, {"e2", int64(2), int64(3)}})
+	presented, err := framing{subst: subst}.present(answer)
+	require.NoError(t, err)
+	assert.Equal(t, []query.Symbol{e, h}, presented.Symbols(), "?x renamed to ?h, ?y unified with it and dropped")
+	tuples, err := CollectTuples(presented, nil)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, [][]interface{}{{"e1", int64(1)}}, tuples, "e1's outputs agree and e2's differ")
 }
 
 // The kept branch is keyed probe-side by the subject tuple's positions of

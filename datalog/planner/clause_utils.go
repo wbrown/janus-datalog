@@ -26,7 +26,7 @@ func (s selection) blockers(clause query.Clause) []query.Symbol {
 // expression binds a variable the pattern reads unbound and can run before
 // the pattern. The greedy scorer ranks a data pattern (~210) far above an
 // expression (~20), and a pattern like [?item :item/color ?color] run before
-// [(enumerate ?vec) [?idx ?item]] joins the accumulated relation on ?color
+// [(enumerate ?vec) [[?idx ?item]]] joins the accumulated relation on ?color
 // alone, a cross-product; held back, it seeks on the ?item the expression
 // bound. An expression whose own needs reach the pattern through the pending
 // clauses binding them (pendingBlockers) cannot run before it: the pattern

@@ -276,15 +276,16 @@ func (w *magicRewriter) rewritePredicate(name query.Symbol, bound []bool) error 
 // subquery's inner query, under what passes into the scope, and reports
 // whether any clause changed. Each clause is rewritten under what passes
 // into it. A clause a magic rule reads joins the clauses the rule reads, the
-// prefix for a body and the scoped clauses inside a subquery, and the
-// variables it provides join the bound set for the clauses after it; the
-// prefix a magic rule reads is the guard and those clauses before the one
-// holding the invocation. A clause left out widens the bindings a magic
-// rule derives and loses no tuple, since the adorned rule applies every
-// clause. What passes into an invocation under a non-monotone form stops at
-// the first clause that invokes a predicate of the rule's own stratum, so
-// no magic rule depends through such a form on that stratum's adorned
-// predicate.
+// prefix for a body and the scoped clauses inside a subquery, an
+// or-default-join as the union of its branches over its header, which binds
+// what the form binds and holds every tuple it yields, and the variables it
+// provides join the bound set for the clauses after it; the prefix a magic
+// rule reads is the guard and those clauses before the one holding the
+// invocation. A clause left out widens the bindings a magic rule derives and
+// loses no tuple, since the adorned rule applies every clause. What passes
+// into an invocation under a non-monotone form stops at the first clause
+// that invokes a predicate of the rule's own stratum, so no magic rule
+// depends through such a form on that stratum's adorned predicate.
 func (w *magicRewriter) rewriteClauses(rule query.Symbol, clauses []query.Clause, before passing) ([]query.Clause, []*query.Rule, bool, error) {
 	out := make([]query.Clause, len(clauses))
 	var magicRules []*query.Rule
@@ -309,10 +310,14 @@ func (w *magicRewriter) rewriteClauses(rule query.Symbol, clauses []query.Clause
 		if !w.magicRuleReads(rewritten, before.bound) {
 			continue
 		}
+		read := rewritten
+		if fallback, ok := rewritten.(*query.OrDefaultJoinClause); ok {
+			read = &query.OrJoinClause{RequiredVars: fallback.RequiredVars, OutputVars: fallback.OutputVars, Branches: fallback.Branches}
+		}
 		if before.call != nil {
-			before.scoped = append(before.scoped[:len(before.scoped):len(before.scoped)], rewritten)
+			before.scoped = append(before.scoped[:len(before.scoped):len(before.scoped)], read)
 		} else {
-			before.prefix = append(before.prefix[:len(before.prefix):len(before.prefix)], rewritten)
+			before.prefix = append(before.prefix[:len(before.prefix):len(before.prefix)], read)
 		}
 		for _, sym := range query.ScopeOf(rewritten, w.rs).Provides {
 			before.bound[sym] = true
@@ -336,13 +341,15 @@ func (w *magicRewriter) invokesStratumOf(rule query.Symbol, clause query.Clause)
 }
 
 // magicRuleReads reports whether a magic rule reads clause: a monotone
-// clause every correlate of which the bound set holds. A negation or a
-// fallback form is never read, so no magic rule depends on a predicate
-// through one; a clause reading a variable a later clause binds is not read,
-// so every magic rule is safe.
+// clause, or an or-default-join read as the union of its branches over its
+// header, every correlate of which the bound set holds. A negation is never
+// read, so no magic rule depends on a predicate through one, and the
+// headerless or-default is not read, since an inferred body holds none; a
+// clause reading a variable a later clause binds is not read, so every magic
+// rule is safe.
 func (w *magicRewriter) magicRuleReads(clause query.Clause, boundVars map[query.Symbol]bool) bool {
 	switch clause.(type) {
-	case *query.NotClause, *query.NotJoinClause, *query.OrDefaultClause, *query.OrDefaultJoinClause:
+	case *query.NotClause, *query.NotJoinClause, *query.OrDefaultClause:
 		return false
 	}
 	for _, sym := range query.ScopeOf(clause, w.rs).Correlates {

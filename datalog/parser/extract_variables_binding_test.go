@@ -8,7 +8,7 @@ import (
 )
 
 // TestExtractVariablesCoversEveryBindingForm pins that a subquery's bound
-// variables are extracted for all four binding forms. A dispatch that omits
+// variables are extracted for all three binding forms. A dispatch that omits
 // ScalarBinding leaves a scalar-bound subquery variable silently invisible to
 // variable extraction.
 func TestExtractVariablesCoversEveryBindingForm(t *testing.T) {
@@ -20,7 +20,6 @@ func TestExtractVariablesCoversEveryBindingForm(t *testing.T) {
 	}{
 		{"scalar", query.ScalarBinding{Variable: out}},
 		{"collection", query.CollectionBinding{Variable: out}},
-		{"tuple", query.TupleBinding{Variables: []query.Symbol{out}}},
 		{"relation", query.RelationBinding{Variables: []query.Symbol{out}}},
 	}
 

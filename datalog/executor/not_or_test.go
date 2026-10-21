@@ -1263,7 +1263,7 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 								},
 							},
 							Inputs:  []query.PatternElement{query.Constant{Value: datalog.NewSymbol("$")}},
-							Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
+							Binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 						},
 					},
 					{
@@ -1387,7 +1387,7 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 								query.Constant{Value: datalog.NewSymbol("$")},
 								query.Variable{Name: datalog.NewSymbol("?scenario")},
 							},
-							Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
+							Binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 						},
 					},
 					{
@@ -1723,7 +1723,7 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 								},
 							},
 							Inputs:  []query.PatternElement{query.Constant{Value: datalog.NewSymbol("$")}},
-							Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
+							Binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 						},
 					},
 					{

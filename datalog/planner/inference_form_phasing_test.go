@@ -96,7 +96,7 @@ func TestInferenceFormSchedulesAfterTheClausesBindingItsBranchVariable(t *testin
 					Where: []query.Clause{&query.Expression{Function: &query.GroundFunction{Value: datalog.NewKeyword(":t/tag")}, Binding: a}},
 				},
 				Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
-				Binding: query.TupleBinding{Variables: []query.Symbol{a}},
+				Binding: query.RelationBinding{Variables: []query.Symbol{a}},
 			},
 		}},
 		{"an or-join", []query.Clause{

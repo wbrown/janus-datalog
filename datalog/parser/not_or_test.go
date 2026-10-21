@@ -131,7 +131,7 @@ func TestParseNotJoinClause(t *testing.T) {
 // TestParseNotJoinEmptyHeaderRejected pins the disjoint-NOT ruling at the
 // syntax boundary: an empty not-join header would declare "unifies with the
 // outer on nothing", a form the language rejects rather than giving global
-// semantics. parseJoinVars is the enforcement point.
+// semantics. parseRequiredRun is the enforcement point.
 func TestParseNotJoinEmptyHeaderRejected(t *testing.T) {
 	_, err := ParseQuery(`[:find ?name
 	                       :where [?e :person/name ?name]
@@ -140,7 +140,7 @@ func TestParseNotJoinEmptyHeaderRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected empty not-join header to be rejected at parse")
 	}
-	if !strings.Contains(err.Error(), "join vars cannot be empty") {
+	if !strings.Contains(err.Error(), "required run cannot be empty") {
 		t.Fatalf("rejection must state the header rule, got: %v", err)
 	}
 }
@@ -273,7 +273,7 @@ func TestNotOrParseErrors(t *testing.T) {
 		{
 			name:  "not-join without inner clauses",
 			input: `[:find ?e :where [?e :foo ?v] (not-join [?e])]`,
-			error: "not-join clause must have join vars and at least one clause",
+			error: "not-join clause must have a header and at least one clause",
 		},
 		{
 			name:  "or without branches",

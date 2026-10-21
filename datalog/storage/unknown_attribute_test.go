@@ -1,12 +1,10 @@
 package storage
 
 import (
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -133,47 +131,25 @@ func TestQueryRefusesUnknownAttributeInDatabaseFunctions(t *testing.T) {
 // input, and a subquery's input, whose call passes the query's input to the
 // inner :in symbol standing in the attribute position, which the roster
 // records as the enclosing scope's attribute variable. The decision reads the
-// plan's roster and the execution's inputs, so it holds whatever wraps the
-// matcher: a handler, scan sharing, or neither.
+// plan's roster and the execution's inputs.
 func TestQueryRefusesUnknownAttributeBoundThroughInput(t *testing.T) {
-	wrappers := []struct {
-		name      string
-		annotated bool
-		sharing   bool
-	}{
-		{"unwrapped", false, false},
-		{"annotated", true, false},
-		{"scan-sharing", false, true},
-	}
 	for _, mode := range optimizerModes {
-		for _, wrapper := range wrappers {
-			t.Run(mode.name+"/"+wrapper.name, func(t *testing.T) {
-				popts := mode.plannerOptions()
-				popts.EnableScanSharing = wrapper.sharing
-				opts := DatabaseOptions{Schema: schemaFactsFixture(t), RefuseUnknownAttributes: true, PlannerOptions: &popts}
-				var events atomic.Int64
-				if wrapper.annotated {
-					opts.AnnotationHandler = func(annotations.Event) { events.Add(1) }
-				}
-				d := openBackendDB(t, mode.backend, opts)
-				attr := kw(":t/strnig")
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t), RefuseUnknownAttributes: true})
+			attr := kw(":t/strnig")
 
-				_, err := d.Query(`[:find ?v :in $ ?a :where [?e ?a ?v]]`, attr)
-				requireUnknown(t, err, attr)
+			_, err := d.Query(`[:find ?v :in $ ?a :where [?e ?a ?v]]`, attr)
+			requireUnknown(t, err, attr)
 
-				_, err = d.Query(`[:find ?v :in $ [?a ...] :where [?e ?a ?v]]`, []interface{}{attr})
-				requireUnknown(t, err, attr)
+			_, err = d.Query(`[:find ?v :in $ [?a ...] :where [?e ?a ?v]]`, []interface{}{attr})
+			requireUnknown(t, err, attr)
 
-				// A subquery's input binds the attribute one scope deeper, and
-				// the roster records the call's argument as the enclosing
-				// scope's attribute variable, so the entry decides it.
-				_, err = d.Query(`[:find ?v :in $ ?a :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`, attr)
-				requireUnknown(t, err, attr)
-				if wrapper.annotated {
-					require.Positive(t, events.Load(), "the entry reports the query as invoked before it refuses the attribute, so the handler the database carries saw that event")
-				}
-			})
-		}
+			// A subquery's input binds the attribute one scope deeper, and
+			// the roster records the call's argument as the enclosing
+			// scope's attribute variable, so the entry decides it.
+			_, err = d.Query(`[:find ?v :in $ ?a :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`, attr)
+			requireUnknown(t, err, attr)
+		})
 	}
 }
 

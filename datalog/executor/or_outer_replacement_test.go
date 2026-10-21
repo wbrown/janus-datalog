@@ -124,9 +124,13 @@ func TestOrDefaultReplacesEveryConsumedOuterGroup(t *testing.T) {
 	groups, err := exec.Execute(ctx, q, []Relation{left, right})
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
+	syms := groups[0].Symbols()
+	xi, yi, si := query.SymbolIndex(syms, x), query.SymbolIndex(syms, y), query.SymbolIndex(syms, sum)
+	require.True(t, xi >= 0 && yi >= 0 && si >= 0, "the result carries both groups' symbols and the output; got %v", syms)
 	tuples, err := CollectTuples(groups[0], nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(2), int64(3), int64(5)}}, tuples)
+	require.Len(t, tuples, 1)
+	require.Equal(t, []interface{}{int64(2), int64(3), int64(5)}, []interface{}{tuples[0][xi], tuples[0][yi], tuples[0][si]})
 	require.Equal(t, 2, consumed)
 }
 

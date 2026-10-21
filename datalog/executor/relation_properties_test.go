@@ -547,7 +547,7 @@ func TestExpandingExpressionDoesNotPreserveOuterKey(t *testing.T) {
 		Function: query.EnumerateFunction{
 			VecTerm: query.VariableTerm{Symbol: vector},
 		},
-		Binding: query.TupleBinding{Variables: []query.Symbol{index, value}},
+		Binding: query.RelationBinding{Variables: []query.Symbol{index, value}},
 	}, nil, nil)
 	require.NoError(t, err)
 

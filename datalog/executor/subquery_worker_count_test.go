@@ -38,16 +38,16 @@ func TestSubqueryWorkerCount_NotAGlobal(t *testing.T) {
 		"MaxSubqueryWorkers must be a per-executor option, not a process-wide global")
 }
 
-// TestSubqueryTupleBinding_ScalesWithInputSize is a diagnostic test.
-// It runs the same `[?e → ?age] TupleBinding` subquery shape against
-// input datasets of different sizes. Each person has exactly one age,
-// so each per-?e subquery invocation should return exactly one tuple
-// and TupleBinding should succeed regardless of dataset size.
+// TestSubqueryRelationBinding_ScalesWithInputSize is a diagnostic test.
+// It runs the same `[?e → ?age]` subquery shape, bound as the relation
+// [[?age]], against input datasets of different sizes. Each person has
+// exactly one age, so the result carries one tuple per ?e regardless of
+// dataset size.
 //
 // If this test fails above some threshold (e.g. at 10 — the parallel
 // subquery threshold), that identifies the code path responsible for
 // the regression.
-func TestSubqueryTupleBinding_ScalesWithInputSize(t *testing.T) {
+func TestSubqueryRelationBinding_ScalesWithInputSize(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":person/name")
 	ageAttr := datalog.NewKeyword(":person/age")
 
@@ -84,7 +84,7 @@ func TestSubqueryTupleBinding_ScalesWithInputSize(t *testing.T) {
 							}},
 						},
 					},
-					Binding: query.TupleBinding{
+					Binding: query.RelationBinding{
 						Variables: []query.Symbol{datalog.NewSymbol("?age")},
 					},
 				},
@@ -179,7 +179,7 @@ func TestMaxSubqueryWorkers_ProducesConsistentResults(t *testing.T) {
 						}},
 					},
 				},
-				Binding: query.TupleBinding{
+				Binding: query.RelationBinding{
 					Variables: []query.Symbol{datalog.NewSymbol("?age")},
 				},
 			},

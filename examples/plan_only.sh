@@ -42,7 +42,7 @@ query='[:find ?scenario ?title ?createdAt ?taskCount ?totalTokens ?totalDuration
                   [(get-else $ ?t :task/token-count 0) ?tok]
                   [(get-else $ ?t :task/duration 0) ?dur]]
           $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+      [(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])
   (or-default [(q [:find (count ?t)
            :in $ ?s
            :where [?t :task/root ?s]
@@ -65,7 +65,7 @@ query='[:find ?scenario ?title ?createdAt ?taskCount ?totalTokens ?totalDuration
                       $ ?s) [[?maxCa]]]
                   [(= ?ca ?maxCa)]]
           $ ?scenario) [[?lastKey ?lastUpdatedAt]]]
-      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
   :order-by [[?lastUpdatedAt :desc]]
   :limit 25]'
 

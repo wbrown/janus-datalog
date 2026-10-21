@@ -390,7 +390,7 @@ func TestAlgebraIntegration_MultipleOrFallbacks(t *testing.T) {
 			                              [?t :task/status :status/complete]
 			                              [(get-else $ ?t :task/token-count 0) ?tok]]
 			                      $ ?e) [[?count ?total]]]
-			                  [(ground [0 0]) [[?count ?total]]])]`
+			                  [(ground [0 0]) [?count ?total]])]`
 
 			db.ClearPlanCache()
 			baselineRel, err := queryWithoutAlgebra(db, q)

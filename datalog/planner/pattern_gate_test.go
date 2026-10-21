@@ -30,7 +30,7 @@ func TestPatternLeadsTheExpressionThatWaitsOnIt(t *testing.T) {
 			`[:find ?item :where [?e :p ?y] [(identity ?e) ?y] [?item :color ?c] [(identity ?y) ?item]]`,
 			`[(identity ?y) ?item]`, `[?item :color ?c]`},
 		{"an expression that can run first",
-			`[:find ?label :where [?c :container/items ?vec] [(enumerate ?vec) [?idx ?item]] [?item :item/color :red] [?item :item/label ?label]]`,
+			`[:find ?label :where [?c :container/items ?vec] [(enumerate ?vec) [[?idx ?item]]] [?item :item/color :red] [?item :item/label ?label]]`,
 			`[(enumerate ?vec) [[?idx ?item]]]`, `[?item :item/color :red]`},
 	}
 	paths := []struct {
@@ -104,7 +104,7 @@ func TestPendingBlockers(t *testing.T) {
 			`[:find ?item :where [?e :p ?y] [(identity ?e) ?y] [?item :color ?c] [(identity ?y) ?item]]`,
 			`[(identity ?y) ?item]`, []string{"?y", "?e"}},
 		{"stopping at a pattern no expression holds",
-			`[:find ?label :where [?c :container/items ?vec] [(enumerate ?vec) [?idx ?item]] [?item :item/color :red] [?item :item/label ?label]]`,
+			`[:find ?label :where [?c :container/items ?vec] [(enumerate ?vec) [[?idx ?item]]] [?item :item/color :red] [?item :item/label ?label]]`,
 			`[(enumerate ?vec) [[?idx ?item]]]`, []string{"?vec"}},
 	}
 	for _, c := range cases {

@@ -15,7 +15,7 @@ func TestExtractSubqueryPatternSymbols(t *testing.T) {
 		expectedRequires []query.Symbol
 	}{
 		{
-			name: "TupleBinding provides variables",
+			name: "RelationBinding of one variable provides it",
 			pattern: &query.SubqueryPattern{
 				Query: &query.Query{
 					Find: []query.FindElement{
@@ -26,7 +26,7 @@ func TestExtractSubqueryPatternSymbols(t *testing.T) {
 					query.Constant{Value: "db"},
 					query.Variable{Name: datalog.NewSymbol("?scenario")},
 				},
-				Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?openingCount")}},
+				Binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?openingCount")}},
 			},
 			expectedProvides: []query.Symbol{datalog.NewSymbol("?openingCount")},
 			expectedRequires: []query.Symbol{datalog.NewSymbol("?scenario")},
@@ -110,7 +110,7 @@ func TestOrJoinClauseRequiresCorrelatedInputs(t *testing.T) {
 							query.Constant{Value: "db"},
 							query.Variable{Name: datalog.NewSymbol("?entity")}, // Correlated input
 						},
-						Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
+						Binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 					},
 				},
 				{

@@ -314,7 +314,7 @@ func TestDecorrelation_ProductionStructure(t *testing.T) {
 	                  [(get-else $ ?i :item/input-units 0) ?iu]
 	                  [(get-else $ ?i :item/output-units 0) ?ou]]
 	          $ ?project) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]]
-	      [(ground [0 0 0 0 0]) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]])
+	      [(ground [0 0 0 0 0]) [?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]])
 	  (or-default [(q [:find (count ?i)
 	           :in $ ?p
 	           :where [?i :item/project ?p]
@@ -340,7 +340,7 @@ func TestDecorrelation_ProductionStructure(t *testing.T) {
 	                      $ ?p) [[?maxCa]]]
 	                  [(= ?ca ?maxCa)]]
 	          $ ?project) [[?lastKey ?lastUpdatedAt]]]
-	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 	  :order-by [[?lastUpdatedAt :desc]]]`)
 	require.NoError(t, err)
 
@@ -438,7 +438,7 @@ func TestDecorrelation_ArgmaxPattern(t *testing.T) {
 	                      $ ?s) [[?maxCa]]]
 	                  [(= ?ca ?maxCa)]]
 	          $ ?e) [[?lastKey ?lastUpdatedAt]]]
-	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])]`)
+	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])]`)
 	require.NoError(t, err)
 
 	root, err := Compile(mustPrepare(t, q, nil), nil)

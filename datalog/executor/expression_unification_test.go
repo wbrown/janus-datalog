@@ -211,7 +211,7 @@ func TestEvaluateExpressionUnifiesBoundBindings(t *testing.T) {
 			  :where [?e :test/vec ?vec]
 			         [?e :test/idx ?idx]
 			         [?e :test/tag ?tag]
-			         [(enumerate ?vec) [?idx ?tag]]]`,
+			         [(enumerate ?vec) [[?idx ?tag]]]]`,
 			exprIndex: 3,
 			symbols:   []query.Symbol{vecSym, idxSym, tagSym},
 			tuples: []Tuple{
@@ -225,7 +225,7 @@ func TestEvaluateExpressionUnifiesBoundBindings(t *testing.T) {
 			queryText: `[:find ?idx ?tag
 			  :where [?e :test/vec ?vec]
 			         [?e :test/tag ?tag]
-			         [(enumerate ?vec) [?idx ?tag]]]`,
+			         [(enumerate ?vec) [[?idx ?tag]]]]`,
 			exprIndex: 2,
 			symbols:   []query.Symbol{vecSym, tagSym},
 			tuples: []Tuple{

@@ -63,7 +63,7 @@ func RefreshSchemas(root *Node) (*Node, error) {
 				output = cloneSymbols(children[0].Symbols())
 			}
 			if data.Expression != nil {
-				output = mergeSymbols(output, bindingSymbols(data.Expression.Binding))
+				output = mergeSymbols(output, data.Expression.BoundVariables())
 			}
 			copy.Output = output
 			refreshed.Data = &copy
@@ -93,7 +93,8 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			}
 			copy := *data
 			copy.Output = cloneSymbols(data.Output)
-			copy.JoinVars = cloneSymbols(data.JoinVars)
+			copy.RequiredVars = cloneSymbols(data.RequiredVars)
+			copy.OutputVars = cloneSymbols(data.OutputVars)
 			copy.Required = cloneSymbols(data.Required)
 			refreshed.Data = &copy
 		case *LateralUnion:
@@ -315,7 +316,7 @@ func analyzeMap(node *Node, children []Analysis) (Analysis, error) {
 	}
 	expected := cloneSymbols(childOutput)
 	if data.Expression != nil {
-		expected = mergeSymbols(expected, bindingSymbols(data.Expression.Binding))
+		expected = mergeSymbols(expected, data.Expression.BoundVariables())
 		if !sameSymbolsInOrder(data.Output, expected) {
 			return Analysis{}, fmt.Errorf("map output %v does not match expected output %v", data.Output, expected)
 		}
@@ -414,7 +415,7 @@ func analyzeUnion(node *Node, children []Analysis) (Analysis, error) {
 	if !ok {
 		return Analysis{}, dataTypeError(node, "*algebra.Union")
 	}
-	return analyzeUnionBranches(data.Output, data.JoinVars, data.Required, children)
+	return analyzeUnionBranches(data.Output, data.OutputVars, data.Required, children)
 }
 
 func analyzeLateralUnion(node *Node, children []Analysis) (Analysis, error) {

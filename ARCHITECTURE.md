@@ -53,7 +53,7 @@ All query paths converge on the same planner and executor. The difference is how
                   (raw tuples)     (struct mapping)  (no planner)
 ```
 
-Preparation, `query.Prepare(q, rules)`, runs once per execution at the executor's entry, after the `QueryInvoked` event and before planning, and `Explain`, `ExplainAlgebra` and `Analyze` call it before they plan. It composes the four static steps, each a function of the text and the rule set bound to `%`: `ValidateInputShapes` on `:in`, `ValidateStaticClauseShapes` on `:where`, `InferHeaders`, which rewrites every `or`, `not` and `or-default` at any depth as the header form stating its interface, and the check that every invocation names a predicate the rule set defines at its arity. Nothing after preparation sees a headerless form: `ScopeOf` reads a nested form's header alone and panics on a headerless one, so a skipped preparation surfaces at once.
+Preparation, `query.Prepare(q, rules)`, runs once per execution at the executor's entry, after the `QueryInvoked` event and before planning, and the entry reports it as `QueryPrepared`, carrying the prepared query, whether the inference rewrote a form, and preparation's time, so a handler and `Analyze` see what the inference wrote and what it cost; `Explain`, `ExplainAlgebra` and `Analyze` call it before they plan. It composes the four static steps, each a function of the text and the rule set bound to `%`: `ValidateInputShapes` on `:in`, `ValidateStaticClauseShapes` on `:where`, `InferHeaders`, which rewrites every `or`, `not` and `or-default` at any depth as the header form stating its interface, and the check that every invocation names a predicate the rule set defines at its arity. Nothing after preparation sees a headerless form: `ScopeOf` reads a nested form's header alone and panics on a headerless one, so a skipped preparation surfaces at once.
 
 ### Entry Point 1: EDN String
 
@@ -728,7 +728,7 @@ T(stratum) = T(seed) + Σ_iterations Σ_bodies T(body on delta_{i-1})
 
 **Relational query algebra with Datalog syntax:**
 - Patterns, joins, predicates, expressions, aggregations
-- Subqueries (TupleBinding, RelationBinding)
+- Subqueries (ScalarBinding, CollectionBinding, RelationBinding)
 - Rules (`%` input, recursion to a fixpoint, stratified negation, required-binding heads, bound invocations through magic sets, iteration and tuple bounds, cancellation through `WithContext`)
 - Order-by (multi-symbol, directional)
 - NOT/OR clauses (`not`, `not-join`, `or`, `or-join`)

@@ -7,7 +7,7 @@ import (
 )
 
 // TestBindingFormBoundVariables pins the symbol extraction for every binding
-// form. BindingForm is sealed (unexported marker method), so these four cases
+// form. BindingForm is sealed (unexported marker method), so these three cases
 // are the complete taxonomy; every consumer relies on exactly these results.
 func TestBindingFormBoundVariables(t *testing.T) {
 	a := datalog.NewSymbol("?a")
@@ -18,7 +18,6 @@ func TestBindingFormBoundVariables(t *testing.T) {
 		binding BindingForm
 		want    []Symbol
 	}{
-		{"tuple", TupleBinding{Variables: []Symbol{a, b}}, []Symbol{a, b}},
 		{"relation", RelationBinding{Variables: []Symbol{a, b}}, []Symbol{a, b}},
 		{"collection", CollectionBinding{Variable: a}, []Symbol{a}},
 		{"scalar", ScalarBinding{Variable: a}, []Symbol{a}},

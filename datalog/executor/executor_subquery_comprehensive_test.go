@@ -451,20 +451,6 @@ func TestSubqueryErrorHandling(t *testing.T) {
 		wantErr  string
 	}{
 		{
-			// The tuple spelling names a single value, which a binding never
-			// is: it is refused at the boundaries, naming the relation form
-			// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.5).
-			name: "TupleBindingIsRefusedNamingTheRelationForm",
-			queryStr: `[:find ?category ?count
-			           :where
-			           [?p :product/category ?category]
-			           [(q [:find ?prod
-			                :in $ ?cat
-			                :where [?prod :product/category ?cat]]
-			               $ ?category) [[?count]]]]`,
-			wantErr: "[[?count] ...]",
-		},
-		{
 			name: "RelationBindingSymbolMismatch",
 			queryStr: `[:find ?name ?a ?b ?c
 			           :where 

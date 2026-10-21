@@ -1,8 +1,7 @@
 package executor
 
 import (
-	"fmt"
-
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -71,63 +70,86 @@ func buildBranchTuples(executor *DefaultQueryExecutor, ctx *Context, f framing, 
 	return tuples, presented.Symbols(), nil
 }
 
-// present is a branch's answer under the enclosing names: the answer
-// projected onto the first of its symbols standing for each enclosing name,
-// renamed through the substitution, and extended with a copy of each
-// attribute under every further name standing for its symbol, through the
-// identity expression, since a rename gives an attribute one name. A
+// present is a branch's answer under the enclosing names. Each name the
+// substitution gives stands for one attribute of the presented answer. The
+// first of the answer's symbols standing for a name is renamed to it. Every
+// later symbol standing for that name, a repeated argument's or a repeated
+// binding name's, is unified with the first: the answer is selected on their
+// equality, as an invocation's repeated argument selects, and the projection
+// drops the later symbol. A symbol standing for several names is presented
+// under the first and copied under each further one through the identity
+// expression, since a rename gives an attribute one name; a further name the
+// presented answer already carries is unified the same way, with no copy. A
 // collection member's symbol stands for its argument at the member's grain
 // and for no enclosing name, so it is kept under its own name, the name the
 // kept branch holds a member's key under, and copied under its further
-// names. A symbol the substitution does not name, a constant argument's, and
-// a later symbol standing for a name an earlier one stands for, a repeated
-// argument's, whose value the run bound equal to the first's, are dropped by
-// the projection. A further name the presented answer carries would name two
-// attributes, a selection on their equality a presentation never performs,
-// and is an error naming it. An answer the substitution names nothing of, a
+// names. A symbol the substitution does not name, a constant argument's, is
+// dropped by the projection. An answer the substitution names nothing of, a
 // branch form's, is returned as it is.
 func (f framing) present(answer Relation) (Relation, error) {
 	symbols := answer.Symbols()
-	var keep, renamed, named []query.Symbol
-	for _, sym := range symbols {
+	var keep, renamed []query.Symbol
+	var carried []query.Symbol   // each name the presented answer carries
+	var carriedAt []int          // the answer position presented under it
+	var equated [][2]int         // answer positions one name stands for
+	var copied [][2]query.Symbol // a presented name and a further name it is copied under
+	for i, sym := range symbols {
+		var presentedAs query.Symbol
 		if query.ContainsSymbol(f.members, sym) {
 			keep = append(keep, sym)
-			continue
+			presentedAs = sym
+			carried = append(carried, sym)
+			carriedAt = append(carriedAt, i)
+		} else {
+			to, ok := f.subst.Of(sym)
+			if !ok {
+				continue
+			}
+			presentedAs = to
+			if j := query.SymbolIndex(carried, to); j >= 0 {
+				equated = append(equated, [2]int{carriedAt[j], i})
+			} else {
+				keep = append(keep, sym)
+				renamed = append(renamed, sym)
+				carried = append(carried, to)
+				carriedAt = append(carriedAt, i)
+			}
 		}
-		to, ok := f.subst.Of(sym)
-		if !ok || query.ContainsSymbol(named, to) {
-			continue
+		for _, further := range f.subst.Further(sym) {
+			if j := query.SymbolIndex(carried, further); j >= 0 {
+				equated = append(equated, [2]int{carriedAt[j], i})
+				continue
+			}
+			copied = append(copied, [2]query.Symbol{presentedAs, further})
+			carried = append(carried, further)
+			carriedAt = append(carriedAt, i)
 		}
-		keep = append(keep, sym)
-		renamed = append(renamed, sym)
-		named = append(named, to)
 	}
 	if len(keep) == 0 {
 		return answer, nil
 	}
-	projected := answer
+	presented := answer
+	if len(equated) > 0 {
+		presented = presented.Select(func(t Tuple) bool {
+			for _, pair := range equated {
+				if !datalog.ValuesEqual(t[pair[0]], t[pair[1]]) {
+					return false
+				}
+			}
+			return true
+		})
+	}
+	var err error
 	if !symbolsMatch(keep, symbols) {
-		var err error
-		projected, err = answer.Project(keep)
-		if err != nil {
+		if presented, err = presented.Project(keep); err != nil {
 			return nil, err
 		}
 	}
-	presented, err := projected.Rename(f.subst.Over(renamed))
-	if err != nil {
+	if presented, err = presented.Rename(f.subst.Over(renamed)); err != nil {
 		return nil, err
 	}
-	for _, sym := range keep {
-		presentedAs := sym
-		if to, ok := f.subst.Of(sym); ok && !query.ContainsSymbol(f.members, sym) {
-			presentedAs = to
-		}
-		for _, further := range f.subst.Further(sym) {
-			if query.ContainsSymbol(presented.Symbols(), further) {
-				return nil, fmt.Errorf("present: %s would name both %s and the attribute presented as %s", further, further, presentedAs)
-			}
-			presented = presented.EvaluateFunction(query.IdentityFunction{Arg: query.VariableTerm{Symbol: presentedAs}}, further)
-		}
+	for _, c := range copied {
+		presented = presented.EvaluateFunction(query.IdentityFunction{Arg: query.VariableTerm{Symbol: c[0]}}, c[1])
 	}
 	return presented, nil
 }

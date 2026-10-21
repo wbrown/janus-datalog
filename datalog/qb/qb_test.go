@@ -693,6 +693,20 @@ func TestBuildRefusesABranchOutsideItsHeaderAsPrepareDoes(t *testing.T) {
 	})
 }
 
+// Build refuses a tuple ground whose vector has another length than its
+// binding, as the parser refuses the same text, with the same message
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §6).
+func TestBuildRefusesATupleGroundOfTheWrongArity(t *testing.T) {
+	a, b, c := NewVar("a"), NewVar("b"), NewVar("c")
+	_, err := Query().Find(a, b, c).Where(TupleGround(1, 2).As(a, b, c)).Build()
+	if err == nil {
+		t.Fatal("Build accepts a ground of two values bound to three variables")
+	}
+	if !strings.Contains(err.Error(), "tuple ground mismatch: 2 values, 3 binding variables") {
+		t.Errorf("the refusal %q does not carry the counts", err)
+	}
+}
+
 // A builder's refusal of a branch argument that is no clause names the branch
 // and the argument by their positions counted from one.
 func TestBuilderRefusalNamesTheBranchAndArgumentCountedFromOne(t *testing.T) {
@@ -885,7 +899,7 @@ func TestSubquery(t *testing.T) {
 		)
 
 	// Create subquery with binding
-	sub := Subquery(innerQ, dept).BindTuple(maxSalary)
+	sub := Subquery(innerQ, dept).BindRelation(maxSalary)
 
 	clause := sub.toClause()
 	sqp, ok := clause.(*query.SubqueryPattern)
@@ -899,9 +913,9 @@ func TestSubquery(t *testing.T) {
 		t.Errorf("Expected 2 inputs ($ and ?dept), got %d", len(sqp.Inputs))
 	}
 
-	// Should have tuple binding
-	if _, ok := sqp.Binding.(query.TupleBinding); !ok {
-		t.Errorf("Expected TupleBinding, got %T", sqp.Binding)
+	// Should have the relation binding
+	if _, ok := sqp.Binding.(query.RelationBinding); !ok {
+		t.Errorf("Expected RelationBinding, got %T", sqp.Binding)
 	}
 }
 
@@ -1063,7 +1077,7 @@ func TestComplexQuery(t *testing.T) {
 			Pat(e, EmpName, name),
 			Pat(e, EmpDept, dept),
 			Pat(e, EmpSalary, salary),
-			Subquery(innerQ, dept).BindTuple(avgSalary),
+			Subquery(innerQ, dept).BindRelation(avgSalary),
 			Gt(salary, avgSalary),
 		).
 		OrderBy(Desc(salary)).

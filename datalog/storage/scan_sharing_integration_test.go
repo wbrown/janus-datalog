@@ -54,7 +54,7 @@ func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
 			                              [?t :task/status :status/complete]
 			                              [(get-else $ ?t :task/token-count 0) ?tok]]
 			                      $ ?e) [[?count ?total]]]
-			                  [(ground [0 0]) [[?count ?total]]])]`
+			                  [(ground [0 0]) [?count ?total]])]`
 
 			// Baseline without scan sharing
 			db.ClearPlanCache()

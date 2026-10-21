@@ -333,9 +333,9 @@ func TestParseSubqueryPatterns(t *testing.T) {
 		check func(*query.Query) error
 	}{
 		{
-			name: "simple subquery with tuple binding",
+			name: "subquery bound by Datomic's relation form [[?high]]",
 			input: `[:find ?date ?high
-			         :where 
+			         :where
 			           [?s :symbol/ticker "AAPL"]
 			           [(ground "2025-06-02") ?date]
 			           [(q [:find (max ?h)
@@ -358,10 +358,10 @@ func TestParseSubqueryPatterns(t *testing.T) {
 					return fmt.Errorf("expected 1 input, got %d", len(subq.Inputs))
 				}
 
-				// Check binding is tuple binding
-				binding, ok := subq.Binding.(query.TupleBinding)
+				// [[?high]] is the relation binding (Datomic's bind-rel)
+				binding, ok := subq.Binding.(query.RelationBinding)
 				if !ok {
-					return fmt.Errorf("expected TupleBinding, got %T", subq.Binding)
+					return fmt.Errorf("expected RelationBinding, got %T", subq.Binding)
 				}
 
 				if len(binding.Variables) != 1 || binding.Variables[0] != datalog.NewSymbol("?high") {
@@ -544,16 +544,16 @@ func TestParseSubqueryErrors(t *testing.T) {
 			error: "binding form must be a symbol or vector",
 		},
 		{
-			name: "empty tuple binding",
+			name: "empty relation binding",
 			input: `[:find ?x
 			         :where [(q [:find ?y :where [?e :foo ?y]]) [[]]]]`,
-			error: "tuple binding cannot be empty",
+			error: "relation binding cannot be empty",
 		},
 		{
-			name: "non-variable in tuple binding",
+			name: "non-variable in relation binding",
 			input: `[:find ?x
 			         :where [(q [:find ?y :where [?e :foo ?y]]) [[foo]]]]`,
-			error: "tuple binding element 0 must be a variable",
+			error: "relation binding element 0 must be a variable",
 		},
 		{
 			name: "invalid nested query",
@@ -565,7 +565,7 @@ func TestParseSubqueryErrors(t *testing.T) {
 			name: "missing q symbol",
 			input: `[:find ?x
 			         :where [(foo [:find ?y :where [?e :foo ?y]] ?s) ?x]]`,
-			error: "unsupported type in vector constant",
+			error: "unsupported function: foo",
 		},
 	}
 
@@ -613,6 +613,44 @@ func TestFormatSubquery(t *testing.T) {
 	_, ok := q2.Where[1].(*query.SubqueryPattern)
 	if !ok {
 		t.Errorf("expected SubqueryPattern in formatted query")
+	}
+}
+
+// A relation binding has one rendering, Datomic's [[?a ?b]], whichever
+// spelling it was written with; the ellipsis form [[?a ?b] ...] is read as
+// the same binding and never written back.
+func TestFormatQueryRendersTheRelationBindingInDatomicsForm(t *testing.T) {
+	q, err := ParseQuery(`[:find ?symbol ?price ?time
+	                       :where [?s :symbol/ticker ?symbol]
+	                              [(q [:find ?p ?t
+	                                   :in $ ?sym
+	                                   :where [?x :price/symbol ?sym]
+	                                          [?x :price/value ?p]
+	                                          [?x :price/time ?t]]
+	                                  $ ?s) [[?price ?time] ...]]]`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	written, ok := q.Where[1].(*query.SubqueryPattern).Binding.(query.RelationBinding)
+	if !ok {
+		t.Fatalf("the ellipsis spelling parses to the relation binding, got %T", q.Where[1].(*query.SubqueryPattern).Binding)
+	}
+
+	formatted := FormatQuery(q)
+	if !contains(formatted, "[[?price ?time]]") || contains(formatted, "] ...]") {
+		t.Fatalf("the relation binding renders as [[?price ?time]], got:\n%s", formatted)
+	}
+
+	q2, err := ParseQuery(formatted)
+	if err != nil {
+		t.Fatalf("formatted query failed to parse: %v\nformatted: %s", err, formatted)
+	}
+	rendered, ok := q2.Where[1].(*query.SubqueryPattern).Binding.(query.RelationBinding)
+	if !ok {
+		t.Fatalf("the rendering parses to the relation binding, got %T", q2.Where[1].(*query.SubqueryPattern).Binding)
+	}
+	if len(rendered.Variables) != len(written.Variables) || rendered.Variables[0] != written.Variables[0] || rendered.Variables[1] != written.Variables[1] {
+		t.Fatalf("the rendering binds %v, the written query bound %v", rendered.Variables, written.Variables)
 	}
 }
 

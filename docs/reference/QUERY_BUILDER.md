@@ -553,15 +553,14 @@ q := qb.Query().
     Where(
         qb.Pat(p, PersonName, name),
         qb.Pat(p, PersonDept, dept),
-        qb.Subquery(innerQ, dept).BindTuple(maxSalary),
+        qb.Subquery(innerQ, dept).BindRelation(maxSalary),
     ).
     MustBuild()
 ```
 
-Binding forms:
-- `BindTuple(vars...)` - single tuple result `[[?a ?b]]`
-- `BindRelation(vars...)` - multiple tuples `[[?a ?b] ...]`
-- `BindCollection(v)` - single symbol `[?a ...]`
+Binding forms, each binding the relation over its variables whatever the inner query's size:
+- `BindRelation(vars...)` - the relation form `[[?a ?b]]`, one variable per element of the inner `:find`
+- `BindCollection(v)` - the collection form `[?a ...]`, one variable for an inner `:find` of one element
 
 The call's inputs follow the inner query's `:in` in order: a source reference at a source position, `%` at the rules position, and the variables given to `Subquery` at the value positions, one per scalar or collection input and one per symbol of a tuple or relation input. An inner query that declares no `:in` takes `$`. `Build` refuses a variable count that differs from the value positions, as the parser refuses a call with the wrong number of inputs.
 

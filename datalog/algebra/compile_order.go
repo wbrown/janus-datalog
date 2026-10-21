@@ -1,9 +1,6 @@
 package algebra
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -65,30 +62,13 @@ func orderClausesForCompile(clauses []query.Clause, scope query.Bindings) ([]que
 			}
 		}
 		if picked < 0 {
-			provided := make(map[query.Symbol]bool)
-			for _, clause := range clauses {
-				for _, sym := range query.ScopeOf(clause, scope.Rules).Provides {
-					provided[sym] = true
-				}
-			}
-			var stuck []string
+			var remaining []query.Clause
 			for i, clause := range clauses {
-				if placed[i] {
-					continue
+				if !placed[i] {
+					remaining = append(remaining, clause)
 				}
-				var waits []string
-				for _, sym := range query.ClauseBlockers(clause, bound, scope.Rules) {
-					if !inputs[sym] && !provided[sym] {
-						waits = append(waits, fmt.Sprintf("%s (no input or clause binds it)", sym))
-					} else {
-						waits = append(waits, sym.String())
-					}
-				}
-				stuck = append(stuck, fmt.Sprintf("%v waits on %s", clause, strings.Join(waits, ", ")))
 			}
-			return nil, fmt.Errorf(
-				"cannot order clauses for compilation: %s",
-				strings.Join(stuck, "; "))
+			return nil, query.NewNoOrderError(remaining, clauses, bound, inputs, scope.Rules)
 		}
 		placed[picked] = true
 		ordered = append(ordered, clauses[picked])

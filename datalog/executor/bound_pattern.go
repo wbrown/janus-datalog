@@ -12,11 +12,11 @@ import "github.com/wbrown/janus-datalog/datalog/query"
 // stands in the consumed groups' place, reports no size, and reads the
 // subject once.
 
-// streamsThroughAPattern reports whether a group sharing a variable with the
-// pattern reports no size: such a group is read once, in windows, where a
-// group held in memory binds the pattern through the matcher.
-func streamsThroughAPattern(pattern *query.DataPattern, groups Relations) bool {
-	symbols := pattern.Symbols()
+// streamsThrough reports whether a group sharing one of the symbols, a
+// pattern's or an invocation's variables, reports no size: such a group is
+// read once, in windows, where a group held in memory binds the pattern
+// through the matcher or seeds the invocation through its projection.
+func streamsThrough(symbols []query.Symbol, groups Relations) bool {
 	for _, group := range groups {
 		if containsAny(group.Symbols(), symbols) && group.Size() < 0 {
 			return true

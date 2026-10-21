@@ -122,20 +122,26 @@ func TestPlan_OrderIndependentUnderBothPaths(t *testing.T) {
 }
 
 // A query in which no order binds a variable an or's branch reads before the
-// or runs is refused naming the form and the variable: a binder that itself
-// needs the or's output, and two ors each reading a variable the other alone
-// binds in one branch.
+// or runs is refused on both planner paths under one message naming the
+// prepared form, the header the inference wrote included, and the variable,
+// and saying whether no input and no clause binds the variable or a clause
+// binds it that no order places before the form
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §2.3): a binder that
+// itself needs the or's output binds ?a, so ?a is named bare, and two ors each
+// requiring ?m, which neither binds in every branch, leave ?m bound by
+// nothing.
 func TestPlan_RefusesAFormNoOrderBinds(t *testing.T) {
 	queries := []struct {
-		name, text, variable, form string
+		name, text, waits, form, absent string
 	}{
 		{"binder needing the form's output",
 			`[:find ?e ?x ?a :where [?e :t/n _] (or [?e ?a ?x] [?e :t/tag ?x]) [(identity ?x) ?a]]`,
-			"?a", "[?e ?a ?x]"},
-		{"two forms each reading what the other binds in one branch",
+			"waits on ?a", "(or-join [[?a] ?e ?x] [?e ?a ?x] [?e :t/tag ?x])", "(no input or clause binds it)"},
+		{"two forms each requiring what neither binds in every branch",
 			`[:find ?e :where [?e :t/n ?n] (or [?m :t/n ?n] [?e :t/tag _]) (or [?e :t/n ?m] [?e :t/tag _])]`,
-			"?m", "[?m :t/n ?n]"},
+			"waits on ?m (no input or clause binds it)", "(or-join [[?m ?n ?e]] [?m :t/n ?n] [?e :t/tag _])", ""},
 	}
+	stalls := map[string][]string{}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -146,10 +152,21 @@ func TestPlan_RefusesAFormNoOrderBinds(t *testing.T) {
 					err = executor.ForEach(rel, func(executor.Tuple) error { return nil })
 				}
 				require.Error(t, err, "%s answers; it is refused", q.name)
-				require.Contains(t, err.Error(), q.variable, "%s: the refusal names the variable", q.name)
+				require.Contains(t, err.Error(), q.waits, "%s: the refusal names the variable and whether anything binds it", q.name)
 				require.Contains(t, err.Error(), q.form, "%s: the refusal names the form", q.name)
+				if q.absent != "" {
+					require.NotContains(t, err.Error(), q.absent, "%s: a variable a clause binds is named bare", q.name)
+				}
+				at := strings.Index(err.Error(), "cannot order clauses: ")
+				require.GreaterOrEqual(t, at, 0, "%s: the refusal carries the stall's prefix: %s", q.name, err)
+				stalls[q.name] = append(stalls[q.name], err.Error()[at:])
 			}
 		})
+	}
+	for name, rendered := range stalls {
+		for _, stall := range rendered[1:] {
+			require.Equal(t, rendered[0], stall, "%s: one message on every path", name)
+		}
 	}
 }
 

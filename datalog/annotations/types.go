@@ -16,8 +16,14 @@ import (
 // read this?". One vocabulary, declared here, referenced everywhere, is what
 // makes both questions answerable at all.
 const (
-	// Query lifecycle
+	// Query lifecycle. QueryInvoked carries the query as received and
+	// QueryPrepared, emitted after Prepare, the prepared query under "query",
+	// whether the inference rewrote a form under "rewritten", and preparation's
+	// time as its latency (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md
+	// §4.9); a query preparation refuses completes with its error and emits no
+	// QueryPrepared.
 	QueryInvoked                      = "query/invoked"
+	QueryPrepared                     = "query/prepared"
 	QueryPlanCreated                  = "query/plan.created"
 	QueryComplete                     = "query/completed"
 	QueryRewriteConditionalAggregates = "query/rewrite.conditional-aggregates"

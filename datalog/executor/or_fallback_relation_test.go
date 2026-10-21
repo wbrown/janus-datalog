@@ -77,7 +77,7 @@ func TestBranchesEmitAtMostOneJudgedAgainstTheCarriedHeader(t *testing.T) {
 	ground := branchGround(value, int64(0))
 	fanning := &query.SubqueryPattern{
 		Query:   &query.Query{Find: []query.FindElement{query.FindVariable{Symbol: task}}},
-		Binding: query.TupleBinding{Variables: []query.Symbol{value}},
+		Binding: query.RelationBinding{Variables: []query.Symbol{value}},
 	}
 	counted := &query.SubqueryPattern{
 		Query:   &query.Query{Find: []query.FindElement{query.FindAggregate{Function: datalog.SymCount, Arg: task}}},
@@ -90,9 +90,29 @@ func TestBranchesEmitAtMostOneJudgedAgainstTheCarriedHeader(t *testing.T) {
 		}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{entity, value}},
 	}
+	tupleGround := &query.Expression{
+		Function: &query.GroundFunction{Value: []interface{}{int64(0), int64(0)}},
+		Binding:  query.TupleBinding{Variables: []query.Symbol{value, task}},
+	}
+	relationGround := &query.Expression{
+		Function: &query.GroundFunction{Value: []interface{}{[]interface{}{int64(0)}, []interface{}{int64(1)}}},
+		Binding:  query.RelationBinding{Variables: []query.Symbol{value}},
+	}
+	collectionGround := &query.Expression{
+		Function: &query.GroundFunction{Value: []interface{}{int64(0), int64(1)}},
+		Binding:  query.CollectionBinding{Variable: value},
+	}
+	enumerated := &query.Expression{
+		Function: query.EnumerateFunction{VecTerm: query.VariableTerm{Symbol: task}},
+		Binding:  query.TupleBinding{Variables: []query.Symbol{value, entity}},
+	}
 	required := []query.Symbol{entity}
 	carried := []query.Symbol{entity}
 	matcher := NewMemoryPatternMatcher(nil)
+	require.True(t, orBranchesEmitAtMostOne([][]query.Clause{{tupleGround}, {ground}}, required, carried, matcher), "a ground under the tuple form binds one tuple")
+	require.False(t, orBranchesEmitAtMostOne([][]query.Clause{{relationGround}, {ground}}, required, carried, matcher), "a ground under the relation form binds the relation over its inner vectors")
+	require.False(t, orBranchesEmitAtMostOne([][]query.Clause{{collectionGround}, {ground}}, required, carried, matcher), "a ground under the collection form binds one tuple per element")
+	require.True(t, orBranchesEmitAtMostOne([][]query.Clause{{enumerated}, {ground}}, required, carried, matcher), "enumerate under the tuple form binds one tuple, whatever the function")
 	require.True(t, orBranchesEmitAtMostOne([][]query.Clause{{ground}, {counted}}, required, carried, matcher), "a scalar-spelled pure count")
 	require.False(t, orBranchesEmitAtMostOne([][]query.Clause{{fanning}, {ground}}, required, carried, matcher), "a tuple-spelled subquery whose find variable the subject does not carry")
 	require.True(t, orBranchesEmitAtMostOne([][]query.Clause{{grouped}, {ground}}, required, carried, matcher))

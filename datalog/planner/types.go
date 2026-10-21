@@ -86,7 +86,7 @@ type PredicatePlan struct {
 type ExpressionPlan struct {
 	Expression *query.Expression // Use the new Expression type
 	Inputs     []query.Symbol    // Symbols this expression needs
-	Output     interface{}       // Symbol (scalar) or TupleBinding (tuple)
+	Output     interface{}       // The expression's binding: a Symbol, a TupleBinding, a CollectionBinding or a RelationBinding
 	IsEquality bool              // True if this is an equality check (no binding)
 }
 

@@ -30,16 +30,7 @@ func ScopeOf(clause Clause, rules *RuleSet) ClauseScope {
 		return ClauseScope{Provides: c.Symbols()}
 
 	case *Expression:
-		var provides []Symbol
-		switch b := c.Binding.(type) {
-		case Symbol:
-			if b != nil {
-				provides = []Symbol{b}
-			}
-		case TupleBinding:
-			provides = b.Variables
-		}
-		return ClauseScope{Provides: provides, Correlates: c.Function.RequiredSymbols()}
+		return ClauseScope{Provides: c.BoundVariables(), Correlates: c.Function.RequiredSymbols()}
 
 	case *SubqueryPattern:
 		var inputs []Symbol
@@ -219,10 +210,6 @@ func (p *SubqueryPattern) Validate() error {
 		if arity != 1 {
 			return fmt.Errorf("subquery collection binding expects the inner :find to have exactly 1 element, got %d", arity)
 		}
-	case TupleBinding:
-		if len(b.Variables) != arity {
-			return fmt.Errorf("subquery tuple binding declares %d symbol(s), but the inner :find has %d element(s)", len(b.Variables), arity)
-		}
 	case RelationBinding:
 		if len(b.Variables) != arity {
 			return fmt.Errorf("subquery relation binding declares %d symbol(s), but the inner :find has %d element(s)", len(b.Variables), arity)
@@ -277,10 +264,57 @@ func ValidateStaticClauseShapes(clauses []Clause) error {
 			validateErr = v.Validate()
 		case *FunctionPredicate:
 			validateErr = v.Validate()
+		case *Expression:
+			validateErr = v.Validate()
 		}
 		return validateErr == nil
 	})
 	return validateErr
+}
+
+// Validate decides a ground's shape against its binding from the constant
+// the text holds, so every boundary refuses the same shapes naming the
+// repair: a ground vector under the tuple form has the binding's length, a
+// ground under the collection form is a vector, and a ground under the
+// relation form is a vector of inner vectors, each of the binding's arity. A
+// function's result is read at run time and is checked nowhere here.
+func (e *Expression) Validate() error {
+	var value interface{}
+	var grounded bool
+	switch f := e.Function.(type) {
+	case GroundFunction:
+		value, grounded = f.Value, true
+	case *GroundFunction:
+		value, grounded = f.Value, true
+	}
+	if !grounded {
+		return nil
+	}
+	switch b := e.Binding.(type) {
+	case TupleBinding:
+		if values, ok := VectorElements(value); ok && len(values) != len(b.Variables) {
+			return fmt.Errorf("tuple ground mismatch: %d values, %d binding variables", len(values), len(b.Variables))
+		}
+	case CollectionBinding:
+		if _, ok := VectorElements(value); !ok {
+			return fmt.Errorf("%s is one value; bind it with the scalar form %s", e.Function, b.Variable)
+		}
+	case RelationBinding:
+		vectors, ok := VectorElements(value)
+		if !ok {
+			return fmt.Errorf("%s is one value; bind it with the scalar form ?a", e.Function)
+		}
+		for i, vector := range vectors {
+			elements, ok := VectorElements(vector)
+			if !ok {
+				return fmt.Errorf("%s is one tuple; bind it with the tuple form %s", e.Function, TupleBinding{Variables: b.Variables})
+			}
+			if len(elements) != len(b.Variables) {
+				return fmt.Errorf("%s tuple %d has %d values, and the binding %s names %d", e.Function, i+1, len(elements), b, len(b.Variables))
+			}
+		}
+	}
+	return nil
 }
 
 // InputArity is the number of values a call supplies for an :in clause: one

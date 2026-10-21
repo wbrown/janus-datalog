@@ -153,16 +153,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	symbols := rel.Symbols()
 	envSymbols, envTuple := environmentTuple(env)
 
-	// Determine binding symbols and whether they already exist
-	var bindingSymbols []query.Symbol
-	switch b := expr.Binding.(type) {
-	case query.Symbol:
-		if b != nil {
-			bindingSymbols = []query.Symbol{b}
-		}
-	case query.TupleBinding:
-		bindingSymbols = b.Variables
-	}
+	bindingSymbols := expr.BoundVariables()
 
 	// Bound binding symbols unify (filter); new ones extend the tuple.
 	align := alignBinding(symbols, bindingSymbols)
@@ -191,7 +182,14 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	// Close() also runs on panic (expression Function.Eval is user-supplied
 	// code and can panic), without losing the Close error.
 	var iterErr error
-	expanded := false
+	// The collection and relation forms read any number of tuples per input
+	// tuple, so the input's keys do not survive them; the scalar and tuple
+	// forms read one tuple by construction.
+	var expanded bool
+	switch expr.Binding.(type) {
+	case query.CollectionBinding, query.RelationBinding:
+		expanded = true
+	}
 	iter := rel.Iterator()
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil && resultErr == nil {
@@ -241,32 +239,9 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		}
 		evalResult = value
 
-		// Handle multi-tuple expansion (e.g., enumerate returns [][]interface{})
-		if multiTuples, ok := evalResult.([][]interface{}); ok {
-			if tb, ok := expr.Binding.(query.TupleBinding); ok {
-				expanded = true
-				for _, subTuple := range multiTuples {
-					if len(subTuple) != len(tb.Variables) {
-						iterErr = fmt.Errorf("tuple mismatch: %d values, %d variables",
-							len(subTuple), len(tb.Variables))
-						break
-					}
-					if out, ok := align.apply(tuple, subTuple); ok {
-						if needsCopy && !align.extendsTuple() {
-							out = copyTuple(out)
-						}
-						newTuples = append(newTuples, out)
-					}
-				}
-				if iterErr != nil {
-					break
-				}
-				continue
-			}
-		}
-
 		// Apply the result: bound binding positions unify (filter), new
-		// binding symbols extend the tuple.
+		// binding symbols extend the tuple, and each tuple the binding reads
+		// from the result is joined with the input tuple.
 		if len(bindingSymbols) == 0 {
 			// No binding, just keep original tuple
 			out := tuple
@@ -276,27 +251,18 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			newTuples = append(newTuples, out)
 			continue
 		}
-		var values []interface{}
-		if _, ok := expr.Binding.(query.TupleBinding); ok {
-			vs, ok := evalResult.([]interface{})
-			if !ok {
-				iterErr = fmt.Errorf("tuple binding requires tuple result, got %T", evalResult)
-				break
-			}
-			if len(vs) != len(bindingSymbols) {
-				iterErr = fmt.Errorf("tuple mismatch: %d values, %d variables",
-					len(vs), len(bindingSymbols))
-				break
-			}
-			values = vs
-		} else {
-			values = []interface{}{evalResult}
+		bound, err := bindingTuples(expr.Binding, evalResult)
+		if err != nil {
+			iterErr = err
+			break
 		}
-		if out, ok := align.apply(tuple, values); ok {
-			if needsCopy && !align.extendsTuple() {
-				out = copyTuple(out)
+		for _, boundTuple := range bound {
+			if out, ok := align.apply(tuple, boundTuple); ok {
+				if needsCopy && !align.extendsTuple() {
+					out = copyTuple(out)
+				}
+				newTuples = append(newTuples, out)
 			}
-			newTuples = append(newTuples, out)
 		}
 	}
 	if iterErr == nil {

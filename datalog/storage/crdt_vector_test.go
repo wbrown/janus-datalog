@@ -1209,7 +1209,7 @@ func TestVectorSetFromEmpty(t *testing.T) {
 	}
 }
 
-// TestVectorEnumerateQuery verifies that [(enumerate ?vec) [?idx ?val]] expands
+// TestVectorEnumerateQuery verifies that [(enumerate ?vec) [[?idx ?val]]] expands
 // a vector into multiple result tuples in a Datalog query.
 func TestVectorEnumerateQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
@@ -1238,7 +1238,7 @@ func TestVectorEnumerateQuery(t *testing.T) {
 		  :where
 		  [?e :product/label "Widget"]
 		  [?e :product/tags ?vec]
-		  [(enumerate ?vec) [?idx ?tag]]]`))
+		  [(enumerate ?vec) [[?idx ?tag]]]]`))
 			require.NoError(t, err)
 			require.Len(t, results, 3, "enumerate should produce one tuple per vector element")
 
@@ -1298,7 +1298,7 @@ func TestVectorEnumerateMultipleEntities(t *testing.T) {
 		  :where
 		  [?e :product/label ?label]
 		  [?e :product/tags ?vec]
-		  [(enumerate ?vec) [?idx ?tag]]]`))
+		  [(enumerate ?vec) [[?idx ?tag]]]]`))
 			require.NoError(t, err)
 			require.Len(t, results, 3, "should get Widget's 2 tags + Gadget's 1 tag = 3 tuples")
 
@@ -1382,7 +1382,7 @@ func TestVectorEnumerateRefWithFilter(t *testing.T) {
 		  :where
 		  [?f :folder/name ?folderName]
 		  [?f :folder/items ?vec]
-		  [(enumerate ?vec) [?idx ?item]]
+		  [(enumerate ?vec) [[?idx ?item]]]
 		  [?item :item/color ?color]
 		  [?item :item/label ?itemLabel]]`,
 				red))
@@ -1469,7 +1469,7 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  :where
 		  [?folder :folder/name ?folderName]
 		  [?folder :folder/items ?vec]
-		  [(enumerate ?vec) [?idx ?item]]
+		  [(enumerate ?vec) [[?idx ?item]]]
 		  [?item :item/color ?color]
 		  [?item :item/label ?itemLabel]]`,
 				red))
@@ -1484,7 +1484,7 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [?inst :instance/template ?folder]
 		  [?folder :folder/name ?folderName]
 		  [?folder :folder/items ?vec]
-		  [(enumerate ?vec) [?idx ?item]]
+		  [(enumerate ?vec) [[?idx ?item]]]
 		  [?item :item/color :color/red]
 		  [?item :item/label ?itemLabel]]`))
 			require.NoError(t, err)
@@ -1499,7 +1499,7 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [?inst :instance/template ?folder]
 		  [?folder :folder/name ?folderName]
 		  [?folder :folder/items ?vec]
-		  [(enumerate ?vec) [?idx ?item]]
+		  [(enumerate ?vec) [[?idx ?item]]]
 		  [?item :item/color ?color]
 		  [?item :item/label ?itemLabel]]`,
 				red))
@@ -1516,7 +1516,7 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [?inst :instance/template ?folder]
 		  [?folder :folder/name ?folderName]
 		  [?folder :folder/items ?vec]
-		  [(enumerate ?vec) [?idx ?item]]
+		  [(enumerate ?vec) [[?idx ?item]]]
 		  [?item :item/color :color/red]
 		  [?item :item/label ?itemLabel]]`,
 				room))
@@ -1534,7 +1534,7 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [?inst :instance/template ?folder]
 		  [?folder :folder/name ?folderName]
 		  [?folder :folder/items ?vec]
-		  [(enumerate ?vec) [?idx ?item]]
+		  [(enumerate ?vec) [[?idx ?item]]]
 		  [?item :item/label ?itemLabel]]`,
 				room, red))
 			require.NoError(t, err)
@@ -1550,7 +1550,7 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [?inst :instance/template ?folder]
 		  [?folder :folder/name ?folderName]
 		  [?folder :folder/items ?vec]
-		  [(enumerate ?vec) [?idx ?item]]
+		  [(enumerate ?vec) [[?idx ?item]]]
 		  [?item :item/color ?color]]`,
 				room, red))
 			require.NoError(t, err)
@@ -1569,7 +1569,7 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [?inst :instance/template ?folder]
 		  [?folder :folder/name ?folderName]
 		  [?folder :folder/items ?vec]
-		  [(enumerate ?vec) [?idx ?item]]
+		  [(enumerate ?vec) [[?idx ?item]]]
 		  [?item :item/color ?color]
 		  [?item :item/label ?itemLabel]]`,
 				room, red))
@@ -1689,7 +1689,7 @@ func TestPlannerReordersDataPatternBeforeEnumerate(t *testing.T) {
 		  [?c :container/room ?room]
 		  [?c :container/name ?name]
 		  [?c :container/items ?vec]
-		  [(enumerate ?vec) [?idx ?item]]
+		  [(enumerate ?vec) [[?idx ?item]]]
 		  [?item :item/color ?color]
 		  [?item :item/label ?label]]`,
 				room, red))

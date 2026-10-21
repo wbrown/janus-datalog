@@ -42,14 +42,21 @@ func TestCorrelatedSubqueryStreamsInputProductIntoCombinationExtraction(t *testi
 	)
 	require.NoError(t, err)
 	require.Len(t, groups, 1, "the result stands in the place of both groups")
+	syms := groups[0].Symbols()
+	xi, yi, si := query.SymbolIndex(syms, x), query.SymbolIndex(syms, y), query.SymbolIndex(syms, sum)
+	require.True(t, xi >= 0 && yi >= 0 && si >= 0, "the result carries both groups' symbols and the binding; got %v", syms)
 	tuples, err := CollectTuples(groups[0], nil)
 	require.NoError(t, err)
+	var got [][]interface{}
+	for _, tuple := range tuples {
+		got = append(got, []interface{}{tuple[xi], tuple[yi], tuple[si]})
+	}
 	require.ElementsMatch(t, [][]interface{}{
 		{int64(1), int64(10), int64(11)},
 		{int64(1), int64(20), int64(21)},
 		{int64(2), int64(10), int64(12)},
 		{int64(2), int64(20), int64(22)},
-	}, tuples)
+	}, got)
 }
 
 // A failure of a subject group's iterator is the result's, surfacing when

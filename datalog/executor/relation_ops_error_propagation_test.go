@@ -20,7 +20,6 @@ func (erroringFunction) RequiredSymbols() []query.Symbol { return nil }
 func (erroringFunction) Eval(map[query.Symbol]interface{}) (interface{}, error) {
 	return nil, errInjectedEval
 }
-func (erroringFunction) ReturnType() string { return "any" }
 
 // Reproductions for BUG_RELATION_TRANSFORMS_DROP_ITERATOR_ERRORS.md
 //

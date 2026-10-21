@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -58,6 +60,69 @@ func (a bindingAlignment) extensionSymbols() []query.Symbol {
 // returns the input tuple itself, and the retainer owns the workspace-copy
 // decision for RequiresCopy sources.
 func (a bindingAlignment) extendsTuple() bool { return a.extensions > 0 }
+
+// bindingTuples is the tuples a function's result yields under an
+// expression's binding, the relation the scope joins: one tuple of the value
+// under a scalar binding, the one tuple the value destructures to under the
+// tuple form, one tuple per element of the value under the collection form,
+// and one tuple per inner vector of the value under the relation form. A
+// value of another shape than the binding's, or an inner vector of another
+// arity, is an error naming both. A tuple may share the value's slice.
+func bindingTuples(binding interface{}, value interface{}) ([]Tuple, error) {
+	switch b := binding.(type) {
+	case query.Symbol:
+		return []Tuple{{value}}, nil
+	case query.TupleBinding:
+		values, ok := query.VectorElements(value)
+		if !ok {
+			return nil, fmt.Errorf("tuple binding requires tuple result, got %T", value)
+		}
+		if len(values) != len(b.Variables) {
+			return nil, fmt.Errorf("tuple mismatch: %d values, %d variables", len(values), len(b.Variables))
+		}
+		return []Tuple{values}, nil
+	case query.CollectionBinding:
+		elements, ok := query.VectorElements(value)
+		if !ok {
+			return nil, fmt.Errorf("collection binding %s requires a vector result, got %T", b, value)
+		}
+		tuples := make([]Tuple, len(elements))
+		for i, element := range elements {
+			tuples[i] = Tuple{element}
+		}
+		return tuples, nil
+	case query.RelationBinding:
+		vectors, ok := query.VectorElements(value)
+		if !ok {
+			return nil, fmt.Errorf("relation binding %s requires a collection of tuples, got %T", b, value)
+		}
+		tuples := make([]Tuple, len(vectors))
+		for i, vector := range vectors {
+			values, ok := query.VectorElements(vector)
+			if !ok {
+				return nil, fmt.Errorf("relation binding %s: tuple %d is no vector, got %T", b, i+1, vector)
+			}
+			if len(values) != len(b.Variables) {
+				return nil, fmt.Errorf("relation binding %s: tuple %d has %d values, %d variables", b, i+1, len(values), len(b.Variables))
+			}
+			tuples[i] = values
+		}
+		return tuples, nil
+	}
+	return nil, fmt.Errorf("unsupported binding type: %T", binding)
+}
+
+// relationOverTuples is the materialized relation over the binding's
+// symbols holding the tuples, each copied so none shares the slice of the
+// value the function returned.
+func relationOverTuples(symbols []query.Symbol, tuples []Tuple, opts ExecutorOptions) Relation {
+	own := make([]Tuple, len(tuples))
+	for i, tuple := range tuples {
+		own[i] = make(Tuple, len(tuple))
+		copy(own[i], tuple)
+	}
+	return NewMaterializedRelationWithOptions(symbols, own, opts)
+}
 
 // apply unifies values against the tuple's bound positions and, on success,
 // returns the output tuple: the input unchanged when nothing extends, or

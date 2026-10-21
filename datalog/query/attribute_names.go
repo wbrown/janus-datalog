@@ -377,12 +377,12 @@ type scopeFrame struct {
 // to is a keyword passed at its position.
 func (r *attributeRoster) resolve(f *scopeFrame) {
 	for _, v := range f.scope.attributeVariables {
-		if attr, ok := f.keyword(v); ok {
+		for _, attr := range f.keywords(v) {
 			r.add(attr)
 		}
 	}
 	for _, p := range f.scope.passed {
-		if attr, ok := f.keyword(p.variable); ok {
+		for _, attr := range f.keywords(p.variable) {
 			r.addInvocationConstant(invocationConstant{Name: p.name, Position: p.position, Attr: attr})
 		}
 	}
@@ -412,27 +412,28 @@ func interfaceVariables(form Clause) map[Symbol]bool {
 	return shared
 }
 
-// keyword returns the keyword sym is bound to in the frame's scope: by the
+// keywords returns the keywords sym is bound to in the frame's scope: by the
 // scope's own expressions, following identity aliases, or, for a variable
-// the scope shares with the enclosing one, by the enclosing frame's. A chain
-// is followed at most one step per alias the scope records, so a cycle of
-// identities, which the text admits, resolves to nothing.
-func (f *scopeFrame) keyword(sym Symbol) (datalog.Keyword, bool) {
+// the scope shares with the enclosing one, by the enclosing frame's, and
+// none for a variable nothing binds to a keyword. A chain is followed at
+// most one step per alias the scope records, so a cycle of identities, which
+// the text admits, resolves to nothing.
+func (f *scopeFrame) keywords(sym Symbol) []datalog.Keyword {
 	bound := &f.scope.bound
 	for steps := 0; steps <= len(bound.aliases); steps++ {
-		if attr, ok := bound.keywords[sym]; ok {
-			return attr, true
+		if attrs, ok := bound.keywords[sym]; ok {
+			return attrs
 		}
 		if next, ok := bound.aliases[sym]; ok {
 			sym = next
 			continue
 		}
 		if f.parent != nil && (f.sharesAll || f.shared[sym]) {
-			return f.parent.keyword(sym)
+			return f.parent.keywords(sym)
 		}
-		return nil, false
+		return nil
 	}
-	return nil, false
+	return nil
 }
 
 // passedVariable is a variable a rule invocation passes at a position.
@@ -443,21 +444,23 @@ type passedVariable struct {
 }
 
 // keywordBindings is what one clause scope binds through its expressions: a
-// variable bound to a keyword by ground with a keyword or identity of a
-// keyword, and a variable bound to another variable by identity of it. The
-// bindings are read at the end of the walk, so the order of the clauses does
-// not decide what resolves. The maps are allocated when the first binding is
-// recorded.
+// variable bound to keywords by ground with a keyword or identity of a
+// keyword, one per inner vector of a relation ground, and a variable bound
+// to another variable by identity of it. The bindings are read at the end of
+// the walk, so the order of the clauses does not decide what resolves. The
+// maps are allocated when the first binding is recorded.
 type keywordBindings struct {
-	keywords map[Symbol]datalog.Keyword
+	keywords map[Symbol][]datalog.Keyword
 	aliases  map[Symbol]Symbol
 }
 
 // bind records what e binds its variables to, when e is ground or identity:
 // a symbol to the ground's value, or to identity's constant, or as an alias
 // of identity's variable; a tuple's variables each to the element of the
-// ground's vector at its position. The parser builds both functions as
-// pointers and a query literal builds them as values, so both forms are read.
+// ground's vector at its position; a relation's variables each to the
+// element at its position of every inner vector. The parser builds both
+// functions as pointers and a query literal builds them as values, so both
+// forms are read.
 func (b *keywordBindings) bind(e *Expression) {
 	var value interface{}
 	var identity *IdentityFunction
@@ -489,13 +492,37 @@ func (b *keywordBindings) bind(e *Expression) {
 		}
 		b.bindKeyword(binding, value)
 	case TupleBinding:
-		values, ok := value.([]interface{})
+		values, ok := VectorElements(value)
 		if !ok {
 			return
 		}
 		for i, sym := range binding.Variables {
 			if i < len(values) {
 				b.bindKeyword(sym, values[i])
+			}
+		}
+	case CollectionBinding:
+		values, ok := VectorElements(value)
+		if !ok {
+			return
+		}
+		for _, element := range values {
+			b.bindKeyword(binding.Variable, element)
+		}
+	case RelationBinding:
+		vectors, ok := VectorElements(value)
+		if !ok {
+			return
+		}
+		for _, vector := range vectors {
+			values, ok := VectorElements(vector)
+			if !ok {
+				return
+			}
+			for i, sym := range binding.Variables {
+				if i < len(values) {
+					b.bindKeyword(sym, values[i])
+				}
 			}
 		}
 	}
@@ -509,9 +536,9 @@ func (b *keywordBindings) bindKeyword(sym Symbol, value interface{}) {
 		return
 	}
 	if b.keywords == nil {
-		b.keywords = map[Symbol]datalog.Keyword{}
+		b.keywords = map[Symbol][]datalog.Keyword{}
 	}
-	b.keywords[sym] = attr
+	b.keywords[sym] = append(b.keywords[sym], attr)
 }
 
 // addDatabaseFunction records the attributes a database function reads. The

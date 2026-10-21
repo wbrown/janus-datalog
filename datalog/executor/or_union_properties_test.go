@@ -38,7 +38,7 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 		{
 			&query.SubqueryPattern{
 				Query:   &query.Query{Find: []query.FindElement{query.FindAggregate{Function: datalog.SymCount, Arg: task}}},
-				Binding: query.TupleBinding{Variables: []query.Symbol{value}},
+				Binding: query.RelationBinding{Variables: []query.Symbol{value}},
 			},
 		},
 		{
@@ -429,7 +429,7 @@ func runOrPropertyDifferential(t *testing.T, seed int64) {
 					Function: query.EnumerateFunction{
 						VecTerm: query.VariableTerm{Symbol: vector},
 					},
-					Binding: query.TupleBinding{Variables: []query.Symbol{index, value}},
+					Binding: query.RelationBinding{Variables: []query.Symbol{index, value}},
 				}}
 			}
 		}
@@ -510,7 +510,7 @@ func evaluateGeneratedOrBranch(
 			tuple := append(copyTuple(outerTuple), function.Value)
 			return symbols, []Tuple{tuple}
 		case query.EnumerateFunction:
-			binding := clause.Binding.(query.TupleBinding)
+			binding := clause.Binding.(query.RelationBinding)
 			symbols := append(append([]query.Symbol(nil), outerSymbols...), binding.Variables...)
 			vectorValue := outerTuple[1].([]interface{})
 			tuples := make([]Tuple, len(vectorValue))

@@ -145,7 +145,7 @@ func TestDefineRuleWithRequiredRun(t *testing.T) {
 func TestSubqueryPassesRulesThrough(t *testing.T) {
 	x, y, n := NewVar("x"), NewVar("y"), NewVar("n")
 	inner := Query().Find(Count(y)).In(DB, Rules, Scalar(x)).Where(Rule("reach", x, y))
-	q := Query().Find(x, n).In(DB, Rules).Where(Pat(x, edge, Blank()), Subquery(inner, x).BindTuple(n)).MustBuild()
+	q := Query().Find(x, n).In(DB, Rules).Where(Pat(x, edge, Blank()), Subquery(inner, x).BindRelation(n)).MustBuild()
 	parsed, err := parser.ParseQuery(`[:find ?x ?n :in $ %
 	                                   :where [?x :edge _]
 	                                          [(q [:find (count ?y) :in $ % ?x :where (reach ?x ?y)] $ % ?x) [[?n]]]]`)
@@ -166,7 +166,7 @@ func TestSubqueryPassesRulesThrough(t *testing.T) {
 func TestSubqueryInputsFollowTheInnerDeclaration(t *testing.T) {
 	x, y, n := NewVar("x"), NewVar("y"), NewVar("n")
 	inner := Query().Find(Count(y)).In(DB, Scalar(x), Rules).Where(Rule("reach", x, y))
-	q := Query().Find(x, n).In(DB, Rules).Where(Pat(x, edge, Blank()), Subquery(inner, x).BindTuple(n)).MustBuild()
+	q := Query().Find(x, n).In(DB, Rules).Where(Pat(x, edge, Blank()), Subquery(inner, x).BindRelation(n)).MustBuild()
 	parsed, err := parser.ParseQuery(`[:find ?x ?n :in $ %
 	                                   :where [?x :edge _]
 	                                          [(q [:find (count ?y) :in $ ?x % :where (reach ?x ?y)] $ ?x %) [[?n]]]]`)
@@ -179,7 +179,7 @@ func TestSubqueryInputsFollowTheInnerDeclaration(t *testing.T) {
 
 	a, b, c := NewVar("a"), NewVar("b"), NewVar("c")
 	pairs := Query().Find(Count(c)).In(DB, Relation(a, b), Rules).Where(Rule("reach", a, c), Rule("reach", b, c))
-	q = Query().Find(a, b, n).In(DB, Rules).Where(Pat(a, edge, b), Subquery(pairs, a, b).BindTuple(n)).MustBuild()
+	q = Query().Find(a, b, n).In(DB, Rules).Where(Pat(a, edge, b), Subquery(pairs, a, b).BindRelation(n)).MustBuild()
 	parsed, err = parser.ParseQuery(`[:find ?a ?b ?n :in $ %
 	                                  :where [?a :edge ?b]
 	                                         [(q [:find (count ?c) :in $ [[?a ?b] ...] % :where (reach ?a ?c) (reach ?b ?c)] $ ?a ?b %) [[?n]]]]`)
@@ -190,7 +190,7 @@ func TestSubqueryInputsFollowTheInnerDeclaration(t *testing.T) {
 		t.Errorf("a relation input takes both callers before the %% that follows it: built :where\n%v\ndiffers from parsed\n%v", q.Where, parsed.Where)
 	}
 
-	_, err = Query().Find(x, n).In(DB, Rules).Where(Pat(x, edge, Blank()), Subquery(inner, x, y).BindTuple(n)).Build()
+	_, err = Query().Find(x, n).In(DB, Rules).Where(Pat(x, edge, Blank()), Subquery(inner, x, y).BindRelation(n)).Build()
 	if err == nil || !strings.Contains(err.Error(), "subquery") {
 		t.Errorf("two caller variables for one value position are refused naming the subquery, got %v", err)
 	}

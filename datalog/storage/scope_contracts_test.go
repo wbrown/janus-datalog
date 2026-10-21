@@ -2,9 +2,11 @@ package storage
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
@@ -93,6 +95,51 @@ func TestFallbackOverAFanningTupleSpelledSubqueryClaimsNoKey(t *testing.T) {
 			rel, err := d.Query(`[:find ?e :where [?e :t/n _] (or-default-join [[?e] ?v] [(q [:find ?x :in $ ?e :where [?e :t/n ?n] [?x :t/n ?n]] $ ?e) [[?v]]] [(ground 0) ?v])]`)
 			require.NoError(t, err)
 			require.ElementsMatch(t, []string{"e1", "e2", "e3"}, renderedRows(t, rel, names))
+		})
+	}
+}
+
+// A ground under the relation form binds the relation over its vector of
+// vectors (NESTED_SCOPES_AS_QUERIES.md goal 12): over the entities it pairs
+// each with every inner vector, and an inner vector the entity's :t/n unifies
+// with keeps that entity's tuple alone.
+func TestRelationGroundBindsOneTuplePerInnerVector(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/n", int64(1)}},
+		"e2": {{":t/n", int64(3)}},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			everyOrder(t, d, names, "?e ?a ?b",
+				[]string{`[?e :t/n _]`, `[(ground [[1 2] [3 4]]) [[?a ?b]]]`},
+				[]string{"e1 1 2", "e1 3 4", "e2 1 2", "e2 3 4"})
+			everyOrder(t, d, names, "?e ?b",
+				[]string{`[?e :t/n ?n]`, `[(ground [[1 2] [3 4]]) [[?n ?b]]]`},
+				[]string{"e1 2", "e2 4"})
+		})
+	}
+}
+
+// A ground under the collection form binds the relation over its vector, one
+// tuple per element: over the entities it pairs each with every element, and
+// an element the entity's :t/n unifies with keeps that entity's tuple alone.
+func TestCollectionGroundBindsOneTuplePerElement(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/n", int64(1)}},
+		"e2": {{":t/n", int64(3)}},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			everyOrder(t, d, names, "?e ?v",
+				[]string{`[?e :t/n _]`, `[(ground [1 2 3]) [?v ...]]`},
+				[]string{"e1 1", "e1 2", "e1 3", "e2 1", "e2 2", "e2 3"})
+			everyOrder(t, d, names, "?e ?n",
+				[]string{`[?e :t/n ?n]`, `[(ground [1 2 3]) [?n ...]]`},
+				[]string{"e1 1", "e2 3"})
 		})
 	}
 }
@@ -484,13 +531,16 @@ func TestFlatHeaderOrDefaultJoinDecidesOnce(t *testing.T) {
 }
 
 // A :where of one form whose required run nothing binds is refused on both
-// planner paths, naming the form and the variable.
+// planner paths under one message, naming the form and the variable and
+// saying that no input and no clause binds it
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §2.3).
 func TestOneFormWhereWithNothingBindingItsRequiredRunIsRefused(t *testing.T) {
 	forms := []struct{ head, text string }{
 		{"(or-join", `[:find ?e :where (or-join [[?x] ?e] [?e :t/a ?x] [?e :t/b ?x])]`},
 		{"(or-default-join", `[:find ?e :where (or-default-join [[?x] ?e] [?e :t/a ?x] [(ground :none) ?e])]`},
 		{"(not-join", `[:find ?x :where (not-join [?x] [?x :t/a _])]`},
 	}
+	stalls := map[string][]string{}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -498,8 +548,93 @@ func TestOneFormWhereWithNothingBindingItsRequiredRunIsRefused(t *testing.T) {
 				_, err := executor.CollectTuples(d.Query(form.text))
 				require.Error(t, err, form.text)
 				require.Contains(t, err.Error(), form.head, form.text)
-				require.Contains(t, err.Error(), "?x", form.text)
+				require.Contains(t, err.Error(), "waits on ?x (no input or clause binds it)", form.text)
+				at := strings.Index(err.Error(), "cannot order clauses: ")
+				require.GreaterOrEqual(t, at, 0, "%s: the refusal carries the stall's prefix: %s", form.text, err)
+				stalls[form.head] = append(stalls[form.head], err.Error()[at:])
 			}
+		})
+	}
+	for head, rendered := range stalls {
+		for _, stall := range rendered[1:] {
+			require.Equal(t, rendered[0], stall, "%s: one message on every path", head)
+		}
+	}
+}
+
+// A handler sees, in one event after Prepare, the prepared query, whether the
+// inference rewrote a form, and preparation's time
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.9): a query holding a
+// headerless or is reported with the or-join the inference wrote and the
+// rewrite flagged, a query of header forms with its own text and no rewrite,
+// and a query preparation refuses with the invocation and the completion
+// alone. The event stands between the invocation and the plan.
+func TestPreparationEventCarriesThePreparedQueryAndWhetherItWasRewritten(t *testing.T) {
+	entities := map[string][]fact{"e1": {{":t/n", int64(1)}, {":t/a", int64(2)}}}
+	cases := []struct {
+		name, text, rendered string
+		rewritten            bool
+	}{
+		{"a headerless or", `[:find ?e :where [?e :t/n _] (or [?e :t/a ?x] [?e :t/b ?x])]`, "(or-join [?e] [?e :t/a ?x] [?e :t/b ?x])", true},
+		{"a header form", `[:find ?e :where [?e :t/n _] (or-join [?e] [?e :t/a ?x] [?e :t/b ?x])]`, "(or-join [?e] [?e :t/a ?x] [?e :t/b ?x])", false},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var events []annotations.Event
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: func(e annotations.Event) {
+				mu.Lock()
+				events = append(events, e)
+				mu.Unlock()
+			}})
+			namedEntities(t, d, entities)
+			lifecycle := func() (invoked, prepared, planned, completed int, event annotations.Event) {
+				invoked, prepared, planned, completed = -1, -1, -1, -1
+				mu.Lock()
+				defer mu.Unlock()
+				for i, e := range events {
+					switch e.Name {
+					case annotations.QueryInvoked:
+						invoked = i
+					case annotations.QueryPrepared:
+						prepared, event = i, e
+					case annotations.QueryPlanCreated:
+						planned = i
+					case annotations.QueryComplete:
+						completed = i
+					}
+				}
+				return
+			}
+			for _, c := range cases {
+				t.Run(c.name, func(t *testing.T) {
+					mu.Lock()
+					events = nil
+					mu.Unlock()
+					_, err := executor.CollectTuples(d.Query(c.text))
+					require.NoError(t, err)
+					invoked, prepared, planned, _, event := lifecycle()
+					require.GreaterOrEqual(t, invoked, 0, "the invocation is reported")
+					require.Greater(t, prepared, invoked, "the preparation is reported after the invocation")
+					require.Greater(t, planned, prepared, "the plan is reported after the preparation")
+					require.Contains(t, event.Data["query"], c.rendered, "the event carries the prepared query")
+					require.Equal(t, c.rewritten, event.Data["rewritten"], "the event says whether the inference rewrote a form")
+					require.False(t, event.End.IsZero(), "the event carries preparation's end")
+					require.GreaterOrEqual(t, event.Latency, time.Duration(0), "the event carries preparation's time")
+				})
+			}
+			t.Run("a query preparation refuses", func(t *testing.T) {
+				mu.Lock()
+				events = nil
+				mu.Unlock()
+				rules := mustRuleSet(t, `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`)
+				_, err := d.Query(`[:find ?m :in $ % :where (or-join [?m] (succ ?n ?m))]`, rules)
+				require.Error(t, err, "a branch reading a required position nothing binds is refused at preparation under the rule set")
+				invoked, prepared, _, completed, _ := lifecycle()
+				require.GreaterOrEqual(t, invoked, 0, "the invocation is reported")
+				require.Equal(t, -1, prepared, "no preparation event is reported for a query preparation refuses")
+				require.Greater(t, completed, invoked, "the completion carries the refusal")
+			})
 		})
 	}
 }
@@ -1169,6 +1304,95 @@ func TestSubqueryBindingNamesAnInputTheFindAlsoNames(t *testing.T) {
 			rel, err := d.Query(`[:find ?h ?mm :in $ ?ks :where [(q [:find ?h ?m :in $ [?m ...] :where [?h :t/holds ?m]] $ ?ks) [[?h ?mm] ...]]]`, []interface{}{int64(1), int64(2)})
 			require.NoError(t, err)
 			require.ElementsMatch(t, []string{"h1 1", "h2 2", "h3 2"}, renderedRows(t, rel, names))
+		})
+	}
+}
+
+// A binding naming one variable at two places unifies the two outputs it
+// names, as an invocation's repeated argument does: a tuple whose two outputs
+// are equal enters the scope under the one name, once, and a tuple whose
+// outputs differ is dropped. e1's :t/n and :t/also agree and e2's differ, so
+// e1 alone is answered, under ?h.
+func TestSubqueryBindingNamingOneVariableTwiceSelectsOnEquality(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":t/n", int64(1)}, {":t/also", int64(1)}},
+		"e2": {{":t/n", int64(2)}, {":t/also", int64(3)}},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			clauses := []string{`[?e :t/n _]`, `[(q [:find ?x ?y :in $ ?e :where [?e :t/n ?x] [?e :t/also ?y]] $ ?e) [[?h ?h] ...]]`}
+			everyOrder(t, d, names, "?e ?h", clauses, []string{"e1 1"})
+		})
+	}
+}
+
+// A form whose required run and output lie in two groups sharing no symbol
+// has their product as its subject, and a second form over one of those
+// groups reads the first's result: the query answers the same tuples in
+// every written order. The or's required run is ?a and ?e from the attribute
+// scan and its output ?x from the :q scan; the or-join over ?e then reads the
+// or's result. e1, e2 and e3 carry :q and are each a :q target or carry :r,
+// and e4 carries only an attribute no clause reads.
+func TestFormsOverTwoGroupsSharingNoSymbolAnswerInEveryOrder(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":p", ref("e2")}, {":r", ref("e3")}, {":q", ref("e3")}},
+		"e2": {{":q", ref("e1")}},
+		"e3": {{":q", ref("e2")}},
+		"e4": {{":s", ref("e1")}},
+	}
+	clauses := []string{
+		`[?e ?a _]`,
+		`[?x :q _]`,
+		`[?w :p _]`,
+		`(or (and [?x ?a ?l] [(q [:find (count ?s) :in $ ?x :where [?s :q ?x]] $ ?x) [[?c]]]) (and [?e :p _] [?x :r ?n]))`,
+		`(or-join [?e] [?l :q ?e] (and [?e :r ?n] [(ground :r) ?a]))`,
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := namedEntities(t, d, entities)
+			everyOrder(t, d, names, "?e", clauses, []string{"e1", "e2", "e3"})
+		})
+	}
+}
+
+// A top-level invocation whose two arguments two groups sharing no symbol
+// bind has their product as its subject, run as the union form over the
+// window: in every written order the query answers the pairs the closure
+// holds, and the invocation's windows fire under its own form. e1, e2 and e5
+// carry :l, e2, e3 and e4 carry :r, the edges chain e1 to e4, and e5 has no
+// edge; both scans carry a constant, so the planner places them before the
+// invocation in every order.
+func TestInvocationWhoseArgumentsTwoGroupsBindRunsOverTheirProduct(t *testing.T) {
+	entities := map[string][]fact{
+		"e1": {{":l", int64(1)}, {":edge", ref("e2")}},
+		"e2": {{":l", int64(1)}, {":r", int64(1)}, {":edge", ref("e3")}},
+		"e3": {{":r", int64(1)}, {":edge", ref("e4")}},
+		"e4": {{":r", int64(1)}},
+		"e5": {{":l", int64(1)}},
+	}
+	clauses := []string{`[?x :l 1]`, `[?y :r 1]`, `(reach ?x ?y)`}
+	want := []string{"e1 e2", "e1 e3", "e1 e4", "e2 e3", "e2 e4"}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var windows atomic.Int32
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{AnnotationHandler: func(e annotations.Event) {
+				if e.Name == annotations.ScopeWindow && e.Data[annotations.KeyForm] == "invocation" {
+					windows.Add(1)
+				}
+			}})
+			names := namedEntities(t, d, entities)
+			rules := mustRuleSet(t, closureRules)
+			for _, order := range orderings(len(clauses)) {
+				text := fmt.Sprintf("[:find ?x ?y :in $ %% :where %s %s %s]", clauses[order[0]], clauses[order[1]], clauses[order[2]])
+				windows.Store(0)
+				rel, err := d.Query(text, rules)
+				require.NoError(t, err, text)
+				require.Equal(t, want, renderedRows(t, rel, names), text)
+				require.GreaterOrEqual(t, windows.Load(), int32(1), "the invocation runs over the window of the product: %s", text)
+			}
 		})
 	}
 }

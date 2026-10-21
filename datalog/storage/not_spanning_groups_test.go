@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -210,6 +211,72 @@ func TestNotBodyPredicateConsumesInBoundParameter(t *testing.T) {
 			got := collectEntityResults(t, rel)
 			require.Equal(t, notSpanningExpected(unflagged, otherFlag), got,
 				"a NOT body may consume an :in-bound symbol through a predicate alone")
+		})
+	}
+}
+
+// TestHeaderlessNotReadingOnlyAnInputDecidesTheScope pins the header rule of
+// docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §2.2 on a plain not that
+// reads a query input and nothing else of the scope: its inferred header is
+// the input alone, the body runs once over the environment's tuple, and the
+// body's answer decides the whole scope, in every written order. With a flag
+// some thing carries the body has a result and every group is emptied; with
+// a flag no thing carries the body has none and every thing remains.
+func TestHeaderlessNotReadingOnlyAnInputDecidesTheScope(t *testing.T) {
+	clauses := []string{`[?e :entity/kind "thing"]`, `(not [?x :entity/flag ?flag])`}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			flagged, unflagged, otherFlag := notSpanningFixture(t, d)
+			for _, order := range orderings(len(clauses)) {
+				ordered := make([]string, len(order))
+				for i, at := range order {
+					ordered[i] = clauses[at]
+				}
+				query := "[:find ?e :in $ ?flag :where " + strings.Join(ordered, " ") + "]"
+
+				rel, err := d.Query(query, "hot")
+				require.NoError(t, err, query)
+				require.Empty(t, collectEntityResults(t, rel),
+					"some thing carries the flag, so the body has a result and the scope is emptied: %s", query)
+
+				rel, err = d.Query(query, "warm")
+				require.NoError(t, err, query)
+				require.Equal(t, map[string]bool{
+					flagged.String():   true,
+					unflagged.String(): true,
+					otherFlag.String(): true,
+				}, collectEntityResults(t, rel),
+					"no thing carries the flag, so the body has no result and every thing remains: %s", query)
+			}
+		})
+	}
+}
+
+// TestOneFormWhereOfAnEnvironmentOnlyNotDecidesTheScope pins the same rule
+// on a :where of the not alone: its header is the input, its run the
+// environment's tuple and its subject the unit relation
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §2.2), so the find's
+// input is answered when no thing carries the flag and nothing is answered
+// when one does.
+func TestOneFormWhereOfAnEnvironmentOnlyNotDecidesTheScope(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			flagged, _, _ := notSpanningFixture(t, d)
+			query := `[:find ?e
+			           :in $ ?flag ?e
+			           :where (not [?x :entity/flag ?flag])]`
+
+			rel, err := d.Query(query, "hot", flagged)
+			require.NoError(t, err)
+			require.Empty(t, collectEntityResults(t, rel),
+				"some thing carries the flag, so the body has a result and the scope is emptied")
+
+			rel, err = d.Query(query, "warm", flagged)
+			require.NoError(t, err)
+			require.Equal(t, map[string]bool{flagged.String(): true}, collectEntityResults(t, rel),
+				"no thing carries the flag, so the body has no result and the input is answered")
 		})
 	}
 }

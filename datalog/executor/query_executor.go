@@ -63,7 +63,6 @@ func newQueryExecutor(matcher PatternMatcher, resolver EntityResolver, options E
 		matcher:        matcher,
 		entityResolver: resolver,
 		planner:        planner.CreatePlanner(nil, plannerOptions),
-		rewritePlanner: newRewritePlanner(plannerOptions),
 		options:        options,
 	}
 	return executor.queryExecutor()
@@ -102,7 +101,7 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 					fusedCount = count
 				}
 			}
-			if fusedCount == 0 && streamsThroughAPattern(c, groups) {
+			if fusedCount == 0 && streamsThrough(c.Symbols(), groups) {
 				var err error
 				groups, err = e.executeBoundPattern(ctx, c, groups)
 				if err != nil {
@@ -195,11 +194,25 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 			}))
 
 		case *query.RuleInvocation:
-			newRel, err := e.executeRuleInvocation(ctx, c, groups)
-			if err != nil {
-				return nil, fmt.Errorf("clause %d (rule invocation) failed: %w", i, err)
+			// An invocation deriving its predicate at the clause over a
+			// streaming group binding an argument is read in windows, the
+			// derivation seeded per window. An invocation of a predicate the
+			// scope holds reads the held relation, and one a group held in
+			// memory seeds through its projection; each joins its result at
+			// the collapse.
+			if _, held := ctx.Derived(c.Name); !held && streamsThrough(c.Variables(), groups) {
+				var err error
+				groups, err = e.executeBoundInvocation(ctx, c, groups)
+				if err != nil {
+					return nil, fmt.Errorf("clause %d (rule invocation) failed: %w", i, err)
+				}
+			} else {
+				newRel, err := e.executeRuleInvocation(ctx, c, groups)
+				if err != nil {
+					return nil, fmt.Errorf("clause %d (rule invocation) failed: %w", i, err)
+				}
+				groups = append(groups, newRel)
 			}
-			groups = append(groups, newRel)
 			groups = Relations(reportCollapse(e.options.Handler, []Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(e.options.Handler))
 			}))
@@ -831,33 +844,15 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 			return []Relation{}, nil
 		}
 
-		// Handle both scalar and tuple bindings
-		switch binding := expr.Binding.(type) {
-		case query.TupleBinding:
-			values, ok := value.([]interface{})
-			if !ok {
-				return nil, fmt.Errorf("tuple binding requires tuple result, got %T", value)
-			}
-			if len(values) != len(binding.Variables) {
-				return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
-					len(values), len(binding.Variables))
-			}
-			symbols := binding.Variables
-			tuple := make(Tuple, len(values))
-			copy(tuple, values)
-			return []Relation{NewMaterializedRelationWithOptions(symbols, []Tuple{tuple}, e.options)}, nil
-
-		case query.Symbol:
-			if binding == nil {
-				return groups, nil
-			}
-			symbols := []query.Symbol{binding}
-			tuples := []Tuple{{value}}
-			return []Relation{NewMaterializedRelationWithOptions(symbols, tuples, e.options)}, nil
-
-		default:
-			return nil, fmt.Errorf("unsupported binding type: %T", expr.Binding)
+		symbols := expr.BoundVariables()
+		if len(symbols) == 0 {
+			return groups, nil
 		}
+		bound, err := bindingTuples(expr.Binding, value)
+		if err != nil {
+			return nil, err
+		}
+		return []Relation{relationOverTuples(symbols, bound, e.options)}, nil
 	}
 
 	// Symbols the environment binds (single-valued :in parameters) need no
@@ -917,37 +912,23 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 				return nil, err
 			}
 
-			// Determine binding symbols, and values when a binding was
-			// produced. Absence still derives the symbols: the emptied
-			// groups below keep the schema this expression provides.
-			var bindingSyms []query.Symbol
-			var bindingValues []interface{}
-			switch binding := expr.Binding.(type) {
-			case query.TupleBinding:
-				bindingSyms = binding.Variables
-				if found {
-					values, ok := value.([]interface{})
-					if !ok {
-						return nil, fmt.Errorf("tuple binding requires tuple result, got %T", value)
-					}
-					if len(values) != len(binding.Variables) {
-						return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
-							len(values), len(binding.Variables))
-					}
-					bindingValues = values
-				}
-			case query.Symbol:
-				if binding != nil {
-					bindingSyms = []query.Symbol{binding}
-					if found {
-						bindingValues = []interface{}{value}
-					}
+			// The binding's symbols, and the tuples the result yields under
+			// it when a binding was produced. Absence still derives the
+			// symbols: the emptied groups below keep the schema this
+			// expression provides.
+			bindingSyms := expr.BoundVariables()
+			var bound []Tuple
+			if found {
+				bound, err = bindingTuples(expr.Binding, value)
+				if err != nil {
+					return nil, err
 				}
 			}
 
-			// For each binding symbol: bound positions unify (filter), new
-			// symbols extend the tuple. alignBinding is the single home of
-			// this semantics — shared with the per-tuple path.
+			// Each tuple the binding reads is joined with each tuple of each
+			// group: bound positions unify (filter) and new symbols extend
+			// the tuple. alignBinding is the single home of this semantics,
+			// shared with the per-tuple path.
 			var resultRels []Relation
 			for _, rel := range groups {
 				align := alignBinding(rel.Symbols(), bindingSyms)
@@ -966,11 +947,13 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 				var outputTuples []Tuple
 				iter := rel.Iterator()
 				for iter.Next() {
-					if out, ok := align.apply(iter.Tuple(), bindingValues); ok {
-						if needsCopy && !align.extendsTuple() {
-							out = copyTuple(out)
+					for _, boundTuple := range bound {
+						if out, ok := align.apply(iter.Tuple(), boundTuple); ok {
+							if needsCopy && !align.extendsTuple() {
+								out = copyTuple(out)
+							}
+							outputTuples = append(outputTuples, out)
 						}
-						outputTuples = append(outputTuples, out)
 					}
 				}
 				scanErr := iter.Error()
@@ -1019,25 +1002,16 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 				return []Relation{}, nil
 			}
 
-			// Create result relation based on binding type
-			switch binding := expr.Binding.(type) {
-			case query.TupleBinding:
-				values, ok := value.([]interface{})
-				if !ok {
-					return nil, fmt.Errorf("tuple binding requires tuple result, got %T", value)
-				}
-				if len(values) != len(binding.Variables) {
-					return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
-						len(values), len(binding.Variables))
-				}
-				return []Relation{NewMaterializedRelationWithOptions(binding.Variables, []Tuple{values}, e.options)}, nil
-			case query.Symbol:
-				if binding != nil {
-					return []Relation{NewMaterializedRelationWithOptions([]query.Symbol{binding}, []Tuple{{value}}, e.options)}, nil
-				}
+			symbols := expr.BoundVariables()
+			if len(symbols) == 0 {
+				// No binding - return empty groups (expression evaluated for side effect only)
+				return []Relation{}, nil
 			}
-			// No binding - return empty groups (expression evaluated for side effect only)
-			return []Relation{}, nil
+			bound, err := bindingTuples(expr.Binding, value)
+			if err != nil {
+				return nil, err
+			}
+			return []Relation{relationOverTuples(symbols, bound, e.options)}, nil
 		}
 
 		// Skip expression if no relevant relations and expression needs symbols
@@ -1474,8 +1448,15 @@ func applyFindPulls(
 	}, nil
 }
 
-// findOuterRelation collects and joins all groups that provide any of the
-// needed symbols into a single outer relation. Returns unit relation if none found.
+// findOuterRelation is a form's subject: the groups holding any of the needed
+// symbols joined into one relation, and the unit relation when none does.
+// Several groups join by a fold of the hash join under their common symbols,
+// none for groups sharing no symbol, whose join is their product. Each later
+// group is the build side, held in the join index under its key, and the
+// join so far is the probe side streaming through it, whatever the executor's
+// join option, so each group is opened once, the subject reports no size, and
+// the fold holds the later groups and never the join so far
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.2).
 func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, groups Relations) (Relation, []int) {
 	if len(groups) == 0 || len(neededSymbols) == 0 {
 		return NewUnitRelation(e.options), nil
@@ -1493,9 +1474,12 @@ func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, g
 	if len(consumed) == 1 {
 		return groups[consumed[0]], consumed
 	}
-	result := groups[consumed[0]].Materialize()
+	streaming := e.options
+	streaming.EnableStreamingJoins = true
+	result := groups[consumed[0]]
 	for _, index := range consumed[1:] {
-		result = result.Join(groups[index].Materialize())
+		held := groups[index]
+		result = HashJoinWithOptions(held, result, CommonSymbols(held, result), streaming)
 	}
 	return result, consumed
 }

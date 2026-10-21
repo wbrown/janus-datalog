@@ -40,7 +40,7 @@ func TestCorrelatedSubqueryDefersBehindSimultaneouslyReadySiblings(t *testing.T)
 			query.Constant{Value: datalog.SymDollar},
 			query.Variable{Name: e},
 		},
-		Binding: query.TupleBinding{Variables: []query.Symbol{total}},
+		Binding: query.RelationBinding{Variables: []query.Symbol{total}},
 	}
 
 	phases, err := createPhasesGreedy(
@@ -84,7 +84,7 @@ func TestUncorrelatedSubqueryKeepsDataSourceScheduling(t *testing.T) {
 		Inputs: []query.PatternElement{
 			query.Constant{Value: datalog.SymDollar},
 		},
-		Binding: query.TupleBinding{Variables: []query.Symbol{threshold}},
+		Binding: query.RelationBinding{Variables: []query.Symbol{threshold}},
 	}
 	correlated := &query.SubqueryPattern{
 		Query: &query.Query{},
@@ -92,7 +92,7 @@ func TestUncorrelatedSubqueryKeepsDataSourceScheduling(t *testing.T) {
 			query.Constant{Value: datalog.SymDollar},
 			query.Variable{Name: e},
 		},
-		Binding: query.TupleBinding{Variables: []query.Symbol{threshold}},
+		Binding: query.RelationBinding{Variables: []query.Symbol{threshold}},
 	}
 
 	available := map[query.Symbol]bool{e: true}

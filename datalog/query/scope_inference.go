@@ -172,7 +172,7 @@ func inferClause(list []Clause, i int, occurs map[Symbol]bool, rules *RuleSet) (
 		}
 		for _, v := range c.RequiredVars {
 			if !ContainsSymbol(FreeVariables(bodies[0], rules), v) {
-				return nil, fmt.Errorf("%s: the header names %s, which the body neither binds nor reads", c, v)
+				return nil, fmt.Errorf("%s: the header names %s, which the body neither binds nor reads; drop %s from the header or read it in the body", c, v, v)
 			}
 		}
 		if !changed {

@@ -257,7 +257,8 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 	return append(leftClauses, orDefaultJoinClause), nil
 }
 
-// decompileAntiJoin emits child clauses from left, then a NOT clause wrapping right.
+// decompileAntiJoin emits child clauses from left, then the not-join over
+// the join symbols whose body is the right child's clauses.
 func decompileAntiJoin(n *Node) ([]query.Clause, error) {
 	aj := n.Data.(*AntiJoin)
 	if len(n.Children) < 2 {
@@ -274,23 +275,14 @@ func decompileAntiJoin(n *Node) ([]query.Clause, error) {
 		return nil, err
 	}
 
-	var notClause query.Clause
-	if aj.ExplicitJoin {
-		notClause = &query.NotJoinClause{
-			RequiredVars: aj.JoinSymbols,
-			Clauses:      rightClauses,
-		}
-	} else {
-		notClause = &query.NotClause{
-			Clauses: rightClauses,
-		}
-	}
-
-	return append(leftClauses, notClause), nil
+	return append(leftClauses, &query.NotJoinClause{
+		RequiredVars: aj.JoinSymbols,
+		Clauses:      rightClauses,
+	}), nil
 }
 
-// decompileUnion emits an OR clause (or OR-join clause if join vars present).
-// Union nodes always decompile to OrClause/OrJoinClause (independent union).
+// decompileUnion emits the or-join over the union's header, the required
+// run and the outputs, with one branch per child.
 func decompileUnion(n *Node) ([]query.Clause, error) {
 	u := n.Data.(*Union)
 	var branches [][]query.Clause
@@ -301,24 +293,15 @@ func decompileUnion(n *Node) ([]query.Clause, error) {
 		}
 		branches = append(branches, branch)
 	}
-	if len(u.JoinVars) > 0 {
-		var outputs []query.Symbol
-		for _, symbol := range u.JoinVars {
-			if !query.ContainsSymbol(u.RequiredVars, symbol) {
-				outputs = append(outputs, symbol)
-			}
-		}
-		return []query.Clause{&query.OrJoinClause{
-			RequiredVars: u.RequiredVars,
-			OutputVars:   outputs,
-			Branches:     branches,
-		}}, nil
-	}
-	return []query.Clause{&query.OrClause{Branches: branches}}, nil
+	return []query.Clause{&query.OrJoinClause{
+		RequiredVars: u.RequiredVars,
+		OutputVars:   u.OutputVars,
+		Branches:     branches,
+	}}, nil
 }
 
-// decompileLateralUnion emits an OR-DEFAULT clause (or OR-DEFAULT-JOIN if join vars present).
-// LateralUnion nodes represent correlated per-tuple branch evaluation.
+// decompileLateralUnion emits the or-default-join over the lateral union's
+// header, the required run and the outputs, with one branch per child.
 func decompileLateralUnion(n *Node) ([]query.Clause, error) {
 	lu := n.Data.(*LateralUnion)
 	var branches [][]query.Clause
@@ -329,14 +312,11 @@ func decompileLateralUnion(n *Node) ([]query.Clause, error) {
 		}
 		branches = append(branches, branch)
 	}
-	if len(lu.RequiredVars) > 0 || len(lu.OutputVars) > 0 {
-		return []query.Clause{&query.OrDefaultJoinClause{
-			RequiredVars: lu.RequiredVars,
-			OutputVars:   lu.OutputVars,
-			Branches:     branches,
-		}}, nil
-	}
-	return []query.Clause{&query.OrDefaultClause{Branches: branches}}, nil
+	return []query.Clause{&query.OrDefaultJoinClause{
+		RequiredVars: lu.RequiredVars,
+		OutputVars:   lu.OutputVars,
+		Branches:     branches,
+	}}, nil
 }
 
 // decompileLateralJoin emits a SubqueryPattern clause.
@@ -433,7 +413,7 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 			},
 		}
 	} else if len(defaultSyms) > 0 {
-		// Tuple ground: [(ground [v1 v2 ...]) [[?a ?b ...]]]
+		// Tuple ground: [(ground [v1 v2 ...]) [?a ?b ...]]
 		defaultBranch = []query.Clause{
 			&query.Expression{
 				Function: &query.GroundFunction{Value: lj.DefaultValues},
@@ -485,9 +465,9 @@ func decompileAggregate(n *Node) ([]query.Clause, error) {
 	}
 
 	// Build binding with the outer names corresponding positionally to the
-	// grouped keys and aggregate results.
-	// RelationBinding (not TupleBinding) because the decorrelated query
-	// returns multiple tuples (one per distinct group key).
+	// grouped keys and aggregate results; the decorrelated query's result
+	// enters the scope as the relation over them, one tuple per distinct
+	// group key.
 	sp := &query.SubqueryPattern{
 		Query:   innerQuery,
 		Inputs:  inputs,

@@ -44,49 +44,40 @@ func (e *DefaultQueryExecutor) runScope(ctx *Context, s planner.Scope, run Relat
 	return e.runPlan(ctx, plan, run)
 }
 
-// requiredRun is the relation a form's scopes run over: the subject, the
-// groups holding the required run joined into one relation, joined with
-// the environment's tuple on the required variables the environment alone
-// binds, and projected onto the required run. Each group the subject reads
-// is replaced in the groups by its materialized form, so the join of the
-// form's result with the groups reads it again. A required run no group and no environment
-// binds a variable of is the unit relation's, over which a scope runs once.
-func (e *DefaultQueryExecutor) requiredRun(ctx *Context, required []query.Symbol, groups Relations) (run *MaterializedRelation, subject Relation, consumed []int, err error) {
-	for i, group := range groups {
-		if containsAny(group.Symbols(), required) {
-			groups[i] = group.Materialize()
-		}
+// requiredRun is the run a form's scopes run over on the unit route, where no
+// group holds a header symbol: the environment's tuple over the required
+// variables, which the environment alone binds, and the unit relation when
+// the required run is empty. A required variable the environment does not
+// bind is the projection's error.
+func (e *DefaultQueryExecutor) requiredRun(ctx *Context, required []query.Symbol) (*MaterializedRelation, error) {
+	if len(required) == 0 {
+		return NewUnitRelation(e.options), nil
 	}
-	subject, consumed = e.findOuterRelation(required, groups)
-	subject = subject.Materialize()
-	outer := subject
+	var outer Relation = NewUnitRelation(e.options)
 	if env := ctx.Environment(); env != nil {
 		var fromEnvironment []query.Symbol
 		for _, sym := range required {
-			if query.ContainsSymbol(env.Symbols(), sym) && !query.ContainsSymbol(outer.Symbols(), sym) {
+			if query.ContainsSymbol(env.Symbols(), sym) {
 				fromEnvironment = append(fromEnvironment, sym)
 			}
 		}
 		if len(fromEnvironment) > 0 {
 			values, err := env.Project(fromEnvironment)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("the environment's required variables: %w", err)
+				return nil, fmt.Errorf("the environment's required variables: %w", err)
 			}
 			outer = outer.Join(values)
 		}
 	}
-	if len(required) == 0 {
-		return NewUnitRelation(e.options), subject, consumed, nil
-	}
 	projected, err := outer.Project(required)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("the required run: %w", err)
+		return nil, fmt.Errorf("the required run: %w", err)
 	}
 	var tuples []Tuple
 	if err := collectTuplesInto(&tuples, projected); err != nil {
-		return nil, nil, nil, fmt.Errorf("the required run: %w", err)
+		return nil, fmt.Errorf("the required run: %w", err)
 	}
-	return newMaterializedRelationFromSet(required, tuples, e.options, deduplicatedProperties(required)), subject, consumed, nil
+	return newMaterializedRelationFromSet(required, tuples, e.options, deduplicatedProperties(required)), nil
 }
 
 // scopeResult unions the results of a form's scopes over the header and
@@ -200,7 +191,7 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx *Context, clause *query.O
 			})
 		}
 		var run *MaterializedRelation
-		run, _, _, err = e.requiredRun(ctx, form.Required, nil)
+		run, err = e.requiredRun(ctx, form.Required)
 		results := make([]Relation, 0, len(clause.Branches))
 		for i := 0; err == nil && i < len(clause.Branches); i++ {
 			var branchStart time.Time

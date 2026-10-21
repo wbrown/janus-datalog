@@ -83,24 +83,6 @@ func environmentSymbols(bound map[query.Symbol]bool) []query.Symbol {
 	return env
 }
 
-// boundDomain returns the binding domain of a clause scope: the symbols the
-// outer relation produces plus the symbols bound around the clause list.
-// This is the one domain every "is this symbol bound?" judgment in the
-// compound-clause compilers consults — an :in-bound symbol is an ordinary
-// bound variable to the language.
-func boundDomain(current *Node, bound map[query.Symbol]bool) map[query.Symbol]bool {
-	domain := make(map[query.Symbol]bool, len(bound))
-	for sym := range bound {
-		domain[sym] = true
-	}
-	if current != nil {
-		for _, sym := range current.Symbols() {
-			domain[sym] = true
-		}
-	}
-	return domain
-}
-
 // bodyScope is the scope a header form's body compiles in: the header
 // variables bound before the form runs, and the rule set. Nothing else of
 // the enclosing scope reaches the body, the query's inputs included.
@@ -178,7 +160,7 @@ func compileDataPattern(p *query.DataPattern, current *Node) *Node {
 // compileExpression wraps current with a Map node.
 func compileExpression(expr *query.Expression, current *Node) *Node {
 	required := expr.Function.RequiredSymbols()
-	bindingSyms := bindingSymbols(expr.Binding)
+	bindingSyms := expr.BoundVariables()
 
 	// Output = current symbols + new binding symbols
 	var output []query.Symbol
@@ -274,50 +256,19 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node, scope query.Bindings
 		return nil, fmt.Errorf("NOT-JOIN clause requires prior relation")
 	}
 
-	// The clause scope's binding domain: outer-relation symbols plus the
-	// symbols bound around the list. An :in-bound symbol is an ordinary
-	// bound variable everywhere the language asks "is this bound?" — every
-	// boundness judgment below consults this one domain.
-	bound := boundDomain(current, scope.Symbols)
-
 	inner, err := compileClausesFrom(nj.Clauses, nil, bodyScope(nj.RequiredVars, scope))
 	if err != nil {
 		return nil, fmt.Errorf("NOT-JOIN inner clauses: %w", err)
 	}
-	analysis, err := Analyze(inner)
-	if err != nil {
+	if _, err := Analyze(inner); err != nil {
 		return nil, fmt.Errorf("NOT-JOIN inner analysis: %w", err)
 	}
-	right := analysis[inner]
-	for _, symbol := range nj.RequiredVars {
-		if !bound[symbol] {
-			return nil, fmt.Errorf("not-join header symbol %s is bound by neither the outer relation nor the query inputs", symbol)
-		}
-	}
-	for _, symbol := range right.Required {
-		if symbol.IsSource() {
-			continue
-		}
-		if !bound[symbol] {
-			return nil, fmt.Errorf("NOT-JOIN body requires unbound outer symbol %s", symbol)
-		}
-		if !query.ContainsSymbol(nj.RequiredVars, symbol) {
-			return nil, fmt.Errorf(
-				"not-join header must declare outer requirement %s used by the body",
-				symbol,
-			)
-		}
-	}
+	// A header symbol the body does not produce is a correlation input the
+	// body consumes.
 	var required []query.Symbol
 	for _, symbol := range nj.RequiredVars {
 		if query.ContainsSymbol(inner.Symbols(), symbol) {
 			continue
-		}
-		if !query.ContainsSymbol(right.Required, symbol) {
-			return nil, fmt.Errorf(
-				"not-join header symbol %s is neither produced nor consumed by the body",
-				symbol,
-			)
 		}
 		required = append(required, symbol)
 	}
@@ -325,10 +276,9 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node, scope query.Bindings
 	return &Node{
 		Op: RuleAntiJoin,
 		Data: &AntiJoin{
-			JoinSymbols:  nj.RequiredVars,
-			Required:     required,
-			Output:       current.Symbols(),
-			ExplicitJoin: true, // NotJoinClause — user specified join vars
+			JoinSymbols: nj.RequiredVars,
+			Required:    required,
+			Output:      current.Symbols(),
 		},
 		Children: []*Node{current, inner},
 	}, nil
@@ -345,7 +295,7 @@ func compileOrJoin(oj *query.OrJoinClause, current *Node, scope query.Bindings) 
 	if branchesRequireOuterContext(oj.Branches) {
 		return compileOrUnionCorrelated(oj, current, branchScope)
 	}
-	return compileOrUnionWithJoinVars(oj, current, branchScope)
+	return compileOrUnionDirect(oj, current, branchScope)
 }
 
 // branchesRequireOuterContext returns true if any branch contains (at any
@@ -386,9 +336,10 @@ func compileOrDefaultJoin(oj *query.OrDefaultJoinClause, current *Node, scope qu
 	return compileOrFallbackWithVars(oj, current, scope)
 }
 
-// orJoinUnion is the Union an or-join's compiled branches form. It keys on
-// the whole header, the required run and the outputs, and requires the
-// required run and the outputs the outer relation already binds.
+// orJoinUnion is the Union an or-join's compiled branches form. Its output
+// is the whole header, it carries the header's two halves, the required run
+// and the outputs, and it requires the required run and the outputs the
+// outer relation already binds.
 func orJoinUnion(oj *query.OrJoinClause, current *Node, children []*Node) *Node {
 	header := mergeSymbols(oj.RequiredVars, oj.OutputVars)
 	required := cloneSymbols(oj.RequiredVars)
@@ -401,16 +352,19 @@ func orJoinUnion(oj *query.OrJoinClause, current *Node, children []*Node) *Node 
 		Op: RuleUnion,
 		Data: &Union{
 			Output:       header,
-			JoinVars:     cloneSymbols(header),
 			Required:     required,
 			RequiredVars: cloneSymbols(oj.RequiredVars),
+			OutputVars:   cloneSymbols(oj.OutputVars),
 		},
 		Children: children,
 	}
 }
 
-// compileOrUnionWithJoinVars compiles an or-join's branches into a Union.
-func compileOrUnionWithJoinVars(oj *query.OrJoinClause, current *Node, branchScope query.Bindings) (*Node, error) {
+// compileOrUnionDirect compiles an or-join whose branches hold no not-join
+// and no missing? at any depth: each branch compiles from nothing under the
+// required run, and the branches form the Union orJoinUnion builds.
+// compileOrUnionCorrelated is the route for the other branches.
+func compileOrUnionDirect(oj *query.OrJoinClause, current *Node, branchScope query.Bindings) (*Node, error) {
 	children := make([]*Node, 0, len(oj.Branches))
 	for i, branch := range oj.Branches {
 		compiled, err := compileClausesFrom(branch, nil, branchScope)
@@ -703,19 +657,6 @@ func patternVariables(p *query.DataPattern) []query.Symbol {
 	return vars
 }
 
-// bindingSymbols extracts symbols from an Expression's Binding field.
-func bindingSymbols(binding interface{}) []query.Symbol {
-	switch b := binding.(type) {
-	case query.Symbol:
-		if b != nil {
-			return []query.Symbol{b}
-		}
-	case query.TupleBinding:
-		return b.Variables
-	}
-	return nil
-}
-
 // collectBranchSymbols collects all variable symbols from OR branch clauses.
 func collectBranchSymbols(branches [][]query.Clause) []query.Symbol {
 	seen := make(map[query.Symbol]bool)
@@ -741,7 +682,7 @@ func clauseSymbols(clause query.Clause) []query.Symbol {
 	case *query.Expression:
 		var syms []query.Symbol
 		syms = append(syms, c.Function.RequiredSymbols()...)
-		syms = append(syms, bindingSymbols(c.Binding)...)
+		syms = append(syms, c.BoundVariables()...)
 		return syms
 	case *query.SubqueryPattern:
 		var syms []query.Symbol
@@ -811,9 +752,11 @@ func childrenOf(n *Node) []*Node {
 }
 
 // extractGroundDefaults extracts constant values and symbols from a branch of
-// ground expressions alone. Returns nil if the branch holds any other clause:
-// a guard or filter beside the grounds decides which tuples take the default,
-// which the lowering's defaults cannot express.
+// ground expressions alone, one default value per symbol. Returns nil if the
+// branch holds any other clause: a guard or filter beside the grounds decides
+// which tuples take the default, and a ground under the relation form yields
+// a default tuple per row, neither of which one default per symbol can
+// express.
 func extractGroundDefaults(branch []query.Clause) ([]interface{}, []query.Symbol) {
 	var values []interface{}
 	var symbols []query.Symbol
@@ -827,6 +770,9 @@ func extractGroundDefaults(branch []query.Clause) ([]interface{}, []query.Symbol
 		if !isGround {
 			return nil, nil
 		}
+		if _, relation := g.Binding.(query.RelationBinding); relation {
+			return nil, nil
+		}
 		// Flatten tuple ground values: (ground [0 0]) has Value=[0,0]
 		// which should produce individual defaults [0, 0], not [[0, 0]].
 		if slice, ok := gf.Value.([]interface{}); ok {
@@ -834,7 +780,7 @@ func extractGroundDefaults(branch []query.Clause) ([]interface{}, []query.Symbol
 		} else {
 			values = append(values, gf.Value)
 		}
-		symbols = append(symbols, bindingSymbols(g.Binding)...)
+		symbols = append(symbols, g.BoundVariables()...)
 	}
 
 	return values, symbols

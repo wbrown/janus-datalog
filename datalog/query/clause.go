@@ -22,10 +22,18 @@ func (*OrJoinClause) clause()           {}
 func (*OrDefaultClause) clause()        {}
 func (*OrDefaultJoinClause) clause()    {}
 
-// Expression wraps a Function with an optional binding
+// Expression binds a function's result under Datomic's binding forms, each
+// reading the result into a relation over the binding's symbols that the
+// scope joins: a Symbol, the scalar ?a, reads one tuple of one attribute; a
+// TupleBinding, [?a ?b], reads one tuple of N attributes, each variable one
+// element of the result; a CollectionBinding, [?a ...], reads one tuple per
+// element of the result; a RelationBinding, [[?a ?b]], reads one tuple per
+// inner vector of the result. The result decides the tuple count and the
+// form the shape, whatever the function. A nil Binding evaluates the function
+// for its own sake.
 type Expression struct {
-	Function Function    // The function to evaluate
-	Binding  interface{} // Symbol (scalar) or TupleBinding (tuple)
+	Function Function
+	Binding  interface{}
 }
 
 func (e *Expression) String() string {
@@ -36,10 +44,32 @@ func (e *Expression) String() string {
 		bindingStr = b.String()
 	case TupleBinding:
 		bindingStr = b.String()
+	case CollectionBinding:
+		bindingStr = b.String()
+	case RelationBinding:
+		bindingStr = b.String()
 	default:
 		bindingStr = ""
 	}
 	return "[" + e.Function.String() + " " + bindingStr + "]"
+}
+
+// BoundVariables is the symbols the expression's binding provides, in the
+// binding's order, and none for an expression with no binding.
+func (e *Expression) BoundVariables() []Symbol {
+	switch b := e.Binding.(type) {
+	case Symbol:
+		if b != nil {
+			return []Symbol{b}
+		}
+	case TupleBinding:
+		return b.Variables
+	case CollectionBinding:
+		return []Symbol{b.Variable}
+	case RelationBinding:
+		return b.Variables
+	}
+	return nil
 }
 
 // NotClause represents a negation clause: (not [clauses...])

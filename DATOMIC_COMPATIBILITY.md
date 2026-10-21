@@ -141,21 +141,21 @@ Extract time components for temporal analysis:
 Full subquery support for proper aggregation scoping:
 
 ```clojure
-[:find ?ticker ?date ?ohlc
+[:find ?ticker ?high ?low ?close
  :where [?s :symbol/ticker ?ticker]
         [(q [:find (max ?high) (min ?low) (avg ?close)
-             :in $ ?sym ?d
+             :in $ ?sym
              :where [?bar :bar/symbol ?sym]
-                    [?bar :bar/date ?d]
                     [?bar :bar/high ?high]
                     [?bar :bar/low ?low]
                     [?bar :bar/close ?close]]
-            ?s ?date) [[?ohlc]]]]
+            $ ?s) [[?high ?low ?close]]]]
 ```
 
-**Binding types:**
-- `[[?var]]` - TupleBinding (single result)
-- `[[?var1 ?var2] ...]` - RelationBinding (multiple results)
+**Binding forms**, each binding the relation over its symbols whatever the inner result's size:
+- `?var` - the scalar form, one symbol for an inner `:find` of one element
+- `[?var ...]` - the collection form, one symbol for an inner `:find` of one element
+- `[[?var1 ?var2]]` - the relation form, one symbol per element of the inner `:find`; `[[?var1 ?var2] ...]` is read as the same form
 
 ### 6. Query Inputs
 

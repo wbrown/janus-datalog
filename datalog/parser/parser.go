@@ -392,29 +392,39 @@ func parsePattern(node *edn.Node) (query.Clause, error) {
 			return parseSubqueryPattern(list, &node.Nodes[1])
 		}
 
-		// Check if it's an expression [(fn ...) ?binding] or [(fn ...) [?a ?b ?c]]
+		// An expression binds its result under Datomic's forms: the scalar
+		// [(fn ...) ?x], the tuple form [(fn ...) [?a ?b]], which destructures
+		// one tuple, the collection form [(fn ...) [?a ...]], which binds one
+		// tuple per element, and the relation form [(fn ...) [[?a ?b]]], which
+		// binds the relation over a collection of tuples.
 		if len(node.Nodes) == 2 {
-			// Scalar binding: [(fn ...) ?x]
 			if node.Nodes[1].Type == edn.NodeSymbol {
 				sym := datalog.NewSymbol(node.Nodes[1].Value)
 				if sym.IsVariable() {
 					return parseExpression(list, sym)
 				}
 			}
-			// Tuple binding: [(fn ...) [?a ?b ?c]] or [(fn ...) [[?a ?b ?c]]]
-			// The double-bracket form [[...]] is the Datomic-style tuple binding
-			// produced by the query builder's TupleGround().As() method.
 			if node.Nodes[1].Type == edn.NodeVector {
 				bindingNode := &node.Nodes[1]
-				// Unwrap [[?a ?b ?c]] → [?a ?b ?c]
+				if len(bindingNode.Nodes) == 2 && bindingNode.Nodes[1].Type == edn.NodeSymbol && bindingNode.Nodes[1].Value == "..." {
+					collectionBinding, err := parseBindingForm(bindingNode)
+					if err != nil {
+						return nil, fmt.Errorf("error parsing collection binding: %w", err)
+					}
+					return parseExpression(list, collectionBinding)
+				}
 				if len(bindingNode.Nodes) == 1 && bindingNode.Nodes[0].Type == edn.NodeVector {
-					bindingNode = &bindingNode.Nodes[0]
+					relationBinding, err := parseRelationBinding(&bindingNode.Nodes[0])
+					if err != nil {
+						return nil, fmt.Errorf("error parsing relation binding: %w", err)
+					}
+					return parseExpression(list, relationBinding)
 				}
 				tupleBinding, err := parseTupleBinding(bindingNode)
 				if err != nil {
 					return nil, fmt.Errorf("error parsing tuple binding: %w", err)
 				}
-				return parseExpressionWithTupleBinding(list, tupleBinding)
+				return parseExpression(list, tupleBinding)
 			}
 		}
 		// Otherwise it's a predicate function pattern [(fn ...)]
@@ -494,8 +504,11 @@ func tryParsePredicate(node *edn.Node) (query.Predicate, error) {
 	return parsePredicate(fn, args)
 }
 
-// parseExpression parses an expression from a list node and binding variable
-func parseExpression(node *edn.Node, binding query.Symbol) (*query.Expression, error) {
+// parseExpression parses an expression from a list node under its binding:
+// a query.Symbol, a query.TupleBinding or a query.RelationBinding. The
+// binding's shape against the function's result is Expression.Validate's
+// check, run by ValidateStaticClauseShapes at every boundary.
+func parseExpression(node *edn.Node, binding interface{}) (*query.Expression, error) {
 	if node.Type != edn.NodeList {
 		return nil, fmt.Errorf("expression must be a list")
 	}
@@ -525,58 +538,6 @@ func parseExpression(node *edn.Node, binding query.Symbol) (*query.Expression, e
 	function, err := parseFunction(fn, args)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing function: %w", err)
-	}
-
-	return &query.Expression{
-		Function: function,
-		Binding:  binding,
-	}, nil
-}
-
-// parseExpressionWithTupleBinding parses an expression with a tuple binding
-// Example: [(ground [1 2 3]) [?a ?b ?c]]
-func parseExpressionWithTupleBinding(node *edn.Node, binding query.TupleBinding) (*query.Expression, error) {
-	if node.Type != edn.NodeList {
-		return nil, fmt.Errorf("expression must be a list")
-	}
-
-	if len(node.Nodes) < 2 {
-		return nil, fmt.Errorf("expression must have at least function name and one argument")
-	}
-
-	// First element must be the function name (symbol)
-	if node.Nodes[0].Type != edn.NodeSymbol {
-		return nil, fmt.Errorf("function name must be a symbol, got %v", node.Nodes[0].Type)
-	}
-
-	fn := node.Nodes[0].Value
-
-	// Parse arguments as PatternElements
-	args := make([]query.PatternElement, len(node.Nodes)-1)
-	for i := 1; i < len(node.Nodes); i++ {
-		arg, err := parsePatternElement(&node.Nodes[i])
-		if err != nil {
-			return nil, fmt.Errorf("error parsing expression argument %d: %w", i, err)
-		}
-		args[i-1] = arg
-	}
-
-	// Try to create a concrete Function
-	function, err := parseFunction(fn, args)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing function: %w", err)
-	}
-
-	// For ground function with tuple binding, validate length match
-	if fn == "ground" {
-		if gf, ok := function.(*query.GroundFunction); ok {
-			if values, ok := gf.Value.([]interface{}); ok {
-				if len(values) != len(binding.Variables) {
-					return nil, fmt.Errorf("tuple ground mismatch: %d values, %d binding variables",
-						len(values), len(binding.Variables))
-				}
-			}
-		}
 	}
 
 	return &query.Expression{
@@ -655,12 +616,15 @@ func parseSubqueryPattern(list *edn.Node, bindingNode *edn.Node) (*query.Subquer
 	}, nil
 }
 
-// parseBindingForm parses a binding form for subqueries
-// Datomic binding forms:
-//   - ?var         = Scalar binding (expects single tuple, single symbol)
-//   - [?var ...]   = Collection binding (collects all values from single symbol)
-//   - [[?a ?b]]    = Tuple binding (expects single tuple, multiple symbols)
-//   - [[?a ?b] ...] = Relation binding (multiple tuples and symbols)
+// parseBindingForm parses a subquery's binding form, Datomic's grammar for
+// a binding (query-data-reference, "Binding Forms"):
+//   - ?var          = bind-scalar, the relation over one symbol
+//   - [?var ...]    = bind-coll, the relation over one symbol
+//   - [[?a ?b]]     = bind-rel, the relation over the named symbols
+//   - [[?a ?b] ...] = the same relation binding, a spelling of janus's own
+//
+// The tuple form [?a ?b] is an expression's destructuring (parseExpression)
+// and is not a subquery binding.
 func parseBindingForm(node *edn.Node) (query.BindingForm, error) {
 	switch node.Type {
 	case edn.NodeSymbol:
@@ -687,13 +651,12 @@ func parseBindingForm(node *edn.Node) (query.BindingForm, error) {
 			return query.CollectionBinding{Variable: sym}, nil
 		}
 
-		// Check if it's a nested vector (tuple or relation binding)
+		// A nested vector is the relation binding, written [[?a ?b]] or
+		// [[?a ?b] ...]
 		if node.Nodes[0].Type == edn.NodeVector {
 			if len(node.Nodes) == 1 {
-				// [[?a ?b]] - tuple binding
-				return parseTupleBinding(&node.Nodes[0])
+				return parseRelationBinding(&node.Nodes[0])
 			} else if len(node.Nodes) == 2 && node.Nodes[1].Type == edn.NodeSymbol && node.Nodes[1].Value == "..." {
-				// [[?a ?b] ...] - relation binding
 				return parseRelationBinding(&node.Nodes[0])
 			}
 		}
@@ -705,7 +668,8 @@ func parseBindingForm(node *edn.Node) (query.BindingForm, error) {
 	}
 }
 
-// parseTupleBinding parses a tuple binding form [[?a ?b]]
+// parseTupleBinding parses the tuple form [?a ?b] an expression destructures
+// its one tuple by
 func parseTupleBinding(node *edn.Node) (query.TupleBinding, error) {
 	if node.Type != edn.NodeVector {
 		return query.TupleBinding{}, fmt.Errorf("tuple binding must be a vector")
@@ -730,10 +694,15 @@ func parseTupleBinding(node *edn.Node) (query.TupleBinding, error) {
 	return query.TupleBinding{Variables: vars}, nil
 }
 
-// parseRelationBinding parses a relation binding form [[?a ?b] ...]
+// parseRelationBinding parses the inner vector of a relation binding, the
+// [?a ?b] of [[?a ?b]] or [[?a ?b] ...]
 func parseRelationBinding(node *edn.Node) (query.RelationBinding, error) {
 	if node.Type != edn.NodeVector {
 		return query.RelationBinding{}, fmt.Errorf("relation binding must be a vector")
+	}
+
+	if len(node.Nodes) == 0 {
+		return query.RelationBinding{}, fmt.Errorf("relation binding cannot be empty")
 	}
 
 	vars := make([]query.Symbol, 0, len(node.Nodes))
@@ -898,6 +867,12 @@ func parsePatternElement(node *edn.Node) (query.PatternElement, error) {
 					return nil, fmt.Errorf("invalid tagged literal in vector: %w", err)
 				}
 				values[i] = val.(query.Constant).Value
+			case edn.NodeVector:
+				nested, err := parsePatternElement(&elem)
+				if err != nil {
+					return nil, fmt.Errorf("invalid vector in vector: %w", err)
+				}
+				values[i] = nested.(query.VectorConstant).Values
 			default:
 				return nil, fmt.Errorf("unsupported type in vector constant: %v", elem.Type)
 			}
@@ -1067,19 +1042,18 @@ func parseNotClause(node *edn.Node) (*query.NotClause, error) {
 // parseNotJoinClause parses (not-join [?x ?y] [clause1] [clause2] ...)
 func parseNotJoinClause(node *edn.Node) (*query.NotJoinClause, error) {
 	if len(node.Nodes) < 3 {
-		return nil, fmt.Errorf("not-join clause must have join vars and at least one clause")
+		return nil, fmt.Errorf("not-join clause must have a header and at least one clause")
 	}
 
-	// Second element must be join vars vector
 	if node.Nodes[1].Type != edn.NodeVector {
-		return nil, fmt.Errorf("not-join second element must be a vector of join variables, got %v", node.Nodes[1].Type)
+		return nil, fmt.Errorf("not-join second element must be a header vector, got %v", node.Nodes[1].Type)
 	}
 
-	// Parse join variables. parseJoinVars rejects an empty header — a
-	// not-join must declare at least one unification variable.
-	joinVars, err := parseJoinVars(&node.Nodes[1])
+	// A not-join's header is all required, and parseRequiredRun refuses an
+	// empty one.
+	required, err := parseRequiredRun(&node.Nodes[1])
 	if err != nil {
-		return nil, fmt.Errorf("error parsing not-join vars: %w", err)
+		return nil, fmt.Errorf("error parsing not-join header: %w", err)
 	}
 
 	// Parse remaining elements as clauses
@@ -1096,7 +1070,7 @@ func parseNotJoinClause(node *edn.Node) (*query.NotJoinClause, error) {
 		return nil, fmt.Errorf("not-join clause must have at least one inner clause")
 	}
 
-	return &query.NotJoinClause{RequiredVars: joinVars, Clauses: clauses}, nil
+	return &query.NotJoinClause{RequiredVars: required, Clauses: clauses}, nil
 }
 
 // parseOrClause parses (or branch1 branch2 ...)
@@ -1164,9 +1138,9 @@ func parseInterfaceHeader(header *edn.Node, form string) (required, outputs []qu
 
 	outputStart := 0
 	if header.Nodes[0].Type == edn.NodeVector {
-		required, err = parseJoinVars(&header.Nodes[0])
+		required, err = parseRequiredRun(&header.Nodes[0])
 		if err != nil {
-			return nil, nil, fmt.Errorf("error parsing %s required vars: %w", form, err)
+			return nil, nil, fmt.Errorf("error parsing %s required run: %w", form, err)
 		}
 		outputStart = 1
 	}
@@ -1242,24 +1216,26 @@ func parseOrDefaultJoinClause(node *edn.Node) (*query.OrDefaultJoinClause, error
 	}, nil
 }
 
-// parseJoinVars parses a vector of join variables [?x ?y ...]
-func parseJoinVars(node *edn.Node) ([]query.Symbol, error) {
+// parseRequiredRun parses a header's required run, a vector of variables
+// [?x ?y ...] each a symbol starting with ?: a not-join's whole header, or
+// the nested first element of an or-join's or an or-default-join's header.
+func parseRequiredRun(node *edn.Node) ([]query.Symbol, error) {
 	if node.Type != edn.NodeVector {
-		return nil, fmt.Errorf("join vars must be a vector")
+		return nil, fmt.Errorf("required run must be a vector")
 	}
 
 	if len(node.Nodes) == 0 {
-		return nil, fmt.Errorf("join vars cannot be empty")
+		return nil, fmt.Errorf("required run cannot be empty")
 	}
 
 	var vars []query.Symbol
 	for i, elem := range node.Nodes {
 		if elem.Type != edn.NodeSymbol {
-			return nil, fmt.Errorf("join variable %d must be a symbol, got %v", i, elem.Type)
+			return nil, fmt.Errorf("required variable %d must be a symbol, got %v", i+1, elem.Type)
 		}
 		sym := datalog.NewSymbol(elem.Value)
 		if !sym.IsVariable() {
-			return nil, fmt.Errorf("join variable %d must start with ?, got %s", i, sym)
+			return nil, fmt.Errorf("required variable %d must start with ?, got %s", i+1, sym)
 		}
 		vars = append(vars, sym)
 	}
@@ -1359,20 +1335,12 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 			}
 
 		case *query.Expression:
-			// Expression outputs are provided (scalar or tuple binding);
-			// argument variables are consumed, not provided
-			switch b := p.Binding.(type) {
-			case query.Symbol:
-				if b != nil && !seen[b] {
-					seen[b] = true
-					vars = append(vars, b)
-				}
-			case query.TupleBinding:
-				for _, v := range b.Variables {
-					if !seen[v] {
-						seen[v] = true
-						vars = append(vars, v)
-					}
+			// Expression outputs are provided; argument variables are
+			// consumed, not provided
+			for _, v := range p.BoundVariables() {
+				if !seen[v] {
+					seen[v] = true
+					vars = append(vars, v)
 				}
 			}
 

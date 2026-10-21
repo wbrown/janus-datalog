@@ -40,8 +40,8 @@ func TestCompile_InfersAnOrsHeaderFromTheText(t *testing.T) {
 	require.NotNil(t, unionNode, "the or compiles to a union")
 	union := unionNode.Data.(*Union)
 	require.Equal(t, []query.Symbol{a}, union.RequiredVars)
+	require.Equal(t, []query.Symbol{qs}, union.OutputVars)
 	require.Equal(t, []query.Symbol{a, qs}, union.Output)
-	require.Equal(t, union.Output, union.JoinVars)
 	require.Equal(t, []query.Symbol{a, qs}, union.Required)
 	require.Equal(t, "∪_join([?a] ?q)", union.String())
 

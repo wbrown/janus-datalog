@@ -197,7 +197,7 @@ func TestInferHeaders_NestedFormReadsTheEnclosingHeader(t *testing.T) {
 			Query: findIn([]string{"?x"}, []InputSpec{ScalarInput{Symbol: sym("?e")}},
 				scopePattern("?e", "q", "?x"), inner()),
 			Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}, Variable{Name: sym("?e")}},
-			Binding: TupleBinding{Variables: []Symbol{sym("?x")}},
+			Binding: RelationBinding{Variables: []Symbol{sym("?x")}},
 		}
 		q := findIn([]string{"?e", "?x"}, nil, scopePattern("?e", "p", "?y"), sub)
 		inferred, err := InferHeaders(q, nil)
@@ -490,7 +490,7 @@ func TestInferHeaders_BranchInputNothingBindsIsRefused(t *testing.T) {
 				Where: []Clause{scopePattern("?i", "s", "?v")},
 			},
 			Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}, Variable{Name: sym("?w")}},
-			Binding: TupleBinding{Variables: []Symbol{sym("?y")}},
+			Binding: RelationBinding{Variables: []Symbol{sym("?y")}},
 		}},
 		{"required position", invoke("succ", "?w", "?y")},
 	}

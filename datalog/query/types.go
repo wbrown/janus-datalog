@@ -56,6 +56,17 @@ func FormatValueEDN(v interface{}) string {
 		return `#inst "` + val.UTC().Format(time.RFC3339Nano) + `"`
 	case []byte:
 		return `#bytes "` + codec.EncodeL85(val) + `"`
+	case []interface{}:
+		var sb strings.Builder
+		sb.WriteRune('[')
+		for i, element := range val {
+			if i > 0 {
+				sb.WriteRune(' ')
+			}
+			sb.WriteString(FormatValueEDN(element))
+		}
+		sb.WriteRune(']')
+		return sb.String()
 	default:
 		return fmt.Sprintf("%v", v)
 	}
@@ -110,17 +121,7 @@ type VectorConstant struct {
 
 func (v VectorConstant) IsVariable() bool { return false }
 func (v VectorConstant) IsBlank() bool    { return false }
-func (v VectorConstant) String() string {
-	result := "["
-	for i, val := range v.Values {
-		if i > 0 {
-			result += " "
-		}
-		result += FormatValueEDN(val)
-	}
-	result += "]"
-	return result
-}
+func (v VectorConstant) String() string { return FormatValueEDN(v.Values) }
 
 // Pattern represents a single pattern in a where clause
 type Pattern interface {
@@ -154,26 +155,23 @@ type BindingForm interface {
 	BoundVariables() []Symbol
 }
 
-// TupleBinding is the tuple spelling, [[?a ?b]]: it names the inner query's
-// outputs in the enclosing scope, one per element of the inner :find, and
-// the result enters the scope as the relation over them.
+// TupleBinding is the tuple form, Datomic's bind-tuple, [?a ?b]: an
+// expression's destructuring of its function's one tuple, one variable per
+// element. It is no subquery binding and no BindingForm; the relation form
+// over a function's collection of tuples is RelationBinding.
 type TupleBinding struct {
 	Variables []Symbol
 }
 
-func (t TupleBinding) isBindingForm() {}
-func (t TupleBinding) BoundVariables() []Symbol {
-	return t.Variables
-}
 func (t TupleBinding) String() string {
-	result := "[["
+	result := "["
 	for i, v := range t.Variables {
 		if i > 0 {
 			result += " "
 		}
 		result += v.String()
 	}
-	result += "]]"
+	result += "]"
 	return result
 }
 
@@ -207,7 +205,11 @@ func (s ScalarBinding) String() string {
 	return s.Variable.String()
 }
 
-// RelationBinding binds as relation: [[?a ?b] ...]
+// RelationBinding is the relation binding, Datomic's bind-rel: it names the
+// inner query's outputs in the enclosing scope, one per element of the inner
+// :find, and the result enters the scope as the relation over them. It is
+// read from the spelling [[?a ?b]] and from janus's synonym [[?a ?b] ...],
+// and renders as [[?a ?b]].
 type RelationBinding struct {
 	Variables []Symbol
 }
@@ -224,7 +226,7 @@ func (r RelationBinding) String() string {
 		}
 		result += v.String()
 	}
-	result += "] ...]"
+	result += "]]"
 	return result
 }
 

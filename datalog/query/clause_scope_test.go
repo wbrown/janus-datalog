@@ -71,6 +71,24 @@ func TestScopeOf(t *testing.T) {
 		assertSymbols(t, "Correlates", scope.Correlates, "?a", "?b")
 	})
 
+	t.Run("relation-bound expression provides the relation's variables", func(t *testing.T) {
+		scope := ScopeOf(&Expression{
+			Function: EnumerateFunction{VecTerm: VariableTerm{Symbol: datalog.NewSymbol("?vec")}},
+			Binding:  RelationBinding{Variables: []Symbol{datalog.NewSymbol("?idx"), datalog.NewSymbol("?item")}},
+		}, nil)
+		assertSymbols(t, "Provides", scope.Provides, "?idx", "?item")
+		assertSymbols(t, "Correlates", scope.Correlates, "?vec")
+	})
+
+	t.Run("collection-bound expression provides its variable", func(t *testing.T) {
+		scope := ScopeOf(&Expression{
+			Function: GroundFunction{Value: []interface{}{int64(1), int64(2)}},
+			Binding:  CollectionBinding{Variable: datalog.NewSymbol("?v")},
+		}, nil)
+		assertSymbols(t, "Provides", scope.Provides, "?v")
+		assertSymbols(t, "Correlates", scope.Correlates)
+	})
+
 	t.Run("subquery provides its binding, correlates on variable inputs, inner query invisible", func(t *testing.T) {
 		scope := ScopeOf(&SubqueryPattern{
 			Query: &Query{Where: []Clause{scopePattern("?inner", "x/y", "?hidden")}},
@@ -78,7 +96,7 @@ func TestScopeOf(t *testing.T) {
 				Constant{Value: datalog.SymDollar},
 				Variable{Name: datalog.NewSymbol("?in")},
 			},
-			Binding: TupleBinding{Variables: []Symbol{datalog.NewSymbol("?out")}},
+			Binding: RelationBinding{Variables: []Symbol{datalog.NewSymbol("?out")}},
 		}, nil)
 		assertSymbols(t, "Provides", scope.Provides, "?out")
 		assertSymbols(t, "Correlates", scope.Correlates, "?in")

@@ -17,20 +17,7 @@ type bindingForm interface {
 	toBindingForm() query.BindingForm
 }
 
-// tupleBind binds results as a single tuple [[?a ?b]]
-type tupleBind struct {
-	vars []*Var
-}
-
-func (t tupleBind) toBindingForm() query.BindingForm {
-	syms := make([]query.Symbol, len(t.vars))
-	for i, v := range t.vars {
-		syms[i] = v.Symbol()
-	}
-	return query.TupleBinding{Variables: syms}
-}
-
-// relationBind binds results as a relation [[?a ?b] ...]
+// relationBind binds results as the relation [[?a ?b]]
 type relationBind struct {
 	vars []*Var
 }
@@ -76,7 +63,7 @@ func (c collectionBind) toBindingForm() query.BindingForm {
 //	    Where(
 //	        qb.Pat(p, PersonName, name),
 //	        qb.Pat(p, PersonDept, dept),
-//	        qb.Subquery(innerQ, dept).BindTuple(maxSalary),
+//	        qb.Subquery(innerQ, dept).BindRelation(maxSalary),
 //	    )
 func Subquery(innerQuery *QueryBuilder, inputs ...*Var) *SubqueryBuilder {
 	return &SubqueryBuilder{
@@ -85,15 +72,9 @@ func Subquery(innerQuery *QueryBuilder, inputs ...*Var) *SubqueryBuilder {
 	}
 }
 
-// BindTuple binds subquery results as a single tuple [[?a ?b]].
-// Use when the subquery returns exactly one tuple.
-func (s *SubqueryBuilder) BindTuple(vars ...*Var) *SubqueryBuilder {
-	s.binding = tupleBind{vars: vars}
-	return s
-}
-
-// BindRelation binds subquery results as a relation [[?a ?b] ...].
-// Use when the subquery may return multiple tuples.
+// BindRelation binds the subquery's result as the relation [[?a ?b]] over
+// the named variables, one per element of the inner :find, whatever the
+// inner query's size.
 func (s *SubqueryBuilder) BindRelation(vars ...*Var) *SubqueryBuilder {
 	s.binding = relationBind{vars: vars}
 	return s

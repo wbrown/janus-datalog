@@ -30,7 +30,7 @@ func TestSubqueryMissingDB(t *testing.T) {
 		Find(scenario, taskCount).
 		Where(
 			qb.Pat(scenario, qb.Kw(":scenario/id"), qb.NewVar("id")),
-			qb.Subquery(subquery, scenario).BindTuple(taskCount),
+			qb.Subquery(subquery, scenario).BindRelation(taskCount),
 		).
 		MustBuild()
 
@@ -64,7 +64,7 @@ func TestSubqueryWithDBGeneratesCorrectEDN(t *testing.T) {
 		Find(outer, result).
 		Where(
 			qb.Pat(outer, qb.Kw(":id"), qb.NewVar("_")),
-			qb.Subquery(subq, outer).BindTuple(result),
+			qb.Subquery(subq, outer).BindRelation(result),
 		).
 		MustBuild()
 

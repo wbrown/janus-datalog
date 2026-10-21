@@ -32,7 +32,9 @@ func TestFindOuterRelationLeavesSingleStreamLazy(t *testing.T) {
 		"single outer selection must not request eager materialization")
 }
 
-func TestFindOuterRelationCombinesMultipleStreamsReusably(t *testing.T) {
+// Two streaming groups sharing no symbol are joined as their product, a
+// subject carrying both groups' symbols and consuming both groups.
+func TestFindOuterRelationCombinesTwoStreamsSharingNoSymbolAsTheirProduct(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	y := datalog.NewSymbol("?y")
 	leftBase := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(2)}})
@@ -46,9 +48,14 @@ func TestFindOuterRelationCombinesMultipleStreamsReusably(t *testing.T) {
 		Relations{left, right},
 	)
 	require.Equal(t, []int{0, 1}, consumed)
+	syms := selected.Symbols()
+	xi, yi := query.SymbolIndex(syms, x), query.SymbolIndex(syms, y)
+	require.True(t, xi >= 0 && yi >= 0, "the subject carries both groups' symbols; got %v", syms)
 	tuples, err := CollectTuples(selected, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(2), int64(3)}}, tuples)
+	require.Len(t, tuples, 1)
+	require.Equal(t, int64(2), tuples[0][xi])
+	require.Equal(t, int64(3), tuples[0][yi])
 }
 
 // collectBranch, the boundary at which a branch's result is kept for its

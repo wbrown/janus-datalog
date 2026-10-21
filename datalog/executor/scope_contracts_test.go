@@ -711,6 +711,370 @@ func TestPatternOverAStreamingGroupReadsItOnce(t *testing.T) {
 	}
 }
 
+// A bound invocation at the top level is a form over the window: the
+// invocation is one body under the header of its bound variables as the
+// required run and its free variables as the outputs, its fixpoint seeded by
+// each window's keys and continued across the windows. Its result stands in
+// the group's place and reports no size, its first tuple follows one pull of
+// the group, the group is read once, to its end, and the rewrite and each
+// stratum run as many times under six windows as under three. Over a chain
+// of six pages each page is answered beside every page after it; with both
+// arguments bound the invocation is a verdict per key, keeping the subject's
+// tuples that the closure holds and the subject's keys.
+func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
+	a, c := datalog.NewSymbol("?a"), datalog.NewSymbol("?c")
+	const pages = 6
+	datoms := chainDatoms(pages)
+	rs := mustRules(t, followsRulesText)
+	closure := mustParse(t, `[:find ?a ?c :in $ % :where (follows ?a ?c)]`).Where
+	type counts struct{ begins, rewrites, windows int }
+	run := func(t *testing.T, opts planner.PlannerOptions, syms []query.Symbol, tuples []Tuple) (Relation, *CountingIterator, *counts) {
+		c := &counts{}
+		opts.Handler = func(e annotations.Event) {
+			switch e.Name {
+			case annotations.RulesStratumBegin:
+				c.begins++
+			case annotations.RulesMagicSets:
+				c.rewrites++
+			case annotations.ScopeWindow:
+				c.windows++
+			}
+		}
+		exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor()
+		pulls := NewCountingIterator(NewMaterializedRelation(syms, tuples).Iterator())
+		subject := NewStreamingRelationWithProperties(syms, pulls, exec.options, deduplicatedProperties(syms))
+		groups, err := exec.Execute(NewContext().WithRules(rs), &query.Query{Where: closure}, []Relation{subject})
+		require.NoError(t, err)
+		require.Len(t, groups, 1, "the invocation's result stands in the group's place")
+		return groups[0], pulls, c
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name+"/with an output", func(t *testing.T) {
+			var tuples []Tuple
+			for i := 1; i <= pages; i++ {
+				tuples = append(tuples, Tuple{page(i)})
+			}
+			opts := mode.plannerOptions()
+			opts.ScopeWindowCap = 8
+			result, pulls, three := run(t, opts, []query.Symbol{a}, tuples)
+			require.Equal(t, -1, result.Size(), "the result over a streaming group reports no size")
+			syms := result.Symbols()
+			ai, ci := query.SymbolIndex(syms, a), query.SymbolIndex(syms, c)
+			require.True(t, ai >= 0 && ci >= 0, "the result carries the group's symbol and the free variable; got %v", syms)
+			it := result.Iterator()
+			require.True(t, it.Next(), "the invocation answers a tuple")
+			require.Equal(t, 1, pulls.Count(), "the first result tuple follows one pull of the group")
+			pairs := map[[2]datalog.Identity]bool{}
+			record := func(tuple Tuple) {
+				pairs[[2]datalog.Identity{tuple[ai].(datalog.Identity), tuple[ci].(datalog.Identity)}] = true
+			}
+			record(it.Tuple())
+			for it.Next() {
+				record(it.Tuple())
+			}
+			require.NoError(t, it.Error())
+			require.NoError(t, it.Close())
+			require.Equal(t, pages, pulls.Count(), "the group is read once, to its end")
+			requireSamePairs(t, pairs, chainClosure(pages))
+			require.Equal(t, 3, three.windows, "six subject tuples under a cap of eight are read in three windows")
+			require.Equal(t, 1, three.rewrites, "the invocation is rewritten once")
+
+			single := mode.plannerOptions()
+			single.ScopeWindowCap = 1
+			result, _, six := run(t, single, []query.Symbol{a}, tuples)
+			_, err := CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Equal(t, pages, six.windows, "under a cap of one each subject tuple is a window")
+			require.Equal(t, three.rewrites, six.rewrites, "one rewrite whatever the window count")
+			require.GreaterOrEqual(t, three.begins, 1, "the invocation evaluates its predicate")
+			require.Equal(t, three.begins, six.begins, "each stratum begins once, continued across the windows")
+		})
+		t.Run(mode.name+"/as a verdict per key", func(t *testing.T) {
+			tuples := []Tuple{{page(1), page(3)}, {page(2), page(1)}, {page(3), page(5)}, {page(4), page(6)}}
+			opts := mode.plannerOptions()
+			opts.ScopeWindowCap = 8
+			result, pulls, _ := run(t, opts, []query.Symbol{a, c}, tuples)
+			require.Equal(t, -1, result.Size(), "the result over a streaming group reports no size")
+			require.ElementsMatch(t, []query.Symbol{a, c}, result.Symbols(), "a verdict adds no symbol")
+			require.NotEmpty(t, result.Properties().Keys, "a verdict per key keeps the subject's keys")
+			got, err := CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Equal(t, len(tuples), pulls.Count(), "the group is read once, to its end")
+			syms := result.Symbols()
+			ai, ci := query.SymbolIndex(syms, a), query.SymbolIndex(syms, c)
+			var kept [][]interface{}
+			for _, tuple := range got {
+				kept = append(kept, []interface{}{tuple[ai], tuple[ci]})
+			}
+			require.ElementsMatch(t, [][]interface{}{{page(1), page(3)}, {page(3), page(5)}, {page(4), page(6)}}, kept, "the pairs the closure holds are kept and page 2 to page 1 is dropped")
+		})
+	}
+}
+
+// An invocation of a predicate the scope holds, a stratum's relation or its
+// delta under the fixpoint, has no fixpoint to seed: it reads the held
+// relation and joins it at the collapse, where the join holds the held
+// relation and streams the group, so no window is read whatever binds its
+// arguments, the group is read once, and the result is the join. The scope
+// holds follows as pages 1 to 4 each followed by page 5, and the group binds
+// ?a to pages 1, 2 and 6, so pages 1 and 2 are answered beside page 5 and
+// page 6 is dropped.
+func TestInvocationOfAHeldPredicateOverAStreamingGroupJoinsAtTheCollapse(t *testing.T) {
+	a, c := datalog.NewSymbol("?a"), datalog.NewSymbol("?c")
+	follows := datalog.NewSymbol("follows")
+	rs := mustRules(t, followsRulesText)
+	head, ok := rs.Head(follows)
+	require.True(t, ok, "the rule set declares follows")
+	held := NewMaterializedRelation(head, []Tuple{{page(1), page(5)}, {page(2), page(5)}, {page(3), page(5)}, {page(4), page(5)}})
+	clauses := mustParse(t, `[:find ?a ?c :in $ % :where (follows ?a ?c)]`).Where
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			windows := 0
+			opts := mode.plannerOptions()
+			opts.Handler = func(e annotations.Event) {
+				if e.Name == annotations.ScopeWindow {
+					windows++
+				}
+			}
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(nil), nil, opts).queryExecutor()
+			pulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{a}, []Tuple{{page(1)}, {page(2)}, {page(6)}}).Iterator())
+			subject := NewStreamingRelationWithProperties([]query.Symbol{a}, pulls, exec.options, deduplicatedProperties([]query.Symbol{a}))
+			ctx := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{follows: held})
+			groups, err := exec.Execute(ctx, &query.Query{Where: clauses}, []Relation{subject})
+			require.NoError(t, err)
+			require.Len(t, groups, 1, "the held relation is joined with the group at the collapse")
+			got, err := CollectTuples(groups[0], nil)
+			require.NoError(t, err)
+			syms := groups[0].Symbols()
+			ai, ci := query.SymbolIndex(syms, a), query.SymbolIndex(syms, c)
+			require.True(t, ai >= 0 && ci >= 0, "the result carries the group's symbol and the free variable; got %v", syms)
+			var pairs [][]interface{}
+			for _, tuple := range got {
+				pairs = append(pairs, []interface{}{tuple[ai], tuple[ci]})
+			}
+			require.ElementsMatch(t, [][]interface{}{{page(1), page(5)}, {page(2), page(5)}}, pairs, "the group's pages the held relation follows are answered beside page 5")
+			require.Equal(t, 3, pulls.Count(), "the group is read once, to its end")
+			require.Equal(t, 0, windows, "an invocation of a held predicate reads no window")
+		})
+	}
+}
+
+// A form whose subject spans two streaming groups joins them with nothing
+// materialized: one group's tuples are held in the join index and the other
+// streams through it, so the result reports no size, its first tuple follows
+// the held group read whole and one pull of the streamed group, and each
+// group is read once, to its end. Each item is answered beside its own value
+// and its tag's.
+func TestFormOverTwoStreamingGroupsReadsEachOnce(t *testing.T) {
+	entity, tag, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?tag"), datalog.NewSymbol("?value")
+	itemValue, tagValue := datalog.NewKeyword(":item/value"), datalog.NewKeyword(":tag/value")
+	const subjects = 5
+	var datoms []datalog.Datom
+	var items, tagged []Tuple
+	var want [][]interface{}
+	for i := 1; i <= subjects; i++ {
+		e := datalog.NewIdentity(fmt.Sprintf("item%d", i))
+		g := datalog.NewIdentity(fmt.Sprintf("tag%d", i))
+		datoms = append(datoms,
+			datalog.Datom{E: e, A: itemValue, V: int64(i), Tx: datalog.ElementID{Lamport: uint64(2 * i), ReplicaID: 1}},
+			datalog.Datom{E: g, A: tagValue, V: int64(10 * i), Tx: datalog.ElementID{Lamport: uint64(2*i + 1), ReplicaID: 1}})
+		items = append(items, Tuple{e})
+		tagged = append(tagged, Tuple{e, g})
+		want = append(want, []interface{}{e, g, int64(i)}, []interface{}{e, g, int64(10 * i)})
+	}
+	q := &query.Query{Where: []query.Clause{&query.OrJoinClause{
+		RequiredVars: []query.Symbol{entity, tag},
+		OutputVars:   []query.Symbol{value},
+		Branches: [][]query.Clause{
+			{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: entity}, query.Constant{Value: itemValue}, query.Variable{Name: value}}}},
+			{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: tag}, query.Constant{Value: tagValue}, query.Variable{Name: value}}}},
+		},
+	}}}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			itemPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{entity}, items).Iterator())
+			taggedPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{entity, tag}, tagged).Iterator())
+			first := NewStreamingRelation([]query.Symbol{entity}, itemPulls)
+			second := NewStreamingRelation([]query.Symbol{entity, tag}, taggedPulls)
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor()
+			groups, err := exec.Execute(NewContext(), q, []Relation{first, second})
+			require.NoError(t, err)
+			require.Len(t, groups, 1, "the form's result stands in the place of both groups")
+			result := groups[0]
+			require.Equal(t, -1, result.Size(), "the result over a streaming subject reports no size")
+			syms := result.Symbols()
+			ei, gi, vi := query.SymbolIndex(syms, entity), query.SymbolIndex(syms, tag), query.SymbolIndex(syms, value)
+			require.True(t, ei >= 0 && gi >= 0 && vi >= 0, "the result carries both groups' symbols and the output; got %v", syms)
+			it := result.Iterator()
+			require.True(t, it.Next(), "the form answers a tuple")
+			require.Equal(t, subjects+1, itemPulls.Count()+taggedPulls.Count(), "the first result tuple follows one group read whole into the join index and one pull of the other")
+			got := [][]interface{}{{it.Tuple()[ei], it.Tuple()[gi], it.Tuple()[vi]}}
+			for it.Next() {
+				got = append(got, []interface{}{it.Tuple()[ei], it.Tuple()[gi], it.Tuple()[vi]})
+			}
+			require.NoError(t, it.Error())
+			require.NoError(t, it.Close())
+			require.Equal(t, subjects, itemPulls.Count(), "the first group is read once, to its end")
+			require.Equal(t, subjects, taggedPulls.Count(), "the second group is read once, to its end")
+			require.ElementsMatch(t, want, got)
+		})
+	}
+}
+
+// A form whose subject spans two streaming groups sharing no symbol has
+// their product as its subject, joined under no key with nothing
+// materialized: the later group's tuples are held under one key and every
+// tuple of the first streams through them, so the result reports no size,
+// its first tuple follows the later group read whole and one pull of the
+// first, and each group is read once, to its end. Every item is answered
+// beside every tag, with the item's value and the tag's.
+func TestFormOverTwoStreamingGroupsSharingNoSymbolReadsEachOnce(t *testing.T) {
+	entity, tag, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?tag"), datalog.NewSymbol("?value")
+	itemValue, tagValue := datalog.NewKeyword(":item/value"), datalog.NewKeyword(":tag/value")
+	const items, tags = 3, 2
+	var datoms []datalog.Datom
+	var itemTuples, tagTuples []Tuple
+	var want [][]interface{}
+	for i := 1; i <= items; i++ {
+		e := datalog.NewIdentity(fmt.Sprintf("item%d", i))
+		datoms = append(datoms, datalog.Datom{E: e, A: itemValue, V: int64(i), Tx: datalog.ElementID{Lamport: uint64(i), ReplicaID: 1}})
+		itemTuples = append(itemTuples, Tuple{e})
+	}
+	for j := 1; j <= tags; j++ {
+		g := datalog.NewIdentity(fmt.Sprintf("tag%d", j))
+		datoms = append(datoms, datalog.Datom{E: g, A: tagValue, V: int64(10 * j), Tx: datalog.ElementID{Lamport: uint64(items + j), ReplicaID: 1}})
+		tagTuples = append(tagTuples, Tuple{g})
+	}
+	for i := 1; i <= items; i++ {
+		for j := 1; j <= tags; j++ {
+			e, g := itemTuples[i-1][0], tagTuples[j-1][0]
+			want = append(want, []interface{}{e, g, int64(i)}, []interface{}{e, g, int64(10 * j)})
+		}
+	}
+	q := &query.Query{Where: []query.Clause{&query.OrJoinClause{
+		RequiredVars: []query.Symbol{entity, tag},
+		OutputVars:   []query.Symbol{value},
+		Branches: [][]query.Clause{
+			{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: entity}, query.Constant{Value: itemValue}, query.Variable{Name: value}}}},
+			{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: tag}, query.Constant{Value: tagValue}, query.Variable{Name: value}}}},
+		},
+	}}}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			itemPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{entity}, itemTuples).Iterator())
+			tagPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{tag}, tagTuples).Iterator())
+			first := NewStreamingRelation([]query.Symbol{entity}, itemPulls)
+			second := NewStreamingRelation([]query.Symbol{tag}, tagPulls)
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor()
+			groups, err := exec.Execute(NewContext(), q, []Relation{first, second})
+			require.NoError(t, err)
+			require.Len(t, groups, 1, "the form's result stands in the place of both groups")
+			result := groups[0]
+			require.Equal(t, -1, result.Size(), "the result over a streaming subject reports no size")
+			syms := result.Symbols()
+			ei, gi, vi := query.SymbolIndex(syms, entity), query.SymbolIndex(syms, tag), query.SymbolIndex(syms, value)
+			require.True(t, ei >= 0 && gi >= 0 && vi >= 0, "the result carries both groups' symbols and the output; got %v", syms)
+			it := result.Iterator()
+			require.True(t, it.Next(), "the form answers a tuple")
+			require.Equal(t, tags, tagPulls.Count(), "the first result tuple follows the later group held whole under one key")
+			require.Equal(t, 1, itemPulls.Count(), "and one pull of the first group, which streams")
+			got := [][]interface{}{{it.Tuple()[ei], it.Tuple()[gi], it.Tuple()[vi]}}
+			for it.Next() {
+				got = append(got, []interface{}{it.Tuple()[ei], it.Tuple()[gi], it.Tuple()[vi]})
+			}
+			require.NoError(t, it.Error())
+			require.NoError(t, it.Close())
+			require.Equal(t, items, itemPulls.Count(), "the item group is read once, to its end")
+			require.Equal(t, tags, tagPulls.Count(), "the tag group is read once, to its end")
+			require.ElementsMatch(t, want, got)
+		})
+	}
+}
+
+// Over three streaming groups sharing no symbol the group held at each join
+// is the one joined, never the join so far: the first group streams, pulled
+// once before the result's first tuple, and each later group is read whole
+// into its join's index, so the fold holds the later groups and never their
+// product. Every item is answered beside every tag and every shelf, with
+// each one's value.
+func TestFormOverThreeStreamingGroupsHoldsEachLaterGroup(t *testing.T) {
+	entity, tag, shelf, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?tag"), datalog.NewSymbol("?shelf"), datalog.NewSymbol("?value")
+	itemValue, tagValue, shelfValue := datalog.NewKeyword(":item/value"), datalog.NewKeyword(":tag/value"), datalog.NewKeyword(":shelf/value")
+	const items, tags, shelves = 2, 3, 4
+	var datoms []datalog.Datom
+	var itemTuples, tagTuples, shelfTuples []Tuple
+	for i := 1; i <= items; i++ {
+		e := datalog.NewIdentity(fmt.Sprintf("item%d", i))
+		datoms = append(datoms, datalog.Datom{E: e, A: itemValue, V: int64(i), Tx: datalog.ElementID{Lamport: uint64(i), ReplicaID: 1}})
+		itemTuples = append(itemTuples, Tuple{e})
+	}
+	for j := 1; j <= tags; j++ {
+		g := datalog.NewIdentity(fmt.Sprintf("tag%d", j))
+		datoms = append(datoms, datalog.Datom{E: g, A: tagValue, V: int64(10 * j), Tx: datalog.ElementID{Lamport: uint64(items + j), ReplicaID: 1}})
+		tagTuples = append(tagTuples, Tuple{g})
+	}
+	for k := 1; k <= shelves; k++ {
+		s := datalog.NewIdentity(fmt.Sprintf("shelf%d", k))
+		datoms = append(datoms, datalog.Datom{E: s, A: shelfValue, V: int64(100 * k), Tx: datalog.ElementID{Lamport: uint64(items + tags + k), ReplicaID: 1}})
+		shelfTuples = append(shelfTuples, Tuple{s})
+	}
+	var want [][]interface{}
+	for i := 1; i <= items; i++ {
+		for j := 1; j <= tags; j++ {
+			for k := 1; k <= shelves; k++ {
+				e, g, s := itemTuples[i-1][0], tagTuples[j-1][0], shelfTuples[k-1][0]
+				want = append(want,
+					[]interface{}{e, g, s, int64(i)},
+					[]interface{}{e, g, s, int64(10 * j)},
+					[]interface{}{e, g, s, int64(100 * k)})
+			}
+		}
+	}
+	q := &query.Query{Where: []query.Clause{&query.OrJoinClause{
+		RequiredVars: []query.Symbol{entity, tag, shelf},
+		OutputVars:   []query.Symbol{value},
+		Branches: [][]query.Clause{
+			{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: entity}, query.Constant{Value: itemValue}, query.Variable{Name: value}}}},
+			{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: tag}, query.Constant{Value: tagValue}, query.Variable{Name: value}}}},
+			{&query.DataPattern{Elements: []query.PatternElement{query.Variable{Name: shelf}, query.Constant{Value: shelfValue}, query.Variable{Name: value}}}},
+		},
+	}}}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			itemPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{entity}, itemTuples).Iterator())
+			tagPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{tag}, tagTuples).Iterator())
+			shelfPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{shelf}, shelfTuples).Iterator())
+			first := NewStreamingRelation([]query.Symbol{entity}, itemPulls)
+			second := NewStreamingRelation([]query.Symbol{tag}, tagPulls)
+			third := NewStreamingRelation([]query.Symbol{shelf}, shelfPulls)
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor()
+			groups, err := exec.Execute(NewContext(), q, []Relation{first, second, third})
+			require.NoError(t, err)
+			require.Len(t, groups, 1, "the form's result stands in the place of the three groups")
+			result := groups[0]
+			require.Equal(t, -1, result.Size(), "the result over a streaming subject reports no size")
+			syms := result.Symbols()
+			ei, gi, si, vi := query.SymbolIndex(syms, entity), query.SymbolIndex(syms, tag), query.SymbolIndex(syms, shelf), query.SymbolIndex(syms, value)
+			require.True(t, ei >= 0 && gi >= 0 && si >= 0 && vi >= 0, "the result carries the three groups' symbols and the output; got %v", syms)
+			it := result.Iterator()
+			require.True(t, it.Next(), "the form answers a tuple")
+			require.Equal(t, 1, itemPulls.Count(), "the first group streams, pulled once before the first tuple")
+			require.Equal(t, tags, tagPulls.Count(), "the second group is held whole in its join's index")
+			require.Equal(t, shelves, shelfPulls.Count(), "the third group is held whole in its join's index")
+			got := [][]interface{}{{it.Tuple()[ei], it.Tuple()[gi], it.Tuple()[si], it.Tuple()[vi]}}
+			for it.Next() {
+				got = append(got, []interface{}{it.Tuple()[ei], it.Tuple()[gi], it.Tuple()[si], it.Tuple()[vi]})
+			}
+			require.NoError(t, it.Error())
+			require.NoError(t, it.Close())
+			require.Equal(t, items, itemPulls.Count(), "the first group is read once, to its end")
+			require.Equal(t, tags, tagPulls.Count(), "the second group is read once")
+			require.Equal(t, shelves, shelfPulls.Count(), "the third group is read once")
+			require.ElementsMatch(t, want, got)
+		})
+	}
+}
+
 // A failure of a subquery body's scan is the query's error, surfacing when
 // the result is driven: the form's result stands in the subject's place and
 // carries the failure, as a not-join's does.

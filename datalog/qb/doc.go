@@ -99,7 +99,7 @@
 //	    In(qb.DB, qb.Scalar(dept)).
 //	    Where(qb.Pat(e, EmpDept, dept), qb.Pat(e, EmpSalary, salary))
 //
-//	qb.Subquery(innerQ, dept).BindTuple(maxSalary)
+//	qb.Subquery(innerQ, dept).BindRelation(maxSalary)
 //
 // Subqueries have lexical scoping - reuse variable names like ?t across subqueries:
 //

@@ -86,7 +86,7 @@ func TestAnalyzeValidatesEveryOperatorContract(t *testing.T) {
 				InnerQuery: &query.Query{
 					Find: []query.FindElement{query.FindVariable{Symbol: payload}},
 				},
-				Binding: query.TupleBinding{Variables: []query.Symbol{payload}},
+				Binding: query.RelationBinding{Variables: []query.Symbol{payload}},
 				Output:  []query.Symbol{entity, score, payload},
 			},
 		},
@@ -186,7 +186,7 @@ func TestAnalyzeRejectsInvalidOperatorContracts(t *testing.T) {
 					InnerQuery: &query.Query{
 						Find: []query.FindElement{query.FindVariable{Symbol: score}},
 					},
-					Binding: query.TupleBinding{Variables: []query.Symbol{score, missing}},
+					Binding: query.RelationBinding{Variables: []query.Symbol{score, missing}},
 					Output:  []query.Symbol{entity, score, missing},
 				},
 			},
@@ -227,7 +227,7 @@ func TestAnalyzeTracksFreeRequirementsFromEnvironment(t *testing.T) {
 			InnerQuery: &query.Query{
 				Find: []query.FindElement{query.FindVariable{Symbol: result}},
 			},
-			Binding: query.TupleBinding{Variables: []query.Symbol{result}},
+			Binding: query.RelationBinding{Variables: []query.Symbol{result}},
 			Output:  []query.Symbol{entity, result},
 		},
 	}
@@ -307,10 +307,9 @@ func TestAnalyzeCorrelatedAntiJoinRequirements(t *testing.T) {
 		Op:       RuleAntiJoin,
 		Children: []*Node{left, right},
 		Data: &AntiJoin{
-			JoinSymbols:  []query.Symbol{goal, goalSet},
-			Required:     []query.Symbol{goalSet},
-			Output:       []query.Symbol{goal, goalSet},
-			ExplicitJoin: true,
+			JoinSymbols: []query.Symbol{goal, goalSet},
+			Required:    []query.Symbol{goalSet},
+			Output:      []query.Symbol{goal, goalSet},
 		},
 	}
 
@@ -347,9 +346,8 @@ func TestAnalyzeAntiJoinEnvironmentSuppliedJoinSymbol(t *testing.T) {
 		Op:       RuleAntiJoin,
 		Children: []*Node{left, right},
 		Data: &AntiJoin{
-			JoinSymbols:  []query.Symbol{entity, flag},
-			Output:       []query.Symbol{entity},
-			ExplicitJoin: true,
+			JoinSymbols: []query.Symbol{entity, flag},
+			Output:      []query.Symbol{entity},
 		},
 	}
 
@@ -381,10 +379,9 @@ func TestAnalyzeAntiJoinEnvironmentSuppliedCorrelationRequirement(t *testing.T) 
 		Op:       RuleAntiJoin,
 		Children: []*Node{left, right},
 		Data: &AntiJoin{
-			JoinSymbols:  []query.Symbol{entity, flag},
-			Required:     []query.Symbol{flag},
-			Output:       []query.Symbol{entity},
-			ExplicitJoin: true,
+			JoinSymbols: []query.Symbol{entity, flag},
+			Required:    []query.Symbol{flag},
+			Output:      []query.Symbol{entity},
 		},
 	}
 
@@ -407,9 +404,8 @@ func TestAnalyzeAntiJoinStillRejectsUndemandedJoinSymbol(t *testing.T) {
 		Op:       RuleAntiJoin,
 		Children: []*Node{left, right},
 		Data: &AntiJoin{
-			JoinSymbols:  []query.Symbol{entity, ghost},
-			Output:       []query.Symbol{entity},
-			ExplicitJoin: true,
+			JoinSymbols: []query.Symbol{entity, ghost},
+			Output:      []query.Symbol{entity},
 		},
 	}
 
@@ -477,9 +473,10 @@ func TestAnalyzeUnionNormalizesOuterKeysAndBranchLocalSymbols(t *testing.T) {
 		Op:       RuleUnion,
 		Children: []*Node{correlatedBranch, defaultBranch},
 		Data: &Union{
-			Output:   []query.Symbol{entity, value},
-			JoinVars: []query.Symbol{entity, value},
-			Required: []query.Symbol{entity},
+			Output:       []query.Symbol{entity, value},
+			RequiredVars: []query.Symbol{entity},
+			OutputVars:   []query.Symbol{value},
+			Required:     []query.Symbol{entity},
 		},
 	}
 

@@ -36,12 +36,12 @@ func TestPrepare_ComposesTheStaticSteps(t *testing.T) {
 		call := &SubqueryPattern{
 			Query:   inner,
 			Inputs:  []PatternElement{Constant{Value: datalog.SymDollar}},
-			Binding: TupleBinding{Variables: []Symbol{sym("?p"), sym("?q")}},
+			Binding: RelationBinding{Variables: []Symbol{sym("?p"), sym("?q")}},
 		}
 		q := findIn([]string{"?p"}, nil, call)
 		want := ValidateStaticClauseShapes(q.Where)
 		if want == nil {
-			t.Fatal("the fixture's tuple binding declares two symbols for a one-element :find, which ValidateStaticClauseShapes refuses")
+			t.Fatal("the fixture's relation binding declares two symbols for a one-element :find, which ValidateStaticClauseShapes refuses")
 		}
 		_, err := Prepare(q, nil)
 		if err == nil || err.Error() != want.Error() {

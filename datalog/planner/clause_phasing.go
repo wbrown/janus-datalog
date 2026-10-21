@@ -1,9 +1,7 @@
 package planner
 
 import (
-	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -41,19 +39,10 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 		}
 
 		if len(phase.Clauses) == 0 {
-			// No clause can execute with the symbols available: each one is
-			// named with the symbols it waits on, which nothing in the query
-			// binds.
-			stuck := make([]string, len(remaining))
-			for i, clause := range remaining {
-				blockers := query.ClauseBlockers(clause, available, bindings.Rules)
-				if len(blockers) == 0 {
-					stuck[i] = fmt.Sprintf("%s cannot execute", clause)
-					continue
-				}
-				stuck[i] = fmt.Sprintf("%s waits on %v, which nothing in the query binds", clause, blockers)
-			}
-			return nil, fmt.Errorf("cannot create phase: %s", strings.Join(stuck, "; "))
+			// No clause can execute with the symbols available: the refusal
+			// names each remaining clause with the variables it waits on and
+			// says of each whether no input and no clause binds it.
+			return nil, query.NewNoOrderError(remaining, clauses, available, inputSymbols, bindings.Rules)
 		}
 
 		// Add symbols this phase provides to available set

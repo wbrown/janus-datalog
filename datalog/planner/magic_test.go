@@ -461,8 +461,10 @@ func TestMagic_RequiredPositionBoundByThePlannedOrder(t *testing.T) {
 // that are monotone. A comparison or a not-join written before the
 // invocation and reading a variable the invocation provides is placed after
 // it by the planner, which orders a clause after its binders, so neither is
-// read; an or-default is not read, so the predicate it invokes stays below
-// the recursive stratum.
+// read. An or-default-join whose output the recursion reads is placed before
+// it and read as the union of its branches over its header, and the
+// predicate it invokes, adorned from the clauses before the form, stays
+// below the recursive stratum.
 func TestMagic_MagicRuleReadsReadyMonotoneClauses(t *testing.T) {
 	t.Run("a comparison the planner places after the invocation is not read", func(t *testing.T) {
 		rs := mustRuleSet(t, append(followsRules(),
@@ -496,21 +498,42 @@ func TestMagic_MagicRuleReadsReadyMonotoneClauses(t *testing.T) {
 		})
 	})
 
-	t.Run("a fallback form is not read", func(t *testing.T) {
+	t.Run("a fallback the recursion reads is read as the union of its branches over its header", func(t *testing.T) {
 		rs := mustRuleSet(t, []*query.Rule{
-			defineRule("marked", []string{"?b"}, scopePattern("?b", "page/marked", "_")),
+			defineRule("marked", []string{"?b", "?d"}, scopePattern("?b", "page/marked", "?d")),
 			defineRule("walk", []string{"?a", "?c"}, scopePattern("?a", "page/next", "?c")),
 			defineRule("walk", []string{"?a", "?c"},
 				scopePattern("?a", "page/next", "?b"),
 				&query.OrDefaultClause{Branches: [][]query.Clause{
-					{invoke("marked", "?b")},
-					{scopePattern("?b", "page/kind", "_")},
+					{invoke("marked", "?b", "?d")},
+					{scopePattern("?b", "page/kind", "?d")},
 				}},
-				invoke("walk", "?b", "?c")),
+				invoke("walk", "?d", "?c")),
 		})
 		magic := mustMagic(t, rs, "walk", true, false)
+		header := []query.Symbol{sym("?b"), sym("?d")}
+		branches := [][]query.Clause{
+			{invoke("adorned.bf/marked", "?b", "?d")},
+			{scopePattern("?b", "page/kind", "?d")},
+		}
+		assertRules(t, "adorned.bf/walk", magic.Rules.Rules(sym("adorned.bf/walk")), []*query.Rule{
+			defineRule("adorned.bf/walk", []string{"?a", "?c"},
+				invoke("magic.bf/walk", "?a"),
+				scopePattern("?a", "page/next", "?c")),
+			defineRule("adorned.bf/walk", []string{"?a", "?c"},
+				invoke("magic.bf/walk", "?a"),
+				scopePattern("?a", "page/next", "?b"),
+				&query.OrDefaultJoinClause{OutputVars: header, Branches: branches},
+				invoke("adorned.bf/walk", "?d", "?c")),
+		})
 		assertRules(t, "magic.bf/walk", magic.Rules.Rules(sym("magic.bf/walk")), []*query.Rule{
-			defineRule("magic.bf/walk", []string{"?b"},
+			defineRule("magic.bf/walk", []string{"?d"},
+				invoke("magic.bf/walk", "?a"),
+				scopePattern("?a", "page/next", "?b"),
+				&query.OrJoinClause{OutputVars: header, Branches: branches}),
+		})
+		assertRules(t, "magic.bf/marked", magic.Rules.Rules(sym("magic.bf/marked")), []*query.Rule{
+			defineRule("magic.bf/marked", []string{"?b"},
 				invoke("magic.bf/walk", "?a"),
 				scopePattern("?a", "page/next", "?b")),
 		})
@@ -523,8 +546,8 @@ func TestMagic_MagicRuleReadsReadyMonotoneClauses(t *testing.T) {
 			t.Fatalf("no stratum holds %s in %+v", name, magic.Rules.Strata())
 			return -1
 		}
-		if marked, walk := stratumOf("adorned.b/marked"), stratumOf("adorned.bf/walk"); marked >= walk {
-			t.Errorf("adorned.b/marked is in stratum %d and adorned.bf/walk in %d; the fallback's predicate sits below the recursive stratum", marked, walk)
+		if marked, walk := stratumOf("adorned.bf/marked"), stratumOf("adorned.bf/walk"); marked >= walk {
+			t.Errorf("adorned.bf/marked is in stratum %d and adorned.bf/walk in %d; the fallback's predicate sits below the recursive stratum", marked, walk)
 		}
 	})
 }
@@ -956,5 +979,76 @@ func TestMagic_ARequiredPredicateUnderANegation(t *testing.T) {
 		if adorned := magic.Rules.Rules(sym("adorned.b/small")); len(adorned) != 0 {
 			t.Errorf("the site is left unadorned, got %v", adorned)
 		}
+	})
+}
+
+// A fallback form is read as the union of its branches over its header
+// (NESTED_SCOPES_AS_QUERIES.md §5.5): its outputs join the bound set, so an
+// invocation after it whose argument the form alone binds is adorned with
+// that position bound, and its magic rule derives the argument through the
+// union, which binds what the form binds and holds every tuple it yields.
+// Inside a subquery's inner query the magic rule reads the union through a
+// subquery over the same call, as it reads any inner clause before the
+// invocation.
+func TestMagic_AFallbackFormIsReadAsTheUnionOfItsBranchesOverItsHeader(t *testing.T) {
+	x, v := []query.Symbol{sym("?x")}, []query.Symbol{sym("?v")}
+	score := func() *query.OrDefaultJoinClause {
+		return &query.OrDefaultJoinClause{RequiredVars: x, OutputVars: v, Branches: [][]query.Clause{
+			{scopePattern("?x", "page/score", "?v")},
+			{&query.Expression{Function: &query.GroundFunction{Value: int64(0)}, Binding: sym("?v")}},
+		}}
+	}
+	union := &query.OrJoinClause{RequiredVars: x, OutputVars: v, Branches: score().Branches}
+	label := defineRule("label", []string{"?v", "?r"}, scopePattern("?v", "page/label", "?r"))
+	adornedLabel := defineRule("adorned.bf/label", []string{"?v", "?r"}, invoke("magic.bf/label", "?v"), scopePattern("?v", "page/label", "?r"))
+
+	t.Run("in a body", func(t *testing.T) {
+		fallback := score()
+		rs := mustRuleSet(t, []*query.Rule{
+			label,
+			defineRule("rank", []string{"?x", "?r"}, scopePattern("?x", "page/root", "_"), fallback, invoke("label", "?v", "?r")),
+		})
+		magic := mustMagic(t, rs, "rank", true, false)
+		assertRules(t, "adorned.bf/rank", magic.Rules.Rules(sym("adorned.bf/rank")), []*query.Rule{
+			defineRule("adorned.bf/rank", []string{"?x", "?r"},
+				invoke("magic.bf/rank", "?x"),
+				scopePattern("?x", "page/root", "_"),
+				fallback,
+				invoke("adorned.bf/label", "?v", "?r")),
+		})
+		assertRules(t, "magic.bf/label", magic.Rules.Rules(sym("magic.bf/label")), []*query.Rule{
+			defineRule("magic.bf/label", []string{"?v"},
+				invoke("magic.bf/rank", "?x"),
+				scopePattern("?x", "page/root", "_"),
+				union),
+		})
+		assertRules(t, "adorned.bf/label", magic.Rules.Rules(sym("adorned.bf/label")), []*query.Rule{adornedLabel})
+	})
+
+	t.Run("in a subquery's inner query", func(t *testing.T) {
+		fallback := score()
+		inner := &query.Query{
+			Find:  []query.FindElement{query.FindVariable{Symbol: sym("?r")}},
+			In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: sym("?x")}},
+			Where: []query.Clause{fallback, invoke("label", "?v", "?r")},
+		}
+		rs := mustRuleSet(t, []*query.Rule{
+			label,
+			defineRule("rank", []string{"?p", "?z"}, scopePattern("?p", "page/root", "?x"), subqueryCall(inner, query.Variable{Name: sym("?x")}, "?z")),
+		})
+		magic := mustMagic(t, rs, "rank", true, false)
+		assertRules(t, "adorned.bf/rank", magic.Rules.Rules(sym("adorned.bf/rank")), []*query.Rule{
+			defineRule("adorned.bf/rank", []string{"?p", "?z"},
+				invoke("magic.bf/rank", "?p"),
+				scopePattern("?p", "page/root", "?x"),
+				subqueryCall(&query.Query{Find: inner.Find, In: inner.In, Where: []query.Clause{fallback, invoke("adorned.bf/label", "?v", "?r")}}, query.Variable{Name: sym("?x")}, "?z")),
+		})
+		assertRules(t, "magic.bf/label", magic.Rules.Rules(sym("magic.bf/label")), []*query.Rule{
+			defineRule("magic.bf/label", []string{"?magic.bf/label.0"},
+				invoke("magic.bf/rank", "?p"),
+				scopePattern("?p", "page/root", "?x"),
+				subqueryCall(&query.Query{Find: []query.FindElement{query.FindVariable{Symbol: sym("?v")}}, In: inner.In, Where: []query.Clause{union}}, query.Variable{Name: sym("?x")}, "?magic.bf/label.0")),
+		})
+		assertRules(t, "adorned.bf/label", magic.Rules.Rules(sym("adorned.bf/label")), []*query.Rule{adornedLabel})
 	})
 }

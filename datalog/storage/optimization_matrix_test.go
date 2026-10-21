@@ -54,7 +54,7 @@ const optimizationMatrixQueryBody = `[:find ?scenario ?title ?createdAt ?taskCou
                   [(get-else $ ?t :task/token-count 0) ?tok]
                   [(get-else $ ?t :task/duration 0) ?dur]]
           $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+      [(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])
   (or-default [(q [:find (count ?t)
            :in $ ?s
            :where [?t :task/root ?s]
@@ -77,7 +77,7 @@ const optimizationMatrixQueryBody = `[:find ?scenario ?title ?createdAt ?taskCou
                       $ ?s) [[?maxCa]]]
                   [(= ?ca ?maxCa)]]
           $ ?scenario) [[?lastKey ?lastUpdatedAt]]]
-      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
   :order-by [[?lastUpdatedAt :desc]]`
 
 func optimizationMatrixQuery(limit int) string {
@@ -250,7 +250,7 @@ func testComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T, mode optim
 					       [(get-else $ ?t :task/token-count 0) ?tok]
 					       [(get-else $ ?t :task/duration 0) ?dur]]
 					$ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-					[(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])]`,
+					[(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])]`,
 		},
 		{
 			name: "scalar fallback and expression",
@@ -266,7 +266,7 @@ func testComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T, mode optim
 					       [(get-else $ ?t :task/token-count 0) ?tok]
 					       [(get-else $ ?t :task/duration 0) ?dur]]
 					$ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-					[(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+					[(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])
 				(or-default [(q [:find (count ?t)
 					:in $ ?s
 					:where [?t :task/root ?s]

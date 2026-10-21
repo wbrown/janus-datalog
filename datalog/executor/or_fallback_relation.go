@@ -182,10 +182,13 @@ func NewOrFallbackRelation(
 
 // orBranchesEmitAtMostOne reports whether every branch answers at most one
 // tuple per subject tuple, judged against the header symbols the subject
-// carries: an expression binding one value, a subquery whose find is
-// aggregates and variables the subject carries, whatever its binding's
+// carries: an expression under the scalar or tuple form, which reads its
+// function's value as one tuple whatever the function, a subquery whose find
+// is aggregates and variables the subject carries, whatever its binding's
 // spelling, which subqueryAnswersAtMostOne states, and a data pattern the
-// matcher serves by one lookup, which patternAnswersAtMostOne states.
+// matcher serves by one lookup, which patternAnswersAtMostOne states. An
+// expression under the collection or relation form reads one tuple per
+// element of its value, any number.
 func orBranchesEmitAtMostOne(
 	branches [][]query.Clause,
 	required []query.Symbol,
@@ -206,7 +209,11 @@ func orBranchesEmitAtMostOne(
 		for _, clause := range branch {
 			switch typed := clause.(type) {
 			case *query.Expression:
-				if typed.Function == nil || typed.Function.ReturnType() == "tuples" {
+				if typed.Function == nil {
+					return false
+				}
+				switch typed.Binding.(type) {
+				case query.CollectionBinding, query.RelationBinding:
 					return false
 				}
 			case *query.SubqueryPattern:

@@ -12,6 +12,7 @@ package executor
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog/query"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -567,5 +568,130 @@ func TestExecuteTupleGround(t *testing.T) {
 		if err == nil {
 			t.Error("Expected error for mismatched tuple ground")
 		}
+	})
+}
+
+// A ground under the relation form [[?a ?b]] binds the relation over its
+// vector of vectors, one tuple per inner vector: alone it is that relation,
+// and over a group it pairs every tuple of the group with every inner vector.
+// An inner vector of another arity than the binding is an error naming its
+// position.
+func TestExecuteRelationGround(t *testing.T) {
+	a, b, x := datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?x")
+	vectors := []interface{}{
+		[]interface{}{int64(1), int64(2)},
+		[]interface{}{int64(3), int64(4)},
+	}
+	relationGround := &query.Expression{
+		Function: &query.GroundFunction{Value: vectors},
+		Binding:  query.RelationBinding{Variables: []query.Symbol{a, b}},
+	}
+
+	t.Run("alone, the relation over the inner vectors", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		groups, err := executor.executeExpression(NewContext(), relationGround, nil)
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		require.Equal(t, []query.Symbol{a, b}, groups[0].Symbols())
+		tuples, err := CollectTuples(groups[0], nil)
+		require.NoError(t, err)
+		require.ElementsMatch(t, [][]interface{}{{int64(1), int64(2)}, {int64(3), int64(4)}}, tuples)
+	})
+
+	t.Run("over a group, every tuple paired with every inner vector", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		group := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(10)}, {int64(20)}})
+		groups, err := executor.executeExpression(NewContext(), relationGround, []Relation{group})
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		require.Equal(t, []query.Symbol{x, a, b}, groups[0].Symbols())
+		tuples, err := CollectTuples(groups[0], nil)
+		require.NoError(t, err)
+		require.ElementsMatch(t, [][]interface{}{
+			{int64(10), int64(1), int64(2)}, {int64(10), int64(3), int64(4)},
+			{int64(20), int64(1), int64(2)}, {int64(20), int64(3), int64(4)},
+		}, tuples)
+	})
+
+	t.Run("an inner vector of another arity than the binding", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		ragged := &query.Expression{
+			Function: &query.GroundFunction{Value: []interface{}{[]interface{}{int64(1), int64(2)}, []interface{}{int64(3)}}},
+			Binding:  query.RelationBinding{Variables: []query.Symbol{a, b}},
+		}
+		_, err := executor.executeExpression(NewContext(), ragged, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "tuple 2")
+	})
+}
+
+// A ground under the collection form [?v ...] binds the relation over its
+// vector, one tuple per element: alone it is that relation, and over a group
+// it pairs every tuple of the group with every element.
+func TestExecuteCollectionGround(t *testing.T) {
+	v, x := datalog.NewSymbol("?v"), datalog.NewSymbol("?x")
+	collectionGround := &query.Expression{
+		Function: &query.GroundFunction{Value: []interface{}{"a", "e", "i"}},
+		Binding:  query.CollectionBinding{Variable: v},
+	}
+
+	t.Run("alone, the relation over the elements", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		groups, err := executor.executeExpression(NewContext(), collectionGround, nil)
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		require.Equal(t, []query.Symbol{v}, groups[0].Symbols())
+		tuples, err := CollectTuples(groups[0], nil)
+		require.NoError(t, err)
+		require.ElementsMatch(t, [][]interface{}{{"a"}, {"e"}, {"i"}}, tuples)
+	})
+
+	t.Run("over a group, every tuple paired with every element", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		group := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(10)}, {int64(20)}})
+		groups, err := executor.executeExpression(NewContext(), collectionGround, []Relation{group})
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		require.Equal(t, []query.Symbol{x, v}, groups[0].Symbols())
+		tuples, err := CollectTuples(groups[0], nil)
+		require.NoError(t, err)
+		require.ElementsMatch(t, [][]interface{}{
+			{int64(10), "a"}, {int64(10), "e"}, {int64(10), "i"},
+			{int64(20), "a"}, {int64(20), "e"}, {int64(20), "i"},
+		}, tuples)
+	})
+}
+
+// A function's value is read by the binding form whatever the function: under
+// the tuple form enumerate's vector of pairs is one tuple, each variable one
+// pair, and a vector of another length than the binding is the arity error.
+func TestExecuteEnumerateUnderTheTupleForm(t *testing.T) {
+	vec, idx, item := datalog.NewSymbol("?vec"), datalog.NewSymbol("?idx"), datalog.NewSymbol("?item")
+	enumerate := &query.Expression{
+		Function: query.EnumerateFunction{VecTerm: query.VariableTerm{Symbol: vec}},
+		Binding:  query.TupleBinding{Variables: []query.Symbol{idx, item}},
+	}
+
+	t.Run("a vector of two elements, each variable one pair", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		group := NewMaterializedRelation([]query.Symbol{vec}, []Tuple{{[]interface{}{"a", "b"}}})
+		groups, err := executor.executeExpression(NewContext(), enumerate, []Relation{group})
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		tuples, err := CollectTuples(groups[0], nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{
+			[]interface{}{"a", "b"},
+			[]interface{}{int64(0), "a"},
+			[]interface{}{int64(1), "b"},
+		}}, tuples)
+	})
+
+	t.Run("a vector of another length is the arity error", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		group := NewMaterializedRelation([]query.Symbol{vec}, []Tuple{{[]interface{}{"a", "b", "c"}}})
+		_, err := executor.executeExpression(NewContext(), enumerate, []Relation{group})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "3 values, 2 variables")
 	})
 }

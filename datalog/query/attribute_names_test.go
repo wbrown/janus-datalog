@@ -529,6 +529,45 @@ func TestDefaultSourceAttributesThroughASubqueryCall(t *testing.T) {
 	})
 }
 
+// A relation ground binds its variable to the value of every row, so a
+// variable in an attribute position bound by a relation ground of keywords
+// names each row's keyword, in the rows' order; a tuple ground of keywords
+// names its one keyword per variable as before.
+func TestDefaultSourceAttributesThroughARelationGround(t *testing.T) {
+	entity := Variable{Name: datalog.NewSymbol("?e")}
+	q := &Query{Where: []Clause{
+		&Expression{
+			Function: GroundFunction{Value: []interface{}{
+				[]interface{}{datalog.NewKeyword(":t/first"), datalog.NewKeyword(":t/other")},
+				[]interface{}{datalog.NewKeyword(":t/second"), datalog.NewKeyword(":t/other")},
+			}},
+			Binding: RelationBinding{Variables: []Symbol{datalog.NewSymbol("?attr"), datalog.NewSymbol("?unread")}},
+		},
+		&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?attr")}, Blank{}}},
+		&Expression{
+			Function: &GroundFunction{Value: []interface{}{datalog.NewKeyword(":t/third"), int64(1)}},
+			Binding:  TupleBinding{Variables: []Symbol{datalog.NewSymbol("?ta"), datalog.NewSymbol("?tn")}},
+		},
+		&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?ta")}, Blank{}}},
+		&Expression{
+			Function: GroundFunction{Value: []interface{}{datalog.NewKeyword(":t/fourth"), datalog.NewKeyword(":t/fifth")}},
+			Binding:  CollectionBinding{Variable: datalog.NewSymbol("?ca")},
+		},
+		&DataPattern{Elements: []PatternElement{entity, Variable{Name: datalog.NewSymbol("?ca")}, Blank{}}},
+	}}
+	inferred, err := InferHeaders(q, nil)
+	if err != nil {
+		t.Fatalf("InferHeaders: %v", err)
+	}
+	assertKeywordsInOrder(t, inferred.DefaultSourceAttributes(nil), []datalog.Keyword{
+		datalog.NewKeyword(":t/first"),
+		datalog.NewKeyword(":t/second"),
+		datalog.NewKeyword(":t/third"),
+		datalog.NewKeyword(":t/fourth"),
+		datalog.NewKeyword(":t/fifth"),
+	})
+}
+
 // TestSourceAttributes pins the roster SourceAttributes collects for a named
 // source: every attribute a data pattern on that source names, in order of
 // first appearance and each once, through NOT/NOT-JOIN bodies,

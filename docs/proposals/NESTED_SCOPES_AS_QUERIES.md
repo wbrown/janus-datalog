@@ -9,8 +9,9 @@ delivers them, and what each component is against `5b152c9`.
 
 ## 1. Goals
 
-The design answers to these eleven goals. Goal 10 is a product choice the
-others do not settle, with the alternatives' costs beside it.
+The design answers to the goals below. Two are product choices the others
+do not settle, the headerless forms and the binding grammar, each with the
+alternative's cost beside it.
 
 1. The most correct fix, not the tactical one: the design question is
    derived to the most correct fix for Janus Datalog.
@@ -32,6 +33,14 @@ others do not settle, with the alternatives' costs beside it.
 11. The engine's own queries run on every database it opens, whatever the
     user's schema declares and whether or not the database refuses unknown
     attributes.
+12. The binding grammar is Datomic's: a subquery's binding and an
+    expression's destructuring take the forms Datomic's query reference
+    gives (`bind-scalar`, `bind-tuple`, `bind-coll`, `bind-rel`) with
+    Datomic's meanings, and a spelling of janus's own is a synonym of a
+    Datomic form, never a form with a meaning of its own. The alternative's
+    cost: a query written for Datomic reads differently here, and a janus
+    spelling with a meaning of its own gives one text two readings across
+    the two engines.
 
 ## 2. The language
 
@@ -219,14 +228,16 @@ A subquery's binding names the inner query's outputs in the enclosing scope,
 and a binding asserts nothing about cardinality (§5.4). A name written at two
 places of a binding unifies the two outputs it names, as a variable repeated
 across an invocation's arguments does: the tuples whose two outputs agree
-enter the scope under the one name. Its spellings are
-the relation form, `[[?a ?b] ...]`, and the collection form, `[?a ...]`, a
-relation of one symbol. The scalar form `?a` and the tuple form `[[?a ?b]]`
-are refused, naming the relation form: in the grammar of a query's inputs
-each names a single value, and a binding is never one. The alternative is
-every spelling as one meaning, under which `[[?a ?b]]` reads as one tuple
-and answers a relation. Goal 3 ranks the consistent grammar over the
-compatible one.
+enter the scope under the one name. Its spellings are Datomic's binding
+forms (goal 12): the relation form `[[?a ?b]]`, Datomic's `bind-rel`; the
+collection form `[?a ...]`, a relation of one symbol; and the scalar form
+`?a`, read as the relation over one symbol. `[[?a ?b] ...]`, a spelling of
+janus's own, is read as the relation form and rendered as `[[?a ?b]]`. The
+tuple form `[?a ?b]` is an expression's destructuring and not a subquery
+binding. The alternative is the reading of `[[?a ?b]]` as a single tuple
+beside `[[?a ?b] ...]` as the relation, under which one text reads as a
+relation at Datomic's `q` and as a cardinality assertion here; goal 12
+excludes it.
 
 An invocation inside a scope is a clause at its planned position. An
 invocation of a predicate with required positions is ordered after the

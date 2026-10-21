@@ -13,13 +13,9 @@ import (
 
 // Executor is the main query execution engine
 type Executor struct {
-	matcher        PatternMatcher
-	entityResolver EntityResolver
-	planner        planner.QueryPlanner
-	// rewritePlanner plans the scopes the magic rewrite reads: the query
-	// planner's options with join-project insertion off, so no decompiled
-	// projection stands between a rule's clauses and its invocations.
-	rewritePlanner           planner.QueryPlanner
+	matcher                  PatternMatcher
+	entityResolver           EntityResolver
+	planner                  planner.QueryPlanner
 	options                  ExecutorOptions
 	enableParallelSubqueries bool
 	maxSubqueryWorkers       int
@@ -38,13 +34,6 @@ func defaultPlannerOptions() planner.PlannerOptions {
 		EnableStreamingAggregation: true,
 		EnableAttributeFetchFusion: true,
 	}
-}
-
-// newRewritePlanner builds the planner the magic rewrite reads scopes
-// through, from the query planner's options with join-project insertion off.
-func newRewritePlanner(opts planner.PlannerOptions) planner.QueryPlanner {
-	opts.EnableJoinProjectInsertion = false
-	return planner.CreatePlanner(nil, opts)
 }
 
 // NewExecutor creates a new query executor with default options
@@ -69,7 +58,6 @@ func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opt
 		matcher:                  matcher,
 		entityResolver:           resolver,
 		planner:                  queryPlanner,
-		rewritePlanner:           newRewritePlanner(opts),
 		options:                  execOpts,
 		enableParallelSubqueries: opts.EnableParallelSubqueries,
 		maxSubqueryWorkers:       opts.MaxSubqueryWorkers,
@@ -270,7 +258,6 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 		matcher:                  matcher,
 		entityResolver:           e.entityResolver,
 		planner:                  e.planner,
-		rewritePlanner:           e.rewritePlanner,
 		options:                  e.options,
 		enableParallelSubqueries: e.enableParallelSubqueries,
 		maxSubqueryWorkers:       e.maxSubqueryWorkers,
@@ -304,10 +291,25 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 
 	// The query is prepared once, before planning: its shapes checked, every
 	// nested form stating its header, every invocation resolved under the
-	// rule set. Nothing after this point sees a headerless form.
+	// rule set. Nothing after this point sees a headerless form. The
+	// preparation is reported with the prepared query, whether the inference
+	// rewrote a form, which InferHeaders states by returning the query it was
+	// given when it rewrote none, and preparation's time; prepared.String()
+	// renders the whole query, so the guard is here.
+	var prepareStart time.Time
+	if handler != nil {
+		prepareStart = time.Now()
+	}
 	prepared, err := query.Prepare(q, ctx.rules)
 	if err != nil {
 		return refused(err)
+	}
+	if handler != nil {
+		handler(annotations.TimedEvent(annotations.QueryPrepared, prepareStart,
+			map[string]interface{}{
+				"query":     prepared.String(),
+				"rewritten": prepared != q,
+			}))
 	}
 
 	// An attribute a source's schema does not declare is refused before
@@ -1451,14 +1453,12 @@ func validatePhaseOutput(phaseNumber int, phase planner.RealizedPhase, groups []
 	return nil
 }
 
-// SetPlanCache sets the plan cache for this executor, on the query's planner
-// and the rewrite's alike, so a scope the rewrite plans is served from the
-// same cache as the scope the executor runs.
+// SetPlanCache sets the plan cache on the executor's planner, through which
+// every scope, the rewrite's included, is planned.
 func (e *Executor) SetPlanCache(cache *planner.PlanCache) {
 	if e.planner != nil {
 		e.planner.SetCache(cache)
 	}
-	e.rewritePlanner.SetCache(cache)
 }
 
 // GetPlanner returns the executor's planner for direct access

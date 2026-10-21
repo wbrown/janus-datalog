@@ -212,14 +212,17 @@ while a closure is under evaluation is invisible to it.
 
 An invocation inside an `or-join` or `or-default-join` branch, a `not-join`
 body or a subquery's inner query is evaluated once per execution of the
-form, continued across the windows of the form's subject. The branch runs
-over each window's keys. A window's keys enter the seed predicate's stratum
-as a delta, the sets of every stratum and the derived-tuple count are
-carried from window to window, and the strata run again from the lowest one
-that changed, so each derived tuple is derived in one window.
-`rules/stratum.begin` fires at the first window and `rules/stratum.complete`
-at the last, and `rules/iteration` numbers each window's iterations from
-zero.
+form, continued across the windows of the form's subject, and a top-level
+invocation one of whose variable arguments a group that reports no size
+binds is evaluated the same way, as the one branch of a form whose subject
+is the groups binding its arguments, its result standing in their place. The
+branch runs over each window's keys. A window's keys enter the seed
+predicate's stratum as a delta, the sets of every stratum and the
+derived-tuple count are carried from window to window, and the strata run
+again from the lowest one that changed, so each derived tuple is derived in
+one window. `rules/stratum.begin` fires at the first window and
+`rules/stratum.complete` at the last, and `rules/iteration` numbers each
+window's iterations from zero.
 
 A rule body is planned by the query planner as a query of its own, under the
 database's planner options. Its plan enters the plan cache under its own
@@ -239,11 +242,11 @@ Two planner options bound an evaluation. Both are opt-in. Both are zero by
 default, and zero is unbounded:
 
 - `MaxRuleIterations`: the iterations one stratum may run, counted per window
-  for an invocation inside a form's branch. Exceeded, the query returns
+  for an invocation continued across windows. Exceeded, the query returns
   `*query.RuleIterationLimitError` naming the stratum's predicates, the limit
   and the iteration reached.
 - `MaxDerivedTuples`: the tuples one invocation's evaluation may derive,
-  carried across the windows for an invocation inside a form's branch. A
+  carried across the windows for an invocation continued across them. A
   rewritten set's magic predicates count too. Exceeded, the query returns
   `*query.DerivedTupleLimitError` naming the predicates, the limit and the
   count reached.
