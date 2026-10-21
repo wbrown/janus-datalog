@@ -1,9 +1,6 @@
 # Distributed Janus Datalog
 
-**Status:** Proposal
-**Author:** wbrown
-**Date:** 2026-01-29
-**Prerequisite:** [CRDT_VECTOR_STORAGE.md](CRDT_VECTOR_STORAGE.md) (CRDT-Based Storage Model)
+**Prerequisite:** [CRDT.md](../reference/CRDT.md) (CRDT-Based Storage Model)
 
 ---
 
@@ -25,13 +22,14 @@ Janus Datalog currently uses BadgerDB as a single-process, single-host backend. 
 ### Why Not Use an Existing Distributed Database?
 
 | Option | Problem |
-|--------|---------|
+| --- | --- |
 | **FoundationDB** | 10KB key size limit; our V (value) component can exceed this for lore text |
 | **TiKV** | Viable, but adds operational complexity and external dependency |
 | **CockroachDB** | Overkill; we don't need SQL |
 | **Datomic** | Closed source, expensive, JVM-only, single-transactor bottleneck, no vectors |
 
 Building on our CRDT storage model with content-addressed sharding gives us:
+
 - No key size limits
 - Conflict-free concurrent writes (no coordination needed)
 - Natural load distribution
@@ -41,21 +39,24 @@ Building on our CRDT storage model with content-addressed sharding gives us:
 
 ## Foundation: CRDT Storage Model
 
-The CRDT-based storage model (see [CRDT_VECTOR_STORAGE.md](CRDT_VECTOR_STORAGE.md)) provides the distributed foundation:
+The CRDT-based storage model (see [CRDT.md](../reference/CRDT.md)) provides the distributed foundation:
 
 **ElementID (Lamport, NodeID):**
+
 - Every write gets a unique `ElementID(Lamport, NodeID)`
 - Lamport clocks provide causal ordering without synchronized clocks
 - NodeID breaks ties deterministically
 - Conflict resolution is automatic—no coordination needed
 
 **Append-only writes:**
+
 - No retractions, only appends with new ElementID
 - Cardinality-one: highest ElementID wins
 - Cardinality-many: add-wins semantics with tombstones
 - Cardinality-vector: RGA merge
 
 **Unified cache:**
+
 - Caches resolved CRDT views per (E, A)
 - Freshness checked via MaxElementID
 - Invalidated on local writes, lazily refreshed
@@ -76,13 +77,14 @@ Shard = DatomIdentity % NumShards
 **Why datom identity, not entity:**
 
 | Aspect | Entity Sharding | Datom Identity Sharding |
-|--------|-----------------|-------------------------|
+| --- | --- | --- |
 | Load distribution | Hot entities = hot shards | Natural distribution |
 | Entity size limits | Large entities strain one shard | No limits |
 | Routing | Need entity→shard mapping | Just hash the datom |
 | Write coordination | Entity-local | None (CRDT merge) |
 
 **Why this works:**
+
 - CRDTs don't need locality for consistency
 - ElementID provides deterministic ordering regardless of storage location
 - Scatter-gather collects datoms, CRDT resolution produces the answer
@@ -236,11 +238,11 @@ func (n *Node) crdtResolve(datoms []Datom) *Entity {
 
 ### Query Optimization
 
-| Query Pattern | Strategy |
-|---------------|----------|
+| Query Pattern       | Strategy                                        |
+| ------------------- | ----------------------------------------------- |
 | `[entity :attr ?v]` | Scatter-gather for entity, resolve, return attr |
-| `[?e :attr value]` | Scatter-gather AVET index, dedupe entities |
-| `[?e :attr ?v]` | Full scatter, stream results |
+| `[?e :attr value]`  | Scatter-gather AVET index, dedupe entities      |
+| `[?e :attr ?v]`     | Full scatter, stream results                    |
 
 The cache amortizes scatter-gather cost. After first access, reads are O(1) until invalidation.
 
@@ -267,10 +269,10 @@ func (f *ShardFSM) Apply(log *raft.Log) interface{} {
 
 **Read consistency options:**
 
-| Mode | Latency | Consistency | Use Case |
-|------|---------|-------------|----------|
-| Local | ~100µs | Eventually consistent | Most reads |
-| Quorum | ~2ms | Majority agreement | Critical reads |
+| Mode   | Latency | Consistency           | Use Case       |
+| ------ | ------- | --------------------- | -------------- |
+| Local  | ~100µs  | Eventually consistent | Most reads     |
+| Quorum | ~2ms    | Majority agreement    | Critical reads |
 
 With CRDTs, "eventually consistent" is well-defined—all nodes converge to the same resolved values.
 
@@ -279,7 +281,7 @@ With CRDTs, "eventually consistent" is well-defined—all nodes converge to the 
 ## Comparison with Datomic
 
 | Aspect | Datomic | Distributed Janus |
-|--------|---------|-------------------|
+| --- | --- | --- |
 | **Write scaling** | Single transactor (bottleneck) | Any node accepts writes (CRDT) |
 | **Conflict resolution** | Last-write-wins (lossy) | CRDT merge (lossless) |
 | **Vectors** | Not supported | Native with RGA |
@@ -290,37 +292,14 @@ With CRDTs, "eventually consistent" is well-defined—all nodes converge to the 
 
 ---
 
-## Implementation Roadmap
-
-### Phase 1: Multi-Node Replication
-- [ ] Implement Lamport clock in Transaction
-- [ ] Add NodeID configuration
-- [ ] Implement datom identity hashing
-- [ ] Add Hashicorp Raft for shard replication
-- [ ] Implement scatter-gather query router
-- [ ] Integration tests with node failures
-
-### Phase 2: Production Hardening
-- [ ] Shard rebalancing (add/remove nodes)
-- [ ] Snapshot and recovery
-- [ ] Metrics and observability
-- [ ] Deployment documentation
-
-### Phase 3: Performance Optimization
-- [ ] RDMA transport for low-latency scatter-gather
-- [ ] Bloom filters for entity→shard hints
-- [ ] Predictive cache warming
-
----
-
 ## Risks and Mitigations
 
-| Risk | Mitigation |
-|------|------------|
-| Scatter-gather latency | Cache resolved views; most reads hit cache |
-| Lamport clock drift | Sync on every message; bounded by max seen |
-| Large entity scatter | Bloom filters hint which shards have datoms |
-| Network partitions | Raft quorum; CRDT merge on reconnect |
+| Risk                   | Mitigation                                  |
+| ---------------------- | ------------------------------------------- |
+| Scatter-gather latency | Cache resolved views; most reads hit cache  |
+| Lamport clock drift    | Sync on every message; bounded by max seen  |
+| Large entity scatter   | Bloom filters hint which shards have datoms |
+| Network partitions     | Raft quorum; CRDT merge on reconnect        |
 
 ---
 

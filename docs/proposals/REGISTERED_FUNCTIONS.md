@@ -51,11 +51,12 @@ With registered functions:
         [(compute-fire-damage ?base-dmg ?resist) ?actual-dmg]]
 ```
 
-The computation happens *inside* the query. Results are already correlated. The query remains declarative.
+The computation happens _inside_ the query. Results are already correlated. The query remains declarative.
 
 ### Use Cases
 
 **Game Rules Engine:**
+
 ```clojure
 ;; NPC behavior selection
 [:find ?npc ?action
@@ -73,7 +74,8 @@ The computation happens *inside* the query. Results are already correlated. The 
         [(resolve-attack ?stats ?armor) ?damage]]
 ```
 
-**Dependency Resolution (pkg/tasks use case):**
+**Dependency Resolution:**
+
 ```clojure
 [:find ?key ?subject
  :in $db $rules ?target
@@ -84,6 +86,7 @@ The computation happens *inside* the query. Results are already correlated. The 
 ```
 
 **Data Transformation:**
+
 ```clojure
 ;; Parse structured codes
 [:find ?region ?x ?y
@@ -175,16 +178,16 @@ datalog.RegisterFunction("myapp/compute", computeFn)
 
 Registered functions use the same type coercion as `QueryInto`:
 
-| Go Type | Datalog Value | Notes |
-|---------|---------------|-------|
-| `int64`, `int`, `int32` | Integer | Numeric coercion |
-| `float64`, `float32` | Float | Numeric coercion |
-| `string` | String | Direct |
-| `bool` | Boolean | Direct |
-| `time.Time` | Instant | Direct |
-| `datalog.Identity` | Entity ID | For entity references |
-| `datalog.Keyword` | Keyword | For attribute names, enums |
-| `[]byte` | Bytes | Direct |
+| Go Type                 | Datalog Value | Notes                      |
+| ----------------------- | ------------- | -------------------------- |
+| `int64`, `int`, `int32` | Integer       | Numeric coercion           |
+| `float64`, `float32`    | Float         | Numeric coercion           |
+| `string`                | String        | Direct                     |
+| `bool`                  | Boolean       | Direct                     |
+| `time.Time`             | Instant       | Direct                     |
+| `datalog.Identity`      | Entity ID     | For entity references      |
+| `datalog.Keyword`       | Keyword       | For attribute names, enums |
+| `[]byte`                | Bytes         | Direct                     |
 
 **Entity returns are joinable:**
 
@@ -267,6 +270,7 @@ datalog.RegisterFunction("safe-divide", func(a, b float64) (float64, error) {
 ```
 
 Behavior options:
+
 - **Filter mode** (default): Error → tuple filtered out (like predicate returning false)
 - **Fail mode**: Error → query fails
 
@@ -316,51 +320,6 @@ db.ExecuteQueryWithInputs(
     funcs,
 )
 ```
-
-## Implementation Plan
-
-### Phase 1: Function Registry
-
-1. Create `FunctionRegistry` type
-2. Implement `RegisterFunction` with reflection
-3. Implement `RegisterPredicate`
-4. Add type validation at registration time
-
-**Files:**
-- `datalog/functions/registry.go`
-- `datalog/functions/types.go`
-
-### Phase 2: Type Coercion
-
-1. Extract coercion logic from `datalog/reflect` into shared utilities
-2. Implement Datalog → Go coercion for function arguments
-3. Implement Go → Datalog coercion for return values
-4. Handle error returns
-
-**Files:**
-- `datalog/coerce/coerce.go` (extracted from reflect)
-- `datalog/functions/coerce.go` (function-specific)
-
-### Phase 3: Executor Integration
-
-1. Add function lookup during expression evaluation
-2. Implement function call wrapper
-3. Handle predicate vs function semantics
-4. Integrate with existing expression evaluation
-
-**Files:**
-- `datalog/executor/functions.go`
-- `datalog/executor/expression_evaluator.go` (modifications)
-
-### Phase 4: Query Builder Integration
-
-1. Add `qb.Func()` for function calls
-2. Add `qb.Pred()` for predicate calls
-3. Support in `Where()` clauses
-
-**Files:**
-- `datalog/qb/functions.go`
-- `datalog/qb/builder.go` (modifications)
 
 ## Examples
 
@@ -485,7 +444,7 @@ datalog.RegisterFunction("select-action", func(state NPCState, targetHP float64)
 
 - **Registration time**: Signature analysis happens once at registration
 - **Call time**: Use cached wrapper, minimal reflection per call
-- **Optimization**: For hot paths, consider code generation (future)
+- **Code generation** is the alternative for hot paths, at the cost of a build step
 
 ### Function Caching
 
@@ -538,7 +497,7 @@ Functions don't know or care which source values came from.
   [(+ ?d ?rest) ?dist]]]
 ```
 
-### Future: Upsert Semantics
+### Upsert Semantics
 
 Registered functions become powerful when combined with mutation:
 
@@ -557,61 +516,6 @@ Query finds affected entities, functions compute new values, upsert applies chan
 2. **Registered functions**: Game logic (damage, AI, physics)
 3. **Upsert**: Apply computed state changes
 4. **Recursive rules**: Pathfinding, propagation
-
-## Future Extensions
-
-### 1. Aggregate Functions
-
-Register custom aggregates:
-
-```go
-datalog.RegisterAggregate("median", medianFn)
-```
-
-```clojure
-[:find ?dept (median ?salary)
- :where [?e :employee/dept ?dept]
-        [?e :employee/salary ?salary]]
-```
-
-### 2. Generator Functions
-
-Functions that produce multiple values (like SQL table-valued functions):
-
-```go
-datalog.RegisterGenerator("range", func(start, end int64) iter.Seq[int64] {
-    return func(yield func(int64) bool) {
-        for i := start; i < end; i++ {
-            if !yield(i) { return }
-        }
-    }
-})
-```
-
-```clojure
-[:find ?n
- :where [(range 1 10) ?n]]  ;; Produces 1, 2, 3, ..., 9
-```
-
-### 3. Struct Coercion
-
-Pass/return structs with automatic field mapping:
-
-```go
-type DamageResult struct {
-    Physical float64
-    Magical  float64
-    Total    float64
-}
-
-datalog.RegisterFunction("compute-damage", func(...) DamageResult {
-    return DamageResult{Physical: 10, Magical: 5, Total: 15}
-})
-```
-
-```clojure
-[(compute-damage ...) {:physical ?phys :magical ?mag :total ?total}]
-```
 
 ## References
 
