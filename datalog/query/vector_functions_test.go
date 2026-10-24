@@ -483,13 +483,13 @@ func TestEnumerate(t *testing.T) {
 		result, err := fn.Eval(bindings)
 		require.NoError(t, err)
 
-		tuples, ok := result.([][]interface{})
-		require.True(t, ok, "enumerate should return [][]interface{}")
-		require.Len(t, tuples, 3)
-
-		assert.Equal(t, []interface{}{int64(0), "a"}, tuples[0])
-		assert.Equal(t, []interface{}{int64(1), "b"}, tuples[1])
-		assert.Equal(t, []interface{}{int64(2), "c"}, tuples[2])
+		// The collection of tuples is a vector of vectors, the value a
+		// relation ground holds.
+		assert.Equal(t, []interface{}{
+			[]interface{}{int64(0), "a"},
+			[]interface{}{int64(1), "b"},
+			[]interface{}{int64(2), "c"},
+		}, result)
 	})
 
 	t.Run("single element", func(t *testing.T) {
@@ -500,11 +500,7 @@ func TestEnumerate(t *testing.T) {
 
 		result, err := fn.Eval(bindings)
 		require.NoError(t, err)
-
-		tuples, ok := result.([][]interface{})
-		require.True(t, ok)
-		require.Len(t, tuples, 1)
-		assert.Equal(t, []interface{}{int64(0), "only"}, tuples[0])
+		assert.Equal(t, []interface{}{[]interface{}{int64(0), "only"}}, result)
 	})
 }
 
@@ -516,10 +512,7 @@ func TestEnumerateEmpty(t *testing.T) {
 
 	result, err := fn.Eval(bindings)
 	require.NoError(t, err)
-
-	tuples, ok := result.([][]interface{})
-	require.True(t, ok)
-	assert.Len(t, tuples, 0, "enumerate of empty vector should return empty slice")
+	assert.Equal(t, []interface{}{}, result, "enumerate of an empty vector is the empty relation")
 }
 
 // Test error handling
@@ -664,16 +657,4 @@ func TestVectorFunctionRequiredSymbols(t *testing.T) {
 		assert.Contains(t, symbols, datalog.NewSymbol("?start"))
 		assert.Contains(t, symbols, datalog.NewSymbol("?end"))
 	})
-}
-
-// Test ReturnType methods
-func TestVectorFunctionReturnTypes(t *testing.T) {
-	assert.Equal(t, "any", NthFunction{}.ReturnType())
-	assert.Equal(t, "any", FirstFunction{}.ReturnType())
-	assert.Equal(t, "any", LastFunction{}.ReturnType())
-	assert.Equal(t, "number", LengthFunction{}.ReturnType())
-	assert.Equal(t, "boolean", ContainsFunction{}.ReturnType())
-	assert.Equal(t, "number", IndexOfFunction{}.ReturnType())
-	assert.Equal(t, "vector", SubvecFunction{}.ReturnType())
-	assert.Equal(t, "tuples", EnumerateFunction{}.ReturnType())
 }

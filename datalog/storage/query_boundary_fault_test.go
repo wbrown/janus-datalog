@@ -23,12 +23,15 @@ import (
 
 var errInjectedScanFault = errors.New("injected scan fault")
 
-// scanFaultStore fails the iterators it hands out, once armed. Setup writes
-// through it unarmed, so only the reads under test fail.
+// scanFaultStore fails the iterators it hands out, once armed, and counts
+// them, so a reader that opens one scan on a failing read is told apart from
+// one that retries. Setup writes through it unarmed, so only the reads under
+// test fail.
 type scanFaultStore struct {
 	Store
 	armed     bool
 	failAfter int
+	scans     int
 }
 
 func (s *scanFaultStore) arm() { s.armed = true }
@@ -37,6 +40,7 @@ func (s *scanFaultStore) wrap(it Iterator, err error) (Iterator, error) {
 	if err != nil || !s.armed {
 		return it, err
 	}
+	s.scans++
 	return &scanFaultIterator{Iterator: it, remaining: s.failAfter}, nil
 }
 

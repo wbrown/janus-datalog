@@ -74,7 +74,9 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	"encoder":        fieldInherited,
 	"planCache":      fieldInherited,
 	"parseCache":     fieldInherited, // shared parse results are immutable post-parse
-	"schema":         fieldInherited,
+	"installed":      fieldInherited, // the schema in force and the store's definitions, one value the handle shares with the parent
+	"refuseUnknown":  fieldInherited, // the RefuseUnknownAttributes option; a handle refuses what its parent refuses
+	"givenSchema":    fieldInherited, // the parent's declaration; a handle declares nothing of its own
 	"plannerOptions": fieldInherited, // carries the handler; the handle inherits both together
 	"clock":          fieldInherited,
 	"replicaID":      fieldInherited,
@@ -84,9 +86,12 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	"activeTx":           fieldZeroed, // writes prohibited on temporal handles
 	"onCommitWindow":     fieldZeroed, // test-only commit-window hook (write path)
 	"onDrainWait":        fieldZeroed, // test-only rollback drain hook (write path)
+	"onInstallLock":      fieldZeroed, // test-only install-lock hook; a handle refuses SetSchema
+	"onInstallLocked":    fieldZeroed, // test-only hook once the install lock is held; a handle refuses SetSchema
 	"rollbackInProgress": fieldZeroed, // rollback coordination (write path)
 	"drainCond":          fieldZeroed,
 	"rollbackMu":         fieldZeroed,
+	"schemaInstallMu":    fieldZeroed, // lock; a handle installs no schema
 	"removePath":         fieldZeroed, // parent's scratch dir; a handle holding it would RemoveAll the parent's data
 
 	// builderCache is snapshot-independent (keyed on pattern structure), so
@@ -148,8 +153,8 @@ func testTemporalHandleFieldClassification(t *testing.T, backend Backend) {
 		if handle.parseCache != db.parseCache {
 			t.Errorf("%s: parseCache not inherited", handleName)
 		}
-		if handle.schema != db.schema {
-			t.Errorf("%s: schema not inherited", handleName)
+		if handle.installed.Load() != db.installed.Load() {
+			t.Errorf("%s: installed schema not inherited", handleName)
 		}
 		if handle.plannerOptions != db.plannerOptions {
 			t.Errorf("%s: plannerOptions not inherited", handleName)

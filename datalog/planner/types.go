@@ -86,7 +86,7 @@ type PredicatePlan struct {
 type ExpressionPlan struct {
 	Expression *query.Expression // Use the new Expression type
 	Inputs     []query.Symbol    // Symbols this expression needs
-	Output     interface{}       // Symbol (scalar) or TupleBinding (tuple)
+	Output     interface{}       // The expression's binding: a Symbol, a TupleBinding, a CollectionBinding or a RelationBinding
 	IsEquality bool              // True if this is an equality check (no binding)
 }
 
@@ -94,6 +94,13 @@ type ExpressionPlan struct {
 type SubqueryPlan struct {
 	Subquery *query.SubqueryPattern // The subquery pattern
 	Inputs   []query.Symbol         // Symbols this subquery needs from outer query
+}
+
+// InvocationPlan is a planned rule invocation: the clause and the variable
+// arguments available before it, which the derived relation joins on.
+type InvocationPlan struct {
+	Invocation *query.RuleInvocation
+	Bound      []query.Symbol
 }
 
 // BoundMask indicates which elements of a pattern are bound
@@ -122,17 +129,35 @@ type PlannerOptions struct {
 	EnableEntityPrefetch       bool // Warm EA cache after first DataPattern via PrefetchEntities (default: false)
 	EnableAttributeFetchFusion bool // Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple binding instead of match+join (default: true)
 
+	// CollectRosters holds with each plan the rosters of what its query names
+	// on each source (RealizedPlan.Rosters), which the unknown-attribute
+	// check at the executor's entry reads when a source the plan runs over
+	// refuses attributes its schema does not declare. An executor sets it
+	// from whether a source its matcher routes to refuses, so a plan made for
+	// sources that refuse nothing carries none and costs no walk (default:
+	// false).
+	CollectRosters bool
+
 	// Executor streaming options - control memory vs performance tradeoffs
 	EnableTrueStreaming     bool // Avoid auto-materialization of StreamingRelation (default: true)
 	EnableSymmetricHashJoin bool // Use symmetric hash join for stream-to-stream joins (default: false)
 
-	// Executor parallel execution options
-	EnableParallelSubqueries bool // Execute subqueries in parallel (default: true)
-	MaxSubqueryWorkers       int  // Maximum parallel workers for subqueries (0 = 4)
-
 	// Executor join/aggregation options
 	EnableStreamingJoins       bool // Return StreamingRelation from joins instead of materializing
 	EnableStreamingAggregation bool // Enable streaming aggregation (default: true)
+
+	// Rule evaluation bounds, each an error naming the predicates and the
+	// count reached when exceeded. Zero is unbounded (default: 0).
+	MaxRuleIterations int // Fixpoint iterations per stratum
+	MaxDerivedTuples  int // Tuples one rule set derives
+
+	// The window a form's branches run over
+	// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.2). Every subject,
+	// sized or streaming, is read into windows of one tuple, then
+	// ScopeWindowGrowth times the last, up to ScopeWindowCap tuples. Zero
+	// takes the executor's default.
+	ScopeWindowCap    int
+	ScopeWindowGrowth int
 
 	// Handler receives annotation events from planning and execution. Nil is
 	// annotations-off and is the default. Registered here, on the options the
@@ -175,13 +200,21 @@ type RealizedPhase struct {
 	Expressions []ExpressionPlan // Expression plans with inputs/outputs
 	Predicates  []PredicatePlan  // Predicate plans with classification
 	Subqueries  []SubqueryPlan   // Subquery plans with nested queries
+	Invocations []InvocationPlan // Rule invocations with their bound arguments
 }
 
 // RealizedPlan is the output of the planner in the realized format.
 // The executor operates on RealizedPlan directly.
 type RealizedPlan struct {
-	Query  *query.Query    // Original user query
+	Query  *query.Query    // The prepared query the plan was made from
 	Phases []RealizedPhase // Phases as Datalog query fragments
+
+	// Rosters is what the prepared query names (query.CollectRosters),
+	// collected at planning under PlannerOptions.CollectRosters and held with
+	// the plan, so a plan the cache serves names its text once; the
+	// vocabulary check at the executor's entry reads it after planning. Nil
+	// for a plan made without the option.
+	Rosters *query.Rosters
 }
 
 // String returns a human-readable representation of a RealizedPhase
@@ -250,6 +283,16 @@ func (rp *RealizedPhase) String() string {
 			sb.WriteString(fmt.Sprintf("  %s\n", subq.Subquery.String()))
 			if len(subq.Inputs) > 0 {
 				sb.WriteString(fmt.Sprintf("    Inputs: %v\n", subq.Inputs))
+			}
+		}
+	}
+
+	if len(rp.Invocations) > 0 {
+		sb.WriteString("Invocations:\n")
+		for _, inv := range rp.Invocations {
+			sb.WriteString(fmt.Sprintf("  %s\n", inv.Invocation.String()))
+			if len(inv.Bound) > 0 {
+				sb.WriteString(fmt.Sprintf("    Bound: %v\n", inv.Bound))
 			}
 		}
 	}

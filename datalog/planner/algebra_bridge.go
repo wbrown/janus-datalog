@@ -17,9 +17,11 @@ const joinProjectPassName = "join-project-insertion"
 // the configured equivalence passes without flattening the optimized tree. The
 // full query goes to Compile — its :in symbols seed the bridge's clause
 // ordering (an input-bound correlate is bindable), so stripping them here
-// would reject valid queries. Both trees return so provenance consumers can
-// hold the before and after.
-func optimizeAlgebra(q *query.Query, handler annotations.Handler, sink *algebra.RewriteSink) (compiled *algebra.Node, optimized *algebra.Node, err error) {
+// would reject valid queries. The bindings are what the caller holds when it
+// asks for the plan; the rule set among them is what the compiler and the
+// passes fold under. Both trees return so provenance consumers can hold the
+// before and after.
+func optimizeAlgebra(q *query.Query, bindings query.Bindings, handler annotations.Handler, sink *algebra.RewriteSink) (compiled *algebra.Node, optimized *algebra.Node, err error) {
 	// The guard is the caller's, never the emitter's: `tree` is a whole-tree
 	// walk through algebra.formatNode, and Go evaluates it before the call, so a
 	// check inside emit would render both trees and discard them on every plan.
@@ -33,11 +35,11 @@ func optimizeAlgebra(q *query.Query, handler annotations.Handler, sink *algebra.
 		})
 	}
 
-	compiled, err = algebra.Compile(q)
+	compiled, err = algebra.Compile(q, bindings.Rules)
 	if err != nil {
 		if handler != nil {
 			emit(annotations.AlgebraCompileError, map[string]interface{}{
-				"error": err.Error(),
+				annotations.KeyError: err.Error(),
 			})
 		}
 		return nil, nil, fmt.Errorf("algebra compile: %w", err)
@@ -54,7 +56,7 @@ func optimizeAlgebra(q *query.Query, handler annotations.Handler, sink *algebra.
 	if err != nil {
 		if handler != nil {
 			emit(annotations.AlgebraOptimizeError, map[string]interface{}{
-				"error": err.Error(),
+				annotations.KeyError: err.Error(),
 			})
 		}
 		return nil, nil, fmt.Errorf("algebra optimize: %w", err)
@@ -78,6 +80,7 @@ func optimizeAlgebra(q *query.Query, handler annotations.Handler, sink *algebra.
 // collects nothing.
 func optimizeViaAlgebra(
 	q *query.Query,
+	bindings query.Bindings,
 	options PlannerOptions,
 	handler annotations.Handler,
 	expl *AlgebraExplanation,
@@ -86,16 +89,18 @@ func optimizeViaAlgebra(
 		return nil, fmt.Errorf("algebra optimize: nil query")
 	}
 	sink := &algebra.RewriteSink{Handler: handler, Collect: expl != nil}
-	compiled, optimized, err := optimizeAlgebra(q, handler, sink)
+	compiled, optimized, err := optimizeAlgebra(q, bindings, handler, sink)
 	if err != nil {
 		return nil, err
 	}
 	if options.EnableJoinProjectInsertion {
 		hasValueInput := false
 		for _, input := range q.In {
-			if _, isDatabase := input.(query.DatabaseInput); !isDatabase {
+			switch input.(type) {
+			case query.DatabaseInput, query.RulesInput:
+				// Execution context, not a value binding.
+			default:
 				hasValueInput = true
-				break
 			}
 		}
 		observing := sink.Recording()
@@ -137,13 +142,19 @@ func optimizeViaAlgebra(
 		if handler != nil {
 			handler(annotations.Event{
 				Name: annotations.AlgebraDecompileError,
-				Data: map[string]interface{}{"error": err.Error()},
+				Data: map[string]interface{}{annotations.KeyError: err.Error()},
 			})
 		}
 		return nil, fmt.Errorf("algebra decompile: %w", err)
 	}
-	rewritten := *q
-	rewritten.Where = clauses
+	rewritten := &query.Query{
+		Find:         q.Find,
+		In:           q.In,
+		Where:        clauses,
+		OrderBy:      q.OrderBy,
+		Limit:        q.Limit,
+		ScalarReturn: q.ScalarReturn,
+	}
 	if handler != nil {
 		handler(annotations.Event{
 			Name: annotations.AlgebraBridgeComplete,
@@ -157,7 +168,7 @@ func optimizeViaAlgebra(
 		expl.Compiled = compiled
 		expl.Rewrites = sink.Records()
 		expl.Optimized = optimized
-		expl.Rewritten = &rewritten
+		expl.Rewritten = rewritten
 	}
-	return &rewritten, nil
+	return rewritten, nil
 }

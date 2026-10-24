@@ -208,15 +208,18 @@ func TestTimeRangeOptimizationCorrectness(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Execution failed: %v", err)
 			}
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("Failed to read the result: %v", err)
+			}
 
 			// Should have 5 hours of results (9-13)
-			if result.Size() != 5 {
-				t.Errorf("Expected 5 hours of data, got %d", result.Size())
+			if len(tuples) != 5 {
+				t.Errorf("Expected 5 hours of data, got %d", len(tuples))
 			}
 
 			// Verify each hour has correct high/low aggregation
-			for i := 0; i < result.Size(); i++ {
-				tuple := result.Get(i)
+			for _, tuple := range tuples {
 				if len(tuple) < 3 {
 					t.Errorf("Tuple too short: %v", tuple)
 					continue

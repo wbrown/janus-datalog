@@ -63,7 +63,8 @@ func TestBindQueryInputs_TwoCollectionsCrossProduct(t *testing.T) {
 
 	// Bind the inputs
 	inputRelations := []Relation{entityRel, attrRel}
-	bound := BindQueryInputs(q, inputRelations)
+	bound, err := BindQueryInputs(q, inputRelations)
+	require.NoError(t, err)
 
 	t.Logf("Bound relation - symbols: %v, size: %d", bound.Symbols(), bound.Size())
 	it = bound.Iterator()
@@ -101,7 +102,8 @@ func TestBindQueryInputs_EmptyCollectionReturnsEmpty(t *testing.T) {
 	t.Logf("Empty entity relation - size: %d", entityRel.Size())
 
 	inputRelations := []Relation{entityRel}
-	bound := BindQueryInputs(q, inputRelations)
+	bound, err := BindQueryInputs(q, inputRelations)
+	require.NoError(t, err)
 
 	t.Logf("Bound relation - symbols: %v, size: %d", bound.Symbols(), bound.Size())
 
@@ -131,7 +133,8 @@ func TestBindQueryInputs_SingleCollection(t *testing.T) {
 	)
 
 	inputRelations := []Relation{entityRel}
-	bound := BindQueryInputs(q, inputRelations)
+	bound, err := BindQueryInputs(q, inputRelations)
+	require.NoError(t, err)
 
 	t.Logf("Bound relation - symbols: %v, size: %d", bound.Symbols(), bound.Size())
 

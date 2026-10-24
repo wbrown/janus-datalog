@@ -30,6 +30,12 @@ type CacheEntry struct {
 	inFlight    bool
 	version     datalog.ElementID // Max ElementID when this entry was computed
 	cardinality datalog.Keyword
+	// unique is whether the entry was resolved under the unique rule, the
+	// resolver's answer (CacheResolver.ResolvesUnique) when it was built, or
+	// false for an entry PopulateFromDatoms built from a group's datoms under
+	// the plain rule. With cardinality it is the entry's resolution rule: a
+	// reader under another rule is not served the entry.
+	unique bool
 
 	// Resolved views (one populated based on cardinality)
 	oneValue    any                 // Cardinality-One: single current value
@@ -214,6 +220,11 @@ func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
 
 // GetOrResolve returns the cached entry if fresh, rebuilding if stale.
 //
+// card is the cardinality the caller resolves the attribute under, the
+// schema's for a declared attribute and one otherwise. An entry resolved under
+// another cardinality is not a hit: a set's view serves no reader under
+// cardinality one, so the entry is rebuilt under card.
+//
 // bound is the caller's snapshot high-water mark, following the matcher's
 // *ElementID mode convention: nil reads latest (any fresh entry serves);
 // non-nil serves a fresh entry only when the slot's version lies within the
@@ -234,7 +245,8 @@ func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
 //
 // Accrual happens inside the resolvers, so a rebuild that fails keeps what it
 // read; the callers that report nothing pass DiscardIntake and say so.
-func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalog.ElementID, handler annotations.Handler, report *scanReport) (*CacheEntry, error) {
+func (c *Cache) GetOrResolve(key CacheKey, card datalog.Keyword, resolver CacheResolver, bound *datalog.ElementID, handler annotations.Handler, report *scanReport) (*CacheEntry, error) {
+	card = resolvedCardinality(card)
 	// Fast path: one trie walk yields the entry and its freshness bound.
 	slot, ok := c.slots.Load(key)
 	if ok && slot.entry != nil {
@@ -245,31 +257,49 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 			if handler != nil {
 				annotateRebuild(handler, key, "in-flight", slot)
 			}
-			entry, err := ResolveEntry(key, resolver, report)
+			entry, err := ResolveEntry(key, card, resolver, report)
 			if err != nil {
 				return nil, err
 			}
 			return entry, nil
 		}
 
-		// Fresh iff the entry's version matches the slot's high-water mark —
-		// and, for a bounded read, the latest write lies within the snapshot,
-		// which makes the fresh entry identical to the session's resolution.
-		if slot.entry.version == slot.version {
-			if bound == nil || slot.version.Compare(*bound) <= 0 {
-				// Fresh - cache hit. No index was read to answer this call, so
-				// the report accrues nothing.
-				return slot.entry, nil
+		// Fresh iff the entry's version matches the slot's high-water mark
+		// and the entry was resolved under the rule this reader resolves
+		// under, cardinality and uniqueness — and, for a bounded read, the
+		// latest write lies within the snapshot, which makes the fresh entry
+		// identical to the session's resolution.
+		switch {
+		case slot.entry.version != slot.version:
+			// Stale - fall through to rebuild
+			if handler != nil {
+				annotateRebuild(handler, key, "stale", slot)
 			}
+		case slot.entry.cardinality != card:
+			// Resolved under another declaration of the attribute: a set's
+			// view serves no reader under cardinality one. The rebuild under
+			// this reader's cardinality stands at the same version and so
+			// replaces the entry.
+			if handler != nil {
+				annotateRebuild(handler, key, "cardinality", slot)
+			}
+		case slot.entry.unique != resolver.ResolvesUnique(key.A):
+			// Resolved under the other uniqueness rule: a value the unique
+			// walk settled serves no reader under the plain rule, and the
+			// plain first entry serves none under the walk. The rebuild under
+			// this reader's rule replaces the entry.
+			if handler != nil {
+				annotateRebuild(handler, key, "uniqueness", slot)
+			}
+		case bound == nil || slot.version.Compare(*bound) <= 0:
+			// Fresh - cache hit. No index was read to answer this call, so
+			// the report accrues nothing.
+			return slot.entry, nil
+		default:
 			// Fresh but past the caller's snapshot — resolve through the
 			// caller's session instead of serving the future.
 			if handler != nil {
 				annotateRebuild(handler, key, "snapshot-bound", slot)
-			}
-		} else {
-			// Stale - fall through to rebuild
-			if handler != nil {
-				annotateRebuild(handler, key, "stale", slot)
 			}
 		}
 	} else if handler != nil {
@@ -279,7 +309,7 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver, bound *datalo
 	// Slow path: rebuild and store
 	// Note: Two goroutines might both rebuild for the same key.
 	// That's fine - CRDT resolution is deterministic, both compute same result.
-	entry, err := ResolveEntry(key, resolver, report)
+	entry, err := ResolveEntry(key, card, resolver, report)
 	if err != nil {
 		// A failed resolution is not an absent value, and it is emphatically
 		// not something to cache: storing it would make one failed scan the
@@ -420,12 +450,12 @@ func (c *Cache) GetCachedAttrs(e Entity) map[Attribute]bool {
 // cached here in a single call.
 func (c *Cache) PopulateFromDatoms(key CacheKey, card datalog.Keyword, datoms []datalog.Datom) {
 	// Skip if a commit to this (E, A) is in flight (the committer owns the cache
-	// for this key), or if already cached and fresh.
+	// for this key), or if already cached and fresh under this cardinality.
 	if slot, ok := c.slots.Load(key); ok && slot.entry != nil {
 		if slot.entry.inFlight {
 			return
 		}
-		if slot.entry.version == slot.version {
+		if slot.entry.version == slot.version && slot.entry.cardinality == resolvedCardinality(card) {
 			return
 		}
 	}
@@ -482,7 +512,18 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card datalog.Keyword, datoms []
 	}
 }
 
-// ResolveEntry resolves the current value for (E, A) based on cardinality.
+// resolvedCardinality is the cardinality an (E, A) resolves under: the
+// attribute's declared one, and one for an attribute with no declaration.
+func resolvedCardinality(card datalog.Keyword) datalog.Keyword {
+	switch card {
+	case schema.CardinalityMany, schema.CardinalityVector:
+		return card
+	}
+	return schema.CardinalityOne
+}
+
+// ResolveEntry resolves the current value for (E, A) under card, the
+// cardinality the caller resolves the attribute under.
 //
 // It returns three outcomes, and they are three: an error, a non-nil entry, or
 // a nil entry with a nil error meaning **this (E, A) has no datoms**. Absence
@@ -493,23 +534,14 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card datalog.Keyword, datoms []
 // It takes no receiver: resolution reads storage through the resolver and
 // touches no cache state. GetOrResolve is this plus the freshness check and the
 // store; the cache-disabled read path calls it directly.
-func ResolveEntry(key CacheKey, resolver CacheResolver, report *scanReport) (*CacheEntry, error) {
-	card := resolver.GetCardinality(key.A)
-
-	switch card {
-	case schema.CardinalityOne:
-		return rebuildOne(key, resolver, report)
-
+func ResolveEntry(key CacheKey, card datalog.Keyword, resolver CacheResolver, report *scanReport) (*CacheEntry, error) {
+	switch resolvedCardinality(card) {
 	case schema.CardinalityMany:
 		return rebuildMany(key, resolver, report)
-
 	case schema.CardinalityVector:
 		return rebuildVector(key, resolver, report)
-
-	default:
-		// Default to cardinality-one for schemaless
-		return rebuildOne(key, resolver, report)
 	}
+	return rebuildOne(key, resolver, report)
 }
 
 // rebuildOne resolves cardinality-one using LWW semantics
@@ -530,6 +562,7 @@ func rebuildOne(key CacheKey, resolver CacheResolver, report *scanReport) (*Cach
 	entry := &CacheEntry{
 		version:     maxID,
 		cardinality: schema.CardinalityOne,
+		unique:      resolver.ResolvesUnique(key.A),
 		oneValue:    value,
 	}
 	if report != nil {
@@ -555,6 +588,7 @@ func rebuildMany(key CacheKey, resolver CacheResolver, report *scanReport) (*Cac
 	entry := &CacheEntry{
 		version:     maxID,
 		cardinality: schema.CardinalityMany,
+		unique:      resolver.ResolvesUnique(key.A),
 		manySet:     members,
 	}
 	if report != nil {
@@ -580,6 +614,7 @@ func rebuildVector(key CacheKey, resolver CacheResolver, report *scanReport) (*C
 	entry := &CacheEntry{
 		version:     maxID,
 		cardinality: schema.CardinalityVector,
+		unique:      resolver.ResolvesUnique(key.A),
 		vectorList:  elements,
 		vectorIndex: positions,
 	}
@@ -599,9 +634,6 @@ func rebuildVector(key CacheKey, resolver CacheResolver, report *scanReport) (*C
 // report, and the cache stores the entry's own share on the CacheEntry, which is
 // what the read bought.
 type CacheResolver interface {
-	// GetCardinality returns the cardinality for an attribute
-	GetCardinality(a Attribute) datalog.Keyword
-
 	// Every resolve method reports `present`: whether the (E, A) carries any
 	// datom at all. It is not "did a value survive resolution" — a tombstoned
 	// scalar, an all-removed set and an all-tombstoned vector are all present,
@@ -612,6 +644,12 @@ type CacheResolver interface {
 	// It is reported rather than derived because nothing in the resolved value
 	// carries it: zero members, an empty vector and a nil scalar all occur in
 	// both states.
+
+	// ResolvesUnique reports whether the resolver resolves a under the unique
+	// rule, the entity's first assertion no other entity's later claim
+	// supersedes. An entry built through the resolver carries the answer,
+	// and the cache serves an entry to a reader whose answer is the same.
+	ResolvesUnique(a Attribute) bool
 
 	// ResolveLWW returns the current value for cardinality-one (highest ElementID wins)
 	// Returns (value, maxElementID, present, error); intake accrues into the report.

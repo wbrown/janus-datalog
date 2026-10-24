@@ -25,7 +25,7 @@ func TestResolveEntityAttributes_SingleAttribute(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -60,7 +60,7 @@ func TestResolveEntityAttributes_MultipleAttributes(t *testing.T) {
 				Attribute(":person/email").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -103,7 +103,7 @@ func TestResolveEntityAttributes_CardinalityMany(t *testing.T) {
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -142,7 +142,7 @@ func TestResolveEntityAttributes_CardinalityVector(t *testing.T) {
 				Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data (tx.Add appends to vector)
 			tx := db.NewTransaction()
@@ -180,7 +180,7 @@ func TestResolveEntityAttributes_LWWResolution(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data then update
 			e1 := datalog.NewIdentity("person1")
@@ -221,7 +221,7 @@ func TestResolveEntityAttributes_MissingAttribute(t *testing.T) {
 				Attribute(":person/age").Type(schema.TypeLong).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add only name, not age
 			tx := db.NewTransaction()
@@ -259,7 +259,7 @@ func TestResolveEntityAttributes_UsesCachedEntries(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()

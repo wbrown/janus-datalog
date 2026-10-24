@@ -11,13 +11,12 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// TestOrJoinProjectionInheritsOuterBindings reproduces the bug documented in
-// ORJOIN_PROJECTION_REQUIRES_REBINDING.md
-//
-// When or-join projection variables are already bound by outer clauses,
-// Datomic makes those bindings available inside each branch. Janus Datalog
-// currently does not: it converts or-join to plain or, discarding the
-// JoinVars, so branches execute without outer context.
+// TestOrJoinRequiredRunCarriesOuterBindings: an or-join whose branches each
+// bind one of two outer-bound variables states both in its required run, so
+// the outer bindings reach every branch. Written as a flat header, the same
+// form is refused: a flat header variable is an output, every branch binds
+// every output, and the refusal names the form, the branch and the variable
+// with the repair of moving it into the required run.
 //
 // Data model: containers have an owner, location, and items.
 // Items or containers can be flagged. Containers can be archived or deleted.
@@ -25,7 +24,7 @@ import (
 // The query: find items in containers matching an owner+location, where
 // either the item OR its container is flagged, excluding archived/deleted
 // containers.
-func TestOrJoinProjectionInheritsOuterBindings(t *testing.T) {
+func TestOrJoinRequiredRunCarriesOuterBindings(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Schema: :container/item is cardinality-many (a container has multiple items)
@@ -77,10 +76,10 @@ func TestOrJoinProjectionInheritsOuterBindings(t *testing.T) {
 			_, err := tx.Commit()
 			require.NoError(t, err)
 
-			t.Run("idiomatic_or_join_with_outer_bindings", func(t *testing.T) {
-				// This is the idiomatic Datomic pattern from the bug doc.
+			t.Run("required_run_carries_outer_bindings", func(t *testing.T) {
 				// ?container and ?item are bound by outer clauses; the or-join
-				// varies which entity carries :item/flagged.
+				// varies which entity carries :item/flagged, and its required
+				// run carries both bindings into every branch.
 				//
 				// Expected: items 1 and 2 from container A (warehouse-1, not archived)
 				// Item 1 matches because it is directly flagged.
@@ -94,22 +93,42 @@ func TestOrJoinProjectionInheritsOuterBindings(t *testing.T) {
 			  [?container :container/owner ?owner]
 			  [?container :container/location ?location]
 			  [?container :container/item ?item]
+			  (or-join [[?container ?item]]
+			    [?item :item/flagged true]
+			    [?container :item/flagged true])
+			  (not [?container :container/archived true])]`,
+					owner, "warehouse-1"))
+				require.NoError(t, err, "or-join with outer-bound required variables should not error")
+				assert.Len(t, result, 2, "should find 2 flagged items in warehouse-1")
+			})
+
+			t.Run("flat_header_a_branch_does_not_bind_is_refused", func(t *testing.T) {
+				_, err := executor.CollectTuples(db.Query(
+					`[:find ?item
+			  :in $ ?owner ?location
+			  :where
+			  [?container :container/owner ?owner]
+			  [?container :container/location ?location]
+			  [?container :container/item ?item]
 			  (or-join [?container ?item]
 			    [?item :item/flagged true]
 			    [?container :item/flagged true])
 			  (not [?container :container/archived true])]`,
 					owner, "warehouse-1"))
-				require.NoError(t, err, "or-join with outer-bound projection variables should not error")
-				assert.Len(t, result, 2, "should find 2 flagged items in warehouse-1")
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "branch 1 does not bind ?container")
+				require.Contains(t, err.Error(), "move ?container into the required run")
 			})
 
 			t.Run("workaround_repeated_bindings", func(t *testing.T) {
-				// The documented workaround: duplicate binding clauses inside each branch.
+				// The binding clauses are duplicated inside each branch, and the
+				// inputs they read reach the branches through the required run
+				// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.2).
 				result, err := executor.CollectTuples(db.Query(
 					`[:find ?item
 			  :in $ ?owner ?location
 			  :where
-			  (or-join [?container ?item]
+			  (or-join [[?owner ?location] ?container ?item]
 			    (and [?container :container/owner ?owner]
 			         [?container :container/location ?location]
 			         [?container :container/item ?item]
@@ -124,7 +143,7 @@ func TestOrJoinProjectionInheritsOuterBindings(t *testing.T) {
 				assert.Len(t, result, 2, "workaround should find 2 flagged items")
 			})
 
-			t.Run("qb_or_join_with_outer_bindings", func(t *testing.T) {
+			t.Run("qb_required_run_carries_outer_bindings", func(t *testing.T) {
 				// Same query via the qb builder.
 				container := qb.NewVar("container")
 				item := qb.NewVar("item")
@@ -138,7 +157,7 @@ func TestOrJoinProjectionInheritsOuterBindings(t *testing.T) {
 						qb.Pat(container, qb.Kw(":container/owner"), ownerVar),
 						qb.Pat(container, qb.Kw(":container/location"), locationVar),
 						qb.Pat(container, qb.Kw(":container/item"), item),
-						qb.OrJoin(container, item).
+						qb.OrJoin().Require(container, item).
 							Branch(qb.Pat(item, qb.Kw(":item/flagged"), qb.V(true))).
 							Branch(qb.Pat(container, qb.Kw(":item/flagged"), qb.V(true))),
 						qb.Not(qb.Pat(container, qb.Kw(":container/archived"), qb.V(true))),
@@ -146,22 +165,21 @@ func TestOrJoinProjectionInheritsOuterBindings(t *testing.T) {
 					MustBuild()
 
 				result, err := executor.CollectTuples(db.Query(q, owner, "warehouse-1"))
-				require.NoError(t, err, "qb or-join with outer-bound projection variables should not error")
+				require.NoError(t, err, "qb or-join with outer-bound required variables should not error")
 				assert.Len(t, result, 2, "should find 2 flagged items in warehouse-1")
 			})
 
-			t.Run("simple_or_join_projects_outer_variable", func(t *testing.T) {
-				// Minimal reproduction: or-join lists a variable in its projection
-				// that is only bound by an outer clause, not by any branch.
-				// The or-join should carry the outer binding through.
+			t.Run("simple_required_run_carries_outer_variable", func(t *testing.T) {
+				// Minimal form: the or-join's required run names variables an
+				// outer clause binds and not every branch binds.
 				result, err := executor.CollectTuples(db.Query(
 					`[:find ?container ?item
 			  :where
 			  [?container :container/item ?item]
-			  (or-join [?container ?item]
+			  (or-join [[?container ?item]]
 			    [?item :item/flagged true]
 			    [?container :item/flagged true])]`))
-				require.NoError(t, err, "or-join should inherit outer binding for ?container")
+				require.NoError(t, err, "or-join should carry the outer binding of ?container")
 				// Items 1 (item flagged), 2 (container A flagged), 3 (item flagged), 4 (item flagged)
 				// Container A is flagged, so all its items (1, 2) match via either branch.
 				assert.GreaterOrEqual(t, len(result), 3,

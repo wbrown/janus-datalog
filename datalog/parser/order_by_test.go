@@ -154,7 +154,7 @@ func TestOrderByFormatting(t *testing.T) {
 				t.Fatalf("ParseQuery() error = %v", err)
 			}
 
-			formatted := FormatQuery(q)
+			formatted := q.String()
 
 			// Parse the formatted query back
 			q2, err := ParseQuery(formatted)
@@ -179,12 +179,12 @@ func TestOrderByFormatting(t *testing.T) {
 	}
 }
 
-// TestOrderByValidation pins the sort-key binding rules from
-// BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md
-// (Design Decision section): a sort key must be bound by :where or be a
-// scalar/tuple :in constant; unbound variables, relation/collection input
-// symbols not bound by :where, and non-group-key variables in aggregate
-// queries are parse errors.
+// TestOrderByValidation pins the sort-key binding rules: a sort key is a
+// variable the :where binds, a :find variable, a scalar or tuple :in constant,
+// or a collection or relation :in symbol, which its input binds and which
+// orders the product of the result with the input's group; a variable bound
+// nowhere, and a non-group-key variable under an aggregating find, are parse
+// errors.
 func TestOrderByValidation(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -216,21 +216,21 @@ func TestOrderByValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "relation input symbol not bound by :where is an error",
+			name: "relation input symbol not bound by :where is valid, a sort over the join",
 			query: `[:find ?v
 			         :in $ [[?k ?tag] ...]
 			         :where [?e :item/key ?k]
 			                [?e :item/val ?v]
 			         :order-by [[?tag :asc]]]`,
-			wantErr: true,
+			wantErr: false,
 		},
 		{
-			name: "collection input not bound by :where is an error",
+			name: "collection input not bound by :where is valid, a sort over the product",
 			query: `[:find ?name
 			         :in $ [?c ...]
 			         :where [?e :user/name ?name]
 			         :order-by [[?c :asc]]]`,
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "aggregate query ordering by non-group-key variable is an error",

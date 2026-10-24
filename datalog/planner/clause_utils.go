@@ -4,21 +4,39 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// patternDependsOnPendingExpression checks if a data pattern uses a variable
-// that a pending (unselected) expression provides but that isn't yet available.
-// This prevents the planner from reordering data patterns before the expressions
-// that provide variables they need for correct join semantics.
-//
-// Without this check, the greedy scorer picks high-scoring data patterns (~210)
-// before low-scoring expressions (~20). When a pattern like [?item :item/color ?color]
-// runs before [(enumerate ?vec) [?idx ?item]], ?item isn't in the accumulated
-// relation, so the join is on ?color alone — producing a cross-product.
-func patternDependsOnPendingExpression(p *query.DataPattern, available map[query.Symbol]bool, remaining []query.Clause, selected map[int]bool) bool {
-	// Collect variables this pattern references that aren't yet available
+// A selection is one phase's greedy pick over the clauses still to place:
+// which of them the phase has taken, the symbols bound so far, and the rule
+// set the clauses are read under. Its gates decide which pending clause the
+// loop may take next.
+type selection struct {
+	remaining []query.Clause
+	selected  map[int]bool
+	available map[query.Symbol]bool
+	rules     *query.RuleSet
+}
+
+// blockers returns the correlates holding a clause back now, per
+// query.ClauseBlockers, under the selection's state: the one readiness view
+// every gate reads.
+func (s selection) blockers(clause query.Clause) []query.Symbol {
+	return query.ClauseBlockers(clause, s.available, s.rules)
+}
+
+// patternDependsOnPendingExpression reports whether a pending (unselected)
+// expression binds a variable the pattern reads unbound and can run before
+// the pattern. The greedy scorer ranks a data pattern (~210) far above an
+// expression (~20), and a pattern like [?item :item/color ?color] run before
+// [(enumerate ?vec) [[?idx ?item]]] joins the accumulated relation on ?color
+// alone, a cross-product; held back, it seeks on the ?item the expression
+// bound. An expression whose own needs reach the pattern through the pending
+// clauses binding them (pendingBlockers) cannot run before it: the pattern
+// runs first, and the expression unifies with the variable the pattern
+// bound.
+func (s selection) patternDependsOnPendingExpression(p *query.DataPattern) bool {
 	needed := make(map[query.Symbol]bool)
 	for _, elem := range p.Elements {
 		if v, ok := elem.(query.Variable); ok {
-			if !available[v.Name] {
+			if !s.available[v.Name] {
 				needed[v.Name] = true
 			}
 		}
@@ -27,48 +45,239 @@ func patternDependsOnPendingExpression(p *query.DataPattern, available map[query
 		return false
 	}
 
-	// Check if any pending expression provides one of these variables
-	for i, clause := range remaining {
-		if selected[i] {
+	for i, clause := range s.remaining {
+		if s.selected[i] {
 			continue
 		}
-		if _, ok := clause.(*query.Expression); ok {
-			for _, sym := range query.ScopeOf(clause).Provides {
-				if needed[sym] {
-					return true
-				}
+		if _, ok := clause.(*query.Expression); !ok {
+			continue
+		}
+		binds := false
+		for _, sym := range query.ScopeOf(clause, s.rules).Provides {
+			if needed[sym] {
+				binds = true
+				break
 			}
+		}
+		if !binds {
+			continue
+		}
+		waits := s.pendingBlockers(clause)
+		reachesPattern := false
+		for sym := range needed {
+			if waits[sym] {
+				reachesPattern = true
+				break
+			}
+		}
+		if !reachesPattern {
+			return true
 		}
 	}
 	return false
 }
 
+// pendingBlockers returns the symbols a clause waits on through the pending
+// (unselected) clauses: its own blockers, and, for each pending clause
+// binding a symbol of the set, what that clause waits on in turn. A pattern,
+// the clause asked about or one reached, waits on its unavailable variables
+// that a pending expression binds, since patternDependsOnPendingExpression
+// holds it behind that expression.
+func (s selection) pendingBlockers(clause query.Clause) map[query.Symbol]bool {
+	expressionBound := make(map[query.Symbol]bool)
+	for i, c := range s.remaining {
+		if s.selected[i] {
+			continue
+		}
+		if _, ok := c.(*query.Expression); ok {
+			for _, sym := range query.ScopeOf(c, s.rules).Provides {
+				expressionBound[sym] = true
+			}
+		}
+	}
+	waits := make(map[query.Symbol]bool)
+	queue := s.blockers(clause)
+	if p, ok := clause.(*query.DataPattern); ok {
+		for _, v := range query.ScopeOf(p, s.rules).Provides {
+			if !s.available[v] && expressionBound[v] {
+				queue = append(queue, v)
+			}
+		}
+	}
+	for len(queue) > 0 {
+		sym := queue[0]
+		queue = queue[1:]
+		if waits[sym] {
+			continue
+		}
+		waits[sym] = true
+		for i, c := range s.remaining {
+			if s.selected[i] {
+				continue
+			}
+			provides := query.ScopeOf(c, s.rules).Provides
+			if !query.ContainsSymbol(provides, sym) {
+				continue
+			}
+			queue = append(queue, s.blockers(c)...)
+			if _, ok := c.(*query.DataPattern); ok {
+				for _, v := range provides {
+					if !s.available[v] && expressionBound[v] {
+						queue = append(queue, v)
+					}
+				}
+			}
+		}
+	}
+	return waits
+}
+
 // clauseSelectable is the single definition of "the greedy selection loop
 // may choose this clause this iteration": every scheduling gate admits it
-// and it is ready. The selection loop and the subquery deferral gate both
-// consume this function — a gate that waits on a clause the loop itself
-// would skip deadlocks the phase, which is exactly the divergence that
-// occurs when the gate checks readiness alone (a DataPattern can be ready
-// yet skipped because it depends on a pending expression).
-func clauseSelectable(
-	clause query.Clause,
-	available map[query.Symbol]bool,
-	inputs map[query.Symbol]bool,
-	providerCount map[query.Symbol]int,
-	remaining []query.Clause,
-	selected map[int]bool,
-) bool {
-	if p, ok := clause.(*query.DataPattern); ok {
-		if patternDependsOnPendingExpression(p, available, remaining, selected) {
+// and it is ready. The selection loop and the subquery and invocation
+// deferral gates all consume it — a gate that waits on a clause the loop
+// itself would skip deadlocks the phase, which is exactly the divergence
+// that occurs when the gate checks readiness alone (a DataPattern can be
+// ready yet skipped because it depends on a pending expression).
+func (s selection) clauseSelectable(clause query.Clause) bool {
+	switch c := clause.(type) {
+	case *query.DataPattern:
+		if s.patternDependsOnPendingExpression(c) {
+			return false
+		}
+	case *query.SubqueryPattern:
+		if s.subqueryDependsOnPendingProvider(c) {
+			return false
+		}
+	case *query.RuleInvocation:
+		if s.invocationDependsOnPendingProvider(c) {
 			return false
 		}
 	}
-	if sp, ok := clause.(*query.SubqueryPattern); ok {
-		if subqueryDependsOnPendingProvider(sp, available, inputs, providerCount, remaining, selected) {
+	return len(s.blockers(clause)) == 0
+}
+
+// scansAWholeExtent reports whether a clause reads nothing bound under the
+// symbols available now: a data pattern with no constant at a position other
+// than the attribute and no available variable, an invocation with no
+// constant argument, no available argument and a predicate the seed does not
+// restrict, or any other clause none of whose variables is available, a form
+// whose header nothing binds, a subquery with no available input, or an
+// expression over constants alone. The selection takes such a clause only
+// when no other clause is selectable, since a scan placed before an
+// invocation the seed's bindings reach multiplies that invocation's magic set
+// by the scan's extent, and a form placed before the pattern binding its
+// header runs over the unit relation (REWRITE_ORDER_PROOF.md T2, T3, F7).
+func scansAWholeExtent(clause query.Clause, available map[query.Symbol]bool, rules *query.RuleSet) bool {
+	switch c := clause.(type) {
+	case *query.DataPattern:
+		for i, elem := range c.Elements {
+			switch e := elem.(type) {
+			case query.Constant, query.VectorConstant:
+				if i != 1 {
+					return false
+				}
+			case query.Variable:
+				if available[e.Name] {
+					return false
+				}
+			}
+		}
+		return true
+	case *query.RuleInvocation:
+		if query.SeedRestricted(c.Name) {
+			return false
+		}
+		for _, arg := range c.Args {
+			switch a := arg.(type) {
+			case query.Constant, query.VectorConstant:
+				return false
+			case query.Variable:
+				if available[a.Name] {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	scope := query.ScopeOf(clause, rules)
+	for _, sym := range scope.Provides {
+		if available[sym] {
 			return false
 		}
 	}
-	return query.ClauseReady(clause, available, inputs, providerCount)
+	for _, sym := range scope.Correlates {
+		if available[sym] {
+			return false
+		}
+	}
+	return true
+}
+
+// invocationDependsOnPendingProvider checks if a rule invocation has a
+// variable argument that a pending (unselected), currently-SELECTABLE clause
+// other than a subquery or an invocation binds but that isn't yet available.
+// An invocation with no available argument derives the whole predicate when
+// selected before the clause that binds its argument, so it waits on any
+// such provider. An invocation with an available argument derives what that
+// argument reaches, and waits on a provider that does not scan a whole
+// extent: a scan placed before it would bind its other argument to the
+// scan's every value, the product REWRITE_ORDER_PROOF.md T2 names. An
+// invocation of a predicate the seed restricts derives nothing at its clause:
+// it reads a relation holding only what the seed reaches, and scoreClause
+// gives it the lead over every pattern, so it waits on no provider.
+//
+// The provider scan carries subqueryDependsOnPendingProvider's restrictions,
+// so deferral cannot block progress:
+//
+//   - Neither an invocation nor a subquery is a provider here: two
+//     invocations binding the same variable never wait on each other, and
+//     the subquery gate already asks whether an invocation is selectable, so
+//     neither gate's scan reaches the other.
+//   - Selectable only, via clauseSelectable: a deferring invocation implies
+//     the loop can select some provider this iteration, so the phase always
+//     advances.
+func (s selection) invocationDependsOnPendingProvider(inv *query.RuleInvocation) bool {
+	if query.SeedRestricted(inv.Name) {
+		return false
+	}
+	bound := false
+	for _, arg := range inv.Args {
+		if v, ok := arg.(query.Variable); ok && s.available[v.Name] {
+			bound = true
+		}
+	}
+	needed := make(map[query.Symbol]bool)
+	for _, sym := range query.ScopeOf(inv, s.rules).Provides {
+		if !s.available[sym] {
+			needed[sym] = true
+		}
+	}
+	if len(needed) == 0 {
+		return false
+	}
+
+	for i, clause := range s.remaining {
+		if s.selected[i] {
+			continue
+		}
+		switch clause.(type) {
+		case *query.SubqueryPattern, *query.RuleInvocation:
+			continue
+		}
+		if !s.clauseSelectable(clause) {
+			continue
+		}
+		if bound && scansAWholeExtent(clause, s.available, s.rules) {
+			continue
+		}
+		for _, sym := range query.ScopeOf(clause, s.rules).Provides {
+			if needed[sym] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // subqueryDependsOnPendingProvider checks if a subquery binds a variable
@@ -80,7 +289,10 @@ func clauseSelectable(
 // intermediate relation. This is patternDependsOnPendingExpression's
 // invariant applied to the subquery relation's interface (a decorrelated
 // grouped subquery binds its group keys to outer names precisely so they
-// join).
+// join). A subquery with an available input waits on a provider with
+// visible selectivity and on no provider that scans a whole extent
+// (scansAWholeExtent), as an invocation with an available argument does
+// (REWRITE_ORDER_PROOF.md §6, L6).
 //
 // Both restrictions on the provider scan make deferral unable to block
 // progress, by construction rather than by convention:
@@ -89,24 +301,25 @@ func clauseSelectable(
 //     decorrelated grouped subqueries binding the same group keys) must not
 //     defer on each other; once every other provider has run, whichever
 //     executes first supplies the keys the next one joins on.
-//   - Selectable only — via clauseSelectable, the same predicate the
-//     selection loop applies, not bare readiness: a deferring subquery
-//     therefore implies the loop can select some provider this iteration,
-//     so the phase always advances. Readiness alone is not enough: a ready
-//     DataPattern that the pattern gate skips (it depends on a pending
-//     expression that in turn needs this subquery's output) is not
-//     selectable, and deferring on it deadlocks a valid query.
-func subqueryDependsOnPendingProvider(
-	sp *query.SubqueryPattern,
-	available map[query.Symbol]bool,
-	inputs map[query.Symbol]bool,
-	providerCount map[query.Symbol]int,
-	remaining []query.Clause,
-	selected map[int]bool,
-) bool {
+//   - A provider that is selectable this iteration holds the subquery, and
+//     so does one that is not selectable but waits, through the pending
+//     clauses (pendingBlockers), on no output of the subquery: the clauses
+//     it waits on are held by no gate of the subquery's, so the phase always
+//     advances. A provider waiting on the subquery's own output never holds
+//     it: a DataPattern the pattern gate skips because it depends on a
+//     pending expression that in turn needs this subquery's output would
+//     deadlock a valid query.
+func (s selection) subqueryDependsOnPendingProvider(sp *query.SubqueryPattern) bool {
+	scope := query.ScopeOf(sp, s.rules)
+	bound := false
+	for _, sym := range scope.Correlates {
+		if s.available[sym] {
+			bound = true
+		}
+	}
 	needed := make(map[query.Symbol]bool)
-	for _, sym := range query.ScopeOf(sp).Provides {
-		if !available[sym] {
+	for _, sym := range scope.Provides {
+		if !s.available[sym] {
 			needed[sym] = true
 		}
 	}
@@ -114,17 +327,30 @@ func subqueryDependsOnPendingProvider(
 		return false
 	}
 
-	for i, clause := range remaining {
-		if selected[i] {
+	for i, clause := range s.remaining {
+		if s.selected[i] {
 			continue
 		}
 		if _, ok := clause.(*query.SubqueryPattern); ok {
 			continue
 		}
-		if !clauseSelectable(clause, available, inputs, providerCount, remaining, selected) {
+		if !s.clauseSelectable(clause) {
+			waits := s.pendingBlockers(clause)
+			waitsOnSubquery := false
+			for _, sym := range scope.Provides {
+				if waits[sym] {
+					waitsOnSubquery = true
+					break
+				}
+			}
+			if waitsOnSubquery {
+				continue
+			}
+		}
+		if bound && scansAWholeExtent(clause, s.available, s.rules) {
 			continue
 		}
-		for _, sym := range query.ScopeOf(clause).Provides {
+		for _, sym := range query.ScopeOf(clause, s.rules).Provides {
 			if needed[sym] {
 				return true
 			}
@@ -148,8 +374,11 @@ func subqueryDependsOnPendingProvider(
 // Constants are weighted 10× more than available variables because:
 // - Constants FILTER data (selectivity is visible in the pattern)
 // - Available variables ENABLE JOINS (don't filter, just connect)
-func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
-	scope := query.ScopeOf(clause)
+//
+// bindings is what the caller holds when it asks for the plan; the rule set
+// among them declares an invocation's scope.
+func scoreClause(clause query.Clause, available map[query.Symbol]bool, bindings query.Bindings) int {
+	scope := query.ScopeOf(clause, bindings.Rules)
 
 	score := 0
 
@@ -167,8 +396,33 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 
 	// OR clauses that provide symbols are data sources too
 	switch clause.(type) {
-	case *query.OrClause, *query.OrJoinClause, *query.OrDefaultClause, *query.OrDefaultJoinClause:
+	case *query.OrJoinClause, *query.OrDefaultJoinClause:
 		score += 80
+	}
+
+	// A rule invocation carries the visible selectivity a pattern's positions
+	// do and schedules beside the patterns that bind its arguments. An
+	// invocation of a predicate the seed restricts, a magic or adorned
+	// predicate or the delta of one, reads a relation holding only what the
+	// seed reaches, so it schedules before every pattern, which then seeks on
+	// what it binds.
+	if inv, ok := clause.(*query.RuleInvocation); ok {
+		score += 80
+		constants, availableVars := 0, 0
+		for _, arg := range inv.Args {
+			switch a := arg.(type) {
+			case query.Constant, query.VectorConstant:
+				constants++
+			case query.Variable:
+				if available[a.Name] {
+					availableVars++
+				}
+			}
+		}
+		score += (constants * 100) + (availableVars * 10)
+		if query.SeedRestricted(inv.Name) {
+			score += 500
+		}
 	}
 
 	// Expressions that produce new symbols are valuable but less than selective patterns
@@ -188,9 +442,6 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 	}
 
 	// NOT clauses filter - defer until all required symbols are available
-	if _, ok := clause.(*query.NotClause); ok {
-		score += 2
-	}
 	if _, ok := clause.(*query.NotJoinClause); ok {
 		score += 2
 	}

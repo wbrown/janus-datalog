@@ -10,6 +10,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // TestHashJoinSymbolIndexBug tests the bug where HashJoinScan confused
@@ -74,18 +75,14 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
-			result, err := exec.Execute(q)
+			tuples, err := executor.CollectTuples(exec.Execute(q))
 			assert.NoError(t, err)
 
 			// Should find all 5 price entities
-			assert.Equal(t, 5, result.Size(), "Should find 5 price entities")
+			assert.Len(t, tuples, 5, "Should find 5 price entities")
 
 			// Verify we actually got the right entities
-			it := result.Iterator()
-			defer it.Close()
-			count := 0
-			for it.Next() {
-				tuple := it.Tuple()
+			for _, tuple := range tuples {
 				assert.Len(t, tuple, 2, "Should have 2 symbols: ?e and ?value")
 				// Verify entity is an Identity
 				switch v := tuple[0].(type) {
@@ -99,9 +96,7 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 				assert.True(t, ok, "Second symbol should be float64, got %T", tuple[1])
 				assert.GreaterOrEqual(t, value, 100.0)
 				assert.LessOrEqual(t, value, 104.0)
-				count++
 			}
-			assert.Equal(t, 5, count, "Iterator should return 5 tuples")
 		})
 	}
 }
@@ -150,14 +145,10 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 			exec := executor.NewExecutorWithOptions(matcher, db,
 				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
-			result, err := exec.Execute(q)
+			tuples, err := executor.CollectTuples(exec.Execute(q))
 			assert.NoError(t, err)
-			assert.Equal(t, 1, result.Size(), "Should find one pair")
-
-			it := result.Iterator()
-			defer it.Close()
-			assert.True(t, it.Next())
-			tuple := it.Tuple()
+			assert.Len(t, tuples, 1, "Should find one pair")
+			tuple := tuples[0]
 
 			// Verify we got Identity types (the actual values are hashes, not the original strings)
 			switch v := tuple[0].(type) {
@@ -215,28 +206,40 @@ func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
 		         [?right :number/right ?value]]`,
 	)
 	assert.NoError(t, err)
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+	declared, err := schema.NewBuilder().
+		Attribute(":number/left").Type(schema.TypeDouble).Add().
+		Attribute(":number/right").Type(schema.TypeDouble).Add().Build()
+	assert.NoError(t, err)
+	for _, sc := range []struct {
+		name string
+		s    *schema.Schema
+	}{{"no schema", nil}, {"declared", declared}} {
+		for _, mode := range optimizerModes {
+			t.Run(sc.name+"/"+mode.name, func(t *testing.T) {
+				db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sc.s})
 
-			leftEntity := datalog.NewIdentity("signed-zero-left")
-			rightEntity := datalog.NewIdentity("signed-zero-right")
-			leftAttr := datalog.NewKeyword(":number/left")
-			rightAttr := datalog.NewKeyword(":number/right")
-			tx := db.NewTransaction()
-			assert.NoError(t, tx.Add(leftEntity, leftAttr, float64(0)))
-			assert.NoError(t, tx.Add(rightEntity, rightAttr, math.Copysign(0, -1)))
-			_, err := tx.Commit()
-			assert.NoError(t, err)
+				leftEntity := datalog.NewIdentity("signed-zero-left")
+				rightEntity := datalog.NewIdentity("signed-zero-right")
+				leftAttr := datalog.NewKeyword(":number/left")
+				rightAttr := datalog.NewKeyword(":number/right")
+				tx := db.NewTransaction()
+				assert.NoError(t, tx.Add(leftEntity, leftAttr, float64(0)))
+				assert.NoError(t, tx.Add(rightEntity, rightAttr, math.Copysign(0, -1)))
+				_, err := tx.Commit()
+				assert.NoError(t, err)
 
-			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
-			exec := executor.NewExecutorWithOptions(matcher, db,
-				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
+				matcher := executor.PatternMatcher(NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{}))
+				if sc.s != nil {
+					matcher = db.Matcher()
+				}
+				exec := executor.NewExecutorWithOptions(matcher, db,
+					planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
-			result, err := exec.Execute(parsed)
-			assert.NoError(t, err)
-			assert.Equal(t, 1, result.Size())
-		})
+				tuples, err := executor.CollectTuples(exec.Execute(parsed))
+				assert.NoError(t, err)
+				assert.Len(t, tuples, 1)
+			})
+		}
 	}
 }
 

@@ -98,7 +98,7 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Convert inputs
-			inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
+			inputRels, _, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
 			assert.NoError(t, err)
 
 			popts := mode.plannerOptions()

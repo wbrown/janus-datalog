@@ -81,8 +81,8 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 			Subject: lj.InnerQuery,
 		}, annotations.AlgebraDecorrelateCheck, map[string]interface{}{
 			"correlation_vars": lj.CorrelationVars,
-			"has_aggregates":   hasAggregates(lj.InnerQuery),
-			"has_defaults":     len(lj.DefaultValues) > 0,
+			"has_aggregates":   lj.InnerQuery.Aggregates(),
+			"has_defaults":     len(lj.Defaults) > 0,
 			"should":           shouldDecorrelate(lj),
 			"inner_query":      lj.InnerQuery,
 		})
@@ -112,6 +112,24 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		return rebuildWithChildren(node, children)
 	}
 
+	// The outer relation, recovered from the children. The decorrelated
+	// result joins it on the correlation variables, and a join keys only on
+	// symbols both sides produce, so a correlation variable the outer
+	// relation does not carry, one the enclosing scope binds, keeps the
+	// subquery on per-combination execution.
+	var outerNode *Node
+	if len(children) > 0 {
+		outerNode = recoverChild(children[0])
+	}
+	if outerNode != nil {
+		for _, cv := range lj.CorrelationVars {
+			if !query.ContainsSymbol(outerNode.Symbols(), cv) {
+				decline(fmt.Sprintf("correlation variable %s is bound by the enclosing scope, not the outer relation", cv))
+				return rebuildWithChildren(node, children)
+			}
+		}
+	}
+
 	innerParams := mapCorrelationToInnerParams(lj.InnerQuery, lj.CorrelationVars)
 	if len(innerParams) == 0 {
 		decline("cannot map correlation to inner params")
@@ -136,7 +154,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		}, annotations.AlgebraDecorrelateApply, map[string]interface{}{
 			"correlation_vars": lj.CorrelationVars,
 			"inner_params":     innerParams,
-			"has_aggregates":   hasAggregates(lj.InnerQuery),
+			"has_aggregates":   lj.InnerQuery.Aggregates(),
 		})
 	}
 
@@ -153,15 +171,9 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 	output = append(output, lj.CorrelationVars...)
 	output = append(output, originalBindingSyms...)
 
-	// Recover the outer relation from children.
-	var outerNode *Node
-	if len(children) > 0 {
-		outerNode = recoverChild(children[0])
-	}
-
 	var innerResultNode *Node
 
-	if hasAggregates(lj.InnerQuery) {
+	if lj.InnerQuery.Aggregates() {
 		// Rule 1: aggregate decorrelation — compile inner, wrap in Aggregate
 		var groupBy []query.Symbol
 		var aggFns []query.FindAggregate
@@ -174,7 +186,9 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 			}
 		}
 
-		innerNode, compileErr := Compile(decorrelated)
+		// The inner query compiles in its own scope: its :in, and the rule set
+		// the call's % binds, which the lateral join carries.
+		innerNode, compileErr := Compile(decorrelated, lj.Rules)
 		if compileErr != nil || innerNode == nil {
 			return node
 		}
@@ -194,7 +208,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		// Compile the inner WHERE, recursively optimize to decorrelate nested
 		// subqueries (e.g., the max subquery in the argmax pattern), then
 		// decompile back to produce optimized WHERE clauses.
-		innerNode, compileErr := Compile(decorrelated)
+		innerNode, compileErr := Compile(decorrelated, lj.Rules)
 		if compileErr != nil || innerNode == nil {
 			return rebuildWithChildren(node, children)
 		}
@@ -250,7 +264,8 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 				InnerQuery:      optimizedDecorrelated,
 				Binding:         query.RelationBinding{Variables: output},
 				Output:          output,
-				DefaultValues:   nil,
+				Defaults:        nil,
+				Rules:           lj.Rules,
 			},
 		}
 	}
@@ -260,17 +275,17 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 	}
 
 	joinKind := InnerJoin
-	if len(lj.DefaultValues) > 0 {
+	if len(lj.Defaults) > 0 {
 		joinKind = LeftOuterJoin
 	}
 
 	joinNode := &Node{
 		Op: RuleJoin,
 		Data: &Join{
-			Kind:          joinKind,
-			JoinSymbols:   lj.CorrelationVars,
-			Output:        mergeSymbols(outerNode.Symbols(), output),
-			DefaultValues: lj.DefaultValues,
+			Kind:        joinKind,
+			JoinSymbols: lj.CorrelationVars,
+			Output:      mergeSymbols(outerNode.Symbols(), output),
+			Defaults:    lj.Defaults,
 		},
 		Children: []*Node{outerNode, innerResultNode},
 	}
@@ -298,7 +313,7 @@ func rebuildWithChildren(node *parse.Node, children []interface{}) *parse.Node {
 // shouldDecorrelate determines whether a LateralJoin should be decorrelated
 // based on structural analysis of the inner query. Per ALGEBRA.md Rule 4.
 func shouldDecorrelate(lj *LateralJoin) bool {
-	if hasAggregates(lj.InnerQuery) {
+	if lj.InnerQuery.Aggregates() {
 		return true // Rule 1: aggregate decorrelation
 	}
 	if hasNestedCorrelatedSubquery(lj.InnerQuery) {
@@ -395,7 +410,7 @@ func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]pa
 	// equality correlates on) is not a symbol the grouped result can carry.
 	var provided []query.Symbol
 	for _, c := range q.Where {
-		for _, sym := range query.ScopeOf(c).Provides {
+		for _, sym := range query.ScopeOf(c, nil).Provides {
 			if !query.ContainsSymbol(provided, sym) {
 				provided = append(provided, sym)
 			}
@@ -432,7 +447,7 @@ func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]pa
 				// Compound clauses, expressions, chained comparisons,
 				// nested subqueries, database functions: any mention is a
 				// consumption shape the translation does not cover.
-				if query.ContainsSymbol(query.ScopeOf(c).Correlates, param) {
+				if query.ContainsSymbol(query.ScopeOf(c, nil).Correlates, param) {
 					otherUse = true
 				}
 			}
@@ -556,16 +571,6 @@ func mapCorrelationToInnerParams(innerQuery *query.Query, outerVars []query.Symb
 		}
 	}
 	return innerParams
-}
-
-// hasAggregates returns true if the query's :find clause contains aggregates.
-func hasAggregates(q *query.Query) bool {
-	for _, elem := range q.Find {
-		if elem.IsAggregate() {
-			return true
-		}
-	}
-	return false
 }
 
 // recoverChild extracts an algebra Node from a transform result.

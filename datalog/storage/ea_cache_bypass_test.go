@@ -78,7 +78,7 @@ func TestEACacheBypass_Reproduction(t *testing.T) {
 			DisableCache:      false,
 			AnnotationHandler: func(e annotations.Event) { *events = append(*events, e) },
 		})
-		db.SetSchema(eaCacheBypassSchema())
+		require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 		for _, name := range []string{"Alice", "Bob", "Charlie"} {
 			tx := db.NewTransaction()
@@ -138,7 +138,7 @@ func TestEACacheBypass_CardinalityOne(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
 					})
-					db.SetSchema(eaCacheBypassSchema())
+					require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 					personID := datalog.NewIdentity("person-1")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -181,7 +181,7 @@ func TestEACacheBypass_CardinalityMany(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
 					})
-					db.SetSchema(eaCacheBypassSchema())
+					require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 					personID := datalog.NewIdentity("person-1")
 					tagsAttr := datalog.NewKeyword(":person/tags")
@@ -227,7 +227,7 @@ func TestEACacheBypass_CardinalityVector(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
 					})
-					db.SetSchema(eaCacheBypassSchema())
+					require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 					docID := datalog.NewIdentity("doc-1")
 					contentAttr := datalog.NewKeyword(":doc/content")
@@ -271,7 +271,7 @@ func TestEACacheBypass_TupleInput(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
 					})
-					db.SetSchema(eaCacheBypassSchema())
+					require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 					personID := datalog.NewIdentity("person-1")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -284,7 +284,7 @@ func TestEACacheBypass_TupleInput(t *testing.T) {
 					}
 
 					results, err := executor.CollectTuples(db.Query(
-						`[:find ?v :in $ [[?e ?a]] :where [?e ?a ?v]]`,
+						`[:find ?v :in $ [?e ?a] :where [?e ?a ?v]]`,
 						[]any{personID, nameAttr}))
 					require.NoError(t, err)
 					require.Len(t, results, 1, "[%s] Tuple input should return 1 result", mode.name)
@@ -303,7 +303,7 @@ func TestEACacheBypass_RelationInput(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
 					})
-					db.SetSchema(eaCacheBypassSchema())
+					require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 					person1 := datalog.NewIdentity("person-1")
 					person2 := datalog.NewIdentity("person-2")
@@ -338,7 +338,7 @@ func TestEACacheBypass_CollectionEWithScalarA(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
 					})
-					db.SetSchema(eaCacheBypassSchema())
+					require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 					nameAttr := datalog.NewKeyword(":person/name")
 
@@ -377,7 +377,7 @@ func TestEACacheBypass_NonexistentAttribute(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
 					})
-					db.SetSchema(eaCacheBypassSchema())
+					require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 					personID := datalog.NewIdentity("person-1")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -407,7 +407,7 @@ func TestEACacheBypass_CacheInvalidation(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
 					})
-					db.SetSchema(eaCacheBypassSchema())
+					require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 					personID := datalog.NewIdentity("person-1")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -449,7 +449,7 @@ func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
 					})
-					db.SetSchema(eaCacheBypassSchema())
+					require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 					person1 := datalog.NewIdentity("person-1")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -518,7 +518,7 @@ func TestEACacheBypass_PerTupleA_UsesCache(t *testing.T) {
 				ValueType:   schema.TypeLong,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			configAttr := datalog.NewKeyword(":config/attr")
 			nameAttr := datalog.NewKeyword(":person/name")
@@ -569,7 +569,7 @@ func TestEACacheBypass_PerTupleVector_RelationInput(t *testing.T) {
 						DisableCache:      mode.disableCache,
 						AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 					})
-					db.SetSchema(eaCacheBypassSchema())
+					require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 					person1 := datalog.NewIdentity("person-1")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -615,7 +615,7 @@ func TestEACacheBypass_CacheMissFallback(t *testing.T) {
 					db := createOptimizerModeDB(t, omode, DatabaseOptions{
 						DisableCache: mode.disableCache,
 					})
-					db.SetSchema(eaCacheBypassSchema())
+					require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 					person1 := datalog.NewIdentity("person-1")
 					person2 := datalog.NewIdentity("person-nonexistent")
@@ -661,7 +661,7 @@ func TestEACacheBypass_JoinBoundA(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					metaID := datalog.NewIdentity("meta-1")
 					personID := datalog.NewIdentity("person-1")
@@ -719,7 +719,7 @@ func BenchmarkEACacheBypass(b *testing.B) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(b, db.SetSchema(s))
 
 			nameAttr := datalog.NewKeyword(":person/name")
 
@@ -770,7 +770,7 @@ func BenchmarkEACacheBypass(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					e := entities[i%100]
 					results, err := executor.CollectTuples(db.Query(
-						`[:find ?v :in $ [[?e ?a]] :where [?e ?a ?v]]`,
+						`[:find ?v :in $ [?e ?a] :where [?e ?a ?v]]`,
 						[]any{e, nameAttr}))
 					if err != nil {
 						b.Fatal(err)

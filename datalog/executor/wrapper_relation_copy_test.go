@@ -8,117 +8,70 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// =============================================================================
-// Mock Relations for Testing RequiresCopy() Behavior
-// =============================================================================
-
-// mockUnsafeRelation simulates a streaming relation that reuses workspace memory.
-// Its iterator overwrites a shared workspace slice on each Next() call,
-// just like storage iterators do with BuildTupleInternedInto.
-type mockUnsafeRelation struct {
-	symbols    []query.Symbol
-	data       [][]interface{} // Source data (will be copied into workspace)
-	options    ExecutorOptions
-	properties RelationProperties
-}
-
-func newMockUnsafeRelation(symbols []query.Symbol, data [][]interface{}) *mockUnsafeRelation {
-	return &mockUnsafeRelation{
-		symbols: symbols,
-		data:    data,
-	}
-}
-
-func (r *mockUnsafeRelation) Symbols() []query.Symbol                                { return r.symbols }
-func (r *mockUnsafeRelation) Properties() RelationProperties                         { return r.properties }
-func (r *mockUnsafeRelation) Size() int                                              { return len(r.data) }
-func (r *mockUnsafeRelation) Get(i int) Tuple                                        { return nil }
-func (r *mockUnsafeRelation) String() string                                         { return "mockUnsafeRelation" }
-func (r *mockUnsafeRelation) Table() string                                          { return "" }
-func (r *mockUnsafeRelation) ProjectFromPattern(*query.DataPattern) Relation         { return nil }
-func (r *mockUnsafeRelation) Sorted() ([]Tuple, error)                               { return nil, nil }
-func (r *mockUnsafeRelation) Project([]query.Symbol) (Relation, error)               { return nil, nil }
-func (r *mockUnsafeRelation) Materialize() Relation                                  { return r }
-func (r *mockUnsafeRelation) Sort([]query.OrderByClause) Relation                    { return nil }
-func (r *mockUnsafeRelation) FilterWithPredicate(query.Predicate) Relation           { return nil }
-func (r *mockUnsafeRelation) EvaluateFunction(query.Function, query.Symbol) Relation { return nil }
-func (r *mockUnsafeRelation) Select(func(Tuple) bool) Relation                       { return nil }
-func (r *mockUnsafeRelation) Join(Relation) Relation                                 { return nil }
-func (r *mockUnsafeRelation) HashJoin(Relation, []query.Symbol) Relation             { return nil }
-func (r *mockUnsafeRelation) SemiJoin(Relation, []query.Symbol) Relation             { return nil }
-func (r *mockUnsafeRelation) AntiJoin(Relation, []query.Symbol) Relation             { return nil }
-func (r *mockUnsafeRelation) Aggregate([]query.FindElement) Relation                 { return nil }
-func (r *mockUnsafeRelation) Options() ExecutorOptions                               { return r.options }
-
-// RequiresCopy returns true - this relation reuses workspace memory
-func (r *mockUnsafeRelation) RequiresCopy() bool { return true }
-
-func (r *mockUnsafeRelation) Iterator() Iterator {
-	return &mockUnsafeIterator{
-		data:      r.data,
-		workspace: make(Tuple, len(r.symbols)), // Shared workspace
-		pos:       -1,
-	}
-}
-
-// mockUnsafeIterator reuses a workspace slice for each tuple
-type mockUnsafeIterator struct {
+// workspaceReusingIterator yields every tuple in one workspace slice,
+// overwritten on each Next(), as a storage iterator does with
+// BuildTupleInternedInto. A StreamingRelation over it is the relation whose
+// RequiresCopy() is true, the shape every storage scan takes.
+type workspaceReusingIterator struct {
 	data      [][]interface{}
-	workspace Tuple // Reused on each Next()
+	workspace Tuple
 	pos       int
 	err       error
 }
 
-func (it *mockUnsafeIterator) Next() bool {
+func newWorkspaceReusingIterator(width int, data [][]interface{}) *workspaceReusingIterator {
+	return &workspaceReusingIterator{data: data, workspace: make(Tuple, width), pos: -1}
+}
+
+func (it *workspaceReusingIterator) Next() bool {
 	it.pos++
 	if it.pos >= len(it.data) {
 		return false
 	}
-	// Overwrite workspace with current tuple's data
 	copy(it.workspace, it.data[it.pos])
 	return true
 }
 
-func (it *mockUnsafeIterator) Tuple() Tuple {
-	return it.workspace // Returns the SAME slice every time
+func (it *workspaceReusingIterator) Tuple() Tuple {
+	return it.workspace
 }
 
-func (it *mockUnsafeIterator) Close() error {
+func (it *workspaceReusingIterator) Close() error {
 	return nil
 }
 
-func (it *mockUnsafeIterator) Error() error { return it.err }
+func (it *workspaceReusingIterator) Error() error { return it.err }
 
 // =============================================================================
-// Test 1: Verify mockUnsafeRelation actually corrupts without copying
-// This is a sanity check that our mock is working correctly
+// Test 1: the iterator's positive control. A reference held across pulls
+// without a copy reads the workspace's last value, so a reader that keeps a
+// tuple past the next pull must copy it.
 // =============================================================================
 
-func TestMockUnsafeRelationActuallyCorrupts(t *testing.T) {
+func TestWorkspaceReusingIteratorYieldsOneWorkspace(t *testing.T) {
 	symbols := []query.Symbol{datalog.NewSymbol("?x")}
-	unsafe := newMockUnsafeRelation(symbols, [][]interface{}{
+	unsafe := NewStreamingRelation(symbols, newWorkspaceReusingIterator(len(symbols), [][]interface{}{
 		{1},
 		{2},
 		{3},
-	})
+	}))
+	if !unsafe.RequiresCopy() {
+		t.Fatal("a streaming relation over a workspace-reusing iterator requires a copy")
+	}
 
-	// Store tuple references WITHOUT copying
 	var refs []Tuple
 	it := unsafe.Iterator()
 	for it.Next() {
-		refs = append(refs, it.Tuple()) // No copy!
+		refs = append(refs, it.Tuple())
 	}
 	it.Close()
 
-	// All refs should point to the same workspace
-	// So they should all have the LAST value
 	for i, ref := range refs {
 		if ref[0] != 3 {
 			t.Errorf("ref %d: expected 3 (last value due to workspace reuse), got %v", i, ref[0])
 		}
 	}
 
-	// Also verify all refs are the same slice
 	if len(refs) >= 2 && &refs[0][0] != &refs[1][0] {
 		t.Error("expected all refs to point to same workspace memory")
 	}
@@ -169,34 +122,36 @@ func TestOrFallbackIteratorCopiesFromUnsafeOuter(t *testing.T) {
 	queryExec := newQueryExecutor(matcher, nil, ExecutorOptions{})
 	ctx := NewContext()
 
-	// Create an unsafe outer relation with [?e, ?name]
-	// This simulates what BadgerDB returns - workspace reuse
-	outerSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")}
+	// The outer relation over [?e, ?name] reuses its workspace, as a
+	// storage scan does.
+	entity, priority := datalog.NewSymbol("?e"), datalog.NewSymbol("?p")
+	outerSymbols := []query.Symbol{entity, datalog.NewSymbol("?name")}
 	outerData := [][]interface{}{
 		{datalog.NewIdentity("e1"), "item1"},
 		{datalog.NewIdentity("e2"), "item2"},
 		{datalog.NewIdentity("e3"), "item3"},
 	}
-	outerRel := newMockUnsafeRelation(outerSymbols, outerData)
+	outerRel := NewStreamingRelation(outerSymbols, newWorkspaceReusingIterator(len(outerSymbols), outerData))
 
-	// Create OR clause: [?e :item/priority ?p]
+	// The form over the entity with one branch: [?e :item/priority ?p]
 	// This branch will match entities with priority
-	orClause := &query.OrClause{
-		Branches: [][]query.Clause{
-			{
-				&query.DataPattern{
-					Elements: []query.PatternElement{
-						query.Variable{Name: datalog.NewSymbol("?e")},
-						query.Constant{Value: datalog.NewKeyword(":item/priority")},
-						query.Variable{Name: datalog.NewSymbol("?p")},
-					},
+	branches := [][]query.Clause{
+		{
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: entity},
+					query.Constant{Value: datalog.NewKeyword(":item/priority")},
+					query.Variable{Name: priority},
 				},
 			},
 		},
 	}
 
 	// Create OrFallbackRelation directly
-	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, orClause.Branches, outerRel, ExecutorOptions{}, true)
+	orFallbackRel, err := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{priority}, branches, outerRel, ExecutorOptions{}, true)
+	if err != nil {
+		t.Fatalf("NewOrFallbackRelation: %v", err)
+	}
 
 	t.Logf("OrFallbackRelation RequiresCopy: %v", orFallbackRel.RequiresCopy())
 	t.Logf("Outer relation RequiresCopy: %v", outerRel.RequiresCopy())
@@ -253,16 +208,14 @@ func TestOrFallbackIteratorCopiesFromUnsafeOuter(t *testing.T) {
 }
 
 // =============================================================================
-// Test 4: OrFallbackIterator with unsafe branch result (direct test)
+// Test 4: a branch result that reuses its workspace is copied when retained
 //
-// This tests the OrFallbackIterator directly by wrapping an unsafe relation
-// as the branch result. This bypasses the execution pipeline that masks the bug.
+// collectBranch is the boundary at which a branch's result is kept for the
+// branch's index, so a tuple from a source whose RequiresCopy() is true is
+// copied there, once.
 // =============================================================================
 
-func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
-	// Create an unsafe relation that will be returned by the "branch"
-	// This simulates what would happen if a branch returned a StreamingRelation
-	// with workspace reuse
+func TestCollectBranchCopiesFromAnUnsafeBranchResult(t *testing.T) {
 	branchSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	unsafeBranchData := [][]interface{}{
 		{1, "a"},
@@ -271,38 +224,18 @@ func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
 		{2, "d"},
 		{2, "e"},
 	}
-	unsafeBranch := newMockUnsafeRelation(branchSymbols, unsafeBranchData)
+	unsafeBranch := NewStreamingRelation(branchSymbols, newWorkspaceReusingIterator(len(branchSymbols), unsafeBranchData))
 
-	// Test projectedIterator - this is what OrFallbackIterator wraps the branch with.
-	// projectedIterator.Tuple() must copy when source.RequiresCopy() = true.
-	branchIt := unsafeBranch.Iterator()
-	projIt := &projectedIterator{
-		inner:          branchIt,
-		branchRelation: unsafeBranch, // This has RequiresCopy() = true
-		// Same symbols, no projection needed — identity plan
-		plan: newProjectionPlan(branchSymbols, branchSymbols, nil),
+	storedTuples, err := collectBranch(unsafeBranch)
+	if err != nil {
+		t.Fatalf("collectBranch: %v", err)
 	}
-
-	var storedTuples []Tuple
-	for projIt.Next() {
-		// projectedIterator.Tuple() should copy because branchRelation.RequiresCopy() = true
-		tuple := projIt.Tuple()
-		storedTuples = append(storedTuples, tuple)
-	}
-	projIt.Close()
-
-	t.Logf("Got %d tuples", len(storedTuples))
-	for i, tuple := range storedTuples {
-		t.Logf("  tuple %d: %v", i, tuple)
-	}
-
-	// Should have 5 tuples
 	if len(storedTuples) != 5 {
 		t.Fatalf("expected 5 tuples, got %d", len(storedTuples))
 	}
 
-	// CRITICAL: If projectedIterator doesn't copy from unsafe source, all stored tuples
-	// will have the LAST value
+	// Without the copy every kept tuple is the workspace, holding the last
+	// value.
 	values := make(map[string]bool)
 	for _, tuple := range storedTuples {
 		if len(tuple) >= 2 {
@@ -311,10 +244,12 @@ func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
 			}
 		}
 	}
-
 	if len(values) != 5 {
 		t.Errorf("expected 5 unique values, got %d (TUPLE CORRUPTION DETECTED)", len(values))
 		t.Logf("values: %v", values)
+	}
+	if &storedTuples[0][0] == &storedTuples[1][0] {
+		t.Error("kept tuples share memory")
 	}
 }
 
@@ -341,32 +276,34 @@ func TestOrFallbackIteratorMultipleBranchResultsIntegration(t *testing.T) {
 	queryExec := newQueryExecutor(matcher, nil, options)
 	ctx := NewContext()
 
-	// Create an outer relation with 2 entities
-	outerSymbols := []query.Symbol{datalog.NewSymbol("?e")}
+	// The outer relation over 2 entities reuses its workspace.
+	entity, tag := datalog.NewSymbol("?e"), datalog.NewSymbol("?tag")
+	outerSymbols := []query.Symbol{entity}
 	outerData := [][]interface{}{
 		{datalog.NewIdentity("e1")},
 		{datalog.NewIdentity("e2")},
 	}
-	outerRel := newMockUnsafeRelation(outerSymbols, outerData)
+	outerRel := NewStreamingRelation(outerSymbols, newWorkspaceReusingIterator(len(outerSymbols), outerData))
 
-	// Create OR clause: [?e :item/tag ?tag]
+	// The form over the entity with one branch: [?e :item/tag ?tag]
 	// This will return MULTIPLE tuples per outer tuple
-	orClause := &query.OrClause{
-		Branches: [][]query.Clause{
-			{
-				&query.DataPattern{
-					Elements: []query.PatternElement{
-						query.Variable{Name: datalog.NewSymbol("?e")},
-						query.Constant{Value: datalog.NewKeyword(":item/tag")},
-						query.Variable{Name: datalog.NewSymbol("?tag")},
-					},
+	branches := [][]query.Clause{
+		{
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: entity},
+					query.Constant{Value: datalog.NewKeyword(":item/tag")},
+					query.Variable{Name: tag},
 				},
 			},
 		},
 	}
 
 	// Create OrFallbackRelation directly
-	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, orClause.Branches, outerRel, options, true)
+	orFallbackRel, err := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{tag}, branches, outerRel, options, true)
+	if err != nil {
+		t.Fatalf("NewOrFallbackRelation: %v", err)
+	}
 
 	// Iterate and store tuple references WITHOUT copying
 	var storedTuples []Tuple
@@ -431,38 +368,40 @@ func TestOrFallbackIteratorWithFallbackBranch(t *testing.T) {
 	queryExec := newQueryExecutor(matcher, nil, ExecutorOptions{})
 	ctx := NewContext()
 
-	// Create an unsafe outer relation with 3 items
-	outerSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")}
+	// The outer relation over 3 items reuses its workspace.
+	entity, priority := datalog.NewSymbol("?e"), datalog.NewSymbol("?p")
+	outerSymbols := []query.Symbol{entity, datalog.NewSymbol("?name")}
 	outerData := [][]interface{}{
 		{datalog.NewIdentity("e1"), "item1"},
 		{datalog.NewIdentity("e2"), "item2"},
 		{datalog.NewIdentity("e3"), "item3"}, // No priority - will use fallback
 	}
-	outerRel := newMockUnsafeRelation(outerSymbols, outerData)
+	outerRel := NewStreamingRelation(outerSymbols, newWorkspaceReusingIterator(len(outerSymbols), outerData))
 
-	// Create OR clause with fallback: [?e :item/priority ?p] or [(ground 0) ?p]
-	orClause := &query.OrClause{
-		Branches: [][]query.Clause{
-			{
-				&query.DataPattern{
-					Elements: []query.PatternElement{
-						query.Variable{Name: datalog.NewSymbol("?e")},
-						query.Constant{Value: datalog.NewKeyword(":item/priority")},
-						query.Variable{Name: datalog.NewSymbol("?p")},
-					},
+	// The form over the entity with a fallback: [?e :item/priority ?p] or [(ground 0) ?p]
+	branches := [][]query.Clause{
+		{
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: entity},
+					query.Constant{Value: datalog.NewKeyword(":item/priority")},
+					query.Variable{Name: priority},
 				},
 			},
-			{
-				&query.Expression{
-					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  datalog.NewSymbol("?p"),
-				},
+		},
+		{
+			&query.Expression{
+				Function: &query.GroundFunction{Value: int64(0)},
+				Binding:  priority,
 			},
 		},
 	}
 
 	// Create OrFallbackRelation directly
-	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, orClause.Branches, outerRel, ExecutorOptions{}, true)
+	orFallbackRel, err := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{priority}, branches, outerRel, ExecutorOptions{}, true)
+	if err != nil {
+		t.Fatalf("NewOrFallbackRelation: %v", err)
+	}
 
 	// Iterate and store tuple references WITHOUT copying
 	var storedTuples []Tuple

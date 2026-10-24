@@ -140,18 +140,18 @@ func TestExecutorJoinQuery(t *testing.T) {
 				},
 			}
 
-			result, err := executor.Execute(q)
+			tuples, err := CollectTuples(executor.Execute(q))
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
 
 			// Should find Alice -> Charlie (through Bob)
-			if result.Size() != 1 {
-				t.Errorf("expected 1 result, got %d", result.Size())
+			if len(tuples) != 1 {
+				t.Errorf("expected 1 result, got %d", len(tuples))
 			}
 
-			if result.Size() > 0 {
-				tuple := result.Get(0)
+			if len(tuples) > 0 {
+				tuple := tuples[0]
 				if tuple[0] != "Alice" || tuple[1] != "Charlie" {
 					t.Errorf("expected [Alice Charlie], got %v", tuple)
 				}

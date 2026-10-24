@@ -18,7 +18,6 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 	// Default-active: documented as on by default.
 	require.True(t, opts.EnableAlgebraOptimizer, "EnableAlgebraOptimizer is documented default-active")
 	require.True(t, opts.EnableTrueStreaming, "EnableTrueStreaming is documented default-active")
-	require.True(t, opts.EnableParallelSubqueries, "EnableParallelSubqueries is documented default-active")
 	require.True(t, opts.EnableStreamingAggregation, "EnableStreamingAggregation is documented default-active")
 
 	// Opt-in: documented as off by default (must be set explicitly).
@@ -34,5 +33,8 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 	require.False(t, hasAggregationDebugFlag, "aggregation diagnostics must use annotations, not a debug flag")
 
 	// Numeric defaults.
-	require.Equal(t, 0, opts.MaxSubqueryWorkers, "MaxSubqueryWorkers default is 0 (= 4 executor workers)")
+	require.Equal(t, 0, opts.MaxRuleIterations, "MaxRuleIterations is documented opt-in; 0 is unbounded")
+	require.Equal(t, 0, opts.MaxDerivedTuples, "MaxDerivedTuples is documented opt-in; 0 is unbounded")
+	require.Equal(t, 0, opts.ScopeWindowCap, "ScopeWindowCap is documented 0; the executor's default is SmallBindingBoundary")
+	require.Equal(t, 0, opts.ScopeWindowGrowth, "ScopeWindowGrowth is documented 0; the executor's default is 2")
 }

@@ -8,14 +8,12 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
-// Reproducers for BUG_ORJOIN_IN_BOUND_CORRELATE_TREATED_AS_BRANCH_LOCAL:
-// an or-join branch external bound only by :in must correlate with the input
-// binding exactly as a clause-bound external does. The documented contract
-// (skill or-join section) keeps branch-specific correlates out of the header;
-// under the branch-locals rule an :in-bound external misclassifies as a fresh
-// per-branch local and the or-join silently over-matches. :in parameters are
-// environment — the query's formal parameters, visible in every clause scope
-// including or-branch bodies — so both planner modes must correlate them.
+// An or-join branch sees the required run of its header and nothing else of
+// the enclosing scope (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.2). A
+// query input a branch reads is named in the required run, whether a scalar,
+// a tuple input's symbol, or a subquery's own input; a variable a branch
+// binds that shares an input's name, with the header not naming it, is the
+// branch's own. The tests below pin each shape on both planner paths.
 
 func collectEntityResults(t *testing.T, rel executor.Relation) map[string]bool {
 	t.Helper()
@@ -33,9 +31,9 @@ func collectEntityResults(t *testing.T, rel executor.Relation) map[string]bool {
 	return got
 }
 
-// TestOrJoinInBoundCorrelate pins the both-branches shape: ?ref is bound only
-// by :in, the header stays narrow per the documented contract, and exactly
-// the entity whose name equals the input may match.
+// TestOrJoinInBoundCorrelate pins the both-branches shape: the input ?ref,
+// named in the required run, reaches both branches, and exactly the entity
+// whose name or code equals it matches.
 func TestOrJoinInBoundCorrelate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -60,22 +58,21 @@ func TestOrJoinInBoundCorrelate(t *testing.T) {
 			                      :in $ ?region ?ref
 			                      :where
 			                      [?e :entity/region ?region]
-			                      (or-join [?e]
+			                      (or-join [[?ref] ?e]
 			                        [?e :entity/name ?ref]
 			                        [?e :entity/code ?ref])]`,
 				region, "alpha")
 			require.NoError(t, err)
 			got := collectEntityResults(t, rel)
 			require.Equal(t, map[string]bool{named.String(): true}, got,
-				"an :in-bound ?ref must correlate into the branches, not degenerate to has-any-name/has-any-code")
+				"the input the required run names reaches both branches")
 		})
 	}
 }
 
-// TestOrJoinInBoundMixedCorrelates pins the mixed-correlate admission shape —
-// the documented example with no wide-header rewrite: each branch binds only
-// one of the two :in-bound correlates, so the query is only expressible if
-// :in-bound externals correlate.
+// TestOrJoinInBoundMixedCorrelates pins the mixed shape: each branch reads
+// one of the two inputs the required run names, so each input quantifies
+// its own branch.
 func TestOrJoinInBoundMixedCorrelates(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -106,21 +103,21 @@ func TestOrJoinInBoundMixedCorrelates(t *testing.T) {
 			                      :in $ ?site ?region
 			                      :where
 			                      [?e :entity/kind "thing"]
-			                      (or-join [?e]
+			                      (or-join [[?site ?region] ?e]
 			                        [?e :entity/site ?site]
 			                        [?e :entity/region ?region])]`,
 				site, region)
 			require.NoError(t, err)
 			got := collectEntityResults(t, rel)
 			require.Equal(t, map[string]bool{inSite.String(): true, inRegion.String(): true}, got,
-				"foreign-site/foreign-region entities must not be admitted; each :in-bound correlate quantifies its branch")
+				"each input the required run names quantifies its own branch")
 		})
 	}
 }
 
-// TestOrJoinClauseBoundCorrelate is the green control: the identical shape
-// with ?ref bound by a where clause instead of :in. This behavior is correct
-// at head and must stay correct while the :in-bound classification is fixed.
+// TestOrJoinClauseBoundCorrelate pins the both-branches shape with ?ref
+// bound by a pattern of the enclosing scope: named in the required run, it
+// reaches both branches as an input does.
 func TestOrJoinClauseBoundCorrelate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -146,22 +143,20 @@ func TestOrJoinClauseBoundCorrelate(t *testing.T) {
 			                      :where
 			                      [_ :probe/ref ?ref]
 			                      [?e :entity/region ?region]
-			                      (or-join [?e]
+			                      (or-join [[?ref] ?e]
 			                        [?e :entity/name ?ref]
 			                        [?e :entity/code ?ref])]`,
 				region)
 			require.NoError(t, err)
 			got := collectEntityResults(t, rel)
 			require.Equal(t, map[string]bool{named.String(): true}, got,
-				"clause-bound correlates work at head and must keep working")
+				"a variable a pattern binds and the required run names reaches both branches")
 		})
 	}
 }
 
 // TestOrJoinInBoundMixedCorrelatesAggregate pins the aggregate find over the
-// mixed-correlate shape: the residual all-environment group ({?site ?region})
-// must absorb at the find boundary instead of tripping the disjoint-groups
-// aggregation error.
+// mixed shape: one tuple, the count of the entities the branches admit.
 func TestOrJoinInBoundMixedCorrelatesAggregate(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -189,7 +184,7 @@ func TestOrJoinInBoundMixedCorrelatesAggregate(t *testing.T) {
 			                      :in $ ?site ?region
 			                      :where
 			                      [?e :entity/kind "thing"]
-			                      (or-join [?e]
+			                      (or-join [[?site ?region] ?e]
 			                        [?e :entity/site ?site]
 			                        [?e :entity/region ?region])]`,
 				site, region)
@@ -198,15 +193,14 @@ func TestOrJoinInBoundMixedCorrelatesAggregate(t *testing.T) {
 			defer iter.Close()
 			require.True(t, iter.Next(), "aggregate must produce one tuple")
 			require.Equal(t, int64(2), iter.Tuple()[0],
-				"count over the mixed-correlate shape must absorb the residual environment group")
+				"the count is over the entities the branches admit")
 			require.NoError(t, iter.Error())
 		})
 	}
 }
 
-// TestOrJoinTupleInputEnvironment pins tuple-input parameters as environment:
-// a TupleInput's jointly-bound symbols must correlate into branches exactly
-// as scalars do.
+// TestOrJoinTupleInputEnvironment pins a tuple input's symbol as an input
+// like a scalar: named in the required run, ?ref reaches both branches.
 func TestOrJoinTupleInputEnvironment(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -228,24 +222,25 @@ func TestOrJoinTupleInputEnvironment(t *testing.T) {
 			require.NoError(t, err)
 
 			rel, err := d.Query(`[:find ?e
-			                      :in $ [[?region ?ref]]
+			                      :in $ [?region ?ref]
 			                      :where
 			                      [?e :entity/region ?region]
-			                      (or-join [?e]
+			                      (or-join [[?ref] ?e]
 			                        [?e :entity/name ?ref]
 			                        [?e :entity/code ?ref])]`,
 				[]interface{}{region, "alpha"})
 			require.NoError(t, err)
 			got := collectEntityResults(t, rel)
 			require.Equal(t, map[string]bool{named.String(): true}, got,
-				"tuple-input parameters are environment and must correlate into branches")
+				"a tuple input's symbol the required run names reaches both branches")
 		})
 	}
 }
 
-// TestOrJoinBranchPredicateConsumesEnvironment pins environment consumption
-// through a branch predicate (the non-cacheable branch arm).
-func TestOrJoinBranchPredicateConsumesEnvironment(t *testing.T) {
+// TestOrJoinBranchPredicateReadsAnInputThroughTheHeader: a branch predicate
+// reads an input through the or-join's header, which names it in the
+// required run.
+func TestOrJoinBranchPredicateReadsAnInputThroughTheHeader(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -267,21 +262,22 @@ func TestOrJoinBranchPredicateConsumesEnvironment(t *testing.T) {
 			                      :in $ ?region ?ref
 			                      :where
 			                      [?e :entity/region ?region]
-			                      (or-join [?e]
+			                      (or-join [[?ref] ?e]
 			                        (and [?e :entity/name ?n] [(= ?n ?ref)])
 			                        [?e :entity/code ?ref])]`,
 				region, "alpha")
 			require.NoError(t, err)
 			got := collectEntityResults(t, rel)
 			require.Equal(t, map[string]bool{named.String(): true}, got,
-				"a branch predicate consuming an :in parameter must see the environment")
+				"a branch predicate reads the input its header's required run names")
 		})
 	}
 }
 
-// TestOrDefaultJoinBranchConsumesEnvironment pins the short-circuit route's
-// non-cacheable arm: an or-default-join branch consuming an :in parameter
-// must evaluate under the environment, per outer tuple.
+// TestOrDefaultJoinBranchConsumesEnvironment pins a fallback whose first
+// branch reads the input ?ref through the required run: the decision is
+// taken per entity and input, true for the entity named alpha and false for
+// the other.
 func TestOrDefaultJoinBranchConsumesEnvironment(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -304,7 +300,7 @@ func TestOrDefaultJoinBranchConsumesEnvironment(t *testing.T) {
 			                      :in $ ?region ?ref
 			                      :where
 			                      [?e :entity/region ?region]
-			                      (or-default-join [[?e] ?flag]
+			                      (or-default-join [[?e ?ref] ?flag]
 			                        (and [?e :entity/name ?ref] [(ground true) ?flag])
 			                        [(ground false) ?flag])]`,
 				region, "alpha")
@@ -321,14 +317,14 @@ func TestOrDefaultJoinBranchConsumesEnvironment(t *testing.T) {
 			}
 			require.NoError(t, iter.Error())
 			require.Equal(t, map[string]bool{named.String(): true, otherNamed.String(): false}, got,
-				"the fallback decision must be quantified by the environment value, not has-any-name")
+				"the fallback is decided per entity and the input the required run names")
 		})
 	}
 }
 
-// TestOrDefaultJoinCacheableBranchConsumesEnvironment pins the short-circuit
-// route's cacheable arm: a DataPattern-only branch consuming an :in parameter
-// evaluates once, narrowed by the outer join keys AND the environment.
+// TestOrDefaultJoinCacheableBranchConsumesEnvironment pins a fallback whose
+// first branch is two patterns, one reading the input ?ref through the
+// required run: the entity named alpha gets its code, the other the default.
 func TestOrDefaultJoinCacheableBranchConsumesEnvironment(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -353,7 +349,7 @@ func TestOrDefaultJoinCacheableBranchConsumesEnvironment(t *testing.T) {
 			                      :in $ ?region ?ref
 			                      :where
 			                      [?e :entity/region ?region]
-			                      (or-default-join [[?e] ?v]
+			                      (or-default-join [[?e ?ref] ?v]
 			                        (and [?e :entity/name ?ref] [?e :entity/code ?v])
 			                        [(ground "none") ?v])]`,
 				region, "alpha")
@@ -370,7 +366,7 @@ func TestOrDefaultJoinCacheableBranchConsumesEnvironment(t *testing.T) {
 			}
 			require.NoError(t, iter.Error())
 			require.Equal(t, map[string]string{named.String(): "code-1", otherNamed.String(): "none"}, got,
-				"the cacheable branch's single evaluation must be environment-narrowed")
+				"the fallback is decided per entity and the input the required run names")
 		})
 	}
 }
@@ -413,10 +409,10 @@ func TestOrJoinWideHeaderInBound(t *testing.T) {
 	}
 }
 
-// TestOrJoinEnvironmentUnderRelationInputIteration pins the per-tuple
-// iteration path (preparedIteration.Run): the environment must bind per Run,
-// alongside the iterated relation input.
-func TestOrJoinEnvironmentUnderRelationInputIteration(t *testing.T) {
+// TestOrJoinEnvironmentBesideARelationInput pins the scalar input ?ref,
+// named in the required run, reaching the branches when a relation input
+// binds ?r as a group of two regions the plan runs once over.
+func TestOrJoinEnvironmentBesideARelationInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -441,25 +437,26 @@ func TestOrJoinEnvironmentUnderRelationInputIteration(t *testing.T) {
 			                      :in $ ?ref [[?r] ...]
 			                      :where
 			                      [?e :entity/region ?r]
-			                      (or-join [?e]
+			                      (or-join [[?ref] ?e]
 			                        [?e :entity/name ?ref]
 			                        [?e :entity/code ?ref])]`,
 				"alpha", [][]interface{}{{regionA}, {regionB}})
 			require.NoError(t, err)
 			got := collectEntityResults(t, rel)
 			require.Equal(t, map[string]bool{namedA.String(): true, namedB.String(): true}, got,
-				"the environment must bind on every per-tuple Run of the iterated plan")
+				"the input the required run names reaches the branches beside a relation input")
 		})
 	}
 }
 
-// TestOrJoinBranchNotConsumesWhereBoundExternal pins the externals gap: a
-// WHERE-bound outer symbol consumed only by a bare (not ...) inside a branch,
-// outside the header, must correlate. The canonical visibility derivation
-// delivers the binding into the branch, and the branch's anti-join bridges
-// the groups its keys span — see
+// TestOrJoinBranchNotReadsAnExternalThroughTheHeader: a WHERE-bound outer
+// symbol reaches a bare (not ...) inside a branch only through the or-join's
+// header. Outside the header it is local to the branch, so the not excludes
+// every entity carrying the attribute. Named in the required run it
+// correlates: the binding reaches the branch, and the branch's anti-join
+// bridges the groups its keys span — see
 // BUG_NOT_SPANNING_DISJOINT_GROUPS_APPLIED_PER_GROUP.
-func TestOrJoinBranchNotConsumesWhereBoundExternal(t *testing.T) {
+func TestOrJoinBranchNotReadsAnExternalThroughTheHeader(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -480,11 +477,9 @@ func TestOrJoinBranchNotConsumesWhereBoundExternal(t *testing.T) {
 			_, err := tx.Commit()
 			require.NoError(t, err)
 
-			// ?outer = "hot" (WHERE-bound). Branch 1 admits things NOT
-			// flagged ?outer: unflagged (no flag) and otherFlag ("cold").
-			// Under the existential-NOT defect, otherFlag is wrongly
-			// excluded (it has *a* flag) — branch 2 (special only) does not
-			// re-admit it, so the errors cannot cancel.
+			// Under the header [?e], the branch's ?outer is local: branch 1
+			// admits things with no flag at all, unflagged alone, and branch
+			// 2 (special only) admits flagged.
 			rel, err := d.Query(`[:find ?e
 			                      :where
 			                      [_ :probe/flag ?outer]
@@ -496,9 +491,26 @@ func TestOrJoinBranchNotConsumesWhereBoundExternal(t *testing.T) {
 			require.Equal(t, map[string]bool{
 				flagged.String():   true,
 				unflagged.String(): true,
+			}, got,
+				"a branch variable outside the header is local, so the branch NOT excludes every flagged thing")
+
+			// Under [[?outer] ?e], ?outer = "hot" (WHERE-bound) reaches the
+			// branch: branch 1 admits things NOT flagged "hot", unflagged and
+			// otherFlag ("cold"), and branch 2 admits flagged.
+			rel, err = d.Query(`[:find ?e
+			                     :where
+			                     [_ :probe/flag ?outer]
+			                     (or-join [[?outer] ?e]
+			                       (and [?e :entity/kind "thing"] (not [?e :entity/flag ?outer]))
+			                       [?e :entity/special true])]`)
+			require.NoError(t, err)
+			got = collectEntityResults(t, rel)
+			require.Equal(t, map[string]bool{
+				flagged.String():   true,
+				unflagged.String(): true,
 				otherFlag.String(): true,
 			}, got,
-				"a WHERE-bound external consumed by a branch NOT must correlate, not turn existential")
+				"a WHERE-bound external the required run names correlates into the branch NOT")
 		})
 	}
 }
@@ -547,9 +559,8 @@ func TestOrBranchNotConsumesExternalInSeparateGroup(t *testing.T) {
 	}
 }
 
-// TestOrJoinInBoundCorrelateInSubquery pins the environment's scope boundary:
-// the or-join lives inside a subquery whose own :in binds the correlate, so
-// the inner query's environment — not the outer's — must reach the branches.
+// TestOrJoinInBoundCorrelateInSubquery pins an or-join inside a subquery
+// reading the subquery's own input ?r through its required run.
 func TestOrJoinInBoundCorrelateInSubquery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -577,7 +588,7 @@ func TestOrJoinInBoundCorrelateInSubquery(t *testing.T) {
 			                           :in $ ?g ?r
 			                           :where
 			                           [?e2 :entity/region ?g]
-			                           (or-join [?e2]
+			                           (or-join [[?r] ?e2]
 			                             [?e2 :entity/name ?r]
 			                             [?e2 :entity/code ?r])]
 			                          $ ?region ?ref) [[?e] ...]]]`,
@@ -585,7 +596,7 @@ func TestOrJoinInBoundCorrelateInSubquery(t *testing.T) {
 			require.NoError(t, err)
 			got := collectEntityResults(t, rel)
 			require.Equal(t, map[string]bool{named.String(): true}, got,
-				"the subquery's own :in environment must correlate inside its or-join branches")
+				"the subquery's input its or-join's required run names reaches the branches")
 		})
 	}
 }

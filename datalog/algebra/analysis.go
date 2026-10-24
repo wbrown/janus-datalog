@@ -63,7 +63,7 @@ func RefreshSchemas(root *Node) (*Node, error) {
 				output = cloneSymbols(children[0].Symbols())
 			}
 			if data.Expression != nil {
-				output = mergeSymbols(output, bindingSymbols(data.Expression.Binding))
+				output = mergeSymbols(output, data.Expression.BoundVariables())
 			}
 			copy.Output = output
 			refreshed.Data = &copy
@@ -74,7 +74,7 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			copy := *data
 			copy.JoinSymbols = cloneSymbols(data.JoinSymbols)
 			copy.Output = mergeSymbols(children[0].Symbols(), children[1].Symbols())
-			copy.DefaultValues = append([]interface{}(nil), data.DefaultValues...)
+			copy.Defaults = append([]Default(nil), data.Defaults...)
 			refreshed.Data = &copy
 		case *AntiJoin:
 			if len(children) != 2 {
@@ -93,7 +93,8 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			}
 			copy := *data
 			copy.Output = cloneSymbols(data.Output)
-			copy.JoinVars = cloneSymbols(data.JoinVars)
+			copy.RequiredVars = cloneSymbols(data.RequiredVars)
+			copy.OutputVars = cloneSymbols(data.OutputVars)
 			copy.Required = cloneSymbols(data.Required)
 			refreshed.Data = &copy
 		case *LateralUnion:
@@ -115,18 +116,16 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			}
 			copy := *data
 			copy.CorrelationVars = cloneSymbols(data.CorrelationVars)
-			copy.DefaultValues = append([]interface{}(nil), data.DefaultValues...)
-			var output []query.Symbol
+			copy.Defaults = append([]Default(nil), data.Defaults...)
+			var outer []query.Symbol
 			if len(children) == 1 {
-				output = cloneSymbols(children[0].Symbols())
-			} else {
-				output = cloneSymbols(data.CorrelationVars)
+				outer = children[0].Symbols()
 			}
 			binding, ok := data.Binding.(query.BindingForm)
 			if !ok {
 				return nil, fmt.Errorf("refresh LateralJoin: binding has type %T", data.Binding)
 			}
-			copy.Output = mergeSymbols(output, binding.BoundVariables())
+			copy.Output = lateralJoinOutput(outer, len(children) == 1, data.CorrelationVars, binding.BoundVariables())
 			refreshed.Data = &copy
 		case *Aggregate:
 			copy := *data
@@ -143,6 +142,13 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			copy := *data
 			copy.Symbols = cloneSymbols(data.Symbols)
 			copy.Values = append([]interface{}(nil), data.Values...)
+			refreshed.Data = &copy
+		case *Derived:
+			if len(children) != 0 {
+				return nil, fmt.Errorf("refresh Derived: expected no children, got %d", len(children))
+			}
+			copy := *data
+			copy.Output = cloneSymbols(data.Output)
 			refreshed.Data = &copy
 		default:
 			return nil, fmt.Errorf("refresh %s: unsupported operator data %T", node.Op, node.Data)
@@ -215,6 +221,8 @@ func analyzeNode(node *Node, result map[*Node]Analysis) (Analysis, error) {
 		analysis, err = analyzeAggregate(node, children)
 	case RuleConstant:
 		analysis, err = analyzeConstant(node, children)
+	case RuleDerived:
+		analysis, err = analyzeDerived(node, children)
 	default:
 		err = fmt.Errorf("unknown algebra operator %q", node.Op)
 	}
@@ -308,7 +316,7 @@ func analyzeMap(node *Node, children []Analysis) (Analysis, error) {
 	}
 	expected := cloneSymbols(childOutput)
 	if data.Expression != nil {
-		expected = mergeSymbols(expected, bindingSymbols(data.Expression.Binding))
+		expected = mergeSymbols(expected, data.Expression.BoundVariables())
 		if !sameSymbolsInOrder(data.Output, expected) {
 			return Analysis{}, fmt.Errorf("map output %v does not match expected output %v", data.Output, expected)
 		}
@@ -407,7 +415,7 @@ func analyzeUnion(node *Node, children []Analysis) (Analysis, error) {
 	if !ok {
 		return Analysis{}, dataTypeError(node, "*algebra.Union")
 	}
-	return analyzeUnionBranches(data.Output, data.JoinVars, data.Required, children)
+	return analyzeUnionBranches(data.Output, data.OutputVars, data.Required, children)
 }
 
 func analyzeLateralUnion(node *Node, children []Analysis) (Analysis, error) {
@@ -438,12 +446,12 @@ func analyzeUnionBranches(output, joinVars, outerRequired []query.Symbol, childr
 					return Analysis{}, fmt.Errorf(
 						"or-join header declares %s, but branch %d schema %v does not bind it; every branch must bind every header variable; if %s is an input filter rather than an output, remove it from the header",
 						symbol,
-						i,
+						i+1,
 						child.Output,
 						symbol,
 					)
 				}
-				return Analysis{}, fmt.Errorf("union branch %d schema %v does not provide output symbol %s", i, child.Output, symbol)
+				return Analysis{}, fmt.Errorf("union branch %d schema %v does not provide output symbol %s", i+1, child.Output, symbol)
 			}
 		}
 		required = append(required, child.Required...)
@@ -487,11 +495,7 @@ func analyzeLateralJoin(node *Node, children []Analysis) (Analysis, error) {
 	if len(bound) != len(data.InnerQuery.Find) {
 		return Analysis{}, fmt.Errorf("lateral binding arity %d does not match inner find arity %d", len(bound), len(data.InnerQuery.Find))
 	}
-	expected := cloneSymbols(outer)
-	if len(children) == 0 {
-		expected = mergeSymbols(expected, data.CorrelationVars)
-	}
-	expected = mergeSymbols(expected, bound)
+	expected := lateralJoinOutput(outer, len(children) == 1, data.CorrelationVars, bound)
 	if !sameSymbolsInOrder(data.Output, expected) {
 		return Analysis{}, fmt.Errorf("lateral output %v does not match outer and binding output %v", data.Output, expected)
 	}
@@ -543,6 +547,23 @@ func analyzeConstant(node *Node, children []Analysis) (Analysis, error) {
 		return Analysis{}, fmt.Errorf("constant symbol arity %d does not match value arity %d", len(data.Symbols), len(data.Values))
 	}
 	return Analysis{Output: data.Symbols}, nil
+}
+
+func analyzeDerived(node *Node, children []Analysis) (Analysis, error) {
+	if err := requireChildCount(node.Op, children, 0); err != nil {
+		return Analysis{}, err
+	}
+	data, ok := node.Data.(*Derived)
+	if !ok {
+		return Analysis{}, dataTypeError(node, "*algebra.Derived")
+	}
+	if data.Invocation == nil {
+		return Analysis{}, fmt.Errorf("derived node has nil invocation")
+	}
+	if !sameSymbolsInOrder(data.Output, data.Invocation.Variables()) {
+		return Analysis{}, fmt.Errorf("derived output %v does not match the invocation's variables %v", data.Output, data.Invocation.Variables())
+	}
+	return Analysis{Output: data.Output}, nil
 }
 
 func requireChildCount(operator string, children []Analysis, expected int) error {

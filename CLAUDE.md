@@ -337,7 +337,7 @@ The storage layer connects the query engine to BadgerDB:
 
 ### Multi-Source Query Architecture
 - **One interface**: `PatternMatcher` is the sole interface for all data sources. No separate `DataSource` type.
-- **SourceRouter**: Routes by `pattern.Source` field via `map[Symbol]PatternMatcher`. Also implements `PredicateAwareMatcher` (delegates predicate pushdown to underlying source) and `EntityLookupMatcher` (delegates to default `$` source for `get-else`, `missing?`, `get-some`).
+- **SourceRouter**: Routes by `pattern.Source` field via `map[Symbol]PatternMatcher`. Also implements `PredicateAwareMatcher` (delegates predicate pushdown to underlying source), `EntityLookupMatcher` (delegates to default `$` source for `get-else`, `missing?`, `get-some`) and `AttributeVocabulary` (routes the unknown-attribute question to the source named, which answers for itself; a database passed as a named source refuses a pattern on it as it does as `$`).
 - **Source threading**: Sources are an execution context built once at the top level. `Query()` accepts `WithSources(...)` as a functional option. The `SourceRouter` becomes the executor's `PatternMatcher`, so subqueries inherit access to all sources automatically.
 - **IsSourceSymbol**: Helper `strings.HasPrefix(string(sym), "$")` replacing all hardcoded `sym == "$"` checks.
 - **Adding new source types**: Implement `PatternMatcher`. Optionally implement `PredicateAwareMatcher` for predicate pushdown. Pass via `WithSources`.
@@ -353,6 +353,24 @@ The storage layer connects the query engine to BadgerDB:
    - `Remove` is unconstrained; import and the other replay paths bypass the check; reads are unchanged
    - `:db/unique-elements` renamed `:db/uniqueElements`, no alias; an unknown or non-keyword key in an EDN attribute definition is a parse error
    - See [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md), [docs/reference/REFLECT.md](docs/reference/REFLECT.md), and [docs/archive/completed/NEVER_ZERO_VALUE.md](docs/archive/completed/NEVER_ZERO_VALUE.md)
+2. **Schema as facts** - A schema given to a database is declared into its store: a declaration's seven words are cardinality-one facts on an entity named by them, and `db.attribute/<ident>` carries one ref, `:db.attribute/declaration`, to the attribute's current declaration; a dump carries them, an open with no schema reads them back, and inference covers only an attribute with datoms and no definition
+   - `SetSchema` returns an error and refuses a temporal handle
+   - A fork opens the branch as any database, on its store as of the snapshot, and asserts its parent's declared definitions into it
+   - `TruncateTo` leaves the database running with the declarations that survive the rewind, writing nothing
+   - The running schema has one home: the database runs with what its store states
+   - `DatabaseOptions.RefuseUnknownAttributes` / `db.WithRefuseUnknownAttributes()` refuses a query, pull or `PullInto` naming an attribute the schema does not declare, as `*schema.UnknownAttributeError`
+   - The option requires a schema: opening with it and none, or `SetSchema(nil)` on a refusing database, is an error
+   - The plan holds the roster the prepared text names, collected once at planning under `PlannerOptions.CollectRosters`, and the check reads it there, so the check is one schema lookup per attribute per execution
+   - A `Query` is never copied by value, and a derived query is built from its parsed parts
+   - See [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md), "Schema as Facts", and [docs/proposals/RULES_WITNESSES_AND_SPECULATIVE_VALUES.md](docs/proposals/RULES_WITNESSES_AND_SPECULATIVE_VALUES.md) §4 and §5
+3. **Rules and recursion, with bounds and cancellation** - A rule set is passed as the `%` input: a `*query.RuleSet` from `parser.ParseRules` or the builder, or its text. It declares predicates a query invokes as `(name args...)` clauses. An invocation evaluates its predicate when its clause runs
+   - An invocation with no bound argument derives the predicate whole. Each needed stratum evaluates to a fixpoint, semi-naively. An invocation with a bound argument rewrites the rule set for the binding (magic sets) and derives only what the binding reaches. A free invocation of a predicate whose needed bodies invoke a predicate with required positions is rewritten with its head all free, so each required predicate is adorned from the clauses before its invocation
+   - The required-binding head, `[(rule [?x] ?y) ...]`, is accepted. The planner orders the invocation after the clauses that bind the required positions
+   - `query.NewRuleSet` refuses an unsafe rule, an arity disagreement, an unknown predicate, a cycle through negation, and a recursive invocation inside a fallback form or an aggregating inner query. Each is a typed error naming its parts
+   - `PlannerOptions.MaxRuleIterations` and `MaxDerivedTuples` bound an evaluation. Both are opt-in. `storage.WithContext` / `db.WithContext` is a query option. A query whose context is done is refused at entry, and a fixpoint whose context is done stops at its next iteration. The context's error is the query's error
+   - `executor.Context` carries the rule set, the derived relations and the cancellation beside the environment. A rule body's plan enters the plan cache under its own text, which carries `%` and the delta symbols. Every iteration reads the query's one snapshot
+   - The CLI reads the `-in` value at the `%` position as rule text. The builder has `qb.Rules`, `qb.Rule`, `qb.DefineRule`, `qb.RuleSet`, `qb.MustRuleSet` and `Require`
+   - See [docs/reference/RULES.md](docs/reference/RULES.md)
 
 ### ✅ Recent Updates (Q1 2026)
 1. **LZJ Compression Codec** - Custom LZ77+FSE compression for value storage
@@ -404,8 +422,7 @@ The storage layer connects the query engine to BadgerDB:
    - Threshold-based activation in matcher_relations.go
    - Modest performance impact, cleaner code structure
    - **Removed in v0.15.0**: the scanner had no caller. Binding-driven scans
-     go through `hash_join_matcher.go` (HashJoinScan, or MergeJoin for large
-     high-selectivity entity-position sets).
+     go through `hash_join_matcher.go`.
 3. **Predicate Infrastructure** - Classification and constraints
    - PredicateClassifier for analyzing pushdown candidates
    - StorageConstraint infrastructure in place
@@ -426,15 +443,15 @@ The storage layer connects the query engine to BadgerDB:
 12. **Aggregation functions** - `sum`, `count`, `avg`, `min`, `max` with grouping support (with proper time.Time support)
 13. **Temporal queries** - ElementID-based AsOf/History queries for time-travel
 14. **Time extraction functions** - `year`, `month`, `day`, `hour`, `minute`, `second` for temporal analysis
-15. **Subqueries** - Full implementation with TupleBinding and RelationBinding support
+15. **Subqueries** - A subquery's result enters its scope as the relation over its binding's symbols, under every spelling Datomic's binding grammar gives (`docs/proposals/NESTED_SCOPES_AS_QUERIES.md` §2.5)
 16. **Result/Relation unification** - Eliminated redundant Result type, unified API
 17. **Table formatter** - Markdown table formatting using tablewriter library
 18. **Order-by clause** - Full implementation with multi-symbol sorting and direction control
 19. **Time comparison fix** - Proper time.Time comparison in aggregations and predicates
-20. **Datomic compatibility** - ~80% feature parity (see DATOMIC_COMPATIBILITY.md)
+20. **Datomic compatibility** - ~90% feature parity (see DATOMIC_COMPATIBILITY.md)
 21. **Relations migration** - Multi-value variable support throughout codebase
 22. **Pull API** - Declarative entity attribute retrieval with nested refs, cycle detection, wildcards (9× faster than queries)
-23. **Schema support** - Type validation, cardinality (one/many/vector), uniqueness (read-time resolution), `:db/uniqueElements` on vectors, `:db/neverZeroValue` (the value type's zero is not a value: `Add`/`Set` reject it, the struct writer omits a field holding it); unknown EDN definition keys are parse errors; optional and additive
+23. **Schema support** - Type validation, cardinality (one/many/vector), uniqueness (read-time resolution), `:db/uniqueElements` on vectors, `:db/neverZeroValue` (the value type's zero is not a value: `Add`/`Set` reject it, the struct writer omits a field holding it); unknown EDN definition keys are parse errors; optional and additive. Declared definitions are stored as facts, each declaration's words on an entity named by them and a ref from `db.attribute/<ident>` to the attribute's current declaration, carried by dumps and read back at open; a database opened with `RefuseUnknownAttributes`, which requires a schema, refuses a query or pull naming an attribute the schema does not declare (`docs/reference/SCHEMA.md`, "Schema as Facts")
 24. **CRDT storage** - LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector; all writes preserved with ElementIDs; `db.History()` for raw datom access, `db.AsOf(elementID)` for point-in-time queries; three-mode `*ElementID` matcher (`nil`=latest, `&ElementID{}`=history, `&ElementID{L,R}`=as-of)
 25. **NOT/OR clauses** - Full support for `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible union semantics; `(or-default ...)`, `(or-default-join ...)` for fallback/default-value patterns (janus extension)
 26. **QueryInto API** - Typed query results via `QueryInto()` and `QueryOneInto()` with struct tag mapping for variables and aggregates
@@ -442,15 +459,16 @@ The storage layer connects the query engine to BadgerDB:
 28. **Database export/import** - EDN format export/import for backup and migration; CLI flags `-export` and `-import`; preserves all value types and transaction IDs
 29. **LZJ compression** - Custom LZ77+FSE codec; 3.6-13× ratios; deterministic; transparent at the storage layer; `#lzj` EDN tagged literal for export/import
 30. **Tier 3 blob store** - Out-of-line storage for large/compressed values with hash-keyed deduplication; values referenced by hash from index keys
+31. **Rules** - A rule set passed as the `%` input and invoked as `(name args...)` clauses. A recursive predicate evaluates to a fixpoint per stratum, semi-naively, with negation stratified. A bound invocation derives only what its bindings reach, through magic sets. Required-binding heads are accepted. `MaxRuleIterations` and `MaxDerivedTuples` bound an evaluation. CLI and query-builder surfaces (`docs/reference/RULES.md`)
+32. **Query cancellation** - `WithContext` is a query option. A query whose context is done is refused at entry, and a fixpoint whose context is done stops at its next iteration. The context's error is the query's error
 
 ### 📋 TODO (Priority Order)
 
 See `TODO.md` and `PERFORMANCE_STATUS.md` for detailed roadmap.
 
 **Medium Priority**:
-1. **CollectionBinding** - `[?x ...]` binding for set inputs in subqueries
-2. **Distinct aggregation** - Add `(count-distinct ?x)` and `distinct` modifier
-3. **Adaptive streaming strategy** - Auto-choose streaming vs materialized based on data shape
+1. **Distinct aggregation** - Add `(count-distinct ?x)` and `distinct` modifier
+2. **Adaptive streaming strategy** - Auto-choose streaming vs materialized based on data shape
 
 **Long Term**:
 1. **Statistics-based optimization** - Query planning with cardinality estimates
@@ -511,6 +529,25 @@ Relational invariants:
 - Set-preserving operators must not defensively deduplicate again.
 - `Materialize` guarantees replayability; it does not require eager realization
   when the Relation is already replayable.
+- A tuple is a map from symbols to values. An attribute is addressed by its
+  symbol. A tuple position is looked up from a symbol in the relation in hand,
+  once per operation at construction, never assumed from a list held
+  elsewhere, and a relation that lacks a symbol it must carry is an error,
+  never a misread. No reader depends on a relation's layout, and "column" is
+  not vocabulary.
+- A tuple key is an ordered list of values whose order is the key-symbol
+  list's, one list shared within one operation and resolved to positions on
+  each side. It is never a relation's layout.
+- A call unifies a variable of one scope with a variable of another. The map
+  a call gives, which of a scope's variables stand for which of the enclosing
+  scope's, is a substitution, read from the text. Applying a substitution to
+  a relation is a rename: a new relation over shared tuples under the new
+  symbols, its input untouched. None of these is a projection, and nothing is
+  changed "in place".
+- A binding is always a Relation. A subquery's result enters its scope as the
+  relation over the binding's symbols, joined on them, whatever the binding's
+  spelling. A cardinality assertion is an aggregate, written in the inner
+  `:find`, never carried by a binding's shape.
 
 **DO (Go idioms):**
 - Simple functions for stateless operations
@@ -547,6 +584,7 @@ func (p RelationProperties) project(symbols []query.Symbol) RelationProperties
 - **Parallel processing**: Leverage Go's concurrency for pattern matching and joins
 - **Caching hierarchy**: Pattern compilation, tuple deduplication, query plans
 - **Early termination**: Stop execution immediately on empty intermediate results
+- **Measure on memory-trees or badger.** A benchmark, a before-and-after comparison, or any number a decision rests on names one of those two backends. The memory backend is not a measurement target, and a number taken on it decides nothing. The tell: a report whose comparison column is the memory backend's because that is the number on hand.
 
 ### CRITICAL: Profile, Don't Theorize
 
@@ -662,10 +700,12 @@ d, _ := db.Open("path/to/db", db.WithAnnotationHandler(handler))
 - **Type transparency**: Wrapped matcher implements same interface as base matcher
 
 **Event Types**. `datalog/annotations/types.go` is the authority — every event the engine emits is named there and every producer emits through one of those constants rather than writing the string. Do not add an event by writing a literal; the two halves have to stay together or a sweep for dead names can only see one of them. The same applies to a payload key more than one producer writes: it is declared beside the names, and one key carries one meaning (`index` is one of the eight physical orderings, never an ordinal). Values go into the payload **typed** — an `IndexType`, a `*query.DataPattern`, a `Keyword` — because the formatter is the renderer; flattening at the producer spends an allocation per emit to hand the consumer a string to parse. The families:
+- **Query lifecycle**: the query as received (`query/invoked`), the prepared query with whether the inference rewrote a form and preparation's time (`query/prepared`, `docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.9), the plan (`query/plan.created`), and the completion with its counts or its error
 - **Pattern matching**: index selection, and the scan funnel — `datoms.scanned` (intake from the index, counted before any narrowing), `datoms.resolved` (what CRDT resolution produced), `datoms.matched` (what survived the pattern and its constraints)
-- **Binding-driven scans**: one completion event per strategy `chooseJoinStrategy` picks — hash-join, merge-join, per-binding, each carrying the same funnel
+- **Binding-driven scans**: one completion event per strategy the matcher takes — the per-key seek, hash-join, merge-join, per-binding — each carrying the same funnel; the per-key seek and the per-binding path carry the scans they opened in place of a run
 - **Joins**: hash-join timing and sizes, build/probe completion, strategy selection
 - **Phase execution**: begin and complete, with the phase's duration and tuple count (`-1` where a streaming group declines to size itself rather than be consumed for the number)
+- **Windowed scopes** (`scope/*`): the modules a windowed form runs on report under every form, each event carrying the form under `KeyForm` — a subject tuple read into a window, a window with its ordinal, tuple count and distinct keys, the subject's exhaustion, and a branch's build with its symbols and tuple count (`docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.9)
 - **V-bound validation, OR and fallback branches, subqueries, algebra rewrites, pull, reflection, cache rebuilds, unique-attribute lookups**
 
 ### Critical Performance Insights
@@ -737,7 +777,7 @@ Note: While our planner is explicit and feature-complete, the **information flow
 ## Important Documentation
 
 ### Core Documentation
-- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Comprehensive compatibility guide for Datomic users (~80% feature parity)
+- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Comprehensive compatibility guide for Datomic users (~90% feature parity)
 - **[PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)** - Current performance status, active optimizations, and benchmarks
 - **[TODO.md](TODO.md)** - Active task tracking with completed and pending features
 - **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Complete documentation navigation
@@ -1145,23 +1185,27 @@ bugs just as easily as a missing note hides real ones.
 
 ---
 
-### RelationInput and Subquery Iteration (2025-08-26)
+### RelationInput and Subquery Iteration (2025-08-26, superseded 2026-10-22)
 
-**Problem**: Subqueries were executing sequentially for each input combination (870 times for OHLC queries)
+**Status**: Superseded. A relation input is a relation the query joins once:
+`executeRealizedPlan` binds every input as one group through
+`BindQueryInputs` (`datalog/executor/executor_utils.go`), each entry symbol
+read from the given relation's own symbol, and the plan runs once over it. An
+aggregate in the `:find` is taken over the whole join, grouped by the find's
+variables; the per-tuple aggregate is spelled by naming the input's symbols in
+the `:find`. The derivation is `docs/proposals/RELATION_INPUT_PROOF.md`.
 
-**Solution Implemented**: Proper RelationInput iteration semantics
-- `:in $ [[?x ?y] ...]` now iterates over each tuple
-- Query executes once per tuple with correct aggregation scoping
-- Semantically correct (each tuple processed independently)
+**What this entry recorded**: a reading under which `:in $ [[?x ?y] ...]` ran
+the query once per input tuple and computed each aggregate per tuple,
+introduced in place of running a subquery once per input combination (870
+runs for the OHLC queries; `docs/archive/2025-10/SUBQUERY_PERFORMANCE_ANALYSIS.md`).
+Every answer that reading gave is the join's answer with the input's symbols
+named in the `:find`, and the aggregate over the whole join, which that
+reading could not spell, is the join's answer with them left out.
 
-**Current Status**:
-- ✅ Correct semantics - aggregations compute per-tuple not globally
-- ⏳ Still sequential execution (performance optimization needed)
-- See `docs/archive/2025-10/SUBQUERY_PERFORMANCE_ANALYSIS.md` for full details
-
-**Key Insight**: Datalog is not SQL - no implicit GROUP BY. Getting the semantics right is more important than speed.
-
-**Pattern**: Correctness first, performance second. Don't optimize prematurely if it breaks semantics.
+**Pattern**: One spelling, one meaning. A form of the engine's own is a
+synonym of a Datomic form, never a form with a meaning of its own
+(`docs/proposals/NESTED_SCOPES_AS_QUERIES.md`, goal 12).
 
 ---
 

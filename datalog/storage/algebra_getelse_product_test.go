@@ -313,7 +313,7 @@ func buildComplexQueryWithOrType(t *testing.T, useOrDefault bool) *query.Query {
 			qb.Pat(i, kw(":item/status"), kw(":status/done")),
 			qb.Pat(i, kw(":item/updated-at"), ts),
 			qb.Pat(i, kw(":item/tag"), tag),
-			qb.Subquery(maxTsSubq, p).BindTuple(maxTs),
+			qb.Subquery(maxTsSubq, p).BindRelation(maxTs),
 			qb.Eq(ts, maxTs),
 		)
 
@@ -321,23 +321,23 @@ func buildComplexQueryWithOrType(t *testing.T, useOrDefault bool) *query.Query {
 	var or1, or2, or3 interface{}
 	if useOrDefault {
 		or1 = qb.OrDefault().
-			Branch(qb.Subquery(countSubq, project).BindTuple(itemCount, totalCost)).
+			Branch(qb.Subquery(countSubq, project).BindRelation(itemCount, totalCost)).
 			Branch(qb.TupleGround(0, 0).As(itemCount, totalCost))
 		or2 = qb.OrDefault().
-			Branch(qb.Subquery(doneSubq, project).BindTuple(doneCount)).
+			Branch(qb.Subquery(doneSubq, project).BindRelation(doneCount)).
 			Branch(qb.Ground(0).As(doneCount))
 		or3 = qb.OrDefault().
-			Branch(qb.Subquery(lastTagSubq, project).BindTuple(lastTag, lastUpdatedAt)).
+			Branch(qb.Subquery(lastTagSubq, project).BindRelation(lastTag, lastUpdatedAt)).
 			Branch(qb.TupleGround(datalog.NewKeyword(":none"), 0).As(lastTag, lastUpdatedAt))
 	} else {
 		or1 = qb.Or().
-			Branch(qb.Subquery(countSubq, project).BindTuple(itemCount, totalCost)).
+			Branch(qb.Subquery(countSubq, project).BindRelation(itemCount, totalCost)).
 			Branch(qb.TupleGround(0, 0).As(itemCount, totalCost))
 		or2 = qb.Or().
-			Branch(qb.Subquery(doneSubq, project).BindTuple(doneCount)).
+			Branch(qb.Subquery(doneSubq, project).BindRelation(doneCount)).
 			Branch(qb.Ground(0).As(doneCount))
 		or3 = qb.Or().
-			Branch(qb.Subquery(lastTagSubq, project).BindTuple(lastTag, lastUpdatedAt)).
+			Branch(qb.Subquery(lastTagSubq, project).BindRelation(lastTag, lastUpdatedAt)).
 			Branch(qb.TupleGround(datalog.NewKeyword(":none"), 0).As(lastTag, lastUpdatedAt))
 	}
 
@@ -378,7 +378,7 @@ const parsedComplexQuery_Or = `
                  [?i :item/status :status/done]
                  [(get-else $ ?i :item/cost 0) ?cost]]
          $ ?project) [[?itemCount ?totalCost]]]
-     [(ground [0 0]) [[?itemCount ?totalCost]]])
+     [(ground [0 0]) [?itemCount ?totalCost]])
  (or [(q [:find (count ?i)
           :in $ ?p
           :where [?i :item/project ?p]
@@ -401,7 +401,7 @@ const parsedComplexQuery_Or = `
                     $ ?p) [[?maxTs]]]
                  [(= ?ts ?maxTs)]]
          $ ?project) [[?lastTag ?lastUpdatedAt]]]
-     [(ground [:none #inst "0001-01-01T00:00:00Z"]) [[?lastTag ?lastUpdatedAt]]])
+     [(ground [:none #inst "0001-01-01T00:00:00Z"]) [?lastTag ?lastUpdatedAt]])
  :order-by [[?lastUpdatedAt :desc]]]`
 
 // parsedComplexQuery_OrDefault returns the complex query using (or-default ...).
@@ -423,7 +423,7 @@ const parsedComplexQuery_OrDefault = `
                  [?i :item/status :status/done]
                  [(get-else $ ?i :item/cost 0) ?cost]]
          $ ?project) [[?itemCount ?totalCost]]]
-     [(ground [0 0]) [[?itemCount ?totalCost]]])
+     [(ground [0 0]) [?itemCount ?totalCost]])
  (or-default [(q [:find (count ?i)
           :in $ ?p
           :where [?i :item/project ?p]
@@ -446,7 +446,7 @@ const parsedComplexQuery_OrDefault = `
                     $ ?p) [[?maxTs]]]
                  [(= ?ts ?maxTs)]]
          $ ?project) [[?lastTag ?lastUpdatedAt]]]
-     [(ground [:none #inst "0001-01-01T00:00:00Z"]) [[?lastTag ?lastUpdatedAt]]])
+     [(ground [:none #inst "0001-01-01T00:00:00Z"]) [?lastTag ?lastUpdatedAt]])
  :order-by [[?lastUpdatedAt :desc]]]`
 
 func runComplexQueryTest(t *testing.T, db *Database, q interface{}, label string, expectedTuples int) {
@@ -480,7 +480,9 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 			}
 
 			// Print algebra bridge output
-			bridged, err := algebra.Compile(&query.Query{Where: q.Where})
+			prepared, err := query.Prepare(q, nil)
+			require.NoError(t, err)
+			bridged, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
 			require.NoError(t, err)
 			t.Logf("Compiled tree:\n%s", bridged.String())
 			opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)

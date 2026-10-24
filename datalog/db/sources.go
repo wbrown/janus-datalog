@@ -35,6 +35,19 @@ type SliceSource[T any] = executor.SliceSource[T]
 //	)
 var WithSources = storage.WithSources
 
+// WithContext cancels the query with ctx. A query whose ctx is done is refused
+// at entry, before any work, and a rule evaluation whose ctx is done stops at
+// its next iteration. ctx's error is the error Query, QueryInto, QueryOneInto
+// and Analyze return. Explain and ExplainAlgebra accept the option and plan
+// without executing.
+//
+// Example:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+//	defer cancel()
+//	err := d.QueryInto(&results, q, db.WithContext(ctx))
+var WithContext = storage.WithContext
+
 // NewSliceSource creates a PatternMatcher from a Go slice and attribute schema.
 // Each item at index i gets entity ID "slice:i". Multi-valued attributes
 // (slices/arrays returned by accessor functions) are expanded into one datom

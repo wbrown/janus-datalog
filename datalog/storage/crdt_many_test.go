@@ -73,7 +73,9 @@ func TestSetEntryStorageRoundTrip(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -162,7 +164,9 @@ func TestResolveAddWinsSetDirect(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -215,7 +219,9 @@ func TestResolveAddWinsSameLamport(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -269,7 +275,9 @@ func TestCheckSetMembershipDirect(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -346,7 +354,9 @@ func TestCardinalityManyAddRemove(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -459,7 +469,9 @@ func TestCardinalityManyAddWins(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -546,7 +558,9 @@ func TestCardinalityManyReplicaIDTiebreaker(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -625,7 +639,9 @@ func TestCardinalityManyAddThenRemove(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -694,7 +710,9 @@ func TestCardinalityManyRemoveThenAdd(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -773,7 +791,9 @@ func TestCardinalityManyMultipleValues(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -849,7 +869,9 @@ func TestCardinalityManyEmptySet(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -913,7 +935,9 @@ func TestCardinalityManyHistory(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -987,7 +1011,9 @@ func TestCardinalityManyMembership(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -1068,7 +1094,9 @@ func TestCardinalityManyReplaceSet(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -1165,7 +1193,9 @@ func TestAddSchemaAware(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 
@@ -1234,7 +1264,9 @@ func TestRemoveCardinalityValidation(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 
@@ -1272,7 +1304,9 @@ func TestCardinalityManySetSeesPendingOps(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -1348,7 +1382,9 @@ func TestCardinalityManySetSeesCommittedAndPending(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -1442,7 +1478,9 @@ func TestCardinalityManyUnboundEWithValue(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			attr := datalog.NewKeyword(":person/tags")
 
@@ -1522,7 +1560,9 @@ func TestCardinalityManyUnboundEUnboundV(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			attr := datalog.NewKeyword(":person/tags")
 
@@ -1609,7 +1649,9 @@ func TestCardinalityManySetWithDuplicates(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -1677,7 +1719,9 @@ func TestCardinalityManyUnboundEWithRemovedValue(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			attr := datalog.NewKeyword(":person/tags")
 
@@ -1757,7 +1801,9 @@ func TestAVETOptimizationForCardinalityMany(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			attr := datalog.NewKeyword(":person/tags")
 
@@ -1845,7 +1891,9 @@ func TestAVETAddWinsResolution(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			attr := datalog.NewKeyword(":person/tags")
 
@@ -1934,7 +1982,9 @@ func TestHistoryModeCardinalityMany(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("test-entity")
 			attr := datalog.NewKeyword(":person/tags")
@@ -2049,7 +2099,9 @@ func TestLookupAttributeManyBytesMembers(t *testing.T) {
 				ValueType:   schema.TypeBytes,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			entityID := datalog.NewIdentity("bytes-entity")
 			attr := datalog.NewKeyword(":doc/chunks")

@@ -277,11 +277,16 @@ query, improving 11.3% time, 8.3% memory, and 10.6% allocations. Replacement is
 observable through `or/outer-replaced`; iterator, cache-build, and close errors
 propagate rather than being interpreted as a missing branch.
 
-Outer selection also leaves a single relation streaming until a branch shape
-requires re-iteration for join-key narrowing. This changes when materialization
-occurs but is neutral for full-result performance; it is a streaming contract,
-not an optimization claim. Required materialization is observable through
-`or-fallback/outer.materialized`.
+Outer selection leaves a single relation streaming. A form's branches run over
+windows of the subject, one tuple doubling to the cap, so the subject is read
+once and never held whole, and the first result follows one pull. Each window
+is observable through `scope/window`, which carries the form, its ordinal, its
+tuple count and its distinct key count. A window's keys bind the branch's
+patterns. At or below the matcher's boundary, `executor.SmallBindingBoundary`,
+which is also the cap's default, a binding of several keys is served by one
+narrowed scan per distinct key, the `per-key-seek` strategy on
+`storage/scan-complete`; above it, one scan of the pattern's extent serves
+every key.
 
 ### Replayable Sources, Single-Use Products
 

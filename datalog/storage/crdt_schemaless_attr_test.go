@@ -39,7 +39,7 @@ func TestSchemalessAttrBoundQuery_BugRepro(t *testing.T) {
 						Attribute(":module/name").Type(schema.TypeString).One().Add().
 						Build()
 					require.NoError(t, err)
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					entityID := datalog.NewIdentity("test-entity")
 
@@ -83,7 +83,7 @@ func TestSchemalessAttrUnboundQuery_BugRepro(t *testing.T) {
 						Attribute(":test/name").Type(schema.TypeString).One().Add().
 						Build()
 					require.NoError(t, err)
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					entityID := datalog.NewIdentity("test-entity")
 
@@ -136,7 +136,7 @@ func TestSchemalessAttrMultipleWrites(t *testing.T) {
 						Attribute(":test/name").Type(schema.TypeString).One().Add().
 						Build()
 					require.NoError(t, err)
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					entityID := datalog.NewIdentity("test-entity")
 
@@ -209,7 +209,7 @@ func TestSchemalessRemove_RoundTrip(t *testing.T) {
 						Attribute(":test/name").Type(schema.TypeString).One().Add().
 						Build()
 					require.NoError(t, err)
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					entityID := datalog.NewIdentity("test-entity")
 					attr := datalog.NewKeyword(":test/data")
@@ -322,7 +322,7 @@ func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 						Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 						Build()
 					require.NoError(t, err)
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					entityID := datalog.NewIdentity("test-entity")
 					attr := datalog.NewKeyword(":unregistered/attr")
@@ -397,7 +397,7 @@ func TestNilSchemaMatcher_ReadsSchemaData(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			e := datalog.NewIdentity("alice")
 			a := datalog.NewKeyword(":person/name")

@@ -85,7 +85,7 @@ func TestGroundVectorPatternDistinguishesClearedFromNeverSet(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(tc.name+"/"+mode.name+"/"+omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
-					db.SetSchema(constantPatternSchema(t))
+					require.NoError(t, db.SetSchema(constantPatternSchema(t)))
 					tc.write(t, db)
 
 					rel, err := db.Query(tc.query)
@@ -133,7 +133,7 @@ func TestClearedVectorBindsEmptyVectorNotNil(t *testing.T) {
 		for _, omode := range optimizerModes {
 			t.Run(mode.name+"/"+omode.name, func(t *testing.T) {
 				db := createCacheTestDB(t, omode, mode.disableCache, nil)
-				db.SetSchema(refSchema(t))
+				require.NoError(t, db.SetSchema(refSchema(t)))
 
 				commitGroundPattern(t, db, func(tx *Transaction) error {
 					return tx.Set(e, refs, []interface{}{
@@ -195,7 +195,7 @@ func TestVBoundScanWithUnboundEntityRejectsSupersededValue(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(tc.name+"/"+mode.name+"/"+omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
-					db.SetSchema(constantPatternSchema(t))
+					require.NoError(t, db.SetSchema(constantPatternSchema(t)))
 					renamed(t, db)
 
 					rel, err := db.Query(tc.query)

@@ -25,7 +25,7 @@ func TestDecorrelation_SimpleAggregate(t *testing.T) {
 	require.NoError(t, err)
 
 	// Compile to algebra
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	t.Logf("Before decorrelation:\n%s", root.String())
 
@@ -100,7 +100,7 @@ func TestDecorrelation_NonAggregateUnchanged(t *testing.T) {
 	      $ ?e) [[?name]]]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	// Verify LateralJoin exists
@@ -137,7 +137,7 @@ func TestDecorrelation_MultipleSubqueries(t *testing.T) {
 	      [(ground 0) ?total])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	t.Logf("Before:\n%s", root.String())
 
@@ -178,7 +178,7 @@ func TestDecorrelation_NestedWithIntermediateMap(t *testing.T) {
 	      [(ground 0) ?total])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	t.Logf("Before:\n%s", root.String())
 
@@ -221,7 +221,7 @@ func TestDecorrelation_NestedWithNotAndGetElse(t *testing.T) {
 	      [(ground 0) ?total])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	t.Logf("Before:\n%s", root.String())
 
@@ -263,7 +263,7 @@ func TestDecorrelation_MixedAggregateAndNonAggregate(t *testing.T) {
 	      [(ground :none) ?lastKey])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	t.Logf("Before:\n%s", root.String())
 
@@ -314,7 +314,7 @@ func TestDecorrelation_ProductionStructure(t *testing.T) {
 	                  [(get-else $ ?i :item/input-units 0) ?iu]
 	                  [(get-else $ ?i :item/output-units 0) ?ou]]
 	          $ ?project) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]]
-	      [(ground [0 0 0 0 0]) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]])
+	      [(ground [0 0 0 0 0]) [?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]])
 	  (or-default [(q [:find (count ?i)
 	           :in $ ?p
 	           :where [?i :item/project ?p]
@@ -340,11 +340,11 @@ func TestDecorrelation_ProductionStructure(t *testing.T) {
 	                      $ ?p) [[?maxCa]]]
 	                  [(= ?ca ?maxCa)]]
 	          $ ?project) [[?lastKey ?lastUpdatedAt]]]
-	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 	  :order-by [[?lastUpdatedAt :desc]]]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	t.Logf("Before:\n%s", root.String())
 
@@ -398,7 +398,7 @@ func TestDecorrelation_NestedLateralJoins(t *testing.T) {
 	      [(ground 0) ?total])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	t.Logf("Before:\n%s", root.String())
 
@@ -438,10 +438,10 @@ func TestDecorrelation_ArgmaxPattern(t *testing.T) {
 	                      $ ?s) [[?maxCa]]]
 	                  [(= ?ca ?maxCa)]]
 	          $ ?e) [[?lastKey ?lastUpdatedAt]]]
-	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])]`)
+	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 	t.Logf("Before:\n%s", root.String())
 
@@ -479,7 +479,7 @@ func TestDecorrelation_PureDataPatternSkipped(t *testing.T) {
 	      [(ground 0) ?val])]`)
 	require.NoError(t, err)
 
-	root, err := Compile(q)
+	root, err := Compile(mustPrepare(t, q, nil), nil)
 	require.NoError(t, err)
 
 	ljBefore := countNodes(root, RuleLateralJoin)
@@ -557,7 +557,7 @@ func TestDecorrelation_EqualityBoundTranslation(t *testing.T) {
 
 	// Mirror the bridge: compile the WHERE clauses only, optimize with the
 	// default passes, decompile back to clauses.
-	root, err := Compile(&query.Query{Where: q.Where})
+	root, err := Compile(&query.Query{Where: q.Where}, nil)
 	require.NoError(t, err)
 	t.Logf("Before:\n%s", root.String())
 

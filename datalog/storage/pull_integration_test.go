@@ -66,9 +66,12 @@ func TestPullIntegration_StandaloneAPI(t *testing.T) {
 				if result == nil {
 					t.Fatal("expected non-nil result")
 				}
-				// Should have all 4 attributes (name, age, email, region)
-				if len(result) != 4 {
-					t.Errorf("expected 4 attributes, got %d: %v", len(result), result)
+				// Every attribute the entity carries (name, age, email, region), and its id beside them
+				if len(result) != 5 {
+					t.Errorf("expected 4 attributes and the id, got %d: %v", len(result), result)
+				}
+				if result[query.DBIDKey] != alice {
+					t.Errorf("expected db/id=%v, got %v", alice, result[query.DBIDKey])
 				}
 			})
 
@@ -123,7 +126,9 @@ func TestPullIntegration_StandaloneAPI(t *testing.T) {
 					ValueType:   schema.TypeString,
 					Cardinality: schema.CardinalityMany,
 				})
-				db.SetSchema(s)
+				if err := db.SetSchema(s); err != nil {
+					t.Fatal(err)
+				}
 
 				// Create entity with multiple tags
 				taggedEntity := datalog.NewIdentity("user:tagged")

@@ -33,7 +33,7 @@ And then the probe that exposed what the map could never carry:
 
 > *"What if the bound env vals are tuples?"*
 
-A map from symbol to value states each binding severally. But `:in $ [[?world ?ref]]` binds a *joint* fact: this `?world` and this `?ref` belong to the same parameter binding. The tuple is the statement of co-occurrence. A map erases it; a relation is made of it. The owner's ruling followed, and it is worth recording in full because every subsequent act applies it:
+A map from symbol to value states each binding severally. But `:in $ [?world ?ref]` binds a *joint* fact: this `?world` and this `?ref` belong to the same parameter binding. The tuple is the statement of co-occurrence. A map erases it; a relation is made of it. The owner's ruling followed, and it is worth recording in full because every subsequent act applies it:
 
 **`:in` scalar and tuple parameters are the query scope's environment — its joint parameter binding. The environment is one single-tuple Relation, carried on the executor Context, ambient in every clause scope: top level, per-tuple iteration, subquery entry, or-branch bodies, not bodies. It reaches consumers by join — never as a map. Collection and relation inputs are data, not environment.**
 

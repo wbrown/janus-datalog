@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -384,7 +385,9 @@ func TestExecuteQueryWithCollectionInput(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			if err := db.SetSchema(s); err != nil {
+				t.Fatal(err)
+			}
 
 			// Add test data
 			tx := db.NewTransaction()
@@ -423,7 +426,8 @@ func TestExecuteQueryWithCollectionInput(t *testing.T) {
 	}
 }
 
-// TestExecuteQueryWithTupleInput tests tuple input [[?var1 ?var2]]
+// TestExecuteQueryWithTupleInput tests the tuple input [?var1 ?var2], one
+// slice bound as one tuple over its symbols.
 func TestExecuteQueryWithTupleInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -444,14 +448,12 @@ func TestExecuteQueryWithTupleInput(t *testing.T) {
 				t.Fatalf("Failed to commit: %v", err)
 			}
 
-			// Query with tuple input - simplified
 			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e
-		  :in $ ?name ?target-age
+		  :in $ [?name ?target-age]
 		  :where [?e :person/name ?name]
 		         [?e :person/age ?target-age]]`,
-				"Alice",
-				int64(30),
+				[]interface{}{"Alice", int64(30)},
 			))
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
@@ -459,6 +461,54 @@ func TestExecuteQueryWithTupleInput(t *testing.T) {
 
 			if len(results) != 1 {
 				t.Errorf("Expected 1 result, got %d", len(results))
+			}
+		})
+	}
+}
+
+// A tuple input bound from one slice, a relation input bound from a slice of
+// that one slice, and the relation input under janus's synonym answer the
+// same tuples: a binding is a relation whatever its spelling, and a tuple is
+// the relation of one tuple.
+func TestTupleInputAndAOneTupleRelationInputAnswerTheSameTuples(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+
+			tx := db.NewTransaction()
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice")
+			tx.Add(alice, datalog.NewKeyword(":person/age"), int64(30))
+			tx.Add(bob, datalog.NewKeyword(":person/name"), "Bob")
+			tx.Add(bob, datalog.NewKeyword(":person/age"), int64(25))
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit: %v", err)
+			}
+
+			where := ` :where [?e :person/name ?name]
+			          [?e :person/age ?age]]`
+			tuple, err := executor.CollectTuples(db.Query(
+				`[:find ?e ?name :in $ [?name ?age]`+where,
+				[]interface{}{"Alice", int64(30)},
+			))
+			if err != nil {
+				t.Fatalf("the tuple input: %v", err)
+			}
+			if len(tuple) != 1 {
+				t.Fatalf("the tuple input answers %d tuples, want 1: %v", len(tuple), tuple)
+			}
+			for _, spelling := range []string{`[[?name ?age]]`, `[[?name ?age] ...]`} {
+				relation, err := executor.CollectTuples(db.Query(
+					`[:find ?e ?name :in $ `+spelling+where,
+					[][]interface{}{{"Alice", int64(30)}},
+				))
+				if err != nil {
+					t.Fatalf("the relation input %s: %v", spelling, err)
+				}
+				if !reflect.DeepEqual(relation, tuple) {
+					t.Errorf("the relation input %s answers %v, the tuple input %v", spelling, relation, tuple)
+				}
 			}
 		})
 	}

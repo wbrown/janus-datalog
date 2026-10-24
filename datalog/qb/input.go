@@ -84,7 +84,7 @@ func (c collectionInput) toInputSpec() query.InputSpec {
 	return query.CollectionInput{Symbol: c.v.Symbol()}
 }
 
-// tupleInput represents a tuple input [[?x ?y]].
+// tupleInput represents a tuple input [?x ?y].
 type tupleInput struct {
 	vars []*Var
 }

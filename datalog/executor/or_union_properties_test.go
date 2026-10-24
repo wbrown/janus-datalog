@@ -12,6 +12,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+// A fallback whose branches each answer at most one tuple per subject tuple,
+// a pure count subquery and a ground, keeps the subject's key and ordering
+// and deduplicates nothing.
 func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 	var events []annotations.Event
 	options := ExecutorOptions{Handler: func(event annotations.Event) {
@@ -20,6 +23,7 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	name := datalog.NewSymbol("?name")
 	value := datalog.NewSymbol("?value")
+	task := datalog.NewSymbol("?task")
 	ordering := []query.OrderByClause{{Variable: entity, Descending: false}}
 	outer := NewMaterializedRelationWithProperties(
 		[]query.Symbol{entity, name},
@@ -30,11 +34,17 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 			Keys:     [][]query.Symbol{{entity}},
 		},
 	)
+	owner := datalog.NewSymbol("?owner")
 	branches := [][]query.Clause{
 		{
 			&query.SubqueryPattern{
-				Query:   &query.Query{},
-				Binding: query.TupleBinding{Variables: []query.Symbol{value}},
+				Query: &query.Query{
+					Find:  []query.FindElement{query.FindAggregate{Function: datalog.SymCount, Arg: task}},
+					In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+					Where: []query.Clause{branchPattern(task, owner, datalog.NewKeyword(":task/owner"))},
+				},
+				Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
+				Binding: query.RelationBinding{Variables: []query.Symbol{value}},
 			},
 		},
 		{
@@ -45,14 +55,17 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 		},
 	}
 
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options),
 		NewContext(),
+		nil,
+		[]query.Symbol{value},
 		branches,
 		outer,
 		options,
 		true,
 	)
+	require.NoError(t, err)
 
 	require.Equal(t, ordering, rel.Properties().Ordering)
 	require.True(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
@@ -73,15 +86,22 @@ func TestOrDefaultDecorrelatedAggregatePreservesOuterGroupKey(t *testing.T) {
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
 	decorrelated := &query.SubqueryPattern{
-		Query: &query.Query{Find: []query.FindElement{
-			query.FindVariable{Symbol: entity},
-			query.FindAggregate{Function: datalog.SymCount, Arg: task},
-		}},
+		Query: &query.Query{
+			Find: []query.FindElement{
+				query.FindVariable{Symbol: entity},
+				query.FindAggregate{Function: datalog.SymCount, Arg: task},
+			},
+			In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+			Where: []query.Clause{branchPattern(task, entity, datalog.NewKeyword(":task/owner"))},
+		},
+		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{entity, count}},
 	}
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 		NewContext(),
+		[]query.Symbol{entity},
+		[]query.Symbol{count},
 		[][]query.Clause{
 			{decorrelated},
 			{&query.Expression{
@@ -93,6 +113,7 @@ func TestOrDefaultDecorrelatedAggregatePreservesOuterGroupKey(t *testing.T) {
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 
 	require.True(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
 }
@@ -108,16 +129,26 @@ func TestOrDefaultRelationBindingWithFreshGroupDoesNotPreserveOuterKey(t *testin
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
 	multiTuple := &query.SubqueryPattern{
-		Query: &query.Query{Find: []query.FindElement{
-			query.FindVariable{Symbol: entity},
-			query.FindVariable{Symbol: key},
-			query.FindVariable{Symbol: updatedAt},
-		}},
+		Query: &query.Query{
+			Find: []query.FindElement{
+				query.FindVariable{Symbol: entity},
+				query.FindVariable{Symbol: key},
+				query.FindVariable{Symbol: updatedAt},
+			},
+			In: []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+			Where: []query.Clause{
+				branchPattern(entity, key, datalog.NewKeyword(":item/key")),
+				branchPattern(entity, updatedAt, datalog.NewKeyword(":item/updated")),
+			},
+		},
+		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{entity, key, updatedAt}},
 	}
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 		NewContext(),
+		[]query.Symbol{entity},
+		[]query.Symbol{key, updatedAt},
 		[][]query.Clause{
 			{multiTuple},
 			{&query.Expression{
@@ -129,6 +160,7 @@ func TestOrDefaultRelationBindingWithFreshGroupDoesNotPreserveOuterKey(t *testin
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 
 	require.False(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
 	require.True(t, containsSymbolSet(
@@ -155,14 +187,17 @@ func TestOrDefaultMultiTupleBranchesDeriveCompositeKey(t *testing.T) {
 		}}
 	}
 
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 		NewContext(),
+		[]query.Symbol{entity},
+		[]query.Symbol{tag},
 		[][]query.Clause{{pattern(":item/tag")}, {pattern(":item/category")}},
 		outer,
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 
 	require.False(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
 	require.True(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity, tag}))
@@ -184,87 +219,21 @@ func TestCorrelatedUnionDeduplicatesAcrossBranches(t *testing.T) {
 			Binding:  value,
 		}
 	}
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 		NewContext(),
+		nil,
+		[]query.Symbol{value},
 		[][]query.Clause{{ground()}, {ground()}},
 		outer,
 		ExecutorOptions{},
 		false,
 	)
+	require.NoError(t, err)
 
 	require.Equal(t, []Tuple{{int64(1), int64(7)}}, collectTuples(rel))
 	require.False(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
 	require.True(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity, value}))
-}
-
-func TestOrBranchOverwriteInvalidatesOuterProperty(t *testing.T) {
-	entity := datalog.NewSymbol("?entity")
-	name := datalog.NewSymbol("?name")
-	ordering := []query.OrderByClause{{Variable: entity, Descending: false}}
-	outer := NewMaterializedRelationWithProperties(
-		[]query.Symbol{entity, name},
-		[]Tuple{{int64(1), "one"}},
-		ExecutorOptions{},
-		RelationProperties{
-			Ordering: ordering,
-			Keys:     [][]query.Symbol{{entity}},
-		},
-	)
-	overwrite := func(value int64) query.Clause {
-		return &query.Expression{
-			Function: query.GroundFunction{Value: value},
-			Binding:  entity,
-		}
-	}
-	rel := NewOrFallbackRelation(
-		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(),
-		[][]query.Clause{{overwrite(10)}, {overwrite(20)}},
-		outer,
-		ExecutorOptions{},
-		true,
-	)
-
-	require.Empty(t, rel.Properties().Ordering)
-	require.False(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
-	require.True(t, containsSymbolSet(rel.Properties().Keys, rel.Symbols()))
-}
-
-func TestOrBranchOverwriteRetainsUnaffectedOrderingPrefix(t *testing.T) {
-	entity := datalog.NewSymbol("?entity")
-	name := datalog.NewSymbol("?name")
-	outer := NewMaterializedRelationWithProperties(
-		[]query.Symbol{entity, name},
-		[]Tuple{{int64(1), "one"}},
-		ExecutorOptions{},
-		RelationProperties{
-			Ordering: []query.OrderByClause{
-				{Variable: entity, Descending: false},
-				{Variable: name, Descending: false},
-			},
-			Keys: [][]query.Symbol{{entity}},
-		},
-	)
-	rel := NewOrFallbackRelation(
-		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
-		NewContext(),
-		[][]query.Clause{{
-			&query.Expression{
-				Function: query.GroundFunction{Value: "replacement"},
-				Binding:  name,
-			},
-		}},
-		outer,
-		ExecutorOptions{},
-		true,
-	)
-
-	require.Equal(t,
-		[]query.OrderByClause{{Variable: entity, Descending: false}},
-		rel.Properties().Ordering,
-	)
-	require.True(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
 }
 
 func TestDeduplicatingUnionAdvertisesOnlyFullOutputKey(t *testing.T) {
@@ -304,9 +273,11 @@ func TestOrFallbackMaterializationPreservesProperties(t *testing.T) {
 		ExecutorOptions{},
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 		NewContext(),
+		nil,
+		[]query.Symbol{value},
 		[][]query.Clause{{
 			&query.Expression{
 				Function: query.GroundFunction{Value: int64(0)},
@@ -317,6 +288,7 @@ func TestOrFallbackMaterializationPreservesProperties(t *testing.T) {
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 
 	materialized := rel.Materialize()
 	require.Equal(t, rel.Properties(), materialized.Properties())
@@ -329,10 +301,13 @@ func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
 	ground := func(v int64) query.Clause {
 		return &query.Expression{Function: query.GroundFunction{Value: v}, Binding: value}
 	}
-	nested := &query.OrDefaultClause{Branches: [][]query.Clause{
-		{ground(1)},
-		{ground(2)},
-	}}
+	nested := &query.OrDefaultJoinClause{
+		OutputVars: []query.Symbol{value},
+		Branches: [][]query.Clause{
+			{ground(1)},
+			{ground(2)},
+		},
+	}
 	queryExecutor := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
 
 	outer := NewMaterializedRelationWithProperties(
@@ -341,14 +316,17 @@ func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
 		ExecutorOptions{},
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
-	relation := NewOrFallbackRelation(
+	relation, err := NewOrFallbackRelation(
 		queryExecutor,
 		NewContext(),
+		nil,
+		[]query.Symbol{value},
 		[][]query.Clause{{nested}, {ground(3)}},
 		outer,
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 	tuples, err := collectTypedTuples(relation)
 	require.NoError(t, err)
 	require.Equal(t, []Tuple{{int64(1), int64(1)}}, tuples)
@@ -360,37 +338,39 @@ func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
 		ExecutorOptions{},
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
-	empty := NewOrFallbackRelation(
+	empty, err := NewOrFallbackRelation(
 		queryExecutor,
 		NewContext(),
+		nil,
+		[]query.Symbol{value},
 		[][]query.Clause{{nested}},
 		emptyOuter,
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 	emptyTuples, err := collectTypedTuples(empty)
 	require.NoError(t, err)
 	require.Empty(t, emptyTuples)
 	assertRelationPropertiesHold(t, empty, emptyTuples, 1)
 }
 
-func TestFilterBranchToOuterTupleComparesVectorValues(t *testing.T) {
+// The carried-output filter compares a vector value by its elements: a
+// branch tuple carrying an equal vector agrees with the subject tuple.
+func TestAgreeingComparesVectorValues(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	vector := datalog.NewSymbol("?vector")
 	id := datalog.NewIdentity("vector-filter")
 	value := []interface{}{int64(1), "two"}
-	branch := NewMaterializedRelation(
-		[]query.Symbol{entity, vector},
-		[]Tuple{{id, value}},
-	)
+	it := &matchEmit{carried: []carriedOutput{{symbol: vector, outerPos: 1}}}
 
 	require.NotPanics(t, func() {
-		result := filterBranchToOuterTuple(
-			branch,
-			Tuple{id, []interface{}{int64(1), "two"}},
+		kept := it.agreeing(
+			[]Tuple{{id, value}},
 			[]query.Symbol{entity, vector},
+			Tuple{id, []interface{}{int64(1), "two"}},
 		)
-		require.Equal(t, 1, result.Size())
+		require.Len(t, kept, 1)
 	})
 }
 
@@ -476,19 +456,22 @@ func runOrPropertyDifferential(t *testing.T, seed int64) {
 					Function: query.EnumerateFunction{
 						VecTerm: query.VariableTerm{Symbol: vector},
 					},
-					Binding: query.TupleBinding{Variables: []query.Symbol{index, value}},
+					Binding: query.RelationBinding{Variables: []query.Symbol{index, value}},
 				}}
 			}
 		}
 		shortCircuit := random.Intn(2) == 0
-		relation := NewOrFallbackRelation(
+		relation, err := NewOrFallbackRelation(
 			queryExecutor,
 			NewContext(),
+			[]query.Symbol{entity, vector},
+			[]query.Symbol{value},
 			branches,
 			outer,
 			ExecutorOptions{},
 			shortCircuit,
 		)
+		require.NoError(t, err, "case %d", caseIndex)
 
 		actual, err := collectTypedTuples(relation)
 		require.NoError(t, err, "case %d", caseIndex)
@@ -555,7 +538,7 @@ func evaluateGeneratedOrBranch(
 			tuple := append(copyTuple(outerTuple), function.Value)
 			return symbols, []Tuple{tuple}
 		case query.EnumerateFunction:
-			binding := clause.Binding.(query.TupleBinding)
+			binding := clause.Binding.(query.RelationBinding)
 			symbols := append(append([]query.Symbol(nil), outerSymbols...), binding.Variables...)
 			vectorValue := outerTuple[1].([]interface{})
 			tuples := make([]Tuple, len(vectorValue))
@@ -733,14 +716,19 @@ func BenchmarkOrFallbackPropertyPropagation(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/tuples_%d", name, count), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					rel := NewOrFallbackRelation(
+					rel, err := NewOrFallbackRelation(
 						queryExecutor,
 						NewContext(),
+						nil,
+						[]query.Symbol{value},
 						branches,
 						outer,
 						ExecutorOptions{},
 						true,
 					)
+					if err != nil {
+						b.Fatal(err)
+					}
 					projected, err := rel.Project([]query.Symbol{entity, value})
 					if err != nil {
 						b.Fatal(err)

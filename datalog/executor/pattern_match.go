@@ -158,8 +158,9 @@ func matchesConstant(value, constant interface{}) bool {
 		}
 	}
 
-	// Fall back to interface equality
-	return value == constant
+	// The remaining values compare by the value domain's rule: a vector or a
+	// byte string element-wise, an instant by the time it names.
+	return datalog.ValuesEqual(value, constant)
 }
 
 // datomIterator lazily converts datoms to tuples during iteration

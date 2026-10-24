@@ -1,6 +1,7 @@
 package qb
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -278,9 +279,9 @@ func TestArithmeticExpressions(t *testing.T) {
 			if !ok {
 				t.Fatalf("Expected *query.Expression, got %T", clause)
 			}
-			arith, ok := expr.Function.(query.ArithmeticFunction)
+			arith, ok := expr.Function.(*query.ArithmeticFunction)
 			if !ok {
-				t.Fatalf("Expected ArithmeticFunction, got %T", expr.Function)
+				t.Fatalf("Expected *ArithmeticFunction, got %T", expr.Function)
 			}
 			if arith.Op != tt.op {
 				t.Errorf("Expected %v, got %v", tt.op, arith.Op)
@@ -302,9 +303,9 @@ func TestStrConcat(t *testing.T) {
 
 	clause := expr.toClause()
 	e := clause.(*query.Expression)
-	_, ok := e.Function.(query.StringConcatFunction)
+	_, ok := e.Function.(*query.StringConcatFunction)
 	if !ok {
-		t.Errorf("Expected StringConcatFunction, got %T", e.Function)
+		t.Errorf("Expected *StringConcatFunction, got %T", e.Function)
 	}
 }
 
@@ -393,7 +394,10 @@ func TestTupleGroundInOr(t *testing.T) {
 			TupleGround(0, 0).As(count, total),
 		)
 
-	clause := orClause.toClause()
+	clause, err := orClause.toClause()
+	if err != nil {
+		t.Fatalf("toClause: %v", err)
+	}
 	oc, ok := clause.(*query.OrClause)
 	if !ok {
 		t.Fatalf("Expected OrClause, got %T", clause)
@@ -516,7 +520,10 @@ func TestNotClause(t *testing.T) {
 
 	notClause := Not(Pat(e, PersonCity, V("NYC")))
 
-	clause := notClause.toClause()
+	clause, err := notClause.toClause()
+	if err != nil {
+		t.Fatalf("toClause: %v", err)
+	}
 	nc, ok := clause.(*query.NotClause)
 	if !ok {
 		t.Fatalf("Expected *query.NotClause, got %T", clause)
@@ -533,13 +540,16 @@ func TestNotJoinClause(t *testing.T) {
 
 	notJoin := NotJoin([]*Var{e}, Pat(e, PersonStatus, V("banned")))
 
-	clause := notJoin.toClause()
+	clause, err := notJoin.toClause()
+	if err != nil {
+		t.Fatalf("toClause: %v", err)
+	}
 	njc, ok := clause.(*query.NotJoinClause)
 	if !ok {
 		t.Fatalf("Expected *query.NotJoinClause, got %T", clause)
 	}
-	if len(njc.JoinVars) != 1 {
-		t.Errorf("Expected 1 join var, got %d", len(njc.JoinVars))
+	if len(njc.RequiredVars) != 1 {
+		t.Errorf("Expected 1 join var, got %d", len(njc.RequiredVars))
 	}
 }
 
@@ -551,7 +561,10 @@ func TestOrClause(t *testing.T) {
 		Branch(Eq(status, V("active"))).
 		Branch(Eq(status, V("pending")))
 
-	clause := orClause.toClause()
+	clause, err := orClause.toClause()
+	if err != nil {
+		t.Fatalf("toClause: %v", err)
+	}
 	oc, ok := clause.(*query.OrClause)
 	if !ok {
 		t.Fatalf("Expected *query.OrClause, got %T", clause)
@@ -572,13 +585,16 @@ func TestOrJoinClause(t *testing.T) {
 		Branch(Pat(e, PersonNickname, name)).
 		Branch(Pat(e, PersonName, name))
 
-	clause := orJoin.toClause()
+	clause, err := orJoin.toClause()
+	if err != nil {
+		t.Fatalf("toClause: %v", err)
+	}
 	ojc, ok := clause.(*query.OrJoinClause)
 	if !ok {
 		t.Fatalf("Expected *query.OrJoinClause, got %T", clause)
 	}
-	if len(ojc.JoinVars) != 1 {
-		t.Errorf("Expected 1 join var, got %d", len(ojc.JoinVars))
+	if len(ojc.OutputVars) != 1 {
+		t.Errorf("Expected 1 join var, got %d", len(ojc.OutputVars))
 	}
 	if len(ojc.Branches) != 2 {
 		t.Errorf("Expected 2 branches, got %d", len(ojc.Branches))
@@ -594,7 +610,10 @@ func TestOrDefaultClauseQB(t *testing.T) {
 		Branch(Pat(e, attr, x)).
 		Branch(Ground(int64(0)).As(x))
 
-	clause := od.toClause()
+	clause, err := od.toClause()
+	if err != nil {
+		t.Fatalf("toClause: %v", err)
+	}
 	odc, ok := clause.(*query.OrDefaultClause)
 	if !ok {
 		t.Fatalf("Expected *query.OrDefaultClause, got %T", clause)
@@ -622,7 +641,10 @@ func TestOrDefaultJoinClauseQB(t *testing.T) {
 			Branch(Pat(e, attr, x)).
 			Branch(Ground(int64(0)).As(x))
 
-		clause := odj.toClause()
+		clause, err := odj.toClause()
+		if err != nil {
+			t.Fatalf("toClause: %v", err)
+		}
 		odjc, ok := clause.(*query.OrDefaultJoinClause)
 		if !ok {
 			t.Fatalf("Expected *query.OrDefaultJoinClause, got %T", clause)
@@ -643,7 +665,10 @@ func TestOrDefaultJoinClauseQB(t *testing.T) {
 			Branch(Pat(e, attr, x)).
 			Branch(Ground(int64(0)).As(x))
 
-		clause := odj.toClause()
+		clause, err := odj.toClause()
+		if err != nil {
+			t.Fatalf("toClause: %v", err)
+		}
 		odjc, ok := clause.(*query.OrDefaultJoinClause)
 		if !ok {
 			t.Fatalf("Expected *query.OrDefaultJoinClause, got %T", clause)
@@ -655,6 +680,120 @@ func TestOrDefaultJoinClauseQB(t *testing.T) {
 			t.Errorf("Expected output var %s, got %v", x.Symbol(), odjc.OutputVars)
 		}
 	})
+}
+
+// Build refuses a written header its branches do not satisfy as an error
+// carrying the message Prepare gives the same shape, never a panic at
+// construction (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §6).
+func TestBuildRefusesABranchOutsideItsHeaderAsPrepareDoes(t *testing.T) {
+	e, v, w, x := NewVar("e"), NewVar("v"), NewVar("w"), NewVar("x")
+	t.Run("a not-join body reading outside its header", func(t *testing.T) {
+		_, err := Query().Find(e).Where(
+			Pat(e, Kw(":t/p"), w),
+			NotJoin([]*Var{e}, Pat(e, Kw(":t/q"), v), Gt(v, w)),
+		).Build()
+		if err == nil {
+			t.Fatal("Build accepts the query; the body reads ?w, which neither the body nor the header binds")
+		}
+		for _, part := range []string{"(not-join [?e]", "branch 1 reads ?w", "bind ?w in the branch or name it in the header"} {
+			if !strings.Contains(err.Error(), part) {
+				t.Errorf("the refusal %q does not carry %q", err, part)
+			}
+		}
+	})
+	t.Run("an or-default-join flat-header output the ground branch does not bind", func(t *testing.T) {
+		_, err := Query().Find(x).Where(
+			Pat(e, Kw(":t/n"), x),
+			OrDefaultJoin(e, x).Branch(Pat(e, Kw(":t/score"), x)).Branch(Ground(int64(0)).As(x)),
+		).Build()
+		if err == nil {
+			t.Fatal("Build accepts the query; branch 2 does not bind ?e")
+		}
+		for _, part := range []string{"(or-default-join [?e ?x]", "branch 2 does not bind ?e", "move ?e into the required run"} {
+			if !strings.Contains(err.Error(), part) {
+				t.Errorf("the refusal %q does not carry %q", err, part)
+			}
+		}
+	})
+}
+
+// Build refuses a tuple ground whose vector has another length than its
+// binding, as the parser refuses the same text, with the same message
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §6).
+func TestBuildRefusesATupleGroundOfTheWrongArity(t *testing.T) {
+	a, b, c := NewVar("a"), NewVar("b"), NewVar("c")
+	_, err := Query().Find(a, b, c).Where(TupleGround(1, 2).As(a, b, c)).Build()
+	if err == nil {
+		t.Fatal("Build accepts a ground of two values bound to three variables")
+	}
+	if !strings.Contains(err.Error(), "tuple ground mismatch: 2 values, 3 binding variables") {
+		t.Errorf("the refusal %q does not carry the counts", err)
+	}
+}
+
+// Build accepts a subquery whose inner query declares no :in, its call
+// passing the $ an omitted :in defaults to, as the parser gives
+// (q [...] $); a caller variable given beside it is one input beyond the
+// value positions and is refused on the count
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §6).
+func TestBuildAcceptsAnInnerQueryWithNoIn(t *testing.T) {
+	e, n, x := NewVar("e"), NewVar("n"), NewVar("x")
+	inner := Query().Find(n).Where(Pat(e, Kw(":t/n"), n))
+	t.Run("no caller variable", func(t *testing.T) {
+		q, err := Query().Find(x, n).Where(Pat(x, Kw(":t/a"), Blank()), Subquery(inner).BindRelation(n)).Build()
+		if err != nil {
+			t.Fatalf("Build refuses a subquery over an inner query with no :in: %v", err)
+		}
+		call, ok := q.Where[1].(*query.SubqueryPattern)
+		if !ok {
+			t.Fatalf("clause 2 is %T, want the subquery", q.Where[1])
+		}
+		if len(call.Inputs) != 1 {
+			t.Fatalf("the call passes %v, want the one $ an omitted :in defaults to", call.Inputs)
+		}
+		if c, isConstant := call.Inputs[0].(query.Constant); !isConstant || c.Value != datalog.SymDollar {
+			t.Errorf("the call passes %v, want $", call.Inputs[0])
+		}
+	})
+	t.Run("a caller variable beyond the value positions", func(t *testing.T) {
+		_, err := Query().Find(x, n).Where(Pat(x, Kw(":t/a"), Blank()), Subquery(inner, x).BindRelation(n)).Build()
+		if err == nil {
+			t.Fatal("Build accepts a caller variable passed to an inner query whose omitted :in binds $ alone")
+		}
+		if !strings.Contains(err.Error(), "subquery passes 2 input(s), but its inner :in binds 1 value(s)") {
+			t.Errorf("the refusal %q does not carry the counts", err)
+		}
+	})
+}
+
+// A builder's refusal of a branch argument that is no clause is the
+// conversion's error, never a panic, and names the form, the branch and the
+// argument by their positions counted from one.
+func TestBuilderRefusalNamesTheBranchAndArgumentCountedFromOne(t *testing.T) {
+	e := NewVar("e")
+	cases := []struct {
+		name    string
+		builder interface{}
+		want    string
+	}{
+		{"or", Or().Branch(Pat(e, Kw(":t/a"), 1)).Branch(42), "Or: branch 2 argument 1: cannot convert int to Clause"},
+		{"or-join", OrJoin(e).Branch(Pat(e, Kw(":t/a"), 1)).Branch(42), "OrJoin: branch 2 argument 1: cannot convert int to Clause"},
+		{"or-default", OrDefault().Branch(Pat(e, Kw(":t/a"), 1)).Branch(42), "OrDefault: branch 2 argument 1: cannot convert int to Clause"},
+		{"or-default-join", OrDefaultJoin(e).Branch(Pat(e, Kw(":t/a"), 1)).Branch(42), "OrDefaultJoin: branch 2 argument 1: cannot convert int to Clause"},
+		{"not", Not(Pat(e, Kw(":t/a"), 1), 42), "Not: argument 2: cannot convert int to Clause"},
+		{"not-join", NotJoin([]*Var{e}, 42), "NotJoin: argument 1: cannot convert int to Clause"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := toClause(c.builder)
+			if err == nil {
+				t.Fatal("the builder accepts 42 as a clause")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("the refusal %q does not carry %q", err, c.want)
+			}
+		})
+	}
 }
 
 // TestOrderSpecs tests ordering specifications
@@ -818,9 +957,12 @@ func TestSubquery(t *testing.T) {
 		)
 
 	// Create subquery with binding
-	sub := Subquery(innerQ, dept).BindTuple(maxSalary)
+	sub := Subquery(innerQ, dept).BindRelation(maxSalary)
 
-	clause := sub.toClause()
+	clause, err := sub.toClause()
+	if err != nil {
+		t.Fatalf("toClause: %v", err)
+	}
 	sqp, ok := clause.(*query.SubqueryPattern)
 	if !ok {
 		t.Fatalf("Expected *query.SubqueryPattern, got %T", clause)
@@ -832,9 +974,9 @@ func TestSubquery(t *testing.T) {
 		t.Errorf("Expected 2 inputs ($ and ?dept), got %d", len(sqp.Inputs))
 	}
 
-	// Should have tuple binding
-	if _, ok := sqp.Binding.(query.TupleBinding); !ok {
-		t.Errorf("Expected TupleBinding, got %T", sqp.Binding)
+	// Should have the relation binding
+	if _, ok := sqp.Binding.(query.RelationBinding); !ok {
+		t.Errorf("Expected RelationBinding, got %T", sqp.Binding)
 	}
 }
 
@@ -856,7 +998,10 @@ func TestSubqueryRelationBinding(t *testing.T) {
 
 	sub := Subquery(innerQ, dept).BindRelation(empName)
 
-	clause := sub.toClause()
+	clause, err := sub.toClause()
+	if err != nil {
+		t.Fatalf("toClause: %v", err)
+	}
 	sqp := clause.(*query.SubqueryPattern)
 
 	if _, ok := sqp.Binding.(query.RelationBinding); !ok {
@@ -883,7 +1028,10 @@ func TestSubqueryCollectionBinding(t *testing.T) {
 	names := NewVar("names")
 	sub := Subquery(innerQ, dept).BindCollection(names)
 
-	clause := sub.toClause()
+	clause, err := sub.toClause()
+	if err != nil {
+		t.Fatalf("toClause: %v", err)
+	}
 	sqp := clause.(*query.SubqueryPattern)
 
 	if _, ok := sqp.Binding.(query.CollectionBinding); !ok {
@@ -996,7 +1144,7 @@ func TestComplexQuery(t *testing.T) {
 			Pat(e, EmpName, name),
 			Pat(e, EmpDept, dept),
 			Pat(e, EmpSalary, salary),
-			Subquery(innerQ, dept).BindTuple(avgSalary),
+			Subquery(innerQ, dept).BindRelation(avgSalary),
 			Gt(salary, avgSalary),
 		).
 		OrderBy(Desc(salary)).

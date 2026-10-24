@@ -212,7 +212,7 @@ func TestParseErrors(t *testing.T) {
 		{
 			name:  "non-vector pattern",
 			input: `[:find ?e :where (?e :foo ?v)]`,
-			error: "unknown list clause type",
+			error: "rule invocation name must be a symbol, not the variable ?e",
 		},
 	}
 
@@ -229,79 +229,7 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
-func TestValidateQuery(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		valid bool
-		error string
-	}{
-		{
-			name: "valid query",
-			input: `[:find ?e ?name
-                     :where [?e :person/name ?name]]`,
-			valid: true,
-		},
-		{
-			name: "unbound find variable",
-			input: `[:find ?e ?x
-                     :where [?e :person/name ?name]]`,
-			valid: false,
-			error: "find variable ?x not bound",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			q, err := ParseQuery(tt.input)
-			if err != nil {
-				t.Fatalf("parse error: %v", err)
-			}
-
-			err = ValidateQuery(q)
-			if tt.valid && err != nil {
-				t.Errorf("expected valid query, got error: %v", err)
-			}
-			if !tt.valid && err == nil {
-				t.Errorf("expected validation error")
-			}
-			if !tt.valid && !contains(err.Error(), tt.error) {
-				t.Errorf("expected error containing %q, got %q", tt.error, err.Error())
-			}
-		})
-	}
-}
-
-func TestExtractVariables(t *testing.T) {
-	input := `[:find ?e ?name
-              :where [?e :person/name ?name]
-                     [?e :person/age ?age]]`
-
-	q, err := ParseQuery(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	vars := ExtractVariables(q.Where)
-	expected := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
-
-	if len(vars) != len(expected) {
-		t.Errorf("expected %d variables, got %d", len(expected), len(vars))
-	}
-
-	varSet := make(map[query.Symbol]bool)
-	for _, v := range vars {
-		varSet[v] = true
-	}
-
-	for _, exp := range expected {
-		if !varSet[exp] {
-			t.Errorf("missing variable %s", exp)
-		}
-	}
-}
-
-func TestFormatQuery(t *testing.T) {
+func TestQueryString(t *testing.T) {
 	input := `[:find ?e ?name :where [?e :person/name ?name]]`
 
 	q, err := ParseQuery(input)
@@ -309,7 +237,7 @@ func TestFormatQuery(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	formatted := FormatQuery(q)
+	formatted := q.String()
 
 	// Parse the formatted output to ensure it's valid
 	q2, err := ParseQuery(formatted)
@@ -333,9 +261,9 @@ func TestParseSubqueryPatterns(t *testing.T) {
 		check func(*query.Query) error
 	}{
 		{
-			name: "simple subquery with tuple binding",
+			name: "subquery bound by Datomic's relation form [[?high]]",
 			input: `[:find ?date ?high
-			         :where 
+			         :where
 			           [?s :symbol/ticker "AAPL"]
 			           [(ground "2025-06-02") ?date]
 			           [(q [:find (max ?h)
@@ -358,10 +286,10 @@ func TestParseSubqueryPatterns(t *testing.T) {
 					return fmt.Errorf("expected 1 input, got %d", len(subq.Inputs))
 				}
 
-				// Check binding is tuple binding
-				binding, ok := subq.Binding.(query.TupleBinding)
+				// [[?high]] is the relation binding (Datomic's bind-rel)
+				binding, ok := subq.Binding.(query.RelationBinding)
 				if !ok {
-					return fmt.Errorf("expected TupleBinding, got %T", subq.Binding)
+					return fmt.Errorf("expected RelationBinding, got %T", subq.Binding)
 				}
 
 				if len(binding.Variables) != 1 || binding.Variables[0] != datalog.NewSymbol("?high") {
@@ -477,32 +405,33 @@ func TestParseSubqueryPatterns(t *testing.T) {
 			           [?s :symbol/ticker "AAPL"]
 			           [(ground "2025-06-02") ?date]
 			           [(q [:find (avg ?v)
+			                :in $ ?sym ?date
 			                :where [?p :price/symbol ?sym]
 			                       [?p :price/time ?t]
 			                       [(= ?t ?date)]
 			                       [?p :price/value ?v]]
-			               ?s ?date) [[?result]]]]`,
+			               $ ?s ?date) [[?result]]]]`,
 			check: func(q *query.Query) error {
 				subq, ok := q.Where[2].(*query.SubqueryPattern)
 				if !ok {
 					return fmt.Errorf("expected SubqueryPattern")
 				}
 
-				// Check multiple inputs
-				if len(subq.Inputs) != 2 {
-					return fmt.Errorf("expected 2 inputs, got %d", len(subq.Inputs))
+				// The source and the two variables, one input per :in position
+				if len(subq.Inputs) != 3 {
+					return fmt.Errorf("expected 3 inputs, got %d", len(subq.Inputs))
 				}
 
-				// First input should be variable ?s
-				v1, ok := subq.Inputs[0].(query.Variable)
+				// The variable ?s follows the source
+				v1, ok := subq.Inputs[1].(query.Variable)
 				if !ok || v1.Name != datalog.NewSymbol("?s") {
-					return fmt.Errorf("expected ?s as first input")
+					return fmt.Errorf("expected ?s as the input after the source")
 				}
 
-				// Second input should be variable ?date
-				v2, ok := subq.Inputs[1].(query.Variable)
+				// The variable ?date follows it
+				v2, ok := subq.Inputs[2].(query.Variable)
 				if !ok || v2.Name != datalog.NewSymbol("?date") {
-					return fmt.Errorf("expected ?date as second input")
+					return fmt.Errorf("expected ?date as the last input")
 				}
 
 				return nil
@@ -543,16 +472,16 @@ func TestParseSubqueryErrors(t *testing.T) {
 			error: "binding form must be a symbol or vector",
 		},
 		{
-			name: "empty tuple binding",
+			name: "empty relation binding",
 			input: `[:find ?x
 			         :where [(q [:find ?y :where [?e :foo ?y]]) [[]]]]`,
-			error: "tuple binding cannot be empty",
+			error: "relation binding cannot be empty",
 		},
 		{
-			name: "non-variable in tuple binding",
+			name: "non-variable in relation binding",
 			input: `[:find ?x
 			         :where [(q [:find ?y :where [?e :foo ?y]]) [[foo]]]]`,
-			error: "tuple binding element 0 must be a variable",
+			error: "relation binding element 0 must be a variable",
 		},
 		{
 			name: "invalid nested query",
@@ -564,7 +493,7 @@ func TestParseSubqueryErrors(t *testing.T) {
 			name: "missing q symbol",
 			input: `[:find ?x
 			         :where [(foo [:find ?y :where [?e :foo ?y]] ?s) ?x]]`,
-			error: "unsupported type in vector constant",
+			error: "unsupported function: foo",
 		},
 	}
 
@@ -595,7 +524,7 @@ func TestFormatSubquery(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	formatted := FormatQuery(q)
+	formatted := q.String()
 
 	// Parse the formatted output to ensure it's valid
 	q2, err := ParseQuery(formatted)
@@ -612,6 +541,43 @@ func TestFormatSubquery(t *testing.T) {
 	_, ok := q2.Where[1].(*query.SubqueryPattern)
 	if !ok {
 		t.Errorf("expected SubqueryPattern in formatted query")
+	}
+}
+
+// A relation binding has one rendering, [[?a ?b] ...], whichever spelling it
+// was written with; Datomic's [[?a ?b]] is read as the same binding.
+func TestQueryStringRendersTheRelationBindingWithTheEllipsis(t *testing.T) {
+	q, err := ParseQuery(`[:find ?symbol ?price ?time
+	                       :where [?s :symbol/ticker ?symbol]
+	                              [(q [:find ?p ?t
+	                                   :in $ ?sym
+	                                   :where [?x :price/symbol ?sym]
+	                                          [?x :price/value ?p]
+	                                          [?x :price/time ?t]]
+	                                  $ ?s) [[?price ?time]]]]`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	written, ok := q.Where[1].(*query.SubqueryPattern).Binding.(query.RelationBinding)
+	if !ok {
+		t.Fatalf("Datomic's spelling parses to the relation binding, got %T", q.Where[1].(*query.SubqueryPattern).Binding)
+	}
+
+	formatted := q.String()
+	if !contains(formatted, "[[?price ?time] ...]") {
+		t.Fatalf("the relation binding renders as [[?price ?time] ...], got:\n%s", formatted)
+	}
+
+	q2, err := ParseQuery(formatted)
+	if err != nil {
+		t.Fatalf("formatted query failed to parse: %v\nformatted: %s", err, formatted)
+	}
+	rendered, ok := q2.Where[1].(*query.SubqueryPattern).Binding.(query.RelationBinding)
+	if !ok {
+		t.Fatalf("the rendering parses to the relation binding, got %T", q2.Where[1].(*query.SubqueryPattern).Binding)
+	}
+	if len(rendered.Variables) != len(written.Variables) || rendered.Variables[0] != written.Variables[0] || rendered.Variables[1] != written.Variables[1] {
+		t.Fatalf("the rendering binds %v, the written query bound %v", rendered.Variables, written.Variables)
 	}
 }
 

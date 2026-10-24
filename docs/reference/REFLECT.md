@@ -350,6 +350,10 @@ var people []*Person
 err := d.PullIntoMany(entityIDs, &people)
 ```
 
+### Unknown Attributes
+
+On a database opened with `WithRefuseUnknownAttributes`, `PullInto` and `PullIntoMany` are refused when a tag names an attribute the schema does not declare, whether or not a datom carries it. The error is a `*schema.UnknownAttributeError` carrying the attribute (see [SCHEMA.md](SCHEMA.md#schema-as-facts)). A field whose attribute is declared and never written reads as its zero value.
+
 ## Reference Handling
 
 ### Writing References

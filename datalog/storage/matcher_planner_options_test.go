@@ -54,7 +54,7 @@ func testDatabaseMatcherHonorsCustomPlannerOptions(t *testing.T, backend Backend
 	// A numeric field as well as booleans: a dropped bool is caught only when
 	// the custom value differs from the default, while a numeric read back as
 	// zero is caught outright.
-	custom.MaxSubqueryWorkers = 7 // default 0, meaning 4
+	custom.MaxRuleIterations = 7 // default 0, unbounded
 
 	db := openBackendDB(t, backend, DatabaseOptions{
 		ReplicaID:      1,
@@ -79,6 +79,6 @@ func testDatabaseMatcherHonorsCustomPlannerOptions(t *testing.T, backend Backend
 		"custom EnableScanSharing=true must reach matcher-produced relations")
 	require.True(t, opts.EnableEntityPrefetch,
 		"custom EnableEntityPrefetch=true must reach matcher-produced relations")
-	require.Equal(t, 7, opts.MaxSubqueryWorkers,
+	require.Equal(t, 7, opts.MaxRuleIterations,
 		"a custom numeric option must reach matcher-produced relations with its value intact")
 }

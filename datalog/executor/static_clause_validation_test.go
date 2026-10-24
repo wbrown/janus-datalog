@@ -9,13 +9,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// TestNotJoinAcceptsNestedExistentialNot pins that header completeness
-// demands only MANDATORY outer requirements. A plain (not ...) nested inside
-// a not-join body carries optional correlates: its free variables unify when
-// the environment binds them and are existential otherwise (Datomic's
-// unification rule) — they are not requirements the header must declare.
-// This exact shape was wrongly rejected when validation flattened correlates
-// through branchInterface and lost the CorrelatesOptional flag.
+// A plain not nested inside a not-join body is inferred under the body's
+// header before the header check: a variable of the not that occurs nowhere
+// else in the body is the not's own, never a requirement the not-join's
+// header must declare.
 func TestNotJoinAcceptsNestedExistentialNot(t *testing.T) {
 	goalAttr := datalog.NewKeyword(":event/goal")
 	nameAttr := datalog.NewKeyword(":goal/name")
@@ -54,14 +51,15 @@ func TestNotJoinAcceptsNestedExistentialNot(t *testing.T) {
 			// goalA has an event and no flagger exists, so the body's
 			// nested NOT holds, the body matches, and goalA is excluded.
 			// goalB has no event and survives.
-			if result.Size() != 1 {
-				for i := 0; i < result.Size(); i++ {
-					t.Logf("tuple %d: %v", i, result.Get(i))
-				}
-				t.Fatalf("expected only the event-less goal to survive, got %d tuples", result.Size())
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("reading the result: %v", err)
 			}
-			if !datalog.ValuesEqual(result.Get(0)[0], "b") {
-				t.Fatalf("expected goal b to survive, got %v", result.Get(0))
+			if len(tuples) != 1 {
+				t.Fatalf("expected only the event-less goal to survive, got %d tuples: %v", len(tuples), tuples)
+			}
+			if !datalog.ValuesEqual(tuples[0][0], "b") {
+				t.Fatalf("expected goal b to survive, got %v", tuples[0])
 			}
 		})
 	}
@@ -71,9 +69,10 @@ func TestNotJoinAcceptsNestedExistentialNot(t *testing.T) {
 // doors with one message: the parser (EDN text), the qb builder (Go
 // construction), and the executor entry (hand-built ASTs). This pins the
 // executor door: a hand-built statically-invalid query is rejected before
-// planning, identically under both planner modes. See
-// BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md and
-// BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md.
+// planning, identically under both planner modes. A not-join body reading a
+// variable outside its header is the inference's refusal, which the executor
+// reaches on both modes too. See
+// BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md.
 func TestExecutorEntryRejectsStaticallyInvalidClauses(t *testing.T) {
 	valAttr := datalog.NewKeyword(":item/val")
 	matcher := NewMemoryPatternMatcher([]datalog.Datom{
@@ -100,22 +99,22 @@ func TestExecutorEntryRejectsStaticallyInvalidClauses(t *testing.T) {
 					Where: []query.Clause{pattern},
 				},
 				Inputs:  []query.PatternElement{query.Variable{Name: e}},
-				Binding: query.TupleBinding{Variables: []query.Symbol{v, other}},
+				Binding: query.RelationBinding{Variables: []query.Symbol{v, other}},
 			},
-			wantErr: "subquery tuple binding declares 2 symbol(s), but the inner :find has 1 element(s)",
+			wantErr: "subquery relation binding declares 2 symbol(s), but the inner :find has 1 element(s)",
 		},
-		"not-join header completeness": {
+		"not-join body reads outside its header": {
 			clause: &query.NotJoinClause{
-				JoinVars: []query.Symbol{e},
+				RequiredVars: []query.Symbol{e},
 				Clauses: []query.Clause{
 					&query.Comparison{
 						Op:    datalog.SymEQ,
 						Left:  query.VariableTerm{Symbol: e},
-						Right: query.VariableTerm{Symbol: other}, // consumed, unbound, undeclared
+						Right: query.VariableTerm{Symbol: other}, // read, bound by neither the body nor the header
 					},
 				},
 			},
-			wantErr: "not-join header",
+			wantErr: "branch 1 reads ?other, which neither the branch nor the header binds; bind ?other in the branch or name it in the header",
 		},
 		"unregistered predicate function": {
 			// Hand-built AST bypassing the parser: the boundary walk must

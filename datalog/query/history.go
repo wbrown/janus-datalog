@@ -15,9 +15,10 @@ type TxRangePredicate struct {
 	High  uint64 // Maximum Lamport value (inclusive)
 }
 
-// Pattern interface
+// String renders the predicate as the bracketed clause the parser reads a
+// predicate by, [(tx-between ?tx 1000 2000)].
 func (t *TxRangePredicate) String() string {
-	return fmt.Sprintf("(tx-between %s %d %d)", t.TxVar.String(), t.Low, t.High)
+	return fmt.Sprintf("[(tx-between %s %d %d)]", t.TxVar.String(), t.Low, t.High)
 }
 
 // Clause interface

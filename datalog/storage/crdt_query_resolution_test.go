@@ -46,7 +46,7 @@ func TestExecuteQueryWithInputs_CardinalityOne_ReturnsMultipleValues(t *testing.
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			personID := datalog.NewIdentity("person-1")
 			nameAttr := datalog.NewKeyword(":person/name")
@@ -117,7 +117,7 @@ func TestExecuteQueryWithInputs_CardinalityMany_ReturnsAllHistoricalValues(t *te
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityMany,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			personID := datalog.NewIdentity("person-1")
 			tagsAttr := datalog.NewKeyword(":person/tags")
@@ -195,7 +195,7 @@ func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			personID := datalog.NewIdentity("person-1")
 			nameAttr := datalog.NewKeyword(":person/name")
@@ -319,7 +319,7 @@ func testAllQueryMethodsCRDTResolution(t *testing.T, mode optimizerMode) {
 		ValueType:   schema.TypeString,
 		Cardinality: schema.CardinalityOne,
 	})
-	db.SetSchema(s)
+	require.NoError(t, db.SetSchema(s))
 
 	personID := datalog.NewIdentity("person-1")
 	nameAttr := datalog.NewKeyword(":person/name")

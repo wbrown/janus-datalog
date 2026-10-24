@@ -82,6 +82,7 @@ func (d *Database) Snapshot(name string) (SnapshotInfo, error) {
 	e := snapshotEntity(name)
 
 	tx := d.NewTransaction()
+	tx.engine = true
 	committed := false
 	defer func() {
 		if !committed {
@@ -183,6 +184,7 @@ func (d *Database) DeleteSnapshot(name string) error {
 
 	e := snapshotEntity(name)
 	tx := d.NewTransaction()
+	tx.engine = true
 	committed := false
 	defer func() {
 		if !committed {

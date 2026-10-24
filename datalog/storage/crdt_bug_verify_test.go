@@ -27,7 +27,7 @@ func TestBugVerification_PullInto_CardinalityOne(t *testing.T) {
 				Attribute(":task/status").Type(schema.TypeKeyword).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Create entity
 			taskID := datalog.NewIdentity("task-1")

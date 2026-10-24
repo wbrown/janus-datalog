@@ -7,45 +7,69 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// BenchmarkPlannerWithoutCache measures planning performance without cache
-func BenchmarkPlannerWithoutCache(b *testing.B) {
-	opts := PlannerOptions{}
-	opts.Cache = nil // Disable cache
-	planner := NewClauseBasedPlanner(nil, opts)
-
-	// Create a complex query
-	q := createComplexQuery()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := planner.Plan(q, nil)
-		if err != nil {
-			b.Fatalf("Failed to plan query: %v", err)
-		}
+// plannerBindingCases are the bound sets the planner benchmarks plan the
+// complex query under: none, and its entity bound as a query input is.
+func plannerBindingCases() []struct {
+	name     string
+	bindings query.Bindings
+} {
+	return []struct {
+		name     string
+		bindings query.Bindings
+	}{
+		{"unbound", query.Bindings{}},
+		{"bound", query.Bindings{Symbols: map[query.Symbol]bool{datalog.NewSymbol("?p"): true}}},
 	}
 }
 
-// BenchmarkPlannerWithCache measures planning performance with cache
-func BenchmarkPlannerWithCache(b *testing.B) {
-	cache := NewPlanCache(1000, 0)
-	opts := PlannerOptions{}
-	opts.Cache = cache
-	planner := NewClauseBasedPlanner(nil, opts)
+// BenchmarkPlannerWithoutCache measures planning performance without cache,
+// under no bound symbol and under one.
+func BenchmarkPlannerWithoutCache(b *testing.B) {
+	for _, tc := range plannerBindingCases() {
+		b.Run(tc.name, func(b *testing.B) {
+			opts := PlannerOptions{}
+			opts.Cache = nil // Disable cache
+			planner := NewClauseBasedPlanner(nil, opts)
+			q := createComplexQuery()
 
-	// Create a complex query
-	q := createComplexQuery()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := planner.Plan(q, nil)
-		if err != nil {
-			b.Fatalf("Failed to plan query: %v", err)
-		}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, err := planner.Plan(q, tc.bindings, nil)
+				if err != nil {
+					b.Fatalf("Failed to plan query: %v", err)
+				}
+			}
+		})
 	}
+}
 
-	// Report cache statistics
-	hits, misses, size := cache.Stats()
-	b.Logf("Cache stats: hits=%d, misses=%d, size=%d", hits, misses, size)
+// BenchmarkPlannerWithCache measures planning performance with cache, under
+// no bound symbol and under one: every plan enters the cache under the
+// symbols bound when it was made, so the bound case is served as the unbound
+// one is.
+func BenchmarkPlannerWithCache(b *testing.B) {
+	for _, tc := range plannerBindingCases() {
+		b.Run(tc.name, func(b *testing.B) {
+			cache := NewPlanCache(1000, 0)
+			opts := PlannerOptions{}
+			opts.Cache = cache
+			planner := NewClauseBasedPlanner(nil, opts)
+			q := createComplexQuery()
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, err := planner.Plan(q, tc.bindings, nil)
+				if err != nil {
+					b.Fatalf("Failed to plan query: %v", err)
+				}
+			}
+
+			hits, misses, size := cache.Stats()
+			if misses != 1 || size != 1 {
+				b.Fatalf("cache stats: hits=%d, misses=%d, size=%d; want one miss and one entry, every later plan served", hits, misses, size)
+			}
+		})
+	}
 }
 
 // BenchmarkPlannerCacheMissOverhead measures the overhead of a cache miss
@@ -73,7 +97,7 @@ func BenchmarkPlannerCacheMissOverhead(b *testing.B) {
 			},
 		}
 
-		_, err := planner.Plan(q, nil)
+		_, err := planner.Plan(q, query.Bindings{}, nil)
 		if err != nil {
 			b.Fatalf("Failed to plan query: %v", err)
 		}

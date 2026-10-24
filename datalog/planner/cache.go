@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,13 +31,15 @@ type cachedPlan struct {
 	timestamp time.Time
 }
 
-// NewPlanCache creates a new query plan cache
+// NewPlanCache creates a new query plan cache holding at most maxSize plans,
+// a thousand when given no bound. A positive ttl expires an entry of that
+// age; zero or less is no expiry, which is how the database makes its cache.
 func NewPlanCache(maxSize int, ttl time.Duration) *PlanCache {
 	if maxSize <= 0 {
 		maxSize = 1000 // Default to 1000 cached plans
 	}
-	if ttl <= 0 {
-		ttl = 5 * time.Minute // Default to 5 minute TTL
+	if ttl < 0 {
+		ttl = 0
 	}
 
 	return &PlanCache{
@@ -46,13 +49,15 @@ func NewPlanCache(maxSize int, ttl time.Duration) *PlanCache {
 	}
 }
 
-// GetWithOptions retrieves a cached RealizedPlan if it exists and is not expired
-func (c *PlanCache) GetWithOptions(q *query.Query, opts PlannerOptions) (*RealizedPlan, bool) {
+// GetWithOptions retrieves a cached RealizedPlan for a query under the
+// caller's bindings, the rule set and the symbols bound when the plan is
+// made, if it exists and, under a TTL, is not expired
+func (c *PlanCache) GetWithOptions(q *query.Query, bindings query.Bindings, opts PlannerOptions) (*RealizedPlan, bool) {
 	if c == nil {
 		return nil, false
 	}
 
-	key := c.computeKeyWithOptions(q, opts)
+	key := c.computeKeyWithOptions(q, bindings, opts)
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -64,7 +69,7 @@ func (c *PlanCache) GetWithOptions(q *query.Query, opts PlannerOptions) (*Realiz
 	}
 
 	// Check if expired
-	if time.Since(cached.timestamp) > c.ttl {
+	if c.ttl > 0 && time.Since(cached.timestamp) > c.ttl {
 		// Note: We don't delete here to avoid write lock, lazy deletion happens on Set
 		atomic.AddInt64(&c.misses, 1)
 		return nil, false
@@ -74,13 +79,14 @@ func (c *PlanCache) GetWithOptions(q *query.Query, opts PlannerOptions) (*Realiz
 	return cached.plan, true
 }
 
-// SetWithOptions stores a RealizedPlan in the cache
-func (c *PlanCache) SetWithOptions(q *query.Query, plan *RealizedPlan, opts PlannerOptions) {
+// SetWithOptions stores a RealizedPlan for a query under the caller's
+// bindings in the cache
+func (c *PlanCache) SetWithOptions(q *query.Query, bindings query.Bindings, plan *RealizedPlan, opts PlannerOptions) {
 	if c == nil || plan == nil {
 		return
 	}
 
-	key := c.computeKeyWithOptions(q, opts)
+	key := c.computeKeyWithOptions(q, bindings, opts)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -127,11 +133,13 @@ func (c *PlanCache) Stats() (hits, misses int64, size int) {
 	return atomic.LoadInt64(&c.hits), atomic.LoadInt64(&c.misses), len(c.cache)
 }
 
-// computeKeyWithOptions generates a deterministic key for a query with planner options
-func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) string {
+// computeKeyWithOptions generates a deterministic key for a query under the
+// caller's bindings with planner options
+func (c *PlanCache) computeKeyWithOptions(q *query.Query, bindings query.Bindings, opts PlannerOptions) string {
 	// Create a string representation that captures the query structure AND options
 	// This needs to be deterministic and capture all relevant aspects
 
+	rules := bindings.Rules
 	h := sha256.New()
 
 	// Hash find clause
@@ -144,6 +152,16 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) s
 	fmt.Fprintf(h, "WHERE:")
 	for _, clause := range q.Where {
 		fmt.Fprintf(h, "%v;", clause)
+	}
+
+	// The positions the rule set requires of an invoked predicate decide the
+	// invocation's correlates, and so its phase, and the clause text does not
+	// carry them; each invocation, at any depth, contributes its predicate's
+	// required positions beside the text.
+	if rules != nil {
+		for _, inv := range query.Invocations(q.Where) {
+			fmt.Fprintf(h, "REQUIRED:%v:%v;", inv.Name, rules.Required(inv.Name))
+		}
 	}
 
 	// Hash in clause (but not the actual values, just the structure)
@@ -160,7 +178,24 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) s
 			fmt.Fprintf(h, "TUPLE:%v;", inp.Symbols)
 		case query.RelationInput:
 			fmt.Fprintf(h, "RELATION:%v;", inp.Symbols)
+		case query.RulesInput:
+			fmt.Fprintf(h, "RULES;")
 		}
+	}
+
+	// The symbols bound when the plan is made reach the plan: planWithBindings
+	// unions them into the symbols the :in seeds, and any bound symbol turns
+	// join-project insertion off for the algebra bridge, so a plan made under
+	// one bound set is not the plan under another. They hash in one fixed
+	// order, whatever order the caller's map iterates.
+	fmt.Fprintf(h, "BOUND:")
+	bound := make([]query.Symbol, 0, len(bindings.Symbols))
+	for sym := range bindings.Symbols {
+		bound = append(bound, sym)
+	}
+	slices.SortFunc(bound, func(a, b query.Symbol) int { return a.Compare(b) })
+	for _, sym := range bound {
+		fmt.Fprintf(h, "%v;", sym)
 	}
 
 	// Hash order-by clause
@@ -178,16 +213,22 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) s
 		fmt.Fprintf(h, "LIMIT:%d;", *q.Limit)
 	}
 
-	// Hash planner options that affect the plan
+	// Hash planner options that affect the plan, the roster it carries
+	// among them
 	fmt.Fprintf(h, "OPTIONS:")
 	fmt.Fprintf(h, "AlgebraOptimizer:%v;", opts.EnableAlgebraOptimizer)
 	fmt.Fprintf(h, "JoinProjectInsertion:%v;", opts.EnableJoinProjectInsertion)
+	fmt.Fprintf(h, "CollectRosters:%v;", opts.CollectRosters)
 
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// evictExpired removes expired entries from the cache
+// evictExpired removes the entries older than the TTL; under no TTL nothing
+// has expired and the cache is left as it is.
 func (c *PlanCache) evictExpired() {
+	if c.ttl <= 0 {
+		return
+	}
 	now := time.Now()
 	for key, cached := range c.cache {
 		if now.Sub(cached.timestamp) > c.ttl {

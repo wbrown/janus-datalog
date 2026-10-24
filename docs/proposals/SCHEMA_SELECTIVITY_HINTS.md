@@ -1,9 +1,5 @@
 # Proposal: Schema-Based Selectivity Hints for Query Planner
 
-**Status**: Not Implemented (documented for future consideration)
-**Date**: December 2025
-**Related**: Fix for multi-position binding performance (PR #20)
-
 ## Problem
 
 The query planner gives patterns identical selectivity scores when it lacks cardinality information. For example, in a query like:
@@ -65,16 +61,16 @@ func (d *Database) SchemaSelectivityHints() map[string]float64 {
 }
 ```
 
-## Why Not Implemented
+## Why the hints are not adopted
 
-The multi-position binding performance fix (Part 1) solved the immediate 40x regression by improving the storage layer's strategy selection. The matcher now analyzes binding cardinalities at runtime to choose optimal index access patterns.
+The matcher analyzes binding cardinalities at runtime to choose its index access. `chooseBestMultiPositionStrategy` picks the seek dimension from the bound positions' distinct values when several positions are bound from a binding relation.
 
 Schema-based selectivity would improve **pattern ordering** in the planner, but:
 
 1. The runtime cardinality analysis in `chooseBestMultiPositionStrategy` handles the critical case
 2. Schema is optional - many databases don't define one
 3. Static selectivity hints are approximations; runtime analysis is more accurate
-4. Adds complexity for marginal benefit given the storage-layer fix
+4. Adds complexity for marginal benefit beside the runtime cardinality analysis
 
 ## When This Would Help
 

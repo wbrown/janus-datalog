@@ -1,7 +1,15 @@
 package executor
 
+import (
+	"context"
+
+	"github.com/wbrown/janus-datalog/datalog/query"
+)
+
 // Context carries the per-query execution state that is not configuration: the
-// scope's environment and the scan registry.
+// scope's environment, the scan registry, the rule set with the relations
+// derived from it, the rule evaluations a form execution continues across its
+// windows, and the cancellation the caller gave.
 //
 // It does not carry the annotation handler. The handler is registered on the
 // options (planner.PlannerOptions.Handler, derived into ExecutorOptions), which
@@ -14,6 +22,26 @@ package executor
 type Context struct {
 	scanRegistry *ScanRegistry
 	env          Relation
+
+	// rules is the rule set the query's invocations resolve against, nil when
+	// the query passed none.
+	rules *query.RuleSet
+
+	// derived holds, per predicate symbol, the relation the fixpoint holds
+	// for it: a predicate's relation over its canonical symbols, and, under
+	// the predicate's delta symbol, the tuples the last iteration added. An
+	// invocation reads the relation held under the symbol it invokes.
+	derived map[query.Symbol]Relation
+
+	// continued holds the rule evaluations the enclosing form execution
+	// continues across its windows, by the invocation clause each evaluates,
+	// nil outside a form execution, where an invocation's evaluation runs its
+	// one window and completes.
+	continued *ruleContinuations
+
+	// cancellation is the context the caller gave to cancel the query, nil
+	// when none was given.
+	cancellation context.Context
 }
 
 // NewContext returns a context for one query scope.
@@ -22,12 +50,78 @@ func NewContext() *Context {
 }
 
 // forkContext returns an independent Context for a concurrent worker, sharing
-// only the environment. The scan registry is not shared: it is mutable per query.
+// everything but the scan registry, which is mutable per query.
 func forkContext(ctx *Context) *Context {
 	if ctx == nil {
 		return nil
 	}
-	return &Context{env: ctx.env}
+	return &Context{
+		env:          ctx.env,
+		rules:        ctx.rules,
+		derived:      ctx.derived,
+		continued:    ctx.continued,
+		cancellation: ctx.cancellation,
+	}
+}
+
+// WithRules derives a context whose invocations resolve against rules.
+func (c *Context) WithRules(rules *query.RuleSet) *Context {
+	derived := c.WithEnvironment(c.env)
+	derived.rules = rules
+	return derived
+}
+
+// WithCancellation derives a context whose query stops with cancellation's
+// error once it is done: at entry, before any work, and a fixpoint at its
+// next iteration.
+func (c *Context) WithCancellation(cancellation context.Context) *Context {
+	derived := c.WithEnvironment(c.env)
+	derived.cancellation = cancellation
+	return derived
+}
+
+// Cancellation returns the context the caller gave to cancel the query, nil
+// when none was given.
+func (c *Context) Cancellation() context.Context {
+	return c.cancellation
+}
+
+// cancelled reports the cancellation's error once it is done, and nil while
+// the query runs on or when no cancellation was given.
+func (c *Context) cancelled() error {
+	if c.cancellation == nil {
+		return nil
+	}
+	return c.cancellation.Err()
+}
+
+// Rules returns the rule set the query passed, nil when it passed none.
+func (c *Context) Rules() *query.RuleSet {
+	return c.rules
+}
+
+// WithDerived derives a context carrying the relations the fixpoint holds,
+// by predicate symbol, replacing the map.
+func (c *Context) WithDerived(derived map[query.Symbol]Relation) *Context {
+	next := c.WithEnvironment(c.env)
+	next.derived = derived
+	return next
+}
+
+// Derived returns the relation held under a predicate symbol and whether the
+// scope holds one.
+func (c *Context) Derived(name query.Symbol) (Relation, bool) {
+	rel, ok := c.derived[name]
+	return rel, ok
+}
+
+// WithContinuations derives a context whose invocations continue the
+// evaluations continued holds, by clause, across the windows of the form
+// execution that owns them.
+func (c *Context) WithContinuations(continued *ruleContinuations) *Context {
+	next := c.WithEnvironment(c.env)
+	next.continued = continued
+	return next
 }
 
 // ScanRegistry returns the per-query scan registry for sharing unbound scan
@@ -59,5 +153,9 @@ func (c *Context) WithEnvironment(env Relation) *Context {
 	return &Context{
 		scanRegistry: c.ScanRegistry(),
 		env:          env,
+		rules:        c.rules,
+		derived:      c.derived,
+		continued:    c.continued,
+		cancellation: c.cancellation,
 	}
 }

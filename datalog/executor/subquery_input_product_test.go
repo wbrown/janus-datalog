@@ -5,22 +5,18 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+// A subquery whose inputs span two groups reads them as their product: the
+// one result group carries every combination beside its sum, in the place of
+// both groups.
 func TestCorrelatedSubqueryStreamsInputProductIntoCombinationExtraction(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	y := datalog.NewSymbol("?y")
 	sum := datalog.NewSymbol("?sum")
-	var combinationEvent annotations.Event
-	handler := func(event annotations.Event) {
-		if event.Name == "subquery/input-combinations" {
-			combinationEvent = event
-		}
-	}
 	ctx := NewContext()
-	options := ExecutorOptions{Handler: handler}
+	options := ExecutorOptions{}
 	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options)
 	left := NewStreamingRelationWithOptions(
 		[]query.Symbol{x},
@@ -39,26 +35,32 @@ func TestCorrelatedSubqueryStreamsInputProductIntoCombinationExtraction(t *testi
 		options,
 	)
 
-	result, err := exec.executeSubquery(
+	groups, err := exec.executeSubquery(
 		ctx,
 		arithmeticSubqueryPattern(x, y, sum),
 		[]Relation{left, right},
 	)
 	require.NoError(t, err)
-	tuples, err := CollectTuples(result, nil)
+	require.Len(t, groups, 1, "the result stands in the place of both groups")
+	syms := groups[0].Symbols()
+	xi, yi, si := query.SymbolIndex(syms, x), query.SymbolIndex(syms, y), query.SymbolIndex(syms, sum)
+	require.True(t, xi >= 0 && yi >= 0 && si >= 0, "the result carries both groups' symbols and the binding; got %v", syms)
+	tuples, err := CollectTuples(groups[0], nil)
 	require.NoError(t, err)
+	var got [][]interface{}
+	for _, tuple := range tuples {
+		got = append(got, []interface{}{tuple[xi], tuple[yi], tuple[si]})
+	}
 	require.ElementsMatch(t, [][]interface{}{
 		{int64(1), int64(10), int64(11)},
 		{int64(1), int64(20), int64(21)},
 		{int64(2), int64(10), int64(12)},
 		{int64(2), int64(20), int64(22)},
-	}, tuples)
-	require.Equal(t, 2, combinationEvent.Data["relation_groups"])
-	require.Equal(t, true, combinationEvent.Data["product"])
-	require.Equal(t, false, combinationEvent.Data["eager_materialized"])
-	require.Equal(t, 4, combinationEvent.Data["combination_count"])
+	}, got)
 }
 
+// A failure of a subject group's iterator is the result's, surfacing when
+// the result is driven.
 func TestCorrelatedSubqueryInputProductPropagatesDeferredError(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	y := datalog.NewSymbol("?y")
@@ -77,11 +79,14 @@ func TestCorrelatedSubqueryInputProductPropagatesDeferredError(t *testing.T) {
 	)
 	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
 
-	_, err := exec.executeSubquery(
+	groups, err := exec.executeSubquery(
 		NewContext(),
 		arithmeticSubqueryPattern(x, y, sum),
 		[]Relation{left, right},
 	)
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	_, err = CollectTuples(groups[0], nil)
 	require.ErrorIs(t, err, errInjectedIterator)
 }
 

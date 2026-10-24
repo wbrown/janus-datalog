@@ -283,7 +283,9 @@ func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
 			require.Equal(t, rga[1].tx, rga[2].afterRef, "third insert AfterRef must equal second Tx")
 			require.Equal(t, []string{"first", "second", "third"}, []string{rga[0].v, rga[1].v, rga[2].v})
 
-			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sch})
+			// The dump carries db1's definitions, so the restore target declares
+			// none of its own.
+			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			require.NoError(t, db2.ImportBinary(&out))
 
 			type docItems struct {

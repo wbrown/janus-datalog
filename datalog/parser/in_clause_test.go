@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -66,9 +67,9 @@ func TestParseInputClause(t *testing.T) {
 			},
 		},
 		{
-			name: "tuple input",
+			name: "tuple input, Datomic's bind-tuple",
 			input: `[:find ?e
-			         :in $ [[?name ?age]]
+			         :in $ [?name ?age]
 			         :where [?e :person/name ?name]
 			                [?e :person/age ?age]]`,
 			check: func(q *query.Query) error {
@@ -89,7 +90,30 @@ func TestParseInputClause(t *testing.T) {
 			},
 		},
 		{
-			name: "relation input",
+			name: "relation input, Datomic's bind-rel",
+			input: `[:find ?e ?name
+			         :in $ [[?name ?email]]
+			         :where [?e :person/name ?name]
+			                [?e :person/email ?email]]`,
+			check: func(q *query.Query) error {
+				if len(q.In) != 2 {
+					t.Errorf("expected 2 inputs, got %d", len(q.In))
+				}
+				if rel, ok := q.In[1].(query.RelationInput); !ok {
+					t.Errorf("expected RelationInput at position 1, got %T", q.In[1])
+				} else {
+					if len(rel.Symbols) != 2 {
+						t.Errorf("expected 2 symbols in relation, got %d", len(rel.Symbols))
+					}
+					if rel.Symbols[0] != datalog.NewSymbol("?name") || rel.Symbols[1] != datalog.NewSymbol("?email") {
+						t.Errorf("expected [?name ?email], got %v", rel.Symbols)
+					}
+				}
+				return nil
+			},
+		},
+		{
+			name: "relation input, janus's synonym",
 			input: `[:find ?e ?name
 			         :in $ [[?name ?email] ...]
 			         :where [?e :person/name ?name]
@@ -208,7 +232,7 @@ func TestParseInputClauseErrors(t *testing.T) {
 			input: `[:find ?e
 			         :in foo
 			         :where [?e :bar ?v]]`,
-			error: "input must be $name or a variable",
+			error: "input must be $name, % or a variable",
 		},
 		{
 			name: "empty input vector",
@@ -227,9 +251,16 @@ func TestParseInputClauseErrors(t *testing.T) {
 		{
 			name: "non-variable in tuple",
 			input: `[:find ?e
-			         :in [[?x foo]]
+			         :in [?x foo]
 			         :where [?e :bar ?v]]`,
 			error: "tuple input element 1 must be a variable",
+		},
+		{
+			name: "non-variable in relation",
+			input: `[:find ?e
+			         :in [[?x foo]]
+			         :where [?e :bar ?v]]`,
+			error: "relation input element 1 must be a variable",
 		},
 	}
 
@@ -246,7 +277,7 @@ func TestParseInputClauseErrors(t *testing.T) {
 	}
 }
 
-func TestFormatQueryWithInputClause(t *testing.T) {
+func TestQueryStringWithInputClause(t *testing.T) {
 	input := `[:find ?e ?name
 	           :in $ ?age [?food ...]
 	           :where [?e :person/name ?name]
@@ -258,7 +289,7 @@ func TestFormatQueryWithInputClause(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	formatted := FormatQuery(q)
+	formatted := q.String()
 
 	// Parse the formatted output to ensure it's valid
 	q2, err := ParseQuery(formatted)
@@ -274,6 +305,42 @@ func TestFormatQueryWithInputClause(t *testing.T) {
 	// Verify the formatted string contains :in clause
 	if !contains(formatted, ":in $") {
 		t.Errorf("formatted query missing :in clause")
+	}
+}
+
+// Every InputSpec kind round-trips through String and ParseQuery.
+func TestQueryStringRendersEveryInputKindAndParsesItBack(t *testing.T) {
+	sym := datalog.NewSymbol
+	q := &query.Query{
+		Find: []query.FindElement{query.FindVariable{Symbol: sym("?e")}},
+		In: []query.InputSpec{
+			query.DatabaseInput{Name: datalog.SymDollar},
+			query.ScalarInput{Symbol: sym("?a")},
+			query.CollectionInput{Symbol: sym("?b")},
+			query.TupleInput{Symbols: []query.Symbol{sym("?c"), sym("?d")}},
+			query.RelationInput{Symbols: []query.Symbol{sym("?x"), sym("?y")}},
+		},
+		Where: []query.Clause{
+			&query.DataPattern{Elements: []query.PatternElement{
+				query.Variable{Name: sym("?e")}, query.Constant{Value: datalog.NewKeyword(":t/a")}, query.Variable{Name: sym("?a")},
+			}},
+		},
+	}
+	rendered := q.String()
+	if !contains(rendered, ":in $ ?a [?b ...] [?c ?d] [[?x ?y] ...]") {
+		t.Errorf("the :in renders each kind in its spelling, got:\n%s", rendered)
+	}
+	again, err := ParseQuery(rendered)
+	if err != nil {
+		t.Fatalf("the rendering does not parse: %v\n%s", err, rendered)
+	}
+	if len(again.In) != len(q.In) {
+		t.Fatalf("the rendering parses to %d inputs, want %d:\n%s", len(again.In), len(q.In), rendered)
+	}
+	for i := range q.In {
+		if !reflect.DeepEqual(again.In[i], q.In[i]) {
+			t.Errorf("input %d parses back as %#v, want %#v", i, again.In[i], q.In[i])
+		}
 	}
 }
 
@@ -299,7 +366,7 @@ func TestSubqueryWithInputClause(t *testing.T) {
 	                         [?p :price/time ?t]
 	                         [(same-date? ?t ?date)]
 	                         [?p :price/high ?h]]
-	                 ?s ?date) [[?high]]]]`
+	                 $ ?s ?date) [[?high]]]]`
 
 	q, err := ParseQuery(input)
 	if err != nil {

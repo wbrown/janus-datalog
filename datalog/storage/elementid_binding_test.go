@@ -39,7 +39,7 @@ func TestElementIDBinding_ScalarInput(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			nameAttr := datalog.NewKeyword(":person/name")
 
@@ -111,7 +111,7 @@ func TestElementIDBinding_CollectionInput(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			nameAttr := datalog.NewKeyword(":person/name")
 
@@ -175,7 +175,7 @@ func TestElementIDBinding_RelationInput(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			nameAttr := datalog.NewKeyword(":person/name")
 
@@ -247,7 +247,7 @@ func TestElementIDBinding_TxJoin(t *testing.T) {
 				ValueType:   schema.TypeLong,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			nameAttr := datalog.NewKeyword(":person/name")
 			ageAttr := datalog.NewKeyword(":person/age")
@@ -316,7 +316,7 @@ func TestElementIDBinding_ComparisonPredicate(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			nameAttr := datalog.NewKeyword(":person/name")
 
@@ -376,7 +376,7 @@ func TestElementIDBinding_MultipleEntitiesSameTx(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			nameAttr := datalog.NewKeyword(":person/name")
 

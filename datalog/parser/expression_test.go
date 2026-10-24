@@ -420,9 +420,9 @@ func TestFormatExpressionPatterns(t *testing.T) {
 				t.Fatalf("ParseQuery() error = %v", err)
 			}
 
-			got := FormatQuery(q)
+			got := q.String()
 			if got != tt.want {
-				t.Errorf("FormatQuery() = %q, want %q", got, tt.want)
+				t.Errorf("Query.String() = %q, want %q", got, tt.want)
 			}
 		})
 	}

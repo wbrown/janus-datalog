@@ -12,6 +12,7 @@ package executor
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog/query"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -144,7 +145,6 @@ func TestExecutePattern(t *testing.T) {
 	}
 
 	executor := newQueryExecutor(matcher, nil, ExecutorOptions{})
-	ctx := NewContext()
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -154,7 +154,7 @@ func TestExecutePattern(t *testing.T) {
 		},
 	}
 
-	result, err := executor.executePattern(ctx, query.PatternQuery(pattern), pattern, nil)
+	result, err := executor.executePattern(query.PatternQuery(pattern), pattern, nil)
 	if err != nil {
 		t.Fatalf("executePattern failed: %v", err)
 	}
@@ -344,32 +344,59 @@ func TestExecuteAggregates(t *testing.T) {
 		}
 	})
 
-	t.Run("error on multiple disjoint groups with aggregates", func(t *testing.T) {
-		// This should error because we can't aggregate over disjoint relations
-		q := &query.Query{
-			Find: []query.FindElement{
-				query.FindAggregate{
-					Function: datalog.SymSum,
-					Arg:      datalog.NewSymbol("?value"),
-				},
-			},
-			Where: []query.Clause{
-				&query.DataPattern{Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?e1")},
-					query.Constant{Value: ":person/name"},
-					query.Variable{Name: datalog.NewSymbol("?n")},
-				}},
-			},
+	// The pattern's group holds ?value, and the two groups given hold ?x
+	// and ?y, sharing nothing with it.
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: datalog.NewSymbol("?e1")},
+		query.Constant{Value: ":person/name"},
+		query.Variable{Name: datalog.NewSymbol("?n")},
+	}}
+	sum := query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?value")}
+	disjoint := func() []Relation {
+		return []Relation{
+			NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?x")}, []Tuple{{int64(1)}}),
+			NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?y")}, []Tuple{{int64(2)}}),
 		}
+	}
 
-		// Manually set up disjoint groups (this simulates the error case)
-		r1 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?x")}, []Tuple{{int64(1)}})
-		r2 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?y")}, []Tuple{{int64(2)}})
+	t.Run("the aggregate runs over the product of the groups the find reads", func(t *testing.T) {
+		// The find reads ?x from one group and sums ?value from the pattern's,
+		// so the sum runs over their product, 450 beside the one ?x, and the
+		// group holding ?y, which the find does not read, is asked for one
+		// tuple and dropped.
+		q := &query.Query{
+			Find:  []query.FindElement{query.FindVariable{Symbol: datalog.NewSymbol("?x")}, sum},
+			Where: []query.Clause{pattern},
+		}
+		groups, err := executor.Execute(ctx, q, disjoint())
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+		if len(groups) != 1 || groups[0].Size() != 1 {
+			t.Fatalf("Expected one result group of one tuple, got %v", groups)
+		}
+		if got := groups[0].Get(0); got[0] != int64(1) || got[1] != int64(450) {
+			t.Errorf("Expected ?x 1 beside the sum 450 over the product, got %v", got)
+		}
+	})
 
-		// Try to aggregate with pre-existing disjoint groups
-		_, err := executor.Execute(ctx, q, []Relation{r1, r2})
-		if err == nil {
-			t.Error("Expected error for aggregating over disjoint relations")
+	t.Run("a group the find does not read stands beside the aggregate", func(t *testing.T) {
+		// The find reads ?value alone, so the groups holding ?x and ?y are
+		// asked for one tuple each and dropped, and the sum runs over the
+		// pattern's group.
+		q := &query.Query{
+			Find:  []query.FindElement{sum},
+			Where: []query.Clause{pattern},
+		}
+		groups, err := executor.Execute(ctx, q, disjoint())
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+		if len(groups) != 1 {
+			t.Fatalf("Expected 1 result group, got %d", len(groups))
+		}
+		if got := groups[0].Get(0)[0]; got != int64(450) {
+			t.Errorf("Expected the sum 450 over the pattern's group, got %v", got)
 		}
 	})
 }
@@ -549,5 +576,130 @@ func TestExecuteTupleGround(t *testing.T) {
 		if err == nil {
 			t.Error("Expected error for mismatched tuple ground")
 		}
+	})
+}
+
+// A ground under the relation form [[?a ?b]] binds the relation over its
+// vector of vectors, one tuple per inner vector: alone it is that relation,
+// and over a group it pairs every tuple of the group with every inner vector.
+// An inner vector of another arity than the binding is an error naming its
+// position.
+func TestExecuteRelationGround(t *testing.T) {
+	a, b, x := datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?x")
+	vectors := []interface{}{
+		[]interface{}{int64(1), int64(2)},
+		[]interface{}{int64(3), int64(4)},
+	}
+	relationGround := &query.Expression{
+		Function: &query.GroundFunction{Value: vectors},
+		Binding:  query.RelationBinding{Variables: []query.Symbol{a, b}},
+	}
+
+	t.Run("alone, the relation over the inner vectors", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		groups, err := executor.executeExpression(NewContext(), relationGround, nil)
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		require.Equal(t, []query.Symbol{a, b}, groups[0].Symbols())
+		tuples, err := CollectTuples(groups[0], nil)
+		require.NoError(t, err)
+		require.ElementsMatch(t, [][]interface{}{{int64(1), int64(2)}, {int64(3), int64(4)}}, tuples)
+	})
+
+	t.Run("over a group, every tuple paired with every inner vector", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		group := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(10)}, {int64(20)}})
+		groups, err := executor.executeExpression(NewContext(), relationGround, []Relation{group})
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		require.Equal(t, []query.Symbol{x, a, b}, groups[0].Symbols())
+		tuples, err := CollectTuples(groups[0], nil)
+		require.NoError(t, err)
+		require.ElementsMatch(t, [][]interface{}{
+			{int64(10), int64(1), int64(2)}, {int64(10), int64(3), int64(4)},
+			{int64(20), int64(1), int64(2)}, {int64(20), int64(3), int64(4)},
+		}, tuples)
+	})
+
+	t.Run("an inner vector of another arity than the binding", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		ragged := &query.Expression{
+			Function: &query.GroundFunction{Value: []interface{}{[]interface{}{int64(1), int64(2)}, []interface{}{int64(3)}}},
+			Binding:  query.RelationBinding{Variables: []query.Symbol{a, b}},
+		}
+		_, err := executor.executeExpression(NewContext(), ragged, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "tuple 2")
+	})
+}
+
+// A ground under the collection form [?v ...] binds the relation over its
+// vector, one tuple per element: alone it is that relation, and over a group
+// it pairs every tuple of the group with every element.
+func TestExecuteCollectionGround(t *testing.T) {
+	v, x := datalog.NewSymbol("?v"), datalog.NewSymbol("?x")
+	collectionGround := &query.Expression{
+		Function: &query.GroundFunction{Value: []interface{}{"a", "e", "i"}},
+		Binding:  query.CollectionBinding{Variable: v},
+	}
+
+	t.Run("alone, the relation over the elements", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		groups, err := executor.executeExpression(NewContext(), collectionGround, nil)
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		require.Equal(t, []query.Symbol{v}, groups[0].Symbols())
+		tuples, err := CollectTuples(groups[0], nil)
+		require.NoError(t, err)
+		require.ElementsMatch(t, [][]interface{}{{"a"}, {"e"}, {"i"}}, tuples)
+	})
+
+	t.Run("over a group, every tuple paired with every element", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		group := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(10)}, {int64(20)}})
+		groups, err := executor.executeExpression(NewContext(), collectionGround, []Relation{group})
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		require.Equal(t, []query.Symbol{x, v}, groups[0].Symbols())
+		tuples, err := CollectTuples(groups[0], nil)
+		require.NoError(t, err)
+		require.ElementsMatch(t, [][]interface{}{
+			{int64(10), "a"}, {int64(10), "e"}, {int64(10), "i"},
+			{int64(20), "a"}, {int64(20), "e"}, {int64(20), "i"},
+		}, tuples)
+	})
+}
+
+// A function's value is read by the binding form whatever the function: under
+// the tuple form enumerate's vector of pairs is one tuple, each variable one
+// pair, and a vector of another length than the binding is the arity error.
+func TestExecuteEnumerateUnderTheTupleForm(t *testing.T) {
+	vec, idx, item := datalog.NewSymbol("?vec"), datalog.NewSymbol("?idx"), datalog.NewSymbol("?item")
+	enumerate := &query.Expression{
+		Function: query.EnumerateFunction{VecTerm: query.VariableTerm{Symbol: vec}},
+		Binding:  query.TupleBinding{Variables: []query.Symbol{idx, item}},
+	}
+
+	t.Run("a vector of two elements, each variable one pair", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		group := NewMaterializedRelation([]query.Symbol{vec}, []Tuple{{[]interface{}{"a", "b"}}})
+		groups, err := executor.executeExpression(NewContext(), enumerate, []Relation{group})
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		tuples, err := CollectTuples(groups[0], nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{
+			[]interface{}{"a", "b"},
+			[]interface{}{int64(0), "a"},
+			[]interface{}{int64(1), "b"},
+		}}, tuples)
+	})
+
+	t.Run("a vector of another length is the arity error", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
+		group := NewMaterializedRelation([]query.Symbol{vec}, []Tuple{{[]interface{}{"a", "b", "c"}}})
+		_, err := executor.executeExpression(NewContext(), enumerate, []Relation{group})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "3 values, 2 variables")
 	})
 }

@@ -198,11 +198,11 @@ func TestCorrelatedOrWithOutputsMatchesUnoptimizedExecution(t *testing.T) {
 }
 
 // TestFullyDisjointNotRejectedAtQueryOutset pins the disjoint-NOT ruling
-// end-to-end: a NOT body sharing no variable the query can bind is rejected
-// at planning — before any execution, on both optimizer paths — with a
-// message naming the clause and the unification rule. Previously this shape
-// planned and then failed deep in the executor with "NOT clause variables
-// not found in input relation".
+// end-to-end: a NOT body sharing no variable with its enclosing scope is
+// rejected at planning — before any execution, on both optimizer paths —
+// with a message naming the clause and the sharing rule. Previously this
+// shape planned and then failed deep in the executor with "NOT clause
+// variables not found in input relation".
 func TestFullyDisjointNotRejectedAtQueryOutset(t *testing.T) {
 	source := `[:find ?goal
 		:where
@@ -219,7 +219,7 @@ func TestFullyDisjointNotRejectedAtQueryOutset(t *testing.T) {
 				_, err := runPlannerOptions(db, source, nil, options)
 				require.Error(t, err, "algebra=%v", algebra)
 				require.Contains(t, err.Error(), "(not ", "algebra=%v: must name the clause", algebra)
-				require.Contains(t, err.Error(), "unify", "algebra=%v: must state the unification rule", algebra)
+				require.Contains(t, err.Error(), "shares no variable", "algebra=%v: must state the sharing rule", algebra)
 			}
 		})
 	}
@@ -241,13 +241,11 @@ func TestCorrelatedNotJoinRequiresOuterInputsInHeader(t *testing.T) {
 			db, _ := openCorrelatedNotJoinDatabase(t, mode)
 			_, err := db.Query(source)
 			require.Error(t, err)
+			// A not-join body reading a variable it neither binds nor names
+			// in its header is the inference's refusal, naming the form and
+			// the variable, the same on both planner modes.
+			require.Contains(t, err.Error(), "(not-join [?goal]")
 			require.Contains(t, err.Error(), "?goalSet")
-			// Header completeness is a static property of the clause text,
-			// enforced by NotJoinClause.Validate at the user boundaries —
-			// both planner modes reject with the same message, before
-			// planning. (Previously algebra-only; divergence resolved:
-			// BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md.)
-			require.Contains(t, err.Error(), "not-join header")
 		})
 	}
 }

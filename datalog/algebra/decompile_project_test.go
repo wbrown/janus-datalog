@@ -17,7 +17,7 @@ func TestDecompileProjectProducesRelationBindingSubquery(t *testing.T) {
 		         [(> ?score 90)]]`,
 	)
 	require.NoError(t, err)
-	child, err := Compile(parsed)
+	child, err := Compile(parsed, nil)
 	require.NoError(t, err)
 	project := &Node{
 		Op:       RuleProject,

@@ -3,7 +3,8 @@
 Compressed, seekable sibling of the EDN dump. Same semantic contract: the
 complete EAVT datom log (not a current-view snapshot), including CRDT ops and
 AfterRefs. Values are inlined (Tier-3 blobs are decoded on export and
-re-encoded on import). Schema is not part of the dump.
+re-encoded on import). Declared attribute definitions are datoms (see
+[SCHEMA.md](SCHEMA.md#schema-as-facts)) and travel in the dump like any other.
 
 Compression uses the package `codec` LZJ compressor (`Compress` /
 `Decompress`) on **independent chunks**. LZJ is whole-buffer only; streaming
@@ -169,7 +170,8 @@ for each batch.
 3. Op + AfterRef pairing
 4. Entity identity by hash; attribute identity by keyword string
 5. Value type fidelity via storage value codec
-6. No schema in the dump; import bypasses schema validation (`store.Assert`)
+6. Declared attribute definitions in the dump as the datoms they are; import
+   bypasses schema validation (`store.Assert`) and ends by reading them
 7. Deterministic EAVT order for byte-stable re-export of the binary form when
    the soft budget and encoder settings match
 

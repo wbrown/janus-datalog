@@ -74,7 +74,7 @@ Why this shape and not flags/markers: the unit relation is the join identity —
 
 ### Piece 3 — environment→data rendering at the result boundary
 
-Core-model derivation: ":in parameters are environment, not data" — EXCEPT `:find` membership makes one **data**, and "result presentation is rendered at the result boundary in `ExecuteRealized`" (pull output is the precedent; order-by already treats scalar `:in` sort keys as every-row-same-value no-ops — constants-as-virtual-columns has in-tree precedent on the sort side).
+Core-model derivation: ":in parameters are environment, not data" — EXCEPT `:find` membership makes one **data**, and "result presentation is rendered at the result boundary in `ExecuteRealized`" (pull output is the precedent; order-by already treats scalar `:in` sort keys as same-value-in-every-tuple no-ops — a constant as an attribute of every tuple has in-tree precedent on the sort side).
 
 At `ExecuteRealized`'s result assembly: for each find symbol present in `constantBindings` (NOTE: constantBindings lives on the `queryExecutor`, constructed per-execution at executor.go:326 — the rendering site has access to `constValues` computed at ~357; thread it to the tail, do NOT re-derive it) and absent from the final relation's symbols, **extend every tuple with the constant value** (zero-symbol unit → one row of pure constants; zero-symbol empty → zero rows; N-row relation → N rows each extended).
 

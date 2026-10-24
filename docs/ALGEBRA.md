@@ -69,11 +69,11 @@ carries the original DataPattern object; decompilation returns it unchanged.
 
 **Compile:** `[(ground 42) ?x]` → `Constant(symbols=[?x], values=[42])`
 
-For tuple ground: `[(ground [1 2]) [[?a ?b]]]` → `Constant(symbols=[?a, ?b], values=[1, 2])`
+For tuple ground: `[(ground [1 2]) [?a ?b]]` → `Constant(symbols=[?a, ?b], values=[1, 2])`
 
 **Decompile:** `Constant(symbols=[?x], values=[42])` → `[(ground 42) ?x]`
 
-For multiple symbols: `Constant(symbols=[?a, ?b], values=[1, 2])` → `[(ground [1 2]) [[?a ?b]]]`
+For multiple symbols: `Constant(symbols=[?a, ?b], values=[1, 2])` → `[(ground [1 2]) [?a ?b]]`
 
 **Round-trip invariant:** Symbol names and values are preserved exactly.
 
@@ -197,9 +197,10 @@ The default branch depends on `DefaultAttr`:
   so `TypedDefaulter` produces schema-typed defaults (e.g., `[]string` not `[]interface{}`)
 - Otherwise: emits `ground` expressions
 
-The or-join evaluates per outer tuple. Branch 1 returns all subquery results;
-`filterBranchToOuterTuple` matches to the current outer tuple on shared symbols.
-Non-matching tuples get branch 2 (defaults).
+The form runs over windows of the outer relation. Branch 1 reads nothing of the
+outer, so it runs once, over the unit relation, and its result is indexed on
+the symbols it shares with the outer; each outer tuple probes the index. A
+tuple the index leaves unanswered takes branch 2 (defaults).
 
 **Round-trip invariant:** Left clauses preserved. Right side becomes an
 or-default-join SubqueryPattern. Default values map to ground or get-else
@@ -264,8 +265,8 @@ For `or-default-join`: `(or-default-join [[?e] ?x] ...)` →
 `LateralUnion(output=[?e, ?x], requiredVars=[?e], outputVars=[?x])(branch1, branch2)`
 
 Also produced when `(or ...)` / `(or-join ...)` branches contain correlated
-predicates (NOT, missing?) that require per-tuple evaluation against the outer
-relation. Independent Union compilation cannot express anti-joins without context.
+predicates (NOT, missing?) that read the outer relation's required run.
+Independent Union compilation cannot express anti-joins without context.
 
 **Decompile:**
 - `LateralUnion(requiredVars=nil, outputVars=nil)(children...)` → `(or-default <decompile(child1)> <decompile(child2)> ...)`
@@ -368,71 +369,86 @@ provides defaults for non-matching outer tuples.
 
 ### OR-Fallback Branch Caching
 
-The decorrelated SubqueryPattern inside an or-join runs once and returns ALL
-groups. The or-join evaluates per outer tuple: for each outer tuple, it
-executes branch 1 (SubqueryPattern), filters to matching rows, and uses
-the result (or defaults from branch 2 if no match).
-
-Without caching, `filterBranchToOuterTuple` evaluates the SubqueryPattern
-AND scans the full result O(M) for EVERY outer tuple — total O(N*M).
-This is worse than the correlated path which uses storage indices O(N*log M).
-
-**The cache contract:**
-
-An uncorrelated branch produces the same result for every outer tuple.
-Therefore:
-1. On first evaluation of a branch, execute it and build a hash index
-   keyed on the shared symbols between the branch result and the outer
-   relation.
-2. On subsequent evaluations of the SAME branch, skip execution entirely
-   and probe the cached hash index.
-
-**Correctness conditions:**
-- The branch must be uncorrelated (its result is independent of the outer
-  tuple). A branch is uncorrelated when its SubqueryPattern has `:in $`
-  only (no correlation parameters from the outer context).
-- Correlated branches MUST NOT be cached — each outer tuple produces
-  different results.
-
-**Detection:**
-A branch is uncorrelated if and only if ALL of these hold:
-1. The branch contains exactly one SubqueryPattern clause
-2. The SubqueryPattern's Inputs contains only `$` (no variables)
-3. The SubqueryPattern's `:in` clause contains only DatabaseInput
-
-If any condition fails, the branch is correlated and must be re-evaluated
-per outer tuple without caching.
+The decorrelated SubqueryPattern inside an or-join reads nothing of the outer
+relation, so it runs once and returns ALL groups. The form runs over windows of
+the outer relation (`docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2):
+one tuple, then double the last, up to `ScopeWindowCap` tuples, 1000 by default
+(`executor.SmallBindingBoundary`). Per window, each branch runs once over the
+window's distinct projection onto the header's required run, less the keys an
+earlier window answered; its result is indexed by key; and each window tuple
+probes the index. A branch reading nothing of the outer, the decorrelated
+subquery, runs once over the unit relation at the first window. Under the
+fallback a later branch runs over the keys the earlier branches left unanswered
+in the window, and a tuple no branch answers takes the defaults.
 
 **Complexity:**
-- Without cache: O(N * M) where N = outer tuples, M = branch result size
-- With cache: O(M) build + O(N) probe = O(N + M)
+- A branch run per outer tuple, its result filtered to that tuple each time:
+  O(N * M), N outer tuples, M branch result size
+- Under the window: each branch runs once per window over at most the cap's
+  keys, O(M) to build the window's index plus O(1) per probe; a branch reading
+  nothing of the outer is built once
+
+**The index contract** (§4.6):
+- A branch's window result is indexed on the header symbols its result shares
+  with the outer relation: the required run, and under the union the carried
+  outputs. Under the fallback the index is on the required run alone, since
+  the decision reads the branch's answer for the key before the carried
+  outputs are joined (§4.3).
+- The index is kept across windows. A key a later window carries again probes
+  the index and is not evaluated again.
+- A branch sharing no symbol with the outer has an empty key, and its probe
+  returns the whole result.
+- A probe allocates nothing.
+
+**Correctness:** a branch's result for an outer tuple is a function of that
+tuple's projection onto the required run, so every partition of the run into
+windows answers the same tuples, provided the fallback decision reads a
+branch's result for the key before the join on the carried outputs filters it
+(§4.2, §4.3). No branch is excluded from the index by its shape: a branch that
+reads the outer is evaluated over the window's keys, never per tuple.
 
 **Implementation:**
-The `OrFallbackIterator` holds a `branchCache map[int]cachedBranch` where:
-```go
-type cachedBranch struct {
-    index      *TupleKeyMap  // hash index keyed on shared symbols
-    branchSyms []query.Symbol
-    outerIdx   []int         // shared symbol positions in outer tuple
-    branchIdx  []int         // shared symbol positions in branch tuple
-}
-```
-
-On first evaluation of branch `i`:
-1. Check `isCacheableBranch(branch, isOrJoin)` — inspect the clause structure
-2. If cacheable: execute with the join variables free, build the index, store in `branchCache[i]`
-3. Otherwise: execute, filter with `filterBranchToOuterTuple`, no cache
-
-A branch is cacheable in **two** cases, and the second depends on the enclosing
-clause: a `SubqueryPattern` whose inputs are only `$` (an uncorrelated subquery),
-or — **in an or-join** — a DataPattern-only branch whose sole connection to the
-outer context is the join variables. Evaluated with those free, the pattern
-returns every match, and the cache indexes by join variable for an O(1) probe per
-outer tuple.
-
-On subsequent evaluations of branch `i`:
-1. If `branchCache[i]` exists: probe the index, return matching tuples
-2. If not cached: re-execute (correlated branch)
+- `windowedIterator` (`datalog/executor/windowed_form.go`) is the composition
+  of `docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.3 over the modules.
+- The window reader (`windowReader`, `datalog/executor/window_reader.go`)
+  reads the next window of the subject through `next` and emits it as
+  `scope/window` under the form.
+- The frames (`windowFrame`, `datalog/executor/window_frame.go`) give each
+  window the run the branches framed alike are built over.
+- The kept branch (`cachedBranch`, `datalog/executor/kept_branch.go`), a
+  `JoinIndex` over the key symbols plus the branch's symbols, is built through
+  `buildBranchTuples`, the plan run over the run and read whole.
+- `runWindow` runs the policy's window step over the window as read, then
+  runs each branch over the window's keys its frame has not run, narrowed
+  under the form's policy, through `buildBranch`.
+- `buildBranch` adds the built tuples to the index, emits `scope/branch.build`
+  and tells the policy of the build.
+- `Next` answers each window tuple under the policy.
+- A form supplies its framing, `frameBranches` over a `framing`.
+- A form supplies its policy, a `formPolicy`: the window step, the narrowing
+  of a branch's run, a build in place of the plan, a record of each build, and
+  the emit rule.
+- The branch forms' `OrFallbackIterator`
+  (`datalog/executor/or_fallback_relation.go`) answers through
+  `nextShortCircuit` or `nextCorrelatedUnion`, probing the index per window
+  tuple.
+- `unanswered`, under the fallback, narrows a branch's run to the keys the
+  earlier branches left unanswered.
+- `recordAnswered` records the keys a build answered.
+- `prefetchWindow`, the fallback's window step and Rule 6's first trigger
+  point, prefetches a window's distinct entities above the threshold under
+  `EnableEntityPrefetch` before the window's branches are built.
+- `buildFromCache`, from the window the trigger prefetched on, builds a branch
+  of one data pattern on the default source, whose entity position is the one
+  required variable it reads, on a cardinality-one attribute under a
+  non-temporal matcher, from the EA cache instead (`buildBranchFromEACache`):
+  one `LookupAttribute` per distinct entity of the window.
+- The `not-join`'s `notJoinIterator` (`datalog/executor/not_join.go`) frames
+  its one body under the all-required header and answers a window tuple whose
+  probe of the body's index returns nothing.
+- The `not-join`'s result is a `StreamingRelation` over the subject's symbols
+  with the subject's properties, standing in the place of the groups it
+  consumed.
 
 ### Rule 4: General Correlated Subquery Decorrelation
 
@@ -445,7 +461,7 @@ R ⋈_LeftOuter(x, defaults) S'
 Where S' is S with:
 - Correlation variable `x` removed from `:in`
 - Correlation variable `x` added to `:find`
-- Binding changed from TupleBinding to RelationBinding (includes `x`)
+- Binding the relation form over `x` and the original binding's symbols
 - WHERE clauses unchanged
 
 **Preconditions:**
@@ -527,7 +543,7 @@ with RelationBinding inside an or-join (if defaults exist) or bare (if no defaul
                 [(q [:find ?s (max ?ca) :in $ :where ...] $) [[?s ?maxCa] ...]]
                 [(= ?ca ?maxCa)]]
         $) [[?scenario ?lastKey ?lastUpdatedAt] ...]]
-    [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+    [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 ```
 
 Note: the nested subquery inside the WHERE is ALSO decorrelated — its `:in` changes
@@ -673,7 +689,7 @@ Before any transforms, prove that every operator round-trips correctly.
 
 **Tests needed:**
 - `TestRoundTrip_Scan` — `[?e :attr ?v]`
-- `TestRoundTrip_Constant` — `[(ground 42) ?x]` and `[(ground [1 2]) [[?a ?b]]]`
+- `TestRoundTrip_Constant` — `[(ground 42) ?x]` and `[(ground [1 2]) [?a ?b]]`
 - `TestRoundTrip_Select` — `[?e :attr ?x] [(> ?x 10)]`
 - `TestRoundTrip_Map` — `[?e :attr ?x] [(+ ?x 1) ?y]`
 - `TestRoundTrip_Map_GetElse` — `[?e :type :foo] [(get-else $ ?e :attr default) ?v]`
@@ -698,7 +714,7 @@ After round-trip tests pass:
 3. **Update `decompileAggregate`** — emit uncorrelated SubqueryPattern with
    RelationBinding
 4. **Update `decompileLeftOuterJoin`** — emit OR-fallback with SubqueryPattern +
-   ground defaults, using `filterBranchToOuterTuple` for per-tuple matching
+   ground defaults, each window tuple answered by the kept branch's probe
 5. **Verify**: all existing tests pass, round-trip tests pass
 
 ### Phase 2: Decorrelation Transform ✅
@@ -712,25 +728,29 @@ With proven round-trip mappings:
 5. ✅ **Fix phaser**: `OrJoinClause.Provides` includes branch output symbols
 
 **Status**: Decorrelation is algebraically correct. Production query returns
-75 scenarios. Performance is worse (29.9s) because `filterBranchToOuterTuple`
-scans O(M) per tuple without caching.
+75 scenarios. Performance is worse (29.9s) because a branch's result was
+filtered per outer tuple, O(M) per tuple, with no index.
 
 ### Phase 3: OR-Fallback Branch Cache ✅
 
 Implement the cache specified in "OR-Fallback Branch Caching" above.
 
-1. ✅ Add `isCacheableBranch(branch, isOrJoin)` — structural detection
-   supporting both SubqueryPattern inputs and DataPattern branches in or-join
-2. ✅ Add `cachedBranch` struct with `TupleKeyMap` index
-3. ✅ Add `branchCache map[int]*cachedBranch` to `OrFallbackIterator`
-4. ✅ On first cacheable branch evaluation: execute, build index, cache
-5. ✅ On subsequent evaluations: probe cached index in O(1)
-6. ✅ Correlated branches: unchanged (re-execute per tuple)
-7. ✅ DataPattern branches in or-join: evaluated with join vars free, cached
+1. ✅ Every branch is built over the window's keys, whatever its clauses: a
+   SubqueryPattern reading nothing of the outer at the first window, a
+   DataPattern branch in or-join over the window's projection
+2. ✅ `cachedBranch` (`datalog/executor/kept_branch.go`), a `JoinIndex` over
+   the key symbols plus the branch's symbols
+3. ✅ The kept branches held by the `windowedIterator`, one per branch
+4. ✅ Per window: build over the window's keys the index does not hold, and
+   add to the index
+5. ✅ Per window tuple: probe the index in O(1)
+6. ✅ A branch reading the outer: built over the window's keys, never per tuple
+7. ✅ DataPattern branches in or-join: under the union a branch holding no
+   invocation runs over the window's projection onto the required run and
+   the carried outputs
 8. ✅ **Verify**: all tests pass
 
-**Status**: Cache implemented. Extended from SubqueryPattern-only to
-also cache DataPattern branches in or-join context (needed for Rule 5).
+**Status**: Cache implemented, every branch kept under the window's rule.
 Production: 28.4s → 13.7s (2.1× speedup).
 
 ### Phase 4: General Correlated Subquery Decorrelation (Rule 4)
@@ -906,9 +926,11 @@ etc.) in parallel. By the time subsequent patterns need the data, the
 cache is warm.
 
 **Trigger points**:
-1. The or-join evaluator: before first per-tuple evaluation, if the outer
-   relation contains entity IDs and branches reference those entities,
-   prefetch them
+1. The fallback's window step (`OrFallbackIterator.prefetchWindow`): before
+   a window's branches are built, when a branch of one data pattern reads the
+   subject's entity symbol, the window's distinct entities above the
+   threshold are prefetched, and the branch is built from the cache from that
+   window on
 2. The clause-by-clause executor: after a DataPattern scan produces entity
    IDs, if subsequent clauses reference the same entity variable, prefetch
 3. The matcher itself: when `Match()` returns a Relation with entity
@@ -919,12 +941,16 @@ cache is warm.
    batch load all (E, A) pairs for a set of entities
 2. `PatternMatcher.PrefetchEntities(entities []datalog.Identity)` — sorts
    by key order, scans EATV, resolves CRDT, populates cache
-3. Integration in executor or or-join to trigger prefetch at the right time
+3. The two triggers in the executor: `DefaultQueryExecutor.Execute` after the
+   first data pattern and `OrFallbackIterator.prefetchWindow` before a
+   fallback window's build, both under `EnableEntityPrefetch` and the one
+   threshold `prefetchEntityThreshold`
 
 **Guard conditions**:
-- Only prefetch when entity count exceeds a threshold (e.g., >50 entities)
+- Only prefetch when entity count exceeds the threshold (`prefetchEntityThreshold`, 50)
 - Only prefetch when subsequent clauses reference the same entity variable
-- Don't prefetch for temporal queries (AsOf/History have different cache semantics)
+- Don't prefetch for temporal queries: the matcher's `PrefetchEntities`
+  prefetches nothing under History and keeps an as-of handle's view
 
 ---
 

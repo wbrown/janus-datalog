@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -38,16 +40,17 @@ func SymmetricHashJoinWithOptions(
 	joinSyms []query.Symbol,
 	opts ExecutorOptions,
 ) Relation {
-	// Build symbol mappings
-	leftIndices := make([]int, len(joinSyms))
-	rightIndices := make([]int, len(joinSyms))
-	for i, sym := range joinSyms {
-		leftIndices[i] = SymbolIndex(left, sym)
-		rightIndices[i] = SymbolIndex(right, sym)
-		if leftIndices[i] < 0 || rightIndices[i] < 0 {
-			// Join symbol not found
-			return NewMaterializedRelation(nil, nil)
-		}
+	// A join symbol a side lacks is the query's error, carried by the result
+	// and surfaced when it is driven.
+	leftIndices, err := query.SymbolIndexTable(left.Symbols(), joinSyms)
+	var rightIndices []int
+	if err == nil {
+		rightIndices, err = query.SymbolIndexTable(right.Symbols(), joinSyms)
+	}
+	if err != nil {
+		result := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
+		result.err = fmt.Errorf("symmetric hash join: %w", err)
+		return result
 	}
 
 	// Determine output symbols (union without duplicates)

@@ -55,7 +55,3 @@ func (c CustomFunction) String() string {
 	}
 	return fmt.Sprintf("(%s %s)", c.Fn, strings.Join(parts, " "))
 }
-
-func (c CustomFunction) ReturnType() string {
-	return "any"
-}

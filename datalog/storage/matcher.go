@@ -33,7 +33,11 @@ type PatternMatcher struct {
 	options           executor.ExecutorOptions // Options for creating relations
 	forceJoinStrategy *JoinStrategy            // Override join strategy selection for testing
 	schema            schema.SchemaProvider    // Optional schema for cardinality-aware index selection
-	cache             *Cache                   // CRDT resolution cache for O(1) access to resolved views
+	// refuseUnknown is the database's RefuseUnknownAttributes option: a query
+	// or pull naming an attribute the schema does not declare is an error. A
+	// matcher built outside a database refuses nothing.
+	refuseUnknown bool
+	cache         *Cache // CRDT resolution cache for O(1) access to resolved views
 }
 
 // encodeValueForSearch encodes a value for use in index lookups. It is
@@ -153,6 +157,7 @@ func (m *PatternMatcher) AsOf(txID datalog.ElementID) *PatternMatcher {
 		handler:        m.handler,
 		options:        m.options,
 		schema:         m.schema,
+		refuseUnknown:  m.refuseUnknown,
 		cache:          m.cache,
 	}
 }
@@ -627,7 +632,9 @@ func (m *PatternMatcher) valuesEqual(v1, v2 interface{}) bool {
 // history mode — the two conditions under which LookupAttribute returns the
 // single value a matched pattern would. Returns false for schemaless,
 // CardinalityMany/Vector, or history-mode matchers (raw multi-version reads).
-func (m *PatternMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
+// The matcher is one source and answers for itself under any name, so the
+// source is not read.
+func (m *PatternMatcher) CanFuseAttributeFetch(_ query.Symbol, attr datalog.Keyword) bool {
 	if m.schema == nil || m.txID != nil {
 		return false
 	}
@@ -711,7 +718,7 @@ func (m *PatternMatcher) LookupAttribute(
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler, report)
+		entry, err := m.cache.GetOrResolve(key, card, m, m.cacheBound(), m.handler, report)
 		if err != nil {
 			return nil, false, err
 		}
@@ -745,46 +752,23 @@ func (m *PatternMatcher) LookupAttribute(
 
 	// Fallback to storage scan (for as-of queries or when cache is not set)
 	if card == schema.CardinalityOne {
-		// For cardinality-one, use EATV index where Tx comes before V
-		// Tx is encoded descending, so first entry = highest Tx = current value (LWW)
+		// The bound names the run the resolve event reports: the entity's
+		// EATV history of the attribute.
 		bound := ScanBound{
 			Index:  EATV,
 			Prefix: []datalog.Value{entity, attr},
 		}
 		run = &bound
-		iter, err := OpenKeyScan(m.reader, report, bound)
+		var aAttr Attribute
+		copy(aAttr[:], aStorage[:])
+		v, _, _, err := m.ResolveLWW(Entity(eBytes), aAttr, report)
 		if err != nil {
 			return nil, false, err
 		}
-		defer func() {
-			// Runs before the emit defer, which was registered first.
-			if closeErr := iter.Close(); lookupErr == nil {
-				lookupErr = closeErr
-			}
-		}()
-
-		for iter.Next() {
-			datom, err := iter.Datom()
-			if err != nil {
-				return nil, false, err
-			}
-
-			// Check transaction filter for as-of queries
-			if m.shouldFilterTx(datom.Tx) {
-				continue
-			}
-
-			// First entry with valid Tx is the LWW winner. If it is a
-			// Remove tombstone, the attribute does not currently exist.
-			if datom.Op == datalog.OpCRDTRemove {
-				return nil, false, nil
-			}
-			return datom.V, true, nil
+		if v == nil {
+			return nil, false, nil
 		}
-		if err := iter.Error(); err != nil {
-			return nil, false, err
-		}
-		return nil, false, nil
+		return v, true, nil
 	}
 
 	if card == schema.CardinalityVector {
@@ -949,19 +933,17 @@ func (m *PatternMatcher) LookupAllAttributes(
 		copy(aAttr[:], aStorage[:])
 		key, _ := m.cacheKey(eEntity, aAttr)
 
-		entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler, report)
+		card := schema.CardinalityOne
+		if m.schema != nil {
+			if def := m.schema.GetAttribute(attr); def != nil {
+				card = def.Cardinality
+			}
+		}
+		entry, err := m.cache.GetOrResolve(key, card, m, m.cacheBound(), m.handler, report)
 		if err != nil {
 			return nil, err
 		}
 		if entry != nil {
-			// Determine cardinality
-			card := schema.CardinalityOne
-			if m.schema != nil {
-				if def := m.schema.GetAttribute(attr); def != nil {
-					card = def.Cardinality
-				}
-			}
-
 			switch card {
 			case schema.CardinalityMany:
 				set := entry.ManySet()

@@ -123,8 +123,3 @@ func TestAndFunctionRequiredSymbols(t *testing.T) {
 	assert.Contains(t, symbols, datalog.NewSymbol("?b"))
 	assert.Contains(t, symbols, datalog.NewSymbol("?c"))
 }
-
-func TestAndFunctionReturnType(t *testing.T) {
-	andFunc := AndFunction{Terms: []Symbol{datalog.NewSymbol("?a")}}
-	assert.Equal(t, "boolean", andFunc.ReturnType())
-}

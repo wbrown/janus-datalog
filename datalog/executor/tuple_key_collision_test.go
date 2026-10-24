@@ -232,7 +232,7 @@ func TestNotJoinClause_PipeInValue_E2E(t *testing.T) {
 				query.Variable{Name: datalog.NewSymbol("?tag")},
 			}},
 			&query.NotJoinClause{
-				JoinVars: []query.Symbol{
+				RequiredVars: []query.Symbol{
 					datalog.NewSymbol("?name"),
 					datalog.NewSymbol("?tag"),
 				},
@@ -266,11 +266,15 @@ func TestNotJoinClause_PipeInValue_E2E(t *testing.T) {
 				t.Fatalf("execution failed: %v", err)
 			}
 
-			if result.Size() != 1 {
-				t.Fatalf("expected 1 result (name=x, tag=y|z) for entity b, got %d", result.Size())
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("reading the result: %v", err)
+			}
+			if len(tuples) != 1 {
+				t.Fatalf("expected 1 result (name=x, tag=y|z) for entity b, got %d", len(tuples))
 			}
 
-			tuple := result.Get(0)
+			tuple := tuples[0]
 			name, _ := tuple[0].(string)
 			tag, _ := tuple[1].(string)
 			if name != "x" || tag != "y|z" {

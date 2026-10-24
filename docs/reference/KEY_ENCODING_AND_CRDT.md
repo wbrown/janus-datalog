@@ -64,7 +64,7 @@ The key structure uses fixed-size components for efficient indexing:
 
 ```
 E (Entity)     : 20 bytes  (SHA1 hash)
-A (Attribute)  : 32 bytes  (direct string or SHA256 if longer)
+A (Attribute)  : 32 bytes  (the keyword's string; a longer one is refused at every boundary)
 Tx (ElementID) : 16 bytes  (Lamport clock + ReplicaID)
 Op             : 1 byte    (CRDT operation type)
 V (Value)      : Variable  (sole variable-length field, with 1-byte type prefix)

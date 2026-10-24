@@ -5,7 +5,7 @@ package storage
 // These tests verify that AVET/VAET indices work correctly for vectors.
 // Currently, RGAElement wrapper in V breaks these lookups.
 //
-// See: docs/proposals/CRDT_VECTOR_STORAGE_IMPLEMENTATION_PLAN.md (Bug #5 section)
+// See: docs/archive/completed/CRDT_VECTOR_STORAGE_IMPLEMENTATION_PLAN.md (Bug #5 section)
 
 import (
 	"testing"

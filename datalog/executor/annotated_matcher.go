@@ -195,9 +195,9 @@ func (m *AnnotatedMatcher) LookupAttribute(
 // CanFuseAttributeFetch implements AttributeFetchFusable if the underlying
 // matcher supports it, so same-entity attribute fusion still applies when an
 // annotation handler is attached.
-func (m *AnnotatedMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
+func (m *AnnotatedMatcher) CanFuseAttributeFetch(source query.Symbol, attr datalog.Keyword) bool {
 	if f, ok := m.underlying.(AttributeFetchFusable); ok {
-		return f.CanFuseAttributeFetch(attr)
+		return f.CanFuseAttributeFetch(source, attr)
 	}
 	return false
 }
@@ -206,6 +206,25 @@ func (m *AnnotatedMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
 func (m *AnnotatedMatcher) PrefetchEntities(entities []datalog.Identity) error {
 	if ep, ok := m.underlying.(EntityPrefetcher); ok {
 		return ep.PrefetchEntities(entities)
+	}
+	return nil
+}
+
+// RefusesUnknownAttributes implements AttributeVocabulary from the underlying
+// matcher, so a source refuses through the annotation wrapper as it does
+// without one; a matcher without a vocabulary refuses nothing.
+func (m *AnnotatedMatcher) RefusesUnknownAttributes(source query.Symbol) bool {
+	if v, ok := m.underlying.(AttributeVocabulary); ok {
+		return v.RefusesUnknownAttributes(source)
+	}
+	return false
+}
+
+// UnknownAttributes implements AttributeVocabulary from the underlying
+// matcher; a matcher without a vocabulary refuses nothing.
+func (m *AnnotatedMatcher) UnknownAttributes(source query.Symbol, attrs []datalog.Keyword) error {
+	if v, ok := m.underlying.(AttributeVocabulary); ok {
+		return v.UnknownAttributes(source, attrs)
 	}
 	return nil
 }

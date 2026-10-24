@@ -201,7 +201,7 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 				q, err := parser.ParseQuery(queryStr)
 				assert.NoError(t, err)
 
-				inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
+				inputRels, _, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
 				assert.NoError(t, err)
 
 				exec := db.NewExecutorWithOptions(opts)
@@ -229,7 +229,7 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 				q, err := parser.ParseQuery(queryStr)
 				assert.NoError(t, err)
 
-				inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
+				inputRels, _, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
 				assert.NoError(t, err)
 
 				exec := db.NewExecutorWithOptions(opts)

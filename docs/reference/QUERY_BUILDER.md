@@ -360,6 +360,9 @@ qb.Tuple(nameVar, ageVar)
 // Relation input - multiple tuples
 qb.Relation(nameVar, ageVar)
 
+// Rules input - the rule set the query's invocations resolve against
+qb.Rules
+
 // Named source - additional database or PatternMatcher
 qb.Source("$users")
 
@@ -507,10 +510,18 @@ qb.Or().
     Branch(qb.Pat(e, PersonCity, qb.V("NYC"))).
     Branch(qb.Pat(e, PersonCity, qb.V("LA")))
 
-// OR with join variables
+// OR-JOIN: the header is the form's whole interface. OrJoin names the
+// outputs, bound by every branch and provided to the enclosing query.
 qb.OrJoin(e, city).
     Branch(qb.Pat(e, PersonCity, city), qb.Eq(city, "NYC")).
     Branch(qb.Pat(e, PersonCity, city), qb.Eq(city, "LA"))
+
+// Require names the required run: bound by the enclosing query before the
+// form runs, and read bound by every branch. Here ?city is bound outside,
+// and the first branch reads it.
+qb.OrJoin(e).Require(city).
+    Branch(qb.Pat(e, PersonCity, city)).
+    Branch(qb.Pat(e, PersonActive, qb.V(true)))
 ```
 
 ## Ordering
@@ -542,15 +553,18 @@ q := qb.Query().
     Where(
         qb.Pat(p, PersonName, name),
         qb.Pat(p, PersonDept, dept),
-        qb.Subquery(innerQ, dept).BindTuple(maxSalary),
+        qb.Subquery(innerQ, dept).BindRelation(maxSalary),
     ).
     MustBuild()
 ```
 
-Binding forms:
-- `BindTuple(vars...)` - single tuple result `[[?a ?b]]`
-- `BindRelation(vars...)` - multiple tuples `[[?a ?b] ...]`
-- `BindCollection(v)` - single symbol `[?a ...]`
+Binding forms, each binding the relation over its variables whatever the inner query's size:
+- `BindRelation(vars...)` - the relation form `[[?a ?b]]`, one variable per element of the inner `:find`
+- `BindCollection(v)` - the collection form `[?a ...]`, one variable for an inner `:find` of one element
+
+The call's inputs follow the inner query's `:in` in order: a source reference at a source position, `%` at the rules position, and the variables given to `Subquery` at the value positions, one per scalar or collection input and one per symbol of a tuple or relation input. An inner query that declares no `:in` takes `$`. `Build` refuses a variable count that differs from the value positions, as the parser refuses a call with the wrong number of inputs.
+
+The inner query is assembled unvalidated inside `Where`, and the enclosing query's `Build` validates it through `query.ValidateQuery`, the one function the parser and `Prepare` run too, so an inner query's refusal is `Build`'s error and never a panic inside the fluent chain: an inner `:in` declaring `%` twice, an inner invocation under an inner `:in` declaring no `%`, a not-join body reading outside its header, an inner `Limit`, an inner `Pull` in the find, and a sort key nothing binds are each refused with the parser's message for the same text. A branch of `Or`, `OrJoin`, `OrDefault`, `OrDefaultJoin`, `Not` or `NotJoin` holds a subquery as it holds any clause, and an argument that is no clause is `Build`'s error naming the form, the branch and the argument.
 
 ### Variable Scoping in Subqueries
 
@@ -592,6 +606,68 @@ t1, s1 := qb.NewVar("t1"), qb.NewVar("s1")
 t2, s2 := qb.NewVar("t2"), qb.NewVar("s2")
 t3, s3 := qb.NewVar("t3"), qb.NewVar("s3")
 ```
+
+## Rules
+
+A rule set declares predicates. A query invokes a predicate as a clause. A
+rule that invokes itself computes a transitive closure.
+
+`qb.DefineRule(name, head...)` starts a rule. Its `Where` takes the body
+clauses `Query().Where` accepts. `qb.RuleSet` builds the rules into a
+validated, stratified `*query.RuleSet`. `qb.MustRuleSet` does the same and
+panics on error:
+
+```go
+a, b, c := qb.NewVar("a"), qb.NewVar("b"), qb.NewVar("c")
+
+reach := qb.MustRuleSet(
+    qb.DefineRule("reach", a, b).Where(qb.Pat(a, Edge, b)),
+    qb.DefineRule("reach", a, c).Where(qb.Pat(a, Edge, b), qb.Rule("reach", b, c)),
+)
+```
+
+Several rules for one name are alternatives.
+
+`qb.Rule(name, args...)` invokes a predicate. Each argument is a `*Var`,
+`qb.Blank()`, or a value. A value becomes a constant. `qb.Rules` is the `%`
+input the rule set is passed as:
+
+```go
+start, y := qb.NewVar("start"), qb.NewVar("y")
+
+q := qb.Query().
+    Find(y).
+    In(qb.DB, qb.Rules, qb.Scalar(start)).
+    Where(qb.Rule("reach", start, y)).
+    MustBuild()
+
+results, err := d.Query(q, reach, startID)
+```
+
+Equivalent EDN: `[:find ?y :in $ % ?start :where (reach ?start ?y)]` with the
+rule set `[[(reach ?a ?b) [?a :edge ?b]] [(reach ?a ?c) [?a :edge ?b] (reach ?b ?c)]]`.
+
+`Require` names the head variables the caller binds. They are the leading run
+of the head. A rule whose body computes from its arguments needs it:
+
+```go
+n, m := qb.NewVar("n"), qb.NewVar("m")
+
+succ := qb.MustRuleSet(
+    qb.DefineRule("succ", n, m).Require(n).Where(qb.Add(n, int64(1)).As(m)),
+)
+```
+
+Equivalent EDN: `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`.
+
+An invocation stands wherever a pattern stands. That includes `qb.Not`,
+`qb.OrJoin` branches and subqueries.
+
+`qb.RuleSet` returns the errors `query.NewRuleSet` returns: an unsafe rule,
+an arity disagreement, an unknown predicate, a cycle through negation, a
+required run that does not lead the head, or a recursive invocation inside a
+fallback or a subquery. See [RULES.md](RULES.md) for the evaluation, the
+bounds and cancellation.
 
 ## Building Queries
 
@@ -924,6 +1000,7 @@ func main() {
 | `qb.Collection(v)` | `[?v ...]` | Multiple values |
 | `qb.Tuple(a, b)` | `[?a ?b]` | Single tuple |
 | `qb.Relation(a, b)` | `[[?a ?b] ...]` | Multiple tuples |
+| `qb.Rules` | `%` | The rule set |
 
 ### Logical Clauses
 
@@ -932,7 +1009,16 @@ func main() {
 | `qb.Not(clauses...)` | `(not ...)` |
 | `qb.NotJoin(vars, clauses...)` | `(not-join [vars] ...)` |
 | `qb.Or().Branch(...).Branch(...)` | `(or ...)` |
-| `qb.OrJoin(vars...).Branch(...).Branch(...)` | `(or-join [vars] ...)` |
+| `qb.OrJoin(outputs...).Branch(...).Branch(...)` | `(or-join [outputs] ...)` |
+| `qb.OrJoin(outputs...).Require(required...).Branch(...)` | `(or-join [[required] outputs] ...)` |
+
+### Rules
+
+| Function | EDN Equivalent |
+|----------|----------------|
+| `qb.Rule("name", a, b)` | `(name ?a ?b)` |
+| `qb.DefineRule("name", a, b).Where(...)` | `[(name ?a ?b) ...]` |
+| `qb.RuleSet(rules...)` | `[[(name ...) ...] ...]` |
 
 ### Ordering
 

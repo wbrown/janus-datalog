@@ -47,7 +47,7 @@ func TestPullInto_CardinalityOne_LWW(t *testing.T) {
 				Attribute(":person/age").Type(schema.TypeLong).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Create entity and update multiple times
 			e1 := datalog.NewIdentity("person1")
@@ -101,7 +101,7 @@ func TestPullInto_CardinalityMany_AddWins(t *testing.T) {
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Create entity with tags
 			e1 := datalog.NewIdentity("person1")
@@ -156,7 +156,7 @@ func TestPullInto_CardinalityVector_RGA(t *testing.T) {
 				Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Create entity with ordered skills
 			e1 := datalog.NewIdentity("person1")
@@ -200,7 +200,7 @@ func TestPull_Wildcard_CRDTResolution(t *testing.T) {
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			e1 := datalog.NewIdentity("person1")
 
@@ -255,7 +255,7 @@ func TestPull_Wildcard_CardinalityVector(t *testing.T) {
 				Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			e1 := datalog.NewIdentity("person1")
 
@@ -292,7 +292,9 @@ func TestPull_Wildcard_CardinalityVector(t *testing.T) {
 }
 
 // TestPullInto_AfterCacheClear verifies that PullInto works correctly
-// after the cache is cleared (simulating a restart).
+// after the cache is cleared (simulating a restart), into a struct whose Age
+// field names an attribute the schema does not declare, on a database that
+// accepts unknown attributes.
 func TestPullInto_AfterCacheClear(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -302,7 +304,7 @@ func TestPullInto_AfterCacheClear(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			e1 := datalog.NewIdentity("person1")
 
@@ -350,7 +352,7 @@ func TestPullInto_AnyField(t *testing.T) {
 				Attribute(":person/age").Type(schema.TypeLong).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			e1 := datalog.NewIdentity("person1")
 
@@ -391,7 +393,7 @@ func TestPullInto_NilEntity_NoPanic(t *testing.T) {
 				Attribute(":entity/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Write some data so the database isn't empty
 			id := datalog.NewIdentity("test")

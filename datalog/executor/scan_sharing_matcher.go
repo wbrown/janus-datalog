@@ -150,9 +150,9 @@ func (m *ScanSharingMatcher) LookupAttribute(
 
 // CanFuseAttributeFetch forwards to inner matcher if it supports fusion, so
 // same-entity attribute fusion still applies under scan sharing.
-func (m *ScanSharingMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
+func (m *ScanSharingMatcher) CanFuseAttributeFetch(source query.Symbol, attr datalog.Keyword) bool {
 	if f, ok := m.inner.(AttributeFetchFusable); ok {
-		return f.CanFuseAttributeFetch(attr)
+		return f.CanFuseAttributeFetch(source, attr)
 	}
 	return false
 }
@@ -172,6 +172,25 @@ func (m *ScanSharingMatcher) TypeDefault(attr datalog.Keyword, defaultVal interf
 func (m *ScanSharingMatcher) PrefetchEntities(entities []datalog.Identity) error {
 	if ep, ok := m.inner.(EntityPrefetcher); ok {
 		return ep.PrefetchEntities(entities)
+	}
+	return nil
+}
+
+// RefusesUnknownAttributes implements AttributeVocabulary from the inner
+// matcher, so a source refuses under scan sharing as it does without it; a
+// matcher without a vocabulary refuses nothing.
+func (m *ScanSharingMatcher) RefusesUnknownAttributes(source query.Symbol) bool {
+	if v, ok := m.inner.(AttributeVocabulary); ok {
+		return v.RefusesUnknownAttributes(source)
+	}
+	return false
+}
+
+// UnknownAttributes implements AttributeVocabulary from the inner matcher; a
+// matcher without a vocabulary refuses nothing.
+func (m *ScanSharingMatcher) UnknownAttributes(source query.Symbol, attrs []datalog.Keyword) error {
+	if v, ok := m.inner.(AttributeVocabulary); ok {
+		return v.UnknownAttributes(source, attrs)
 	}
 	return nil
 }

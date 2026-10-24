@@ -135,7 +135,10 @@ func (d *Database) TruncateTo(name string) error {
 	if d.cache != nil {
 		d.cache.InvalidateRewind(keys)
 	}
-	return nil
+
+	// The database runs with the declarations that survive the rewind, until
+	// SetSchema or an import declares again; nothing is written here.
+	return d.installSchema(false)
 }
 
 // touchedCacheKeys returns the deduplicated (E,A) cache keys for a set of datoms.

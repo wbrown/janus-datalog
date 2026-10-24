@@ -83,7 +83,7 @@ func TestSilentSinkBuildsNoProvenance(t *testing.T) {
 	  [?s :scenario/name ?n]
 	  [(q [:find (max ?h) :in $ ?s :where [?p :price/scenario ?s] [?p :price/high ?h]] $ ?s) [[?mx]]]]`)
 	require.NoError(t, err)
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	optimizeWith := func(sink *RewriteSink) float64 {
@@ -115,7 +115,7 @@ func TestDecorrelationPassRecords(t *testing.T) {
 	  [?s :scenario/name ?n]
 	  [(q [:find (max ?h) :in $ ?s :where [?p :price/scenario ?s] [?p :price/high ?h]] $ ?s) [[?mx]]]]`)
 	require.NoError(t, err)
-	root, err := Compile(applied)
+	root, err := Compile(applied, nil)
 	require.NoError(t, err)
 
 	sink := &RewriteSink{Collect: true}
@@ -141,7 +141,7 @@ func TestDecorrelationPassRecords(t *testing.T) {
 	  [?e :thing/kind "widget"]
 	  [(q [:find ?x :in $ ?e :where [?e :thing/value ?x]] $ ?e) [[?v] ...]]]`)
 	require.NoError(t, err)
-	root, err = Compile(declined)
+	root, err = Compile(declined, nil)
 	require.NoError(t, err)
 
 	sink = &RewriteSink{Collect: true}
@@ -168,7 +168,7 @@ func TestGetElsePassRecords(t *testing.T) {
 	  [?e :entity/type :entity.type/project]
 	  [(get-else $ ?e :project/title "") ?title]]`)
 	require.NoError(t, err)
-	root, err := Compile(q)
+	root, err := Compile(q, nil)
 	require.NoError(t, err)
 
 	var events []annotations.Event
@@ -200,7 +200,7 @@ func TestGetElsePassRecords(t *testing.T) {
 	  :where
 	  [(get-else $ ?e :project/title "") ?title]]`)
 	require.NoError(t, err)
-	root, err = Compile(childless)
+	root, err = Compile(childless, nil)
 	require.NoError(t, err)
 
 	sink = &RewriteSink{Collect: true}
@@ -221,7 +221,7 @@ func TestGetElsePassRecords(t *testing.T) {
 	  [?x :entity/type :entity.type/project]
 	  [(get-else $ ?e :project/title "") ?title]]`)
 	require.NoError(t, err)
-	root, err = Compile(notProvided)
+	root, err = Compile(notProvided, nil)
 	require.NoError(t, err)
 
 	sink = &RewriteSink{Collect: true}

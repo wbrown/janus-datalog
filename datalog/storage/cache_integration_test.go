@@ -32,12 +32,13 @@ func TestQueryPathUsesCache(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			name := datalog.NewKeyword(":person/name")
 			tx := db.NewTransaction()
 			e := datalog.NewIdentity("person1")
-			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			err = tx.Set(e, name, "Alice")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -53,18 +54,18 @@ func TestQueryPathUsesCache(t *testing.T) {
 			db.Cache().Clear()
 
 			// First lookup should populate the cache
-			val, found := requireAttributeLookup(t, bm, e, datalog.NewKeyword(":person/name"))
+			val, found := requireAttributeLookup(t, bm, e, name)
 			require.True(t, found)
 			assert.Equal(t, "Alice", val)
 
 			// Verify the cache was populated
 			eBytes := Entity(e.Hash())
 			var aBytes Attribute
-			copy(aBytes[:], ":person/name")
+			copy(aBytes[:], name.String())
 			key := CacheKey{E: eBytes, A: aBytes}
 
 			// The cache should now have an entry for this (E, A) pair
-			entry, err := db.Cache().GetOrResolve(key, bm, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(key, bm.GetCardinality(name), bm, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -84,7 +85,7 @@ func TestPullAPIUsesCache(t *testing.T) {
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -135,7 +136,7 @@ func TestCacheInvalidatedOnCommit(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add initial data
 			tx := db.NewTransaction()
@@ -181,7 +182,7 @@ func TestMultipleMatchersShareCache(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -224,7 +225,7 @@ func TestAsOfDoesNotUseCache(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add initial data
 			tx := db.NewTransaction()
@@ -267,7 +268,7 @@ func TestVectorCacheIntegration(t *testing.T) {
 				Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add vector data
 			tx := db.NewTransaction()
@@ -308,14 +309,15 @@ func TestCacheResolverInterface(t *testing.T) {
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			name, tags := datalog.NewKeyword(":person/name"), datalog.NewKeyword(":person/tags")
 			tx := db.NewTransaction()
 			e := datalog.NewIdentity("person1")
-			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			err = tx.Set(e, name, "Alice")
 			require.NoError(t, err)
-			err = tx.Add(e, datalog.NewKeyword(":person/tags"), "dev")
+			err = tx.Add(e, tags, "dev")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -326,12 +328,12 @@ func TestCacheResolverInterface(t *testing.T) {
 			// Test that matcher can be used as a CacheResolver
 			eBytes := Entity(e.Hash())
 			var nameAttr, tagsAttr Attribute
-			copy(nameAttr[:], ":person/name")
-			copy(tagsAttr[:], ":person/tags")
+			copy(nameAttr[:], name.String())
+			copy(tagsAttr[:], tags.String())
 
 			// Test GetCardinality
-			assert.Equal(t, schema.CardinalityOne, matcher.GetCardinality(nameAttr))
-			assert.Equal(t, schema.CardinalityMany, matcher.GetCardinality(tagsAttr))
+			assert.Equal(t, schema.CardinalityOne, matcher.GetCardinality(name))
+			assert.Equal(t, schema.CardinalityMany, matcher.GetCardinality(tags))
 
 			// Test ResolveLWW
 			lww := &scanReport{}
@@ -368,12 +370,13 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 				Attribute(":person/age").Type(schema.TypeLong).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			name := datalog.NewKeyword(":person/name")
 			tx := db.NewTransaction()
 			e := datalog.NewIdentity("person1")
-			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			err = tx.Set(e, name, "Alice")
 			require.NoError(t, err)
 			err = tx.Set(e, datalog.NewKeyword(":person/age"), int64(30))
 			require.NoError(t, err)
@@ -392,11 +395,12 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 			// Verify the cache was populated by the query
 			eBytes := Entity(e.Hash())
 			var nameAttr Attribute
-			copy(nameAttr[:], ":person/name")
+			copy(nameAttr[:], name.String())
 			key := CacheKey{E: eBytes, A: nameAttr}
 
 			// The cache should now have an entry from the query execution
-			entry, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil, DiscardIntake)
+			matcher := db.Matcher().(*PatternMatcher)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after query execution")
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -417,19 +421,20 @@ func TestJoinQueryUsesCache(t *testing.T) {
 				Attribute(":person/city").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			name, city := datalog.NewKeyword(":person/name"), datalog.NewKeyword(":person/city")
 			tx := db.NewTransaction()
 			e1 := datalog.NewIdentity("person1")
 			e2 := datalog.NewIdentity("person2")
-			err = tx.Set(e1, datalog.NewKeyword(":person/name"), "Alice")
+			err = tx.Set(e1, name, "Alice")
 			require.NoError(t, err)
-			err = tx.Set(e1, datalog.NewKeyword(":person/city"), "NYC")
+			err = tx.Set(e1, city, "NYC")
 			require.NoError(t, err)
-			err = tx.Set(e2, datalog.NewKeyword(":person/name"), "Bob")
+			err = tx.Set(e2, name, "Bob")
 			require.NoError(t, err)
-			err = tx.Set(e2, datalog.NewKeyword(":person/city"), "LA")
+			err = tx.Set(e2, city, "LA")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -454,10 +459,11 @@ func TestJoinQueryUsesCache(t *testing.T) {
 			// Verify the cache was populated for the city attribute
 			e1Bytes := Entity(e1.Hash())
 			var cityAttr Attribute
-			copy(cityAttr[:], ":person/city")
+			copy(cityAttr[:], city.String())
 			key := CacheKey{E: e1Bytes, A: cityAttr}
 
-			entry, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil, DiscardIntake)
+			matcher := db.Matcher().(*PatternMatcher)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(city), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after join query")
 			assert.Equal(t, "NYC", entry.OneValue())
@@ -478,16 +484,17 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			tags := datalog.NewKeyword(":person/tags")
 			tx := db.NewTransaction()
 			e := datalog.NewIdentity("person1")
 			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
 			require.NoError(t, err)
-			err = tx.Add(e, datalog.NewKeyword(":person/tags"), "developer")
+			err = tx.Add(e, tags, "developer")
 			require.NoError(t, err)
-			err = tx.Add(e, datalog.NewKeyword(":person/tags"), "golang")
+			err = tx.Add(e, tags, "golang")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -501,20 +508,21 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 			require.Len(t, result, 2, "should return 2 tags")
 
 			// Verify results
-			tags := make(map[interface{}]bool)
+			found := make(map[interface{}]bool)
 			for _, tuple := range result {
-				tags[tuple[0]] = true
+				found[tuple[0]] = true
 			}
-			assert.True(t, tags["developer"])
-			assert.True(t, tags["golang"])
+			assert.True(t, found["developer"])
+			assert.True(t, found["golang"])
 
 			// Verify the cache was populated
 			eBytes := Entity(e.Hash())
 			var tagsAttr Attribute
-			copy(tagsAttr[:], ":person/tags")
+			copy(tagsAttr[:], tags.String())
 			key := CacheKey{E: eBytes, A: tagsAttr}
 
-			entry, err := db.Cache().GetOrResolve(key, db.Matcher().(*PatternMatcher), nil, nil, DiscardIntake)
+			matcher := db.Matcher().(*PatternMatcher)
+			entry, err := db.Cache().GetOrResolve(key, matcher.GetCardinality(tags), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry, "cache should be populated after cardinality-many query")
 			_, hasDeveloper := entry.ManySet()["developer"]
@@ -537,12 +545,13 @@ func TestCacheConcurrency(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			name := datalog.NewKeyword(":person/name")
 			tx := db.NewTransaction()
 			e := datalog.NewIdentity("person1")
-			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			err = tx.Set(e, name, "Alice")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -553,11 +562,11 @@ func TestCacheConcurrency(t *testing.T) {
 
 			eBytes := Entity(e.Hash())
 			var nameAttr Attribute
-			copy(nameAttr[:], ":person/name")
+			copy(nameAttr[:], name.String())
 			key := CacheKey{E: eBytes, A: nameAttr}
 
 			// Populate initial entry
-			_, err = cache.GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+			_, err = cache.GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 
 			var wg sync.WaitGroup
@@ -567,9 +576,10 @@ func TestCacheConcurrency(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					entry, err := cache.GetOrResolve(key, matcher, nil, nil, DiscardIntake)
+					entry, err := cache.GetOrResolve(key, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 					assert.NoError(t, err)
 					assert.NotNil(t, entry)
+					assert.Equal(t, "Alice", entry.OneValue(), "every reader is served the value the store holds")
 				}()
 			}
 

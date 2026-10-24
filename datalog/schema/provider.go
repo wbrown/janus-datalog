@@ -18,6 +18,9 @@ type SchemaProvider interface {
 
 	// IsMany returns true if the attribute has cardinality many
 	IsMany(attr datalog.Keyword) bool
+
+	// Attributes returns every definition the provider holds, in no particular order
+	Attributes() []*AttributeDefinition
 }
 
 // Verify Schema implements SchemaProvider at compile time

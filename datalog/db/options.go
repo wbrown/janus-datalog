@@ -11,6 +11,7 @@ import (
 
 type config struct {
 	schema               schema.SchemaProvider
+	refuseUnknown        bool
 	replicaID            uint64
 	annotationHandler    annotations.Handler
 	disableCache         bool
@@ -25,6 +26,14 @@ type Option func(*config)
 // WithSchema sets the schema for type validation and cardinality handling.
 func WithSchema(s schema.SchemaProvider) Option {
 	return func(c *config) { c.schema = s }
+}
+
+// WithRefuseUnknownAttributes makes a query or pull that names an attribute
+// the schema does not declare an error, where the database otherwise answers
+// it with no tuple. It requires WithSchema: with no schema to check against,
+// Open returns an error.
+func WithRefuseUnknownAttributes() Option {
+	return func(c *config) { c.refuseUnknown = true }
 }
 
 // WithReplicaID sets the CRDT replica identifier.

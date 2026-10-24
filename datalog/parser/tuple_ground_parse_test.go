@@ -10,97 +10,102 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// TestParseTupleGroundBinding verifies that (ground [...]) with [[...]] tuple
-// binding syntax parses correctly. This is the format produced by the query
-// builder's TupleGround().As() method, so the parser must round-trip it.
-//
-// Bug: the parser handled [(ground [0 0 0]) [?a ?b ?c]] (single-bracket
-// tuple binding) but not [(ground [0 0 0]) [[?a ?b ?c]]] (double-bracket
-// Datomic-style tuple binding). The double-bracket form is what the query
-// builder produces and what Datomic uses.
-func TestParseTupleGroundBinding(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     string
-		wantVars  []string // expected tuple binding variables
-		wantError bool
+// An expression's binding takes Datomic's forms (NESTED_SCOPES_AS_QUERIES.md
+// goal 12): the tuple form [?a ?b] destructures the function's one tuple,
+// whatever the function, and the relation form [[?a ?b]] binds the relation
+// over its collection of tuples. Each renders as written and parses back to
+// the same binding, and a ground whose constant the form cannot bind is
+// refused naming the repair: a flat ground under the relation form names the
+// tuple form, and a ground of the wrong length or a ground inner vector of
+// the wrong arity names both counts.
+func TestParseExpressionBindings(t *testing.T) {
+	a, b := datalog.NewSymbol("?a"), datalog.NewSymbol("?b")
+	idx, item := datalog.NewSymbol("?idx"), datalog.NewSymbol("?item")
+	bindings := []struct {
+		name    string
+		query   string
+		clause  int
+		binding interface{}
 	}{
-		{
-			name: "single-bracket tuple binding (existing support)",
-			input: `[:find ?a ?b
-			         :where [?x :type :foo]
-			                [(ground [0 0]) [?a ?b]]]`,
-			wantVars: []string{"?a", "?b"},
-		},
-		{
-			name: "double-bracket tuple binding (Datomic style)",
-			input: `[:find ?a ?b ?c
-			         :where [?x :type :foo]
-			                [(ground [0 0 0]) [[?a ?b ?c]]]]`,
-			wantVars: []string{"?a", "?b", "?c"},
-		},
-		{
-			name: "tuple ground in OR fallback branch",
-			input: `[:find ?e ?count ?total
-			         :where [?e :entity/type :entity.type/scenario]
-			                (or [(q [:find (count ?t) (sum ?v)
-			                         :in $ ?s
-			                         :where [?t :task/root ?s]
-			                                [?t :task/value ?v]]
-			                        $ ?e) [[?count ?total]]]
-			                    [(ground [0 0]) [[?count ?total]]])]`,
-			wantVars: []string{"?count", "?total"},
-		},
-		{
-			name: "five-element tuple ground (production pattern)",
-			input: `[:find ?e ?a ?b ?c ?d ?f
-			         :where [?e :type :foo]
-			                [(ground [0 0 0 0 0]) [[?a ?b ?c ?d ?f]]]]`,
-			wantVars: []string{"?a", "?b", "?c", "?d", "?f"},
-		},
+		{"a flat ground under the tuple form",
+			`[:find ?a ?b :where [(ground [0 0]) [?a ?b]]]`, 0,
+			query.TupleBinding{Variables: []query.Symbol{a, b}}},
+		{"a ground of vectors under the tuple form, each a value",
+			`[:find ?a ?b :where [(ground [[1 2] [3 4]]) [?a ?b]]]`, 0,
+			query.TupleBinding{Variables: []query.Symbol{a, b}}},
+		{"a ground of vectors under the relation form",
+			`[:find ?a ?b :where [(ground [[1 2] [3 4]]) [[?a ?b]]]]`, 0,
+			query.RelationBinding{Variables: []query.Symbol{a, b}}},
+		{"an empty ground under the relation form",
+			`[:find ?a ?b :where [(ground []) [[?a ?b]]]]`, 0,
+			query.RelationBinding{Variables: []query.Symbol{a, b}}},
+		{"enumerate under the relation form",
+			`[:find ?idx ?item :where [?x :t/vec ?vec] [(enumerate ?vec) [[?idx ?item]]]]`, 1,
+			query.RelationBinding{Variables: []query.Symbol{idx, item}}},
+		{"enumerate under the tuple form, each variable one pair",
+			`[:find ?idx ?item :where [?x :t/vec ?vec] [(enumerate ?vec) [?idx ?item]]]`, 1,
+			query.TupleBinding{Variables: []query.Symbol{idx, item}}},
+		{"a ground under the collection form, one tuple per element",
+			`[:find ?v :where [(ground [:a :e :i]) [?v ...]]]`, 0,
+			query.CollectionBinding{Variable: datalog.NewSymbol("?v")}},
+		{"enumerate under the collection form, one tuple per pair",
+			`[:find ?p :where [?x :t/vec ?vec] [(enumerate ?vec) [?p ...]]]`, 1,
+			query.CollectionBinding{Variable: datalog.NewSymbol("?p")}},
+		{"a tuple ground in a fallback branch",
+			`[:find ?e ?count ?total :where [?e :t/n _] (or-default [?e :t/pair ?count] [(ground [0 0]) [?count ?total]])]`, 1,
+			query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count"), datalog.NewSymbol("?total")}}},
 	}
+	for _, c := range bindings {
+		t.Run(c.name, func(t *testing.T) {
+			q, err := ParseQuery(c.query)
+			require.NoError(t, err)
+			expr := expressionAt(t, q.Where[c.clause])
+			assert.Equal(t, c.binding, expr.Binding)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			q, err := ParseQuery(tt.input)
-			if tt.wantError {
-				assert.Error(t, err)
-				return
-			}
-			require.NoError(t, err, "query should parse without error")
-
-			// Find the expression clause with tuple binding
-			var foundTupleBinding bool
-			for _, clause := range q.Where {
-				switch c := clause.(type) {
-				case *query.Expression:
-					if tb, ok := c.Binding.(query.TupleBinding); ok {
-						foundTupleBinding = true
-						require.Len(t, tb.Variables, len(tt.wantVars))
-						for i, wantVar := range tt.wantVars {
-							assert.Equal(t, datalog.NewSymbol(wantVar), tb.Variables[i])
-						}
-					}
-				case *query.OrClause:
-					// Check branches for tuple bindings
-					for _, branch := range c.Branches {
-						for _, bc := range branch {
-							if expr, ok := bc.(*query.Expression); ok {
-								if tb, ok := expr.Binding.(query.TupleBinding); ok {
-									foundTupleBinding = true
-									require.Len(t, tb.Variables, len(tt.wantVars))
-									for i, wantVar := range tt.wantVars {
-										assert.Equal(t, datalog.NewSymbol(wantVar), tb.Variables[i])
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-			assert.True(t, foundTupleBinding, "should find a tuple binding in the parsed query")
+			formatted := q.String()
+			assert.Contains(t, formatted, expr.String(), "the clause renders as written")
+			reparsed, err := ParseQuery(formatted)
+			require.NoError(t, err, "the rendering parses:\n%s", formatted)
+			assert.Equal(t, c.binding, expressionAt(t, reparsed.Where[c.clause]).Binding)
 		})
 	}
+
+	refusals := []struct {
+		name   string
+		query  string
+		repair string
+	}{
+		{"a flat ground under the relation form names the tuple form",
+			`[:find ?a ?b :where [(ground [0 0]) [[?a ?b]]]]`, "[?a ?b]"},
+		{"a scalar ground under the collection form names the scalar form",
+			`[:find ?v :where [(ground 1) [?v ...]]]`, "scalar form ?v"},
+		{"a ground vector of another length than the tuple form",
+			`[:find ?a ?b ?c :where [(ground [1 2]) [?a ?b ?c]]]`, "2 values, 3 binding variables"},
+		{"a ground inner vector of another arity than the relation form",
+			`[:find ?a ?b :where [(ground [[1 2] [3]]) [[?a ?b]]]]`, "tuple 2"},
+	}
+	for _, c := range refusals {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := ParseQuery(c.query)
+			require.Error(t, err, "the parser accepts %s", c.query)
+			assert.Contains(t, err.Error(), c.repair)
+		})
+	}
+}
+
+// expressionAt is the expression a clause is, or the one its fallback form's
+// last branch holds.
+func expressionAt(t *testing.T, clause query.Clause) *query.Expression {
+	t.Helper()
+	switch c := clause.(type) {
+	case *query.Expression:
+		return c
+	case *query.OrDefaultClause:
+		last := c.Branches[len(c.Branches)-1]
+		return expressionAt(t, last[len(last)-1])
+	}
+	t.Fatalf("clause %s is no expression", clause)
+	return nil
 }
 
 // TestVectorConstantTaggedLiterals verifies that tagged literals (#inst, #db/id)
@@ -146,7 +151,7 @@ func TestVectorConstantTaggedLiterals(t *testing.T) {
 		                       :where [?e :item/status :status/done]
 		                              (or-default [?e :item/tag ?tag]
 		                                          [?e :item/updated-at ?ts]
-		                                          [(ground [:none #inst "0001-01-01T00:00:00Z"]) [[?tag ?ts]]])]`)
+		                                          [(ground [:none #inst "0001-01-01T00:00:00Z"]) [?tag ?ts]])]`)
 		require.NoError(t, err, "#inst must be valid inside or-default ground vector")
 		_ = q
 	})

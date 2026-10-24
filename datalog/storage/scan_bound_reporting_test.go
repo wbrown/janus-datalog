@@ -12,24 +12,27 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// bindingDrivenPeople is the fixture the binding-driven pins share: three
-// entities under one cardinality-one attribute, written bindingDrivenWrites
-// times each.
+// The binding-driven pins bind bindingDrivenEntities entities where the count
+// does not decide the strategy, under one cardinality-one attribute written
+// bindingDrivenWrites times each.
 //
 // The depth is the point. With one write per entity every term of the funnel is
-// three, so a counter wired to the wrong term — or to nothing — still passes,
-// and a fixture like that cannot tell the three counters apart. Three writes
-// and last-write-wins make intake and resolution nine and three.
-// An array rather than a slice so len() is a constant expression and the
-// counts derived from it below can be constants too.
-var bindingDrivenPeople = [3]string{"person:alice", "person:bob", "person:carol"}
-
-const bindingDrivenWrites = 3
+// the entity count, so a counter wired to the wrong term — or to nothing —
+// still passes, and a fixture like that cannot tell the three counters apart.
+// Three writes and last-write-wins make intake three times what resolution
+// emits.
+const (
+	bindingDrivenEntities = 3
+	bindingDrivenWrites   = 3
+)
 
 // bindingDrivenFixture opens a database whose schema declares the attribute
 // cardinality-one — so resolution is unambiguously LWW rather than inferred —
-// writes the fixture, and returns the pattern, the binding relation over E and
-// the output symbols the three strategies share.
+// writes people entities bindingDrivenWrites times each, and returns the
+// pattern, the entities and the output symbols the four strategies share.
+//
+// Each write lands in a transaction of its own, over every entity, so the
+// earlier writes are history rather than overwritten in the buffer.
 //
 // Handler is registered at open, since the matchers and relations this database
 // builds are all constructed with it; nil is annotations-off.
@@ -37,7 +40,8 @@ func bindingDrivenFixture(
 	t *testing.T,
 	mode optimizerMode,
 	handler annotations.Handler,
-) (*Database, *query.DataPattern, executor.Relation, []query.Symbol) {
+	people int,
+) (*Database, *query.DataPattern, []datalog.Identity, []query.Symbol) {
 	t.Helper()
 
 	s, err := schema.NewBuilder().
@@ -51,18 +55,17 @@ func bindingDrivenFixture(
 	})
 
 	name := datalog.NewKeyword(":person/name")
-	bindings := make([]executor.Tuple, len(bindingDrivenPeople))
-	for i, seed := range bindingDrivenPeople {
-		who := datalog.NewIdentity(seed)
-		bindings[i] = executor.Tuple{who}
-		// Separate transactions: each Set must land on its own Tx for the
-		// earlier ones to be history rather than overwritten in the buffer.
-		for w := 0; w < bindingDrivenWrites; w++ {
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Set(who, name, fmt.Sprintf("%s-%d", seed, w)))
-			_, err = tx.Commit()
-			require.NoError(t, err)
+	entities := make([]datalog.Identity, people)
+	for i := range entities {
+		entities[i] = datalog.NewIdentity(fmt.Sprintf("person:%d", i))
+	}
+	for w := 0; w < bindingDrivenWrites; w++ {
+		tx := db.NewTransaction()
+		for i, who := range entities {
+			require.NoError(t, tx.Set(who, name, fmt.Sprintf("person:%d-%d", i, w)))
 		}
+		_, err = tx.Commit()
+		require.NoError(t, err)
 	}
 
 	pattern := &query.DataPattern{
@@ -72,11 +75,18 @@ func bindingDrivenFixture(
 			query.Variable{Name: datalog.NewSymbol("?n")},
 		},
 	}
-	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{datalog.NewSymbol("?e")}, bindings)
 	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?n")}
 
-	return db, pattern, bindingRel, symbols
+	return db, pattern, entities, symbols
+}
+
+// entityBindings binds ?e to each entity, one tuple each.
+func entityBindings(entities []datalog.Identity) executor.Relation {
+	tuples := make([]executor.Tuple, len(entities))
+	for i, who := range entities {
+		tuples[i] = executor.Tuple{who}
+	}
+	return executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, tuples)
 }
 
 // drainRelation iterates a relation to exhaustion and returns the tuple count.
@@ -94,7 +104,7 @@ func drainRelation(t *testing.T, rel executor.Relation) int {
 	return tuples
 }
 
-// TestBindingDrivenStrategiesReportTheirFunnel pins all three intake counters
+// TestBindingDrivenStrategiesReportTheirFunnel pins all four intake counters
 // the binding-driven paths maintain — one per strategy, each a separate
 // implementation.
 //
@@ -108,7 +118,13 @@ func drainRelation(t *testing.T, rel executor.Relation) int {
 // Each strategy is driven directly rather than reached through a query. Which
 // one chooseJoinStrategy picks depends on binding-set size and its own
 // thresholds, so a query-level test would pin whichever it picks today and
-// silently stop covering the other two.
+// silently stop covering the others.
+//
+// The hash join seeks a binding's keys one by one at or below
+// executor.SmallBindingBoundary and scans the extent above it, so the per-key
+// row binds bindingDrivenEntities and the hash-join row binds one entity more
+// than the boundary.
+//
 // The algebra axis is pinned off — the planner is not on this path — while the
 // backend is not: these strategies are matcher-level, and the matcher is what
 // each store implements differently.
@@ -121,37 +137,35 @@ func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
 }
 
 func testBindingDrivenStrategiesReportTheirFunnel(t *testing.T, mode optimizerMode) {
-	const (
-		entities = len(bindingDrivenPeople)
-		// Every write is intake: the scan reads the whole (A, E) group and CRDT
-		// resolution emits the highest-Tx entry, so intake exceeds output by the
-		// history depth. That gap is what the funnel exists to show.
-		wantScanned = entities * bindingDrivenWrites
-	)
-
 	for _, tc := range []struct {
 		strategy annotations.ScanStrategy
+		entities int
 		// namesRun distinguishes the two strategies that open one scan from the
-		// one that opens a scan per binding. Hash join and merge join each build
-		// a single ScanBound from the pattern's constant A, so each names AETV
-		// bound at A; the per-binding path runs chooseIndex again for every
-		// binding tuple, so naming one run would mean naming whichever came
-		// last.
+		// two that open several. Hash join and merge join each build a single
+		// ScanBound from the pattern's constant A, so each names AETV bound at
+		// A; the per-key path opens one run per key, and the per-binding path
+		// runs chooseIndex again for every binding tuple, so naming one run
+		// would mean naming one of many.
 		namesRun bool
 		match    func(m *PatternMatcher, pattern *query.DataPattern,
 			bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error)
 	}{
-		{strategy: annotations.ScanHashJoin, namesRun: true,
+		{strategy: annotations.ScanPerKeySeek, entities: bindingDrivenEntities,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithHashJoin(pattern, bindingRel, symbols, 0, AETV, nil)
 			}},
-		{strategy: annotations.ScanMergeJoin, namesRun: true,
+		{strategy: annotations.ScanHashJoin, entities: executor.SmallBindingBoundary + 1, namesRun: true,
+			match: func(m *PatternMatcher, pattern *query.DataPattern,
+				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
+				return m.matchWithHashJoin(pattern, bindingRel, symbols, 0, AETV, nil)
+			}},
+		{strategy: annotations.ScanMergeJoin, entities: bindingDrivenEntities, namesRun: true,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithMergeJoin(pattern, bindingRel, symbols, 0, AETV, nil)
 			}},
-		{strategy: annotations.ScanPerBinding,
+		{strategy: annotations.ScanPerBinding, entities: bindingDrivenEntities,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, nil)
@@ -159,23 +173,28 @@ func testBindingDrivenStrategiesReportTheirFunnel(t *testing.T, mode optimizerMo
 	} {
 		t.Run(string(tc.strategy), func(t *testing.T) {
 			var events []annotations.Event
-			db, pattern, bindingRel, symbols := bindingDrivenFixture(t, mode,
-				func(e annotations.Event) { events = append(events, e) })
+			db, pattern, entities, symbols := bindingDrivenFixture(t, mode,
+				func(e annotations.Event) { events = append(events, e) }, tc.entities)
 
-			rel, err := tc.match(db.Matcher().(*PatternMatcher), pattern, bindingRel, symbols)
+			rel, err := tc.match(db.Matcher().(*PatternMatcher), pattern, entityBindings(entities), symbols)
 			require.NoError(t, err)
-			require.Equal(t, entities, drainRelation(t, rel),
+			require.Equal(t, tc.entities, drainRelation(t, rel),
 				"last write wins, so each entity contributes one tuple")
 
 			complete := lastScanComplete(events, tc.strategy)
 			require.NotNil(t, complete, "%s must report what its scan cost", tc.strategy)
 
+			// Every write is intake: the scan reads the whole (A, E) group and
+			// CRDT resolution emits the highest-Tx entry, so intake exceeds
+			// output by the history depth. That gap is what the funnel exists
+			// to show.
+			wantScanned := tc.entities * bindingDrivenWrites
 			require.Equal(t, wantScanned, complete.Data[annotations.KeyDatomsScanned],
 				"%s read every write in each group; reporting %d would be reporting resolution's output",
-				tc.strategy, entities)
-			require.Equal(t, entities, complete.Data[annotations.KeyDatomsResolved])
-			require.Equal(t, entities, complete.Data[annotations.KeyDatomsMatched])
-			require.Equal(t, entities, complete.Data[annotations.KeyBindingSize])
+				tc.strategy, tc.entities)
+			require.Equal(t, tc.entities, complete.Data[annotations.KeyDatomsResolved])
+			require.Equal(t, tc.entities, complete.Data[annotations.KeyDatomsMatched])
+			require.Equal(t, tc.entities, complete.Data[annotations.KeyBindingSize])
 			require.Positive(t, complete.Latency,
 				"a completion event without a duration reports as 0 ms in Analyze")
 
@@ -186,7 +205,7 @@ func testBindingDrivenStrategiesReportTheirFunnel(t *testing.T, mode optimizerMo
 			// index without its bound leaves that unanswerable.
 			if !tc.namesRun {
 				require.NotContains(t, complete.Data, annotations.KeyIndex,
-					"%s runs chooseIndex per binding; one index here would name whichever was last",
+					"%s opens a scan per key or per binding; one index here would name one of many",
 					tc.strategy)
 				require.NotContains(t, complete.Data, annotations.KeyBound)
 				return
@@ -201,20 +220,20 @@ func testBindingDrivenStrategiesReportTheirFunnel(t *testing.T, mode optimizerMo
 }
 
 // TestBindingSizeCountsTuplesNotDistinctKeys pins the unit of binding.size
-// across the three strategies that report it.
+// across the four strategies that report it.
 //
-// One key, one unit. Hash join tracked distinct join keys because it needs that
-// count for its own reason — exactly one key lets a bound value narrow the scan
-// — and reported the same number as its binding size, where merge join and the
-// per-binding path report tuples. The unit matters to a reader comparing two
-// traces and to the number chooseJoinStrategy actually selects on, which is
-// bindingRel.Size(): tuples.
+// One key, one unit. Hash join collects the distinct join keys for its own
+// reason — they decide whether one scan narrows to its key or the keys are
+// sought one by one — and once reported their count as its binding size, where
+// merge join and the per-binding path report tuples. The unit matters to a
+// reader comparing two traces and to the number chooseJoinStrategy actually
+// selects on, which is bindingRel.Size(): tuples.
 //
 // TestBindingDrivenStrategiesReportTheirFunnel cannot see this. Its bindings
 // carry one symbol, and a Relation is a set, so tuples and distinct keys are
 // necessarily the same number there — the assertion passes against either unit.
 // Separating them takes a second symbol, which is what this fixture adds: the
-// same three entities, each appearing under two slots.
+// same entities, each appearing under two slots.
 //
 // Tuple counts are deliberately not asserted. The strategies legitimately differ
 // on repeated keys — hash join emits once per datom, merge join once per
@@ -231,24 +250,29 @@ func TestBindingSizeCountsTuplesNotDistinctKeys(t *testing.T) {
 
 func testBindingSizeCountsTuplesNotDistinctKeys(t *testing.T, mode optimizerMode) {
 	const slotsPerEntity = 2
-	const wantTuples = len(bindingDrivenPeople) * slotsPerEntity
 
 	for _, tc := range []struct {
 		strategy annotations.ScanStrategy
+		entities int
 		match    func(m *PatternMatcher, pattern *query.DataPattern,
 			bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error)
 	}{
-		{strategy: annotations.ScanHashJoin,
+		{strategy: annotations.ScanPerKeySeek, entities: bindingDrivenEntities,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithHashJoin(pattern, bindingRel, symbols, 0, AETV, nil)
 			}},
-		{strategy: annotations.ScanMergeJoin,
+		{strategy: annotations.ScanHashJoin, entities: executor.SmallBindingBoundary + 1,
+			match: func(m *PatternMatcher, pattern *query.DataPattern,
+				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
+				return m.matchWithHashJoin(pattern, bindingRel, symbols, 0, AETV, nil)
+			}},
+		{strategy: annotations.ScanMergeJoin, entities: bindingDrivenEntities,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithMergeJoin(pattern, bindingRel, symbols, 0, AETV, nil)
 			}},
-		{strategy: annotations.ScanPerBinding,
+		{strategy: annotations.ScanPerBinding, entities: bindingDrivenEntities,
 			match: func(m *PatternMatcher, pattern *query.DataPattern,
 				bindingRel executor.Relation, symbols []query.Symbol) (executor.Relation, error) {
 				return m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, nil)
@@ -256,17 +280,17 @@ func testBindingSizeCountsTuplesNotDistinctKeys(t *testing.T, mode optimizerMode
 	} {
 		t.Run(string(tc.strategy), func(t *testing.T) {
 			var events []annotations.Event
-			db, pattern, _, symbols := bindingDrivenFixture(t, mode,
-				func(e annotations.Event) { events = append(events, e) })
+			db, pattern, entities, symbols := bindingDrivenFixture(t, mode,
+				func(e annotations.Event) { events = append(events, e) }, tc.entities)
+			wantTuples := tc.entities * slotsPerEntity
 
-			// The entity stays at tuple position 0, which is where all three
+			// The entity stays at tuple position 0, which is where all four
 			// strategies read the join key from; the second symbol only
 			// multiplies the tuples behind each key.
 			entity := datalog.NewSymbol("?e")
 			slot := datalog.NewSymbol("?slot")
 			tuples := make([]executor.Tuple, 0, wantTuples)
-			for _, seed := range bindingDrivenPeople {
-				who := datalog.NewIdentity(seed)
+			for _, who := range entities {
 				for s := 0; s < slotsPerEntity; s++ {
 					tuples = append(tuples, executor.Tuple{who, int64(s)})
 				}
@@ -283,7 +307,7 @@ func testBindingSizeCountsTuplesNotDistinctKeys(t *testing.T, mode optimizerMode
 			require.Equal(t, wantTuples, complete.Data[annotations.KeyBindingSize],
 				"%s reports binding.size in distinct join keys (%d) rather than binding "+
 					"tuples (%d); two strategies reporting different units under one key "+
-					"cannot be compared", tc.strategy, len(bindingDrivenPeople), wantTuples)
+					"cannot be compared", tc.strategy, tc.entities, wantTuples)
 		})
 	}
 }
@@ -318,7 +342,7 @@ func lastScanComplete(events []annotations.Event, strategy annotations.ScanStrat
 //
 // Its funnel is asserted by TestBindingDrivenStrategiesReportTheirFunnel above,
 // which shares the fixture; what is left here is the count of events and the
-// scan count only this strategy carries.
+// scan count only this strategy and the per-key seek carry.
 func TestPerBindingScanReportsOneCountedEvent(t *testing.T) {
 	for _, mode := range pinnedOptimizerModes(false) {
 		t.Run(mode.name, func(t *testing.T) {
@@ -331,14 +355,14 @@ func testPerBindingScanReportsOneCountedEvent(t *testing.T, mode optimizerMode) 
 	// Cleared after the fixture: the assertion below counts scan-completions, so
 	// it has to be about the match and not about the fixture's writes.
 	var events []annotations.Event
-	db, pattern, bindingRel, symbols := bindingDrivenFixture(t, mode,
-		func(e annotations.Event) { events = append(events, e) })
+	db, pattern, entities, symbols := bindingDrivenFixture(t, mode,
+		func(e annotations.Event) { events = append(events, e) }, bindingDrivenEntities)
 	events = nil
 
 	m := db.Matcher().(*PatternMatcher)
-	rel, err := m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, nil)
+	rel, err := m.matchWithoutIteratorReuse(pattern, entityBindings(entities), symbols, nil)
 	require.NoError(t, err)
-	require.Equal(t, len(bindingDrivenPeople), drainRelation(t, rel))
+	require.Equal(t, bindingDrivenEntities, drainRelation(t, rel))
 
 	var complete []annotations.Event
 	for _, e := range events {
@@ -352,7 +376,7 @@ func testPerBindingScanReportsOneCountedEvent(t *testing.T, mode optimizerMode) 
 	require.Len(t, complete, 1,
 		"the path reports once for the whole run; %d events means it reports per binding", len(complete))
 
-	require.Equal(t, len(bindingDrivenPeople), complete[0].Data[annotations.KeyScansOpened],
+	require.Equal(t, bindingDrivenEntities, complete[0].Data[annotations.KeyScansOpened],
 		"the count is the datum a per-binding path owes its reader")
 }
 
@@ -497,10 +521,10 @@ func testIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T, mode optimizerMo
 	_, err = executor.CollectTuples(result, nil)
 	require.NoError(t, err)
 
-	var sawIndex, sawSubqueryInput bool
+	var sawIndex, sawSubqueryBuild bool
 	for _, e := range events {
-		if e.Name == annotations.SubqueryInputRelation {
-			sawSubqueryInput = true
+		if e.Name == annotations.ScopeBranchBuild && e.Data[annotations.KeyForm] == "subquery" {
+			sawSubqueryBuild = true
 		}
 		raw, ok := e.Data[annotations.KeyIndex]
 		if !ok {
@@ -512,8 +536,8 @@ func testIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T, mode optimizerMo
 				"eight physical orderings and nothing else", e.Name, raw)
 	}
 	require.True(t, sawIndex, "the trace must contain an event naming the run it walked")
-	require.True(t, sawSubqueryInput,
-		"the subquery family must be in the trace, or this pins nothing")
+	require.True(t, sawSubqueryBuild,
+		"the subquery's build must be in the trace, or this pins nothing")
 }
 
 // TestCardinalityAnnotationKeyCarriesOnlyAKeyword is the sibling pin on
@@ -545,7 +569,7 @@ func testCardinalityAnnotationKeyCarriesOnlyAKeyword(t *testing.T, mode optimize
 		Attribute(":person/name").Type(schema.TypeString).One().Add().
 		Build()
 	require.NoError(t, err)
-	db.SetSchema(s)
+	require.NoError(t, db.SetSchema(s))
 
 	name := datalog.NewKeyword(":person/name")
 	alice := datalog.NewIdentity("cardkey:alice")

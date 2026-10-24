@@ -51,11 +51,11 @@ func TestSimpleSubquery(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			var executionPath string
+			builds := 0
 			opts := mode.plannerOptions()
 			opts.Handler = func(event annotations.Event) {
-				if event.Name == "subquery/executor-path" {
-					executionPath, _ = event.Data["path"].(string)
+				if event.Name == annotations.ScopeBranchBuild && event.Data[annotations.KeyForm] == "subquery" {
+					builds++
 				}
 			}
 			exec := NewExecutorWithOptions(matcher, nil, opts)
@@ -64,22 +64,25 @@ func TestSimpleSubquery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
 			}
-			if executionPath != "Per-combination QueryExecutor" {
-				t.Fatalf("unexpected subquery execution path annotation: %q", executionPath)
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("Failed to read the result: %v", err)
+			}
+			if builds == 0 {
+				t.Fatal("the subquery was not built over the window: no build event under the subquery form")
 			}
 
 			// Check results
-			if result.Size() != 2 {
-				t.Errorf("Expected 2 results, got %d", result.Size())
-				for i := 0; i < result.Size(); i++ {
-					t.Logf("Tuple %d: %v", i, result.Get(i))
+			if len(tuples) != 2 {
+				t.Errorf("Expected 2 results, got %d", len(tuples))
+				for i, tuple := range tuples {
+					t.Logf("Tuple %d: %v", i, tuple)
 				}
 			}
 
 			// Create a map for easier checking
 			resultMap := make(map[string]float64)
-			for i := 0; i < result.Size(); i++ {
-				tuple := result.Get(i)
+			for i, tuple := range tuples {
 				if len(tuple) < 2 {
 					t.Errorf("Tuple %d has insufficient values: %v", i, tuple)
 					continue
@@ -210,17 +213,21 @@ func TestSubqueryWithMultipleInputs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
 			}
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("Failed to read the result: %v", err)
+			}
 
 			// Check results
-			if result.Size() != 1 {
-				t.Errorf("Expected 1 result, got %d", result.Size())
-				for i := 0; i < result.Size(); i++ {
-					t.Logf("Result %d: %v", i, result.Get(i))
+			if len(tuples) != 1 {
+				t.Errorf("Expected 1 result, got %d", len(tuples))
+				for i, tuple := range tuples {
+					t.Logf("Result %d: %v", i, tuple)
 				}
 			}
 
-			if result.Size() > 0 {
-				tuple := result.Get(0)
+			if len(tuples) > 0 {
+				tuple := tuples[0]
 				if symbol := tuple[0].(string); symbol != "AAPL" {
 					t.Errorf("Expected symbol AAPL, got %s", symbol)
 				}

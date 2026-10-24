@@ -4,12 +4,13 @@ This guide is for developers familiar with Datomic who want to understand what j
 
 ## Quick Summary
 
-**Estimated feature parity: ~80%** (weighted by typical usage frequency)
+**Estimated feature parity: ~90%** (weighted by typical usage frequency)
 
-Janus-datalog implements most of Datomic's Datalog query language. The core query path — patterns, joins, predicates, expressions, aggregations, subqueries, NOT/OR, Pull API, schema, database functions, time-travel queries — is fully implemented. The main gaps are rules/recursion, transaction functions, and the Entity API (largely superseded by Pull). Go-specific features (Struct Reflection, QueryInto, Query Builder) go beyond what Datomic offers.
+Janus-datalog implements most of Datomic's Datalog query language. The core query path — patterns, joins, predicates, expressions, aggregations, subqueries, rules, NOT/OR, Pull API, schema, database functions, time-travel queries — is fully implemented. The main gaps are transaction functions and the Entity API (largely superseded by Pull). Go-specific features (Struct Reflection, QueryInto, Query Builder) go beyond what Datomic offers.
 
 **Core Features (fully implemented):**
 - ✅ Query patterns, expressions, aggregations, subqueries, order-by
+- ✅ Rules passed as `%`, recursive ones evaluated to a fixpoint with stratified negation
 - ✅ Pull API with nested references, wildcards, defaults, cycle detection
 - ✅ NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)`
 - ✅ Database functions: `get-else`, `missing?`, `get-some`
@@ -24,16 +25,12 @@ Janus-datalog implements most of Datomic's Datalog query language. The core quer
 
 **Storage:**
 - ✅ BadgerDB persistent storage with CRDT model and 8 indices (EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV)
-- ✅ Export/Import to EDN format for backup and migration
+- ✅ Export/Import to EDN text or JDZL binary dumps for backup and migration
 
 **Not Implemented:**
-- ⚠️ Rules: non-recursive rules (named, reusable query fragments) are fully
-  covered by Go functions + Query Builder, but not available through EDN
-  queries. Recursive rules (transitive closure, graph walking) are not
-  supported — though Datomic's own recursion lacks fixed-point evaluation
-  and termination guarantees.
 - ❌ Transaction functions
 - ❌ Entity API (navigation) — largely superseded by Pull API
+- ❌ Full-text search (no `:db/fulltext`)
 - ❌ Distributed queries (single-node only)
 
 ## Implemented Datomic Features
@@ -50,10 +47,11 @@ Basic Datalog queries work as expected:
 ```
 
 **Supported clauses:**
-- `:find` - with variables and aggregations
+- `:find` - with variables, aggregations, `(pull ...)`, and the scalar form `?x .`, which returns one value
 - `:where` - pattern matching and expressions
-- `:in` - database and parameter inputs
+- `:in` - database, rule set and parameter inputs
 - `:order-by` - result ordering with multi-symbol and direction support
+- `:limit` - bounds the result after ordering and aggregation; not accepted inside a subquery
 
 **Pattern matching:**
 - `[?e ?a ?v]` - basic triple patterns
@@ -145,21 +143,21 @@ Extract time components for temporal analysis:
 Full subquery support for proper aggregation scoping:
 
 ```clojure
-[:find ?ticker ?date ?ohlc
+[:find ?ticker ?high ?low ?close
  :where [?s :symbol/ticker ?ticker]
         [(q [:find (max ?high) (min ?low) (avg ?close)
-             :in $ ?sym ?d
+             :in $ ?sym
              :where [?bar :bar/symbol ?sym]
-                    [?bar :bar/date ?d]
                     [?bar :bar/high ?high]
                     [?bar :bar/low ?low]
                     [?bar :bar/close ?close]]
-            ?s ?date) [[?ohlc]]]]
+            $ ?s) [[?high ?low ?close]]]]
 ```
 
-**Binding types:**
-- `[[?var]]` - TupleBinding (single result)
-- `[[?var1 ?var2] ...]` - RelationBinding (multiple results)
+**Binding forms**, each binding the relation over its symbols whatever the inner result's size:
+- `?var` - the scalar form, one symbol for an inner `:find` of one element
+- `[?var ...]` - the collection form, one symbol for an inner `:find` of one element
+- `[[?var1 ?var2]]` - the relation form, one symbol per element of the inner `:find`; `[[?var1 ?var2] ...]` is read as the same form
 
 ### 6. Query Inputs
 
@@ -176,10 +174,11 @@ Standard Datomic input patterns:
 
 **Supported inputs:**
 - `$` - database
+- `%` - rule set
 - `?var` - scalar
 - `[?var ...]` - collection
-- `[[?x ?y]]` - tuple
-- `[[?x ?y] ...]` - relation
+- `[?x ?y]` - tuple, one tuple over its symbols
+- `[[?x ?y]]` - relation, a set of tuples. `[[?x ?y] ...]` is read the same way, and it is how a query renders the input.
 
 ### 7. Database Functions
 
@@ -235,8 +234,10 @@ Logical negation and disjunction for complex query patterns:
                   [?e :deleted true])]
 ```
 
-The header must include every outer variable consumed by the body, including
-variables used only by predicates or expressions:
+The header is the form's whole interface, and every variable in it is
+required: bound by the enclosing scope before the form runs, and read bound by
+the body. It must name every outer variable the body reads, including one
+used only by a predicate or an expression:
 
 ```clojure
 [:find ?goal
@@ -248,10 +249,12 @@ variables used only by predicates or expressions:
    [(!= ?eventType ?goalSet)])]
 ```
 
-Here `?goal` is produced by both sides and acts as an equality key.
-`?goalSet` is supplied by the outer tuple and consumed only by the body
-predicate. Omitting it from the header is invalid. Plain `not` infers both
-right-produced equality keys and predicate/expression correlation inputs.
+Here `?goal` is bound by both sides and `?goalSet` is supplied by the outer
+tuple and read only by the body's predicate. Omitting either from the header is
+refused, naming the form and the variable; so is a header variable the body
+neither binds nor reads. A plain `not` gets its header from the text: every
+variable it shares with its scope is required, and a variable only the body
+names, such as `?event` above, is the body's own.
 
 **OR - Union of branches:**
 ```clojure
@@ -261,7 +264,7 @@ right-produced equality keys and predicate/expression correlation inputs.
             [?e :status "pending"])]
 ```
 
-**OR-JOIN - Union with explicit join variables:**
+**OR-JOIN - Union with a declared interface:**
 ```clojure
 [:find ?name
  :where [?e :person/name ?name]
@@ -270,15 +273,47 @@ right-produced equality keys and predicate/expression correlation inputs.
                  [?e :admin/status "enabled"])]
 ```
 
-Every `or-join` branch must bind every header variable. The header is the shared
-branch output interface, not a list of branch-specific filter inputs:
+The header has two halves, `(or-join [[?required ...] ?output ...] branch ...)`.
+The required run names the variables the enclosing scope binds before the form
+runs, and every branch reads them bound. The outputs name the variables every
+branch binds and the form provides to the enclosing scope; a flat header is all
+outputs. Every other variable inside a branch is that branch's own:
 
 ```clojure
-;; Valid: both branches bind ?e.
+;; Valid: both branches bind ?e, and ?crawl and ?world are each branch's own.
 (or-join [?e]
   [?e :entity/crawl ?crawl]
   [?e :entity/world ?world])
 ```
+
+An output some branch does not bind is refused, naming the form, the branch by
+its position counted from one and the variable, with the repair of moving the
+variable into the required run.
+
+A plain `or` gets its header from the text by the same rule as `not`, so an
+`or` whose branches bind different variables is legal, where Datomic refuses
+it. A variable inside the form is shared when it occurs elsewhere in its scope.
+A shared variable every branch binds is an output, every other shared variable
+is required, and every other variable is local to the branch that holds it:
+
+```clojure
+[:find ?q
+ :where [?q :t/n _]
+        (or [?q ?a ?v] [?q :t/tag :t/none])
+        [(ground :t/tag) ?a]]
+```
+
+`?q` is shared and every branch binds it, so it is an output. `?a` is shared
+and the second branch does not bind it, so it is required; the ground binds it
+before the form in every written order. `?v` occurs only inside the form, so it
+is the first branch's own. The header is `[[?a] ?q]`, and the query has one
+answer. The interface of a headerless form is therefore read with its scope,
+which `or-join` states in the text. The trade: a clause added elsewhere in the
+scope that names a variable a branch held as its own makes it shared, and the
+form's answer changes with no edit to the form. That falls only on a variable
+some branch does not bind, the forms Datomic's rule refuses, and `or-join`
+states the interface wherever the scope would leave it unclear. A form whose
+variables occur nowhere else in its scope is refused, naming the form.
 
 **OR semantics (Datomic-compatible):**
 
@@ -292,7 +327,7 @@ branch output interface, not a list of branch-specific filter inputs:
 
 **OR-DEFAULT (janus extension for fallback/defaults):**
 
-`(or-default ...)` and `(or-default-join ...)` use **fallback semantics**: branches are tried in order, returning the first non-empty result. This enables default values — a pattern not available in Datomic's query language:
+`(or-default ...)` and `(or-default-join ...)` use **fallback semantics**: per tuple of the form's required run, the first branch with a result wins. A headerless `or-default` infers its header, as `or` and `not` do. So its fallback is decided per tuple of the variables it shares with its scope. A flat `or-default-join` header is all outputs with no required run, so the form decides once, globally. This enables default values — a pattern not available in Datomic's query language:
 
 ```clojure
 ;; Return "Unknown" if no name exists
@@ -345,7 +380,7 @@ Every datom includes a full ElementID (Lamport + ReplicaID) for temporal orderin
 - **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV (EATV/AETV use Tx-descending for CRDT resolution; ATEV puts Tx↓ ahead of E for AsOf-by-attribute access)
 - **BadgerDB backend** for persistence
 - **Raw binary encoding** for sortable, compact physical keys
-- **Export/Import** to EDN format for backup and migration (see [docs/reference/EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md))
+- **Export/Import** to EDN text or JDZL binary dumps for backup and migration (see [docs/reference/EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md) and [docs/reference/BINARY_EXPORT.md](docs/reference/BINARY_EXPORT.md))
 
 ### 11. Type System
 
@@ -390,6 +425,7 @@ results, err := d.PullMany(entityIDs, `[:user/name]`)
 
 **Key behaviors:**
 - Result keys omit leading colon: `"user/name"` not `":user/name"`
+- The entity's id is answered under `"db/id"` when the pattern names `:db/id` or holds the wildcard, through `Pull`, `PullMany` and a `(pull ...)` in a `:find` alike, at every depth of a nested pull; a pattern naming neither answers no id. A wildcard's id rides beside the attributes the entity carries, so an entity carrying none answers nil under it, where `[:db/id ...]` answers the id for any identity
 - Missing attributes are omitted from results (not nil)
 - Cycle detection prevents infinite loops on circular references
 - Unlimited nesting depth
@@ -568,7 +604,7 @@ results, err := d.Query(q)
 - Compile-time safety: attribute typos caught immediately
 - IDE support: autocomplete for attributes and functions
 - Variable identity = join semantics (same `*Var` pointer in multiple patterns)
-- Full Datalog support: patterns, predicates, expressions, aggregations, NOT/OR, subqueries
+- Full Datalog support: patterns, predicates, expressions, aggregations, NOT/OR, subqueries, rules
 
 **Available functions:**
 - Patterns: `Pat()` (2-5 elements), `Blank()` for wildcards
@@ -577,50 +613,53 @@ results, err := d.Query(q)
 - Time: `Year`, `Month`, `Day`, `Hour`, `Minute`, `Second`
 - Aggregates: `Sum`, `Count`, `Avg`, `Min`, `Max`
 - Logic: `Not`, `NotJoin`, `Or`, `OrJoin`
-- Inputs: `DB`, `Scalar`, `Collection`, `Tuple`, `Relation`
+- Inputs: `DB`, `Scalar`, `Collection`, `Tuple`, `Relation`, `Rules`
+- Rules: `DefineRule`, `RuleSet`, `MustRuleSet`, `Rule`
 
 See [docs/reference/QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md) for complete documentation.
 
-## Missing Datomic Features
+### 16. Rules ✅
 
-### 1. Rules ⚠️
-
-**Non-recursive rules** (named, reusable query fragments) are fully supported
-via Go functions + Query Builder. A Go function that returns clauses IS a rule
-— with compile-time safety, IDE support, and parameterization:
-
-```go
-// Equivalent to Datomic rule: [(active-employee ?e ?name) ...]
-func ActiveEmployee(e, name *qb.Var) []interface{} {
-    return []interface{}{
-        qb.Pat(e, EmployeeName, name),
-        qb.Pat(e, EmployeeStatus, qb.V("active")),
-        qb.Not(qb.Pat(e, EmployeeArchived, qb.V(true))),
-    }
-}
-
-// Composed into queries just like Datomic rule invocation
-q := qb.Query().Find(name).Where(ActiveEmployee(e, name)...).MustBuild()
-```
-
-This is not available through the EDN query path — only via Go.
-
-**Recursive rules** (transitive closure, graph walking) are not supported:
+Rules are Datomic's. A rule set is a vector of `[(name ?args...) clause...]`
+rules. It is passed as the `%` input. A predicate is invoked as
+`(name args...)` in `:where`. Several rules for one name are alternatives. A
+recursive rule evaluates to a fixpoint:
 
 ```clojure
-; NOT SUPPORTED — self-referential recursion:
-[[(ancestor ?a ?d)
-  [?a :parent ?d]]
- [(ancestor ?a ?d)
-  [?a :parent ?p]
-  (ancestor ?p ?d)]]
+[[(ancestor ?a ?d) [?a :parent ?d]]
+ [(ancestor ?a ?d) [?a :parent ?p] (ancestor ?p ?d)]]
+
+[:find ?d
+ :in $ % ?a
+ :where (ancestor ?a ?d)]
 ```
 
-Note: Datomic's recursion is also limited — rules can call themselves, but
-there is no automatic fixed-point evaluation or termination guarantees.
-Deep recursion on large graphs can cause stack overflows in Datomic.
+**Differences from Datomic:**
+- Evaluation is bottom-up and semi-naive. A recursive rule terminates on a
+  cyclic graph. Datomic's rules can call themselves but carry no termination
+  guarantee.
+- Negation is stratified. A rule set whose predicates depend on each other
+  through `not` or `not-join` is refused, with the predicates named. A
+  recursive invocation inside `or-default`, `or-default-join` or a subquery
+  whose inner query aggregates is refused too. Inside a subquery that does
+  not aggregate it stands, as it does inside an `or` branch.
+- The required-binding head, `[(rule [?x] ?y) ...]`, has Datomic's meaning.
+  The planner orders an invocation after the clauses that bind the required
+  positions.
+- An invocation with a bound argument derives only what the argument reaches.
+  The rule set is rewritten for the binding (magic sets) and the bound values
+  seed the fixpoint. Datomic does not state how it evaluates one.
+- Two opt-in planner options, `MaxRuleIterations` and `MaxDerivedTuples`,
+  bound an evaluation. The `WithContext` query option cancels a query.
 
-### 2. Schema (Partial Support) ⚠️
+A Go function returning builder clauses is still a way to share a
+non-recursive fragment with compile-time safety. The builder defines a rule
+set with `qb.DefineRule` and `qb.RuleSet`. It invokes a predicate with
+`qb.Rule`. See [docs/reference/RULES.md](docs/reference/RULES.md).
+
+## Missing Datomic Features
+
+### 1. Schema (Partial Support) ⚠️
 
 Schema is supported but with limitations vs Datomic:
 
@@ -659,10 +698,12 @@ d, _ := db.Open(path, db.WithSchema(s))
 **Schema behavior:**
 - Type validation and `:db/neverZeroValue` enforced on transaction `Add()` and `Set()`
 - Uniqueness is a read-time CRDT resolution rule: every write to a unique attribute succeeds, and the canonical owner of a value is decided when it is read (see [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md#uniqueness-semantics)). Datomic rejects the conflicting write; janus does not.
-- Unknown attributes allowed (additive schema)
+- A write of an attribute the schema does not declare is accepted (additive schema)
+- A read of an attribute the schema does not declare is refused on a database opened with `RefuseUnknownAttributes`, which requires a schema (see [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md#schema-as-facts))
 - Unknown keys inside an EDN attribute definition are parse errors
 - Pull API uses schema for cardinality-many handling
 - Schema is optional - existing behavior preserved without schema
+- Declared definitions are stored as datoms, so a dump carries them and a reopen with no schema reads them back
 
 **Schema limitations vs Datomic:**
 - No `:db/isComponent` - component entity semantics not implemented
@@ -670,11 +711,10 @@ d, _ := db.Open(path, db.WithSchema(s))
 - No `:db/fulltext` - fulltext search not supported
 - No `:db/noHistory` - all datoms are retained
 - No write-time upsert - `:db.unique/identity` differs from `:db.unique/value` only in declared intent
-- Schema not stored as datoms - schema is in-memory only
 
 **Performance:** Type validation is paid at `Add()` time; uniqueness costs nothing at write time and is paid by the read that asks. See `PERFORMANCE_STATUS.md` for benchmarks.
 
-### 3. Transaction Features ⚠️
+### 2. Transaction Features ⚠️
 
 Partial transaction support:
 - ✅ **CRDT semantics** - LWW, add-wins, and RGA based on attribute cardinality
@@ -682,10 +722,10 @@ Partial transaction support:
 - ✅ **Hard deletion** - `Retract(e, a, v)` for explicit removal (GDPR, cleanup)
 - ❌ **No transaction functions**
 - ❌ **No tempids** for new entities
-- ❌ **No transaction metadata** beyond ElementID (Lamport + ReplicaID)
-- ❌ **No transaction entities**
+- ✅ **Transaction entity** - each commit writes one `:db/txInstant` datom on an entity named for the commit's high-water Lamport, atomically with the batch. Its value is the time the caller gave the transaction through `NewTransactionAt` or `SetTime`, and the commit's wall-clock time when the caller gave none. So a commit is an entity a query can read. That mark is the high-water point an as-of read uses.
+- ❌ **No further transaction metadata** - no API attaches other attributes to the transaction entity at commit
 
-### 4. Entity API ❌
+### 3. Entity API ❌
 
 No entity navigation:
 
@@ -696,7 +736,7 @@ No entity navigation:
 (touch entity)
 ```
 
-### 5. Advanced Query Features (Partial) ⚠️
+### 4. Advanced Query Features (Partial) ⚠️
 
 **Implemented:**
 - `get-else` - default values for missing attributes ✅
@@ -708,7 +748,7 @@ No entity navigation:
 - `keys` - no map results
 - `with` - no duplicate control
 
-### 6. Time and History Features ✅
+### 5. Time and History Features ✅
 
 **Supported:**
 - CRDT storage inherently preserves all writes with ElementIDs (Lamport + ReplicaID)
@@ -751,15 +791,14 @@ asOf, _ := d.AsOf(tx1).Query(
 **Not supported:**
 - No `since` queries (use `[(tx-between ?tx start ∞)]` instead)
 
-### 7. Database Features ❌
+### 6. Database Features ⚠️
 
-No advanced database operations:
-- No database branching/forking
-- No speculative transactions
-- No database filters
-- No log API
+- ✅ **Snapshots and branches** - `Snapshot(name)` names the current state as a `:db.snapshot/*` entity. `Fork(name)` opens a writable branch holding the state as of a named snapshot, as a replica of its own with the parent's declared schema, and neither sees what the other commits afterward. `TruncateTo(name)` rewinds the writable timeline to a snapshot, physically removing every later datom. There is no merge of a branch into its parent.
+- ❌ No speculative transactions in Datomic's `with` form. A fork written and then discarded is the nearest.
+- ❌ No database filters
+- ❌ No log API
 
-### 8. Other Missing Features ❌
+### 7. Other Missing Features ❌
 
 - **Nested expressions in predicates**: Cannot do `[(< (- ?t2 ?t1) 300)]`
 - **Distinct in aggregations**: No `(count-distinct ?x)`
@@ -804,14 +843,13 @@ No advanced database operations:
 - Queries with patterns, expressions, predicates, aggregations
 - Pull API expressions (including nested refs, wildcards, defaults)
 - NOT/OR clauses
-- Subqueries with tuple/relation bindings
+- Subqueries, under the scalar, collection and relation binding forms
+- Rules passed as `%`, recursive ones and required-binding heads included
 - Order-by clauses
 - Time-travel queries via `d.History().Query(...)` and `d.AsOf(elementID).Query(...)`
 - Database functions (get-else, missing?, get-some)
 
 **Require refactoring:**
-- Non-recursive rules → Go functions + Query Builder (compile-time safe, composable)
-- Recursive rules → handle recursion in application code
 - Entity navigation → use Pull API or explicit joins
 
 **Not possible:**
@@ -846,17 +884,16 @@ cardinality handling.
         [?friend :person/name ?friend-name]]
 ```
 
-**Datomic with Rules:**
+**Datomic with Rules (works directly):**
 ```clojure
+; The rule set, passed as the % input
+[[(ancestor ?person ?ancestor) [?person :parent ?ancestor]]
+ [(ancestor ?person ?ancestor) [?person :parent ?p] (ancestor ?p ?ancestor)]]
+
+; The query
 [:find ?person ?ancestor
  :in $ %
  :where (ancestor ?person ?ancestor)]
-```
-
-**Janus-Datalog equivalent (must inline):**
-```clojure
-; Must explicitly write out the recursive logic
-; or handle in application code
 ```
 
 ## Performance Characteristics
@@ -879,17 +916,17 @@ These make it suitable for production workloads with substantial Datomic feature
 - Applications needing Datalog's expressiveness with Go's performance
 - Entity retrieval using Pull API (9× faster than equivalent queries)
 - Applications requiring NOT/OR logic and subqueries
+- Recursive and graph queries through rules, with a termination guarantee
 - Single-node deployments with BadgerDB persistence
 
 **Consider alternatives for:**
-- Recursive/graph queries requiring rules (no rule support)
 - Distributed/multi-node requirements (single-node only)
 
 ## Getting Started
 
 For Datomic users, the transition is straightforward:
 
-1. Most queries port directly, including Pull expressions and NOT/OR clauses
+1. Most queries port directly, including Pull expressions, NOT/OR clauses and rules
 2. Use subqueries for complex aggregations with proper scoping
 3. Define schema for type validation and cardinality support (one/many/vector)
 4. Use Pull API for efficient entity navigation (replaces Entity API)

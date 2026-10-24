@@ -19,9 +19,6 @@ type Function interface {
 	// Eval evaluates the function with given bindings
 	// Returns (result, error)
 	Eval(bindings map[Symbol]interface{}) (interface{}, error)
-
-	// ReturnType hints at what type this function returns
-	ReturnType() string // "number", "string", "boolean", "time", "any"
 }
 
 // ArithmeticFunction implements arithmetic operations. Op is one of the
@@ -133,10 +130,6 @@ func (a ArithmeticFunction) String() string {
 	return b.String()
 }
 
-func (a ArithmeticFunction) ReturnType() string {
-	return "number"
-}
-
 // StringConcatFunction implements string concatenation
 type StringConcatFunction struct {
 	Terms []Term
@@ -169,10 +162,6 @@ func (s StringConcatFunction) String() string {
 	}
 	str += ")"
 	return str
-}
-
-func (s StringConcatFunction) ReturnType() string {
-	return "string"
 }
 
 // TimeExtractionFunction extracts components from time values. Field is one
@@ -220,10 +209,6 @@ func (t TimeExtractionFunction) String() string {
 	return fmt.Sprintf("(%s %s)", t.Field, t.TimeTerm)
 }
 
-func (t TimeExtractionFunction) ReturnType() string {
-	return "number"
-}
-
 // GroundFunction binds a constant value to a variable
 // Example: [(ground 42) ?x] binds 42 to ?x
 type GroundFunction struct {
@@ -239,27 +224,7 @@ func (g GroundFunction) Eval(bindings map[Symbol]interface{}) (interface{}, erro
 }
 
 func (g GroundFunction) String() string {
-	// Handle vector values for tuple ground
-	if values, ok := g.Value.([]interface{}); ok {
-		parts := make([]string, len(values))
-		for i, v := range values {
-			parts[i] = FormatValueEDN(v)
-		}
-		result := "["
-		for i, p := range parts {
-			if i > 0 {
-				result += " "
-			}
-			result += p
-		}
-		result += "]"
-		return fmt.Sprintf("(ground %s)", result)
-	}
 	return fmt.Sprintf("(ground %s)", FormatValueEDN(g.Value))
-}
-
-func (g GroundFunction) ReturnType() string {
-	return "any"
 }
 
 // IdentityFunction passes through a value unchanged
@@ -282,10 +247,6 @@ func (i IdentityFunction) Eval(bindings map[Symbol]interface{}) (interface{}, er
 
 func (i IdentityFunction) String() string {
 	return fmt.Sprintf("(identity %s)", i.Arg)
-}
-
-func (i IdentityFunction) ReturnType() string {
-	return "any"
 }
 
 // toNumber normalizes a numeric operand to int64 or float64 (Go integer and
@@ -353,10 +314,6 @@ func (c ComparisonFunction) Eval(bindings map[Symbol]interface{}) (interface{}, 
 	return result, err
 }
 
-func (c ComparisonFunction) ReturnType() string {
-	return "boolean"
-}
-
 func (c ComparisonFunction) String() string {
 	return c.Comparison.String()
 }
@@ -376,10 +333,6 @@ func (c ChainedComparisonFunction) Eval(bindings map[Symbol]interface{}) (interf
 	// Evaluate the chained comparison and return the boolean result as interface{}
 	result, err := c.ChainedComparison.Eval(bindings)
 	return result, err
-}
-
-func (c ChainedComparisonFunction) ReturnType() string {
-	return "boolean"
 }
 
 func (c ChainedComparisonFunction) String() string {
@@ -418,10 +371,6 @@ func (a AndFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error) 
 
 	// All terms are true
 	return true, nil
-}
-
-func (a AndFunction) ReturnType() string {
-	return "boolean"
 }
 
 func (a AndFunction) String() string {

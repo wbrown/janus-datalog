@@ -44,10 +44,9 @@ func TestRelationPropertiesRenameSymbols(t *testing.T) {
 		Keys: [][]query.Symbol{{innerA}, {innerA, innerB}},
 	}
 
-	renamed := properties.renameSymbols(
-		[]query.Symbol{innerA, innerB},
-		[]query.Symbol{outerA, outerB},
-	)
+	subst, err := query.SubstitutionOf([]query.Symbol{innerA, innerB}, []query.Symbol{outerA, outerB})
+	require.NoError(t, err)
+	renamed := properties.renameSymbols(subst)
 	require.Equal(t,
 		RelationProperties{
 			Ordering: []query.OrderByClause{
@@ -60,10 +59,20 @@ func TestRelationPropertiesRenameSymbols(t *testing.T) {
 	)
 	require.Equal(t, innerA, properties.Ordering[0].Variable,
 		"renaming must not mutate the source properties")
-	require.Empty(t, properties.renameSymbols(
-		[]query.Symbol{innerA},
-		[]query.Symbol{outerA, outerB},
-	))
+
+	partial, err := query.SubstitutionOf([]query.Symbol{innerA}, []query.Symbol{outerA})
+	require.NoError(t, err)
+	require.Equal(t,
+		RelationProperties{
+			Ordering: []query.OrderByClause{
+				{Variable: outerA, Descending: false},
+				{Variable: innerB, Descending: true},
+			},
+			Keys: [][]query.Symbol{{outerA}, {outerA, innerB}},
+		},
+		properties.renameSymbols(partial),
+		"a symbol the substitution does not name keeps its name",
+	)
 }
 
 func TestNewMaterializedRelationFromSetPreservesProofs(t *testing.T) {
@@ -308,9 +317,9 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 	joined := HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
 	require.Equal(t, RelationProperties{Keys: [][]query.Symbol{{id}}}, joined.Properties())
 	joinIterator := joined.(*StreamingRelation).iterator.(*hashJoinIterator)
-	require.True(t, joinIterator.buildIndex.keysUnique(),
+	require.True(t, joinIterator.buildIndex.KeysUnique(),
 		"the candidate-key proof must hold in the grouped build tuples")
-	require.Len(t, joinIterator.buildIndex.probe(Tuple{int64(1)}), 1,
+	require.Len(t, joinIterator.buildIndex.Probe(Tuple{int64(1)}), 1,
 		"a unique build key groups exactly one tuple")
 	require.Nil(t, joinIterator.seen,
 		"a proven result key makes internal full-tuple join deduplication redundant")
@@ -376,9 +385,9 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 	joined := HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
 	require.Empty(t, joined.Properties().Keys)
 	joinIterator := joined.(*StreamingRelation).iterator.(*hashJoinIterator)
-	require.False(t, joinIterator.buildIndex.keysUnique(),
+	require.False(t, joinIterator.buildIndex.KeysUnique(),
 		"a fanout key must be visible in the grouped build tuples")
-	require.Len(t, joinIterator.buildIndex.probe(Tuple{int64(1)}), 2,
+	require.Len(t, joinIterator.buildIndex.Probe(Tuple{int64(1)}), 2,
 		"a non-unique build key must retain every fanout tuple")
 	require.NotNil(t, joinIterator.seen,
 		"an unkeyed join must retain internal full-tuple deduplication")
@@ -538,7 +547,7 @@ func TestExpandingExpressionDoesNotPreserveOuterKey(t *testing.T) {
 		Function: query.EnumerateFunction{
 			VecTerm: query.VariableTerm{Symbol: vector},
 		},
-		Binding: query.TupleBinding{Variables: []query.Symbol{index, value}},
+		Binding: query.RelationBinding{Variables: []query.Symbol{index, value}},
 	}, nil, nil)
 	require.NoError(t, err)
 

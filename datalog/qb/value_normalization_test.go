@@ -60,9 +60,9 @@ func TestRawConstantsNormalizeToInt64(t *testing.T) {
 
 	t.Run("arithmetic operand", func(t *testing.T) {
 		expr := Add(x, 1).As(NewVar("sum")).toClause().(*query.Expression)
-		fn, ok := expr.Function.(query.ArithmeticFunction)
+		fn, ok := expr.Function.(*query.ArithmeticFunction)
 		if !ok {
-			t.Fatalf("function is %T, want query.ArithmeticFunction", expr.Function)
+			t.Fatalf("function is %T, want *query.ArithmeticFunction", expr.Function)
 		}
 		term, ok := fn.Args[1].(query.ConstantTerm)
 		if !ok {

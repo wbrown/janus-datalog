@@ -197,6 +197,52 @@ func TestJoinProjectInsertionDeduplicatesProjectedFanout(t *testing.T) {
 	}
 }
 
+// A count runs over the whole join under every planner option: an entity with
+// two tags and one payload counts two payload tuples with join-project
+// insertion on as off, since under an aggregating find the symbols kept to the
+// find boundary are every symbol of the join.
+func TestCountOverAFanout_IsTheSameUnderJoinProjectInsertion(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			tag := datalog.NewKeyword(":item/tag")
+			payload := datalog.NewKeyword(":item/payload")
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       tag,
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			s.Add(&schema.AttributeDefinition{
+				Ident:       payload,
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
+
+			entity := datalog.NewIdentity("fanout-item")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(entity, tag, "alpha"))
+			require.NoError(t, tx.Add(entity, tag, "beta"))
+			require.NoError(t, tx.Add(entity, payload, "shared"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			source := `[:find (count ?payload)
+				:where [?entity :item/tag ?tag]
+				       [?entity :item/payload ?payload]]`
+			baselineOptions := mode.plannerOptions()
+			baselineOptions.EnableJoinProjectInsertion = false
+			projectOptions := baselineOptions
+			projectOptions.EnableJoinProjectInsertion = true
+
+			baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
+			projected := executePlannerOptions(t, db, source, nil, projectOptions)
+			require.Equal(t, [][]interface{}{{int64(2)}}, baseline, "the count is over every tuple of the join")
+			require.Equal(t, baseline, projected, "join-project insertion keeps every symbol of the join under an aggregating find")
+		})
+	}
+}
+
 func executeAlgebraMode(
 	t *testing.T,
 	db *Database,
@@ -236,7 +282,7 @@ func runPlannerOptions(
 	if err != nil {
 		return nil, err
 	}
-	relations, err := db.convertInputsToRelations(q, inputs)
+	relations, _, err := db.convertInputsToRelations(q, inputs)
 	if err != nil {
 		return nil, err
 	}

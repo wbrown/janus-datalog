@@ -20,7 +20,6 @@ func (erroringFunction) RequiredSymbols() []query.Symbol { return nil }
 func (erroringFunction) Eval(map[query.Symbol]interface{}) (interface{}, error) {
 	return nil, errInjectedEval
 }
-func (erroringFunction) ReturnType() string { return "any" }
 
 // Reproductions for BUG_RELATION_TRANSFORMS_DROP_ITERATOR_ERRORS.md
 //
@@ -113,22 +112,6 @@ func TestEvaluateExpressionWithLookup_PropagatesIteratorError(t *testing.T) {
 	require.ErrorIs(t, err, errInjectedIterator)
 }
 
-// TestProjectToSymbols_PropagatesIteratorError: projection must not launder a
-// failed source into a clean projected result.
-func TestProjectToSymbols_PropagatesIteratorError(t *testing.T) {
-	src := newFailingStream(0, Tuple{int64(1)}, Tuple{int64(2)}, Tuple{int64(3)})
-	rel := projectToSymbols(src, testSymbols(), ExecutorOptions{})
-	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
-}
-
-// TestProjectToSymbols_PropagatesAfterPartialResults: same, but after partial
-// projection succeeds and the iterator fails partway through.
-func TestProjectToSymbols_PropagatesAfterPartialResults(t *testing.T) {
-	src := newFailingStream(1, Tuple{int64(1)}, Tuple{int64(2)}, Tuple{int64(3)})
-	rel := projectToSymbols(src, testSymbols(), ExecutorOptions{})
-	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
-}
-
 // TestFilterWithPredicateAndLookup_PropagatesEvalError: a predicate that fails
 // to evaluate (here: references a variable that isn't in the source's bindings,
 // so Comparison.Eval returns "cannot resolve...") must surface the error, not
@@ -191,17 +174,13 @@ func TestUniqueCombinationExtractionPropagatesIteratorAndCloseErrors(t *testing.
 	_, err := getUniqueCombinations(failing, []query.Symbol{x})
 	require.ErrorIs(t, err, errInjectedIterator)
 
-	// Unique-combination extraction is filterSourceSymbols + Relation.Project
-	// consumed through the projection's iterator (executeSubquery drains
-	// comboIter, then checks Error() and its deferred Close()). The
-	// extraction is streaming, so an injected failure surfaces as the
-	// projection's deferred error, not a synchronous return — pinned through
-	// the same drain-then-check shape.
-	// failingRelation is invisible to MaterializedRelation.Project (which
-	// reads tuples directly); the streaming sources below present the failing
-	// iterator to the path Project actually consumes.
-	dataSymbols := filterSourceSymbols([]query.Symbol{x})
-	combos, err := newFailingStream(1, Tuple{int64(1)}, Tuple{int64(2)}).Project(dataSymbols)
+	// A streaming relation's projection streams, so an injected failure
+	// surfaces as the projection's deferred error, not a synchronous return,
+	// and is read through the drain-then-check shape. failingRelation is
+	// invisible to MaterializedRelation.Project (which reads tuples
+	// directly); the streaming sources below present the failing iterator to
+	// the path Project actually consumes.
+	combos, err := newFailingStream(1, Tuple{int64(1)}, Tuple{int64(2)}).Project([]query.Symbol{x})
 	require.NoError(t, err)
 	require.ErrorIs(t, driveErr(combos), errInjectedIterator)
 
@@ -218,7 +197,7 @@ func TestUniqueCombinationExtractionPropagatesIteratorAndCloseErrors(t *testing.
 		failAfter: 100,
 		closeErr:  closeErr,
 	})
-	combos, err = closeFailingStream.Project(dataSymbols)
+	combos, err = closeFailingStream.Project([]query.Symbol{x})
 	require.NoError(t, err)
 	closeIter := combos.Iterator()
 	for closeIter.Next() {

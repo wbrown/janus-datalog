@@ -66,15 +66,18 @@ func TestNotClause(t *testing.T) {
 			}
 
 			// Should have 2 non-archived users: Bob and Charlie
-			if result.Size() != 2 {
-				t.Errorf("expected 2 results, got %d", result.Size())
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("reading the result: %v", err)
+			}
+			if len(tuples) != 2 {
+				t.Errorf("expected 2 results, got %d", len(tuples))
 			}
 
 			// Check we got the right names
 			names := make(map[string]bool)
-			for i := 0; i < result.Size(); i++ {
-				name := result.Get(i)[0].(string)
-				names[name] = true
+			for _, tuple := range tuples {
+				names[tuple[0].(string)] = true
 			}
 
 			if names["Alice"] {
@@ -114,7 +117,7 @@ func TestNotClauseWithOrJoinBody(t *testing.T) {
 			}},
 			&query.NotClause{Clauses: []query.Clause{
 				&query.OrJoinClause{
-					JoinVars: []query.Symbol{v},
+					OutputVars: []query.Symbol{v},
 					Branches: [][]query.Clause{{
 						&query.DataPattern{Elements: []query.PatternElement{
 							query.Variable{Name: datalog.NewSymbol("?d")},
@@ -339,7 +342,7 @@ func TestOrJoinBranchLocalAlphaEquivalence(t *testing.T) {
 					query.Variable{Name: v},
 				}},
 				&query.OrJoinClause{
-					JoinVars: []query.Symbol{v},
+					OutputVars: []query.Symbol{v},
 					Branches: [][]query.Clause{
 						{&query.DataPattern{Elements: []query.PatternElement{
 							query.Variable{Name: local},
@@ -444,8 +447,12 @@ func TestNotClauseNoMatches(t *testing.T) {
 			}
 
 			// Should have both users since no one is archived
-			if result.Size() != 2 {
-				t.Errorf("expected 2 results, got %d", result.Size())
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("reading the result: %v", err)
+			}
+			if len(tuples) != 2 {
+				t.Errorf("expected 2 results, got %d", len(tuples))
 			}
 		})
 	}
@@ -505,8 +512,12 @@ func TestNotClauseAllMatch(t *testing.T) {
 			}
 
 			// Should have no users since everyone is archived
-			if result.Size() != 0 {
-				t.Errorf("expected 0 results, got %d", result.Size())
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("reading the result: %v", err)
+			}
+			if len(tuples) != 0 {
+				t.Errorf("expected 0 results, got %d", len(tuples))
 			}
 		})
 	}
@@ -552,7 +563,7 @@ func TestNotJoinClause(t *testing.T) {
 						},
 					},
 					&query.NotJoinClause{
-						JoinVars: []query.Symbol{datalog.NewSymbol("?e")},
+						RequiredVars: []query.Symbol{datalog.NewSymbol("?e")},
 						Clauses: []query.Clause{
 							&query.DataPattern{
 								Elements: []query.PatternElement{
@@ -581,8 +592,12 @@ func TestNotJoinClause(t *testing.T) {
 			// The NOT-JOIN inner clauses are like an AND - both must match for the entity to be excluded.
 			// Since no entity has BOTH archived AND deleted, all should be kept.
 
-			if result.Size() != 3 {
-				t.Errorf("expected 3 results (no entity has both archived and deleted), got %d", result.Size())
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("reading the result: %v", err)
+			}
+			if len(tuples) != 3 {
+				t.Errorf("expected 3 results (no entity has both archived and deleted), got %d", len(tuples))
 			}
 		})
 	}
@@ -715,7 +730,7 @@ func TestOrJoinClause(t *testing.T) {
 						},
 					},
 					&query.OrJoinClause{
-						JoinVars: []query.Symbol{datalog.NewSymbol("?e")},
+						OutputVars: []query.Symbol{datalog.NewSymbol("?e")},
 						Branches: [][]query.Clause{
 							{
 								&query.DataPattern{
@@ -1248,7 +1263,7 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 								},
 							},
 							Inputs:  []query.PatternElement{query.Constant{Value: datalog.NewSymbol("$")}},
-							Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
+							Binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 						},
 					},
 					{
@@ -1372,7 +1387,7 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 								query.Constant{Value: datalog.NewSymbol("$")},
 								query.Variable{Name: datalog.NewSymbol("?scenario")},
 							},
-							Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
+							Binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 						},
 					},
 					{
@@ -1708,7 +1723,7 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 								},
 							},
 							Inputs:  []query.PatternElement{query.Constant{Value: datalog.NewSymbol("$")}},
-							Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
+							Binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 						},
 					},
 					{
@@ -1844,17 +1859,21 @@ func TestOrCorrelatedUnionWithIdentityBranch(t *testing.T) {
 			if err != nil {
 				t.Fatalf("execution failed: %v", err)
 			}
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("reading the result: %v", err)
+			}
 
 			names := make(map[string]bool)
-			for i := 0; i < result.Size(); i++ {
-				name := result.Get(i)[0].(string)
+			for i, tuple := range tuples {
+				name := tuple[0].(string)
 				names[name] = true
 				t.Logf("result[%d]: %s", i, name)
 			}
 
 			// All 3 rooms in the area (including Guard Chamber itself) + the area entity
-			if result.Size() != 4 {
-				t.Errorf("expected 4 results, got %d", result.Size())
+			if len(tuples) != 4 {
+				t.Errorf("expected 4 results, got %d", len(tuples))
 			}
 			if !names["Guard Chamber"] {
 				t.Error("missing 'Guard Chamber' (room in same area)")
@@ -2011,12 +2030,16 @@ func TestClauseOrderIndependenceForNot(t *testing.T) {
 						t.Fatalf("execution failed: %v", err)
 					}
 
-					if result.Size() != 1 {
-						t.Fatalf("expected exactly 1 result (goal:b), got %d", result.Size())
+					tuples, err := CollectTuples(result, nil)
+					if err != nil {
+						t.Fatalf("reading the result: %v", err)
 					}
-					got, ok := result.Get(0)[0].(datalog.Identity)
+					if len(tuples) != 1 {
+						t.Fatalf("expected exactly 1 result (goal:b), got %d", len(tuples))
+					}
+					got, ok := tuples[0][0].(datalog.Identity)
 					if !ok {
-						t.Fatalf("expected an Identity result, got %T", result.Get(0)[0])
+						t.Fatalf("expected an Identity result, got %T", tuples[0][0])
 					}
 					if !got.Equal(goalB) {
 						t.Errorf("expected goal:b (no event), got %v", got)
@@ -2093,10 +2116,14 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 						t.Fatalf("execution failed: %v", err)
 					}
 
-					if result.Size() != 1 {
-						t.Fatalf("expected exactly 1 result (beta), got %d", result.Size())
+					tuples, err := CollectTuples(result, nil)
+					if err != nil {
+						t.Fatalf("reading the result: %v", err)
 					}
-					if got := result.Get(0)[0].(string); got != "beta" {
+					if len(tuples) != 1 {
+						t.Fatalf("expected exactly 1 result (beta), got %d", len(tuples))
+					}
+					if got := tuples[0][0].(string); got != "beta" {
 						t.Errorf("expected beta, got %q", got)
 					}
 				})
@@ -2157,12 +2184,16 @@ func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
 					if err != nil {
 						t.Fatalf("execution failed: %v", err)
 					}
-					if result.Size() != 1 {
-						t.Fatalf("expected exactly 1 result (entity:1), got %d", result.Size())
+					tuples, err := CollectTuples(result, nil)
+					if err != nil {
+						t.Fatalf("reading the result: %v", err)
 					}
-					got, ok := result.Get(0)[0].(datalog.Identity)
+					if len(tuples) != 1 {
+						t.Fatalf("expected exactly 1 result (entity:1), got %d", len(tuples))
+					}
+					got, ok := tuples[0][0].(datalog.Identity)
 					if !ok {
-						t.Fatalf("expected an Identity result, got %T", result.Get(0)[0])
+						t.Fatalf("expected an Identity result, got %T", tuples[0][0])
 					}
 					if !got.Equal(e1) {
 						t.Errorf("expected entity:1 (unflagged), got %v", got)

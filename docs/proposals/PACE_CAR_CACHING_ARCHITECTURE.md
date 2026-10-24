@@ -1,25 +1,25 @@
 # Proposal: Pace Car Caching Architecture for Pipeline Parallelism
 
-**Status**: Proposed
-**Author**: Wes Brown
-**Date**: 2025-10-16
-**Related**: `fix-buffered-iterator-architecture` branch, LAZY_MATERIALIZATION_PLAN.md
-
----
-
-## Executive Summary
+## Summary
 
 Current `StreamingRelation` caching blocks all subsequent consumers until the first consumer **completes** iteration. This prevents pipeline parallelism in multi-phase queries.
 
 **Proposed**: "Pace car" architecture where the first consumer acts as the leader, and subsequent consumers follow along incrementally, reading from cache as it's built. This enables true streaming with bounded memory usage and concurrent phase execution.
 
 **Key Benefits**:
+
 - Pipeline parallelism: Phases overlap instead of running sequentially
 - Lower latency: First results available immediately (not after full phase completion)
 - Bounded memory: Buffer size = speed differential between consumers, not full dataset
 - Better CPU utilization: Multiple phases running concurrently
 
 **Inspiration**: Clojure's chunked lazy sequences
+
+---
+
+## What exists
+
+`StreamingRelation` (`datalog/executor/relation.go`) caches on request. `Materialize()` sets `shouldCache`. The first `Iterator()` call builds the `cache` through a `CachingIterator`, and every later `Iterator()` call blocks on `cacheComplete`, a channel closed when the cache is ready, then reads the complete cache. The relation also keeps `err`, the source iterator's deferred error captured when the cache finishes building, which the cache-replay iterators report.
 
 ---
 
@@ -76,8 +76,7 @@ Phase 2 could START as soon as Phase 1 produces its FIRST tuple, but doesn't!
 
 ### Core Concept
 
-**First consumer is the "pace car"** - sets the pace of realization.
-**Subsequent consumers "follow"** - read from cache as it grows, staying "close behind" the pace car.
+**First consumer is the "pace car"** - sets the pace of realization. **Subsequent consumers "follow"** - read from cache as it grows, staying "close behind" the pace car.
 
 ```go
 // Pace car (first consumer)
@@ -125,6 +124,22 @@ Speedup: 3x for 3-phase query
 ```
 
 **All phases run concurrently with bounded buffering.**
+
+---
+
+## The contracts the tests pin
+
+None of these tests exists yet. They are written with the implementation.
+
+- A single pace car and a single follower each iterate the full dataset, the follower waits only at chunk boundaries, and no tuple is lost.
+- Several followers read the same chunks concurrently, each gets the full dataset, and no read corrupts a chunk.
+- A follower that stops early (`LIMIT`) and a pace car that errors mid-stream leave no goroutine running, and the pace car's error reaches every follower, as `StreamingRelation.err` reaches the cache-replay iterators today.
+- When every follower stops, the pace car stops.
+- Chunks are freed once every consumer has passed them, memory stays bounded under a slow consumer, and consumer positions stay correct across a head collection.
+- `Seal()` is what permits a head collection, and no chunk is freed before it.
+- `Iterator()` after `Seal()` panics, with a message naming the call.
+- A differential run returns the same relations as the block-until-complete cache on every query shape the executor runs.
+- A benchmark, also unwritten, measures the multi-phase speedup, the time to first result, the cache's steady-state size under a speed differential, and the single-phase throughput, against the current sequential execution.
 
 ---
 
@@ -204,8 +219,7 @@ func (it *FollowerIterator) Next() bool {
 }
 ```
 
-**Pros**: Simple, easy to understand
-**Cons**: High synchronization overhead (signal per tuple)
+**Pros**: Simple, easy to understand **Cons**: High synchronization overhead (signal per tuple)
 
 ---
 
@@ -318,11 +332,13 @@ func (it *FollowerIterator) Next() bool {
 ```
 
 **Pros**:
+
 - Low synchronization overhead (signal per 32 tuples)
 - Better cache locality (32 tuples in array)
 - Matches Clojure's proven design
 
 **Cons**:
+
 - More complex
 - Slight latency (wait for chunk boundary)
 
@@ -332,9 +348,12 @@ func (it *FollowerIterator) Next() bool {
 
 ## Performance Analysis
 
+The figures in this section and in the use cases below are worked examples over assumed phase times, not measurements. The benchmark the contracts section asks for, which has not been written, is what would replace them.
+
 ### Memory Usage
 
 **Current (Block Until Complete)**:
+
 ```
 Single iteration:  0 bytes (no cache if !shouldCache)
 Multiple iteration: N tuples × sizeof(Tuple)
@@ -343,6 +362,7 @@ Example: 1M tuples × 1KB = 1GB cached forever
 ```
 
 **Proposed (Pace Car)**:
+
 ```
 Cache size ≈ (producer_rate - consumer_rate) × pipeline_depth
 
@@ -363,12 +383,14 @@ If follower falls behind: Cache grows to accommodate
 ### Latency
 
 **Current**:
+
 ```
 Time to first result = Phase 1 complete + Phase 2 start
                      = 100ms + 0ms = 100ms
 ```
 
 **Proposed**:
+
 ```
 Time to first result = Phase 1 first tuple + Phase 2 first tuple
                      = 1ms + 1ms = 2ms
@@ -379,6 +401,7 @@ Time to first result = Phase 1 first tuple + Phase 2 first tuple
 ### Throughput
 
 **Current (Sequential)**:
+
 ```
 Total time = sum(phase_times)
            = T1 + T2 + T3
@@ -388,6 +411,7 @@ Throughput = N tuples / 300ms
 ```
 
 **Proposed (Pipeline)**:
+
 ```
 Total time ≈ max(phase_times) + startup_overhead
            ≈ max(100ms, 100ms, 100ms) + 2ms = 102ms
@@ -430,12 +454,14 @@ Speedup: 300ms / 102ms ≈ 3x for 3-phase query
 ```
 
 **What Clojure does automatically**:
+
 1. ✓ Chunked realization (32 elements)
 2. ✓ Concurrent consumers
 3. ✓ Automatic synchronization
 4. ✓ Head GC when no references
 
 **What we'd need to implement manually**:
+
 1. ✓ Chunked realization (we choose chunk size)
 2. ✓ Concurrent consumers (pace car + followers)
 3. ✓ Manual synchronization (channels)
@@ -444,6 +470,7 @@ Speedup: 300ms / 102ms ≈ 3x for 3-phase query
 ### Key Difference: Head GC
 
 **Clojure**: Automatic GC of realized chunks once all consumers pass them
+
 ```clojure
 ; If all consumers are past chunk 0:
 ;   → Chunk 0 becomes unreachable
@@ -454,6 +481,7 @@ Speedup: 300ms / 102ms ≈ 3x for 3-phase query
 ```
 
 **Go (Our Implementation)**: Manual head GC via tracking + sealing
+
 ```go
 type StreamingRelation struct {
     chunks        []CacheChunk
@@ -521,6 +549,7 @@ func (r *StreamingRelation) gcHead() {
 **Critical constraint**: Must call `Seal()` after all consumers are created, otherwise new consumers will try to read GC'd chunks.
 
 **Our Architectural Advantage**: Unlike a general-purpose lazy sequence library, **Relations are internal implementation details**. The planner controls the entire execution graph and knows:
+
 - Exactly how many consumers each relation will have
 - When all consumers have been created
 - The complete consumption pattern upfront
@@ -528,6 +557,7 @@ func (r *StreamingRelation) gcHead() {
 This means `Seal()` can be called **automatically** by the executor, not manually by user code. The query plan IS the factory for all consumers, so we have perfect knowledge.
 
 **In practice**:
+
 ```go
 // Executor creates relation and ALL its iterators atomically
 inputRel := phases[n].Execute()
@@ -558,6 +588,7 @@ if r.sealed {
 **Why panic, not error?**
 
 This is exactly like Go's `close()` behavior for channels:
+
 ```go
 ch := make(chan int)
 close(ch)
@@ -567,6 +598,7 @@ close(ch)  // PANIC: "close of closed channel"
 Go doesn't return an error - it panics. Why? **Because it's a bug in your code, not a runtime condition.**
 
 **Same reasoning here**:
+
 - ✅ **Fail fast** - Catch bugs immediately at the point of error
 - ✅ **Unambiguous** - No "maybe it works" - it either works or panics
 - ✅ **Forces correctness** - Can't accidentally create race conditions or GC bugs
@@ -639,121 +671,6 @@ Perceived speedup: 200x!
 
 ---
 
-## Implementation Roadmap
-
-### Phase 1: Proof of Concept (1-2 weeks)
-
-**Goal**: Validate chunked caching works with single producer, single consumer
-
-**Tasks**:
-1. Implement `CacheChunk` structure
-2. Implement `PaceCarIterator` with chunk commits
-3. Implement `FollowerIterator` with chunk reading
-4. Add chunk signaling channel
-5. Write tests:
-   - Single pace car, single follower
-   - Verify both iterate full dataset
-   - Verify follower waits on chunk boundaries
-   - Verify no data loss
-
-**Success Criteria**: Tests pass, both iterators complete successfully
-
----
-
-### Phase 2: Multi-Consumer Support (1 week)
-
-**Goal**: Support multiple followers reading concurrently
-
-**Tasks**:
-1. Update signaling to broadcast (all followers notified)
-2. Handle race conditions (multiple followers reading same chunk)
-3. Add tests:
-   - Single pace car, multiple followers
-   - Verify all followers get full dataset
-   - Verify concurrent reads are safe
-
-**Success Criteria**: N followers can read concurrently without corruption
-
----
-
-### Phase 3: Cancellation and Error Handling (1 week)
-
-**Goal**: Handle early termination and errors gracefully
-
-**Tasks**:
-1. Implement pace car cancellation (if all followers stop)
-2. Implement follower cancellation (LIMIT clause)
-3. Propagate errors from pace car to followers
-4. Add tests:
-   - Follower stops early (LIMIT)
-   - Pace car errors mid-stream
-   - All followers stop (pace car should stop)
-
-**Success Criteria**: No goroutine leaks, errors propagate correctly
-
----
-
-### Phase 4: Integration with Executor (2 weeks)
-
-**Goal**: Enable pipeline parallelism in multi-phase queries
-
-**Tasks**:
-1. Update `Materialize()` to enable pace car mode
-2. Update executor to NOT materialize between phases
-3. Add executor option: `EnablePipelineParallelism`
-4. Benchmark multi-phase queries
-5. Compare against current sequential execution
-
-**Success Criteria**:
-- Multi-phase queries show speedup
-- Memory usage bounded (not growing indefinitely)
-- No correctness regressions
-
----
-
-### Phase 5: Optimization (1-2 weeks)
-
-**Goal**: Tune for production performance
-
-**Tasks**:
-1. Experiment with chunk sizes (16, 32, 64, 128)
-2. Profile synchronization overhead
-3. Optimize hot paths (tuple copying, locking)
-4. Add adaptive chunk sizing based on tuple size
-5. Consider lock-free ring buffer for chunks
-
-**Success Criteria**:
-- Minimal overhead vs sequential execution
-- Speedup demonstrated on real queries
-
----
-
-### Phase 6: Head GC
-
-**Goal**: Free cache chunks once all consumers pass them
-
-**Tasks**:
-1. Add `consumerPositions map[IteratorID]int` and `sealed bool` to StreamingRelation
-2. Add `Seal()` method to mark "no more consumers will be created"
-3. Track each iterator's position on Next() calls
-4. Implement `gcHead()` to find laggard and slice off consumed chunks
-5. Call gcHead() periodically (e.g., every 100 chunks, or on memory pressure)
-6. Update executor to call `Seal()` after creating all iterators for a phase
-7. Add iterator registration/deregistration for tracking
-8. Add tests:
-   - Verify chunks are GC'd once all consumers pass
-   - Verify memory doesn't grow indefinitely with slow consumer
-   - Verify position tracking correctness
-   - **Verify Seal() prevents GC until called**
-   - **Verify Iterator() after Seal() panics (not error) - fail-fast safety**
-   - Verify panic message is clear and actionable
-
-**Success Criteria**: Long-running queries with slow consumers maintain bounded memory
-
-**Critical**: The `Seal()` call is essential - GC cannot proceed until we know no more consumers will be created. In query execution, this happens naturally when a phase creates all its iterators from the input relation.
-
----
-
 ## Risks and Mitigations
 
 ### Risk 1: Increased Complexity
@@ -761,6 +678,7 @@ Perceived speedup: 200x!
 **Risk**: Chunked caching more complex than current block-until-complete
 
 **Mitigation**:
+
 - Encapsulate complexity in iterator types
 - Hide behind existing `Materialize()` API
 - Make opt-in via `EnablePipelineParallelism` flag
@@ -771,6 +689,7 @@ Perceived speedup: 200x!
 **Risk**: Per-chunk signaling might be expensive
 
 **Mitigation**:
+
 - Benchmark different chunk sizes
 - Non-blocking signal sends (don't wait if follower not ready)
 - Consider lock-free alternatives for hot paths
@@ -780,16 +699,18 @@ Perceived speedup: 200x!
 **Risk**: If follower is very slow, cache grows large
 
 **Mitigation**:
+
+- Head GC, as the Clojure comparison designs it, bounds the cache by the speed differential once every consumer has passed a chunk
 - Monitor cache size, log warnings
 - Add max cache size limit (error if exceeded)
 - Document that slow consumers can cause memory pressure
-- Future: Implement head GC
 
 ### Risk 4: Correctness Bugs
 
 **Risk**: Concurrent access to cache chunks could corrupt data
 
 **Mitigation**:
+
 - Chunks are immutable once committed
 - Pace car exclusively writes to `currentChunk`
 - Followers read from `chunks` slice (append-only)
@@ -801,6 +722,7 @@ Perceived speedup: 200x!
 **Risk**: Executor might try to create iterator after sealing (programming bug)
 
 **Mitigation**:
+
 - **Deliberate panic** - Fail fast like `close()` on closed channel
 - Clear panic message: "Iterator() called after Seal()"
 - Caught immediately in tests, not silently in production
@@ -815,8 +737,7 @@ Perceived speedup: 200x!
 
 **Approach**: Always materialize before any consumer starts
 
-**Pros**: Simple, no synchronization complexity
-**Cons**: No pipeline parallelism, high latency, high memory
+**Pros**: Simple, no synchronization complexity **Cons**: No pipeline parallelism, high latency, high memory
 
 **Decision**: Rejected - defeats purpose of streaming
 
@@ -826,8 +747,7 @@ Perceived speedup: 200x!
 
 **Approach**: Use lock-free ring buffer instead of slice + mutex
 
-**Pros**: Lower overhead, better throughput
-**Cons**: Fixed buffer size, complex implementation, risk of deadlock if buffer full
+**Pros**: Lower overhead, better throughput **Cons**: Fixed buffer size, complex implementation, risk of deadlock if buffer full
 
 **Decision**: Defer - start with mutex-based, optimize if needed
 
@@ -837,31 +757,9 @@ Perceived speedup: 200x!
 
 **Approach**: Each consumer gets independent copy of cache
 
-**Pros**: No synchronization needed
-**Cons**: N× memory usage, defeats purpose of caching
+**Pros**: No synchronization needed **Cons**: N× memory usage, defeats purpose of caching
 
 **Decision**: Rejected - memory usage unacceptable
-
----
-
-## Success Metrics
-
-**Correctness**:
-- [ ] All existing tests pass
-- [ ] New concurrency tests pass (no data loss, no corruption)
-- [ ] Differential validation tests pass (same results as current)
-
-**Performance**:
-- [ ] Multi-phase query speedup: ≥1.5x on 3-phase queries
-- [ ] Latency improvement: First result ≤10ms (vs 100ms+ sequential)
-- [ ] Memory bounded: Cache ≤2× steady-state differential
-- [ ] Throughput: No regression on single-phase queries
-
-**Usability**:
-- [ ] Opt-in via flag (existing queries unchanged)
-- [ ] Clear documentation
-- [ ] Performance characteristics documented
-- [ ] Error messages helpful
 
 ---
 
@@ -872,6 +770,7 @@ Perceived speedup: 200x!
 ### What We Know (That Libraries Don't)
 
 **The planner has complete knowledge**:
+
 ```go
 // Planner produces the execution graph
 plan := planner.Plan(query)
@@ -884,6 +783,7 @@ plan := planner.Plan(query)
 ```
 
 **General-purpose library** (like Clojure's lazy-seq):
+
 ```clojure
 ; User can create consumers at any time
 (def s (range 1000000))
@@ -893,6 +793,7 @@ plan := planner.Plan(query)
 ```
 
 **Our closed model**:
+
 ```go
 // Executor creates ALL consumers atomically
 func (e *Executor) ExecutePhase(phase *Phase, inputRel Relation) Relation {
@@ -913,7 +814,7 @@ func (e *Executor) ExecutePhase(phase *Phase, inputRel Relation) Relation {
 ### Why This Matters
 
 | Challenge | General Library | Our Closed Model |
-|-----------|----------------|------------------|
+| --- | --- | --- |
 | **Sealing** | User must call `Seal()` manually | Executor seals automatically |
 | **Safety** | User can forget to seal → leak | Impossible to forget - built into executor |
 | **Head GC** | Conservative (can't know if more consumers) | Aggressive (perfect knowledge) |
@@ -928,6 +829,7 @@ func (e *Executor) ExecutePhase(phase *Phase, inputRel Relation) Relation {
 The pace car caching architecture brings us **much closer to Clojure's lazy-seq semantics** by enabling true pipeline parallelism with bounded memory usage.
 
 **What we gain**:
+
 1. ✅ Pipeline parallelism (3x speedup potential on 3-phase queries)
 2. ✅ Low latency (first results in milliseconds)
 3. ✅ Bounded memory (grows with speed differential, not dataset size)
@@ -936,18 +838,18 @@ The pace car caching architecture brings us **much closer to Clojure's lazy-seq 
 6. ✅ **Perfect consumption knowledge** (planner controls entire graph)
 
 **What we still miss vs Clojure**:
+
 1. ❌ Language-level chunking (manual implementation)
 2. ❌ Zero-overhead abstraction (some synchronization cost)
 
 **But**: For production Go code, this is a **massive improvement** over current sequential execution. Our closed execution model actually gives us **advantages over general-purpose libraries** - we can implement head GC more safely because we control the consumption graph.
 
-**Recommendation**: Implement in phases, starting with proof of concept. This is the right direction for enabling true streaming with pipeline parallelism.
+**Recommendation**: The chunked pace car, sealed by the executor, is the shape this proposal recommends.
 
 ---
 
 ## References
 
-- **Current Implementation**: `datalog/executor/relation.go` (CachingIterator)
+- **Current Implementation**: `datalog/executor/relation.go` (`StreamingRelation`, `CachingIterator`)
 - **Clojure Chunked Sequences**: https://clojure.org/reference/sequences#_chunked_sequences
-- **Related Proposal**: `docs/LAZY_MATERIALIZATION_PLAN.md`
-- **Branch Context**: `fix-buffered-iterator-architecture` (29 commits to streaming correctness)
+- **Related Document**: `docs/archive/completed/LAZY_MATERIALIZATION_IDEAS.md`

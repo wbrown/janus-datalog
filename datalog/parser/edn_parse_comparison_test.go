@@ -33,7 +33,7 @@ func BenchmarkEDNParsing(b *testing.B) {
 		                         [?t :task/status :status/complete]
 		                         [(get-else $ ?t :task/token-count 0) ?tok]]
 		                 $ ?scenario) [[?taskCount ?totalTokens]]]
-		             [(ground [0 0]) [[?taskCount ?totalTokens]]])]`,
+		             [(ground [0 0]) [?taskCount ?totalTokens]])]`,
 
 		"datom": `[#identity "0$&1Jt:M;j(7P!6s0BvD4k!,!" :person/name "Alice" 1]`,
 

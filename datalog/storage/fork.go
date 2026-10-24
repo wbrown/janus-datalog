@@ -45,8 +45,10 @@ type forker interface {
 //
 // The branch holds what this database held as of the snapshot, the state
 // AsOfSnapshot reads, and neither sees what the other commits afterward. It
-// validates against this database's schema, plans with its planner options,
-// and carries its own EA cache. It writes as a replica of its own: a fresh
+// opens as any database does, with this database's given schema declared
+// into it where its store lacks it, and runs with the schema its store
+// states; it plans with this database's planner options and carries its own
+// EA cache. It writes as a replica of its own: a fresh
 // ReplicaID, and a clock started past every ElementID it holds, so every write
 // it makes orders after everything it inherited.
 //
@@ -68,6 +70,7 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 		return nil, fmt.Errorf("Fork: snapshot name must not be empty")
 	}
 	tx := d.NewTransaction()
+	tx.engine = true
 	committed := false
 	defer func() {
 		if !committed {
@@ -99,15 +102,30 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 		return nil, fmt.Errorf("Fork %q: %w", name, err)
 	}
 	plannerOptions := *d.plannerOptions
+	// The given schema and the declared definitions are one state, published
+	// together under schemaInstallMu by every install, so both are read under
+	// it.
+	d.schemaInstallMu.Lock()
+	d.mu.RLock()
+	given := d.givenSchema
+	d.mu.RUnlock()
+	declared := d.declaredSchema()
+	d.schemaInstallMu.Unlock()
 	branch, err = NewDatabaseWithOptions(DatabaseOptions{
-		Store:          forked,
-		Schema:         d.Schema(),
-		PlannerOptions: &plannerOptions,
-		DisableCache:   d.cache == nil,
-		schemaAsGiven:  true,
+		Store:                   forked,
+		Schema:                  given,
+		RefuseUnknownAttributes: d.refuseUnknown,
+		PlannerOptions:          &plannerOptions,
+		DisableCache:            d.cache == nil,
 	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("Fork %q: %w", name, err), forked.Close())
+	}
+	// The branch holds the parent's facts as of the snapshot. The parent's
+	// declared definitions are asserted into it, so a declaration the parent
+	// made after the snapshot reaches the branch and its dump describes itself.
+	if err := branch.adoptDeclarations(declared); err != nil {
+		return nil, errors.Join(fmt.Errorf("Fork %q: %w", name, err), branch.Close())
 	}
 	if err := addBranchRecord(tx, name, snapshot.At, ceiling, branch.ReplicaID()); err != nil {
 		return nil, errors.Join(err, branch.Close())

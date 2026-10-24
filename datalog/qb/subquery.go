@@ -1,6 +1,7 @@
 package qb
 
 import (
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -16,20 +17,7 @@ type bindingForm interface {
 	toBindingForm() query.BindingForm
 }
 
-// tupleBind binds results as a single tuple [[?a ?b]]
-type tupleBind struct {
-	vars []*Var
-}
-
-func (t tupleBind) toBindingForm() query.BindingForm {
-	syms := make([]query.Symbol, len(t.vars))
-	for i, v := range t.vars {
-		syms[i] = v.Symbol()
-	}
-	return query.TupleBinding{Variables: syms}
-}
-
-// relationBind binds results as a relation [[?a ?b] ...]
+// relationBind binds results as the relation [[?a ?b]]
 type relationBind struct {
 	vars []*Var
 }
@@ -75,7 +63,7 @@ func (c collectionBind) toBindingForm() query.BindingForm {
 //	    Where(
 //	        qb.Pat(p, PersonName, name),
 //	        qb.Pat(p, PersonDept, dept),
-//	        qb.Subquery(innerQ, dept).BindTuple(maxSalary),
+//	        qb.Subquery(innerQ, dept).BindRelation(maxSalary),
 //	    )
 func Subquery(innerQuery *QueryBuilder, inputs ...*Var) *SubqueryBuilder {
 	return &SubqueryBuilder{
@@ -84,15 +72,9 @@ func Subquery(innerQuery *QueryBuilder, inputs ...*Var) *SubqueryBuilder {
 	}
 }
 
-// BindTuple binds subquery results as a single tuple [[?a ?b]].
-// Use when the subquery returns exactly one tuple.
-func (s *SubqueryBuilder) BindTuple(vars ...*Var) *SubqueryBuilder {
-	s.binding = tupleBind{vars: vars}
-	return s
-}
-
-// BindRelation binds subquery results as a relation [[?a ?b] ...].
-// Use when the subquery may return multiple tuples.
+// BindRelation binds the subquery's result as the relation [[?a ?b]] over
+// the named variables, one per element of the inner :find, whatever the
+// inner query's size.
 func (s *SubqueryBuilder) BindRelation(vars ...*Var) *SubqueryBuilder {
 	s.binding = relationBind{vars: vars}
 	return s
@@ -105,34 +87,49 @@ func (s *SubqueryBuilder) BindCollection(v *Var) *SubqueryBuilder {
 	return s
 }
 
-// toClause converts SubqueryBuilder to a query.Clause
-func (s *SubqueryBuilder) toClause() query.Clause {
-	// Build the inner query - panic on error since we're in a fluent chain
-	innerQ, err := s.innerQuery.Build()
+// toClause is the subquery clause over the inner query, assembled
+// unvalidated through assemble: the enclosing query's Build validates the
+// inner query through SubqueryPattern.Validate, so an inner query's refusal
+// is Build's error and never a panic inside the fluent chain. An error the
+// inner builder's fluent methods recorded is returned here and reaches Build
+// through Where.
+func (s *SubqueryBuilder) toClause() (query.Clause, error) {
+	innerQ, err := s.innerQuery.assemble()
 	if err != nil {
-		panic("subquery build failed: " + err.Error())
+		return nil, err
 	}
 
-	// Collect all database source inputs from the inner query
-	var dbInputSyms []query.Symbol
+	// The inputs follow the inner query's :in in order: a source reference at
+	// a source position, % at the rules position, and the caller's variables
+	// at the value positions, one per value the entry takes under
+	// query.InputArity, so a tuple or relation input takes one caller per
+	// symbol, as the parsed forms (q [...] $ ?x %) and (q [...] $ ?a ?b %)
+	// have them. An inner query declaring no :in takes the $ an omitted :in
+	// defaults to, as the parsed form (q [...] $) has it. A caller variable
+	// beyond the value positions is passed through, so Build refuses the
+	// count as the static shape it is.
+	var inputs []query.PatternElement
+	callers := s.inputs
+	if len(innerQ.In) == 0 {
+		inputs = append(inputs, query.Constant{Value: datalog.SymDollar})
+	}
 	for _, in := range innerQ.In {
-		if dbIn, ok := in.(query.DatabaseInput); ok {
-			dbInputSyms = append(dbInputSyms, dbIn.Name)
+		switch in := in.(type) {
+		case query.DatabaseInput:
+			inputs = append(inputs, query.Constant{Value: in.Name})
+		case query.RulesInput:
+			inputs = append(inputs, query.Constant{Value: datalog.SymRules})
+		default:
+			for values := query.InputArity([]query.InputSpec{in}); values > 0 && len(callers) > 0; values-- {
+				inputs = append(inputs, query.Variable{Name: callers[0].Symbol()})
+				callers = callers[1:]
+			}
 		}
 	}
-
-	// Convert input variables to pattern elements.
-	// Prepend all database source references from the inner query's :in clause.
-	var inputs []query.PatternElement
-	inputs = make([]query.PatternElement, 0, len(s.inputs)+len(dbInputSyms))
-	for _, sym := range dbInputSyms {
-		inputs = append(inputs, query.Constant{Value: sym})
-	}
-	for _, v := range s.inputs {
+	for _, v := range callers {
 		inputs = append(inputs, query.Variable{Name: v.Symbol()})
 	}
 
-	// Convert binding form
 	var binding query.BindingForm
 	if s.binding != nil {
 		binding = s.binding.toBindingForm()
@@ -142,5 +139,5 @@ func (s *SubqueryBuilder) toClause() query.Clause {
 		Query:   innerQ,
 		Inputs:  inputs,
 		Binding: binding,
-	}
+	}, nil
 }

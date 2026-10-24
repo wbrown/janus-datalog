@@ -18,7 +18,9 @@ func BenchmarkCRDTWrite(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/name").Type(schema.TypeString).Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		entity := datalog.NewIdentity("bench-entity")
 		attr := datalog.NewKeyword(":person/name")
@@ -38,7 +40,9 @@ func BenchmarkCRDTWrite(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		entity := datalog.NewIdentity("bench-entity")
 		attr := datalog.NewKeyword(":person/tags")
@@ -58,7 +62,9 @@ func BenchmarkCRDTWrite(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		entity := datalog.NewIdentity("bench-entity")
 		attr := datalog.NewKeyword(":person/tags")
@@ -84,7 +90,9 @@ func BenchmarkCRDTWrite(b *testing.B) {
 				s, _ := schema.NewBuilder().
 					Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 					Build()
-				db.SetSchema(s)
+				if err := db.SetSchema(s); err != nil {
+					b.Fatal(err)
+				}
 
 				entity := datalog.NewIdentity("bench-entity")
 				attr := datalog.NewKeyword(":person/tags")
@@ -118,7 +126,9 @@ func BenchmarkCRDTWrite(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		entity := datalog.NewIdentity("bench-entity")
 		attr := datalog.NewKeyword(":person/skills")
@@ -141,7 +151,9 @@ func BenchmarkCRDTRead(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/name").Type(schema.TypeString).Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		// Setup: write 100 versions
 		entity := datalog.NewIdentity("bench-entity")
@@ -171,7 +183,9 @@ func BenchmarkCRDTRead(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		entity := datalog.NewIdentity("bench-entity")
 		attr := datalog.NewKeyword(":person/tags")
@@ -200,7 +214,9 @@ func BenchmarkCRDTRead(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		entity := datalog.NewIdentity("bench-entity")
 		attr := datalog.NewKeyword(":person/tags")
@@ -229,7 +245,9 @@ func BenchmarkCRDTRead(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		entity := datalog.NewIdentity("bench-entity")
 		attr := datalog.NewKeyword(":person/skills")
@@ -258,7 +276,9 @@ func BenchmarkCRDTRead(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		entity := datalog.NewIdentity("bench-entity")
 		attr := datalog.NewKeyword(":person/skills")
@@ -290,7 +310,9 @@ func BenchmarkCRDTResolution(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		entity := datalog.NewIdentity("bench-entity")
 		attr := datalog.NewKeyword(":person/tags")
@@ -322,7 +344,9 @@ func BenchmarkCRDTResolution(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		entity := datalog.NewIdentity("bench-entity")
 		attr := datalog.NewKeyword(":person/tags")
@@ -360,7 +384,9 @@ func BenchmarkCRDTResolution(b *testing.B) {
 		s, _ := schema.NewBuilder().
 			Attribute(":person/name").Type(schema.TypeString).Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		entity := datalog.NewIdentity("bench-entity")
 		attr := datalog.NewKeyword(":person/name")
@@ -395,7 +421,9 @@ func BenchmarkCRDTQuery(b *testing.B) {
 			Attribute(":person/name").Type(schema.TypeString).Add().
 			Attribute(":person/age").Type(schema.TypeLong).Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		// Insert 100 entities
 		for i := 0; i < 100; i++ {
@@ -426,7 +454,9 @@ func BenchmarkCRDTQuery(b *testing.B) {
 			Attribute(":person/name").Type(schema.TypeString).Add().
 			Attribute(":person/age").Type(schema.TypeLong).Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		// Insert 100 entities
 		for i := 0; i < 100; i++ {
@@ -457,7 +487,9 @@ func BenchmarkCRDTQuery(b *testing.B) {
 			Attribute(":person/name").Type(schema.TypeString).Add().
 			Attribute(":person/tags").Type(schema.TypeString).Many().Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		// Insert 100 entities with tags
 		for i := 0; i < 100; i++ {
@@ -489,7 +521,9 @@ func BenchmarkCRDTQuery(b *testing.B) {
 			Attribute(":person/name").Type(schema.TypeString).Add().
 			Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
 			Build()
-		db.SetSchema(s)
+		if err := db.SetSchema(s); err != nil {
+			b.Fatal(err)
+		}
 
 		// Insert 50 entities with skills
 		for i := 0; i < 50; i++ {

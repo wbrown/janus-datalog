@@ -125,7 +125,20 @@ func createOptimizerModeDB(t testing.TB, mode optimizerMode, opts DatabaseOption
 // paths. Reaching for this one drops that half of the axis.
 func openBackendDB(t testing.TB, backend Backend, opts DatabaseOptions) *Database {
 	t.Helper()
+	db, err := NewDatabaseWithOptions(backendOptions(t, backend, opts))
+	if err != nil {
+		t.Fatalf("failed to create %s database: %v", backend.Name, err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
 
+// backendOptions returns opts placed on the named backend: its name, a
+// temporary path when it persists, and compression off unless opts asks for
+// it. A test asserting that an open fails builds its options here and calls
+// NewDatabaseWithOptions itself.
+func backendOptions(t testing.TB, backend Backend, opts DatabaseOptions) DatabaseOptions {
+	t.Helper()
 	opts.BackendName = backend.Name
 	opts.Path = ""
 	if backend.Persistent {
@@ -138,10 +151,5 @@ func openBackendDB(t testing.TB, backend Backend, opts DatabaseOptions) *Databas
 		// the encoder these tests have been running on.
 		opts.CompressionThreshold = -1
 	}
-	db, err := NewDatabaseWithOptions(opts)
-	if err != nil {
-		t.Fatalf("failed to create %s database: %v", backend.Name, err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	return db
+	return opts
 }

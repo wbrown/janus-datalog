@@ -17,6 +17,7 @@ Query String → Parse → Cache Lookup → [Plan if miss] → Execute
 ```
 
 With plan cache hit:
+
 1. Parse query string to AST
 2. Compute cache key (SHA256 hash of query structure)
 3. Map lookup
@@ -34,6 +35,7 @@ db.Query(`[:find ?e :in $ ?name :where [?e :person/name ?name]]`, "Charlie")
 ```
 
 Query plans depend only on query structure, not input values. This is already exploited by the plan cache, but there's still overhead:
+
 - Parsing the query string every time
 - Computing the cache key
 - Hash map lookup
@@ -42,10 +44,18 @@ Query plans depend only on query structure, not input values. This is already ex
 ### The Opportunity
 
 If queries are known at compile/init time, we can:
+
 1. Parse once
 2. Plan once
 3. Hold the plan directly (no cache lookup)
 4. Catch syntax errors at init, not runtime
+
+## Testing Strategy
+
+1. **Unit tests** for Prepare/TryPrepare (parse errors, plan errors)
+2. **Equivalence tests** - PreparedQuery.Execute should match Query for same inputs
+3. **Concurrency tests** - Multiple goroutines executing same PreparedQuery
+4. **Benchmark** - Compare prepared vs cached vs uncached execution
 
 ## Design
 
@@ -244,27 +254,29 @@ func (e *Executor) ExecuteWithPlan(ctx Context, plan *planner.QueryPlan, inputs 
 }
 ```
 
-## Performance Analysis
+## Expected cost, unmeasured
+
+The figures in this section are estimates. No benchmark has produced them. The benchmark in the Testing Strategy, prepared against cached against uncached execution, is the measurement that replaces them.
 
 ### Current Overhead (with cache hit)
 
-| Operation | Approximate Cost |
-|-----------|------------------|
-| Parse query string | 5-50 μs |
-| Compute cache key (SHA256) | 1-2 μs |
-| Cache map lookup | 0.1-0.5 μs |
-| Execute | varies |
+| Operation                  | Estimated Cost |
+| -------------------------- | -------------- |
+| Parse query string         | 5-50 μs        |
+| Compute cache key (SHA256) | 1-2 μs         |
+| Cache map lookup           | 0.1-0.5 μs     |
+| Execute                    | varies         |
 
 ### With Prepared Queries
 
-| Operation | Approximate Cost |
-|-----------|------------------|
-| Dereference PreparedQuery pointer | ~0 |
-| Execute | varies |
+| Operation                         | Estimated Cost |
+| --------------------------------- | -------------- |
+| Dereference PreparedQuery pointer | ~0             |
+| Execute                           | varies         |
 
 ### When It Matters
 
-For queries where execution is fast (simple lookups, small result sets), planning overhead can be 10-50% of total time. Examples:
+The estimate is that for queries where execution is fast (simple lookups, small result sets), planning overhead is 10-50% of total time. Examples:
 
 - Point lookups by entity ID
 - Single-value index scans
@@ -273,7 +285,7 @@ For queries where execution is fast (simple lookups, small result sets), plannin
 
 For complex queries (large joins, full scans), execution dominates and planning overhead is negligible.
 
-## Type-Safe Variant (Future)
+## Type-Safe Variant
 
 With Go generics, could add compile-time type checking:
 
@@ -301,45 +313,17 @@ var FindPerson = storage.PrepareTyped[PersonResult](`[:find ?name ?age :where ..
 results, err := FindPerson.Execute(db, "Alice")  // returns []PersonResult directly
 ```
 
-## Migration Path
+## Compatibility
 
-1. **Additive** - `Prepare` is a new API, doesn't change existing `Query` behavior
-2. **Gradual adoption** - Convert hot-path queries first
-3. **Coexistence** - Can mix prepared and ad-hoc queries
+- **Additive** - `Prepare` is a new API, doesn't change existing `Query` behavior
+- **Coexistence** - Can mix prepared and ad-hoc queries
 
-## Testing Strategy
+## The choices
 
-1. **Unit tests** for Prepare/TryPrepare (parse errors, plan errors)
-2. **Equivalence tests** - PreparedQuery.Execute should match Query for same inputs
-3. **Concurrency tests** - Multiple goroutines executing same PreparedQuery
-4. **Benchmark** - Compare prepared vs cached vs uncached execution
-
-## Open Questions
-
-1. **Matcher dependency**: Current planner takes a matcher. Can we plan without one?
-   - Likely yes - plan structure doesn't depend on data, only query structure
-   - May need to defer some optimizations to execution time
-
-2. **Schema changes**: What happens if schema changes after Prepare?
-   - Could add `Replan()` method
-   - Or treat PreparedQuery as immutable, require re-preparation
-
-3. **Statistics**: Should prepared queries use statistics for planning?
-   - Without stats: deterministic plan, always the same
-   - With stats: better plan, but need mechanism to update
-
-4. **Plan cache interaction**: Should prepared queries still populate the cache?
-   - Probably no - they bypass the cache entirely
-   - But could share plans if same query is also used ad-hoc
-
-## Estimated Effort
-
-- Core implementation: 200-300 lines
-- Executor integration: 50-100 lines
-- Tests: 300-400 lines
-- Documentation: 100 lines
-
-**Timeline**: 2-3 days when prioritized
+- **Matcher dependency.** The planner takes a matcher. One alternative plans with no matcher at preparation and defers every matcher-dependent choice to execution. The other prepares against a database, which binds the prepared query to that database.
+- **Schema changes after `Prepare`.** One alternative adds `Replan()`, so a prepared query follows a schema change. The other treats a prepared query as immutable and requires re-preparation.
+- **Statistics.** Without statistics the plan is deterministic and always the same. With statistics the plan is better and needs a mechanism to update it.
+- **Plan cache interaction.** One alternative bypasses the cache entirely. The other shares a plan with ad-hoc use of the same query text.
 
 ## References
 
