@@ -10,6 +10,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // TestHashJoinSymbolIndexBug tests the bug where HashJoinScan confused
@@ -205,28 +206,40 @@ func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
 		         [?right :number/right ?value]]`,
 	)
 	assert.NoError(t, err)
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
+	declared, err := schema.NewBuilder().
+		Attribute(":number/left").Type(schema.TypeDouble).Add().
+		Attribute(":number/right").Type(schema.TypeDouble).Add().Build()
+	assert.NoError(t, err)
+	for _, sc := range []struct {
+		name string
+		s    *schema.Schema
+	}{{"no schema", nil}, {"declared", declared}} {
+		for _, mode := range optimizerModes {
+			t.Run(sc.name+"/"+mode.name, func(t *testing.T) {
+				db := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: sc.s})
 
-			leftEntity := datalog.NewIdentity("signed-zero-left")
-			rightEntity := datalog.NewIdentity("signed-zero-right")
-			leftAttr := datalog.NewKeyword(":number/left")
-			rightAttr := datalog.NewKeyword(":number/right")
-			tx := db.NewTransaction()
-			assert.NoError(t, tx.Add(leftEntity, leftAttr, float64(0)))
-			assert.NoError(t, tx.Add(rightEntity, rightAttr, math.Copysign(0, -1)))
-			_, err := tx.Commit()
-			assert.NoError(t, err)
+				leftEntity := datalog.NewIdentity("signed-zero-left")
+				rightEntity := datalog.NewIdentity("signed-zero-right")
+				leftAttr := datalog.NewKeyword(":number/left")
+				rightAttr := datalog.NewKeyword(":number/right")
+				tx := db.NewTransaction()
+				assert.NoError(t, tx.Add(leftEntity, leftAttr, float64(0)))
+				assert.NoError(t, tx.Add(rightEntity, rightAttr, math.Copysign(0, -1)))
+				_, err := tx.Commit()
+				assert.NoError(t, err)
 
-			matcher := NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{})
-			exec := executor.NewExecutorWithOptions(matcher, db,
-				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
+				matcher := executor.PatternMatcher(NewPatternMatcherWithOptions(db.Store(), executor.ExecutorOptions{}))
+				if sc.s != nil {
+					matcher = db.Matcher()
+				}
+				exec := executor.NewExecutorWithOptions(matcher, db,
+					planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
-			tuples, err := executor.CollectTuples(exec.Execute(parsed))
-			assert.NoError(t, err)
-			assert.Len(t, tuples, 1)
-		})
+				tuples, err := executor.CollectTuples(exec.Execute(parsed))
+				assert.NoError(t, err)
+				assert.Len(t, tuples, 1)
+			})
+		}
 	}
 }
 

@@ -39,7 +39,7 @@ func optimizeAlgebra(q *query.Query, bindings query.Bindings, handler annotation
 	if err != nil {
 		if handler != nil {
 			emit(annotations.AlgebraCompileError, map[string]interface{}{
-				"error": err.Error(),
+				annotations.KeyError: err.Error(),
 			})
 		}
 		return nil, nil, fmt.Errorf("algebra compile: %w", err)
@@ -56,7 +56,7 @@ func optimizeAlgebra(q *query.Query, bindings query.Bindings, handler annotation
 	if err != nil {
 		if handler != nil {
 			emit(annotations.AlgebraOptimizeError, map[string]interface{}{
-				"error": err.Error(),
+				annotations.KeyError: err.Error(),
 			})
 		}
 		return nil, nil, fmt.Errorf("algebra optimize: %w", err)
@@ -142,7 +142,7 @@ func optimizeViaAlgebra(
 		if handler != nil {
 			handler(annotations.Event{
 				Name: annotations.AlgebraDecompileError,
-				Data: map[string]interface{}{"error": err.Error()},
+				Data: map[string]interface{}{annotations.KeyError: err.Error()},
 			})
 		}
 		return nil, fmt.Errorf("algebra decompile: %w", err)

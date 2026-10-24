@@ -20,7 +20,8 @@ func windowIterator(t *testing.T, matcher PatternMatcher, subject Relation, bran
 	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
 	opts := ExecutorOptions{ScopeWindowCap: 8, Handler: func(e annotations.Event) { *events = append(*events, e) }}
 	exec := newQueryExecutor(matcher, nil, opts)
-	rel := NewOrFallbackRelation(exec, NewContext(), []query.Symbol{entity}, []query.Symbol{value}, branches, subject, opts, true)
+	rel, err := NewOrFallbackRelation(exec, NewContext(), []query.Symbol{entity}, []query.Symbol{value}, branches, subject, opts, true)
+	require.NoError(t, err)
 	it, ok := rel.Iterator().(*OrFallbackIterator)
 	require.True(t, ok)
 	require.NoError(t, it.err)

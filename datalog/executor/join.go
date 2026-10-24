@@ -232,20 +232,23 @@ func HashJoinWithOptions(
 		}
 	}
 
-	// Build symbol mappings
-	leftIndices := make([]int, len(joinSyms))
-	rightIndices := make([]int, len(joinSyms))
-	for i, sym := range joinSyms {
-		leftIndices[i] = SymbolIndex(left, sym)
-		rightIndices[i] = SymbolIndex(right, sym)
-		if leftIndices[i] < 0 || rightIndices[i] < 0 {
-			// Join symbol not found - return empty relation with options
-			opts := left.Options()
-			if !opts.populated() {
-				opts = right.Options()
-			}
-			return NewMaterializedRelationWithOptions(nil, nil, opts)
+	// A join symbol a side lacks is the query's error, carried by the result
+	// and surfaced when it is driven.
+	leftIndices, err := query.SymbolIndexTable(left.Symbols(), joinSyms)
+	var rightIndices []int
+	if err == nil {
+		rightIndices, err = query.SymbolIndexTable(right.Symbols(), joinSyms)
+	}
+	if err != nil {
+		if !opts.populated() {
+			opts = left.Options()
 		}
+		if !opts.populated() {
+			opts = right.Options()
+		}
+		result := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
+		result.err = fmt.Errorf("hash join: %w", err)
+		return result
 	}
 
 	// Determine output symbols and the right-side projection plan in a

@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"bytes"
+	"math"
 	"testing"
 )
 
@@ -36,6 +37,25 @@ func TestNormalizeValue_CoercesIntegerWidths(t *testing.T) {
 		if got := NormalizeValue(v); got != v {
 			t.Errorf("NormalizeValue(%T) changed it to %T %v", v, got, got)
 		}
+	}
+}
+
+// A signed zero is one value: the engine's equality holds 0.0 and -0.0 equal,
+// so the domain admits -0.0 as 0.0, and the bytes a value encodes to agree
+// with its equality.
+func TestNormalizeValue_TakesASignedZeroAsZero(t *testing.T) {
+	got, ok := NormalizeValue(math.Copysign(0, -1)).(float64)
+	if !ok {
+		t.Fatalf("NormalizeValue(-0.0) is %T, want float64", got)
+	}
+	if math.Signbit(got) {
+		t.Errorf("NormalizeValue(-0.0) carries the sign bit, want 0.0")
+	}
+	if got := NormalizeValue(float64(0)).(float64); math.Signbit(got) {
+		t.Errorf("NormalizeValue(0.0) carries the sign bit, want 0.0")
+	}
+	if !bytes.Equal(ValueBytes(math.Copysign(0, -1)), ValueBytes(float64(0))) {
+		t.Errorf("ValueBytes(-0.0) differs from ValueBytes(0.0); one value encodes to one key")
 	}
 }
 

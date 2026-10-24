@@ -34,10 +34,16 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 			Keys:     [][]query.Symbol{{entity}},
 		},
 	)
+	owner := datalog.NewSymbol("?owner")
 	branches := [][]query.Clause{
 		{
 			&query.SubqueryPattern{
-				Query:   &query.Query{Find: []query.FindElement{query.FindAggregate{Function: datalog.SymCount, Arg: task}}},
+				Query: &query.Query{
+					Find:  []query.FindElement{query.FindAggregate{Function: datalog.SymCount, Arg: task}},
+					In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+					Where: []query.Clause{branchPattern(task, owner, datalog.NewKeyword(":task/owner"))},
+				},
+				Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
 				Binding: query.RelationBinding{Variables: []query.Symbol{value}},
 			},
 		},
@@ -49,7 +55,7 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 		},
 	}
 
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, options),
 		NewContext(),
 		nil,
@@ -59,6 +65,7 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 		options,
 		true,
 	)
+	require.NoError(t, err)
 
 	require.Equal(t, ordering, rel.Properties().Ordering)
 	require.True(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
@@ -79,13 +86,18 @@ func TestOrDefaultDecorrelatedAggregatePreservesOuterGroupKey(t *testing.T) {
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
 	decorrelated := &query.SubqueryPattern{
-		Query: &query.Query{Find: []query.FindElement{
-			query.FindVariable{Symbol: entity},
-			query.FindAggregate{Function: datalog.SymCount, Arg: task},
-		}},
+		Query: &query.Query{
+			Find: []query.FindElement{
+				query.FindVariable{Symbol: entity},
+				query.FindAggregate{Function: datalog.SymCount, Arg: task},
+			},
+			In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+			Where: []query.Clause{branchPattern(task, entity, datalog.NewKeyword(":task/owner"))},
+		},
+		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{entity, count}},
 	}
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 		NewContext(),
 		[]query.Symbol{entity},
@@ -101,6 +113,7 @@ func TestOrDefaultDecorrelatedAggregatePreservesOuterGroupKey(t *testing.T) {
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 
 	require.True(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
 }
@@ -116,14 +129,22 @@ func TestOrDefaultRelationBindingWithFreshGroupDoesNotPreserveOuterKey(t *testin
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
 	multiTuple := &query.SubqueryPattern{
-		Query: &query.Query{Find: []query.FindElement{
-			query.FindVariable{Symbol: entity},
-			query.FindVariable{Symbol: key},
-			query.FindVariable{Symbol: updatedAt},
-		}},
+		Query: &query.Query{
+			Find: []query.FindElement{
+				query.FindVariable{Symbol: entity},
+				query.FindVariable{Symbol: key},
+				query.FindVariable{Symbol: updatedAt},
+			},
+			In: []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+			Where: []query.Clause{
+				branchPattern(entity, key, datalog.NewKeyword(":item/key")),
+				branchPattern(entity, updatedAt, datalog.NewKeyword(":item/updated")),
+			},
+		},
+		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{entity, key, updatedAt}},
 	}
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 		NewContext(),
 		[]query.Symbol{entity},
@@ -139,6 +160,7 @@ func TestOrDefaultRelationBindingWithFreshGroupDoesNotPreserveOuterKey(t *testin
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 
 	require.False(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
 	require.True(t, containsSymbolSet(
@@ -165,7 +187,7 @@ func TestOrDefaultMultiTupleBranchesDeriveCompositeKey(t *testing.T) {
 		}}
 	}
 
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 		NewContext(),
 		[]query.Symbol{entity},
@@ -175,6 +197,7 @@ func TestOrDefaultMultiTupleBranchesDeriveCompositeKey(t *testing.T) {
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 
 	require.False(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
 	require.True(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity, tag}))
@@ -196,7 +219,7 @@ func TestCorrelatedUnionDeduplicatesAcrossBranches(t *testing.T) {
 			Binding:  value,
 		}
 	}
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 		NewContext(),
 		nil,
@@ -206,6 +229,7 @@ func TestCorrelatedUnionDeduplicatesAcrossBranches(t *testing.T) {
 		ExecutorOptions{},
 		false,
 	)
+	require.NoError(t, err)
 
 	require.Equal(t, []Tuple{{int64(1), int64(7)}}, collectTuples(rel))
 	require.False(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
@@ -249,7 +273,7 @@ func TestOrFallbackMaterializationPreservesProperties(t *testing.T) {
 		ExecutorOptions{},
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
-	rel := NewOrFallbackRelation(
+	rel, err := NewOrFallbackRelation(
 		newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 		NewContext(),
 		nil,
@@ -264,6 +288,7 @@ func TestOrFallbackMaterializationPreservesProperties(t *testing.T) {
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 
 	materialized := rel.Materialize()
 	require.Equal(t, rel.Properties(), materialized.Properties())
@@ -291,7 +316,7 @@ func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
 		ExecutorOptions{},
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
-	relation := NewOrFallbackRelation(
+	relation, err := NewOrFallbackRelation(
 		queryExecutor,
 		NewContext(),
 		nil,
@@ -301,6 +326,7 @@ func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 	tuples, err := collectTypedTuples(relation)
 	require.NoError(t, err)
 	require.Equal(t, []Tuple{{int64(1), int64(1)}}, tuples)
@@ -312,7 +338,7 @@ func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
 		ExecutorOptions{},
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
-	empty := NewOrFallbackRelation(
+	empty, err := NewOrFallbackRelation(
 		queryExecutor,
 		NewContext(),
 		nil,
@@ -322,6 +348,7 @@ func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 	emptyTuples, err := collectTypedTuples(empty)
 	require.NoError(t, err)
 	require.Empty(t, emptyTuples)
@@ -434,7 +461,7 @@ func runOrPropertyDifferential(t *testing.T, seed int64) {
 			}
 		}
 		shortCircuit := random.Intn(2) == 0
-		relation := NewOrFallbackRelation(
+		relation, err := NewOrFallbackRelation(
 			queryExecutor,
 			NewContext(),
 			[]query.Symbol{entity, vector},
@@ -444,6 +471,7 @@ func runOrPropertyDifferential(t *testing.T, seed int64) {
 			ExecutorOptions{},
 			shortCircuit,
 		)
+		require.NoError(t, err, "case %d", caseIndex)
 
 		actual, err := collectTypedTuples(relation)
 		require.NoError(t, err, "case %d", caseIndex)
@@ -688,7 +716,7 @@ func BenchmarkOrFallbackPropertyPropagation(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/tuples_%d", name, count), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					rel := NewOrFallbackRelation(
+					rel, err := NewOrFallbackRelation(
 						queryExecutor,
 						NewContext(),
 						nil,
@@ -698,6 +726,9 @@ func BenchmarkOrFallbackPropertyPropagation(b *testing.B) {
 						ExecutorOptions{},
 						true,
 					)
+					if err != nil {
+						b.Fatal(err)
+					}
 					projected, err := rel.Project([]query.Symbol{entity, value})
 					if err != nil {
 						b.Fatal(err)

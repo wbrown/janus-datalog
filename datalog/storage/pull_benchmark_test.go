@@ -8,6 +8,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // setupBenchmarkDB creates a temporary database with test data
@@ -24,33 +25,70 @@ func setupBenchmarkDB(b *testing.B, numEntities, attrsPerEntity int) (*Database,
 		os.RemoveAll(tmpDir)
 		b.Fatalf("failed to create database: %v", err)
 	}
+	b.Cleanup(func() {
+		db.Close()
+		os.RemoveAll(tmpDir)
+	})
 
-	// Create entities and add data
+	return db, writePullBenchmarkEntities(b, db, numEntities, attrsPerEntity)
+}
+
+// writePullBenchmarkEntities commits numEntities entities, each carrying the
+// string attributes :entity/attr0 to :entity/attr<attrsPerEntity-1>, and
+// returns them in order.
+func writePullBenchmarkEntities(b *testing.B, db *Database, numEntities, attrsPerEntity int) []datalog.Identity {
+	b.Helper()
+
 	var entities []datalog.Identity
 	tx := db.NewTransaction()
-
 	for i := 0; i < numEntities; i++ {
 		entity := datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
 		entities = append(entities, entity)
 
 		for j := 0; j < attrsPerEntity; j++ {
 			attr := datalog.NewKeyword(fmt.Sprintf(":entity/attr%d", j))
-			tx.Add(entity, attr, fmt.Sprintf("value_%d_%d", i, j))
+			if err := tx.Add(entity, attr, fmt.Sprintf("value_%d_%d", i, j)); err != nil {
+				b.Fatalf("failed to add: %v", err)
+			}
 		}
 	}
-
 	if _, err := tx.Commit(); err != nil {
-		db.Close()
-		os.RemoveAll(tmpDir)
 		b.Fatalf("failed to commit: %v", err)
 	}
+	return entities
+}
 
-	b.Cleanup(func() {
-		db.Close()
-		os.RemoveAll(tmpDir)
-	})
+// BenchmarkPullBadger_WildcardDeclared measures the wildcard pull of one
+// entity carrying five attributes under a schema declaring five, and under
+// one declaring a hundred.
+func BenchmarkPullBadger_WildcardDeclared(b *testing.B) {
+	for _, declared := range []int{5, 100} {
+		b.Run(fmt.Sprintf("declared=%d", declared), func(b *testing.B) {
+			builder := schema.NewBuilder()
+			for j := 0; j < declared; j++ {
+				builder = builder.Attribute(fmt.Sprintf(":entity/attr%d", j)).Type(schema.TypeString).Add()
+			}
+			s, err := builder.Build()
+			if err != nil {
+				b.Fatalf("failed to build schema: %v", err)
+			}
+			db, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "badger", Path: b.TempDir(), Schema: s})
+			if err != nil {
+				b.Fatalf("failed to create database: %v", err)
+			}
+			b.Cleanup(func() { db.Close() })
+			entities := writePullBenchmarkEntities(b, db, 100, 5)
+			entity := entities[0]
 
-	return db, entities
+			pattern, _ := parser.ParsePullPattern(`[*]`)
+			puller := executor.NewPullExecutor(db.Matcher(), db)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, _ = puller.Pull(entity, pattern)
+			}
+		})
+	}
 }
 
 // BenchmarkPullBadger_SingleAttribute measures single attribute lookup with BadgerDB

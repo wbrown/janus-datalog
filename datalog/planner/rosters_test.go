@@ -33,7 +33,7 @@ func assertRosterNames(t *testing.T, plan *RealizedPlan) {
 	if plan.Rosters == nil {
 		t.Fatal("the plan holds its query's rosters; got none")
 	}
-	got := plan.Rosters.DefaultSourceAttributes(nil)
+	got := plan.Rosters.SourceAttributes(datalog.SymDollar)
 	want := []datalog.Keyword{datalog.NewKeyword(":t/a"), datalog.NewKeyword(":t/b"), datalog.NewKeyword(":t/c")}
 	if len(got) != len(want) {
 		t.Fatalf("the plan's roster names %v, want %v", got, want)
@@ -61,7 +61,7 @@ func TestRealizedPlanHoldsItsRostersUnderTheOption(t *testing.T) {
 		t.Fatalf("Plan: %v", err)
 	}
 	if plan.Rosters != nil {
-		t.Fatalf("a plan made without the option carries no roster; got %v", plan.Rosters.DefaultSourceAttributes(nil))
+		t.Fatalf("a plan made without the option carries no roster; got %v", plan.Rosters.SourceAttributes(datalog.SymDollar))
 	}
 }
 

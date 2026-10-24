@@ -132,6 +132,18 @@ func (sr *SourceRouter) RefusesUnknownAttributes(source query.Symbol) bool {
 	return false
 }
 
+// refusesAnySource reports whether a source the router holds refuses
+// attributes its schema does not declare, each asked as the router asks it
+// (RefusesUnknownAttributes).
+func (sr *SourceRouter) refusesAnySource() bool {
+	for source := range sr.sources {
+		if sr.RefusesUnknownAttributes(source) {
+			return true
+		}
+	}
+	return false
+}
+
 // UnknownAttributes implements AttributeVocabulary by asking the source
 // named, which answers for itself as $. A source without the capability, and
 // a source the router does not hold, refuse nothing.

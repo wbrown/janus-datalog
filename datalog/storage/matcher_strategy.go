@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // ReuseType indicates the type of iterator reuse strategy
@@ -40,7 +42,15 @@ type ReuseStrategy struct {
 // analyzeReuseStrategy determines if and how iterator reuse can be applied.
 // Returns the strategy and the (possibly materialized) binding relation.
 // For multi-position cases, the relation may be materialized to allow cardinality counting.
-func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relation) (ReuseStrategy, executor.Relation) {
+//
+// A run narrowed to a bound V hides the (E, A) group's other values from
+// resolution. It holds the whole resolution decision only for a declared
+// cardinality many, whose adds and removes all carry the value. Any other
+// attribute, an undeclared one and a matcher with no schema included,
+// resolves as cardinality one: with V the one bound position its candidates
+// are post-validated against the EATV winner, and with several positions
+// bound V is no seek dimension (docs/proposals/BOUND_VALUE_SEEK_PROOF.md T6).
+func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relation) (ReuseStrategy, executor.Relation) {
 	if bindingRel == nil {
 		return ReuseStrategy{Type: NoReuse}, bindingRel
 	}
@@ -81,6 +91,18 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 		}
 	}
 
+	// The cardinality a constant attribute resolves under: its declaration's,
+	// and cardinality one for an undeclared attribute or a matcher with no
+	// schema.
+	card := schema.CardinalityOne
+	if aConst, ok := pattern.GetA().(query.Constant); ok && m.schema != nil {
+		if aKw, ok := aConst.Value.(datalog.Keyword); ok {
+			if def := m.schema.GetAttribute(aKw); def != nil {
+				card = def.Cardinality
+			}
+		}
+	}
+
 	// Single position bound - check if we can use iterator reuse
 	if len(boundPositions) == 1 {
 		position := boundPositions[0]
@@ -110,38 +132,32 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 			canReuse = true
 
 		case 2: // V is bound
-			// V-bound queries use candidate + validate pattern for cardinality-one.
-			// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 4.
-			//
-			// Strategy: Use V-primary index for candidate discovery, then validate
-			// each candidate with EATV point lookup.
-			//
-			// For cardinality-many, validation is not needed (add-wins semantics).
-			// Caller must check cardinality and clear NeedsValidation if appropriate.
+			// V-bound queries use the candidate + validate pattern for an
+			// attribute resolving as cardinality one: the V-primary index
+			// finds the candidates and an EATV point lookup validates each
+			// (docs/reference/INDEX_SELECTION_PROOF.md Theorem 5).
 			if aConst, ok := pattern.GetA().(query.Constant); ok {
 				// A is constant: use AVET for (A, V) prefix scan
 				indexType = AVET
 				canReuse = true
-				// Return strategy with validation setup
-				// Caller will check cardinality and may clear NeedsValidation
 				return ReuseStrategy{
 					Type:            SinglePositionReuse,
 					Position:        position,
 					Index:           indexType,
-					NeedsValidation: true,         // Assume cardinality-one; caller clears for many
+					NeedsValidation: card == schema.CardinalityOne,
 					ValidationIndex: EATV,         // Point lookup on (E, A)
 					BoundA:          aConst.Value, // For validation lookups
 				}, bindingRel
 			} else {
-				// A is variable: use VAET for V-primary scan
-				// Validation will need to determine A from each candidate
+				// A is variable: use VAET for V-primary scan. Each candidate's
+				// own attribute decides its validation.
 				indexType = VAET
 				canReuse = true
 				return ReuseStrategy{
 					Type:            SinglePositionReuse,
 					Position:        position,
 					Index:           indexType,
-					NeedsValidation: true, // Must validate since A varies
+					NeedsValidation: true,
 					ValidationIndex: EATV,
 				}, bindingRel
 			}
@@ -164,7 +180,7 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 
 	// Multiple positions bound - choose the most selective position for reuse
 	if len(boundPositions) > 1 {
-		return chooseBestMultiPositionStrategy(pattern, boundPositions, bindingRel, bindingSet)
+		return chooseBestMultiPositionStrategy(pattern, boundPositions, bindingRel, bindingSet, card == schema.CardinalityMany)
 	}
 
 	return ReuseStrategy{Type: NoReuse}, bindingRel
@@ -183,11 +199,16 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 // - E has 81 distinct values
 // - Seek E in one E-primary iterator, filter by the code value: 1 open, not 81
 // Returns the strategy and the (possibly materialized) binding relation.
+// vSeeks says whether a run narrowed to a bound V holds the whole resolution
+// decision, which analyzeReuseStrategy decides from the attribute's
+// cardinality; when it does not, V is no seek dimension and the bound V is
+// compared downstream of a run read whole.
 func chooseBestMultiPositionStrategy(
 	pattern *query.DataPattern,
 	boundPositions []int,
 	bindingRel executor.Relation,
 	bindingSet map[query.Symbol]bool,
+	vSeeks bool,
 ) (ReuseStrategy, executor.Relation) {
 	// CRITICAL: Materialize streaming relations before iterating
 	// This function iterates the relation to count cardinalities, and later code
@@ -220,6 +241,9 @@ func chooseBestMultiPositionStrategy(
 				varName = v.Name
 			}
 		case 2: // V
+			if !vSeeks {
+				continue
+			}
 			if v, ok := pattern.GetV().(query.Variable); ok {
 				varName = v.Name
 			}

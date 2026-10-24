@@ -21,7 +21,9 @@ const (
 	// whether the inference rewrote a form under "rewritten", and preparation's
 	// time as its latency (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md
 	// §4.9); a query preparation refuses completes with its error and emits no
-	// QueryPrepared.
+	// QueryPrepared. A query the database refuses before the executor's entry,
+	// once it is resolved, is reported invoked and completed the same way,
+	// with no QueryPrepared and no QueryPlanCreated.
 	QueryInvoked                      = "query/invoked"
 	QueryPrepared                     = "query/prepared"
 	QueryPlanCreated                  = "query/plan.created"
@@ -272,6 +274,18 @@ const (
 	// ran, and the reads it performed unaccounted. QueryComplete, PullComplete,
 	// the reflect contexts and the annotated matcher already answer it this way.
 	KeySuccess = "success"
+
+	// The query lifecycle's payloads. KeyQuery is the query's rendering, as
+	// received on QueryInvoked and as prepared on QueryPrepared.
+	// KeyRelationsCount and KeyTuplesCount are QueryComplete's counts, and a
+	// refused query reports none of either. KeyError is the text of the error
+	// an event reports: QueryComplete's refusal, and the algebra bridge's
+	// compile, optimize and decompile failures. A refusal on any query entry
+	// path, the executor's and the database's, is reported through these keys.
+	KeyQuery          = "query"
+	KeyRelationsCount = "relations.count"
+	KeyTuplesCount    = "tuples.count"
+	KeyError          = "error"
 
 	// The form a windowed module's event fired under: or-join,
 	// or-default-join, not-join or subquery. The window reader's and the

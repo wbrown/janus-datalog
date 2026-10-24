@@ -124,29 +124,6 @@ func TestWindowFrames_ResolvesAFrameSymbolThroughItsSubstitution(t *testing.T) {
 	assert.Equal(t, [][]interface{}{{e1, int64(9), e1}}, tuples, "the subject's value at both symbols standing for it, the environment's at the third")
 }
 
-// A frame symbol bound to the members of its argument's value, a subquery's
-// collection input, yields one key per member of the subject tuple's value
-// at the symbol it stands for, a value that is no slice being one member;
-// a later window carrying the same subject value again runs none of them.
-func TestWindowFrame_WindowRunExpandsACollectionSymbolToOneKeyPerMember(t *testing.T) {
-	e, n, _, subject, _ := frameFixture()
-	m, x := datalog.NewSymbol("?m"), datalog.NewSymbol("?x")
-	e1, e2 := datalog.NewIdentity("wf:members1"), datalog.NewIdentity("wf:members2")
-	subst, err := query.SubstitutionOf([]query.Symbol{m, x}, []query.Symbol{n, e})
-	require.NoError(t, err)
-	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{m, x}}}}, framing{subject: subject, subst: subst, members: []query.Symbol{m}})
-	frame := &frames[0]
-	opts := ExecutorOptions{}
-
-	first := frame.windowRun([]Tuple{{[]interface{}{"a", "b"}, e1}, {"c", e2}}, 1, opts)
-	tuples, err := CollectTuples(first, nil)
-	require.NoError(t, err)
-	assert.Equal(t, [][]interface{}{{"a", e1}, {"b", e1}, {"c", e2}}, tuples, "one key per member beside the subject's other value, and a scalar as one member")
-
-	second := frame.windowRun([]Tuple{{[]interface{}{"a", "b"}, e1}}, 2, opts)
-	assert.Zero(t, second.Size(), "a subject value an earlier window ran runs none of its members again")
-}
-
 // A window's keys are distinct under typed value identity: two tuples whose
 // values render alike, a delimiter split two ways, an integer beside its
 // digits, a boolean beside its name, a float beside its digits, and two byte
@@ -171,40 +148,4 @@ func TestWindowFrame_WindowRunDistinguishesKeysByTypedValue(t *testing.T) {
 			require.Equal(t, 2, run.Size(), "two keys distinct under typed value identity, got %s", run.Table())
 		})
 	}
-}
-
-// A subject tuple's probe keys are the keys it stands for, expanded at the
-// subject positions the frame's collection symbols read as the window's run
-// expands the keys a branch is built over: one key per member of the value
-// there, the tuple's other values beside each, a value that is no slice
-// being one member, and the tuple itself for a frame reading no collection.
-func TestWindowFrame_ProbeKeysExpandASubjectTupleAtItsCollectionPositions(t *testing.T) {
-	e, n, _, subject, _ := frameFixture()
-	m, x := datalog.NewSymbol("?m"), datalog.NewSymbol("?x")
-	e1 := datalog.NewIdentity("wf:probe1")
-	subst, err := query.SubstitutionOf([]query.Symbol{m, x}, []query.Symbol{n, e})
-	require.NoError(t, err)
-	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{m, x}}}}, framing{subject: subject, subst: subst, members: []query.Symbol{m}})
-	frame := &frames[0]
-	assert.Equal(t, []int{0}, frame.probeExpandPos, "?m reads the subject's first position, which the probe expands")
-	assert.Equal(t, []Tuple{{"a", e1}, {"b", e1}}, frame.probeKeys(Tuple{[]interface{}{"a", "b"}, e1}), "one key per member, the entity beside each")
-	assert.Equal(t, []Tuple{{"c", e1}}, frame.probeKeys(Tuple{"c", e1}), "a scalar is its own one member")
-
-	plain, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{x}}}}, framing{subject: subject, subst: subst})
-	assert.Empty(t, plain[0].probeExpandPos, "a frame reading no collection expands no position")
-	assert.Equal(t, []Tuple{{[]interface{}{"a", "b"}, e1}}, plain[0].probeKeys(Tuple{[]interface{}{"a", "b"}, e1}), "the tuple itself is its one key")
-}
-
-// A frame of no subject symbol expands a collection symbol the frame
-// environment binds the same way: its run is one tuple per member.
-func TestWindowFrame_EnvironmentRunExpandsACollectionSymbol(t *testing.T) {
-	_, _, _, subject, _ := frameFixture()
-	m := datalog.NewSymbol("?m")
-	frameEnv := NewMaterializedRelation([]query.Symbol{m}, []Tuple{{[]interface{}{"a", "b"}}})
-	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{m}}}}, framing{subject: subject, environment: frameEnv, members: []query.Symbol{m}})
-	run := frames[0].environmentRun(ExecutorOptions{})
-	require.NotNil(t, run)
-	tuples, err := CollectTuples(run, nil)
-	require.NoError(t, err)
-	assert.Equal(t, [][]interface{}{{"a"}, {"b"}}, tuples)
 }

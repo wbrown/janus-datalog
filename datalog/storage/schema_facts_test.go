@@ -735,8 +735,9 @@ func TestSchemaFacts_ChangedCardinalityHoldsAgainstAPullInFlight(t *testing.T) {
 // Two SetSchema calls that overlap leave the database running the definition
 // its store states, and installs are serialized: the first call is held at
 // its first scan, under the install's lock; the second call reaches the lock
-// while the first is held, and is released only then; so the second declares
-// after the first and the second's definition is the one in force.
+// while the first is held and takes it only once the first has been released,
+// which is read at the moment it takes the lock; so the second declares after
+// the first and the second's definition is the one in force.
 func TestSchemaFacts_OverlappingSetSchemaCallsAgree(t *testing.T) {
 	n := kw(":t/n")
 	base, err := schema.NewBuilder().Attribute(":t/n").Type(schema.TypeLong).Doc("one").Add().Build()
@@ -773,12 +774,22 @@ func TestSchemaFacts_OverlappingSetSchemaCallsAgree(t *testing.T) {
 				default:
 				}
 			}
+			lockedAfterRelease := make(chan bool, 1)
+			d.onInstallLocked = func() {
+				select {
+				case <-release:
+					lockedAfterRelease <- true
+				default:
+					lockedAfterRelease <- false
+				}
+			}
 			second := make(chan error, 1)
 			go func() { second <- d.SetSchema(widened) }()
 			<-arrived
 			close(release)
 			require.NoError(t, <-first)
 			require.NoError(t, <-second)
+			require.True(t, <-lockedAfterRelease, "the second call takes the install lock only once the first has been released")
 
 			running := d.Schema().GetAttribute(n)
 			require.NotNil(t, running)

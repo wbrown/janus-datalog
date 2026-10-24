@@ -63,7 +63,7 @@ func TestParseRules_RefusesMalformedRules(t *testing.T) {
 		{"not a vector", `{}`, "rule set must be a vector"},
 		{"rule not a vector", `[(follows ?a ?b)]`, "a rule is a vector"},
 		{"head not a list", `[[follows [?a :page/next ?b]]]`, "rule head must be a list"},
-		{"head name a variable", `[[(?f ?a ?b) [?a :page/next ?b]]]`, "rule name must be a symbol"},
+		{"head name a variable", `[[(?f ?a ?b) [?a :page/next ?b]]]`, "a predicate's name is not a variable"},
 		{"required run not first", `[[(succ ?m [?n]) [(+ ?n 1) ?m]]]`, "required run"},
 		{"required run empty", `[[(succ [] ?m) [(+ ?n 1) ?m]]]`, "required run"},
 		{"required run holding a non-variable", `[[(succ [:n] ?m) [(+ ?n 1) ?m]]]`, "required run"},
@@ -290,17 +290,6 @@ func TestParseQuery_ReadsMintedPredicateNames(t *testing.T) {
 	}
 	if bound, ok := expr.Binding.(query.Symbol); !ok || bound != datalog.NewSymbol("?magic.bb/pair.1") || !bound.IsVariable() {
 		t.Errorf("Where[1] binds %v, want the variable ?magic.bb/pair.1", expr.Binding)
-	}
-}
-
-func TestExtractVariablesRuleInvocation(t *testing.T) {
-	q, err := ParseQuery(`[:find ?y :in $ % :where (marked ?y "read" ?y)]`)
-	if err != nil {
-		t.Fatalf("ParseQuery: %v", err)
-	}
-	vars := ExtractVariables(q.Where)
-	if len(vars) != 1 || vars[0] != datalog.NewSymbol("?y") {
-		t.Errorf("ExtractVariables = %v, want ?y once", vars)
 	}
 }
 

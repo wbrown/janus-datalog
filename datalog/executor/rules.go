@@ -271,20 +271,8 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 // site under a non-monotone form the rewritten set cannot carry adorned is
 // left unadorned (planner.Rewrite).
 func (e *DefaultQueryExecutor) invocationEvaluation(rs *query.RuleSet, inv *query.RuleInvocation, bound []bool) (*ruleEvaluation, error) {
-	if !anyBound(bound) {
-		requiring := false
-		for p := range neededPredicates(rs, inv.Name) {
-			for _, rule := range rs.Rules(p) {
-				for _, invoked := range query.Invocations(rule.Body) {
-					if anyBound(rs.Required(invoked.Name)) {
-						requiring = true
-					}
-				}
-			}
-		}
-		if !requiring {
-			return newRuleEvaluation(e.executor, rs, inv.Name, nil), nil
-		}
+	if !anyBound(bound) && !rs.ReachesRequired(inv.Name) {
+		return newRuleEvaluation(e.executor, rs, inv.Name, nil), nil
 	}
 	magic, err := planner.Rewrite(e.executor.planner, rs, inv.Name, bound, e.options.Handler)
 	if err != nil {

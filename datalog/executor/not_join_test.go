@@ -14,7 +14,7 @@ import (
 func TestNotJoinAnswerYieldsTheWindowTuplesWithNoMatch(t *testing.T) {
 	entity, value := datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")
 	e1, e2, e3 := datalog.NewIdentity("anti1"), datalog.NewIdentity("anti2"), datalog.NewIdentity("anti3")
-	body := newCachedBranch([]query.Symbol{entity, value}, []query.Symbol{entity}, []query.Symbol{entity}, []query.Symbol{entity})
+	body := newCachedBranch([]query.Symbol{entity, value}, []query.Symbol{entity}, []query.Symbol{entity})
 	body.Add(Tuple{e2, int64(2)})
 	it := &notJoinIterator{windowedIterator: windowedIterator{
 		reader:      &windowReader{window: []Tuple{{e1}, {e2}, {e3}}},

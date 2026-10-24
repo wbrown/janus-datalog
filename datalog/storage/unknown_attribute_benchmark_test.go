@@ -15,11 +15,11 @@ import (
 // the option, where the gate is off; opened with it, for a query naming a
 // declared attribute, which runs; opened with it, for a query whose subquery
 // names a declared attribute and runs once per outer tuple; opened with it,
-// for a query under a rule set whose or-join branch passes, at a position the
-// rule set requires, a variable the enclosing scope binds to a declared
-// attribute, so the roster resolves under the rule set; and opened with it,
-// for a query naming an attribute the store carries but the schema does not
-// declare, which is refused.
+// for a query under a rule set whose or-join branch names a declared
+// attribute beside an invocation of a required predicate, so the check reads
+// the rule set's roster too; and opened with it, for a query naming an
+// attribute the store carries but the schema does not declare, which is
+// refused.
 func BenchmarkUnknownAttributeCheck(b *testing.B) {
 	const declared = `[:find ?v :where [?e :t/string ?v]]`
 	const declaredInSubquery = `[:find ?e ?n :where [?e :t/string ?v] [(q [:find (count ?x) :in $ ?e :where [?e :t/string ?x]] $ ?e) [[?n]]]]`
@@ -58,10 +58,9 @@ func BenchmarkUnknownAttributeCheck(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			var rules *query.RuleSet
 			var inputs []interface{}
 			if c.rules != "" {
-				rules, err = parser.ParseRules(c.rules)
+				rules, err := parser.ParseRules(c.rules)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -69,7 +68,7 @@ func BenchmarkUnknownAttributeCheck(b *testing.B) {
 			}
 
 			b.Run("check/"+backend.Name+"/"+c.name, func(b *testing.B) {
-				benchmarkCheck(b, db, q, rules, inputs, c.refused)
+				benchmarkCheck(b, db, q, inputs, c.refused)
 			})
 			b.Run("query/"+backend.Name+"/"+c.name, func(b *testing.B) {
 				benchmarkQuery(b, db, q, inputs, c.refused)
@@ -79,10 +78,10 @@ func BenchmarkUnknownAttributeCheck(b *testing.B) {
 }
 
 // benchmarkCheck times the matcher's check alone on the roster q's plan
-// carries under rules, made once ahead of the loop, which refuses q when
-// refused is set and accepts it otherwise. A database that refuses nothing
-// makes a plan carrying no roster, and its check reads none.
-func benchmarkCheck(b *testing.B, db *Database, q *query.Query, rules *query.RuleSet, inputs []interface{}, refused bool) {
+// carries for the default source, made once ahead of the loop, which refuses
+// q when refused is set and accepts it otherwise. A database that refuses
+// nothing makes a plan carrying no roster, and its check reads none.
+func benchmarkCheck(b *testing.B, db *Database, q *query.Query, inputs []interface{}, refused bool) {
 	matcher := db.Matcher().(*PatternMatcher)
 	plan, err := db.Explain(q, inputs...)
 	if err != nil {
@@ -90,7 +89,7 @@ func benchmarkCheck(b *testing.B, db *Database, q *query.Query, rules *query.Rul
 	}
 	var attrs []datalog.Keyword
 	if plan.Rosters != nil {
-		attrs = plan.Rosters.DefaultSourceAttributes(rules)
+		attrs = plan.Rosters.SourceAttributes(datalog.SymDollar)
 	}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {

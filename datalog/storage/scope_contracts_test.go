@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -562,6 +563,56 @@ func TestOneFormWhereWithNothingBindingItsRequiredRunIsRefused(t *testing.T) {
 	}
 }
 
+// The refusal of a required run no order binds is one text from "cannot
+// order clauses:" on, on both planner paths and every backend, for each
+// shape of stall (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §2.3): a
+// cycle of two expressions, a predicate's input nothing binds, an
+// expression's input nothing binds, a subquery's argument nothing binds, a
+// required invocation position nothing binds, a union's required variable
+// nothing binds, and a cycle of an invocation and an expression. The paths
+// differ in the text before the stall alone.
+func TestNoOrderRefusalIsOneTextOnBothPathsForEveryStallShape(t *testing.T) {
+	entities := map[string][]fact{
+		"n1": {{":x", int64(1)}, {":y", int64(10)}},
+		"n2": {{":x", int64(2)}, {":y", int64(20)}},
+		"n3": {{":x", int64(3)}, {":y", int64(30)}},
+	}
+	const succ = `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`
+	shapes := []struct {
+		name, text string
+		rules      bool
+	}{
+		{"a cycle of two expressions", `[:find ?w :where [?q :x _] [(+ ?w 1) ?v] [(+ ?v 1) ?w]]`, false},
+		{"a predicate's input nothing binds", `[:find ?e :where [?e :x _] [(> ?zz 1)]]`, false},
+		{"an expression's input nothing binds", `[:find ?e ?w :where [?e :x _] [(+ ?zz 1) ?w]]`, false},
+		{"a subquery's argument nothing binds", `[:find ?e ?n :where [?e :x _] [(q [:find (count ?f) :in $ ?k :where [?f :x ?k]] $ ?zz) [[?n]]]]`, false},
+		{"a required invocation position nothing binds", `[:find ?m :in $ % :where [?e :x _] (succ ?zz ?m)]`, true},
+		{"a union's required variable nothing binds", `[:find ?e :where [?e :x _] (or-join [[?zz] ?e] [?e :y ?zz] [?e :x ?zz])]`, false},
+		{"a cycle of an invocation and an expression", `[:find ?m :in $ % :where [?e :x _] (succ ?k ?m) [(- ?m 1) ?k]]`, true},
+	}
+	for _, shape := range shapes {
+		t.Run(shape.name, func(t *testing.T) {
+			var stalls []string
+			for _, mode := range optimizerModes {
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+				namedEntities(t, d, entities)
+				var inputs []interface{}
+				if shape.rules {
+					inputs = append(inputs, mustRuleSet(t, succ))
+				}
+				_, err := executor.CollectTuples(d.Query(shape.text, inputs...))
+				require.Error(t, err, "%s: %s", mode.name, shape.text)
+				at := strings.Index(err.Error(), "cannot order clauses: ")
+				require.GreaterOrEqual(t, at, 0, "%s: the refusal carries the stall's prefix: %s", mode.name, err)
+				stalls = append(stalls, err.Error()[at:])
+			}
+			for _, stall := range stalls[1:] {
+				require.Equal(t, stalls[0], stall, "one message on every path")
+			}
+		})
+	}
+}
+
 // A handler sees, in one event after Prepare, the prepared query, whether the
 // inference rewrote a form, and preparation's time
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.9): a query holding a
@@ -577,6 +628,8 @@ func TestPreparationEventCarriesThePreparedQueryAndWhetherItWasRewritten(t *test
 	}{
 		{"a headerless or", `[:find ?e :where [?e :t/n _] (or [?e :t/a ?x] [?e :t/b ?x])]`, "(or-join [?e] [?e :t/a ?x] [?e :t/b ?x])", true},
 		{"a header form", `[:find ?e :where [?e :t/n _] (or-join [?e] [?e :t/a ?x] [?e :t/b ?x])]`, "(or-join [?e] [?e :t/a ?x] [?e :t/b ?x])", false},
+		{"a headerless not inside a subquery", `[:find ?e ?c :where [?e :t/n ?v] [(q [:find (count ?x) :in $ ?v :where [?x :t/n ?v] (not [?x :t/a 1])] $ ?v) [[?c]]]]`, "(not-join [?x] [?x :t/a 1])", true},
+		{"a query of no form", `[:find ?e :where [?e :t/n 1]]`, "[?e :t/n 1]", false},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -634,6 +687,19 @@ func TestPreparationEventCarriesThePreparedQueryAndWhetherItWasRewritten(t *test
 				require.GreaterOrEqual(t, invoked, 0, "the invocation is reported")
 				require.Equal(t, -1, prepared, "no preparation event is reported for a query preparation refuses")
 				require.Greater(t, completed, invoked, "the completion carries the refusal")
+			})
+			t.Run("a query whose input count the executor's entry refuses", func(t *testing.T) {
+				mu.Lock()
+				events = nil
+				mu.Unlock()
+				q, err := parser.ParseQuery(`[:find ?e :in $ ?v :where [?e :t/n ?v]]`)
+				require.NoError(t, err)
+				_, err = d.NewExecutor().Execute(q)
+				require.Error(t, err, "an input the :in binds and the call does not pass is refused")
+				invoked, prepared, planned, completed, _ := lifecycle()
+				require.Greater(t, prepared, invoked, "the preparation is reported, since the entry checks the count after it")
+				require.Equal(t, -1, planned, "no plan is reported for a query the count refuses")
+				require.Greater(t, completed, prepared, "the completion carries the refusal")
 			})
 		})
 	}
@@ -1241,10 +1307,11 @@ func TestBranchReadingARequiredVariableAfterAnUncorrelatedSubqueryRunsPerTuple(t
 	}
 }
 
-// A collection input of a subquery yields one run tuple per member: an
-// entity's ordered set, passed to an inner query declaring a collection
-// input, pairs the entity with the holder of each member and no other.
-func TestCollectionInputYieldsOneRunTuplePerMember(t *testing.T) {
+// A collection input of a subquery binds its members as a group inside the
+// scope: an entity's ordered set, passed to an inner query declaring a
+// collection input, pairs the entity with the holder of each member and no
+// other.
+func TestCollectionInputBindsItsMembersAsAGroup(t *testing.T) {
 	entities := map[string][]fact{
 		"e1": {{":t/ordered", "a"}, {":t/ordered", "b"}},
 		"h1": {{":t/string", "a"}},

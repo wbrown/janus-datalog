@@ -148,7 +148,10 @@ func TestOrFallbackIteratorCopiesFromUnsafeOuter(t *testing.T) {
 	}
 
 	// Create OrFallbackRelation directly
-	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{priority}, branches, outerRel, ExecutorOptions{}, true)
+	orFallbackRel, err := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{priority}, branches, outerRel, ExecutorOptions{}, true)
+	if err != nil {
+		t.Fatalf("NewOrFallbackRelation: %v", err)
+	}
 
 	t.Logf("OrFallbackRelation RequiresCopy: %v", orFallbackRel.RequiresCopy())
 	t.Logf("Outer relation RequiresCopy: %v", outerRel.RequiresCopy())
@@ -297,7 +300,10 @@ func TestOrFallbackIteratorMultipleBranchResultsIntegration(t *testing.T) {
 	}
 
 	// Create OrFallbackRelation directly
-	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{tag}, branches, outerRel, options, true)
+	orFallbackRel, err := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{tag}, branches, outerRel, options, true)
+	if err != nil {
+		t.Fatalf("NewOrFallbackRelation: %v", err)
+	}
 
 	// Iterate and store tuple references WITHOUT copying
 	var storedTuples []Tuple
@@ -392,7 +398,10 @@ func TestOrFallbackIteratorWithFallbackBranch(t *testing.T) {
 	}
 
 	// Create OrFallbackRelation directly
-	orFallbackRel := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{priority}, branches, outerRel, ExecutorOptions{}, true)
+	orFallbackRel, err := NewOrFallbackRelation(queryExec, ctx, []query.Symbol{entity}, []query.Symbol{priority}, branches, outerRel, ExecutorOptions{}, true)
+	if err != nil {
+		t.Fatalf("NewOrFallbackRelation: %v", err)
+	}
 
 	// Iterate and store tuple references WITHOUT copying
 	var storedTuples []Tuple

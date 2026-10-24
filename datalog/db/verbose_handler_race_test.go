@@ -21,12 +21,11 @@ import (
 // another's counts, and a mutex would serialize the writes while leaving every
 // line wrong.
 //
-// **This is not a proven reproducer of concurrent emission.** It drives the
-// shape most likely to fork — a relation input, which is what reaches
-// executeRealizedWithRelationInputIterationParallel and its four default
-// workers — but whether db.Query plans this relation as an iteration or as a
-// join is not established here, so overlapping emission is not demonstrated.
-// What it does establish is that the public verbose path runs clean.
+// **This is not a proven reproducer of concurrent emission.** The query path
+// runs on one goroutine (docs/proposals/CONCURRENCY_PROOF.md, P10), so
+// overlapping emission is not demonstrated. What it does establish is that
+// the public verbose path runs clean over a relation input, the shape whose
+// seeks a pool fans out first (the proof's T5 and T9).
 //
 // The callback deliberately does nothing. The state at issue is the formatter
 // inside the option, not anything the caller supplies — a test whose callback
@@ -56,12 +55,9 @@ func TestVerboseHandlerIsSafeUnderParallelEmission(t *testing.T) {
 			_, err = tx.Commit()
 			require.NoError(t, err)
 
-			// A relation input is what reaches
-			// executeRealizedWithRelationInputIterationParallel, which forks
-			// four workers by default and hands each a context sharing the one
-			// collector. Every worker's events pass through the handler the
-			// option installed. A correlated subquery with a scalar :in does
-			// not reach it, which is why this drives the relation form.
+			// A relation input binds as one group the plan runs once over, and
+			// every event of the run passes through the handler the option
+			// installed.
 			result, err := d.Query(`[:find ?e
 			     :in $ [[?n ?v] ...]
 			     :where [?e :task/name ?n]

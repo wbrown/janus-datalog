@@ -790,18 +790,24 @@ func TestEvaluateRules_DerivesOnlyTheNeededStrata(t *testing.T) {
 	}
 }
 
-func TestEnvironmentRelationFromInputs_SkipsRulesInput(t *testing.T) {
+// BindQueryInputs takes one relation per :in entry that binds, and the
+// rules input binds none, so a scalar written after % reads the first
+// relation given.
+func TestBindQueryInputs_SkipsRulesInput(t *testing.T) {
 	x := datalog.NewSymbol("?x")
-	in := []query.InputSpec{
+	q := &query.Query{In: []query.InputSpec{
 		query.DatabaseInput{Name: datalog.SymDollar},
 		query.RulesInput{},
 		query.ScalarInput{Symbol: x},
-	}
-	env := environmentRelationFromInputs(in, []Relation{
+	}}
+	bound, err := BindQueryInputs(q, []Relation{
 		NewMaterializedRelation([]query.Symbol{x}, []Tuple{{page(1)}}),
 	})
-	if env == nil || len(env.Symbols()) != 1 || env.Symbols()[0] != x || env.Get(0)[0] != page(1) {
-		t.Errorf("environment = %v, want ?x bound to page1: the rules input consumes no relation", env)
+	if err != nil {
+		t.Fatalf("the rules input consumes no relation, got error %v", err)
+	}
+	if len(bound.Symbols()) != 1 || bound.Symbols()[0] != x || bound.Size() != 1 || bound.Get(0)[0] != page(1) {
+		t.Errorf("bound group = %v, want ?x bound to page1: the rules input consumes no relation", bound)
 	}
 }
 

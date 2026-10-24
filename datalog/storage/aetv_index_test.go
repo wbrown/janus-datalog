@@ -579,7 +579,7 @@ func TestIndexSelectionAETVForInputBoundE(t *testing.T) {
 			)
 
 			// Analyze reuse strategy
-			strategy, _ := analyzeReuseStrategy(pattern, inputRel)
+			strategy, _ := db.Matcher().(*PatternMatcher).analyzeReuseStrategy(pattern, inputRel)
 
 			// With CardinalityOne schema, should select AETV (once implemented)
 			// For now, document the expected behavior

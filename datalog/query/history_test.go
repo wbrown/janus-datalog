@@ -19,7 +19,7 @@ func TestTxRangePredicateString(t *testing.T) {
 		Low:   1000,
 		High:  2000,
 	}
-	assert.Equal(t, "(tx-between ?tx 1000 2000)", pred.String())
+	assert.Equal(t, "[(tx-between ?tx 1000 2000)]", pred.String())
 }
 
 func TestTxRangePredicateRequiredSymbols(t *testing.T) {

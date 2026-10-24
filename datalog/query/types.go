@@ -10,9 +10,12 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/codec"
 )
 
-// FormatValueEDN formats a Go value as a parseable EDN string.
-// This is the canonical way to render values in query String() methods
-// so that the output round-trips through the parser.
+// FormatValueEDN renders a value in the text the parser reads back as the
+// same value, the one renderer of values in a query's text: a float's
+// mantissa always carries a point, so a whole-valued float parses back as a
+// float and never as an integer; a string is quoted at any depth; and every
+// value VectorElements reads as a vector, a typed slice included, renders
+// element by element through this function.
 func FormatValueEDN(v interface{}) string {
 	switch val := v.(type) {
 	case datalog.Keyword:
@@ -45,7 +48,15 @@ func FormatValueEDN(v interface{}) string {
 	case int:
 		return strconv.Itoa(val)
 	case float64:
-		return strconv.FormatFloat(val, 'g', -1, 64)
+		text := strconv.FormatFloat(val, 'g', -1, 64)
+		if !strings.Contains(text, ".") {
+			if exponent := strings.IndexAny(text, "eE"); exponent >= 0 {
+				text = text[:exponent] + ".0" + text[exponent:]
+			} else {
+				text += ".0"
+			}
+		}
+		return text
 	case bool:
 		if val {
 			return "true"
@@ -55,10 +66,11 @@ func FormatValueEDN(v interface{}) string {
 		return `#inst "` + val.UTC().Format(time.RFC3339Nano) + `"`
 	case []byte:
 		return `#bytes "` + codec.EncodeL85(val) + `"`
-	case []interface{}:
+	}
+	if elements, ok := VectorElements(v); ok {
 		var sb strings.Builder
 		sb.WriteRune('[')
-		for i, element := range val {
+		for i, element := range elements {
 			if i > 0 {
 				sb.WriteRune(' ')
 			}
@@ -66,9 +78,8 @@ func FormatValueEDN(v interface{}) string {
 		}
 		sb.WriteRune(']')
 		return sb.String()
-	default:
-		return fmt.Sprintf("%v", v)
 	}
+	return fmt.Sprintf("%v", v)
 }
 
 // Tuple represents a tuple of values in a relation
@@ -120,7 +131,7 @@ type VectorConstant struct {
 
 func (v VectorConstant) IsVariable() bool { return false }
 func (v VectorConstant) IsBlank() bool    { return false }
-func (v VectorConstant) String() string { return FormatValueEDN(v.Values) }
+func (v VectorConstant) String() string   { return FormatValueEDN(v.Values) }
 
 // Pattern represents a single pattern in a where clause
 type Pattern interface {

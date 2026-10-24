@@ -38,9 +38,6 @@ type PlannerOptions struct {
     EnableTrueStreaming     bool // default-active
     EnableSymmetricHashJoin bool // opt-in
 
-    EnableParallelSubqueries bool // default-active
-    MaxSubqueryWorkers       int  // 0 = 4 workers
-
     EnableStreamingJoins       bool // opt-in
     EnableStreamingAggregation bool // default-active
 
@@ -65,8 +62,6 @@ EnableEntityPrefetch:       false
 EnableAttributeFetchFusion: true
 EnableTrueStreaming:        true
 EnableSymmetricHashJoin:    false
-EnableParallelSubqueries:   true
-MaxSubqueryWorkers:         0      // executor default: 4 workers
 EnableStreamingJoins:       false
 EnableStreamingAggregation: true
 MaxRuleIterations:          0      // unbounded
@@ -133,16 +128,6 @@ than consuming the iterator). Consumed in `executor/relation.go`.
 Dual-hash-table join for stream-to-stream joins without materializing either
 side. Standard hash join is faster when one side can be materialized, so this is
 off by default. Consumed in `executor/join.go`.
-
-### Parallel execution
-
-#### EnableParallelSubqueries — **default-active**
-Executes RelationInput query iterations in parallel via the executor's bounded
-worker loop. Consumed in `executor/executor.go`.
-
-#### MaxSubqueryWorkers — **default 0**
-Worker-pool size for parallel subqueries; `0` means `runtime.NumCPU()`. Consumed
-in `executor/executor.go`.
 
 ### Joins / aggregation
 
@@ -225,6 +210,8 @@ give their own reason and date below.
 | `EnableStreamingAggregationDebug` | Removed in 2026-07. Aggregation strategy and materialization diagnostics are structured annotation events. |
 | `EnableIteratorComposition` | Removed in 2026-07. Composed iterators are the only implementation of streaming relation operations; the flag's false arm ("materialize then delegate") recursed without bound because `StreamingRelation.Materialize` returns the receiver, and no production path ever ran with the flag off. Materialization is a consumer decision made through `Materialize()`, not a mode. |
 | `IndexNestedLoopThreshold` | Removed in 2026-07 with the index-nested-loop join strategy it gated. The strategy had been off by default since 2025-10 on a benchmark that does not survive inspection, and was independently incorrect: its precondition — bindings sorted in index order — is unmet for the Tx and V positions, where `CompareValues` order deliberately differs from key order. Binding-driven scans seek a binding set's distinct keys one by one at or below `executor.SmallBindingBoundary`, and above it use HashJoinScan, or MergeJoin for large high-selectivity entity-position sets. |
+| `EnableParallelSubqueries` | Removed in 2026-10 with the per-tuple relation-input loop it switched on. A relation input binds as one group the plan runs once over (`docs/proposals/RELATION_INPUT_PROOF.md`), the query path runs on one goroutine, and concurrency returns at the job's grain under one worker bound (`docs/proposals/CONCURRENCY_PROOF.md`). |
+| `MaxSubqueryWorkers` | Removed in 2026-10 with `EnableParallelSubqueries`; it sized that loop's worker pool. |
 
 If your code sets any of these, delete the lines — the fields no longer exist.
 
@@ -239,7 +226,7 @@ they need.
 
 ```go
 opts := storage.DefaultPlannerOptions()
-// Already tuned: algebra optimizer + streaming + parallel subqueries on.
+// Already tuned: algebra optimizer + streaming on.
 ```
 
 ### Debugging execution

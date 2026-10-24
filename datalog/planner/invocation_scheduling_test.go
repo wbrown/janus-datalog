@@ -26,7 +26,7 @@ func TestCreatePhasesGreedy_AScanOfAWholeExtentIsSelectedLast(t *testing.T) {
 	rules, err := parser.ParseRules(orderingRules)
 	require.NoError(t, err)
 	cases := []struct {
-		name, text string
+		name, text  string
 		scan, other int
 	}{
 		{"a pattern seeking on an available variable", `[:find ?b ?v :in $ ?a :where [?e :item/val ?v ?tx] [?a :item/next ?b]]`, 0, 1},
@@ -85,6 +85,41 @@ func TestCreatePhasesGreedy_AnInvocationWaitsOnAProviderByItsSelectivity(t *test
 			phases, err := createPhasesGreedy(q.Where, physicalFindSymbols(q.Find), c.inputs, query.Bindings{Rules: rules})
 			require.NoError(t, err)
 			assertScheduledAfter(t, phases, q.Where[c.later], q.Where[c.earlier], c.msg)
+		})
+	}
+}
+
+// A subquery reading an available input waits on a provider of its binding
+// variable with visible selectivity and on no scan of a whole extent, as an
+// invocation with an available argument does: a scan providing the variable
+// and a free invocation providing it are each selected after the subquery
+// (REWRITE_ORDER_PROOF.md §6, L6).
+func TestCreatePhasesGreedy_ASubqueryReadingAnAvailableInputPrecedesAScan(t *testing.T) {
+	s := datalog.NewSymbol("?s")
+	rules, err := parser.ParseRules(orderingRules)
+	require.NoError(t, err)
+	cases := []struct {
+		name, text string
+		msg        string
+	}{
+		{
+			"a scan providing the binding variable",
+			`[:find ?c :in $ ?s :where [?s :edge ?m] [?k :edge ?c] [(q [:find ?w :in $ ?x :where [?x :edge ?w]] $ ?m) [[?k] ...]]]`,
+			"the scan providing ?k is selected after the subquery reading the available ?m",
+		},
+		{
+			"a free invocation providing the binding variable",
+			`[:find ?c :in $ % ?s :where [?s :edge ?m] (follows ?k ?c) [(q [:find ?w :in $ ?x :where [?x :edge ?w]] $ ?m) [[?k] ...]]]`,
+			"the free invocation providing ?k is selected after the subquery reading the available ?m",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q, err := parser.ParseQuery(c.text)
+			require.NoError(t, err)
+			phases, err := createPhasesGreedy(q.Where, physicalFindSymbols(q.Find), map[query.Symbol]bool{s: true}, query.Bindings{Rules: rules})
+			require.NoError(t, err)
+			assertScheduledAfter(t, phases, q.Where[1], q.Where[2], c.msg)
 		})
 	}
 }

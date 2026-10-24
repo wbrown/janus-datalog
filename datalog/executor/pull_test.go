@@ -87,9 +87,12 @@ func TestPullExecutor_Wildcard(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 
-	// All attributes should be in result
-	if len(result) != 3 {
-		t.Errorf("expected 3 attributes, got %d: %v", len(result), result)
+	// Every attribute the entity carries is in the result, and its id beside them
+	if len(result) != 4 {
+		t.Errorf("expected 3 attributes and the id, got %d: %v", len(result), result)
+	}
+	if result[query.DBIDKey] != alice {
+		t.Errorf("expected db/id=%v, got %v", alice, result[query.DBIDKey])
 	}
 
 	if result["user/name"] != "Alice" {

@@ -43,7 +43,6 @@ func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.
 			outputs = append(outputs, sym)
 		}
 	}
-	runSyms, joinSyms := runSymbols(required, outerSyms)
 	find := make([]query.FindElement, len(outputs))
 	for i, sym := range outputs {
 		find[i] = query.FindVariable{Symbol: sym}
@@ -62,8 +61,7 @@ func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.
 		required: required,
 		find:     find,
 		given:    required,
-		runSyms:  runSyms,
-		key:      joinSyms,
+		key:      keySymbols(required, outerSyms),
 	}
 	plans, err := frameBranches(e, ctx, [][]query.Clause{{pattern}}, f)
 	if err != nil {

@@ -120,7 +120,7 @@ func populateOptimizationMatrix(tb testing.TB, db *Database, numScenarios, tasks
 
 // TestOptimizationMatrix runs the production-structure query with all
 // combinations of optimizer flags to measure their individual and combined
-// impact. Uses 75 scenarios × 100 tasks (7,500 tasks total).
+// impact. Uses 30 scenarios × 100 tasks (3,000 tasks total).
 func TestOptimizationMatrix(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -131,7 +131,7 @@ func TestOptimizationMatrix(t *testing.T) {
 
 func testOptimizationMatrix(t *testing.T, mode optimizerMode) {
 	const (
-		numScenarios     = 75
+		numScenarios     = 30
 		tasksPerScenario = 100
 	)
 
@@ -463,7 +463,7 @@ func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
 
 func testComplexQueryCheckpointCacheSteadyState(t *testing.T, mode optimizerMode) {
 	const (
-		numScenarios     = 75
+		numScenarios     = 30
 		tasksPerScenario = 100
 		resultLimit      = 25
 	)

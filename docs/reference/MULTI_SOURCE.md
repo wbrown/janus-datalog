@@ -269,7 +269,7 @@ The join on `?uid` bridges the database and cache sources. The planner processes
 
 ## Subqueries
 
-Inner queries inherit all sources from the execution context. When an outer query has `$users` and `$perms` available, any subquery can reference them:
+Inner queries inherit all sources from the execution context. When an outer query has `$users` and `$perms` available, any subquery can reference them. A source the inner `:in` declares stands for the source the call passes at its place: an inner query written over `$t` reads `$perms` when the call passes `$perms` there, and the calling database when it passes `$`. An inner query declaring no `:in`, or declaring `$`, reads the source the call passes the same way.
 
 ```go
 users := qb.Source("$users")
@@ -286,7 +286,7 @@ q := qb.Query().
     Find(dept, qb.NewVar("headcount")).
     Where(
         qb.Pat(qb.NewVar("d"), qb.Kw(":dept/name"), dept),
-        qb.Subquery(innerQ, dept).BindTuple(qb.NewVar("headcount")),
+        qb.Subquery(innerQ, dept).BindRelation(qb.NewVar("headcount")),
     ).
     MustBuild()
 ```

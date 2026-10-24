@@ -387,6 +387,38 @@ func TestInputSymbolsNameTheSymbolEachCallPositionBinds(t *testing.T) {
 	}
 }
 
+// InputPositions is the call positions of an :in clause, each the entry at
+// it and the symbol the call's value there binds: a source and the rule set
+// at one position binding nothing, a scalar and a collection input at one
+// binding their symbol, a tuple and a relation input at one position per
+// symbol, and an omitted :in at the one position of the $ it defaults to.
+func TestInputPositionsNameTheEntryAndSymbolAtEachCallPosition(t *testing.T) {
+	x, y, z, m := datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z"), datalog.NewSymbol("?m")
+	source := DatabaseInput{Name: datalog.SymDollar}
+	rules := RulesInput{}
+	scalar := ScalarInput{Symbol: x}
+	collection := CollectionInput{Symbol: m}
+	tuple := TupleInput{Symbols: []Symbol{y, z}}
+	relation := RelationInput{Symbols: []Symbol{z, x}}
+	got := InputPositions([]InputSpec{source, rules, scalar, collection, tuple, relation})
+	want := []InputPosition{{source, nil}, {rules, nil}, {scalar, x}, {collection, m}, {tuple, y}, {tuple, z}, {relation, z}, {relation, x}}
+	if len(got) != len(want) {
+		t.Fatalf("InputPositions names %d positions, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].Symbol != want[i].Symbol {
+			t.Errorf("position %d binds %v, want %v", i, got[i].Symbol, want[i].Symbol)
+		}
+		if got[i].Spec.String() != want[i].Spec.String() {
+			t.Errorf("position %d is the entry %s, want %s", i, got[i].Spec, want[i].Spec)
+		}
+	}
+	omitted := InputPositions(nil)
+	if len(omitted) != 1 || omitted[0].Symbol != nil || omitted[0].Spec.String() != source.String() {
+		t.Errorf("an omitted :in is [$], one position of the default source binding no symbol, got %v", omitted)
+	}
+}
+
 // BindingInputs names the entries of an :in that bind variables, in the
 // :in's order, one per scalar, collection, tuple or relation input, and
 // none for a source or the rule set; an empty :in names none.

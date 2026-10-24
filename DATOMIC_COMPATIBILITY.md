@@ -425,6 +425,7 @@ results, err := d.PullMany(entityIDs, `[:user/name]`)
 
 **Key behaviors:**
 - Result keys omit leading colon: `"user/name"` not `":user/name"`
+- The entity's id is answered under `"db/id"` when the pattern names `:db/id` or holds the wildcard, through `Pull`, `PullMany` and a `(pull ...)` in a `:find` alike, at every depth of a nested pull; a pattern naming neither answers no id. A wildcard's id rides beside the attributes the entity carries, so an entity carrying none answers nil under it, where `[:db/id ...]` answers the id for any identity
 - Missing attributes are omitted from results (not nil)
 - Cycle detection prevents infinite loops on circular references
 - Unlimited nesting depth
@@ -721,7 +722,7 @@ Partial transaction support:
 - ✅ **Hard deletion** - `Retract(e, a, v)` for explicit removal (GDPR, cleanup)
 - ❌ **No transaction functions**
 - ❌ **No tempids** for new entities
-- ✅ **Transaction entity** - each commit writes one `:db/txInstant` datom, the commit's wall-clock time, on an entity named for the commit's high-water Lamport, atomically with the batch. So a commit is an entity a query can read. That mark is the high-water point an as-of read uses.
+- ✅ **Transaction entity** - each commit writes one `:db/txInstant` datom on an entity named for the commit's high-water Lamport, atomically with the batch. Its value is the time the caller gave the transaction through `NewTransactionAt` or `SetTime`, and the commit's wall-clock time when the caller gave none. So a commit is an entity a query can read. That mark is the high-water point an as-of read uses.
 - ❌ **No further transaction metadata** - no API attaches other attributes to the transaction entity at commit
 
 ### 3. Entity API ❌

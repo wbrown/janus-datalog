@@ -2,8 +2,10 @@ package storage
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
@@ -43,12 +45,40 @@ func (d *Database) queryUnderPlannerOptions(
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
+	// A handler sees every query the database is asked. A query refused here,
+	// after it is resolved and before the executor's entry, is reported as the
+	// executor reports a query it refuses: invoked, with the query as received,
+	// then completed with the refusal. A query that reaches ExecuteWithRelations
+	// is reported there.
+	handler := planOpts.Handler
+	var queryStart time.Time
+	if handler != nil {
+		queryStart = time.Now()
+	}
+	refused := func(err error) (executor.Relation, error) {
+		if handler != nil {
+			handler(annotations.Event{
+				Name:  annotations.QueryInvoked,
+				Start: queryStart,
+				Data:  map[string]interface{}{annotations.KeyQuery: q.String()},
+			})
+			handler(annotations.TimedEvent(annotations.QueryComplete, queryStart,
+				map[string]interface{}{
+					annotations.KeyRelationsCount: 0,
+					annotations.KeyTuplesCount:    0,
+					annotations.KeySuccess:        false,
+					annotations.KeyError:          err.Error(),
+				}))
+		}
+		return nil, err
+	}
+
 	// One read session per query: every storage read — eager during
 	// execution or lazy during result consumption — observes one snapshot.
 	// The session closes when the result is exhausted or closed.
 	matcher, session, err := d.sessionMatcher(planOpts)
 	if err != nil {
-		return nil, err
+		return refused(err)
 	}
 
 	// Build source map — database is always $
@@ -57,7 +87,7 @@ func (d *Database) queryUnderPlannerOptions(
 	// Validate declared sources exist
 	if err := validateQuerySources(q, sources); err != nil {
 		_ = session.Close()
-		return nil, err
+		return refused(err)
 	}
 
 	// Create SourceRouter with full source map
@@ -66,14 +96,13 @@ func (d *Database) queryUnderPlannerOptions(
 	inputRelations, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		_ = session.Close()
-		return nil, err
+		return refused(err)
 	}
 
-	// Execute with the SourceRouter as the PatternMatcher. A plan over a
-	// source that refuses unknown attributes carries its roster for the check
-	// at the executor's entry.
+	// Execute with the SourceRouter as the PatternMatcher. The executor has
+	// its plans carry their rosters when a source the router holds refuses
+	// unknown attributes, for the check at its entry.
 	planOpts.Cache = d.planCache
-	planOpts.CollectRosters = planOpts.CollectRosters || anySourceRefusesUnknownAttributes(sources)
 	exec := executor.NewExecutorWithOptions(router, d, planOpts)
 	result, err := exec.ExecuteWithRelations(executor.NewContext().WithRules(rules).WithCancellation(opts.ctx), q, inputRelations)
 	if err != nil {
@@ -113,8 +142,17 @@ func (d *Database) Assert(datoms []datalog.Datom) error {
 	return err
 }
 
+// A typed accessor names the attribute it reads, so a database that refuses
+// unknown attributes refuses an accessor naming one its schema does not
+// declare before the query runs, as it refuses a query naming it. The query
+// the accessors share binds the attribute through an input, which the
+// vocabulary check at the executor's entry reads as a value.
+
 // GetString returns a string attribute value.
 func (d *Database) GetString(e datalog.Identity, a datalog.Keyword) (string, bool, error) {
+	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
+		return "", false, err
+	}
 	var v string
 	found, err := d.QueryOneInto(&v, queryGetAttr, e, a)
 	return v, found, err
@@ -122,6 +160,9 @@ func (d *Database) GetString(e datalog.Identity, a datalog.Keyword) (string, boo
 
 // GetInt returns an int64 attribute value.
 func (d *Database) GetInt(e datalog.Identity, a datalog.Keyword) (int64, bool, error) {
+	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
+		return 0, false, err
+	}
 	var v int64
 	found, err := d.QueryOneInto(&v, queryGetAttr, e, a)
 	return v, found, err
@@ -129,6 +170,9 @@ func (d *Database) GetInt(e datalog.Identity, a datalog.Keyword) (int64, bool, e
 
 // GetFloat returns a float64 attribute value.
 func (d *Database) GetFloat(e datalog.Identity, a datalog.Keyword) (float64, bool, error) {
+	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
+		return 0, false, err
+	}
 	var v float64
 	found, err := d.QueryOneInto(&v, queryGetAttr, e, a)
 	return v, found, err
@@ -136,6 +180,9 @@ func (d *Database) GetFloat(e datalog.Identity, a datalog.Keyword) (float64, boo
 
 // GetBool returns a bool attribute value.
 func (d *Database) GetBool(e datalog.Identity, a datalog.Keyword) (bool, bool, error) {
+	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
+		return false, false, err
+	}
 	var v bool
 	found, err := d.QueryOneInto(&v, queryGetAttr, e, a)
 	return v, found, err
@@ -143,6 +190,9 @@ func (d *Database) GetBool(e datalog.Identity, a datalog.Keyword) (bool, bool, e
 
 // GetRef returns an entity reference attribute value.
 func (d *Database) GetRef(e datalog.Identity, a datalog.Keyword) (datalog.Identity, bool, error) {
+	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
+		return nil, false, err
+	}
 	var v datalog.Identity
 	found, err := d.QueryOneInto(&v, queryGetAttr, e, a)
 	return v, found, err
@@ -150,6 +200,9 @@ func (d *Database) GetRef(e datalog.Identity, a datalog.Keyword) (datalog.Identi
 
 // GetStrings returns all string values for a cardinality-many attribute.
 func (d *Database) GetStrings(e datalog.Identity, a datalog.Keyword) ([]string, error) {
+	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
+		return nil, err
+	}
 	var vals []string
 	if err := d.QueryInto(&vals, queryGetAttr, e, a); err != nil {
 		return nil, err

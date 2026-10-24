@@ -74,7 +74,7 @@ func (d *Database) ResolveAllAttributesMany(
 	})
 
 	resolved := make(map[[20]byte]map[datalog.Keyword]interface{}, len(sortedEntities))
-	declaredAttrs := d.declaredWildcardAttributes()
+	declaredAttrs := d.installed.Load().wildcard
 	var uniqueLookups []wildcardUniqueLookup
 	bound := ScanBound{Index: EATV}
 
@@ -210,23 +210,6 @@ func (d *Database) resolveWildcardEntity(
 	}
 	flush()
 	return result, pending, nil
-}
-
-// declaredWildcardAttributes is the set a wildcard pull resolves: nil when the
-// database declares nothing beyond the engine's words, and a wildcard pull
-// then resolves every attribute the entity carries.
-func (d *Database) declaredWildcardAttributes() map[datalog.Keyword]struct{} {
-	var declared map[datalog.Keyword]struct{}
-	for _, definition := range d.Schema().Attributes() {
-		if engineSchema.GetAttribute(definition.Ident) != nil {
-			continue
-		}
-		if declared == nil {
-			declared = make(map[datalog.Keyword]struct{})
-		}
-		declared[definition.Ident] = struct{}{}
-	}
-	return declared
 }
 
 func (d *Database) resolveWildcardDatoms(

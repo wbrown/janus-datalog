@@ -46,7 +46,7 @@ func (m *PatternMatcher) ResolvesUnique(a Attribute) bool {
 // walk-based resolution: the returned value is the entity's first
 // non-superseded assertion, which may fall back to an older entry if the
 // latest has been claimed by another entity.
-func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (any, datalog.ElementID, bool, error) {
+func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (v any, tx datalog.ElementID, present bool, resolveErr error) {
 	if m.ResolvesUnique(a) {
 		// The walk acquires through report, so its intake — the deepest read
 		// on this path — reaches the arm whether or not the walk goes on to
@@ -81,7 +81,11 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (
 	if err != nil {
 		return nil, datalog.ElementID{}, false, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); resolveErr == nil {
+			resolveErr = closeErr
+		}
+	}()
 
 	for iter.Next() {
 		datom, err := iter.Datom()

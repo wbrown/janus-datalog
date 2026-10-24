@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -22,20 +21,18 @@ type cachedBranch struct {
 
 // newCachedBranch is an empty index over a branch's result symbols, keyed
 // probe-side by the subject tuple's positions of the key symbols and
-// stored-side by the branch tuple's positions of the symbols the result
-// holds each key under, storedSyms, the key symbol itself for all but a
-// collection argument's, which the result holds under the member's inner
-// symbol. A key the result does not hold is no key, and a result holding
-// none of them is grouped under one key, so every subject tuple probes the
-// whole result: the shape of a branch reading nothing.
-func newCachedBranch(branchSyms, outerSyms, keySyms, storedSyms []query.Symbol) *cachedBranch {
+// stored-side by the branch tuple's positions of the same symbols. A key the
+// result does not hold is no key, and a result holding none of them is
+// grouped under one key, so every subject tuple probes the whole result: the
+// shape of a branch reading nothing.
+func newCachedBranch(branchSyms, outerSyms, keySyms []query.Symbol) *cachedBranch {
 	var bIdx, oIdx []int
-	for i, ksym := range keySyms {
+	for _, ksym := range keySyms {
 		oi := query.SymbolIndex(outerSyms, ksym)
 		if oi < 0 {
 			continue
 		}
-		if bi := query.SymbolIndex(branchSyms, storedSyms[i]); bi >= 0 {
+		if bi := query.SymbolIndex(branchSyms, ksym); bi >= 0 {
 			oIdx = append(oIdx, oi)
 			bIdx = append(bIdx, bi)
 		}
@@ -80,49 +77,57 @@ func buildBranchTuples(executor *DefaultQueryExecutor, ctx *Context, f framing, 
 // under the first and copied under each further one through the identity
 // expression, since a rename gives an attribute one name; a further name the
 // presented answer already carries is unified the same way, with no copy. A
-// collection member's symbol stands for its argument at the member's grain
-// and for no enclosing name, so it is kept under its own name, the name the
-// kept branch holds a member's key under, and copied under its further
-// names. A symbol the substitution does not name, a constant argument's, is
-// dropped by the projection. An answer the substitution names nothing of, a
-// branch form's, is returned as it is.
+// symbol the substitution does not name, a constant argument's, is dropped
+// by the projection. An answer the substitution names nothing of, a branch
+// form's, is returned as it is.
 func (f framing) present(answer Relation) (Relation, error) {
 	symbols := answer.Symbols()
-	var keep, renamed []query.Symbol
-	var carried []query.Symbol   // each name the presented answer carries
-	var carriedAt []int          // the answer position presented under it
-	var equated [][2]int         // answer positions one name stands for
-	var copied [][2]query.Symbol // a presented name and a further name it is copied under
+	// The names the answer's positions carry, one entry per name in position
+	// order: a position's presented name, the one the substitution gives its
+	// symbol, then each further name the substitution gives it. A symbol the
+	// substitution does not name carries none.
+	var names []query.Symbol
+	var at []int       // the answer position carrying the entry's name
+	var further []bool // the entry is a further name, not the position's presented name
+	presentedAt := make([]query.Symbol, len(symbols))
 	for i, sym := range symbols {
-		var presentedAs query.Symbol
-		if query.ContainsSymbol(f.members, sym) {
-			keep = append(keep, sym)
-			presentedAs = sym
-			carried = append(carried, sym)
-			carriedAt = append(carriedAt, i)
-		} else {
-			to, ok := f.subst.Of(sym)
-			if !ok {
-				continue
-			}
-			presentedAs = to
-			if j := query.SymbolIndex(carried, to); j >= 0 {
-				equated = append(equated, [2]int{carriedAt[j], i})
-			} else {
-				keep = append(keep, sym)
-				renamed = append(renamed, sym)
-				carried = append(carried, to)
-				carriedAt = append(carriedAt, i)
-			}
+		to, ok := f.subst.Of(sym)
+		if !ok {
+			continue
 		}
-		for _, further := range f.subst.Further(sym) {
-			if j := query.SymbolIndex(carried, further); j >= 0 {
-				equated = append(equated, [2]int{carriedAt[j], i})
-				continue
+		presentedAt[i] = to
+		names = append(names, presentedAt[i])
+		at = append(at, i)
+		further = append(further, false)
+		for _, name := range f.subst.Further(sym) {
+			names = append(names, name)
+			at = append(at, i)
+			further = append(further, true)
+		}
+	}
+	// A name's first entry carries it: a presented name keeps its symbol,
+	// renamed to the name unless the symbol is a member, and a further name
+	// is copied from its position's presented name. The positions of all of
+	// a name's entries are unified.
+	_, groups := query.SymbolGroups(names)
+	var keep, renamed []query.Symbol
+	var equated [][]int          // per name standing for several positions, those positions
+	var copied [][2]query.Symbol // a presented name and a further name copied from it
+	for _, group := range groups {
+		first := group[0]
+		carrier := at[first]
+		if further[first] {
+			copied = append(copied, [2]query.Symbol{presentedAt[carrier], names[first]})
+		} else {
+			keep = append(keep, symbols[carrier])
+			renamed = append(renamed, symbols[carrier])
+		}
+		if len(group) > 1 {
+			positions := make([]int, len(group))
+			for k, entry := range group {
+				positions[k] = at[entry]
 			}
-			copied = append(copied, [2]query.Symbol{presentedAs, further})
-			carried = append(carried, further)
-			carriedAt = append(carriedAt, i)
+			equated = append(equated, positions)
 		}
 	}
 	if len(keep) == 0 {
@@ -130,14 +135,7 @@ func (f framing) present(answer Relation) (Relation, error) {
 	}
 	presented := answer
 	if len(equated) > 0 {
-		presented = presented.Select(func(t Tuple) bool {
-			for _, pair := range equated {
-				if !datalog.ValuesEqual(t[pair[0]], t[pair[1]]) {
-					return false
-				}
-			}
-			return true
-		})
+		presented = presented.Select(func(t Tuple) bool { return query.AgreesAt(t, equated) })
 	}
 	var err error
 	if !symbolsMatch(keep, symbols) {

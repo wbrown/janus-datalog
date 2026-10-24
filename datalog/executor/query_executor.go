@@ -275,32 +275,6 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 	}
 	groups = rendered
 
-	// The find boundary keeps the groups holding the symbols the find
-	// consumes, one of them or their product, and takes the existence
-	// verdict over every other group: a group with none is the join zero
-	// and empties the result (∅ × R = ∅), and one with a tuple is the join
-	// identity and gates nothing further (unit × R = R). A zero-symbol
-	// verdict, a group of environment symbols the find does not consume,
-	// and a pattern's group sharing no symbol with the rest are such groups.
-	consumed := consumedFindSymbols(q.Find)
-	holders := make(Relations, 0, len(groups))
-	var unread []Relation
-	for _, group := range groups {
-		if containsAny(group.Symbols(), consumed) {
-			holders = append(holders, group)
-			continue
-		}
-		unread = append(unread, group)
-	}
-	verdict, verdictErr := existenceVerdict(unread, e.options)
-	if verdictErr != nil {
-		return nil, verdictErr
-	}
-	if len(verdict) == 0 {
-		return []Relation{}, nil
-	}
-	groups = holders
-
 	hasAggregates := false
 	for _, elem := range q.Find {
 		if elem.IsAggregate() {
@@ -310,22 +284,47 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 	}
 
 	if hasAggregates {
-		// Must have single relation for aggregation
-		if len(groups) > 1 {
-			return nil, fmt.Errorf("cannot aggregate over %d disjoint relations", len(groups))
-		}
+		// Under an aggregating find every group is a factor of the relation
+		// the aggregate runs over, the groups the find does not read included
+		// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §3): a group with
+		// no tuple empties the product, and one with tuples multiplies it.
 		if len(groups) == 0 {
 			return []Relation{}, nil
 		}
-
-		// Apply aggregations using existing function
-		result := ExecuteAggregations(groups[0], q.Find)
+		result := ExecuteAggregations(Relations(groups).Product(), q.Find)
 		if materialized, ok := result.(*MaterializedRelation); ok && materialized.err != nil {
 			return nil, materialized.err
 		}
 		return []Relation{result}, nil
 
 	} else {
+		// Under a projection find the boundary keeps the groups holding the
+		// symbols the find consumes, one of them or their product, and takes
+		// the existence verdict over every other group: a group with none is
+		// the join zero and empties the result (∅ × R = ∅), and one with a
+		// tuple is the join identity and gates nothing further (unit × R = R).
+		// A zero-symbol verdict, a group of environment symbols the find does
+		// not consume, and a pattern's group sharing no symbol with the rest
+		// are such groups.
+		consumed := consumedFindSymbols(q.Find)
+		holders := make(Relations, 0, len(groups))
+		var unread []Relation
+		for _, group := range groups {
+			if containsAny(group.Symbols(), consumed) {
+				holders = append(holders, group)
+				continue
+			}
+			unread = append(unread, group)
+		}
+		verdict, verdictErr := existenceVerdict(unread, e.options)
+		if verdictErr != nil {
+			return nil, verdictErr
+		}
+		if len(verdict) == 0 {
+			return []Relation{}, nil
+		}
+		groups = holders
+
 		// Simple projection to :find symbols. Pull find elements project
 		// their entity variable like any other symbol (Identity values):
 		// pull rendering is result presentation and happens at the result
@@ -852,7 +851,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 		if err != nil {
 			return nil, err
 		}
-		return []Relation{relationOverTuples(symbols, bound, e.options)}, nil
+		return []Relation{alignBinding(nil, symbols).relationOver(bound, e.options)}, nil
 	}
 
 	// Symbols the environment binds (single-valued :in parameters) need no
@@ -1011,7 +1010,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx *Context, expr *query.Expre
 			if err != nil {
 				return nil, err
 			}
-			return []Relation{relationOverTuples(symbols, bound, e.options)}, nil
+			return []Relation{alignBinding(nil, symbols).relationOver(bound, e.options)}, nil
 		}
 
 		// Skip expression if no relevant relations and expression needs symbols
@@ -1186,39 +1185,22 @@ func (e *DefaultQueryExecutor) executePredicate(ctx *Context, pred query.Predica
 // its combination, and stands in the place of the groups it consumed. A
 // constant argument and an argument the environment alone binds ride the
 // frames' environment relation under the inner symbol, so every combination
-// carries the value; a collection input expands in the frame's key to one
-// combination per member; a binding symbol the subject or the environment
-// binds is a carried output, joined after the probe and never bound into the
-// inner query. An argument nothing binds and a refusal of the body's plan are
-// the clause's errors, and a failure of the body's scan is the result's,
-// surfacing when it is driven.
+// carries the value; a collection input's whole value rides the required run
+// under its holder, query.ScopeInput, and the scope's clauses open with the
+// binding of its members from the holder, so the members join the body as a
+// group and the inner find aggregates over them per argument value; a
+// binding symbol the subject or the environment binds is a carried output,
+// joined after the probe and never bound into the inner query. An argument
+// nothing binds and a refusal of the body's plan are the clause's errors,
+// and a failure of the body's scan is the result's, surfacing when it is
+// driven.
 func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.SubqueryPattern, groups Relations) (Relations, error) {
-	inner := query.InputSymbols(subq.Query.In)
 	bound := subq.Binding.BoundVariables()
 
-	// The call's substitution, read from the text: each inner :in symbol
-	// stands for the variable argument at its place, and each inner :find
-	// element's symbol for the binding variable at its place. A constant
-	// argument's symbol stands for nothing, so the presentation drops it.
-	var from, to, given, members []query.Symbol
-	for position, sym := range inner {
-		if sym == nil {
-			continue
-		}
-		given = append(given, sym)
-		if arg, ok := subq.Inputs[position].(query.Variable); ok {
-			from = append(from, sym)
-			to = append(to, arg.Name)
-		}
-	}
-	for _, spec := range subq.Query.In {
-		if collection, ok := spec.(query.CollectionInput); ok {
-			members = append(members, collection.Symbol)
-		}
-	}
-	from = append(from, extractFindSymbols(subq.Query.Find)...)
-	to = append(to, bound...)
-	subst, err := query.SubstitutionOf(from, to)
+	// The call's frame, read from its text through the planner's one reading
+	// of it: the inner symbols, the clauses under the call's sources, the
+	// substitution and the enclosing variable each inner symbol stands for.
+	frame, err := planner.ReadSubqueryFrame(subq)
 	if err != nil {
 		return nil, err
 	}
@@ -1226,7 +1208,12 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.Subquer
 	// The subject: the groups holding an argument's symbol or a binding
 	// symbol.
 	var needed []query.Symbol
-	for _, sym := range to {
+	for _, sym := range frame.StandsFor {
+		if sym != nil && !query.ContainsSymbol(needed, sym) {
+			needed = append(needed, sym)
+		}
+	}
+	for _, sym := range bound {
 		if !query.ContainsSymbol(needed, sym) {
 			needed = append(needed, sym)
 		}
@@ -1234,24 +1221,12 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.Subquer
 	subject, consumed := e.findOuterRelation(needed, groups)
 	outerSyms := subject.Symbols()
 
-	// What the body is given, ordered against the subject: the inner symbols
-	// standing for a subject symbol lead, in the subject's order, and the
-	// rest follow. The key is the subject's symbols an argument or the
-	// binding names, in the subject's order.
-	var runSyms, key []query.Symbol
+	// The key: the subject's symbols an argument or the binding names, in
+	// the subject's order.
+	var key []query.Symbol
 	for _, outerSym := range outerSyms {
-		for _, sym := range given {
-			if standsFor, ok := subst.Of(sym); ok && standsFor == outerSym && !query.ContainsSymbol(runSyms, sym) {
-				runSyms = append(runSyms, sym)
-			}
-		}
 		if query.ContainsSymbol(needed, outerSym) {
 			key = append(key, outerSym)
-		}
-	}
-	for _, sym := range given {
-		if !query.ContainsSymbol(runSyms, sym) {
-			runSyms = append(runSyms, sym)
 		}
 	}
 
@@ -1265,7 +1240,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.Subquer
 	}
 	var environmentSyms []query.Symbol
 	var environmentValues Tuple
-	for position, sym := range inner {
+	for position, sym := range frame.Inner {
 		if sym == nil {
 			continue
 		}
@@ -1328,16 +1303,14 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.Subquer
 	f := framing{
 		form:        "subquery",
 		subject:     subject,
-		required:    given,
-		find:        subq.Query.Find,
-		given:       given,
-		runSyms:     runSyms,
+		required:    frame.Given,
+		find:        frame.Find,
+		given:       frame.Given,
 		key:         key,
 		environment: environment,
-		subst:       subst,
-		members:     members,
+		subst:       frame.Subst,
 	}
-	plans, err := frameBranches(e, ctx, [][]query.Clause{subq.Query.Where}, f)
+	plans, err := frameBranches(e, ctx, [][]query.Clause{frame.Clauses}, f)
 	if err != nil {
 		return nil, err
 	}
@@ -1376,16 +1349,33 @@ func applyFindPulls(
 		symbolIndex int
 		pull        query.FindPull
 	}
+	// A find element renders at its own position: the boundary projects one
+	// position per element in the find's order, so the k-th element naming a
+	// variable reads the k-th position of the result carrying it. A pull
+	// whose variable the result lacks is the query's error.
 	var requests []pullRequest
+	occurrence := make(map[query.Symbol]int, len(find))
 	for _, elem := range find {
-		if pull, ok := elem.(query.FindPull); ok {
-			if i := query.SymbolIndex(symbols, pull.Variable); i >= 0 {
-				requests = append(requests, pullRequest{
-					symbolIndex: i,
-					pull:        pull,
-				})
-			}
+		var variable query.Symbol
+		switch e := elem.(type) {
+		case query.FindVariable:
+			variable = e.Symbol
+		case query.FindPull:
+			variable = e.Variable
+		default:
+			continue
 		}
+		k := occurrence[variable]
+		occurrence[variable]++
+		pull, ok := elem.(query.FindPull)
+		if !ok {
+			continue
+		}
+		_, positions, err := query.SymbolPositions(symbols, []query.Symbol{variable})
+		if err != nil {
+			return nil, fmt.Errorf("pull %s: %w", pull, err)
+		}
+		requests = append(requests, pullRequest{symbolIndex: positions[0][k], pull: pull})
 	}
 	if len(requests) == 0 {
 		return rel, nil
@@ -1431,10 +1421,6 @@ func applyFindPulls(
 			return nil, fmt.Errorf("pull failed for %s: %w", request.pull.Variable, err)
 		}
 		for i, pulled := range pulledResults {
-			entity := entities[i]
-			if pulled != nil {
-				pulled[query.DBIDKey] = entity
-			}
 			resultTuples[tupleIndexes[i]][request.symbolIndex] = pulled
 		}
 	}

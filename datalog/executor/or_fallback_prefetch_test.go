@@ -75,7 +75,7 @@ func TestFallbackPrefetchesAWindowsEntitiesAboveTheThreshold(t *testing.T) {
 				triggers = append(triggers, e)
 			}
 		}}
-		relation := NewOrFallbackRelation(
+		relation, err := NewOrFallbackRelation(
 			newQueryExecutor(matcher, nil, options),
 			NewContext(),
 			[]query.Symbol{symE},
@@ -85,6 +85,7 @@ func TestFallbackPrefetchesAWindowsEntitiesAboveTheThreshold(t *testing.T) {
 			options,
 			true,
 		)
+		require.NoError(t, err)
 		result, err := CollectTuples(relation, nil)
 		require.NoError(t, err)
 		return matcher, triggers, result

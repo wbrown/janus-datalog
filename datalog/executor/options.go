@@ -16,10 +16,6 @@ type ExecutorOptions struct {
 	EnableTrueStreaming     bool
 	EnableSymmetricHashJoin bool
 
-	// Parallel execution options
-	EnableParallelSubqueries bool
-	MaxSubqueryWorkers       int
-
 	// Join options
 	EnableStreamingJoins bool
 	DefaultHashTableSize int // Default hash table size for streaming relations (Size() = -1). If 0, uses 256.
@@ -103,8 +99,6 @@ func (o ExecutorOptions) windowGrowth() int {
 func (o ExecutorOptions) populated() bool {
 	return o.EnableTrueStreaming ||
 		o.EnableSymmetricHashJoin ||
-		o.EnableParallelSubqueries ||
-		o.MaxSubqueryWorkers != 0 ||
 		o.EnableStreamingJoins ||
 		o.DefaultHashTableSize != 0 ||
 		o.EnableStreamingAggregation ||

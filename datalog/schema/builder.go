@@ -154,16 +154,10 @@ func (ab *AttributeBuilder) Add() *Builder {
 		return ab.parent
 	}
 
-	// Reject attribute names too long to store without truncation/aliasing.
-	if n := len(ab.def.Ident.String()); n > datalog.MaxAttributeBytes {
-		ab.parent.errors = append(ab.parent.errors, fmt.Errorf("attribute %q is %d bytes, exceeds the %d-byte storage limit", ab.def.Ident.String(), n, datalog.MaxAttributeBytes))
-		return ab.parent
-	}
-
-	// Schema.Add panics on this; the builder reports it as an error.
-	if ab.def.NeverZeroValue && ab.def.ValueType == nil {
-		ab.parent.errors = append(ab.parent.errors,
-			fmt.Errorf("attribute %s: NeverZeroValue requires a value type", ab.def.Ident))
+	// Schema.Add panics on what ValidateDefinition refuses; the builder
+	// records it as an error for Build.
+	if err := ValidateDefinition(ab.def); err != nil {
+		ab.parent.errors = append(ab.parent.errors, err)
 		return ab.parent
 	}
 

@@ -81,6 +81,34 @@ func seedHead(name Symbol, arity int) []Symbol {
 // invocation over the required run.
 var ScopeRequired = mint(scopeNamespace, datalog.NewSymbol("required"))
 
+// ScopeInput names the variable a nested scope's required run carries a
+// collection input's whole value under, by the input's call position:
+// ?scope/input.2. The scope's clauses open by binding the input's members
+// from it, so the members join the body as a group and the inner find
+// aggregates over them per argument value.
+func ScopeInput(position int) Symbol {
+	return datalog.NewSymbol("?" + scopeNamespace + "/input." + strconv.Itoa(position))
+}
+
+// unifyNamespace leads the namespace of the variables a data pattern's
+// later occurrences of one variable are written as.
+const unifyNamespace = "unify"
+
+// UnifiedVariable names the variable a data pattern's later occurrence of
+// sym at position is written as, ?unify/x.2 for ?x at the value position,
+// the variable's own namespace following unify when it has one. The pattern
+// then states the equality of sym with it, so the two positions agree.
+func UnifiedVariable(sym Symbol, position int) Symbol {
+	ns := "?" + unifyNamespace
+	name := sym.Name()
+	if own := sym.Namespace(); own != "" {
+		ns += "." + strings.TrimPrefix(own, "?")
+	} else {
+		name = strings.TrimPrefix(name, "?")
+	}
+	return datalog.NewSymbol(ns + "/" + name + "." + strconv.Itoa(position))
+}
+
 // SeedRestricted reports whether a predicate's relation holds only what a
 // seed reaches: the magic and adorned predicates the rewrite mints, their
 // deltas, and scope/required, the tuples a nested scope runs over. A body's

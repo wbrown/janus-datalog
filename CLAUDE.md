@@ -360,7 +360,7 @@ The storage layer connects the query engine to BadgerDB:
    - The running schema has one home: the database runs with what its store states
    - `DatabaseOptions.RefuseUnknownAttributes` / `db.WithRefuseUnknownAttributes()` refuses a query, pull or `PullInto` naming an attribute the schema does not declare, as `*schema.UnknownAttributeError`
    - The option requires a schema: opening with it and none, or `SetSchema(nil)` on a refusing database, is an error
-   - A parsed `query.Query` collects the attributes it names once, under a `sync.Once`, so the check is one schema lookup per attribute per execution
+   - The plan holds the roster the prepared text names, collected once at planning under `PlannerOptions.CollectRosters`, and the check reads it there, so the check is one schema lookup per attribute per execution
    - A `Query` is never copied by value, and a derived query is built from its parsed parts
    - See [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md), "Schema as Facts", and [docs/proposals/RULES_WITNESSES_AND_SPECULATIVE_VALUES.md](docs/proposals/RULES_WITNESSES_AND_SPECULATIVE_VALUES.md) §4 and §5
 3. **Rules and recursion, with bounds and cancellation** - A rule set is passed as the `%` input: a `*query.RuleSet` from `parser.ParseRules` or the builder, or its text. It declares predicates a query invokes as `(name args...)` clauses. An invocation evaluates its predicate when its clause runs
@@ -443,7 +443,7 @@ The storage layer connects the query engine to BadgerDB:
 12. **Aggregation functions** - `sum`, `count`, `avg`, `min`, `max` with grouping support (with proper time.Time support)
 13. **Temporal queries** - ElementID-based AsOf/History queries for time-travel
 14. **Time extraction functions** - `year`, `month`, `day`, `hour`, `minute`, `second` for temporal analysis
-15. **Subqueries** - Full implementation with TupleBinding and RelationBinding support
+15. **Subqueries** - A subquery's result enters its scope as the relation over its binding's symbols, under every spelling Datomic's binding grammar gives (`docs/proposals/NESTED_SCOPES_AS_QUERIES.md` §2.5)
 16. **Result/Relation unification** - Eliminated redundant Result type, unified API
 17. **Table formatter** - Markdown table formatting using tablewriter library
 18. **Order-by clause** - Full implementation with multi-symbol sorting and direction control
@@ -1185,23 +1185,27 @@ bugs just as easily as a missing note hides real ones.
 
 ---
 
-### RelationInput and Subquery Iteration (2025-08-26)
+### RelationInput and Subquery Iteration (2025-08-26, superseded 2026-10-22)
 
-**Problem**: Subqueries were executing sequentially for each input combination (870 times for OHLC queries)
+**Status**: Superseded. A relation input is a relation the query joins once:
+`executeRealizedPlan` binds every input as one group through
+`BindQueryInputs` (`datalog/executor/executor_utils.go`), each entry symbol
+read from the given relation's own symbol, and the plan runs once over it. An
+aggregate in the `:find` is taken over the whole join, grouped by the find's
+variables; the per-tuple aggregate is spelled by naming the input's symbols in
+the `:find`. The derivation is `docs/proposals/RELATION_INPUT_PROOF.md`.
 
-**Solution Implemented**: Proper RelationInput iteration semantics
-- `:in $ [[?x ?y] ...]` now iterates over each tuple
-- Query executes once per tuple with correct aggregation scoping
-- Semantically correct (each tuple processed independently)
+**What this entry recorded**: a reading under which `:in $ [[?x ?y] ...]` ran
+the query once per input tuple and computed each aggregate per tuple,
+introduced in place of running a subquery once per input combination (870
+runs for the OHLC queries; `docs/archive/2025-10/SUBQUERY_PERFORMANCE_ANALYSIS.md`).
+Every answer that reading gave is the join's answer with the input's symbols
+named in the `:find`, and the aggregate over the whole join, which that
+reading could not spell, is the join's answer with them left out.
 
-**Current Status**:
-- ✅ Correct semantics - aggregations compute per-tuple not globally
-- ⏳ Still sequential execution (performance optimization needed)
-- See `docs/archive/2025-10/SUBQUERY_PERFORMANCE_ANALYSIS.md` for full details
-
-**Key Insight**: Datalog is not SQL - no implicit GROUP BY. Getting the semantics right is more important than speed.
-
-**Pattern**: Correctness first, performance second. Don't optimize prematurely if it breaks semantics.
+**Pattern**: One spelling, one meaning. A form of the engine's own is a
+synonym of a Datomic form, never a form with a meaning of its own
+(`docs/proposals/NESTED_SCOPES_AS_QUERIES.md`, goal 12).
 
 ---
 

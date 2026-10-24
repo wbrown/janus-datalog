@@ -115,6 +115,12 @@ type Database struct {
 	// queued behind it. It must not block or touch the database.
 	onInstallLock func()
 
+	// onInstallLocked, if set, is invoked by SetSchema once it holds
+	// schemaInstallMu. Test-only (nil in production); lets a test tell a call
+	// waiting on the lock from one holding it. It must not block or touch the
+	// database.
+	onInstallLocked func()
+
 	// Rollback (TruncateTo) coordination: rollbackInProgress and drainCond are guarded by
 	// mu (drainCond signals the rollback's drain as activeTx shrinks); rollbackMu
 	// serializes one rollback against another.
@@ -389,10 +395,16 @@ func (d *Database) SetSchema(s schema.SchemaProvider) error {
 	}
 	d.schemaInstallMu.Lock()
 	defer d.schemaInstallMu.Unlock()
+	if d.onInstallLocked != nil {
+		d.onInstallLocked()
+	}
+	if err := d.installLocked(s, true); err != nil {
+		return err
+	}
 	d.mu.Lock()
 	d.givenSchema = s
 	d.mu.Unlock()
-	return d.installLocked(true)
+	return nil
 }
 
 // ReplicaID returns this database's replica identifier for CRDT operations.
@@ -735,10 +747,6 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableTrueStreaming:     true,  // No auto-materialization
 		EnableSymmetricHashJoin: false, // Conservative for now
 
-		// Executor parallel options
-		EnableParallelSubqueries: true, // Parallel subquery execution
-		MaxSubqueryWorkers:       0,    // 0 = 4 workers
-
 		// Other executor options
 		EnableStreamingJoins:       false, // Keep false for stability
 		EnableStreamingAggregation: true,  // Streaming aggregation
@@ -762,12 +770,11 @@ func (d *Database) NewExecutor() *executor.Executor {
 // matcherWithExecOptions, so the executor and the matcher's relations agree on
 // the effective options — including opts.Handler, which reaches every relation
 // either constructs — and schema, cache, and temporal mode (AsOf/History) are
-// all applied. A database that refuses unknown attributes has the executor's
-// plans carry their rosters, which the check at the executor's entry reads
-// against its schema.
+// all applied. The matcher carries whether the database refuses unknown
+// attributes, and the executor has its plans carry their rosters when it
+// does, for the check at its entry.
 func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor.Executor {
 	opts.Cache = d.planCache
-	opts.CollectRosters = opts.CollectRosters || d.refuseUnknown
 	matcher := d.matcherWithExecOptions(opts)
 	return executor.NewExecutorWithOptions(matcher, d, opts)
 }
@@ -915,19 +922,6 @@ func buildSourceMap(
 		sources[datalog.SymDollar] = dbMatcher
 	}
 	return sources
-}
-
-// anySourceRefusesUnknownAttributes reports whether a source of the map
-// refuses attributes its schema does not declare, each asked as it answers
-// for itself as $, as the router asks it. A plan for a query over such
-// sources carries its roster, which the check at the executor's entry reads.
-func anySourceRefusesUnknownAttributes(sources map[query.Symbol]executor.PatternMatcher) bool {
-	for _, source := range sources {
-		if v, ok := source.(executor.AttributeVocabulary); ok && v.RefusesUnknownAttributes(datalog.SymDollar) {
-			return true
-		}
-	}
-	return false
 }
 
 // validateQuerySources checks that all sources declared in the query's :in clause
@@ -2008,8 +2002,8 @@ func validateAttributeStorable(t *Transaction, a datalog.Keyword) error {
 	if a == nil {
 		return fmt.Errorf("nil attribute")
 	}
-	if n := len(a.String()); n > datalog.MaxAttributeBytes {
-		return fmt.Errorf("attribute %q is %d bytes, exceeds the %d-byte storage limit", a.String(), n, datalog.MaxAttributeBytes)
+	if err := datalog.ValidateAttributeWidth(a); err != nil {
+		return err
 	}
 	if !t.engine && engineSchema.GetAttribute(a) != nil {
 		return fmt.Errorf("attribute %s is the engine's: the engine alone writes it", a)
@@ -2022,9 +2016,9 @@ func validateAttributeStorable(t *Transaction, a datalog.Keyword) error {
 // values) cannot be used as Go map keys directly, so membership maps key by
 // this string and carry the original value separately. It is byte-for-byte the
 // same key resolveAddWinsSet uses internally, so the Set diff lines up with
-// stored membership. Note: this keys floats by raw bits, which differs from
-// datalog.ValuesEqual at float corner cases (±0.0, NaN) but matches the read
-// path — the property that matters here.
+// stored membership. The encoding agrees with datalog.ValuesEqual on every
+// value the domain admits: NormalizeValue takes a signed zero as zero, and NaN
+// is excluded at the boundary.
 func memberKey(v interface{}) string {
 	return string(append([]byte{byte(datalog.Type(v))}, datalog.ValueBytes(v)...))
 }
@@ -3299,15 +3293,13 @@ func entryToValue(entry *CacheEntry, valueType datalog.Keyword) interface{} {
 // This is used by wildcard pulls to get all attributes with proper CRDT
 // resolution.
 //
-// Two paths:
-//   - With declarations beyond the engine's words (declaredWildcardAttributes):
-//     enumerate them and resolve each
-//   - Without: scan EAVT to discover the entity's attributes, then resolve
-//
-// Both paths delegate the per-attribute resolution to ResolveEntityAttributes,
-// which handles cache-aware and cache-less modes uniformly. Per the codebase
-// principle that the cache is an optimization, not a correctness requirement,
-// this method works correctly under DisableCache: true.
+// The attributes answered are the entity's own, kept to the set
+// wildcardAttributes builds when the store declares any. In history mode an
+// EAVT scan discovers them and ResolveEntityAttributes resolves each;
+// otherwise one walk of the entity's EATV range discovers and resolves them,
+// the batch wildcard walk applied to one entity. Per the codebase principle
+// that the cache is an optimization, not a correctness requirement, this
+// method works correctly under DisableCache: true.
 //
 // Returns a map of keyword -> resolved value. The value type depends on
 // cardinality:
@@ -3315,14 +3307,7 @@ func entryToValue(entry *CacheEntry, valueType datalog.Keyword) interface{} {
 //   - CardinalityMany: []interface{} (add-wins set)
 //   - CardinalityVector: []interface{} (RGA ordered list)
 func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Keyword]interface{}, error) {
-	if declared := d.declaredWildcardAttributes(); declared != nil {
-		keywords := make([]datalog.Keyword, 0, len(declared))
-		for attr := range declared {
-			keywords = append(keywords, attr)
-		}
-		return d.ResolveEntityAttributes(entity, keywords)
-	}
-
+	declared := d.installed.Load().wildcard
 	matcher := d.Matcher().(*PatternMatcher)
 
 	var opened time.Time
@@ -3390,23 +3375,29 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 
 		keywords := make([]datalog.Keyword, 0, len(seenAttrs))
 		for _, kw := range seenAttrs {
+			if declared != nil {
+				if _, ok := declared[kw]; !ok {
+					continue
+				}
+			}
 			keywords = append(keywords, kw)
 		}
-		// What this branch's own scan served: the attributes it discovered. The
-		// per-attribute resolution below is its own read and reports itself.
+		// What this branch's own scan served: the attributes it discovered and
+		// kept. The per-attribute resolution below is its own read and reports
+		// itself.
 		served = len(keywords)
 		return d.ResolveEntityAttributes(entity, keywords)
 	}
 
-	// No schema, latest or as-of: walk the entity's EATV range once,
-	// discovering and resolving every attribute from the same scan — one
-	// store read session instead of a discovery scan plus one lookup per
-	// attribute. This is the batch wildcard walk applied to one entity.
+	// Latest or as-of: walk the entity's EATV range once, discovering and
+	// resolving every attribute from the same scan — one store read session
+	// instead of a discovery scan plus one lookup per attribute. This is the
+	// batch wildcard walk applied to one entity.
 	iterator, err := OpenKeyScan(d.store, report, bound)
 	if err != nil {
 		return nil, fmt.Errorf("EATV scan failed: %w", err)
 	}
-	result, pending, err := d.resolveWildcardEntity(matcher, iterator, entity, nil)
+	result, pending, err := d.resolveWildcardEntity(matcher, iterator, entity, declared)
 	if err != nil {
 		_ = iterator.Close()
 		return nil, err

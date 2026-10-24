@@ -33,8 +33,7 @@ func (e *DefaultQueryExecutor) executeBoundInvocation(ctx *Context, inv *query.R
 			outputs = append(outputs, sym)
 		}
 	}
-	runSyms, joinSyms := runSymbols(required, outerSyms)
-	environment, err := environmentRelation(ctx, runSyms, outerSyms)
+	environment, err := environmentRelation(ctx, required, outerSyms)
 	if err != nil {
 		return nil, err
 	}
@@ -51,8 +50,7 @@ func (e *DefaultQueryExecutor) executeBoundInvocation(ctx *Context, inv *query.R
 		required:    required,
 		find:        find,
 		given:       required,
-		runSyms:     runSyms,
-		key:         joinSyms,
+		key:         keySymbols(required, outerSyms),
 		environment: environment,
 	}
 	plans, err := frameBranches(e, ctx, [][]query.Clause{{inv}}, f)

@@ -252,6 +252,41 @@ func TestExplain_PlansThePreparedQuery(t *testing.T) {
 	}
 }
 
+// A not inside an or branch holding a variable that occurs nowhere else is an
+// existential of the branch, so the branch admits an entity carrying no such
+// datom, written with the variable, with the blank, and under an or-join
+// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.3, the fourth example): of
+// three entities carrying :a, the one with :b and no :c and the one with :d
+// answer, and the one with :b and :c does not.
+func TestPlan_AnExistentialUnderANotInsideAnOrBranchIsTheBranchsOwn(t *testing.T) {
+	queries := []string{
+		`[:find ?e :where [?e :a _] (or (and [?e :b _] (not [?e :c ?z])) [?e :d _])]`,
+		`[:find ?e :where [?e :a _] (or (and [?e :b _] (not [?e :c _])) [?e :d _])]`,
+		`[:find ?e :where [?e :a _] (or-join [?e] (and [?e :b _] (not [?e :c ?z])) [?e :d _])]`,
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := map[datalog.Identity]string{}
+			tx := d.NewTransaction()
+			for name, attrs := range map[string][]string{"e1": {":a", ":b"}, "e2": {":a", ":b", ":c"}, "e3": {":a", ":d"}} {
+				id := datalog.NewIdentity(name)
+				names[id] = name
+				for _, a := range attrs {
+					require.NoError(t, tx.Add(id, kw(a), int64(1)))
+				}
+			}
+			_, err := tx.Commit()
+			require.NoError(t, err)
+			for _, text := range queries {
+				rel, err := d.Query(text)
+				require.NoError(t, err, text)
+				require.Equal(t, []string{"e1", "e3"}, renderedRows(t, rel, names), text)
+			}
+		})
+	}
+}
+
 // requirePhasesOfHeaderForms asserts that no phase of plan holds an or, a not
 // or an or-default: every nested form a phase carries states its header.
 func requirePhasesOfHeaderForms(t *testing.T, entry string, plan *planner.RealizedPlan) {

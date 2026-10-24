@@ -409,10 +409,10 @@ func TestOrJoinWideHeaderInBound(t *testing.T) {
 	}
 }
 
-// TestOrJoinEnvironmentUnderRelationInputIteration pins the scalar input
-// ?ref, named in the required run, reaching the branches on every per-tuple
-// run of a plan a relation input iterates.
-func TestOrJoinEnvironmentUnderRelationInputIteration(t *testing.T) {
+// TestOrJoinEnvironmentBesideARelationInput pins the scalar input ?ref,
+// named in the required run, reaching the branches when a relation input
+// binds ?r as a group of two regions the plan runs once over.
+func TestOrJoinEnvironmentBesideARelationInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -444,7 +444,7 @@ func TestOrJoinEnvironmentUnderRelationInputIteration(t *testing.T) {
 			require.NoError(t, err)
 			got := collectEntityResults(t, rel)
 			require.Equal(t, map[string]bool{namedA.String(): true, namedB.String(): true}, got,
-				"the input the required run names reaches the branches on every per-tuple run")
+				"the input the required run names reaches the branches beside a relation input")
 		})
 	}
 }

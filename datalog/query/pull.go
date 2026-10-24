@@ -125,10 +125,15 @@ func KeyNameFromString(s string) string {
 	return s
 }
 
-// DBIDKey is the map key for entity ID in pull results.
-// This corresponds to the :db/id attribute but without the leading colon,
-// consistent with how all pull result keys are formatted.
-const DBIDKey = "db/id"
+// DBID is the engine's word for an entity's id in a pull pattern. It is
+// well-known, so its pointer identity survives ClearInterns and the puller
+// compares against it by pointer. A pull answers the entity under its key
+// when the pattern names it or holds a wildcard.
+var DBID = datalog.WellKnownKeyword(":db/id")
+
+// DBIDKey is DBID's key in a pull result: the attribute name without the
+// leading colon, as every pull result key is formatted.
+var DBIDKey = KeyName(DBID)
 
 // ============================================================================
 // Resolved Pull Types

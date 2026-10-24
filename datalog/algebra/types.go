@@ -141,13 +141,21 @@ func (m *Map) String() string {
 	return m.Expression.String()
 }
 
+// Default is the value a symbol takes where a left outer join's right side
+// has no match or a lateral join's inner query answers nothing: a fallback
+// ground's value for the symbol the ground binds.
+type Default struct {
+	Symbol query.Symbol
+	Value  interface{}
+}
+
 // Join combines two relations. R ⋈ S
 type Join struct {
-	Kind          JoinKind         // Inner or LeftOuter
-	JoinSymbols   []query.Symbol   // Symbols to join on (empty = natural join on shared symbols)
-	Output        []query.Symbol   // Combined output symbols
-	DefaultValues []interface{}    // For LeftOuterJoin: fill these when right side has no match
-	DefaultAttr   *datalog.Keyword // For get-else rewrite: the attribute, enabling typed defaults
+	Kind        JoinKind         // Inner or LeftOuter
+	JoinSymbols []query.Symbol   // Symbols to join on (empty = natural join on shared symbols)
+	Output      []query.Symbol   // Combined output symbols
+	Defaults    []Default        // For LeftOuterJoin: each symbol's value when right side has no match
+	DefaultAttr *datalog.Keyword // For get-else rewrite: the attribute, enabling typed defaults
 }
 
 func (j *Join) OutputSymbols() []query.Symbol { return j.Output }
@@ -240,12 +248,12 @@ type LateralJoin struct {
 	// compile→decompile round trip is lossless. CorrelationVars is the
 	// derived variable subset; rebuilding the call site from it alone drops
 	// constant arguments and re-points named sources at $.
-	Inputs        []query.PatternElement
-	InnerQuery    *query.Query   // The nested query to execute per outer tuple
-	Binding       interface{}    // the call's query.BindingForm: ScalarBinding, CollectionBinding or RelationBinding
-	Output        []query.Symbol // Combined output (outer + binding symbols)
-	DefaultValues []interface{}  // Fallback values when inner produces no results (from OR-fallback ground)
-	Rules         *query.RuleSet // The rule set the call's % argument binds; nil when the call passes no %
+	Inputs     []query.PatternElement
+	InnerQuery *query.Query   // The nested query to execute per outer tuple
+	Binding    interface{}    // the call's query.BindingForm: ScalarBinding, CollectionBinding or RelationBinding
+	Output     []query.Symbol // Combined output (outer + binding symbols)
+	Defaults   []Default      // Each symbol's value when inner produces no results (from the OR-fallback ground)
+	Rules      *query.RuleSet // The rule set the call's % argument binds; nil when the call passes no %
 }
 
 func (l *LateralJoin) OutputSymbols() []query.Symbol { return l.Output }
@@ -255,7 +263,7 @@ func (l *LateralJoin) String() string {
 		vars[i] = v.String()
 	}
 	hasDefaults := ""
-	if len(l.DefaultValues) > 0 {
+	if len(l.Defaults) > 0 {
 		hasDefaults = " +defaults"
 	}
 	return fmt.Sprintf("⋈_L(%s)%s", strings.Join(vars, ", "), hasDefaults)

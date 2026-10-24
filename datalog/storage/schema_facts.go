@@ -74,14 +74,41 @@ const definitionWords = `[:db/ident :db/valueType :db/cardinality :db/unique :db
 
 // installedSchema is what a database runs with, published as one immutable
 // value: the effective schema, the engine's words over the definitions the
-// store carries as facts and the ones its ops infer, and the stored
-// definitions themselves. installSchema and adoptDeclarations publish a new
-// value, and every reader loads the current one in a single atomic
-// operation, so a reader never pairs one schema's declarations with
-// another's definitions.
+// store carries as facts and the ones its ops infer, the stored definitions
+// themselves, and the set a wildcard pull resolves under them. installSchema
+// and adoptDeclarations publish a new value, and every reader loads the
+// current one in a single atomic operation, so a reader never pairs one
+// schema's declarations with another's definitions.
 type installedSchema struct {
 	effective schema.SchemaProvider
 	declared  *schema.Schema
+	wildcard  map[datalog.Keyword]struct{}
+}
+
+// wildcardAttributes is the set a wildcard pull resolves under the stored
+// declarations: nil when they declare no attribute beyond the engine's words,
+// and a wildcard pull then resolves every attribute the entity carries;
+// otherwise the declared attributes with the engine's words, which every
+// running schema declares. A definition inferred from the ops is not a
+// declaration and is not in the set.
+func wildcardAttributes(declared *schema.Schema) map[datalog.Keyword]struct{} {
+	var set map[datalog.Keyword]struct{}
+	for _, definition := range declared.Attributes() {
+		if engineSchema.GetAttribute(definition.Ident) != nil {
+			continue
+		}
+		if set == nil {
+			set = make(map[datalog.Keyword]struct{})
+		}
+		set[definition.Ident] = struct{}{}
+	}
+	if set == nil {
+		return nil
+	}
+	for _, definition := range engineSchema.Attributes() {
+		set[definition.Ident] = struct{}{}
+	}
+	return set
 }
 
 // readSchemaFacts reads the definitions the store holds: the query names each
@@ -218,10 +245,18 @@ type declarationWord struct {
 // ref moved to that declaration. A word a declaration does not carry is absent
 // from its entity, so nothing is withdrawn. Nothing differing opens no
 // transaction: Commit writes a commit mark even for an empty transaction, and
-// an open that changes nothing writes nothing.
+// an open that changes nothing writes nothing. Every given definition is
+// checked through schema.ValidateDefinition before any is written, since a
+// provider of the caller's own hands out definitions as given, and a stored
+// definition the schema does not admit refuses every later open.
 func assertSchemaFacts(d *Database, stored, given schema.SchemaProvider) error {
 	defs := given.Attributes()
 	slices.SortFunc(defs, func(a, b *schema.AttributeDefinition) int { return a.Ident.Compare(b.Ident) })
+	for _, def := range defs {
+		if err := schema.ValidateDefinition(def); err != nil {
+			return fmt.Errorf("definition of %s: %w", def.Ident, err)
+		}
+	}
 
 	var declared []*schema.AttributeDefinition
 	for _, def := range defs {
@@ -304,14 +339,17 @@ var errRefuseUnknownNeedsSchema = errors.New("RefuseUnknownAttributes requires a
 func (d *Database) installSchema(assertGiven bool) error {
 	d.schemaInstallMu.Lock()
 	defer d.schemaInstallMu.Unlock()
-	return d.installLocked(assertGiven)
-}
-
-// installLocked is installSchema with schemaInstallMu held by the caller.
-func (d *Database) installLocked(assertGiven bool) error {
 	d.mu.RLock()
 	given := d.givenSchema
 	d.mu.RUnlock()
+	return d.installLocked(given, assertGiven)
+}
+
+// installLocked is installSchema with schemaInstallMu held by the caller and
+// the schema to install given: the recorded one for an import, a rewind and
+// an adoption, and the argument for SetSchema, which records it only once
+// this install has succeeded.
+func (d *Database) installLocked(given schema.SchemaProvider, assertGiven bool) error {
 	if d.refuseUnknown && given == nil {
 		return errRefuseUnknownNeedsSchema
 	}
@@ -340,7 +378,7 @@ func (d *Database) installLocked(assertGiven bool) error {
 	}
 
 	previous := d.installed.Load().effective
-	d.installed.Store(&installedSchema{effective: effective, declared: stored})
+	d.installed.Store(&installedSchema{effective: effective, declared: stored, wildcard: wildcardAttributes(stored)})
 	d.invalidateChangedDefinitions(previous, effective)
 	return nil
 }
@@ -362,7 +400,10 @@ func (d *Database) adoptDeclarations(declared *schema.Schema) error {
 	if err := assertSchemaFacts(d, stored, declared); err != nil {
 		return err
 	}
-	return d.installLocked(false)
+	d.mu.RLock()
+	given := d.givenSchema
+	d.mu.RUnlock()
+	return d.installLocked(given, false)
 }
 
 // declaredSchema returns the definitions the store carries as facts.
@@ -430,7 +471,7 @@ var engineSchema = func() *schema.Schema {
 	}
 	return schema.NewSchema().
 		Add(one(datalog.WellKnownKeyword(":db/txInstant"), schema.TypeInstant)).
-		Add(one(datalog.WellKnownKeyword(":db/id"), schema.TypeRef)).
+		Add(one(query.DBID, schema.TypeRef)).
 		Add(one(snapshotNameAttr, schema.TypeString)).
 		Add(one(snapshotAtLamportAttr, schema.TypeLong)).
 		Add(one(snapshotAtReplicaAttr, schema.TypeLong)).

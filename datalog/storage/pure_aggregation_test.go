@@ -49,8 +49,6 @@ func testStorageBackedPureAggregation(t *testing.T, db *Database, mode optimizer
 	execOpts := executor.ExecutorOptions{
 		EnableTrueStreaming:        true,
 		EnableSymmetricHashJoin:    false,
-		EnableParallelSubqueries:   true,
-		MaxSubqueryWorkers:         0,
 		EnableStreamingJoins:       false,
 		EnableStreamingAggregation: true,
 	}
@@ -59,8 +57,6 @@ func testStorageBackedPureAggregation(t *testing.T, db *Database, mode optimizer
 		EnableAlgebraOptimizer:     mode.algebra,
 		EnableTrueStreaming:        execOpts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:    execOpts.EnableSymmetricHashJoin,
-		EnableParallelSubqueries:   execOpts.EnableParallelSubqueries,
-		MaxSubqueryWorkers:         execOpts.MaxSubqueryWorkers,
 		EnableStreamingJoins:       execOpts.EnableStreamingJoins,
 		EnableStreamingAggregation: execOpts.EnableStreamingAggregation,
 	}

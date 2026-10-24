@@ -67,7 +67,8 @@ func TestTwoCollections_PlanAndBind(t *testing.T) {
 	inputRelations := []Relation{entityRel, attrRel}
 
 	// Test BindQueryInputs
-	bound := BindQueryInputs(q, inputRelations)
+	bound, err := BindQueryInputs(q, inputRelations)
+	require.NoError(t, err)
 	t.Logf("Bound relation - symbols: %v, size: %d", bound.Symbols(), bound.Size())
 	it := bound.Iterator()
 	for it.Next() {

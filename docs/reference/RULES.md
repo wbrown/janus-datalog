@@ -30,8 +30,8 @@ clause in `:where`:
 
 A head's arguments are distinct variables. Every rule for one name has the
 same arity. Every invocation uses that arity. A predicate's name lies outside
-the namespaces the engine names its own predicates in, `adorned`, `magic`
-and `delta`; a rule set naming a predicate there is refused.
+the namespaces the engine names its own predicates in, `adorned`, `magic`,
+`delta` and `scope`; a rule set naming a predicate there is refused.
 
 A head may begin with a vector of variables. This is Datomic's required
 binding form. The caller binds those variables. The body may use them without
@@ -196,7 +196,16 @@ This is the magic-set rewrite:
   where the bindings it receives leave a position its predicate requires
   free. The set is rebuilt with that site left as it is, so no rewrite is
   refused.
-- A body invocation that nothing before it binds keeps the original rules.
+- A body invocation that nothing before it binds keeps the original rules,
+  unless a rule of its predicate, or of a predicate its rules invoke at any
+  depth, invokes a predicate with required positions. Then it is rewritten
+  with its head all free, at every level, so each required predicate is
+  adorned from the clauses before its invocation and derived once in the
+  rewritten set, never at its clause on every run of the body invoking it.
+  Under `not`, `not-join`, `or-default`, `or-default-join` or a subquery
+  whose inner query aggregates, that rewrite holds when the set it gives is
+  accepted, and the invocation keeps the original rules otherwise, as the
+  bullet above states for a bound one.
 - A subquery's inner query is a scope of the rewrite: its `:in` symbols
   stand for the call's arguments, and an invocation inside it is adorned by
   the arguments the clauses before the call bind and the inner clauses
@@ -241,9 +250,12 @@ either, reads a relation holding only what the seed reaches, so the planner
 schedules it before the body's patterns, which then seek on the bindings it
 provides. An invocation of any other predicate, `reach` or `delta/reach`,
 reads an unrestricted relation. The body's patterns scan first and it joins
-them. A database opened with `RefuseUnknownAttributes` refuses a rule body
-naming an attribute its schema does not declare, as it refuses the query's
-own.
+them.
+
+A source opened with `RefuseUnknownAttributes` refuses a rule body whose
+pattern on it names an attribute its schema does not declare. A keyword an
+argument carries into a pattern's attribute position is a value, and the
+pattern evaluates over the store.
 
 ## Bounds
 
@@ -358,11 +370,26 @@ panics on them. See [QUERY_BUILDER.md](QUERY_BUILDER.md).
 
 `Query` wraps an execution error with `%w`, so `errors.As` reaches each.
 
+Four more shapes are refused as plain errors naming the rule:
+
+- A predicate named for a clause form (`or`, `not`, `and` and the rest) is refused when the set is built, since a list headed by that name never parses as an invocation: "rule or: or heads a clause form, so a list headed by it never parses as an invocation".
+- A predicate named as a variable is refused when the set is built: "rule ?r: a predicate's name is not a variable".
+- A head naming no variable is refused when the set is built: "rule r: a head names at least one variable".
+- A `:in` declaring `%` twice is refused at every query boundary through `query.ValidateQuery`: "a query declares % at most once".
+
 ## Deferred
 
 - **Recursive aggregation**: an aggregate over a recursive predicate inside
   its own stratum (shortest paths, counts over closures). A body aggregates
   over a completed stratum through a subquery, as a query does.
+- **A source on an invocation**: Datomic's rule expression may carry a
+  source prefix, `[$src (reach ?a ?b)]` or `($src reach ?a ?b)`, under which
+  the rules evaluate over that source, as a database function's first
+  argument names the source it reads, `(get-else $src ?e :a "d")`. An
+  invocation here holds its name and its arguments and no source, and
+  `get-else`, `get-some` and `missing?` read `$`. Under the extension the
+  roster names an attribute on whichever source the function or the rule
+  body reads.
 
 ## Measurement
 
@@ -376,7 +403,7 @@ of its session history.
 ## Tests
 
 `datalog/query/rules_test.go` (the set and its refusals) and
-`datalog/query/magic_test.go` (the rewrite), `datalog/parser/rules_test.go`,
+`datalog/planner/magic_test.go` (the rewrite), `datalog/parser/rules_test.go`,
 `datalog/executor/rules_test.go` (the fixpoint, the invocation and the bound
 invocation), `datalog/executor/cancellation_test.go`,
 `datalog/storage/rules_test.go` and `datalog/storage/cancellation_test.go`

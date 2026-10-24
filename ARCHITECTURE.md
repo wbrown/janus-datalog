@@ -53,7 +53,7 @@ All query paths converge on the same planner and executor. The difference is how
                   (raw tuples)     (struct mapping)  (no planner)
 ```
 
-Preparation, `query.Prepare(q, rules)`, runs once per execution at the executor's entry, after the `QueryInvoked` event and before planning, and the entry reports it as `QueryPrepared`, carrying the prepared query, whether the inference rewrote a form, and preparation's time, so a handler and `Analyze` see what the inference wrote and what it cost; `Explain`, `ExplainAlgebra` and `Analyze` call it before they plan. It composes the four static steps, each a function of the text and the rule set bound to `%`: `ValidateInputShapes` on `:in`, `ValidateStaticClauseShapes` on `:where`, `InferHeaders`, which rewrites every `or`, `not` and `or-default` at any depth as the header form stating its interface, and the check that every invocation names a predicate the rule set defines at its arity. Nothing after preparation sees a headerless form: `ScopeOf` reads a nested form's header alone and panics on a headerless one, so a skipped preparation surfaces at once.
+Preparation, `query.Prepare(q, rules)`, runs once per execution at the executor's entry, after the `QueryInvoked` event and before planning, and the entry reports it as `QueryPrepared`, carrying the prepared query, whether the inference rewrote a form, and preparation's time, so a handler and `Analyze` see what the inference wrote and what it cost; `Explain`, `ExplainAlgebra` and `Analyze` call it before they plan. It composes the four static steps, each a function of the text and the rule set bound to `%`: `ValidateQuery`, which runs every static check the text admits and reaches every inner query (`docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §6); `InferHeaders`, which rewrites every `or`, `not` and `or-default` at any depth as the header form stating its interface; `UnifyPatterns`, which writes a pattern naming one variable at several positions as the pattern over distinct variables with one equality per later occurrence; and the check that a rule set was given when the query invokes a predicate and that every invocation names a predicate it defines at its arity. Nothing after preparation sees a headerless form: `ScopeOf` reads a nested form's header alone and panics on a headerless one, so a skipped preparation surfaces at once.
 
 ### Entry Point 1: EDN String
 
@@ -600,7 +600,7 @@ inactive logical-rewrite experiment.
 
 **Explain support** (`explain_analysis.go`): Optional population of per-phase `Patterns`, `Expressions`, `Predicates`, `Subqueries`, `Invocations` with index selection, selectivity scores, and binding analysis for plan inspection.
 
-**NOT/OR/Subquery/invocation handling**: All treated as first-class clauses in the greedy algorithm. Every nested form reaches the planner as a header form, and the planner reads its header alone. A not-join requires its header bound and provides nothing (score +2, naturally deferred). An or-join or or-default-join requires its required run and provides its outputs (score +80). A rule invocation provides its variable arguments (score +80). It requires the positions its predicate declares as required bindings, and nothing else. Subqueries require all `:in` correlation symbols (score -50, executed last).
+**NOT/OR/Subquery/invocation handling**: All treated as first-class clauses in the greedy algorithm. Every nested form reaches the planner as a header form, and the planner reads its header alone. A not-join requires its header bound and provides nothing (score +2, naturally deferred). An or-join or or-default-join requires its required run and provides its outputs (score +80). A rule invocation provides its variable arguments (score +80, plus 100 per constant argument and 10 per available variable argument as for a pattern's positions, and +500 for a predicate the seed restricts). It requires the positions its predicate declares as required bindings, and nothing else. Subqueries require all `:in` correlation symbols; a correlated subquery, one with a variable among its inputs, scores −1000 so that it runs after every simultaneously ready clause that can narrow that input, and an uncorrelated one takes no deferral, since it runs once wherever it is placed.
 
 ### Query Execution (`datalog/executor/`)
 
@@ -699,7 +699,6 @@ T(stratum) = T(seed) + Σ_iterations Σ_bodies T(body on delta_{i-1})
 | Mode | Time | When |
 |------|------|------|
 | Per-combination | O(\|combos\| x T(sub)) | Nested `(q ...)` clauses |
-| Parallel RelationInput iteration | O(\|inputs\| x T(query) / workers) | `EnableParallelSubqueries=true` |
 
 ### Pull API
 

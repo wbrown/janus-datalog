@@ -51,9 +51,15 @@ type bindery struct {
 	names                  map[datalog.Identity]string
 }
 
-func binderySheetID(i int) datalog.Identity { return datalog.NewIdentity(fmt.Sprintf("bindery/sheet/%d", i)) }
-func binderyQuireID(j int) datalog.Identity { return datalog.NewIdentity(fmt.Sprintf("bindery/quire/%d", j)) }
-func binderyBlockID(k int) datalog.Identity { return datalog.NewIdentity(fmt.Sprintf("bindery/block/%d", k)) }
+func binderySheetID(i int) datalog.Identity {
+	return datalog.NewIdentity(fmt.Sprintf("bindery/sheet/%d", i))
+}
+func binderyQuireID(j int) datalog.Identity {
+	return datalog.NewIdentity(fmt.Sprintf("bindery/quire/%d", j))
+}
+func binderyBlockID(k int) datalog.Identity {
+	return datalog.NewIdentity(fmt.Sprintf("bindery/block/%d", k))
+}
 func binderyStateID(name string) datalog.Identity {
 	return datalog.NewIdentity("bindery/state/" + name)
 }

@@ -359,16 +359,24 @@ func TestExecuteAggregates(t *testing.T) {
 		}
 	}
 
-	t.Run("error on multiple disjoint groups with aggregates", func(t *testing.T) {
-		// The find reads ?x from one group and sums ?value from another,
-		// and an aggregate runs over one relation.
+	t.Run("the aggregate runs over the product of the groups the find reads", func(t *testing.T) {
+		// The find reads ?x from one group and sums ?value from the pattern's,
+		// so the sum runs over their product, 450 beside the one ?x, and the
+		// group holding ?y, which the find does not read, is asked for one
+		// tuple and dropped.
 		q := &query.Query{
 			Find:  []query.FindElement{query.FindVariable{Symbol: datalog.NewSymbol("?x")}, sum},
 			Where: []query.Clause{pattern},
 		}
-		_, err := executor.Execute(ctx, q, disjoint())
-		if err == nil {
-			t.Error("Expected error for aggregating over disjoint relations")
+		groups, err := executor.Execute(ctx, q, disjoint())
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+		if len(groups) != 1 || groups[0].Size() != 1 {
+			t.Fatalf("Expected one result group of one tuple, got %v", groups)
+		}
+		if got := groups[0].Get(0); got[0] != int64(1) || got[1] != int64(450) {
+			t.Errorf("Expected ?x 1 beside the sum 450 over the product, got %v", got)
 		}
 	})
 

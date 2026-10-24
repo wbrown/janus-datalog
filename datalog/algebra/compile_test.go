@@ -181,7 +181,7 @@ func TestCompileOrFallback(t *testing.T) {
 	if lj != nil {
 		ljData := lj.Data.(*LateralJoin)
 		t.Logf("Found LateralJoin: correlation=%v, defaults=%v",
-			ljData.CorrelationVars, ljData.DefaultValues)
+			ljData.CorrelationVars, ljData.Defaults)
 		assert.NotEmpty(t, ljData.CorrelationVars, "should have correlation variables")
 	} else {
 		t.Log("No LateralJoin found — OR-fallback compiled to different structure")
@@ -931,7 +931,7 @@ func TestRoundTrip_LateralJoin(t *testing.T) {
 
 	ljData := lj.Data.(*LateralJoin)
 	assert.NotEmpty(t, ljData.CorrelationVars, "has correlation variables")
-	assert.NotEmpty(t, ljData.DefaultValues, "has defaults from ground branch")
+	assert.NotEmpty(t, ljData.Defaults, "has defaults from ground branch")
 	assert.NotNil(t, ljData.InnerQuery, "has inner query")
 
 	// Decompile
@@ -977,7 +977,7 @@ func TestRoundTrip_LateralJoinNoDefaults(t *testing.T) {
 	require.NotNil(t, lj, "correlated subquery → LateralJoin")
 
 	ljData := lj.Data.(*LateralJoin)
-	assert.Empty(t, ljData.DefaultValues, "no defaults (no OR-fallback)")
+	assert.Empty(t, ljData.Defaults, "no defaults (no OR-fallback)")
 
 	clauses, err := Decompile(root)
 	require.NoError(t, err)
@@ -995,6 +995,53 @@ func TestRoundTrip_LateralJoinNoDefaults(t *testing.T) {
 	}
 	assert.True(t, hasSubquery, "decompiled has SubqueryPattern")
 	assert.False(t, hasOr, "no OrClause without defaults")
+}
+
+// The default branch of an or-default lowered onto a lateral join keeps each
+// default value with the symbol its ground binds through compile and
+// decompile: [(ground [7 8]) [?u ?v]] decompiles to a ground binding 7 to
+// ?u and 8 to ?v, whatever order the subquery's binding names them in, and
+// the decompiled clauses parse.
+func TestRoundTrip_DefaultsKeepTheirSymbols(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?v ?u
+	  :where [?e :t/b _]
+	         (or-default-join [[?e] ?v ?u]
+	           [(q [:find (max ?w) (min ?w) :in $ ?e :where [?e :t/c ?w]] $ ?e) [[?v ?u]]]
+	           [(ground [7 8]) [?u ?v]])]`)
+	require.NoError(t, err)
+
+	root, err := Compile(mustPrepare(t, q, nil), nil)
+	require.NoError(t, err)
+	clauses, err := Decompile(root)
+	require.NoError(t, err)
+
+	var fallback *query.OrDefaultJoinClause
+	for _, c := range clauses {
+		if oj, ok := c.(*query.OrDefaultJoinClause); ok {
+			fallback = oj
+		}
+	}
+	require.NotNil(t, fallback, "the lowering decompiles to an or-default-join")
+	require.Len(t, fallback.Branches, 2)
+	require.Len(t, fallback.Branches[1], 1, "the default branch is one ground")
+	ground, ok := fallback.Branches[1][0].(*query.Expression)
+	require.True(t, ok, "the default branch is an expression, got %T", fallback.Branches[1][0])
+	fn, ok := ground.Function.(*query.GroundFunction)
+	require.True(t, ok, "the default branch is a ground, got %T", ground.Function)
+	values, ok := query.VectorElements(fn.Value)
+	require.True(t, ok, "a ground of two defaults holds a vector, got %T", fn.Value)
+	symbols := ground.BoundVariables()
+	require.Len(t, values, len(symbols), "one value per bound symbol: %s", ground)
+	bound := map[query.Symbol]interface{}{}
+	for i, sym := range symbols {
+		bound[sym] = values[i]
+	}
+	assert.Equal(t, int64(7), bound[datalog.NewSymbol("?u")], "?u takes 7: %s", ground)
+	assert.Equal(t, int64(8), bound[datalog.NewSymbol("?v")], "?v takes 8: %s", ground)
+
+	decompiled := &query.Query{Find: q.Find, Where: clauses}
+	_, err = parser.ParseQuery(decompiled.String())
+	require.NoError(t, err, "the decompiled clauses parse: %s", decompiled)
 }
 
 // TestCompileAdapterRoundTrip verifies the parse.Node adapter preserves

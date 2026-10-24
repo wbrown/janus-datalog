@@ -1,6 +1,10 @@
 package query
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/wbrown/janus-datalog/datalog"
+)
 
 // ClauseScope is a clause's interface to its enclosing scope. Provides are
 // the variables the clause can bind there; Correlates are its free variables
@@ -180,22 +184,38 @@ func (o *OrDefaultJoinClause) Validate() error {
 	return err
 }
 
-// Validate enforces the subquery clause's static shape: the binding form's
-// arity must match the inner query's :find arity, and the call passes one
-// input per position of the inner :in. Each is a property of the clause
-// text alone — no data, planning, or mode is needed to check it — so the
-// parser, the qb builder, and the executor entry enforce it with one
-// message; the execution paths' deeper checks remain as backstops for
-// internally constructed plans.
-// Nested subqueries inside the inner query are part of this clause's text
-// and validate recursively. See
-// docs/bugs/BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md.
+// Validate enforces the subquery clause's static shape: the inner query
+// passes ValidateQuery whole, its refusal wrapped with this clause, so an
+// inner query is checked as the outer query is, at every depth; the inner
+// query carries no :limit, since the scope's evaluation applies neither
+// :order-by nor :limit, which are the result boundary's own steps, and a cap
+// the inner query carried would be silently ignored
+// (docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md); its :find holds
+// no pull, since pull output is result presentation and no relational value,
+// where the subquery's result enters the scope's joins and deduplication,
+// which operate on values (docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md);
+// the call passes one input per position of the inner :in; and the binding
+// form's arity matches the inner :find's. Each is a property of the clause
+// text alone, so the parser, the qb builder and Prepare enforce it through
+// ValidateQuery with one message
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md goal 5 and §6).
 func (p *SubqueryPattern) Validate() error {
 	if p.Query == nil {
 		return fmt.Errorf("subquery has no inner query")
 	}
 	if p.Binding == nil {
 		return fmt.Errorf("subquery has no binding form")
+	}
+	if err := ValidateQuery(p.Query); err != nil {
+		return fmt.Errorf("subquery %s: %w", p, err)
+	}
+	if p.Query.Limit != nil {
+		return fmt.Errorf(":limit is not supported inside a subquery; cap tuples in the enclosing query, or use the (max ?x)/(min ?x) aggregate idiom for top-1-per-group")
+	}
+	for _, elem := range p.Query.Find {
+		if _, isPull := elem.(FindPull); isPull {
+			return fmt.Errorf("(pull ...) is not supported inside a subquery find: pull output is result presentation, not a relational value; return the entity from the subquery and pull it in the enclosing query's :find")
+		}
 	}
 	if arity := InputArity(p.Query.In); len(p.Inputs) != arity {
 		return fmt.Errorf("subquery passes %d input(s), but its inner :in binds %d value(s): one per source, %%, scalar and collection input, one per symbol of a tuple or relation input, and one for the $ an omitted :in defaults to", len(p.Inputs), arity)
@@ -217,7 +237,7 @@ func (p *SubqueryPattern) Validate() error {
 	default:
 		return fmt.Errorf("subquery has unknown binding form %T", p.Binding)
 	}
-	return ValidateStaticClauseShapes(p.Query.Where)
+	return nil
 }
 
 // Validate reads the not-join at a text boundary: the header names at least
@@ -274,10 +294,16 @@ func ValidateStaticClauseShapes(clauses []Clause) error {
 
 // Validate decides a ground's shape against its binding from the constant
 // the text holds, so every boundary refuses the same shapes naming the
-// repair: a ground vector under the tuple form has the binding's length, a
-// ground under the collection form is a vector, and a ground under the
-// relation form is a vector of inner vectors, each of the binding's arity. A
-// function's result is read at run time and is checked nowhere here.
+// repair over the author's own symbols: a ground under the tuple form is a
+// vector of the binding's length, one under the collection form is a vector,
+// and one under the relation form is a vector of inner vectors, each of the
+// binding's arity. One value under the tuple or relation form is bound by
+// the scalar form over the first symbol. A vector of values under the
+// relation form is bound by the collection form when the binding names one
+// symbol and by the tuple form when it names as many symbols as the vector
+// holds values; otherwise the refusal states both counts. A tuple or
+// relation binding names at least one symbol, as the parser requires of the
+// text. A function's result is read at run time and is checked nowhere here.
 func (e *Expression) Validate() error {
 	var value interface{}
 	var grounded bool
@@ -287,27 +313,50 @@ func (e *Expression) Validate() error {
 	case *GroundFunction:
 		value, grounded = f.Value, true
 	}
-	if !grounded {
-		return nil
-	}
 	switch b := e.Binding.(type) {
 	case TupleBinding:
-		if values, ok := VectorElements(value); ok && len(values) != len(b.Variables) {
+		if len(b.Variables) == 0 {
+			return fmt.Errorf("tuple binding cannot be empty")
+		}
+		if !grounded {
+			return nil
+		}
+		values, ok := VectorElements(value)
+		if !ok {
+			return fmt.Errorf("%s is one value; bind it with the scalar form %s", e.Function, b.Variables[0])
+		}
+		if len(values) != len(b.Variables) {
 			return fmt.Errorf("tuple ground mismatch: %d values, %d binding variables", len(values), len(b.Variables))
 		}
 	case CollectionBinding:
+		if !grounded {
+			return nil
+		}
 		if _, ok := VectorElements(value); !ok {
 			return fmt.Errorf("%s is one value; bind it with the scalar form %s", e.Function, b.Variable)
 		}
 	case RelationBinding:
+		if len(b.Variables) == 0 {
+			return fmt.Errorf("relation binding cannot be empty")
+		}
+		if !grounded {
+			return nil
+		}
 		vectors, ok := VectorElements(value)
 		if !ok {
-			return fmt.Errorf("%s is one value; bind it with the scalar form ?a", e.Function)
+			return fmt.Errorf("%s is one value; bind it with the scalar form %s", e.Function, b.Variables[0])
 		}
 		for i, vector := range vectors {
 			elements, ok := VectorElements(vector)
 			if !ok {
-				return fmt.Errorf("%s is one tuple; bind it with the tuple form %s", e.Function, TupleBinding{Variables: b.Variables})
+				switch {
+				case len(b.Variables) == 1:
+					return fmt.Errorf("%s is one tuple; bind it with the collection form %s", e.Function, CollectionBinding{Variable: b.Variables[0]})
+				case len(vectors) == len(b.Variables):
+					return fmt.Errorf("%s is one tuple; bind it with the tuple form %s", e.Function, TupleBinding{Variables: b.Variables})
+				default:
+					return fmt.Errorf("%s is one tuple of %d values, and the binding %s names %d symbols", e.Function, len(vectors), b, len(b.Variables))
+				}
 			}
 			if len(elements) != len(b.Variables) {
 				return fmt.Errorf("%s tuple %d has %d values, and the binding %s names %d", e.Function, i+1, len(elements), b, len(b.Variables))
@@ -317,53 +366,60 @@ func (e *Expression) Validate() error {
 	return nil
 }
 
-// InputArity is the number of values a call supplies for an :in clause: one
-// per source, rules, scalar and collection input, one per symbol of a tuple
-// or relation input, and one for the $ an omitted :in defaults to. A
-// subquery's call is checked against it as a static shape, and the executor
-// binds a call's values by it.
-func InputArity(in []InputSpec) int {
-	if len(in) == 0 {
-		return 1
-	}
-	arity := 0
-	for _, spec := range in {
-		switch spec := spec.(type) {
-		case RelationInput:
-			arity += len(spec.Symbols)
-		case TupleInput:
-			arity += len(spec.Symbols)
-		default:
-			arity++
-		}
-	}
-	return arity
+// InputPosition is one call position of an :in clause: the entry at it and
+// the symbol the call's value there binds, nil for a source and for the
+// rule set.
+type InputPosition struct {
+	Spec   InputSpec
+	Symbol Symbol
 }
 
-// InputSymbols is the symbol a call's value at each position of an :in
-// clause binds, in call order: nil at a source's or the rule set's position,
-// the symbol of a scalar or collection input, and each symbol of a tuple or
-// relation input in turn. The length is InputArity's. A subquery's frame and
-// the attribute roster read a call's substitution from it against the call's
-// arguments.
-func InputSymbols(in []InputSpec) []Symbol {
+// InputPositions is the call positions of an :in clause in call order: one
+// per source, rules, scalar and collection input, one per symbol of a tuple
+// or relation input, and the one of the $ an omitted :in defaults to. A
+// subquery's call is checked against their count as a static shape, the
+// executor binds a call's values by them, and a subquery's frame and the
+// attribute roster read a call's substitution from their symbols against
+// the call's arguments.
+func InputPositions(in []InputSpec) []InputPosition {
 	if len(in) == 0 {
-		return []Symbol{nil}
+		return []InputPosition{{Spec: DatabaseInput{Name: datalog.SymDollar}}}
 	}
-	symbols := make([]Symbol, 0, len(in))
+	positions := make([]InputPosition, 0, len(in))
 	for _, spec := range in {
-		switch spec := spec.(type) {
+		switch entry := spec.(type) {
 		case ScalarInput:
-			symbols = append(symbols, spec.Symbol)
+			positions = append(positions, InputPosition{Spec: spec, Symbol: entry.Symbol})
 		case CollectionInput:
-			symbols = append(symbols, spec.Symbol)
+			positions = append(positions, InputPosition{Spec: spec, Symbol: entry.Symbol})
 		case RelationInput:
-			symbols = append(symbols, spec.Symbols...)
+			for _, sym := range entry.Symbols {
+				positions = append(positions, InputPosition{Spec: spec, Symbol: sym})
+			}
 		case TupleInput:
-			symbols = append(symbols, spec.Symbols...)
+			for _, sym := range entry.Symbols {
+				positions = append(positions, InputPosition{Spec: spec, Symbol: sym})
+			}
 		default:
-			symbols = append(symbols, nil)
+			positions = append(positions, InputPosition{Spec: spec})
 		}
+	}
+	return positions
+}
+
+// InputArity is the number of values a call supplies for an :in clause, the
+// count of its call positions.
+func InputArity(in []InputSpec) int {
+	return len(InputPositions(in))
+}
+
+// InputSymbols is the symbol a call's value at each call position of an :in
+// clause binds, nil at a source's or the rule set's position.
+func InputSymbols(in []InputSpec) []Symbol {
+	positions := InputPositions(in)
+	symbols := make([]Symbol, len(positions))
+	for i, position := range positions {
+		symbols[i] = position.Symbol
 	}
 	return symbols
 }

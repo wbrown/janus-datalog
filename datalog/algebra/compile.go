@@ -25,7 +25,7 @@ func Compile(q *query.Query, rules *query.RuleSet) (*Node, error) {
 		return nil, fmt.Errorf("empty WHERE clause")
 	}
 	bound := query.ConstantInputSymbols(q.In)
-	for sym := range query.IteratedInputSymbols(q.In) {
+	for sym := range query.MultiValuedInputSymbols(q.In) {
 		bound[sym] = true
 	}
 	return compileClausesFrom(q.Where, nil, query.Bindings{Symbols: bound, Rules: rules})
@@ -422,13 +422,12 @@ func compileOrFallbackWithVars(oj *query.OrDefaultJoinClause, current *Node, sco
 	}
 	branchScope := bodyScope(oj.RequiredVars, scope)
 
-	var defaultValues []interface{}
-	var defaultSymbols []query.Symbol
+	var defaults []Default
 	isSubqueryFallback := false
 	if len(branches) == 2 && len(branches[0]) == 1 {
 		if _, isSubquery := branches[0][0].(*query.SubqueryPattern); isSubquery {
-			defaultValues, defaultSymbols = extractGroundDefaults(branches[1])
-			isSubqueryFallback = defaultValues != nil
+			defaults = extractGroundDefaults(branches[1])
+			isSubqueryFallback = defaults != nil
 		}
 	}
 
@@ -457,13 +456,13 @@ func compileOrFallbackWithVars(oj *query.OrDefaultJoinClause, current *Node, sco
 	if lj := findLateralJoin(subNode); lj != nil {
 		// Correlated subquery → LateralJoin with defaults
 		ljData := lj.Data.(*LateralJoin)
-		ljData.DefaultValues = defaultValues
-		for _, ds := range defaultSymbols {
-			if !query.ContainsSymbol(ljData.Output, ds) {
-				ljData.Output = append(ljData.Output, ds)
+		ljData.Defaults = defaults
+		for _, d := range defaults {
+			if !query.ContainsSymbol(ljData.Output, d.Symbol) {
+				ljData.Output = append(ljData.Output, d.Symbol)
 			}
 		}
-	} else if len(defaultValues) > 0 {
+	} else if len(defaults) > 0 {
 		// Uncorrelated subquery → wrap in LeftOuterJoin with defaults.
 		// The subquery returns results for some outer tuples; non-matching
 		// outer tuples get default values via the LeftOuterJoin.
@@ -471,10 +470,10 @@ func compileOrFallbackWithVars(oj *query.OrDefaultJoinClause, current *Node, sco
 		subNode = &Node{
 			Op: RuleJoin,
 			Data: &Join{
-				Kind:          LeftOuterJoin,
-				JoinSymbols:   joinSyms,
-				Output:        mergeSymbols(symbolsOf(current), subNode.Symbols()),
-				DefaultValues: defaultValues,
+				Kind:        LeftOuterJoin,
+				JoinSymbols: joinSyms,
+				Output:      mergeSymbols(symbolsOf(current), subNode.Symbols()),
+				Defaults:    defaults,
 			},
 			Children: []*Node{current, subNode},
 		}
@@ -751,39 +750,46 @@ func childrenOf(n *Node) []*Node {
 	return []*Node{n}
 }
 
-// extractGroundDefaults extracts constant values and symbols from a branch of
-// ground expressions alone, one default value per symbol. Returns nil if the
-// branch holds any other clause: a guard or filter beside the grounds decides
-// which tuples take the default, and a ground under the relation form yields
-// a default tuple per row, neither of which one default per symbol can
-// express.
-func extractGroundDefaults(branch []query.Clause) ([]interface{}, []query.Symbol) {
-	var values []interface{}
-	var symbols []query.Symbol
+// extractGroundDefaults is the defaults a branch of ground expressions alone
+// states, one per symbol the grounds bind, each with its value. Returns nil
+// when the branch holds any other clause, a ground under the collection or
+// relation form, or a tuple-form ground whose value is not a vector of its
+// arity: a guard or filter beside the grounds decides which tuples take the
+// default, and a ground yielding a default tuple per element states no one
+// default per symbol.
+func extractGroundDefaults(branch []query.Clause) []Default {
+	var defaults []Default
 
 	for _, c := range branch {
 		g, isExpression := c.(*query.Expression)
 		if !isExpression {
-			return nil, nil
+			return nil
 		}
 		gf, isGround := g.Function.(*query.GroundFunction)
 		if !isGround {
-			return nil, nil
+			return nil
 		}
-		if _, relation := g.Binding.(query.RelationBinding); relation {
-			return nil, nil
+		// Each ground states one default per symbol its binding names: the
+		// whole value under a scalar binding, one element per variable under
+		// the tuple form. The collection and relation forms yield a default
+		// tuple per element, which one default per symbol cannot state.
+		switch binding := g.Binding.(type) {
+		case query.Symbol:
+			defaults = append(defaults, Default{Symbol: binding, Value: gf.Value})
+		case query.TupleBinding:
+			values, isVector := query.VectorElements(gf.Value)
+			if !isVector || len(values) != len(binding.Variables) {
+				return nil
+			}
+			for i, sym := range binding.Variables {
+				defaults = append(defaults, Default{Symbol: sym, Value: values[i]})
+			}
+		default:
+			return nil
 		}
-		// Flatten tuple ground values: (ground [0 0]) has Value=[0,0]
-		// which should produce individual defaults [0, 0], not [[0, 0]].
-		if slice, ok := gf.Value.([]interface{}); ok {
-			values = append(values, slice...)
-		} else {
-			values = append(values, gf.Value)
-		}
-		symbols = append(symbols, g.BoundVariables()...)
 	}
 
-	return values, symbols
+	return defaults
 }
 
 // findLateralJoin finds the first LateralJoin node in a tree (DFS).

@@ -6,6 +6,35 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+// bodyClauses converts one clause list of a form, where naming the form and
+// under a branch form the branch counted from one. A conversion failure
+// reaches Build through Where; nothing panics inside the fluent chain.
+func bodyClauses(where string, clauses []interface{}) ([]query.Clause, error) {
+	out := make([]query.Clause, len(clauses))
+	for i, c := range clauses {
+		converted, err := toClause(c)
+		if err != nil {
+			return nil, fmt.Errorf("%s argument %d: %w", where, i+1, err)
+		}
+		out[i] = converted
+	}
+	return out, nil
+}
+
+// branchClauses converts every branch of a branch form, naming the form and
+// the branch counted from one.
+func branchClauses(form string, branches [][]interface{}) ([][]query.Clause, error) {
+	out := make([][]query.Clause, len(branches))
+	for i, branch := range branches {
+		converted, err := bodyClauses(fmt.Sprintf("%s: branch %d", form, i+1), branch)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = converted
+	}
+	return out, nil
+}
+
 // NotClause represents a NOT (negation) clause.
 type NotClause struct {
 	clauses []interface{}
@@ -28,16 +57,12 @@ func Not(clauses ...interface{}) *NotClause {
 	return &NotClause{clauses: clauses}
 }
 
-func (n *NotClause) toClause() query.Clause {
-	qclauses := make([]query.Clause, len(n.clauses))
-	for i, c := range n.clauses {
-		clause, ok := c.(Clause)
-		if !ok {
-			panic(fmt.Sprintf("Not: argument %d is not a Clause (got %T)", i, c))
-		}
-		qclauses[i] = clause.toClause()
+func (n *NotClause) toClause() (query.Clause, error) {
+	qclauses, err := bodyClauses("Not:", n.clauses)
+	if err != nil {
+		return nil, err
 	}
-	return &query.NotClause{Clauses: qclauses}
+	return &query.NotClause{Clauses: qclauses}, nil
 }
 
 // NotJoinClause represents a NOT-JOIN clause with explicit join variables.
@@ -58,25 +83,19 @@ func NotJoin(joinVars []*Var, clauses ...interface{}) *NotJoinClause {
 	return &NotJoinClause{joinVars: joinVars, clauses: clauses}
 }
 
-func (n *NotJoinClause) toClause() query.Clause {
+func (n *NotJoinClause) toClause() (query.Clause, error) {
 	joinSyms := make([]query.Symbol, len(n.joinVars))
 	for i, v := range n.joinVars {
 		joinSyms[i] = v.Symbol()
 	}
-
-	qclauses := make([]query.Clause, len(n.clauses))
-	for i, c := range n.clauses {
-		clause, ok := c.(Clause)
-		if !ok {
-			panic(fmt.Sprintf("NotJoin: argument %d is not a Clause (got %T)", i, c))
-		}
-		qclauses[i] = clause.toClause()
+	qclauses, err := bodyClauses("NotJoin:", n.clauses)
+	if err != nil {
+		return nil, err
 	}
-
 	return &query.NotJoinClause{
 		RequiredVars: joinSyms,
 		Clauses:      qclauses,
-	}
+	}, nil
 }
 
 // OrBuilder accumulates branches for an OR clause.
@@ -102,19 +121,12 @@ func (o *OrBuilder) Branch(clauses ...interface{}) *OrBuilder {
 	return o
 }
 
-func (o *OrBuilder) toClause() query.Clause {
-	qbranches := make([][]query.Clause, len(o.branches))
-	for i, branch := range o.branches {
-		qbranches[i] = make([]query.Clause, len(branch))
-		for j, c := range branch {
-			clause, ok := c.(Clause)
-			if !ok {
-				panic(fmt.Sprintf("Or: branch %d argument %d is not a Clause (got %T)", i+1, j+1, c))
-			}
-			qbranches[i][j] = clause.toClause()
-		}
+func (o *OrBuilder) toClause() (query.Clause, error) {
+	qbranches, err := branchClauses("Or", o.branches)
+	if err != nil {
+		return nil, err
 	}
-	return &query.OrClause{Branches: qbranches}
+	return &query.OrClause{Branches: qbranches}, nil
 }
 
 // OrJoinBuilder accumulates branches for an OR-JOIN clause.
@@ -149,7 +161,7 @@ func (o *OrJoinBuilder) Branch(clauses ...interface{}) *OrJoinBuilder {
 	return o
 }
 
-func (o *OrJoinBuilder) toClause() query.Clause {
+func (o *OrJoinBuilder) toClause() (query.Clause, error) {
 	var requiredSyms []query.Symbol
 	for _, v := range o.required {
 		requiredSyms = append(requiredSyms, v.Symbol())
@@ -158,24 +170,15 @@ func (o *OrJoinBuilder) toClause() query.Clause {
 	for i, v := range o.joinVars {
 		joinSyms[i] = v.Symbol()
 	}
-
-	qbranches := make([][]query.Clause, len(o.branches))
-	for i, branch := range o.branches {
-		qbranches[i] = make([]query.Clause, len(branch))
-		for j, c := range branch {
-			clause, ok := c.(Clause)
-			if !ok {
-				panic(fmt.Sprintf("OrJoin: branch %d argument %d is not a Clause (got %T)", i+1, j+1, c))
-			}
-			qbranches[i][j] = clause.toClause()
-		}
+	qbranches, err := branchClauses("OrJoin", o.branches)
+	if err != nil {
+		return nil, err
 	}
-
 	return &query.OrJoinClause{
 		RequiredVars: requiredSyms,
 		OutputVars:   joinSyms,
 		Branches:     qbranches,
-	}
+	}, nil
 }
 
 // OrDefaultBuilder accumulates branches for an OR-DEFAULT clause (fallback semantics).
@@ -195,19 +198,12 @@ func (o *OrDefaultBuilder) Branch(clauses ...interface{}) *OrDefaultBuilder {
 	return o
 }
 
-func (o *OrDefaultBuilder) toClause() query.Clause {
-	qbranches := make([][]query.Clause, len(o.branches))
-	for i, branch := range o.branches {
-		qbranches[i] = make([]query.Clause, len(branch))
-		for j, c := range branch {
-			clause, ok := c.(Clause)
-			if !ok {
-				panic(fmt.Sprintf("OrDefault: branch %d argument %d is not a Clause (got %T)", i+1, j+1, c))
-			}
-			qbranches[i][j] = clause.toClause()
-		}
+func (o *OrDefaultBuilder) toClause() (query.Clause, error) {
+	qbranches, err := branchClauses("OrDefault", o.branches)
+	if err != nil {
+		return nil, err
 	}
-	return &query.OrDefaultClause{Branches: qbranches}
+	return &query.OrDefaultClause{Branches: qbranches}, nil
 }
 
 // OrDefaultJoinBuilder accumulates branches for an OR-DEFAULT-JOIN clause.
@@ -238,7 +234,7 @@ func (o *OrDefaultJoinBuilder) Branch(clauses ...interface{}) *OrDefaultJoinBuil
 	return o
 }
 
-func (o *OrDefaultJoinBuilder) toClause() query.Clause {
+func (o *OrDefaultJoinBuilder) toClause() (query.Clause, error) {
 	requiredSyms := make([]query.Symbol, len(o.requiredVars))
 	for i, v := range o.requiredVars {
 		requiredSyms[i] = v.Symbol()
@@ -247,22 +243,13 @@ func (o *OrDefaultJoinBuilder) toClause() query.Clause {
 	for i, v := range o.outputVars {
 		outputSyms[i] = v.Symbol()
 	}
-
-	qbranches := make([][]query.Clause, len(o.branches))
-	for i, branch := range o.branches {
-		qbranches[i] = make([]query.Clause, len(branch))
-		for j, c := range branch {
-			clause, ok := c.(Clause)
-			if !ok {
-				panic(fmt.Sprintf("OrDefaultJoin: branch %d argument %d is not a Clause (got %T)", i+1, j+1, c))
-			}
-			qbranches[i][j] = clause.toClause()
-		}
+	qbranches, err := branchClauses("OrDefaultJoin", o.branches)
+	if err != nil {
+		return nil, err
 	}
-
 	return &query.OrDefaultJoinClause{
 		RequiredVars: requiredSyms,
 		OutputVars:   outputSyms,
 		Branches:     qbranches,
-	}
+	}, nil
 }

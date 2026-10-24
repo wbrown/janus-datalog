@@ -235,9 +235,12 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx *Context, clause *query.O
 			groups = append(groups, result)
 		}
 	} else {
-		rel := NewOrFallbackRelation(e, ctx, clause.RequiredVars, clause.OutputVars, clause.Branches, subject, e.options, false)
-		result = rel
-		groups = replaceConsumedGroups(groups, consumed, rel, e.options.Handler)
+		var rel *OrFallbackRelation
+		rel, err = NewOrFallbackRelation(e, ctx, clause.RequiredVars, clause.OutputVars, clause.Branches, subject, e.options, false)
+		if err == nil {
+			result = rel
+			groups = replaceConsumedGroups(groups, consumed, rel, e.options.Handler)
+		}
 	}
 
 	if handler != nil {
@@ -275,7 +278,10 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx *Context, clause *query.O
 // relation's events and no or-clause event.
 func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx *Context, clause *query.OrDefaultJoinClause, groups Relations) (Relations, error) {
 	subject, consumed := e.findOuterRelation(clause.RequiredVars, groups)
-	rel := NewOrFallbackRelation(e, ctx, clause.RequiredVars, clause.OutputVars, clause.Branches, subject, e.options, true)
+	rel, err := NewOrFallbackRelation(e, ctx, clause.RequiredVars, clause.OutputVars, clause.Branches, subject, e.options, true)
+	if err != nil {
+		return nil, err
+	}
 	return replaceConsumedGroups(groups, consumed, rel, e.options.Handler), nil
 }
 
@@ -293,8 +299,7 @@ func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx *Context, clause *
 // surfacing when it is driven.
 func (e *DefaultQueryExecutor) executeNotJoinClause(ctx *Context, clause *query.NotJoinClause, groups Relations) (Relations, error) {
 	subject, consumed := e.findOuterRelation(clause.RequiredVars, groups)
-	runSyms, joinSyms := runSymbols(clause.RequiredVars, subject.Symbols())
-	environment, err := environmentRelation(ctx, runSyms, subject.Symbols())
+	environment, err := environmentRelation(ctx, clause.RequiredVars, subject.Symbols())
 	if err != nil {
 		return nil, err
 	}
@@ -303,8 +308,7 @@ func (e *DefaultQueryExecutor) executeNotJoinClause(ctx *Context, clause *query.
 		subject:     subject,
 		required:    clause.RequiredVars,
 		given:       clause.RequiredVars,
-		runSyms:     runSyms,
-		key:         joinSyms,
+		key:         keySymbols(clause.RequiredVars, subject.Symbols()),
 		environment: environment,
 	}
 	plans, err := frameBranches(e, ctx, [][]query.Clause{clause.Clauses}, f)

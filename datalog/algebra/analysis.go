@@ -74,7 +74,7 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			copy := *data
 			copy.JoinSymbols = cloneSymbols(data.JoinSymbols)
 			copy.Output = mergeSymbols(children[0].Symbols(), children[1].Symbols())
-			copy.DefaultValues = append([]interface{}(nil), data.DefaultValues...)
+			copy.Defaults = append([]Default(nil), data.Defaults...)
 			refreshed.Data = &copy
 		case *AntiJoin:
 			if len(children) != 2 {
@@ -116,7 +116,7 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			}
 			copy := *data
 			copy.CorrelationVars = cloneSymbols(data.CorrelationVars)
-			copy.DefaultValues = append([]interface{}(nil), data.DefaultValues...)
+			copy.Defaults = append([]Default(nil), data.Defaults...)
 			var outer []query.Symbol
 			if len(children) == 1 {
 				outer = children[0].Symbols()

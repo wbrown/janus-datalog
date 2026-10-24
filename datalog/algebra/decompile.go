@@ -188,7 +188,7 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 		return nil, err
 	}
 
-	if len(join.DefaultValues) == 0 {
+	if len(join.Defaults) == 0 {
 		return nil, fmt.Errorf("LeftOuterJoin has no defaults (decorrelation produces InnerJoin when no defaults)")
 	}
 
@@ -213,7 +213,7 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 	}
 
 	var defaultBranch []query.Clause
-	if join.DefaultAttr != nil && len(join.DefaultValues) == 1 && len(defaultSyms) == 1 && len(join.JoinSymbols) > 0 {
+	if join.DefaultAttr != nil && len(join.Defaults) == 1 && len(join.JoinSymbols) > 0 {
 		// Get-else rewrite origin: emit get-else in the default branch so
 		// TypedDefaulter can convert the default to the schema type (e.g.,
 		// []interface{} → []string). The default branch only runs for entities
@@ -223,25 +223,13 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 				Function: &query.GetElseFunction{
 					Entity:  query.VariableTerm{Symbol: join.JoinSymbols[0]},
 					Attr:    *join.DefaultAttr,
-					Default: join.DefaultValues[0],
+					Default: join.Defaults[0].Value,
 				},
-				Binding: defaultSyms[0],
-			},
-		}
-	} else if len(join.DefaultValues) == 1 && len(defaultSyms) == 1 {
-		defaultBranch = []query.Clause{
-			&query.Expression{
-				Function: &query.GroundFunction{Value: join.DefaultValues[0]},
-				Binding:  defaultSyms[0],
+				Binding: join.Defaults[0].Symbol,
 			},
 		}
 	} else {
-		defaultBranch = []query.Clause{
-			&query.Expression{
-				Function: &query.GroundFunction{Value: join.DefaultValues},
-				Binding:  query.TupleBinding{Variables: defaultSyms},
-			},
-		}
+		defaultBranch = groundDefaults(join.Defaults)
 	}
 
 	// Declare the interface: the join symbols are the per-group correlation
@@ -354,7 +342,7 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 		Binding: bindingAsForm(lj.Binding),
 	}
 
-	if len(lj.DefaultValues) == 0 {
+	if len(lj.Defaults) == 0 {
 		// No defaults — bare subquery
 		clauses = append(clauses, sp)
 		return clauses, nil
@@ -402,25 +390,8 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 		}
 	}
 
-	// Branch 2: ground defaults using only non-join symbols
-	var defaultBranch []query.Clause
-	if len(lj.DefaultValues) == 1 && len(defaultSyms) == 1 {
-		// Scalar ground: [(ground val) ?sym]
-		defaultBranch = []query.Clause{
-			&query.Expression{
-				Function: &query.GroundFunction{Value: lj.DefaultValues[0]},
-				Binding:  defaultSyms[0],
-			},
-		}
-	} else if len(defaultSyms) > 0 {
-		// Tuple ground: [(ground [v1 v2 ...]) [?a ?b ...]]
-		defaultBranch = []query.Clause{
-			&query.Expression{
-				Function: &query.GroundFunction{Value: lj.DefaultValues},
-				Binding:  query.TupleBinding{Variables: defaultSyms},
-			},
-		}
-	}
+	// Branch 2: the grounds stating the defaults, each under its own symbol.
+	defaultBranch := groundDefaults(lj.Defaults)
 
 	orDefaultJoinClause := &query.OrDefaultJoinClause{
 		RequiredVars: joinVars,
@@ -429,6 +400,32 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 	}
 	clauses = append(clauses, orDefaultJoinClause)
 	return clauses, nil
+}
+
+// groundDefaults is the fallback branch stating the defaults: one scalar
+// ground for one default, and otherwise one tuple ground binding each
+// default's value to its symbol, in the defaults' order.
+func groundDefaults(defaults []Default) []query.Clause {
+	if len(defaults) == 1 {
+		return []query.Clause{
+			&query.Expression{
+				Function: &query.GroundFunction{Value: defaults[0].Value},
+				Binding:  defaults[0].Symbol,
+			},
+		}
+	}
+	values := make([]interface{}, len(defaults))
+	symbols := make([]query.Symbol, len(defaults))
+	for i, d := range defaults {
+		values[i] = d.Value
+		symbols[i] = d.Symbol
+	}
+	return []query.Clause{
+		&query.Expression{
+			Function: &query.GroundFunction{Value: values},
+			Binding:  query.TupleBinding{Variables: symbols},
+		},
+	}
 }
 
 // decompileAggregate emits a decorrelated SubqueryPattern.

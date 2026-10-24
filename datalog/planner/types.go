@@ -129,22 +129,18 @@ type PlannerOptions struct {
 	EnableEntityPrefetch       bool // Warm EA cache after first DataPattern via PrefetchEntities (default: false)
 	EnableAttributeFetchFusion bool // Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple binding instead of match+join (default: true)
 
-	// CollectRosters holds with each plan the roster of what its query names
-	// (RealizedPlan.Rosters), which the unknown-attribute check at the
-	// executor's entry reads when a source the plan runs over refuses
-	// attributes its schema does not declare. A database sets it for the
-	// executors it builds from whether such a source is among the query's,
-	// so a plan made for sources that refuse nothing carries none and costs
-	// no walk (default: false).
+	// CollectRosters holds with each plan the rosters of what its query names
+	// on each source (RealizedPlan.Rosters), which the unknown-attribute
+	// check at the executor's entry reads when a source the plan runs over
+	// refuses attributes its schema does not declare. An executor sets it
+	// from whether a source its matcher routes to refuses, so a plan made for
+	// sources that refuse nothing carries none and costs no walk (default:
+	// false).
 	CollectRosters bool
 
 	// Executor streaming options - control memory vs performance tradeoffs
 	EnableTrueStreaming     bool // Avoid auto-materialization of StreamingRelation (default: true)
 	EnableSymmetricHashJoin bool // Use symmetric hash join for stream-to-stream joins (default: false)
-
-	// Executor parallel execution options
-	EnableParallelSubqueries bool // Execute subqueries in parallel (default: true)
-	MaxSubqueryWorkers       int  // Maximum parallel workers for subqueries (0 = 4)
 
 	// Executor join/aggregation options
 	EnableStreamingJoins       bool // Return StreamingRelation from joins instead of materializing

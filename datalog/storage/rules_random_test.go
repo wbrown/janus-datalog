@@ -177,6 +177,7 @@ var closureForms = []struct {
 	{"or", `[[(r ?a ?b) [?a :edge ?b]] [(r ?a ?c) (or (and [?a :edge ?b] (r ?b ?c)) (and (r ?a ?b) (r ?b ?c)))]]`, false},
 	{"mutual", `[[(r ?a ?b) [?a :edge ?b]] [(r ?a ?c) (s ?a ?b) (r ?b ?c)] [(s ?a ?b) (r ?a ?b)]]`, false},
 	{"or-join", `[[(r ?a ?c) (or-join [?a ?c] [?a :edge ?c] (and [?a :edge ?b] (r ?b ?c)))]]`, false},
+	{"or in one rule", `[[(r ?a ?c) (or [?a :edge ?c] (and [?a :edge ?b] (r ?b ?c)))]]`, false},
 	{"not", `[` + edgeClosure + ` [(r ?a ?b) [?a :type :node] [?b :type :node] (not (e ?a ?b))]]`, true},
 	{"not-join", `[` + edgeClosure + ` [(r ?a ?b) [?a :type :node] [?b :type :node] (not-join [?a ?b] (e ?a ?b))]]`, true},
 	{"or-default", `[` + edgeClosure + ` [(r ?a ?b) [?a :type :node] [?b :type :node] (or-default (and (e ?a ?b) [(ground 1) ?k]) [(ground 0) ?k]) [(= ?k 0)]]]`, true},
@@ -1071,4 +1072,234 @@ func TestRules_InvocationBoundByItsBranchOnRandomGraphs(t *testing.T) {
 // a random coloured graph what the reference computes.
 func TestRules_ScopeShapesOnRandomGraphsMatchTheReference(t *testing.T) {
 	runScopeCases(t, scopeShapeCases)
+}
+
+// A random rule set holds four predicates, p0 and p1 in group 0 and p2 and
+// p3 in group 1, beside nb, whose first position is required. Each predicate
+// has one base body over :edge and :color and one to three bodies drawn from
+// the templates: an invocation of a predicate of the same or a lower group
+// under a pattern, a chain, an or-join, an or, a fallback, a subquery and
+// the required predicate; and in group 1 a lower-group predicate under a
+// negation, a fallback or an aggregating subquery, after the recursion or
+// before it, binding its input. The free evaluation of each predicate is the
+// reference: every bound invocation answers what the free one answers whole.
+
+const randomRulePredicates = 4
+
+// ruleGroup is a predicate's group: p0 and p1 in 0, p2 and p3 in 1.
+func ruleGroup(i int) int { return i / 2 }
+
+// ruleSetDraw draws the bodies of one predicate of a random rule set.
+type ruleSetDraw struct {
+	r    *rand.Rand
+	self int
+}
+
+// same names a predicate of the same or a lower group.
+func (g *ruleSetDraw) same() string {
+	var candidates []int
+	for j := 0; j < randomRulePredicates; j++ {
+		if ruleGroup(j) <= ruleGroup(g.self) {
+			candidates = append(candidates, j)
+		}
+	}
+	return fmt.Sprintf("p%d", candidates[g.r.Intn(len(candidates))])
+}
+
+// lower names a predicate of a strictly lower group, or "" when there is
+// none.
+func (g *ruleSetDraw) lower() string {
+	if ruleGroup(g.self) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("p%d", g.r.Intn(2))
+}
+
+// base is the predicate's body over the data alone.
+func (g *ruleSetDraw) base() string {
+	switch g.r.Intn(3) {
+	case 0:
+		return "[?a :edge ?b]"
+	case 1:
+		return "[?a :edge ?b] [?b :color 0]"
+	default:
+		return "[?a :color ?c] [?b :color ?c] [?a :edge ?b]"
+	}
+}
+
+// body is one body drawn from the templates.
+func (g *ruleSetDraw) body() string {
+	q := g.same()
+	l := g.lower()
+	choices := []string{
+		"[?a :edge ?m] (" + q + " ?m ?b)",
+		"(" + q + " ?a ?m) [?m :edge ?b]",
+		"(" + q + " ?a ?m) (" + g.same() + " ?m ?b)",
+		"[?a :edge ?b] (or-join [?a ?b] (" + q + " ?a ?b) (and [?a :color ?c] [?b :color ?c]))",
+		"[?a :color _] (or-join [[?a] ?b] [?a :edge ?b] (and [?a :edge ?m] (" + q + " ?m ?b)))",
+		"[?a :edge ?m] (or (" + q + " ?m ?b) (and [?m :edge ?b] [?b :color 0]))",
+		"[?a :color ?c] (" + q + " ?a ?b) [?b :color ?c]",
+		"[?a :edge ?m] [(q [:find ?z :in $ % ?x :where (" + q + " ?x ?z)] $ % ?m) [[?b] ...]]",
+		"[?a :edge ?m] (or-join [[?m] ?b] (and [?m :color 1] (" + q + " ?m ?b)) (and [?m :edge ?k] [?k :edge ?b]))",
+		"[?a :edge ?m] (nb ?m ?b)",
+		"[?a :edge ?m] [(q [:find ?z :in $ % ?x :where [?x :edge ?w] (" + q + " ?w ?z)] $ % ?m) [[?b] ...]]",
+		"[?a :color ?c] (or-join [[?a ?c] ?b] (and [?a :edge ?m] [?m :color ?c] (" + q + " ?m ?b)) (and [?a :edge ?b] [?b :color ?c]))",
+		"(" + q + " ?a ?m) (nb ?m ?b)",
+		"[?a :color _] (or-join [[?a] ?b] (nb ?a ?b) (and [?a :edge ?m] (" + q + " ?m ?b)))",
+		"[?a :edge ?m] (or-default-join [[?m] ?k] (and [?m :edge ?k]) [(identity ?m) ?k]) (" + q + " ?k ?b)",
+	}
+	if l != "" {
+		choices = append(choices,
+			"[?a :edge ?b] (not-join [?a ?b] ("+l+" ?b ?a))",
+			"[?a :edge ?m] ("+q+" ?m ?b) (not ("+l+" ?a ?b))",
+			"("+q+" ?a ?b) (or-default-join [[?a ?b] ?k] (and ("+l+" ?a ?b) [(ground 1) ?k]) [(ground 0) ?k]) [(= ?k 0)]",
+			"[?a :edge ?b] [(q [:find (count ?z) :in $ % ?x :where ("+l+" ?x ?z)] $ % ?b) [[?n]]] [(> ?n 0)]",
+			"[?a :edge ?m] ("+q+" ?m ?b) (not-join [?m] [?m :color 2] ("+l+" ?m ?z))",
+			"("+q+" ?a ?b) (or-default-join [[?b] ?k] (and ("+l+" ?b ?z) [(ground 1) ?k]) [(ground 0) ?k]) [(= ?k 1)]",
+			"("+q+" ?a ?m) [?m :edge ?b] [(q [:find (count ?z) :in $ % ?x ?y :where ("+l+" ?x ?z) [(!= ?z ?y)]] $ % ?a ?b) [[?n]]]",
+			"[?a :edge ?b] (not-join [?a ?b] (nb ?b ?a))",
+			"("+q+" ?a ?m) [?m :edge ?b] [(q [:find (count ?z) :in $ % ?x ?y :where [?x :edge ?w] ("+l+" ?w ?z) [(!= ?z ?y)]] $ % ?a ?b) [[?n]]] [(> ?n 0)]",
+			"[?a :edge ?b] (not-join [?b] [?b :edge ?w] ("+l+" ?w ?a))",
+			"[?a :edge ?m] ("+q+" ?m ?b) (not-join [?b] [?b :color 0] (nb ?b ?z))",
+			"[?a :edge ?m] [(q [:find ?z :in $ % ?x :where ("+l+" ?x ?z)] $ % ?m) [[?v] ...]] ("+q+" ?v ?b)",
+			"[?a :edge ?m] [(q [:find ?w (count ?z) :in $ % ?x :where ("+l+" ?x ?w) ("+l+" ?w ?z)] $ % ?m) [[?v ?n]]] ("+q+" ?v ?b)",
+		)
+	}
+	return choices[g.r.Intn(len(choices))]
+}
+
+// randomRuleSet draws a rule set from r: nb, then each predicate's base body
+// and one to three template bodies.
+func randomRuleSet(r *rand.Rand) string {
+	var sb strings.Builder
+	sb.WriteString("[[(nb [?x] ?y) [?x :edge ?y]]\n")
+	for i := 0; i < randomRulePredicates; i++ {
+		g := &ruleSetDraw{r: r, self: i}
+		fmt.Fprintf(&sb, "[(p%d ?a ?b) %s]\n", i, g.base())
+		for k := r.Intn(3); k >= 0; k-- {
+			fmt.Fprintf(&sb, "[(p%d ?a ?b) %s]\n", i, g.body())
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
+}
+
+// ruleGraphNodes is the node count of a random rule set's graph.
+const ruleGraphNodes = 7
+
+// ruleGraphNode is the identity of the i-th node of a random rule set's
+// graph.
+func ruleGraphNode(i int) datalog.Identity { return datalog.NewIdentity(fmt.Sprintf("n/%d", i)) }
+
+// writeRandomRuleGraph commits a graph drawn from r into d: each node's
+// :color below three, then twice the node count of edge draws, each kept as
+// a member of the set under :edge. It returns the graph's names and its
+// edges as pairs of names.
+func writeRandomRuleGraph(t testing.TB, d *Database, r *rand.Rand) (graph, map[[2]string]bool) {
+	t.Helper()
+	g := graph{names: map[datalog.Identity]string{}}
+	tx := d.NewTransaction()
+	for i := 0; i < ruleGraphNodes; i++ {
+		g.names[ruleGraphNode(i)] = fmt.Sprintf("n%d", i)
+		require.NoError(t, tx.Add(ruleGraphNode(i), kw(":color"), int64(r.Intn(3))))
+	}
+	edges := map[[2]string]bool{}
+	for k := 0; k < ruleGraphNodes*2; k++ {
+		a, b := r.Intn(ruleGraphNodes), r.Intn(ruleGraphNodes)
+		require.NoError(t, tx.Add(ruleGraphNode(a), kw(":edge"), ruleGraphNode(b)))
+		edges[[2]string{g.names[ruleGraphNode(a)], g.names[ruleGraphNode(b)]}] = true
+	}
+	_, err := tx.Commit()
+	require.NoError(t, err)
+	return g, edges
+}
+
+// pairsOf reads a two-symbol result's rendered tuples back into pairs.
+func pairsOf(rendered []string) map[[2]string]bool {
+	pairs := map[[2]string]bool{}
+	for _, tuple := range rendered {
+		parts := strings.SplitN(tuple, ">", 2)
+		pairs[[2]string{parts[0], parts[1]}] = true
+	}
+	return pairs
+}
+
+// ruleSetSeeds is the seeds the random rule sets are drawn from: 2000 to
+// 2024, 2033 and 2049.
+var ruleSetSeeds = []struct{ start, count int }{{2000, 25}, {2033, 1}, {2049, 1}}
+
+// Every predicate of a random rule set, invoked bound at either position
+// through an input, as an or-join branch beside an edge, and under a
+// not-join beside every node, answers on a random graph what its free
+// invocation answers whole, in every mode. A free invocation that fails is a
+// failure.
+func TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, span := range ruleSetSeeds {
+				for seed := span.start; seed < span.start+span.count; seed++ {
+					r := rand.New(rand.NewSource(int64(seed)))
+					rs := mustRuleSet(t, randomRuleSet(r))
+					plannerOpts := mode.plannerOptions()
+					plannerOpts.MaxRuleIterations = 500
+					d := openBackendDB(t, mode.backend, DatabaseOptions{Schema: coloredGraphSchema(), PlannerOptions: &plannerOpts})
+					g, edges := writeRandomRuleGraph(t, d, r)
+					var nodes []string
+					for i := 0; i < ruleGraphNodes; i++ {
+						nodes = append(nodes, g.names[ruleGraphNode(i)])
+					}
+					// rows runs text and renders its tuples; an error at the query or
+					// while its tuples are read is the check's failure.
+					rows := func(text string, inputs ...interface{}) ([]string, error) {
+						rel, err := d.Query(text, append([]interface{}{rs}, inputs...)...)
+						if err != nil {
+							return nil, err
+						}
+						return g.render(rel)
+					}
+					check := func(label, text string, want []string, inputs ...interface{}) {
+						got, err := rows(text, inputs...)
+						if err != nil {
+							t.Errorf("%s: %v", label, err)
+							return
+						}
+						sort.Strings(got)
+						sort.Strings(want)
+						if !equalStrings(got, want) {
+							t.Errorf("%s: rows %v, the free evaluation gives %v", label, got, want)
+						}
+					}
+					for p := 0; p < randomRulePredicates; p++ {
+						name := fmt.Sprintf("p%d", p)
+						label := fmt.Sprintf("seed %d %s", seed, name)
+						rendered, err := rows(fmt.Sprintf(`[:find ?x ?y :in $ %% :where (%s ?x ?y)]`, name))
+						if err != nil {
+							t.Errorf("%s free: %v", label, err)
+							continue
+						}
+						free := pairsOf(rendered)
+						for i, s := range nodes {
+							reached := reachedFrom(free, s)
+							branch := append([]string{}, reached...)
+							for _, y := range nodes {
+								if edges[[2]string{s, y}] && !free[[2]string{s, y}] {
+									branch = append(branch, y)
+								}
+							}
+							var unreached []string
+							for _, y := range nodes {
+								if !free[[2]string{s, y}] {
+									unreached = append(unreached, y)
+								}
+							}
+							check(label+" bound first from "+s, fmt.Sprintf(`[:find ?y :in $ %% ?s :where (%s ?s ?y)]`, name), reached, ruleGraphNode(i))
+							check(label+" bound second to "+s, fmt.Sprintf(`[:find ?x :in $ %% ?t :where (%s ?x ?t)]`, name), reaching(free, s), ruleGraphNode(i))
+							check(label+" as an or-join branch from "+s, fmt.Sprintf(`[:find ?y :in $ %% ?s :where (or-join [[?s] ?y] (%s ?s ?y) [?s :edge ?y])]`, name), branch, ruleGraphNode(i))
+							check(label+" under a not-join from "+s, fmt.Sprintf(`[:find ?y :in $ %% ?s :where [?y :color _] (not-join [?s ?y] (%s ?s ?y))]`, name), unreached, ruleGraphNode(i))
+						}
+					}
+				}
+			}
+		})
+	}
 }

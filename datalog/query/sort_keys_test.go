@@ -6,7 +6,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-func TestConstantAndIteratedInputSymbols(t *testing.T) {
+func TestConstantAndMultiValuedInputSymbols(t *testing.T) {
 	scalar := datalog.NewSymbol("?s")
 	tupA := datalog.NewSymbol("?ta")
 	tupB := datalog.NewSymbol("?tb")
@@ -34,14 +34,14 @@ func TestConstantAndIteratedInputSymbols(t *testing.T) {
 		}
 	}
 
-	iterated := IteratedInputSymbols(specs)
+	multiValued := MultiValuedInputSymbols(specs)
 	for _, sym := range []Symbol{coll, relA, relB} {
-		if !iterated[sym] {
+		if !multiValued[sym] {
 			t.Errorf("expected %s to be an iterated input", sym)
 		}
 	}
 	for _, sym := range []Symbol{scalar, tupA, tupB} {
-		if iterated[sym] {
+		if multiValued[sym] {
 			t.Errorf("%s must not be an iterated input", sym)
 		}
 	}

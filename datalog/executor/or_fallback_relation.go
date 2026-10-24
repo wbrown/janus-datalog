@@ -35,12 +35,11 @@ type OrFallbackRelation struct {
 	joinSyms      []query.Symbol // the run symbols the subject carries: a built branch's probe key
 	shortCircuit  bool           // true = fallback (first match wins), false = correlated union (all branches)
 
-	// runSyms is what a branch holding no invocation is given, the frame it
-	// runs over: the required run, and under the union the outputs the
-	// subject or the environment binds, its seek. The subject's symbols lead,
-	// in the subject's order, and the symbols the environment alone binds
-	// follow.
-	runSyms []query.Symbol
+	// given is what a branch holding no invocation is given, the frame it
+	// runs over, in the header's order: the required run, and under the
+	// union the outputs the subject or the environment binds after it, its
+	// seek.
+	given []query.Symbol
 
 	// carried is the outputs the subject or the environment binds. Under the
 	// fallback they are joined after the decision: a branch tuple disagreeing
@@ -70,6 +69,10 @@ type branchRun struct {
 // subject, running branches under the header of required and outputs.
 // When shortCircuit=true, uses fallback semantics (first match wins).
 // When shortCircuit=false, uses correlated union (all branches contribute).
+// The branches are planned here, so a branch's planning refusal is the
+// form's error at the handler, and a text's acceptance does not depend on
+// the subject's tuples (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md
+// §4.4).
 func NewOrFallbackRelation(
 	executor *DefaultQueryExecutor,
 	ctx *Context,
@@ -79,7 +82,7 @@ func NewOrFallbackRelation(
 	outerRel Relation,
 	options ExecutorOptions,
 	shortCircuit bool,
-) *OrFallbackRelation {
+) (*OrFallbackRelation, error) {
 	outerSyms := outerRel.Symbols()
 	var envSyms []query.Symbol
 	var envTuple Tuple
@@ -116,9 +119,14 @@ func NewOrFallbackRelation(
 		carried = append(carried, output)
 	}
 
-	// What a branch is given, ordered against the subject: the subject's
-	// symbols lead and are a built branch's probe key.
-	runSyms, joinSyms := runSymbols(givenSymbols(required, carried, shortCircuit), outerSyms)
+	// What a branch is given, in the header's order, and the given symbols
+	// the subject carries, a built branch's probe key.
+	carriedSyms := make([]query.Symbol, len(carried))
+	for i, output := range carried {
+		carriedSyms[i] = output.symbol
+	}
+	given := planner.GivenSymbols(required, carriedSyms, shortCircuit)
+	joinSyms := keySymbols(given, outerSyms)
 
 	// The properties: whether every branch answers at most one tuple per
 	// subject tuple is judged against the header symbols the subject
@@ -162,7 +170,7 @@ func NewOrFallbackRelation(
 		})
 	}
 
-	return &OrFallbackRelation{
+	r := &OrFallbackRelation{
 		executor:     executor,
 		ctx:          ctx,
 		required:     required,
@@ -175,9 +183,15 @@ func NewOrFallbackRelation(
 		deduplicate:  deduplicate,
 		joinSyms:     joinSyms,
 		shortCircuit: shortCircuit,
-		runSyms:      runSyms,
+		given:        given,
 		carried:      carried,
 	}
+	plans, err := r.planBranches()
+	if err != nil {
+		return nil, err
+	}
+	r.plans = plans
+	return r, nil
 }
 
 // orBranchesEmitAtMostOne reports whether every branch answers at most one
@@ -294,80 +308,6 @@ func patternAnswersAtMostOne(
 	return fusable.CanFuseAttributeFetch(source, attr)
 }
 
-// holdsInvocation reports whether the clauses invoke a predicate at any
-// depth, a subquery's inner query included.
-func holdsInvocation(clauses []query.Clause) bool {
-	found := false
-	query.WalkClauses(clauses, func(clause query.Clause) bool {
-		if found {
-			return false
-		}
-		switch typed := clause.(type) {
-		case *query.RuleInvocation:
-			found = true
-			return false
-		case *query.SubqueryPattern:
-			if typed.Query != nil && holdsInvocation(typed.Query.Where) {
-				found = true
-				return false
-			}
-		}
-		return true
-	})
-	return found
-}
-
-// branchProvides is the symbols a branch's clauses provide, read under the
-// rule set, in first-appearance order.
-func branchProvides(clauses []query.Clause, rules *query.RuleSet) []query.Symbol {
-	var provided []query.Symbol
-	for _, clause := range clauses {
-		for _, sym := range query.ScopeOf(clause, rules).Provides {
-			if !query.ContainsSymbol(provided, sym) {
-				provided = append(provided, sym)
-			}
-		}
-	}
-	return provided
-}
-
-// givenSymbols is what a branch is given: the required run under the
-// fallback, and the required run with the carried outputs under the union.
-func givenSymbols(required []query.Symbol, carried []carriedOutput, shortCircuit bool) []query.Symbol {
-	given := append([]query.Symbol(nil), required...)
-	if shortCircuit {
-		return given
-	}
-	for _, output := range carried {
-		if !query.ContainsSymbol(given, output.symbol) {
-			given = append(given, output.symbol)
-		}
-	}
-	return given
-}
-
-// branchReads is the given symbols a branch reads, in the given order: a
-// symbol a clause consumes that no clause of the branch provides, or a data
-// pattern mentions.
-func branchReads(branch []query.Clause, given []query.Symbol, rules *query.RuleSet) []query.Symbol {
-	var provided, consumed, mentioned []query.Symbol
-	for _, clause := range branch {
-		clauseScope := query.ScopeOf(clause, rules)
-		provided = append(provided, clauseScope.Provides...)
-		consumed = append(consumed, clauseScope.Correlates...)
-		if _, isPattern := clause.(*query.DataPattern); isPattern {
-			mentioned = append(mentioned, clauseScope.Provides...)
-		}
-	}
-	var reads []query.Symbol
-	for _, sym := range given {
-		if query.ContainsSymbol(mentioned, sym) || (query.ContainsSymbol(consumed, sym) && !query.ContainsSymbol(provided, sym)) {
-			reads = append(reads, sym)
-		}
-	}
-	return reads
-}
-
 // framing is the branch forms' framing over the subject, with environment
 // as the frames' environment relation: a branch is given the required run
 // under the fallback, and the required run with the carried outputs, its
@@ -375,7 +315,7 @@ func branchReads(branch []query.Clause, given []query.Symbol, rules *query.RuleS
 // with carried outputs is planned first over the required run alone, the
 // language's scope, so that plan's refusal is the form's and the seek that
 // then binds the carried outputs into it never runs a branch the language
-// refuses; the find is the outputs as variables; and the key is the run
+// refuses; the find is the outputs as variables; and the key is the given
 // symbols the subject carries.
 func (r *OrFallbackRelation) framing(environment Relation) framing {
 	form := "or-join"
@@ -391,8 +331,7 @@ func (r *OrFallbackRelation) framing(environment Relation) framing {
 		subject:          r.outerRel,
 		required:         r.required,
 		find:             find,
-		given:            givenSymbols(r.required, r.carried, r.shortCircuit),
-		runSyms:          r.runSyms,
+		given:            r.given,
 		key:              r.joinSyms,
 		environment:      environment,
 		planOverRequired: !r.shortCircuit && len(r.carried) > 0,
@@ -409,21 +348,13 @@ func (r *OrFallbackRelation) planBranches() ([]branchRun, error) {
 // policy: the emit rule of the union or the fallback, and under the
 // fallback the narrowing of a branch's run to the keys the earlier branches
 // left unanswered, the build from the EA cache and the record of the keys a
-// build answered. A planning failure is the iterator's error, with the
-// subject unopened.
+// build answered. The branches' plans are the constructor's; an environment
+// failure is the iterator's error, with the subject unopened.
 func (r *OrFallbackRelation) Iterator() Iterator {
 	r.iteratorCount++
 
-	var setupErr error
-	if r.plans == nil {
-		r.plans, setupErr = r.planBranches()
-	}
-
 	outer := r.outerRel
-	var envRel Relation
-	if setupErr == nil {
-		envRel, setupErr = environmentRelation(r.ctx, r.runSyms, outer.Symbols())
-	}
+	envRel, setupErr := environmentRelation(r.ctx, r.given, outer.Symbols())
 
 	var seen *TupleKeyMap
 	if r.deduplicate {
@@ -907,13 +838,13 @@ func (it *OrFallbackIterator) buildFromCache(branchIdx int, run *MaterializedRel
 }
 
 // answeredKeys is the keys a fallback branch's runs have answered: each
-// result tuple's projection onto the run symbols the subject carries that
-// the result holds, recorded at the tuple's positions and probed at a keyed
-// branch's run tuple, which those symbols lead in the subject's order.
+// result tuple's projection onto the key symbols the result holds, recorded
+// at the tuple's positions and probed at a keyed branch's run tuple at the
+// positions the run's own symbols give those key symbols.
 type answeredKeys struct {
 	keys      *TupleKeyMap
-	branchPos []int // the key symbols' positions in the branch's result tuple
-	runPos    []int // the same symbols' positions in a keyed branch's run tuple
+	keySyms   []query.Symbol // the key symbols the branch's result holds
+	branchPos []int          // their positions in the branch's result tuple
 }
 
 // recordAnswered records the keys a fallback branch's build answers, so a
@@ -925,10 +856,10 @@ func (it *OrFallbackIterator) recordAnswered(branchIdx int, branchSyms []query.S
 	answered := it.answered[branchIdx]
 	if answered == nil {
 		answered = &answeredKeys{keys: NewTupleKeyMap()}
-		for i, sym := range it.framing.key {
+		for _, sym := range it.framing.key {
 			if bi := query.SymbolIndex(branchSyms, sym); bi >= 0 {
+				answered.keySyms = append(answered.keySyms, sym)
 				answered.branchPos = append(answered.branchPos, bi)
-				answered.runPos = append(answered.runPos, i)
 			}
 		}
 		if len(answered.branchPos) == 0 {
@@ -944,8 +875,9 @@ func (it *OrFallbackIterator) recordAnswered(branchIdx int, branchSyms []query.S
 // unanswered is the run tuples of keys none of the branches before branchIdx
 // answered: an unrecorded branch, one whose result carries no run symbol the
 // subject carries, answers every key when its index holds a tuple, and a
-// recorded branch answers the keys it recorded. A run none of them answered
-// is returned as it is.
+// recorded branch answers the keys it recorded, read at the positions the
+// run's symbols give its key symbols. A run none of them answered is
+// returned as it is.
 func (it *OrFallbackIterator) unanswered(run *MaterializedRelation, branchIdx int) *MaterializedRelation {
 	for j := 0; j < branchIdx; j++ {
 		if it.answered[j] == nil {
@@ -954,12 +886,22 @@ func (it *OrFallbackIterator) unanswered(run *MaterializedRelation, branchIdx in
 			}
 		}
 	}
+	runSyms := run.Symbols()
+	runPos := make([][]int, branchIdx)
+	for j := 0; j < branchIdx; j++ {
+		if earlier := it.answered[j]; earlier != nil {
+			runPos[j] = make([]int, len(earlier.keySyms))
+			for k, sym := range earlier.keySyms {
+				runPos[j][k] = query.SymbolIndex(runSyms, sym)
+			}
+		}
+	}
 	var kept []Tuple
 	for _, tuple := range run.tuples {
 		answered := false
 		for j := 0; j < branchIdx && !answered; j++ {
 			if earlier := it.answered[j]; earlier != nil {
-				_, answered = earlier.keys.GetPositions(tuple, earlier.runPos)
+				_, answered = earlier.keys.GetPositions(tuple, runPos[j])
 			}
 		}
 		if !answered {

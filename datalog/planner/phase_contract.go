@@ -137,6 +137,14 @@ func validateFinalizationLiveness(
 	return nil
 }
 
+// terminalSymbols is the set the final projection and finalization read, the
+// set the planner keeps to the find boundary and the algebra path's
+// join-project insertion keeps: the find's variables, aggregate arguments and
+// pull variables, with the retained sort symbols. Under an aggregating find
+// the aggregate runs over the whole join
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §3), so the set is every
+// symbol the join binds beside them: what each top-level clause provides and
+// what each collection or relation input binds.
 func terminalSymbols(q *query.Query) []query.Symbol {
 	var symbols []query.Symbol
 	add := func(symbol query.Symbol) {
@@ -144,11 +152,13 @@ func terminalSymbols(q *query.Query) []query.Symbol {
 			symbols = append(symbols, symbol)
 		}
 	}
+	aggregating := false
 	for _, element := range q.Find {
 		switch find := element.(type) {
 		case query.FindVariable:
 			add(find.Symbol)
 		case query.FindAggregate:
+			aggregating = true
 			add(find.Arg)
 			add(find.Predicate)
 		case query.FindPull:
@@ -157,6 +167,23 @@ func terminalSymbols(q *query.Query) []query.Symbol {
 	}
 	for _, symbol := range query.RetainedSortSymbols(q) {
 		add(symbol)
+	}
+	if aggregating {
+		for _, clause := range q.Where {
+			for _, symbol := range query.ScopeOf(clause, nil).Provides {
+				add(symbol)
+			}
+		}
+		for _, input := range q.In {
+			switch spec := input.(type) {
+			case query.CollectionInput:
+				add(spec.Symbol)
+			case query.RelationInput:
+				for _, symbol := range spec.Symbols {
+					add(symbol)
+				}
+			}
+		}
 	}
 	return symbols
 }

@@ -1,17 +1,10 @@
 // Reproductions for BUG_SEQUENTIAL_RELATION_INPUT_DROPS_ITERATOR_ERROR.md
 //
-// The sequential RelationInput path drives the iteration relation directly:
-//
-//	it := iterationRelation.Iterator()
-//	defer it.Close()
-//	for it.Next() { ... }
-//
-// Per the Iterator contract, Error() must be checked after Next() returns false,
-// and Close()'s error must not be discarded. The parallel path already does
-// both; the sequential path is the counterpart that this file pins. These are
-// the sequential analogues of TestRelationInputParallel_PropagatesDeferredIteratorError,
-// but they fail the *input* iteration relation (the actual sequential loss
-// site) rather than a per-tuple result.
+// BindQueryInputs (executor_utils.go) reads a relation input's tuples into
+// the bound group through the relation's iterator, takes Error() after Next()
+// returns false, and takes Close()'s error when the iteration's is nil; each
+// is the query's error. These tests fail the *input* relation, where
+// TestRelationInput_PropagatesDeferredIteratorError fails a pattern's result.
 
 package executor
 
@@ -31,23 +24,21 @@ func peopleInputSymbols() []query.Symbol {
 	return []query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")}
 }
 
-// TestRelationInputSequential_PropagatesDeferredInputIteratorError targets the
-// loss site unique to the sequential path: the loop driving the RelationInput
-// iteration relation. If that input relation's iterator yields a prefix and then
-// reports a deferred error (the way a streaming/storage-backed input aborts
-// mid-scan), the sequential path must surface it rather than return the prefix's
-// per-tuple results as a clean success.
-func TestRelationInputSequential_PropagatesDeferredInputIteratorError(t *testing.T) {
+// TestRelationInput_PropagatesDeferredInputIteratorError: an input relation
+// whose iterator yields a prefix and then reports a deferred error (the way a
+// streaming/storage-backed input aborts mid-scan) makes the query fail with
+// that error rather than answer over the prefix as a clean success.
+func TestRelationInput_PropagatesDeferredInputIteratorError(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(buildPeopleDatoms())
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
 	require.NoError(t, err)
 
-	// Iteration relation for [[?n ?y] ...]: yields one tuple, then defers
+	// Input relation for [[?n ?y] ...]: yields one tuple, then defers
 	// errInjectedIterator via Iterator().Error().
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// failingRelation wraps a single-use iteration relation, so it must
-			// be rebuilt fresh per mode rather than shared across modes.
+			// failingRelation wraps a single-use relation, so it must be
+			// rebuilt fresh per mode rather than shared across modes.
 			base := NewMaterializedRelation(peopleInputSymbols(), []Tuple{
 				{"Alice", int64(2020)},
 				{"Bob", int64(2020)},
@@ -55,7 +46,6 @@ func TestRelationInputSequential_PropagatesDeferredInputIteratorError(t *testing
 			inputRel := failingRelation{Relation: base, failAfter: 1}
 
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			exec.DisableParallelSubqueries()
 
 			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err,
@@ -66,11 +56,10 @@ func TestRelationInputSequential_PropagatesDeferredInputIteratorError(t *testing
 	}
 }
 
-// TestRelationInputSequential_PropagatesInputCloseError pins the second signal:
-// the iteration relation iterates cleanly to exhaustion but its Close() reports
-// an error. The sequential path defers Close() and discards its return; that
-// error must surface rather than be dropped.
-func TestRelationInputSequential_PropagatesInputCloseError(t *testing.T) {
+// TestRelationInput_PropagatesInputCloseError pins the second signal: the
+// input relation iterates cleanly to exhaustion but its Close() reports an
+// error, and that error must surface rather than be dropped.
+func TestRelationInput_PropagatesInputCloseError(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(buildPeopleDatoms())
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
 	require.NoError(t, err)
@@ -84,15 +73,14 @@ func TestRelationInputSequential_PropagatesInputCloseError(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// failingRelation wraps a single-use iteration relation, so it must
-			// be rebuilt fresh per mode rather than shared across modes.
+			// failingRelation wraps a single-use relation, so it must be
+			// rebuilt fresh per mode rather than shared across modes.
 			base := NewMaterializedRelation(peopleInputSymbols(), tuples)
 			// failAfter past the tuple count => no deferred iteration error; Close()
 			// returns closeErr.
 			inputRel := failingRelation{Relation: base, failAfter: len(tuples) + 1, closeErr: closeErr}
 
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			exec.DisableParallelSubqueries()
 
 			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err,

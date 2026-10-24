@@ -48,40 +48,12 @@ func (it *subqueryIterator) answer() bool {
 		tuple := it.reader.window[it.windowPos]
 		it.windowPos++
 		body := it.branchCache[0]
-		matches := it.agreeing(it.probe(body, tuple), body.branchSyms, tuple)
+		matches := it.agreeing(body.Probe(tuple), body.branchSyms, tuple)
 		if first, ok := it.begin(0, body.branchSyms, matches, tuple); ok {
 			it.currentTuple = first
 			return true
 		}
 	}
-}
-
-// probe is the body's matches for a window tuple: its index probed by the
-// tuple for a frame reading no collection, and otherwise once per key the
-// tuple's members stand for, the matches of every key together and distinct
-// at the branch positions the result reads, since two members can answer one
-// match.
-func (it *subqueryIterator) probe(body *cachedBranch, tuple Tuple) []Tuple {
-	frame := &it.frames[it.frameOf[0]]
-	if len(frame.probeExpandPos) == 0 {
-		return body.Probe(tuple)
-	}
-	var read []int
-	for _, sym := range it.outputSyms {
-		if pos := query.SymbolIndex(body.branchSyms, sym); pos >= 0 {
-			read = append(read, pos)
-		}
-	}
-	seen := NewTupleKeyMap()
-	var matches []Tuple
-	for _, key := range frame.probeKeys(tuple) {
-		for _, match := range body.Probe(key) {
-			if !seen.PutIfAbsentPositions(match, read, true) {
-				matches = append(matches, match)
-			}
-		}
-	}
-	return matches
 }
 
 // createInputRelationsFromValuesWithOptions creates relations from ordered input values with options.

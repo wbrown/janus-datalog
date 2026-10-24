@@ -205,7 +205,11 @@ resolution determines.
 
 **A bound V may enter the prefix only for cardinality-many** — its adds and
 removes all carry its own value, so the V-filtered run contains the whole
-resolution decision. Theorems 2 and 3 at selection time.
+resolution decision. Theorems 2 and 3 at selection time. The binding-driven
+match applies the same rule: a single bound V is post-validated when the
+attribute resolves as cardinality one, and V is the seek dimension among
+several bound positions only for a declared many
+(`docs/proposals/BOUND_VALUE_SEEK_PROOF.md`, T6).
 
 **Resolution behavior by cardinality**:
 - **CardinalityOne**: Post-validate with an EATV `(E,A)` run (LWW winner may have a different V)

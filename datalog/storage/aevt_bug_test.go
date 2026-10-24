@@ -89,9 +89,8 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 				[]executor.Tuple{{entities[0]}, {entities[5]}, {entities[9]}},
 			)
 
-			// Execute query without parallel execution (to capture all annotations)
+			// Execute the query
 			exec := executor.NewExecutorWithOptions(matcher, db, opts)
-			exec.DisableParallelSubqueries() // Disable parallel to get all events in our handler
 			result, err := exec.ExecuteWithRelations(
 				executor.NewContext(), parsed, []executor.Relation{inputRel})
 			if err != nil {

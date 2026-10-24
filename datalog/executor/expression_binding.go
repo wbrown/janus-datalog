@@ -13,6 +13,10 @@ import (
 // unequal drops it, and the position is never written (Datomic unification
 // semantics; an expression binding a bound variable is an equality
 // constraint). A binding symbol absent from the relation extends the tuple.
+// A symbol written twice in the binding names one variable (the groups
+// query.SymbolGroups gives): its later occurrences neither bind a relation
+// position nor extend, and applying values keeps the tuple only when the
+// values at all of its positions agree.
 //
 // This is the single home of that invariant. Every path that applies
 // expression results to relation tuples goes through apply — the ground
@@ -20,27 +24,34 @@ import (
 // diverged (docs/bugs/BUG_EXPRESSION_BINDING_OVERWRITES_BOUND_VARIABLE.md).
 type bindingAlignment struct {
 	symbols     []query.Symbol // relation symbols followed by extension symbols
-	boundAt     []int          // per binding symbol: tuple position, or -1 (extension)
-	extensionAt []int          // per binding symbol: output position, or -1 (bound)
+	boundAt     []int          // per binding symbol: tuple position, or -1 (extension or later occurrence)
+	extensionAt []int          // per binding symbol: output position, or -1 (bound or later occurrence)
+	groups      [][]int        // per distinct binding symbol: every binding position naming it
 	extensions  int
 }
 
 // alignBinding computes the alignment of bindingSyms against relSymbols.
 func alignBinding(relSymbols, bindingSyms []query.Symbol) bindingAlignment {
+	_, groups := query.SymbolGroups(bindingSyms)
 	a := bindingAlignment{
 		boundAt:     make([]int, len(bindingSyms)),
 		extensionAt: make([]int, len(bindingSyms)),
+		groups:      groups,
 	}
-	symbols := make([]query.Symbol, len(relSymbols), len(relSymbols)+len(bindingSyms))
+	for i := range bindingSyms {
+		a.boundAt[i] = -1
+		a.extensionAt[i] = -1
+	}
+	symbols := make([]query.Symbol, len(relSymbols), len(relSymbols)+len(groups))
 	copy(symbols, relSymbols)
-	for i, sym := range bindingSyms {
-		a.boundAt[i] = query.SymbolIndex(relSymbols, sym)
-		if a.boundAt[i] >= 0 {
-			a.extensionAt[i] = -1
+	for _, group := range groups {
+		first := group[0]
+		a.boundAt[first] = query.SymbolIndex(relSymbols, bindingSyms[first])
+		if a.boundAt[first] >= 0 {
 			continue
 		}
-		a.extensionAt[i] = len(symbols)
-		symbols = append(symbols, sym)
+		a.extensionAt[first] = len(symbols)
+		symbols = append(symbols, bindingSyms[first])
 		a.extensions++
 	}
 	a.symbols = symbols
@@ -112,27 +123,35 @@ func bindingTuples(binding interface{}, value interface{}) ([]Tuple, error) {
 	return nil, fmt.Errorf("unsupported binding type: %T", binding)
 }
 
-// relationOverTuples is the materialized relation over the binding's
-// symbols holding the tuples, each copied so none shares the slice of the
-// value the function returned.
-func relationOverTuples(symbols []query.Symbol, tuples []Tuple, opts ExecutorOptions) Relation {
-	own := make([]Tuple, len(tuples))
-	for i, tuple := range tuples {
-		own[i] = make(Tuple, len(tuple))
-		copy(own[i], tuple)
+// relationOver is the materialized relation over the alignment's symbols
+// holding each tuple a binding read, applied to no input tuple. The
+// alignment is against no relation symbols, so every first occurrence of a
+// binding symbol extends, every output tuple is fresh and shares nothing
+// with the value the function returned, and a tuple whose repeated symbol
+// disagrees is dropped.
+func (a bindingAlignment) relationOver(bound []Tuple, opts ExecutorOptions) Relation {
+	tuples := make([]Tuple, 0, len(bound))
+	for _, values := range bound {
+		if out, ok := a.apply(nil, values); ok {
+			tuples = append(tuples, out)
+		}
 	}
-	return NewMaterializedRelationWithOptions(symbols, own, opts)
+	return NewMaterializedRelationWithOptions(a.symbols, tuples, opts)
 }
 
-// apply unifies values against the tuple's bound positions and, on success,
-// returns the output tuple: the input unchanged when nothing extends, or
-// the input plus the extension values. ok=false means a bound position did
-// not unify — the tuple is dropped, never rewritten.
+// apply unifies values against the tuple's bound positions and against each
+// other where one symbol holds several positions and, on success, returns
+// the output tuple: the input unchanged when nothing extends, or the input
+// plus the extension values. ok=false means a position did not unify — the
+// tuple is dropped, never rewritten.
 func (a bindingAlignment) apply(tuple Tuple, values []interface{}) (Tuple, bool) {
 	for i, idx := range a.boundAt {
 		if idx >= 0 && !datalog.ValuesEqual(tuple[idx], values[i]) {
 			return nil, false
 		}
+	}
+	if !query.AgreesAt(values, a.groups) {
+		return nil, false
 	}
 	if a.extensions == 0 {
 		return tuple, true

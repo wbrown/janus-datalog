@@ -509,8 +509,8 @@ func encodeBinaryDatom(d *datalog.Datom) ([]byte, error) {
 	if d.A == nil {
 		return nil, errors.New("binary export: nil attribute")
 	}
-	if len(d.A.String()) > datalog.MaxAttributeBytes {
-		return nil, fmt.Errorf("binary export: attribute %q exceeds %d bytes", d.A.String(), datalog.MaxAttributeBytes)
+	if err := datalog.ValidateAttributeWidth(d.A); err != nil {
+		return nil, fmt.Errorf("binary export: %w", err)
 	}
 
 	vBytes := datalog.ValueBytes(d.V)

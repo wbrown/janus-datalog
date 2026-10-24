@@ -105,7 +105,7 @@ func TestOrFallbackSurfacesTheSubjectsIteratorAndCloseErrors(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			relation := NewOrFallbackRelation(
+			relation, err := NewOrFallbackRelation(
 				newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
 				NewContext(),
 				[]query.Symbol{entity},
@@ -118,10 +118,11 @@ func TestOrFallbackSurfacesTheSubjectsIteratorAndCloseErrors(t *testing.T) {
 				ExecutorOptions{},
 				true,
 			)
+			require.NoError(t, err)
 			iterator := relation.Iterator()
 			for iterator.Next() {
 			}
-			err := iterator.Error()
+			err = iterator.Error()
 			if closeErr := iterator.Close(); err == nil {
 				err = closeErr
 			}
@@ -186,7 +187,7 @@ func TestOrFallbackSurfacesTheSubjectsErrorsUnderTheEAArm(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			matcher := &prefetchingMatcher{PatternMatcher: NewMemoryPatternMatcher(datoms), values: values}
 			options := ExecutorOptions{EnableEntityPrefetch: true, ScopeWindowCap: 128}
-			relation := NewOrFallbackRelation(
+			relation, err := NewOrFallbackRelation(
 				newQueryExecutor(matcher, nil, options),
 				NewContext(),
 				[]query.Symbol{entitySymbol},
@@ -196,10 +197,11 @@ func TestOrFallbackSurfacesTheSubjectsErrorsUnderTheEAArm(t *testing.T) {
 				options,
 				true,
 			)
+			require.NoError(t, err)
 			iterator := relation.Iterator()
 			for iterator.Next() {
 			}
-			err := iterator.Error()
+			err = iterator.Error()
 			if closeErr := iterator.Close(); err == nil {
 				err = closeErr
 			}

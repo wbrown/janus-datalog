@@ -752,46 +752,23 @@ func (m *PatternMatcher) LookupAttribute(
 
 	// Fallback to storage scan (for as-of queries or when cache is not set)
 	if card == schema.CardinalityOne {
-		// For cardinality-one, use EATV index where Tx comes before V
-		// Tx is encoded descending, so first entry = highest Tx = current value (LWW)
+		// The bound names the run the resolve event reports: the entity's
+		// EATV history of the attribute.
 		bound := ScanBound{
 			Index:  EATV,
 			Prefix: []datalog.Value{entity, attr},
 		}
 		run = &bound
-		iter, err := OpenKeyScan(m.reader, report, bound)
+		var aAttr Attribute
+		copy(aAttr[:], aStorage[:])
+		v, _, _, err := m.ResolveLWW(Entity(eBytes), aAttr, report)
 		if err != nil {
 			return nil, false, err
 		}
-		defer func() {
-			// Runs before the emit defer, which was registered first.
-			if closeErr := iter.Close(); lookupErr == nil {
-				lookupErr = closeErr
-			}
-		}()
-
-		for iter.Next() {
-			datom, err := iter.Datom()
-			if err != nil {
-				return nil, false, err
-			}
-
-			// Check transaction filter for as-of queries
-			if m.shouldFilterTx(datom.Tx) {
-				continue
-			}
-
-			// First entry with valid Tx is the LWW winner. If it is a
-			// Remove tombstone, the attribute does not currently exist.
-			if datom.Op == datalog.OpCRDTRemove {
-				return nil, false, nil
-			}
-			return datom.V, true, nil
+		if v == nil {
+			return nil, false, nil
 		}
-		if err := iter.Error(); err != nil {
-			return nil, false, err
-		}
-		return nil, false, nil
+		return v, true, nil
 	}
 
 	if card == schema.CardinalityVector {

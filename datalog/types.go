@@ -59,6 +59,16 @@ type Keyword = *keyword
 // (storage enforces the match with a compile-time assertion).
 const MaxAttributeBytes = 32
 
+// ValidateAttributeWidth is the one statement of the width rule: a keyword
+// whose string form is longer than MaxAttributeBytes is refused, naming the
+// keyword, its length and the limit.
+func ValidateAttributeWidth(a Keyword) error {
+	if n := len(a.String()); n > MaxAttributeBytes {
+		return fmt.Errorf("attribute %s is %d bytes, exceeds the %d-byte storage limit", a, n, MaxAttributeBytes)
+	}
+	return nil
+}
+
 // NewKeyword creates an interned keyword.
 // Accepts both ":foo/bar" and "foo/bar" formats (auto-prefixes colon).
 func NewKeyword(s string) Keyword {

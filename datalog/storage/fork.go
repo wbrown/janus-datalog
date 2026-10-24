@@ -102,9 +102,15 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 		return nil, fmt.Errorf("Fork %q: %w", name, err)
 	}
 	plannerOptions := *d.plannerOptions
+	// The given schema and the declared definitions are one state, published
+	// together under schemaInstallMu by every install, so both are read under
+	// it.
+	d.schemaInstallMu.Lock()
 	d.mu.RLock()
 	given := d.givenSchema
 	d.mu.RUnlock()
+	declared := d.declaredSchema()
+	d.schemaInstallMu.Unlock()
 	branch, err = NewDatabaseWithOptions(DatabaseOptions{
 		Store:                   forked,
 		Schema:                  given,
@@ -118,7 +124,7 @@ func (d *Database) Fork(name string) (branch *Database, err error) {
 	// The branch holds the parent's facts as of the snapshot. The parent's
 	// declared definitions are asserted into it, so a declaration the parent
 	// made after the snapshot reaches the branch and its dump describes itself.
-	if err := branch.adoptDeclarations(d.declaredSchema()); err != nil {
+	if err := branch.adoptDeclarations(declared); err != nil {
 		return nil, errors.Join(fmt.Errorf("Fork %q: %w", name, err), branch.Close())
 	}
 	if err := addBranchRecord(tx, name, snapshot.At, ceiling, branch.ReplicaID()); err != nil {

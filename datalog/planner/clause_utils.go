@@ -289,7 +289,10 @@ func (s selection) invocationDependsOnPendingProvider(inv *query.RuleInvocation)
 // intermediate relation. This is patternDependsOnPendingExpression's
 // invariant applied to the subquery relation's interface (a decorrelated
 // grouped subquery binds its group keys to outer names precisely so they
-// join).
+// join). A subquery with an available input waits on a provider with
+// visible selectivity and on no provider that scans a whole extent
+// (scansAWholeExtent), as an invocation with an available argument does
+// (REWRITE_ORDER_PROOF.md §6, L6).
 //
 // Both restrictions on the provider scan make deferral unable to block
 // progress, by construction rather than by convention:
@@ -307,9 +310,15 @@ func (s selection) invocationDependsOnPendingProvider(inv *query.RuleInvocation)
 //     pending expression that in turn needs this subquery's output would
 //     deadlock a valid query.
 func (s selection) subqueryDependsOnPendingProvider(sp *query.SubqueryPattern) bool {
-	outputs := query.ScopeOf(sp, s.rules).Provides
+	scope := query.ScopeOf(sp, s.rules)
+	bound := false
+	for _, sym := range scope.Correlates {
+		if s.available[sym] {
+			bound = true
+		}
+	}
 	needed := make(map[query.Symbol]bool)
-	for _, sym := range outputs {
+	for _, sym := range scope.Provides {
 		if !s.available[sym] {
 			needed[sym] = true
 		}
@@ -328,7 +337,7 @@ func (s selection) subqueryDependsOnPendingProvider(sp *query.SubqueryPattern) b
 		if !s.clauseSelectable(clause) {
 			waits := s.pendingBlockers(clause)
 			waitsOnSubquery := false
-			for _, sym := range outputs {
+			for _, sym := range scope.Provides {
 				if waits[sym] {
 					waitsOnSubquery = true
 					break
@@ -337,6 +346,9 @@ func (s selection) subqueryDependsOnPendingProvider(sp *query.SubqueryPattern) b
 			if waitsOnSubquery {
 				continue
 			}
+		}
+		if bound && scansAWholeExtent(clause, s.available, s.rules) {
+			continue
 		}
 		for _, sym := range query.ScopeOf(clause, s.rules).Provides {
 			if needed[sym] {

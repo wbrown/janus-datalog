@@ -157,11 +157,6 @@ func TestParseComparatorPatterns(t *testing.T) {
 			if err := tt.validate(q); err != nil {
 				t.Error(err)
 			}
-
-			// Validate that all variables are bound
-			if err := ValidateQuery(q); err != nil {
-				t.Errorf("validation error: %v", err)
-			}
 		})
 	}
 }

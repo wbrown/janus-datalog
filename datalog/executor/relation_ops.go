@@ -6,16 +6,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// hasRelationInput checks if a query has a RelationInput in its :in clause
-func hasRelationInput(q *query.Query) bool {
-	for _, input := range q.In {
-		if _, ok := input.(query.RelationInput); ok {
-			return true
-		}
-	}
-	return false
-}
-
 // materializeRelationsForPattern materializes relations that share symbols with a pattern.
 // This is needed for binding-based filtering during pattern matching.
 func materializeRelationsForPattern(pattern *query.DataPattern, relations Relations) Relations {

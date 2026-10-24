@@ -255,38 +255,57 @@ func (s *Schema) Add(def *AttributeDefinition) *Schema {
 	}
 	// After the default, so a definition that named no cardinality is checked
 	// against the value it will actually carry.
-	mustBelong(def.Ident, def.ValueType, valueTypes, "a value type")
-	mustBelong(def.Ident, def.Cardinality, cardinalities, "a cardinality")
-	mustBelong(def.Ident, def.Unique, uniques, "a uniqueness constraint")
-	// An ident longer than storage holds would be truncated to its first bytes
-	// and alias every attribute sharing them, so a definition of one is never
-	// constructed.
-	if n := len(def.Ident.String()); n > datalog.MaxAttributeBytes {
-		panic(fmt.Errorf("attribute %s is %d bytes, exceeds the %d-byte storage limit", def.Ident, n, datalog.MaxAttributeBytes))
-	}
-	// NeverZeroValue is a statement about the value type's zero, so it has
-	// nothing to say without one.
-	if def.NeverZeroValue && def.ValueType == nil {
-		panic(fmt.Errorf("attribute %s: NeverZeroValue requires a value type", def.Ident))
+	if err := ValidateDefinition(def); err != nil {
+		panic(err)
 	}
 	s.attributes[def.Ident] = def
 	return s
 }
 
-// mustBelong panics unless kw is absent or drawn from set. A nil keyword is
+// ValidateDefinition is the one statement of what the schema admits as a
+// definition: each keyword the definition carries drawn from its vocabulary,
+// an ident within the width storage holds, and NeverZeroValue only beside a
+// value type. Add panics on its error, the builder records it for Build, and
+// a database checks a given provider's definitions through it before any fact
+// of them is asserted.
+//
+// An ident longer than storage holds would be truncated to its first bytes
+// and alias every attribute sharing them. NeverZeroValue is a statement about
+// the value type's zero, so it has nothing to say without one.
+func ValidateDefinition(def *AttributeDefinition) error {
+	if err := belongs(def.Ident, def.ValueType, valueTypes, "a value type"); err != nil {
+		return err
+	}
+	if err := belongs(def.Ident, def.Cardinality, cardinalities, "a cardinality"); err != nil {
+		return err
+	}
+	if err := belongs(def.Ident, def.Unique, uniques, "a uniqueness constraint"); err != nil {
+		return err
+	}
+	if err := datalog.ValidateAttributeWidth(def.Ident); err != nil {
+		return err
+	}
+	if def.NeverZeroValue && def.ValueType == nil {
+		return fmt.Errorf("attribute %s: NeverZeroValue requires a value type", def.Ident)
+	}
+	return nil
+}
+
+// belongs is the error unless kw is absent or drawn from set. A nil keyword is
 // absence — a definition that has not said which value type or uniqueness
 // constraint it carries — and is left alone; Add has already replaced an absent
 // cardinality with its default before this runs.
 //
 // noun names the vocabulary in the message, worded as the builder words it, so
 // a definition rejected here and one rejected there read alike.
-func mustBelong(ident, kw datalog.Keyword, set map[datalog.Keyword]struct{}, noun string) {
+func belongs(ident, kw datalog.Keyword, set map[datalog.Keyword]struct{}, noun string) error {
 	if kw == nil {
-		return
+		return nil
 	}
 	if _, ok := set[kw]; !ok {
-		panic(fmt.Errorf("attribute %s: %s is not %s", ident, kw, noun))
+		return fmt.Errorf("attribute %s: %s is not %s", ident, kw, noun)
 	}
+	return nil
 }
 
 // GetAttribute returns the definition for an attribute, or nil if unknown

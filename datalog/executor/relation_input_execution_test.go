@@ -15,23 +15,23 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Regression guards for executeRealizedWithRelationInputIterationParallel.
+// ExecuteWithRelations over a relation input: the input enters as the bound
+// group BindQueryInputs builds (executor_utils.go), and the plan runs once
+// over it. relation_input_test.go pins the answers themselves; this file pins
+// what the run reports, what it reads, and what it leaves behind:
 //
-// The function runs a fixed pool of numWorkers worker goroutines against a
-// channel of input tuples, rather than spawning one goroutine per tuple, to
-// avoid goroutine-creation and semaphore contention on relation inputs with
-// hundreds of tuples.
-//
-// These tests pin the observable behavior of the function so its
-// implementation can change without changing semantics. The existing
-// relation_input_test.go covers basic correctness; this file covers the
-// invariants that must be preserved:
-//
-//   1. Multiset equality with sequential (count-preserving, not just set)
-//   2. Error propagation when a worker's per-tuple query errors
-//   3. Deferred iterator-error propagation through per-tuple results
-//   4. No goroutine leaks across many invocations
-//   5. Concurrent invocation produces correct results, not just no errors
+//  1. Over an input holding duplicate tuples the answer is the exact set, each
+//     matching entity once, compared as a sorted tuple list so an extra or a
+//     dropped tuple shows as a length difference.
+//  2. A matcher error, on the first pattern or a later one, is the query's
+//     error.
+//  3. An error a pattern's result defers to Iterator().Error() is the query's
+//     error.
+//  4. Repeated queries leave no goroutine behind.
+//  5. A streaming input whose iterator reuses one workspace answers as a
+//     materialized input does.
+//  6. Concurrent queries over one matcher and one input each answer the same
+//     tuples.
 
 // ---------------------------------------------------------------------------
 // Error-injection matchers
@@ -41,8 +41,8 @@ import (
 var errInjectedMatcher = errors.New("injected matcher failure")
 
 // failingMatcher wraps a delegate PatternMatcher and lets a test inject
-// failures based on a hook. Match-call counting is mutex-protected because
-// the parallel path invokes Match concurrently from worker goroutines.
+// failures based on a hook. Match-call counting is mutex-protected, so the
+// matcher is safe under concurrent Match calls.
 type failingMatcher struct {
 	delegate   PatternMatcher
 	mu         sync.Mutex
@@ -71,7 +71,7 @@ func (m *failingMatcher) Match(q *query.Query, bindings Relations) (Relation, er
 // returns a Relation whose iterator yields nothing and then reports an error
 // via Error() — mimicking a Tier-3 blob decode failure or any other deferred
 // storage error that surfaces only after Next() returns false. Used to verify
-// the parallel path's deferred-error propagation contract.
+// the deferred-error propagation contract.
 type deferredFailMatcher struct {
 	delegate   PatternMatcher
 	mu         sync.Mutex
@@ -122,8 +122,7 @@ func buildPeopleDatoms() []datalog.Datom {
 }
 
 // peopleQueryNoAgg is `[:find ?n ?y ?age :in $ [[?n ?y] ...] :where ...]`.
-// Returns one tuple per matching entity, so duplicates in the input relation
-// flow through to duplicates in the output — which is what gap (1) exercises.
+// Returns one tuple per matching entity.
 const peopleQueryNoAgg = `[:find ?n ?y ?age
  :in $ [[?n ?y] ...]
  :where [?e :name ?n]
@@ -147,34 +146,18 @@ func sortedTupleStrings(t *testing.T, rel Relation) []string {
 }
 
 // ---------------------------------------------------------------------------
-// Gap 1: multiset equality with sequential
+// The exact set over an input holding duplicate tuples
 // ---------------------------------------------------------------------------
 
-// TestRelationInputParallel_MultisetMatchesSequential pins
-// **count-preserving** equality between sequential and parallel execution.
-// Sorted-list comparison (not map/set) catches a refactor that silently
-// emits extra duplicates or drops valid duplicates that should have been
-// preserved.
-//
-// Note: janus-datalog enforces set semantics at the result boundary, so
-// input duplicates collapse downstream. This test still adds value over a
-// map comparison because the comparison is at the *sorted-list* level —
-// if a refactor produced an extra tuple that for any reason wasn't
-// deduped (e.g. an off-by-one in worker pool collection that emits the
-// last tuple twice, with the duplicate slipping past dedup because of an
-// ordering or pointer-identity quirk), the sorted-list lengths would
-// differ. A map comparison would silently collapse it.
-//
-// The pre-existing TestRelationInputIterationParallel "parallel vs
-// sequential correctness" subtest builds result *maps*, losing this.
-func TestRelationInputParallel_MultisetMatchesSequential(t *testing.T) {
+// TestRelationInput_DuplicateInputTuplesAnswerTheExactSet pins that the
+// answer over an input relation holding duplicate tuples is the exact set of
+// matching entities, each once, compared as the sorted list of its tuples.
+func TestRelationInput_DuplicateInputTuplesAnswerTheExactSet(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(buildPeopleDatoms())
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
 	require.NoError(t, err)
 
-	// Mix of distinct tuples and duplicates. The downstream set semantics
-	// collapses input dupes, but the sorted-list comparison still catches
-	// any drift on the parallel side that survives dedup.
+	// Mix of distinct tuples and duplicates.
 	inputRel := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
 		[]Tuple{
@@ -187,43 +170,38 @@ func TestRelationInputParallel_MultisetMatchesSequential(t *testing.T) {
 			{"Carol", int64(2020)},
 		},
 	)
+	expected := []string{
+		"[Alice 2020 25]",
+		"[Alice 2021 26]",
+		"[Bob 2020 30]",
+		"[Bob 2021 31]",
+		"[Carol 2020 40]",
+	}
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			seqExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			seqExec.DisableParallelSubqueries()
-			seqResult, err := seqExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 
-			parExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			parExec.EnableParallelSubqueries(4)
-			parResult, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
-			require.NoError(t, err)
-
-			seqTuples := sortedTupleStrings(t, seqResult)
-			parTuples := sortedTupleStrings(t, parResult)
-
-			require.Equal(t, seqTuples, parTuples,
-				"parallel and sequential must produce identical sorted-tuple lists; "+
-					"a set/map comparison would miss any duplicate-count drift that "+
-					"slipped past downstream dedup")
+			require.Equal(t, expected, sortedTupleStrings(t, result),
+				"the answer over duplicate input tuples is the exact set, each matching entity once")
 		})
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Gap 2: error from per-tuple worker query propagates
+// A matcher error is the query's error
 // ---------------------------------------------------------------------------
 
-// TestRelationInputParallel_PropagatesMatcherError pins that an error
-// returned by the PatternMatcher during a worker's per-tuple query surfaces
-// as a non-nil error from ExecuteWithRelations — not as a partial successful
-// result that quietly drops the failed tuple.
+// TestRelationInput_PropagatesMatcherError pins that an error the
+// PatternMatcher returns while matching a pattern over the bound group
+// surfaces as a non-nil error from ExecuteWithRelations — not as a partial
+// successful result that quietly drops the failed pattern.
 //
-// Failure is wrapped: ExecuteWithRelations wraps with
-// "parallel iteration execution failed: %w", so errors.Is must unwrap to the
-// injected sentinel.
-func TestRelationInputParallel_PropagatesMatcherError(t *testing.T) {
+// The phase that ran the pattern wraps the failure, so errors.Is must unwrap
+// to the injected sentinel.
+func TestRelationInput_PropagatesMatcherError(t *testing.T) {
 	// Shared read-only delegate; the stateful failingMatcher wrapper (call
 	// counter) is rebuilt fresh per mode below so each mode's execution sees
 	// its own "fail on call N" state.
@@ -243,15 +221,13 @@ func TestRelationInputParallel_PropagatesMatcherError(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Fail on the very first Match() call. Whichever worker hits it first
-			// will see the error and the function must surface it.
+			// Fail on the very first Match() call.
 			fm := &failingMatcher{
 				delegate:   delegate,
 				shouldFail: func(n int, _ *query.DataPattern) error { return errInjectedMatcher },
 			}
 
 			exec := NewExecutorWithOptions(fm, nil, mode.plannerOptions())
-			exec.EnableParallelSubqueries(4)
 
 			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err, "matcher error must not be silently dropped")
@@ -261,10 +237,10 @@ func TestRelationInputParallel_PropagatesMatcherError(t *testing.T) {
 	}
 }
 
-// TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple covers the
-// case where the first few tuples succeed and a later one fails. The
-// contract is that error propagates regardless of position.
-func TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple(t *testing.T) {
+// TestRelationInput_PropagatesMatcherErrorAfterAnEarlierPattern covers the
+// case where an earlier pattern matched and a later one fails. The contract
+// is that the error propagates whatever its position.
+func TestRelationInput_PropagatesMatcherErrorAfterAnEarlierPattern(t *testing.T) {
 	// Shared read-only delegate; the stateful failingMatcher wrapper (call
 	// counter) is rebuilt fresh per mode below so each mode's execution sees
 	// its own "fail on call N" state.
@@ -286,10 +262,10 @@ func TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple(t *testing.T) 
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Fail on the Nth Match() call (across all workers). The exact call
-			// count depends on plan shape; we just need it to be > 1 to verify
-			// the "after some tuples succeeded" case is handled.
-			const failAfter = 5
+			// Fail on the second Match() call: the query's three patterns are
+			// matched once each over the bound group, so the second call is
+			// the "after an earlier pattern succeeded" case.
+			const failAfter = 2
 			fm := &failingMatcher{
 				delegate: delegate,
 				shouldFail: func(n int, _ *query.DataPattern) error {
@@ -301,7 +277,6 @@ func TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple(t *testing.T) 
 			}
 
 			exec := NewExecutorWithOptions(fm, nil, mode.plannerOptions())
-			exec.EnableParallelSubqueries(4)
 
 			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err, "matcher error after partial success must not be silently dropped")
@@ -312,18 +287,14 @@ func TestRelationInputParallel_PropagatesMatcherErrorOnLaterTuple(t *testing.T) 
 }
 
 // ---------------------------------------------------------------------------
-// Gap 3: deferred iterator-error propagation
+// A deferred iterator error is the query's error
 // ---------------------------------------------------------------------------
 
-// TestRelationInputParallel_PropagatesDeferredIteratorError pins the
-// iterator-error contract through the parallel path: a per-tuple query
-// whose result relation defers an error to Iterator().Error() (the way a
-// failed Tier-3 blob decode would) must surface as a non-nil error from
-// ExecuteWithRelations.
-//
-// The parallel function consumes per-worker results via collectTuplesInto,
-// which is the contract-enforcing call. This test verifies the wiring.
-func TestRelationInputParallel_PropagatesDeferredIteratorError(t *testing.T) {
+// TestRelationInput_PropagatesDeferredIteratorError pins the iterator-error
+// contract: a pattern whose result relation defers an error to
+// Iterator().Error() (the way a failed Tier-3 blob decode would) must surface
+// as a non-nil error from ExecuteWithRelations.
+func TestRelationInput_PropagatesDeferredIteratorError(t *testing.T) {
 	// Shared read-only delegate; the stateful deferredFailMatcher wrapper
 	// (call counter) is rebuilt fresh per mode below so each mode's
 	// execution sees its own "fail on call N" state.
@@ -348,7 +319,6 @@ func TestRelationInputParallel_PropagatesDeferredIteratorError(t *testing.T) {
 			}
 
 			exec := NewExecutorWithOptions(dm, nil, mode.plannerOptions())
-			exec.EnableParallelSubqueries(4)
 
 			_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.Error(t, err, "deferred iterator error must propagate, not be laundered into a clean result")
@@ -359,16 +329,15 @@ func TestRelationInputParallel_PropagatesDeferredIteratorError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Gap 4: no goroutine leaks
+// No goroutine left behind
 // ---------------------------------------------------------------------------
 
-// TestRelationInputParallel_NoGoroutineLeak verifies that repeated parallel
-// iteration does not leak goroutines. Catches forgotten wg.Wait(),
-// abandoned worker pool goroutines, or unclosed channels.
-//
-// The worker pool spawns numWorkers long-lived goroutines per call; count
-// must return to baseline after the call.
-func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
+// TestRelationInput_NoGoroutineLeak verifies that repeated queries over a
+// relation input leave no goroutine behind: the goroutine count after fifty
+// queries is the count before them. A pool running the query's jobs spawns
+// its goroutines per call, and a forgotten wg.Wait(), an abandoned worker or
+// an unclosed channel leaves them running past the call's return.
+func TestRelationInput_NoGoroutineLeak(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(buildPeopleDatoms())
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
 	require.NoError(t, err)
@@ -387,7 +356,6 @@ func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			exec.EnableParallelSubqueries(4)
 
 			// Warm up: first run amortizes one-time initializations that may park
 			// goroutines (intern caches, etc.). Without this, "before" can be lower
@@ -407,8 +375,8 @@ func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			// Give the runtime time to reap finished goroutines. The parallel
-			// function returns only after all workers signal done, so there should
+			// Give the runtime time to reap finished goroutines. A query returns
+			// only after every goroutine it started signals done, so there should
 			// be no in-flight workers; what we're guarding against is workers that
 			// linger past the function return.
 			runtime.GC()
@@ -427,7 +395,7 @@ func TestRelationInputParallel_NoGoroutineLeak(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Gap 5: concurrent invocation correctness
+// A streaming input reusing its workspace
 // ---------------------------------------------------------------------------
 
 // reusingWorkspaceIterator yields tuples by mutating a single shared
@@ -490,9 +458,9 @@ func (it *reusingWorkspaceIterator) Tuple() Tuple { return it.workspace }
 func (it *reusingWorkspaceIterator) Close() error { return nil }
 func (it *reusingWorkspaceIterator) Error() error { return nil }
 
-// TestRelationInputParallel_HandlesWorkspaceReuseIterator: a streaming input
-// relation whose iterator reuses a single workspace slice across Next() calls
-// (the production-default storage-iterator pattern, used by
+// TestRelationInput_AStreamingInputReusingItsWorkspaceAnswersAsAMaterializedOne:
+// a streaming input relation whose iterator reuses a single workspace slice
+// across Next() calls (the production-default storage-iterator pattern, used by
 // matcher_iterator_nonreusing.go and hash_join_matcher.go) must produce the
 // same multiset of results as a materialized input. Without a producer-side
 // copy, workers race against the producer's workspace overwrites — and
@@ -517,7 +485,7 @@ func (it *reusingWorkspaceIterator) Error() error { return nil }
 //     producer can finish all sends before any worker reads its tuple,
 //     and the test accidentally passes (the race detector still catches
 //     it under -race, but the result happens to come out correct).
-func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
+func TestRelationInput_AStreamingInputReusingItsWorkspaceAnswersAsAMaterializedOne(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":name")
 	yearAttr := datalog.NewKeyword(":year")
 	ageAttr := datalog.NewKeyword(":age")
@@ -558,7 +526,6 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 			)
 
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			exec.EnableParallelSubqueries(4)
 
 			result, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
@@ -594,15 +561,17 @@ func TestRelationInputParallel_HandlesWorkspaceReuseIterator(t *testing.T) {
 	}
 }
 
-// TestRelationInputParallel_ConcurrentInvocationCorrectness strengthens the
-// existing concurrent test (relation_input_test.go:590, which only checks
-// errors). Multiple outer goroutines simultaneously invoke the parallel
-// path; each must receive a correct multiset, not just a non-error.
-//
-// This shape — multiple concurrent callers each running parallel
-// relation-input queries against the same matcher — exposes any
-// shared-state race in the parallel function.
-func TestRelationInputParallel_ConcurrentInvocationCorrectness(t *testing.T) {
+// ---------------------------------------------------------------------------
+// Concurrent queries
+// ---------------------------------------------------------------------------
+
+// TestRelationInput_ConcurrentQueriesAnswerAlike pins that concurrent queries
+// over one matcher and one input relation each answer the tuples one query
+// alone answers. Sixteen goroutines, each with its own executor, run the
+// query twenty times each, and every run's tuples are compared with the
+// expected list, never only its error, which is what the concurrent subtest
+// of TestRelationInput_ThreeHundredTuples checks.
+func TestRelationInput_ConcurrentQueriesAnswerAlike(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(buildPeopleDatoms())
 	q, err := parser.ParseQuery(peopleQueryNoAgg)
 	require.NoError(t, err)
@@ -620,10 +589,9 @@ func TestRelationInputParallel_ConcurrentInvocationCorrectness(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Compute the expected multiset once, sequentially.
-			seqExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			seqExec.DisableParallelSubqueries()
-			expected, err := seqExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
+			// The expected tuples, from one query run alone.
+			expected, err := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).
+				ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 			require.NoError(t, err)
 			expectedTuples := sortedTupleStrings(t, expected)
 
@@ -644,7 +612,6 @@ func TestRelationInputParallel_ConcurrentInvocationCorrectness(t *testing.T) {
 					// Each outer goroutine gets its own executor, mirroring the
 					// production pattern (per-task or per-request executor).
 					exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-					exec.EnableParallelSubqueries(4)
 					for i := 0; i < itersPerGoroutine; i++ {
 						rel, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
 						if err != nil {

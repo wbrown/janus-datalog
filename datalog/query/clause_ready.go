@@ -55,20 +55,27 @@ type StuckClause struct {
 
 // NewNoOrderError is the refusal of a stall: for each clause of remaining,
 // the variables it waits on under available, and those among them that no
-// symbol of inputs and no clause of all provides. rules declares an
-// invocation's correlates and provisions.
+// symbol of inputs and no clause of all other than the stuck clause itself
+// provides, since a clause binding the variable it reads is no provider of
+// it. remaining's clauses are members of all. rules declares an invocation's
+// correlates and provisions.
 func NewNoOrderError(remaining, all []Clause, available, inputs map[Symbol]bool, rules *RuleSet) *NoOrderError {
-	provided := make(map[Symbol]bool)
+	providers := make(map[Symbol]int)
 	for _, clause := range all {
 		for _, sym := range ScopeOf(clause, rules).Provides {
-			provided[sym] = true
+			providers[sym]++
 		}
 	}
 	e := &NoOrderError{}
 	for _, clause := range remaining {
 		stuck := StuckClause{Clause: clause, Waits: ClauseBlockers(clause, available, rules)}
+		own := ScopeOf(clause, rules).Provides
 		for _, sym := range stuck.Waits {
-			if !inputs[sym] && !provided[sym] {
+			others := providers[sym]
+			if ContainsSymbol(own, sym) {
+				others--
+			}
+			if !inputs[sym] && others == 0 {
 				stuck.Unbound = append(stuck.Unbound, sym)
 			}
 		}

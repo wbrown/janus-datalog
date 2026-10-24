@@ -70,7 +70,7 @@ func (f *OutputFormatter) Format(event Event) string {
 
 	switch event.Name {
 	case QueryInvoked:
-		return fmt.Sprintf("%s Query: %s", latency, event.Data["query"].(string))
+		return fmt.Sprintf("%s Query: %s", latency, event.Data[KeyQuery].(string))
 
 	case QueryPlanCreated:
 		return fmt.Sprintf("\n%s\n", event.Data["plan"].(string))
@@ -81,13 +81,13 @@ func (f *OutputFormatter) Format(event Event) string {
 			return fmt.Sprintf("%s %s Query failed: %v",
 				latency,
 				f.colorize("✗", color.FgRed),
-				event.Data["error"])
+				event.Data[KeyError])
 		}
 		return fmt.Sprintf("%s %s Query done with %s with %s total.",
 			latency,
 			f.colorize("===", color.FgGreen),
-			f.colorizeCount("Relations", event.Data["relations.count"].(int)),
-			f.colorizeCount("Tuples", event.Data["tuples.count"].(int)))
+			f.colorizeCount("Relations", event.Data[KeyRelationsCount].(int)),
+			f.colorizeCount("Tuples", event.Data[KeyTuplesCount].(int)))
 
 	case PhaseBegin:
 		return fmt.Sprintf("%s %s Phase %v starting on %v input group(s)",

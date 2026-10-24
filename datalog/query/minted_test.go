@@ -25,6 +25,9 @@ func TestMintedPredicateSymbols(t *testing.T) {
 		{"delta of an adorned predicate", DeltaSymbol(AdornedSymbol(sym("follows"), bf)), "delta.adorned.bf/follows"},
 		{"delta of a magic predicate", DeltaSymbol(MagicSymbol(sym("follows"), bf)), "delta.magic.bf/follows"},
 		{"adorned, the predicate in a namespace of the caller's", AdornedSymbol(sym("mine/follows"), bf), "adorned.bf.mine/follows"},
+		{"a scope's collection input at its call position", ScopeInput(2), "?scope/input.2"},
+		{"a pattern's later occurrence of a variable", UnifiedVariable(sym("?x"), 2), "?unify/x.2"},
+		{"a pattern's later occurrence of a namespaced variable", UnifiedVariable(sym("?mine/x"), 1), "?unify.mine/x.1"},
 	}
 	for _, c := range cases {
 		if c.got != sym(c.want) {

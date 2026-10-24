@@ -273,6 +273,8 @@ func (p *DatabaseFunctionPredicate) Selectivity() float64 {
 // clause implements the Clause interface marker method
 func (p *DatabaseFunctionPredicate) clause() {}
 
+// String renders the predicate as the bracketed clause the parser reads a
+// predicate by, [(missing? $ ?e :attr)].
 func (p *DatabaseFunctionPredicate) String() string {
-	return p.Function.String()
+	return "[" + p.Function.String() + "]"
 }

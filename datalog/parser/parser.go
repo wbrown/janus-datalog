@@ -29,14 +29,9 @@ func ParseQuery(input string) (*query.Query, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Static clause-shape rules (subquery binding arity, not-join header
-	// completeness, or-default-join interface) and input-shape rules (% at
-	// most once) are enforced at every user boundary with one message; this
-	// is the parse boundary's call.
-	if err := query.ValidateInputShapes(q.In); err != nil {
-		return nil, err
-	}
-	if err := query.ValidateStaticClauseShapes(q.Where); err != nil {
+	// Every static check the text admits runs through ValidateQuery, which
+	// reaches every inner query.
+	if err := query.ValidateQuery(q); err != nil {
 		return nil, err
 	}
 	return q, nil
@@ -73,11 +68,6 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 				}
 				q.Find = append(q.Find, elem)
 				i++
-			}
-
-			// Validate: scalar find spec requires exactly one find element
-			if q.ScalarReturn && len(q.Find) != 1 {
-				return nil, fmt.Errorf("scalar find spec (.) requires exactly one find element, got %d", len(q.Find))
 			}
 
 		case ":in":
@@ -160,91 +150,7 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 		}
 	}
 
-	// Validate query
-	if len(q.Find) == 0 {
-		return nil, fmt.Errorf("query must have at least one find variable")
-	}
-	if len(q.Where) == 0 {
-		return nil, fmt.Errorf("query must have at least one where pattern")
-	}
-
-	// Scalar find spec (.) returns a single value, so a :limit above 1 is
-	// contradictory. :limit 0 (no result) and :limit 1 are coherent.
-	if q.ScalarReturn && q.Limit != nil && *q.Limit > 1 {
-		return nil, fmt.Errorf("scalar find spec (.) is incompatible with :limit %d (limit must be 0 or 1)", *q.Limit)
-	}
-
-	if err := query.ValidateRulesInput(q.In, q.Where); err != nil {
-		return nil, err
-	}
-
-	if err := validateOrderByClauses(q); err != nil {
-		return nil, err
-	}
-
 	return q, nil
-}
-
-// validateOrderByClauses enforces the sort-key binding rules from the Design
-// Decision section of
-// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md:
-// a sort key must be bound by :where (the result is sorted before the final
-// projection, so it need not be projected) or be a scalar/tuple :in constant
-// (a well-defined identity sort, dropped at execution). Variables bound
-// nowhere violate the safety condition; relation/collection input symbols
-// not bound by :where are not attributes of any relation the sort could see;
-// and aggregate queries collapse tuples, so only their group keys can order
-// them.
-func validateOrderByClauses(q *query.Query) error {
-	if len(q.OrderBy) == 0 {
-		return nil
-	}
-
-	constants := query.ConstantInputSymbols(q.In)
-	iterated := query.IteratedInputSymbols(q.In)
-
-	whereVars := make(map[query.Symbol]bool)
-	for _, v := range ExtractVariables(q.Where) {
-		whereVars[v] = true
-	}
-
-	findVars := make(map[query.Symbol]bool)
-	hasAggregates := false
-	for _, elem := range q.Find {
-		switch e := elem.(type) {
-		case query.FindVariable:
-			findVars[e.Symbol] = true
-		case query.FindPull:
-			findVars[e.Variable] = true
-		case query.FindAggregate:
-			hasAggregates = true
-		}
-	}
-
-	for _, clause := range q.OrderBy {
-		v := clause.Variable
-		if constants[v] {
-			continue
-		}
-		if hasAggregates {
-			if !findVars[v] {
-				return fmt.Errorf("order-by variable %s is not a group key: aggregation collapses tuples, so only :find variables can order an aggregate query", v)
-			}
-			continue
-		}
-		if findVars[v] {
-			// A projected symbol is always resolvable at sort time.
-			continue
-		}
-		if whereVars[v] {
-			continue
-		}
-		if iterated[v] {
-			return fmt.Errorf("order-by variable %s is an input symbol not bound in :where: bind it in a :where clause or add it to :find to sort by it", v)
-		}
-		return fmt.Errorf("order-by variable %s is not bound in the query", v)
-	}
-	return nil
 }
 
 // parseOrderByClause parses an order-by clause element
@@ -572,27 +478,6 @@ func parseSubqueryPattern(list *edn.Node, bindingNode *edn.Node) (*query.Subquer
 		return nil, fmt.Errorf("error parsing nested query: %w", err)
 	}
 
-	// :limit inside a subquery is not yet supported. The subquery execution path
-	// applies neither :order-by nor :limit (both are top-level finalization
-	// steps), so honoring it would require per-invocation finalization plus
-	// disabling batching/decorrelation when a cap is present. Rejecting here
-	// prevents silently-ignored caps (wrong results). Tracked in
-	// docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md.
-	if nestedQuery.Limit != nil {
-		return nil, fmt.Errorf(":limit is not supported inside a subquery; cap tuples in the enclosing query, or use the (max ?x)/(min ?x) aggregate idiom for top-1-per-group")
-	}
-
-	// Pull output is result presentation (maps), not a datalog value. A
-	// subquery's result feeds the enclosing query's relational pipeline
-	// (joins, deduplication), which operates on values only — see
-	// docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md. Return the entity and
-	// pull it in the enclosing query's top-level :find instead.
-	for _, elem := range nestedQuery.Find {
-		if _, isPull := elem.(query.FindPull); isPull {
-			return nil, fmt.Errorf("(pull ...) is not supported inside a subquery find: pull output is result presentation, not a relational value; return the entity from the subquery and pull it in the enclosing query's :find")
-		}
-	}
-
 	// Parse inputs (everything between query and end)
 	inputs := make([]query.PatternElement, 0, len(list.Nodes)-2)
 	for i := 2; i < len(list.Nodes); i++ {
@@ -659,6 +544,13 @@ func parseBindingForm(node *edn.Node) (query.BindingForm, error) {
 			} else if len(node.Nodes) == 2 && node.Nodes[1].Type == edn.NodeSymbol && node.Nodes[1].Value == "..." {
 				return parseRelationBinding(&node.Nodes[0])
 			}
+		}
+
+		// A vector of variables is the tuple form, an expression's
+		// destructuring and no subquery binding; the repair is the relation
+		// form over the same variables.
+		if written, err := parseTupleBinding(node); err == nil {
+			return nil, fmt.Errorf("%s is the tuple form, an expression's destructuring and no subquery binding; bind the inner :find with the relation form %s", written, query.RelationBinding{Variables: written.Variables})
 		}
 
 		return nil, fmt.Errorf("invalid binding form: expected ?var, [?var ...], [[?vars]], or [[?vars] ...]")
@@ -1301,191 +1193,4 @@ func parseWhereElement(node *edn.Node) (query.Clause, error) {
 	default:
 		return nil, fmt.Errorf("where element must be a vector or list, got %v", node.Type)
 	}
-}
-
-// Utility functions
-
-// ExtractVariables returns all unique variables from patterns
-func ExtractVariables(clauses []query.Clause) []query.Symbol {
-	seen := make(map[query.Symbol]bool)
-	var vars []query.Symbol
-
-	for _, clause := range clauses {
-		switch p := clause.(type) {
-		case *query.DataPattern:
-			for _, elem := range p.Elements {
-				if elem.IsVariable() {
-					if v, ok := elem.(query.Variable); ok {
-						if !seen[v.Name] {
-							seen[v.Name] = true
-							vars = append(vars, v.Name)
-						}
-					}
-				}
-			}
-		case *query.SubqueryPattern:
-			// Add variables from binding form - these are PROVIDED by the subquery
-			for _, v := range p.Binding.BoundVariables() {
-				if !seen[v] {
-					seen[v] = true
-					vars = append(vars, v)
-				}
-			}
-			// Note: Input variables are consumed, not provided
-
-		case *query.RuleInvocation:
-			for _, v := range p.Variables() {
-				if !seen[v] {
-					seen[v] = true
-					vars = append(vars, v)
-				}
-			}
-
-		case *query.Expression:
-			// Expression outputs are provided; argument variables are
-			// consumed, not provided
-			for _, v := range p.BoundVariables() {
-				if !seen[v] {
-					seen[v] = true
-					vars = append(vars, v)
-				}
-			}
-
-		case *query.NotClause:
-			// NOT doesn't provide new variables, but recursively extract from inner clauses
-			// (to check they're all bound before NOT executes)
-			innerVars := ExtractVariables(p.Clauses)
-			for _, v := range innerVars {
-				if !seen[v] {
-					seen[v] = true
-					vars = append(vars, v)
-				}
-			}
-
-		case *query.NotJoinClause:
-			// NOT-JOIN only exposes join vars
-			for _, v := range p.RequiredVars {
-				if !seen[v] {
-					seen[v] = true
-					vars = append(vars, v)
-				}
-			}
-
-		case *query.OrClause:
-			// OR provides intersection of all branches
-			if len(p.Branches) > 0 {
-				// Get vars from first branch
-				firstBranchVars := make(map[query.Symbol]bool)
-				for _, v := range ExtractVariables(p.Branches[0]) {
-					firstBranchVars[v] = true
-				}
-
-				// Intersect with remaining branches
-				for _, branch := range p.Branches[1:] {
-					branchVars := make(map[query.Symbol]bool)
-					for _, v := range ExtractVariables(branch) {
-						branchVars[v] = true
-					}
-					// Keep only vars in both
-					for v := range firstBranchVars {
-						if !branchVars[v] {
-							delete(firstBranchVars, v)
-						}
-					}
-				}
-
-				// Add intersection to result
-				for v := range firstBranchVars {
-					if !seen[v] {
-						seen[v] = true
-						vars = append(vars, v)
-					}
-				}
-			}
-
-		case *query.OrDefaultClause:
-			// OR-DEFAULT provides the intersection of all branches, like OR
-			if len(p.Branches) > 0 {
-				branchVars := make(map[query.Symbol]bool)
-				for _, v := range ExtractVariables(p.Branches[0]) {
-					branchVars[v] = true
-				}
-				for _, branch := range p.Branches[1:] {
-					next := make(map[query.Symbol]bool)
-					for _, v := range ExtractVariables(branch) {
-						next[v] = true
-					}
-					for v := range branchVars {
-						if !next[v] {
-							delete(branchVars, v)
-						}
-					}
-				}
-				for v := range branchVars {
-					if !seen[v] {
-						seen[v] = true
-						vars = append(vars, v)
-					}
-				}
-			}
-
-		case *query.OrDefaultJoinClause:
-			// OR-DEFAULT-JOIN binds its declared outputs; required vars are
-			// bound by other clauses, not by this one.
-			for _, v := range p.OutputVars {
-				if !seen[v] {
-					seen[v] = true
-					vars = append(vars, v)
-				}
-			}
-
-		case *query.OrJoinClause:
-			// OR-JOIN only exposes join vars
-			for _, v := range p.OutputVars {
-				if !seen[v] {
-					seen[v] = true
-					vars = append(vars, v)
-				}
-			}
-
-		case *query.Comparison, *query.ChainedComparison, *query.NotEqualPredicate,
-			*query.GroundPredicate, *query.MissingPredicate, *query.StrStartsWithPredicate,
-			*query.FunctionPredicate, *query.DatabaseFunctionPredicate, *query.TxRangePredicate:
-			// Predicates consume variables; they provide none.
-
-		default:
-			// The clause taxonomy is closed; a clause type without a case
-			// here would silently provide nothing — the exact hazard that
-			// hid the missing ScalarBinding and Subquery cases.
-			panic(fmt.Sprintf("BUG: unknown clause type %T in ExtractVariables", clause))
-		}
-	}
-
-	return vars
-}
-
-// ValidateQuery performs semantic validation on a query
-func ValidateQuery(q *query.Query) error {
-	// Check that all find variables appear in where clause
-	whereVars := ExtractVariables(q.Where)
-	whereVarSet := make(map[query.Symbol]bool)
-	for _, v := range whereVars {
-		whereVarSet[v] = true
-	}
-
-	// Check each find element
-	for _, elem := range q.Find {
-		switch e := elem.(type) {
-		case query.FindVariable:
-			if !whereVarSet[e.Symbol] {
-				return fmt.Errorf("find variable %s not bound in where clause", e.Symbol)
-			}
-		case query.FindAggregate:
-			if !whereVarSet[e.Arg] {
-				return fmt.Errorf("aggregate variable %s not bound in where clause", e.Arg)
-			}
-		}
-	}
-
-	return nil
 }

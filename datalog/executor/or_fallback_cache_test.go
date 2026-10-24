@@ -12,7 +12,7 @@ import (
 // cachedBranchOver is a branch's cache over the tuples of its result, keyed
 // on keySyms at the subject's positions, filled as buildBranch fills it.
 func cachedBranchOver(t *testing.T, branchResult Relation, outerSyms, keySyms []query.Symbol) *cachedBranch {
-	cb := newCachedBranch(branchResult.Symbols(), outerSyms, keySyms, keySyms)
+	cb := newCachedBranch(branchResult.Symbols(), outerSyms, keySyms)
 	tuples, err := CollectTuples(branchResult, nil)
 	require.NoError(t, err)
 	for _, tuple := range tuples {

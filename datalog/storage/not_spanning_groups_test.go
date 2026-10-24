@@ -501,11 +501,12 @@ func TestNotJoinScalarEnvWithCollectionDataInput(t *testing.T) {
 	}
 }
 
-// TestNotJoinScalarEnvWithRelationInputIteration pins the per-Run
-// environment path: a relation input iterates the query per tuple, and each
-// Run's environment carries the scalar ?flag alongside the Run's ?kind. The
-// "other" Run matches nothing; the union is the "thing" Run's tuples.
-func TestNotJoinScalarEnvWithRelationInputIteration(t *testing.T) {
+// TestNotJoinScalarEnvBesideARelationInput pins the environment beside a
+// relation input: the scalar ?flag is the environment the not-join's header
+// reads, and [[?kind] ...] binds two kinds as a group the plan runs once
+// over. The "other" kind matches no entity; the answer is the "thing"
+// entities.
+func TestNotJoinScalarEnvBesideARelationInput(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -521,7 +522,7 @@ func TestNotJoinScalarEnvWithRelationInputIteration(t *testing.T) {
 			require.NoError(t, err)
 			got := collectEntityResults(t, rel)
 			require.Equal(t, notSpanningExpected(unflagged, otherFlag), got,
-				"per-Run environments must carry the scalar correlate into the not-join")
+				"the environment carries the scalar correlate into the not-join beside a relation input")
 		})
 	}
 }

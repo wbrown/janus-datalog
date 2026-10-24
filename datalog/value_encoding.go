@@ -48,14 +48,15 @@ type BlobData struct {
 // Badger has a 64KB key limit; subtract overhead for E(20)+A(32)+Tx(16)+Op(1)=69 bytes.
 const maxKeyValueSize = 60000
 
-// Type returns the type of a value
-// NormalizeValue coerces a value's dynamic integer type to the engine's
-// canonical int64 representation: int, int8, int16, int32 become int64; every
-// other type (including int64) is returned unchanged. Storage decode, the EDN
-// parser, and comparison all standardize on int64, so normalizing user-supplied
-// values where they enter the engine (writes, query inputs, query-builder
-// constants) keeps a Go int from diverging from stored int64 data. int64 and
-// non-integers pass through untouched, adding no allocation for the common case.
+// NormalizeValue returns a value as the domain admits it: int, int8, int16 and
+// int32 become int64, the engine's canonical integer representation, and a
+// float's signed zero becomes 0.0, since the engine's equality holds the two
+// zeros equal and a value's encoding agrees with its equality. Storage decode,
+// the EDN parser, and comparison all standardize on int64, so normalizing
+// user-supplied values where they enter the engine (writes, query inputs,
+// query-builder constants) keeps a Go int from diverging from stored int64
+// data. Every other value passes through untouched, adding no allocation for
+// the common case.
 func NormalizeValue(v Value) Value {
 	switch n := v.(type) {
 	case int:
@@ -66,9 +67,15 @@ func NormalizeValue(v Value) Value {
 		return int64(n)
 	case int32:
 		return int64(n)
+	case float64:
+		if n == 0 {
+			return float64(0)
+		}
 	}
 	return v
 }
+
+// Type returns the type of a value
 
 func Type(v Value) ValueType {
 	v = NormalizeValue(v) // int/int8/int16/int32 -> canonical int64

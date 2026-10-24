@@ -87,12 +87,16 @@ func (s *SubqueryBuilder) BindCollection(v *Var) *SubqueryBuilder {
 	return s
 }
 
-// toClause converts SubqueryBuilder to a query.Clause
-func (s *SubqueryBuilder) toClause() query.Clause {
-	// Build the inner query - panic on error since we're in a fluent chain
-	innerQ, err := s.innerQuery.Build()
+// toClause is the subquery clause over the inner query, assembled
+// unvalidated through assemble: the enclosing query's Build validates the
+// inner query through SubqueryPattern.Validate, so an inner query's refusal
+// is Build's error and never a panic inside the fluent chain. An error the
+// inner builder's fluent methods recorded is returned here and reaches Build
+// through Where.
+func (s *SubqueryBuilder) toClause() (query.Clause, error) {
+	innerQ, err := s.innerQuery.assemble()
 	if err != nil {
-		panic("subquery build failed: " + err.Error())
+		return nil, err
 	}
 
 	// The inputs follow the inner query's :in in order: a source reference at
@@ -126,7 +130,6 @@ func (s *SubqueryBuilder) toClause() query.Clause {
 		inputs = append(inputs, query.Variable{Name: v.Symbol()})
 	}
 
-	// Convert binding form
 	var binding query.BindingForm
 	if s.binding != nil {
 		binding = s.binding.toBindingForm()
@@ -136,5 +139,5 @@ func (s *SubqueryBuilder) toClause() query.Clause {
 		Query:   innerQ,
 		Inputs:  inputs,
 		Binding: binding,
-	}
+	}, nil
 }

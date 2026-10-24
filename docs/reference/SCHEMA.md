@@ -102,7 +102,7 @@ A database opened with `RefuseUnknownAttributes` (`db.WithRefuseUnknownAttribute
 unknown attribute :person/naem: the schema does not declare it
 ```
 
-The error is a `*schema.UnknownAttributeError` carrying the attribute, reachable with `errors.As`. Several unknown attributes in one query are joined, in order of appearance. The check reads data patterns on the default source, the attributes of `get-else`, `get-some` and `missing?`, pull patterns in `:find` and in the `Pull` family, and the attributes an input binds to a variable in a pattern's attribute position, as the typed accessors bind theirs, descending through `not`, `or`, their `-join` forms, the `or-default` forms and subquery bodies. A pattern on a named source is checked by that source: a database passed as a named source refuses as it does as `$`, and a source without the option refuses nothing. The schema checked is the one the database runs with: the definitions its store states. The option requires a schema: opening with it and no schema, or withdrawing the schema with `SetSchema(nil)`, is an error.
+The error is a `*schema.UnknownAttributeError` carrying the attribute, reachable with `errors.As`. Several unknown attributes in one query are joined, in order of appearance. The check reads, per source, the keyword constants written in the attribute position of the data patterns on that source, at any depth: through `not`, `or`, their `-join` forms, the `or-default` forms, subquery bodies and rule bodies. A pattern inside a subquery body is checked by the source the call passes at its inner source's place, the `$` of an omitted or declared inner `:in` included. On the default source the check also reads the attributes of `get-else`, `get-some` and `missing?`, pull patterns in `:find`, in the `Pull` family and in a `PullInto` struct's tags, and the attribute a typed accessor names. A keyword that reaches an attribute position through a variable is a value, whatever binds the variable: an input, a ground, a form's output, a subquery's binding, a rule's head or a datom. It is checked against no schema, and the pattern evaluates over the store, where an attribute no datom carries yields no tuple. A pattern on a named source is checked by that source: a database passed as a named source refuses as it does as `$`, and a source without the option refuses nothing. The schema checked is the one the database runs with: the definitions its store states. The option requires a schema: opening with it and no schema, or withdrawing the schema with `SetSchema(nil)`, is an error.
 
 Not refused:
 
@@ -451,15 +451,15 @@ type SchemaProvider interface {
 
 ## Performance
 
-Schema validation is paid on writes. A read pays the unknown-attribute check once per query or pull when the database refuses unknown attributes (see [Schema as Facts](#schema-as-facts)); otherwise the check is a flag read, and no roster is collected. The attributes a query names are collected from the prepared text when its plan is made, under the planner option `CollectRosters` a refusing database sets, and held with the plan (`RealizedPlan.Rosters`, filled by `query.CollectRosters` in the planner), so a plan the cache serves carries its roster and the check on every later execution is one schema lookup per attribute; the attributes an input binds are read from the input on each execution. Measured on Apple M5 by `BenchmarkUnknownAttributeCheck`, `BenchmarkOpenWithUnchangedSchema` and `BenchmarkImportInferenceAfterLoad` in `datalog/storage`:
+Schema validation is paid on writes. A read pays the unknown-attribute check once per query or pull when the database refuses unknown attributes (see [Schema as Facts](#schema-as-facts)); otherwise the check is a flag read, and no roster is collected. The attributes a query names are collected from the prepared text, per source, when its plan is made, under the planner option `CollectRosters` an executor sets when a source its matcher routes to refuses, and held with the plan (`RealizedPlan.Rosters`, filled by `query.CollectRosters` in the planner), so a plan the cache serves carries its rosters and the check on every later execution is one schema lookup per attribute, reading nothing of the execution's inputs. Measured on Apple M5 by `BenchmarkUnknownAttributeCheck`, `BenchmarkOpenWithUnchangedSchema` and `BenchmarkImportInferenceAfterLoad` in `datalog/storage`; the unknown-attribute rows are the check alone in that benchmark, under the plan-held roster, pooled over its memory-trees and badger legs, the declared row over its three declared cases:
 
 | Operation | Overhead | When |
 |-----------|----------|------|
 | Type validation | <0.2% | `Add()` time |
 | Schema resolution | 225ns | Once per Pull pattern |
-| Unknown-attribute check, not refusing | 3–9ns | Once per query or pull |
-| Unknown-attribute check, declared attribute | 9–14ns | Once per query or pull |
-| Unknown-attribute check, undeclared attribute, refused | 36–54ns | Once per query or pull |
+| Unknown-attribute check, not refusing | 0.5–0.8ns | Once per query or pull |
+| Unknown-attribute check, declared attribute | 5.4–6.6ns | Once per query or pull |
+| Unknown-attribute check, undeclared attribute, refused | 30–36ns | Once per query or pull |
 | Reopen with an unchanged schema | within noise of a reopen with none | `Open()` time |
 | Reading the definitions and inferring after an import | 0.6–3% of the import | `Import()` time |
 

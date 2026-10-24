@@ -82,7 +82,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		}, annotations.AlgebraDecorrelateCheck, map[string]interface{}{
 			"correlation_vars": lj.CorrelationVars,
 			"has_aggregates":   lj.InnerQuery.Aggregates(),
-			"has_defaults":     len(lj.DefaultValues) > 0,
+			"has_defaults":     len(lj.Defaults) > 0,
 			"should":           shouldDecorrelate(lj),
 			"inner_query":      lj.InnerQuery,
 		})
@@ -264,7 +264,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 				InnerQuery:      optimizedDecorrelated,
 				Binding:         query.RelationBinding{Variables: output},
 				Output:          output,
-				DefaultValues:   nil,
+				Defaults:        nil,
 				Rules:           lj.Rules,
 			},
 		}
@@ -275,17 +275,17 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 	}
 
 	joinKind := InnerJoin
-	if len(lj.DefaultValues) > 0 {
+	if len(lj.Defaults) > 0 {
 		joinKind = LeftOuterJoin
 	}
 
 	joinNode := &Node{
 		Op: RuleJoin,
 		Data: &Join{
-			Kind:          joinKind,
-			JoinSymbols:   lj.CorrelationVars,
-			Output:        mergeSymbols(outerNode.Symbols(), output),
-			DefaultValues: lj.DefaultValues,
+			Kind:        joinKind,
+			JoinSymbols: lj.CorrelationVars,
+			Output:      mergeSymbols(outerNode.Symbols(), output),
+			Defaults:    lj.Defaults,
 		},
 		Children: []*Node{outerNode, innerResultNode},
 	}

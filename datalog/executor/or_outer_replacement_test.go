@@ -199,7 +199,7 @@ func TestOrFallbackDoesNotTreatBranchErrorAsNoMatch(t *testing.T) {
 			Binding:  value,
 		}},
 	}
-	relation := NewOrFallbackRelation(
+	relation, err := NewOrFallbackRelation(
 		exec,
 		NewContext(),
 		[]query.Symbol{entity},
@@ -209,6 +209,7 @@ func TestOrFallbackDoesNotTreatBranchErrorAsNoMatch(t *testing.T) {
 		ExecutorOptions{},
 		true,
 	)
+	require.NoError(t, err)
 
 	require.ErrorIs(t, driveErr(relation), errInjectedIterator,
 		"a failed preferred branch must not fall through to the default branch")
@@ -237,7 +238,8 @@ func TestReplaceConsumedGroupsStandsInForTheConsumedGroups(t *testing.T) {
 		Function: &query.GroundFunction{Value: "selected"},
 		Binding:  value,
 	}}}
-	form := NewOrFallbackRelation(exec, NewContext(), []query.Symbol{entity}, []query.Symbol{value}, branches, first, options, true)
+	form, err := NewOrFallbackRelation(exec, NewContext(), []query.Symbol{entity}, []query.Symbol{value}, branches, first, options, true)
+	require.NoError(t, err)
 
 	replaced := replaceConsumedGroups(Relations{first, other, last}, []int{0, 2}, form, options.Handler)
 	require.Len(t, replaced, 2)

@@ -784,8 +784,8 @@ type mergeJoinIterator struct {
 	pattern      *query.DataPattern
 	bindingRel   executor.Relation
 	symbols      []query.Symbol
-	position     int                            // The key's datom position (0=E, 1=A, 2=V, 3=T)
-	keyPos       int                            // The key's position in a binding tuple, found by symbol
+	position     int // The key's datom position (0=E, 1=A, 2=V, 3=T)
+	keyPos       int // The key's position in a binding tuple, found by symbol
 	constraints  []executor.StorageConstraint
 	sortedTuples []executor.Tuple // Binding tuples sorted by the key
 	bindingIdx   int              // Start of the current key group in sortedTuples

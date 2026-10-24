@@ -125,7 +125,7 @@ func ValueNodeCompressed(v interface{}) edn.Node {
 // The transaction IDs from the file are preserved, allowing exact restoration
 // of the database state. Empty lines and lines starting with ; are ignored.
 //
-// Import uses batched transactions for efficiency (5000 datoms per batch).
+// Import asserts the datoms in batches of 1000.
 func (d *Database) Import(r io.Reader) error {
 	scanner := bufio.NewScanner(r)
 	// Increase buffer size for long lines
@@ -388,6 +388,9 @@ func ParseDatomEDN(s string) (*datalog.Datom, error) {
 	// Parse attribute
 	attr, err := parseKeywordNode(&node.Nodes[1])
 	if err != nil {
+		return nil, fmt.Errorf("invalid attribute: %w", err)
+	}
+	if err := datalog.ValidateAttributeWidth(attr); err != nil {
 		return nil, fmt.Errorf("invalid attribute: %w", err)
 	}
 

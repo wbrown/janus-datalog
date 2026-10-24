@@ -21,7 +21,7 @@ import "fmt"
 // of complete header forms is returned as it is.
 func InferHeaders(q *Query, rules *RuleSet) (*Query, error) {
 	bound := ConstantInputSymbols(q.In)
-	for sym := range IteratedInputSymbols(q.In) {
+	for sym := range MultiValuedInputSymbols(q.In) {
 		bound[sym] = true
 	}
 	occurs := make(map[Symbol]bool, len(bound)+len(q.Find))

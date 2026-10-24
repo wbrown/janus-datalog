@@ -155,11 +155,11 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 	joinNode := &Node{
 		Op: RuleJoin,
 		Data: &Join{
-			Kind:          LeftOuterJoin,
-			JoinSymbols:   []query.Symbol{entityVar.Symbol},
-			Output:        mergeSymbols(childNode.Symbols(), []query.Symbol{bindingSym}),
-			DefaultValues: []interface{}{ge.Default},
-			DefaultAttr:   &defaultAttr,
+			Kind:        LeftOuterJoin,
+			JoinSymbols: []query.Symbol{entityVar.Symbol},
+			Output:      mergeSymbols(childNode.Symbols(), []query.Symbol{bindingSym}),
+			Defaults:    []Default{{Symbol: bindingSym, Value: ge.Default}},
+			DefaultAttr: &defaultAttr,
 		},
 		Children: []*Node{childNode, scanNode},
 	}

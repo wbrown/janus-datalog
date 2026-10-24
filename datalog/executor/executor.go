@@ -2,7 +2,6 @@ package executor
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -13,12 +12,10 @@ import (
 
 // Executor is the main query execution engine
 type Executor struct {
-	matcher                  PatternMatcher
-	entityResolver           EntityResolver
-	planner                  planner.QueryPlanner
-	options                  ExecutorOptions
-	enableParallelSubqueries bool
-	maxSubqueryWorkers       int
+	matcher        PatternMatcher
+	entityResolver EntityResolver
+	planner        planner.QueryPlanner
+	options        ExecutorOptions
 }
 
 // defaultPlannerOptions is the planner profile NewExecutor constructs with —
@@ -28,8 +25,6 @@ func defaultPlannerOptions() planner.PlannerOptions {
 	return planner.PlannerOptions{
 		EnableTrueStreaming:        true,
 		EnableSymmetricHashJoin:    false,
-		EnableParallelSubqueries:   true,
-		MaxSubqueryWorkers:         0,
 		EnableStreamingJoins:       false,
 		EnableStreamingAggregation: true,
 		EnableAttributeFetchFusion: true,
@@ -41,7 +36,10 @@ func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 	return NewExecutorWithOptions(matcher, resolver, defaultPlannerOptions())
 }
 
-// NewExecutorWithOptions creates a new query executor with custom planner options
+// NewExecutorWithOptions creates a new query executor with custom planner
+// options. Its plans carry their rosters when a source the matcher routes to
+// refuses attributes its schema does not declare, so the check at the
+// executor's entry reads a roster from every plan its own planner makes.
 func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opts planner.PlannerOptions) *Executor {
 	// Convert to executor options
 	execOpts := ExecutorOptionsFromPlanner(opts)
@@ -51,17 +49,31 @@ func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opt
 		indexedMatcher.WithOptions(execOpts)
 	}
 
+	opts.CollectRosters = opts.CollectRosters || anySourceRefusesUnknownAttributes(matcher)
+
 	// Create the appropriate planner based on options
 	queryPlanner := planner.CreatePlanner(nil, opts)
 
 	return &Executor{
-		matcher:                  matcher,
-		entityResolver:           resolver,
-		planner:                  queryPlanner,
-		options:                  execOpts,
-		enableParallelSubqueries: opts.EnableParallelSubqueries,
-		maxSubqueryWorkers:       opts.MaxSubqueryWorkers,
+		matcher:        matcher,
+		entityResolver: resolver,
+		planner:        queryPlanner,
+		options:        execOpts,
 	}
+}
+
+// anySourceRefusesUnknownAttributes reports whether a source the matcher
+// routes to refuses attributes its schema does not declare: a router is
+// asked about the sources it holds, and any other matcher about itself as $.
+// A matcher without the capability refuses nothing.
+func anySourceRefusesUnknownAttributes(matcher PatternMatcher) bool {
+	switch m := matcher.(type) {
+	case *SourceRouter:
+		return m.refusesAnySource()
+	case AttributeVocabulary:
+		return m.RefusesUnknownAttributes(datalog.SymDollar)
+	}
+	return false
 }
 
 // ExecutorOptionsFromPlanner is the single source of truth for deriving
@@ -76,8 +88,6 @@ func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 		Handler:                    opts.Handler,
 		EnableTrueStreaming:        opts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:    opts.EnableSymmetricHashJoin,
-		EnableParallelSubqueries:   opts.EnableParallelSubqueries,
-		MaxSubqueryWorkers:         opts.MaxSubqueryWorkers,
 		EnableStreamingJoins:       opts.EnableStreamingJoins,
 		EnableStreamingAggregation: opts.EnableStreamingAggregation,
 		EnableScanSharing:          opts.EnableScanSharing,
@@ -88,17 +98,6 @@ func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 		ScopeWindowCap:             opts.ScopeWindowCap,
 		ScopeWindowGrowth:          opts.ScopeWindowGrowth,
 	}
-}
-
-// EnableParallelSubqueries enables parallel execution of subquery iterations
-func (e *Executor) EnableParallelSubqueries(maxWorkers int) {
-	e.enableParallelSubqueries = true
-	e.maxSubqueryWorkers = maxWorkers
-}
-
-// DisableParallelSubqueries disables parallel execution of subquery iterations
-func (e *Executor) DisableParallelSubqueries() {
-	e.enableParallelSubqueries = false
 }
 
 // Execute runs a parsed query and returns the results
@@ -112,97 +111,34 @@ func (e *Executor) ExecuteWithContext(ctx *Context, q *query.Query) (Relation, e
 	return e.ExecuteWithRelations(ctx, q, []Relation{})
 }
 
-// boundAttributes is the roster of attributes the input relations bind to a
-// variable of the query's own scope that reaches the attribute position of a
-// data pattern on the default source, the variables the plan's roster names
-// (query.Rosters.AttributeVariables): each keyword value at such a variable's
-// position in its relation, found by symbol, in order of first appearance and
-// each once. A value that is not a keyword names no attribute. A relation
-// lacking a variable its :in entry binds is the query's error. A relation
-// read here is made replayable first, so the execution that follows reads it
-// whole.
-func boundAttributes(q *query.Query, variables []query.Symbol, inputRelations []Relation) ([]datalog.Keyword, error) {
-	if len(variables) == 0 {
-		return nil, nil
-	}
-	seen := make(map[datalog.Keyword]bool)
-	var roster []datalog.Keyword
-	for index, input := range query.BindingInputs(q.In) {
-		var symbols []query.Symbol
-		switch inp := input.(type) {
-		case query.ScalarInput:
-			symbols = []query.Symbol{inp.Symbol}
-		case query.CollectionInput:
-			symbols = []query.Symbol{inp.Symbol}
-		case query.TupleInput:
-			symbols = inp.Symbols
-		case query.RelationInput:
-			symbols = inp.Symbols
-		}
-		for _, sym := range symbols {
-			if !query.ContainsSymbol(variables, sym) {
-				continue
-			}
-			rel := inputRelations[index].Materialize()
-			inputRelations[index] = rel
-			positions, err := query.SymbolIndexTable(rel.Symbols(), []query.Symbol{sym})
-			if err != nil {
-				return nil, err
-			}
-			position := positions[0]
-			err = ForEach(rel, func(t Tuple) error {
-				if attr, ok := t[position].(datalog.Keyword); ok && !seen[attr] {
-					seen[attr] = true
-					roster = append(roster, attr)
-				}
-				return nil
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	return roster, nil
-}
-
-// refuseUnknownAttributes asks each source the query names, when that source
-// refuses attributes its schema does not declare, about the attributes the
-// plan's roster names on it: on the default source the query's own under the
-// rule set it runs with, the keywords its invocations pass at the positions
-// the rule set reads as attributes among them, the rule bodies', and the ones
-// this execution's inputs bind to a variable reaching a pattern's attribute
-// position; on a named source the patterns' on it. The roster is the plan's,
-// collected at planning from the prepared query under
+// refuseUnknownAttributes asks each source the query runs over, $ and each
+// named source its :in declares, when that source refuses attributes its
+// schema does not declare, about the attributes the plan's roster names on
+// it and the ones the rule set's bodies name on it. The roster is the
+// plan's, collected at planning from the prepared query under
 // PlannerOptions.CollectRosters and read here after it, so the check runs on
-// both planner modes alike. A source that does not refuse is asked about
-// nothing, and its roster is not read, so a plan over sources that refuse
-// nothing carries none. The first refusal is returned.
-func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, plan *planner.RealizedPlan, inputRelations []Relation) error {
-	q, rosters := plan.Query, plan.Rosters
-	if vocabulary.RefusesUnknownAttributes(datalog.SymDollar) {
-		if err := vocabulary.UnknownAttributes(datalog.SymDollar, rosters.DefaultSourceAttributes(ctx.rules)); err != nil {
+// both planner modes alike and reads nothing of the execution. A source that
+// does not refuse is asked about nothing, and its roster is not read, so a
+// plan over sources that refuse nothing carries none. The first refusal is
+// returned.
+func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, plan *planner.RealizedPlan) error {
+	sources := []query.Symbol{datalog.SymDollar}
+	for _, input := range plan.Query.In {
+		if source, ok := input.(query.DatabaseInput); ok && source.Name != datalog.SymDollar {
+			sources = append(sources, source.Name)
+		}
+	}
+	for _, source := range sources {
+		if !vocabulary.RefusesUnknownAttributes(source) {
+			continue
+		}
+		if err := vocabulary.UnknownAttributes(source, plan.Rosters.SourceAttributes(source)); err != nil {
 			return err
 		}
 		if ctx.rules != nil {
-			if err := vocabulary.UnknownAttributes(datalog.SymDollar, ctx.rules.DefaultSourceAttributes()); err != nil {
+			if err := vocabulary.UnknownAttributes(source, ctx.rules.SourceAttributes(source)); err != nil {
 				return err
 			}
-		}
-		bound, err := boundAttributes(q, rosters.AttributeVariables(ctx.rules), inputRelations)
-		if err != nil {
-			return err
-		}
-		if err := vocabulary.UnknownAttributes(datalog.SymDollar, bound); err != nil {
-			return err
-		}
-	}
-	for _, input := range q.In {
-		source, ok := input.(query.DatabaseInput)
-		if !ok || source.Name == datalog.SymDollar || !vocabulary.RefusesUnknownAttributes(source.Name) {
-			continue
-		}
-		if err := vocabulary.UnknownAttributes(source.Name, rosters.SourceAttributes(source.Name)); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -237,12 +173,10 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 
 	// Create a temporary executor with the wrapped matcher
 	executor := &Executor{
-		matcher:                  matcher,
-		entityResolver:           e.entityResolver,
-		planner:                  e.planner,
-		options:                  e.options,
-		enableParallelSubqueries: e.enableParallelSubqueries,
-		maxSubqueryWorkers:       e.maxSubqueryWorkers,
+		matcher:        matcher,
+		entityResolver: e.entityResolver,
+		planner:        e.planner,
+		options:        e.options,
 	}
 
 	// q.String() renders the whole query, so the guard is here rather than
@@ -253,7 +187,7 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 		handler(annotations.Event{
 			Name:  annotations.QueryInvoked,
 			Start: queryStart,
-			Data:  map[string]interface{}{"query": q.String()},
+			Data:  map[string]interface{}{annotations.KeyQuery: q.String()},
 		})
 	}
 
@@ -262,10 +196,10 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 		if handler != nil {
 			handler(annotations.TimedEvent(annotations.QueryComplete, queryStart,
 				map[string]interface{}{
-					"relations.count":      0,
-					"tuples.count":         0,
-					annotations.KeySuccess: false,
-					"error":                err.Error(),
+					annotations.KeyRelationsCount: 0,
+					annotations.KeyTuplesCount:    0,
+					annotations.KeySuccess:        false,
+					annotations.KeyError:          err.Error(),
 				}))
 		}
 		return nil, err
@@ -289,8 +223,8 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 	if handler != nil {
 		handler(annotations.TimedEvent(annotations.QueryPrepared, prepareStart,
 			map[string]interface{}{
-				"query":     prepared.String(),
-				"rewritten": prepared != q,
+				annotations.KeyQuery: prepared.String(),
+				"rewritten":          prepared != q,
 			}))
 	}
 
@@ -349,10 +283,10 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 	}
 
 	// An attribute a source's schema does not declare is refused against
-	// the roster the plan holds and this execution's inputs, before any
-	// phase runs. The matcher owns the schema, so the decision is its own.
+	// the roster the plan holds, before any phase runs. The matcher owns the
+	// schema, so the decision is its own.
 	if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
-		if err := refuseUnknownAttributes(vocabulary, ctx, realizedPlan, inputRelations); err != nil {
+		if err := refuseUnknownAttributes(vocabulary, ctx, realizedPlan); err != nil {
 			return refused(err)
 		}
 	}
@@ -368,11 +302,10 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 // - Final phase must collapse to single relation or error on Cartesian product
 //
 // Finalization (:order-by then :limit) is applied here, at the single outer
-// boundary, on the fully-assembled result. This is what makes the inline path
-// and the per-tuple RelationInput-iteration path behave identically: the result
-// of a RelationInput query is the union of its per-tuple executions, so ordering
-// and capping must run over that whole union — not per iteration. Sorting before
-// limiting yields a correct global top-N.
+// boundary, on the fully-assembled result, whatever the :in binds: the
+// inputs enter the phases as one bound group, so the result is one relation
+// ordered and capped once. Sorting before limiting yields a correct global
+// top-N.
 func (e *Executor) ExecuteRealized(ctx *Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
 	if err := plan.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid realized plan: %w", err)
@@ -468,18 +401,15 @@ func (e *Executor) queryExecutor() *DefaultQueryExecutor {
 // executeRealizedPlan runs the phase pipeline and returns the assembled result
 // (un-ordered, un-limited). ExecuteRealized applies :order-by and :limit to it.
 func (e *Executor) executeRealizedPlan(ctx *Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
-	// Check if we need to iterate over a RelationInput
-	// RelationInput (e.g., :in [[?a ?b]]) requires executing the query once per tuple
-	if hasRelationInput(plan.Query) && len(inputRelations) > 0 {
-		return e.executeRealizedWithRelationInputIteration(ctx, plan, inputRelations)
-	}
-
 	var currentGroups []Relation
 
-	// If we have input relations, bind them before the first phase
+	// The inputs enter as one bound group, the relation the first phase
+	// joins, whatever the form of each :in entry.
 	if len(inputRelations) > 0 && len(plan.Phases) > 0 {
-		// Bind input relations using the query's :in clause
-		boundRelation := BindQueryInputs(plan.Query, inputRelations)
+		boundRelation, err := BindQueryInputs(plan.Query, inputRelations)
+		if err != nil {
+			return nil, err
+		}
 		currentGroups = []Relation{boundRelation}
 	}
 
@@ -674,700 +604,6 @@ func (e *Executor) runPhases(ctx *Context, plan *planner.RealizedPlan, currentGr
 	}
 
 	// :order-by and :limit are applied by ExecuteRealized on the final result.
-	return currentGroups[0], nil
-}
-
-// executeRealizedWithRelationInputIteration handles RelationInput iteration for QueryExecutor path
-// This iterates over each tuple in the RelationInput and executes the plan once per tuple.
-func (e *Executor) executeRealizedWithRelationInputIteration(ctx *Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
-	// Find the RelationInput, its corresponding relation, and that relation's index
-	// within inputRelations. The index lets each per-tuple execution forward the
-	// OTHER input relations (scalars, collections) in their original positions
-	// rather than dropping them
-	// (see docs/bugs/resolved/BUG_SCALAR_PLUS_RELATION_INPUT_DROPS_OTHER_INPUTS.md).
-	var relationInput query.RelationInput
-	var iterationRelation Relation
-	iterationIndex := -1
-	relationIndex := 0
-
-	for _, input := range plan.Query.In {
-		switch inp := input.(type) {
-		case query.DatabaseInput:
-			// Skip database
-		case query.RelationInput:
-			relationInput = inp
-			if relationIndex < len(inputRelations) {
-				iterationRelation = inputRelations[relationIndex]
-				iterationIndex = relationIndex
-			}
-			relationIndex++
-		case query.ScalarInput, query.TupleInput, query.CollectionInput:
-			// These would be handled as regular inputs
-			relationIndex++
-		}
-	}
-
-	if iterationRelation == nil {
-		// No iteration needed
-		return emptyRelationForQuery(plan.Query), nil
-	}
-	if iterationRelation.Size() == 0 {
-		// An errored relation that materialized empty is not an empty
-		// input; surface the taint instead of answering from it.
-		if err := EmptyRelationError(iterationRelation); err != nil {
-			return nil, err
-		}
-		return emptyRelationForQuery(plan.Query), nil
-	}
-
-	// Dispatch to parallel or sequential implementation
-	if e.enableParallelSubqueries {
-		return e.executeRealizedWithRelationInputIterationParallel(ctx, plan, inputRelations, relationInput, iterationRelation, iterationIndex)
-	}
-	return e.executeRealizedWithRelationInputIterationSequential(ctx, plan, inputRelations, relationInput, iterationRelation, iterationIndex)
-}
-
-// perTupleInputBuilder pre-computes the layout of the per-tuple input-relation
-// list once. Per RelationInput iteration: every original input relation is
-// forwarded in its original position, except the iteration relation (at
-// iterationIndex), which is replaced by one single-value relation per
-// RelationInput symbol drawn from the tuple. Forwarding the non-iteration
-// inputs (scalars, collections) in place keeps them aligned with
-// executeRealizedPlan's in-place :in rewrite; without it they are
-// dropped and BindQueryInputs binds the wrong values
-// (see docs/bugs/resolved/BUG_SCALAR_PLUS_RELATION_INPUT_DROPS_OTHER_INPUTS.md).
-//
-// Use Session() to obtain a workspace-reusable handle for repeated per-tuple
-// builds — that's the path used by both the parallel (per worker) and
-// sequential paths, and it allocates the scratch relations once instead of
-// per-tuple.
-type perTupleInputBuilder struct {
-	prefix   []Relation     // inputRelations[:iterationIndex]
-	suffix   []Relation     // inputRelations[iterationIndex+1:]
-	symbols  []query.Symbol // relationInput.Symbols
-	capacity int            // len(prefix) + len(suffix) + len(symbols)
-}
-
-// newPerTupleInputBuilder splits inputRelations around iterationIndex once.
-// If iterationIndex is out of range, no substitution is performed (the input
-// relations pass through unchanged).
-func newPerTupleInputBuilder(inputRelations []Relation, iterationIndex int, relationInput query.RelationInput) *perTupleInputBuilder {
-	if iterationIndex < 0 || iterationIndex >= len(inputRelations) {
-		return &perTupleInputBuilder{
-			prefix:   inputRelations,
-			symbols:  relationInput.Symbols,
-			capacity: len(inputRelations) + len(relationInput.Symbols),
-		}
-	}
-	return &perTupleInputBuilder{
-		prefix:   inputRelations[:iterationIndex],
-		suffix:   inputRelations[iterationIndex+1:],
-		symbols:  relationInput.Symbols,
-		capacity: len(inputRelations) - 1 + len(relationInput.Symbols),
-	}
-}
-
-// perTupleInputSession is a workspace-reusable handle for repeated per-tuple
-// input-list builds, mirroring the BuildTupleInternedInto / it.workspace
-// pattern used by the storage iterators (hash_join_matcher.go): all
-// per-iteration state is pre-allocated, and each
-// step does an in-place update instead of an allocation.
-//
-// Pre-allocated once per worker:
-//   - valueSlots: N single-element Tuple slices, one per RelationInput symbol;
-//     the caller mutates valueSlots[i][0] per tuple to set the scalar value.
-//   - inputList: the full input-relation list (prefix + scratch relations +
-//     suffix), wired up to the scratch relations whose internal tuples
-//     ARE valueSlots[i]. Mutating valueSlots[i][0] changes what the relation
-//     yields on its next iteration.
-//
-// Safety contract: callers must not retain the returned Input slice or the
-// scratch relations within it across Update calls. executeRealizedPlan
-// satisfies this — it calls BindQueryInputs eagerly, which iterates each
-// input relation once and copies the value out via Tuple{tuple[0]}.
-//
-// Each worker creates its own session via builder.Session(); sessions are
-// not safe for concurrent use.
-type perTupleInputSession struct {
-	valueSlots []Tuple    // valueSlots[i] is the (mutable) 1-element Tuple slice for symbol i
-	inputList  []Relation // pre-wired: prefix + scratch relations + suffix
-}
-
-// Session pre-builds the per-symbol scratch relations and the full input
-// list once, so per-tuple work is reduced to N value writes (no allocation).
-func (b *perTupleInputBuilder) Session() *perTupleInputSession {
-	valueSlots := make([]Tuple, len(b.symbols))
-	scratchRels := make([]Relation, len(b.symbols))
-	for i, sym := range b.symbols {
-		// Each scratch tuple is a 1-element slice whose value is updated
-		// per tuple. Wrapping it in a MaterializedRelation means the
-		// relation's tuples[0] IS valueSlots[i] (deduplicateTuples on a
-		// 1-tuple input returns a fresh outer slice whose element shares
-		// the inner Tuple).
-		valueSlots[i] = make(Tuple, 1)
-		scratchRels[i] = NewMaterializedRelation([]query.Symbol{sym}, []Tuple{valueSlots[i]})
-	}
-	inputList := make([]Relation, 0, b.capacity)
-	inputList = append(inputList, b.prefix...)
-	inputList = append(inputList, scratchRels...)
-	inputList = append(inputList, b.suffix...)
-	return &perTupleInputSession{
-		valueSlots: valueSlots,
-		inputList:  inputList,
-	}
-}
-
-// Update writes the tuple's values into the session's scratch slots. No
-// allocation: this is the per-tuple equivalent of BuildTupleInternedInto
-// writing into a reused workspace.
-func (s *perTupleInputSession) Update(tuple Tuple) {
-	for i := range s.valueSlots {
-		if i < len(tuple) {
-			s.valueSlots[i][0] = tuple[i]
-		}
-	}
-}
-
-// Input returns the session's pre-wired input-relation list. The returned
-// slice (and the scratch relations within it) MUST be fully consumed before
-// the next Update call; executeRealizedPlan via BindQueryInputs
-// satisfies that.
-func (s *perTupleInputSession) Input() []Relation {
-	return s.inputList
-}
-
-// executeRealizedWithRelationInputIterationSequential executes QueryExecutor path sequentially for RelationInput
-func (e *Executor) executeRealizedWithRelationInputIterationSequential(
-	ctx *Context,
-	plan *planner.RealizedPlan,
-	inputRelations []Relation,
-	relationInput query.RelationInput,
-	iterationRelation Relation,
-	iterationIndex int,
-) (Relation, error) {
-	// Collect results from each tuple iteration
-	var allResults []Relation
-
-	// Hoist all per-query setup out of the iteration loop. preparedIteration
-	// owns the QueryExecutor, the rewritten modifiedQuery, and either the
-	// pre-built bound relation (fast path) or a perTupleInputSession
-	// (fallback). The per-tuple inner loop is just prepared.Run(ctx, tuple).
-	prepared := e.prepareIteration(plan, relationInput, inputRelations, iterationIndex)
-
-	// Iterate over each tuple in the relation. Close() is explicit (not
-	// deferred) so its error can be inspected before results are combined, and
-	// so a deferred input-iteration failure — which surfaces only through
-	// Error() after Next() returns false — is not laundered into a clean
-	// partial result. This mirrors the parallel path's policy.
-	it := iterationRelation.Iterator()
-
-	for it.Next() {
-		result, err := prepared.Run(ctx, it.Tuple())
-		if err != nil {
-			// Per-tuple execution error is the most specific cause: close
-			// best-effort and do not let a Close() error mask it.
-			it.Close()
-			return nil, fmt.Errorf("iteration execution failed: %w", err)
-		}
-
-		if result != nil {
-			allResults = append(allResults, result)
-		}
-	}
-
-	// Error priority: a deferred iteration error (the input may have truncated,
-	// so anything past the failure point was never seen) wins over a Close()
-	// error, so cleanup cannot mask the real cause.
-	iterErr := it.Error()
-	closeErr := it.Close()
-	if iterErr != nil {
-		return nil, iterErr
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-
-	// Combine all results
-	if len(allResults) == 0 {
-		return emptyRelationForQuery(plan.Query), nil
-	}
-
-	// Union all results, propagating any per-tuple scan error rather than
-	// dropping it (a failed iteration must not look like an empty result).
-	var allTuples []Tuple
-	symbols := allResults[0].Symbols()
-
-	for _, rel := range allResults {
-		if err := collectTuplesInto(&allTuples, rel); err != nil {
-			return nil, fmt.Errorf("iteration execution failed: %w", err)
-		}
-	}
-
-	return NewMaterializedRelation(symbols, allTuples), nil
-}
-
-// executeRealizedWithRelationInputIterationParallel executes the
-// QueryExecutor path in parallel for RelationInput. The producer (this
-// goroutine) streams tuples directly from iterationRelation's iterator
-// into the jobs channel; a fixed pool of numWorkers worker goroutines
-// drains jobs, runs per-tuple queries, and appends results into its own
-// slot in workerResults[wIdx] — a slot only that worker writes, so there is
-// no cross-worker synchronization on output.
-func (e *Executor) executeRealizedWithRelationInputIterationParallel(
-	ctx *Context,
-	plan *planner.RealizedPlan,
-	inputRelations []Relation,
-	relationInput query.RelationInput,
-	iterationRelation Relation,
-	iterationIndex int,
-) (Relation, error) {
-	numWorkers := e.maxSubqueryWorkers
-	if numWorkers <= 0 {
-		numWorkers = 4 // Default to 4 workers
-	}
-
-	type iterationResult struct {
-		result Relation
-		err    error
-	}
-
-	// Small fixed buffer: producer doesn't run far ahead of workers,
-	// workers don't starve waiting for the next item. Size scales with
-	// worker count, not input size.
-	jobs := make(chan Tuple, numWorkers*2)
-
-	// Each worker appends only to its own slot. The slice-of-slices header
-	// is shared, but each slot is written by exactly one worker, so the
-	// writes do not race. wg.Wait below is the only synchronization point
-	// between workers and the aggregator.
-	workerResults := make([][]iterationResult, numWorkers)
-
-	// Workers: long-lived, each consumes from jobs until closed. Each
-	// worker forks the context once at startup — a Context's per-query
-	// state (queryStart, metadata, scanRegistry) is not safe for concurrent
-	// mutation between parallel workers, but it is safe for sequential
-	// reuse within one worker (and beneficial when scan sharing is on,
-	// since the worker's ScanRegistry then deduplicates across its tuples).
-	//
-	// Each worker owns its own preparedIteration: the QueryExecutor, the
-	// rewritten modifiedQuery, and (fast path) the pre-built bound relation
-	// + tuple workspace, or (fallback) a perTupleInputSession. All of
-	// these are allocated once at worker startup; the per-tuple inner loop
-	// is just `prepared.Run(ctx, tuple)`.
-	var wg sync.WaitGroup
-	wg.Add(numWorkers)
-	for w := 0; w < numWorkers; w++ {
-		wIdx := w
-		go func() {
-			defer wg.Done()
-			workerCtx := forkContext(ctx)
-			prepared := e.prepareIteration(plan, relationInput, inputRelations, iterationIndex)
-			for tuple := range jobs {
-				result, err := prepared.Run(workerCtx, tuple)
-				workerResults[wIdx] = append(workerResults[wIdx], iterationResult{result: result, err: err})
-			}
-		}()
-	}
-
-	// Producer (this goroutine): stream iterationRelation → jobs.
-	// Backpressure flows naturally — if workers are slow, the bounded
-	// jobs buffer fills and iter.Next() stalls, pacing the storage scan
-	// to query throughput. Without a per-tuple results channel there is
-	// no deadlock risk from running the producer in this goroutine.
-	//
-	// The iterator-workspace-reuse contract (relation.go:14-23): when the
-	// source relation reports RequiresCopy()==true, its iterator's
-	// Tuple() returns a workspace slice that subsequent Next() calls
-	// overwrite. Sending that slice across the channel without copying
-	// would race the producer's next overwrite against workers reading
-	// their tuple. MaterializedRelation returns false (stable tuples,
-	// no copy needed); StreamingRelation returns true (default for
-	// storage-backed inputs).
-	needsCopy := iterationRelation.RequiresCopy()
-	iter := iterationRelation.Iterator()
-	for iter.Next() {
-		t := iter.Tuple()
-		if needsCopy {
-			t = copyTuple(t)
-		}
-		jobs <- t
-	}
-	iterErr := iter.Error()
-	closeErr := iter.Close()
-	close(jobs)
-
-	wg.Wait()
-
-	// Aggregate from per-worker slices. Consume each per-worker result via
-	// collectTuplesInto so a failed scan's deferred error propagates rather
-	// than being laundered into a clean result by Size() materialization.
-	var allTuples []Tuple
-	var symbols []query.Symbol
-	var firstResultErr error
-	for _, ws := range workerResults {
-		for _, r := range ws {
-			if r.err != nil {
-				if firstResultErr == nil {
-					firstResultErr = r.err
-				}
-				continue
-			}
-			if r.result == nil {
-				continue
-			}
-			if symbols == nil {
-				symbols = r.result.Symbols()
-			}
-			if err := collectTuplesInto(&allTuples, r.result); err != nil {
-				if firstResultErr == nil {
-					firstResultErr = err
-				}
-			}
-		}
-	}
-
-	// Error priority: producer's iterator error first (it may have truncated
-	// the input — anything past the failure point was never seen by workers),
-	// then any per-worker error, then iter.Close() error.
-	if iterErr != nil {
-		return nil, iterErr
-	}
-	if firstResultErr != nil {
-		return nil, fmt.Errorf("parallel iteration execution failed: %w", firstResultErr)
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-
-	if symbols == nil {
-		return emptyRelationForQuery(plan.Query), nil
-	}
-	return NewMaterializedRelation(symbols, allTuples), nil
-}
-
-// preparedIteration encapsulates ALL the per-query state needed to execute
-// a RelationInput iteration loop's per-tuple inner body, so callers (the
-// parallel worker loop and the sequential path) reduce to:
-//
-//	prepared := e.prepareIteration(plan, relationInput, inputRelations, iterationIndex)
-//	for tuple := range tuples {
-//	    result, err := prepared.Run(ctx, tuple)
-//	}
-//
-// Owned state, all pre-allocated once at prepare time:
-//   - queryExecutor: the DefaultQueryExecutor
-//   - modifiedQuery: plan.Query rewritten with RelationInput replaced by
-//     N ScalarInputs
-//   - Fast path (canMutateBindings == true): boundRelation +
-//     boundTuple + iterationSlots — the bound relation is pre-built with
-//     constant values baked in; per-tuple Run mutates iteration-derived
-//     slots in boundTuple, then runs the phases
-//   - Fallback path (canMutateBindings == false, used when the query's
-//     :in contains shapes the fast path can't handle, e.g. CollectionInput):
-//     fallbackSession — a perTupleInputSession that Run feeds and passes
-//     through BindQueryInputs per call
-//
-// Safe to reuse across sequential per-tuple calls within a single worker:
-//   - DefaultQueryExecutor carries no per-query mutable state; the query
-//     scope's environment rides the Context, derived fresh per Run.
-//   - modifiedQuery is read-only after construction.
-//   - boundTuple mutation: phase execution reads boundTuple's interface{}
-//     values into freshly-allocated result tuples (joins/projections build
-//     new tuples by combining bindings; aggregations build new summary
-//     tuples). For primitive values (int64, string, bool, time.Time) the
-//     interface{} carries the value; for pointer types (Identity, Keyword)
-//     it carries the pointer. In both cases, copy-on-store at the consumer
-//     means a previously-stored interface{} snapshot is independent of
-//     subsequent boundTuple mutations.
-//
-// NOT safe to share across goroutines. Each worker creates its own.
-type preparedIteration struct {
-	executor      *Executor
-	queryExecutor *DefaultQueryExecutor
-	plan          *planner.RealizedPlan
-	modifiedQuery *query.Query
-
-	// Fast-path state (when canMutateBindings is true): pre-built bound
-	// relation with mutable tuple slots. iterationSlots maps positions in
-	// the iteration tuple to positions in boundTuple — iterationSlots[i]
-	// is the slot in boundTuple where iteration tuple value [i] should be
-	// written; -1 if that iteration position doesn't appear in the bound
-	// relation (shouldn't happen in normal flow but handled defensively).
-	boundRelation     *MaterializedRelation
-	boundTuple        Tuple
-	iterationSlots    []int
-	canMutateBindings bool
-
-	// Fallback-path state (when canMutateBindings is false): a
-	// perTupleInputSession that Run feeds and then passes through
-	// BindQueryInputs per call. Nil when the fast path is active — no
-	// session is allocated in that case.
-	fallbackSession *perTupleInputSession
-}
-
-// prepareIteration builds the reusable per-query state for one worker's
-// (or the sequential path's) per-tuple iteration loop. All allocations
-// performed here happen ONCE; the returned struct's Run method does the
-// per-tuple work without repeating any of this setup.
-//
-// The inputRelations and iterationIndex are used to read CONSTANT scalar
-// values (those whose symbols are not in relationInput.Symbols) at prepare
-// time, so the fast path can bake them into boundTuple instead of
-// re-reading per call.
-//
-// Fast path activates only when modifiedQuery.In contains exclusively
-// DatabaseInputs, ScalarInputs, and TupleInputs — all of which produce a
-// single-tuple bound relation. CollectionInput or any other RelationInput
-// would produce a multi-tuple bound relation; in those cases
-// canMutateBindings stays false and Run uses a fallbackSession +
-// BindQueryInputs per call. The session is only allocated when needed.
-func (e *Executor) prepareIteration(plan *planner.RealizedPlan, relationInput query.RelationInput, inputRelations []Relation, iterationIndex int) *preparedIteration {
-	queryExecutor := e.queryExecutor()
-
-	// Rewrite plan.Query's :in clause: replace the RelationInput with one
-	// ScalarInput per RelationInput symbol.
-	newIn := make([]query.InputSpec, 0, len(plan.Query.In)+len(relationInput.Symbols)-1)
-	for _, input := range plan.Query.In {
-		if _, isRelInput := input.(query.RelationInput); isRelInput {
-			for _, sym := range relationInput.Symbols {
-				newIn = append(newIn, query.ScalarInput{Symbol: sym})
-			}
-		} else {
-			newIn = append(newIn, input)
-		}
-	}
-	modifiedQuery := &query.Query{
-		Find:         plan.Query.Find,
-		In:           newIn,
-		Where:        plan.Query.Where,
-		OrderBy:      plan.Query.OrderBy,
-		Limit:        plan.Query.Limit,
-		ScalarReturn: plan.Query.ScalarReturn,
-	}
-
-	p := &preparedIteration{
-		executor:      e,
-		queryExecutor: queryExecutor,
-		plan:          plan,
-		modifiedQuery: modifiedQuery,
-	}
-
-	// Try to pre-build the bound relation (fast path). On success,
-	// canMutateBindings is set and the fallback session is NOT allocated.
-	p.buildBoundRelation(relationInput, inputRelations, iterationIndex)
-
-	// If the fast path didn't activate, build the fallback session so Run
-	// can take the per-call BindQueryInputs path.
-	if !p.canMutateBindings {
-		builder := newPerTupleInputBuilder(inputRelations, iterationIndex, relationInput)
-		p.fallbackSession = builder.Session()
-	}
-
-	return p
-}
-
-// buildBoundRelation tries to pre-build a workspace-reusable bound relation
-// for the fast path. Sets p.boundRelation, p.boundTuple, p.iterationSlots,
-// and p.canMutateBindings on success; leaves them at zero values on
-// fallback.
-//
-// The walk: modifiedQuery.In and inputRelations are kept in lockstep
-// (DatabaseInputs in modifiedQuery.In don't consume an inputRelations
-// slot). For each ScalarInput / TupleInput a slot is appended to
-// boundTuple. ScalarInputs whose symbol is in relationInput.Symbols are
-// iteration-derived (slot tracked in iterationSlots). Other ScalarInputs
-// and all TupleInputs are constant — their values are read from
-// inputRelations now and baked into boundTuple. CollectionInput or any
-// other shape aborts the optimization.
-func (p *preparedIteration) buildBoundRelation(relationInput query.RelationInput, inputRelations []Relation, iterationIndex int) {
-	// Map RelationInput symbols to their position in the iteration tuple,
-	// so we can resolve ScalarInputs derived from RelationInput rewrite
-	// back to the iteration tuple position they'll be written from.
-	iterSymToPos := make(map[query.Symbol]int, len(relationInput.Symbols))
-	for i, sym := range relationInput.Symbols {
-		iterSymToPos[sym] = i
-	}
-
-	// The inputRelations slice matches the ORIGINAL plan.Query.In layout
-	// (RelationInput at iterationIndex, scalars/collections around it).
-	// We need to look up scalar/tuple values from inputRelations using
-	// the original layout, not the rewritten modifiedQuery.In.
-	// The loop below walks plan.Query.In; relationIndex walks the
-	// (DatabaseInput-skipped) inputRelations slice.
-	var boundSymbols []query.Symbol
-	var boundTuple Tuple
-	iterationSlots := make([]int, len(relationInput.Symbols))
-	for i := range iterationSlots {
-		iterationSlots[i] = -1
-	}
-
-	relationIndex := 0
-	for _, input := range p.plan.Query.In {
-		switch inp := input.(type) {
-		case query.DatabaseInput, query.RulesInput:
-			// Neither consumes an inputRelations slot.
-			continue
-		case query.RelationInput:
-			// The RelationInput is the iteration source. It expands to
-			// len(inp.Symbols) ScalarInputs in modifiedQuery.In, each
-			// iteration-derived (slot mutated per Run).
-			for i, sym := range inp.Symbols {
-				slotIdx := len(boundTuple)
-				boundSymbols = append(boundSymbols, sym)
-				boundTuple = append(boundTuple, nil) // filled by Run
-				if pos, ok := iterSymToPos[sym]; ok {
-					iterationSlots[pos] = slotIdx
-				}
-				_ = i
-			}
-			relationIndex++
-		case query.ScalarInput:
-			// Constant scalar input — read value from inputRelation now.
-			slotIdx := len(boundTuple)
-			boundSymbols = append(boundSymbols, inp.Symbol)
-			var v interface{}
-			if relationIndex < len(inputRelations) {
-				rel := inputRelations[relationIndex]
-				if rel != nil && rel.Size() > 0 {
-					it := rel.Iterator()
-					if it.Next() {
-						t := it.Tuple()
-						if len(t) > 0 {
-							v = t[0]
-						}
-					}
-					it.Close()
-				}
-			}
-			boundTuple = append(boundTuple, v)
-			_ = slotIdx
-			relationIndex++
-		case query.TupleInput:
-			// Constant tuple input — read values from inputRelation now.
-			if relationIndex < len(inputRelations) {
-				rel := inputRelations[relationIndex]
-				if rel != nil && rel.Size() > 0 && len(inp.Symbols) == len(rel.Symbols()) {
-					it := rel.Iterator()
-					if it.Next() {
-						t := it.Tuple()
-						for i, sym := range inp.Symbols {
-							boundSymbols = append(boundSymbols, sym)
-							var v interface{}
-							if i < len(t) {
-								v = t[i]
-							}
-							boundTuple = append(boundTuple, v)
-						}
-					}
-					it.Close()
-				}
-			}
-			relationIndex++
-		default:
-			// CollectionInput, or any other unhandled shape — fall back to
-			// per-call BindQueryInputs.
-			return
-		}
-	}
-
-	// If anything was bound, construct the workspace-reusable bound
-	// relation. Direct struct construction bypasses NewMaterializedRelation's
-	// deduplicateTuples — which would allocate a TupleKeyMap + TupleKey +
-	// result slice for a known-singleton input. The relation's tuples[0]
-	// IS boundTuple (the slice header is wrapped in a fresh outer slice,
-	// but tuples[0] points to the same Tuple), so mutating boundTuple
-	// mutates what the relation yields.
-	if len(boundSymbols) > 0 {
-		p.boundRelation = &MaterializedRelation{
-			symbols: boundSymbols,
-			tuples:  []Tuple{boundTuple},
-			options: ExecutorOptions{},
-		}
-		p.boundTuple = boundTuple
-		p.iterationSlots = iterationSlots
-		p.canMutateBindings = true
-	}
-}
-
-// Run executes one per-tuple query using the prepared state.
-// iterationTuple is the current tuple from the iteration relation; Run
-// internally picks the fast path (mutate pre-built bound relation) or
-// the fallback path (session.Update + BindQueryInputs) based on the
-// flags set at prepare time.
-func (p *preparedIteration) Run(ctx *Context, iterationTuple Tuple) (Relation, error) {
-	var currentGroups []Relation
-	var env Relation
-
-	if p.canMutateBindings {
-		// Fast path: mutate the pre-built boundTuple's slots from the
-		// iteration tuple values.
-		for i, slot := range p.iterationSlots {
-			if slot >= 0 && i < len(iterationTuple) {
-				p.boundTuple[slot] = iterationTuple[i]
-			}
-		}
-		currentGroups = []Relation{p.boundRelation}
-		// Every bound symbol is single-valued by construction (the
-		// RelationInput rewrote to ScalarInputs; collection inputs abort the
-		// fast path), so the bound tuple is this Run's whole environment.
-		// Snapshot it: boundTuple is a per-Run mutable workspace, and the
-		// environment must not change under a consumer between Runs.
-		env = newMaterializedRelationFromSet(
-			p.boundRelation.Symbols(),
-			[]Tuple{copyTuple(p.boundTuple)},
-			ExecutorOptions{},
-			deduplicatedProperties(p.boundRelation.Symbols()),
-		)
-	} else if p.fallbackSession != nil {
-		// Fallback: feed the session, run per-call BindQueryInputs.
-		p.fallbackSession.Update(iterationTuple)
-		boundRelation := BindQueryInputs(p.modifiedQuery, p.fallbackSession.Input())
-		currentGroups = []Relation{boundRelation}
-		env = environmentRelationFromInputs(p.modifiedQuery.In, p.fallbackSession.Input())
-	}
-	if env != nil {
-		ctx = ctx.WithEnvironment(env)
-	}
-
-	// Execute each phase as an independent query.
-	for i, phase := range p.plan.Phases {
-		phaseIndex := i
-		isLastPhase := (i == len(p.plan.Phases)-1)
-
-		groups, err := p.queryExecutor.executePhase(ctx, phaseIndex+1, phase, currentGroups)
-		if err != nil {
-			return nil, err
-		}
-
-		// Non-final Query fragments already emit their exact Keep schema. Make
-		// each result reusable for the next phase without projecting it again.
-		if !isLastPhase && len(phase.Keep) > 0 {
-			for i, group := range groups {
-				groups[i] = materializePhaseBoundary(group)
-			}
-		}
-
-		// Early termination on empty.
-		if len(groups) == 0 {
-			return emptyRelationForQuery(p.plan.Query), nil
-		}
-
-		// Last phase must collapse to a single relation (error on Cartesian).
-		if isLastPhase && len(groups) > 1 {
-			return nil, fmt.Errorf("phase %d resulted in %d disjoint relation groups", phaseIndex+1, len(groups))
-		}
-
-		currentGroups = groups
-	}
-
-	if len(currentGroups) == 0 {
-		return emptyRelationForQuery(p.plan.Query), nil
-	}
-
-	// Per-tuple results are returned un-ordered: the RelationInput result is the
-	// union of all per-tuple executions, and :order-by/:limit are applied once by
-	// ExecuteRealized over that whole union (a per-tuple sort here would be
-	// discarded by the union and would not produce a global ordering).
 	return currentGroups[0], nil
 }
 

@@ -173,27 +173,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 
 	// Analyze if we can use iterator reuse
 	// For multi-position cases, the relation may be materialized to allow cardinality counting
-	strategy, bindingRel := analyzeReuseStrategy(pattern, bindingRel)
-
-	// For V-bound queries with NeedsValidation, check cardinality
-	// Only validate when EXPLICITLY CardinalityOne
-	// CardinalityMany uses add-wins, CardinalityUnknown/schemaless emits all
-	// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 3b
-	if strategy.NeedsValidation && strategy.BoundA != nil {
-		// Default: no validation (schemaless = Datascript-style = emit all)
-		strategy.NeedsValidation = false
-
-		if m.schema != nil {
-			if aKw, ok := strategy.BoundA.(datalog.Keyword); ok {
-				if def := m.schema.GetAttribute(aKw); def != nil {
-					if def.Cardinality == schema.CardinalityOne {
-						// Only explicit CardinalityOne needs validation
-						strategy.NeedsValidation = true
-					}
-				}
-			}
-		}
-	}
+	strategy, bindingRel := m.analyzeReuseStrategy(pattern, bindingRel)
 
 	// Emit strategy selection event
 	if m.handler != nil {
@@ -1828,9 +1808,11 @@ func (m *PatternMatcher) matchVectorWithBindings(
 	}
 
 	if eSymIdx == -1 {
-		// E is not bound from bindings - fall back to normal path
-		// This shouldn't happen if we got here, but be safe
-		return executor.NewMaterializedRelation(symbols, nil), nil
+		// The binding binds the value and not the entity. A vector's value
+		// names the whole collection, so no run is narrowed by it: every
+		// entity's vector is resolved and the bound values are compared at
+		// the collapse.
+		return m.matchVectorScanAllEntities(pattern, symbols, attr, v, valueType)
 	}
 
 	// Get attribute bytes once

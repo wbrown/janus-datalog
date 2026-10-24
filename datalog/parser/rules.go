@@ -45,9 +45,6 @@ func parseRule(node *edn.Node) (*query.Rule, error) {
 		return nil, fmt.Errorf("rule name must be a symbol, got %v", head.Nodes[0].Type)
 	}
 	name := datalog.NewSymbol(head.Nodes[0].Value)
-	if name.IsVariable() {
-		return nil, fmt.Errorf("rule name must be a symbol, not the variable %s", head.Nodes[0].Value)
-	}
 	rule := &query.Rule{Name: name}
 	headVariable := func(arg *edn.Node) (query.Symbol, error) {
 		if arg.Type != edn.NodeSymbol {
