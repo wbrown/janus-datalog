@@ -34,5 +34,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Full js/wasm suite (same gate as make test)
-        run: make test-wasm
+      - name: js/wasm suite less the storage package (the make test gate's wasm leg)
+        run: make test-wasm-others
+  wasm-storage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: js/wasm storage package under its own timeout (the make test gate's wasm leg)
+        run: make test-wasm-storage
