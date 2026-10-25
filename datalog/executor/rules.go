@@ -211,31 +211,23 @@ func (e *DefaultQueryExecutor) invocationSource(ctx *Context, inv *query.RuleInv
 // the clause stands in when the context carries that execution's
 // continuations, and otherwise an evaluation of this one run, completed at
 // once. The evaluation is created at the clause's first run through
-// invocationEvaluation and extended by every run with the seed the run's
-// bindings give. The relation is returned with its head, the evaluation's
-// set's for the predicate it derives: the predicate's own, or the adorned
-// one the rewrite derives.
+// invocationEvaluation, over what the plan planned for the clause, and
+// extended by every run with the seed the run's bindings give at the
+// positions the plan has bound. The relation is returned with its head, the
+// evaluation's set's for the predicate it derives: the predicate's own, or
+// the adorned one the rewrite derives.
 func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInvocation, groups []Relation) (Relation, []query.Symbol, error) {
 	rs := ctx.Rules()
 	if rs == nil {
 		return nil, nil, fmt.Errorf("rule invocation %s: no rule set was given for %%", inv)
 	}
-	envSymbols, _ := environmentTuple(ctx.Environment())
-	bound := planner.BoundPositions(inv, func(sym query.Symbol) bool {
-		return query.SymbolIndex(envSymbols, sym) >= 0 || groupBinding(groups, sym) >= 0
-	})
-	if err := rs.CheckRequired(inv.Name, bound, nil); err != nil {
-		return nil, nil, err
-	}
+	planned := e.plan.Evaluations[inv]
 	var eval *ruleEvaluation
 	if ctx.continued != nil {
 		eval = ctx.continued.byClause[inv]
 	}
 	if eval == nil {
-		var err error
-		if eval, err = e.invocationEvaluation(rs, inv, bound); err != nil {
-			return nil, nil, err
-		}
+		eval = e.invocationEvaluation(rs, inv, planned)
 		if ctx.continued != nil {
 			ctx.continued.byClause[inv] = eval
 		}
@@ -244,7 +236,7 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 	if eval.seed != nil {
 		seedHead, _ := eval.rs.Head(eval.seed)
 		var err error
-		if seed, err = e.seedRelation(ctx, inv, bound, seedHead, groups); err != nil {
+		if seed, err = e.seedRelation(ctx, inv, planned.Bound, seedHead, groups); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -259,18 +251,15 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 	return rel, head, nil
 }
 
-// invocationEvaluation is the evaluation an invocation runs, over the set it
-// evaluates (planner.EvaluatedSet), whose bodies the planner's walk planned
-// at PlanQuery. A rewritten set is reported through the magic-sets event.
-func (e *DefaultQueryExecutor) invocationEvaluation(rs *query.RuleSet, inv *query.RuleInvocation, bound []bool) (*ruleEvaluation, error) {
-	magic, err := planner.EvaluatedSet(e.executor.planner, rs, inv.Name, bound, e.options.Handler)
-	if err != nil {
-		return nil, err
+// invocationEvaluation is the evaluation an invocation runs, over what the
+// plan planned for its clause (planner.InvocationEvaluation): the set it
+// evaluates and the planned bodies of each stratum the predicate needs. A
+// rewritten set is reported through the magic-sets event.
+func (e *DefaultQueryExecutor) invocationEvaluation(rs *query.RuleSet, inv *query.RuleInvocation, planned *planner.InvocationEvaluation) *ruleEvaluation {
+	if e.options.Handler != nil && planned.Magic.Rules != rs {
+		e.options.Handler(magicSetsEvent(inv.Name, planned.Bound))
 	}
-	if e.options.Handler != nil && magic.Rules != rs {
-		e.options.Handler(magicSetsEvent(inv.Name, bound))
-	}
-	return newRuleEvaluation(e.executor, magic.Rules, magic.Predicate, magic.Seed), nil
+	return newRuleEvaluation(e.executor, planned)
 }
 
 // magicSetsEvent is the rewrite made for one invocation: the predicate and
@@ -384,6 +373,7 @@ func (e *DefaultQueryExecutor) seedRelation(ctx *Context, inv *query.RuleInvocat
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.2).
 type ruleEvaluation struct {
 	executor  *Executor
+	planned   *planner.InvocationEvaluation // what the plan planned for the clause
 	rs        *query.RuleSet
 	predicate query.Symbol // the predicate the invocation reads
 	seed      query.Symbol // the seed predicate the windows fill, nil for a whole evaluation
@@ -406,11 +396,19 @@ type stratumState struct {
 	completed  bool
 }
 
-// newRuleEvaluation is the evaluation of predicate under rs, fed through the
-// seed predicate by the windows of the scope it stands in; a nil seed is a
-// whole evaluation, which a later window leaves as it is.
-func newRuleEvaluation(e *Executor, rs *query.RuleSet, predicate, seed query.Symbol) *ruleEvaluation {
-	return &ruleEvaluation{executor: e, rs: rs, predicate: predicate, seed: seed, derived: map[query.Symbol]Relation{}}
+// newRuleEvaluation is the evaluation planned for an invocation: of its
+// predicate under its set, fed through the seed predicate by the windows of
+// the scope the invocation stands in; a nil seed is a whole evaluation,
+// which a later window leaves as it is.
+func newRuleEvaluation(e *Executor, planned *planner.InvocationEvaluation) *ruleEvaluation {
+	return &ruleEvaluation{
+		executor:  e,
+		planned:   planned,
+		rs:        planned.Magic.Rules,
+		predicate: planned.Magic.Predicate,
+		seed:      planned.Magic.Seed,
+		derived:   map[query.Symbol]Relation{},
+	}
 }
 
 // extend runs one window: seed, the window's tuples of the seed predicate,
@@ -423,13 +421,10 @@ func newRuleEvaluation(e *Executor, rs *query.RuleSet, predicate, seed query.Sym
 func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) {
 	ev.windows++
 	if ev.windows == 1 {
-		for _, stratum := range planner.NeededStrata(ev.rs, ev.predicate) {
-			eval, err := ev.executor.prepareStratum(ev.rs, stratum)
-			if err != nil {
-				return nil, err
-			}
-			s := &stratumState{stratum: stratum, eval: eval, full: map[query.Symbol]*derivedSet{}}
-			for _, p := range stratum.Predicates {
+		for _, planned := range ev.planned.Strata {
+			eval := ev.executor.prepareStratum(ev.rs, planned)
+			s := &stratumState{stratum: planned.Stratum, eval: eval, full: map[query.Symbol]*derivedSet{}}
+			for _, p := range planned.Stratum.Predicates {
 				s.full[p] = newDerivedSet(eval.symbols[p])
 			}
 			ev.strata = append(ev.strata, s)
@@ -534,21 +529,16 @@ type stratumEvaluation struct {
 	bodies   planner.Bodies
 }
 
-// prepareStratum reads the stratum's planned bodies from the planner
-// (planner.PlanStratum), the ones the walk at PlanQuery planned and the plan
-// cache serves, and the canonical symbols of its predicates.
-func (e *Executor) prepareStratum(rs *query.RuleSet, stratum query.Stratum) (*stratumEvaluation, error) {
-	eval := &stratumEvaluation{executor: e, rs: rs, stratum: stratum, symbols: map[query.Symbol][]query.Symbol{}}
-	for _, p := range stratum.Predicates {
+// prepareStratum is a stratum's evaluation over the bodies the plan carries
+// for it, the ones the walk at PlanQuery planned, and the canonical symbols
+// of its predicates.
+func (e *Executor) prepareStratum(rs *query.RuleSet, planned planner.PlannedStratum) *stratumEvaluation {
+	eval := &stratumEvaluation{executor: e, rs: rs, stratum: planned.Stratum, symbols: map[query.Symbol][]query.Symbol{}, bodies: planned.Bodies}
+	for _, p := range planned.Stratum.Predicates {
 		head, _ := rs.Head(p)
 		eval.symbols[p] = head
 	}
-	bodies, err := planner.PlanStratum(e.planner, rs, stratum, e.options.Handler)
-	if err != nil {
-		return nil, err
-	}
-	eval.bodies = bodies
-	return eval, nil
+	return eval
 }
 
 // run executes bodies under a scope holding held, the relations by predicate

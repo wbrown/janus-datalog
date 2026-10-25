@@ -386,15 +386,16 @@ func (e *Executor) ExecuteRealized(ctx *Context, plan *planner.RealizedPlan, inp
 	return result, nil
 }
 
-// queryExecutor builds the clause executor for this executor's plans. It
-// carries the executor itself, which an invocation clause needs to plan and
-// run a fixpoint.
-func (e *Executor) queryExecutor() *DefaultQueryExecutor {
+// queryExecutor builds the clause executor for one run of plan. It carries
+// the executor itself, which an invocation clause needs to run a fixpoint,
+// and the plan, whose evaluations an invocation clause reads.
+func (e *Executor) queryExecutor(plan *planner.RealizedPlan) *DefaultQueryExecutor {
 	return &DefaultQueryExecutor{
 		matcher:        e.matcher,
 		entityResolver: e.entityResolver,
 		options:        e.options,
 		executor:       e,
+		plan:           plan,
 	}
 }
 
@@ -511,7 +512,7 @@ func (e *Executor) executeRealizedPlan(ctx *Context, plan *planner.RealizedPlan,
 // form's own events report a branch's execution, and a phase event per
 // window would be a handler call per window beside the window's own event.
 func (e *Executor) runPhases(ctx *Context, plan *planner.RealizedPlan, currentGroups []Relation, handler annotations.Handler) (Relation, error) {
-	queryExecutor := e.queryExecutor()
+	queryExecutor := e.queryExecutor(plan)
 
 	// Count conditional aggregates directly from the Datalog phase fragments.
 	if handler != nil {

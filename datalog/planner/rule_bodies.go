@@ -8,13 +8,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// The bodies an invocation runs are computed here, beside the rewrite, and
-// read by the executor's evaluation and by the planner's walk at PlanQuery
-// alike (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.1): the set an
-// invocation evaluates, the strata that set runs for the predicate, and the
-// bodies each stratum runs, each planned as a query of its own under the
-// plan cache. So every body a query reaches is planned at PlanQuery, and
-// Query, Explain and ExplainAlgebra refuse a body no order runs alike.
+// What an invocation evaluates is computed here, beside the rewrite, by the
+// planner's walk at PlanQuery (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md
+// §4.1): the set an invocation evaluates, the strata that set runs for the
+// predicate, and the bodies each stratum runs, each planned as a query of its
+// own under the plan cache. The plan carries the result (InvocationEvaluation)
+// for the executor's evaluation to read. So every body a query reaches is
+// planned at PlanQuery, and Query, Explain and ExplainAlgebra refuse a body no
+// order runs alike.
 
 // BoundPositions marks the positions of an invocation the clause binds: a
 // constant, or a variable binds reports bound, a repeated variable at its
@@ -55,6 +56,43 @@ func EvaluatedSet(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound []
 		return &Magic{Rules: rs, Predicate: name}, nil
 	}
 	return Rewrite(p, rs, name, bound, handler)
+}
+
+// InvocationEvaluation is what an invocation derived at its clause
+// evaluates, decided at planning: the positions bound before it, the set it
+// evaluates (EvaluatedSet) and the planned bodies of each stratum the
+// predicate needs, in the set's order.
+type InvocationEvaluation struct {
+	Bound  []bool
+	Magic  *Magic
+	Strata []PlannedStratum
+}
+
+// PlannedStratum is one stratum an evaluation runs, with its planned bodies.
+type PlannedStratum struct {
+	Stratum query.Stratum
+	Bodies  Bodies
+}
+
+// PlanEvaluation plans what an invocation of name evaluates under rs with
+// the given positions bound: the set (EvaluatedSet) and, for each stratum
+// the predicate needs (NeededStrata), its planned bodies (PlanStratum). The
+// planner's walk plans every invocation's evaluation through it, and the
+// plan carries the result.
+func PlanEvaluation(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound []bool, handler annotations.Handler) (*InvocationEvaluation, error) {
+	magic, err := EvaluatedSet(p, rs, name, bound, handler)
+	if err != nil {
+		return nil, err
+	}
+	var strata []PlannedStratum
+	for _, stratum := range NeededStrata(magic.Rules, magic.Predicate) {
+		bodies, err := PlanStratum(p, magic.Rules, stratum, handler)
+		if err != nil {
+			return nil, err
+		}
+		strata = append(strata, PlannedStratum{Stratum: stratum, Bodies: bodies})
+	}
+	return &InvocationEvaluation{Bound: bound, Magic: magic, Strata: strata}, nil
 }
 
 // NeededStrata is the strata an evaluation of the predicate runs, in the

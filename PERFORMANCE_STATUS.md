@@ -1574,7 +1574,7 @@ B/op **−0.79%** and allocs/op **−1.26%**, both p=0.000 at ±0% spread. Artif
 
 This measures the whole 38-commit branch, and it exists because the 2026-07-27
 checkpoint below sat 23 commits behind HEAD — including the value-domain
-enforcement arc, which added domain checks to `ValuesEqual`/`hashValue`/
+enforcement arc, which added domain checks to `ValuesEqual`/`HashValue`/
 `CompareValues`, and the arc that moved V out of the scan prefix. Neither is
 visible here. The benchmark uses no cardinality-vector attribute, so the
 element-wise comparison that arc introduced is the one cost this shape cannot
@@ -1775,8 +1775,8 @@ projection without adding this physical cost.
 - First query: ~1-5ms planning time
 - Cached query: ~0.3ms planning time
 - **~3× speedup for repeated queries**
-- The key is the prepared text, the rule set as its rendering, the options that shape a plan, the symbols bound when the plan was made, and which invocations are held, in one fixed order, so every plan enters the cache and a plan under a bound input is served to the next execution under the same bound set (`docs/proposals/NESTED_SCOPES_AS_QUERIES.md` §5.2). The database's cache holds a thousand plans and expires none.
-- `BenchmarkPlannerWithoutCache` and `BenchmarkPlannerWithCache` (`datalog/planner/cache_benchmark_test.go`) plan the complex query under no bound symbol and under its entity bound, five runs each: uncached **4.0–7.8 µs/op unbound and 4.1 µs/op bound**; served from the cache **1.5 µs/op unbound and 1.5–1.7 µs/op bound**, the bound plan now served where it was planned on every call.
+- The key is a structural hash of the prepared query, the rule set, the options that shape a plan, the symbols bound when the plan was made and which invocations are held, and a hit compares the parts in full (`computeKeyWithOptions` and `madeUnder`, `datalog/planner/cache.go`; `docs/proposals/NESTED_SCOPES_AS_QUERIES.md` §5.2), so every plan enters the cache and a plan under a bound input is served to the next execution under the same bound set. The database's cache holds a thousand plans and expires none.
+- `BenchmarkPlannerWithoutCache`, `BenchmarkPlannerWithCache` and `BenchmarkPlannerWithCacheUnderRules` (`datalog/planner/cache_benchmark_test.go`) plan the complex query under no bound symbol and under its entity bound, and a rule-invoking query free and bound, on Apple M5: uncached **4.2 µs/op unbound and 4.5 µs/op bound**; served from the cache **170 ns/op unbound and 190 ns/op bound, 0 allocs/op**; under a rule set **43 ns/op free and 48 ns/op bound, 0 allocs/op**.
 
 ---
 

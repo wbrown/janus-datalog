@@ -44,18 +44,25 @@ type DefaultQueryExecutor struct {
 	options        ExecutorOptions
 
 	// executor is the executor whose plan this one runs clauses for. An
-	// invocation clause plans and runs a fixpoint through it, and a form
-	// plans its scopes through it.
+	// invocation clause runs a fixpoint through it, and a form plans its
+	// scopes through it.
 	executor *Executor
+
+	// plan is the plan whose phases this executor runs the clauses of. An
+	// invocation clause reads what the plan planned for it
+	// (planner.RealizedPlan.Evaluations).
+	plan *planner.RealizedPlan
 }
 
 // newQueryExecutor builds a clause executor for tests of the executor's
 // internals, over an executor on the default planner profile carrying the
 // options' handler. A query it is given runs clause by clause in the written
-// order, bypassing the planner; a form inside those clauses plans each of
-// its scopes through the executor's planner, and an invocation clause plans
-// and runs its fixpoint through it. End-to-end and integration tests use
-// NewExecutor or NewExecutorWithOptions, which plan the query.
+// order, bypassing the planner. A form inside those clauses plans each of its
+// scopes through the executor's planner, and an invocation clause inside a
+// scope reads the scope's plan. An invocation clause at the top level of the
+// query has no plan to read its evaluation from; a test that runs one plans
+// the query. End-to-end and integration tests use NewExecutor or
+// NewExecutorWithOptions, which plan the query.
 func newQueryExecutor(matcher PatternMatcher, resolver EntityResolver, options ExecutorOptions) *DefaultQueryExecutor {
 	plannerOptions := defaultPlannerOptions()
 	plannerOptions.Handler = options.Handler
@@ -65,7 +72,7 @@ func newQueryExecutor(matcher PatternMatcher, resolver EntityResolver, options E
 		planner:        planner.CreatePlanner(nil, plannerOptions),
 		options:        options,
 	}
-	return executor.queryExecutor()
+	return executor.queryExecutor(nil)
 }
 
 // Execute implements QueryExecutor interface

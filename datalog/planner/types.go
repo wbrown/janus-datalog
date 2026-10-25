@@ -215,6 +215,11 @@ type RealizedPlan struct {
 	// vocabulary check at the executor's entry reads it after planning. Nil
 	// for a plan made without the option.
 	Rosters *query.Rosters
+
+	// Evaluations is what each invocation the plan's phases derive at its
+	// clause evaluates, by the clause, planned with the plan; the executor's
+	// evaluation reads it here.
+	Evaluations map[*query.RuleInvocation]*InvocationEvaluation
 }
 
 // String returns a human-readable representation of a RealizedPhase

@@ -107,7 +107,7 @@ func TestGroundVectorPatternDistinguishesClearedFromNeverSet(t *testing.T) {
 // TestClearedVectorBindsEmptyVectorNotNil pins that a cleared vector binds the
 // empty vector for every element type, not only the ones typedVector converts.
 //
-// nil is not a datalog value. It has no case in ValuesEqual or hashValue, both
+// nil is not a datalog value. It has no case in ValuesEqual or HashValue, both
 // of which panic on anything outside the closed domain, so a nil reaching a
 // tuple's value position is not a wrong answer here — it is a crash at whatever
 // join or dedup touches that tuple next, arbitrarily far away.

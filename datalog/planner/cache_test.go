@@ -310,6 +310,107 @@ func TestPlanCacheKeyDistinguishesBoundSymbols(t *testing.T) {
 	}
 }
 
+// A conditional aggregate and the plain aggregate over one text are two
+// plans: the find's predicate variable decides what the plan computes, so a
+// plan made for the plain aggregate is not served to the conditional one, and
+// the conditional one is served under its own find.
+func TestPlanCacheDistinguishesAConditionalAggregate(t *testing.T) {
+	cache := NewPlanCache(10, 0)
+	opts := PlannerOptions{}
+	v, p := datalog.NewSymbol("?v"), datalog.NewSymbol("?p")
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: datalog.NewSymbol("?e")},
+		query.Constant{Value: datalog.NewKeyword(":n")},
+		query.Variable{Name: v},
+	}}
+	plain := &query.Query{Find: []query.FindElement{query.FindAggregate{Function: datalog.SymMax, Arg: v}}, Where: []query.Clause{pattern}}
+	conditional := &query.Query{Find: []query.FindElement{query.FindAggregate{Function: datalog.SymMax, Arg: v, Predicate: p}}, Where: []query.Clause{pattern}}
+	plainPlan, conditionalPlan := &RealizedPlan{Query: plain}, &RealizedPlan{Query: conditional}
+
+	cache.SetWithOptions(plain, query.Bindings{}, plainPlan, opts)
+	if _, ok := cache.GetWithOptions(conditional, query.Bindings{}, opts); ok {
+		t.Fatal("a plan made for the plain aggregate is served to the conditional aggregate over the same text")
+	}
+	cache.SetWithOptions(conditional, query.Bindings{}, conditionalPlan, opts)
+	if cached, ok := cache.GetWithOptions(conditional, query.Bindings{}, opts); !ok || cached != conditionalPlan {
+		t.Fatal("the conditional aggregate's plan is served under its own find")
+	}
+	if cached, ok := cache.GetWithOptions(plain, query.Bindings{}, opts); !ok || cached != plainPlan {
+		t.Fatal("the plain aggregate's plan is served under its own find beside the conditional one's")
+	}
+}
+
+// A cached plan was made under a request when the request's query is
+// structurally the plan's, its rule set is structurally the plan's or both
+// are absent, its bound symbols are the plan's as a set, and its held
+// invocations and options are the plan's; a request differing in any one
+// part was not. The parts are compared on a hash hit, so a collision between
+// two requests is a miss and never a plan served to the wrong request.
+func TestCachedPlanMadeUnderComparesEveryPart(t *testing.T) {
+	e, n := datalog.NewSymbol("?e"), datalog.NewSymbol("?n")
+	pattern := func() *query.DataPattern {
+		return &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: e},
+			query.Constant{Value: datalog.NewKeyword(":person/name")},
+			query.Variable{Name: n},
+		}}
+	}
+	queryOf := func(where ...query.Clause) *query.Query {
+		return &query.Query{
+			Find:  []query.FindElement{query.FindVariable{Symbol: n}},
+			In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}},
+			Where: where,
+		}
+	}
+	rules := func(body ...query.Clause) *query.RuleSet {
+		rs, err := query.NewRuleSet([]*query.Rule{{Name: datalog.NewSymbol("named"), Head: []query.Symbol{e, n}, Body: body}})
+		if err != nil {
+			t.Fatalf("NewRuleSet: %v", err)
+		}
+		return rs
+	}
+	opts := PlannerOptions{EnableAlgebraOptimizer: true}
+	made := &cachedPlan{
+		plan:    &RealizedPlan{},
+		query:   queryOf(pattern(), invocation("named", "?e", "?n")),
+		rules:   rules(pattern()),
+		bound:   []query.Symbol{e},
+		held:    query.HeldByFixpoint,
+		options: planOptionsOf(opts),
+	}
+	same := query.Bindings{Rules: rules(pattern()), Symbols: map[query.Symbol]bool{e: true}, Held: query.HeldByFixpoint}
+	if !made.madeUnder(queryOf(pattern(), invocation("named", "?e", "?n")), same, opts) {
+		t.Fatal("a plan is not made under a request whose every part is the plan's, each built afresh")
+	}
+
+	withRosters := opts
+	withRosters.CollectRosters = true
+	differing := []struct {
+		name     string
+		q        *query.Query
+		bindings query.Bindings
+		opts     PlannerOptions
+	}{
+		{"the query", queryOf(pattern()), same, opts},
+		{"the rule set's body", made.query, query.Bindings{Rules: rules(pattern(), pattern()), Symbols: same.Symbols, Held: same.Held}, opts},
+		{"a rule set absent", made.query, query.Bindings{Symbols: same.Symbols, Held: same.Held}, opts},
+		{"a bound symbol added", made.query, query.Bindings{Rules: same.Rules, Symbols: map[query.Symbol]bool{e: true, n: true}, Held: same.Held}, opts},
+		{"a bound symbol absent", made.query, query.Bindings{Rules: same.Rules, Held: same.Held}, opts},
+		{"the held invocations", made.query, query.Bindings{Rules: same.Rules, Symbols: same.Symbols, Held: query.HeldEvery}, opts},
+		{"an option", made.query, same, withRosters},
+	}
+	for _, request := range differing {
+		if made.madeUnder(request.q, request.bindings, request.opts) {
+			t.Errorf("a plan is made under a request differing in %s", request.name)
+		}
+	}
+
+	withoutRules := &cachedPlan{plan: made.plan, query: made.query, bound: made.bound, held: made.held, options: made.options}
+	if withoutRules.madeUnder(made.query, same, opts) {
+		t.Error("a plan made under no rule set is made under a request carrying one")
+	}
+}
+
 // A cache made with no TTL expires nothing: an entry stored an hour ago is
 // served as a hit.
 func TestPlanCacheWithNoTTLServesAnOldEntry(t *testing.T) {

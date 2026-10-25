@@ -92,7 +92,7 @@ func TestNonValueTypeHashPanics(t *testing.T) {
 // element-wise), so []string{"a"} equals []interface{}{"a"} — and the
 // storage vector-matching path (matchVectorWithBindings) puts []string
 // values into relation tuples. The consistency invariant (ValuesEqual ⇒
-// equal hashes) therefore requires hashValue to hash every slice kind via
+// equal hashes) therefore requires HashValue to hash every slice kind via
 // the same generic element iteration — including across representations.
 func TestTypedSliceValuesHashLikeVectors(t *testing.T) {
 	typed := []string{"a", "b"}

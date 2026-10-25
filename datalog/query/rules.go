@@ -125,12 +125,15 @@ type RuleSet struct {
 	// as the rosters are collected.
 	renderOnce sync.Once
 	rendering  string
+
+	// hash is the set's structural hash (Hash), computed at construction over
+	// the predicates in order, each by its name, its arity and its rules.
+	hash uint64
 }
 
-// String renders the set: each predicate in the set's order, a seed
-// predicate as its head in rule syntax, [(name head...)], and each rule as
-// ParseRules reads it, inside [ ]. The rendering identifies the set whole,
-// its bodies, required runs and heads, so the plan cache keys a plan on it.
+// String renders the set as ParseRules reads it: each predicate in the set's
+// order, a seed predicate as its head in rule syntax, [(name head...)], and
+// each rule as Rule.String renders it, inside [ ].
 func (rs *RuleSet) String() string {
 	rs.renderOnce.Do(func() {
 		var sb strings.Builder
@@ -323,6 +326,7 @@ func NewSeededRuleSet(rules []*Rule, seeds []SeedPredicate) (*RuleSet, error) {
 	// its invocations and derived in the rewritten set with its bindings
 	// (NESTED_SCOPES_AS_QUERIES.md §5.5).
 	rs.strata = strata
+	rs.hash = hashRuleSet(rs)
 	return rs, nil
 }
 
@@ -447,6 +451,7 @@ func requiredRun(rule *Rule) ([]bool, error) {
 	return mask, nil
 }
 
+// equalMasks reports whether two binding patterns mark the same positions.
 func equalMasks(a, b []bool) bool {
 	if len(a) != len(b) {
 		return false

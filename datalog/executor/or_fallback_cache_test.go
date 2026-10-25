@@ -196,11 +196,11 @@ func TestCachedBranchGroupsAKeysTuplesInCollectionOrder(t *testing.T) {
 // Two distinct keys sharing one hash are told apart: each probe answers its
 // own key's tuples, a third key under the hash misses, and a probe under a
 // shared hash allocates nothing. int64(0) and false share a hash under
-// hashValue, as does the zero ElementID.
+// HashValue, as does the zero ElementID.
 func TestCachedBranchTellsTwoKeysUnderOneHashApart(t *testing.T) {
 	zero, no, absent := int64(0), false, datalog.ElementID{}
-	require.Equal(t, hashValue(zero), hashValue(no), "the fixture's two keys share one hash")
-	require.Equal(t, hashValue(zero), hashValue(absent), "the fixture's absent key shares it")
+	require.Equal(t, datalog.HashValue(zero), datalog.HashValue(no), "the fixture's two keys share one hash")
+	require.Equal(t, datalog.HashValue(zero), datalog.HashValue(absent), "the fixture's absent key shares it")
 	symE := datalog.NewSymbol("?e")
 	symCount := datalog.NewSymbol("?count")
 	branchResult := NewMaterializedRelation(

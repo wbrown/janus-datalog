@@ -43,7 +43,7 @@ func TestStreamingOuterIsReadOnce(t *testing.T) {
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
 			pulls := NewCountingIterator(base.Iterator())
 			subject := NewStreamingRelation([]query.Symbol{entity}, pulls)
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor()
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor(nil)
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
 			require.NoError(t, err)
 			require.Len(t, groups, 1, "the form's result stands in the subject's place")
@@ -120,7 +120,7 @@ func TestNotJoinBodyScanFailureIsTheQuerysError(t *testing.T) {
 				failAttr: failing,
 				dataRel:  NewMaterializedRelation([]query.Symbol{entity, value}, nil),
 			}
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor()
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor(nil)
 			outer := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{datalog.NewIdentity("body-error")}})
 			groups, err := exec.Execute(NewContext(), q, []Relation{outer})
 			require.NoError(t, err, "the anti-join carries the body's failure on its result")
@@ -198,7 +198,7 @@ func TestFormReportsItsExecution(t *testing.T) {
 				var events []annotations.Event
 				opts := mode.plannerOptions()
 				opts.Handler = func(e annotations.Event) { events = append(events, e) }
-				exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor()
+				exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor(nil)
 				groups, err := exec.Execute(NewContext(), &query.Query{Where: []query.Clause{form.clause}}, form.inputs)
 				require.NoError(t, err)
 				var tuples [][]interface{}
@@ -264,7 +264,7 @@ func TestFormFailureCompletesWithSuccessFalse(t *testing.T) {
 				failAttr: failing,
 				dataRel:  NewMaterializedRelation([]query.Symbol{entity, value}, nil),
 			}
-			exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor()
+			exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor(nil)
 			_, err := exec.Execute(NewContext(), q, nil)
 			require.ErrorIs(t, err, errInjectedIterator, "the union route reads the branch whole, so its failure is Execute's")
 			reported := orClauseEvents(events)
@@ -394,7 +394,7 @@ func TestSubqueryOverAFormReadsTheSubjectOnce(t *testing.T) {
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
 			pulls := NewCountingIterator(base.Iterator())
 			subject := NewStreamingRelation([]query.Symbol{entity}, pulls)
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor()
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor(nil)
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
 			require.NoError(t, err)
 			require.Len(t, groups, 1, "the subquery's result stands in the form's place")
@@ -445,7 +445,7 @@ func TestNotJoinOverAStreamingSubjectReadsItOnce(t *testing.T) {
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
 			pulls := NewCountingIterator(base.Iterator())
 			subject := NewStreamingRelation([]query.Symbol{entity}, pulls)
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor()
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor(nil)
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
 			require.NoError(t, err)
 			require.Len(t, groups, 1, "the form's result stands in the subject's place")
@@ -508,7 +508,7 @@ func TestNotJoinBodyIsBuiltOncePerWindowOverTheKeysNotYetRun(t *testing.T) {
 			opts := mode.plannerOptions()
 			opts.ScopeWindowCap = 8
 			opts.Handler = func(e annotations.Event) { events = append(events, e) }
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor()
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor(nil)
 			subject := NewStreamingRelation([]query.Symbol{entity, n}, NewMaterializedRelation([]query.Symbol{entity, n}, tuples).Iterator())
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
 			require.NoError(t, err)
@@ -575,7 +575,7 @@ func TestNotJoinBodyHoldingAnInvocationIsContinuedAcrossTheWindows(t *testing.T)
 				c.windows++
 			}
 		}
-		exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor()
+		exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor(nil)
 		subject := NewStreamingRelation([]query.Symbol{entity}, NewMaterializedRelation([]query.Symbol{entity}, tuples).Iterator())
 		groups, err := exec.Execute(NewContext().WithRules(rs), &query.Query{Where: form}, []Relation{subject})
 		require.NoError(t, err)
@@ -637,7 +637,7 @@ func TestSubqueryOverAStreamingSubjectReadsItOnce(t *testing.T) {
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
 			pulls := NewCountingIterator(base.Iterator())
 			subject := NewStreamingRelation([]query.Symbol{entity}, pulls)
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor()
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor(nil)
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
 			require.NoError(t, err)
 			require.Len(t, groups, 1, "the subquery's result stands in the subject's place")
@@ -687,7 +687,7 @@ func TestPatternOverAStreamingGroupReadsItOnce(t *testing.T) {
 			base := NewMaterializedRelation([]query.Symbol{entity}, tuples)
 			pulls := NewCountingIterator(base.Iterator())
 			subject := NewStreamingRelation([]query.Symbol{entity}, pulls)
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor()
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor(nil)
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
 			require.NoError(t, err)
 			require.Len(t, groups, 1, "the pattern's result stands in the group's place")
@@ -740,7 +740,7 @@ func TestBoundInvocationOverAStreamingGroupReadsItOnce(t *testing.T) {
 				c.windows++
 			}
 		}
-		exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor()
+		exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor(nil)
 		pulls := NewCountingIterator(NewMaterializedRelation(syms, tuples).Iterator())
 		subject := NewStreamingRelationWithProperties(syms, pulls, exec.options, deduplicatedProperties(syms))
 		groups, err := exec.Execute(NewContext().WithRules(rs), &query.Query{Where: closure}, []Relation{subject})
@@ -836,7 +836,7 @@ func TestInvocationOfAHeldPredicateOverAStreamingGroupJoinsAtTheCollapse(t *test
 					windows++
 				}
 			}
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(nil), nil, opts).queryExecutor()
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(nil), nil, opts).queryExecutor(nil)
 			pulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{a}, []Tuple{{page(1)}, {page(2)}, {page(6)}}).Iterator())
 			subject := NewStreamingRelationWithProperties([]query.Symbol{a}, pulls, exec.options, deduplicatedProperties([]query.Symbol{a}))
 			ctx := NewContext().WithRules(rs).WithDerived(map[query.Symbol]Relation{follows: held})
@@ -896,7 +896,7 @@ func TestFormOverTwoStreamingGroupsReadsEachOnce(t *testing.T) {
 			taggedPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{entity, tag}, tagged).Iterator())
 			first := NewStreamingRelation([]query.Symbol{entity}, itemPulls)
 			second := NewStreamingRelation([]query.Symbol{entity, tag}, taggedPulls)
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor()
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor(nil)
 			groups, err := exec.Execute(NewContext(), q, []Relation{first, second})
 			require.NoError(t, err)
 			require.Len(t, groups, 1, "the form's result stands in the place of both groups")
@@ -965,7 +965,7 @@ func TestFormOverTwoStreamingGroupsSharingNoSymbolReadsEachOnce(t *testing.T) {
 			tagPulls := NewCountingIterator(NewMaterializedRelation([]query.Symbol{tag}, tagTuples).Iterator())
 			first := NewStreamingRelation([]query.Symbol{entity}, itemPulls)
 			second := NewStreamingRelation([]query.Symbol{tag}, tagPulls)
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor()
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor(nil)
 			groups, err := exec.Execute(NewContext(), q, []Relation{first, second})
 			require.NoError(t, err)
 			require.Len(t, groups, 1, "the form's result stands in the place of both groups")
@@ -1047,7 +1047,7 @@ func TestFormOverThreeStreamingGroupsHoldsEachLaterGroup(t *testing.T) {
 			first := NewStreamingRelation([]query.Symbol{entity}, itemPulls)
 			second := NewStreamingRelation([]query.Symbol{tag}, tagPulls)
 			third := NewStreamingRelation([]query.Symbol{shelf}, shelfPulls)
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor()
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, mode.plannerOptions()).queryExecutor(nil)
 			groups, err := exec.Execute(NewContext(), q, []Relation{first, second, third})
 			require.NoError(t, err)
 			require.Len(t, groups, 1, "the form's result stands in the place of the three groups")
@@ -1098,7 +1098,7 @@ func TestSubqueryBodyScanFailureSurfacesWhenTheResultIsDriven(t *testing.T) {
 				failAttr: failing,
 				dataRel:  NewMaterializedRelation([]query.Symbol{item, value}, nil),
 			}
-			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor()
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions()).queryExecutor(nil)
 			outer := NewMaterializedRelation([]query.Symbol{entity}, []Tuple{{datalog.NewIdentity("body-error")}})
 			groups, err := exec.Execute(NewContext(), q, []Relation{outer})
 			require.NoError(t, err, "the form's result carries the body's failure")

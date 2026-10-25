@@ -64,7 +64,7 @@ func TestWindowGrowsFromOneTupleToTheCap(t *testing.T) {
 			opts := mode.plannerOptions()
 			opts.ScopeWindowCap = 8
 			opts.Handler = func(e annotations.Event) { events = append(events, e) }
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor()
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts).queryExecutor(nil)
 			answers := func(subject Relation) {
 				groups, err := exec.Execute(NewContext(), q, []Relation{subject})
 				require.NoError(t, err)
@@ -131,7 +131,7 @@ func TestKeyAnsweredByAnEarlierWindowIsProbedNotEvaluated(t *testing.T) {
 			matcher := &keyCountingMatcher{PatternMatcher: NewMemoryPatternMatcher(datoms)}
 			opts := mode.plannerOptions()
 			opts.ScopeWindowCap = 8
-			exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor()
+			exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor(nil)
 			subject := NewStreamingRelation([]query.Symbol{entity, n}, NewMaterializedRelation([]query.Symbol{entity, n}, tuples).Iterator())
 			groups, err := exec.Execute(NewContext(), q, []Relation{subject})
 			require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestIterationBoundIsCountedPerWindowAndTheTupleBoundIsCarried(t *testing.T)
 	form := mustParse(t, `[:find ?x ?y :in $ % :where (or-default-join [[?x] ?y] (follows ?x ?y) [(ground :end) ?y])]`).Where
 	x := datalog.NewSymbol("?x")
 	run := func(t *testing.T, opts planner.PlannerOptions, order []Tuple) error {
-		exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor()
+		exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor(nil)
 		subject := NewStreamingRelation([]query.Symbol{x}, NewMaterializedRelation([]query.Symbol{x}, order).Iterator())
 		groups, err := exec.Execute(NewContext().WithRules(rs), &query.Query{Where: form}, []Relation{subject})
 		if err != nil {

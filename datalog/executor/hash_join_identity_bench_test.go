@@ -12,8 +12,8 @@ import (
 // datalog.Identity values as the join key instead of int64. This exercises
 // code paths that the int64-keyed benchmarks do not:
 //
-//   - hashValue's datalog.Identity branch (tuple_key.go:73-78, 98-102)
-//     runs an FNV-1a loop over the full 20-byte SHA1 hash.
+//   - datalog.HashValue's Identity branch hashes the interned pointer's
+//     address, and the TupleKeyMap's collision check compares identities.
 //   - ValuesEqual's interned-Identity branch goes through type-assertion +
 //     Equal() rather than short-circuiting on the cheap interface
 //     pointer-equality of a primitive int64.

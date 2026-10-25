@@ -490,7 +490,7 @@ func NewMaterializedRelationFromSet(symbols []query.Symbol, tuples []Tuple, opts
 func validateTupleValueDomain(tuples []Tuple) {
 	for _, tuple := range tuples {
 		for _, value := range tuple {
-			hashValue(value)
+			datalog.HashValue(value)
 		}
 	}
 }

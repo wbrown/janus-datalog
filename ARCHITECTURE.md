@@ -254,16 +254,14 @@ For each phase in plan:
 
 ### Rule Evaluation
 
-An invocation clause outside a rule body evaluates its predicate when it runs. The arguments bound by then decide the seed:
+An invocation clause outside a rule body evaluates its predicate when it runs, over what the plan carries for the clause, decided at `PlanQuery` (`planner.PlanEvaluation`, `RealizedPlan.Evaluations`). The arguments bound before the clause decide the set, and the run gives the seed:
 
 ```
-Bound positions: constants, and variables the environment or the phase's relations bind
-No bound position: evaluate the original rule set; the invocation reads the predicate whole
-Some bound: rewrite the rule set for the binding pattern (magic sets)
-  Decline the rewrite when its result does not stratify; evaluate the original set instead
-  Seed: the bound values, projected from the phase's relations, as the magic predicate's relation
-For each needed stratum, in order:
-  Plan each rule's body as a query of its own
+Bound positions: constants, and variables the environment or the clauses before bind
+No bound position: the original rule set; the invocation reads the predicate whole
+Some bound: the rule set rewritten for the binding pattern (magic sets)
+  Seed, at the run: the bound values, projected from the phase's relations, as the magic predicate's relation
+For each needed stratum, in order, each rule's body planned as a query of its own:
   Iteration 0: absorb the seed, when the stratum has one; run the bodies holding no invocation of this stratum
   While a recursive stratum's last iteration added tuples:
     Check the cancellation, then the iteration bound
@@ -596,7 +594,7 @@ inactive logical-rewrite experiment.
 
 **Key invariants**: phase metadata must match Datalog input/output schemas exactly; adjacent `Keep`/relation-input schemas must agree; runtime relations are checked against `Provides`.
 
-**Plan caching** (`cache.go`): a `RealizedPlan` is cached under a key of five parts, in one fixed order: the prepared text, the rule set as its rendering, the options that shape a plan, the symbols bound when the plan was made, and which invocations are held. So every plan enters the cache, and a plan made under a bound input serves the next execution under the same bound set (`docs/proposals/NESTED_SCOPES_AS_QUERIES.md` §5.2). The database's cache holds a thousand plans. It evicts the oldest when full and expires none. 3x speedup on repeated queries. Hit/miss counters for monitoring. A rule body's plan enters the cache under its own text, which carries `%` and the delta symbol, so the cached plan is the one the fixpoint would make.
+**Plan caching** (`cache.go`): a `RealizedPlan` is cached under the structural hash of five parts: the prepared query, the rule set, the options that shape a plan, the symbols bound when the plan was made, and which invocations are held. A query's hash folds its typed parts, a symbol by its interned pointer and a constant by its value hash (`Query.Hash`); a rule set's is computed once at its construction (`RuleSet.Hash`); a hit compares the parts in full (`Query.Equal`, `RuleSet.Equal`), so a collision is a miss. So every plan enters the cache, and a plan made under a bound input serves the next execution under the same bound set (`docs/proposals/NESTED_SCOPES_AS_QUERIES.md` §5.2). The database's cache holds a thousand plans. It evicts the oldest when full and expires none. 3x speedup on repeated queries. Hit/miss counters for monitoring. A rule body's plan enters the cache under the body's own structure, which carries `%` and the delta symbol, so the cached plan is the one the fixpoint would make.
 
 **Explain support** (`explain_analysis.go`): Optional population of per-phase `Patterns`, `Expressions`, `Predicates`, `Subqueries`, `Invocations` with index selection, selectivity scores, and binding analysis for plan inspection.
 

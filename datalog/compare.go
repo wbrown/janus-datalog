@@ -19,7 +19,7 @@ import (
 // cross-compare).
 //
 // The domain is closed, so this enumerates it and panics on the rest, the way
-// Type() and hashValue do. A catch-all rank is what let vectors — the domain's
+// Type() and HashValue do. A catch-all rank is what let vectors — the domain's
 // only composite — order by their rendered form: two vectors shared the unknown
 // rank, and compareByRank resolved same-rank pairs through fmt.
 //
@@ -568,7 +568,7 @@ func ValuesEqual(a, b interface{}) bool {
 	// The value domain is closed and every member of it was handled above, so a
 	// value reaching here is outside the domain — a layering violation, e.g. a
 	// pulled map[string]interface{}, which is result presentation and never a
-	// relational value. Fail loudly naming the type, as Type() and hashValue do.
+	// relational value. Fail loudly naming the type, as Type() and HashValue do.
 	//
 	// This is a domain check, not a comparability check. Testing Comparable()
 	// let any comparable non-domain value through to `a == b`: a pointer then

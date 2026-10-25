@@ -101,10 +101,12 @@ func benchmarkNaiveClosure(b *testing.B, matcher PatternMatcher, rs *query.RuleS
 	ctx := NewContext().WithRules(rs)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		eval, err := exec.prepareStratum(rs, rs.Strata()[0])
+		stratum := rs.Strata()[0]
+		bodies, err := planner.PlanStratum(exec.planner, rs, stratum, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
+		eval := exec.prepareStratum(rs, planner.PlannedStratum{Stratum: stratum, Bodies: bodies})
 		full := newDerivedSet(eval.symbols[follows])
 		seed, err := eval.run(ctx, nil, eval.bodies.Plain)
 		if err != nil {

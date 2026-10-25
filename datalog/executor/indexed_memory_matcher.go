@@ -129,10 +129,9 @@ func (m *IndexedMemoryMatcher) buildIndices() {
 	})
 }
 
-// hashDatomValue computes a hash for a datom value
-// Reuses the hashValue function from tuple_key.go
+// hashDatomValue is the hash of a datom value, datalog.HashValue's.
 func hashDatomValue(v interface{}) uint64 {
-	return hashValue(v)
+	return datalog.HashValue(v)
 }
 
 // WithOptions sets the executor options and returns self for chaining

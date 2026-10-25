@@ -78,11 +78,11 @@ func TestJoinIndex_WithNoKeyEveryProbeAnswersEveryTuple(t *testing.T) {
 
 // Two distinct keys sharing one hash are told apart: each probe answers its
 // own key's tuples, and a third key under the same hash misses. int64(0)
-// and false are such keys under hashValue, as is the zero ElementID.
+// and false are such keys under HashValue, as is the zero ElementID.
 func TestJoinIndex_TwoKeysUnderOneHashAreToldApart(t *testing.T) {
 	zero, no, absent := int64(0), false, datalog.ElementID{}
-	require.Equal(t, hashValue(zero), hashValue(no), "the fixture's two keys share one hash")
-	require.Equal(t, hashValue(zero), hashValue(absent), "the fixture's absent key shares it")
+	require.Equal(t, datalog.HashValue(zero), datalog.HashValue(no), "the fixture's two keys share one hash")
+	require.Equal(t, datalog.HashValue(zero), datalog.HashValue(absent), "the fixture's absent key shares it")
 	require.False(t, datalog.ValuesEqual(zero, no), "the fixture's two keys are distinct values")
 	require.False(t, datalog.ValuesEqual(zero, absent), "the fixture's absent key is distinct from the first")
 	require.False(t, datalog.ValuesEqual(no, absent), "the fixture's absent key is distinct from the second")

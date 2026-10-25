@@ -132,7 +132,7 @@ func TestTupleKeyMap_DistinguishesAdversarialPairs(t *testing.T) {
 
 // TestTupleKeyMap_BytesAreDistinguishedByContent verifies that []byte values are
 // keyed by content in a TupleKeyMap: equal content hashes equally (so it lands in
-// the same bucket and is found), and different content does not match. hashValue
+// the same bucket and is found), and different content does not match. HashValue
 // has a dedicated []byte case that hashes by content (hashBytes). Without it,
 // []byte fell through to a pointer-address hash, so equal slices landed in
 // DIFFERENT buckets and the ValuesEqual fallback — which only resolves collisions
@@ -141,7 +141,7 @@ func TestTupleKeyMap_DistinguishesAdversarialPairs(t *testing.T) {
 // dropped tuples, only reliably under -race because the bogus address hash happened
 // to collide otherwise).
 //
-// Exercises: tuple_key.go hashValue/TupleKey/TupleKeyMap with []byte values
+// Exercises: datalog.HashValue and tuple_key.go's TupleKey/TupleKeyMap with []byte values
 func TestTupleKeyMap_BytesAreDistinguishedByContent(t *testing.T) {
 	a := []byte{1, 2, 3}
 	bSameContent := []byte{1, 2, 3} // distinct slice, equal content

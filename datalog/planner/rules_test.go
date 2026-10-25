@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -180,6 +181,77 @@ func TestPlanCacheKeyDistinguishesRuleBodies(t *testing.T) {
 		if cache.computeKeyWithOptions(q, query.Bindings{Rules: oneHop}, PlannerOptions{}) != cache.computeKeyWithOptions(q, query.Bindings{Rules: oneHopAgain}, PlannerOptions{}) {
 			t.Errorf("%s under two rule sets built from one text has two plan-cache keys", q)
 		}
+	}
+}
+
+// A plan carries, for each invocation its phases derive at its clause, what
+// the invocation evaluates: the positions bound before it, the set, the rule
+// set as given for a free invocation and the rewrite for a bound one, and the
+// planned bodies of each stratum the predicate needs, the same evaluation
+// PlanEvaluation plans for that set, predicate and binding pattern.
+func TestPlanCarriesEachInvocationsEvaluation(t *testing.T) {
+	x, y, z := datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")
+	edge := func(from, to query.Symbol) *query.DataPattern {
+		return &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: from},
+			query.Constant{Value: datalog.NewKeyword(":edge")},
+			query.Variable{Name: to},
+		}}
+	}
+	reach := datalog.NewSymbol("reach")
+	rs, err := query.NewRuleSet([]*query.Rule{
+		{Name: reach, Head: []query.Symbol{x, y}, Body: []query.Clause{edge(x, y)}},
+		{Name: reach, Head: []query.Symbol{x, y}, Body: []query.Clause{edge(x, z), invocation("reach", "?z", "?y")}},
+	})
+	if err != nil {
+		t.Fatalf("NewRuleSet: %v", err)
+	}
+	p := NewClauseBasedPlanner(nil, PlannerOptions{})
+	find := []query.FindElement{query.FindVariable{Symbol: y}}
+
+	free := invocation("reach", "?x", "?y")
+	plan, err := p.Plan(&query.Query{Find: find, In: []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}}, Where: []query.Clause{free}}, query.Bindings{Rules: rs}, nil)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	planned, ok := plan.Evaluations[free]
+	if !ok {
+		t.Fatal("the plan carries no evaluation for the free invocation")
+	}
+	if !slices.Equal(planned.Bound, []bool{false, false}) {
+		t.Errorf("the free invocation's bound positions are %v, want none", planned.Bound)
+	}
+	if planned.Magic.Rules != rs || planned.Magic.Predicate != reach || planned.Magic.Seed != nil {
+		t.Errorf("a free invocation evaluates the set as given, deriving reach whole; got %v", planned.Magic)
+	}
+	if len(planned.Strata) != 1 || len(planned.Strata[0].Bodies.Plain) != 1 || len(planned.Strata[0].Bodies.Delta) != 1 {
+		t.Errorf("reach's one stratum plans the base rule plain and the recursive rule's delta copy; got %+v", planned.Strata)
+	}
+
+	bound := invocation("reach", "?x", "?y")
+	plan, err = p.Plan(&query.Query{Find: find, In: []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: x}}, Where: []query.Clause{bound}}, query.Bindings{Rules: rs}, nil)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	planned, ok = plan.Evaluations[bound]
+	if !ok {
+		t.Fatal("the plan carries no evaluation for the bound invocation")
+	}
+	if !slices.Equal(planned.Bound, []bool{true, false}) {
+		t.Errorf("the bound invocation's bound positions are %v, want the first", planned.Bound)
+	}
+	if planned.Magic.Rules == rs || planned.Magic.Seed == nil {
+		t.Errorf("a bound invocation evaluates the rewrite, seeded by the bound position; got %v", planned.Magic)
+	}
+	if len(planned.Strata) == 0 {
+		t.Error("the bound invocation's evaluation plans the rewritten set's strata")
+	}
+	direct, err := PlanEvaluation(p, rs, reach, []bool{true, false}, nil)
+	if err != nil {
+		t.Fatalf("PlanEvaluation: %v", err)
+	}
+	if !direct.Magic.Rules.Equal(planned.Magic.Rules) || len(direct.Strata) != len(planned.Strata) {
+		t.Error("the plan's evaluation is the one PlanEvaluation plans for the set, the predicate and the binding pattern")
 	}
 }
 

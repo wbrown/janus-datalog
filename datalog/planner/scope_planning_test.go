@@ -179,7 +179,8 @@ func TestPlanFormScopes_PlansEveryFormOfThePhases(t *testing.T) {
 	phased, err := NewClauseBasedPlanner(nil, PlannerOptions{}).Plan(prepared, query.Bindings{}, nil)
 	require.NoError(t, err)
 	p := NewClauseBasedPlanner(nil, PlannerOptions{Cache: NewPlanCache(10, 0)})
-	require.NoError(t, p.planFormScopes(phased.Phases, query.Bindings{}, nil))
+	_, err = p.planFormScopes(phased.Phases, query.Bindings{}, nil)
+	require.NoError(t, err)
 	outputs := []query.FindElement{query.FindVariable{Symbol: m}}
 	for i, branch := range orJoin.Branches {
 		require.True(t, heldPlan(p, Scope{Required: []query.Symbol{e}, Find: outputs, Clauses: branch}), "or-join branch %d", i+1)
@@ -190,9 +191,9 @@ func TestPlanFormScopes_PlansEveryFormOfThePhases(t *testing.T) {
 	require.Equal(t, 4, size, "every form's frames and nothing else")
 }
 
-// planFormScope plans the bodies an invocation runs into the cache, as the
-// executor's evaluation plans them.
-func TestPlanFormScope_PlansTheBodiesAnInvocationRuns(t *testing.T) {
+// planInvocation plans the bodies an invocation runs into the cache, as the
+// executor's evaluation runs them.
+func TestPlanInvocation_PlansTheBodiesAnInvocationRuns(t *testing.T) {
 	follows := sym("follows")
 	rs, err := query.NewRuleSet(followsRules())
 	require.NoError(t, err)
@@ -212,7 +213,8 @@ func TestPlanFormScope_PlansTheBodiesAnInvocationRuns(t *testing.T) {
 	}
 	t.Run("a free invocation under a query", func(t *testing.T) {
 		p := planner()
-		require.NoError(t, p.planFormScope(invoke("follows", "?x", "?y"), nil, nil, query.Bindings{Rules: rs}, nil))
+		_, err := p.planInvocation(invoke("follows", "?x", "?y"), nil, nil, query.Bindings{Rules: rs}, nil)
+		require.NoError(t, err)
 		base, recursive := rs.Rules(follows)[0], rs.Rules(follows)[1]
 		require.True(t, heldBody(p, rs, base, base.Body), "the base rule's plain body")
 		require.True(t, heldBody(p, rs, recursive, markDelta(recursive.Body, map[query.Symbol]bool{follows: true}, 0)), "the recursive rule's delta copy")
@@ -221,7 +223,9 @@ func TestPlanFormScope_PlansTheBodiesAnInvocationRuns(t *testing.T) {
 	})
 	t.Run("a held predicate under a body a fixpoint runs", func(t *testing.T) {
 		p := planner()
-		require.NoError(t, p.planFormScope(invoke("follows", "?x", "?y"), nil, nil, query.Bindings{Rules: rs, Held: query.HeldByFixpoint}, nil))
+		planned, err := p.planInvocation(invoke("follows", "?x", "?y"), nil, nil, query.Bindings{Rules: rs, Held: query.HeldByFixpoint}, nil)
+		require.NoError(t, err)
+		require.Nil(t, planned, "a predicate the fixpoint holds evaluates nothing at its clause")
 		_, _, size := p.cache.Stats()
 		require.Equal(t, 0, size, "a predicate the fixpoint holds plans nothing")
 	})
@@ -229,7 +233,8 @@ func TestPlanFormScope_PlansTheBodiesAnInvocationRuns(t *testing.T) {
 		reaching, err := parser.ParseRules(`[[(near [?p] ?q) [?p :page/next ?q]]]`)
 		require.NoError(t, err)
 		p := planner()
-		require.NoError(t, p.planFormScope(invoke("near", "?x", "?y"), []query.Symbol{sym("?x")}, nil, query.Bindings{Rules: reaching, Held: query.HeldByFixpoint}, nil))
+		_, err = p.planInvocation(invoke("near", "?x", "?y"), []query.Symbol{sym("?x")}, nil, query.Bindings{Rules: reaching, Held: query.HeldByFixpoint}, nil)
+		require.NoError(t, err)
 		magic, err := EvaluatedSet(planner(), reaching, sym("near"), []bool{true, false}, nil)
 		require.NoError(t, err)
 		adorned := magic.Rules.Rules(magic.Predicate)[0]
@@ -237,7 +242,9 @@ func TestPlanFormScope_PlansTheBodiesAnInvocationRuns(t *testing.T) {
 	})
 	t.Run("any invocation under the rewrite's reading", func(t *testing.T) {
 		p := planner()
-		require.NoError(t, p.planFormScope(invoke("follows", "?x", "?y"), nil, nil, query.Bindings{Rules: rs, Held: query.HeldEvery}, nil))
+		planned, err := p.planInvocation(invoke("follows", "?x", "?y"), nil, nil, query.Bindings{Rules: rs, Held: query.HeldEvery}, nil)
+		require.NoError(t, err)
+		require.Nil(t, planned, "the rewrite decides each site itself")
 		_, _, size := p.cache.Stats()
 		require.Equal(t, 0, size, "the rewrite decides each site itself")
 	})

@@ -67,7 +67,7 @@ func TestExecutePhaseTakesTheVerdictForAFragmentFindingNothing(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	full := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}})
 	empty := NewMaterializedRelation([]query.Symbol{x}, nil)
-	queryExecutor := NewExecutor(NewMemoryPatternMatcher(nil), nil).queryExecutor()
+	queryExecutor := NewExecutor(NewMemoryPatternMatcher(nil), nil).queryExecutor(nil)
 	verdictPhase := planner.RealizedPhase{Query: &query.Query{}}
 	findingPhase := planner.RealizedPhase{
 		Query:    &query.Query{Find: []query.FindElement{query.FindVariable{Symbol: x}}},

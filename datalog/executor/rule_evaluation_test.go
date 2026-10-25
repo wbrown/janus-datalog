@@ -60,15 +60,15 @@ func (r *ruleEvents) entered() int {
 }
 
 // boundClosure is the closure in text rewritten for a bound first position:
-// the executor over matcher under opts, the rewritten set, the predicate the
-// invocation reads, its seed predicate, and a context carrying the original
-// set.
-func boundClosure(t *testing.T, text string, matcher PatternMatcher, opts planner.PlannerOptions) (*Executor, *query.RuleSet, query.Symbol, query.Symbol, *Context) {
+// the executor over matcher under opts, the evaluation planned for the
+// invocation with its first position bound, whose set is the rewrite, and a
+// context carrying the original set.
+func boundClosure(t *testing.T, text string, matcher PatternMatcher, opts planner.PlannerOptions) (*Executor, *planner.InvocationEvaluation, *Context) {
 	t.Helper()
 	rs := mustRules(t, text)
-	magic, err := planner.Rewrite(planner.CreatePlanner(nil, opts), rs, datalog.NewSymbol("follows"), []bool{true, false}, nil)
+	planned, err := planner.PlanEvaluation(planner.CreatePlanner(nil, opts), rs, datalog.NewSymbol("follows"), []bool{true, false}, nil)
 	require.NoError(t, err)
-	return NewExecutorWithOptions(matcher, nil, opts), magic.Rules, magic.Predicate, magic.Seed, NewContext().WithRules(rs)
+	return NewExecutorWithOptions(matcher, nil, opts), planned, NewContext().WithRules(rs)
 }
 
 // seedOf is a seed relation of the pages given, over the seed predicate's
@@ -103,8 +103,9 @@ func TestRuleEvaluation_ALaterSeedDerivesTheNewKeysAlone(t *testing.T) {
 			events := &ruleEvents{}
 			opts := mode.plannerOptions()
 			opts.Handler = events.handle
-			exec, rules, predicate, seed, ctx := boundClosure(t, followsRulesText, NewMemoryPatternMatcher(chainDatoms(6)), opts)
-			ev := newRuleEvaluation(exec, rules, predicate, seed)
+			exec, planned, ctx := boundClosure(t, followsRulesText, NewMemoryPatternMatcher(chainDatoms(6)), opts)
+			rules, seed := planned.Magic.Rules, planned.Magic.Seed
+			ev := newRuleEvaluation(exec, planned)
 
 			rel, err := ev.extend(ctx, seedOf(rules, seed, 4))
 			require.NoError(t, err)
@@ -166,8 +167,9 @@ func TestRuleEvaluation_ALaterWindowReadsALowerStratumsNewTuplesAlone(t *testing
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			matcher := &edgeKeysMatcher{PatternMatcher: NewMemoryPatternMatcher(chainDatoms(6)), keys: map[query.Symbol]int{}}
-			exec, rules, predicate, seed, ctx := boundClosure(t, followsRecursionFirstText, matcher, mode.plannerOptions())
-			ev := newRuleEvaluation(exec, rules, predicate, seed)
+			exec, planned, ctx := boundClosure(t, followsRecursionFirstText, matcher, mode.plannerOptions())
+			rules, seed := planned.Magic.Rules, planned.Magic.Seed
+			ev := newRuleEvaluation(exec, planned)
 			// A bound invocation answers the whole invocation's tuples carrying
 			// the bound value at the bound position, the rule
 			// TestExecuteWithRelations_SeededEqualsWhole pins: for the first
@@ -210,8 +212,9 @@ func TestRuleEvaluation_CompleteReportsEachStratumOnce(t *testing.T) {
 			events := &ruleEvents{}
 			opts := mode.plannerOptions()
 			opts.Handler = events.handle
-			exec, rules, predicate, seed, ctx := boundClosure(t, followsRulesText, NewMemoryPatternMatcher(chainDatoms(6)), opts)
-			ev := newRuleEvaluation(exec, rules, predicate, seed)
+			exec, planned, ctx := boundClosure(t, followsRulesText, NewMemoryPatternMatcher(chainDatoms(6)), opts)
+			rules, seed := planned.Magic.Rules, planned.Magic.Seed
+			ev := newRuleEvaluation(exec, planned)
 			for _, s := range []Relation{seedOf(rules, seed, 4), seedOf(rules, seed, 2)} {
 				_, err := ev.extend(ctx, s)
 				require.NoError(t, err)
@@ -249,7 +252,9 @@ func TestRuleEvaluation_AWholeEvaluationRunsOnce(t *testing.T) {
 			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(6)), nil, opts)
 			rs := mustRules(t, followsRulesText)
 			ctx := NewContext().WithRules(rs)
-			ev := newRuleEvaluation(exec, rs, follows, nil)
+			planned, err := planner.PlanEvaluation(exec.planner, rs, follows, []bool{false, false}, nil)
+			require.NoError(t, err)
+			ev := newRuleEvaluation(exec, planned)
 
 			rel, err := ev.extend(ctx, nil)
 			require.NoError(t, err)
@@ -272,8 +277,9 @@ func TestRuleEvaluation_AWholeEvaluationRunsOnce(t *testing.T) {
 func TestRuleEvaluation_RunStratumReturnsWhatTheWindowAdded(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			exec, rules, predicate, seed, ctx := boundClosure(t, followsRulesText, NewMemoryPatternMatcher(chainDatoms(6)), mode.plannerOptions())
-			ev := newRuleEvaluation(exec, rules, predicate, seed)
+			exec, planned, ctx := boundClosure(t, followsRulesText, NewMemoryPatternMatcher(chainDatoms(6)), mode.plannerOptions())
+			rules, seed := planned.Magic.Rules, planned.Magic.Seed
+			ev := newRuleEvaluation(exec, planned)
 			_, err := ev.extend(ctx, seedOf(rules, seed, 4))
 			require.NoError(t, err)
 			magic := ev.strata[0]
@@ -307,9 +313,10 @@ func TestContext_ContinuationsAreCarriedByEveryDerivedContext(t *testing.T) {
 	require.Nil(t, NewContext().continued, "a context carries no continuations until a form execution gives it some")
 }
 
-// An invocation's evaluation is whole when nothing is bound, and rewritten
-// for the bound positions, with the seed predicate the windows fill,
-// otherwise.
+// An invocation's evaluation is the one planned for its clause: whole when
+// nothing is bound, and over the rewrite for the bound positions, with the
+// seed predicate the windows fill, otherwise, which the magic-sets event
+// reports.
 func TestInvocationEvaluation_IsWholeWithNothingBoundAndRewrittenOtherwise(t *testing.T) {
 	follows := datalog.NewSymbol("follows")
 	x, y := datalog.NewSymbol("?x"), datalog.NewSymbol("?y")
@@ -317,22 +324,24 @@ func TestInvocationEvaluation_IsWholeWithNothingBoundAndRewrittenOtherwise(t *te
 	events := &ruleEvents{}
 	opts := defaultPlannerOptions()
 	opts.Handler = events.handle
-	exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(6)), nil, opts).queryExecutor()
+	exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(6)), nil, opts).queryExecutor(nil)
 	rs := mustRules(t, followsRulesText)
 
-	whole, err := exec.invocationEvaluation(rs, inv, []bool{false, false})
+	plannedWhole, err := planner.PlanEvaluation(exec.executor.planner, rs, follows, []bool{false, false}, nil)
 	require.NoError(t, err)
+	whole := exec.invocationEvaluation(rs, inv, plannedWhole)
 	require.Same(t, rs, whole.rs)
 	require.Equal(t, follows, whole.predicate)
 	require.Nil(t, whole.seed, "nothing bound: the predicate whole")
 	require.Zero(t, events.count(annotations.RulesMagicSets))
 
-	bound, err := exec.invocationEvaluation(rs, inv, []bool{true, false})
+	plannedBound, err := planner.PlanEvaluation(exec.executor.planner, rs, follows, []bool{true, false}, nil)
 	require.NoError(t, err)
+	bound := exec.invocationEvaluation(rs, inv, plannedBound)
 	require.NotSame(t, rs, bound.rs, "something bound: the rewritten set")
 	require.NotEqual(t, follows, bound.predicate, "the adorned predicate")
 	require.NotNil(t, bound.seed, "the seed predicate the windows fill")
-	require.Equal(t, 1, events.count(annotations.RulesMagicSets), "the rewrite is recorded once")
+	require.Equal(t, 1, events.count(annotations.RulesMagicSets), "the rewrite is reported once")
 }
 
 // Under continuations an invocation clause's evaluation is created at its
@@ -354,8 +363,11 @@ func TestDeriveInvocation_ContinuesTheClausesEvaluationUnderContinuations(t *tes
 			events := &ruleEvents{}
 			opts := mode.plannerOptions()
 			opts.Handler = events.handle
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(6)), nil, opts).queryExecutor()
+			ex := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(6)), nil, opts)
 			rs := mustRules(t, followsRulesText)
+			planned, err := planner.PlanEvaluation(ex.planner, rs, follows, []bool{true, false}, nil)
+			require.NoError(t, err)
+			exec := ex.queryExecutor(&planner.RealizedPlan{Evaluations: map[*query.RuleInvocation]*planner.InvocationEvaluation{inv: planned}})
 
 			continued := newRuleContinuations()
 			ctx := NewContext().WithRules(rs).WithContinuations(continued)
@@ -378,7 +390,7 @@ func TestDeriveInvocation_ContinuesTheClausesEvaluationUnderContinuations(t *tes
 				_, _, err := exec.deriveInvocation(alone, inv, groups)
 				require.NoError(t, err)
 			}
-			require.Equal(t, 2, events.count(annotations.RulesMagicSets), "an invocation outside a form execution is rewritten at each run")
+			require.Equal(t, 2, events.count(annotations.RulesMagicSets), "an invocation outside a form execution evaluates the rewrite anew at each run")
 			require.Equal(t, 4, events.count(annotations.RulesStratumBegin))
 			require.Equal(t, 4, events.count(annotations.RulesStratumComplete), "each run's evaluation completes at once")
 		})
@@ -433,7 +445,7 @@ func TestOrFallbackIteratorClosedBeforeExhaustionCompletesItsEvaluations(t *test
 			opts := mode.plannerOptions()
 			opts.ScopeWindowCap = 2
 			opts.Handler = events.handle
-			exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor()
+			exec := NewExecutorWithOptions(matcher, nil, opts).queryExecutor(nil)
 			subject := NewStreamingRelation([]query.Symbol{x}, NewMaterializedRelation([]query.Symbol{x}, subjects).Iterator())
 			groups, err := exec.Execute(NewContext().WithRules(rs), &query.Query{Where: form}, []Relation{subject})
 			require.NoError(t, err)

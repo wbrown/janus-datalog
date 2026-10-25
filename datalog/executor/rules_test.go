@@ -104,6 +104,61 @@ func requireSamePairs(t *testing.T, got, want map[[2]datalog.Identity]bool) {
 	}
 }
 
+// countingPlanner counts the plans asked of the planner it wraps.
+type countingPlanner struct {
+	planner.QueryPlanner
+	queries, scopes int
+}
+
+func (p *countingPlanner) PlanQuery(q *query.Query, bindings query.Bindings, handler annotations.Handler) (*planner.RealizedPlan, error) {
+	p.queries++
+	return p.QueryPlanner.PlanQuery(q, bindings, handler)
+}
+
+func (p *countingPlanner) PlanScope(s planner.Scope, bindings query.Bindings, handler annotations.Handler) (*planner.RealizedPlan, error) {
+	p.scopes++
+	return p.QueryPlanner.PlanScope(s, bindings, handler)
+}
+
+// Executing a planned query plans no body: the planner is asked for the
+// query's plan once, and the bodies the query's invocations run, free and
+// bound, are read from that plan, so no body is planned and no set is
+// rewritten at evaluation. An invocation a streaming group binds is framed
+// over the group at the handler, the one scope planned at evaluation
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.1), and the frame's
+// plan carries what the invocation inside it runs.
+func TestRules_ExecutingAPlannedQueryPlansNoBody(t *testing.T) {
+	matcher := NewMemoryPatternMatcher(chainDatoms(6))
+	rs := mustRules(t, followsRulesText)
+	queries := []struct {
+		name   string
+		q      *query.Query
+		inputs []interface{}
+		scopes int
+	}{
+		{"free", mustParse(t, `[:find ?x ?y :in $ % :where (follows ?x ?y)]`), []interface{}{datalog.SymDollar, datalog.NewSymbol("%")}, 0},
+		{"bound by the environment", mustParse(t, `[:find ?y :in $ % ?x :where (follows ?x ?y)]`), []interface{}{datalog.SymDollar, datalog.NewSymbol("%"), page(1)}, 0},
+		{"bound by a streaming group", mustParse(t, `[:find ?y :in $ % :where [?x :page/kind "leaf"] (follows ?x ?y)]`), []interface{}{datalog.SymDollar, datalog.NewSymbol("%")}, 1},
+	}
+	for _, mode := range optimizerModes {
+		for _, tc := range queries {
+			t.Run(mode.name+"/"+tc.name, func(t *testing.T) {
+				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				counting := &countingPlanner{QueryPlanner: exec.planner}
+				exec.planner = counting
+				inputs, err := createInputRelationsFromValuesWithOptions(tc.q, tc.inputs, exec.options)
+				require.NoError(t, err)
+				result, err := exec.ExecuteWithRelations(NewContext().WithRules(rs), tc.q, inputs)
+				require.NoError(t, err)
+				_, err = CollectTuples(result, nil)
+				require.NoError(t, err)
+				require.Equal(t, 1, counting.queries, "the planner is asked for the query's plan once; every body is read from it")
+				require.Equal(t, tc.scopes, counting.scopes, "the scopes planned at evaluation: the frame of an invocation a streaming group binds, and no other")
+			})
+		}
+	}
+}
+
 func TestRules_TransitiveClosureOnChain(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(chainDatoms(6))
 	rs := mustRules(t, followsRulesText)
@@ -194,10 +249,12 @@ func TestEvaluateRules_NaiveStepEqualsSemiNaive(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			ctx := NewContext().WithRules(rs)
-			eval, err := exec.prepareStratum(rs, rs.Strata()[0])
+			stratum := rs.Strata()[0]
+			bodies, err := planner.PlanStratum(exec.planner, rs, stratum, nil)
 			if err != nil {
-				t.Fatalf("prepareStratum: %v", err)
+				t.Fatalf("PlanStratum: %v", err)
 			}
+			eval := exec.prepareStratum(rs, planner.PlannedStratum{Stratum: stratum, Bodies: bodies})
 			full := map[query.Symbol]*derivedSet{follows: newDerivedSet(eval.symbols[follows])}
 			seed, err := eval.run(ctx, nil, eval.bodies.Plain)
 			if err != nil {
@@ -606,7 +663,11 @@ func TestEvaluateRules_DerivesOnlyTheNeededStrata(t *testing.T) {
 	                     [(follows ?a ?c) [?a :page/next ?b] (follows ?b ?c)]
 	                     [(marked ?p) [?p :page/kind "marked"]]]`)
 	exec := NewExecutor(matcher, nil)
-	ev := newRuleEvaluation(exec, rs, datalog.NewSymbol("follows"), nil)
+	planned, err := planner.PlanEvaluation(exec.planner, rs, datalog.NewSymbol("follows"), []bool{false, false}, nil)
+	if err != nil {
+		t.Fatalf("PlanEvaluation: %v", err)
+	}
+	ev := newRuleEvaluation(exec, planned)
 	if _, err := ev.extend(NewContext().WithRules(rs), nil); err != nil {
 		t.Fatalf("extend: %v", err)
 	}
@@ -1049,10 +1110,6 @@ func TestExecuteWithRelations_RequiredBindingInSubqueryBodyIsOrderedAfterItsBind
 func TestEvaluateRules_SeedAbsorbedAtIterationZero(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(chainDatoms(6))
 	rs := mustRules(t, followsRulesText)
-	magic, err := planner.Rewrite(planner.CreatePlanner(nil, defaultPlannerOptions()), rs, datalog.NewSymbol("follows"), []bool{true, false}, nil)
-	if err != nil {
-		t.Fatalf("Rewrite: %v", err)
-	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var iterations []annotations.Event
@@ -1063,9 +1120,14 @@ func TestEvaluateRules_SeedAbsorbedAtIterationZero(t *testing.T) {
 				}
 			}
 			exec := NewExecutorWithOptions(matcher, nil, opts)
+			planned, err := planner.PlanEvaluation(exec.planner, rs, datalog.NewSymbol("follows"), []bool{true, false}, nil)
+			if err != nil {
+				t.Fatalf("PlanEvaluation: %v", err)
+			}
+			magic := planned.Magic
 			seedHead, _ := magic.Rules.Head(magic.Seed)
 			seed := NewMaterializedRelation(seedHead, []Tuple{{page(3)}})
-			ev := newRuleEvaluation(exec, magic.Rules, magic.Predicate, magic.Seed)
+			ev := newRuleEvaluation(exec, planned)
 			if _, err := ev.extend(NewContext().WithRules(rs), seed); err != nil {
 				t.Fatalf("extend: %v", err)
 			}
@@ -1189,11 +1251,11 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 			}
 			for _, s := range sets {
 				for _, stratum := range s.rules.Strata() {
-					eval, err := exec.prepareStratum(s.rules, stratum)
+					planned, err := planner.PlanStratum(exec.planner, s.rules, stratum, nil)
 					if err != nil {
-						t.Fatalf("%s: prepareStratum %v: %v", s.name, stratum.Predicates, err)
+						t.Fatalf("%s: PlanStratum %v: %v", s.name, stratum.Predicates, err)
 					}
-					for _, bodies := range [][]planner.PlannedBody{eval.bodies.Plain, eval.bodies.Delta, eval.bodies.Lower} {
+					for _, bodies := range [][]planner.PlannedBody{planned.Plain, planned.Delta, planned.Lower} {
 						for _, body := range bodies {
 							plans = append(plans, labelledPlan{s.name + ", body of " + body.Rule.Name.String(), body.Plan})
 						}
