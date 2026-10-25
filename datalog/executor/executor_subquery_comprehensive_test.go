@@ -286,11 +286,14 @@ func TestSubqueryWithTwoInputs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to execute query: %v", err)
 			}
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("Failed to read the result: %v", err)
+			}
 
 			// Check results
 			resultMap := make(map[string]float64)
-			for i := 0; i < result.Size(); i++ {
-				tuple := result.Get(i)
+			for _, tuple := range tuples {
 				category := tuple[0].(string)
 				total := tuple[1].(float64)
 				resultMap[category] = total
@@ -447,17 +450,6 @@ func TestSubqueryErrorHandling(t *testing.T) {
 		queryStr string
 		wantErr  string
 	}{
-		{
-			name: "TupleBindingMultipleResults",
-			queryStr: `[:find ?category ?count
-			           :where 
-			           [?p :product/category ?category]
-			           [(q [:find ?prod
-			                :in $ ?cat
-			                :where [?prod :product/category ?cat]]
-			               $ ?category) [[?count]]]]`, // Tuple binding but returns multiple products
-			wantErr: "tuple binding expects exactly 1 result",
-		},
 		{
 			name: "RelationBindingSymbolMismatch",
 			queryStr: `[:find ?name ?a ?b ?c

@@ -4,12 +4,16 @@ package query
 //
 // The result of the :where body is sorted before the final projection to
 // :find (π_find ∘ τ_keys over the satisfying-assignment relation), so a sort
-// key may be any variable bound by :where — projected or not. Scalar and
-// tuple :in inputs are per-execution constants: every tuple carries the same
-// value, so a sort clause keyed on one is a well-defined identity and is
-// dropped at the execution boundary. See the Design Decision section of
-// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md for the
-// full reasoning.
+// key may be any variable bound by :where or by a collection or relation
+// input, projected or not; a key an input alone binds orders the product of
+// the result with the input's group. Scalar and tuple :in inputs are
+// per-execution constants, each bound from one tuple (BindQueryInputs in
+// datalog/executor refuses a relation of more than one tuple given at such
+// an entry): every tuple carries the same value, so a sort clause keyed on
+// one is a well-defined identity and is dropped at the execution boundary.
+// See the Design Decision section of
+// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md
+// for the full reasoning.
 
 // ConstantInputSymbols returns the :in symbols that are constant for an
 // entire query execution: scalar inputs and tuple-input components.
@@ -28,9 +32,9 @@ func ConstantInputSymbols(specs []InputSpec) map[Symbol]bool {
 	return constants
 }
 
-// IteratedInputSymbols returns the :in symbols whose values vary across the
+// MultiValuedInputSymbols returns the :in symbols whose values vary across the
 // result: collection inputs and relation-input symbols.
-func IteratedInputSymbols(specs []InputSpec) map[Symbol]bool {
+func MultiValuedInputSymbols(specs []InputSpec) map[Symbol]bool {
 	iterated := make(map[Symbol]bool)
 	for _, spec := range specs {
 		switch s := spec.(type) {

@@ -170,7 +170,7 @@ For each site:
 
 ## Relationship to Subquery Proposal
 
-This is **independent** from `docs/proposal/SUBQUERY_SINGLE_PASS_JOIN.md`:
+This is **independent** from `docs/archive/obsolete/SUBQUERY_SINGLE_PASS_JOIN.md`:
 
 | This Plan | Subquery Proposal |
 |-----------|-------------------|
@@ -357,4 +357,4 @@ The optimization is **complete and ready for production**.
 - Current implementation: `datalog/executor/join.go:514-530`
 - StreamingRelation single-use enforcement: `datalog/executor/relation.go:765`
 - hashJoinIterator definition: `datalog/executor/join.go:17`
-- Related proposal: `docs/proposal/SUBQUERY_SINGLE_PASS_JOIN.md`
+- Related proposal: `docs/archive/obsolete/SUBQUERY_SINGLE_PASS_JOIN.md`

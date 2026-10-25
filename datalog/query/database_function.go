@@ -37,9 +37,6 @@ type DatabaseFunction interface {
 
 	// EvalWithLookup evaluates the function with bindings and database access
 	EvalWithLookup(bindings map[Symbol]interface{}, lookup EntityLookup) (interface{}, error)
-
-	// ReturnType hints at what type this function returns
-	ReturnType() string
 }
 
 // GetElseFunction implements the Datomic get-else function.
@@ -91,10 +88,6 @@ func (g *GetElseFunction) EvalWithLookup(bindings map[Symbol]interface{}, lookup
 	return g.Default, nil
 }
 
-func (g *GetElseFunction) ReturnType() string {
-	return "any"
-}
-
 func (g *GetElseFunction) String() string {
 	return fmt.Sprintf("(get-else $ %s %s %s)", g.Entity, g.Attr, FormatValueEDN(g.Default))
 }
@@ -138,10 +131,6 @@ func (m *MissingFunction) EvalWithLookup(bindings map[Symbol]interface{}, lookup
 		return nil, err
 	}
 	return !found, nil
-}
-
-func (m *MissingFunction) ReturnType() string {
-	return "boolean"
 }
 
 func (m *MissingFunction) String() string {
@@ -204,10 +193,6 @@ func (gs *GetSomeFunction) EvalWithLookup(bindings map[Symbol]interface{}, looku
 	// No attribute found — return Found=false so the caller can drop the
 	// tuple without abusing error as a soft signal.
 	return &GetSomeResult{Found: false}, nil
-}
-
-func (gs *GetSomeFunction) ReturnType() string {
-	return "tuple" // Returns [attr value] pair
 }
 
 func (gs *GetSomeFunction) String() string {
@@ -288,6 +273,8 @@ func (p *DatabaseFunctionPredicate) Selectivity() float64 {
 // clause implements the Clause interface marker method
 func (p *DatabaseFunctionPredicate) clause() {}
 
+// String renders the predicate as the bracketed clause the parser reads a
+// predicate by, [(missing? $ ?e :attr)].
 func (p *DatabaseFunctionPredicate) String() string {
-	return p.Function.String()
+	return "[" + p.Function.String() + "]"
 }

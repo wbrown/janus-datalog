@@ -129,71 +129,75 @@ func setupMemoryBatchWildcardDB(b *testing.B, entityCount, attrsPerEntity int) (
 }
 
 func BenchmarkMemoryStorageHashJoinCompiledMatching(b *testing.B) {
-	db := openMemoryBenchDB(b)
+	for _, backend := range inProcessStores() {
+		b.Run(backend.name, func(b *testing.B) {
+			db := openContractDatabase(b, backend, DatabaseOptions{DisableCache: true})
 
-	groupAttr := datalog.NewKeyword(":item/group")
-	groups := make([]datalog.Identity, 100)
-	for i := range groups {
-		groups[i] = datalog.NewIdentity(fmt.Sprintf("group-%d", i))
-	}
-	tx := db.NewTransaction()
-	for i := 0; i < 10_000; i++ {
-		entity := datalog.NewIdentity(fmt.Sprintf("item-%d", i))
-		if err := tx.Add(entity, groupAttr, groups[i%len(groups)]); err != nil {
-			b.Fatal(err)
-		}
-	}
-	if _, err := tx.Commit(); err != nil {
-		b.Fatal(err)
-	}
+			groupAttr := datalog.NewKeyword(":item/group")
+			groups := make([]datalog.Identity, 100)
+			for i := range groups {
+				groups[i] = datalog.NewIdentity(fmt.Sprintf("group-%d", i))
+			}
+			tx := db.NewTransaction()
+			for i := 0; i < 10_000; i++ {
+				entity := datalog.NewIdentity(fmt.Sprintf("item-%d", i))
+				if err := tx.Add(entity, groupAttr, groups[i%len(groups)]); err != nil {
+					b.Fatal(err)
+				}
+			}
+			if _, err := tx.Commit(); err != nil {
+				b.Fatal(err)
+			}
 
-	groupSymbol := datalog.NewSymbol("?group")
-	noiseSymbol := datalog.NewSymbol("?noise")
-	entitySymbol := datalog.NewSymbol("?e")
-	bindingTuples := make([]executor.Tuple, 50)
-	for i := range bindingTuples {
-		bindingTuples[i] = executor.Tuple{int64(i), groups[i]}
-	}
-	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{noiseSymbol, groupSymbol},
-		bindingTuples,
-	)
-	pattern := &query.DataPattern{Elements: []query.PatternElement{
-		query.Variable{Name: entitySymbol},
-		query.Constant{Value: groupAttr},
-		query.Variable{Name: groupSymbol},
-	}}
-	resultSymbols := []query.Symbol{entitySymbol, groupSymbol}
-	matcher := NewPatternMatcher(db.Store())
+			groupSymbol := datalog.NewSymbol("?group")
+			noiseSymbol := datalog.NewSymbol("?noise")
+			entitySymbol := datalog.NewSymbol("?e")
+			bindingTuples := make([]executor.Tuple, 50)
+			for i := range bindingTuples {
+				bindingTuples[i] = executor.Tuple{int64(i), groups[i]}
+			}
+			bindingRel := executor.NewMaterializedRelation(
+				[]query.Symbol{noiseSymbol, groupSymbol},
+				bindingTuples,
+			)
+			pattern := &query.DataPattern{Elements: []query.PatternElement{
+				query.Variable{Name: entitySymbol},
+				query.Constant{Value: groupAttr},
+				query.Variable{Name: groupSymbol},
+			}}
+			resultSymbols := []query.Symbol{entitySymbol, groupSymbol}
+			matcher := NewPatternMatcher(db.Store())
 
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		result, err := matcher.matchWithHashJoin(
-			pattern,
-			bindingRel,
-			resultSymbols,
-			2,
-			AVET,
-			nil,
-		)
-		if err != nil {
-			b.Fatal(err)
-		}
-		count := 0
-		it := result.Iterator()
-		for it.Next() {
-			count++
-		}
-		if err := it.Error(); err != nil {
-			b.Fatal(err)
-		}
-		if err := it.Close(); err != nil {
-			b.Fatal(err)
-		}
-		if count != 5_000 {
-			b.Fatalf("got %d matches, want 5000", count)
-		}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				result, err := matcher.matchWithHashJoin(
+					pattern,
+					bindingRel,
+					resultSymbols,
+					2,
+					AVET,
+					nil,
+				)
+				if err != nil {
+					b.Fatal(err)
+				}
+				count := 0
+				it := result.Iterator()
+				for it.Next() {
+					count++
+				}
+				if err := it.Error(); err != nil {
+					b.Fatal(err)
+				}
+				if err := it.Close(); err != nil {
+					b.Fatal(err)
+				}
+				if count != 5_000 {
+					b.Fatalf("got %d matches, want 5000", count)
+				}
+			}
+		})
 	}
 }
 

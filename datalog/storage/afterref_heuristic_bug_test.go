@@ -163,7 +163,7 @@ func TestAfterRefHeuristicBug_Integration(t *testing.T) {
 				Attribute(":test/ref").Type(schema.TypeRef).Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Find identities that trigger and don't trigger the bug
 			triggerStr, _ := findHashWithByte4(3)
@@ -332,7 +332,7 @@ func TestAfterRefHeuristicBug_FullDBRoundTrip(t *testing.T) {
 				Attribute(":test/type").Type(schema.TypeKeyword).Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			refAttrs := []datalog.Keyword{
 				datalog.NewKeyword(":test/ref-a"),

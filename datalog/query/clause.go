@@ -22,10 +22,18 @@ func (*OrJoinClause) clause()           {}
 func (*OrDefaultClause) clause()        {}
 func (*OrDefaultJoinClause) clause()    {}
 
-// Expression wraps a Function with an optional binding
+// Expression binds a function's result under Datomic's binding forms, each
+// reading the result into a relation over the binding's symbols that the
+// scope joins: a Symbol, the scalar ?a, reads one tuple of one attribute; a
+// TupleBinding, [?a ?b], reads one tuple of N attributes, each variable one
+// element of the result; a CollectionBinding, [?a ...], reads one tuple per
+// element of the result; a RelationBinding, [[?a ?b]], reads one tuple per
+// inner vector of the result. The result decides the tuple count and the
+// form the shape, whatever the function. A nil Binding evaluates the function
+// for its own sake.
 type Expression struct {
-	Function Function    // The function to evaluate
-	Binding  interface{} // Symbol (scalar) or TupleBinding (tuple)
+	Function Function
+	Binding  interface{}
 }
 
 func (e *Expression) String() string {
@@ -36,10 +44,32 @@ func (e *Expression) String() string {
 		bindingStr = b.String()
 	case TupleBinding:
 		bindingStr = b.String()
+	case CollectionBinding:
+		bindingStr = b.String()
+	case RelationBinding:
+		bindingStr = b.String()
 	default:
 		bindingStr = ""
 	}
 	return "[" + e.Function.String() + " " + bindingStr + "]"
+}
+
+// BoundVariables is the symbols the expression's binding provides, in the
+// binding's order, and none for an expression with no binding.
+func (e *Expression) BoundVariables() []Symbol {
+	switch b := e.Binding.(type) {
+	case Symbol:
+		if b != nil {
+			return []Symbol{b}
+		}
+	case TupleBinding:
+		return b.Variables
+	case CollectionBinding:
+		return []Symbol{b.Variable}
+	case RelationBinding:
+		return b.Variables
+	}
+	return nil
 }
 
 // NotClause represents a negation clause: (not [clauses...])
@@ -58,15 +88,19 @@ func (n *NotClause) String() string {
 }
 
 // NotJoinClause represents a not-join clause: (not-join [vars] [clauses...])
-// Like NotClause but with explicit join variables
+//
+// The header is the clause's whole interface, and every variable in it is
+// required: bound by the enclosing scope before the clause runs, and read
+// bound by the body. A not provides nothing, so the header has no outputs,
+// and every other variable of the body is the body's own.
 type NotJoinClause struct {
-	JoinVars []Symbol // Variables to join on (must be bound before this clause)
-	Clauses  []Clause // Inner clauses
+	RequiredVars []Symbol
+	Clauses      []Clause // Inner clauses
 }
 
 func (n *NotJoinClause) String() string {
 	result := "(not-join ["
-	for i, v := range n.JoinVars {
+	for i, v := range n.RequiredVars {
 		if i > 0 {
 			result += " "
 		}
@@ -103,16 +137,37 @@ func (o *OrClause) String() string {
 	return result
 }
 
-// OrJoinClause represents an or-join clause with explicit variable binding
-// (or-join [vars] branch1 branch2 ...)
+// OrJoinClause represents an or-join with a declared interface:
+//
+//	(or-join [[?required ...] ?output ...] branch1 branch2 ...)
+//	(or-join [?output ...] branch1 branch2 ...)
+//
+// RequiredVars are bound by the enclosing query before the clause runs, and
+// every branch reads them bound. OutputVars are the outputs, bound by every
+// branch and provided to the enclosing query. The header is the complete
+// interface: branch locals never escape.
 type OrJoinClause struct {
-	JoinVars []Symbol   // Variables to expose from union
-	Branches [][]Clause // Each branch is a list of clauses
+	RequiredVars []Symbol
+	OutputVars   []Symbol
+	Branches     [][]Clause // Each branch is a list of clauses
 }
 
 func (o *OrJoinClause) String() string {
 	result := "(or-join ["
-	for i, v := range o.JoinVars {
+	if len(o.RequiredVars) > 0 {
+		result += "["
+		for i, v := range o.RequiredVars {
+			if i > 0 {
+				result += " "
+			}
+			result += v.String()
+		}
+		result += "]"
+		if len(o.OutputVars) > 0 {
+			result += " "
+		}
+	}
+	for i, v := range o.OutputVars {
 		if i > 0 {
 			result += " "
 		}

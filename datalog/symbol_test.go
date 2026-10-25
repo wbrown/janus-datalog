@@ -99,6 +99,33 @@ func TestSymbol_IsSource_Nil(t *testing.T) {
 	}
 }
 
+func TestSymbol_NamespaceAndName(t *testing.T) {
+	tests := []struct {
+		input     string
+		namespace string
+		name      string
+	}{
+		{"delta/follows", "delta", "follows"},
+		{"delta.adorned.bf/follows", "delta.adorned.bf", "follows"},
+		{"follows", "", "follows"},
+		{"?magic.bb/pair.1", "?magic.bb", "pair.1"},
+		{"/", "", "/"},
+	}
+	for _, tt := range tests {
+		s := NewSymbol(tt.input)
+		if got := s.Namespace(); got != tt.namespace {
+			t.Errorf("NewSymbol(%q).Namespace() = %q, want %q", tt.input, got, tt.namespace)
+		}
+		if got := s.Name(); got != tt.name {
+			t.Errorf("NewSymbol(%q).Name() = %q, want %q", tt.input, got, tt.name)
+		}
+	}
+	var nilSym Symbol
+	if nilSym.Namespace() != "" || nilSym.Name() != "" {
+		t.Errorf("nil Symbol: Namespace() = %q, Name() = %q, want both empty", nilSym.Namespace(), nilSym.Name())
+	}
+}
+
 func TestSymbol_Compare(t *testing.T) {
 	a := NewSymbol("?a")
 	b := NewSymbol("?b")

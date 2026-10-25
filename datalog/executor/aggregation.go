@@ -334,10 +334,13 @@ func executeGroupedAggregation(
 		return errRel
 	}
 
-	// Create symbol mapping. Group-by and aggregate symbols are validated
-	// present, so no table entry is -1.
 	symbols := rel.Symbols()
-	groupIndices := query.SymbolIndexTable(symbols, groupByVars)
+	groupIndices, err := query.SymbolIndexTable(symbols, groupByVars)
+	if err != nil {
+		errRel := NewMaterializedRelationWithOptions(resultSymbols, nil, rel.Options())
+		errRel.err = fmt.Errorf("group by: %w", err)
+		return errRel
+	}
 
 	aggIndices := make([]int, len(aggregates))
 	for i, agg := range aggregates {
@@ -764,6 +767,12 @@ func (r *StreamingAggregateRelation) Project(symbols []query.Symbol) (Relation, 
 	return r.materialized.Project(symbols)
 }
 
+// Rename is the materialized result under the substitution.
+func (r *StreamingAggregateRelation) Rename(subst query.Substitution) (Relation, error) {
+	r.Iterator()
+	return r.materialized.Rename(subst)
+}
+
 // Materialize returns the materialized relation
 func (r *StreamingAggregateRelation) Materialize() Relation {
 	r.Iterator()
@@ -834,10 +843,14 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 		return errRel
 	}
 
-	// Build symbol index mappings; -1 means not found.
 	symbols := r.source.Symbols()
 
-	groupIndices := query.SymbolIndexTable(symbols, r.groupByVars)
+	groupIndices, err := query.SymbolIndexTable(symbols, r.groupByVars)
+	if err != nil {
+		errRel := newMaterializedRelationFromSet(r.Symbols(), nil, r.options, r.Properties())
+		errRel.err = fmt.Errorf("group by: %w", err)
+		return errRel
+	}
 
 	aggIndices := make([]int, len(r.aggregates))
 	for i, agg := range r.aggregates {

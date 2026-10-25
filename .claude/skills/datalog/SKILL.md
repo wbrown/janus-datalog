@@ -6,9 +6,10 @@ description: >
   the language much of the code is written in: store queries, rule clauses, N+1
   fixes, ExecuteQueryWithInputs / QueryInto / PullInto in Go. Covers the EDN language
   and its functions — data patterns, predicates, aggregates, get-else/missing?/get-some,
-  subqueries (tuple + relation binding), enumerate and vector fns, :in bindings,
-  order-by/limit, and time-travel (History/AsOf). Also use it to inspect/explore a
-  .db, check entity attributes, debug query results, or examine CRDT storage state.
+  subqueries and their binding forms, rules and recursive predicates, enumerate and
+  vector fns, :in bindings, order-by/limit, and time-travel (History/AsOf). Also use
+  it to inspect/explore a .db, check entity attributes, debug query results, or
+  examine CRDT storage state.
 argument-hint: <database-or-dump-path>
 allowed-tools: Bash(~/go/bin/datalog *)
 ---
@@ -140,6 +141,14 @@ Queries are EDN vectors. The basic form:
 [(identity ?x) ?y]                       ;; pass-through binding
 ```
 
+An expression's binding takes Datomic's forms. The form decides how the function's value is read. `?a` binds the value. `[?a ?b]` destructures one vector value into its elements, as one tuple. `[?a ...]` binds one tuple per element of a vector value. `[[?a ?b] ...]` binds one tuple per inner vector of a vector of vectors. That is the relation form. `[[?a ?b]]` reads the same.
+```clojure
+[(ground [1 "x"]) [?n ?s]]                   ;; one tuple: ?n = 1, ?s = "x"
+[(ground [1 2 3]) [?n ...]]                  ;; three tuples, one per element
+[(ground [[1 "x"] [2 "y"]]) [[?n ?s] ...]]   ;; two tuples
+```
+A value of another shape than the binding's, or an inner vector of another arity, is an error naming both.
+
 **Time extraction** — extract components from `time.Time` values:
 ```clojure
 [(year ?timestamp) ?y]
@@ -157,23 +166,6 @@ Queries are EDN vectors. The basic form:
   [?p :person/status "inactive"])
 ```
 
-`not-join` headers must include every outer variable consumed by the body,
-including predicate/expression-only inputs:
-```clojure
-[?goal :goal/set-type ?goalSet]
-(not-join [?goal ?goalSet]
-  [?event :event/goal ?goal]
-  [?event :event/type ?eventType]
-  [(!= ?eventType ?goalSet)])
-```
-Variables produced by both sides are equality keys; outer variables consumed
-only by body predicates are correlation inputs. Plain `not` infers both.
-
-An `:in` parameter is an ordinary bound variable here: a body may consume
-it, the header may declare it, and the same declaration rule applies —
-predicate-only consumption of an `:in` parameter requires it in the header,
-while a body pattern providing it may omit it.
-
 **OR clauses** — alternative patterns:
 ```clojure
 (or [?p :person/city "New York"]
@@ -183,22 +175,14 @@ while a body pattern providing it may omit it.
   [?p :role/superuser true])
 ```
 
-Every `or-join` branch must bind every header variable. Keep branch-specific
-filter inputs out of the header:
+**OR-default clauses** — fallback semantics (janus extension): per tuple of the required run, the first branch with a result wins.
 ```clojure
-(or-join [?e]
-  [?e :item/category ?category]
-  [?e :item/region ?region])
-```
-
-**OR-default clauses** — fallback semantics (janus extension). Branches are tried in order; the first non-empty result wins:
-```clojure
-;; Value with a default when the attribute is missing
+;; Each ?e gets its status, or :status/unknown
 (or-default [?e :user/status ?status]
             [(ground :status/unknown) ?status])
 ```
 
-`or-default-join` declares its complete interface in the header: an optional nested vector of **required vars** (the per-group correlation keys, which the enclosing query must bind first) followed by the **output vars**, which every branch must bind:
+**Headers.** Each of the three forms has a `-join` spelling that writes its header. The header is the whole interface of a form. It has a required run and outputs. The required run is the variables the enclosing scope binds before the form runs. The outputs are the variables every branch binds and the form provides. The written form is `[[req…] out…]`. A flat header `[out…]` is all outputs. A `not-join` header is all required, since a `not` provides nothing. Every other variable inside a form is local to its branch. A local that shares an outer variable's name reads nothing of it. That holds for an `:in` parameter's name too.
 ```clojure
 ;; Per-entity fallback: each ?e gets its score, or 0
 (or-default-join [[?e] ?score]
@@ -210,9 +194,30 @@ filter inputs out of the header:
   [(q [:find ?e (count ?c) :in $ :where [?c :child/parent ?e]] $)
    [[?e ?count] ...]]
   [(ground 0) ?count])
+
+;; ?category and ?region are each branch's own
+(or-join [?e]
+  [?e :item/category ?category]
+  [?e :item/region ?region])
 ```
 
-A flat header declares outputs only — the fallback decision is then **global**: branch 1 evaluates once, and the default fires only when it returns nothing. Declare the grouping keys deliberately: which keys the fallback is decided per changes the results, not just the plan. Branch variables outside the header are locals — a name shared with an outer variable does not correlate. A per-group filter with no outputs is `or-join`'s job.
+A headerless `or`, `or-default` or `not` infers its header. A variable inside the form is shared when it occurs in another clause of the form's list. It is also shared when it occurs in what the scope exposes to that list. A query exposes its `:in`, `:find` and `:order-by`. Inside a branch, the scope exposes the enclosing form's header. A shared variable every branch binds is an output. Every other shared variable is required. Every shared variable of a `not` is required, since a `not` binds nothing. So the `or-default` above is decided per `?e` when a clause of the enclosing scope binds `?e`. In
+```clojure
+[?goal :goal/set-type ?goalSet]
+(not [?event :event/goal ?goal]
+     [?event :event/type ?eventType]
+     [(!= ?eventType ?goalSet)])
+```
+`?goal` and `?goalSet` are required. `?event` and `?eventType` are local. Written as `not-join`, the header names both: `(not-join [?goal ?goalSet] …)`.
+
+A written header is read strictly. Each of these is refused naming the form and the variable:
+
+- an `or-join` or `or-default-join` output some branch does not bind
+- a `not-join` body reading an outer variable its header does not name
+- a `not-join` header variable the body neither binds nor reads
+- a branch reading a variable neither the branch nor the header binds
+
+A flat `or-default-join` header has an empty required run, so its decision is **global**. Branch 1 evaluates once. The default fires only when branch 1 returns nothing. Declare the required run deliberately. The keys the fallback is decided per change the results, not just the plan. A per-group filter with no outputs is `or-join`'s job.
 
 **Vector functions** — operate on cardinality-vector attributes:
 ```clojure
@@ -225,17 +230,17 @@ A flat header declares outputs only — the fallback decision is then **global**
 [(subvec ?vec 1 3) ?slice]               ;; sub-vector [start, end)
 ```
 
-**`enumerate`** — expands a vector into one tuple per element with index. This is the primary way to query vector contents:
+**`enumerate`** — yields one `[index element]` pair per element of a vector. Bind it under the relation form, one tuple per pair. This is the primary way to query vector contents:
 ```clojure
 ;; Given :product/tags is a vector ["electronics" "sale" "new"]
 [:find ?tag ?idx
  :where [?e :product/label "Widget"]
         [?e :product/tags ?vec]
-        [(enumerate ?vec) [?idx ?tag]]]
+        [(enumerate ?vec) [[?idx ?tag] ...]]]
 ;; Returns: [0 "electronics"], [1 "sale"], [2 "new"]
 ```
 
-Important: `enumerate` produces **multiple output tuples** from a single input tuple. The binding `[?idx ?tag]` is required — it destructures each element into an index and value. The data pattern that binds `?vec` must appear **before** the enumerate expression in the where clause, and the planner must not reorder it ahead of the pattern that provides the vector.
+The binding form reads the result, whatever the function. Under the tuple form, `[(enumerate ?vec) [?idx ?tag]]`, the whole vector of pairs is one tuple. On a vector of two elements `?idx` is the first pair and `?tag` the second. A vector of any other length is an arity error. The data pattern that binds `?vec` must appear **before** the enumerate expression in the where clause, and the planner must not reorder it ahead of the pattern that provides the vector.
 
 **Database functions:**
 ```clojure
@@ -245,20 +250,20 @@ Important: `enumerate` produces **multiple output tuples** from a single input t
 ```
 
 `get-some` binds the first listed attribute's value that exists on the
-entity; when **none** exist, the row is dropped — a soft no-match, not an
-error and not a nil binding. Use `get-else` when every row must survive
+entity; when **none** exist, the tuple is dropped — a soft no-match, not an
+error and not a nil binding. Use `get-else` when every tuple must survive
 with a default.
 
-**Subqueries** — nested queries that bind results into the outer query:
+**Subqueries** — nested queries whose results join the outer query:
 ```clojure
-;; Tuple binding — subquery returns one tuple, binds to variables
+;; An aggregate per outer tuple: the inner :find decides the cardinality
 [(q [:find (max ?h)
      :in $ ?sym
      :where [?p :price/symbol ?sym]
             [?p :price/high ?h]]
     $ ?s) [[?max-high]]]
 
-;; Relation binding — subquery returns multiple tuples
+;; A relation per outer tuple
 [(q [:find ?p ?h
      :in $ ?sym
      :where [?p :price/symbol ?sym]
@@ -266,7 +271,7 @@ with a default.
     $ ?s) [[?price ?high] ...]]
 ```
 
-The subquery `(q [...] $ ?var1 ?var2)` takes a full query, then lists the inputs to pass (matching the subquery's `:in` clause). The binding after `)` determines how results are captured: `[[?x]]` for a single tuple, `[[?x ?y] ...]` for multiple tuples.
+The subquery `(q [...] $ ?var1 ?var2)` takes a full query, then lists the inputs to pass (matching the subquery's `:in` clause). The inner query is a scope of its own. It sees what its `:in` declares and the call passes, and nothing else of the outer query. The binding after `)` names the inner query's outputs in the outer scope. It asserts nothing about cardinality. `[[?x ?y]]` is the relation form. `[[?x ?y] ...]` reads the same. It is how a query renders the form. `[?x ...]` and `?x` each bind one symbol. A cardinality is written as an aggregate in the inner `:find`, as `(max ?h)` above. The binding's shape never carries one. The tuple form `[?x ?y]` is an expression's destructuring, not a subquery binding. A name written twice in a binding unifies the two outputs it names.
 
 `:limit` is **not** supported inside a subquery (it parse-errors). For "top-1 per group", use the `(max ?x)`/`(min ?x)` aggregate idiom in the subquery instead.
 
@@ -282,6 +287,8 @@ The subquery `(q [...] $ ?var1 ?var2)` takes a full query, then lists the inputs
 
 ### Input Parameters
 
+An `:in` entry takes Datomic's forms. `?a` is a scalar. `[?a ...]` is a collection. `[?a ?b]` is one tuple over its symbols. `[[?a ?b]]` is a relation, a set of tuples. `%` is the rule set (see Rules below). `[[?a ?b] ...]` reads as the relation input. It is how a query renders the form. A tuple input and a relation input of one tuple answer the same tuples.
+
 ```clojure
 ;; Scalar input
 [:find ?name :in $ ?target-age
@@ -292,6 +299,16 @@ The subquery `(q [...] $ ?var1 ?var2)` takes a full query, then lists the inputs
 [:find ?name :in $ [?city ...]
  :where [?p :person/city ?city]
         [?p :person/name ?name]]
+
+;; Tuple input
+[:find ?e :in $ [?name ?age]
+ :where [?e :person/name ?name]
+        [?e :person/age ?age]]
+
+;; Relation input
+[:find ?e :in $ [[?name ?age]]
+ :where [?e :person/name ?name]
+        [?e :person/age ?age]]
 ```
 
 Pass `:in` values with the `-in` flag (one per binding, order matches `:in` after `$`):
@@ -318,7 +335,50 @@ Pass `:in` values with the `-in` flag (one per binding, order matches `:in` afte
   -in 20 -in 30
 ```
 
-Each `-in` value is parsed as EDN, so tagged literals work too — the full query vocabulary: `-in '#inst "2024-01-01T00:00:00Z"'`, `-in '#identity "L85hash..."'`, `-in '#id "user:alice"'`. Relation inputs pass as vectors of tuple vectors: `-in '[["Alice" 30] ["Bob" 25]]'` for `:in $ [[?name ?age] ...]`.
+Each `-in` value is parsed as EDN, so tagged literals work too — the full query vocabulary: `-in '#inst "2024-01-01T00:00:00Z"'`, `-in '#identity "L85hash..."'`, `-in '#id "user:alice"'`. A tuple input passes as one vector: `-in '["Alice" 30]'` for `:in $ [?name ?age]`. A relation input passes as a vector of tuple vectors: `-in '[["Alice" 30] ["Bob" 25]]'` for `:in $ [[?name ?age]]`. A query whose `:in` binds a variable, run with no `-in` for it, is refused. The refusal names the count given and the count the `:in` binds.
+
+### Rules
+
+A rule set declares predicates. Each rule is a vector. Its first element is the head, `(name ?args...)`. The rest are body clauses. Several rules for one name are alternatives. A rule that invokes its own predicate computes a transitive closure:
+
+```clojure
+[[(reach ?a ?b) [?a :edge ?b]]
+ [(reach ?a ?c) [?a :edge ?b] (reach ?b ?c)]]
+```
+
+The rule set is the query's `%` input. The query invokes a predicate as a list clause in `:where`. On the CLI the `-in` value at the `%` position is the rule set's text:
+
+```bash
+~/go/bin/datalog -db <path> \
+  -query '[:find ?y :in $ % ?x :where (reach ?x ?y)]' \
+  -in '[[(reach ?a ?b) [?a :edge ?b]] [(reach ?a ?c) [?a :edge ?b] (reach ?b ?c)]]' \
+  -in '#id "node/n1"'
+```
+
+An invocation's argument is a variable, a constant, or `_`. An invocation with no bound argument derives the predicate whole. One with a bound argument derives only what the binding reaches. A bound argument is a constant, or a variable the inputs or earlier clauses bind. An invocation stands wherever a pattern stands. That is the top level, a `not` or `not-join` body, an `or`, `or-join`, `or-default` or `or-default-join` branch, and a subquery. A subquery that invokes a predicate declares `%` in its own `:in`. The call passes it `%`:
+
+```clojure
+[:find ?x ?n
+ :in $ %
+ :where [?x :edge _]
+        [(q [:find (count ?y) :in $ % ?x :where (reach ?x ?y)] $ % ?x) [[?n]]]]
+```
+
+A head may begin with a vector of variables the caller binds. That is Datomic's required binding form. It lets a rule compute from its arguments. The planner orders such an invocation after the clauses that bind those positions:
+
+```clojure
+[[(succ [?n] ?m) [(+ ?n 1) ?m]]]
+```
+
+A body may hold patterns, predicates, expressions, database functions, the nested forms, subqueries and invocations. Negation is stratified. A body may invoke a predicate of an earlier stratum under `not`. A cycle through negation is refused. Each refusal names its parts:
+
+- an unsafe rule, one with a head or consumed variable that nothing in the body or the required run binds
+- an arity disagreement among a predicate's rules and invocations
+- an invocation of a predicate the set does not define
+- a cycle through negation
+- a recursive invocation inside `or-default`, `or-default-join` or an aggregating subquery
+
+An aggregate over a recursive predicate inside its own stratum is not supported. Aggregate over the completed closure through a subquery, as above. Two opt-in planner options, `MaxRuleIterations` and `MaxDerivedTuples`, bound an evaluation (`docs/reference/RULES.md`).
 
 ### Order By
 
@@ -341,7 +401,7 @@ stripped back to the `:find` symbols:
  :order-by [[?age :asc]]]
 ```
 
-Keys that are scalar/tuple `:in` constants are accepted as no-ops (every row
+Keys that are scalar/tuple `:in` constants are accepted as no-ops (every tuple
 carries the same value). A key bound nowhere, a relation/collection input
 symbol not bound in `:where`, or a non-group-key variable in an aggregate
 query is a parse error — aggregate queries can only be ordered by their
@@ -349,16 +409,16 @@ group keys.
 
 `:order-by` composes with `(pull ...)` in the find spec: sorting (and
 `:limit`) run over entity references, and pulls render only the returned
-rows. `(pull ...)` is valid in the **top-level** find only — inside a
+tuples. `(pull ...)` is valid in the **top-level** find only — inside a
 subquery find it is a parse error (a subquery's result feeds the enclosing
 query's joins, which operate on values; return the entity and pull it in
 the enclosing `:find`).
 
 ### Limiting Results and Pagination
 
-**`:limit N`** caps the number of result rows — for *bounding* a result (top-N,
-latest-1, "does any row match"), not for pagination. `:order-by` is optional and
-independent: `:limit N` alone returns the first N rows the engine produces
+**`:limit N`** caps the number of result tuples — for *bounding* a result (top-N,
+latest-1, "does any tuple match"), not for pagination. `:order-by` is optional and
+independent: `:limit N` alone returns the first N tuples the engine produces
 (arbitrary but valid, like SQL `LIMIT` without `ORDER BY`) and stops the scan
 early. Add `:order-by` only when N must be chosen by a sort key — e.g. with
 `:order-by … :desc`, `:limit 1` is the canonical "latest record" query:
@@ -391,7 +451,7 @@ allowed; `:limit N>1` is an error — it contradicts "return a single value".
 **There is no `:offset` / pagination clause, by design.** A query result is a
 streaming relation, so "the next page" is just *keep pulling from the same
 iterator* — which reads one consistent snapshot and gives stable, gap-free paging
-for free. An offset would re-scan and discard rows every page and is unstable
+for free. An offset would re-scan and discard tuples every page and is unstable
 across writes. For stateless/cross-process paging, use **keyset (cursor)
 pagination** instead: pin a snapshot with `d.AsOf(tx)` and carry the last-seen
 sort key forward as a `:where` bound —

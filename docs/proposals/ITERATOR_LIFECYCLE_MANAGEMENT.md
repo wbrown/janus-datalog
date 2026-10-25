@@ -1,16 +1,12 @@
 # Proposal: Iterator Lifecycle Management
 
-**Status**: Not Implemented (documenting options for future consideration)
-**Date**: February 2026
-**Related**: `BUG_ITERATOR_LEAK_BUILTIN_EVALUATION.md` — missing `iter.Close()` in two executor functions
-
 ## Problem
 
 The `executor.Iterator` interface has a `Close() error` method that releases underlying resources. When the iterator chain is backed by a `BadgerIterator`, `Close()` calls `it.Close()` + `txn.Discard()` on the BadgerDB transaction. Failure to call `Close()` leaves the transaction's skiplist ref count elevated, preventing WAL file cleanup during `db.Close()`.
 
-This manifested as a concrete bug: two functions in `executor/helpers.go` called `rel.Iterator()` without `iter.Close()`, leaking 256 MB WAL files per query. The fix is two `defer iter.Close()` lines.
+The leak that raised this proposal is fixed. Two executor functions, `filterWithPredicateAndLookup` and `evaluateExpressionWithLookup` (`datalog/executor/relation_ops.go`), called `rel.Iterator()` and never closed it, holding a WAL file per query. Each now closes its iterator in a deferred closure that runs on a panic as well and keeps the Close error. The record is `BUG_ITERATOR_LEAK_BUILTIN_EVALUATION.md` under `docs/bugs/resolved`.
 
-But the pattern is fragile. Every consumer of `Relation.Iterator()` must remember to close, and nothing in the type system or runtime enforces it. A comprehensive audit found ~70 call sites for `.Iterator()` across the executor and storage packages. Most close correctly. Some rely on wrapper iterators propagating `Close()` down the chain. The current count of missing closes is small, but the pattern invites future regressions.
+The pattern stays fragile. Every consumer of `Relation.Iterator()` must remember to close, and nothing in the type system or runtime enforces it. Some consumers rely on wrapper iterators propagating `Close()` down the chain. The pattern invites the same regression again.
 
 ### Scope of the Risk
 
@@ -18,7 +14,7 @@ The high-level `db` package API (`Query`, `QueryInto`, `Pull`, `GetString`, etc.
 
 The risk is in two places:
 
-1. **Internal executor/storage code** — any new function that iterates a Relation and forgets `iter.Close()`. This is where the current bug lives.
+1. **Internal executor/storage code** — any new function that iterates a Relation and forgets `iter.Close()`. This is where the fixed leak lived.
 
 2. **Advanced API users** — `db.Unwrap()` returns the raw `*storage.Database`, which exposes `ExecuteQueryRelation()` and `Match()`. Both return `executor.Relation`. If someone calls `rel.Iterator()` without `Close()`, they leak. The `executor.Iterator` interface documents `Close()`, but there's no compile-time enforcement.
 
@@ -203,7 +199,7 @@ A custom `analysis.Analyzer` (using `golang.org/x/tools/go/analysis`) that:
 
 ### Verdict
 
-Good long-term investment if iterator leaks become a recurring pattern. Overkill for the current two-site bug.
+Good long-term investment if iterator leaks become a recurring pattern. A larger investment than the two-site leak that was found.
 
 ## Option D: Streaming-First Public API
 
@@ -375,7 +371,7 @@ func (t *Tuples) Close() error {
 ### What changes
 
 | Current API | New API | Notes |
-|------------|---------|-------|
+| --- | --- | --- |
 | `Query() ([][]any, error)` | `Query() (*Tuples, error)` | Streaming is the primitive |
 | `QueryInto(&dest, q)` | `tuples.CollectInto(&dest)` | No double materialization |
 | `QueryOneInto(&dest, q)` | `tuples.Next(); tuples.ScanInto(&dest)` | Reads one tuple, not all |
@@ -412,20 +408,6 @@ This is the correct API. Streaming is the primitive. Materialization is a conven
 
 ## Recommendation
 
-**Immediate (do now)** — ~~Fix the two missing `iter.Close()` calls in `helpers.go` and the one in `simple_batch_scanner.go`.~~ **Discharged (2026-07-26).** `simple_batch_scanner.go` was deleted in v0.15.0, taking its site with it; the `helpers.go` sites moved when that file was split under the no-helpers rule. Re-derive against the current tree before acting on the rows below — the file table is as of this document's date.
+Option D is the change this proposal recommends. It is the public API the streaming architecture asks for, and it carries that architecture through to the consumer.
 
-**Short-term (next feature)**: Option D — `Query()` returns `*Tuples`. This is the correct public API and addresses the real design gap. The streaming architecture currently stops at the API boundary. This carries it through to the consumer.
-
-**Medium-term (consider if leaks recur)**: Option A (finalizer) as a defense-in-depth backstop.
-
-**Medium-term (consider for test infrastructure)**: Option B debug-only variant. Add `WithIteratorTracking()` to the test harness so `go test` detects leaked iterators automatically.
-
-**Long-term (if pattern persists)**: Option C (static analysis).
-
-## Affected Files (for reference)
-
-| File | Missing `Close()` | Risk |
-|------|-------------------|------|
-| `executor/helpers.go:80` | `filterWithPredicateAndLookup` | **High** — receives StreamingRelation from pattern match |
-| `executor/helpers.go:178` | `evaluateExpressionWithLookup` | **High** — receives StreamingRelation from pattern match |
-| `storage/simple_batch_scanner.go:94` | `buildBindingSet` | Low — binding relations are pre-materialized |
+The other three are defenses for internal code, and each earns its cost under one condition. Option A pays off when a leak recurs and a bounded blast radius is worth a masked bug. Option B's debug-only variant pays off when the test harness wants `go test` to detect leaked iterators on its own. Option C pays off when the pattern persists across many sites and a maintained linter costs less than the audits it replaces.

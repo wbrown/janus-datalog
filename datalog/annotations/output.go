@@ -13,12 +13,12 @@ import (
 
 // OutputFormatter formats events for human-readable display.
 //
-// It holds no state between events, and must not: the engine emits from
-// parallel workers through one handler, so anything remembered from the last
-// event is whoever wrote last rather than this line's own run. Every line is
-// rendered from the event that produced it, which is why a scan event carries
-// the bound its reporter held at scan time instead of relying on the
-// announcement that preceded it.
+// It holds no state between events, and must not: the engine serializes no
+// handler, and two queries on two goroutines share one, so anything
+// remembered from the last event is whichever query wrote last rather than
+// this line's own run. Every line is rendered from the event that produced
+// it, which is why a scan event carries the bound its reporter held at scan
+// time instead of relying on the announcement that preceded it.
 type OutputFormatter struct {
 	useColor bool
 	writer   io.Writer
@@ -70,7 +70,7 @@ func (f *OutputFormatter) Format(event Event) string {
 
 	switch event.Name {
 	case QueryInvoked:
-		return fmt.Sprintf("%s Query: %s", latency, event.Data["query"].(string))
+		return fmt.Sprintf("%s Query: %s", latency, event.Data[KeyQuery].(string))
 
 	case QueryPlanCreated:
 		return fmt.Sprintf("\n%s\n", event.Data["plan"].(string))
@@ -81,13 +81,13 @@ func (f *OutputFormatter) Format(event Event) string {
 			return fmt.Sprintf("%s %s Query failed: %v",
 				latency,
 				f.colorize("✗", color.FgRed),
-				event.Data["error"])
+				event.Data[KeyError])
 		}
 		return fmt.Sprintf("%s %s Query done with %s with %s total.",
 			latency,
 			f.colorize("===", color.FgGreen),
-			f.colorizeCount("Relations", event.Data["relations.count"].(int)),
-			f.colorizeCount("Tuples", event.Data["tuples.count"].(int)))
+			f.colorizeCount("Relations", event.Data[KeyRelationsCount].(int)),
+			f.colorizeCount("Tuples", event.Data[KeyTuplesCount].(int)))
 
 	case PhaseBegin:
 		return fmt.Sprintf("%s %s Phase %v starting on %v input group(s)",
@@ -230,11 +230,13 @@ func (f *OutputFormatter) Format(event Event) string {
 				event.Data[KeyPattern], index, bound, event.Data[KeyBindingSize],
 				renderScanFunnel(event.Data))
 
-		case ScanPerBinding:
-			// One scan per binding, reported once. No index: chooseIndex runs
-			// per binding and can pick a different one each time, so a single
-			// index here would name whichever happened to be last. The count of
-			// scans is the datum this path owes its reader.
+		case ScanPerBinding, ScanPerKeySeek:
+			// One scan per binding, or one per distinct key, reported once. No
+			// index: the per-binding path runs chooseIndex per binding and can
+			// pick a different one each time, so a single index here would name
+			// whichever happened to be last, and the per-key path addresses one
+			// run per key and no single run. The count of scans is the datum
+			// these paths owe their reader.
 			return fmt.Sprintf("%s %s([%v], %v scans over %v bindings) → %s",
 				latency, strategy,
 				event.Data[KeyPattern], event.Data[KeyScansOpened], event.Data[KeyBindingSize],
@@ -281,8 +283,8 @@ func (f *OutputFormatter) Format(event Event) string {
 
 		// Both come from this event. The reporter holds the bound at scan time
 		// and puts it here; a formatter that remembered the last one it saw
-		// would render another worker's run on this line, since the engine
-		// emits from parallel workers through one handler.
+		// would render another query's run on this line, since the engine
+		// serializes no handler and two queries on two goroutines share one.
 		//
 		// "?" is a producer that named no run, which is different from a run
 		// that bound nothing — renderBoundPositions reports the latter as

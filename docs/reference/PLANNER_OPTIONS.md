@@ -1,6 +1,5 @@
 # Planner Options Reference
 
-**Last Updated**: 2026-07-19
 **Status**: Current with the clause-based planner
 
 ## Overview
@@ -39,11 +38,14 @@ type PlannerOptions struct {
     EnableTrueStreaming     bool // default-active
     EnableSymmetricHashJoin bool // opt-in
 
-    EnableParallelSubqueries bool // default-active
-    MaxSubqueryWorkers       int  // 0 = 4 workers
-
     EnableStreamingJoins       bool // opt-in
     EnableStreamingAggregation bool // default-active
+
+    MaxRuleIterations int // opt-in, 0 = unbounded
+    MaxDerivedTuples  int // opt-in, 0 = unbounded
+
+    ScopeWindowCap    int // 0 = executor default, 1000 tuples
+    ScopeWindowGrowth int // 0 = executor default, 2
 }
 ```
 
@@ -60,15 +62,17 @@ EnableEntityPrefetch:       false
 EnableAttributeFetchFusion: true
 EnableTrueStreaming:        true
 EnableSymmetricHashJoin:    false
-EnableParallelSubqueries:   true
-MaxSubqueryWorkers:         0      // executor default: 4 workers
 EnableStreamingJoins:       false
 EnableStreamingAggregation: true
+MaxRuleIterations:          0      // unbounded
+MaxDerivedTuples:           0      // unbounded
+ScopeWindowCap:             0      // executor default: 1000 tuples
+ScopeWindowGrowth:          0      // executor default: 2
 ```
 
 So, off by default (opt-in): `EnableJoinProjectInsertion`,
-`EnableScanSharing`, `EnableEntityPrefetch`, `EnableSymmetricHashJoin`, and
-`EnableStreamingJoins`.
+`EnableScanSharing`, `EnableEntityPrefetch`, `EnableSymmetricHashJoin`,
+`EnableStreamingJoins`, `MaxRuleIterations` and `MaxDerivedTuples`.
 
 ---
 
@@ -97,8 +101,13 @@ Deduplicates identical unbound scans across subqueries via a shared lazy sequenc
 Benchmarked performance-neutral, hence off. Consumed in `executor/executor.go`.
 
 #### EnableEntityPrefetch — **opt-in** (default false)
-Warms the EA cache after the first data pattern via `PrefetchEntities`.
-Benchmarked performance-neutral, hence off. Consumed in `executor/query_executor.go`.
+Prefetches entities into the EA cache via `PrefetchEntities` at two points:
+after the first data pattern, and before a fallback window's branches are
+built when a branch of one data pattern reads the subject's entity symbol,
+from which window on that branch is built from the cache. Both fire above one
+threshold of 50 entities, and the matcher prefetches nothing under History.
+Benchmarked performance-neutral, hence off. Consumed in
+`executor/query_executor.go` and `executor/or_fallback_relation.go`.
 
 #### EnableAttributeFetchFusion — **default-active**
 Fuses contiguous CardinalityOne patterns sharing an already-bound entity into
@@ -120,16 +129,6 @@ Dual-hash-table join for stream-to-stream joins without materializing either
 side. Standard hash join is faster when one side can be materialized, so this is
 off by default. Consumed in `executor/join.go`.
 
-### Parallel execution
-
-#### EnableParallelSubqueries — **default-active**
-Executes RelationInput query iterations in parallel via the executor's bounded
-worker loop. Consumed in `executor/executor.go`.
-
-#### MaxSubqueryWorkers — **default 0**
-Worker-pool size for parallel subqueries; `0` means `runtime.NumCPU()`. Consumed
-in `executor/executor.go`.
-
 ### Joins / aggregation
 
 #### EnableStreamingJoins — **opt-in** (default false)
@@ -141,6 +140,43 @@ uses 3.78% more memory, and performs 8.34% more allocations than the default
 #### EnableStreamingAggregation — **default-active**
 Streaming aggregation (no full materialization of the input). Consumed in
 `executor/aggregation.go`.
+
+### Rule evaluation bounds
+
+#### MaxRuleIterations — **opt-in** (default 0)
+The fixpoint iterations one stratum of a rule set may run, counted per window
+for an invocation inside a form's branch. `0` is unbounded. Exceeded, the
+query returns `*query.RuleIterationLimitError` naming the stratum's
+predicates, the limit and the iteration reached. Consumed in
+`executor/rules.go`.
+
+#### MaxDerivedTuples — **opt-in** (default 0)
+The tuples one invocation may derive when it is evaluated, carried across the
+windows for an invocation inside a form's branch. A rewritten set's magic
+predicates count too. `0` is unbounded. Exceeded, the query returns
+`*query.DerivedTupleLimitError` naming the predicates, the limit and the
+count reached. Consumed in `executor/rules.go`.
+
+Both bound the evaluation of a rule set the caller does not control. See
+[RULES.md](RULES.md). Cancellation is a query option, `WithContext`, not a
+planner option.
+
+### Scope windows
+
+An `or-join` or `or-default-join` reads its subject into windows: one tuple,
+then `ScopeWindowGrowth` times the last, up to `ScopeWindowCap` tuples. Each
+branch runs once per window and the window's tuples probe its result, so the
+subject is read once, nothing of it is held beyond the window, and the first
+result follows one pull. Both options are consumed in
+`executor/or_fallback_relation.go`.
+
+#### ScopeWindowCap — **default 0** (executor default: 1000 tuples)
+The most tuples one window holds. `0` takes `executor.SmallBindingBoundary`,
+the boundary at or below which the matcher seeks a binding's distinct keys one
+by one, so a full window's keys are sought per key.
+
+#### ScopeWindowGrowth — **default 0** (executor default: 2)
+The factor each window grows by over the last. `0` or `1` takes 2.
 
 ### Plan cache
 
@@ -173,7 +209,9 @@ give their own reason and date below.
 | `EnableDebugLogging` | Removed in 2026-07. Join and relation diagnostics are structured annotation events. |
 | `EnableStreamingAggregationDebug` | Removed in 2026-07. Aggregation strategy and materialization diagnostics are structured annotation events. |
 | `EnableIteratorComposition` | Removed in 2026-07. Composed iterators are the only implementation of streaming relation operations; the flag's false arm ("materialize then delegate") recursed without bound because `StreamingRelation.Materialize` returns the receiver, and no production path ever ran with the flag off. Materialization is a consumer decision made through `Materialize()`, not a mode. |
-| `IndexNestedLoopThreshold` | Removed in 2026-07 with the index-nested-loop join strategy it gated. The strategy had been off by default since 2025-10 on a benchmark that does not survive inspection, and was independently incorrect: its precondition — bindings sorted in index order — is unmet for the Tx and V positions, where `CompareValues` order deliberately differs from key order. Binding-driven scans use HashJoinScan, or MergeJoin for large high-selectivity entity-position sets. |
+| `IndexNestedLoopThreshold` | Removed in 2026-07 with the index-nested-loop join strategy it gated. The strategy had been off by default since 2025-10 on a benchmark that does not survive inspection, and was independently incorrect: its precondition — bindings sorted in index order — is unmet for the Tx and V positions, where `CompareValues` order deliberately differs from key order. Binding-driven scans seek a binding set's distinct keys one by one at or below `executor.SmallBindingBoundary`, and above it use HashJoinScan, or MergeJoin for large high-selectivity entity-position sets. |
+| `EnableParallelSubqueries` | Removed in 2026-10 with the per-tuple relation-input loop it switched on. A relation input binds as one group the plan runs once over (`docs/proposals/RELATION_INPUT_PROOF.md`), the query path runs on one goroutine, and concurrency returns at the job's grain under one worker bound (`docs/proposals/CONCURRENCY_PROOF.md`). |
+| `MaxSubqueryWorkers` | Removed in 2026-10 with `EnableParallelSubqueries`; it sized that loop's worker pool. |
 
 If your code sets any of these, delete the lines — the fields no longer exist.
 
@@ -188,7 +226,7 @@ they need.
 
 ```go
 opts := storage.DefaultPlannerOptions()
-// Already tuned: algebra optimizer + streaming + parallel subqueries on.
+// Already tuned: algebra optimizer + streaming on.
 ```
 
 ### Debugging execution

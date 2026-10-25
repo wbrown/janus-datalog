@@ -1,9 +1,6 @@
 package algebra
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -25,23 +22,23 @@ import (
 // selective-child lowerings. The fold's requires-prior-relation guards
 // remain for clause lists containing no generator at all.
 //
-// available seeds the bound set: the query's :in symbols plus whatever the
-// enclosing context supplies (an outer relation for NOT bodies, a schema
-// placeholder for or-branches). inputs is the :in symbol set alone —
-// ClauseReady distinguishes a correlate an input can bind from one nothing
-// can bind.
+// scope's symbols seed the bound set: what is bound around the clause list,
+// the query's :in symbols and the caller's at the top level, a header's bound
+// variables inside a header form, so a correlate the scope binds is available
+// from the first pick. scope's rule set is read by every clause scope, so an
+// invocation consumes the variables at its predicate's required positions
+// and waits for their binders.
 //
-// A stall — no remaining clause ready — means some clause's mandatory
-// correlates are bindable by no input and no clause: an invalid query,
-// rejected loudly naming the stuck clauses (the planner's phasing loop
-// rejects the same queries with its no-progress error).
-func orderClausesForCompile(clauses []query.Clause, available, inputs map[query.Symbol]bool) ([]query.Clause, error) {
-	if len(clauses) < 2 {
-		return clauses, nil
-	}
-	providerCount := query.CountProviders(clauses)
-	bound := make(map[query.Symbol]bool, len(available))
-	for sym := range available {
+// A stall — no remaining clause ready — means some clause's correlates are
+// bound by no input and no clause, or by a clause no order places before it:
+// an invalid query, rejected loudly naming the stuck clauses and, for a
+// variable no input and no clause binds, that nothing binds it (the
+// planner's phasing loop rejects the same queries with its no-progress
+// error).
+func orderClausesForCompile(clauses []query.Clause, scope query.Bindings) ([]query.Clause, error) {
+	inputs := scope.Symbols
+	bound := make(map[query.Symbol]bool, len(inputs))
+	for sym := range inputs {
 		bound[sym] = true
 	}
 
@@ -53,10 +50,10 @@ func orderClausesForCompile(clauses []query.Clause, available, inputs map[query.
 			if placed[i] {
 				continue
 			}
-			if !query.ClauseReady(clause, bound, inputs, providerCount) {
+			if !query.ClauseReady(clause, bound, scope.Rules) {
 				continue
 			}
-			if len(ordered) > 0 || len(query.ScopeOf(clause).Provides) > 0 {
+			if len(ordered) > 0 || len(query.ScopeOf(clause, scope.Rules).Provides) > 0 {
 				picked = i
 				break
 			}
@@ -65,28 +62,17 @@ func orderClausesForCompile(clauses []query.Clause, available, inputs map[query.
 			}
 		}
 		if picked < 0 {
-			var stuck []string
+			var remaining []query.Clause
 			for i, clause := range clauses {
-				if placed[i] {
-					continue
+				if !placed[i] {
+					remaining = append(remaining, clause)
 				}
-				var waits []string
-				for _, sym := range query.ClauseBlockers(clause, bound, inputs, providerCount) {
-					if !inputs[sym] && providerCount[sym] == 0 {
-						waits = append(waits, fmt.Sprintf("%s (no input or clause binds it)", sym))
-					} else {
-						waits = append(waits, sym.String())
-					}
-				}
-				stuck = append(stuck, fmt.Sprintf("%v waits on %s", clause, strings.Join(waits, ", ")))
 			}
-			return nil, fmt.Errorf(
-				"cannot order clauses for compilation: %s",
-				strings.Join(stuck, "; "))
+			return nil, query.NewNoOrderError(remaining, clauses, bound, inputs, scope.Rules)
 		}
 		placed[picked] = true
 		ordered = append(ordered, clauses[picked])
-		for _, sym := range query.ScopeOf(clauses[picked]).Provides {
+		for _, sym := range query.ScopeOf(clauses[picked], nil).Provides {
 			bound[sym] = true
 		}
 	}

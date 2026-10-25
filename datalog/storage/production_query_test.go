@@ -198,7 +198,7 @@ func TestProductionQueryPattern(t *testing.T) {
 				)
 
 				// Check what strategy would be chosen
-				strategy, _ := analyzeReuseStrategy(pattern, minuteRel)
+				strategy, _ := NewPatternMatcher(store).analyzeReuseStrategy(pattern, minuteRel)
 
 				t.Logf("Iterator reuse analysis for minute-of-day pattern:")
 				t.Logf("  Pattern: [?bar :price/minute-of-day ?mod]")

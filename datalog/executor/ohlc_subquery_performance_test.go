@@ -186,6 +186,11 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 	}
 }
 
+// ohlcBenchmarkDays is the number of days BenchmarkOHLCSubqueries writes bars
+// for. Each of its queries answers one tuple per day, the bar at minute-of-day
+// 570, so it is the tuple count each timed loop asserts.
+const ohlcBenchmarkDays = 20
+
 // BenchmarkOHLCSubqueries measures the performance difference between
 // single vs multiple subqueries accessing the same data
 func BenchmarkOHLCSubqueries(b *testing.B) {
@@ -201,9 +206,9 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
-	// Create 20 days of data, 50 bars per day = 1000 bars
+	// Create ohlcBenchmarkDays days of data, 50 bars per day = 1000 bars
 	barID := 1000
-	for day := 1; day <= 20; day++ {
+	for day := 1; day <= ohlcBenchmarkDays; day++ {
 		dayTime := time.Date(2025, 1, day, 9, 30, 0, 0, time.UTC)
 
 		for minute := 0; minute < 50; minute++ {
@@ -276,9 +281,16 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 
 		q, _ := parser.ParseQuery(queryStr)
 
+		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			exec.Execute(q)
+			tuples, err := CollectTuples(exec.Execute(q))
+			if err != nil {
+				b.Fatalf("execute: %v", err)
+			}
+			if len(tuples) != ohlcBenchmarkDays {
+				b.Fatalf("expected %d tuples, got %d", ohlcBenchmarkDays, len(tuples))
+			}
 		}
 	})
 
@@ -325,17 +337,24 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 
 		q, _ := parser.ParseQuery(queryStr)
 
+		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			exec.Execute(q)
+			tuples, err := CollectTuples(exec.Execute(q))
+			if err != nil {
+				b.Fatalf("execute: %v", err)
+			}
+			if len(tuples) != ohlcBenchmarkDays {
+				b.Fatalf("expected %d tuples, got %d", ohlcBenchmarkDays, len(tuples))
+			}
 		}
 	})
 }
 
-// BenchmarkRelationInputParallel compares sequential vs parallel execution
-// for RelationInput iteration scenarios
-func BenchmarkRelationInputParallel(b *testing.B) {
-	// Create much larger dataset to properly stress test parallelism
+// BenchmarkRelationInput measures a grouped aggregate over a relation input
+// of 2400 tuples, each matching one entity.
+func BenchmarkRelationInput(b *testing.B) {
+	// 2400 entities, one per input tuple
 	nameAttr := datalog.NewKeyword(":name")
 	ageAttr := datalog.NewKeyword(":age")
 	yearAttr := datalog.NewKeyword(":year")
@@ -374,7 +393,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 
 	q, _ := parser.ParseQuery(queryStr)
 
-	// Create input relation (2400 tuples - simulating 40 days × 60 iterations)
+	// Input relation of 2400 tuples
 	var inputTuples []Tuple
 	for _, name := range names {
 		for year := 2015; year <= 2024; year++ {
@@ -385,81 +404,13 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	}
 	inputRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
-	b.Run("Sequential", func(b *testing.B) {
-		seqExec := NewExecutor(matcher, nil)
-		seqExec.DisableParallelSubqueries()
+	exec := NewExecutor(matcher, nil)
 
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_, err := seqExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
-			if err != nil {
-				b.Fatal(err)
-			}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := exec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
+		if err != nil {
+			b.Fatal(err)
 		}
-	})
-
-	b.Run("Parallel-2Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher, nil)
-		parExec.EnableParallelSubqueries(2)
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-
-	b.Run("Parallel-4Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher, nil)
-		parExec.EnableParallelSubqueries(4)
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-
-	b.Run("Parallel-8Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher, nil)
-		parExec.EnableParallelSubqueries(8)
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-
-	b.Run("Parallel-16Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher, nil)
-		parExec.EnableParallelSubqueries(16)
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-
-	b.Run("Parallel-32Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher, nil)
-		parExec.EnableParallelSubqueries(32)
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_, err := parExec.ExecuteWithRelations(NewContext(), q, []Relation{inputRel})
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
+	}
 }

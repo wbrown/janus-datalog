@@ -34,8 +34,8 @@ func TestSingleBranchOrJoinExecutesAsItsBranch(t *testing.T) {
 
 	shapes := map[string]query.Clause{
 		"or-join": &query.OrJoinClause{
-			JoinVars: []query.Symbol{v},
-			Branches: [][]query.Clause{branch},
+			OutputVars: []query.Symbol{v},
+			Branches:   [][]query.Clause{branch},
 		},
 		"or": &query.OrClause{
 			Branches: [][]query.Clause{branch},

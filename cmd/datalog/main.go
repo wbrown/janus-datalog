@@ -17,6 +17,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
+	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
@@ -465,13 +466,19 @@ func runImportBin(dbPath, importPath string) {
 // The database's planner options carry the -optimize mode, so the
 // explanation reflects exactly what this invocation would run.
 func runPlanOnly(db *storage.Database, queryStr string, inputs []string) {
-	goInputs, err := parseEDNInputs(inputs)
+	q, err := parser.ParseQuery(queryStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
+		os.Exit(1)
+	}
+
+	goInputs, err := parseEDNInputs(q.In, inputs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Input error: %v\n", err)
 		os.Exit(1)
 	}
 
-	expl, err := db.ExplainAlgebra(queryStr, goInputs...)
+	expl, err := db.ExplainAlgebra(q, goInputs...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Plan error: %v\n", err)
 		os.Exit(1)
@@ -491,7 +498,7 @@ func runSingleQuery(db *storage.Database, queryStr string, enableDecorrelation b
 	fmt.Printf("Query:\n%s\n\n", q.String())
 
 	// Parse input values from EDN strings
-	goInputs, err := parseEDNInputs(inputs)
+	goInputs, err := parseEDNInputs(q.In, inputs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Input error: %v\n", err)
 		os.Exit(1)
@@ -540,14 +547,34 @@ func (f *ednSliceFlag) Set(val string) error {
 	return nil
 }
 
-// parseEDNInputs converts EDN string values to Go values for query inputs.
-func parseEDNInputs(inputs []string) ([]interface{}, error) {
+// parseEDNInputs converts the -in values to query inputs, each read under the
+// :in spec at its position among the specs that consume a value: at the %
+// position the text parses as a rule set, elsewhere as an EDN value. A value
+// past the last spec is EDN, and the query's input check names the excess.
+func parseEDNInputs(in []query.InputSpec, inputs []string) ([]interface{}, error) {
 	if len(inputs) == 0 {
 		return nil, nil
 	}
+	var consuming []query.InputSpec
+	for _, spec := range in {
+		if _, ok := spec.(query.DatabaseInput); ok {
+			continue
+		}
+		consuming = append(consuming, spec)
+	}
 	result := make([]interface{}, len(inputs))
 	for i, input := range inputs {
-		val, err := parseEDNValue(input)
+		rulesAt := false
+		if i < len(consuming) {
+			_, rulesAt = consuming[i].(query.RulesInput)
+		}
+		var val interface{}
+		var err error
+		if rulesAt {
+			val, err = parser.ParseRules(input)
+		} else {
+			val, err = parseEDNValue(input)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("input %d (%q): %w", i+1, input, err)
 		}

@@ -28,7 +28,7 @@ func TestVectorCacheHit(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add vector data
 			tx := db.NewTransaction()
@@ -72,7 +72,7 @@ func TestVectorCacheMiss(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -106,7 +106,7 @@ func TestVectorCacheInvalidation(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add initial data
 			tx := db.NewTransaction()
@@ -149,7 +149,7 @@ func TestVectorNthFromCache(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -202,7 +202,7 @@ func TestVectorLengthFromCache(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Empty vector
 			e := datalog.NewIdentity("character1")
@@ -241,7 +241,7 @@ func TestVectorCachePreservesOrder(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data in specific order
 			tx := db.NewTransaction()
@@ -280,7 +280,7 @@ func TestVectorCacheAfterSet(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add initial data
 			tx := db.NewTransaction()
@@ -330,7 +330,7 @@ func TestVectorNthNotVectorAttribute(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -361,7 +361,7 @@ func TestVectorLengthNotVectorAttribute(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
 			tx := db.NewTransaction()
@@ -398,7 +398,7 @@ func TestVectorIndexContainsRealElementIDs(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add vector data
 			e := datalog.NewIdentity("character1")
@@ -471,7 +471,7 @@ func TestVectorIndexUsableForTombstone(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add vector data
 			e := datalog.NewIdentity("character1")

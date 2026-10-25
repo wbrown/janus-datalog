@@ -30,7 +30,7 @@ func TestEATV_VectorTransitionDropsDatom(t *testing.T) {
 				DisableCache:      true, // cache disabled
 				AnnotationHandler: func(e annotations.Event) { events = append(events, e) },
 			})
-			db.SetSchema(eaCacheBypassSchema())
+			require.NoError(t, db.SetSchema(eaCacheBypassSchema()))
 
 			nameAttr := datalog.NewKeyword(":person/name")
 			contentAttr := datalog.NewKeyword(":doc/content")

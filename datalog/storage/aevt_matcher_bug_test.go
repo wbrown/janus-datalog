@@ -100,36 +100,44 @@ func TestAEVTMatcherBug(t *testing.T) {
 			// Check annotations
 			t.Logf("Total events: %d", len(events))
 
-			var datomsScanned int
+			var datomsScanned, scansOpened int
 			var indexUsed string
 
 			for i, event := range events {
 				t.Logf("Event %d: %s - %+v", i, event.Name, event.Data)
 
-				// The hash join's completion carries the scan statistics this test
-				// reads. Matched by strategy, not by name: one event name covers every
-				// scan, so the name alone would also take the direct scans the query
-				// performs around this one.
+				// The index is the dispatch's choice, carried by the join-strategy
+				// event. The per-key seek's completion carries the scan statistics
+				// this test reads, and names no index of its own, since it opens
+				// one run per key. Matched by strategy, not by name: one event name
+				// covers every scan, so the name alone would also take the direct
+				// scans the query performs around this one.
 				//
 				// datoms.scanned, not datoms.resolved: the assertion below is about how
-				// much of the index the scan read, and resolution's output is a lower
+				// much of the index the scans read, and resolution's output is a lower
 				// number by the history depth. They coincide here only because the
 				// fixture writes each entity once.
+				if event.Name == annotations.StorageJoinStrategy {
+					if idx, ok := event.Data[annotations.KeyIndex].(IndexType); ok {
+						indexUsed = idx.String()
+					}
+					continue
+				}
 				if event.Name != annotations.StorageScanComplete {
 					continue
 				}
-				if s, _ := event.Data[annotations.KeyStrategy].(annotations.ScanStrategy); s == annotations.ScanHashJoin {
+				if s, _ := event.Data[annotations.KeyStrategy].(annotations.ScanStrategy); s == annotations.ScanPerKeySeek {
 					if scanned, ok := event.Data[annotations.KeyDatomsScanned].(int); ok {
 						datomsScanned = scanned
 					}
-					if idx, ok := event.Data[annotations.KeyIndex].(IndexType); ok {
-						indexUsed = idx.String()
+					if opened, ok := event.Data[annotations.KeyScansOpened].(int); ok {
+						scansOpened = opened
 					}
 				}
 			}
 
 			t.Logf("Index used: %s", indexUsed)
-			t.Logf("Datoms scanned: %d", datomsScanned)
+			t.Logf("Datoms scanned: %d over %d scans", datomsScanned, scansOpened)
 			t.Logf("Entities bound: 3")
 			t.Logf("Total datoms in DB: 50")
 
@@ -140,18 +148,15 @@ func TestAEVTMatcherBug(t *testing.T) {
 				t.Errorf("Expected AETV index (CRDT-aware A-primary), got %s", indexUsed)
 			}
 
-			// With HashJoinScan we scan all :person/age datoms (10) and probe the hash
-			// set for matches, rather than seeking once per binding. The scan count is
-			// therefore the attribute's size, not the binding count.
-			expectedScans := 10 // All :person/age datoms
-			tolerance := 5      // Allow some overhead
-
-			if datomsScanned > expectedScans+tolerance {
-				t.Errorf("🚨 EXCESSIVE SCANNING: Scanned %d datoms for 3 bound entities (expected ~%d)",
-					datomsScanned, expectedScans)
-				t.Logf("Should scan all :person/age datoms (~10), not entire database (50)")
-			} else {
-				t.Logf("✅ SUCCESS: Scanned %d datoms (expected ~%d for HashJoinScan strategy)", datomsScanned, expectedScans)
+			// Three keys are sought one by one, each by its (A, E) run, so the
+			// intake is the three bound entities' own :person/age datoms: not the
+			// attribute's ten, and not the database's fifty.
+			if scansOpened != 3 {
+				t.Errorf("Expected one scan per bound entity (3), got %d", scansOpened)
+			}
+			if datomsScanned != 3 {
+				t.Errorf("🚨 EXCESSIVE SCANNING: Scanned %d datoms for 3 bound entities (expected 3, one per key)",
+					datomsScanned)
 			}
 		})
 	}

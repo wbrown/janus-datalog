@@ -41,9 +41,24 @@ func decompileNode(n *Node) ([]query.Clause, error) {
 		return decompileConstant(n)
 	case RuleProject:
 		return decompileProject(n)
+	case RuleDerived:
+		return []query.Clause{n.Data.(*Derived).Invocation}, nil
 	default:
 		return nil, fmt.Errorf("unknown algebra node: %s", n.Op)
 	}
+}
+
+// subqueryInputs is what a decompiled subquery declares and is passed: the
+// default source, and the rule set after it when a clause of its own scope
+// uses % (query.RulesUse).
+func subqueryInputs(where []query.Clause) ([]query.InputSpec, []query.PatternElement) {
+	in := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}}
+	inputs := []query.PatternElement{query.Constant{Value: datalog.SymDollar}}
+	if query.RulesUse(where) != nil {
+		in = append(in, query.RulesInput{})
+		inputs = append(inputs, query.Constant{Value: datalog.SymRules})
+	}
+	return in, inputs
 }
 
 func decompileProject(n *Node) ([]query.Clause, error) {
@@ -62,13 +77,14 @@ func decompileProject(n *Node) ([]query.Clause, error) {
 	for i, symbol := range project.Symbols {
 		find[i] = query.FindVariable{Symbol: symbol}
 	}
+	in, inputs := subqueryInputs(where)
 	return []query.Clause{&query.SubqueryPattern{
 		Query: &query.Query{
 			Find:  find,
-			In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+			In:    in,
 			Where: where,
 		},
-		Inputs: []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
+		Inputs: inputs,
 		Binding: query.RelationBinding{
 			Variables: append([]query.Symbol(nil), project.Symbols...),
 		},
@@ -172,11 +188,11 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 		return nil, err
 	}
 
-	if len(join.DefaultValues) == 0 {
+	if len(join.Defaults) == 0 {
 		return nil, fmt.Errorf("LeftOuterJoin has no defaults (decorrelation produces InnerJoin when no defaults)")
 	}
 
-	// Build ground default branch from Join.DefaultValues.
+	// Build ground default branch from Join.Defaults.
 	// The defaults correspond to the original LateralJoin's binding symbols —
 	// the aggregate output symbols minus the GROUP BY keys. These are the
 	// symbols that the OR-fallback's ground branch must provide.
@@ -197,7 +213,7 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 	}
 
 	var defaultBranch []query.Clause
-	if join.DefaultAttr != nil && len(join.DefaultValues) == 1 && len(defaultSyms) == 1 && len(join.JoinSymbols) > 0 {
+	if join.DefaultAttr != nil && len(join.Defaults) == 1 && len(join.JoinSymbols) > 0 {
 		// Get-else rewrite origin: emit get-else in the default branch so
 		// TypedDefaulter can convert the default to the schema type (e.g.,
 		// []interface{} → []string). The default branch only runs for entities
@@ -207,25 +223,13 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 				Function: &query.GetElseFunction{
 					Entity:  query.VariableTerm{Symbol: join.JoinSymbols[0]},
 					Attr:    *join.DefaultAttr,
-					Default: join.DefaultValues[0],
+					Default: join.Defaults[0].Value,
 				},
-				Binding: defaultSyms[0],
-			},
-		}
-	} else if len(join.DefaultValues) == 1 && len(defaultSyms) == 1 {
-		defaultBranch = []query.Clause{
-			&query.Expression{
-				Function: &query.GroundFunction{Value: join.DefaultValues[0]},
-				Binding:  defaultSyms[0],
+				Binding: join.Defaults[0].Symbol,
 			},
 		}
 	} else {
-		defaultBranch = []query.Clause{
-			&query.Expression{
-				Function: &query.GroundFunction{Value: join.DefaultValues},
-				Binding:  query.TupleBinding{Variables: defaultSyms},
-			},
-		}
+		defaultBranch = groundDefaults(join.Defaults)
 	}
 
 	// Declare the interface: the join symbols are the per-group correlation
@@ -241,7 +245,8 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 	return append(leftClauses, orDefaultJoinClause), nil
 }
 
-// decompileAntiJoin emits child clauses from left, then a NOT clause wrapping right.
+// decompileAntiJoin emits child clauses from left, then the not-join over
+// the join symbols whose body is the right child's clauses.
 func decompileAntiJoin(n *Node) ([]query.Clause, error) {
 	aj := n.Data.(*AntiJoin)
 	if len(n.Children) < 2 {
@@ -258,23 +263,14 @@ func decompileAntiJoin(n *Node) ([]query.Clause, error) {
 		return nil, err
 	}
 
-	var notClause query.Clause
-	if aj.ExplicitJoin {
-		notClause = &query.NotJoinClause{
-			JoinVars: aj.JoinSymbols,
-			Clauses:  rightClauses,
-		}
-	} else {
-		notClause = &query.NotClause{
-			Clauses: rightClauses,
-		}
-	}
-
-	return append(leftClauses, notClause), nil
+	return append(leftClauses, &query.NotJoinClause{
+		RequiredVars: aj.JoinSymbols,
+		Clauses:      rightClauses,
+	}), nil
 }
 
-// decompileUnion emits an OR clause (or OR-join clause if join vars present).
-// Union nodes always decompile to OrClause/OrJoinClause (independent union).
+// decompileUnion emits the or-join over the union's header, the required
+// run and the outputs, with one branch per child.
 func decompileUnion(n *Node) ([]query.Clause, error) {
 	u := n.Data.(*Union)
 	var branches [][]query.Clause
@@ -285,17 +281,15 @@ func decompileUnion(n *Node) ([]query.Clause, error) {
 		}
 		branches = append(branches, branch)
 	}
-	if len(u.JoinVars) > 0 {
-		return []query.Clause{&query.OrJoinClause{
-			JoinVars: u.JoinVars,
-			Branches: branches,
-		}}, nil
-	}
-	return []query.Clause{&query.OrClause{Branches: branches}}, nil
+	return []query.Clause{&query.OrJoinClause{
+		RequiredVars: u.RequiredVars,
+		OutputVars:   u.OutputVars,
+		Branches:     branches,
+	}}, nil
 }
 
-// decompileLateralUnion emits an OR-DEFAULT clause (or OR-DEFAULT-JOIN if join vars present).
-// LateralUnion nodes represent correlated per-tuple branch evaluation.
+// decompileLateralUnion emits the or-default-join over the lateral union's
+// header, the required run and the outputs, with one branch per child.
 func decompileLateralUnion(n *Node) ([]query.Clause, error) {
 	lu := n.Data.(*LateralUnion)
 	var branches [][]query.Clause
@@ -306,14 +300,11 @@ func decompileLateralUnion(n *Node) ([]query.Clause, error) {
 		}
 		branches = append(branches, branch)
 	}
-	if len(lu.RequiredVars) > 0 || len(lu.OutputVars) > 0 {
-		return []query.Clause{&query.OrDefaultJoinClause{
-			RequiredVars: lu.RequiredVars,
-			OutputVars:   lu.OutputVars,
-			Branches:     branches,
-		}}, nil
-	}
-	return []query.Clause{&query.OrDefaultClause{Branches: branches}}, nil
+	return []query.Clause{&query.OrDefaultJoinClause{
+		RequiredVars: lu.RequiredVars,
+		OutputVars:   lu.OutputVars,
+		Branches:     branches,
+	}}, nil
 }
 
 // decompileLateralJoin emits a SubqueryPattern clause.
@@ -351,7 +342,7 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 		Binding: bindingAsForm(lj.Binding),
 	}
 
-	if len(lj.DefaultValues) == 0 {
+	if len(lj.Defaults) == 0 {
 		// No defaults — bare subquery
 		clauses = append(clauses, sp)
 		return clauses, nil
@@ -399,40 +390,42 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 		}
 	}
 
-	// Branch 2: ground defaults using only non-join symbols
-	var defaultBranch []query.Clause
-	if len(lj.DefaultValues) == 1 && len(defaultSyms) == 1 {
-		// Scalar ground: [(ground val) ?sym]
-		defaultBranch = []query.Clause{
-			&query.Expression{
-				Function: &query.GroundFunction{Value: lj.DefaultValues[0]},
-				Binding:  defaultSyms[0],
-			},
-		}
-	} else if len(defaultSyms) > 0 {
-		// Tuple ground: [(ground [v1 v2 ...]) [[?a ?b ...]]]
-		defaultBranch = []query.Clause{
-			&query.Expression{
-				Function: &query.GroundFunction{Value: lj.DefaultValues},
-				Binding:  query.TupleBinding{Variables: defaultSyms},
-			},
-		}
-	}
+	// Branch 2: the grounds stating the defaults, each under its own symbol.
+	defaultBranch := groundDefaults(lj.Defaults)
 
-	if len(joinVars) > 0 {
-		orDefaultJoinClause := &query.OrDefaultJoinClause{
-			RequiredVars: joinVars,
-			OutputVars:   defaultSyms,
-			Branches:     [][]query.Clause{subqueryBranch, defaultBranch},
-		}
-		clauses = append(clauses, orDefaultJoinClause)
-	} else {
-		orDefaultClause := &query.OrDefaultClause{
-			Branches: [][]query.Clause{subqueryBranch, defaultBranch},
-		}
-		clauses = append(clauses, orDefaultClause)
+	orDefaultJoinClause := &query.OrDefaultJoinClause{
+		RequiredVars: joinVars,
+		OutputVars:   defaultSyms,
+		Branches:     [][]query.Clause{subqueryBranch, defaultBranch},
 	}
+	clauses = append(clauses, orDefaultJoinClause)
 	return clauses, nil
+}
+
+// groundDefaults is the fallback branch stating the defaults: one scalar
+// ground for one default, and otherwise one tuple ground binding each
+// default's value to its symbol, in the defaults' order.
+func groundDefaults(defaults []Default) []query.Clause {
+	if len(defaults) == 1 {
+		return []query.Clause{
+			&query.Expression{
+				Function: &query.GroundFunction{Value: defaults[0].Value},
+				Binding:  defaults[0].Symbol,
+			},
+		}
+	}
+	values := make([]interface{}, len(defaults))
+	symbols := make([]query.Symbol, len(defaults))
+	for i, d := range defaults {
+		values[i] = d.Value
+		symbols[i] = d.Symbol
+	}
+	return []query.Clause{
+		&query.Expression{
+			Function: &query.GroundFunction{Value: values},
+			Binding:  query.TupleBinding{Variables: symbols},
+		},
+	}
 }
 
 // decompileAggregate emits a decorrelated SubqueryPattern.
@@ -461,21 +454,20 @@ func decompileAggregate(n *Node) ([]query.Clause, error) {
 		findElems = append(findElems, fn)
 	}
 
-	// Build the decorrelated query — must include :in $ for the database source
+	in, inputs := subqueryInputs(innerClauses)
 	innerQuery := &query.Query{
 		Find:  findElems,
-		In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+		In:    in,
 		Where: innerClauses,
 	}
 
 	// Build binding with the outer names corresponding positionally to the
-	// grouped keys and aggregate results.
-	// Uses Constant($) for the database source marker (not Variable).
-	// RelationBinding (not TupleBinding) because the decorrelated query
-	// returns multiple tuples (one per distinct group key).
+	// grouped keys and aggregate results; the decorrelated query's result
+	// enters the scope as the relation over them, one tuple per distinct
+	// group key.
 	sp := &query.SubqueryPattern{
 		Query:   innerQuery,
-		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
+		Inputs:  inputs,
 		Binding: query.RelationBinding{Variables: agg.Bindings},
 	}
 

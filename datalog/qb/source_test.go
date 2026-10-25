@@ -209,7 +209,10 @@ func TestSubqueryWithNamedSource(t *testing.T) {
 		)
 
 	sub := Subquery(innerQ, dept).BindRelation(name)
-	clause := sub.toClause()
+	clause, err := sub.toClause()
+	if err != nil {
+		t.Fatalf("toClause: %v", err)
+	}
 
 	sq, ok := clause.(*query.SubqueryPattern)
 	if !ok {

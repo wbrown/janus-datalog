@@ -357,7 +357,7 @@ This is **premature documentation** instead of premature optimization - write do
 
 ### The Rabbit Hole
 
-From [CRDT_VECTOR_STORAGE.md](../proposals/CRDT_VECTOR_STORAGE.md):
+From [CRDT_VECTOR_STORAGE.md](../archive/completed/CRDT_VECTOR_STORAGE.md):
 
 > **The rabbit hole:** Implementing vectors properly meant rethinking the storage model. Append-at-position needs conflict resolution. Conflict resolution needs unique element identifiers. Unique identifiers need Lamport clocks. And once you have all that, you've accidentally built a CRDT-based system with benefits beyond just vectors.
 
@@ -530,6 +530,6 @@ db.DefineAttribute(":name", TypeString, CardinalityOne)  // Add validation later
 
 - [KEY_ENCODING_AND_CRDT.md](KEY_ENCODING_AND_CRDT.md) - Storage layer analysis
 - [PACE_CAR_CACHING_ARCHITECTURE.md](../proposals/PACE_CAR_CACHING_ARCHITECTURE.md) - Pipeline parallelism proposal
-- [CRDT_VECTOR_STORAGE.md](../proposals/CRDT_VECTOR_STORAGE.md) - CRDT origin story
+- [CRDT_VECTOR_STORAGE.md](../archive/completed/CRDT_VECTOR_STORAGE.md) - CRDT origin story
 - [CLAUDE.md](../../CLAUDE.md) - Project guidelines and architecture overview
 - [PERFORMANCE_STATUS.md](../../PERFORMANCE_STATUS.md) - Verified benchmarks

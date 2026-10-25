@@ -29,6 +29,7 @@ const (
 	RuleLateralJoin  = "LateralJoin"
 	RuleAggregate    = "Aggregate"
 	RuleConstant     = "Constant"
+	RuleDerived      = "Derived"
 )
 
 // JoinKind distinguishes inner joins from left outer joins.
@@ -140,13 +141,21 @@ func (m *Map) String() string {
 	return m.Expression.String()
 }
 
+// Default is the value a symbol takes where a left outer join's right side
+// has no match or a lateral join's inner query answers nothing: a fallback
+// ground's value for the symbol the ground binds.
+type Default struct {
+	Symbol query.Symbol
+	Value  interface{}
+}
+
 // Join combines two relations. R ⋈ S
 type Join struct {
-	Kind          JoinKind         // Inner or LeftOuter
-	JoinSymbols   []query.Symbol   // Symbols to join on (empty = natural join on shared symbols)
-	Output        []query.Symbol   // Combined output symbols
-	DefaultValues []interface{}    // For LeftOuterJoin: fill these when right side has no match
-	DefaultAttr   *datalog.Keyword // For get-else rewrite: the attribute, enabling typed defaults
+	Kind        JoinKind         // Inner or LeftOuter
+	JoinSymbols []query.Symbol   // Symbols to join on (empty = natural join on shared symbols)
+	Output      []query.Symbol   // Combined output symbols
+	Defaults    []Default        // For LeftOuterJoin: each symbol's value when right side has no match
+	DefaultAttr *datalog.Keyword // For get-else rewrite: the attribute, enabling typed defaults
 }
 
 func (j *Join) OutputSymbols() []query.Symbol { return j.Output }
@@ -162,12 +171,11 @@ func (j *Join) String() string {
 }
 
 // AntiJoin returns tuples from left with no match in right. R ▷ S
-// Compiled from query.NotClause / query.NotJoinClause.
+// Compiled from query.NotJoinClause, keyed on its header.
 type AntiJoin struct {
-	JoinSymbols  []query.Symbol // Variables to anti-join on
-	Required     []query.Symbol // Correlation inputs supplied by the left relation
-	Output       []query.Symbol // Same as left child's output
-	ExplicitJoin bool           // True if compiled from NotJoinClause (user specified join vars)
+	JoinSymbols []query.Symbol // Variables to anti-join on
+	Required    []query.Symbol // Correlation inputs supplied by the left relation
+	Output      []query.Symbol // Same as left child's output
 }
 
 func (a *AntiJoin) OutputSymbols() []query.Symbol { return a.Output }
@@ -180,36 +188,43 @@ func (a *AntiJoin) String() string {
 }
 
 // Union combines branches independently. R ∪ S
-// Compiled from query.OrClause or query.OrJoinClause with union semantics.
-// Branches are evaluated independently (no outer context).
+// Compiled from query.OrJoinClause, keyed on its header; the branches see
+// the header's required run alone.
 type Union struct {
-	Output   []query.Symbol // Shared output symbols across branches
-	JoinVars []query.Symbol // Explicit join variables from or-join (nil for plain or)
-	Required []query.Symbol // Correlation keys supplied by the outer relation
+	Output       []query.Symbol // The whole header, the required run and the outputs
+	Required     []query.Symbol // Correlation keys supplied by the outer relation
+	RequiredVars []query.Symbol // The or-join header's required run, bound before the union runs
+	OutputVars   []query.Symbol // The or-join header's outputs, which every branch binds
 }
 
 // LateralUnion combines branches with per-tuple evaluation against the outer relation.
 // R ⋈_L∪ (B₁ ∪ B₂ ∪ ... Bₙ)
-// Each branch sees the outer tuple as context. Used when branches contain
-// correlated predicates (NOT, missing?) or fallback defaults (or-default).
-// Decompiles to OrDefaultClause/OrDefaultJoinClause.
+// Each branch sees the outer tuple's required run as its context, a branch
+// holding a not-join or missing? compiles against a placeholder over that
+// run, and the first branch with a result answers the tuple. Compiled from
+// query.OrDefaultJoinClause by compileOrFallbackExclusive and decompiled to
+// the or-default-join over its header.
 type LateralUnion struct {
 	Output       []query.Symbol // Output symbols across branches
-	RequiredVars []query.Symbol // Declared per-group correlation keys (nil for plain or-default)
-	OutputVars   []query.Symbol // Declared output variables (nil for plain or-default)
+	RequiredVars []query.Symbol // The or-default-join header's required run, bound before the union runs
+	OutputVars   []query.Symbol // The or-default-join header's outputs, which every branch binds
 	Required     []query.Symbol // Correlation keys supplied by the outer relation
 }
 
 func (u *Union) OutputSymbols() []query.Symbol { return u.Output }
 func (u *Union) String() string {
-	if len(u.JoinVars) > 0 {
-		syms := make([]string, len(u.JoinVars))
-		for i, s := range u.JoinVars {
-			syms[i] = s.String()
-		}
-		return fmt.Sprintf("∪_join(%s)", strings.Join(syms, ", "))
+	outputs := make([]string, len(u.OutputVars))
+	for i, s := range u.OutputVars {
+		outputs[i] = s.String()
 	}
-	return "∪"
+	if len(u.RequiredVars) > 0 {
+		required := make([]string, len(u.RequiredVars))
+		for i, s := range u.RequiredVars {
+			required[i] = s.String()
+		}
+		return fmt.Sprintf("∪_join([%s] %s)", strings.Join(required, ", "), strings.Join(outputs, ", "))
+	}
+	return fmt.Sprintf("∪_join(%s)", strings.Join(outputs, ", "))
 }
 
 func (lu *LateralUnion) OutputSymbols() []query.Symbol { return lu.Output }
@@ -233,11 +248,12 @@ type LateralJoin struct {
 	// compile→decompile round trip is lossless. CorrelationVars is the
 	// derived variable subset; rebuilding the call site from it alone drops
 	// constant arguments and re-points named sources at $.
-	Inputs        []query.PatternElement
-	InnerQuery    *query.Query   // The nested query to execute per outer tuple
-	Binding       interface{}    // query.Symbol, query.TupleBinding, etc.
-	Output        []query.Symbol // Combined output (outer + binding symbols)
-	DefaultValues []interface{}  // Fallback values when inner produces no results (from OR-fallback ground)
+	Inputs     []query.PatternElement
+	InnerQuery *query.Query   // The nested query to execute per outer tuple
+	Binding    interface{}    // the call's query.BindingForm: ScalarBinding, CollectionBinding or RelationBinding
+	Output     []query.Symbol // Combined output (outer + binding symbols)
+	Defaults   []Default      // Each symbol's value when inner produces no results (from the OR-fallback ground)
+	Rules      *query.RuleSet // The rule set the call's % argument binds; nil when the call passes no %
 }
 
 func (l *LateralJoin) OutputSymbols() []query.Symbol { return l.Output }
@@ -247,7 +263,7 @@ func (l *LateralJoin) String() string {
 		vars[i] = v.String()
 	}
 	hasDefaults := ""
-	if len(l.DefaultValues) > 0 {
+	if len(l.Defaults) > 0 {
 		hasDefaults = " +defaults"
 	}
 	return fmt.Sprintf("⋈_L(%s)%s", strings.Join(vars, ", "), hasDefaults)
@@ -270,6 +286,17 @@ func (a *Aggregate) String() string {
 	}
 	return fmt.Sprintf("γ(%s)", strings.Join(keys, ", "))
 }
+
+// Derived is a rule invocation: the invoked predicate's derived relation,
+// projected onto the invocation's arguments. A leaf compiled from
+// query.RuleInvocation and decompiled to it unchanged.
+type Derived struct {
+	Invocation *query.RuleInvocation
+	Output     []query.Symbol // The invocation's variable arguments
+}
+
+func (d *Derived) OutputSymbols() []query.Symbol { return d.Output }
+func (d *Derived) String() string                { return d.Invocation.String() }
 
 // Constant injects literal values. Compiled from query.GroundPredicate.
 type Constant struct {

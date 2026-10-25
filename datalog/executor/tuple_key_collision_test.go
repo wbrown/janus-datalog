@@ -132,7 +132,7 @@ func TestTupleKeyMap_DistinguishesAdversarialPairs(t *testing.T) {
 
 // TestTupleKeyMap_BytesAreDistinguishedByContent verifies that []byte values are
 // keyed by content in a TupleKeyMap: equal content hashes equally (so it lands in
-// the same bucket and is found), and different content does not match. hashValue
+// the same bucket and is found), and different content does not match. HashValue
 // has a dedicated []byte case that hashes by content (hashBytes). Without it,
 // []byte fell through to a pointer-address hash, so equal slices landed in
 // DIFFERENT buckets and the ValuesEqual fallback — which only resolves collisions
@@ -141,7 +141,7 @@ func TestTupleKeyMap_DistinguishesAdversarialPairs(t *testing.T) {
 // dropped tuples, only reliably under -race because the bogus address hash happened
 // to collide otherwise).
 //
-// Exercises: tuple_key.go hashValue/TupleKey/TupleKeyMap with []byte values
+// Exercises: datalog.HashValue and tuple_key.go's TupleKey/TupleKeyMap with []byte values
 func TestTupleKeyMap_BytesAreDistinguishedByContent(t *testing.T) {
 	a := []byte{1, 2, 3}
 	bSameContent := []byte{1, 2, 3} // distinct slice, equal content
@@ -232,7 +232,7 @@ func TestNotJoinClause_PipeInValue_E2E(t *testing.T) {
 				query.Variable{Name: datalog.NewSymbol("?tag")},
 			}},
 			&query.NotJoinClause{
-				JoinVars: []query.Symbol{
+				RequiredVars: []query.Symbol{
 					datalog.NewSymbol("?name"),
 					datalog.NewSymbol("?tag"),
 				},
@@ -266,11 +266,15 @@ func TestNotJoinClause_PipeInValue_E2E(t *testing.T) {
 				t.Fatalf("execution failed: %v", err)
 			}
 
-			if result.Size() != 1 {
-				t.Fatalf("expected 1 result (name=x, tag=y|z) for entity b, got %d", result.Size())
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("reading the result: %v", err)
+			}
+			if len(tuples) != 1 {
+				t.Fatalf("expected 1 result (name=x, tag=y|z) for entity b, got %d", len(tuples))
 			}
 
-			tuple := result.Get(0)
+			tuple := tuples[0]
 			name, _ := tuple[0].(string)
 			tag, _ := tuple[1].(string)
 			if name != "x" || tag != "y|z" {

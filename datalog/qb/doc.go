@@ -53,7 +53,7 @@
 //	qb.DB                     // database source
 //	qb.Scalar(v)              // single value
 //	qb.Collection(v)          // iterate values [?v ...]
-//	qb.Tuple(a, b)            // single tuple [[?a ?b]]
+//	qb.Tuple(a, b)            // single tuple [?a ?b]
 //	qb.Relation(a, b)         // multiple tuples [[?a ?b] ...]
 //
 // # Predicates
@@ -99,7 +99,7 @@
 //	    In(qb.DB, qb.Scalar(dept)).
 //	    Where(qb.Pat(e, EmpDept, dept), qb.Pat(e, EmpSalary, salary))
 //
-//	qb.Subquery(innerQ, dept).BindTuple(maxSalary)
+//	qb.Subquery(innerQ, dept).BindRelation(maxSalary)
 //
 // Subqueries have lexical scoping - reuse variable names like ?t across subqueries:
 //

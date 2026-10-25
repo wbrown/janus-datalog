@@ -72,16 +72,24 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 			}
 
 			// Verify results match
-			if resultNo.Size() != resultWith.Size() {
-				t.Errorf("Size mismatch: no_decorr=%d, with_decorr=%d", resultNo.Size(), resultWith.Size())
+			tuplesNo, err := CollectTuples(resultNo, nil)
+			if err != nil {
+				t.Fatalf("No decorrelation failed: %v", err)
+			}
+			tuplesWith, err := CollectTuples(resultWith, nil)
+			if err != nil {
+				t.Fatalf("With decorrelation failed: %v", err)
+			}
+			if len(tuplesNo) != len(tuplesWith) {
+				t.Errorf("Size mismatch: no_decorr=%d, with_decorr=%d", len(tuplesNo), len(tuplesWith))
 			}
 
-			if resultNo.Size() != 100 {
-				t.Errorf("Expected 100 categories, got %d", resultNo.Size())
+			if len(tuplesNo) != 100 {
+				t.Errorf("Expected 100 categories, got %d", len(tuplesNo))
 			}
 
-			t.Logf("WITHOUT decorrelation: %v (%d results)", durNo, resultNo.Size())
-			t.Logf("WITH decorrelation: %v (%d results)", durWith, resultWith.Size())
+			t.Logf("WITHOUT decorrelation: %v (%d results)", durNo, len(tuplesNo))
+			t.Logf("WITH decorrelation: %v (%d results)", durWith, len(tuplesWith))
 
 			speedup := float64(durNo) / float64(durWith)
 			t.Logf("Speedup: %.2fx", speedup)
@@ -155,9 +163,13 @@ func TestDecorrelationAnnotations(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Execution failed: %v", err)
 			}
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("Failed to read the result: %v", err)
+			}
 
-			if result.Size() != 10 {
-				t.Errorf("Expected 10 results, got %d", result.Size())
+			if len(tuples) != 10 {
+				t.Errorf("Expected 10 results, got %d", len(tuples))
 			}
 
 			// Verify decorrelation annotations are present

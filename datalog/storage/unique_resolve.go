@@ -131,7 +131,11 @@ func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute, 
 	if err != nil {
 		return nil, datalog.ElementID{}, false, false, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); err == nil {
+			err = closeErr
+		}
+	}()
 
 	state := newUniqueWalkState()
 	for iter.Next() {
@@ -167,7 +171,7 @@ func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute, 
 //
 // Honors the matcher's temporal mode — entries with Tx > m.txID in as-of
 // mode are excluded.
-func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exceptE Entity, report *scanReport) (datalog.ElementID, error) {
+func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exceptE Entity, report *scanReport) (maxTx datalog.ElementID, resolveErr error) {
 	iter, err := OpenKeyScan(m.reader, report, ScanBound{
 		Index:  AVET,
 		Prefix: []datalog.Value{datalog.InternKeywordFromBytes(aBytes), v},
@@ -175,9 +179,12 @@ func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exce
 	if err != nil {
 		return datalog.ElementID{}, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); resolveErr == nil {
+			resolveErr = closeErr
+		}
+	}()
 
-	var maxTx datalog.ElementID
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {

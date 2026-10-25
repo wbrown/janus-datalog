@@ -120,7 +120,7 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 			[:find ?name ?count
 			 :where [?p :entity/type :type/parent]
 			        [?p :parent/name ?name]
-			        (or-join [?p ?count]
+			        (or-join [[?p] ?count]
 			          [(q [:find ?p (count ?c)
 			               :in $
 			               :where [?c :child/parent ?p]]
@@ -167,27 +167,6 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 				}
 				assert.Equal(t, 3, byName["Alice"])
 				assert.Equal(t, 1, byName["Bob"])
-			})
-
-			// Test 4: Decorrelated subquery with TupleBinding.
-			// TupleBinding [[?a ?b]] binds a single tuple. A decorrelated subquery
-			// returns multiple tuples, so this should use RelationBinding [[?a ?b] ...]
-			// instead. This test documents the current behavior.
-			t.Run("decorrelated_tuple_binding", func(t *testing.T) {
-				results, err := executor.CollectTuples(db.Query(`
-			[:find ?name ?count
-			 :where [?p :entity/type :type/parent]
-			        [?p :parent/name ?name]
-			        [(q [:find ?p (count ?c)
-			             :in $
-			             :where [?c :child/parent ?p]]
-			            $) [[?p ?count]]]]`))
-				if err != nil {
-					t.Logf("TupleBinding with multi-tuple result: %v", err)
-					t.Log("Use RelationBinding [[?p ?count] ...] for multi-tuple subquery results")
-					t.Skip("TupleBinding only handles single-tuple results per Datomic spec")
-				}
-				t.Logf("Tuple binding results: %v", results)
 			})
 		})
 	}

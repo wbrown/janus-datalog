@@ -27,23 +27,36 @@ Expression branches work in union mode — both data patterns and expressions co
     [(identity ?target) ?related])
 ```
 
-When branches reference symbols from the outer query context, the executor uses **correlated union**: each outer tuple evaluates all branches, and results are unioned per tuple.
-
-When branches are independent (no outer symbol references), the executor uses **uncorrelated union**: branches execute independently and results are merged.
+The header decides the route. When a group of the enclosing scope binds a header symbol, the form is a **correlated union**: those groups are its subject, each branch runs once per window of the subject over the window's keys, each subject tuple takes every branch's answers for it, and the result stands in the consumed groups' place. When no group binds a header symbol, the subject is the unit relation and the form is an **uncorrelated union**: each branch runs once, and the union joins the enclosing scope as a new group. `or/complete` reports `semantics` as `correlated-union` or `union` accordingly.
 
 ### or-join
 
-Explicit join variables control which symbols are exposed:
+The header states the form's whole interface. It has two halves:
 
 ```clojure
+(or-join [[?required ...] ?output ...] branch ...)
+(or-join [?output ...] branch ...)
+```
+
+The required run, the nested vector, names the variables the enclosing scope binds before the form runs; every branch reads them bound. The outputs name the variables every branch binds and the form provides to the enclosing scope. A flat header is all outputs. Every other variable inside a branch is that branch's own, whatever reads it, and a name it shares with a variable outside the header unifies with nothing. A union of one branch is that branch over the header.
+
+```clojure
+;; ?e is an output: both branches bind it, and the enclosing scope reads it
 (or-join [?e]
   [?e :user/status "active"]
   [?e :admin/status "enabled"])
+
+;; ?a is required: the enclosing scope binds it, and the first branch reads it
+(or-join [[?a] ?q]
+  [?q ?a ?v]
+  [?q :t/tag :t/none])
 ```
+
+An output some branch does not bind is refused, naming the form, the branch by its position counted from one, and the variable, with the repair of moving the variable into the required run. A variable a branch reads through a predicate, an expression, a subquery input or a rule's required position, which neither the branch nor the header binds, is refused naming the form, the branch by its position counted from one, and the variable, with the repair of binding the variable in the branch or naming it in the header. Both checks run at every boundary, `ParseQuery`, `qb.Build`, `NewRuleSet` and the executor's entry, with the same message; the text boundaries read them with no rule set, under which an invocation provides every variable argument, and `Prepare` under the rule set the query runs with.
 
 ## Fallback Semantics: `(or-default ...)`
 
-A janus-datalog extension for the "data with default" pattern. Branches are tried in order, and the first non-empty result is returned.
+A janus-datalog extension for the "data with default" pattern. Branches are tried in order, and the first branch with a result wins, per tuple of the form's required run.
 
 ```clojure
 ;; Return "Unknown" if no name exists
@@ -51,10 +64,12 @@ A janus-datalog extension for the "data with default" pattern. Branches are trie
             [(ground "Unknown") ?name])
 ```
 
-Evaluation order:
-1. If branch 1 returns results, return immediately (short-circuit)
-2. If branch 1 is empty, try branch 2
-3. Continue until a non-empty result or all branches exhausted
+A headerless `or-default` gets its header from the text, by the rule every headerless form follows. A variable inside the form is shared when it occurs elsewhere in its scope: in another clause of the enclosing list, or in the enclosing query's `:in`, `:find` or `:order-by`. A shared variable every branch binds is an output. Every other shared variable is required. Every other variable is local to the branch that holds it. In the example `?name` is an output, since both branches bind it, and `?e` is required, since the ground does not mention it: the header is `[[?e] ?name]`, and each entity gets its name or the default. An `or-default` whose variables occur nowhere else in its scope is refused naming the form.
+
+Evaluation, per tuple of the required run:
+1. If branch 1 has a result for the tuple, that result is the form's (short-circuit)
+2. If branch 1 has none, try branch 2
+3. Continue until a branch has a result or all branches are exhausted
 
 ### Common Patterns
 
@@ -78,6 +93,8 @@ Evaluation order:
                         $ ?c) [[?count]]]
                     [(ground 0) ?count])]
 ```
+
+Both branches bind `?count`, so it is an output; the subquery reads `?c` and the ground does not mention it, so `?c` is required. The header is `[[?c] ?count]`, and each category gets its count or zero.
 
 **Multiple fallback levels:**
 
@@ -109,16 +126,21 @@ A flat header declares outputs only — the fallback decision is then **global**
   [(ground 100) ?limit])
 ```
 
-or-default is non-monotone — which variables the fallback decision is grouped by changes the *results*, not just the plan — so the correlation keys are declared syntax, never inferred from branch structure or from what happens to be bound at execution. Validation enforces the declaration loudly: at least one output, required and output sets disjoint, every branch binds every output, and any variable a branch consumes without binding must be a declared required var. A per-group filter with no outputs is `or-join`'s job — with nothing to output, fallback-filter and union-filter are the same relation.
+or-default is non-monotone — which variables the fallback decision is grouped by changes the *results*, not just the plan. An `or-default-join` declares the run in its header, and an `or-default` gets it by the inference rule above; neither is read from what happens to be bound at execution. The checks on the written form:
+
+- The shape, checked from the text alone: a non-empty header, at least two branches, and required and output sets disjoint.
+- Every branch binds every output; a branch that does not is refused naming the form, the branch by its position counted from one and the output, with the repair of moving the output into the required run.
+- A variable a branch reads through a predicate, an expression, a subquery input or a rule's required position, which neither the branch nor the header binds, is refused naming the form, the branch by its position counted from one and the variable, with the repair of binding the variable in the branch or naming it in the header.
+- A per-group filter with no outputs is `or-join`'s job — with nothing to output, fallback-filter and union-filter are the same relation.
 
 ## Algebra IR Representation
 
 | Clause | IR Node | Description |
 |--------|---------|-------------|
 | `(or ...)` / `(or-join ...)` | `Union` | Branch evaluation, correlated or not |
-| `(or-default ...)` / `(or-default-join ...)` | `LateralUnion` | Correlated per-tuple evaluation |
-| `(or-default ...)` over a **correlated** subquery + ground | `LateralJoin` carrying `DefaultValues` | |
-| `(or-default ...)` over an **uncorrelated** subquery + ground | `Join{Kind: LeftOuterJoin}` carrying `DefaultValues` | Non-matching outer tuples take the defaults |
+| `(or-default ...)` / `(or-default-join ...)` | `LateralUnion` | Correlated form, run over windows of its subject |
+| `(or-default ...)` over a **correlated** subquery + ground | `LateralJoin` carrying `Defaults` | |
+| `(or-default ...)` over an **uncorrelated** subquery + ground | `Join{Kind: LeftOuterJoin}` carrying `Defaults` | Non-matching outer tuples take the defaults |
 
 A union whose branches contain correlated predicates (NOT, `missing?`) still
 compiles to `Union`. What differs is the branch context: branches compile against

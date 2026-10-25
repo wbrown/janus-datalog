@@ -42,9 +42,9 @@ type EntityLookupMatcher interface {
 	) (value interface{}, found bool, err error)
 }
 
-// AttributeFetchFusable reports whether a same-entity fetch of attr can be
-// fused into a per-tuple LookupAttribute binding instead of a separate
-// pattern match + hash join. Fusion is valid only when the matcher's
+// AttributeFetchFusable reports whether a same-entity fetch of attr on a
+// source can be fused into a per-tuple LookupAttribute binding instead of a
+// separate pattern match + hash join. Fusion is valid only when the source's
 // LookupAttribute returns the single value a matched pattern would, which
 // requires both:
 //   - the attribute is CardinalityOne (CardinalityMany/Vector must expand on
@@ -53,9 +53,27 @@ type EntityLookupMatcher interface {
 //     so a one-value attach would drop superseded datoms).
 //
 // The matcher owns both facts (schema + temporal mode), so the decision lives
-// there rather than being reconstructed by the executor.
+// there rather than being reconstructed by the executor. The source is the
+// symbol the query names it by, $ for the default source; a matcher that is
+// one source answers for itself under any name, and a router answers from
+// the source named, a source without the capability answering false.
 type AttributeFetchFusable interface {
-	CanFuseAttributeFetch(attr datalog.Keyword) bool
+	CanFuseAttributeFetch(source query.Symbol, attr datalog.Keyword) bool
+}
+
+// AttributeVocabulary reports the attributes of a roster that a source's
+// schema does not declare. The matcher owns the schema, so the decision lives
+// there, and a matcher without the capability refuses nothing. The source is
+// the symbol the query names it by, $ for the default source; a matcher that
+// is one source answers for itself under any name, and a router answers from
+// the source named. A source whose RefusesUnknownAttributes is false is never
+// asked about a roster, so none is collected for it. A query's roster, a rule
+// set's, the attributes the inputs bind and a pull pattern's are checked
+// alike. UnknownAttributes returns nil when every attribute is known, and
+// otherwise the error naming each unknown one.
+type AttributeVocabulary interface {
+	RefusesUnknownAttributes(source query.Symbol) bool
+	UnknownAttributes(source query.Symbol, attrs []datalog.Keyword) error
 }
 
 // EntityPrefetcher extends PatternMatcher with batch entity prefetch capability.

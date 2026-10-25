@@ -158,6 +158,10 @@ Entity identities are always exported as L85-encoded SHA1 hashes (20 bytes = 25 
 
 Transaction IDs are preserved during export/import, allowing exact restoration of database state including the transaction history structure.
 
+### Schema
+
+A database's declared attribute definitions are datoms: each declaration's words on an entity named by them, and on each `db.attribute/<ident>` entity a ref to its current declaration (see [SCHEMA.md](SCHEMA.md#schema-as-facts)), so the dump carries them with every other datom. An import ends by reading them: a database opened with no schema resolves a set the dump's writer declared as a set. A database opened with a schema declares it again after the import, and the given schema supersedes the dump's definitions for the idents it names. The import applies the recorded datoms as they are, with no schema validation.
+
 ### Comments and Blank Lines
 
 During import:
@@ -185,7 +189,7 @@ Example with comments:
 
 ### Import
 
-- Batched transactions (5000 datoms per batch)
+- Batched writes (1000 datoms per batch)
 - Uses 1MB line buffer for long values
 - Efficient for large imports
 
@@ -204,15 +208,14 @@ line 100: invalid entity: invalid L85 in #identity: expected 25 characters, got 
 
 The import process validates:
 - EDN syntax correctness
-- Vector format (exactly 4 elements: entity, attribute, value, tx)
+- Vector format (4 to 6 elements: entity, attribute, value, tx, then the op and, for an RGA op, its after-ref)
 - Entity identity format (valid L85, 25 characters)
-- Attribute format (must be a keyword)
-- Transaction ID format (must be an integer)
+- Attribute format (a keyword of at most `datalog.MaxAttributeBytes`, 32 bytes; storage holds an attribute in that fixed width, so a longer one is refused and nothing is stored under its first 32 bytes)
+- Transaction ID format (a `[lamport replica]` vector, or an integer read as the Lamport clock of replica 0)
 
 ## Limitations
 
 - **No incremental export** - Always exports the entire database
-- **No schema export** - Schema definitions are not included (schema is optional and additive)
 - **No compression** - Output is plain text (use external compression if needed)
 
 ## Related Documentation

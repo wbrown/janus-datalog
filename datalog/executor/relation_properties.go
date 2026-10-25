@@ -29,42 +29,30 @@ func (p RelationProperties) clone() RelationProperties {
 	return result
 }
 
-func (p RelationProperties) renameSymbols(from, to []query.Symbol) RelationProperties {
-	if len(from) != len(to) {
-		return RelationProperties{}
-	}
-	rename := func(symbol query.Symbol) (query.Symbol, bool) {
-		if i := query.SymbolIndex(from, symbol); i >= 0 {
-			return to[i], true
+// renameSymbols is the properties under a substitution: each ordering and
+// key symbol the substitution names becomes the symbol standing for it, and
+// every other keeps its name, as it does in the renamed relation.
+func (p RelationProperties) renameSymbols(subst query.Substitution) RelationProperties {
+	rename := func(symbol query.Symbol) query.Symbol {
+		if to, ok := subst.Of(symbol); ok {
+			return to
 		}
-		return nil, false
+		return symbol
 	}
 
 	result := RelationProperties{}
 	for _, clause := range p.Ordering {
-		symbol, ok := rename(clause.Variable)
-		if !ok {
-			break
-		}
 		result.Ordering = append(result.Ordering, query.OrderByClause{
-			Variable:   symbol,
+			Variable:   rename(clause.Variable),
 			Descending: clause.Descending,
 		})
 	}
 	for _, key := range p.Keys {
 		renamed := make([]query.Symbol, len(key))
-		valid := true
 		for i, symbol := range key {
-			replacement, ok := rename(symbol)
-			if !ok {
-				valid = false
-				break
-			}
-			renamed[i] = replacement
+			renamed[i] = rename(symbol)
 		}
-		if valid {
-			result.Keys = append(result.Keys, renamed)
-		}
+		result.Keys = append(result.Keys, renamed)
 	}
 	return result
 }
@@ -196,14 +184,20 @@ func deduplicatedProperties(symbols []query.Symbol) RelationProperties {
 	}
 }
 
+// orProperties derives a form's result properties from the subject's and
+// the header: the subject's ordering survives every form; its keys survive
+// a form that answers at most one tuple per subject tuple, answersAtMostOne,
+// which the form's policy decides, a fallback whose every branch answers at
+// most one, a one-body form whose body does, and a union never, since two
+// branches can answer one subject tuple; and otherwise the result's key is
+// the composite of each subject key and the produced outputs.
 func orProperties(
 	outer RelationProperties,
 	producedSymbols []query.Symbol,
 	overwrittenSymbols []query.Symbol,
 	outputSymbols []query.Symbol,
-	shortCircuit bool,
-	branchesEmitAtMostOne bool,
-) (RelationProperties, bool) {
+	answersAtMostOne bool,
+) RelationProperties {
 	preserved := outer.withoutReboundSymbols(overwrittenSymbols)
 	unaffectedOuterKeys := preserved.Keys
 	preserved.Keys = nil
@@ -211,9 +205,9 @@ func orProperties(
 	result := preserved
 	result.Keys = appendDistinctKeys(result.Keys, deduplicatedProperties(outputSymbols).Keys)
 
-	if shortCircuit && branchesEmitAtMostOne {
+	if answersAtMostOne {
 		result.Keys = appendDistinctKeys(result.Keys, unaffectedOuterKeys)
-		return result, len(unaffectedOuterKeys) == 0
+		return result
 	}
 
 	outputSet := make(map[query.Symbol]bool, len(outputSymbols))
@@ -230,7 +224,7 @@ func orProperties(
 		result.Keys = appendDistinctKeys(result.Keys, [][]query.Symbol{composite})
 	}
 
-	return result, true
+	return result
 }
 
 func expansionProperties(
@@ -238,15 +232,13 @@ func expansionProperties(
 	bindingSymbols []query.Symbol,
 	outputSymbols []query.Symbol,
 ) RelationProperties {
-	result, _ := orProperties(
+	return orProperties(
 		outer,
 		bindingSymbols,
 		bindingSymbols,
 		outputSymbols,
 		false,
-		false,
 	)
-	return result
 }
 
 func joinProperties(

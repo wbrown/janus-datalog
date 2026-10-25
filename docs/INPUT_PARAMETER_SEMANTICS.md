@@ -12,12 +12,14 @@ Input parameters (from `:in` clause) have specific semantics in query planning a
 
 Janus Datalog maintains a clear separation between three different "levels" of symbols:
 
-### 1. Input Parameters (Environment Level)
-- **Declared**: `:in $ ?symbol ?month` clause
+### 1. Scalar and Tuple Inputs (Environment Level)
+- **Declared**: `:in $ ?symbol ?month` clause, or the tuple input `:in $ [?symbol ?month]`
 - **Scope**: Available throughout ALL phases of query execution
 - **Purpose**: Filtering and correlation (like SQL prepared statement parameters)
 - **Location**: In `Phase.Available` but NOT in `Phase.Provides`
 - **Analogy**: Function parameters in scope throughout function body
+
+A collection input, `:in $ [?city ...]`, and a relation input, `:in $ [[?n ?y] ...]`, are not environment. Each binds a relation over its symbols, read from the given relation's own symbols, that the query joins once (`BindQueryInputs`, `datalog/executor/executor_utils.go`). The environment, `Context.Environment` in `datalog/executor/context.go`, is the one-tuple relation `executeRealizedPlan` projects out of that bound group onto the scalar and tuple symbols, each of which `BindQueryInputs` binds from one tuple, refusing a relation of more than one tuple given at its entry. A collection or relation input's symbols are data the result carries, as pattern variables are, and an aggregate in the `:find` is taken over the whole join, grouped by the find's variables: `[:find (count ?e) :in $ [[?c] ...] :where [?e :t/c ?c]]` given two tuples answers one count, and the same query with `?c` in the find answers one count per value (`TestRelationInput_APureAggregateIsOverTheWholeJoin` and `TestRelationInput_GroupKeysNamingTheInputAnswerPerTuple`, `datalog/storage/input_join_test.go`). The derivation is `docs/proposals/RELATION_INPUT_PROOF.md`.
 
 ### 2. Pattern Variables (Computation Level)
 - **Declared**: Implicitly through pattern usage `[?e :attr ?v]`
@@ -228,13 +230,13 @@ scored as a free variable is what produced the Cartesian product.
 ### Clause Readiness
 
 Whether a clause can run yet has one definition, in `datalog/query/clause_ready.go`.
-`inputs` is a separate argument from `available` precisely because an input
-parameter is bound everywhere, not provided by some earlier phase:
+An input parameter is bound everywhere, not provided by some earlier phase, so
+it is among the available symbols from the first pick, and a clause blocks on
+every correlate that is not yet available:
 
 ```go
-func ClauseBlockers(clause Clause, available, inputs map[Symbol]bool, providerCount map[Symbol]int) []Symbol
-func ClauseReady(clause Clause, available, inputs map[Symbol]bool, providerCount map[Symbol]int) bool
-func CountProviders(clauses []Clause) map[Symbol]int
+func ClauseBlockers(clause Clause, available map[Symbol]bool, rules *RuleSet) []Symbol
+func ClauseReady(clause Clause, available map[Symbol]bool, rules *RuleSet) bool
 ```
 
 Both the planner's greedy phasing (`clauseSelectable`, `datalog/planner/clause_utils.go`)

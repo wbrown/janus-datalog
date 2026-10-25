@@ -28,15 +28,16 @@ func TestWarmCacheSingleAttribute(t *testing.T) {
 				Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add some data
+			name := datalog.NewKeyword(":person/name")
 			tx := db.NewTransaction()
 			e1 := datalog.NewIdentity("person1")
 			e2 := datalog.NewIdentity("person2")
-			err = tx.Set(e1, datalog.NewKeyword(":person/name"), "Alice")
+			err = tx.Set(e1, name, "Alice")
 			require.NoError(t, err)
-			err = tx.Set(e2, datalog.NewKeyword(":person/name"), "Bob")
+			err = tx.Set(e2, name, "Bob")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -45,13 +46,13 @@ func TestWarmCacheSingleAttribute(t *testing.T) {
 			db.Cache().Clear()
 
 			// Warm cache
-			err = db.WarmCache([]datalog.Keyword{datalog.NewKeyword(":person/name")})
+			err = db.WarmCache([]datalog.Keyword{name})
 			require.NoError(t, err)
 
 			// Verify entries are cached
 			e1Bytes := Entity(e1.Hash())
 			var a Attribute
-			copy(a[:], ":person/name")
+			copy(a[:], name.String())
 			key1 := CacheKey{E: e1Bytes, A: a}
 
 			e2Bytes := Entity(e2.Hash())
@@ -60,9 +61,9 @@ func TestWarmCacheSingleAttribute(t *testing.T) {
 			// The entries should be populated
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
-			entry1, err1 := db.Cache().GetOrResolve(key1, matcher, nil, nil, DiscardIntake)
+			entry1, err1 := db.Cache().GetOrResolve(key1, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err1)
-			entry2, err2 := db.Cache().GetOrResolve(key2, matcher, nil, nil, DiscardIntake)
+			entry2, err2 := db.Cache().GetOrResolve(key2, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err2)
 
 			require.NotNil(t, entry1)
@@ -84,14 +85,15 @@ func TestWarmCacheMultipleAttributes(t *testing.T) {
 				Attribute(":person/age").Type(schema.TypeLong).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			name, age := datalog.NewKeyword(":person/name"), datalog.NewKeyword(":person/age")
 			tx := db.NewTransaction()
 			e1 := datalog.NewIdentity("person1")
-			err = tx.Set(e1, datalog.NewKeyword(":person/name"), "Alice")
+			err = tx.Set(e1, name, "Alice")
 			require.NoError(t, err)
-			err = tx.Set(e1, datalog.NewKeyword(":person/age"), int64(30))
+			err = tx.Set(e1, age, int64(30))
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
@@ -100,26 +102,23 @@ func TestWarmCacheMultipleAttributes(t *testing.T) {
 			db.Cache().Clear()
 
 			// Warm both attributes
-			err = db.WarmCache([]datalog.Keyword{
-				datalog.NewKeyword(":person/name"),
-				datalog.NewKeyword(":person/age"),
-			})
+			err = db.WarmCache([]datalog.Keyword{name, age})
 			require.NoError(t, err)
 
 			// Verify both are cached
 			eBytes := Entity(e1.Hash())
 
 			var nameAttr Attribute
-			copy(nameAttr[:], ":person/name")
+			copy(nameAttr[:], name.String())
 			var ageAttr Attribute
-			copy(ageAttr[:], ":person/age")
+			copy(ageAttr[:], age.String())
 
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 
-			nameEntry, nameErr := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: nameAttr}, matcher, nil, nil, DiscardIntake)
+			nameEntry, nameErr := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: nameAttr}, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, nameErr)
-			ageEntry, ageErr := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: ageAttr}, matcher, nil, nil, DiscardIntake)
+			ageEntry, ageErr := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: ageAttr}, matcher.GetCardinality(age), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, ageErr)
 
 			require.NotNil(t, nameEntry)
@@ -140,7 +139,7 @@ func TestWarmCacheEmptyAttribute(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Don't add any data - attribute is empty
 
@@ -196,32 +195,33 @@ func TestWarmCacheIdempotent(t *testing.T) {
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add data
+			name := datalog.NewKeyword(":person/name")
 			tx := db.NewTransaction()
 			e1 := datalog.NewIdentity("person1")
-			err = tx.Set(e1, datalog.NewKeyword(":person/name"), "Alice")
+			err = tx.Set(e1, name, "Alice")
 			require.NoError(t, err)
 			_, err = tx.Commit()
 			require.NoError(t, err)
 
 			// Warm cache twice - should be safe
-			err = db.WarmCache([]datalog.Keyword{datalog.NewKeyword(":person/name")})
+			err = db.WarmCache([]datalog.Keyword{name})
 			require.NoError(t, err)
 
-			err = db.WarmCache([]datalog.Keyword{datalog.NewKeyword(":person/name")})
+			err = db.WarmCache([]datalog.Keyword{name})
 			require.NoError(t, err)
 
 			// Verify data is still correct
 			eBytes := Entity(e1.Hash())
 			var a Attribute
-			copy(a[:], ":person/name")
+			copy(a[:], name.String())
 
 			matcher := NewPatternMatcher(db.Store())
 			matcher.SetSchema(s)
 
-			entry, err := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: a}, matcher, nil, nil, DiscardIntake)
+			entry, err := db.Cache().GetOrResolve(CacheKey{E: eBytes, A: a}, matcher.GetCardinality(name), matcher, nil, nil, DiscardIntake)
 			require.NoError(t, err)
 			require.NotNil(t, entry)
 			assert.Equal(t, "Alice", entry.OneValue())

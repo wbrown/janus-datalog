@@ -25,15 +25,6 @@ func TestSortRelation_PropagatesIteratorError(t *testing.T) {
 	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
 }
 
-// TestCombineSubqueryResultsSimple_PropagatesIteratorError: unioning subquery
-// results must not drop an error from one branch and return the others as success.
-func TestCombineSubqueryResultsSimple_PropagatesIteratorError(t *testing.T) {
-	clean := NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}})
-	failing := newFailingStream(0, Tuple{int64(2)})
-	rel := combineSubqueryResultsSimple([]Relation{clean, failing})
-	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
-}
-
 func TestAggregationPropagatesIteratorAndCloseErrors(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	aggregate := []query.FindAggregate{{Function: datalog.SymCount, Arg: x}}

@@ -5,8 +5,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// analyzeClausesForExplain analyzes clauses and populates explain fields in RealizedPhase
-func analyzeClausesForExplain(phase *RealizedPhase, clauses []query.Clause, available map[query.Symbol]bool, stats *Statistics) {
+// analyzeClausesForExplain analyzes clauses and populates explain fields in
+// RealizedPhase. available is what the clauses before each one bind, read
+// under the rule set the query runs with.
+func analyzeClausesForExplain(phase *RealizedPhase, clauses []query.Clause, available map[query.Symbol]bool, rules *query.RuleSet, stats *Statistics) {
 	for _, clause := range clauses {
 		switch c := clause.(type) {
 		case *query.DataPattern:
@@ -21,15 +23,8 @@ func analyzeClausesForExplain(phase *RealizedPhase, clauses []query.Clause, avai
 			plan := analyzeExprForExplain(c, available)
 			phase.Expressions = append(phase.Expressions, plan)
 			// Add expression output to available
-			switch binding := c.Binding.(type) {
-			case query.Symbol:
-				if binding != nil {
-					available[binding] = true
-				}
-			case query.TupleBinding:
-				for _, sym := range binding.Variables {
-					available[sym] = true
-				}
+			for _, sym := range c.BoundVariables() {
+				available[sym] = true
 			}
 
 		case query.Predicate:
@@ -41,6 +36,25 @@ func analyzeClausesForExplain(phase *RealizedPhase, clauses []query.Clause, avai
 			phase.Subqueries = append(phase.Subqueries, plan)
 			// Add subquery outputs to available
 			for _, sym := range c.Binding.BoundVariables() {
+				available[sym] = true
+			}
+
+		case *query.RuleInvocation:
+			var bound []query.Symbol
+			for _, sym := range c.Variables() {
+				if available[sym] {
+					bound = append(bound, sym)
+				}
+			}
+			phase.Invocations = append(phase.Invocations, InvocationPlan{Invocation: c, Bound: bound})
+			for _, sym := range c.Variables() {
+				available[sym] = true
+			}
+
+		default:
+			// A not, not-join, or, or-join, or-default or or-default-join
+			// binds what it provides for the clauses after it.
+			for _, sym := range query.ScopeOf(clause, rules).Provides {
 				available[sym] = true
 			}
 		}
@@ -211,16 +225,8 @@ func scorePatternSelectivity(pattern *query.DataPattern, resolved map[query.Symb
 // analyzeExprForExplain creates an ExpressionPlan from an Expression
 func analyzeExprForExplain(expr *query.Expression, available map[query.Symbol]bool) ExpressionPlan {
 	inputs := extractExprInputs(expr)
-	// Check if this is an equality check (no binding)
-	var isEquality bool
-	switch b := expr.Binding.(type) {
-	case query.Symbol:
-		isEquality = b == nil
-	case query.TupleBinding:
-		isEquality = len(b.Variables) == 0
-	default:
-		isEquality = expr.Binding == nil
-	}
+	// An expression binding nothing is an equality check
+	isEquality := len(expr.BoundVariables()) == 0
 	return ExpressionPlan{
 		Expression: expr,
 		Inputs:     inputs,

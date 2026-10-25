@@ -83,8 +83,28 @@ func InsertJoinProjects(root *Node, terminal []query.Symbol) (*Node, error) {
 				}
 				return symbols
 			}
-			project := func(child *Node, symbols []query.Symbol) *Node {
-				if len(symbols) == 0 || len(symbols) == len(child.Symbols()) {
+			// Decompiled, a child's projection onto exactly the live symbols
+			// beside a partner carrying nothing beyond the join symbols is a
+			// subquery over the child alone, which planned again is this join
+			// again.
+			joinsOwn := func(partner *Node, symbols []query.Symbol) bool {
+				for _, symbol := range partner.Symbols() {
+					if !query.ContainsSymbol(data.JoinSymbols, symbol) {
+						return false
+					}
+				}
+				if len(symbols) != len(live) {
+					return false
+				}
+				for _, symbol := range live {
+					if !query.ContainsSymbol(symbols, symbol) {
+						return false
+					}
+				}
+				return true
+			}
+			project := func(child, partner *Node, symbols []query.Symbol) *Node {
+				if len(symbols) == 0 || len(symbols) == len(child.Symbols()) || joinsOwn(partner, symbols) {
 					return child
 				}
 				return &Node{
@@ -108,8 +128,8 @@ func InsertJoinProjects(root *Node, terminal []query.Symbol) (*Node, error) {
 				Op:   node.Op,
 				Data: node.Data,
 				Children: []*Node{
-					project(left, leftNeeded),
-					project(right, rightNeeded),
+					project(left, node.Children[1], leftNeeded),
+					project(right, node.Children[0], rightNeeded),
 				},
 			}, nil
 

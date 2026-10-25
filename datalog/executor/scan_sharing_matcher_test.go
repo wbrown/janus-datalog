@@ -316,6 +316,41 @@ func TestScanSharingMatcherPreservesAndRemapsProperties(t *testing.T) {
 	}, hit.Properties())
 }
 
+// A matcher without a vocabulary refuses nothing under the wrappers the
+// execution puts around it. A subquery whose input binds a pattern's attribute
+// position asks the executor's matcher, wrapped for scan sharing and for
+// annotation, before it runs; over a memory matcher, which answers no
+// vocabulary question, the subquery runs and reads the datoms the attribute
+// carries.
+func TestScanSharingMatcherOverAMatcherWithoutAVocabularyRefusesNothing(t *testing.T) {
+	name := datalog.NewKeyword(":t/name")
+	datoms := []datalog.Datom{
+		{E: datalog.NewIdentity("e1"), A: name, V: "alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("e2"), A: name, V: "bob", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+	}
+	const text = `[:find ?v :in $ ?a :where [(q [:find ?v :in $ ?attr :where [?e ?attr ?v]] $ ?a) [[?v] ...]]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			opts := mode.plannerOptions()
+			opts.EnableScanSharing = true
+			opts.Handler = func(annotations.Event) {}
+			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(datoms), nil, opts)
+			q := mustParse(t, text)
+			inputs, err := createInputRelationsFromValuesWithOptions(q, []interface{}{datalog.SymDollar, name}, exec.options)
+			require.NoError(t, err)
+			rel, err := exec.ExecuteWithRelations(NewContext(), q, inputs)
+			require.NoError(t, err, "a subquery over a matcher without a vocabulary runs under the wrappers")
+			var tuples []Tuple
+			require.NoError(t, collectTuplesInto(&tuples, rel))
+			var values []string
+			for _, tuple := range tuples {
+				values = append(values, tuple[0].(string))
+			}
+			require.ElementsMatch(t, []string{"alice", "bob"}, values, "the subquery read the datoms the bound attribute carries")
+		})
+	}
+}
+
 func TestScanSharingMatcherConcurrentSameFingerprintUsesOneScan(t *testing.T) {
 	inner := &countingMatcher{inner: &fixedMatcher{
 		tuples:  []Tuple{{"e1", int64(1)}, {"e2", int64(2)}, {"e3", int64(3)}},

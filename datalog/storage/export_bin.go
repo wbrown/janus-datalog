@@ -285,7 +285,11 @@ func (d *Database) ImportBinary(r io.ReadSeeker, opts ...BinaryImportOptions) er
 	if !maxElementID.IsZero() {
 		d.clock.Restore(maxElementID)
 	}
-	return nil
+	// The dump carried its writer's definitions. The schema the database runs
+	// with is composed from them, under a given schema if one was declared,
+	// whose facts take ElementIDs past the restored clock and so supersede the
+	// imported ones for the idents it names.
+	return d.installSchema(true)
 }
 
 func writeBinaryHeader(w io.Writer, softBudget int, indexOffset uint64) error {
@@ -505,8 +509,8 @@ func encodeBinaryDatom(d *datalog.Datom) ([]byte, error) {
 	if d.A == nil {
 		return nil, errors.New("binary export: nil attribute")
 	}
-	if len(d.A.String()) > datalog.MaxAttributeBytes {
-		return nil, fmt.Errorf("binary export: attribute %q exceeds %d bytes", d.A.String(), datalog.MaxAttributeBytes)
+	if err := datalog.ValidateAttributeWidth(d.A); err != nil {
+		return nil, fmt.Errorf("binary export: %w", err)
 	}
 
 	vBytes := datalog.ValueBytes(d.V)

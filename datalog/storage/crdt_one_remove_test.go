@@ -39,7 +39,7 @@ func createCardinalityOneDB(t *testing.T, mode optimizerMode) *Database {
 		ValueType:   schema.TypeString,
 		Cardinality: schema.CardinalityOne,
 	})
-	db.SetSchema(s)
+	require.NoError(t, db.SetSchema(s))
 	return db
 }
 

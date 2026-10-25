@@ -1,7 +1,6 @@
 package planner
 
 import (
-	"fmt"
 	"sort"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -15,8 +14,10 @@ type ClausePhase struct {
 }
 
 // createPhasesGreedy groups clauses into phases using a greedy algorithm
-// This operates on the optimized clause list and phases it ONCE
-func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inputSymbols map[query.Symbol]bool) ([]ClausePhase, error) {
+// This operates on the optimized clause list and phases it ONCE. The
+// bindings are what the caller holds when it asks for the plan; the rule set
+// among them declares an invocation's scope.
+func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inputSymbols map[query.Symbol]bool, bindings query.Bindings) ([]ClausePhase, error) {
 	if len(clauses) == 0 {
 		return nil, nil
 	}
@@ -27,52 +28,21 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 		available[sym] = true
 	}
 
-	// How many clauses can bind each symbol — see query.CountProviders and
-	// query.ClauseReady for the self-provider subtraction this feeds.
-	providerCount := query.CountProviders(clauses)
-
-	// A NOT body must unify with the enclosing query through at least one
-	// variable the query can bind — by input or by some clause. With zero
-	// unifiable variables the anti-join has no keys and the clause's
-	// quantification would silently turn global; reject here, before any
-	// execution, naming the clause (Datomic's insufficient-binding rule).
-	for _, clause := range clauses {
-		nc, ok := clause.(*query.NotClause)
-		if !ok {
-			continue
-		}
-		unifiable := false
-		for _, sym := range query.FreeVariables(nc.Clauses) {
-			if sym.IsSource() {
-				continue
-			}
-			if available[sym] || providerCount[sym] > 0 {
-				unifiable = true
-				break
-			}
-		}
-		if !unifiable {
-			return nil, fmt.Errorf(
-				"NOT clause %s shares no variable the enclosing query can bind; a NOT body must unify with the enclosing query through at least one variable",
-				nc,
-			)
-		}
-	}
-
 	var phases []ClausePhase
 	remaining := clauses
 
 	// Keep creating phases until all clauses are assigned
 	for len(remaining) > 0 {
-		phase, newRemaining, err := selectPhaseClauses(remaining, available, findSymbols, inputSymbols, providerCount)
+		phase, newRemaining, err := selectPhaseClauses(remaining, available, findSymbols, bindings)
 		if err != nil {
 			return nil, err
 		}
 
 		if len(phase.Clauses) == 0 {
-			// No progress - we have clauses that can't execute with available symbols
-			// This indicates a problem with the query
-			return nil, fmt.Errorf("cannot create phase: %d clauses remaining but none can execute with available symbols", len(remaining))
+			// No clause can execute with the symbols available: the refusal
+			// names each remaining clause with the variables it waits on and
+			// says of each whether no input and no clause binds it.
+			return nil, query.NewNoOrderError(remaining, clauses, available, inputSymbols, bindings.Rules)
 		}
 
 		// Add symbols this phase provides to available set
@@ -88,7 +58,7 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 }
 
 // selectPhaseClauses greedily selects clauses for the next phase
-func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]bool, findSymbols []query.Symbol, inputs map[query.Symbol]bool, providerCount map[query.Symbol]int) (ClausePhase, []query.Clause, error) {
+func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]bool, findSymbols []query.Symbol, bindings query.Bindings) (ClausePhase, []query.Clause, error) {
 	var selectedClauses []query.Clause
 	var providedSymbols []query.Symbol
 	providedSet := make(map[query.Symbol]bool)
@@ -99,11 +69,17 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 
 	// Track which clauses we've selected
 	selected := make(map[int]bool)
+	sel := selection{
+		remaining: remaining,
+		selected:  selected,
+		available: available,
+		rules:     bindings.Rules,
+	}
 
 	// Greedy selection: keep selecting best clause until no more can execute
 	for {
 		bestIdx := -1
-		bestScore := -1000
+		bestRank, bestScore := -1, -1000
 
 		// Find the best clause that can execute
 		for i, clause := range remaining {
@@ -117,13 +93,20 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 			// providers of their binding variables), and readiness. The
 			// subquery gate consumes the same predicate, so it can never
 			// wait on a clause this loop would skip.
-			if !clauseSelectable(clause, available, inputs, providerCount, remaining, selected) {
+			if !sel.clauseSelectable(clause) {
 				continue
 			}
 
-			score := scoreClause(clause, available)
-			if score > bestScore {
-				bestScore = score
+			// A clause scanning a whole extent ranks below every other
+			// clause, and the score decides within a rank, the first in
+			// list order on a tie (REWRITE_ORDER_PROOF.md §6).
+			rank := 1
+			if scansAWholeExtent(clause, available, bindings.Rules) {
+				rank = 0
+			}
+			score := scoreClause(clause, available, bindings)
+			if rank > bestRank || (rank == bestRank && score > bestScore) {
+				bestRank, bestScore = rank, score
 				bestIdx = i
 			}
 		}
@@ -139,7 +122,7 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 		selectedClauses = append(selectedClauses, clause)
 
 		// Add symbols this clause provides to our local available set and tracking
-		for _, sym := range query.ScopeOf(clause).Provides {
+		for _, sym := range query.ScopeOf(clause, bindings.Rules).Provides {
 			if !providedSet[sym] {
 				providedSymbols = append(providedSymbols, sym)
 				providedSet[sym] = true
@@ -181,7 +164,7 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 }
 
 // computeKeepSymbols determines which symbols to pass to the next phase
-func computeKeepSymbols(currentPhase ClausePhase, remainingClauses []query.Clause, findSymbols []query.Symbol) []query.Symbol {
+func computeKeepSymbols(currentPhase ClausePhase, remainingClauses []query.Clause, findSymbols []query.Symbol, rules *query.RuleSet) []query.Symbol {
 	needed := make(map[query.Symbol]bool)
 
 	// Symbols needed by find clause
@@ -191,7 +174,7 @@ func computeKeepSymbols(currentPhase ClausePhase, remainingClauses []query.Claus
 
 	// Symbols needed by remaining clauses
 	for _, clause := range remainingClauses {
-		for _, sym := range query.ScopeOf(clause).Correlates {
+		for _, sym := range query.ScopeOf(clause, rules).Correlates {
 			needed[sym] = true
 		}
 	}

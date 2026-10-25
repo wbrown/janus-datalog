@@ -7,11 +7,15 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/codec"
 )
 
-// FormatValueEDN formats a Go value as a parseable EDN string.
-// This is the canonical way to render values in query String() methods
-// so that the output round-trips through the parser.
+// FormatValueEDN renders a value in the text the parser reads back as the
+// same value, the one renderer of values in a query's text: a float's
+// mantissa always carries a point, so a whole-valued float parses back as a
+// float and never as an integer; a string is quoted at any depth; and every
+// value VectorElements reads as a vector, a typed slice included, renders
+// element by element through this function.
 func FormatValueEDN(v interface{}) string {
 	switch val := v.(type) {
 	case datalog.Keyword:
@@ -44,7 +48,15 @@ func FormatValueEDN(v interface{}) string {
 	case int:
 		return strconv.Itoa(val)
 	case float64:
-		return strconv.FormatFloat(val, 'g', -1, 64)
+		text := strconv.FormatFloat(val, 'g', -1, 64)
+		if !strings.Contains(text, ".") {
+			if exponent := strings.IndexAny(text, "eE"); exponent >= 0 {
+				text = text[:exponent] + ".0" + text[exponent:]
+			} else {
+				text += ".0"
+			}
+		}
+		return text
 	case bool:
 		if val {
 			return "true"
@@ -53,10 +65,21 @@ func FormatValueEDN(v interface{}) string {
 	case time.Time:
 		return `#inst "` + val.UTC().Format(time.RFC3339Nano) + `"`
 	case []byte:
-		return fmt.Sprintf("#bytes \"%x\"", val)
-	default:
-		return fmt.Sprintf("%v", v)
+		return `#bytes "` + codec.EncodeL85(val) + `"`
 	}
+	if elements, ok := VectorElements(v); ok {
+		var sb strings.Builder
+		sb.WriteRune('[')
+		for i, element := range elements {
+			if i > 0 {
+				sb.WriteRune(' ')
+			}
+			sb.WriteString(FormatValueEDN(element))
+		}
+		sb.WriteRune(']')
+		return sb.String()
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 // Tuple represents a tuple of values in a relation
@@ -108,17 +131,7 @@ type VectorConstant struct {
 
 func (v VectorConstant) IsVariable() bool { return false }
 func (v VectorConstant) IsBlank() bool    { return false }
-func (v VectorConstant) String() string {
-	result := "["
-	for i, val := range v.Values {
-		if i > 0 {
-			result += " "
-		}
-		result += FormatValueEDN(val)
-	}
-	result += "]"
-	return result
-}
+func (v VectorConstant) String() string   { return FormatValueEDN(v.Values) }
 
 // Pattern represents a single pattern in a where clause
 type Pattern interface {
@@ -152,29 +165,29 @@ type BindingForm interface {
 	BoundVariables() []Symbol
 }
 
-// TupleBinding binds a single tuple: [[?a ?b]]
+// TupleBinding is the tuple form, Datomic's bind-tuple, [?a ?b]: an
+// expression's destructuring of its function's one tuple, one variable per
+// element. It is no subquery binding and no BindingForm; the relation form
+// over a function's collection of tuples is RelationBinding.
 type TupleBinding struct {
 	Variables []Symbol
 }
 
-func (t TupleBinding) isBindingForm() {}
-func (t TupleBinding) BoundVariables() []Symbol {
-	return t.Variables
-}
 func (t TupleBinding) String() string {
-	result := "[["
+	result := "["
 	for i, v := range t.Variables {
 		if i > 0 {
 			result += " "
 		}
 		result += v.String()
 	}
-	result += "]]"
+	result += "]"
 	return result
 }
 
-// CollectionBinding binds a single symbol from all tuples: [?coll ...]
-// This collects all values from a single-symbol result into a collection.
+// CollectionBinding is the collection spelling, [?a ...]: it names the one
+// output of an inner :find of one element, and the result enters the scope
+// as the relation over it.
 type CollectionBinding struct {
 	Variable Symbol
 }
@@ -187,8 +200,9 @@ func (c CollectionBinding) String() string {
 	return "[" + c.Variable.String() + " ...]"
 }
 
-// ScalarBinding binds a single value to a single variable: ?var
-// Expects exactly one tuple with one symbol. Used with scalar find spec (.:find ... .)
+// ScalarBinding is the scalar spelling, ?a: it names the one output of an
+// inner :find of one element, and the result enters the scope as the
+// relation over it.
 type ScalarBinding struct {
 	Variable Symbol
 }
@@ -201,7 +215,11 @@ func (s ScalarBinding) String() string {
 	return s.Variable.String()
 }
 
-// RelationBinding binds as relation: [[?a ?b] ...]
+// RelationBinding is the relation binding, Datomic's bind-rel: it names the
+// inner query's outputs in the enclosing scope, one per element of the inner
+// :find, and the result enters the scope as the relation over them. It is
+// read from the spelling [[?a ?b]] and from janus's synonym [[?a ?b] ...],
+// and renders as [[?a ?b] ...], whose trailing ... says a set of tuples.
 type RelationBinding struct {
 	Variables []Symbol
 }
@@ -358,6 +376,30 @@ func (q *Query) SingleDataPattern() (*DataPattern, error) {
 	return pattern, nil
 }
 
+// WithWhere is the query derived over where: the same find, inputs,
+// ordering, limit and scalar flag, built from the parsed parts, since a
+// Query is never copied by value. The query it is derived from is unchanged.
+func (q *Query) WithWhere(where []Clause) *Query {
+	return &Query{
+		Find:         q.Find,
+		In:           q.In,
+		Where:        where,
+		OrderBy:      q.OrderBy,
+		Limit:        q.Limit,
+		ScalarReturn: q.ScalarReturn,
+	}
+}
+
+// Aggregates reports whether the query's find holds an aggregate.
+func (q *Query) Aggregates() bool {
+	for _, elem := range q.Find {
+		if elem.IsAggregate() {
+			return true
+		}
+	}
+	return false
+}
+
 // PatternQuery wraps a DataPattern as the minimal Datalog query fragment
 // accepted by PatternMatcher.
 func PatternQuery(pattern *DataPattern) *Query {
@@ -396,25 +438,29 @@ type CollectionInput struct {
 func (c CollectionInput) isInputSpec()   {}
 func (c CollectionInput) String() string { return "[" + c.Symbol.String() + " ...]" }
 
-// TupleInput represents a tuple input [[?x ?y]]
+// TupleInput is the tuple input, Datomic's bind-tuple, [?x ?y]: one tuple
+// over its symbols.
 type TupleInput struct {
 	Symbols []Symbol
 }
 
 func (t TupleInput) isInputSpec() {}
 func (t TupleInput) String() string {
-	result := "[["
+	result := "["
 	for i, sym := range t.Symbols {
 		if i > 0 {
 			result += " "
 		}
 		result += sym.String()
 	}
-	result += "]]"
+	result += "]"
 	return result
 }
 
-// RelationInput represents a relation input [[?x ?y] ...]
+// RelationInput is the relation input, Datomic's bind-rel, [[?x ?y]]: a set
+// of tuples over its symbols. It is read from that spelling and from janus's
+// synonym [[?x ?y] ...], and renders as [[?x ?y] ...], whose trailing ...
+// says a set of tuples where [[?x ?y]] alone reads as one.
 type RelationInput struct {
 	Symbols []Symbol
 }
@@ -473,18 +519,20 @@ func (f FindAggregate) IsAggregate() bool {
 	return true
 }
 
-// String returns a string representation of the query
-func (q Query) String() string {
-	// Import cycle prevents using parser.FormatQuery directly
-	// So we implement a simplified version here that matches the parser's format
+// String renders the query in the text the parser reads. A query's text is
+// its own to render, and every phase the planner emits parses back to itself.
+func (q *Query) String() string {
 	return q.formatWithIndent("")
 }
 
 // formatWithIndent formats the query with proper indentation
-func (q Query) formatWithIndent(indent string) string {
+func (q *Query) formatWithIndent(indent string) string {
 	result := "[:find"
 	for _, elem := range q.Find {
 		result += " " + elem.String()
+	}
+	if q.ScalarReturn {
+		result += " ."
 	}
 
 	// Add :in clause if present

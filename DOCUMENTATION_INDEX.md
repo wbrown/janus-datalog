@@ -26,12 +26,13 @@ Configuration, semantics, and proofs in `docs/reference/`:
 - **[KEY_ENCODING_AND_CRDT.md](docs/reference/KEY_ENCODING_AND_CRDT.md)** - Key layout, bitwise-NOT Tx, the eight indices, LZ77+FSE compression, Tier-3 blob store
 - **[INDEX_SELECTION_PROOF.md](docs/reference/INDEX_SELECTION_PROOF.md)** - Proof of CRDT-correct index selection by binding pattern
 - **[OP_POSITION_PROOF.md](docs/reference/OP_POSITION_PROOF.md)** - Why the Op byte goes last (key-decoding correctness)
-- **[SCHEMA.md](docs/reference/SCHEMA.md)** - Schema support: types, cardinality, uniqueness, Pull API integration
+- **[SCHEMA.md](docs/reference/SCHEMA.md)** - Schema support: types, cardinality, uniqueness, Pull API integration, definitions stored as facts, the opt-in unknown-attribute refusal
 - **[EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md)** - Database export/import to EDN format for backup and migration
 - **[BINARY_EXPORT.md](docs/reference/BINARY_EXPORT.md)** - Compressed seekable JDZL binary dump (`-export-bin` / `-import-bin`)
 
 **Query system:**
 - **[PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Complete planner options reference with performance guidance
+- **[RULES.md](docs/reference/RULES.md)** - Rules: the `%` input, recursion to a fixpoint, stratified negation, the iteration and tuple bounds, cancellation through `WithContext`
 - **[QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md)** - Type-safe Go query builder (qb package)
 - **[QUERY_INTO.md](docs/reference/QUERY_INTO.md)** - Typed query results into Go structs
 - **[REFLECT.md](docs/reference/REFLECT.md)** - Struct ↔ datom reflection API

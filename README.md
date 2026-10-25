@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/wbrown/janus-datalog)](https://goreportcard.com/report/github.com/wbrown/janus-datalog)
 
-*What if you never wrote a JOIN again, could time-travel through your data, and deployed it all as a single binary?*
+*What if you never wrote a JOIN or a recursive CTE again, could time-travel through your data, and deployed it all as a single binary?*
 
 ```clojure
 [:find ?name ?friend-name
@@ -13,6 +13,13 @@
 ```
 
 No JOIN keyword. No ON clauses. Relationships follow naturally through shared variables.
+
+```clojure
+[[(connected ?a ?b) [?a :user/friend ?b]]
+ [(connected ?a ?c) [?a :user/friend ?b] (connected ?b ?c)]]
+```
+
+Friends of friends, to any depth, is two rules. No `WITH RECURSIVE`, no stored procedure, no loop in the application. The engine iterates the rules to a fixpoint and, when you ask about one person, derives only what that person reaches.
 
 ## Why Janus?
 
@@ -26,7 +33,7 @@ Most databases make you choose:
 
 **Janus gives you all five:**
 
-- **Datomic-style queries**: Joins, aggregations, subqueries, time-travel, history
+- **Datomic-style queries**: Joins, aggregations, subqueries, recursive rules, time-travel, history
 - **Single Go binary**: No JVM, no external dependencies, just `go get`
 - **No surprises**: Greedy planning without statistics, explicit error handling, predictable performance
 - **CRDT storage**: Automatic conflict resolution, multi-replica ready, history is inherent
@@ -93,7 +100,7 @@ results, _ := d.Query(q)
 [["Alice" 30]]
 ```
 
-That's it. One import, one `Open()` call, one `Query()`. No schema required. No connection pools. No query tuning. Typos caught at compile time.
+That's it. One import, one `Open()` call, one `Query()`. No schema required. No connection pools. No query tuning. Typos caught at compile time here, or refused at run time by a database opened with `WithRefuseUnknownAttributes` and a schema.
 
 ## Query Builder vs EDN Strings
 
@@ -126,7 +133,7 @@ results, _ := d.Query(q)
 ```
 
 **Why use it:**
-- Typos in `":person/naem"` silently return empty results; `PersonName` catches typos at compile time
+- A typo like `":person/naem"` returns an empty result, or an error on a database opened with `WithRefuseUnknownAttributes`; `PersonName` catches it at compile time
 - IDE autocomplete shows available attributes
 - Refactoring is safe with find-replace
 - Same `*Var` in multiple patterns = join (no string matching)
@@ -155,7 +162,7 @@ See [docs/reference/QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md) for compl
 
 ## Running Examples
 
-The `examples/` directory contains 14 working examples covering the full API. Run from the repository root:
+The `examples/` directory contains 15 working examples covering the full API. Run from the repository root:
 
 ```bash
 # Start here
@@ -263,16 +270,7 @@ Available aggregations: `sum`, `count`, `avg`, `min`, `max`
 
 ### Time Travel
 
-Every fact is timestamped. Query historical state:
-
-```go
-[:find ?price
- :in $ ?as-of
- :where [?stock :stock/price ?price]
- :as-of ?as-of]
-```
-
-Or extract time components:
+Every fact is timestamped. Historical state is read through a database handle. `d.AsOf(elementID)` reads the state as of a commit. `d.History()` reads every datom. Both are shown under History Queries below. A query extracts time components:
 
 ```go
 [:find ?stock (max ?price)
@@ -326,17 +324,76 @@ asOf.Query(`[:find ?name :where [_ :user/name ?name]]`)
 When you need scoped aggregations:
 
 ```go
-[:find ?date ?symbol ?daily-max
+[:find ?symbol ?date ?daily-max
  :where [?s :symbol/ticker ?symbol]
+        [?b :bar/symbol ?s]
+        [?b :bar/date ?date]
         [(q [:find (max ?high)
              :in $ ?sym ?d
              :where [?bar :bar/symbol ?sym]
                     [?bar :bar/date ?d]
                     [?bar :bar/high ?high]]
-            ?s ?date) [[?daily-max]]]]
+            $ ?s ?date) [[?daily-max]]]]
 ```
 
-The `q` function runs a sub-query with its own `:find` and `:where` clauses. Results bind to the outer query.
+The `q` function runs a sub-query with its own `:find` and `:where` clauses. The call passes `$` and the inputs the inner `:in` declares, and the results join the outer query under the binding.
+
+### Rules and Recursion
+
+A rule set declares predicates. Pass it as the `%` input and invoke a predicate as a clause. A rule that invokes itself is a transitive closure:
+
+```clojure
+;; connected: friends, friends of friends, to any depth
+[[(connected ?a ?b) [?a :user/friend ?b]]
+ [(connected ?a ?c) [?a :user/friend ?b] (connected ?b ?c)]]
+```
+
+```clojure
+[:find ?name
+ :in $ % ?alice
+ :where (connected ?alice ?u)
+        [?u :user/name ?name]]
+```
+
+```go
+rules, _ := parser.ParseRules(connectedRules)
+results, _ := d.Query(query, rules, alice)
+```
+
+Each recursive predicate evaluates to a fixpoint, semi-naively: an iteration runs the rules over the tuples the one before it added, and the closure is complete when an iteration adds nothing. An invocation with a bound argument, `?alice` here, is rewritten by magic sets, so it derives what that binding reaches and not the whole graph.
+
+Negation stratifies. A predicate that negates another is evaluated after the other is complete:
+
+```clojure
+[(isolated ?u) [?u :user/name _] (not (connected _ ?u))]
+```
+
+A cycle through negation is refused when the rule set is built, as are an unsafe rule, an arity mismatch and an unknown predicate, each as a typed error naming its parts.
+
+The query builder has the same forms:
+
+```go
+UserFriend := qb.Kw(":user/friend")
+
+a, b, c := qb.NewVar("a"), qb.NewVar("b"), qb.NewVar("c")
+connected := qb.MustRuleSet(
+    qb.DefineRule("connected", a, b).Where(qb.Pat(a, UserFriend, b)),
+    qb.DefineRule("connected", a, c).Where(qb.Pat(a, UserFriend, b), qb.Rule("connected", b, c)),
+)
+
+start, u, name := qb.NewVar("start"), qb.NewVar("u"), qb.NewVar("name")
+q := qb.Query().
+    Find(name).
+    In(qb.DB, qb.Rules, qb.Scalar(start)).
+    Where(qb.Rule("connected", start, u), qb.Pat(u, UserName, name)).
+    MustBuild()
+
+results, _ := d.Query(q, connected, alice)
+```
+
+An evaluation is bounded by `MaxRuleIterations` and `MaxDerivedTuples`, both opt-in, and a query's context cancels a fixpoint at its next iteration. Every iteration reads the one snapshot the query reads.
+
+See [docs/reference/RULES.md](docs/reference/RULES.md) for required-binding heads, the magic-set rewrite, rules inside `not`, `or` and subqueries, the error types, and the events an annotation handler sees.
 
 ### Multi-Source Queries
 
@@ -579,19 +636,21 @@ See [docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md) for complete do
 
 ## What Makes Janus Different
 
-### Pure Relational Algebra
+### Recursive Rules on a Relational-Algebra Core
 
-Most Datalog engines use semi-naive evaluation or magic sets transformation. Janus uses **pure relational algebra** – just projection (π), selection (σ), and joins (⋈).
+Recursion is part of the query language. A rule set, passed as `%` in Datomic's syntax, declares predicates a query invokes as clauses, and a rule that invokes itself is a closure. What the engine does with one:
 
-This means:
-- Simpler implementation (10× less code)
-- Easier to understand and debug
-- Proven performance characteristics
-- No specialized evaluation strategies
+- **A fixpoint, semi-naively.** Each recursive stratum iterates until an iteration adds nothing, and each iteration runs the rules over the tuples the one before it added, never over the whole relation again.
+- **Magic sets.** An invocation with a bound argument rewrites the rule set for its binding pattern, so asking what one node reaches derives that node's reach and nothing else.
+- **Stratified negation.** A rule may negate a predicate from an earlier stratum. A cycle through negation is refused when the set is built, as are an unsafe rule, an arity mismatch and an unknown predicate.
+- **Required-binding heads.** `[(succ [?n] ?m) [(+ ?n 1) ?m]]` computes from arguments the caller binds, as Datomic's form does.
+- **Rules wherever a pattern stands.** Inside `not`, `not-join`, `or`, `or-join`, `or-default` and subqueries. An invocation inside a form is evaluated once per execution of the form and continued across the windows of its subject, so each tuple is derived once however the subject streams.
+- **Bounded and cancellable.** `MaxRuleIterations` and `MaxDerivedTuples` bound an evaluation, and a query's context stops a fixpoint at its next iteration. Every iteration reads the query's one snapshot.
+- **Planned once.** Every rule body a query can run is planned at `PlanQuery`, as a query of its own under the same planner options, and the plan carries each invocation's evaluation. `Explain` refuses a body `Query` would refuse, and executing an explained query plans no body.
 
-Every query compiles to a sequence of relational operations. No magic, just algebra.
+Underneath, a query with no rule invocation compiles to projection (π), selection (σ) and joins (⋈), and nothing else: one sequence of relational operations the planner orders and the executor streams. The fixpoint sits on that same algebra, so a rule body is an ordinary query.
 
-See [RELATIONAL_ALGEBRA_OVERVIEW.md](RELATIONAL_ALGEBRA_OVERVIEW.md) for the complete story, or [docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md](docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md) for the research paper proposal.
+See [docs/reference/RULES.md](docs/reference/RULES.md) for the rules, [RELATIONAL_ALGEBRA_OVERVIEW.md](RELATIONAL_ALGEBRA_OVERVIEW.md) for the algebra, or [docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md](docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md) for the research paper proposal on the non-recursive core.
 
 ### Greedy Planning Without Statistics
 
@@ -817,11 +876,10 @@ this number; the storage layer is designed for both.
 - **1.9× faster** with CRDT storage (vs pre-CRDT baseline)
 - **4.06× faster** iterator composition with 89% memory reduction
 - **2.22× faster** streaming execution with 52% memory reduction
-- **2.06× faster** parallel subquery execution (8 workers)
 - **555× faster** attribute high-water-mark seek (ATEV index, 10K datoms/attr)
 - **44 µs** for simple queries (e.g. attribute lookup, 1–3 patterns)
 - **21–27 ms** for complex 7-pattern queries with predicate pushdown (OHLC shape, persistent storage)
-- **2–4 s** for OHLC monthly-aggregation queries with 4 parallel subqueries
+- **2–4 s** for OHLC monthly-aggregation queries with 4 subqueries
 
 ### Architectural Wins
 
@@ -832,7 +890,6 @@ this number; the storage layer is designed for both.
 | Streaming execution | 2.22× | Avoid intermediate result materialization |
 | Predicate pushdown | 1.58–2.78× | Filter at storage layer (scales with dataset size) |
 | Time-range scanning | 4× | Multi-range queries for OHLC data |
-| Parallel subqueries | 2.06× | Worker pool for concurrent execution |
 | ATEV attribute high-water seek | 2.2× – 555× | O(1) newest-Tx-under-A seek; replaces an O(datoms-for-A) scan |
 | Conditional aggregate rewriting | 7.7× | Correlated aggregate subqueries — folded into the algebra optimizer |
 | Identity & Keyword interning | 6.26× | Pointer-equality joins; lock-free intern caches |
@@ -875,7 +932,7 @@ Janus isn't a research project – it's built from production experience.
 
 - **Domain:** Stock option analysis
 - **Stakes:** Real money, real decisions
-- **Workload:** Time-series OHLC queries with 4 parallel subqueries
+- **Workload:** Time-series OHLC queries with 4 subqueries
 - **Requirements:** Real-time analysis, no query failures
 
 **Use case that drove development:**
@@ -1000,7 +1057,7 @@ Janus has produced several research-worthy contributions. Five paper proposals/o
 
 ### Paper Proposals
 
-3. **[Pure Relational Algebra](docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md)** - Implementing Datalog with only π, σ, ⋈ (no semi-naive evaluation)
+3. **[Pure Relational Algebra](docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md)** - Implementing Datalog's non-recursive core with only π, σ, ⋈
 4. **[Functional Streaming](docs/papers/PAPER_PROPOSAL_3_FUNCTIONAL_STREAMING.md)** - Applying lazy evaluation and immutability to query execution
 
 See [docs/papers/README.md](docs/papers/README.md) for complete details.
@@ -1013,11 +1070,12 @@ See [docs/papers/README.md](docs/papers/README.md) for complete details.
 
 - **[docs/reference/QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md)** - Go-native query builder (recommended)
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design decisions
-- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Feature comparison (~80% compatibility)
+- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Feature comparison (~90% compatibility)
 - **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Complete documentation guide
 
 ### Deep Dives
 
+- **[docs/reference/RULES.md](docs/reference/RULES.md)** - Rules: the `%` input, recursion to a fixpoint, stratified negation, bounds and cancellation
 - **[docs/reference/MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md)** - Multi-source queries: cross-database joins, in-memory sources, Go slices
 - **[RELATIONAL_ALGEBRA_OVERVIEW.md](RELATIONAL_ALGEBRA_OVERVIEW.md)** - How queries become algebra
 - **[PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)** - Measured performance and benchmarks
@@ -1030,7 +1088,7 @@ See [docs/papers/README.md](docs/papers/README.md) for complete details.
 
 ## Examples
 
-See [`examples/README.md`](examples/README.md) for the full list of 14 examples with a suggested learning path. Start with:
+See [`examples/README.md`](examples/README.md) for the full list of 15 examples with a suggested learning path. Start with:
 
 ```bash
 go run -tags example examples/getting_started.go
@@ -1039,15 +1097,17 @@ go run -tags example examples/getting_started.go
 ## Running Tests
 
 ```bash
-# All tests
-go test ./...
+# The full gate: the native suite, the examples compile check, and the js/wasm contracts
+make test
 
-# Specific package
+# Specific package, for iteration
 go test ./datalog/executor -v
 
 # With coverage
 go test ./... -cover
 ```
+
+`go test ./...` alone runs the native suite only. The `examples/` files are each a `package main` behind the `example` build tag, so only `make test-examples` compiles them. `make test-wasm` runs the js/wasm contracts.
 
 Test suite includes:
 - Unit tests for all core components
@@ -1062,7 +1122,7 @@ We welcome contributions! Here's how to get started:
 1. **Understand the architecture**: Read [CLAUDE.md](CLAUDE.md) and [ARCHITECTURE.md](ARCHITECTURE.md)
 2. **Check the roadmap**: See [TODO.md](TODO.md) for current priorities
 3. **Review performance lessons**: Read [PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)
-4. **Run the tests**: `go test ./...` should pass
+4. **Run the tests**: `make test` should pass
 5. **Follow Go idioms**: Simple functions over complex abstractions
 
 **Areas where we'd love help:**
@@ -1076,7 +1136,7 @@ We welcome contributions! Here's how to get started:
 
 ## Datomic Compatibility
 
-Janus implements **~80% of Datomic's feature set** (weighted by typical usage), focusing on the most commonly used features:
+Janus implements **~90% of Datomic's feature set** (weighted by typical usage), focusing on the most commonly used features:
 
 **Implemented:**
 - Core queries: Patterns, joins, variables
@@ -1089,13 +1149,15 @@ Janus implements **~80% of Datomic's feature set** (weighted by typical usage), 
 - Schema: Type validation, cardinality (one/many/vector), uniqueness, never-zero-value domain constraint
 - Storage: Persistent BadgerDB backend
 - NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with fallback expressions
+- Rules: passed as `%`, recursive ones evaluated to a fixpoint with stratified negation, bounded and cancellable
 - Multi-source queries: Named sources (`$name`), cross-source joins, in-memory and slice sources
 - Go-specific: Struct reflection API, QueryInto for typed results
 
 **Not implemented:**
-- Rules and recursive queries
+- Transaction functions
+- Entity API (navigation), superseded by the Pull API
 - Full-text search
-- Distributed transactions
+- Distributed queries (single-node only)
 
 See [DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md) for the complete compatibility matrix.
 
@@ -1114,7 +1176,7 @@ See [TODO.md](TODO.md) for roadmap and [PERFORMANCE_STATUS.md](PERFORMANCE_STATU
 These principles guided Janus's development:
 
 1. **Correctness First** - Better to fail explicitly than succeed surprisingly
-2. **Simple > Complex** - Pure relational algebra over specialized strategies
+2. **Simple > Complex** - Relational algebra for every query, and a fixpoint only for rules
 3. **Predictable > Optimal** - Greedy planning without statistics surprises
 4. **Debug-Friendly** - Human-readable keys, explicit errors, clear traces
 5. **Production-Ready** - Real workloads, measured performance, comprehensive tests

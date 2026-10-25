@@ -1,7 +1,6 @@
 # Compression Research: Algorithms and Order-Preserving Techniques
 
-Reference material for the [Compressed String Values](COMPRESSED_STRING_VALUES.md) proposal.
-Research conducted 2026-03-28.
+Reference material for the [Compressed String Values](COMPRESSED_STRING_VALUES.md) proposal. Research conducted 2026-03-28.
 
 ---
 
@@ -34,6 +33,7 @@ The three sequence streams (literal-lengths, match-lengths, offsets) are each en
 #### The Sequence Encoding Pipeline in Detail
 
 A zstd compressed block contains:
+
 1. **Literals section**: Raw bytes compressed with Huffman (or stored raw/RLE)
 2. **Sequences section**: Three interleaved FSE-coded streams
    - Literal lengths (how many raw bytes before each match)
@@ -78,6 +78,7 @@ This helps because the statistical distributions are fundamentally different bet
 zstd's match finders (hash chains, binary trees, optimal parsing at high levels) are more sophisticated than typical DEFLATE implementations. At comparable speed, zstd finds slightly better matches. At high compression levels, zstd's optimal parser can explore much larger match-space.
 
 **Summary**: On text data, the rough breakdown of zstd's advantage over DEFLATE is:
+
 - Larger windows: ~40% of the improvement
 - FSE for sequences: ~20% of the improvement
 - Repeat offsets: ~20% of the improvement
@@ -89,6 +90,7 @@ zstd's match finders (hash chains, binary trees, optimal parsing at high levels)
 #### The zstd frame format includes:
 
 **Framing overhead (not needed for custom use):**
+
 - Magic number (4 bytes) — format identification
 - Frame header with flags for: window size, single-segment flag, content size, checksum flag, dictionary ID
 - Block headers (3 bytes each: last-block flag, block type, block size)
@@ -96,17 +98,20 @@ zstd's match finders (hash chains, binary trees, optimal parsing at high levels)
 - Skippable frames (for metadata embedding)
 
 **Dictionary support (not needed without pre-shared dictionaries):**
+
 - Dictionary ID field in frame header
 - Dictionary decoding tables (Huffman + 3 FSE tables)
 - Dictionary content (raw bytes for initial match window)
 - Dictionary is specifically for small data (<1KB) where there isn't enough data to build good statistics
 
 **Streaming/incremental features (not needed for single-shot compression):**
+
 - Multi-block support within a frame
 - Block-level types (raw, RLE, compressed, reserved)
 - The ability to reset statistics per-block vs reusing previous block's tables
 
 **Backward compatibility / generality:**
+
 - Multiple Huffman table transmission formats (direct, FSE-compressed weights)
 - Predefined FSE distribution tables (for when explicit tables would cost more than they save)
 - The "repeat" mode for FSE tables (reuse previous block's table)
@@ -147,12 +152,14 @@ Given a normalized distribution (symbol frequencies that sum to a power of 2, ty
 Based on examining reference implementations and simplified versions:
 
 **Minimal FSE decoder** (decompress only): ~200-300 lines of Go
+
 - Table reconstruction from normalized counts: ~80 lines
 - Bit reader: ~50 lines
 - Decode loop: ~40 lines
 - Table building: ~80 lines
 
 **Minimal FSE encoder** (compress only): ~300-400 lines of Go
+
 - Normalization (convert raw counts to power-of-2 sum): ~100 lines (this is the trickiest part)
 - Table construction: ~100 lines
 - Bit writer: ~50 lines
@@ -162,6 +169,7 @@ Based on examining reference implementations and simplified versions:
 **Both encoder and decoder**: ~500-700 lines of Go for a clean implementation.
 
 **The tricky parts:**
+
 - **Count normalization**: Converting arbitrary symbol frequencies to frequencies that sum to exactly 2^N, while preserving the relative proportions and ensuring every present symbol gets at least frequency 1. Yann Collet's normalization algorithm has subtle edge cases.
 - **Bit-level I/O**: FSE reads/writes variable numbers of bits, often straddling byte boundaries. Getting the bit buffer management right (especially flushing) is fiddly.
 - **State table spread**: The specific spread algorithm matters for interoperability but any valid spread works for a custom format.
@@ -218,16 +226,16 @@ For natural language and structured text (JSON/EDN), here's the minimum you'd ne
 
 #### Rough line count estimate for a minimal "zstd-like" compressor in Go:
 
-| Component | Lines (approx) |
-|-----------|----------------|
-| LZ77 match finder (hash chain) | 300-400 |
-| Repeat offset logic | 50-80 |
-| Huffman coder (literals) | 200-300 |
-| FSE coder (sequences) | 500-700 |
-| Sequence encoding (baseline+extra bits) | 150-200 |
-| Bit-level I/O | 100-150 |
-| Block framing (minimal) | 100-150 |
-| **Total** | **~1400-2000** |
+| Component                               | Lines (approx) |
+| --------------------------------------- | -------------- |
+| LZ77 match finder (hash chain)          | 300-400        |
+| Repeat offset logic                     | 50-80          |
+| Huffman coder (literals)                | 200-300        |
+| FSE coder (sequences)                   | 500-700        |
+| Sequence encoding (baseline+extra bits) | 150-200        |
+| Bit-level I/O                           | 100-150        |
+| Block framing (minimal)                 | 100-150        |
+| **Total**                               | **~1400-2000** |
 
 This would get you within 1-3% of zstd's compression ratio on text data at comparable speed. The main thing you'd sacrifice vs full zstd is the optimal parser (which only matters at compression levels 16+, and costs significant CPU).
 
@@ -275,6 +283,7 @@ The seminal paper is **"Order Preserving String Compression"** by Antoshenkov, L
 The most important modern work is **HOPE** from CMU (Zhang, Liu, Andersen, Kaminsky, Keeton, Pavlo). HOPE is a fast dictionary-based compressor that encodes arbitrary keys while preserving their order. It identifies common key patterns at fine granularity and exploits entropy for compression.
 
 Key results:
+
 - **Up to 40% lower query latency** and **up to 30% smaller memory** for in-memory search trees
 - Evaluated on 5 data structures: SuRF, ART, HOT, B+tree, Prefix B+tree
 - Implements **6 representative compression schemes** making different tradeoffs between compression rate and encoding speed
@@ -312,6 +321,7 @@ This is the strongest example of "operate on compressed data" in the literature.
 **FSST** from CWI Amsterdam is a lightweight string compression scheme used in vertically partitioned analytical stores. Its key property: **equality comparisons can be performed directly on compressed values** as long as both operands are compressed with the same symbol table. This means queries with equality-selection predicates work on compressed strings without decompression.
 
 Properties:
+
 - Maps 1-8 byte "symbols" to single-byte "codes"
 - Random access to individual compressed strings (not block-based)
 - Decompression speed comparable to or better than LZ4, with significantly better compression
@@ -345,6 +355,7 @@ This category is highly relevant to janus-datalog's L85 encoding.
 TiDB uses a **Memcomparable** encoding where the comparison result of two objects before encoding is consistent with byte-array comparison after encoding. All row data is arranged in TiKV by RowID order, enabling efficient range scans on encoded keys.
 
 Key techniques:
+
 - **Integers**: Big-endian, sign-bit flipping (signed integers XOR with 0x80 in MSB)
 - **Strings**: Chunked encoding with padding and continuation bytes
 - **Floats**: IEEE 754 with conditional bit flipping
@@ -397,6 +408,7 @@ Most LSM-tree and B-tree databases do NOT compress their keys with general-purpo
 #### LevelDB / RocksDB / Pebble: Block-level prefix compression
 
 Keys are delta-encoded within blocks:
+
 - Each entry stores `(shared_bytes, unshared_bytes, value_length, key_delta, value)`
 - **Restart points** every N keys (default 16) store the full key for binary search
 - This is NOT general compression — it's prefix deduplication of sorted keys
@@ -422,6 +434,7 @@ Pebble (CockroachDB's Go storage engine) uses the same block format. There is an
 #### ClickHouse: Per-field specialized encodings
 
 ClickHouse uses a two-layer approach:
+
 1. **Encodings** (Delta, DoubleDelta, Gorilla, T64) transform data by type to reduce entropy
 2. **Compression** (LZ4, ZSTD) compresses the encoded output
 
@@ -442,6 +455,7 @@ Parquet uses dictionary encoding and RLE within chunks that each hold one schema
 ### 5. B-Tree Compression Survey (SIGMOD 2024)
 
 **"Revisiting B-tree Compression: An Experimental Study"** evaluated 7 compression techniques:
+
 - Prefix compression (used by WiredTiger, InnoDB)
 - Suffix truncation (used by WiredTiger)
 - Head+Tail compression (recommended — best search/insert performance with decent compression)
@@ -473,19 +487,22 @@ L85 is already an **order-preserving encoding** (category 3 above). It maps 20-b
 The research suggests several potential directions:
 
 **If the goal is to make keys shorter while preserving sort order:**
+
 - HOPE's dictionary-based approach could compress common key patterns while maintaining order. This is the most directly applicable academic work.
 - Hu-Tucker coding provides the theoretical optimum for order-preserving variable-length codes.
 
 **If the goal is to compress values while still supporting range scans:**
+
 - The standard approach (LevelDB/RocksDB/Pebble) is: keep keys in order-preserving encoding, use prefix deduplication within sorted blocks, compress values with LZ4/zstd. This is what BadgerDB already does.
 - Dictionary compression across blocks (as proposed for Pebble) would improve value compression for sorted index data.
 
 **If the goal is to support operations on compressed data:**
+
 - FSST for equality comparison on compressed strings
 - HOCO/HocoPG for text operations on compressed data
 - Order-preserving dictionary encoding (Binnig et al.) for range queries on compressed dictionary codes
 
-**The gap in the literature**: There is no system that does true general-purpose compression of keys while preserving arbitrary range scan capability on the compressed form. Every production database either (a) uses order-preserving *encoding* (not compression) for keys, or (b) compresses at the block/page level and decompresses for comparison. HOPE is the closest to bridging this gap, but it's dictionary-based encoding, not general compression.
+**The gap in the literature**: There is no system that does true general-purpose compression of keys while preserving arbitrary range scan capability on the compressed form. Every production database either (a) uses order-preserving _encoding_ (not compression) for keys, or (b) compresses at the block/page level and decompresses for comparison. HOPE is the closest to bridging this gap, but it's dictionary-based encoding, not general compression.
 
 ### All References
 

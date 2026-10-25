@@ -14,15 +14,16 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-// TestBadgerParallelProfile profiles parallel execution to find bottlenecks.
+// TestBadgerRelationInputProfile profiles a relation-input query over badger
+// to find bottlenecks.
 //
 // It is an instrument rather than a correctness test: it writes a CPU profile
 // and a duration, and the only thing it asserts is that execution did not
 // error. The backend is fixed so successive profiles are comparable, which is
 // also why it stays off the backend axis — three stores would produce three
-// runs overwriting one profile. TestParallelSubqueryOverStorage carries the
-// parallel-execution correctness claim across every backend.
-func TestBadgerParallelProfile(t *testing.T) {
+// runs overwriting one profile. TestRelationInputOverStorage carries the
+// correctness claim across every backend.
+func TestBadgerRelationInputProfile(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping profiling test in short mode")
 	}
@@ -93,8 +94,8 @@ func TestBadgerParallelProfile(t *testing.T) {
 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// Profile parallel execution
-			f, err := os.Create("badger_parallel.prof")
+			// Profile the query
+			f, err := os.Create("badger_relation_input.prof")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -105,21 +106,19 @@ func TestBadgerParallelProfile(t *testing.T) {
 			}
 			defer pprof.StopCPUProfile()
 
-			// Run parallel execution
-			parExec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			parExec.EnableParallelSubqueries(8)
+			exec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
 			start := time.Now()
-			result, err := parExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
+			result, err := exec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
 			duration := time.Since(start)
 
 			if err != nil {
-				t.Fatalf("Parallel execution failed: %v", err)
+				t.Fatalf("Query failed: %v", err)
 			}
 
-			t.Logf("Parallel execution: %v (%d results)", duration, result.Size())
-			t.Logf("CPU profile written to badger_parallel.prof")
-			t.Logf("Analyze with: go tool pprof badger_parallel.prof")
+			t.Logf("Relation input over badger: %v (%d results)", duration, result.Size())
+			t.Logf("CPU profile written to badger_relation_input.prof")
+			t.Logf("Analyze with: go tool pprof badger_relation_input.prof")
 		})
 	}
 }

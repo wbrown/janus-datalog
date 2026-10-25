@@ -29,7 +29,7 @@ func (m *bundleLookupMatcher) LookupAttribute(
 	return value, ok, nil
 }
 
-func (m *bundleLookupMatcher) CanFuseAttributeFetch(datalog.Keyword) bool {
+func (m *bundleLookupMatcher) CanFuseAttributeFetch(query.Symbol, datalog.Keyword) bool {
 	return true
 }
 

@@ -3,9 +3,41 @@ package planner
 import (
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
+
+// Under an aggregating find the aggregate runs over the whole join, so the
+// terminal symbols, the set the planner keeps to the find boundary and the
+// algebra path's join-project insertion keeps, are every symbol the join
+// binds: the aggregate's argument, the entities the find does not name, and a
+// collection input no clause reads. A projection find's terminal symbols are
+// its own.
+func TestTerminalSymbols_UnderAnAggregatingFindAreTheJoins(t *testing.T) {
+	aggregating, err := parser.ParseQuery(`[:find (count ?n) :in $ [?w ...] :where [?e :t/n ?n] [?z :t/k _]]`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got := terminalSymbols(aggregating)
+	for _, name := range []string{"?n", "?e", "?z", "?w"} {
+		if !query.ContainsSymbol(got, datalog.NewSymbol(name)) {
+			t.Errorf("the terminal symbols under an aggregating find carry %s, got %v", name, got)
+		}
+	}
+	if len(got) != 4 {
+		t.Errorf("the terminal symbols under an aggregating find are the join's four, got %v", got)
+	}
+
+	projecting, err := parser.ParseQuery(`[:find ?n :in $ [?w ...] :where [?e :t/n ?n] [?z :t/k _]]`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got = terminalSymbols(projecting)
+	if len(got) != 1 || !query.ContainsSymbol(got, datalog.NewSymbol("?n")) {
+		t.Errorf("the terminal symbols under a projection find are the find's, got %v", got)
+	}
+}
 
 // These tests pin the planner half of the order-by fix from
 // BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md:
@@ -37,7 +69,7 @@ func TestPlanRetainsNonProjectedOrderBySymbols(t *testing.T) {
 	}
 
 	p := NewClauseBasedPlanner(nil, PlannerOptions{})
-	plan, err := p.Plan(q, nil)
+	plan, err := p.Plan(q, query.Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -94,7 +126,7 @@ func TestPlanRetainsOnlyNonProjectedSortKeys(t *testing.T) {
 	}
 
 	p := NewClauseBasedPlanner(nil, PlannerOptions{})
-	plan, err := p.Plan(q, nil)
+	plan, err := p.Plan(q, query.Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -121,7 +153,7 @@ func TestPlanDoesNotRetainForAggregates(t *testing.T) {
 	}
 
 	p := NewClauseBasedPlanner(nil, PlannerOptions{})
-	plan, err := p.Plan(q, nil)
+	plan, err := p.Plan(q, query.Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -143,7 +175,7 @@ func TestPlanDoesNotRetainConstantInputKeys(t *testing.T) {
 	}
 
 	p := NewClauseBasedPlanner(nil, PlannerOptions{})
-	plan, err := p.Plan(q, nil)
+	plan, err := p.Plan(q, query.Bindings{}, nil)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}

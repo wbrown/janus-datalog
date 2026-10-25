@@ -14,9 +14,9 @@ Janus Datalog's active architecture is Datalog-in/Datalog-out:
 4. `DefaultQueryExecutor` executes those fragments.
 5. `PatternMatcher` receives one-pattern Datalog query fragments.
 
-Several older planning structures, opaque metadata paths, compatibility aliases,
-and parallel subquery implementations remain around that architecture. They are
-not equally problematic. This document separates:
+Several older planning structures, opaque metadata paths and compatibility
+aliases remain around that architecture. They are not equally problematic. This
+document separates:
 
 - Confirmed active debt
 - High-confidence dead-code candidates
@@ -73,7 +73,7 @@ kept them reachable have been removed together.
 as typed explain records on `RealizedPhase`; fields used solely by the old graph
 were removed.
 
-### 4. Parallel subquery execution implementations
+### 4. Subquery execution implementations
 
 There are two distinct subquery families:
 
@@ -81,8 +81,10 @@ There are two distinct subquery families:
 
 `query_executor.go` executes nested Datalog recursively and supports:
 
-- Default per-combination execution
-- Parallel RelationInput iteration through the executor worker loop
+- Execution over the window of the call's argument combinations
+  (`docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.4)
+- A relation input bound as one group the plan joins once (`BindQueryInputs`,
+  `datalog/executor/executor_utils.go`), with no parallel variant
 
 The annotation now reports `"Per-combination QueryExecutor"`.
 

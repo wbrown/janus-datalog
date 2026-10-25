@@ -74,7 +74,7 @@ func (d *Database) ResolveAllAttributesMany(
 	})
 
 	resolved := make(map[[20]byte]map[datalog.Keyword]interface{}, len(sortedEntities))
-	declaredAttrs := d.declaredWildcardAttributes()
+	declaredAttrs := d.installed.Load().wildcard
 	var uniqueLookups []wildcardUniqueLookup
 	bound := ScanBound{Index: EATV}
 
@@ -212,19 +212,6 @@ func (d *Database) resolveWildcardEntity(
 	return result, pending, nil
 }
 
-func (d *Database) declaredWildcardAttributes() map[datalog.Keyword]struct{} {
-	s, ok := d.schema.(*schema.Schema)
-	if !ok || !s.HasSchema() {
-		return nil
-	}
-	attrs := s.Attributes()
-	declared := make(map[datalog.Keyword]struct{}, len(attrs))
-	for _, definition := range attrs {
-		declared[definition.Ident] = struct{}{}
-	}
-	return declared
-}
-
 func (d *Database) resolveWildcardDatoms(
 	matcher *PatternMatcher,
 	entity datalog.Identity,
@@ -232,7 +219,7 @@ func (d *Database) resolveWildcardDatoms(
 	datoms []datalog.Datom,
 ) (interface{}, bool) {
 	storageDatom := ToStorageDatom(datalog.Datom{E: entity, A: attr})
-	cardinality := matcher.GetCardinality(storageDatom.A)
+	cardinality := matcher.GetCardinality(attr)
 	if d.cache != nil {
 		if key, ok := matcher.cacheKey(storageDatom.E, storageDatom.A); ok {
 			d.cache.PopulateFromDatoms(key, cardinality, datoms)
@@ -266,17 +253,11 @@ func (d *Database) resolveWildcardDatoms(
 }
 
 func (d *Database) isUniqueAttribute(attr datalog.Keyword) bool {
-	if d.schema == nil {
-		return false
-	}
-	return d.schema.GetAttribute(attr).HasUniqueConstraint()
+	return d.Schema().GetAttribute(attr).HasUniqueConstraint()
 }
 
 func (d *Database) attributeValueType(attr datalog.Keyword) datalog.Keyword {
-	if d.schema == nil {
-		return nil
-	}
-	definition := d.schema.GetAttribute(attr)
+	definition := d.Schema().GetAttribute(attr)
 	if definition == nil {
 		return nil
 	}

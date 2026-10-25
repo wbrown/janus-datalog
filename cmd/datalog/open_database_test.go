@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
@@ -311,6 +313,100 @@ func TestCLI_ImportIntoEDNPathRejected(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "database directory") {
 		t.Errorf("Expected error to explain -db must be a database directory, got: %s", out)
+	}
+}
+
+// createDeclaredJDZLDump exports a database that declared :person/tags as a
+// set and wrote three members of it.
+func createDeclaredJDZLDump(t *testing.T) string {
+	t.Helper()
+	s, err := schema.NewBuilder().
+		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+		Build()
+	if err != nil {
+		t.Fatalf("Failed to build schema: %v", err)
+	}
+	db, err := storage.NewDatabaseWithSchema(filepath.Join(t.TempDir(), "declared.db"), s)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	tx := db.NewTransaction()
+	alice := datalog.NewIdentity("alice")
+	for _, tag := range []string{"warrior", "veteran", "mage"} {
+		if err := tx.Add(alice, datalog.NewKeyword(":person/tags"), tag); err != nil {
+			t.Fatalf("Failed to add tag: %v", err)
+		}
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	jdzlPath := filepath.Join(t.TempDir(), "declared.jdzl")
+	f, err := os.Create(jdzlPath)
+	if err != nil {
+		t.Fatalf("Failed to create JDZL file: %v", err)
+	}
+	defer f.Close()
+	if err := db.ExportBinary(f); err != nil {
+		t.Fatalf("Failed to export binary: %v", err)
+	}
+	return jdzlPath
+}
+
+// requireAllTags fails unless every member of the set the dump's writer
+// declared appears in the CLI's output.
+func requireAllTags(t *testing.T, output string) {
+	t.Helper()
+	for _, tag := range []string{"warrior", "veteran", "mage"} {
+		if !strings.Contains(output, tag) {
+			t.Errorf("Expected every member of :person/tags in output, %q missing:\n%s", tag, output)
+		}
+	}
+}
+
+// A dump carries its writer's definitions, so the CLI resolves a set in it as
+// the set, under either optimizer path.
+func TestCLI_QueryFromJDZLDumpResolvesSets(t *testing.T) {
+	binPath := buildCLI(t)
+	jdzlPath := createDeclaredJDZLDump(t)
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			cmd := exec.Command(binPath, "-db", jdzlPath, mode.cliFlag(),
+				"-query", `[:find ?t :where [_ :person/tags ?t]]`)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query against JDZL dump failed: %v\n%s", err, out)
+			}
+			requireAllTags(t, string(out))
+		})
+	}
+}
+
+// An import into a directory carries the dump's definitions with it, so a
+// later open of that directory resolves the set.
+func TestCLI_ImportBinCarriesSchema(t *testing.T) {
+	binPath := buildCLI(t)
+	jdzlPath := createDeclaredJDZLDump(t)
+	target := filepath.Join(t.TempDir(), "target.db")
+
+	cmd := exec.Command(binPath, "-db", target, "-import-bin", jdzlPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Import-bin into directory failed: %v\n%s", err, out)
+	}
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			cmd := exec.Command(binPath, "-db", target, mode.cliFlag(),
+				"-query", `[:find ?t :where [_ :person/tags ?t]]`)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query against imported directory failed: %v\n%s", err, out)
+			}
+			requireAllTags(t, string(out))
+		})
 	}
 }
 

@@ -33,7 +33,7 @@ func (f NthFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error) 
 		return nil, fmt.Errorf("nth: cannot resolve index argument %s", f.IndexTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("nth: first argument must be a vector, got %T", vecVal)
 	}
@@ -53,10 +53,6 @@ func (f NthFunction) String() string {
 	return fmt.Sprintf("(nth %s %s)", f.VecTerm, f.IndexTerm)
 }
 
-func (f NthFunction) ReturnType() string {
-	return "any"
-}
-
 // FirstFunction returns the first element of a vector.
 // Usage: [(first ?vec) ?val]
 // Returns nil for empty vectors.
@@ -74,7 +70,7 @@ func (f FirstFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error
 		return nil, fmt.Errorf("first: cannot resolve vector argument %s", f.VecTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("first: argument must be a vector, got %T", vecVal)
 	}
@@ -88,10 +84,6 @@ func (f FirstFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error
 
 func (f FirstFunction) String() string {
 	return fmt.Sprintf("(first %s)", f.VecTerm)
-}
-
-func (f FirstFunction) ReturnType() string {
-	return "any"
 }
 
 // LastFunction returns the last element of a vector.
@@ -111,7 +103,7 @@ func (f LastFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error)
 		return nil, fmt.Errorf("last: cannot resolve vector argument %s", f.VecTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("last: argument must be a vector, got %T", vecVal)
 	}
@@ -125,10 +117,6 @@ func (f LastFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error)
 
 func (f LastFunction) String() string {
 	return fmt.Sprintf("(last %s)", f.VecTerm)
-}
-
-func (f LastFunction) ReturnType() string {
-	return "any"
 }
 
 // LengthFunction returns the length of a vector.
@@ -147,7 +135,7 @@ func (f LengthFunction) Eval(bindings map[Symbol]interface{}) (interface{}, erro
 		return nil, fmt.Errorf("length: cannot resolve vector argument %s", f.VecTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("length: argument must be a vector, got %T", vecVal)
 	}
@@ -157,10 +145,6 @@ func (f LengthFunction) Eval(bindings map[Symbol]interface{}) (interface{}, erro
 
 func (f LengthFunction) String() string {
 	return fmt.Sprintf("(length %s)", f.VecTerm)
-}
-
-func (f LengthFunction) ReturnType() string {
-	return "number"
 }
 
 // ContainsFunction returns true if a value is in a vector.
@@ -187,7 +171,7 @@ func (f ContainsFunction) Eval(bindings map[Symbol]interface{}) (interface{}, er
 		return nil, fmt.Errorf("contains?: cannot resolve value argument %s", f.ValueTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("contains?: first argument must be a vector, got %T", vecVal)
 	}
@@ -203,10 +187,6 @@ func (f ContainsFunction) Eval(bindings map[Symbol]interface{}) (interface{}, er
 
 func (f ContainsFunction) String() string {
 	return fmt.Sprintf("(contains? %s %s)", f.VecTerm, f.ValueTerm)
-}
-
-func (f ContainsFunction) ReturnType() string {
-	return "boolean"
 }
 
 // IndexOfFunction returns the index of a value in a vector, or -1 if not found.
@@ -232,7 +212,7 @@ func (f IndexOfFunction) Eval(bindings map[Symbol]interface{}) (interface{}, err
 		return nil, fmt.Errorf("index-of: cannot resolve value argument %s", f.ValueTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("index-of: first argument must be a vector, got %T", vecVal)
 	}
@@ -248,10 +228,6 @@ func (f IndexOfFunction) Eval(bindings map[Symbol]interface{}) (interface{}, err
 
 func (f IndexOfFunction) String() string {
 	return fmt.Sprintf("(index-of %s %s)", f.VecTerm, f.ValueTerm)
-}
-
-func (f IndexOfFunction) ReturnType() string {
-	return "number"
 }
 
 // SubvecFunction returns a slice of a vector from start (inclusive) to end (exclusive).
@@ -285,7 +261,7 @@ func (f SubvecFunction) Eval(bindings map[Symbol]interface{}) (interface{}, erro
 		return nil, fmt.Errorf("subvec: cannot resolve end argument %s", f.EndTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("subvec: first argument must be a vector, got %T", vecVal)
 	}
@@ -320,14 +296,8 @@ func (f SubvecFunction) String() string {
 	return fmt.Sprintf("(subvec %s %s %s)", f.VecTerm, f.StartTerm, f.EndTerm)
 }
 
-func (f SubvecFunction) ReturnType() string {
-	return "vector"
-}
-
-// EnumerateFunction decomposes a vector into (index, value) pairs.
-// Usage: [(enumerate ?vec) ?idx ?val]
-// This function returns a slice of tuples that will be expanded into multiple bindings.
-// The executor handles this specially by expanding the tuples into the binding variables.
+// EnumerateFunction yields a vector's elements as (index, value) tuples, a
+// relation bound under the relation form: [(enumerate ?vec) [[?idx ?val]]].
 type EnumerateFunction struct {
 	VecTerm Term
 }
@@ -336,20 +306,20 @@ func (f EnumerateFunction) RequiredSymbols() []Symbol {
 	return f.VecTerm.RequiredSymbols()
 }
 
+// Eval is the collection of (index, value) tuples as a vector of vectors,
+// the value a relation ground holds.
 func (f EnumerateFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error) {
 	vecVal, ok := f.VecTerm.Resolve(bindings)
 	if !ok {
 		return nil, fmt.Errorf("enumerate: cannot resolve vector argument %s", f.VecTerm)
 	}
 
-	vec, ok := toSlice(vecVal)
+	vec, ok := VectorElements(vecVal)
 	if !ok {
 		return nil, fmt.Errorf("enumerate: argument must be a vector, got %T", vecVal)
 	}
 
-	// Return slice of [index, value] tuples
-	// The executor will handle expanding these into multiple bindings
-	result := make([][]interface{}, len(vec))
+	result := make([]interface{}, len(vec))
 	for i, v := range vec {
 		result[i] = []interface{}{int64(i), v}
 	}
@@ -360,14 +330,12 @@ func (f EnumerateFunction) String() string {
 	return fmt.Sprintf("(enumerate %s)", f.VecTerm)
 }
 
-func (f EnumerateFunction) ReturnType() string {
-	return "tuples" // Special return type indicating multiple bindings
-}
-
 // Vector operation functions
 
-// toSlice converts a value to []interface{} if possible.
-func toSlice(val interface{}) ([]interface{}, bool) {
+// VectorElements is the elements of a vector value, and whether the value is
+// one: a []interface{} as it is, a typed slice of strings, integers, floats
+// or booleans as values, and any other value no vector.
+func VectorElements(val interface{}) ([]interface{}, bool) {
 	switch v := val.(type) {
 	case []interface{}:
 		return v, true

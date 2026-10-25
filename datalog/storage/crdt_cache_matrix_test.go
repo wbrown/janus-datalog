@@ -101,7 +101,7 @@ func TestCacheMatrix_AConstant(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					personID := datalog.NewIdentity("person-1")
 
@@ -140,7 +140,7 @@ func TestCacheMatrix_AFromScalarInput(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					personID := datalog.NewIdentity("person-1")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -185,7 +185,7 @@ func TestCacheMatrix_AUnbound(t *testing.T) {
 						ValueType:   schema.TypeLong,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					personID := datalog.NewIdentity("person-1")
 
@@ -240,7 +240,7 @@ func TestCacheMatrix_EConstantAUnbound(t *testing.T) {
 						ValueType:   schema.TypeLong,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					personID := datalog.NewIdentity("person-1")
 
@@ -306,7 +306,7 @@ func TestCacheMatrix_VOnlyBound(t *testing.T) {
 						ValueType:   schema.TypeRef,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					leader := datalog.NewIdentity("leader-1")
 					emp1 := datalog.NewIdentity("emp-1")
@@ -372,7 +372,7 @@ func TestCacheMatrix_VOnlyBound_Supersede(t *testing.T) {
 						ValueType:   schema.TypeRef,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					leader := datalog.NewIdentity("leader-1")
 					newLeader := datalog.NewIdentity("new-leader-1")
@@ -438,13 +438,13 @@ func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityMany,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					emp1 := datalog.NewIdentity("emp-1")
 
 					// Debug: check schema
-					if db.schema != nil {
-						attr := db.schema.GetAttribute(datalog.NewKeyword(":person/tags"))
+					if s := db.Schema(); s != nil {
+						attr := s.GetAttribute(datalog.NewKeyword(":person/tags"))
 						if attr != nil {
 							t.Logf("Schema has :person/tags with cardinality=%v", attr.Cardinality)
 						} else {
@@ -546,7 +546,7 @@ func TestVOnlyBound_MixedCardinality(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityMany,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					emp1 := datalog.NewIdentity("emp-1")
 
@@ -643,7 +643,7 @@ func TestCacheMatrix_AVBound(t *testing.T) {
 						ValueType:   schema.TypeRef,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					manager := datalog.NewIdentity("manager-1")
 					emp1 := datalog.NewIdentity("emp-1")
@@ -696,7 +696,7 @@ func TestCacheMatrix_EFromCollection_AFromScalar(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					nameAttr := datalog.NewKeyword(":person/name")
 
@@ -746,7 +746,7 @@ func TestCacheMatrix_CardinalityMany(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityMany,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					personID := datalog.NewIdentity("person-1")
 					tagsAttr := datalog.NewKeyword(":person/tags")
@@ -800,7 +800,7 @@ func TestCacheMatrix_PullIntoComparison(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					personID := datalog.NewIdentity("person-1")
 
@@ -848,7 +848,7 @@ func TestCacheMatrix_AFromCollection(t *testing.T) {
 						ValueType:   schema.TypeLong,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					personID := datalog.NewIdentity("person-1")
 
@@ -901,7 +901,7 @@ func TestCacheMatrix_AFromTupleInput(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					personID := datalog.NewIdentity("person-1")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -912,10 +912,9 @@ func TestCacheMatrix_AFromTupleInput(t *testing.T) {
 						tx.Commit()
 					}
 
-					// Pattern: E and A from tuple input [[?e ?a]]
-					// Tuple input syntax requires double brackets
+					// Pattern: E and A from the tuple input [?e ?a]
 					results, err := executor.CollectTuples(db.Query(
-						`[:find ?v :in $ [[?e ?a]] :where [?e ?a ?v]]`,
+						`[:find ?v :in $ [?e ?a] :where [?e ?a ?v]]`,
 						[]any{personID, nameAttr}))
 					require.NoError(t, err)
 
@@ -950,7 +949,7 @@ func TestCacheMatrix_AFromRelationInput(t *testing.T) {
 						ValueType:   schema.TypeLong,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					person1 := datalog.NewIdentity("person-1")
 					person2 := datalog.NewIdentity("person-2")
@@ -1013,7 +1012,7 @@ func TestCacheMatrix_ABoundViaJoin(t *testing.T) {
 						ValueType:   schema.TypeKeyword,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					personID := datalog.NewIdentity("person-1")
 					configID := datalog.NewIdentity("config-1")
@@ -1071,7 +1070,7 @@ func TestCacheMatrix_EAndABothFromCollections(t *testing.T) {
 						ValueType:   schema.TypeLong,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					entities := []datalog.Identity{
 						datalog.NewIdentity("person-1"),
@@ -1132,7 +1131,7 @@ func TestCacheMatrix_WithNotClause(t *testing.T) {
 						ValueType:   schema.TypeBoolean,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					person1 := datalog.NewIdentity("person-1")
 					person2 := datalog.NewIdentity("person-2")
@@ -1200,7 +1199,7 @@ func TestCacheMatrix_WithOrClause(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					person1 := datalog.NewIdentity("person-1")
 					person2 := datalog.NewIdentity("person-2")
@@ -1259,7 +1258,7 @@ func TestCacheMatrix_WithAggregation(t *testing.T) {
 						ValueType:   schema.TypeLong,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					// Create 3 people, each with multiple historical scores
 					for i := 1; i <= 3; i++ {
@@ -1311,7 +1310,7 @@ func TestCacheMatrix_CardinalityVector(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityVector,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					docID := datalog.NewIdentity("doc-1")
 					contentAttr := datalog.NewKeyword(":doc/content")
@@ -1390,7 +1389,7 @@ func TestCacheMatrix_NeverSetVectorAgainstEmptyVectorLiteral(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityVector,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					// One entity, written under a different attribute, so the entity
 					// exists and :person/skill genuinely never was.
@@ -1444,7 +1443,7 @@ func TestCacheMatrix_ABoundViaSubquery(t *testing.T) {
 						ValueType:   schema.TypeKeyword,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					personID := datalog.NewIdentity("person-1")
 					configID := datalog.NewIdentity("config-1")
@@ -1505,7 +1504,7 @@ func TestCacheMatrix_AsOfQuery(t *testing.T) {
 						ValueType:   schema.TypeString,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					personID := datalog.NewIdentity("person-1")
 					nameAttr := datalog.NewKeyword(":person/name")
@@ -1579,7 +1578,7 @@ func TestCacheMatrix_SchemaAfterWrite(t *testing.T) {
 						ValueType:   schema.TypeLong,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					// Pattern: E bound, A unbound - entity browser pattern
 					results, err := executor.CollectTuples(db.Query(
@@ -1629,7 +1628,7 @@ func TestCacheMatrix_AllUnbound(t *testing.T) {
 						ValueType:   schema.TypeLong,
 						Cardinality: schema.CardinalityOne,
 					})
-					db.SetSchema(s)
+					require.NoError(t, db.SetSchema(s))
 
 					// Create two entities with multiple historical values each
 					person1 := datalog.NewIdentity("person-1")

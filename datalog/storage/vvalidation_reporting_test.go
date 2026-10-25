@@ -77,7 +77,7 @@ func testVValidationReportsWhatItsScansCost(t *testing.T, mode optimizerMode) {
 				Attribute(":person/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
 				Build()
 			require.NoError(t, err)
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			commit := func(fn func(tx *Transaction) error) {
 				t.Helper()

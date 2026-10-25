@@ -84,10 +84,11 @@ func TestUniqueLookupLineReportsItsFunnel(t *testing.T) {
 //
 // A formatter that carries lastIndex and lastBound between calls, filled by
 // the preceding index-selection event, holds the reporter's state in the
-// consumer, and that cannot survive concurrency: the engine emits from
-// parallel workers through one handler, so a worker's scan line could render
-// the index another worker had just selected. A mutex only hides the race and
-// keeps the wrong pairing, because the leftovers are still whoever wrote last.
+// consumer, and that cannot survive concurrency: the engine serializes no
+// handler, and two queries on two goroutines share one, so a query's scan
+// line could render the index another query had just selected. A mutex only
+// hides the race and keeps the wrong pairing, because the leftovers are still
+// whoever wrote last.
 //
 // The matcher holds the bound at scan time — it hands the same ScanBound to
 // emitIndexSelection and to the reader — so the scan event carries it, and this

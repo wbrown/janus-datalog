@@ -68,6 +68,11 @@ func (r *LimitRelation) ensure() *MaterializedRelation {
 }
 
 func (r *LimitRelation) Symbols() []query.Symbol { return r.source.Symbols() }
+
+// Rename is the bounded materialization under the substitution.
+func (r *LimitRelation) Rename(subst query.Substitution) (Relation, error) {
+	return r.ensure().Rename(subst)
+}
 func (r *LimitRelation) Properties() RelationProperties {
 	return r.source.Properties()
 }

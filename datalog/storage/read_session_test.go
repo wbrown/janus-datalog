@@ -189,8 +189,8 @@ func TestReadSessionConcurrentScans(t *testing.T) {
 			require.NoError(t, err)
 			defer session.Close()
 
-			// Multiple goroutines scan through one session simultaneously —
-			// the executor's parallel workers do exactly this within a query.
+			// Multiple goroutines scan through one session simultaneously,
+			// which each backend's session supports for read-only use.
 			var wg sync.WaitGroup
 			errs := make([]error, 8)
 			counts := make([]int, 8)

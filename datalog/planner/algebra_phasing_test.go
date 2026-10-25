@@ -22,16 +22,18 @@ func TestPhaserSymbolExtraction(t *testing.T) {
 	                      $ ?e) [[?count]]]
 	                  [(ground 0) ?count])]`)
 	require.NoError(t, err)
+	prepared, err := query.Prepare(q, nil)
+	require.NoError(t, err)
 
 	// Compile + decorrelate
-	root, _ := algebra.Compile(q)
+	root, _ := algebra.Compile(prepared, nil)
 	opt := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
 	optimized, _ := opt.Optimize(root)
 	clauses, _ := algebra.Decompile(optimized)
 
 	t.Logf("Decompiled %d clauses:", len(clauses))
 	for i, c := range clauses {
-		scope := query.ScopeOf(c)
+		scope := query.ScopeOf(c, nil)
 		t.Logf("  [%d] %T provides=%v correlates=%v", i, c, scope.Provides, scope.Correlates)
 	}
 }
@@ -51,7 +53,7 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	                  [(get-else $ ?t :task/token-count 0) ?tok]
 	                  [(get-else $ ?t :task/duration 0) ?dur]]
 	          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-	      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+	      [(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])
 	  (or [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
@@ -74,14 +76,18 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	                      $ ?s) [[?maxCa]]]
 	                  [(= ?ca ?maxCa)]]
 	          $ ?scenario) [[?lastKey ?lastUpdatedAt]]]
-	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 	  :order-by [[?lastUpdatedAt :desc]]]`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+	prepared, err := query.Prepare(q, nil)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
 
 	// Compile + decorrelate
-	root, err := algebra.Compile(q)
+	root, err := algebra.Compile(prepared, nil)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -100,7 +106,7 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	}
 	t.Logf("Decompiled %d clauses:", len(clauses))
 	for i, c := range clauses {
-		scope := query.ScopeOf(c)
+		scope := query.ScopeOf(c, nil)
 		t.Logf("  [%d] %T provides=%v correlates=%v", i, c, scope.Provides, scope.Correlates)
 	}
 
@@ -113,7 +119,7 @@ func TestPhaserWithDecorrelatedClauses(t *testing.T) {
 	}
 	inputSymbols := map[query.Symbol]bool{}
 
-	phases, err := createPhasesGreedy(clauses, findSymbols, inputSymbols)
+	phases, err := createPhasesGreedy(clauses, findSymbols, inputSymbols, query.Bindings{})
 	if err != nil {
 		t.Fatalf("phasing failed: %v", err)
 	}

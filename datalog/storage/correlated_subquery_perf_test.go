@@ -105,7 +105,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 	                  [(get-else $ ?t :task/token-count 0) ?tok]
 	                  [(get-else $ ?t :task/duration 0) ?dur]]
 	          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-	      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+	      [(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])
 
 	  ;; Subquery 2: opening count (determines completeness)
 	  (or-default [(q [:find (count ?t)
@@ -132,7 +132,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 	                      $ ?s) [[?maxCa]]]
 	                  [(= ?ca ?maxCa)]]
 	          $ ?scenario) [[?lastKey ?lastUpdatedAt]]]
-	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 
 	  :order-by [[?lastUpdatedAt :desc]]]`
 
@@ -228,7 +228,7 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 			                  [(get-else $ ?t :task/token-count 0) ?tok]
 			                  [(get-else $ ?t :task/duration 0) ?dur]]
 			          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-			      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+			      [(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])
 			  (or-default [(q [:find (count ?t)
 			           :in $ ?s
 			           :where [?t :task/root ?s]
@@ -251,7 +251,7 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 			                      $ ?s) [[?maxCa]]]
 			                  [(= ?ca ?maxCa)]]
 			          $ ?scenario) [[?lastKey ?lastUpdatedAt]]]
-			      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+			      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 			  :order-by [[?lastUpdatedAt :desc]]]`
 
 			b.ResetTimer()
@@ -336,7 +336,7 @@ func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, backend Backend) {
 	                  [(get-else $ ?t :task/token-count 0) ?tok]
 	                  [(get-else $ ?t :task/duration 0) ?dur]]
 	          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-	      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+	      [(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])
 	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
@@ -359,7 +359,7 @@ func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, backend Backend) {
 	                      $ ?s) [[?maxCa]]]
 	                  [(= ?ca ?maxCa)]]
 	          $ ?scenario) [[?lastKey ?lastUpdatedAt]]]
-	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 	  :order-by [[?lastUpdatedAt :desc]]]`
 
 	t.Run("baseline", func(t *testing.T) {
@@ -391,11 +391,17 @@ func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, backend Backend) {
 		db.ClearPlanCache()
 
 		// Log the rewritten clauses
-		q, _ := db.resolveQuery(queryStr)
-		root, _ := algebra.Compile(&query.Query{Where: q.Where})
+		q, err := db.resolveQuery(queryStr)
+		require.NoError(t, err)
+		prepared, err := query.Prepare(q, nil)
+		require.NoError(t, err)
+		root, err := algebra.Compile(&query.Query{Where: prepared.Where}, nil)
+		require.NoError(t, err)
 		optimizer := algebra.NewOptimizer(algebra.DefaultPasses(nil)...)
-		optimized, _ := optimizer.Optimize(root)
-		rewritten, _ := algebra.Decompile(optimized)
+		optimized, err := optimizer.Optimize(root)
+		require.NoError(t, err)
+		rewritten, err := algebra.Decompile(optimized)
+		require.NoError(t, err)
 		t.Logf("Rewritten %d clauses:", len(rewritten))
 		for i, c := range rewritten {
 			t.Logf("  [%d] %T: %s", i, c, c.String())
@@ -496,7 +502,7 @@ func testCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T, mode optim
 	                  [(get-else $ ?t :task/token-count 0) ?tok]
 	                  [(get-else $ ?t :task/duration 0) ?dur]]
 	          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-	      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+	      [(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])
 	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
@@ -519,7 +525,7 @@ func testCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T, mode optim
 	                      $ ?s) [[?maxCa]]]
 	                  [(= ?ca ?maxCa)]]
 	          $ ?scenario) [[?lastKey ?lastUpdatedAt]]]
-	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 	  :order-by [[?lastUpdatedAt :desc]]]`
 
 	t.Run("baseline", func(t *testing.T) {
@@ -626,7 +632,7 @@ func testCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T, mod
 
 	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		AnnotationHandler: func(e annotations.Event) {
-			if e.Name == "or-fallback/cache-build" || e.Name == "or-fallback/branch.success" {
+			if e.Name == annotations.ScopeBranchBuild || e.Name == annotations.OrFallbackBranchSuccess {
 				t.Logf("[%s] %v", e.Name, e.Data)
 			}
 			if e.Name == annotations.ScanSharingCacheHit || e.Name == annotations.ScanSharingCacheMiss {
@@ -694,7 +700,7 @@ func testCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T, mod
 	                  [(get-else $ ?i :item/input-units 0) ?iu]
 	                  [(get-else $ ?i :item/output-units 0) ?ou]]
 	          $ ?project) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]]
-	      [(ground [0 0 0 0 0]) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]])
+	      [(ground [0 0 0 0 0]) [?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]])
 	  (or-default [(q [:find (count ?i)
 	           :in $ ?p
 	           :where [?i :item/project ?p]
@@ -720,7 +726,7 @@ func testCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T, mod
 	                      $ ?p) [[?maxCa]]]
 	                  [(= ?ca ?maxCa)]]
 	          $ ?project) [[?lastKey ?lastUpdatedAt]]]
-	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
 	  :order-by [[?lastUpdatedAt :desc]]]`
 
 	t.Run("baseline", func(t *testing.T) {

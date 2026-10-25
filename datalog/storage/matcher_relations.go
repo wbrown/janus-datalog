@@ -116,6 +116,19 @@ func (m *PatternMatcher) MatchWithConstraints(
 		}
 	}
 
+	// A binding tuple that names no entity, no attribute or no datom's value
+	// at the pattern's positions is the equality join's typed non-match: it
+	// contributes no tuple and drives no seek (typedPositionBindingCheck). The
+	// bindings are selected once here, after the vector arm, which compares a
+	// vector against a declared vector attribute's whole collection, so the
+	// cache arm, the strategy chooser's counting and every join strategy read
+	// typed bindings alone. The selection reads the relation once into a
+	// materialized one carrying its properties and its deferred error, which
+	// every path below reads whole in any case.
+	if typed := typedPositionBindingCheck(pattern, bindingRel.Symbols()); typed != nil {
+		bindingRel = executor.Select(bindingRel, typed)
+	}
+
 	// CACHE OPTIMIZATION: When A is known (from pattern constant or bindings),
 	// use the cache for each E value instead of storage scans.
 	if m.handler != nil {
@@ -173,27 +186,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 
 	// Analyze if we can use iterator reuse
 	// For multi-position cases, the relation may be materialized to allow cardinality counting
-	strategy, bindingRel := analyzeReuseStrategy(pattern, bindingRel)
-
-	// For V-bound queries with NeedsValidation, check cardinality
-	// Only validate when EXPLICITLY CardinalityOne
-	// CardinalityMany uses add-wins, CardinalityUnknown/schemaless emits all
-	// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 3b
-	if strategy.NeedsValidation && strategy.BoundA != nil {
-		// Default: no validation (schemaless = Datascript-style = emit all)
-		strategy.NeedsValidation = false
-
-		if m.schema != nil {
-			if aKw, ok := strategy.BoundA.(datalog.Keyword); ok {
-				if def := m.schema.GetAttribute(aKw); def != nil {
-					if def.Cardinality == schema.CardinalityOne {
-						// Only explicit CardinalityOne needs validation
-						strategy.NeedsValidation = true
-					}
-				}
-			}
-		}
-	}
+	strategy, bindingRel := m.analyzeReuseStrategy(pattern, bindingRel)
 
 	// Emit strategy selection event
 	if m.handler != nil {
@@ -354,6 +347,14 @@ func (m *PatternMatcher) matchUnboundScan(
 				}
 			}
 		}
+	}
+
+	// A datom's value is a scalar. A vector at the value position names a
+	// declared vector attribute's whole collection, which the vector arms
+	// below compare; under any other constant attribute it equals no datom,
+	// and the pattern answers the empty relation.
+	if a != nil && card != schema.CardinalityVector && datalog.IsVector(v) {
+		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
 	}
 
 	// CACHE OPTIMIZATION: When E and A are bound, use the cache for O(1)
@@ -572,7 +573,6 @@ func (m *PatternMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, b
 	}); err != nil {
 		return nil, err
 	}
-	bindingTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), bindingTuples)
 
 	report := DiscardIntake
 	if m.handler != nil {
@@ -941,7 +941,13 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 		var aAttr Attribute
 		copy(eEnt[:], eBytes[:])
 		copy(aAttr[:], aStorage[:])
-		entry, err := it.matcher.cache.GetOrResolve(CacheKey{E: eEnt, A: aAttr}, it.matcher, it.matcher.cacheBound(), it.matcher.handler, it.report)
+		card := schema.CardinalityOne
+		if it.matcher.schema != nil {
+			if def := it.matcher.schema.GetAttribute(a); def != nil {
+				card = def.Cardinality
+			}
+		}
+		entry, err := it.matcher.cache.GetOrResolve(CacheKey{E: eEnt, A: aAttr}, card, it.matcher, it.matcher.cacheBound(), it.matcher.handler, it.report)
 		if err != nil {
 			return false, err
 		}
@@ -1220,7 +1226,7 @@ func (m *PatternMatcher) matchFromCache(
 		report = &scanReport{}
 		opened = time.Now()
 	}
-	entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler, report)
+	entry, err := m.cache.GetOrResolve(key, card, m, m.cacheBound(), m.handler, report)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1509,17 +1515,10 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			continue
 		}
 
-		// Get E value from binding
-		eVal := tuple[eSymIdx]
-		eIdent, ok := eVal.(datalog.Identity)
-		if !ok {
-			// Try to convert if it's a different type
-			if id, ok := eVal.(*datalog.Identity); ok {
-				eIdent = *id
-			} else {
-				continue // Can't use cache for non-Identity E
-			}
-		}
+		// The bindings hold typed values alone, selected at the match's entry
+		// (MatchWithConstraints): an Identity at the entity position and a
+		// Keyword at the attribute position.
+		eIdent := tuple[eSymIdx].(datalog.Identity)
 
 		// Determine A and cardinality for this tuple
 		var tupleCard datalog.Keyword
@@ -1530,10 +1529,7 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			if aSymIdx >= len(tuple) {
 				continue
 			}
-			aKw, ok := tuple[aSymIdx].(datalog.Keyword)
-			if !ok {
-				continue
-			}
+			aKw := tuple[aSymIdx].(datalog.Keyword)
 			tupleCard = schema.CardinalityOne
 			if m.schema != nil {
 				if def := m.schema.GetAttribute(aKw); def != nil {
@@ -1555,7 +1551,7 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		key := CacheKey{E: Entity(eIdent.Hash()), A: tupleAAttr}
 
 		// Get from cache
-		entry, err := m.cache.GetOrResolve(key, m, m.cacheBound(), m.handler, report)
+		entry, err := m.cache.GetOrResolve(key, tupleCard, m, m.cacheBound(), m.handler, report)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1822,9 +1818,11 @@ func (m *PatternMatcher) matchVectorWithBindings(
 	}
 
 	if eSymIdx == -1 {
-		// E is not bound from bindings - fall back to normal path
-		// This shouldn't happen if we got here, but be safe
-		return executor.NewMaterializedRelation(symbols, nil), nil
+		// The binding binds the value and not the entity. A vector's value
+		// names the whole collection, so no run is narrowed by it: every
+		// entity's vector is resolved and the bound values are compared at
+		// the collapse.
+		return m.matchVectorScanAllEntities(pattern, symbols, attr, v, valueType)
 	}
 
 	// Get attribute bytes once

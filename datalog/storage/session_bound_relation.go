@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // sessionBoundRelation ties a query's ReadSession to its result: the session
@@ -19,6 +20,16 @@ func newSessionBoundRelation(inner executor.Relation, session ReadSession) execu
 
 func (r *sessionBoundRelation) Iterator() executor.Iterator {
 	return &sessionBoundIterator{Iterator: r.Relation.Iterator(), session: r.session}
+}
+
+// Rename is the inner relation's rename bound to the same session, so the
+// session closes when the renamed result's iterator is exhausted or closed.
+func (r *sessionBoundRelation) Rename(subst query.Substitution) (executor.Relation, error) {
+	renamed, err := r.Relation.Rename(subst)
+	if err != nil {
+		return nil, err
+	}
+	return newSessionBoundRelation(renamed, r.session), nil
 }
 
 // sessionBoundIterator releases the session at exhaustion or Close. A close

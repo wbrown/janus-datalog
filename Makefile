@@ -1,6 +1,6 @@
 # Janus Datalog - Makefile
 
-.PHONY: test test-fast test-storage test-wasm test-examples test-hooks bench bench-prebuilt profile clean-testdb build-testdb help
+.PHONY: test test-fast test-storage test-wasm test-wasm-others test-wasm-storage wasm-build test-examples test-hooks bench bench-prebuilt profile clean-testdb build-testdb help
 
 WASM_PATH := $(shell go env GOROOT)/lib/wasm
 
@@ -13,6 +13,8 @@ help:
 	@echo "  make test-storage   - Run storage tests only (native)"
 	@echo "  make test-examples  - Compile-check every examples/ file under its build tag"
 	@echo "  make test-wasm      - datalog and tests packages under js/wasm (node runner)"
+	@echo "  make test-wasm-others  - the wasm leg less the storage package"
+	@echo "  make test-wasm-storage - the storage package under js/wasm, under its own timeout"
 	@echo "  make test-hooks     - .claude/hooks harness (Tier 2 runs the real claude CLI)"
 	@echo "  make bench          - Run all benchmarks"
 	@echo "  make bench-prebuilt - Run pre-built database benchmarks"
@@ -38,11 +40,26 @@ test-storage: build-testdb
 # Test files are portable by default: whatever compiles into the wasm test
 # binaries runs, so a misclassified file fails loudly in this leg rather than
 # being silently excluded. The !(js && wasm) tag is reserved for files bound
-# to native-only surface (direct Badger imports, BadgerStore APIs).
-test-wasm:
+# to native-only surface (direct Badger imports, BadgerStore APIs). A wasm
+# test binary runs its tests on one thread, and the storage package's runs
+# past twenty minutes on a CI runner, so the leg is two invocations: the
+# storage package alone, under a timeout of its own, and every other
+# package. The complement is make's filter-out over go list, so a new
+# package lands in it by construction and no package is named twice.
+WASM_PACKAGES = $(shell go list ./datalog/... ./tests/...)
+WASM_STORAGE := github.com/wbrown/janus-datalog/datalog/storage
+
+test-wasm: test-wasm-others test-wasm-storage
+
+wasm-build:
 	@command -v node >/dev/null 2>&1 || { echo "node is required for wasm tests (go_js_wasm_exec)"; exit 1; }
 	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go build ./datalog/...
-	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go test -count=1 ./datalog/... ./tests/...
+
+test-wasm-others: wasm-build
+	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go test -count=1 $(filter-out $(WASM_STORAGE),$(WASM_PACKAGES))
+
+test-wasm-storage: wasm-build
+	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go test -count=1 -timeout 45m $(WASM_STORAGE)
 
 # Every examples/ file is its own `package main` behind //go:build example, so
 # `go vet ./examples/` reports main redeclared and no ordinary build reaches

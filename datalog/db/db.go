@@ -59,13 +59,14 @@ func Open(source interface{}, opts ...Option) (*DB, error) {
 		opt(&cfg)
 	}
 	dbOpts := storage.DatabaseOptions{
-		BackendName:          cfg.backendName,
-		Schema:               cfg.schema,
-		ReplicaID:            cfg.replicaID,
-		AnnotationHandler:    cfg.annotationHandler,
-		DisableCache:         cfg.disableCache,
-		PlannerOptions:       cfg.plannerOptions,
-		CompressionThreshold: cfg.compressionThreshold,
+		BackendName:             cfg.backendName,
+		Schema:                  cfg.schema,
+		RefuseUnknownAttributes: cfg.refuseUnknown,
+		ReplicaID:               cfg.replicaID,
+		AnnotationHandler:       cfg.annotationHandler,
+		DisableCache:            cfg.disableCache,
+		PlannerOptions:          cfg.plannerOptions,
+		CompressionThreshold:    cfg.compressionThreshold,
 	}
 
 	var dump io.ReadSeeker

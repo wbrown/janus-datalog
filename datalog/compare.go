@@ -19,7 +19,7 @@ import (
 // cross-compare).
 //
 // The domain is closed, so this enumerates it and panics on the rest, the way
-// Type() and hashValue do. A catch-all rank is what let vectors — the domain's
+// Type() and HashValue do. A catch-all rank is what let vectors — the domain's
 // only composite — order by their rendered form: two vectors shared the unknown
 // rank, and compareByRank resolved same-rank pairs through fmt.
 //
@@ -60,7 +60,7 @@ func typeRank(v interface{}) int {
 		}
 		return 9
 	}
-	if isVector(v) {
+	if IsVector(v) {
 		return rankVector
 	}
 	panic(fmt.Sprintf("typeRank: %T is not a datalog value type", v))
@@ -193,7 +193,7 @@ func CompareValues(left, right interface{}) int {
 	// ValuesEqual performs, so two vectors it calls equal — across
 	// representations — compare zero here. A vector against a scalar orders by
 	// rank; []byte is a scalar and left the switch above.
-	if isVector(left) && isVector(right) {
+	if IsVector(left) && IsVector(right) {
 		return compareVectors(reflect.ValueOf(left), reflect.ValueOf(right))
 	}
 
@@ -277,9 +277,9 @@ func CompareValuesTagOrder(a, b Value) int {
 	return CompareValues(a, b)
 }
 
-// isVector reports whether v is the domain's composite. []byte is a Go slice but
+// IsVector reports whether v is the domain's composite. []byte is a Go slice but
 // a domain scalar, with its own rank and its own comparison.
-func isVector(v interface{}) bool {
+func IsVector(v interface{}) bool {
 	if _, ok := v.([]byte); ok {
 		return false
 	}
@@ -568,7 +568,7 @@ func ValuesEqual(a, b interface{}) bool {
 	// The value domain is closed and every member of it was handled above, so a
 	// value reaching here is outside the domain — a layering violation, e.g. a
 	// pulled map[string]interface{}, which is result presentation and never a
-	// relational value. Fail loudly naming the type, as Type() and hashValue do.
+	// relational value. Fail loudly naming the type, as Type() and HashValue do.
 	//
 	// This is a domain check, not a comparability check. Testing Comparable()
 	// let any comparable non-domain value through to `a == b`: a pointer then

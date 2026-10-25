@@ -114,29 +114,28 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 			if err != nil {
 				return fmt.Errorf("wildcard pull failed: %w", err)
 			}
-			for kw, val := range resolved {
-				result[query.KeyName(kw)] = val
-			}
+			renderWildcard(entity, resolved, result)
 		} else {
 			// Fallback to raw datoms when no EntityResolver
 			datoms, err := pe.getAllAttributes(entity)
 			if err != nil {
 				return fmt.Errorf("wildcard pull failed: %w", err)
 			}
+			resolved := make(map[datalog.Keyword]interface{}, len(datoms))
 			for _, datom := range datoms {
-				key := query.KeyName(datom.A)
-				if existing, ok := result[key]; ok {
+				if existing, ok := resolved[datom.A]; ok {
 					// Attribute already seen - accumulate into slice (cardinality-many)
 					switch v := existing.(type) {
 					case []interface{}:
-						result[key] = append(v, datom.V)
+						resolved[datom.A] = append(v, datom.V)
 					default:
-						result[key] = []interface{}{v, datom.V}
+						resolved[datom.A] = []interface{}{v, datom.V}
 					}
 				} else {
-					result[key] = datom.V
+					resolved[datom.A] = datom.V
 				}
 			}
+			renderWildcard(entity, resolved, result)
 		}
 
 	case *query.PullMapSpec:
@@ -200,11 +199,16 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 	return nil
 }
 
-// lookupAttribute retrieves a single attribute value using the matcher
+// lookupAttribute retrieves a single attribute value using the matcher. The
+// entity's id, the attribute query.DBID names, is the entity, answered with
+// no read.
 func (pe *PullExecutor) lookupAttribute(
 	entity datalog.Identity,
 	attr datalog.Keyword,
 ) (interface{}, bool, error) {
+	if attr == query.DBID {
+		return entity, true, nil
+	}
 	// Use EntityLookupMatcher interface if available
 	if lookupMatcher, ok := pe.matcher.(EntityLookupMatcher); ok {
 		var val interface{}
@@ -356,7 +360,7 @@ func (pe *PullExecutor) PullMany(entities []datalog.Identity, pattern *query.Pul
 			pe.pullBatchComplete(len(entities), 0, false, err)
 			return nil, fmt.Errorf("batch wildcard pull failed: %w", err)
 		}
-		results, attrCount, err := renderBatchWildcardResults(resolved, len(entities))
+		results, attrCount, err := renderBatchWildcardResults(entities, resolved)
 		pe.pullBatchComplete(len(entities), attrCount, false, err)
 		return results, err
 	}
@@ -380,15 +384,29 @@ func isWildcardPullPattern(pattern *query.PullPattern) bool {
 	return ok
 }
 
+// renderWildcard renders a wildcard's answer for entity into result: the
+// resolved attributes under their keys, and the entity under query.DBIDKey
+// beside them, since a wildcard names the id as it names every attribute. An
+// entity carrying no attribute answers nothing, so no id stands alone.
+func renderWildcard(entity datalog.Identity, resolved map[datalog.Keyword]interface{}, result map[string]interface{}) {
+	if len(resolved) == 0 {
+		return
+	}
+	for attr, value := range resolved {
+		result[query.KeyName(attr)] = value
+	}
+	result[query.DBIDKey] = entity
+}
+
 func renderBatchWildcardResults(
+	entities []datalog.Identity,
 	resolved []map[datalog.Keyword]interface{},
-	entityCount int,
 ) ([]map[string]interface{}, int, error) {
-	if len(resolved) != entityCount {
+	if len(resolved) != len(entities) {
 		return nil, 0, fmt.Errorf(
 			"batch wildcard resolver returned %d results for %d entities",
 			len(resolved),
-			entityCount,
+			len(entities),
 		)
 	}
 	results := make([]map[string]interface{}, len(resolved))
@@ -397,10 +415,8 @@ func renderBatchWildcardResults(
 		if len(attrs) == 0 {
 			continue
 		}
-		result := make(map[string]interface{}, len(attrs))
-		for attr, value := range attrs {
-			result[query.KeyName(attr)] = value
-		}
+		result := make(map[string]interface{}, len(attrs)+1)
+		renderWildcard(entities[i], attrs, result)
 		results[i] = result
 		attrCount += len(result)
 	}
@@ -494,9 +510,7 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 		if err != nil {
 			return fmt.Errorf("wildcard pull failed: %w", err)
 		}
-		for kw, val := range resolved {
-			result[query.KeyName(kw)] = val
-		}
+		renderWildcard(entity, resolved, result)
 
 	case *query.ResolvedPullMapSpec:
 		if s.IsMany {
@@ -682,7 +696,7 @@ func (pe *PullExecutor) PullResolvedMany(entities []datalog.Identity, pattern *q
 			pe.pullBatchComplete(len(entities), 0, true, err)
 			return nil, fmt.Errorf("batch resolved wildcard pull failed: %w", err)
 		}
-		results, attrCount, err := renderBatchWildcardResults(resolved, len(entities))
+		results, attrCount, err := renderBatchWildcardResults(entities, resolved)
 		pe.pullBatchComplete(len(entities), attrCount, true, err)
 		return results, err
 	}

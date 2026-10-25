@@ -39,10 +39,10 @@ func main() {
 	}
 	f.Close()
 
-	fmt.Println("=== 1. Tuple binding: max close per security ===")
+	fmt.Println("=== 1. Relation binding: max close per security ===")
 	// A subquery computes the max close for a given security.
-	// The outer query passes ?sec as input; the inner query returns
-	// a single tuple bound to ?max_close.
+	// The outer query passes ?sec as input; the inner query's result
+	// enters the outer query as the relation over ?max_close.
 	//
 	// EDN equivalent:
 	//   [:find ?ticker ?max_close
@@ -75,7 +75,7 @@ func main() {
 		Find(ticker, maxClose).
 		Where(
 			qb.Pat(sec, qb.Kw(":security/ticker"), ticker),
-			qb.Subquery(inner, sec).BindTuple(maxClose),
+			qb.Subquery(inner, sec).BindRelation(maxClose),
 		).
 		OrderBy(qb.Desc(maxClose)).
 		MustBuild()
@@ -93,8 +93,9 @@ func main() {
 		fmt.Printf("    %s: $%.2f\n", r.Ticker, r.MaxClose)
 	}
 
-	fmt.Println("\n=== 2. Tuple binding: price range per security ===")
-	// Subquery returning multiple aggregates as a single tuple.
+	fmt.Println("\n=== 2. Relation binding: price range per security ===")
+	// A subquery whose find holds two aggregates binds the relation over
+	// both symbols.
 	innerMin := qb.NewVar("min_c")
 	innerMax := qb.NewVar("max_c")
 	minClose := qb.NewVar("min_close")
@@ -111,7 +112,7 @@ func main() {
 		Find(ticker, minClose, maxClose).
 		Where(
 			qb.Pat(sec, qb.Kw(":security/ticker"), ticker),
-			qb.Subquery(rangeInner, sec).BindTuple(minClose, maxClose),
+			qb.Subquery(rangeInner, sec).BindRelation(minClose, maxClose),
 		).
 		OrderBy(qb.Asc(ticker)).
 		MustBuild()

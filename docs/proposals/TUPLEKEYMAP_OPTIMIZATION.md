@@ -1,58 +1,37 @@
-# TupleKeyMap Optimization for Set Membership
+# TupleKeyMap optimization for set membership
 
-**Status**: `PutIfAbsent` adoption complete (2026-07-11); specialized set
-representation remains a proposal
-**Created**: 2025-12-24
-**Context**: Performance regression from set semantics fix
+## The problem
 
-## Problem Statement
+A `Relation` is a set, so `StreamingRelation.Project()` deduplicates its output through `DedupIterator`. `DedupIterator` keys a `TupleKeyMap` by the whole tuple. The map stores a value beside every key. Deduplication asks one question, whether the tuple was seen, and reads no value. The value and the entry that carries it are the cost this proposal removes.
 
-The set semantics fix for `StreamingRelation.Project()` added `DedupIterator` which uses `TupleKeyMap` for deduplication. This caused:
+`PERFORMANCE_STATUS.md` carries the measurements. The set-semantics fix's cost is under "Known Performance Regressions (Correctness Fixes)". The single-walk insertion is entry 19, "Single-Lookup Dedup Insertion", with the gain it measured.
 
-| Metric | Before | After | Regression |
-|--------|--------|-------|------------|
-| Time | 35,326 ns/op | 44,331 ns/op | +25% |
-| Memory | 2,520 B/op | 16,744 B/op | +6.6× |
-| Allocs | 111 allocs/op | 224 allocs/op | +2× |
+## What exists
 
-The original implementation also performed separate `Exists` and `Put` calls.
-That redundant lookup is now removed across all production add-if-absent paths:
-deduplication is **7.3% faster geomean** with unchanged memory and allocations.
-
-The remaining overhead comes from `TupleKeyMap` being designed for **key-value
-storage** when deduplication only needs **set membership**.
-
-## Current Implementation
+`DedupIterator` (`datalog/executor/iterator_composition.go`) deduplicates in one walk per tuple:
 
 ```go
-// TupleKeyMap stores key-value pairs
-type TupleKeyMap struct {
-    m map[uint64][]mapEntry
-}
-
-type mapEntry struct {
-    values []interface{}  // For collision detection
-    value  interface{}    // The stored value - NOT NEEDED FOR DEDUP
-}
-
-// DedupIterator now uses the single-walk insertion API
-if !it.seen.PutIfAbsent(key, struct{}{}) {
+key := NewTupleKeyFull(tuple)
+if !it.seen.PutIfAbsent(key, true) {
+    it.current = tuple
     return true
 }
 ```
 
-For every unique tuple:
-1. Compute FNV-1a hash over all values
-2. Look up hash in map
-3. If collision bucket exists, compare values using `datalog.ValuesEqual()`
-4. Store `mapEntry{values, struct{}{}}` — the `value` field remains unnecessary
-   for set membership
+`TupleKeyMap` (`datalog/executor/tuple_key.go`) holds each hash's first entry inline in `entries map[uint64]mapEntry`. Second and later entries sharing a hash spill into `overflow map[uint64][]mapEntry`, which stays nil until the first collision. Every lookup compares full values, so a collision costs time and never correctness.
 
-## Proposed Optimizations
+`mapEntry` carries two fields. `values []interface{}` holds the tuple's values for the collision comparison. `value interface{}` holds the stored value. For deduplication the stored value is `true`, and nothing reads it.
 
-### Option 1: TupleSet (Minimal Change)
+For every unique tuple the map computes the FNV-1a hash over the values, looks the hash up, compares values on a collision, and stores a `mapEntry` holding the values and the `true`.
 
-Create a specialized `TupleSet` that doesn't store values:
+## Its tests
+
+- `TestDedupIterator` (`datalog/executor/iterator_composition_test.go`).
+- `TestSetSemantics_Projection` and `TestSetSemantics_Contract_ProjectionAlwaysDeduplicates` (`datalog/executor/set_semantics_test.go`). Every option below keeps these green, since none changes which tuples pass.
+
+## The alternatives
+
+### A `TupleSet` that stores no value
 
 ```go
 type TupleSet struct {
@@ -81,11 +60,11 @@ func (s *TupleSet) Contains(tuple Tuple) bool {
 }
 ```
 
-**Expected savings**: Eliminates `mapEntry` wrapper and `value` field per unique tuple.
+It removes the `mapEntry` wrapper and the `value` field per unique tuple. It changes no behaviour. Its cost is a second keyed type beside `TupleKeyMap`, with the same hashing to keep in step. The sketch above keys a bucket slice per hash. `TupleKeyMap` has since moved to an inline first entry with an overflow map, and a `TupleSet` takes the same layout.
 
-### Option 2: Interned Value Fast Path
+### An interned-value fast path
 
-For single-symbol projections on interned types (`*Identity`, `*Keyword`), use pointer comparison:
+A projection to one symbol of an interned type (`*Identity`, `*Keyword`) can key a native Go map by the pointer:
 
 ```go
 type SingleValueSet struct {
@@ -101,12 +80,9 @@ func (s *SingleValueSet) Add(val interface{}) bool {
 }
 ```
 
-**When applicable**: Projection to single symbol of interned type.
-**Expected speedup**: Significant - avoids hashing entirely, uses Go's native map.
+It avoids hashing altogether on that shape. Its cost is detecting the projection's symbol type, which the iterator does not know today.
 
-### Option 3: Adaptive Strategy
-
-Choose strategy based on projection characteristics:
+### An adaptive strategy
 
 ```go
 func NewDedupIterator(source Iterator, symbols []Symbol) Iterator {
@@ -120,40 +96,13 @@ func NewDedupIterator(source Iterator, symbols []Symbol) Iterator {
 }
 ```
 
-### Option 4: Probabilistic (Not Recommended)
+It picks the representation by the projection's shape. Its cost is three iterator types and a cardinality estimate the planner does not carry.
 
-Use Bloom filter for approximate membership. **Rejected** because false positives would drop valid tuples, violating correctness.
+### A probabilistic set
 
-## Implementation Plan
+A Bloom filter answers membership approximately. A false positive drops a valid tuple, so the relation is no longer the set the query defines. That cost excludes it.
 
-1. ✅ **Phase 0**: Replace `Exists` + `Put` with `PutIfAbsent`
-   - 5.4–9.0% faster across unique/duplicate-heavy materialized/streaming paths
-   - 7.3% geomean; no memory or allocation change
-2. **Phase 1**: Create `TupleSet` (Option 1)
-   - Simple change, no behavior difference
-   - Measure improvement
-3. **Phase 2**: Add single-symbol fast path (Option 2)
-   - Requires detecting projection symbol types
-   - Only if Phase 1 shows insufficient improvement
-4. **Phase 3**: Adaptive strategy (Option 3)
-   - Only if real-world profiling shows benefit
+## What decides it
 
-## Acceptance Criteria
-
-- Memory overhead reduced by at least 50%
-- Time overhead reduced by at least 15%
-- No correctness regressions (set semantics tests pass)
-- No additional allocations per tuple
-
-## Related Files
-
-- `datalog/executor/tuple_key.go` - Current `TupleKeyMap` implementation
-- `datalog/executor/iterator_composition.go` - `DedupIterator` implementation
-- `datalog/executor/relation.go` - `StreamingRelation.Project()` fix
-- `datalog/executor/set_semantics_test.go` - Correctness tests
-
-## Notes
-
-The 6.6× memory increase is significant but the fix is necessary for correctness. Datalog relations are **sets**, not **bags**. Without deduplication, queries can return incorrect results.
-
-The optimization should be measured against the fixed implementation, not the broken one. The goal is to reduce the correctness tax, not eliminate it entirely.
+- Each alternative is measured against the deduplicating implementation, never against the pre-fix one that returned duplicates. The gain is a smaller correctness tax, not its removal.
+- The `TupleSet` changes no behaviour and needs no new information, so its measurement comes first. The fast path pays off only where the single-symbol projection is the shape that remains slow after it. The adaptive strategy pays off only where a profile shows the cardinality split it keys on.

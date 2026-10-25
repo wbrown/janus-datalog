@@ -30,18 +30,15 @@ func TestSubqueryMissingDB(t *testing.T) {
 		Find(scenario, taskCount).
 		Where(
 			qb.Pat(scenario, qb.Kw(":scenario/id"), qb.NewVar("id")),
-			qb.Subquery(subquery, scenario).BindTuple(taskCount),
+			qb.Subquery(subquery, scenario).BindRelation(taskCount),
 		).
 		MustBuild()
 
 	generated := q.String()
 
-	// The subquery call should include $ before ?scenario
-	// Expected: (q [...] $ ?scenario) [[?taskCount]]
-	// Actual:   (q [...] ?scenario) [[?taskCount]]
-
-	if !strings.Contains(generated, "$ ?scenario) [[?taskCount]]") {
-		t.Errorf("Subquery invocation missing database $\n\nGenerated:\n%s\n\nExpected to contain: $ ?scenario) [[?taskCount]]", generated)
+	// The subquery call includes $ before ?scenario.
+	if !strings.Contains(generated, "$ ?scenario) [[?taskCount] ...]") {
+		t.Errorf("Subquery invocation missing database $\n\nGenerated:\n%s\n\nExpected to contain: $ ?scenario) [[?taskCount] ...]", generated)
 	}
 }
 
@@ -64,13 +61,13 @@ func TestSubqueryWithDBGeneratesCorrectEDN(t *testing.T) {
 		Find(outer, result).
 		Where(
 			qb.Pat(outer, qb.Kw(":id"), qb.NewVar("_")),
-			qb.Subquery(subq, outer).BindTuple(result),
+			qb.Subquery(subq, outer).BindRelation(result),
 		).
 		MustBuild()
 
 	generated := q.String()
 
-	if !strings.Contains(generated, "$ ?outer) [[?result]]") {
-		t.Errorf("Subquery invocation missing database $\n\nGenerated:\n%s\n\nExpected to contain: $ ?outer) [[?result]]", generated)
+	if !strings.Contains(generated, "$ ?outer) [[?result] ...]") {
+		t.Errorf("Subquery invocation missing database $\n\nGenerated:\n%s\n\nExpected to contain: $ ?outer) [[?result] ...]", generated)
 	}
 }

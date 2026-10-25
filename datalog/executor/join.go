@@ -15,7 +15,7 @@ import (
 // by concurrent access. Each goroutine must create its own iterator by calling
 // Relation.Iterator(), which returns independent iterator instances.
 type hashJoinIterator struct {
-	buildIndex  *groupedTupleIndex
+	buildIndex  *JoinIndex
 	probeIt     Iterator
 	buildErr    error // deferred error captured from the (eagerly consumed) build relation
 	seen        *TupleKeyMap
@@ -115,9 +115,9 @@ func (it *hashJoinIterator) Next() bool {
 			it.currentProbeTuple = tupleCopy
 		}
 
-		// Look up matches in the grouped build tuples — a positional probe, so
-		// no key materializes, and a hit is a subslice of the shared backing.
-		if matches := it.buildIndex.probe(it.currentProbeTuple); len(matches) > 0 {
+		// Look up matches in the build index — a positional probe, so no key
+		// materializes, and a hit is the key's group of held tuples.
+		if matches := it.buildIndex.Probe(it.currentProbeTuple); len(matches) > 0 {
 			it.matches = matches
 			it.matchIdx = 0
 			if it.metrics != nil {
@@ -224,9 +224,6 @@ func HashJoinWithOptions(
 	joinSyms []query.Symbol,
 	opts ExecutorOptions,
 ) Relation {
-	// Default capacity for unknown sizes (-1)
-	const defaultCapacity = 1000
-
 	// Check if we should use symmetric hash join for streaming relations
 	if opts.EnableSymmetricHashJoin {
 		strategy := ChooseJoinStrategy(left, right, joinSyms, opts)
@@ -235,20 +232,23 @@ func HashJoinWithOptions(
 		}
 	}
 
-	// Build symbol mappings
-	leftIndices := make([]int, len(joinSyms))
-	rightIndices := make([]int, len(joinSyms))
-	for i, sym := range joinSyms {
-		leftIndices[i] = SymbolIndex(left, sym)
-		rightIndices[i] = SymbolIndex(right, sym)
-		if leftIndices[i] < 0 || rightIndices[i] < 0 {
-			// Join symbol not found - return empty relation with options
-			opts := left.Options()
-			if !opts.populated() {
-				opts = right.Options()
-			}
-			return NewMaterializedRelationWithOptions(nil, nil, opts)
+	// A join symbol a side lacks is the query's error, carried by the result
+	// and surfaced when it is driven.
+	leftIndices, err := query.SymbolIndexTable(left.Symbols(), joinSyms)
+	var rightIndices []int
+	if err == nil {
+		rightIndices, err = query.SymbolIndexTable(right.Symbols(), joinSyms)
+	}
+	if err != nil {
+		if !opts.populated() {
+			opts = left.Options()
 		}
+		if !opts.populated() {
+			opts = right.Options()
+		}
+		result := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
+		result.err = fmt.Errorf("hash join: %w", err)
+		return result
 	}
 
 	// Determine output symbols and the right-side projection plan in a
@@ -326,12 +326,11 @@ func HashJoinWithOptions(
 		emitJoinStrategyAnnotation(opts.Handler, left, right, joinSyms, mode, buildSide, buildKeysUnique)
 	}
 
-	// Build phase - collect the build tuples once, then group them by join-key
-	// hash into contiguous spans of one shared backing (groupedTupleIndex).
+	// Build phase - hold each build tuple in the index under its join key.
 	// This is a pure relational join: every build tuple is preserved. CRDT/temporal
 	// resolution is the storage layer's responsibility (EATV ordering), never
 	// inferred here from a symbol's name.
-	// Pre-size based on build relation size to avoid slice growth
+	// Pre-size based on build relation size to avoid growth
 	collectCap := buildRel.Size()
 	if collectCap < 0 {
 		// Unknown size (streaming), use configurable default
@@ -342,7 +341,7 @@ func HashJoinWithOptions(
 			collectCap = 256 // Default if not configured
 		}
 	}
-	buildTuples := make([]Tuple, 0, collectCap)
+	buildIndex := NewJoinIndex(probeIndices, buildIndices, collectCap)
 
 	// CRITICAL: Check if build relation was already consumed
 	// This should never happen - it indicates a bug in the executor
@@ -393,9 +392,9 @@ func HashJoinWithOptions(
 		} else if trackCopy {
 			passthruCount++
 		}
-		buildTuples = append(buildTuples, tuple)
+		buildIndex.Add(tuple)
 	}
-	buildCount := len(buildTuples)
+	buildCount := buildIndex.Len()
 
 	// Capture any deferred error from the build scan before closing it, so a
 	// build-side failure isn't lost (it propagates onto the join result).
@@ -412,11 +411,7 @@ func HashJoinWithOptions(
 		buildEnd = time.Now()
 	}
 
-	// Group the build tuples by join-key hash. The tuples carry their own key
-	// values, so no key materializes per tuple and fanout needs no per-key
-	// slices — probes verify against the tuples in place.
-	buildIndex := groupTuples(buildTuples, probeIndices, buildIndices)
-	if buildKeysUnique && !buildIndex.keysUnique() {
+	if buildKeysUnique && !buildIndex.KeysUnique() {
 		panic("hash join build relation violated its candidate-key guarantee")
 	}
 
@@ -454,14 +449,11 @@ func HashJoinWithOptions(
 		// Return streaming relation with lazy evaluation
 		var resultSeen *TupleKeyMap
 		if len(resultProperties.Keys) == 0 {
-			// Handle unknown sizes (-1) with reasonable default.
-			expectedResults := probeRel.Size()
-			if expectedResults < 0 {
-				expectedResults = defaultCapacity
-			}
-			buildSize := buildRel.Size()
-			if buildSize > 0 && buildSize < expectedResults {
-				expectedResults = buildSize
+			// The build tuples are in hand and size the map, the probe side
+			// when its size is known and smaller; the map grows past either.
+			expectedResults := buildCount
+			if probeSize := probeRel.Size(); probeSize >= 0 && probeSize < expectedResults {
+				expectedResults = probeSize
 			}
 			resultSeen = NewTupleKeyMapWithCapacity(expectedResults)
 		}
@@ -492,15 +484,11 @@ func HashJoinWithOptions(
 	// Use efficient TupleKeyMap for deduplication
 	var seen *TupleKeyMap
 	if len(resultProperties.Keys) == 0 {
-		// Pre-size seen map - worst case is probe size, but likely smaller due
-		// to filtering. Use min(probeSize, buildSize) as estimate.
-		expectedResults := probeRel.Size()
-		if expectedResults < 0 {
-			expectedResults = defaultCapacity
-		}
-		probeBuildSize := buildRel.Size()
-		if probeBuildSize > 0 && probeBuildSize < expectedResults {
-			expectedResults = probeBuildSize
+		// The build tuples are in hand and size the map, the probe side when
+		// its size is known and smaller; the map grows past either.
+		expectedResults := buildCount
+		if probeSize := probeRel.Size(); probeSize >= 0 && probeSize < expectedResults {
+			expectedResults = probeSize
 		}
 		seen = NewTupleKeyMapWithCapacity(expectedResults)
 	}
@@ -528,9 +516,9 @@ func HashJoinWithOptions(
 		probeTuple := probeIt.Tuple()
 		probeCount++
 
-		// Positional probe against the grouped build tuples — no key
-		// materializes, and the hit is a subslice of the shared backing.
-		matches := buildIndex.probe(probeTuple)
+		// Positional probe against the build index — no key materializes,
+		// and the hit is the key's group of held tuples.
+		matches := buildIndex.Probe(probeTuple)
 		if len(matches) == 0 {
 			continue
 		}

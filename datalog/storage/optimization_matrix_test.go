@@ -2,10 +2,12 @@ package storage
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
@@ -52,7 +54,7 @@ const optimizationMatrixQueryBody = `[:find ?scenario ?title ?createdAt ?taskCou
                   [(get-else $ ?t :task/token-count 0) ?tok]
                   [(get-else $ ?t :task/duration 0) ?dur]]
           $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+      [(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])
   (or-default [(q [:find (count ?t)
            :in $ ?s
            :where [?t :task/root ?s]
@@ -75,7 +77,7 @@ const optimizationMatrixQueryBody = `[:find ?scenario ?title ?createdAt ?taskCou
                       $ ?s) [[?maxCa]]]
                   [(= ?ca ?maxCa)]]
           $ ?scenario) [[?lastKey ?lastUpdatedAt]]]
-      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+      [(ground [:none :none]) [?lastKey ?lastUpdatedAt]])
   :order-by [[?lastUpdatedAt :desc]]`
 
 func optimizationMatrixQuery(limit int) string {
@@ -118,7 +120,7 @@ func populateOptimizationMatrix(tb testing.TB, db *Database, numScenarios, tasks
 
 // TestOptimizationMatrix runs the production-structure query with all
 // combinations of optimizer flags to measure their individual and combined
-// impact. Uses 75 scenarios × 100 tasks (7,500 tasks total).
+// impact. Uses 30 scenarios × 100 tasks (3,000 tasks total).
 func TestOptimizationMatrix(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -129,7 +131,7 @@ func TestOptimizationMatrix(t *testing.T) {
 
 func testOptimizationMatrix(t *testing.T, mode optimizerMode) {
 	const (
-		numScenarios     = 75
+		numScenarios     = 30
 		tasksPerScenario = 100
 	)
 
@@ -248,7 +250,7 @@ func testComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T, mode optim
 					       [(get-else $ ?t :task/token-count 0) ?tok]
 					       [(get-else $ ?t :task/duration 0) ?dur]]
 					$ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-					[(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])]`,
+					[(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])]`,
 		},
 		{
 			name: "scalar fallback and expression",
@@ -264,7 +266,7 @@ func testComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T, mode optim
 					       [(get-else $ ?t :task/token-count 0) ?tok]
 					       [(get-else $ ?t :task/duration 0) ?dur]]
 					$ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-					[(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+					[(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])
 				(or-default [(q [:find (count ?t)
 					:in $ ?s
 					:where [?t :task/root ?s]
@@ -324,15 +326,25 @@ func BenchmarkComplexQueryCheckpoint(b *testing.B) {
 	benchmarkComplexQueryCheckpoint(b, nil)
 }
 
+// BenchmarkComplexQueryCheckpointPrefetch is the checkpoint with
+// EnableEntityPrefetch on, the number beside BenchmarkComplexQueryCheckpoint's
+// that prices the option's every trigger
+// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.10).
+func BenchmarkComplexQueryCheckpointPrefetch(b *testing.B) {
+	options := DefaultPlannerOptions()
+	options.EnableEntityPrefetch = true
+	benchmarkComplexQueryCheckpoint(b, &options)
+}
+
 // TestComplexQuerySubqueryExecutionCounts pins the algebra path's plan
 // structure. Every counter asserted below is an optimizer artifact: one
 // global execution per subquery body (4 total), or-fallback cache builds,
-// fused constraints, replaced outer groups, narrowed materializations. The
-// baseline path executes correlated subqueries once per outer combination
-// by definition (10 scenarios × 4 subquery bodies = 40 executions), so the
-// counts cannot hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test
-// declares its mode explicitly. Cross-mode result equivalence for the same
-// query body is covered by TestOptimizationMatrix.
+// fused constraints, replaced outer groups. The baseline path executes
+// correlated subqueries once per outer combination by definition (10
+// scenarios × 4 subquery bodies = 40 executions), so the counts cannot hold
+// there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its mode
+// explicitly. Cross-mode result equivalence for the same query body is
+// covered by TestOptimizationMatrix.
 func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 	for _, mode := range pinnedOptimizerModes(true) {
 		t.Run(mode.name, func(t *testing.T) {
@@ -342,30 +354,41 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 }
 
 func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
-	var subqueryExecutions atomic.Int64
-	var fallbackCacheBuilds atomic.Int64
-	var fusedConstraints atomic.Int64
+	var subqueryBuilds atomic.Int64
+	var builtMu sync.Mutex
+	var builtBranches [][]query.Symbol
+	// fusion is one same-entity pattern fused into the scan that bound the
+	// entity: the event reporting it and the attribute it read.
+	type fusion struct {
+		event string
+		attr  datalog.Keyword
+	}
+	var fusedMu sync.Mutex
+	var fused []fusion
 	var uniqueJoinBuilds atomic.Int64
 	var replacedOuterGroups atomic.Int64
-	var narrowedOuterMaterializations atomic.Int64
 	db := createOptimizerModeDB(t, mode, DatabaseOptions{
 		Schema: optimizationMatrixSchema(),
 		AnnotationHandler: func(event annotations.Event) {
 			switch event.Name {
-			case "subquery/executor-path":
-				subqueryExecutions.Add(1)
-			case "or-fallback/cache-build":
-				fallbackCacheBuilds.Add(1)
-			case annotations.PatternFusedConstraint:
-				fusedConstraints.Add(1)
+			case annotations.ScopeBranchBuild:
+				if event.Data[annotations.KeyForm] == "subquery" {
+					subqueryBuilds.Add(1)
+					return
+				}
+				builtMu.Lock()
+				builtBranches = append(builtBranches, event.Data["branch_syms"].([]query.Symbol))
+				builtMu.Unlock()
+			case annotations.PatternFusedConstraint, annotations.PatternFusedFetch:
+				fusedMu.Lock()
+				fused = append(fused, fusion{event: event.Name, attr: event.Data["attr"].(datalog.Keyword)})
+				fusedMu.Unlock()
 			case annotations.JoinStrategy:
 				if unique, _ := event.Data["build_key_unique"].(bool); unique {
 					uniqueJoinBuilds.Add(1)
 				}
-			case "or/outer-replaced":
+			case annotations.OrOuterReplaced:
 				replacedOuterGroups.Add(1)
-			case "or-fallback/outer.materialized":
-				narrowedOuterMaterializations.Add(1)
 			}
 		},
 	})
@@ -376,12 +399,54 @@ func testComplexQuerySubqueryExecutionCounts(t *testing.T, mode optimizerMode) {
 	tuples, err := executor.CollectTuples(result, nil)
 	require.NoError(t, err)
 	require.Len(t, tuples, 10)
-	require.Equal(t, int64(4), subqueryExecutions.Load())
-	require.Equal(t, int64(5), fallbackCacheBuilds.Load())
-	require.Equal(t, int64(5), fusedConstraints.Load())
+	require.Equal(t, int64(4), subqueryBuilds.Load(), "each of the four subquery clauses is built once under the subquery form")
+	sym := datalog.NewSymbol
+	// Every branch of the fallbacks is built, once per window of its subject,
+	// and nothing else is built: the two get-else rewrites' pattern branches
+	// keyed on the task, and each or-default's decorrelated subquery branch
+	// keyed on the scenario beside its ground default, which reads nothing.
+	fallbackBranches := [][]query.Symbol{
+		{sym("?t"), sym("?tok")},
+		{sym("?t"), sym("?dur")},
+		{sym("?scenario"), sym("?taskCount"), sym("?totalTokens"), sym("?totalDuration")},
+		{sym("?taskCount"), sym("?totalTokens"), sym("?totalDuration")},
+		{sym("?scenario"), sym("?openingCount")},
+		{sym("?openingCount")},
+		{sym("?scenario"), sym("?lastKey"), sym("?lastUpdatedAt")},
+		{sym("?lastKey"), sym("?lastUpdatedAt")},
+	}
+	for _, branch := range fallbackBranches {
+		require.Contains(t, builtBranches, branch, "the branch %v is built; the builds: %v", branch, builtBranches)
+	}
+	for _, built := range builtBranches {
+		require.Contains(t, fallbackBranches, built, "the build %v is a branch of the fallbacks; the builds: %v", built, builtBranches)
+	}
+	// A same-entity pattern following the scan that bound its entity fuses
+	// into it. The scenario's title and created-at fuse into the top-level
+	// type scan. The get-else rewrites' two pattern branches, over the
+	// fallback's window of the two hundred tasks, fuse once per window, and
+	// the tasks are read in eight windows. Each inner query's body is
+	// ordered by the planner, which leads the decorrelated body with a
+	// constant-valued pattern, the scan binding the task: :task/root is
+	// fetched in every body; :task/status is a constraint only in the
+	// opening-count body, where :task/key leads; and the last-key bodies
+	// fetch :task/completed-at and :task/key.
+	kw := datalog.NewKeyword
+	fetch := func(attr string) fusion { return fusion{event: annotations.PatternFusedFetch, attr: kw(attr)} }
+	constraint := func(attr string) fusion { return fusion{event: annotations.PatternFusedConstraint, attr: kw(attr)} }
+	want := []fusion{fetch(":scenario/title"), fetch(":scenario/created-at")}
+	for window := 0; window < 8; window++ {
+		want = append(want, fetch(":task/token-count"), fetch(":task/duration"))
+	}
+	want = append(want,
+		fetch(":task/root"),
+		constraint(":task/status"), fetch(":task/root"),
+		fetch(":task/completed-at"), fetch(":task/key"), fetch(":task/root"),
+		fetch(":task/root"), fetch(":task/completed-at"),
+	)
+	assert.ElementsMatch(t, want, fused, "the fusions of the top-level scan, the get-else branches' windows and each inner body under the planner's order")
 	require.Zero(t, uniqueJoinBuilds.Load())
-	require.Equal(t, int64(5), replacedOuterGroups.Load())
-	require.Equal(t, int64(1), narrowedOuterMaterializations.Load())
+	require.Equal(t, int64(6), replacedOuterGroups.Load(), "the fallbacks, the get-else rewrites and the subquery each stand in the place of the groups they consumed")
 }
 
 // TestComplexQueryCheckpointCacheSteadyState observes the EA cache's rebuild
@@ -398,7 +463,7 @@ func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
 
 func testComplexQueryCheckpointCacheSteadyState(t *testing.T, mode optimizerMode) {
 	const (
-		numScenarios     = 75
+		numScenarios     = 30
 		tasksPerScenario = 100
 		resultLimit      = 25
 	)

@@ -155,25 +155,29 @@ func (b *QueryBuilder) Limit(n int) *QueryBuilder {
 	return b
 }
 
-// Build finalizes and validates the query, returning the built *query.Query.
-// Returns an error if the query is invalid or if any errors occurred during construction.
+// Build assembles the query and runs ValidateQuery, every static check the
+// text admits, over it and every inner query it holds, so an inner query's
+// refusal is Build's error. An error a fluent method recorded, an element it
+// could not convert, is returned first.
 func (b *QueryBuilder) Build() (*query.Query, error) {
+	q, err := b.assemble()
+	if err != nil {
+		return nil, err
+	}
+	if err := query.ValidateQuery(q); err != nil {
+		return nil, err
+	}
+	return q, nil
+}
+
+// assemble is the query over the builder's parts, unvalidated, or the errors
+// the fluent methods recorded. A subquery builder assembles its inner query
+// through it, since the enclosing query's Build validates the inner query
+// through SubqueryPattern.Validate.
+func (b *QueryBuilder) assemble() (*query.Query, error) {
 	if len(b.errors) > 0 {
 		return nil, fmt.Errorf("query builder errors: %v", b.errors)
 	}
-	if len(b.find) == 0 {
-		return nil, fmt.Errorf("query must have at least one find element")
-	}
-	if len(b.where) == 0 {
-		return nil, fmt.Errorf("query must have at least one where clause")
-	}
-	// Static clause-shape rules (subquery binding arity, not-join header
-	// completeness, or-default-join interface) are enforced at every user
-	// boundary with one message; this is the builder boundary's call.
-	if err := query.ValidateStaticClauseShapes(b.where); err != nil {
-		return nil, err
-	}
-
 	return &query.Query{
 		Find:    b.find,
 		In:      b.in,
@@ -245,29 +249,27 @@ func toInputSpec(spec interface{}) (query.InputSpec, error) {
 	}
 }
 
-// toClause converts various types to query.Clause
+// toClause converts a builder to its query.Clause: a Clause converts as it
+// is, and a form or subquery builder, whose conversion holds other clauses
+// or a query and can fail, returns its own refusal.
 func toClause(c interface{}) (query.Clause, error) {
 	switch x := c.(type) {
 	case Clause:
 		return x.toClause(), nil
-	case *Pattern:
-		return x.toClause(), nil
-	case *Comparison:
-		return x.toClause(), nil
-	case *ChainedComparison:
-		return x.toClause(), nil
-	case *Expression:
-		return x.toClause(), nil
 	case *NotClause:
-		return x.toClause(), nil
+		return x.toClause()
 	case *NotJoinClause:
-		return x.toClause(), nil
+		return x.toClause()
 	case *OrBuilder:
-		return x.toClause(), nil
+		return x.toClause()
 	case *OrJoinBuilder:
-		return x.toClause(), nil
+		return x.toClause()
+	case *OrDefaultBuilder:
+		return x.toClause()
+	case *OrDefaultJoinBuilder:
+		return x.toClause()
 	case *SubqueryBuilder:
-		return x.toClause(), nil
+		return x.toClause()
 	default:
 		return nil, fmt.Errorf("cannot convert %T to Clause", c)
 	}

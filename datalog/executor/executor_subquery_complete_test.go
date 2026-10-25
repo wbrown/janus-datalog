@@ -90,15 +90,18 @@ func TestSubqueryComplete(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to execute query: %v", err)
 				}
+				tuples, err := CollectTuples(result, nil)
+				if err != nil {
+					t.Fatalf("Failed to read the result: %v", err)
+				}
 
-				if result.Size() != 2 {
-					t.Errorf("Expected 2 results, got %d", result.Size())
+				if len(tuples) != 2 {
+					t.Errorf("Expected 2 results, got %d", len(tuples))
 				}
 
 				// Check results
 				results := make(map[string]float64)
-				for i := 0; i < result.Size(); i++ {
-					tuple := result.Get(i)
+				for _, tuple := range tuples {
 					symbol := tuple[0].(string)
 					maxHigh := tuple[1].(float64)
 					results[symbol] = maxHigh
@@ -142,19 +145,22 @@ func TestSubqueryComplete(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to execute query: %v", err)
 				}
+				tuples, err := CollectTuples(result, nil)
+				if err != nil {
+					t.Fatalf("Failed to read the result: %v", err)
+				}
 
 				// We should get results for both symbols on 2025-06-02
-				if result.Size() != 2 {
-					t.Errorf("Expected 2 results, got %d", result.Size())
-					for i := 0; i < result.Size(); i++ {
-						t.Logf("Result %d: %v", i, result.Get(i))
+				if len(tuples) != 2 {
+					t.Errorf("Expected 2 results, got %d", len(tuples))
+					for i, tuple := range tuples {
+						t.Logf("Result %d: %v", i, tuple)
 					}
 				}
 
 				// Check AAPL results
 				found := false
-				for i := 0; i < result.Size(); i++ {
-					tuple := result.Get(i)
+				for _, tuple := range tuples {
 					if tuple[0].(string) == "AAPL" {
 						found = true
 						// AAPL has two entries for 2025-06-02: high 155 and 160, low 151 and 154
@@ -192,19 +198,22 @@ func TestSubqueryComplete(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to execute query: %v", err)
 				}
+				tuples, err := CollectTuples(result, nil)
+				if err != nil {
+					t.Fatalf("Failed to read the result: %v", err)
+				}
 
 				// Should get 3 results (one for each AAPL price entry)
-				if result.Size() != 3 {
-					t.Errorf("Expected 3 results, got %d", result.Size())
-					for i := 0; i < result.Size(); i++ {
-						t.Logf("Result %d: %v", i, result.Get(i))
+				if len(tuples) != 3 {
+					t.Errorf("Expected 3 results, got %d", len(tuples))
+					for i, tuple := range tuples {
+						t.Logf("Result %d: %v", i, tuple)
 					}
 				}
 
 				// Check that all results are for AAPL
 				expectedHighs := map[float64]bool{150.0: true, 155.0: true, 160.0: true}
-				for i := 0; i < result.Size(); i++ {
-					tuple := result.Get(i)
+				for _, tuple := range tuples {
 					symbol := tuple[0].(string)
 					if symbol != "AAPL" {
 						t.Errorf("Expected symbol AAPL, got %s", symbol)

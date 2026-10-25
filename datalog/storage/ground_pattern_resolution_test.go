@@ -85,7 +85,7 @@ func TestGroundVectorPatternDistinguishesClearedFromNeverSet(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(tc.name+"/"+mode.name+"/"+omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
-					db.SetSchema(constantPatternSchema(t))
+					require.NoError(t, db.SetSchema(constantPatternSchema(t)))
 					tc.write(t, db)
 
 					rel, err := db.Query(tc.query)
@@ -107,7 +107,7 @@ func TestGroundVectorPatternDistinguishesClearedFromNeverSet(t *testing.T) {
 // TestClearedVectorBindsEmptyVectorNotNil pins that a cleared vector binds the
 // empty vector for every element type, not only the ones typedVector converts.
 //
-// nil is not a datalog value. It has no case in ValuesEqual or hashValue, both
+// nil is not a datalog value. It has no case in ValuesEqual or HashValue, both
 // of which panic on anything outside the closed domain, so a nil reaching a
 // tuple's value position is not a wrong answer here — it is a crash at whatever
 // join or dedup touches that tuple next, arbitrarily far away.
@@ -133,7 +133,7 @@ func TestClearedVectorBindsEmptyVectorNotNil(t *testing.T) {
 		for _, omode := range optimizerModes {
 			t.Run(mode.name+"/"+omode.name, func(t *testing.T) {
 				db := createCacheTestDB(t, omode, mode.disableCache, nil)
-				db.SetSchema(refSchema(t))
+				require.NoError(t, db.SetSchema(refSchema(t)))
 
 				commitGroundPattern(t, db, func(tx *Transaction) error {
 					return tx.Set(e, refs, []interface{}{
@@ -195,7 +195,7 @@ func TestVBoundScanWithUnboundEntityRejectsSupersededValue(t *testing.T) {
 			for _, omode := range optimizerModes {
 				t.Run(tc.name+"/"+mode.name+"/"+omode.name, func(t *testing.T) {
 					db := createCacheTestDB(t, omode, mode.disableCache, nil)
-					db.SetSchema(constantPatternSchema(t))
+					require.NoError(t, db.SetSchema(constantPatternSchema(t)))
 					renamed(t, db)
 
 					rel, err := db.Query(tc.query)

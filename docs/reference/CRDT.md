@@ -891,7 +891,7 @@ type EntityResolver interface {
 }
 ```
 
-The Database implements this interface, delegating to `ResolveEntityAttributes` which uses the EA cache for efficient resolution.
+The Database implements this interface. A latest or as-of read walks the entity's EATV range once, discovering and resolving every attribute from the same scan and populating the EA cache as it goes. A history read discovers the attributes by an EAVT scan and resolves each through `ResolveEntityAttributes`.
 
 ### Wildcard Pulls
 
@@ -905,9 +905,11 @@ result, _ := d.Pull(entity, "[*]")
 // - CardinalityVector: []interface{} (RGA ordered list)
 ```
 
-**With schema**: Uses schema attributes as the resolution list, leveraging the cache when data is already cached.
+**With declarations**: the attributes the entity carries among the stored declarations and the engine's words. An attribute the entity carries that the store does not declare is not answered, and a definition inferred from the ops is not a declaration.
 
-**Without schema**: Scans EAVT to discover all attributes for the entity.
+**Without declarations**: every attribute the entity carries.
+
+**The id**: beside the attributes, the entity under `db/id`, which a wildcard names as it names every attribute. An entity carrying no attribute answers nil, so no id stands alone under a wildcard.
 
 ### Pull Expressions in Queries
 

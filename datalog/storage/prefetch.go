@@ -85,6 +85,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		// Single-pass: iterate EATV, accumulate datoms per (E, A) group,
 		// dispatch to cache at each attribute boundary.
 		var currentAttr Attribute
+		var currentKeyword datalog.Keyword
 		var currentDatoms []datalog.Datom
 		hasGroup := false
 
@@ -103,7 +104,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 
 			if hasGroup && aBytes != currentAttr {
 				// Attribute boundary — resolve and cache the previous group
-				card := m.GetCardinality(currentAttr)
+				card := m.GetCardinality(currentKeyword)
 				if key, ok := m.cacheKey(e, currentAttr); ok {
 					m.cache.PopulateFromDatoms(key, card, currentDatoms)
 					populated++
@@ -112,6 +113,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 			}
 
 			currentAttr = aBytes
+			currentKeyword = d.A
 			currentDatoms = append(currentDatoms, *d)
 			hasGroup = true
 		}
@@ -121,7 +123,7 @@ func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
 		}
 		// Flush last group
 		if hasGroup && len(currentDatoms) > 0 {
-			card := m.GetCardinality(currentAttr)
+			card := m.GetCardinality(currentKeyword)
 			if key, ok := m.cacheKey(e, currentAttr); ok {
 				m.cache.PopulateFromDatoms(key, card, currentDatoms)
 				populated++

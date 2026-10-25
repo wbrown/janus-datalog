@@ -403,7 +403,7 @@ func TestAETVCRDTResolutionSingleEntity(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Write multiple values (LWW - last write wins)
 			entity := datalog.NewIdentity("test-person")
@@ -443,7 +443,7 @@ func TestAETVCRDTResolutionMultipleEntities(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Create 3 entities, each with 3 name updates
 			entities := []datalog.Identity{
@@ -504,7 +504,7 @@ func TestAETVCRDTResolutionUnboundEntity(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Create entities with status updates
 			for i := 0; i < 5; i++ {
@@ -553,7 +553,7 @@ func TestIndexSelectionAETVForInputBoundE(t *testing.T) {
 				ValueType:   schema.TypeString,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			// Add test data
 			entity := datalog.NewIdentity("test-person")
@@ -579,7 +579,7 @@ func TestIndexSelectionAETVForInputBoundE(t *testing.T) {
 			)
 
 			// Analyze reuse strategy
-			strategy, _ := analyzeReuseStrategy(pattern, inputRel)
+			strategy, _ := db.Matcher().(*PatternMatcher).analyzeReuseStrategy(pattern, inputRel)
 
 			// With CardinalityOne schema, should select AETV (once implemented)
 			// For now, document the expected behavior
@@ -614,7 +614,7 @@ func TestAETVCrossProductInputs(t *testing.T) {
 				ValueType:   schema.TypeLong,
 				Cardinality: schema.CardinalityOne,
 			})
-			db.SetSchema(s)
+			require.NoError(t, db.SetSchema(s))
 
 			entities := []datalog.Identity{
 				datalog.NewIdentity("person-1"),

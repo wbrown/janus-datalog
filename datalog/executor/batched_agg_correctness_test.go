@@ -65,11 +65,14 @@ func TestBatchedAggregationCorrectness(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("Failed to read the result: %v", err)
+			}
 
 			// Build map of results
 			results := make(map[string]float64)
-			for i := 0; i < result.Size(); i++ {
-				tuple := result.Get(i)
+			for _, tuple := range tuples {
 				ticker := tuple[0].(string)
 				maxPrice := tuple[1].(float64)
 				results[ticker] = maxPrice

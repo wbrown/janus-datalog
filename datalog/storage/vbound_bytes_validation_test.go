@@ -219,7 +219,7 @@ func TestVBoundCardinalityOneBytes_AfterRemove(t *testing.T) {
 func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			// This handler accumulates, and parallel subquery workers share it,
+			// This handler accumulates, and the engine serializes no handler,
 			// so it holds its own lock.
 			var mu sync.Mutex
 			var trail []string

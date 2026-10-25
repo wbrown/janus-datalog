@@ -16,8 +16,16 @@ import (
 // read this?". One vocabulary, declared here, referenced everywhere, is what
 // makes both questions answerable at all.
 const (
-	// Query lifecycle
+	// Query lifecycle. QueryInvoked carries the query as received and
+	// QueryPrepared, emitted after Prepare, the prepared query under "query",
+	// whether the inference rewrote a form under "rewritten", and preparation's
+	// time as its latency (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md
+	// §4.9); a query preparation refuses completes with its error and emits no
+	// QueryPrepared. A query the database refuses before the executor's entry,
+	// once it is resolved, is reported invoked and completed the same way,
+	// with no QueryPrepared and no QueryPlanCreated.
 	QueryInvoked                      = "query/invoked"
+	QueryPrepared                     = "query/prepared"
 	QueryPlanCreated                  = "query/plan.created"
 	QueryComplete                     = "query/completed"
 	QueryRewriteConditionalAggregates = "query/rewrite.conditional-aggregates"
@@ -109,18 +117,40 @@ const (
 	OrOuterReplaced        = "or/outer-replaced"
 
 	// OR fallback evaluation
-	OrFallbackOuterMaterialized = "or-fallback/outer.materialized"
-	OrFallbackIteratorCreated   = "or-fallback/iterator.created"
-	OrFallbackOuterExhausted    = "or-fallback/outer.exhausted"
-	OrFallbackOuterTuple        = "or-fallback/outer.tuple"
-	OrFallbackBranchNarrowed    = "or-fallback/branch.narrowed"
-	OrFallbackBranchSuccess     = "or-fallback/branch.success"
-	OrFallbackCacheBuild        = "or-fallback/cache-build"
+	OrFallbackIteratorCreated = "or-fallback/iterator.created"
+	OrFallbackBranchNarrowed  = "or-fallback/branch.narrowed"
+	OrFallbackBranchSuccess   = "or-fallback/branch.success"
 
-	// Subquery execution
-	SubqueryExecutorPath      = "subquery/executor-path"
-	SubqueryInputRelation     = "subquery/input-relation"
-	SubqueryInputCombinations = "subquery/input-combinations"
+	// The modules a windowed form runs on
+	// (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.3, §4.9), reporting
+	// under every form, each event carrying the form under KeyForm.
+	//
+	// ScopeSubjectTuple is one subject tuple read into a window, rendered;
+	// ScopeSubjectExhausted is the subject read to its end; ScopeWindow is
+	// one window of the subject the branches run over: its ordinal, counted
+	// from one, its tuple count, and the count of distinct keys it projects
+	// onto the header's required run; ScopeBranchBuild is one window's build
+	// of a branch: the branch, its result symbols, the subject's symbols and
+	// the tuples built.
+	ScopeSubjectTuple     = "scope/subject.tuple"
+	ScopeSubjectExhausted = "scope/subject.exhausted"
+	ScopeWindow           = "scope/window"
+	ScopeBranchBuild      = "scope/branch.build"
+
+	// Rule evaluation: one stratum's fixpoint, begun, iterated and completed.
+	// RulesIteration carries the iteration number and the delta size per
+	// predicate; RulesStratumComplete the iterations run and the tuples
+	// derived.
+	RulesStratumBegin    = "rules/stratum.begin"
+	RulesIteration       = "rules/iteration"
+	RulesStratumComplete = "rules/stratum.complete"
+
+	// RulesMagicSets is the rewrite made for one invocation: the predicate
+	// and its adornment (bound per position). An invocation with a bound
+	// argument is rewritten for its binding pattern; a free invocation of a
+	// predicate reaching one with required positions is rewritten with its
+	// head all free and reports an adornment with no position bound.
+	RulesMagicSets = "rules/magic-sets"
 
 	// Algebra bridge and rewrites
 	AlgebraBridgeBegin               = "algebra/bridge-begin"
@@ -248,6 +278,24 @@ const (
 	// the reflect contexts and the annotated matcher already answer it this way.
 	KeySuccess = "success"
 
+	// The query lifecycle's payloads. KeyQuery is the query's rendering, as
+	// received on QueryInvoked and as prepared on QueryPrepared.
+	// KeyRelationsCount and KeyTuplesCount are QueryComplete's counts, and a
+	// refused query reports none of either. KeyError is the text of the error
+	// an event reports: QueryComplete's refusal, and the algebra bridge's
+	// compile, optimize and decompile failures. A refusal on any query entry
+	// path, the executor's and the database's, is reported through these keys.
+	KeyQuery          = "query"
+	KeyRelationsCount = "relations.count"
+	KeyTuplesCount    = "tuples.count"
+	KeyError          = "error"
+
+	// The form a windowed module's event fired under: or-join,
+	// or-default-join, not-join or subquery. The window reader's and the
+	// kept branch's events carry it, since the modules report under every
+	// form and the name alone cannot tell which.
+	KeyForm = "form"
+
 	// The funnel, narrowest last: intake from the index, what CRDT resolution
 	// produced from it, what survived the pattern and its constraints.
 	//
@@ -296,6 +344,11 @@ const (
 	// ScanMergeJoin merges the sorted binding stream against index order.
 	ScanMergeJoin ScanStrategy = "merge-join"
 
+	// ScanPerKeySeek opens one narrowed scan per distinct key of the bindings
+	// and probes the hash set against the keys' datoms as one stream, so it
+	// addresses one run per key and no single run.
+	ScanPerKeySeek ScanStrategy = "per-key-seek"
+
 	// ScanPerBinding opens one scan per binding tuple, so it addresses no
 	// single run.
 	ScanPerBinding ScanStrategy = "per-binding"
@@ -324,11 +377,12 @@ type Event struct {
 type Handler func(event Event)
 
 // A handler needs no serializing wrapper, and this package deliberately offers
-// none. The engine emits from parallel workers through one handler, so a
-// handler that remembers the last event renders one worker's line from
-// another's leftovers — and a mutex does not repair that, it only hides the
-// race while the pairing stays wrong. An event therefore carries everything its
-// line reports, and state lives where the facts are produced.
+// none. The engine emits on the goroutine that runs the query and serializes
+// no handler, so two queries on two goroutines share one, and a handler that
+// remembers the last event renders one query's line from another's leftovers
+// — and a mutex does not repair that, it only hides the race while the
+// pairing stays wrong. An event therefore carries everything its line
+// reports, and state lives where the facts are produced.
 
 // TimedEvent closes an event that began at start, computing End and Latency from
 // one clock read. A producer holding a start time builds its event here and emits

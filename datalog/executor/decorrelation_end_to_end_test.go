@@ -102,18 +102,20 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 				10: {high: 165.0, low: 152.0},
 			}
 
-			if result.Size() != 2 {
-				t.Errorf("expected 2 result tuples, got %d", result.Size())
-				dumpRelationTest(t, result)
+			tuples, err := CollectTuples(result, nil)
+			if err != nil {
+				t.Fatalf("failed to read the result: %v", err)
+			}
+			if len(tuples) != 2 {
+				t.Errorf("expected 2 result tuples, got %d", len(tuples))
+				for i, tuple := range tuples {
+					t.Logf("  [%d] %v", i, tuple)
+				}
 				return
 			}
 
-			it := result.Iterator()
-			defer it.Close()
-
 			found := make(map[int64]bool)
-			for it.Next() {
-				tuple := it.Tuple()
+			for _, tuple := range tuples {
 				if len(tuple) != 3 {
 					t.Errorf("expected tuple length 3, got %d: %v", len(tuple), tuple)
 					continue
