@@ -54,11 +54,7 @@ func NewContext() *Context {
 }
 
 // forkContext returns an independent Context sharing everything but the scan
-// registry, which is mutable per query. A Context is not safe for concurrent
-// use on account of that one member, and this is the derivation that makes
-// two concurrent holders of one query's state safe: each holds a fork.
-// context_test.go and rule_evaluation_test.go pin that a fork carries every
-// field the other derivations carry.
+// registry, which is mutable per query.
 func forkContext(ctx *Context) *Context {
 	if ctx == nil {
 		return nil

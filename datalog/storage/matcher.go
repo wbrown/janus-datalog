@@ -474,18 +474,21 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 	return ScanBound{Index: EATV}
 }
 
-// typedPositionBindingCheck returns the per-tuple check behind
-// filterTypedPositionBindings: whether the tuple's value for the pattern's
-// entity-position variable is an Identity, its value for the
-// attribute-position variable is a Keyword, and, under a constant attribute,
-// its value for the value-position variable is a scalar. A datom's value is
-// a scalar of the domain. The vector, the domain's one composite, names a
-// declared vector attribute's whole collection, which the vector arm of
-// MatchWithConstraints compares before any strategy runs, so at a strategy a
-// vector at the value position of a pattern on a constant attribute equals
-// no datom. Under a variable attribute the fact is per tuple, and the value
-// position is left alone. Returns nil when no checked position is bound by
-// these symbols — no check is needed.
+// typedPositionBindingCheck returns the per-tuple check the binding-driven
+// match selects its bindings under at its entry (MatchWithConstraints):
+// whether the tuple's value for the pattern's entity-position variable is an
+// Identity, its value for the attribute-position variable is a Keyword, and,
+// under a constant attribute, its value for the value-position variable is a
+// scalar. A tuple failing it names no entity, no attribute and no datom's
+// value, the typed non-match of the equality join, so it contributes zero
+// tuples and no seek is constructed for it. A datom's value is a scalar of
+// the domain. The vector, the domain's one composite, names a declared vector
+// attribute's whole collection, which the vector arm of MatchWithConstraints
+// compares before the selection runs, so past the selection a vector at the
+// value position of a pattern on a constant attribute equals no datom. Under
+// a variable attribute the fact is per tuple, and the value position is left
+// alone. Returns nil when no checked position is bound by these symbols — no
+// check is needed.
 func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbol) func(executor.Tuple) bool {
 	eIdx, aIdx, vIdx := -1, -1, -1
 	if v, ok := pattern.GetE().(query.Variable); ok {
@@ -520,42 +523,6 @@ func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbo
 	}
 }
 
-// filterTypedPositionBindings drops binding tuples whose value for the
-// pattern's entity-position variable is not an Identity, whose value for
-// the attribute-position variable is not a Keyword, or, under a constant
-// attribute, whose value for the value-position variable is a vector. Such
-// values name no entity, no attribute and no datom's value — the typed
-// non-match of the equality join — so they contribute zero tuples and no
-// seek is constructed for them. Every join strategy applies this check at
-// construction (the seek paths, the V-validation path and the merge join
-// filter their tuple slices; the hash join drops tuples while building its
-// hash set), so matchesDatom only ever sees correctly typed position
-// bindings. Tuples are returned unchanged (and unallocated) when no checked
-// position is bound by these symbols or every binding already has its
-// position's type.
-func filterTypedPositionBindings(pattern *query.DataPattern, symbols []query.Symbol, tuples []executor.Tuple) []executor.Tuple {
-	typed := typedPositionBindingCheck(pattern, symbols)
-	if typed == nil {
-		return tuples
-	}
-
-	for i, tuple := range tuples {
-		if typed(tuple) {
-			continue
-		}
-		// First untyped binding found: copy-filter the remainder.
-		filtered := make([]executor.Tuple, 0, len(tuples)-1)
-		filtered = append(filtered, tuples[:i]...)
-		for _, rest := range tuples[i+1:] {
-			if typed(rest) {
-				filtered = append(filtered, rest)
-			}
-		}
-		return filtered
-	}
-	return tuples
-}
-
 // matchesDatom checks if a datom matches the pattern constraints
 func (m *PatternMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface{}) bool {
 	// Tx is the one position with a pointer form: a bound Tx arrives as either an
@@ -572,9 +539,11 @@ func (m *PatternMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interfac
 				return false
 			}
 		default:
-			// Unreachable when entity bindings are validated at extraction
-			// (validateEntityBinding). Fail loudly rather than fuzzy-match: the
-			// entity position is inhabited only by Identity.
+			// Unreachable: a constant is validated at the user boundary
+			// (query.ValidateEntityBinding) and a binding is selected at the
+			// match's entry (typedPositionBindingCheck). Fail loudly rather
+			// than fuzzy-match: the entity position is inhabited only by
+			// Identity.
 			panic(fmt.Sprintf("BUG: non-Identity entity binding reached matchesDatom: %T", e))
 		}
 	}
@@ -588,9 +557,10 @@ func (m *PatternMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interfac
 				return false
 			}
 		default:
-			// Unreachable when attribute bindings are validated at extraction
-			// (validateAttributeBinding) and filtered at construction. Fail
-			// loudly: the attribute position is inhabited only by Keyword.
+			// Unreachable: a constant is validated at the user boundary
+			// (query.ValidateAttributeBinding) and a binding is selected at
+			// the match's entry (typedPositionBindingCheck). Fail loudly: the
+			// attribute position is inhabited only by Keyword.
 			panic(fmt.Sprintf("BUG: non-Keyword attribute binding reached matchesDatom: %T", a))
 		}
 	}

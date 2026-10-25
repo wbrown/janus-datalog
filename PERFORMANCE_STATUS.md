@@ -1775,7 +1775,7 @@ projection without adding this physical cost.
 - First query: ~1-5ms planning time
 - Cached query: ~0.3ms planning time
 - **~3× speedup for repeated queries**
-- The key is the prepared text, the positions the rule set requires of each invocation, the options that shape a plan, and the symbols bound when the plan was made, in one fixed order, so every plan enters the cache and a plan under a bound input is served to the next execution under the same bound set (`docs/proposals/NESTED_SCOPES_AS_QUERIES.md` §5.2). The database's cache holds a thousand plans and expires none.
+- The key is the prepared text, the rule set as its rendering, the options that shape a plan, the symbols bound when the plan was made, and which invocations are held, in one fixed order, so every plan enters the cache and a plan under a bound input is served to the next execution under the same bound set (`docs/proposals/NESTED_SCOPES_AS_QUERIES.md` §5.2). The database's cache holds a thousand plans and expires none.
 - `BenchmarkPlannerWithoutCache` and `BenchmarkPlannerWithCache` (`datalog/planner/cache_benchmark_test.go`) plan the complex query under no bound symbol and under its entity bound, five runs each: uncached **4.0–7.8 µs/op unbound and 4.1 µs/op bound**; served from the cache **1.5 µs/op unbound and 1.5–1.7 µs/op bound**, the bound plan now served where it was planned on every call.
 
 ---

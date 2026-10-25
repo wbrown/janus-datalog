@@ -75,10 +75,11 @@ func (e *NestedRecursionError) Error() string {
 }
 
 // EngineNamespaceError reports a variable written in a namespace the engine
-// mints variables into: unify, the later occurrences of a variable a pattern
-// names twice; scope, the holder of a collection input's whole value; and
-// magic, a seed predicate's head. Variable is the symbol, and Rule the rule it
-// stands in, nil for a query's own.
+// mints into, adorned, magic, delta, scope or unify (engineNamespace): the
+// engine's own variables are unify, the later occurrences of a variable a
+// pattern names twice; scope, the holder of a collection input's whole value;
+// and magic, a seed predicate's head. Variable is the symbol, and Rule the
+// rule it stands in, nil for a query's own.
 type EngineNamespaceError struct {
 	Variable Symbol
 	Rule     Symbol

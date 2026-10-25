@@ -125,8 +125,7 @@ func (m *PatternMatcher) matchWithHashJoin(
 	symbolIndex := keyPositions[0]
 
 	// Build hash set using symbol index (not datom position)
-	hashSet, keys, tuples, err := m.buildHashSet(
-		bindingRel, symbolIndex, typedPositionBindingCheck(pattern, bindingRel.Symbols()))
+	hashSet, keys, tuples, err := m.buildHashSet(bindingRel, symbolIndex)
 	if err != nil {
 		return nil, fmt.Errorf("hash join bindings failed: %w", err)
 	}
@@ -375,18 +374,12 @@ func (m *PatternMatcher) scanBoundForValues(index IndexType, e, a, v, tx interfa
 // each, and the tuple count. The keys decide the scan: one key narrows one
 // scan to its value, and several are sought one by one or probed against one
 // scan of the extent (matchWithHashJoin). The tuple count is the size of the
-// binding set, which binding.size reports. Tuples failing the typed-position
-// check (non-Identity entity, non-Keyword attribute — see
-// filterTypedPositionBindings) are dropped here: they are typed non-matches,
-// and dropping them at construction keeps them away from the probe's
-// full-tuple verification. They are dropped from the keys and the count with
-// it — a tuple that joins no tuples by construction is not part of the binding
-// set the scan was driven by, and merge join's filterTypedPositionBindings
-// drops them before its own count for the same reason.
+// binding set, which binding.size reports. The binding relation holds typed
+// bindings alone, selected at the match's entry (MatchWithConstraints), so
+// every tuple joins by its key and none reaches matchesDatom mistyped.
 func (m *PatternMatcher) buildHashSet(
 	bindingRel executor.Relation,
 	position int,
-	typed func(executor.Tuple) bool,
 ) (*executor.TupleKeyMap, []interface{}, int, error) {
 	capacity := bindingRel.Size()
 	if capacity < 0 {
@@ -400,13 +393,6 @@ func (m *PatternMatcher) buildHashSet(
 	for iter.Next() {
 		tuple := iter.Tuple()
 		if position >= len(tuple) {
-			continue
-		}
-		if typed != nil && !typed(tuple) {
-			// Typed non-match: this tuple's entity/attribute-position value
-			// names nothing, so it joins no tuples by definition. Dropping it
-			// here is the same result the probe would compute, without ever
-			// presenting a mistyped binding to matchesDatom.
 			continue
 		}
 
@@ -603,9 +589,6 @@ func (m *PatternMatcher) matchWithMergeJoin(
 	}); err != nil {
 		return nil, err
 	}
-	// Typed non-matches join no tuples by definition; drop them before
-	// merging, exactly as the seek paths do.
-	sortedTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), sortedTuples)
 	sort.SliceStable(sortedTuples, func(i, j int) bool {
 		return datalog.CompareValues(sortedTuples[i][keyPos], sortedTuples[j][keyPos]) < 0
 	})

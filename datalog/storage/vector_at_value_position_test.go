@@ -8,6 +8,7 @@ package storage
 // pattern's own literal.
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -98,16 +99,64 @@ func TestVectorAtValuePosition_ABoundVectorAnswersNoTupleUnderAScalarAttribute(t
 	runValueRouteCases(t, valueRouteFacts(), cases)
 }
 
-// The same scalar input over a history handle, the mode that reads raw
-// datoms without CRDT resolution.
-func TestVectorAtValuePosition_UnderAHistoryHandle(t *testing.T) {
+// A bound vector under every handle: the history handle reads raw datoms
+// without CRDT resolution and answers no binding-driven match from the cache,
+// and the live and as-of handles answer from it. By a scalar input with the
+// entity unbound, by a scalar input beside an entity a pattern binds, and by
+// a collection input of vectors beside one, under an undeclared attribute, a
+// declared cardinality one and a declared cardinality many, the pattern
+// answers no tuple, with no error and no panic.
+func TestVectorAtValuePosition_UnderEveryHandle(t *testing.T) {
+	x := named("x")
+	facts := []fact{
+		{x, ":a", int64(1)}, {x, ":r", int64(1)}, {x, ":one", int64(1)},
+		{x, ":m", int64(1)}, {x, ":m", int64(2)},
+	}
+	attributes := []struct{ name, attr string }{
+		{"undeclared", ":r"},
+		{"declared one", ":one"},
+		{"declared many", ":m"},
+	}
+	routes := []struct {
+		name, query string
+		inputs      []interface{}
+	}{
+		{"scalar input, entity unbound", `[:find ?e :in $ ?v :where [?e %s ?v]]`, []interface{}{vectorOneTwo}},
+		{"scalar input beside an entity a pattern binds", `[:find ?e :in $ ?v :where [?e :a 1] [?e %s ?v]]`, []interface{}{vectorOneTwo}},
+		{"collection input of vectors beside an entity a pattern binds", `[:find ?e :in $ [?v ...] :where [?e :a 1] [?e %s ?v]]`, []interface{}{[]interface{}{vectorOneTwo, []interface{}{int64(3)}}}},
+	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
-			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := commitFacts(t, d, valueRouteFacts())
-			assertCase(t, d.History(), names, valueRouteCase{
-				":in scalar given a vector", `[:find ?e :in $ ?v :where [?e :r ?v]]`, []interface{}{vectorOneTwo}, nil,
-			})
+			s, err := schema.NewBuilder().
+				Attribute(":one").Type(schema.TypeLong).One().Add().
+				Attribute(":m").Type(schema.TypeLong).Many().Add().
+				Build()
+			require.NoError(t, err)
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
+			names := map[datalog.Identity]string{x.id: x.name}
+			tx := d.NewTransaction()
+			for _, f := range facts {
+				require.NoError(t, tx.Add(f.of.id, kw(f.attr), f.value))
+			}
+			at, err := tx.Commit()
+			require.NoError(t, err)
+			handles := []struct {
+				name   string
+				handle *Database
+			}{
+				{"history", d.History()},
+				{"live", d},
+				{"as-of", d.AsOf(at)},
+			}
+			for _, h := range handles {
+				for _, a := range attributes {
+					for _, r := range routes {
+						t.Run(h.name+"/"+a.name+"/"+r.name, func(t *testing.T) {
+							assertCase(t, h.handle, names, valueRouteCase{r.name, fmt.Sprintf(r.query, a.attr), r.inputs, nil})
+						})
+					}
+				}
+			}
 		})
 	}
 }

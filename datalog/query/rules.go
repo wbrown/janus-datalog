@@ -120,6 +120,47 @@ type RuleSet struct {
 	// query that passes it, so the rosters are collected once.
 	rostersOnce sync.Once
 	rosters     *Rosters
+
+	// rendering is the set's text (String), rendered on its first call, once,
+	// as the rosters are collected.
+	renderOnce sync.Once
+	rendering  string
+}
+
+// String renders the set: each predicate in the set's order, a seed
+// predicate as its head in rule syntax, [(name head...)], and each rule as
+// ParseRules reads it, inside [ ]. The rendering identifies the set whole,
+// its bodies, required runs and heads, so the plan cache keys a plan on it.
+func (rs *RuleSet) String() string {
+	rs.renderOnce.Do(func() {
+		var sb strings.Builder
+		sb.WriteString("[")
+		for _, name := range rs.order {
+			rules := rs.rules[name]
+			if len(rules) == 0 {
+				// A seed predicate no rule derives: declared by its head alone.
+				if sb.Len() > 1 {
+					sb.WriteString(" ")
+				}
+				sb.WriteString("[(")
+				sb.WriteString(name.String())
+				for _, head := range rs.heads[name] {
+					sb.WriteString(" ")
+					sb.WriteString(head.String())
+				}
+				sb.WriteString(")]")
+			}
+			for _, rule := range rules {
+				if sb.Len() > 1 {
+					sb.WriteString(" ")
+				}
+				sb.WriteString(rule.String())
+			}
+		}
+		sb.WriteString("]")
+		rs.rendering = sb.String()
+	})
+	return rs.rendering
 }
 
 // clauseForms are the symbols the parser reads as a clause form at the head
@@ -200,7 +241,9 @@ type SeedPredicate struct {
 // NewSeededRuleSet builds a set whose seed predicates, declared in the order
 // given, are the relations a caller fills: the magic predicates of a set the
 // planner's rewrite builds. A seed is a stratum of its own unless a rule
-// derives into it.
+// derives into it. It is the rewrite's constructor: the names it is given
+// are the engine's own, in the namespaces the engine mints into, so it runs
+// none of the refusals NewRuleSet runs on a name or a variable of user text.
 func NewSeededRuleSet(rules []*Rule, seeds []SeedPredicate) (*RuleSet, error) {
 	rs := &RuleSet{rules: map[Symbol][]*Rule{}, arity: map[Symbol]int{}, required: map[Symbol][]bool{}, heads: map[Symbol][]Symbol{}}
 	for _, seed := range seeds {

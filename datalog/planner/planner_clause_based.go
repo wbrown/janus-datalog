@@ -32,10 +32,10 @@ func NewClauseBasedPlanner(stats *Statistics, options PlannerOptions) *ClauseBas
 }
 
 // Plan creates an optimized query plan under the caller's bindings. Every
-// plan is served from the cache and stored in it, under the query, the
-// positions the rule set requires of its invocations, the options, and the
-// symbols bound when the plan is made, so a plan is made once per distinct
-// text and bound set. The handler (may be nil) is request-scoped annotation
+// plan is served from the cache and stored in it, under the query, the rule
+// set, the options, the symbols bound when the plan is made and the
+// invocations held, so a plan is made once per distinct text, rule set and
+// bound set. The handler (may be nil) is request-scoped annotation
 // state, threaded through planning rather than stored on the planner, so
 // concurrent queries through a shared planner do not race on it.
 func (p *ClauseBasedPlanner) Plan(q *query.Query, bindings query.Bindings, handler annotations.Handler) (*RealizedPlan, error) {

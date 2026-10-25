@@ -15,7 +15,7 @@ The goals of `NESTED_SCOPES_AS_QUERIES.md` §1 stand. This design adds these.
 7. Cost is measured, never claimed (`RULES_WITNESSES_AND_SPECULATIVE_VALUES.md` §7). An option that is off costs nothing.
 8. The optimizer never changes results. Every test of this design runs under the optimizer-mode matrix of `RULES_WITNESSES_AND_SPECULATIVE_VALUES.md` §0.
 9. The engine's contracts are the tests §7 names. A change that drops a contract names the failure it removes. A mechanism is not a contract. Three mechanisms are excluded: computing a form's interface from what a reader holds (`NESTED_SCOPES_AS_QUERIES.md` §4), choosing how a branch runs from the shape of its clauses, and binding into a branch what the form's header does not name (§4.2, §4.3).
-10. A query is planned once per database per distinct prepared text and the symbols bound when the plan is made, whatever its inputs bind. The alternative is a plan made under a bound symbol kept out of the cache. Under it a query with a non-empty input is planned again on every execution.
+10. A query is planned once per database per distinct prepared text, rule set and the symbols bound when the plan is made, whatever its inputs bind. The alternative is a plan made under a bound symbol kept out of the cache. Under it a query with a non-empty input is planned again on every execution.
 
 ## 2. The language
 
@@ -69,7 +69,7 @@ The bodies the query's invocations run are planned at `PlanQuery` too (`planInvo
 - Each stratum's bodies, the plain, delta and lower copies, each planned as the query finding the rule's head (`PlanStratum`).
 - A body is planned with the fixpoint's predicates held (`query.HeldByFixpoint`). Inside it an invocation of a predicate without required positions reads the fixpoint's relation and plans nothing, and one of a predicate with required positions is derived at its clause, its bodies planned the same way.
 - The rewrite plans the scopes it reads for their order with every invocation held (`query.HeldEvery`), since it decides each site itself.
-- Which invocations are held is part of a plan's key, beside the text, the rule set's required positions, the bound symbols and the options.
+- Which invocations are held is part of a plan's key, beside the text, the rule set, the bound symbols and the options (`NESTED_SCOPES_AS_QUERIES.md` §5.2).
 - The executor's evaluation reads each body's plan from the cache, `prepareStratum` through `PlanStratum`, and each scope inside a body under the same held value, so executing a planned query plans no body, and `Query`, `Explain` and `ExplainAlgebra` refuse a body no order runs alike (§2.3).
 - The alternative is the bodies planned at evaluation alone. Under it `Explain` and `ExplainAlgebra` accept a body `Query` refuses, at any depth of invocation, against goal 5, and the executor plans at evaluation what the planner did not, a second computation of which bodies a query runs.
 

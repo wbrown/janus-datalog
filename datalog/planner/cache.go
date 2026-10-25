@@ -154,14 +154,12 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, bindings query.Binding
 		fmt.Fprintf(h, "%v;", clause)
 	}
 
-	// The positions the rule set requires of an invoked predicate decide the
-	// invocation's correlates, and so its phase, and the clause text does not
-	// carry them; each invocation, at any depth, contributes its predicate's
-	// required positions beside the text.
+	// A plan is the walk over the bodies the query's invocations run, and
+	// the positions the rule set requires of an invoked predicate decide the
+	// invocation's phase; the clause text carries neither, so the rule set's
+	// own rendering, its rules in the set's order, hashes beside the text.
 	if rules != nil {
-		for _, inv := range query.Invocations(q.Where) {
-			fmt.Fprintf(h, "REQUIRED:%v:%v;", inv.Name, rules.Required(inv.Name))
-		}
+		fmt.Fprintf(h, "RULES:%s;", rules)
 	}
 
 	// Hash in clause (but not the actual values, just the structure)

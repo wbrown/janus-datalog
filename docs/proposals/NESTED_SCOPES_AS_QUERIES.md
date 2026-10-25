@@ -261,7 +261,7 @@ The planner's scheduling preferences stand. `patternDependsOnPendingExpression` 
 
 Both optimizer modes phase a prepared query. With the algebra engine on, the planner phases the clauses the decompiler returns. With it off, the planner phases the prepared clauses.
 
-The plan cache serves a plan under a key of five parts in one fixed order: the prepared text, the positions the rule set requires of its invocations, the options that shape a plan, the symbols bound when the plan was made, and which of the scope's invocations are held (`query.Held`). Every plan enters the cache (goal 10 of `SCOPE_EXECUTION_AND_CONTRACTS.md`).
+The plan cache serves a plan under a key of five parts in one fixed order: the prepared text, the rule set, the options that shape a plan, the symbols bound when the plan was made, and which of the scope's invocations are held (`query.Held`). The rule set enters as its rendering, its rules in the set's order (`RuleSet.String`), since a plan is the walk over the bodies the query's invocations run (`SCOPE_EXECUTION_AND_CONTRACTS.md` §4.1), and two sets built from one text render alike, so the set the executor builds again at evaluation reads the plans the walk made. Every plan enters the cache (goal 10 of `SCOPE_EXECUTION_AND_CONTRACTS.md`).
 
 The bound symbols reach a plan at two places. `planWithBindings` unions them into the symbols the `:in` seeds. A non-empty set turns `EnableJoinProjectInsertion` off for the algebra bridge. So two plans made under one key are one plan.
 

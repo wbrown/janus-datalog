@@ -116,6 +116,19 @@ func (m *PatternMatcher) MatchWithConstraints(
 		}
 	}
 
+	// A binding tuple that names no entity, no attribute or no datom's value
+	// at the pattern's positions is the equality join's typed non-match: it
+	// contributes no tuple and drives no seek (typedPositionBindingCheck). The
+	// bindings are selected once here, after the vector arm, which compares a
+	// vector against a declared vector attribute's whole collection, so the
+	// cache arm, the strategy chooser's counting and every join strategy read
+	// typed bindings alone. The selection reads the relation once into a
+	// materialized one carrying its properties and its deferred error, which
+	// every path below reads whole in any case.
+	if typed := typedPositionBindingCheck(pattern, bindingRel.Symbols()); typed != nil {
+		bindingRel = executor.Select(bindingRel, typed)
+	}
+
 	// CACHE OPTIMIZATION: When A is known (from pattern constant or bindings),
 	// use the cache for each E value instead of storage scans.
 	if m.handler != nil {
@@ -560,7 +573,6 @@ func (m *PatternMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, b
 	}); err != nil {
 		return nil, err
 	}
-	bindingTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), bindingTuples)
 
 	report := DiscardIntake
 	if m.handler != nil {
@@ -625,7 +637,6 @@ func (m *PatternMatcher) matchWithVValidation(
 	if err != nil {
 		return nil, err
 	}
-	sortedTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), sortedTuples)
 
 	report := DiscardIntake
 	if m.handler != nil {
@@ -1504,17 +1515,10 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			continue
 		}
 
-		// Get E value from binding
-		eVal := tuple[eSymIdx]
-		eIdent, ok := eVal.(datalog.Identity)
-		if !ok {
-			// Try to convert if it's a different type
-			if id, ok := eVal.(*datalog.Identity); ok {
-				eIdent = *id
-			} else {
-				continue // Can't use cache for non-Identity E
-			}
-		}
+		// The bindings hold typed values alone, selected at the match's entry
+		// (MatchWithConstraints): an Identity at the entity position and a
+		// Keyword at the attribute position.
+		eIdent := tuple[eSymIdx].(datalog.Identity)
 
 		// Determine A and cardinality for this tuple
 		var tupleCard datalog.Keyword
@@ -1525,10 +1529,7 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 			if aSymIdx >= len(tuple) {
 				continue
 			}
-			aKw, ok := tuple[aSymIdx].(datalog.Keyword)
-			if !ok {
-				continue
-			}
+			aKw := tuple[aSymIdx].(datalog.Keyword)
 			tupleCard = schema.CardinalityOne
 			if m.schema != nil {
 				if def := m.schema.GetAttribute(aKw); def != nil {

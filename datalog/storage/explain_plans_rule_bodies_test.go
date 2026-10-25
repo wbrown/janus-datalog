@@ -102,6 +102,69 @@ func TestExplain_RefusesARuleBodyAsQueryDoes(t *testing.T) {
 	}
 }
 
+// A plan the cache holds for a text under one rule set is not served to the
+// same text under another: a second set whose body no order runs is refused
+// by Query, Explain and ExplainAlgebra with the one stall text whatever warmed
+// the cache, the invocation free, bound by a pattern, inside an or-join branch
+// or inside a subquery. The cold case is the control, and the orderable set
+// answers the text after the second set is refused.
+func TestExplain_RefusesARuleBodyWhateverThePlanCacheHolds(t *testing.T) {
+	const orderable = `[[(p ?a ?b) [?a :edge ?b]]]`
+	const stuck = "[" + stuckRule + "]"
+	g := newPathGraph()
+	shapes := []struct {
+		name, query string
+		want        []string
+	}{
+		{"a free invocation", `[:find ?x ?y :in $ % :where (p ?x ?y)]`, []string{"a b", "b c"}},
+		{"an invocation a pattern binds", `[:find ?x ?y :in $ % :where [?x :edge _] (p ?x ?y)]`, []string{"a b", "b c"}},
+		{"an invocation inside an or-join branch", `[:find ?x ?y :in $ % :where [?x :edge _] (or-join [[?x] ?y] (p ?x ?y) [?x :edge ?y])]`, []string{"a b", "b c"}},
+		{"an invocation inside a subquery", `[:find ?x ?y :in $ % :where [?x :edge _] [(q [:find ?y :in $ % ?e :where (p ?e ?y)] $ % ?x) [[?y]]]]`, []string{"a b", "b c"}},
+	}
+	warmers := []struct {
+		name string
+		warm func(d *Database, text string, rs *query.RuleSet) error
+	}{
+		{"cold", func(*Database, string, *query.RuleSet) error { return nil }},
+		{"warmed by Query", func(d *Database, text string, rs *query.RuleSet) error { return runToEnd(d, text, rs) }},
+		{"warmed by Explain", func(d *Database, text string, rs *query.RuleSet) error {
+			_, err := d.Explain(text, rs)
+			return err
+		}},
+		{"warmed by ExplainAlgebra", func(d *Database, text string, rs *query.RuleSet) error {
+			_, err := d.ExplainAlgebra(text, rs)
+			return err
+		}},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := commitFacts(t, d, g.facts())
+			for _, s := range shapes {
+				for _, w := range warmers {
+					t.Run(s.name+", "+w.name, func(t *testing.T) {
+						d.ClearPlanCache()
+						first := mustRuleSet(t, orderable)
+						require.NoError(t, w.warm(d, s.query, first))
+						second := mustRuleSet(t, stuck)
+						queryErr := runToEnd(d, s.query, second)
+						require.Error(t, queryErr, "Query refuses the second set's body")
+						_, explainErr := d.Explain(s.query, second)
+						require.Error(t, explainErr, "Explain refuses the second set's body; Query: %v", queryErr)
+						_, algebraErr := d.ExplainAlgebra(s.query, second)
+						require.Error(t, algebraErr, "ExplainAlgebra refuses the second set's body; Query: %v", queryErr)
+						require.Equal(t, stallText(t, queryErr), stallText(t, explainErr), "one text for one stall at Explain and at Query")
+						require.Equal(t, stallText(t, queryErr), stallText(t, algebraErr), "one text for one stall at ExplainAlgebra and at Query")
+						rel, err := d.Query(s.query, first)
+						require.NoError(t, err, "the orderable set answers the text")
+						require.Equal(t, s.want, renderedTuples(t, rel, names))
+					})
+				}
+			}
+		})
+	}
+}
+
 // A body orderable under a bound invocation alone, the head's required
 // position supplying the position its required predicate needs, is accepted
 // by Query, Explain and ExplainAlgebra alike when the invocation binds it.

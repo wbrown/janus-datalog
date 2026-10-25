@@ -142,6 +142,47 @@ func TestPlanCacheKeyDistinguishesRequiredPositions(t *testing.T) {
 	}
 }
 
+// TestPlanCacheKeyDistinguishesRuleBodies: a plan is the walk over the bodies
+// the query's invocations run, so one query text under two rule sets whose
+// predicate has different bodies never shares a plan, at the top level or
+// inside a form, and two sets built from one text share one.
+func TestPlanCacheKeyDistinguishesRuleBodies(t *testing.T) {
+	find := []query.FindElement{query.FindVariable{Symbol: datalog.NewSymbol("?m")}}
+	in := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}}
+	next := func(from, to string) *query.DataPattern {
+		return &query.DataPattern{Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol(from)},
+			query.Constant{Value: datalog.NewKeyword(":page/next")},
+			query.Variable{Name: datalog.NewSymbol(to)},
+		}}
+	}
+	succ := func(body ...query.Clause) *query.RuleSet {
+		rs, err := query.NewRuleSet([]*query.Rule{{
+			Name: datalog.NewSymbol("succ"),
+			Head: []query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?m")},
+			Body: body,
+		}})
+		if err != nil {
+			t.Fatalf("NewRuleSet: %v", err)
+		}
+		return rs
+	}
+	oneHop, twoHops, oneHopAgain := succ(next("?n", "?m")), succ(next("?n", "?k"), next("?k", "?m")), succ(next("?n", "?m"))
+	cache := &PlanCache{}
+	top := &query.Query{Find: find, In: in, Where: []query.Clause{invocation("succ", "?n", "?m")}}
+	branch := &query.Query{Find: find, In: in, Where: []query.Clause{
+		&query.OrJoinClause{OutputVars: []query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?m")}, Branches: [][]query.Clause{{invocation("succ", "?n", "?m")}}},
+	}}
+	for _, q := range []*query.Query{top, branch} {
+		if cache.computeKeyWithOptions(q, query.Bindings{Rules: oneHop}, PlannerOptions{}) == cache.computeKeyWithOptions(q, query.Bindings{Rules: twoHops}, PlannerOptions{}) {
+			t.Errorf("%s under a rule set whose body is one hop shares its plan-cache key with the query under one whose body is two hops", q)
+		}
+		if cache.computeKeyWithOptions(q, query.Bindings{Rules: oneHop}, PlannerOptions{}) != cache.computeKeyWithOptions(q, query.Bindings{Rules: oneHopAgain}, PlannerOptions{}) {
+			t.Errorf("%s under two rule sets built from one text has two plan-cache keys", q)
+		}
+	}
+}
+
 func TestAnalyzeClausesForExplainRecordsInvocation(t *testing.T) {
 	inv := invocation("follows", "?x", "?y")
 	phase := RealizedPhase{Query: &query.Query{

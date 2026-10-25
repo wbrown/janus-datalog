@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -452,8 +453,8 @@ type typedAccessor struct {
 }
 
 // typedAccessors is every exported read of Database that names an attribute
-// in Go: the six value readers, the two vector readers and the entity
-// resolver.
+// in Go and asks the schema whether it declares it: the six value readers,
+// the two vector readers and the entity resolver.
 func typedAccessors() []typedAccessor {
 	return []typedAccessor{
 		{"GetString", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
@@ -502,6 +503,36 @@ func TestTypedAccessorsRefuseUnknownAttribute(t *testing.T) {
 				d, entity := refusingDB(t, mode)
 				attr := kw(":t/strnig")
 				requireUnknown(t, accessor.get(d, entity, attr), attr)
+			})
+		}
+	}
+}
+
+// LookupByUnique requires a unique declaration, so it refuses an attribute
+// the schema does not declare with an error of its own naming the attribute,
+// on a database that refuses unknown attributes and on one that does not.
+func TestLookupByUniqueRefusesAnUndeclaredAttributeWithItsOwnError(t *testing.T) {
+	attr := kw(":t/strnig")
+	databases := []struct {
+		name string
+		open func(t *testing.T, mode optimizerMode) *Database
+	}{
+		{"refusing unknown attributes", func(t *testing.T, mode optimizerMode) *Database {
+			d, _ := refusingDB(t, mode)
+			return d
+		}},
+		{"without the option", func(t *testing.T, mode optimizerMode) *Database {
+			return createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
+		}},
+	}
+	for _, mode := range optimizerModes {
+		for _, db := range databases {
+			t.Run(mode.name+"/"+db.name, func(t *testing.T) {
+				d := db.open(t, mode)
+				_, err := d.LookupByUnique(attr, "held")
+				require.ErrorContains(t, err, attr.String(), "the refusal names the attribute")
+				var unknown *schema.UnknownAttributeError
+				require.False(t, errors.As(err, &unknown), "the refusal is the read's own, not the unknown-attribute refusal: %v", err)
 			})
 		}
 	}

@@ -58,8 +58,10 @@ func (f framing) standing(sym query.Symbol) query.Symbol {
 
 // frameBranches frames each branch as a scope under the header through the
 // planner's framing, the given symbols the subject carries being those
-// standing for one of its symbols, and reads each frame's plan, made at
-// PlanQuery and served from the cache
+// standing for one of its symbols, and reads each frame's plan from the
+// cache. A form's frames were planned at PlanQuery; a data pattern's and a
+// bound invocation's frame over a streaming group exist only when the group
+// reports no size, a run-time fact, and are planned here
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.1). A plan's refusal
 // is the form's, naming the branch counted from one.
 func frameBranches(executor *DefaultQueryExecutor, ctx *Context, branches [][]query.Clause, f framing) ([]branchRun, error) {

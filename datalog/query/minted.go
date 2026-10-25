@@ -128,10 +128,10 @@ func SeedRestricted(name Symbol) bool {
 	return kind == adornedNamespace || kind == magicNamespace || kind == scopeNamespace
 }
 
-// engineNamespace reports whether a name lies in a namespace the engine mints
-// into: its namespace up to the first dot, a variable's leading ? stripped,
-// is one of the kinds, adorned, magic, delta and scope for the predicates,
-// unify, scope and magic for the variables.
+// engineNamespace reports whether a name, a predicate's or a variable's, lies
+// in a namespace the engine mints into: its namespace up to the first dot, a
+// variable's leading ? stripped, is one of the five kinds, adorned, magic,
+// delta, scope and unify.
 func engineNamespace(name Symbol) bool {
 	ns := strings.TrimPrefix(name.Namespace(), "?")
 	if i := strings.Index(ns, "."); i >= 0 {

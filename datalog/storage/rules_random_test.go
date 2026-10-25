@@ -1257,27 +1257,40 @@ const ruleGraphNodes = 7
 // graph.
 func ruleGraphNode(i int) datalog.Identity { return datalog.NewIdentity(fmt.Sprintf("n/%d", i)) }
 
+// ruleGraph is a random rule set's graph as the references read it: its
+// nodes' names in order, each node's colour, and its edges as pairs of
+// names.
+type ruleGraph struct {
+	nodes  []string
+	colors map[string]int64
+	edges  map[[2]string]bool
+}
+
 // writeRandomRuleGraph commits a graph drawn from r into d: each node's
-// :color below three, then twice the node count of edge draws, each kept as
-// a member of the set under :edge. It returns the graph's names and its
-// edges as pairs of names.
-func writeRandomRuleGraph(t testing.TB, d *Database, r *rand.Rand) (graph, map[[2]string]bool) {
+// :name and its :color below three, then twice the node count of edge draws,
+// each kept as a member of the set under :edge. It returns the graph's names
+// and the graph as the references read it.
+func writeRandomRuleGraph(t testing.TB, d *Database, r *rand.Rand) (graph, ruleGraph) {
 	t.Helper()
 	g := graph{names: map[datalog.Identity]string{}}
+	rg := ruleGraph{colors: map[string]int64{}, edges: map[[2]string]bool{}}
 	tx := d.NewTransaction()
 	for i := 0; i < ruleGraphNodes; i++ {
-		g.names[ruleGraphNode(i)] = fmt.Sprintf("n%d", i)
-		require.NoError(t, tx.Add(ruleGraphNode(i), kw(":color"), int64(r.Intn(3))))
+		name := fmt.Sprintf("n%d", i)
+		g.names[ruleGraphNode(i)] = name
+		rg.nodes = append(rg.nodes, name)
+		rg.colors[name] = int64(r.Intn(3))
+		require.NoError(t, tx.Add(ruleGraphNode(i), kw(":name"), name))
+		require.NoError(t, tx.Add(ruleGraphNode(i), kw(":color"), rg.colors[name]))
 	}
-	edges := map[[2]string]bool{}
 	for k := 0; k < ruleGraphNodes*2; k++ {
 		a, b := r.Intn(ruleGraphNodes), r.Intn(ruleGraphNodes)
 		require.NoError(t, tx.Add(ruleGraphNode(a), kw(":edge"), ruleGraphNode(b)))
-		edges[[2]string{g.names[ruleGraphNode(a)], g.names[ruleGraphNode(b)]}] = true
+		rg.edges[[2]string{rg.nodes[a], rg.nodes[b]}] = true
 	}
 	_, err := tx.Commit()
 	require.NoError(t, err)
-	return g, edges
+	return g, rg
 }
 
 // pairsOf reads a two-symbol result's rendered tuples back into pairs.
@@ -1290,20 +1303,254 @@ func pairsOf(rendered []string) map[[2]string]bool {
 	return pairs
 }
 
+// deepLower names a predicate of a strictly lower stratum under the deep
+// chain: a chain predicate, or in group 1 p0 or p1 as well.
+func (g *ruleSetDraw) deepLower() string {
+	candidates := []string{"w0", "w1", "w2"}
+	if ruleGroup(g.self) == 1 {
+		candidates = append(candidates, "p0", "p1")
+	}
+	return candidates[g.r.Intn(len(candidates))]
+}
+
+// deepChainBody is one body drawn from the deep-chain templates: the
+// recursion under a pattern, a fallback whose output a pattern or an
+// invocation binds before it, a not-join whose header a recursion binds, a
+// lower predicate reached only through an or-join branch inside a subquery,
+// a fallback inside a not-join, the recursion and a lower predicate in a
+// union's branches, a fallback over two required symbols, the chain's head,
+// and nb inside a fallback branch.
+func (g *ruleSetDraw) deepChainBody() string {
+	q, l := g.same(), g.deepLower()
+	choices := []string{
+		"[?a :edge ?m] (" + q + " ?m ?b)",
+		"(" + q + " ?a ?m) [?m :edge ?b]",
+		"[?a :edge ?b] (or-default-join [[?a] ?b] (" + l + " ?a ?b) [(identity ?a) ?b])",
+		"(" + q + " ?a ?b) (or-default-join [[?a] ?b] (" + l + " ?a ?b) [(identity ?a) ?b])",
+		"(" + q + " ?a ?b) (not-join [?a ?b] [?b :edge ?m] (" + l + " ?m ?a))",
+		"[?a :edge ?m] [(q [:find ?z :in $ % ?x :where (or-join [[?x] ?z] (" + l + " ?x ?z) [?x :edge ?z])] $ % ?m) [[?b] ...]]",
+		"[?a :edge ?b] (not-join [?b] (or-default-join [[?b] ?k] (and (" + l + " ?b ?z) [(ground 1) ?k]) [(ground 0) ?k]) [(= ?k 0)])",
+		"[?a :edge ?m] (or-join [[?m] ?b] (" + q + " ?m ?b) (and (" + l + " ?m ?b) [?b :color 1]))",
+		"[?a :color ?c] (or-default-join [[?a ?c] ?b] (and (" + l + " ?a ?b) [?b :color ?c]) [(identity ?a) ?b])",
+		"[?a :edge ?m] (w0 ?m ?b)",
+		"[?a :edge ?m] (or-default-join [[?m] ?b] (nb ?m ?b) [(identity ?m) ?b])",
+	}
+	return choices[g.r.Intn(len(choices))]
+}
+
+// deepChain reaches nb four levels down: w3 invokes nb under a pattern, w2
+// invokes w3 inside an or-join branch, w1 invokes w2 inside a subquery, and
+// w0 invokes w1 inside a fallback branch.
+const deepChain = `[(nb [?x] ?y) [?x :edge ?y]]
+[(w3 ?a ?b) [?a :color _] (nb ?a ?b)]
+[(w2 ?a ?b) [?a :edge ?m] (or-join [[?m] ?b] (w3 ?m ?b) (and [?m :color 2] [(identity ?m) ?b]))]
+[(w1 ?a ?b) [?a :color _] [(q [:find ?z :in $ % ?x :where (w2 ?x ?z)] $ % ?a) [[?b] ...]]]
+[(w0 ?a ?b) [?a :edge ?m] (or-default-join [[?m] ?b] (w1 ?m ?b) [(identity ?m) ?b])]
+`
+
+// deepChainRuleSet draws a rule set from r over the deep chain, then each
+// predicate's base body over :edge and one to three deep-chain template
+// bodies.
+func deepChainRuleSet(r *rand.Rand) string {
+	var sb strings.Builder
+	sb.WriteString("[" + deepChain)
+	for i := 0; i < randomRulePredicates; i++ {
+		g := &ruleSetDraw{r: r, self: i}
+		fmt.Fprintf(&sb, "[(p%d ?a ?b) [?a :edge ?b]]\n", i)
+		for k := r.Intn(3); k >= 0; k-- {
+			fmt.Fprintf(&sb, "[(p%d ?a ?b) %s]\n", i, g.deepChainBody())
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
+}
+
+// deepChainReference is the deep chain's predicates computed over g in Go,
+// by name: w3 is the edges; w2 pairs a with b when an edge leaves a for an m
+// that w3 joins to b, or for an m of colour 2 that is b itself; w1 is w2; w0
+// pairs a with b when an edge leaves a for an m that w1 joins to b, or for an
+// m that w1 joins to nothing and is b itself.
+func deepChainReference(g ruleGraph) map[string]map[[2]string]bool {
+	w3 := map[[2]string]bool{}
+	for e := range g.edges {
+		w3[e] = true
+	}
+	w2 := map[[2]string]bool{}
+	for _, a := range g.nodes {
+		for _, m := range g.nodes {
+			if !g.edges[[2]string{a, m}] {
+				continue
+			}
+			for _, b := range g.nodes {
+				if w3[[2]string{m, b}] || (g.colors[m] == 2 && b == m) {
+					w2[[2]string{a, b}] = true
+				}
+			}
+		}
+	}
+	w1 := w2
+	w0 := map[[2]string]bool{}
+	for _, a := range g.nodes {
+		for _, m := range g.nodes {
+			if !g.edges[[2]string{a, m}] {
+				continue
+			}
+			reached := false
+			for _, b := range g.nodes {
+				if w1[[2]string{m, b}] {
+					reached = true
+					w0[[2]string{a, b}] = true
+				}
+			}
+			if !reached {
+				w0[[2]string{a, m}] = true
+			}
+		}
+	}
+	return map[string]map[[2]string]bool{"w3": w3, "w2": w2, "w1": w1, "w0": w0}
+}
+
+// fallbackOf is the nodes p joins s to, or s itself when it joins s to
+// nothing: a fallback's answer whose first branch invokes p from s.
+func fallbackOf(p map[[2]string]bool, s string) []string {
+	if reached := reachedFrom(p, s); len(reached) > 0 {
+		return reached
+	}
+	return []string{s}
+}
+
+// boundShape is one query shape over a predicate P bound at a node s: its
+// text, where %[1]s is P, %[2]s is s's name and %[3]s is the second
+// predicate Q, whether s is given as a scalar input, and its answer, read
+// from the free tuples of P and Q.
+type boundShape struct {
+	name   string
+	text   string
+	scalar bool
+	want   func(g ruleGraph, p, q map[[2]string]bool, s string) []string
+}
+
+// boundShapes are the shapes a predicate is invoked in bound at a node under
+// the deep-chain templates: bound through a pattern at either position, in a
+// fallback branch with the output bound before the form by a pattern, an
+// input or an invocation, in a not-join with its header bound before the
+// form and bound by the body's own pattern, in a union branch with the
+// output bound before the form, reached only through a subquery and through
+// an or-join branch inside one, and in a fallback inside a not-join.
+var boundShapes = []boundShape{
+	{"bound through a pattern",
+		`[:find ?y :in $ %% :where [?s :name "%[2]s"] (%[1]s ?s ?y)]`, false,
+		func(g ruleGraph, p, q map[[2]string]bool, s string) []string { return reachedFrom(p, s) }},
+	{"bound at the second position through a pattern",
+		`[:find ?x :in $ %% :where [?t :name "%[2]s"] (%[1]s ?x ?t)]`, false,
+		func(g ruleGraph, p, q map[[2]string]bool, s string) []string { return reaching(p, s) }},
+	{"in a fallback branch, the output bound before the form by a pattern",
+		`[:find ?y :in $ %% :where [?s :name "%[2]s"] [?y :color _] (or-default-join [[?s] ?y] (%[1]s ?s ?y) [(identity ?s) ?y])]`, false,
+		func(g ruleGraph, p, q map[[2]string]bool, s string) []string { return fallbackOf(p, s) }},
+	{"in a fallback branch, the output bound before the form by an input",
+		`[:find ?y :in $ %% ?s :where [?y :color _] (or-default-join [[?s] ?y] (%[1]s ?s ?y) [(identity ?s) ?y])]`, true,
+		func(g ruleGraph, p, q map[[2]string]bool, s string) []string { return fallbackOf(p, s) }},
+	{"in a fallback branch, the output bound before the form by an invocation",
+		`[:find ?y :in $ %% :where [?s :name "%[2]s"] (%[3]s ?s ?y) (or-default-join [[?s] ?y] (%[1]s ?s ?y) [(identity ?s) ?y])]`, false,
+		func(g ruleGraph, p, q map[[2]string]bool, s string) []string {
+			decided := fallbackOf(p, s)
+			var out []string
+			for _, y := range reachedFrom(q, s) {
+				if containsString(decided, y) {
+					out = append(out, y)
+				}
+			}
+			return out
+		}},
+	{"in a not-join, the header bound before the form",
+		`[:find ?y :in $ %% :where [?s :name "%[2]s"] [?y :color _] (not-join [?s ?y] (%[1]s ?s ?y))]`, false,
+		func(g ruleGraph, p, q map[[2]string]bool, s string) []string {
+			var out []string
+			for _, y := range g.nodes {
+				if !p[[2]string{s, y}] {
+					out = append(out, y)
+				}
+			}
+			return out
+		}},
+	{"in a not-join, bound by the body's own pattern",
+		`[:find ?y :in $ %% :where [?s :name "%[2]s"] [?y :color _] (not-join [?s ?y] [?y :edge ?m] (%[1]s ?m ?s))]`, false,
+		func(g ruleGraph, p, q map[[2]string]bool, s string) []string {
+			var out []string
+			for _, y := range g.nodes {
+				blocked := false
+				for _, m := range g.nodes {
+					if g.edges[[2]string{y, m}] && p[[2]string{m, s}] {
+						blocked = true
+					}
+				}
+				if !blocked {
+					out = append(out, y)
+				}
+			}
+			return out
+		}},
+	{"in a union branch, the output bound before the form",
+		`[:find ?y :in $ %% :where [?s :name "%[2]s"] [?y :color _] (or-join [[?s] ?y] (%[1]s ?s ?y) (and [?s :edge ?y] [?y :color 0]))]`, false,
+		func(g ruleGraph, p, q map[[2]string]bool, s string) []string {
+			out := reachedFrom(p, s)
+			for _, y := range g.nodes {
+				if g.edges[[2]string{s, y}] && g.colors[y] == 0 && !containsString(out, y) {
+					out = append(out, y)
+				}
+			}
+			return out
+		}},
+	{"reached only through a subquery",
+		`[:find ?y :in $ %% :where [?s :name "%[2]s"] [(q [:find ?z :in $ %% ?x :where (%[1]s ?x ?z)] $ %% ?s) [[?y] ...]]]`, false,
+		func(g ruleGraph, p, q map[[2]string]bool, s string) []string { return reachedFrom(p, s) }},
+	{"reached only through an or-join branch inside a subquery",
+		`[:find ?y :in $ %% :where [?s :name "%[2]s"] [(q [:find ?z :in $ %% ?x :where (or-join [[?x] ?z] (%[1]s ?x ?z) [(identity ?x) ?z])] $ %% ?s) [[?y] ...]]]`, false,
+		func(g ruleGraph, p, q map[[2]string]bool, s string) []string {
+			out := reachedFrom(p, s)
+			if !containsString(out, s) {
+				out = append(out, s)
+			}
+			return out
+		}},
+	{"in a fallback inside a not-join",
+		`[:find ?s :in $ %% :where [?s :name "%[2]s"] (not-join [?s] (or-default-join [[?s] ?k] (and (%[1]s ?s ?z) [(ground 1) ?k]) [(ground 0) ?k]) [(= ?k 0)])]`, false,
+		func(g ruleGraph, p, q map[[2]string]bool, s string) []string {
+			if len(reachedFrom(p, s)) > 0 {
+				return []string{s}
+			}
+			return nil
+		}},
+}
+
+// ruleTemplates names the template set a span of random rule sets is drawn
+// under.
+type ruleTemplates int
+
+const (
+	plainTemplates ruleTemplates = iota
+	chainTemplates
+	deepChainTemplates
+)
+
 // ruleSetSeeds is the seeds the random rule sets are drawn from, each span
 // under one template set: 2000 to 2024, 2033 and 2049 under the templates,
-// and 4000 to 4039 under the chain templates.
+// 4000 to 4039 under the chain templates, and 5000 to 5015 under the
+// deep-chain templates.
 var ruleSetSeeds = []struct {
 	start, count int
-	chain        bool
-}{{2000, 25, false}, {2033, 1, false}, {2049, 1, false}, {4000, 40, true}}
+	templates    ruleTemplates
+}{{2000, 25, plainTemplates}, {2033, 1, plainTemplates}, {2049, 1, plainTemplates}, {4000, 40, chainTemplates}, {5000, 16, deepChainTemplates}}
 
 // Every predicate of a random rule set, invoked bound at either position
 // through an input, as an or-join branch beside an edge, and under a
 // not-join beside every node, answers on a random graph what its free
 // invocation answers whole, in every mode, and Explain plans every query
 // Query answers. Under the chain templates w0 is checked beside the four
-// predicates. A free invocation that fails is a failure.
+// predicates. Under the deep-chain templates w0 and w2 are checked beside
+// them, each predicate is also invoked bound at a node under every shape of
+// boundShapes, and the chain's free evaluation answers what Go computes. A
+// free invocation that fails is a failure.
 func TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -1312,21 +1559,21 @@ func TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation(t *testing
 					r := rand.New(rand.NewSource(int64(seed)))
 					predicates := []string{"p0", "p1", "p2", "p3"}
 					var rules string
-					if span.chain {
+					switch span.templates {
+					case chainTemplates:
 						rules = chainRuleSet(r)
 						predicates = append(predicates, "w0")
-					} else {
+					case deepChainTemplates:
+						rules = deepChainRuleSet(r)
+						predicates = append(predicates, "w0", "w2")
+					default:
 						rules = randomRuleSet(r)
 					}
 					rs := mustRuleSet(t, rules)
 					plannerOpts := mode.plannerOptions()
 					plannerOpts.MaxRuleIterations = 500
 					d := openBackendDB(t, mode.backend, DatabaseOptions{Schema: coloredGraphSchema(), PlannerOptions: &plannerOpts})
-					g, edges := writeRandomRuleGraph(t, d, r)
-					var nodes []string
-					for i := 0; i < ruleGraphNodes; i++ {
-						nodes = append(nodes, g.names[ruleGraphNode(i)])
-					}
+					g, rg := writeRandomRuleGraph(t, d, r)
 					// tuplesOf runs text and renders its tuples; an error at the query
 					// or while its tuples are read is the check's failure.
 					tuplesOf := func(text string, inputs ...interface{}) ([]string, error) {
@@ -1351,24 +1598,53 @@ func TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation(t *testing
 							t.Errorf("%s: tuples %v, the free evaluation gives %v\n%s", label, got, want, rules)
 						}
 					}
-					for _, name := range predicates {
-						label := fmt.Sprintf("seed %d %s", seed, name)
+					// freeOf is a predicate's free tuples as pairs; a free invocation
+					// that fails is a failure and answers nothing.
+					freeOf := func(name string) (map[[2]string]bool, bool) {
 						rendered, err := tuplesOf(fmt.Sprintf(`[:find ?x ?y :in $ %% :where (%s ?x ?y)]`, name))
 						if err != nil {
-							t.Errorf("%s free: %v\n%s", label, err, rules)
+							t.Errorf("seed %d %s free: %v\n%s", seed, name, err, rules)
+							return nil, false
+						}
+						return pairsOf(rendered), true
+					}
+					// Under the deep chain, the chain's free evaluation against the Go
+					// reference, and w2's tuples as the second predicate the shapes
+					// read.
+					var second map[[2]string]bool
+					if span.templates == deepChainTemplates {
+						for name, want := range deepChainReference(rg) {
+							free, ok := freeOf(name)
+							if !ok {
+								continue
+							}
+							if name == "w2" {
+								second = free
+							}
+							got, wantRendered := pairsRendered(free), pairsRendered(want)
+							sort.Strings(got)
+							sort.Strings(wantRendered)
+							if !equalStrings(got, wantRendered) {
+								t.Errorf("seed %d %s free: %v, Go computes %v\n%s", seed, name, got, wantRendered, rules)
+							}
+						}
+					}
+					for _, name := range predicates {
+						label := fmt.Sprintf("seed %d %s", seed, name)
+						free, ok := freeOf(name)
+						if !ok {
 							continue
 						}
-						free := pairsOf(rendered)
-						for i, s := range nodes {
+						for i, s := range rg.nodes {
 							reached := reachedFrom(free, s)
 							branch := append([]string{}, reached...)
-							for _, y := range nodes {
-								if edges[[2]string{s, y}] && !free[[2]string{s, y}] {
+							for _, y := range rg.nodes {
+								if rg.edges[[2]string{s, y}] && !free[[2]string{s, y}] {
 									branch = append(branch, y)
 								}
 							}
 							var unreached []string
-							for _, y := range nodes {
+							for _, y := range rg.nodes {
 								if !free[[2]string{s, y}] {
 									unreached = append(unreached, y)
 								}
@@ -1377,6 +1653,16 @@ func TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation(t *testing
 							check(label+" bound second to "+s, fmt.Sprintf(`[:find ?x :in $ %% ?t :where (%s ?x ?t)]`, name), reaching(free, s), ruleGraphNode(i))
 							check(label+" as an or-join branch from "+s, fmt.Sprintf(`[:find ?y :in $ %% ?s :where (or-join [[?s] ?y] (%s ?s ?y) [?s :edge ?y])]`, name), branch, ruleGraphNode(i))
 							check(label+" under a not-join from "+s, fmt.Sprintf(`[:find ?y :in $ %% ?s :where [?y :color _] (not-join [?s ?y] (%s ?s ?y))]`, name), unreached, ruleGraphNode(i))
+							if second == nil {
+								continue
+							}
+							for _, shape := range boundShapes {
+								var inputs []interface{}
+								if shape.scalar {
+									inputs = append(inputs, ruleGraphNode(i))
+								}
+								check(label+" "+shape.name+" at "+s, fmt.Sprintf(shape.text, name, s, "w2"), shape.want(rg, free, second, s), inputs...)
+							}
 						}
 					}
 				}
