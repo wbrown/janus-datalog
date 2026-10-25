@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/wbrown/janus-datalog)](https://goreportcard.com/report/github.com/wbrown/janus-datalog)
 
-*What if you never wrote a JOIN again, could time-travel through your data, and deployed it all as a single binary?*
+*What if you never wrote a JOIN or a recursive CTE again, could time-travel through your data, and deployed it all as a single binary?*
 
 ```clojure
 [:find ?name ?friend-name
@@ -13,6 +13,13 @@
 ```
 
 No JOIN keyword. No ON clauses. Relationships follow naturally through shared variables.
+
+```clojure
+[[(connected ?a ?b) [?a :user/friend ?b]]
+ [(connected ?a ?c) [?a :user/friend ?b] (connected ?b ?c)]]
+```
+
+Friends of friends, to any depth, is two rules. No `WITH RECURSIVE`, no stored procedure, no loop in the application. The engine iterates the rules to a fixpoint and, when you ask about one person, derives only what that person reaches.
 
 ## Why Janus?
 
@@ -331,6 +338,63 @@ When you need scoped aggregations:
 
 The `q` function runs a sub-query with its own `:find` and `:where` clauses. The call passes `$` and the inputs the inner `:in` declares, and the results join the outer query under the binding.
 
+### Rules and Recursion
+
+A rule set declares predicates. Pass it as the `%` input and invoke a predicate as a clause. A rule that invokes itself is a transitive closure:
+
+```clojure
+;; connected: friends, friends of friends, to any depth
+[[(connected ?a ?b) [?a :user/friend ?b]]
+ [(connected ?a ?c) [?a :user/friend ?b] (connected ?b ?c)]]
+```
+
+```clojure
+[:find ?name
+ :in $ % ?alice
+ :where (connected ?alice ?u)
+        [?u :user/name ?name]]
+```
+
+```go
+rules, _ := parser.ParseRules(connectedRules)
+results, _ := d.Query(query, rules, alice)
+```
+
+Each recursive predicate evaluates to a fixpoint, semi-naively: an iteration runs the rules over the tuples the one before it added, and the closure is complete when an iteration adds nothing. An invocation with a bound argument, `?alice` here, is rewritten by magic sets, so it derives what that binding reaches and not the whole graph.
+
+Negation stratifies. A predicate that negates another is evaluated after the other is complete:
+
+```clojure
+[(isolated ?u) [?u :user/name _] (not (connected _ ?u))]
+```
+
+A cycle through negation is refused when the rule set is built, as are an unsafe rule, an arity mismatch and an unknown predicate, each as a typed error naming its parts.
+
+The query builder has the same forms:
+
+```go
+UserFriend := qb.Kw(":user/friend")
+
+a, b, c := qb.NewVar("a"), qb.NewVar("b"), qb.NewVar("c")
+connected := qb.MustRuleSet(
+    qb.DefineRule("connected", a, b).Where(qb.Pat(a, UserFriend, b)),
+    qb.DefineRule("connected", a, c).Where(qb.Pat(a, UserFriend, b), qb.Rule("connected", b, c)),
+)
+
+start, u, name := qb.NewVar("start"), qb.NewVar("u"), qb.NewVar("name")
+q := qb.Query().
+    Find(name).
+    In(qb.DB, qb.Rules, qb.Scalar(start)).
+    Where(qb.Rule("connected", start, u), qb.Pat(u, UserName, name)).
+    MustBuild()
+
+results, _ := d.Query(q, connected, alice)
+```
+
+An evaluation is bounded by `MaxRuleIterations` and `MaxDerivedTuples`, both opt-in, and a query's context cancels a fixpoint at its next iteration. Every iteration reads the one snapshot the query reads.
+
+See [docs/reference/RULES.md](docs/reference/RULES.md) for required-binding heads, the magic-set rewrite, rules inside `not`, `or` and subqueries, the error types, and the events an annotation handler sees.
+
 ### Multi-Source Queries
 
 Query across multiple data sources — databases, in-memory facts, or Go slices — in a single query. Sources are declared in `:in` and referenced in `:where` patterns:
@@ -572,11 +636,21 @@ See [docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md) for complete do
 
 ## What Makes Janus Different
 
-### Relational Algebra, and a Fixpoint Only for Rules
+### Recursive Rules on a Relational-Algebra Core
 
-A query with no rule invocation compiles to projection (π), selection (σ), and joins (⋈), and nothing else. It is one sequence of relational operations, which the planner orders and the executor streams. Recursion enters only through a rule set passed as `%`. There each stratum iterates to a fixpoint, semi-naively. An invocation with a bound argument is rewritten by magic sets, so it derives only what the binding reaches. The fixpoint sits on the same algebra. Each iteration plans and runs a rule body as a query of its own.
+Recursion is part of the query language. A rule set, passed as `%` in Datomic's syntax, declares predicates a query invokes as clauses, and a rule that invokes itself is a closure. What the engine does with one:
 
-See [RELATIONAL_ALGEBRA_OVERVIEW.md](RELATIONAL_ALGEBRA_OVERVIEW.md) for the algebra, [docs/reference/RULES.md](docs/reference/RULES.md) for the fixpoint, or [docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md](docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md) for the research paper proposal on the non-recursive core.
+- **A fixpoint, semi-naively.** Each recursive stratum iterates until an iteration adds nothing, and each iteration runs the rules over the tuples the one before it added, never over the whole relation again.
+- **Magic sets.** An invocation with a bound argument rewrites the rule set for its binding pattern, so asking what one node reaches derives that node's reach and nothing else.
+- **Stratified negation.** A rule may negate a predicate from an earlier stratum. A cycle through negation is refused when the set is built, as are an unsafe rule, an arity mismatch and an unknown predicate.
+- **Required-binding heads.** `[(succ [?n] ?m) [(+ ?n 1) ?m]]` computes from arguments the caller binds, as Datomic's form does.
+- **Rules wherever a pattern stands.** Inside `not`, `not-join`, `or`, `or-join`, `or-default` and subqueries. An invocation inside a form is evaluated once per execution of the form and continued across the windows of its subject, so each tuple is derived once however the subject streams.
+- **Bounded and cancellable.** `MaxRuleIterations` and `MaxDerivedTuples` bound an evaluation, and a query's context stops a fixpoint at its next iteration. Every iteration reads the query's one snapshot.
+- **Planned once.** Every rule body a query can run is planned at `PlanQuery`, as a query of its own under the same planner options, and the plan carries each invocation's evaluation. `Explain` refuses a body `Query` would refuse, and executing an explained query plans no body.
+
+Underneath, a query with no rule invocation compiles to projection (π), selection (σ) and joins (⋈), and nothing else: one sequence of relational operations the planner orders and the executor streams. The fixpoint sits on that same algebra, so a rule body is an ordinary query.
+
+See [docs/reference/RULES.md](docs/reference/RULES.md) for the rules, [RELATIONAL_ALGEBRA_OVERVIEW.md](RELATIONAL_ALGEBRA_OVERVIEW.md) for the algebra, or [docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md](docs/papers/PAPER_PROPOSAL_2_DATALOG_AS_RELATIONAL_ALGEBRA.md) for the research paper proposal on the non-recursive core.
 
 ### Greedy Planning Without Statistics
 
