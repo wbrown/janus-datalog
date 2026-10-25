@@ -38,11 +38,13 @@ test-storage: build-testdb
 # Test files are portable by default: whatever compiles into the wasm test
 # binaries runs, so a misclassified file fails loudly in this leg rather than
 # being silently excluded. The !(js && wasm) tag is reserved for files bound
-# to native-only surface (direct Badger imports, BadgerStore APIs).
+# to native-only surface (direct Badger imports, BadgerStore APIs). The
+# storage package's test binary runs its tests serially under wasm and past
+# go test's default timeout, so this leg runs under a timeout of its own.
 test-wasm:
 	@command -v node >/dev/null 2>&1 || { echo "node is required for wasm tests (go_js_wasm_exec)"; exit 1; }
 	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go build ./datalog/...
-	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go test -count=1 ./datalog/... ./tests/...
+	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go test -count=1 -timeout 20m ./datalog/... ./tests/...
 
 # Every examples/ file is its own `package main` behind //go:build example, so
 # `go vet ./examples/` reports main redeclared and no ordinary build reaches
