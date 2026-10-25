@@ -145,8 +145,11 @@ const (
 	RulesIteration       = "rules/iteration"
 	RulesStratumComplete = "rules/stratum.complete"
 
-	// RulesMagicSets is the rewrite made for one invocation with bound
-	// arguments: the predicate and its adornment (bound per position).
+	// RulesMagicSets is the rewrite made for one invocation: the predicate
+	// and its adornment (bound per position). An invocation with a bound
+	// argument is rewritten for its binding pattern; a free invocation of a
+	// predicate reaching one with required positions is rewritten with its
+	// head all free and reports an adornment with no position bound.
 	RulesMagicSets = "rules/magic-sets"
 
 	// Algebra bridge and rewrites

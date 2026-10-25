@@ -186,9 +186,10 @@ func TestPlanCacheKeyDistinguishesRuleBodies(t *testing.T) {
 
 // A plan carries, for each invocation its phases derive at its clause, what
 // the invocation evaluates: the positions bound before it, the set, the rule
-// set as given for a free invocation and the rewrite for a bound one, and the
-// planned bodies of each stratum the predicate needs, the same evaluation
-// PlanEvaluation plans for that set, predicate and binding pattern.
+// set as given for a free invocation and the rewrite for a bound one, whether
+// that set is a rewrite, and the planned bodies of each stratum the predicate
+// needs, the same evaluation PlanEvaluation plans for that set, predicate and
+// binding pattern.
 func TestPlanCarriesEachInvocationsEvaluation(t *testing.T) {
 	x, y, z := datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")
 	edge := func(from, to query.Symbol) *query.DataPattern {
@@ -224,6 +225,9 @@ func TestPlanCarriesEachInvocationsEvaluation(t *testing.T) {
 	if planned.Magic.Rules != rs || planned.Magic.Predicate != reach || planned.Magic.Seed != nil {
 		t.Errorf("a free invocation evaluates the set as given, deriving reach whole; got %v", planned.Magic)
 	}
+	if planned.Rewritten {
+		t.Error("a free invocation of a predicate reaching no required predicate evaluates the set as given, which the plan records as no rewrite")
+	}
 	if len(planned.Strata) != 1 || len(planned.Strata[0].Bodies.Plain) != 1 || len(planned.Strata[0].Bodies.Delta) != 1 {
 		t.Errorf("reach's one stratum plans the base rule plain and the recursive rule's delta copy; got %+v", planned.Strata)
 	}
@@ -242,6 +246,9 @@ func TestPlanCarriesEachInvocationsEvaluation(t *testing.T) {
 	}
 	if planned.Magic.Rules == rs || planned.Magic.Seed == nil {
 		t.Errorf("a bound invocation evaluates the rewrite, seeded by the bound position; got %v", planned.Magic)
+	}
+	if !planned.Rewritten {
+		t.Error("a bound invocation evaluates the rewrite, which the plan records as a rewrite")
 	}
 	if len(planned.Strata) == 0 {
 		t.Error("the bound invocation's evaluation plans the rewritten set's strata")

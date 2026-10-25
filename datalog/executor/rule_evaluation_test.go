@@ -313,10 +313,13 @@ func TestContext_ContinuationsAreCarriedByEveryDerivedContext(t *testing.T) {
 	require.Nil(t, NewContext().continued, "a context carries no continuations until a form execution gives it some")
 }
 
-// An invocation's evaluation is the one planned for its clause: whole when
-// nothing is bound, and over the rewrite for the bound positions, with the
-// seed predicate the windows fill, otherwise, which the magic-sets event
-// reports.
+// An invocation's evaluation is the one planned for its clause, read from
+// the plan's record alone: whole when nothing is bound and no required
+// predicate is reached; over the rewrite for the bound positions, with the
+// seed predicate the windows fill, when something is bound; and over the
+// rewrite with its head all free, unseeded, for a free invocation of a
+// predicate reaching one with required positions. Each rewrite is reported
+// once through the magic-sets event.
 func TestInvocationEvaluation_IsWholeWithNothingBoundAndRewrittenOtherwise(t *testing.T) {
 	follows := datalog.NewSymbol("follows")
 	x, y := datalog.NewSymbol("?x"), datalog.NewSymbol("?y")
@@ -329,7 +332,7 @@ func TestInvocationEvaluation_IsWholeWithNothingBoundAndRewrittenOtherwise(t *te
 
 	plannedWhole, err := planner.PlanEvaluation(exec.executor.planner, rs, follows, []bool{false, false}, nil)
 	require.NoError(t, err)
-	whole := exec.invocationEvaluation(rs, inv, plannedWhole)
+	whole := exec.invocationEvaluation(inv, plannedWhole)
 	require.Same(t, rs, whole.rs)
 	require.Equal(t, follows, whole.predicate)
 	require.Nil(t, whole.seed, "nothing bound: the predicate whole")
@@ -337,11 +340,22 @@ func TestInvocationEvaluation_IsWholeWithNothingBoundAndRewrittenOtherwise(t *te
 
 	plannedBound, err := planner.PlanEvaluation(exec.executor.planner, rs, follows, []bool{true, false}, nil)
 	require.NoError(t, err)
-	bound := exec.invocationEvaluation(rs, inv, plannedBound)
+	bound := exec.invocationEvaluation(inv, plannedBound)
 	require.NotSame(t, rs, bound.rs, "something bound: the rewritten set")
 	require.NotEqual(t, follows, bound.predicate, "the adorned predicate")
 	require.NotNil(t, bound.seed, "the seed predicate the windows fill")
 	require.Equal(t, 1, events.count(annotations.RulesMagicSets), "the rewrite is reported once")
+
+	reaching := mustRules(t, `[[(near [?p] ?q) [?p :page/next ?q]] [(hop ?a ?c) [?a :page/next ?b] (near ?b ?c)]]`)
+	hop := datalog.NewSymbol("hop")
+	hopInv := &query.RuleInvocation{Name: hop, Args: []query.PatternElement{query.Variable{Name: x}, query.Variable{Name: y}}}
+	plannedAllFree, err := planner.PlanEvaluation(exec.executor.planner, reaching, hop, []bool{false, false}, nil)
+	require.NoError(t, err)
+	allFree := exec.invocationEvaluation(hopInv, plannedAllFree)
+	require.NotSame(t, reaching, allFree.rs, "a required predicate reached: the rewritten set")
+	require.NotEqual(t, hop, allFree.predicate, "the predicate adorned all free")
+	require.Nil(t, allFree.seed, "nothing bound: no seed")
+	require.Equal(t, 2, events.count(annotations.RulesMagicSets), "the all-free rewrite is reported once")
 }
 
 // Under continuations an invocation clause's evaluation is created at its

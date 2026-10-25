@@ -60,12 +60,15 @@ func EvaluatedSet(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound []
 
 // InvocationEvaluation is what an invocation derived at its clause
 // evaluates, decided at planning: the positions bound before it, the set it
-// evaluates (EvaluatedSet) and the planned bodies of each stratum the
-// predicate needs, in the set's order.
+// evaluates (EvaluatedSet), whether that set is a rewrite of the set as
+// given, and the planned bodies of each stratum the predicate needs, in the
+// set's order. The executor's evaluation reports a rewrite through the
+// magic-sets event.
 type InvocationEvaluation struct {
-	Bound  []bool
-	Magic  *Magic
-	Strata []PlannedStratum
+	Bound     []bool
+	Magic     *Magic
+	Rewritten bool
+	Strata    []PlannedStratum
 }
 
 // PlannedStratum is one stratum an evaluation runs, with its planned bodies.
@@ -75,10 +78,10 @@ type PlannedStratum struct {
 }
 
 // PlanEvaluation plans what an invocation of name evaluates under rs with
-// the given positions bound: the set (EvaluatedSet) and, for each stratum
-// the predicate needs (NeededStrata), its planned bodies (PlanStratum). The
-// planner's walk plans every invocation's evaluation through it, and the
-// plan carries the result.
+// the given positions bound: the set (EvaluatedSet), whether it is a rewrite,
+// a set other than rs, and, for each stratum the predicate needs
+// (NeededStrata), its planned bodies (PlanStratum). The planner's walk plans
+// every invocation's evaluation through it, and the plan carries the result.
 func PlanEvaluation(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound []bool, handler annotations.Handler) (*InvocationEvaluation, error) {
 	magic, err := EvaluatedSet(p, rs, name, bound, handler)
 	if err != nil {
@@ -92,7 +95,7 @@ func PlanEvaluation(p QueryPlanner, rs *query.RuleSet, name query.Symbol, bound 
 		}
 		strata = append(strata, PlannedStratum{Stratum: stratum, Bodies: bodies})
 	}
-	return &InvocationEvaluation{Bound: bound, Magic: magic, Strata: strata}, nil
+	return &InvocationEvaluation{Bound: bound, Magic: magic, Rewritten: magic.Rules != rs, Strata: strata}, nil
 }
 
 // NeededStrata is the strata an evaluation of the predicate runs, in the

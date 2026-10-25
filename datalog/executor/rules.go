@@ -227,7 +227,7 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 		eval = ctx.continued.byClause[inv]
 	}
 	if eval == nil {
-		eval = e.invocationEvaluation(rs, inv, planned)
+		eval = e.invocationEvaluation(inv, planned)
 		if ctx.continued != nil {
 			ctx.continued.byClause[inv] = eval
 		}
@@ -253,10 +253,12 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 
 // invocationEvaluation is the evaluation an invocation runs, over what the
 // plan planned for its clause (planner.InvocationEvaluation): the set it
-// evaluates and the planned bodies of each stratum the predicate needs. A
-// rewritten set is reported through the magic-sets event.
-func (e *DefaultQueryExecutor) invocationEvaluation(rs *query.RuleSet, inv *query.RuleInvocation, planned *planner.InvocationEvaluation) *ruleEvaluation {
-	if e.options.Handler != nil && planned.Magic.Rules != rs {
+// evaluates, whether that set is a rewrite, and the planned bodies of each
+// stratum the predicate needs. A rewrite is reported through the magic-sets
+// event as the record states it, whichever equal set the plan was made
+// under.
+func (e *DefaultQueryExecutor) invocationEvaluation(inv *query.RuleInvocation, planned *planner.InvocationEvaluation) *ruleEvaluation {
+	if e.options.Handler != nil && planned.Rewritten {
 		e.options.Handler(magicSetsEvent(inv.Name, planned.Bound))
 	}
 	return newRuleEvaluation(e.executor, planned)
