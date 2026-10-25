@@ -1003,7 +1003,7 @@ func (c *ruleEventCounts) handle(e annotations.Event) {
 	switch e.Name {
 	case annotations.RulesMagicSets:
 		c.rewrites++
-		c.trail = append(c.trail, fmt.Sprintf("%s %v applied=%v", e.Name, e.Data["predicate"], e.Data["applied"]))
+		c.trail = append(c.trail, fmt.Sprintf("%s %v %v", e.Name, e.Data["predicate"], e.Data["adornment"]))
 	case annotations.RulesStratumBegin:
 		c.strata++
 		c.trail = append(c.trail, fmt.Sprintf("%s %v", e.Name, e.Data["predicates"]))
