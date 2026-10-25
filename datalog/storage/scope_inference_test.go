@@ -44,11 +44,11 @@ func taggedEntities(t testing.TB, d *Database) map[datalog.Identity]string {
 	return names
 }
 
-// renderedRows reads a result into one string per tuple, an identity by its
+// renderedTuples reads a result into one string per tuple, an identity by its
 // name in names and any other value by fmt, sorted.
-func renderedRows(t testing.TB, rel executor.Relation, names map[datalog.Identity]string) []string {
+func renderedTuples(t testing.TB, rel executor.Relation, names map[datalog.Identity]string) []string {
 	t.Helper()
-	var rows []string
+	var tuples []string
 	require.NoError(t, executor.ForEach(rel, func(tuple executor.Tuple) error {
 		parts := make([]string, len(tuple))
 		for i, v := range tuple {
@@ -58,11 +58,11 @@ func renderedRows(t testing.TB, rel executor.Relation, names map[datalog.Identit
 				parts[i] = fmt.Sprint(v)
 			}
 		}
-		rows = append(rows, strings.Join(parts, " "))
+		tuples = append(tuples, strings.Join(parts, " "))
 		return nil
 	}))
-	sort.Strings(rows)
-	return rows
+	sort.Strings(tuples)
+	return tuples
 }
 
 // orderings is every ordering of n positions.
@@ -83,7 +83,7 @@ func orderings(n int) [][]int {
 	return out
 }
 
-// An or reading a variable another clause binds answers the same rows in
+// An or reading a variable another clause binds answers the same tuples in
 // every written order of the query's clauses, on both planner paths,
 // whichever clause binds the variable: a ground, a chain of expressions, an
 // or, an or-join or a subquery.
@@ -114,7 +114,7 @@ func TestPlan_OrderIndependentUnderBothPaths(t *testing.T) {
 					text := "[:find ?q :where " + strings.Join(ordered, " ") + "]"
 					rel, err := d.Query(text)
 					require.NoError(t, err, "%s: %s", binder.name, text)
-					require.Equal(t, []string{"e0"}, renderedRows(t, rel, names), "%s: %s", binder.name, text)
+					require.Equal(t, []string{"e0"}, renderedTuples(t, rel, names), "%s: %s", binder.name, text)
 				}
 			}
 		})
@@ -183,7 +183,7 @@ func TestPlan_AlgebraBridgeOrdersUnderTheRuleSet(t *testing.T) {
 			names := taggedEntities(t, d)
 			rel, err := d.Query(text, mustRuleSet(t, rules))
 			require.NoError(t, err)
-			require.Equal(t, []string{"e0 0", "e0 6", "e1 51"}, renderedRows(t, rel, names))
+			require.Equal(t, []string{"e0 0", "e0 6", "e1 51"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -198,7 +198,7 @@ func TestPlan_OrDefaultReadingAnInputRunsOnBothPaths(t *testing.T) {
 			names := taggedEntities(t, d)
 			rel, err := d.Query(text, int64(5))
 			require.NoError(t, err)
-			require.Equal(t, []string{"e0 1", "e1 0"}, renderedRows(t, rel, names))
+			require.Equal(t, []string{"e0 1", "e1 0"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -281,7 +281,7 @@ func TestPlan_AnExistentialUnderANotInsideAnOrBranchIsTheBranchsOwn(t *testing.T
 			for _, text := range queries {
 				rel, err := d.Query(text)
 				require.NoError(t, err, text)
-				require.Equal(t, []string{"e1", "e3"}, renderedRows(t, rel, names), text)
+				require.Equal(t, []string{"e1", "e3"}, renderedTuples(t, rel, names), text)
 			}
 		})
 	}

@@ -249,7 +249,7 @@ func TestFrameBranchesFramesANotJoinBodyOverItsHeader(t *testing.T) {
 	header := []query.Symbol{entity}
 	subject := NewMaterializedRelation([]query.Symbol{entity, value}, nil)
 	plans, err := frameBranches(exec, NewContext(), [][]query.Clause{{branchPattern(entity, value, attr)}, {branchGround(entity, int64(1))}}, framing{
-		required: header, given: header, subject: subject,
+		required: header, given: header, standsFor: header, subject: subject,
 	})
 	require.NoError(t, err)
 	require.Len(t, plans, 2)
@@ -264,6 +264,30 @@ func TestFrameBranchesFramesANotJoinBodyOverItsHeader(t *testing.T) {
 	}
 }
 
+// frameBranches and the window's key read a frame symbol by the symbol it
+// stands for: a subquery's inner symbol standing for the subject's ?x is
+// carried, and one standing for nothing, a constant argument's, is not,
+// though the subject carries a symbol of its name. So a body reading nothing
+// of what it is given is framed over the constant's symbol alone, the
+// environment's, and the window's keys are counted over ?x's position alone.
+func TestFrameBranchesCarryAFrameSymbolByTheSymbolItStandsFor(t *testing.T) {
+	v, w, x, y := datalog.NewSymbol("?v"), datalog.NewSymbol("?w"), datalog.NewSymbol("?x"), datalog.NewSymbol("?y")
+	exec := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+	subject := NewMaterializedRelation([]query.Symbol{x, v}, nil)
+	f := framing{
+		form: "subquery", subject: subject, required: []query.Symbol{v, w}, find: []query.FindElement{query.FindVariable{Symbol: y}},
+		given: []query.Symbol{v, w}, standsFor: []query.Symbol{nil, x}, key: []query.Symbol{x},
+		environment: NewMaterializedRelation([]query.Symbol{v}, []Tuple{{int64(5)}}),
+	}
+	plans, err := frameBranches(exec, NewContext(), [][]query.Clause{{branchGround(y, int64(1))}}, f)
+	require.NoError(t, err)
+	require.Len(t, plans, 1)
+	require.True(t, plans[0].readsNothing, "a ground reads nothing of what it is given")
+	require.Equal(t, []query.Symbol{v}, plans[0].frame.Required, "the constant's symbol is the environment's, whatever ?v the subject carries; ?w, standing for the subject's ?x, is carried")
+	it := newWindowedIterator(exec, NewContext(), f, plans, ExecutorOptions{})
+	require.Equal(t, []int{0}, it.reader.keyPos, "the window's keys are counted over ?x's position, which ?w stands for, and over no position for the constant's symbol")
+}
+
 // frameBranches frames a subquery's inner query over its inputs with its
 // find shape: the frame's find is the inner :find as written, a variable and
 // an aggregate by its display form, after the given symbols the body
@@ -274,7 +298,7 @@ func TestFrameBranchesFramesASubqueryOverItsInputsWithItsFindShape(t *testing.T)
 	count := query.FindAggregate{Function: datalog.SymCount, Arg: s}
 	body := []query.Clause{branchPattern(x, v, datalog.NewKeyword(":t/v")), branchPattern(x, s, datalog.NewKeyword(":t/s"))}
 	plans, err := frameBranches(exec, NewContext(), [][]query.Clause{body}, framing{
-		required: []query.Symbol{x}, find: []query.FindElement{query.FindVariable{Symbol: v}, count}, given: []query.Symbol{x}, subject: NewMaterializedRelation([]query.Symbol{x}, nil),
+		required: []query.Symbol{x}, find: []query.FindElement{query.FindVariable{Symbol: v}, count}, given: []query.Symbol{x}, standsFor: []query.Symbol{x}, subject: NewMaterializedRelation([]query.Symbol{x}, nil),
 	})
 	require.NoError(t, err)
 	require.Len(t, plans, 1)
@@ -348,7 +372,7 @@ func TestNewWindowedIteratorComposesTheModulesOverTheSubject(t *testing.T) {
 	require.NoError(t, err)
 	f := framing{
 		form: "or-default-join", subject: subject, required: required, find: []query.FindElement{query.FindVariable{Symbol: value}},
-		given: required, key: key, environment: envRel,
+		given: required, standsFor: required, key: key, environment: envRel,
 	}
 	plans, err := frameBranches(exec, ctx, [][]query.Clause{{branchPattern(entity, value, attr)}, {branchGround(value, int64(0))}}, f)
 	require.NoError(t, err)
@@ -419,7 +443,7 @@ func TestBuildBranchTuplesPresentsTheAnswerUnderTheFramesSubstitution(t *testing
 	subst, err := query.SubstitutionOf([]query.Symbol{x, y, v}, []query.Symbol{e, e, c})
 	require.NoError(t, err)
 	f := framing{
-		required: []query.Symbol{x, y, k}, find: []query.FindElement{query.FindVariable{Symbol: v}}, given: []query.Symbol{x, y, k},
+		required: []query.Symbol{x, y, k}, find: []query.FindElement{query.FindVariable{Symbol: v}}, given: []query.Symbol{x, y, k}, standsFor: []query.Symbol{e, e, nil},
 		subject: NewMaterializedRelation([]query.Symbol{e}, nil), subst: subst,
 	}
 	plans, err := frameBranches(exec, NewContext(), [][]query.Clause{{branchPattern(x, v, attr)}}, f)

@@ -16,12 +16,15 @@ import (
 // unified feeds every consumer as any relation does, and a ground's shape the
 // text admits binds as its value.
 
-// pairedEntities carry :p/n 1, 2 and 3 beside :p/m 1, 3 and 3, so e1 alone
-// has :p/n equal to :p/m, and the :p/m value 3 is held twice.
-var pairedEntities = map[string][]fact{
-	"e1": {{":p/n", int64(1)}, {":p/m", int64(1)}},
-	"e2": {{":p/n", int64(2)}, {":p/m", int64(3)}},
-	"e3": {{":p/n", int64(3)}, {":p/m", int64(3)}},
+// pairedFacts: e1, e2 and e3 carry :p/n 1, 2 and 3 beside :p/m 1, 3 and 3,
+// so e1 alone has :p/n equal to :p/m, and the :p/m value 3 is held twice.
+func pairedFacts() []fact {
+	e1, e2, e3 := named("e1"), named("e2"), named("e3")
+	return []fact{
+		{e1, ":p/n", int64(1)}, {e1, ":p/m", int64(1)},
+		{e2, ":p/n", int64(2)}, {e2, ":p/m", int64(3)},
+		{e3, ":p/n", int64(3)}, {e3, ":p/m", int64(3)},
+	}
 }
 
 // Two :in entries naming one symbol bind two relations the query joins on it,
@@ -45,12 +48,12 @@ func TestInputEntries_SharingASymbolAreJoinedOnIt(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, pairedEntities)
+			names := commitFacts(t, d, pairedFacts())
 			for _, c := range cases {
 				t.Run(c.name, func(t *testing.T) {
 					rel, err := d.Query(c.text, c.inputs...)
 					require.NoError(t, err)
-					require.ElementsMatch(t, c.want, renderedRows(t, rel, names))
+					require.ElementsMatch(t, c.want, renderedTuples(t, rel, names))
 				})
 			}
 		})
@@ -77,12 +80,12 @@ func TestInnerQuery_ARepeatedNameUnifiesInItsInAndRepeatsInItsFind(t *testing.T)
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, pairedEntities)
+			names := commitFacts(t, d, pairedFacts())
 			for _, c := range cases {
 				t.Run(c.name, func(t *testing.T) {
 					rel, err := d.Query(c.text, c.inputs...)
 					require.NoError(t, err)
-					require.ElementsMatch(t, c.want, renderedRows(t, rel, names))
+					require.ElementsMatch(t, c.want, renderedTuples(t, rel, names))
 				})
 			}
 		})
@@ -93,17 +96,17 @@ func TestInnerQuery_ARepeatedNameUnifiesInItsInAndRepeatsInItsFind(t *testing.T)
 // name, so the entities whose two values agree enter the scope under ?h.
 const agreeingPair = `[(q [:find ?n ?m :in $ ?e :where [?e :p/n ?n] [?e :p/m ?m]] $ ?e) [[?h ?h]]]`
 
-// agreeingRows is a relation ground whose rows name one symbol twice, so the
-// rows whose two values agree bind ?a.
-const agreeingRows = `[(ground [[1 1] [3 3] [2 9]]) [[?a ?a]]]`
+// agreeingTuples is a relation ground whose tuples name one symbol twice, so
+// the tuples whose two values agree bind ?a.
+const agreeingTuples = `[(ground [[1 1] [3 3] [2 9]]) [[?a ?a]]]`
 
 // A binding that unified enters the scope as a relation over its one name,
 // and every consumer after it reads that relation: a join, a count, a not, an
 // or-join, a subquery and an expression over a subquery's binding, and a
 // join, a not, a count and a subquery over an expression's binding. The
-// expression binding's rows 1 and 3 are both :p/m values, so the not drops
-// every row, and the row 2 9 binds nothing. A binding naming the scope's own
-// ?e at both positions unifies the entity with its number, which never
+// expression binding's tuples 1 and 3 are both :p/m values, so the not drops
+// every tuple, and the tuple 2 9 binds nothing. A binding naming the scope's
+// own ?e at both positions unifies the entity with its number, which never
 // agree, where the same two under distinct names bind every entity.
 func TestUnifiedBinding_FeedsEveryConsumerAsARelation(t *testing.T) {
 	cases := []struct {
@@ -119,19 +122,19 @@ func TestUnifiedBinding_FeedsEveryConsumerAsARelation(t *testing.T) {
 		{"a subquery's binding passed to a subquery", `[:find ?e ?h ?c :where [?e :p/n _] ` + agreeingPair + ` [(q [:find (count ?y) :in $ ?v :where [?y :p/m ?v]] $ ?h) [[?c]]]]`, []string{"e1 1 1", "e3 3 2"}},
 		{"a subquery's binding read by an expression", `[:find ?e ?k :where [?e :p/n _] ` + agreeingPair + ` [(+ ?h 1) ?k]]`, []string{"e1 2", "e3 4"}},
 		{"an expression's binding joined", `[:find ?a ?x :where [(ground [[1 1] [3 3] [1 2]]) [[?a ?a]]] [?x :p/n ?a]]`, []string{"1 e1", "3 e3"}},
-		{"an expression's binding under a not", `[:find ?a :where ` + agreeingRows + ` (not [?x :p/m ?a])]`, nil},
-		{"an expression's binding counted", `[:find (count ?a) :where ` + agreeingRows + `]`, []string{"2"}},
+		{"an expression's binding under a not", `[:find ?a :where ` + agreeingTuples + ` (not [?x :p/m ?a])]`, nil},
+		{"an expression's binding counted", `[:find (count ?a) :where ` + agreeingTuples + `]`, []string{"2"}},
 		{"an expression's binding passed to a subquery", `[:find ?a ?c :where [(ground [[1 1] [2 9]]) [[?a ?a]]] [(q [:find (count ?y) :in $ ?v :where [?y :p/n ?v]] $ ?a) [[?c]]]]`, []string{"1 1"}},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, pairedEntities)
+			names := commitFacts(t, d, pairedFacts())
 			for _, c := range cases {
 				t.Run(c.name, func(t *testing.T) {
 					rel, err := d.Query(c.text)
 					require.NoError(t, err)
-					require.ElementsMatch(t, c.want, renderedRows(t, rel, names))
+					require.ElementsMatch(t, c.want, renderedTuples(t, rel, names))
 				})
 			}
 		})
@@ -156,12 +159,12 @@ func TestPerTupleFunction_ARepeatedBindingNameUnifies(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, pairedEntities)
+			names := commitFacts(t, d, pairedFacts())
 			for _, c := range cases {
 				t.Run(c.name, func(t *testing.T) {
 					rel, err := d.Query(c.text, c.inputs...)
 					require.NoError(t, err)
-					require.ElementsMatch(t, c.want, renderedRows(t, rel, names))
+					require.ElementsMatch(t, c.want, renderedTuples(t, rel, names))
 				})
 			}
 		})
@@ -169,7 +172,7 @@ func TestPerTupleFunction_ARepeatedBindingNameUnifies(t *testing.T) {
 }
 
 // A ground's value binds as its shape has it: a vector of vectors under the
-// relation form binds its rows, and an empty vector under the relation form
+// relation form binds its tuples, and an empty vector under the relation form
 // or the collection form binds nothing and answers no tuple; a vector of one
 // vector under the tuple form of one symbol binds that one value, the inner
 // vector, so a not over it drops no entity whose value is a number; and a
@@ -179,19 +182,19 @@ func TestGround_AValueBindsAsItsShapeHasIt(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, pairedEntities)
-			rows, err := d.Query(`[:find ?a ?b :where [(ground [[1 2]]) [[?a ?b]]]]`)
+			names := commitFacts(t, d, pairedFacts())
+			bound, err := d.Query(`[:find ?a ?b :where [(ground [[1 2]]) [[?a ?b]]]]`)
 			require.NoError(t, err)
-			require.Equal(t, []string{"1 2"}, renderedRows(t, rows, names), "a vector of vectors under the relation form binds its rows")
+			require.Equal(t, []string{"1 2"}, renderedTuples(t, bound, names), "a vector of vectors under the relation form binds its tuples")
 			none, err := d.Query(`[:find ?a ?b :where [(ground []) [[?a ?b]]]]`)
 			require.NoError(t, err)
-			require.Empty(t, renderedRows(t, none, names), "an empty vector under the relation form binds nothing")
+			require.Empty(t, renderedTuples(t, none, names), "an empty vector under the relation form binds nothing")
 			none, err = d.Query(`[:find ?a :where [(ground []) [?a ...]]]`)
 			require.NoError(t, err)
-			require.Empty(t, renderedRows(t, none, names), "an empty vector under the collection form binds nothing")
+			require.Empty(t, renderedTuples(t, none, names), "an empty vector under the collection form binds nothing")
 			kept, err := d.Query(`[:find ?e :where [?e :p/n ?n] (not [(ground [[1 2]]) [?n]])]`)
 			require.NoError(t, err)
-			require.ElementsMatch(t, []string{"e1", "e2", "e3"}, renderedRows(t, kept, names), "the tuple form of one binds the inner vector, which equals no entity's number")
+			require.ElementsMatch(t, []string{"e1", "e2", "e3"}, renderedTuples(t, kept, names), "the tuple form of one binds the inner vector, which equals no entity's number")
 			_, err = executor.CollectTuples(d.Query(`[:find ?a ?b :in $ ?v :where [(identity ?v) [?a ?b]]]`, int64(1)))
 			require.Error(t, err, "a scalar under the tuple form at run time is the query's error")
 		})

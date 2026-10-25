@@ -50,6 +50,7 @@ func (e *DefaultQueryExecutor) executeBoundInvocation(ctx *Context, inv *query.R
 		required:    required,
 		find:        find,
 		given:       required,
+		standsFor:   required,
 		key:         keySymbols(required, outerSyms),
 		environment: environment,
 	}

@@ -616,7 +616,8 @@ func parseRelationBinding(node *edn.Node) (query.RelationBinding, error) {
 // Datomic's grammar: $name a source, % the rule set, ?x the scalar input,
 // [?x ...] the collection input, [?x ?y] the tuple input, [[?x ?y]] the
 // relation input, and [[?x ?y] ...], janus's own spelling, the relation
-// input as well.
+// input as well. [] is the tuple input naming no variable, which
+// ValidateQuery refuses at every boundary.
 func parseInputSpec(node *edn.Node) (query.InputSpec, error) {
 	switch node.Type {
 	case edn.NodeSymbol:
@@ -634,7 +635,7 @@ func parseInputSpec(node *edn.Node) (query.InputSpec, error) {
 
 	case edn.NodeVector:
 		if len(node.Nodes) == 0 {
-			return nil, fmt.Errorf("input vector cannot be empty")
+			return query.TupleInput{}, nil
 		}
 		trailing := len(node.Nodes) == 2 && node.Nodes[1].Type == edn.NodeSymbol && node.Nodes[1].Value == "..."
 

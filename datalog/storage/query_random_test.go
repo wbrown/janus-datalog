@@ -64,15 +64,15 @@ import (
 // a query reads one type and not the other, and a vector ground of integers
 // has a twin of strings that no :r value matches. A query holding either may
 // be followed by its respelled twin, the same text with the constant
-// respelled, on the same store: the twin's rows are its own type's alone,
+// respelled, on the same store: the twin's tuples are its own type's alone,
 // and a plan served to the twin under the original's text shows as the
-// original's rows.
+// original's tuples.
 //
 // Each seed draws its datoms and its queries from one source, so a seed and
 // query number name the same query on every run. The engine runs each query
 // in every mode of the matrix, in the written order, the reverse, a shuffle
-// and the written order again, and must give the reference's rows, or refuse
-// the queries the reference refuses, and never panic.
+// and the written order again, and must give the reference's tuples, or
+// refuse the queries the reference refuses, and never panic.
 
 // shapeTerm is a variable, a constant, or the blank.
 type shapeTerm struct {
@@ -96,8 +96,8 @@ func (t shapeTerm) String() string {
 // the inner query. A groundvec's terms are a vector constant and the
 // variable it binds; a subqcoll's are the variable holding the collection
 // its inner query is passed, its binding variable and the attribute its
-// inner query counts under. An in's terms are the input's symbols, its rows
-// the input's tuples, one value per symbol, and its form the spelling the
+// inner query counts under. An in's terms are the input's symbols, its
+// tuples the input's, one value per symbol, and its form the spelling the
 // input has in the :in; it renders as a ground clause binding the same
 // tuples under the same form.
 type shapeClause struct {
@@ -105,14 +105,14 @@ type shapeClause struct {
 	t        []shapeTerm
 	branches [][]shapeClause
 	header   []string
-	rows     [][]shapeTerm
+	tuples   [][]shapeTerm
 	form     string // an in's form: scalar, coll, tuple or rel
 }
 
-// rowText renders a row's values, each by its constant's text.
-func rowText(row []shapeTerm) string {
-	parts := make([]string, len(row))
-	for i, t := range row {
+// tupleText renders a tuple's values, each by its constant's text.
+func tupleText(tuple []shapeTerm) string {
+	parts := make([]string, len(tuple))
+	for i, t := range tuple {
 		parts[i] = t.String()
 	}
 	return strings.Join(parts, " ")
@@ -139,22 +139,22 @@ func (c shapeClause) String() string {
 		for i, t := range c.t {
 			syms[i] = t.String()
 		}
-		rows := make([]string, len(c.rows))
-		for i, row := range c.rows {
-			rows[i] = rowText(row)
+		rendered := make([]string, len(c.tuples))
+		for i, tuple := range c.tuples {
+			rendered[i] = tupleText(tuple)
 		}
 		switch c.form {
 		case "scalar":
-			return fmt.Sprintf("[(ground %s) %s]", rows[0], syms[0])
+			return fmt.Sprintf("[(ground %s) %s]", rendered[0], syms[0])
 		case "coll":
-			return fmt.Sprintf("[(ground [%s]) [%s ...]]", strings.Join(rows, " "), syms[0])
+			return fmt.Sprintf("[(ground [%s]) [%s ...]]", strings.Join(rendered, " "), syms[0])
 		case "tuple":
-			return fmt.Sprintf("[(ground [%s]) [%s]]", rows[0], strings.Join(syms, " "))
+			return fmt.Sprintf("[(ground [%s]) [%s]]", rendered[0], strings.Join(syms, " "))
 		}
-		for i, row := range rows {
-			rows[i] = "[" + row + "]"
+		for i, tuple := range rendered {
+			rendered[i] = "[" + tuple + "]"
 		}
-		return fmt.Sprintf("[(ground [%s]) [[%s] ...]]", strings.Join(rows, " "), strings.Join(syms, " "))
+		return fmt.Sprintf("[(ground [%s]) [[%s] ...]]", strings.Join(rendered, " "), strings.Join(syms, " "))
 	}
 	var b strings.Builder
 	switch c.kind {
@@ -244,9 +244,9 @@ func isShapeForm(c shapeClause) bool {
 // tuple or rel, its symbols, and its tuples, one value per symbol. A scalar
 // or tuple entry holds one tuple; a coll or rel entry holds any number.
 type shapeInput struct {
-	form string
-	syms []string
-	rows [][]shapeTerm
+	form   string
+	syms   []string
+	tuples [][]shapeTerm
 }
 
 // spec is the entry's text in the :in.
@@ -262,10 +262,10 @@ func (in shapeInput) spec() string {
 	return "[[" + strings.Join(in.syms, " ") + "] ...]"
 }
 
-// rowValues is a row's values.
-func rowValues(row []shapeTerm) []interface{} {
-	out := make([]interface{}, len(row))
-	for i, t := range row {
+// tupleValues is a tuple's values.
+func tupleValues(tuple []shapeTerm) []interface{} {
+	out := make([]interface{}, len(tuple))
+	for i, t := range tuple {
 		out[i] = t.val
 	}
 	return out
@@ -276,19 +276,19 @@ func rowValues(row []shapeTerm) []interface{} {
 func (in shapeInput) value() interface{} {
 	switch in.form {
 	case "scalar":
-		return in.rows[0][0].val
+		return in.tuples[0][0].val
 	case "coll":
-		out := make([]interface{}, len(in.rows))
-		for i, row := range in.rows {
-			out[i] = row[0].val
+		out := make([]interface{}, len(in.tuples))
+		for i, tuple := range in.tuples {
+			out[i] = tuple[0].val
 		}
 		return out
 	case "tuple":
-		return rowValues(in.rows[0])
+		return tupleValues(in.tuples[0])
 	}
-	out := make([]interface{}, len(in.rows))
-	for i, row := range in.rows {
-		out[i] = rowValues(row)
+	out := make([]interface{}, len(in.tuples))
+	for i, tuple := range in.tuples {
+		out[i] = tupleValues(tuple)
 	}
 	return out
 }
@@ -296,7 +296,7 @@ func (in shapeInput) value() interface{} {
 // ground is the entry as a clause of the body binding the same tuples under
 // the same form.
 func (in shapeInput) ground() shapeClause {
-	c := shapeClause{kind: "in", form: in.form, rows: in.rows}
+	c := shapeClause{kind: "in", form: in.form, tuples: in.tuples}
 	for _, s := range in.syms {
 		c.t = append(c.t, shapeVar(s))
 	}
@@ -626,7 +626,7 @@ func intTerm(n int64) shapeTerm {
 
 // vectorTerm is a vector constant over the members.
 func vectorTerm(members []shapeTerm) shapeTerm {
-	return shapeTerm{c: "[" + rowText(members) + "]", val: rowValues(members)}
+	return shapeTerm{c: "[" + tupleText(members) + "]", val: tupleValues(members)}
 }
 
 // randomVectorGround draws a ground of a vector into ?coll, the members a
@@ -675,23 +675,23 @@ func randomInput(r *rand.Rand, data shapeData, allowRel bool) shapeInput {
 		in.syms[1] = in.syms[0]
 	}
 	repeated := nsyms == 2 && in.syms[0] == in.syms[1]
-	nrows := 1
+	n := 1
 	if in.form == "coll" || in.form == "rel" {
-		nrows = 1 + r.Intn(3)
+		n = 1 + r.Intn(3)
 	}
-	for i := 0; i < nrows; i++ {
-		var row []shapeTerm
+	for i := 0; i < n; i++ {
+		var tuple []shapeTerm
 		for _, s := range in.syms {
 			if s == "?n" {
-				row = append(row, intTerm(int64(r.Intn(3))))
+				tuple = append(tuple, intTerm(int64(r.Intn(3))))
 			} else {
-				row = append(row, entityTerm(data, r.Intn(len(data.ents))))
+				tuple = append(tuple, entityTerm(data, r.Intn(len(data.ents))))
 			}
 		}
 		if repeated && r.Intn(2) == 0 {
-			row[1] = row[0]
+			tuple[1] = tuple[0]
 		}
-		in.rows = append(in.rows, row)
+		in.tuples = append(in.tuples, tuple)
 	}
 	return in
 }
@@ -788,7 +788,7 @@ func floatTerm(f float64) shapeTerm {
 // float of the same magnitude and every vector ground of integers respelled
 // as the strings of their digits, and false when q holds neither. The twin
 // matches the store's float values alone and no :r value as a string, so
-// its rows are the original's only where the engine reads the twin's text
+// its tuples are the original's only where the engine reads the twin's text
 // as the original's.
 func respelledTwin(q shapeQuery) (shapeQuery, bool) {
 	changed := false
@@ -1256,11 +1256,11 @@ func (s *shapeSolver) evalScope(plan *scopePlan, list []shapeClause, k int, σ s
 		}
 		return true
 	case "in":
-		for _, row := range c.rows {
+		for _, tuple := range c.tuples {
 			n := σ.copy()
 			unified := true
 			for i, t := range c.t {
-				if !unify(n, t, row[i].val) {
+				if !unify(n, t, tuple[i].val) {
 					unified = false
 					break
 				}
@@ -1371,7 +1371,7 @@ func (s *shapeSolver) evalScope(plan *scopePlan, list []shapeClause, k int, σ s
 		}
 		return true
 	case "ordef":
-		// The fallback is decided on a branch's own rows, before they join
+		// The fallback is decided on a branch's own tuples, before they join
 		// the scope on the outputs.
 		for b, br := range c.branches {
 			var sols []shapeEnv
@@ -1418,11 +1418,11 @@ func (data shapeData) renderValue(v interface{}) string {
 	return fmt.Sprint(v)
 }
 
-// referenceRows plans q and returns the sorted, deduplicated rows the
+// referenceTuples plans q and returns the sorted, deduplicated tuples the
 // reference computes for it over data, or errShapeRefused. The reference
 // reads each input as a clause of the top-level scope, before the body: a
 // relation over the input's symbols the body joins, whatever its form.
-func referenceRows(data shapeData, q shapeQuery) ([]string, error) {
+func referenceTuples(data shapeData, q shapeQuery) ([]string, error) {
 	list := make([]shapeClause, 0, len(q.ins)+len(q.where))
 	for _, in := range q.ins {
 		list = append(list, in.ground())
@@ -1461,12 +1461,12 @@ func referenceRows(data shapeData, q shapeQuery) ([]string, error) {
 	return out, nil
 }
 
-// engineRows runs text on d with the given inputs and returns the sorted,
-// deduplicated rows, or the error's text, or "PANIC: ..." for a panic.
-func engineRows(d *Database, data shapeData, text string, inputs ...interface{}) (rows []string, msg string) {
+// engineTuples runs text on d with the given inputs and returns the sorted,
+// deduplicated tuples, or the error's text, or "PANIC: ..." for a panic.
+func engineTuples(d *Database, data shapeData, text string, inputs ...interface{}) (tuples []string, msg string) {
 	defer func() {
 		if p := recover(); p != nil {
-			rows, msg = nil, fmt.Sprintf("PANIC: %v", p)
+			tuples, msg = nil, fmt.Sprintf("PANIC: %v", p)
 		}
 	}()
 	rel, err := d.Query(text, inputs...)
@@ -1485,12 +1485,12 @@ func engineRows(d *Database, data shapeData, text string, inputs ...interface{})
 	if err != nil {
 		return nil, err.Error()
 	}
-	rows = make([]string, 0, len(set))
+	tuples = make([]string, 0, len(set))
 	for k := range set {
-		rows = append(rows, k)
+		tuples = append(tuples, k)
 	}
-	sort.Strings(rows)
-	return rows, ""
+	sort.Strings(tuples)
+	return tuples, ""
 }
 
 // writeShapeData writes a seed's datoms in one transaction and returns the
@@ -1555,48 +1555,48 @@ func queryDifferences(d *Database, stored shapeData, q shapeQuery, orders map[st
 	var diffs []string
 	if q.aggregates() {
 		for _, name := range shapeOrderNames {
-			rows, msg := engineRows(d, stored, q.text(orders[name]), q.values()...)
-			ground, groundMsg := engineRows(d, stored, q.groundText(orders[name]))
+			tuples, msg := engineTuples(d, stored, q.text(orders[name]), q.values()...)
+			ground, groundMsg := engineTuples(d, stored, q.groundText(orders[name]))
 			switch {
 			case strings.HasPrefix(msg, "PANIC") || strings.HasPrefix(groundMsg, "PANIC"):
 				diffs = append(diffs, fmt.Sprintf("%s: %q, ground form %q", name, msg, groundMsg))
 			case (msg == "") != (groundMsg == ""):
 				diffs = append(diffs, fmt.Sprintf("%s: error %q, ground form error %q", name, msg, groundMsg))
-			case msg == "" && !equalStrings(rows, ground):
-				diffs = append(diffs, fmt.Sprintf("%s: rows %v, ground form rows %v", name, rows, ground))
+			case msg == "" && !equalStrings(tuples, ground):
+				diffs = append(diffs, fmt.Sprintf("%s: tuples %v, ground form tuples %v", name, tuples, ground))
 			}
 		}
 		return diffs, nil
 	}
-	ref, refused := referenceRows(stored, q)
+	ref, refused := referenceTuples(stored, q)
 	if refused != nil && !errors.Is(refused, errShapeRefused) {
 		return nil, fmt.Errorf("the reference failed: %w", refused)
 	}
-	compare := func(label string, rows []string, msg string) {
+	compare := func(label string, tuples []string, msg string) {
 		switch {
 		case strings.HasPrefix(msg, "PANIC"):
 			diffs = append(diffs, fmt.Sprintf("%s: %s", label, msg))
 		case refused != nil && msg == "":
-			diffs = append(diffs, fmt.Sprintf("%s: rows %v, reference refuses: %v", label, rows, refused))
+			diffs = append(diffs, fmt.Sprintf("%s: tuples %v, reference refuses: %v", label, tuples, refused))
 		case refused == nil && msg != "":
-			diffs = append(diffs, fmt.Sprintf("%s: error %q, reference rows %v", label, msg, ref))
-		case refused == nil && !equalStrings(rows, ref):
-			diffs = append(diffs, fmt.Sprintf("%s: rows %v, reference rows %v", label, rows, ref))
+			diffs = append(diffs, fmt.Sprintf("%s: error %q, reference tuples %v", label, msg, ref))
+		case refused == nil && !equalStrings(tuples, ref):
+			diffs = append(diffs, fmt.Sprintf("%s: tuples %v, reference tuples %v", label, tuples, ref))
 		}
 	}
 	for _, name := range shapeOrderNames {
-		rows, msg := engineRows(d, stored, q.text(orders[name]), q.values()...)
-		compare(name, rows, msg)
+		tuples, msg := engineTuples(d, stored, q.text(orders[name]), q.values()...)
+		compare(name, tuples, msg)
 		if len(q.ins) > 0 && !q.repeatsASymbol() {
-			rows, msg = engineRows(d, stored, q.groundText(orders[name]))
-			compare(name+" as grounds", rows, msg)
+			tuples, msg = engineTuples(d, stored, q.groundText(orders[name]))
+			compare(name+" as grounds", tuples, msg)
 		}
 	}
 	return diffs, nil
 }
 
-// Every generated query gives, in every mode and in every order, the rows the
-// reference computes over the datoms that mode's store holds, and a query the
+// Every generated query gives, in every mode and in every order, the tuples
+// the reference computes over the datoms that mode's store holds, and a query the
 // reference refuses is refused. The failure for a query names its seed, its
 // number, its text, with its inputs as grounds where it has any, and for each
 // order and mode what the engine gave against what it must give.

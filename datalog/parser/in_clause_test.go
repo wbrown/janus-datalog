@@ -239,7 +239,7 @@ func TestParseInputClauseErrors(t *testing.T) {
 			input: `[:find ?e
 			         :in []
 			         :where [?e :bar ?v]]`,
-			error: "input vector cannot be empty",
+			error: "[] names no variable; a tuple input names at least one",
 		},
 		{
 			name: "non-variable in collection",

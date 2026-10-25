@@ -63,11 +63,11 @@ func environmentRelation(ctx *Context, runSyms, outerSyms []query.Symbol) (Relat
 // windowFrames resolves each distinct frame of plans against the framing's
 // subject and its environment relation, and returns the frames with each
 // branch's frame by index. A frame symbol is found in the subject by the
-// symbol the framing's substitution says it stands for, itself when the
-// substitution does not name it, and a symbol the subject lacks takes the
-// environment relation's value under its own name. The branches of one form
-// share one substitution, so branches framed over one symbol list share one
-// frame.
+// symbol the framing says it stands for; a symbol standing for nothing, a
+// constant argument's, and one standing for a symbol the subject lacks take
+// the environment relation's value under their own name. The branches of
+// one form share one standing, so branches framed over one symbol list
+// share one frame.
 func windowFrames(plans []branchRun, f framing) ([]windowFrame, []int) {
 	outerSyms := f.subject.Symbols()
 	var frames []windowFrame
@@ -87,14 +87,12 @@ func windowFrames(plans []branchRun, f framing) ([]windowFrame, []int) {
 		}
 		frame := windowFrame{required: required, envValues: make(Tuple, len(required))}
 		for pos, sym := range required {
-			standsFor := sym
-			if to, ok := f.subst.Of(sym); ok {
-				standsFor = to
-			}
-			if outerPos := query.SymbolIndex(outerSyms, standsFor); outerPos >= 0 {
-				frame.subjectPos = append(frame.subjectPos, outerPos)
-				frame.framePos = append(frame.framePos, pos)
-				continue
+			if standsFor := f.standing(sym); standsFor != nil {
+				if outerPos := query.SymbolIndex(outerSyms, standsFor); outerPos >= 0 {
+					frame.subjectPos = append(frame.subjectPos, outerPos)
+					frame.framePos = append(frame.framePos, pos)
+					continue
+				}
 			}
 			frame.envValues[pos] = f.environment.Get(0)[query.SymbolIndex(f.environment.Symbols(), sym)]
 		}

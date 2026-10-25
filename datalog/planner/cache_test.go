@@ -88,6 +88,35 @@ func TestPlanCache(t *testing.T) {
 	}
 }
 
+// A plan is served under the invocations held when it was made: a scope
+// planned under the rewrite's reading of its order, with every invocation
+// held and no body planned, never serves the same text planned as a body a
+// fixpoint runs or as a query, whose invocations are derived at their
+// clauses with their bodies planned.
+func TestPlanCache_APlanIsServedUnderTheHeldItWasMadeUnder(t *testing.T) {
+	cache := NewPlanCache(10, 0)
+	opts := PlannerOptions{}
+	q := &query.Query{
+		Find: []query.FindElement{query.FindVariable{Symbol: datalog.NewSymbol("?e")}},
+		Where: []query.Clause{&query.RuleInvocation{
+			Name: datalog.NewSymbol("reaches"),
+			Args: []query.PatternElement{query.Variable{Name: datalog.NewSymbol("?e")}},
+		}},
+	}
+	plan := &RealizedPlan{Query: q}
+	cache.SetWithOptions(q, query.Bindings{Held: query.HeldEvery}, plan, opts)
+	if _, ok := cache.GetWithOptions(q, query.Bindings{Held: query.HeldByFixpoint}, opts); ok {
+		t.Error("a plan made with every invocation held is served to a body a fixpoint runs")
+	}
+	if _, ok := cache.GetWithOptions(q, query.Bindings{Held: query.HeldNone}, opts); ok {
+		t.Error("a plan made with every invocation held is served to a query")
+	}
+	cached, ok := cache.GetWithOptions(q, query.Bindings{Held: query.HeldEvery}, opts)
+	if !ok || cached != plan {
+		t.Error("a plan is served under the held it was made under")
+	}
+}
+
 func TestPlanCacheEviction(t *testing.T) {
 	cache := NewPlanCache(2, 1*time.Hour) // Small cache size
 	opts := PlannerOptions{}

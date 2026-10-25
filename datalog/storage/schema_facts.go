@@ -149,7 +149,11 @@ func readSchemaFacts(d *Database) (*schema.Schema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading schema facts: %w", err)
 	}
-	for i, facts := range pulled {
+	for i, words := range pulled {
+		facts := make(map[datalog.Keyword]interface{}, len(words))
+		for name, value := range words {
+			facts[datalog.NewKeyword(name)] = value
+		}
 		def, err := definitionFromFacts(definitions[i], facts)
 		if err != nil {
 			return nil, fmt.Errorf("reading schema facts: %w", err)
@@ -159,23 +163,23 @@ func readSchemaFacts(d *Database) (*schema.Schema, error) {
 	return stored, nil
 }
 
-// definitionFromFacts builds the definition the facts on entity state. The
-// facts are input, so every word is checked: a keyword outside its vocabulary,
-// a word of the wrong type, or a definition on an entity other than its
-// ident's own is an error naming the ident and the word.
-func definitionFromFacts(entity datalog.Identity, facts map[string]interface{}) (*schema.AttributeDefinition, error) {
-	ident, ok := facts["db/ident"].(datalog.Keyword)
+// definitionFromFacts builds the definition the facts on entity state, keyed
+// by word. The facts are input, so every word is checked: a keyword outside
+// its vocabulary, a word of the wrong type, or a definition on an entity
+// other than its ident's own is an error naming the ident and the word.
+func definitionFromFacts(entity datalog.Identity, facts map[datalog.Keyword]interface{}) (*schema.AttributeDefinition, error) {
+	ident, ok := facts[schema.DBIdent].(datalog.Keyword)
 	if !ok {
-		return nil, fmt.Errorf("definition on %s: :db/ident is %T, not a keyword", entity, facts["db/ident"])
+		return nil, fmt.Errorf("definition on %s: :db/ident is %T, not a keyword", entity, facts[schema.DBIdent])
 	}
 	if attributeEntity(ident) != entity {
 		return nil, fmt.Errorf("definition of %s lives on %s, not on its own entity", ident, entity)
 	}
 	b := schema.NewBuilder().Attribute(ident.String())
 
-	cardinality, ok := facts["db/cardinality"].(datalog.Keyword)
+	cardinality, ok := facts[schema.DBCardinality].(datalog.Keyword)
 	if !ok {
-		return nil, fmt.Errorf("definition of %s: :db/cardinality is %T, not a keyword", ident, facts["db/cardinality"])
+		return nil, fmt.Errorf("definition of %s: :db/cardinality is %T, not a keyword", ident, facts[schema.DBCardinality])
 	}
 	switch cardinality {
 	case schema.CardinalityOne:
@@ -188,28 +192,28 @@ func definitionFromFacts(entity datalog.Identity, facts map[string]interface{}) 
 		return nil, fmt.Errorf("definition of %s: %s is not a cardinality", ident, cardinality)
 	}
 
-	if v, carried := facts["db/valueType"]; carried {
+	if v, carried := facts[schema.DBValueType]; carried {
 		valueType, ok := v.(datalog.Keyword)
 		if !ok {
 			return nil, fmt.Errorf("definition of %s: :db/valueType is %T, not a keyword", ident, v)
 		}
 		b.Type(valueType)
 	}
-	if v, carried := facts["db/unique"]; carried {
+	if v, carried := facts[schema.DBUnique]; carried {
 		unique, ok := v.(datalog.Keyword)
 		if !ok {
 			return nil, fmt.Errorf("definition of %s: :db/unique is %T, not a keyword", ident, v)
 		}
 		b.Unique(unique)
 	}
-	if v, carried := facts["db/uniqueElements"]; carried {
+	if v, carried := facts[schema.DBUniqueElements]; carried {
 		flag, ok := v.(bool)
 		if !ok {
 			return nil, fmt.Errorf("definition of %s: :db/uniqueElements is %T, not a boolean", ident, v)
 		}
 		b.UniqueElements(flag)
 	}
-	if v, carried := facts["db/neverZeroValue"]; carried {
+	if v, carried := facts[schema.DBNeverZeroValue]; carried {
 		flag, ok := v.(bool)
 		if !ok {
 			return nil, fmt.Errorf("definition of %s: :db/neverZeroValue is %T, not a boolean", ident, v)
@@ -218,7 +222,7 @@ func definitionFromFacts(entity datalog.Identity, facts map[string]interface{}) 
 			b.NeverZeroValue()
 		}
 	}
-	if v, carried := facts["db/doc"]; carried {
+	if v, carried := facts[schema.DBDoc]; carried {
 		doc, ok := v.(string)
 		if !ok {
 			return nil, fmt.Errorf("definition of %s: :db/doc is %T, not a string", ident, v)

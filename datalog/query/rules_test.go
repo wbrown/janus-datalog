@@ -747,8 +747,9 @@ func TestNewRuleSet_RefusesARuleWithNoName(t *testing.T) {
 	}
 }
 
-// A query declares % at most once, a rule of the :in clause alone, so every
-// boundary refuses the same shape.
+// A query declares % at most once, and a tuple or relation input names at
+// least one variable, each a rule of the :in clause alone, so every boundary
+// refuses the same shape.
 func TestValidateInputShapes(t *testing.T) {
 	db := DatabaseInput{Name: datalog.SymDollar}
 	if err := ValidateInputShapes([]InputSpec{db, ScalarInput{Symbol: sym("?x")}}); err != nil {
@@ -760,6 +761,29 @@ func TestValidateInputShapes(t *testing.T) {
 	err := ValidateInputShapes([]InputSpec{db, RulesInput{}, RulesInput{}})
 	if err == nil || !strings.Contains(err.Error(), "%") {
 		t.Fatalf("want a refusal naming %%, got %v", err)
+	}
+	for _, spec := range []InputSpec{TupleInput{}, RelationInput{}} {
+		err := ValidateInputShapes([]InputSpec{db, spec})
+		if err == nil || !strings.Contains(err.Error(), "names no variable") {
+			t.Errorf("want a refusal of %s naming no variable, got %v", spec, err)
+		}
+	}
+	for _, spec := range []InputSpec{TupleInput{Symbols: []Symbol{sym("?x")}}, RelationInput{Symbols: []Symbol{sym("?x")}}} {
+		if err := ValidateInputShapes([]InputSpec{db, spec}); err != nil {
+			t.Errorf("%s names a variable and is valid, got %v", spec, err)
+		}
+	}
+}
+
+// A body's inner query is walked as at the text boundaries, so a rule whose
+// body holds a subquery with an inner tuple input naming no variable is
+// refused at build, naming the rule.
+func TestNewRuleSet_RefusesABodySubqueryWhoseInnerInputNamesNoVariable(t *testing.T) {
+	inner := findIn([]string{"?y"}, []InputSpec{TupleInput{}}, scopePattern("?y", "page/kind", "?m"))
+	call := &SubqueryPattern{Query: inner, Inputs: []PatternElement{Constant{Value: datalog.SymDollar}}, Binding: CollectionBinding{Variable: sym("?y")}}
+	_, err := NewRuleSet([]*Rule{defineRule("p", []string{"?y"}, call)})
+	if err == nil || !strings.Contains(err.Error(), "rule p") || !strings.Contains(err.Error(), "names no variable") {
+		t.Fatalf("want a refusal naming the rule and the input naming no variable, got %v", err)
 	}
 }
 

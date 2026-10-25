@@ -194,12 +194,12 @@ func TestEvaluateRules_NaiveStepEqualsSemiNaive(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			ctx := NewContext().WithRules(rs)
-			eval, err := exec.prepareStratum(ctx, rs, rs.Strata()[0])
+			eval, err := exec.prepareStratum(rs, rs.Strata()[0])
 			if err != nil {
 				t.Fatalf("prepareStratum: %v", err)
 			}
 			full := map[query.Symbol]*derivedSet{follows: newDerivedSet(eval.symbols[follows])}
-			seed, err := eval.run(ctx, nil, eval.plain)
+			seed, err := eval.run(ctx, nil, eval.bodies.Plain)
 			if err != nil {
 				t.Fatalf("seeding: %v", err)
 			}
@@ -214,7 +214,7 @@ func TestEvaluateRules_NaiveStepEqualsSemiNaive(t *testing.T) {
 			for grew := true; grew; {
 				whole := full[follows].relation(exec.options)
 				view := map[query.Symbol]Relation{follows: whole, query.DeltaSymbol(follows): whole}
-				got, err := eval.run(ctx, view, eval.delta)
+				got, err := eval.run(ctx, view, eval.bodies.Delta)
 				if err != nil {
 					t.Fatalf("naive pass: %v", err)
 				}
@@ -577,113 +577,6 @@ func TestCreateInputRelationsFromValues_RulesInputConsumesNoRelation(t *testing.
 	}
 }
 
-// TestMarkDelta_RenamesOneOccurrenceAndCopiesThePath: the target occurrence
-// of a same-stratum predicate becomes a copy invoking the predicate's delta
-// symbol, the forms on its path are copied, and everything else is shared.
-func TestMarkDelta_RenamesOneOccurrenceAndCopiesThePath(t *testing.T) {
-	follows := datalog.NewSymbol("follows")
-	delta := query.DeltaSymbol(follows)
-	inStratum := map[query.Symbol]bool{follows: true}
-	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/next ?b]]
-	                     [(follows ?a ?c) (follows ?a ?b)
-	                                      (or-join [?b ?c]
-	                                        (follows ?b ?c)
-	                                        [?b :page/next ?c])]]`)
-	body := rs.Rules(follows)[1].Body
-	first := markDelta(body, inStratum, 0)
-	if inv := first[0].(*query.RuleInvocation); inv.Name != delta || inv == body[0] || body[0].(*query.RuleInvocation).Name != follows {
-		t.Errorf("marking occurrence 0 replaces the first invocation by a copy invoking %s, got %s with the body's own %s", delta, inv, body[0])
-	}
-	if len(first[0].(*query.RuleInvocation).Args) != 2 {
-		t.Error("the copy keeps the occurrence's arguments")
-	}
-	if first[1] != body[1] {
-		t.Error("an or-join holding no marked occurrence is shared, not copied")
-	}
-	second := markDelta(body, inStratum, 1)
-	if second[0] != body[0] {
-		t.Error("marking occurrence 1 shares the first invocation")
-	}
-	orJoin, ok := second[1].(*query.OrJoinClause)
-	if !ok || orJoin == body[1] {
-		t.Fatal("an or-join holding the marked occurrence is copied")
-	}
-	if inv := orJoin.Branches[0][0].(*query.RuleInvocation); inv.Name != delta {
-		t.Errorf("the or-join branch's invocation invokes %s, got %s", delta, inv)
-	}
-	if orJoin.Branches[1][0] != body[1].(*query.OrJoinClause).Branches[1][0] {
-		t.Error("a branch without the marked occurrence shares its clauses")
-	}
-	if len(markDeltaWalk(body, inStratum, 5, new(int))) != len(body) {
-		t.Error("a target past the last occurrence copies the body with nothing marked")
-	}
-}
-
-func TestNeededPredicates_IsTheTransitiveDependencySet(t *testing.T) {
-	rs := mustRules(t, `[[(follows ?a ?b) [?a :page/next ?b]]
-	                     [(follows ?a ?c) [?a :page/next ?b] (follows ?b ?c)]
-	                     [(first ?p) [?p :page/kind _] (not (follows _ ?p))]
-	                     [(marked ?p) [?p :page/kind "marked"]]]`)
-	needed := neededPredicates(rs, datalog.NewSymbol("first"))
-	if !needed[datalog.NewSymbol("first")] || !needed[datalog.NewSymbol("follows")] {
-		t.Errorf("needed = %v, want first and the follows it invokes", needed)
-	}
-	if needed[datalog.NewSymbol("marked")] {
-		t.Error("a predicate nothing invoked depends on is not needed")
-	}
-}
-
-func TestPlanBody_FindsTheHead(t *testing.T) {
-	rs := mustRules(t, followsRulesText)
-	exec := NewExecutor(NewMemoryPatternMatcher(chainDatoms(3)), nil)
-	rule := rs.Rules(datalog.NewSymbol("follows"))[1]
-	plan, err := exec.planBody(rs, rule, rule.Body)
-	if err != nil {
-		t.Fatalf("planBody: %v", err)
-	}
-	if len(plan.Query.Find) != 2 || plan.Query.Find[0].(query.FindVariable).Symbol != rule.Head[0] {
-		t.Errorf("the body plan finds %v, want the rule's head %v", plan.Query.Find, rule.Head)
-	}
-	if len(plan.Phases) == 0 {
-		t.Error("the body plan has no phases")
-	}
-}
-
-// TestPrepareStratum_BodyInvocationLeadsItsPatterns: a magic body's
-// invocation reads a relation holding only what the seed reaches, so its
-// plan runs it before the patterns.
-func TestPrepareStratum_BodyInvocationLeadsItsPatterns(t *testing.T) {
-	rs := mustRules(t, followsRulesText)
-	magic, err := planner.Rewrite(planner.CreatePlanner(nil, defaultPlannerOptions()), rs, datalog.NewSymbol("follows"), []bool{true, false}, nil)
-	if err != nil {
-		t.Fatalf("Rewrite: %v", err)
-	}
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(3)), nil, mode.plannerOptions())
-			stratum := magic.Rules.Strata()[0]
-			if len(stratum.Predicates) != 1 || stratum.Predicates[0] != magic.Seed {
-				t.Fatalf("the first stratum is %v, want the magic predicate %s alone", stratum.Predicates, magic.Seed)
-			}
-			eval, err := exec.prepareStratum(NewContext().WithRules(rs), magic.Rules, stratum)
-			if err != nil {
-				t.Fatalf("prepareStratum: %v", err)
-			}
-			if len(eval.delta) != 1 || len(eval.plain) != 0 || len(eval.lower) != 0 {
-				t.Fatalf("the magic stratum plans %d plain, %d delta and %d lower bodies, want its one recursive rule's delta copy alone", len(eval.plain), len(eval.delta), len(eval.lower))
-			}
-			plan := eval.delta[0].plan
-			if len(plan.Phases) == 0 || len(plan.Phases[0].Query.Where) == 0 {
-				t.Fatalf("the body plan has no clauses: %v", plan)
-			}
-			first, ok := plan.Phases[0].Query.Where[0].(*query.RuleInvocation)
-			if !ok || first.Name != query.DeltaSymbol(magic.Seed) {
-				t.Errorf("the body's first clause is %v, want the delta occurrence %s leading the edge pattern:\n%s", plan.Phases[0].Query.Where[0], query.DeltaSymbol(magic.Seed), plan)
-			}
-		})
-	}
-}
-
 // A rule body written with its recursive invocation before the pattern that
 // binds the invocation's argument is rewritten in the planner's order, where
 // the pattern seeks on the required run first and the invocation is bound by
@@ -703,65 +596,6 @@ func TestDeriveInvocation_ABodyWrittenBeforeItsBinderDerivesWhatTheBindingReache
 			tuples, err := CollectTuples(exec.ExecuteWithRelations(NewContext().WithRules(rs), q, inputs))
 			require.NoError(t, err, "the bound invocation derives the chain its start reaches under the cap")
 			require.Len(t, tuples, 10, "the ten pages page0 reaches")
-		})
-	}
-}
-
-// An invocation of the rule's own stratum inside a subquery body is an
-// occurrence of the semi-naive step: the body's delta copy invokes the
-// predicate's delta symbol inside the inner query, and the body is planned
-// plain as well, for iteration zero, as a body whose occurrences all sit
-// inside forms is.
-func TestPrepareStratum_AnOccurrenceInsideASubqueryBodyIsADeltaCopy(t *testing.T) {
-	rs := mustRules(t, `[[(reach ?x ?y) [?x :edge ?y]]
-	                     [(reach ?x ?z) [?x :edge ?y] [(q [:find ?w :in $ % ?y :where (reach ?y ?w)] $ % ?y) [[?z] ...]]]]`)
-	reach := datalog.NewSymbol("reach")
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(nil), nil, mode.plannerOptions())
-			eval, err := exec.prepareStratum(NewContext().WithRules(rs), rs, rs.Strata()[0])
-			if err != nil {
-				t.Fatalf("prepareStratum: %v", err)
-			}
-			if len(eval.plain) != 2 || len(eval.delta) != 1 {
-				t.Fatalf("the stratum plans %d plain and %d delta bodies, want both rules plain and the second's one delta copy", len(eval.plain), len(eval.delta))
-			}
-			var inner []*query.RuleInvocation
-			for _, phase := range eval.delta[0].plan.Phases {
-				for _, clause := range phase.Query.Where {
-					if subq, ok := clause.(*query.SubqueryPattern); ok {
-						inner = append(inner, query.Invocations(subq.Query.Where)...)
-					}
-				}
-			}
-			if len(inner) != 1 || inner[0].Name != query.DeltaSymbol(reach) {
-				t.Errorf("the delta copy's inner query invokes %v, want the one delta occurrence %s:\n%s", inner, query.DeltaSymbol(reach), eval.delta[0].plan)
-			}
-			if original := query.Invocations(rs.Rules(reach)[1].Body); len(original) != 1 || original[0].Name != reach {
-				t.Errorf("the rule's own body is shared and unmarked, got %v", original)
-			}
-		})
-	}
-}
-
-// TestPrepareStratum_UnguardedBodyKeepsThePatternFirst: a rule no magic
-// predicate guards derives an unrestricted relation, so its plan scans the
-// pattern first and joins the delta afterwards.
-func TestPrepareStratum_UnguardedBodyKeepsThePatternFirst(t *testing.T) {
-	rs := mustRules(t, followsRulesText)
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			exec := NewExecutorWithOptions(NewMemoryPatternMatcher(chainDatoms(3)), nil, mode.plannerOptions())
-			eval, err := exec.prepareStratum(NewContext().WithRules(rs), rs, rs.Strata()[0])
-			if err != nil {
-				t.Fatalf("prepareStratum: %v", err)
-			}
-			for _, body := range eval.delta {
-				first := body.plan.Phases[0].Query.Where[0]
-				if _, ok := first.(*query.DataPattern); !ok {
-					t.Errorf("the recursive body's first clause is %v, want the edge pattern before the delta occurrence:\n%s", first, body.plan)
-				}
-			}
 		})
 	}
 }
@@ -1139,25 +973,6 @@ func TestExecuteWithRelations_TwoInvocationsUnderAFormKeepTheirOwnSeeds(t *testi
 	}
 }
 
-// A predicate with required positions is evaluated at its invocation under
-// the invoking body's bindings, never whole, so the walk of an invoked
-// predicate's dependencies leaves it out; every other dependency stays in.
-func TestNeededPredicates_LeavesOutARequiredPredicate(t *testing.T) {
-	rs := mustRules(t, `[[(succ [?n] ?m) [(+ ?n 1) ?m]]
-	                     [(next ?x ?y) [?x :page/rank ?k] (succ ?k ?j) [?y :page/rank ?j]]
-	                     [(follows ?x ?y) [?x :page/next ?y]]
-	                     [(chain ?x ?z) (follows ?x ?y) (next ?y ?z)]]`)
-	needed := neededPredicates(rs, datalog.NewSymbol("chain"))
-	for _, name := range []string{"chain", "follows", "next"} {
-		if !needed[datalog.NewSymbol(name)] {
-			t.Errorf("%s is among the predicates chain needs", name)
-		}
-	}
-	if needed[datalog.NewSymbol("succ")] {
-		t.Error("succ requires its first position bound and is not among the predicates chain needs")
-	}
-}
-
 const successorRulesText = `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`
 
 // TestExecuteWithRelations_RequiredBindingSchedulesAfterItsProvider writes
@@ -1337,12 +1152,13 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 	queries := []struct {
 		name  string
 		text  string
+		rules *query.RuleSet
 		bound []string
 	}{
-		{"plain", `[:find ?x ?k :where [?x :page/next ?y] [?y :page/kind ?k]]`, nil},
-		{"whole", `[:find ?x ?y :in $ % :where (follows ?x ?y)]`, nil},
-		{"bound", `[:find ?y :in $ % ?x :where (follows ?x ?y)]`, []string{"?x"}},
-		{"required", `[:find ?m :in $ % :where (succ ?n ?m) [(ground 5) ?n]]`, nil},
+		{"plain", `[:find ?x ?k :where [?x :page/next ?y] [?y :page/kind ?k]]`, nil, nil},
+		{"whole", `[:find ?x ?y :in $ % :where (follows ?x ?y)]`, closure, nil},
+		{"bound", `[:find ?y :in $ % ?x :where (follows ?x ?y)]`, closure, []string{"?x"}},
+		{"required", `[:find ?m :in $ % :where (succ ?n ?m) [(ground 5) ?n]]`, successor, nil},
 	}
 	sets := []struct {
 		name  string
@@ -1361,7 +1177,7 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			var plans []labelledPlan
 			for _, c := range queries {
-				bindings := query.Bindings{Symbols: map[query.Symbol]bool{}}
+				bindings := query.Bindings{Symbols: map[query.Symbol]bool{}, Rules: c.rules}
 				for _, b := range c.bound {
 					bindings.Symbols[datalog.NewSymbol(b)] = true
 				}
@@ -1373,13 +1189,13 @@ func TestPlan_PhasesParseBackToThemselves(t *testing.T) {
 			}
 			for _, s := range sets {
 				for _, stratum := range s.rules.Strata() {
-					eval, err := exec.prepareStratum(NewContext().WithRules(s.rules), s.rules, stratum)
+					eval, err := exec.prepareStratum(s.rules, stratum)
 					if err != nil {
 						t.Fatalf("%s: prepareStratum %v: %v", s.name, stratum.Predicates, err)
 					}
-					for _, bodies := range [][]plannedBody{eval.plain, eval.delta, eval.lower} {
+					for _, bodies := range [][]planner.PlannedBody{eval.bodies.Plain, eval.bodies.Delta, eval.bodies.Lower} {
 						for _, body := range bodies {
-							plans = append(plans, labelledPlan{s.name + ", body of " + body.rule.Name.String(), body.plan})
+							plans = append(plans, labelledPlan{s.name + ", body of " + body.Rule.Name.String(), body.Plan})
 						}
 					}
 				}

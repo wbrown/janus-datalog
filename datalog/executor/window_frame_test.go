@@ -20,6 +20,12 @@ func frameFixture() (e, n, z query.Symbol, subject, env Relation) {
 	return e, n, z, NewMaterializedRelation([]query.Symbol{n, e}, nil), NewMaterializedRelation([]query.Symbol{z}, []Tuple{{int64(7)}})
 }
 
+// branchFraming is a branch form's framing over subject with env as the
+// frames' environment relation: its given symbols stand for themselves.
+func branchFraming(subject, env Relation, given ...query.Symbol) framing {
+	return framing{subject: subject, environment: env, given: given, standsFor: given}
+}
+
 // Branches framed over one symbol list share one frame, and each branch
 // names its frame by index.
 func TestWindowFrames_SharesAFrameAmongBranchesFramedAlike(t *testing.T) {
@@ -30,7 +36,7 @@ func TestWindowFrames_SharesAFrameAmongBranchesFramedAlike(t *testing.T) {
 		{frame: planner.Scope{Required: []query.Symbol{z, e}}},
 		{frame: planner.Scope{}},
 	}
-	frames, frameOf := windowFrames(plans, framing{subject: subject, environment: env})
+	frames, frameOf := windowFrames(plans, branchFraming(subject, env, z, e))
 	require.Len(t, frames, 3, "three distinct frames among four branches")
 	assert.Equal(t, []int{0, 0, 1, 2}, frameOf)
 	assert.Equal(t, []query.Symbol{e}, frames[0].required)
@@ -42,7 +48,7 @@ func TestWindowFrames_SharesAFrameAmongBranchesFramedAlike(t *testing.T) {
 // the environment's value when the environment alone binds it.
 func TestWindowFrames_ResolvesEachRequiredSymbolToTheSubjectOrTheEnvironment(t *testing.T) {
 	e, _, z, subject, env := frameFixture()
-	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{z, e}}}}, framing{subject: subject, environment: env})
+	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{z, e}}}}, branchFraming(subject, env, z, e))
 	frame := frames[0]
 	assert.Equal(t, []int{1}, frame.subjectPos, "?e is the subject's second symbol")
 	assert.Equal(t, []int{1}, frame.framePos, "?e is the frame's second symbol")
@@ -54,11 +60,11 @@ func TestWindowFrames_ResolvesEachRequiredSymbolToTheSubjectOrTheEnvironment(t *
 // environment's tuple over its symbols, or the unit relation when it has
 // none.
 func TestWindowFrame_AFrameOfNoSubjectSymbolRunsOverTheEnvironmentsTuple(t *testing.T) {
-	_, _, z, subject, env := frameFixture()
+	e, _, z, subject, env := frameFixture()
 	frames, _ := windowFrames([]branchRun{
 		{frame: planner.Scope{Required: []query.Symbol{z}}},
 		{frame: planner.Scope{}},
-	}, framing{subject: subject, environment: env})
+	}, branchFraming(subject, env, z, e))
 	environmentOnly, empty := frames[0], frames[1]
 	assert.Nil(t, environmentOnly.ran)
 	assert.Nil(t, empty.ran)
@@ -79,7 +85,7 @@ func TestWindowFrame_AFrameOfNoSubjectSymbolRunsOverTheEnvironmentsTuple(t *test
 func TestWindowFrame_WindowRunIsTheWindowsDistinctKeysLessThoseRunBefore(t *testing.T) {
 	e, _, z, subject, env := frameFixture()
 	e1, e2, e3 := datalog.NewIdentity("wf:e1"), datalog.NewIdentity("wf:e2"), datalog.NewIdentity("wf:e3")
-	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{z, e}}}}, framing{subject: subject, environment: env})
+	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{z, e}}}}, branchFraming(subject, env, z, e))
 	frame := &frames[0]
 	opts := ExecutorOptions{}
 
@@ -98,30 +104,32 @@ func TestWindowFrame_WindowRunIsTheWindowsDistinctKeysLessThoseRunBefore(t *test
 	assert.Zero(t, third.Size(), "a window of keys run before has an empty run")
 }
 
-// A frame symbol standing for another through its plan's substitution, a
-// subquery's inner :in symbol for the call's argument, is found in the
-// subject by the symbol it stands for: two frame symbols standing for one
-// argument read one subject position, and a frame symbol the substitution
-// does not name that the subject lacks takes the frame environment's value
-// under its own name, so the window's run carries the subject's value at
-// both and the environment's at the third.
-func TestWindowFrames_ResolvesAFrameSymbolThroughItsSubstitution(t *testing.T) {
-	e, _, _, subject, _ := frameFixture()
+// A frame symbol is found in the subject by the symbol it stands for, a
+// subquery's inner :in symbol by the argument its call passes: two frame
+// symbols standing for one argument read one subject position, and a frame
+// symbol standing for nothing, a constant argument's, takes the frame
+// environment's value under its own name, whether the subject lacks a symbol
+// of that name or carries one. So the window's run carries the subject's
+// value at the two and the environment's at the third.
+func TestWindowFrames_ResolvesAFrameSymbolByTheSymbolItStandsFor(t *testing.T) {
+	e, n, _, lacking, _ := frameFixture()
 	x, y, k := datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?k")
-	e1 := datalog.NewIdentity("wf:subst1")
-	subst, err := query.SubstitutionOf([]query.Symbol{x, y}, []query.Symbol{e, e})
-	require.NoError(t, err)
+	e1 := datalog.NewIdentity("wf:standsfor1")
 	frameEnv := NewMaterializedRelation([]query.Symbol{k}, []Tuple{{int64(9)}})
-	frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{x, k, y}}}}, framing{subject: subject, environment: frameEnv, subst: subst})
-	frame := &frames[0]
-	assert.Equal(t, []int{1, 1}, frame.subjectPos, "?x and ?y both stand for ?e, the subject's second symbol")
-	assert.Equal(t, []int{0, 2}, frame.framePos)
-	assert.Equal(t, Tuple{nil, int64(9), nil}, frame.envValues, "?k takes the frame environment's value under its own name")
+	carrying := NewMaterializedRelation([]query.Symbol{n, e, k}, nil)
+	for _, subject := range []Relation{lacking, carrying} {
+		f := framing{subject: subject, environment: frameEnv, given: []query.Symbol{x, k, y}, standsFor: []query.Symbol{e, nil, e}}
+		frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{x, k, y}}}}, f)
+		frame := &frames[0]
+		assert.Equal(t, []int{1, 1}, frame.subjectPos, "?x and ?y both stand for ?e, the subject's second symbol")
+		assert.Equal(t, []int{0, 2}, frame.framePos)
+		assert.Equal(t, Tuple{nil, int64(9), nil}, frame.envValues, "?k takes the frame environment's value under its own name")
 
-	run := frame.windowRun([]Tuple{{int64(1), e1}}, 1, ExecutorOptions{})
-	tuples, err := CollectTuples(run, nil)
-	require.NoError(t, err)
-	assert.Equal(t, [][]interface{}{{e1, int64(9), e1}}, tuples, "the subject's value at both symbols standing for it, the environment's at the third")
+		run := frame.windowRun([]Tuple{{int64(1), e1, int64(4)}}, 1, ExecutorOptions{})
+		tuples, err := CollectTuples(run, nil)
+		require.NoError(t, err)
+		assert.Equal(t, [][]interface{}{{e1, int64(9), e1}}, tuples, "the subject's value at both symbols standing for it, the environment's at the third")
+	}
 }
 
 // A window's keys are distinct under typed value identity: two tuples whose
@@ -143,7 +151,7 @@ func TestWindowFrame_WindowRunDistinguishesKeysByTypedValue(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{a, b}}}}, framing{subject: subject})
+			frames, _ := windowFrames([]branchRun{{frame: planner.Scope{Required: []query.Symbol{a, b}}}}, branchFraming(subject, nil, a, b))
 			run := frames[0].windowRun(tc.window, 1, ExecutorOptions{})
 			require.Equal(t, 2, run.Size(), "two keys distinct under typed value identity, got %s", run.Table())
 		})

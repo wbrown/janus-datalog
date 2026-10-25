@@ -177,10 +177,14 @@ func unifiedTuple(tuple Tuple, positions [][]int) (Tuple, bool) {
 // query joins once (docs/proposals/RELATION_INPUT_PROOF.md §8): one relation
 // per :in entry that binds, over the entry's distinct symbols, joined into
 // one. A scalar, a collection, a tuple and a relation input are one form, a
-// set of tuples over a symbol list, so every tuple of the given relation
-// binds, each entry symbol read from the relation's own symbol of that name.
-// A symbol the entry or the relation carries twice is one variable, bound
-// by the tuples whose values at its positions agree. A relation lacking a
+// set of tuples over a symbol list, each entry symbol read from the
+// relation's own symbol of that name. A collection or a relation entry binds
+// every tuple of the relation given. A scalar or a tuple entry is one tuple
+// over its symbols (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.5), so a
+// relation of more than one tuple given at it is the query's error, naming
+// the entry and the collection or relation spelling that binds several. A
+// symbol the entry or the relation carries twice is one variable, bound by
+// the tuples whose values at its positions agree. A relation lacking a
 // symbol its entry names, a relation count other than the entries that
 // bind, and a read that fails are the query's error. With no entry the
 // group is the unit relation.
@@ -192,6 +196,16 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) (Relation, error
 	var bound Relation
 	for i, entry := range entries {
 		rel := inputRelations[i]
+		// several is the spelling that binds several tuples over the entry's
+		// symbols, for an entry that binds one tuple, and nil for an entry
+		// that binds every tuple given.
+		var several query.InputSpec
+		switch e := entry.(type) {
+		case query.ScalarInput:
+			several = query.CollectionInput{Symbol: e.Symbol}
+		case query.TupleInput:
+			several = query.RelationInput{Symbols: e.Symbols}
+		}
 		distinct, positions, err := query.SymbolPositions(rel.Symbols(), query.InputSymbols([]query.InputSpec{entry}))
 		if err != nil {
 			return nil, fmt.Errorf("the relation given for %s: %w", entry, err)
@@ -200,8 +214,13 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) (Relation, error
 		if n := rel.Size(); n > 0 {
 			tuples = make([]Tuple, 0, n)
 		}
+		read := 0
 		it := rel.Iterator()
 		for it.Next() {
+			read++
+			if several != nil && read > 1 {
+				break
+			}
 			if tuple, ok := unifiedTuple(it.Tuple(), positions); ok {
 				tuples = append(tuples, tuple)
 			}
@@ -212,6 +231,9 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) (Relation, error
 		}
 		if err != nil {
 			return nil, fmt.Errorf("reading the relation given for %s: %w", entry, err)
+		}
+		if several != nil && read > 1 {
+			return nil, fmt.Errorf("the relation given for %s holds more than one tuple, and a scalar or a tuple input is one tuple over its symbols; give one tuple, or declare the input as %s", entry, several)
 		}
 		entryBound := NewMaterializedRelationWithOptions(distinct, tuples, rel.Options())
 		if bound == nil {

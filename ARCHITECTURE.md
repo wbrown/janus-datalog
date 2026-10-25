@@ -714,7 +714,6 @@ T(stratum) = T(seed) + Σ_iterations Σ_bodies T(body on delta_{i-1})
 - **4.06x speedup**: Iterator composition vs materialized operations
 - **9x faster**: Pull API vs equivalent queries
 - **3x faster**: Query plan caching
-- **2.06x speedup**: Parallel subquery execution (8 workers)
 
 ### Known Bottlenecks
 - No parallel execution within phases

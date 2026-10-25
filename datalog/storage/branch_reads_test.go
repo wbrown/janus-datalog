@@ -15,11 +15,10 @@ import (
 // over no run would leave both symbols unbound, and the planner would refuse
 // the branch as unorderable.
 
-// edgeEntities carry :t/p a→b, b→b and c→a.
-var edgeEntities = map[string][]fact{
-	"a": {{":t/p", ref("b")}},
-	"b": {{":t/p", ref("b")}},
-	"c": {{":t/p", ref("a")}},
+// edgeFacts: :t/p a→b, b→b and c→a.
+func edgeFacts() []fact {
+	a, b, c := named("a"), named("b"), named("c")
+	return []fact{{a, ":t/p", b}, {b, ":t/p", b}, {c, ":t/p", a}}
 }
 
 // identityCycle binds each of two required symbols from the other, so the
@@ -50,7 +49,7 @@ func TestFrame_ABranchProvidingARequiredSymbolReadsIt(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, edgeEntities)
+			names := commitFacts(t, d, edgeFacts())
 			for _, c := range cases {
 				t.Run(c.name, func(t *testing.T) {
 					everyOrder(t, d, names, c.find, []string{"[?e :t/p ?w]", c.form}, c.want)
@@ -60,12 +59,15 @@ func TestFrame_ABranchProvidingARequiredSymbolReadsIt(t *testing.T) {
 	}
 }
 
-// kindEntities: d carries :t/r 2.0 and :t/k :p, e carries :t/k :q and :t/q
-// to d, and f carries :t/k :p.
-var kindEntities = map[string][]fact{
-	"d": {{":t/r", 2.0}, {":t/k", datalog.NewKeyword(":p")}},
-	"e": {{":t/k", datalog.NewKeyword(":q")}, {":t/q", ref("d")}},
-	"f": {{":t/k", datalog.NewKeyword(":p")}},
+// kindFacts: d carries :t/r 2.0 and :t/k :p, e carries :t/k :q and :t/q to
+// d, and f carries :t/k :p.
+func kindFacts() []fact {
+	d, e, f := named("d"), named("e"), named("f")
+	return []fact{
+		{d, ":t/r", 2.0}, {d, ":t/k", datalog.NewKeyword(":p")},
+		{e, ":t/k", datalog.NewKeyword(":q")}, {e, ":t/q", d},
+		{f, ":t/k", datalog.NewKeyword(":p")},
+	}
 }
 
 // A flat or-join header names outputs every branch computes alone, so a
@@ -76,18 +78,18 @@ var kindEntities = map[string][]fact{
 func TestFrame_ABranchNoOrderRunsIsRefusedAtQuery(t *testing.T) {
 	const text = `[:find ?e ?x :where [?x :t/r 2.0] [?e :t/k ?a] [?x :t/k :p] (or-join [?e] [?e :t/q ?m] (and [(identity ?x) ?e] [(identity ?e) ?x])) (not [(identity ?m) ?e] [(identity ?e) ?m])]`
 	stores := []struct {
-		name     string
-		entities map[string][]fact
+		name  string
+		facts []fact
 	}{
-		{"a subject holding tuples", kindEntities},
-		{"an empty subject", map[string][]fact{"z": {{":t/n", int64(1)}}}},
+		{"a subject holding tuples", kindFacts()},
+		{"an empty subject", []fact{{named("z"), ":t/n", int64(1)}}},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, store := range stores {
 				t.Run(store.name, func(t *testing.T) {
 					d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-					namedEntities(t, d, store.entities)
+					commitFacts(t, d, store.facts)
 					_, err := d.Query(text)
 					require.Error(t, err, "a branch no order runs is refused at Query, whatever the store holds")
 					require.Contains(t, err.Error(), "cannot order clauses: [(identity ?x) ?e] waits on ?x; [(identity ?e) ?x] waits on ?e")
@@ -106,7 +108,7 @@ func TestExplain_RefusesABranchNoOrderRunsAsQueryDoes(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			namedEntities(t, d, kindEntities)
+			commitFacts(t, d, kindFacts())
 			_, explainErr := d.Explain(text)
 			require.Error(t, explainErr, "Explain refuses a branch no order runs")
 			_, queryErr := d.Query(text)
@@ -125,11 +127,10 @@ func stallText(t *testing.T, err error) string {
 	return err.Error()[at:]
 }
 
-// numberEntities carry :t/n 1, 2 and 3.
-var numberEntities = map[string][]fact{
-	"p": {{":t/n", int64(1)}},
-	"q": {{":t/n", int64(2)}},
-	"s": {{":t/n", int64(3)}},
+// numberFacts: p, q and s carry :t/n 1, 2 and 3.
+func numberFacts() []fact {
+	p, q, s := named("p"), named("q"), named("s")
+	return []fact{{p, ":t/n", int64(1)}, {q, ":t/n", int64(2)}, {s, ":t/n", int64(3)}}
 }
 
 // An arithmetic cycle over a required symbol, ?v bound from ?n and ?n bound
@@ -140,7 +141,7 @@ func TestFrame_AnArithmeticCycleOverARequiredSymbolRuns(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, numberEntities)
+			names := commitFacts(t, d, numberFacts())
 			everyOrder(t, d, names, "?e", []string{"[?e :t/n ?n]", "(not " + cycle + ")"}, nil)
 			everyOrder(t, d, names, "?e", []string{"[?e :t/n ?n]", "(or-join [[?n]] (and " + cycle + "))"}, []string{"p", "q", "s"})
 		})

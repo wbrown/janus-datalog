@@ -14,7 +14,7 @@ import (
 // 3→4 and 4→2, each carrying :edge/from and :edge/to as longs, and six
 // nodes 0 to 5 carrying :node/id, nodes 2 and 4 red and the rest blue. The
 // closure of the edges is every pair over 1 to 4 but those leaving for 1.
-// Each case is a query over a rule set and its inputs, and the rows it
+// Each case is a query over a rule set and its inputs, and the tuples it
 // answers on both planner paths, or its refusal.
 
 // writeRewriteGraph commits the graph into d and returns its entities'
@@ -71,7 +71,7 @@ var rewriteClosureWithZero = append(append([]string{}, rewriteClosure...), "1 0"
 var rewriteEdges = []string{"1 2", "2 3", "3 4", "4 2"}
 
 // rewriteCase is one query over a rule set, its inputs after the rule set,
-// and the rows it answers, or that it is refused, with a part of the
+// and the tuples it answers, or that it is refused, with a part of the
 // refusal's message when the records state one.
 type rewriteCase struct {
 	name, rules, text string
@@ -145,7 +145,7 @@ func rewriteCases() []rewriteCase {
 	groundInOrRule := `[` + rewriteEdge + ` [(t ?b ?c) [?x :edge/from ?b] [?y :node/id ?c] (or (and [?n :node/id ?b] [?n :node/color "red"] [(ground 0) ?c]) [?y :node/color "nope"])]]`
 	groundInOrRuleInvoking := `[` + rewriteRed + ` [(t ?b ?c) [?x :edge/from ?b] [?y :node/id ?c] (or (and (red ?b) [(ground 0) ?c]) [?y :node/color "nope"])]]`
 	nodesReaching := []string{"1 2", "1 3", "1 4", "2 2", "2 3", "2 4", "3 2", "3 3", "3 4"}
-	stepRows := []string{"1 3", "2 4", "3 5", "4 3"}
+	stepTuples := []string{"1 3", "2 4", "3 5", "4 3"}
 
 	cases := []rewriteCase{
 		{"cap: bound through an input named ?start", rewriteReach, `[:find ?y :in $ % ?start :where (reach ?start ?y)]`, []interface{}{one}, false, "", []string{"2", "3", "4"}},
@@ -217,14 +217,14 @@ func rewriteCases() []rewriteCase {
 		{"ornot: the predicate required, bound", orNotRequired, `[:find ?q :in $ % ?p :where (q ?p ?q)]`, []interface{}{one}, false, "", []string{"2", "3", "4"}},
 		{"ornot: the predicate required with the or written last, bound", orNotRequiredAfter, `[:find ?q :in $ % ?p :where (q ?p ?q)]`, []interface{}{one}, false, "", []string{"2", "3", "4"}},
 
-		{"r2x: a required invocation written before its provider, free", rewriteStep, `[:find ?p ?y :in $ % :where (stepw ?p ?y)]`, nil, false, "", stepRows},
+		{"r2x: a required invocation written before its provider, free", rewriteStep, `[:find ?p ?y :in $ % :where (stepw ?p ?y)]`, nil, false, "", stepTuples},
 		{"r2x: the same bound", rewriteStep, `[:find ?y :in $ % ?p :where (stepw ?p ?y)]`, []interface{}{one}, false, "", []string{"3"}},
 		{"r2x: bound at the second position with the binder first", rewriteStepBinderFirst, `[:find ?y :in $ % ?p :where (stepw ?y ?p)]`, []interface{}{three}, false, "", []string{"1", "4"}},
 
 		{"req: the provider before the required invocation, bound", rewriteStepBinderFirst, `[:find ?y :in $ % ?p :where (stepw ?p ?y)]`, []interface{}{one}, false, "", []string{"3"}},
 		{"req: the required invocation before its provider, bound", rewriteStep, `[:find ?y :in $ % ?p :where (stepw ?p ?y)]`, []interface{}{one}, false, "", []string{"3"}},
 		{"req: the required invocation before its provider at the query level", `[` + rewriteEdge + ` ` + rewriteSucc + `]`, `[:find ?y :in $ % ?p :where (succ ?x ?y) (e ?p ?x)]`, []interface{}{one}, false, "", []string{"3"}},
-		{"req: a free invocation of a predicate invoking the required one", rewriteStepBinderFirst, `[:find ?p ?y :in $ % :where (stepw ?p ?y)]`, nil, false, "", stepRows},
+		{"req: a free invocation of a predicate invoking the required one", rewriteStepBinderFirst, `[:find ?p ?y :in $ % :where (stepw ?p ?y)]`, nil, false, "", stepTuples},
 		{"req: a bound invocation whose rewrite reaches the predicate inside a subquery", stepFanIn, `[:find ?k :in $ % ?p :where (cnt ?p ?k)]`, []interface{}{one}, false, "", []string{"1"}},
 		{"req: a bound invocation whose body invokes the predicate at an unbound position", stepTwo, `[:find ?z ?y :in $ % ?p :where (two ?p ?z ?y)]`, []interface{}{two}, false, "", []string{"1 3", "4 3"}},
 
@@ -254,7 +254,7 @@ func rewriteCases() []rewriteCase {
 	return cases
 }
 
-// Every isolated case of the magic rewrite answers its rows, or is refused,
+// Every isolated case of the magic rewrite answers its tuples, or is refused,
 // on both planner paths: bindings through an input named as a rule's
 // variable, a required predicate under a negation, inside the recursion and
 // mutually recursive with a free one, existential negations inside branches,
@@ -292,7 +292,7 @@ func TestRules_IsolatedRewriteCasesOnTheFourEdgeGraph(t *testing.T) {
 					}
 					rel, err := d.Query(c.text, inputs...)
 					require.NoError(t, err)
-					require.ElementsMatch(t, c.want, renderedRows(t, rel, names))
+					require.ElementsMatch(t, c.want, renderedTuples(t, rel, names))
 				})
 			}
 		})

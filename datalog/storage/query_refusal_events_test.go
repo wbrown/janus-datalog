@@ -16,7 +16,7 @@ import (
 // executor's entry or at it. A refusal before the executor's entry reports no
 // preparation and no plan, since neither ran.
 func TestQuery_ARefusalBeforeTheExecutorsEntryReachesTheHandler(t *testing.T) {
-	entities := map[string][]fact{"e1": {{":t/n", int64(1)}}}
+	facts := []fact{{named("e1"), ":t/n", int64(1)}}
 	refusals := []struct {
 		name, text, refusal string
 		inputs              []interface{}
@@ -35,13 +35,13 @@ func TestQuery_ARefusalBeforeTheExecutorsEntryReachesTheHandler(t *testing.T) {
 				events = append(events, e)
 				mu.Unlock()
 			}})
-			namedEntities(t, d, entities)
+			commitFacts(t, d, facts)
 			reset := func() {
 				mu.Lock()
 				events = nil
 				mu.Unlock()
 			}
-			named := func(name string) []annotations.Event {
+			eventsNamed := func(name string) []annotations.Event {
 				mu.Lock()
 				defer mu.Unlock()
 				var found []annotations.Event
@@ -55,15 +55,15 @@ func TestQuery_ARefusalBeforeTheExecutorsEntryReachesTheHandler(t *testing.T) {
 			requireReported := func(t *testing.T, text string, err error) {
 				rendered, perr := parser.ParseQuery(text)
 				require.NoError(t, perr)
-				invoked := named(annotations.QueryInvoked)
+				invoked := eventsNamed(annotations.QueryInvoked)
 				require.Len(t, invoked, 1, "the query is reported invoked once")
 				require.Equal(t, rendered.String(), invoked[0].Data[annotations.KeyQuery], "the invocation carries the query as received")
-				completed := named(annotations.QueryComplete)
+				completed := eventsNamed(annotations.QueryComplete)
 				require.Len(t, completed, 1, "the query is reported completed once")
 				require.Equal(t, false, completed[0].Data[annotations.KeySuccess], "the completion reports the refusal")
 				require.Equal(t, err.Error(), completed[0].Data[annotations.KeyError], "the completion carries the refusal")
-				require.Empty(t, named(annotations.QueryPrepared), "no preparation is reported, since none ran")
-				require.Empty(t, named(annotations.QueryPlanCreated), "no plan is reported, since none was made")
+				require.Empty(t, eventsNamed(annotations.QueryPrepared), "no preparation is reported, since none ran")
+				require.Empty(t, eventsNamed(annotations.QueryPlanCreated), "no plan is reported, since none was made")
 			}
 			for _, c := range refusals {
 				t.Run(c.name, func(t *testing.T) {
@@ -86,7 +86,7 @@ func TestQuery_ARefusalBeforeTheExecutorsEntryReachesTheHandler(t *testing.T) {
 				tuples, err := executor.CollectTuples(d.Query(text))
 				require.NoError(t, err)
 				require.Len(t, tuples, 1)
-				require.Len(t, named(annotations.QueryInvoked), 1, "the query is reported invoked once")
+				require.Len(t, eventsNamed(annotations.QueryInvoked), 1, "the query is reported invoked once")
 			})
 		})
 	}

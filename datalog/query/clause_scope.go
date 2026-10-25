@@ -439,19 +439,28 @@ func BindingInputs(in []InputSpec) []InputSpec {
 }
 
 // ValidateInputShapes validates every static input-shape rule — the checks
-// that depend on the :in clause alone: a query declares % at most once. The
-// user boundaries share it beside ValidateStaticClauseShapes, so a
-// hand-built query gets the same rejection as parsed text.
+// that depend on the :in clause alone: a query declares % at most once, and
+// a tuple or relation input names at least one variable. The user
+// boundaries share it beside ValidateStaticClauseShapes, so a hand-built
+// query gets the same rejection as parsed text.
 func ValidateInputShapes(in []InputSpec) error {
 	declared := false
 	for _, spec := range in {
-		if _, ok := spec.(RulesInput); !ok {
-			continue
+		switch entry := spec.(type) {
+		case RulesInput:
+			if declared {
+				return fmt.Errorf("a query declares %% at most once")
+			}
+			declared = true
+		case TupleInput:
+			if len(entry.Symbols) == 0 {
+				return fmt.Errorf("%s names no variable; a tuple input names at least one, as [?x]", entry)
+			}
+		case RelationInput:
+			if len(entry.Symbols) == 0 {
+				return fmt.Errorf("%s names no variable; a relation input names at least one, as [[?x] ...]", entry)
+			}
 		}
-		if declared {
-			return fmt.Errorf("a query declares %% at most once")
-		}
-		declared = true
 	}
 	return nil
 }

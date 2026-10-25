@@ -27,9 +27,13 @@ func writeRanks(t testing.TB, d *Database, spec graphSpec) {
 
 // A bound query answers what the free one answers for its binding when an
 // aggregating subquery stands before the recursion, when a negation stands
-// inside an or-join branch the recursion reads, and when a free invocation
-// under a fallback, of a predicate reaching a required one, would lie in the
-// invoking rule's stratum named all free and so keeps its original rules.
+// inside an or-join branch the recursion reads, when a negation or an
+// aggregating subquery stands inside a non-aggregating subquery the
+// recursion reads, inside a branch or an inner query of it included, when
+// such a subquery's find is bound only by an aggregating inner query, so the
+// subquery is not read, and when a free invocation under a fallback, of a
+// predicate reaching a required one, would lie in the invoking rule's
+// stratum named all free and so keeps its original rules.
 func TestRules_ABoundQueryAnswersWhereTheFreeOneDoes(t *testing.T) {
 	cases := []struct{ name, rules string }{
 		{"an aggregating subquery before the recursion",
@@ -40,6 +44,26 @@ func TestRules_ABoundQueryAnswersWhereTheFreeOneDoes(t *testing.T) {
 			`[[(low ?a ?b) [?a :edge ?b]]
 			  [(p ?a ?b) [?a :edge ?b]]
 			  [(p ?a ?c) [?a :edge ?m] (or-join [[?m] ?k] (and (not-join [?m] (low ?m ?z)) [(identity ?m) ?k]) (and [?m :type :node] [(identity ?m) ?k])) (p ?k ?c)]]`},
+		{"a negation inside a subquery the recursion reads",
+			`[[(low ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?c) [?a :type :node] [(q [:find ?w :in $ % ?x :where [?x :edge ?w] (not-join [?w] (low ?w ?w))] $ % ?a) [[?m]]] (p ?m ?c)]]`},
+		{"an aggregating subquery inside a subquery the recursion reads",
+			`[[(low ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?c) [?a :type :node] [(q [:find ?w :in $ % ?x :where [?x :edge ?w] [(q [:find ?u (count ?z) :in $ % ?y :where (low ?y ?u) (low ?u ?z)] $ % ?w) [[?u2 ?n]]]] $ % ?a) [[?m]]] (p ?m ?c)]]`},
+		{"a negation inside a branch inside a subquery the recursion reads",
+			`[[(low ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?c) [?a :type :node] [(q [:find ?k :in $ % ?x :where [?x :edge ?w] (or-join [[?w] ?k] (and (not-join [?w] (low ?w ?z)) [(identity ?w) ?k]) (and [?w :type :node] [(identity ?w) ?k]))] $ % ?a) [[?m]]] (p ?m ?c)]]`},
+		{"a negation inside a subquery inside a subquery the recursion reads",
+			`[[(low ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?c) [?a :type :node] [(q [:find ?w :in $ % ?x :where [(q [:find ?v :in $ % ?y :where [?y :edge ?v] (not-join [?v] (low ?v ?v))] $ % ?x) [[?w]]]] $ % ?a) [[?m]]] (p ?m ?c)]]`},
+		{"a subquery before the recursion whose find only an aggregating inner query binds",
+			`[[(low ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?c) [?a :type :node] [(q [:find ?w :in $ % ?x :where [(q [:find ?u (count ?z) :in $ % ?y :where (low ?y ?u) (low ?u ?z)] $ % ?x) [[?w ?n]]]] $ % ?a) [[?m]]] (p ?m ?c)]]`},
 		{"a free site under a fallback whose all-free name would not stratify",
 			`[[(nb [?x] ?y) [?x :edge ?y]]
 			  [(low ?a ?b) [?a :edge ?b]]

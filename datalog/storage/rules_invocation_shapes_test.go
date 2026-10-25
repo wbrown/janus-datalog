@@ -96,7 +96,7 @@ func TestRules_InvocationShapesAtAQueryAnswerOrAreRefused(t *testing.T) {
 					}
 					rel, err := d.Query(c.text, c.inputs...)
 					require.NoError(t, err)
-					require.ElementsMatch(t, c.want, renderedRows(t, rel, names))
+					require.ElementsMatch(t, c.want, renderedTuples(t, rel, names))
 				})
 			}
 		})

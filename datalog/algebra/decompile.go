@@ -192,7 +192,7 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 		return nil, fmt.Errorf("LeftOuterJoin has no defaults (decorrelation produces InnerJoin when no defaults)")
 	}
 
-	// Build ground default branch from Join.DefaultValues.
+	// Build ground default branch from Join.Defaults.
 	// The defaults correspond to the original LateralJoin's binding symbols —
 	// the aggregate output symbols minus the GROUP BY keys. These are the
 	// symbols that the OR-fallback's ground branch must provide.

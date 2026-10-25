@@ -21,9 +21,10 @@ func TestSubjectKeySurvivesAFallbackPatternBranchOfCardinalityOne(t *testing.T) 
 		Attribute(":t/n").Type(schema.TypeLong).Add().
 		Attribute(":t/a").Type(schema.TypeLong).Add().
 		MustBuild()
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/a", int64(5)}},
-		"e2": {{":t/n", int64(2)}},
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(5)},
+		{e2, ":t/n", int64(2)},
 	}
 	rules := mustRuleSet(t, `[[(node ?e ?n) [?e :t/n ?n]]]`)
 	subjectQuery := `[:find ?e ?n :in $ % :where (node ?e ?n)]`
@@ -31,7 +32,7 @@ func TestSubjectKeySurvivesAFallbackPatternBranchOfCardinalityOne(t *testing.T) 
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: declared})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			handles := []struct {
 				name     string
 				db       *Database
@@ -48,7 +49,7 @@ func TestSubjectKeySurvivesAFallbackPatternBranchOfCardinalityOne(t *testing.T) 
 
 				rel, err := handle.db.Query(formQuery, rules)
 				require.NoError(t, err, handle.name)
-				require.ElementsMatch(t, []string{"e1 1 5", "e2 2 0"}, renderedRows(t, rel, names), handle.name)
+				require.ElementsMatch(t, []string{"e1 1 5", "e2 2 0"}, renderedTuples(t, rel, names), handle.name)
 				for _, key := range subjectKeys {
 					require.Equal(t, handle.survives, hasKey(rel.Properties().Keys, key),
 						"%s: the subject's key %v among the result's keys %v", handle.name, key, rel.Properties().Keys)

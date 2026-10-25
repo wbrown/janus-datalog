@@ -53,6 +53,22 @@ func TestBranchesFrameEachBranchInTheHeadersOrder(t *testing.T) {
 	require.Empty(t, frames[2].Scope.Find, "every output is in the frame's required run")
 }
 
+// The carried symbols are the given symbols standing for a symbol bound
+// before the form: a subquery's inner symbol standing for the variable its
+// call passes is carried when that variable is bound, one standing for
+// nothing, a constant argument's, is never carried, whatever symbol of its
+// own name is bound, and a branch form's symbol, standing for itself, is
+// carried when it is bound.
+func TestCarriedByReadsWhatEachGivenSymbolStandsFor(t *testing.T) {
+	v, w, x, e, f := datalog.NewSymbol("?v"), datalog.NewSymbol("?w"), datalog.NewSymbol("?x"), datalog.NewSymbol("?e"), datalog.NewSymbol("?f")
+	call := Framing{Given: []query.Symbol{v, w}, StandsFor: []query.Symbol{nil, x}}
+	require.Equal(t, []query.Symbol{w}, call.CarriedBy([]query.Symbol{v, x}), "?w stands for the bound ?x and is carried; ?v stands for nothing and is not, though a ?v is bound")
+	require.Empty(t, call.CarriedBy([]query.Symbol{v}), "with ?x unbound nothing is carried")
+	branch := Framing{Given: []query.Symbol{e, f}, StandsFor: []query.Symbol{e, f}}
+	require.Equal(t, []query.Symbol{f}, branch.CarriedBy([]query.Symbol{f}), "a branch form's symbol stands for itself")
+	require.Equal(t, []query.Symbol{e, f}, branch.CarriedBy([]query.Symbol{f, e}), "in the given order")
+}
+
 // ReadSubqueryFrame reads a call's frame from its text: the inner symbols in
 // call order, a collection input's as its position's holder; the clauses,
 // the opening binding the collection's members from the holder and then the

@@ -23,16 +23,17 @@ import (
 // the branch over :t/a holds for an entity whatever its :t/n, and the
 // entity's :t/n is answered beside it.
 func TestOrJoinBranchSeesOnlyItsHeader(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/a", int64(2)}},
-		"e2": {{":t/n", int64(2)}, {":t/a", int64(1)}},
-		"e3": {{":t/n", int64(3)}},
+	e1, e2, e3 := named("e1"), named("e2"), named("e3")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(2)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/a", int64(1)},
+		{e3, ":t/n", int64(3)},
 	}
 	clauses := []string{`[?e :t/n ?x]`, `(or-join [?e] [?e :t/a ?x] [?e :t/b ?x])`}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?x", clauses, []string{"e1 1", "e2 2"})
 		})
 	}
@@ -43,18 +44,19 @@ func TestOrJoinBranchSeesOnlyItsHeader(t *testing.T) {
 // the entity's :t/n and invokes succ on it, and the second answers the
 // entity's :t/fixed.
 func TestInvocationInABranchSeesTheBranchBindingsBeforeIt(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}},
-		"e2": {{":t/n", int64(5)}, {":t/fixed", int64(9)}},
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{
+		{e1, ":t/n", int64(1)},
+		{e2, ":t/n", int64(5)}, {e2, ":t/fixed", int64(9)},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?e ?m :in $ % :where [?e :t/n _] (or-join [[?e] ?m] (and [?e :t/n ?n] (succ ?n ?m)) [?e :t/fixed ?m])]`,
 				mustRuleSet(t, `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`))
 			require.NoError(t, err)
-			require.ElementsMatch(t, []string{"e1 2", "e2 6", "e2 9"}, renderedRows(t, rel, names))
+			require.ElementsMatch(t, []string{"e1 2", "e2 6", "e2 9"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -63,16 +65,17 @@ func TestInvocationInABranchSeesTheBranchBindingsBeforeIt(t *testing.T) {
 // superseded by it: an entity whose :t/a disagrees with its :t/q is dropped,
 // and one with no branch value is dropped too.
 func TestOrJoinOutputIsJoinedWithTheOuter(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/q", int64(1)}, {":t/a", int64(1)}},
-		"e2": {{":t/q", int64(2)}, {":t/a", int64(3)}},
-		"e3": {{":t/q", int64(4)}},
+	e1, e2, e3 := named("e1"), named("e2"), named("e3")
+	facts := []fact{
+		{e1, ":t/q", int64(1)}, {e1, ":t/a", int64(1)},
+		{e2, ":t/q", int64(2)}, {e2, ":t/a", int64(3)},
+		{e3, ":t/q", int64(4)},
 	}
 	clauses := []string{`[?e :t/q ?q]`, `(or-join [?e ?q] [?e :t/a ?q] [?e :t/b ?q])`}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?q", clauses, []string{"e1 1"})
 		})
 	}
@@ -84,18 +87,15 @@ func TestOrJoinOutputIsJoinedWithTheOuter(t *testing.T) {
 // sharing the subject's :t/n fans out, so the fallback's result claims no
 // key and the find projection onto ?e yields each entity once.
 func TestFallbackOverAFanningTupleSpelledSubqueryClaimsNoKey(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}},
-		"e2": {{":t/n", int64(1)}},
-		"e3": {{":t/n", int64(2)}},
-	}
+	e1, e2, e3 := named("e1"), named("e2"), named("e3")
+	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(1)}, {e3, ":t/n", int64(2)}}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?e :where [?e :t/n _] (or-default-join [[?e] ?v] [(q [:find ?x :in $ ?e :where [?e :t/n ?n] [?x :t/n ?n]] $ ?e) [[?v]]] [(ground 0) ?v])]`)
 			require.NoError(t, err)
-			require.ElementsMatch(t, []string{"e1", "e2", "e3"}, renderedRows(t, rel, names))
+			require.ElementsMatch(t, []string{"e1", "e2", "e3"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -105,14 +105,12 @@ func TestFallbackOverAFanningTupleSpelledSubqueryClaimsNoKey(t *testing.T) {
 // each with every inner vector, and an inner vector the entity's :t/n unifies
 // with keeps that entity's tuple alone.
 func TestRelationGroundBindsOneTuplePerInnerVector(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}},
-		"e2": {{":t/n", int64(3)}},
-	}
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(3)}}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?a ?b",
 				[]string{`[?e :t/n _]`, `[(ground [[1 2] [3 4]]) [[?a ?b]]]`},
 				[]string{"e1 1 2", "e1 3 4", "e2 1 2", "e2 3 4"})
@@ -127,14 +125,12 @@ func TestRelationGroundBindsOneTuplePerInnerVector(t *testing.T) {
 // tuple per element: over the entities it pairs each with every element, and
 // an element the entity's :t/n unifies with keeps that entity's tuple alone.
 func TestCollectionGroundBindsOneTuplePerElement(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}},
-		"e2": {{":t/n", int64(3)}},
-	}
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(3)}}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?v",
 				[]string{`[?e :t/n _]`, `[(ground [1 2 3]) [?v ...]]`},
 				[]string{"e1 1", "e1 2", "e1 3", "e2 1", "e2 2", "e2 3"})
@@ -149,18 +145,19 @@ func TestCollectionGroundBindsOneTuplePerElement(t *testing.T) {
 // with ?q given as 1, the entity whose :t/a is 1 is kept, and the one whose
 // :t/a is 3 is dropped.
 func TestOutputTheEnvironmentBindsIsJoinedWithItsTuple(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/a", int64(1)}},
-		"e2": {{":t/n", int64(2)}, {":t/a", int64(3)}},
-		"e3": {{":t/n", int64(3)}},
+	e1, e2, e3 := named("e1"), named("e2"), named("e3")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(1)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/a", int64(3)},
+		{e3, ":t/n", int64(3)},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?e :in $ ?q :where [?e :t/n _] (or-join [?e ?q] [?e :t/a ?q] [?e :t/b ?q])]`, int64(1))
 			require.NoError(t, err)
-			require.ElementsMatch(t, []string{"e1"}, renderedRows(t, rel, names))
+			require.ElementsMatch(t, []string{"e1"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -175,7 +172,7 @@ func TestFallbackBranchProvidingAnEnvironmentBoundRequiredVariableMeetsItsValue(
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			rel, err := d.Query(`[:find ?v :in $ ?z :where (or-default-join [[?z] ?v] (and [(ground 2) ?z] [(ground 7) ?v]) [(ground 0) ?v])]`, int64(1))
 			require.NoError(t, err)
-			require.Equal(t, []string{"0"}, renderedRows(t, rel, nil))
+			require.Equal(t, []string{"0"}, renderedTuples(t, rel, nil))
 		})
 	}
 }
@@ -185,15 +182,16 @@ func TestFallbackBranchProvidingAnEnvironmentBoundRequiredVariableMeetsItsValue(
 // having a match answers every tuple of the required run, and none answers
 // none.
 func TestUnionBranchReadingNothingUnderARequiredOnlyHeaderIsAVerdict(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/a", int64(1)}},
-		"e2": {{":t/n", int64(2)}},
-		"e3": {{":t/b", int64(3)}},
+	e1, e2, e3 := named("e1"), named("e2"), named("e3")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(1)},
+		{e2, ":t/n", int64(2)},
+		{e3, ":t/b", int64(3)},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e", []string{`[?e :t/n _]`, `(or-join [[?e]] [?e :t/a _] [?m :t/b _])`}, []string{"e1", "e2"})
 			everyOrder(t, d, names, "?e", []string{`[?e :t/n _]`, `(or-join [[?e]] [?e :t/a _] [?m :t/c _])`}, []string{"e1"})
 		})
@@ -203,16 +201,17 @@ func TestUnionBranchReadingNothingUnderARequiredOnlyHeaderIsAVerdict(t *testing.
 // An or-default-join decides its fallback per tuple of the required run: an
 // entity with :t/a answers it, and one without takes the default.
 func TestOrDefaultJoinFallsBackPerRequiredGroup(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/a", int64(10)}},
-		"e2": {{":t/n", int64(2)}},
-		"e3": {{":t/n", int64(3)}, {":t/a", int64(30)}},
+	e1, e2, e3 := named("e1"), named("e2"), named("e3")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(10)},
+		{e2, ":t/n", int64(2)},
+		{e3, ":t/n", int64(3)}, {e3, ":t/a", int64(30)},
 	}
 	clauses := []string{`[?e :t/n _]`, `(or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])`}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?v", clauses, []string{"e1 10", "e2 0", "e3 30"})
 		})
 	}
@@ -222,10 +221,11 @@ func TestOrDefaultJoinFallsBackPerRequiredGroup(t *testing.T) {
 // the entity alone, every entity carrying :t/a is dropped; on the entity and
 // its :t/n, only the entity whose :t/a equals its :t/n is.
 func TestNotJoinAntiJoinsOnItsHeader(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/a", int64(1)}},
-		"e2": {{":t/n", int64(2)}},
-		"e3": {{":t/n", int64(3)}, {":t/a", int64(4)}},
+	e1, e2, e3 := named("e1"), named("e2"), named("e3")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(1)},
+		{e2, ":t/n", int64(2)},
+		{e3, ":t/n", int64(3)}, {e3, ":t/a", int64(4)},
 	}
 	headers := []struct {
 		form string
@@ -237,7 +237,7 @@ func TestNotJoinAntiJoinsOnItsHeader(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			for _, h := range headers {
 				everyOrder(t, d, names, "?e", []string{`[?e :t/n ?x]`, h.form}, h.want)
 			}
@@ -248,24 +248,25 @@ func TestNotJoinAntiJoinsOnItsHeader(t *testing.T) {
 // A scope's plan is served from the plan cache: a form's second execution
 // plans no branch anew, and each branch's plan is a hit.
 func TestScopePlanIsServedFromTheCache(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/a", int64(1)}},
-		"e2": {{":t/n", int64(2)}, {":t/b", int64(2)}},
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(1)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/b", int64(2)},
 	}
 	const text = `[:find ?e :where [?e :t/n _] (or-join [?e] [?e :t/a _] [?e :t/b _])]`
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			require.NotNil(t, d.PlanCache(), "the database plans through a cache")
 			rel, err := d.Query(text)
 			require.NoError(t, err)
-			require.ElementsMatch(t, []string{"e1", "e2"}, renderedRows(t, rel, names))
+			require.ElementsMatch(t, []string{"e1", "e2"}, renderedTuples(t, rel, names))
 			hitsBefore, missesBefore, _ := d.PlanCache().Stats()
 
 			rel, err = d.Query(text)
 			require.NoError(t, err)
-			require.ElementsMatch(t, []string{"e1", "e2"}, renderedRows(t, rel, names))
+			require.ElementsMatch(t, []string{"e1", "e2"}, renderedTuples(t, rel, names))
 			hitsAfter, missesAfter, _ := d.PlanCache().Stats()
 			require.Equal(t, missesBefore, missesAfter, "the second execution plans nothing anew")
 			require.GreaterOrEqual(t, hitsAfter-hitsBefore, int64(2), "each branch's plan is a hit on the second execution; hits %d before, %d after", hitsBefore, hitsAfter)
@@ -294,16 +295,17 @@ func TestScopeInsideABodySeesTheStratum(t *testing.T) {
 // :t/a is answered by the first branch and dropped, never passed to the
 // default; one with no :t/a takes the default, kept when it equals its :t/want.
 func TestFallbackDecisionReadsTheBranchBeforeTheCarriedOutputFilter(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/want", int64(0)}, {":t/a", int64(5)}},
-		"e2": {{":t/n", int64(2)}, {":t/want", int64(0)}},
-		"e3": {{":t/n", int64(3)}, {":t/want", int64(7)}, {":t/a", int64(7)}},
+	e1, e2, e3 := named("e1"), named("e2"), named("e3")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/want", int64(0)}, {e1, ":t/a", int64(5)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/want", int64(0)},
+		{e3, ":t/n", int64(3)}, {e3, ":t/want", int64(7)}, {e3, ":t/a", int64(7)},
 	}
 	clauses := []string{`[?e :t/n _]`, `[?e :t/want ?v]`, `(or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])`}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?v", clauses, []string{"e2 0", "e3 7"})
 		})
 	}
@@ -417,14 +419,16 @@ func TestBranchIsEvaluatedOncePerWindowAndProbedPerTuple(t *testing.T) {
 // tuples under each cap, and each branch is built once per window, never
 // per tuple.
 func TestOuterTupleEventFiresPerSubjectTuple(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/a", int64(1)}},
-		"e2": {{":t/n", int64(2)}, {":t/b", int64(2)}},
-		"e3": {{":t/n", int64(3)}},
-		"e4": {{":t/n", int64(4)}, {":t/a", int64(4)}},
+	e1, e2, e3, e4 := named("e1"), named("e2"), named("e3"), named("e4")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(1)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/b", int64(2)},
+		{e3, ":t/n", int64(3)},
+		{e4, ":t/n", int64(4)}, {e4, ":t/a", int64(4)},
 	}
+	const subjectSize = 4
 	for _, mode := range optimizerModes {
-		for windowCap := 1; windowCap <= len(entities); windowCap++ {
+		for windowCap := 1; windowCap <= subjectSize; windowCap++ {
 			t.Run(mode.name+"/"+windowCapNames[windowCap], func(t *testing.T) {
 				var outerTuples, cacheBuilds, windows atomic.Int64
 				opts := mode.plannerOptions()
@@ -439,10 +443,10 @@ func TestOuterTupleEventFiresPerSubjectTuple(t *testing.T) {
 						windows.Add(1)
 					}
 				}})
-				names := namedEntities(t, d, entities)
+				names := commitFacts(t, d, facts)
 				rel, err := d.Query(`[:find ?e :where [?e :t/n _] (or-join [?e] [?e :t/a _] [?e :t/b _])]`)
 				require.NoError(t, err)
-				require.ElementsMatch(t, []string{"e1", "e2", "e4"}, renderedRows(t, rel, names))
+				require.ElementsMatch(t, []string{"e1", "e2", "e4"}, renderedTuples(t, rel, names))
 				require.Equal(t, int64(4), outerTuples.Load(), "the subject's tuples are reported once each")
 				require.Equal(t, 2*windows.Load(), cacheBuilds.Load(), "each of the two branches is built once per window")
 			})
@@ -454,10 +458,11 @@ func TestOuterTupleEventFiresPerSubjectTuple(t *testing.T) {
 // answer at most one tuple per subject tuple, replaces the groups it
 // consumed, and seeks on the subject's values.
 func TestFlatOrJoinKeepsItsSubjectsPropertiesAndReplacesItsGroups(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/a", int64(1)}},
-		"e2": {{":t/n", int64(2)}, {":t/b", int64(2)}},
-		"e3": {{":t/n", int64(3)}},
+	e1, e2, e3 := named("e1"), named("e2"), named("e3")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(1)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/b", int64(2)},
+		{e3, ":t/n", int64(3)},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -469,7 +474,7 @@ func TestFlatOrJoinKeepsItsSubjectsPropertiesAndReplacesItsGroups(t *testing.T) 
 				}
 				events = append(events, e)
 			}})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			subject, err := d.Query(`[:find ?e ?v :where [?e :t/n ?v]]`)
 			require.NoError(t, err)
 			subjectKeys := subject.Properties().Keys
@@ -477,7 +482,7 @@ func TestFlatOrJoinKeepsItsSubjectsPropertiesAndReplacesItsGroups(t *testing.T) 
 
 			rel, err := d.Query(`[:find ?e ?v :where [?e :t/n ?v] (or-join [?e] [?e :t/a _] [?e :t/b _])]`)
 			require.NoError(t, err)
-			require.ElementsMatch(t, []string{"e1 1", "e2 2"}, renderedRows(t, rel, names))
+			require.ElementsMatch(t, []string{"e1 1", "e2 2"}, renderedTuples(t, rel, names))
 			for _, key := range subjectKeys {
 				require.True(t, hasKey(rel.Properties().Keys, key), "the result keeps the subject's key %v; keys=%v", key, rel.Properties().Keys)
 			}
@@ -517,15 +522,16 @@ func hasKey(keys [][]query.Symbol, key []query.Symbol) bool {
 // branch answers for any tuple, the default fires for none, and every entity
 // is paired with the first branch's values.
 func TestFlatHeaderOrDefaultJoinDecidesOnce(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/a", int64(5)}},
-		"e2": {{":t/n", int64(2)}},
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(5)},
+		{e2, ":t/n", int64(2)},
 	}
 	clauses := []string{`[?e :t/n _]`, `(or-default-join [?v] [?x :t/a ?v] [(ground 0) ?v])`}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?v", clauses, []string{"e1 5", "e2 5"})
 		})
 	}
@@ -572,10 +578,11 @@ func TestOneFormWhereWithNothingBindingItsRequiredRunIsRefused(t *testing.T) {
 // nothing binds, and a cycle of an invocation and an expression. The paths
 // differ in the text before the stall alone.
 func TestNoOrderRefusalIsOneTextOnBothPathsForEveryStallShape(t *testing.T) {
-	entities := map[string][]fact{
-		"n1": {{":x", int64(1)}, {":y", int64(10)}},
-		"n2": {{":x", int64(2)}, {":y", int64(20)}},
-		"n3": {{":x", int64(3)}, {":y", int64(30)}},
+	n1, n2, n3 := named("n1"), named("n2"), named("n3")
+	facts := []fact{
+		{n1, ":x", int64(1)}, {n1, ":y", int64(10)},
+		{n2, ":x", int64(2)}, {n2, ":y", int64(20)},
+		{n3, ":x", int64(3)}, {n3, ":y", int64(30)},
 	}
 	const succ = `[[(succ [?n] ?m) [(+ ?n 1) ?m]]]`
 	shapes := []struct {
@@ -595,7 +602,7 @@ func TestNoOrderRefusalIsOneTextOnBothPathsForEveryStallShape(t *testing.T) {
 			var stalls []string
 			for _, mode := range optimizerModes {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-				namedEntities(t, d, entities)
+				commitFacts(t, d, facts)
 				var inputs []interface{}
 				if shape.rules {
 					inputs = append(inputs, mustRuleSet(t, succ))
@@ -621,7 +628,8 @@ func TestNoOrderRefusalIsOneTextOnBothPathsForEveryStallShape(t *testing.T) {
 // and a query preparation refuses with the invocation and the completion
 // alone. The event stands between the invocation and the plan.
 func TestPreparationEventCarriesThePreparedQueryAndWhetherItWasRewritten(t *testing.T) {
-	entities := map[string][]fact{"e1": {{":t/n", int64(1)}, {":t/a", int64(2)}}}
+	e1 := named("e1")
+	facts := []fact{{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(2)}}
 	cases := []struct {
 		name, text, rendered string
 		rewritten            bool
@@ -640,7 +648,7 @@ func TestPreparationEventCarriesThePreparedQueryAndWhetherItWasRewritten(t *test
 				events = append(events, e)
 				mu.Unlock()
 			}})
-			namedEntities(t, d, entities)
+			commitFacts(t, d, facts)
 			lifecycle := func() (invoked, prepared, planned, completed int, event annotations.Event) {
 				invoked, prepared, planned, completed = -1, -1, -1, -1
 				mu.Lock()
@@ -709,9 +717,10 @@ func TestPreparationEventCarriesThePreparedQueryAndWhetherItWasRewritten(t *test
 // over the same entity triggers no prefetch and populates no cache entry on
 // anyone's behalf.
 func TestEntityPrefetchOffRunsNoPrefetch(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/a", int64(1)}},
-		"e2": {{":t/n", int64(2)}, {":t/a", int64(2)}},
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/a", int64(1)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/a", int64(2)},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -727,10 +736,10 @@ func TestEntityPrefetchOffRunsNoPrefetch(t *testing.T) {
 				}
 			}})
 			require.False(t, mode.plannerOptions().EnableEntityPrefetch, "the option is off by default")
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?e ?v :where [?e :t/n _] [?e :t/a ?v]]`)
 			require.NoError(t, err)
-			require.ElementsMatch(t, []string{"e1 1", "e2 2"}, renderedRows(t, rel, names))
+			require.ElementsMatch(t, []string{"e1 1", "e2 2"}, renderedTuples(t, rel, names))
 			require.Zero(t, triggers.Load(), "no prefetch triggers with the option off")
 			require.Zero(t, populated.Load(), "no read populates the cache on another's behalf with the option off")
 		})
@@ -748,12 +757,12 @@ func TestFallbackPrefetchAnswersAsTheScanPath(t *testing.T) {
 	// threshold.
 	const subjectSize = 120
 	const lastWindow = 57
-	entities := map[string][]fact{}
+	var facts []fact
 	var want []string
 	for i := 1; i <= subjectSize; i++ {
-		name := fmt.Sprintf("e%d", i)
-		entities[name] = []fact{{":t/n", int64(i)}, {":t/a", int64(i)}}
-		want = append(want, fmt.Sprintf("%s %d", name, i))
+		e := named(fmt.Sprintf("e%d", i))
+		facts = append(facts, fact{e, ":t/n", int64(i)}, fact{e, ":t/a", int64(i)})
+		want = append(want, fmt.Sprintf("%s %d", e.name, i))
 	}
 	const text = `[:find ?e ?v :where [?e :t/n _] (or-default-join [[?e] ?v] [?e :t/a ?v] [(ground 0) ?v])]`
 	for _, mode := range optimizerModes {
@@ -771,10 +780,10 @@ func TestFallbackPrefetchAnswersAsTheScanPath(t *testing.T) {
 						triggersMu.Unlock()
 					}
 				}})
-				names := namedEntities(t, d, entities)
+				names := commitFacts(t, d, facts)
 				rel, err := d.Query(text)
 				require.NoError(t, err)
-				require.ElementsMatch(t, want, renderedRows(t, rel, names))
+				require.ElementsMatch(t, want, renderedTuples(t, rel, names))
 				return triggers
 			}
 			require.Empty(t, run(t, false), "no trigger with the option off")
@@ -802,22 +811,21 @@ func TestFallbackPrefetchAnswersAsTheScanPathForARequiredValue(t *testing.T) {
 	// threshold.
 	const subjectSize = 120
 	const lastWindow = 57
-	entities := map[string][]fact{}
+	var facts []fact
 	var want []string
 	for i := 1; i <= subjectSize; i++ {
-		name := fmt.Sprintf("e%d", i)
-		facts := []fact{{":t/n", int64(i)}}
+		e := named(fmt.Sprintf("e%d", i))
+		facts = append(facts, fact{e, ":t/n", int64(i)})
 		switch {
 		case i%2 == 0:
-			facts = append(facts, fact{":t/a", int64(i)})
-			want = append(want, fmt.Sprintf("%s %d", name, i))
+			facts = append(facts, fact{e, ":t/a", int64(i)})
+			want = append(want, fmt.Sprintf("%s %d", e.name, i))
 		case i%4 == 1:
-			facts = append(facts, fact{":t/a", int64(i + 1000)}, fact{":t/b", int64(i)})
-			want = append(want, fmt.Sprintf("%s %d", name, i))
+			facts = append(facts, fact{e, ":t/a", int64(i + 1000)}, fact{e, ":t/b", int64(i)})
+			want = append(want, fmt.Sprintf("%s %d", e.name, i))
 		default:
-			facts = append(facts, fact{":t/a", int64(i + 1000)})
+			facts = append(facts, fact{e, ":t/a", int64(i + 1000)})
 		}
-		entities[name] = facts
 	}
 	const text = `[:find ?e ?v :where [?e :t/n ?v] (or-default-join [[?e ?v]] [?e :t/a ?v] [?e :t/b ?v])]`
 	for _, mode := range optimizerModes {
@@ -835,10 +843,10 @@ func TestFallbackPrefetchAnswersAsTheScanPathForARequiredValue(t *testing.T) {
 						triggersMu.Unlock()
 					}
 				}})
-				names := namedEntities(t, d, entities)
+				names := commitFacts(t, d, facts)
 				rel, err := d.Query(text)
 				require.NoError(t, err)
-				require.ElementsMatch(t, want, renderedRows(t, rel, names))
+				require.ElementsMatch(t, want, renderedTuples(t, rel, names))
 				return triggers
 			}
 			require.Empty(t, run(t, false), "no trigger with the option off")
@@ -862,13 +870,15 @@ func TestFallbackPrefetchAnswersAsTheScanPathForARequiredValue(t *testing.T) {
 // both planner paths, and the entity with no referrer takes no tuple, since a
 // count over nothing binds none.
 func TestSubqueryAfterAFormAnswersOverItsStreamingResult(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/p", ref("e4")}},
-		"e2": {{":t/p", ref("e5")}},
-		"e3": {{":t/p", ref("e4")}},
-		"r1": {{":t/s", ref("e1")}},
-		"r2": {{":t/s", ref("e2")}},
-		"r3": {{":t/s", ref("e2")}},
+	e1, e2, e3, e4, e5 := named("e1"), named("e2"), named("e3"), named("e4"), named("e5")
+	r1, r2, r3 := named("r1"), named("r2"), named("r3")
+	facts := []fact{
+		{e1, ":t/p", e4},
+		{e2, ":t/p", e5},
+		{e3, ":t/p", e4},
+		{r1, ":t/s", e1},
+		{r2, ":t/s", e2},
+		{r3, ":t/s", e2},
 	}
 	clauses := []string{
 		`[?e :t/p ?y]`,
@@ -878,7 +888,7 @@ func TestSubqueryAfterAFormAnswersOverItsStreamingResult(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?n", clauses, []string{"e1 1", "e2 2"})
 		})
 	}
@@ -926,17 +936,15 @@ func TestSubqueryHoldingAnInvocationIsBuiltOncePerWindow(t *testing.T) {
 // input is evaluated after it, and each entity is answered beside its :t/n
 // plus one.
 func TestSubqueryBodyIsOrderedByThePlanner(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}},
-		"e2": {{":t/n", int64(5)}},
-	}
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(5)}}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?e ?v :where [?e :t/n _] [(q [:find ?v :in $ ?e :where [(+ ?n 1) ?v] [?e :t/n ?n]] $ ?e) [[?v] ...]]]`)
 			require.NoError(t, err)
-			require.Equal(t, []string{"e1 2", "e2 6"}, renderedRows(t, rel, names))
+			require.Equal(t, []string{"e1 2", "e2 6"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -945,18 +953,19 @@ func TestSubqueryBodyIsOrderedByThePlanner(t *testing.T) {
 // tuples: two entities sharing a :t/g each take the inner tuples of that
 // group, and an entity whose group has none takes none.
 func TestSubqueryOverItsCombinationsGivesThePerCombinationTuples(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/g", int64(1)}},
-		"e2": {{":t/g", int64(1)}},
-		"e3": {{":t/g", int64(2)}},
-		"m1": {{":t/in", int64(1)}, {":t/v", "a"}},
-		"m2": {{":t/in", int64(1)}, {":t/v", "b"}},
+	e1, e2, e3, m1, m2 := named("e1"), named("e2"), named("e3"), named("m1"), named("m2")
+	facts := []fact{
+		{e1, ":t/g", int64(1)},
+		{e2, ":t/g", int64(1)},
+		{e3, ":t/g", int64(2)},
+		{m1, ":t/in", int64(1)}, {m1, ":t/v", "a"},
+		{m2, ":t/in", int64(1)}, {m2, ":t/v", "b"},
 	}
 	clauses := []string{`[?e :t/g ?g]`, `[(q [:find ?v :in $ ?g :where [?m :t/in ?g] [?m :t/v ?v]] $ ?g) [[?v] ...]]`}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?v", clauses, []string{"e1 a", "e1 b", "e2 a", "e2 b"})
 		})
 	}
@@ -965,17 +974,15 @@ func TestSubqueryOverItsCombinationsGivesThePerCombinationTuples(t *testing.T) {
 // A pure aggregate, whose inner query reads no input, over a body matching
 // nothing binds no tuple: with no :t/absent to count, no entity is answered.
 func TestPureAggregateOverACombinationMatchingNothingBindsNoTuple(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}},
-		"e2": {{":t/n", int64(2)}},
-	}
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(2)}}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?e ?k :where [?e :t/n _] [(q [:find (count ?s) :in $ ?e :where [?s :t/absent _]] $ ?e) [[?k] ...]]]`)
 			require.NoError(t, err)
-			require.Empty(t, renderedRows(t, rel, names), "a count over nothing binds no tuple")
+			require.Empty(t, renderedTuples(t, rel, names), "a count over nothing binds no tuple")
 		})
 	}
 }
@@ -984,20 +991,21 @@ func TestPureAggregateOverACombinationMatchingNothingBindsNoTuple(t *testing.T) 
 // aggregated once and paired with every run tuple: each entity is answered
 // beside the count of every :t/s in the store.
 func TestAggregateNotReadingTheInputIsPairedWithEveryRunTuple(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}},
-		"e2": {{":t/n", int64(2)}},
-		"s1": {{":t/s", int64(1)}},
-		"s2": {{":t/s", int64(2)}},
-		"s3": {{":t/s", int64(3)}},
+	e1, e2, s1, s2, s3 := named("e1"), named("e2"), named("s1"), named("s2"), named("s3")
+	facts := []fact{
+		{e1, ":t/n", int64(1)},
+		{e2, ":t/n", int64(2)},
+		{s1, ":t/s", int64(1)},
+		{s2, ":t/s", int64(2)},
+		{s3, ":t/s", int64(3)},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?e ?k :where [?e :t/n _] [(q [:find (count ?s) :in $ ?e :where [?s :t/s _]] $ ?e) [[?k] ...]]]`)
 			require.NoError(t, err)
-			require.Equal(t, []string{"e1 3", "e2 3"}, renderedRows(t, rel, names))
+			require.Equal(t, []string{"e1 3", "e2 3"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -1006,12 +1014,13 @@ func TestAggregateNotReadingTheInputIsPairedWithEveryRunTuple(t *testing.T) {
 // pair of an :t/x holder and a :t/y holder is answered beside the holder of
 // their sum, in every written order on both planner paths.
 func TestSubqueryInputsSpanningTwoGroupsAreReadAsTheirProduct(t *testing.T) {
-	entities := map[string][]fact{
-		"a1":  {{":t/x", int64(1)}},
-		"a2":  {{":t/x", int64(2)}},
-		"b1":  {{":t/y", int64(10)}},
-		"h11": {{":t/sum", int64(11)}},
-		"h12": {{":t/sum", int64(12)}},
+	a1, a2, b1, h11, h12 := named("a1"), named("a2"), named("b1"), named("h11"), named("h12")
+	facts := []fact{
+		{a1, ":t/x", int64(1)},
+		{a2, ":t/x", int64(2)},
+		{b1, ":t/y", int64(10)},
+		{h11, ":t/sum", int64(11)},
+		{h12, ":t/sum", int64(12)},
 	}
 	clauses := []string{
 		`[?a :t/x ?x]`,
@@ -1021,7 +1030,7 @@ func TestSubqueryInputsSpanningTwoGroupsAreReadAsTheirProduct(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?a ?b ?h", clauses, []string{"a1 b1 h11", "a2 b1 h12"})
 		})
 	}
@@ -1032,10 +1041,11 @@ func TestSubqueryInputsSpanningTwoGroupsAreReadAsTheirProduct(t *testing.T) {
 // aggregating one: an entity is kept when its :t/n equals its :t/m, and when
 // its :t/n equals its count of :t/s referrers.
 func TestSubqueryBindingSymbolTheScopeBindsIsJoined(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/m", int64(1)}},
-		"e2": {{":t/n", int64(2)}, {":t/m", int64(3)}},
-		"r1": {{":t/s", ref("e1")}},
+	e1, e2, r1 := named("e1"), named("e2"), named("r1")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/m", int64(1)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/m", int64(3)},
+		{r1, ":t/s", e1},
 	}
 	inner := []struct {
 		name    string
@@ -1048,7 +1058,7 @@ func TestSubqueryBindingSymbolTheScopeBindsIsJoined(t *testing.T) {
 		for _, q := range inner {
 			t.Run(mode.name+"/"+q.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-				names := namedEntities(t, d, entities)
+				names := commitFacts(t, d, facts)
 				everyOrder(t, d, names, "?e ?c", q.clauses, []string{"e1 1"})
 			})
 		}
@@ -1059,16 +1069,14 @@ func TestSubqueryBindingSymbolTheScopeBindsIsJoined(t *testing.T) {
 // entity carrying :t/absent, the inner query is given no combination, and the
 // query answers no tuple and no error.
 func TestSubqueryOverAnEmptyCombinationRelationYieldsNothing(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}},
-	}
+	facts := []fact{{named("e1"), ":t/n", int64(1)}}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?e ?k :where [?e :t/absent _] [(q [:find ?k :in $ ?e :where [?e :t/n ?k]] $ ?e) [[?k] ...]]]`)
 			require.NoError(t, err)
-			require.Empty(t, renderedRows(t, rel, names))
+			require.Empty(t, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -1080,9 +1088,10 @@ func TestSubqueryOverAnEmptyCombinationRelationYieldsNothing(t *testing.T) {
 // carrying :t/n is answered beside its :t/m, in every written order on both
 // planner paths.
 func TestSubqueryAnswersUnderTheEnclosingNamesWhateverTheInnerNames(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/m", int64(10)}},
-		"e2": {{":t/n", int64(2)}, {":t/m", int64(20)}},
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/m", int64(10)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/m", int64(20)},
 	}
 	inner := []struct {
 		name    string
@@ -1095,7 +1104,7 @@ func TestSubqueryAnswersUnderTheEnclosingNamesWhateverTheInnerNames(t *testing.T
 		for _, q := range inner {
 			t.Run(mode.name+"/"+q.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-				names := namedEntities(t, d, entities)
+				names := commitFacts(t, d, facts)
 				everyOrder(t, d, names, "?e ?c", q.clauses, []string{"e1 10", "e2 20"})
 			})
 		}
@@ -1106,15 +1115,16 @@ func TestSubqueryAnswersUnderTheEnclosingNamesWhateverTheInnerNames(t *testing.T
 // it stands for: an entity is answered its :t/a when its :t/b equals it, and
 // the entity whose two differ takes no tuple.
 func TestSubqueryPassingOneVariableAtTwoPlacesEquatesThem(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/a", int64(1)}, {":t/b", int64(1)}},
-		"e2": {{":t/a", int64(2)}, {":t/b", int64(3)}},
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{
+		{e1, ":t/a", int64(1)}, {e1, ":t/b", int64(1)},
+		{e2, ":t/a", int64(2)}, {e2, ":t/b", int64(3)},
 	}
 	clauses := []string{`[?e :t/a _]`, `[(q [:find ?v :in $ ?x ?y :where [?x :t/a ?v] [?y :t/b ?v]] $ ?e ?e) [[?v] ...]]`}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?v", clauses, []string{"e1 1"})
 		})
 	}
@@ -1124,15 +1134,13 @@ func TestSubqueryPassingOneVariableAtTwoPlacesEquatesThem(t *testing.T) {
 // constant at its :in symbol, and the entity whose :t/n is the constant is
 // the one the binding, a symbol the scope binds, is joined with.
 func TestSubqueryWithAConstantArgumentSelectsOnItsValue(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}},
-		"e2": {{":t/n", int64(2)}},
-	}
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{{e1, ":t/n", int64(1)}, {e2, ":t/n", int64(2)}}
 	clauses := []string{`[?e :t/n _]`, `[(q [:find ?h :in $ ?k :where [?h :t/n ?k]] $ 2) [[?e] ...]]`}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e", clauses, []string{"e2"})
 		})
 	}
@@ -1144,12 +1152,13 @@ func TestSubqueryWithAConstantArgumentSelectsOnItsValue(t *testing.T) {
 // sight of a group answered from the build its first sight made. Each entity
 // is answered its group's tuples.
 func TestSubqueryRepeatedCombinationIsReadFromTheIndexNotRun(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/g", int64(1)}},
-		"e2": {{":t/g", int64(1)}},
-		"e3": {{":t/g", int64(2)}},
-		"m1": {{":t/in", int64(1)}, {":t/v", "a"}},
-		"m2": {{":t/in", int64(2)}, {":t/v", "b"}},
+	e1, e2, e3, m1, m2 := named("e1"), named("e2"), named("e3"), named("m1"), named("m2")
+	facts := []fact{
+		{e1, ":t/g", int64(1)},
+		{e2, ":t/g", int64(1)},
+		{e3, ":t/g", int64(2)},
+		{m1, ":t/in", int64(1)}, {m1, ":t/v", "a"},
+		{m2, ":t/in", int64(2)}, {m2, ":t/v", "b"},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
@@ -1167,10 +1176,10 @@ func TestSubqueryRepeatedCombinationIsReadFromTheIndexNotRun(t *testing.T) {
 					windows.Add(1)
 				}
 			}})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?e ?v :where [?e :t/g ?g] [(q [:find ?v :in $ ?g :where [?m :t/in ?g] [?m :t/v ?v]] $ ?g) [[?v] ...]]]`)
 			require.NoError(t, err)
-			require.ElementsMatch(t, []string{"e1 a", "e2 a", "e3 b"}, renderedRows(t, rel, names))
+			require.ElementsMatch(t, []string{"e1 a", "e2 a", "e3 b"}, renderedTuples(t, rel, names))
 			require.Equal(t, int64(3), windows.Load(), "under a cap of one each subject tuple is a window")
 			require.Equal(t, int64(2), builds.Load(), "the inner query is built once per group, and a group a later window carries again is read from the index")
 		})
@@ -1181,15 +1190,16 @@ func TestSubqueryRepeatedCombinationIsReadFromTheIndexNotRun(t *testing.T) {
 // each entity carrying :t/n is answered beside its :t/m, as under the
 // relation spelling.
 func TestSubqueryCollectionBindingAnswersTheRelationOverItsSymbol(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/m", int64(10)}},
-		"e2": {{":t/n", int64(2)}, {":t/m", int64(20)}},
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/m", int64(10)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/m", int64(20)},
 	}
 	clauses := []string{`[?e :t/n _]`, `[(q [:find ?v :in $ ?x :where [?x :t/m ?v]] $ ?e) [?c ...]]`}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?c", clauses, []string{"e1 10", "e2 20"})
 		})
 	}
@@ -1199,13 +1209,14 @@ func TestSubqueryCollectionBindingAnswersTheRelationOverItsSymbol(t *testing.T) 
 // zero default answers each category its count or zero under every cap from
 // one tuple to the subject's size.
 func TestSubqueryInsideABranchRunsOverTheBranchsWindow(t *testing.T) {
-	entities := map[string][]fact{
-		"c1": {{":category/name", "books"}},
-		"c2": {{":category/name", "tools"}},
-		"c3": {{":category/name", "wire"}},
-		"p1": {{":product/category", ref("c1")}},
-		"p2": {{":product/category", ref("c1")}},
-		"p3": {{":product/category", ref("c3")}},
+	c1, c2, c3, p1, p2, p3 := named("c1"), named("c2"), named("c3"), named("p1"), named("p2"), named("p3")
+	facts := []fact{
+		{c1, ":category/name", "books"},
+		{c2, ":category/name", "tools"},
+		{c3, ":category/name", "wire"},
+		{p1, ":product/category", c1},
+		{p2, ":product/category", c1},
+		{p3, ":product/category", c3},
 	}
 	const text = `[:find ?category ?count :where [?c :category/name ?category] (or-default [(q [:find (count ?p) :in $ ?c :where [?p :product/category ?c]] $ ?c) [[?count] ...]] [(ground 0) ?count])]`
 	for _, mode := range optimizerModes {
@@ -1214,10 +1225,10 @@ func TestSubqueryInsideABranchRunsOverTheBranchsWindow(t *testing.T) {
 				opts := mode.plannerOptions()
 				opts.ScopeWindowCap = windowCap
 				d := openBackendDB(t, mode.backend, DatabaseOptions{PlannerOptions: &opts})
-				names := namedEntities(t, d, entities)
+				names := commitFacts(t, d, facts)
 				rel, err := d.Query(text)
 				require.NoError(t, err)
-				require.ElementsMatch(t, []string{"books 2", "tools 0", "wire 1"}, renderedRows(t, rel, names))
+				require.ElementsMatch(t, []string{"books 2", "tools 0", "wire 1"}, renderedTuples(t, rel, names))
 			})
 		}
 	}
@@ -1231,11 +1242,12 @@ func TestSubqueryInsideABranchRunsOverTheBranchsWindow(t *testing.T) {
 // nothing, and an entity carrying :t/r and :t/q is kept when a :t/p referrer
 // reaches it through the other branch.
 func TestSubqueryInsideAUnionBranchUnderACarriedOutputReadsTheSubjectOnce(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/r", int64(1)}, {":t/q", int64(1)}},
-		"e2": {{":t/r", int64(1)}, {":t/q", int64(1)}},
-		"e3": {{":t/r", int64(1)}},
-		"l1": {{":t/p", ref("e1")}},
+	e1, e2, e3, l1 := named("e1"), named("e2"), named("e3"), named("l1")
+	facts := []fact{
+		{e1, ":t/r", int64(1)}, {e1, ":t/q", int64(1)},
+		{e2, ":t/r", int64(1)}, {e2, ":t/q", int64(1)},
+		{e3, ":t/r", int64(1)},
+		{l1, ":t/p", e1},
 	}
 	clauses := []string{
 		`[?e :t/r ?n]`,
@@ -1246,7 +1258,7 @@ func TestSubqueryInsideAUnionBranchUnderACarriedOutputReadsTheSubjectOnce(t *tes
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e", clauses, []string{"e1"})
 		})
 	}
@@ -1260,12 +1272,8 @@ func TestSubqueryInsideAUnionBranchUnderACarriedOutputReadsTheSubjectOnce(t *tes
 // pair of a referrer with itself and the or's first branch holds for every
 // pair.
 func TestANotThenAnOrOverTheSameGroupsReadEachSubjectOnce(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {},
-		"e2": {},
-		"x1": {{":t/p", ref("e1")}},
-		"x2": {{":t/p", ref("e2")}},
-	}
+	e1, e2, x1, x2 := named("e1"), named("e2"), named("x1"), named("x2")
+	facts := []fact{{x1, ":t/p", e1}, {x2, ":t/p", e2}}
 	clauses := []string{
 		`[?x :t/p ?e]`,
 		`[?y ?a _]`,
@@ -1276,7 +1284,7 @@ func TestANotThenAnOrOverTheSameGroupsReadEachSubjectOnce(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e ?y", clauses, []string{"e1 x2", "e2 x1"})
 		})
 	}
@@ -1288,11 +1296,12 @@ func TestANotThenAnOrOverTheSameGroupsReadEachSubjectOnce(t *testing.T) {
 // entity with a :t/q referrer or a :t/flag is kept, in every written order
 // on both planner paths.
 func TestBranchReadingARequiredVariableAfterAnUncorrelatedSubqueryRunsPerTuple(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}},
-		"e2": {{":t/n", int64(2)}, {":t/flag", true}},
-		"e3": {{":t/n", int64(3)}},
-		"r1": {{":t/q", ref("e1")}},
+	e1, e2, e3, r1 := named("e1"), named("e2"), named("e3"), named("r1")
+	facts := []fact{
+		{e1, ":t/n", int64(1)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/flag", true},
+		{e3, ":t/n", int64(3)},
+		{r1, ":t/q", e1},
 	}
 	clauses := []string{
 		`[?e :t/n _]`,
@@ -1301,7 +1310,7 @@ func TestBranchReadingARequiredVariableAfterAnUncorrelatedSubqueryRunsPerTuple(t
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e", clauses, []string{"e1", "e2"})
 		})
 	}
@@ -1312,19 +1321,20 @@ func TestBranchReadingARequiredVariableAfterAnUncorrelatedSubqueryRunsPerTuple(t
 // collection input, pairs the entity with the holder of each member and no
 // other.
 func TestCollectionInputBindsItsMembersAsAGroup(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/ordered", "a"}, {":t/ordered", "b"}},
-		"h1": {{":t/string", "a"}},
-		"h2": {{":t/string", "b"}},
-		"h3": {{":t/string", "c"}},
+	e1, h1, h2, h3 := named("e1"), named("h1"), named("h2"), named("h3")
+	facts := []fact{
+		{e1, ":t/ordered", "a"}, {e1, ":t/ordered", "b"},
+		{h1, ":t/string", "a"},
+		{h2, ":t/string", "b"},
+		{h3, ":t/string", "c"},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?e ?h :where [?e :t/ordered ?members] [(q [:find ?h :in $ [?m ...] :where [?h :t/string ?m]] $ ?members) [[?h] ...]]]`)
 			require.NoError(t, err)
-			require.Equal(t, []string{"e1 h1", "e1 h2"}, renderedRows(t, rel, names))
+			require.Equal(t, []string{"e1 h1", "e1 h2"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -1339,38 +1349,39 @@ func TestCollectionInputBindsItsMembersAsAGroup(t *testing.T) {
 // joined with that value, and a binding's name that is the argument's own is
 // the argument, joined as any binding symbol the subject carries.
 func TestSubqueryBindingNamesAnInputTheFindAlsoNames(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/also", int64(1)}},
-		"e2": {{":t/n", int64(2)}, {":t/also", int64(3)}},
-		"h1": {{":t/holds", int64(1)}},
-		"h2": {{":t/holds", int64(2)}},
-		"h3": {{":t/holds", int64(2)}},
+	e1, e2, h1, h2, h3 := named("e1"), named("e2"), named("h1"), named("h2"), named("h3")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/also", int64(1)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/also", int64(3)},
+		{h1, ":t/holds", int64(1)},
+		{h2, ":t/holds", int64(2)},
+		{h3, ":t/holds", int64(2)},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name+"/scalar input", func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			clauses := []string{`[?e :t/n ?n]`, `[(q [:find ?h ?k :in $ ?k :where [?h :t/holds ?k]] $ ?n) [[?h ?kk] ...]]`}
 			everyOrder(t, d, names, "?e ?h ?kk", clauses, []string{"e1 h1 1", "e2 h2 2", "e2 h3 2"})
 		})
 		t.Run(mode.name+"/binding name the scope binds", func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			clauses := []string{`[?e :t/n ?n]`, `[?e :t/also ?kk]`, `[(q [:find ?h ?k :in $ ?k :where [?h :t/holds ?k]] $ ?n) [[?h ?kk] ...]]`}
 			everyOrder(t, d, names, "?e ?h ?kk", clauses, []string{"e1 h1 1"})
 		})
 		t.Run(mode.name+"/binding name the argument's own", func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			clauses := []string{`[?e :t/n ?n]`, `[(q [:find ?h ?k :in $ ?k :where [?h :t/holds ?k]] $ ?n) [[?h ?n] ...]]`}
 			everyOrder(t, d, names, "?e ?h ?n", clauses, []string{"e1 h1 1", "e2 h2 2", "e2 h3 2"})
 		})
 		t.Run(mode.name+"/collection input", func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?h ?mm :in $ ?ks :where [(q [:find ?h ?m :in $ [?m ...] :where [?h :t/holds ?m]] $ ?ks) [[?h ?mm] ...]]]`, []interface{}{int64(1), int64(2)})
 			require.NoError(t, err)
-			require.ElementsMatch(t, []string{"h1 1", "h2 2", "h3 2"}, renderedRows(t, rel, names))
+			require.ElementsMatch(t, []string{"h1 1", "h2 2", "h3 2"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -1381,14 +1392,15 @@ func TestSubqueryBindingNamesAnInputTheFindAlsoNames(t *testing.T) {
 // outputs differ is dropped. e1's :t/n and :t/also agree and e2's differ, so
 // e1 alone is answered, under ?h.
 func TestSubqueryBindingNamingOneVariableTwiceSelectsOnEquality(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/also", int64(1)}},
-		"e2": {{":t/n", int64(2)}, {":t/also", int64(3)}},
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/also", int64(1)},
+		{e2, ":t/n", int64(2)}, {e2, ":t/also", int64(3)},
 	}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			clauses := []string{`[?e :t/n _]`, `[(q [:find ?x ?y :in $ ?e :where [?e :t/n ?x] [?e :t/also ?y]] $ ?e) [[?h ?h] ...]]`}
 			everyOrder(t, d, names, "?e ?h", clauses, []string{"e1 1"})
 		})
@@ -1403,11 +1415,12 @@ func TestSubqueryBindingNamingOneVariableTwiceSelectsOnEquality(t *testing.T) {
 // or's result. e1, e2 and e3 carry :q and are each a :q target or carry :r,
 // and e4 carries only an attribute no clause reads.
 func TestFormsOverTwoGroupsSharingNoSymbolAnswerInEveryOrder(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":p", ref("e2")}, {":r", ref("e3")}, {":q", ref("e3")}},
-		"e2": {{":q", ref("e1")}},
-		"e3": {{":q", ref("e2")}},
-		"e4": {{":s", ref("e1")}},
+	e1, e2, e3, e4 := named("e1"), named("e2"), named("e3"), named("e4")
+	facts := []fact{
+		{e1, ":p", e2}, {e1, ":r", e3}, {e1, ":q", e3},
+		{e2, ":q", e1},
+		{e3, ":q", e2},
+		{e4, ":s", e1},
 	}
 	clauses := []string{
 		`[?e ?a _]`,
@@ -1419,7 +1432,7 @@ func TestFormsOverTwoGroupsSharingNoSymbolAnswerInEveryOrder(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?e", clauses, []string{"e1", "e2", "e3"})
 		})
 	}
@@ -1433,12 +1446,13 @@ func TestFormsOverTwoGroupsSharingNoSymbolAnswerInEveryOrder(t *testing.T) {
 // edge; both scans carry a constant, so the planner places them before the
 // invocation in every order.
 func TestInvocationWhoseArgumentsTwoGroupsBindRunsOverTheirProduct(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":l", int64(1)}, {":edge", ref("e2")}},
-		"e2": {{":l", int64(1)}, {":r", int64(1)}, {":edge", ref("e3")}},
-		"e3": {{":r", int64(1)}, {":edge", ref("e4")}},
-		"e4": {{":r", int64(1)}},
-		"e5": {{":l", int64(1)}},
+	e1, e2, e3, e4, e5 := named("e1"), named("e2"), named("e3"), named("e4"), named("e5")
+	facts := []fact{
+		{e1, ":l", int64(1)}, {e1, ":edge", e2},
+		{e2, ":l", int64(1)}, {e2, ":r", int64(1)}, {e2, ":edge", e3},
+		{e3, ":r", int64(1)}, {e3, ":edge", e4},
+		{e4, ":r", int64(1)},
+		{e5, ":l", int64(1)},
 	}
 	clauses := []string{`[?x :l 1]`, `[?y :r 1]`, `(reach ?x ?y)`}
 	want := []string{"e1 e2", "e1 e3", "e1 e4", "e2 e3", "e2 e4"}
@@ -1450,14 +1464,14 @@ func TestInvocationWhoseArgumentsTwoGroupsBindRunsOverTheirProduct(t *testing.T)
 					windows.Add(1)
 				}
 			}})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			rules := mustRuleSet(t, closureRules)
 			for _, order := range orderings(len(clauses)) {
 				text := fmt.Sprintf("[:find ?x ?y :in $ %% :where %s %s %s]", clauses[order[0]], clauses[order[1]], clauses[order[2]])
 				windows.Store(0)
 				rel, err := d.Query(text, rules)
 				require.NoError(t, err, text)
-				require.Equal(t, want, renderedRows(t, rel, names), text)
+				require.Equal(t, want, renderedTuples(t, rel, names), text)
 				require.GreaterOrEqual(t, windows.Load(), int32(1), "the invocation runs over the window of the product: %s", text)
 			}
 		})
@@ -1473,9 +1487,10 @@ func TestInvocationWhoseArgumentsTwoGroupsBindRunsOverTheirProduct(t *testing.T)
 // read of a required variable runs per tuple, where the seek would bind the
 // carried output and close the cycle.
 func TestBranchNoOrderRunsUnderTheRequiredRunIsRefused(t *testing.T) {
-	entities := map[string][]fact{
-		"e1": {{":t/n", int64(1)}, {":t/p", ref("e2")}},
-		"e2": {{":t/n", int64(2)}},
+	e1, e2 := named("e1"), named("e2")
+	facts := []fact{
+		{e1, ":t/n", int64(1)}, {e1, ":t/p", e2},
+		{e2, ":t/n", int64(2)},
 	}
 	queries := []struct {
 		name  string
@@ -1489,7 +1504,7 @@ func TestBranchNoOrderRunsUnderTheRequiredRunIsRefused(t *testing.T) {
 		for _, q := range queries {
 			t.Run(mode.name+"/"+q.name, func(t *testing.T) {
 				d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-				namedEntities(t, d, entities)
+				commitFacts(t, d, facts)
 				_, err := executor.CollectTuples(d.Query(q.query))
 				require.Error(t, err, "no order runs the first branch over the required run alone")
 				require.Contains(t, err.Error(), "branch 1")

@@ -18,7 +18,7 @@ import (
 // first.
 //
 // Not safe for concurrent use — the lazily created scanRegistry is mutable per
-// query. Parallel workers each take their own via forkContext.
+// query; forkContext derives a context with a scan registry of its own.
 type Context struct {
 	scanRegistry *ScanRegistry
 	env          Relation
@@ -39,6 +39,10 @@ type Context struct {
 	// one window and completes.
 	continued *ruleContinuations
 
+	// held says which invocations of a scope planned under this context read
+	// a relation the context holds, which a scope's plan is served under.
+	held query.Held
+
 	// cancellation is the context the caller gave to cancel the query, nil
 	// when none was given.
 	cancellation context.Context
@@ -49,8 +53,12 @@ func NewContext() *Context {
 	return &Context{}
 }
 
-// forkContext returns an independent Context for a concurrent worker, sharing
-// everything but the scan registry, which is mutable per query.
+// forkContext returns an independent Context sharing everything but the scan
+// registry, which is mutable per query. A Context is not safe for concurrent
+// use on account of that one member, and this is the derivation that makes
+// two concurrent holders of one query's state safe: each holds a fork.
+// context_test.go and rule_evaluation_test.go pin that a fork carries every
+// field the other derivations carry.
 func forkContext(ctx *Context) *Context {
 	if ctx == nil {
 		return nil
@@ -60,8 +68,23 @@ func forkContext(ctx *Context) *Context {
 		rules:        ctx.rules,
 		derived:      ctx.derived,
 		continued:    ctx.continued,
+		held:         ctx.held,
 		cancellation: ctx.cancellation,
 	}
+}
+
+// WithHeld derives a context whose scopes are planned with held as the
+// invocations that read a relation the context holds.
+func (c *Context) WithHeld(held query.Held) *Context {
+	next := c.WithEnvironment(c.env)
+	next.held = held
+	return next
+}
+
+// Held returns which invocations of a scope planned under this context read
+// a relation the context holds.
+func (c *Context) Held() query.Held {
+	return c.held
 }
 
 // WithRules derives a context whose invocations resolve against rules.
@@ -156,6 +179,7 @@ func (c *Context) WithEnvironment(env Relation) *Context {
 		rules:        c.rules,
 		derived:      c.derived,
 		continued:    c.continued,
+		held:         c.held,
 		cancellation: c.cancellation,
 	}
 }

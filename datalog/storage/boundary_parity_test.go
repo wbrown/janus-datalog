@@ -197,7 +197,7 @@ func boundaryCases() []boundaryCase {
 			refused: true,
 		},
 		{
-			name:    "a relation ground with a row that is no vector is refused",
+			name:    "a relation ground with a tuple that is no vector is refused",
 			text:    `[:find ?p :where [?e :page/kind ?k] [(ground [[1 2] 3]) [[?p ?q]]]]`,
 			hand:    handFindIn([]string{"?p"}, nil, pageKindPattern("?e", "?k"), groundOf([]interface{}{[]interface{}{one, two}, three}, query.RelationBinding{Variables: []query.Symbol{boundarySym("?p"), boundarySym("?q")}})),
 			refused: true,
@@ -292,6 +292,72 @@ func boundaryCases() []boundaryCase {
 				return q
 			}(),
 		},
+		{
+			name: "an :in tuple input naming no variable is refused",
+			text: `[:find ?e :in $ [] :where [?e :page/kind ?k]]`,
+			build: func() (*query.Query, error) {
+				e, k := qb.NewVar("e"), qb.NewVar("k")
+				return qb.Query().Find(e).In(qb.DB, qb.Tuple()).Where(qb.Pat(e, pageKind, k)).Build()
+			},
+			hand:    handFindIn([]string{"?e"}, []query.InputSpec{query.TupleInput{}}, pageKindPattern("?e", "?k")),
+			refused: true,
+		},
+		{
+			name: "an :in relation input naming no variable is refused",
+			text: `[:find ?e :in $ [[]] :where [?e :page/kind ?k]]`,
+			build: func() (*query.Query, error) {
+				e, k := qb.NewVar("e"), qb.NewVar("k")
+				return qb.Query().Find(e).In(qb.DB, qb.Relation()).Where(qb.Pat(e, pageKind, k)).Build()
+			},
+			hand:    handFindIn([]string{"?e"}, []query.InputSpec{query.RelationInput{}}, pageKindPattern("?e", "?k")),
+			refused: true,
+		},
+		{
+			name:    "an :in relation input naming no variable, in the trailing spelling, is refused",
+			text:    `[:find ?e :in $ [[] ...] :where [?e :page/kind ?k]]`,
+			hand:    handFindIn([]string{"?e"}, []query.InputSpec{query.RelationInput{}}, pageKindPattern("?e", "?k")),
+			refused: true,
+		},
+		{
+			name: "an :in entry naming no variable beside one naming a variable is refused",
+			text: `[:find ?e :in $ ?x [] :where [?e :page/kind ?x]]`,
+			build: func() (*query.Query, error) {
+				e, x := qb.NewVar("e"), qb.NewVar("x")
+				return qb.Query().Find(e).In(qb.DB, qb.Scalar(x), qb.Tuple()).Where(qb.Pat(e, pageKind, x)).Build()
+			},
+			hand:    handFindIn([]string{"?e"}, []query.InputSpec{scalarX, query.TupleInput{}}, pageKindPattern("?e", "?x")),
+			refused: true,
+		},
+		{
+			name: "an inner :in tuple input naming no variable is refused",
+			text: `[:find ?y :where [?e :page/kind ?k] [(q [:find ?y :in $ [] :where [?y :page/kind ?m]] $) [?y ...]]]`,
+			build: func() (*query.Query, error) {
+				e, k, y, m := qb.NewVar("e"), qb.NewVar("k"), qb.NewVar("y"), qb.NewVar("m")
+				inner := qb.Query().Find(y).In(qb.DB, qb.Tuple()).Where(qb.Pat(y, pageKind, m))
+				return qb.Query().Find(y).Where(qb.Pat(e, pageKind, k), qb.Subquery(inner).BindCollection(y)).Build()
+			},
+			hand: handFindIn([]string{"?y"}, nil, pageKindPattern("?e", "?k"),
+				collectingY(handFindIn([]string{"?y"}, []query.InputSpec{query.TupleInput{}}, pageKindPattern("?y", "?m")), dollar)),
+			refused: true,
+		},
+		{
+			name: "an :in tuple input naming one variable is accepted",
+			text: `[:find ?e :in $ [?x] :where [?e :page/kind ?x]]`,
+			build: func() (*query.Query, error) {
+				e, x := qb.NewVar("e"), qb.NewVar("x")
+				return qb.Query().Find(e).In(qb.DB, qb.Tuple(x)).Where(qb.Pat(e, pageKind, x)).Build()
+			},
+			hand: handFindIn([]string{"?e"}, []query.InputSpec{query.TupleInput{Symbols: []query.Symbol{boundarySym("?x")}}}, pageKindPattern("?e", "?x")),
+		},
+		{
+			name: "an :in relation input naming one variable is accepted",
+			text: `[:find ?e :in $ [[?x]] :where [?e :page/kind ?x]]`,
+			build: func() (*query.Query, error) {
+				e, x := qb.NewVar("e"), qb.NewVar("x")
+				return qb.Query().Find(e).In(qb.DB, qb.Relation(x)).Where(qb.Pat(e, pageKind, x)).Build()
+			},
+			hand: handFindIn([]string{"?e"}, []query.InputSpec{query.RelationInput{Symbols: []query.Symbol{boundarySym("?x")}}}, pageKindPattern("?e", "?x")),
+		},
 	}
 }
 
@@ -328,6 +394,100 @@ func TestBoundaryParity_EveryRefusalIsTheSameAtEveryBoundary(t *testing.T) {
 				require.NoError(t, buildErr, "Build accepts the builder chain")
 				_, err = query.Prepare(built, rules)
 				require.NoError(t, err, "Prepare accepts the built query")
+			}
+		})
+	}
+}
+
+// Query refuses a query whose text the parser refuses, carrying the parser's
+// message for that text, under both optimizer modes: an :in tuple or relation
+// input naming no variable, hand-built since the builder refuses the
+// spelling, and the one-variable inputs answer.
+func TestBoundaryParity_QueryRefusesWhatTheParserRefuses(t *testing.T) {
+	n1 := named("n1")
+	facts := []fact{{n1, ":page/kind", "k"}}
+	x := []query.Symbol{boundarySym("?x")}
+	cases := []struct {
+		name    string
+		hand    *query.Query
+		input   interface{}
+		refused bool
+		tuples  []string
+	}{
+		{"a tuple input naming no variable", handFindIn([]string{"?e"}, []query.InputSpec{query.TupleInput{}}, pageKindPattern("?e", "?k")), []interface{}{}, true, nil},
+		{"a relation input naming no variable", handFindIn([]string{"?e"}, []query.InputSpec{query.RelationInput{}}, pageKindPattern("?e", "?k")), [][]interface{}{}, true, nil},
+		{"a tuple input naming one variable", handFindIn([]string{"?e"}, []query.InputSpec{query.TupleInput{Symbols: x}}, pageKindPattern("?e", "?x")), []interface{}{"k"}, false, []string{"n1"}},
+		{"a relation input naming one variable", handFindIn([]string{"?e"}, []query.InputSpec{query.RelationInput{Symbols: x}}, pageKindPattern("?e", "?x")), [][]interface{}{{"k"}}, false, []string{"n1"}},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
+			names := commitFacts(t, d, facts)
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					rel, err := d.Query(tc.hand, tc.input)
+					if tc.refused {
+						_, parseErr := parser.ParseQuery(tc.hand.String())
+						require.Error(t, parseErr, "ParseQuery refuses the text")
+						require.Error(t, err, "Query refuses the query")
+						require.ErrorContains(t, err, parseErr.Error(), "Query carries ParseQuery's message")
+						return
+					}
+					require.NoError(t, err)
+					require.Equal(t, tc.tuples, renderedTuples(t, rel, names))
+				})
+			}
+		})
+	}
+}
+
+// Prepare refuses a variable in a namespace the engine mints into, and
+// ParseQuery and Build accept the spelling: the prepared text carries the
+// engine's own ?unify/<name>.<position> and ?scope/input.<position>, and
+// every phase the planner emits parses back through ParseQuery, so the check
+// is Prepare's, as the check that every invocation names a defined predicate
+// is (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §6).
+func TestBoundaryParity_PrepareAloneRefusesAVariableInAnEngineNamespace(t *testing.T) {
+	pageKind := qb.Kw(":page/kind")
+	cases := []struct {
+		name     string
+		text     string
+		build    func() (*query.Query, error)
+		hand     *query.Query
+		variable string
+	}{
+		{
+			name: "the unify namespace",
+			text: `[:find ?e :where [?e :page/kind ?unify/k.2]]`,
+			build: func() (*query.Query, error) {
+				e, k := qb.NewVar("e"), qb.NewVar("unify/k.2")
+				return qb.Query().Find(e).Where(qb.Pat(e, pageKind, k)).Build()
+			},
+			hand:     handFindIn([]string{"?e"}, nil, pageKindPattern("?e", "?unify/k.2")),
+			variable: "?unify/k.2",
+		},
+		{
+			name: "the scope namespace",
+			text: `[:find ?e :where [?e :page/kind ?scope/input.1]]`,
+			build: func() (*query.Query, error) {
+				e, k := qb.NewVar("e"), qb.NewVar("scope/input.1")
+				return qb.Query().Find(e).Where(qb.Pat(e, pageKind, k)).Build()
+			},
+			hand:     handFindIn([]string{"?e"}, nil, pageKindPattern("?e", "?scope/input.1")),
+			variable: "?scope/input.1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := parser.ParseQuery(tc.text)
+			require.NoError(t, err, "ParseQuery accepts the text")
+			built, err := tc.build()
+			require.NoError(t, err, "Build accepts the builder chain")
+			for name, q := range map[string]*query.Query{"the parsed query": parsed, "the built query": built, "the hand-built query": tc.hand} {
+				_, err := query.Prepare(q, nil)
+				require.Error(t, err, "Prepare refuses %s", name)
+				require.ErrorContains(t, err, tc.variable, "the refusal of %s names the variable", name)
+				require.ErrorContains(t, err, "namespace", "the refusal of %s names the namespace", name)
 			}
 		})
 	}

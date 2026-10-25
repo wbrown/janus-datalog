@@ -34,11 +34,11 @@ func bindingEntities() ([]datalog.Datom, map[datalog.Identity]string) {
 	return datoms, map[datalog.Identity]string{x: "x", y: "y"}
 }
 
-// renderedTuples reads a result into one string per tuple, an identity by
-// its name in names and any other value by fmt, sorted.
-func renderedTuples(t *testing.T, rel Relation, names map[datalog.Identity]string) []string {
+// orderedTuples reads a result into one string per tuple in the result's
+// order, an identity by its name in names and any other value by fmt.
+func orderedTuples(t *testing.T, rel Relation, names map[datalog.Identity]string) []string {
 	t.Helper()
-	var rows []string
+	var tuples []string
 	require.NoError(t, ForEach(rel, func(tuple Tuple) error {
 		parts := make([]string, len(tuple))
 		for i, v := range tuple {
@@ -48,11 +48,18 @@ func renderedTuples(t *testing.T, rel Relation, names map[datalog.Identity]strin
 				parts[i] = fmt.Sprint(v)
 			}
 		}
-		rows = append(rows, strings.Join(parts, " "))
+		tuples = append(tuples, strings.Join(parts, " "))
 		return nil
 	}))
-	sort.Strings(rows)
-	return rows
+	return tuples
+}
+
+// renderedTuples is orderedTuples sorted.
+func renderedTuples(t *testing.T, rel Relation, names map[datalog.Identity]string) []string {
+	t.Helper()
+	tuples := orderedTuples(t, rel, names)
+	sort.Strings(tuples)
+	return tuples
 }
 
 // relationOver is a materialized relation over the named symbols holding
@@ -84,21 +91,21 @@ func TestRelationInputs_TwoAreJoined(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			first := relationOver([]string{"?j", "?v"}, Tuple{int64(1), int64(10)}, Tuple{int64(2), int64(20)})
-			var rows []string
+			var tuples []string
 			require.NotPanics(t, func() {
 				rel, err := exec.ExecuteWithRelations(NewContext(), parsedQuery(t, `[:find ?j ?f :in $ [[?j ?v] ...] [[?f ?e] ...] :where [?x :a ?j]]`),
 					[]Relation{first, relationOver([]string{"?f", "?e"}, Tuple{int64(7), int64(70)})})
 				require.NoError(t, err)
-				rows = renderedTuples(t, rel, names)
+				tuples = renderedTuples(t, rel, names)
 			})
-			require.Equal(t, []string{"1 7", "2 7"}, rows, "sharing no symbol, the product")
+			require.Equal(t, []string{"1 7", "2 7"}, tuples, "sharing no symbol, the product")
 			require.NotPanics(t, func() {
 				rel, err := exec.ExecuteWithRelations(NewContext(), parsedQuery(t, `[:find ?j ?f :in $ [[?j ?v] ...] [[?v ?f] ...] :where [?x :a ?j]]`),
 					[]Relation{first, relationOver([]string{"?v", "?f"}, Tuple{int64(10), int64(7)}, Tuple{int64(30), int64(9)})})
 				require.NoError(t, err)
-				rows = renderedTuples(t, rel, names)
+				tuples = renderedTuples(t, rel, names)
 			})
-			require.Equal(t, []string{"1 7"}, rows, "sharing ?v, the join")
+			require.Equal(t, []string{"1 7"}, tuples, "sharing ?v, the join")
 		})
 	}
 }
@@ -114,26 +121,26 @@ func TestInput_ARepeatedSymbolUnifies(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 			tupleQuery := parsedQuery(t, `[:find ?x :in $ [?w ?w] :where [?x :a ?w]]`)
-			var rows []string
+			var tuples []string
 			require.NotPanics(t, func() {
 				rel, err := exec.ExecuteWithRelations(NewContext(), tupleQuery, []Relation{relationOver([]string{"?w", "?w"}, Tuple{int64(1), int64(2)})})
 				require.NoError(t, err)
-				rows = renderedTuples(t, rel, names)
+				tuples = renderedTuples(t, rel, names)
 			})
-			require.Empty(t, rows, "a tuple whose two values differ binds nothing")
+			require.Empty(t, tuples, "a tuple whose two values differ binds nothing")
 			require.NotPanics(t, func() {
 				rel, err := exec.ExecuteWithRelations(NewContext(), tupleQuery, []Relation{relationOver([]string{"?w", "?w"}, Tuple{int64(1), int64(1)})})
 				require.NoError(t, err)
-				rows = renderedTuples(t, rel, names)
+				tuples = renderedTuples(t, rel, names)
 			})
-			require.Equal(t, []string{"x"}, rows, "a tuple whose two values agree binds them")
+			require.Equal(t, []string{"x"}, tuples, "a tuple whose two values agree binds them")
 			require.NotPanics(t, func() {
 				rel, err := exec.ExecuteWithRelations(NewContext(), parsedQuery(t, `[:find ?x :in $ [[?w ?w] ...] :where [?x :a ?w]]`),
 					[]Relation{relationOver([]string{"?w", "?w"}, Tuple{int64(1), int64(2)}, Tuple{int64(2), int64(2)})})
 				require.NoError(t, err)
-				rows = renderedTuples(t, rel, names)
+				tuples = renderedTuples(t, rel, names)
 			})
-			require.Equal(t, []string{"y"}, rows, "of a relation's tuples, those whose two values agree bind")
+			require.Equal(t, []string{"y"}, tuples, "of a relation's tuples, those whose two values agree bind")
 		})
 	}
 }
@@ -190,12 +197,55 @@ func TestExpressionBinding_ARepeatedSymbolUnifies(t *testing.T) {
 			for _, shape := range shapes {
 				rel, err := exec.Execute(parsedQuery(t, shape.text))
 				require.NoError(t, err, shape.name)
-				rows := renderedTuples(t, rel, names)
+				tuples := renderedTuples(t, rel, names)
 				if shape.want == nil {
-					require.Empty(t, rows, shape.name)
+					require.Empty(t, tuples, shape.name)
 					continue
 				}
-				require.Equal(t, shape.want, rows, shape.name)
+				require.Equal(t, shape.want, tuples, shape.name)
+			}
+		})
+	}
+}
+
+// A scalar or a tuple input is one tuple over its symbols: a relation of
+// more than one tuple given at such an entry is refused naming the entry and
+// the spelling that binds several, a relation of one tuple binds it with a
+// sort on its symbol an identity, a relation of none binds nothing, and a
+// collection or a relation input given several tuples binds every one in
+// the order the :order-by asks.
+func TestInput_AScalarOrATupleEntryBindsOneTuple(t *testing.T) {
+	datoms, names := bindingEntities()
+	matcher := NewMemoryPatternMatcher(datoms)
+	three := []Tuple{{int64(1), "a"}, {int64(3), "b"}, {int64(2), "c"}}
+	cases := []struct {
+		name    string
+		text    string
+		given   Relation
+		refused string // the spelling the refusal names, "" where the query answers
+		want    []string
+	}{
+		{"a tuple entry given three tuples, sorted on its first symbol", `[:find ?p ?q ?x :in $ [?p ?q] :where [?x :a 1] :order-by [[?p :desc]]]`, relationOver([]string{"?p", "?q"}, three...), "[[?p ?q] ...]", nil},
+		{"a scalar entry given two tuples", `[:find ?p ?x :in $ ?p :where [?x :a 1]]`, relationOver([]string{"?p"}, Tuple{int64(1)}, Tuple{int64(2)}), "[?p ...]", nil},
+		{"a tuple entry given one tuple, sorted on its symbol", `[:find ?p ?q ?x :in $ [?p ?q] :where [?x :a 1] :order-by [[?p :desc]]]`, relationOver([]string{"?p", "?q"}, Tuple{int64(1), "a"}), "", []string{"1 a x"}},
+		{"a tuple entry given no tuple", `[:find ?p ?q ?x :in $ [?p ?q] :where [?x :a 1]]`, relationOver([]string{"?p", "?q"}), "", nil},
+		{"a relation entry given three tuples, sorted on its first symbol", `[:find ?p ?q ?x :in $ [[?p ?q]] :where [?x :a 1] :order-by [[?p :desc]]]`, relationOver([]string{"?p", "?q"}, three...), "", []string{"3 b x", "2 c x", "1 a x"}},
+		{"a collection entry given three tuples, sorted on it", `[:find ?p ?x :in $ [?p ...] :where [?x :a 1] :order-by [[?p :desc]]]`, relationOver([]string{"?p"}, Tuple{int64(1)}, Tuple{int64(3)}, Tuple{int64(2)}), "", []string{"3 x", "2 x", "1 x"}},
+	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			for _, c := range cases {
+				t.Run(c.name, func(t *testing.T) {
+					rel, err := exec.ExecuteWithRelations(NewContext(), parsedQuery(t, c.text), []Relation{c.given})
+					if c.refused != "" {
+						require.Error(t, err, "a scalar or a tuple entry given more than one tuple is refused")
+						require.Contains(t, err.Error(), c.refused, "the refusal names the spelling that binds several tuples")
+						return
+					}
+					require.NoError(t, err)
+					require.Equal(t, c.want, orderedTuples(t, rel, names))
+				})
 			}
 		})
 	}

@@ -74,6 +74,24 @@ func (e *NestedRecursionError) Error() string {
 	return fmt.Sprintf("rule %s invokes %s, a predicate of its own stratum, inside %s: a recursive invocation stands at the top level of its body, in an or branch, in an or-join branch, or in a subquery whose inner query does not aggregate", e.Rule, e.Predicate, e.Form)
 }
 
+// EngineNamespaceError reports a variable written in a namespace the engine
+// mints variables into: unify, the later occurrences of a variable a pattern
+// names twice; scope, the holder of a collection input's whole value; and
+// magic, a seed predicate's head. Variable is the symbol, and Rule the rule it
+// stands in, nil for a query's own.
+type EngineNamespaceError struct {
+	Variable Symbol
+	Rule     Symbol
+}
+
+func (e *EngineNamespaceError) Error() string {
+	where := "the query"
+	if e.Rule != nil {
+		where = "rule " + e.Rule.String()
+	}
+	return fmt.Sprintf("%s names %s, a variable in the namespace %s, which the engine mints into; rename it outside the namespaces adorned, magic, delta, scope and unify", where, e.Variable, strings.TrimPrefix(e.Variable.Namespace(), "?"))
+}
+
 // RequiredBindingError reports an invocation that leaves a position its
 // predicate requires bound free. Name is the predicate, Symbol the head
 // variable at that position, and Rule the invoking rule, nil for the

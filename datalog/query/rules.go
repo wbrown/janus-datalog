@@ -139,24 +139,35 @@ var clauseForms = []Symbol{
 func ClauseForm(name Symbol) bool { return ContainsSymbol(clauseForms, name) }
 
 // NewRuleSet validates and stratifies rules. No predicate is named in a
-// namespace the engine mints into, for a clause form, or as a variable; a
-// head names at least one variable; the heads of one predicate agree on
-// arity and are distinct variables; every rule is safe; every invocation
-// names a defined predicate at its arity; no predicates depend on each other
-// through negation; and a predicate invoked by a rule of its own stratum is
-// invoked at the top level of the body, in an or branch, in an or-join
-// branch, or in a subquery whose inner query does not aggregate.
+// namespace the engine mints into, for a clause form, or as a variable; no
+// variable of a head or a body lies in a namespace the engine mints into,
+// checked before the inference and the unification write the engine's own
+// into the body; a head names at least one variable; the heads of one
+// predicate agree on arity and are distinct variables; every rule is safe;
+// every invocation names a defined predicate at its arity; no predicates
+// depend on each other through negation; and a predicate invoked by a rule of
+// its own stratum is invoked at the top level of the body, in an or branch,
+// in an or-join branch, or in a subquery whose inner query does not
+// aggregate.
 func NewRuleSet(rules []*Rule) (*RuleSet, error) {
 	for _, rule := range rules {
 		switch {
 		case engineNamespace(rule.Name):
-			return nil, fmt.Errorf("rule %s: the namespace %s is the engine's, which names the adorned, magic, delta and scope predicates it mints there", rule.Name, rule.Name.Namespace())
+			return nil, fmt.Errorf("rule %s: the namespace %s is the engine's, which mints the adorned, magic, delta, scope and unify names there", rule.Name, rule.Name.Namespace())
 		case ClauseForm(rule.Name):
 			return nil, fmt.Errorf("rule %s: %s heads a clause form, so a list headed by it never parses as an invocation", rule.Name, rule.Name)
 		case rule.Name.IsVariable():
 			return nil, fmt.Errorf("rule %s: a predicate's name is not a variable", rule.Name)
 		case len(rule.Head) == 0:
 			return nil, fmt.Errorf("rule %s: a head names at least one variable", rule.Name)
+		}
+		for _, head := range rule.Head {
+			if engineNamespace(head) {
+				return nil, &EngineNamespaceError{Variable: head, Rule: rule.Name}
+			}
+		}
+		if v := engineVariableIn(rule.Body, nil); v != nil {
+			return nil, &EngineNamespaceError{Variable: v, Rule: rule.Name}
 		}
 	}
 	return NewSeededRuleSet(rules, nil)

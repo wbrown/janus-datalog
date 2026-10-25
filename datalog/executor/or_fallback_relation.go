@@ -332,6 +332,7 @@ func (r *OrFallbackRelation) framing(environment Relation) framing {
 		required:         r.required,
 		find:             find,
 		given:            r.given,
+		standsFor:        r.given,
 		key:              r.joinSyms,
 		environment:      environment,
 		planOverRequired: !r.shortCircuit && len(r.carried) > 0,

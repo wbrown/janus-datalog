@@ -198,6 +198,10 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, bindings query.Binding
 		fmt.Fprintf(h, "%v;", sym)
 	}
 
+	// Which invocations are held decides which bodies the planner walks, so
+	// a plan made under one is not the plan under another.
+	fmt.Fprintf(h, "HELD:%d;", bindings.Held)
+
 	// Hash order-by clause
 	if q.OrderBy != nil {
 		fmt.Fprintf(h, "ORDERBY:")

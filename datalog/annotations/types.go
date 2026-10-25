@@ -374,11 +374,12 @@ type Event struct {
 type Handler func(event Event)
 
 // A handler needs no serializing wrapper, and this package deliberately offers
-// none. The engine emits from parallel workers through one handler, so a
-// handler that remembers the last event renders one worker's line from
-// another's leftovers — and a mutex does not repair that, it only hides the
-// race while the pairing stays wrong. An event therefore carries everything its
-// line reports, and state lives where the facts are produced.
+// none. The engine emits on the goroutine that runs the query and serializes
+// no handler, so two queries on two goroutines share one, and a handler that
+// remembers the last event renders one query's line from another's leftovers
+// — and a mutex does not repair that, it only hides the race while the
+// pairing stays wrong. An event therefore carries everything its line
+// reports, and state lives where the facts are produced.
 
 // TimedEvent closes an event that began at start, computing End and Latency from
 // one clock read. A producer holding a start time builds its event here and emits

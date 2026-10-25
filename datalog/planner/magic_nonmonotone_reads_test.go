@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,6 +15,43 @@ import (
 // and the rewritten set is accepted
 // (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §5.5,
 // docs/proposals/NON_MONOTONE_FORMS_PROOF.md §1).
+
+// firstNonMonotoneForm is the first negation or aggregating subquery at any
+// depth of clauses, a branch, a body and a non-aggregating inner query
+// included, or nil when there is none. WalkClauses descends into the forms'
+// branches and bodies and leaves an inner query to its caller.
+func firstNonMonotoneForm(clauses []query.Clause) query.Clause {
+	var found query.Clause
+	query.WalkClauses(clauses, func(clause query.Clause) bool {
+		if found != nil {
+			return false
+		}
+		switch c := clause.(type) {
+		case *query.NotJoinClause:
+			found = clause
+		case *query.SubqueryPattern:
+			if c.Query.Aggregates() {
+				found = clause
+			} else {
+				found = firstNonMonotoneForm(c.Query.Where)
+			}
+		}
+		return found == nil
+	})
+	return found
+}
+
+// magicRules is every rule of a magic predicate of the rewritten set, in the
+// set's order of predicates.
+func magicRules(magic *Magic) []*query.Rule {
+	var rules []*query.Rule
+	for _, name := range magic.Rules.Predicates() {
+		if kind, _, _ := strings.Cut(name.Namespace(), "."); kind == "magic" {
+			rules = append(rules, magic.Rules.Rules(name)...)
+		}
+	}
+	return rules
+}
 
 // mustParseRules parses text as a rule set.
 func mustParseRules(t *testing.T, text string) *query.RuleSet {
@@ -66,6 +104,92 @@ func TestMagic_ANegationInsideAReadBranchIsLeftOutOfTheRead(t *testing.T) {
 				require.False(t, negation, "the magic rule's read of the or-join holds no not-join: %s", form)
 			}
 		}
+	}
+}
+
+// A subquery whose inner query does not aggregate is read with its inner
+// clauses read as a scope's are, so a negation or an aggregating subquery at
+// any depth of the inner query, inside a branch or an inner query of it
+// included, is left out of the read, the recursion after the subquery is
+// adorned from the find the read still binds, and the set is accepted
+// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §5.5).
+func TestMagic_ANonMonotoneFormInsideASubqueryTheMagicRuleReadsIsLeftOut(t *testing.T) {
+	edge := &query.Query{
+		Find:  []query.FindElement{query.FindVariable{Symbol: sym("?w")}},
+		In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}, query.ScalarInput{Symbol: sym("?x")}},
+		Where: []query.Clause{scopePattern("?x", "edge", "?w")},
+	}
+	readOverEdge := []*query.Rule{
+		defineRule("magic.bf/p", []string{"?m"},
+			invoke("magic.bf/p", "?a"),
+			scopePattern("?a", "type", "node"),
+			subqueryCall(edge, query.Variable{Name: sym("?a")}, "?m")),
+	}
+	cases := []struct {
+		name, rules string
+		read        []*query.Rule
+	}{
+		{"a negation inside the subquery",
+			`[[(low ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?c) [?a :type :node] [(q [:find ?w :in $ % ?x :where [?x :edge ?w] (not-join [?w] (low ?w ?w))] $ % ?a) [[?m]]] (p ?m ?c)]]`,
+			readOverEdge},
+		{"an aggregating subquery inside the subquery",
+			`[[(low ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?c) [?a :type :node] [(q [:find ?w :in $ % ?x :where [?x :edge ?w] [(q [:find ?u (count ?z) :in $ % ?y :where (low ?y ?u) (low ?u ?z)] $ % ?w) [[?u2 ?n]]]] $ % ?a) [[?m]]] (p ?m ?c)]]`,
+			readOverEdge},
+		{"a negation inside a branch inside the subquery",
+			`[[(low ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?c) [?a :type :node] [(q [:find ?k :in $ % ?x :where [?x :edge ?w] (or-join [[?w] ?k] (and (not-join [?w] (low ?w ?z)) [(identity ?w) ?k]) (and [?w :type :node] [(identity ?w) ?k]))] $ % ?a) [[?m]]] (p ?m ?c)]]`,
+			nil},
+		{"a negation inside a subquery inside the subquery",
+			`[[(low ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?b) [?a :edge ?b]]
+			  [(p ?a ?c) [?a :type :node] [(q [:find ?w :in $ % ?x :where [(q [:find ?v :in $ % ?y :where [?y :edge ?v] (not-join [?v] (low ?v ?v))] $ % ?x) [[?w]]]] $ % ?a) [[?m]]] (p ?m ?c)]]`,
+			nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rs := mustParseRules(t, c.rules)
+			magic, err := rewriteOf(rs, "p", true, false)
+			require.NoError(t, err, "the rewritten set is accepted")
+			rules := magic.Rules.Rules(sym("magic.bf/p"))
+			require.Len(t, rules, 1, "the recursion is adorned from the find the subquery's read binds")
+			var read *query.SubqueryPattern
+			for _, clause := range rules[0].Body {
+				if sub, ok := clause.(*query.SubqueryPattern); ok {
+					read = sub
+				}
+			}
+			require.NotNil(t, read, "the magic rule reads the subquery: %s", rules[0])
+			require.Nil(t, firstNonMonotoneForm(read.Query.Where), "the read of the subquery holds no non-monotone form: %s", read)
+			if c.read != nil {
+				assertRules(t, "magic.bf/p", rules, c.read)
+			}
+			for _, r := range magicRules(magic) {
+				require.Nil(t, firstNonMonotoneForm(r.Body), "magic rule %s reads a non-monotone form", r)
+			}
+		})
+	}
+}
+
+// A subquery whose read inner clauses no longer bind every find variable is
+// not read, so the recursion after it, whose argument the subquery alone
+// provides, keeps the original predicate, as an aggregating subquery before
+// the recursion leaves it.
+func TestMagic_ASubqueryWhoseReadNoLongerBindsItsFindIsNotRead(t *testing.T) {
+	rs := mustParseRules(t, `[[(low ?a ?b) [?a :edge ?b]]
+	                          [(p ?a ?b) [?a :edge ?b]]
+	                          [(p ?a ?c) [?a :type :node] [(q [:find ?w :in $ % ?x :where [(q [:find ?u (count ?z) :in $ % ?y :where (low ?y ?u) (low ?u ?z)] $ % ?x) [[?w ?n]]]] $ % ?a) [[?m]]] (p ?m ?c)]]`)
+	magic, err := rewriteOf(rs, "p", true, false)
+	require.NoError(t, err, "the rewritten set is accepted")
+	require.Empty(t, magic.Rules.Rules(sym("magic.bf/p")), "the recursion after the subquery is not adorned, since its argument is provided through a subquery no magic rule reads")
+	require.NotEmpty(t, magic.Rules.Rules(sym("p")), "the recursion keeps the original predicate")
+	require.NotEmpty(t, magic.Rules.Rules(sym("adorned.bf/low")), "the aggregating inner query's invocation is adorned from the clauses before the form")
+	for _, r := range magicRules(magic) {
+		require.Nil(t, firstNonMonotoneForm(r.Body), "magic rule %s reads a non-monotone form", r)
 	}
 }
 

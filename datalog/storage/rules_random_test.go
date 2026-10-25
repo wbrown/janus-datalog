@@ -777,7 +777,7 @@ func (g coloredGraph) pairsWhere(pred func(x, y string) bool) []string {
 }
 
 // scopeCase is one query shape over a coloured graph, its rule set, whether
-// ?s is bound to the node n3 through an input, and the rows the reference
+// ?s is bound to the node n3 through an input, and the tuples the reference
 // computes for it. The reference reads each nested scope by the rule the
 // language states: a not-join, or-join or or-default-join shares its header
 // with the enclosing scope and nothing else, so a body variable outside the
@@ -1015,7 +1015,7 @@ var scopeShapeCases = []scopeCase{
 }
 
 // runScopeCases runs each case on twenty-five random coloured graphs in every
-// mode and reports every case whose rows, or whose error, differ from the
+// mode and reports every case whose tuples, or whose error, differ from the
 // reference's, naming the trial, the case, the graph's edges and colours.
 func runScopeCases(t *testing.T, cases []scopeCase) {
 	t.Helper()
@@ -1035,17 +1035,17 @@ func runScopeCases(t *testing.T, cases []scopeCase) {
 					sort.Strings(want)
 					rel, err := d.Query(c.text, inputs...)
 					if err != nil {
-						t.Errorf("%s: error %q, reference rows %v", label, err, want)
+						t.Errorf("%s: error %q, reference tuples %v", label, err, want)
 						continue
 					}
 					got, err := g.render(rel)
 					if err != nil {
-						t.Errorf("%s: error %q, reference rows %v", label, err, want)
+						t.Errorf("%s: error %q, reference tuples %v", label, err, want)
 						continue
 					}
 					sort.Strings(got)
 					if !equalStrings(got, want) {
-						t.Errorf("%s: rows %v, reference rows %v", label, got, want)
+						t.Errorf("%s: tuples %v, reference tuples %v", label, got, want)
 					}
 				}
 			}
@@ -1184,6 +1184,72 @@ func randomRuleSet(r *rand.Rand) string {
 	return sb.String()
 }
 
+// chainBody is one body drawn from the chain templates, which reach nb
+// through w0, w1 and w2: an invocation of w0 or w1 free and bound, the
+// recursion inside nested subqueries, a negation and an aggregating subquery
+// over w0, a fallback over w1 before the recursion, and in group 1 a lower
+// predicate under an aggregating subquery inside either branch form, under
+// a fallback after the recursion and before it, under a negation inside an
+// or-join branch before the recursion, and under a nested subquery before
+// it, with the lower predicate's position bound through a tuple and a
+// relation input.
+func (g *ruleSetDraw) chainBody() string {
+	q := g.same()
+	choices := []string{
+		"[?a :edge ?m] (" + q + " ?m ?b)",
+		"(" + q + " ?a ?m) [?m :edge ?b]",
+		"[?a :edge ?m] (w0 ?m ?b)",
+		"(w0 ?a ?b)",
+		"(" + q + " ?a ?m) (w0 ?m ?b)",
+		"(w1 ?a ?m) (" + q + " ?m ?b)",
+		"[?a :edge ?m] [(q [:find ?z :in $ % ?x :where [(q [:find ?w :in $ % ?y :where (" + q + " ?y ?w)] $ % ?x) [[?z] ...]]] $ % ?m) [[?b] ...]]",
+		"[?a :edge ?m] [(q [:find ?z :in $ % ?x :where (w0 ?x ?z)] $ % ?m) [[?b] ...]]",
+		"[?a :edge ?m] (or-join [[?m] ?b] (w0 ?m ?b) (and [?m :edge ?k] (" + q + " ?k ?b)))",
+		"[?a :edge ?b] (not-join [?b] (w0 ?b ?z))",
+		"[?a :edge ?b] [(q [:find (count ?z) :in $ % ?x :where (w0 ?x ?z)] $ % ?b) [[?n]]] [(> ?n 0)]",
+		"[?a :edge ?m] (or-default-join [[?m] ?k] (w1 ?m ?k) [(identity ?m) ?k]) (" + q + " ?k ?b)",
+	}
+	if l := g.lower(); l != "" {
+		choices = append(choices,
+			"[?a :edge ?m] [(q [:find (count ?z) :in $ % ?x :where (or-join [[?x] ?z] ("+l+" ?x ?z) [?x :edge ?z])] $ % ?m) [[?n]]] ("+q+" ?m ?b)",
+			"("+q+" ?a ?b) [(q [:find (count ?z) :in $ % ?x :where (or-default-join [[?x] ?z] ("+l+" ?x ?z) [(identity ?x) ?z])] $ % ?b) [[?n]]] [(> ?n 0)]",
+			"[?a :edge ?m] [(q [:find (count ?z) :in $ % ?x :where (or-default-join [[?x] ?z] (and [?x :edge ?w] ("+l+" ?w ?z)) [(identity ?x) ?z])] $ % ?m) [[?n]]] [(> ?n 1)] ("+q+" ?m ?b)",
+			"("+q+" ?a ?m) (or-default-join [[?m] ?b] ("+l+" ?m ?b) [(identity ?m) ?b])",
+			"[?a :edge ?m] (or-default-join [[?m] ?k] ("+l+" ?m ?k) [(identity ?m) ?k]) ("+q+" ?k ?b)",
+			"[?a :edge ?m] (or-join [[?m] ?k] (and (not-join [?m] ("+l+" ?m ?z)) [(identity ?m) ?k]) (and [?m :color 0] [(identity ?m) ?k])) ("+q+" ?k ?b)",
+			"[?a :edge ?m] [(q [:find ?z :in $ % ?x :where [?x :edge ?z] [(q [:find (count ?w) :in $ % ?y :where ("+l+" ?y ?w)] $ % ?z) [[?n]]] [(> ?n 0)]] $ % ?m) [[?v] ...]] ("+q+" ?v ?b)",
+			"[?a :edge ?m] ("+q+" ?m ?b) (not-join [?b] (w0 ?b ?z) ("+l+" ?z ?a))",
+			"[?a :edge ?b] [(q [:find (count ?z) :in $ % ?x :where (or-join [[?x] ?z] (w1 ?x ?z) ("+l+" ?x ?z))] $ % ?b) [[?n]]] [(> ?n 0)]",
+			"("+q+" ?a ?m) [?m :edge ?b] [(q [:find (count ?z) :in $ % ?x ?y :where [?x :edge ?w] ("+l+" ?w ?z) [(!= ?z ?y)]] $ % ?a ?b) [[?n]]] [(> ?n 0)]",
+			"("+q+" ?a ?m) [?m :edge ?b] [(q [:find (count ?z) :in $ % [?x ?y] :where [?x :edge ?w] ("+l+" ?w ?z) [(!= ?z ?y)]] $ % ?a ?b) [[?n]]] [(> ?n 0)]",
+			"[?a :edge ?m] [(q [:find (count ?z) :in $ % [[?x ?y]] :where ("+l+" ?x ?z) [(!= ?z ?y)]] $ % ?m ?a) [[?n]]] ("+q+" ?m ?b)",
+		)
+	}
+	return choices[g.r.Intn(len(choices))]
+}
+
+// chainRuleSet draws a rule set from r over the chain: nb, whose first
+// position is required; w2 invoking nb; w1 invoking w2 or nb; w0 invoking
+// w1; then each predicate's base body over :edge and one to three chain
+// template bodies.
+func chainRuleSet(r *rand.Rand) string {
+	var sb strings.Builder
+	sb.WriteString("[[(nb [?x] ?y) [?x :edge ?y]]\n")
+	sb.WriteString("[(w2 ?a ?b) [?a :edge ?m] (nb ?m ?b)]\n")
+	sb.WriteString("[(w1 ?a ?b) (w2 ?a ?m) [?m :color _] [?m :edge ?b]]\n")
+	sb.WriteString("[(w1 ?a ?b) [?a :color 1] (nb ?a ?b)]\n")
+	sb.WriteString("[(w0 ?a ?b) [?a :color _] (w1 ?a ?b)]\n")
+	for i := 0; i < randomRulePredicates; i++ {
+		g := &ruleSetDraw{r: r, self: i}
+		fmt.Fprintf(&sb, "[(p%d ?a ?b) [?a :edge ?b]]\n", i)
+		for k := r.Intn(3); k >= 0; k-- {
+			fmt.Fprintf(&sb, "[(p%d ?a ?b) %s]\n", i, g.chainBody())
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
+}
+
 // ruleGraphNodes is the node count of a random rule set's graph.
 const ruleGraphNodes = 7
 
@@ -1224,22 +1290,35 @@ func pairsOf(rendered []string) map[[2]string]bool {
 	return pairs
 }
 
-// ruleSetSeeds is the seeds the random rule sets are drawn from: 2000 to
-// 2024, 2033 and 2049.
-var ruleSetSeeds = []struct{ start, count int }{{2000, 25}, {2033, 1}, {2049, 1}}
+// ruleSetSeeds is the seeds the random rule sets are drawn from, each span
+// under one template set: 2000 to 2024, 2033 and 2049 under the templates,
+// and 4000 to 4039 under the chain templates.
+var ruleSetSeeds = []struct {
+	start, count int
+	chain        bool
+}{{2000, 25, false}, {2033, 1, false}, {2049, 1, false}, {4000, 40, true}}
 
 // Every predicate of a random rule set, invoked bound at either position
 // through an input, as an or-join branch beside an edge, and under a
 // not-join beside every node, answers on a random graph what its free
-// invocation answers whole, in every mode. A free invocation that fails is a
-// failure.
+// invocation answers whole, in every mode, and Explain plans every query
+// Query answers. Under the chain templates w0 is checked beside the four
+// predicates. A free invocation that fails is a failure.
 func TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, span := range ruleSetSeeds {
 				for seed := span.start; seed < span.start+span.count; seed++ {
 					r := rand.New(rand.NewSource(int64(seed)))
-					rs := mustRuleSet(t, randomRuleSet(r))
+					predicates := []string{"p0", "p1", "p2", "p3"}
+					var rules string
+					if span.chain {
+						rules = chainRuleSet(r)
+						predicates = append(predicates, "w0")
+					} else {
+						rules = randomRuleSet(r)
+					}
+					rs := mustRuleSet(t, rules)
 					plannerOpts := mode.plannerOptions()
 					plannerOpts.MaxRuleIterations = 500
 					d := openBackendDB(t, mode.backend, DatabaseOptions{Schema: coloredGraphSchema(), PlannerOptions: &plannerOpts})
@@ -1248,9 +1327,9 @@ func TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation(t *testing
 					for i := 0; i < ruleGraphNodes; i++ {
 						nodes = append(nodes, g.names[ruleGraphNode(i)])
 					}
-					// rows runs text and renders its tuples; an error at the query or
-					// while its tuples are read is the check's failure.
-					rows := func(text string, inputs ...interface{}) ([]string, error) {
+					// tuplesOf runs text and renders its tuples; an error at the query
+					// or while its tuples are read is the check's failure.
+					tuplesOf := func(text string, inputs ...interface{}) ([]string, error) {
 						rel, err := d.Query(text, append([]interface{}{rs}, inputs...)...)
 						if err != nil {
 							return nil, err
@@ -1258,23 +1337,25 @@ func TestRules_BoundInvocationsOnRandomRuleSetsMatchTheFreeEvaluation(t *testing
 						return g.render(rel)
 					}
 					check := func(label, text string, want []string, inputs ...interface{}) {
-						got, err := rows(text, inputs...)
+						got, err := tuplesOf(text, inputs...)
 						if err != nil {
-							t.Errorf("%s: %v", label, err)
+							t.Errorf("%s: %v\n%s", label, err, rules)
 							return
+						}
+						if _, err := d.Explain(text, append([]interface{}{rs}, inputs...)...); err != nil {
+							t.Errorf("%s: Query answers and Explain refuses: %v\n%s", label, err, rules)
 						}
 						sort.Strings(got)
 						sort.Strings(want)
 						if !equalStrings(got, want) {
-							t.Errorf("%s: rows %v, the free evaluation gives %v", label, got, want)
+							t.Errorf("%s: tuples %v, the free evaluation gives %v\n%s", label, got, want, rules)
 						}
 					}
-					for p := 0; p < randomRulePredicates; p++ {
-						name := fmt.Sprintf("p%d", p)
+					for _, name := range predicates {
 						label := fmt.Sprintf("seed %d %s", seed, name)
-						rendered, err := rows(fmt.Sprintf(`[:find ?x ?y :in $ %% :where (%s ?x ?y)]`, name))
+						rendered, err := tuplesOf(fmt.Sprintf(`[:find ?x ?y :in $ %% :where (%s ?x ?y)]`, name))
 						if err != nil {
-							t.Errorf("%s free: %v", label, err)
+							t.Errorf("%s free: %v\n%s", label, err, rules)
 							continue
 						}
 						free := pairsOf(rendered)

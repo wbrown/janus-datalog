@@ -55,6 +55,47 @@ func TestPlanQuery_RefusesABranchNoOrderRunsOnBothPaths(t *testing.T) {
 	}
 }
 
+// A rule body the query's invocations reach is planned at PlanQuery on both
+// planner paths, so a body no order runs is refused there, with one text from
+// "cannot order clauses:" on, whether the invocation is free or bound, at the
+// top level or inside a form, and whether the stall is the body itself or a
+// form inside it (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §2.3 and
+// §4.1).
+func TestPlanQuery_RefusesARuleBodyNoOrderRunsOnBothPaths(t *testing.T) {
+	const cycle = `[(identity ?z) ?m] [(identity ?m) ?z]`
+	const stuck = `[(p ?a ?b) [?a :t/p ?b] ` + cycle + `]`
+	cases := []struct{ name, rules, text string }{
+		{"a body invoked free", "[" + stuck + "]", `[:find ?x ?y :in $ % :where (p ?x ?y)]`},
+		{"a body invoked bound", "[" + stuck + "]", `[:find ?y :in $ % :where [?x :t/k _] (p ?x ?y)]`},
+		{"a body invoked inside an or-join branch", "[" + stuck + "]", `[:find ?x ?y :in $ % :where [?x :t/k _] (or-join [[?x] ?y] (p ?x ?y) [?x :t/p ?y])]`},
+		{"a body invoked inside a not-join body", "[" + stuck + "]", `[:find ?x :in $ % :where [?x :t/k _] (not-join [?x] (p ?x ?y))]`},
+		{"a body invoked inside a subquery's inner query", "[" + stuck + "]", `[:find ?x ?y :in $ % :where [?x :t/k _] [(q [:find ?y :in $ % ?e :where (p ?e ?y)] $ % ?x) [[?y]]]]`},
+		{"a body reached through another rule", `[[(r ?a ?b) (p ?a ?b)] ` + stuck + `]`, `[:find ?x ?y :in $ % :where (r ?x ?y)]`},
+		{"an or-join branch inside a body", `[[(p ?a ?b) [?a :t/p ?b] (or-join [[?a] ?k] (and ` + cycle + ` [(identity ?a) ?k]) [(identity ?a) ?k])]]`, `[:find ?x ?y :in $ % :where (p ?x ?y)]`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rules, err := parser.ParseRules(c.rules)
+			require.NoError(t, err)
+			q, err := parser.ParseQuery(c.text)
+			require.NoError(t, err)
+			prepared, err := query.Prepare(q, rules)
+			require.NoError(t, err)
+			bindings := query.Bindings{Rules: rules}
+			stall := map[bool]string{}
+			for _, algebra := range []bool{true, false} {
+				p := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: algebra})
+				_, err := p.PlanQuery(prepared, bindings, nil)
+				require.Error(t, err, "algebra=%v: a rule body no order runs is refused at PlanQuery", algebra)
+				at := strings.Index(err.Error(), "cannot order clauses:")
+				require.GreaterOrEqual(t, at, 0, "algebra=%v: the refusal names the stall: %v", algebra, err)
+				stall[algebra] = err.Error()[at:]
+			}
+			require.Equal(t, stall[true], stall[false], "one text for one stall on both paths")
+		})
+	}
+}
+
 // formsQuery holds one form of each kind after a pattern binding ?e and ?a.
 const formsQuery = `[:find ?e ?m ?c :where [?e :t/k ?a] (or-join [[?e] ?m] [?e :t/q ?m] [(identity ?e) ?m]) (not-join [?e] [?e :t/n _]) [(q [:find (count ?s) :in $ ?a :where [?s :t/k ?a]] $ ?a) [[?c]]]]`
 
@@ -138,7 +179,7 @@ func TestPlanFormScopes_PlansEveryFormOfThePhases(t *testing.T) {
 	phased, err := NewClauseBasedPlanner(nil, PlannerOptions{}).Plan(prepared, query.Bindings{}, nil)
 	require.NoError(t, err)
 	p := NewClauseBasedPlanner(nil, PlannerOptions{Cache: NewPlanCache(10, 0)})
-	require.NoError(t, p.planFormScopes(phased.Phases, nil, nil))
+	require.NoError(t, p.planFormScopes(phased.Phases, query.Bindings{}, nil))
 	outputs := []query.FindElement{query.FindVariable{Symbol: m}}
 	for i, branch := range orJoin.Branches {
 		require.True(t, heldPlan(p, Scope{Required: []query.Symbol{e}, Find: outputs, Clauses: branch}), "or-join branch %d", i+1)
@@ -147,4 +188,57 @@ func TestPlanFormScopes_PlansEveryFormOfThePhases(t *testing.T) {
 	require.True(t, heldPlan(p, Scope{Required: []query.Symbol{a}, Find: subquery.Query.Find, Clauses: subquery.Query.Where}), "the subquery's inner query")
 	_, _, size := p.cache.Stats()
 	require.Equal(t, 4, size, "every form's frames and nothing else")
+}
+
+// planFormScope plans the bodies an invocation runs into the cache, as the
+// executor's evaluation plans them.
+func TestPlanFormScope_PlansTheBodiesAnInvocationRuns(t *testing.T) {
+	follows := sym("follows")
+	rs, err := query.NewRuleSet(followsRules())
+	require.NoError(t, err)
+	bodyQuery := func(rule *query.Rule, body []query.Clause) *query.Query {
+		find := make([]query.FindElement, len(rule.Head))
+		for i, head := range rule.Head {
+			find[i] = query.FindVariable{Symbol: head}
+		}
+		return &query.Query{Find: find, In: []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}}, Where: body}
+	}
+	heldBody := func(p *ClauseBasedPlanner, r *query.RuleSet, rule *query.Rule, body []query.Clause) bool {
+		_, ok := p.cache.GetWithOptions(bodyQuery(rule, body), query.Bindings{Rules: r, Held: query.HeldByFixpoint}, p.options)
+		return ok
+	}
+	planner := func() *ClauseBasedPlanner {
+		return NewClauseBasedPlanner(nil, PlannerOptions{Cache: NewPlanCache(10, 0)})
+	}
+	t.Run("a free invocation under a query", func(t *testing.T) {
+		p := planner()
+		require.NoError(t, p.planFormScope(invoke("follows", "?x", "?y"), nil, nil, query.Bindings{Rules: rs}, nil))
+		base, recursive := rs.Rules(follows)[0], rs.Rules(follows)[1]
+		require.True(t, heldBody(p, rs, base, base.Body), "the base rule's plain body")
+		require.True(t, heldBody(p, rs, recursive, markDelta(recursive.Body, map[query.Symbol]bool{follows: true}, 0)), "the recursive rule's delta copy")
+		_, _, size := p.cache.Stats()
+		require.Equal(t, 2, size, "the two bodies and nothing else")
+	})
+	t.Run("a held predicate under a body a fixpoint runs", func(t *testing.T) {
+		p := planner()
+		require.NoError(t, p.planFormScope(invoke("follows", "?x", "?y"), nil, nil, query.Bindings{Rules: rs, Held: query.HeldByFixpoint}, nil))
+		_, _, size := p.cache.Stats()
+		require.Equal(t, 0, size, "a predicate the fixpoint holds plans nothing")
+	})
+	t.Run("a required predicate under a body a fixpoint runs", func(t *testing.T) {
+		reaching, err := parser.ParseRules(`[[(near [?p] ?q) [?p :page/next ?q]]]`)
+		require.NoError(t, err)
+		p := planner()
+		require.NoError(t, p.planFormScope(invoke("near", "?x", "?y"), []query.Symbol{sym("?x")}, nil, query.Bindings{Rules: reaching, Held: query.HeldByFixpoint}, nil))
+		magic, err := EvaluatedSet(planner(), reaching, sym("near"), []bool{true, false}, nil)
+		require.NoError(t, err)
+		adorned := magic.Rules.Rules(magic.Predicate)[0]
+		require.True(t, heldBody(p, magic.Rules, adorned, adorned.Body), "the adorned body of the predicate derived at its clause")
+	})
+	t.Run("any invocation under the rewrite's reading", func(t *testing.T) {
+		p := planner()
+		require.NoError(t, p.planFormScope(invoke("follows", "?x", "?y"), nil, nil, query.Bindings{Rules: rs, Held: query.HeldEvery}, nil))
+		_, _, size := p.cache.Stats()
+		require.Equal(t, 0, size, "the rewrite decides each site itself")
+	})
 }

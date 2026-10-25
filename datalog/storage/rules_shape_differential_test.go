@@ -123,10 +123,10 @@ var shapeCases = []shapeCase{
 	{"req-before-binder", "[" + shapeBase + `[(succ [?n] ?m) [(+ ?n 1) ?m]] [(stepw ?a ?b) (succ ?x ?b) (e ?a ?x)]]`, "stepw", 2},
 }
 
-// plainRows reads a query's result into one string per tuple, its values
+// plainTuples reads a query's result into one string per tuple, its values
 // printed and joined by ",", sorted; the query's own error is returned before
 // anything is read.
-func plainRows(rel executor.Relation, err error) ([]string, error) {
+func plainTuples(rel executor.Relation, err error) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -143,21 +143,21 @@ func plainRows(rel executor.Relation, err error) ([]string, error) {
 	return out, err
 }
 
-// rowsAt keeps the whole evaluation's rows whose values at positions equal
-// one of the combinations, rendered as plainRows renders them.
-func rowsAt(whole [][]string, positions []int, combinations [][]int64) []string {
+// tuplesAt keeps the whole evaluation's tuples whose values at positions equal
+// one of the combinations, rendered as plainTuples renders them.
+func tuplesAt(whole [][]string, positions []int, combinations [][]int64) []string {
 	var out []string
-	for _, row := range whole {
+	for _, tuple := range whole {
 		for _, values := range combinations {
 			agrees := true
 			for j, p := range positions {
-				if row[p] != fmt.Sprint(values[j]) {
+				if tuple[p] != fmt.Sprint(values[j]) {
 					agrees = false
 					break
 				}
 			}
 			if agrees {
-				out = append(out, strings.Join(row, ","))
+				out = append(out, strings.Join(tuple, ","))
 				break
 			}
 		}
@@ -185,11 +185,11 @@ func TestRules_BoundInvocationsOfTheNamedShapesMatchTheWholeEvaluation(t *testin
 						head[i] = fmt.Sprintf("?v%d", i)
 					}
 					variables := strings.Join(head, " ")
-					rendered, err := plainRows(d.Query(fmt.Sprintf(`[:find %s :in $ %% :where (%s %s)]`, variables, c.predicate, variables), rs))
+					rendered, err := plainTuples(d.Query(fmt.Sprintf(`[:find %s :in $ %% :where (%s %s)]`, variables, c.predicate, variables), rs))
 					require.NoError(t, err, "%s: the whole evaluation answers", label)
 					whole := make([][]string, len(rendered))
-					for i, row := range rendered {
-						whole[i] = strings.Split(row, ",")
+					for i, tuple := range rendered {
+						whole[i] = strings.Split(tuple, ",")
 					}
 					for mask := 1; mask < 1<<c.arity; mask++ {
 						var bound []string
@@ -201,14 +201,14 @@ func TestRules_BoundInvocationsOfTheNamedShapesMatchTheWholeEvaluation(t *testin
 							}
 						}
 						combinations := map[string][]int64{}
-						for _, row := range whole {
+						for _, tuple := range whole {
 							var values []int64
 							key := ""
 							for _, p := range positions {
 								var x int64
-								fmt.Sscan(row[p], &x)
+								fmt.Sscan(tuple[p], &x)
 								values = append(values, x)
-								key += row[p] + ","
+								key += tuple[p] + ","
 							}
 							combinations[key] = values
 						}
@@ -244,13 +244,13 @@ func TestRules_BoundInvocationsOfTheNamedShapesMatchTheWholeEvaluation(t *testin
 							}
 							every = append(every, values)
 							relation = append(relation, tuple)
-							got, err := plainRows(d.Query(scalar, inputs...))
+							got, err := plainTuples(d.Query(scalar, inputs...))
 							require.NoError(t, err, "%s mask %b at %v", label, mask, values)
-							require.Equal(t, rowsAt(whole, positions, [][]int64{values}), got, "%s mask %b at %v: the bound invocation answers the whole evaluation at its binding", label, mask, values)
+							require.Equal(t, tuplesAt(whole, positions, [][]int64{values}), got, "%s mask %b at %v: the bound invocation answers the whole evaluation at its binding", label, mask, values)
 						}
-						got, err := plainRows(d.Query(fmt.Sprintf(`[:find %s :in $ %% [[%s] ...] :where (%s %s)]`, variables, strings.Join(bound, " "), c.predicate, variables), rs, relation))
+						got, err := plainTuples(d.Query(fmt.Sprintf(`[:find %s :in $ %% [[%s] ...] :where (%s %s)]`, variables, strings.Join(bound, " "), c.predicate, variables), rs, relation))
 						require.NoError(t, err, "%s mask %b as a relation input", label, mask)
-						require.Equal(t, rowsAt(whole, positions, every), got, "%s mask %b as a relation input: the invocation answers the whole evaluation at every combination", label, mask)
+						require.Equal(t, tuplesAt(whole, positions, every), got, "%s mask %b as a relation input: the invocation answers the whole evaluation at every combination", label, mask)
 					}
 				}
 			}

@@ -69,8 +69,8 @@ func TestExpressionValidate_NamesTheRepairFromTheGroundsShape(t *testing.T) {
 	})
 
 	t.Run("a vector of vectors of the binding's arity under the relation form is accepted", func(t *testing.T) {
-		rows := []interface{}{[]interface{}{int64(1), int64(2)}, []interface{}{int64(3), int64(4)}}
-		require.NoError(t, groundBound(rows, pq).Validate())
+		tuples := []interface{}{[]interface{}{int64(1), int64(2)}, []interface{}{int64(3), int64(4)}}
+		require.NoError(t, groundBound(tuples, pq).Validate())
 	})
 }
 

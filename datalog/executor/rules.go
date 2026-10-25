@@ -220,7 +220,10 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 	if rs == nil {
 		return nil, nil, fmt.Errorf("rule invocation %s: no rule set was given for %%", inv)
 	}
-	bound := boundPositions(ctx, inv, groups)
+	envSymbols, _ := environmentTuple(ctx.Environment())
+	bound := planner.BoundPositions(inv, func(sym query.Symbol) bool {
+		return query.SymbolIndex(envSymbols, sym) >= 0 || groupBinding(groups, sym) >= 0
+	})
 	if err := rs.CheckRequired(inv.Name, bound, nil); err != nil {
 		return nil, nil, err
 	}
@@ -256,29 +259,15 @@ func (e *DefaultQueryExecutor) deriveInvocation(ctx *Context, inv *query.RuleInv
 	return rel, head, nil
 }
 
-// invocationEvaluation is the evaluation an invocation runs: its predicate
-// whole when nothing binds its arguments and no body the predicate needs
-// invokes a predicate with required positions, and through the magic-set
-// rewrite otherwise, seeded by the bound arguments when there are any, so
-// the fixpoint derives only the tuples those arguments reach. A free
-// invocation reaching a predicate with required positions is rewritten with
-// its head all free, so that predicate is adorned from the clauses before
-// each of its invocations and derived in the rewritten set, never drawn
-// whole into an evaluation without its bindings and never derived at its
-// clause on every run of the body invoking it
-// (NESTED_SCOPES_AS_QUERIES.md §5.5). The rewrite reads each scope in the
-// order the executor's planner gives it, and every rewrite is accepted: a
-// site under a non-monotone form the rewritten set cannot carry adorned is
-// left unadorned (planner.Rewrite).
+// invocationEvaluation is the evaluation an invocation runs, over the set it
+// evaluates (planner.EvaluatedSet), whose bodies the planner's walk planned
+// at PlanQuery. A rewritten set is reported through the magic-sets event.
 func (e *DefaultQueryExecutor) invocationEvaluation(rs *query.RuleSet, inv *query.RuleInvocation, bound []bool) (*ruleEvaluation, error) {
-	if !anyBound(bound) && !rs.ReachesRequired(inv.Name) {
-		return newRuleEvaluation(e.executor, rs, inv.Name, nil), nil
-	}
-	magic, err := planner.Rewrite(e.executor.planner, rs, inv.Name, bound, e.options.Handler)
+	magic, err := planner.EvaluatedSet(e.executor.planner, rs, inv.Name, bound, e.options.Handler)
 	if err != nil {
 		return nil, err
 	}
-	if e.options.Handler != nil {
+	if e.options.Handler != nil && magic.Rules != rs {
 		e.options.Handler(magicSetsEvent(inv.Name, bound))
 	}
 	return newRuleEvaluation(e.executor, magic.Rules, magic.Predicate, magic.Seed), nil
@@ -295,37 +284,6 @@ func magicSetsEvent(name query.Symbol, bound []bool) annotations.Event {
 			"adornment": bound,
 		},
 	}
-}
-
-// boundPositions marks the invocation's positions the clause binds: a
-// constant, or a variable the environment or a relation group binds, a
-// repeated variable at its first position only.
-func boundPositions(ctx *Context, inv *query.RuleInvocation, groups []Relation) []bool {
-	envSymbols, _ := environmentTuple(ctx.Environment())
-	bound := make([]bool, len(inv.Args))
-	seen := map[query.Symbol]bool{}
-	for i, arg := range inv.Args {
-		switch a := arg.(type) {
-		case query.Constant, query.VectorConstant:
-			bound[i] = true
-		case query.Variable:
-			if seen[a.Name] {
-				continue
-			}
-			seen[a.Name] = true
-			bound[i] = query.SymbolIndex(envSymbols, a.Name) >= 0 || groupBinding(groups, a.Name) >= 0
-		}
-	}
-	return bound
-}
-
-func anyBound(bound []bool) bool {
-	for _, b := range bound {
-		if b {
-			return true
-		}
-	}
-	return false
 }
 
 // groupBinding is the index of the group whose symbols hold sym, -1 when
@@ -465,19 +423,8 @@ func newRuleEvaluation(e *Executor, rs *query.RuleSet, predicate, seed query.Sym
 func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) {
 	ev.windows++
 	if ev.windows == 1 {
-		needed := neededPredicates(ev.rs, ev.predicate)
-		for _, stratum := range ev.rs.Strata() {
-			wanted := false
-			for _, p := range stratum.Predicates {
-				if needed[p] {
-					wanted = true
-					break
-				}
-			}
-			if !wanted {
-				continue
-			}
-			eval, err := ev.executor.prepareStratum(ctx, ev.rs, stratum)
+		for _, stratum := range planner.NeededStrata(ev.rs, ev.predicate) {
+			eval, err := ev.executor.prepareStratum(ev.rs, stratum)
 			if err != nil {
 				return nil, err
 			}
@@ -497,8 +444,8 @@ func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) 
 			stratumSeed = seed
 		}
 		changed := ev.windows == 1 || stratumSeed != nil
-		for _, body := range s.eval.lower {
-			if len(added[body.lower]) > 0 {
+		for _, body := range s.eval.bodies.Lower {
+			if len(added[body.Lower]) > 0 {
 				changed = true
 				break
 			}
@@ -515,32 +462,6 @@ func (ev *ruleEvaluation) extend(ctx *Context, seed Relation) (Relation, error) 
 		}
 	}
 	return ev.derived[ev.predicate], nil
-}
-
-// neededPredicates is the set of predicates the invoked one depends on,
-// itself included: its rules' invocations, transitively. A predicate with
-// required positions is not among them and is not walked through: it is
-// evaluated at its invocation, under the invoking body's bindings, never
-// whole.
-func neededPredicates(rs *query.RuleSet, invoked query.Symbol) map[query.Symbol]bool {
-	needed := map[query.Symbol]bool{}
-	pending := []query.Symbol{invoked}
-	for len(pending) > 0 {
-		p := pending[len(pending)-1]
-		pending = pending[:len(pending)-1]
-		if needed[p] || anyBound(rs.Required(p)) {
-			continue
-		}
-		needed[p] = true
-		for _, rule := range rs.Rules(p) {
-			for _, inv := range query.Invocations(rule.Body) {
-				if !needed[inv.Name] {
-					pending = append(pending, inv.Name)
-				}
-			}
-		}
-	}
-	return needed
 }
 
 // derivedSet accumulates a predicate's tuples over its canonical symbols,
@@ -602,177 +523,32 @@ func (s *derivedSet) relation(opts ExecutorOptions) Relation {
 	return newMaterializedRelationFromSet(s.symbols, s.tuples[:n:n], opts, deduplicatedProperties(s.symbols))
 }
 
-// plannedBody is one rule body planned for the fixpoint, with, for a copy
-// marked on a lower-stratum predicate, that predicate.
-type plannedBody struct {
-	rule  *query.Rule
-	plan  *planner.RealizedPlan
-	lower query.Symbol
-}
-
-// stratumEvaluation is a stratum's planned bodies, in three kinds, under the
-// rule set they were planned with, and the canonical symbols of each of its
-// predicates, the set's head for it. plain holds each body with no
-// same-stratum invocation at its top level, planned once and run at the
-// first window's iteration zero over the view; a body whose same-stratum
-// occurrences all sit inside or and or-join branches or subquery bodies is
-// among them, since a branch or an inner query invoking no same-stratum
-// predicate produces without any delta. delta holds, per same-stratum
-// occurrence of a body, at the top level, in a branch or in a subquery body,
-// the copy whose occurrence invokes the predicate's delta symbol, run each
-// iteration after the first. lower holds, per occurrence of a seed-restricted predicate of a
-// lower stratum, the copy whose occurrence invokes that predicate's delta
-// symbol, run at a later window's iteration zero over the tuples the window
-// added to that predicate.
+// stratumEvaluation is a stratum's planned bodies (planner.Bodies), under
+// the rule set they were planned with, and the canonical symbols of each of
+// its predicates, the set's head for it.
 type stratumEvaluation struct {
 	executor *Executor
 	rs       *query.RuleSet
 	stratum  query.Stratum
 	symbols  map[query.Symbol][]query.Symbol
-	plain    []plannedBody
-	delta    []plannedBody
-	lower    []plannedBody
+	bodies   planner.Bodies
 }
 
-// prepareStratum plans every body of the stratum under the rule set. Each
-// plan is a query's plan under its own text, which carries % and the delta
-// symbols, so the planner serves and stores it through the plan cache as it
-// does any query's.
-func (e *Executor) prepareStratum(ctx *Context, rs *query.RuleSet, stratum query.Stratum) (*stratumEvaluation, error) {
-	inStratum := map[query.Symbol]bool{}
-	for _, p := range stratum.Predicates {
-		inStratum[p] = true
-	}
+// prepareStratum reads the stratum's planned bodies from the planner
+// (planner.PlanStratum), the ones the walk at PlanQuery planned and the plan
+// cache serves, and the canonical symbols of its predicates.
+func (e *Executor) prepareStratum(rs *query.RuleSet, stratum query.Stratum) (*stratumEvaluation, error) {
 	eval := &stratumEvaluation{executor: e, rs: rs, stratum: stratum, symbols: map[query.Symbol][]query.Symbol{}}
 	for _, p := range stratum.Predicates {
 		head, _ := rs.Head(p)
 		eval.symbols[p] = head
-		for _, rule := range rs.Rules(p) {
-			occurrences := 0
-			var lowerOrder []query.Symbol
-			lowerCount := map[query.Symbol]int{}
-			for _, inv := range query.Invocations(rule.Body) {
-				switch {
-				case inStratum[inv.Name]:
-					occurrences++
-				case query.SeedRestricted(inv.Name):
-					if lowerCount[inv.Name] == 0 {
-						lowerOrder = append(lowerOrder, inv.Name)
-					}
-					lowerCount[inv.Name]++
-				}
-			}
-			topLevel := 0
-			for _, clause := range rule.Body {
-				if inv, ok := clause.(*query.RuleInvocation); ok && inStratum[inv.Name] {
-					topLevel++
-				}
-			}
-			if occurrences == 0 || topLevel == 0 {
-				plan, err := e.planBody(rs, rule, rule.Body)
-				if err != nil {
-					return nil, err
-				}
-				eval.plain = append(eval.plain, plannedBody{rule: rule, plan: plan})
-			}
-			for j := 0; j < occurrences; j++ {
-				plan, err := e.planBody(rs, rule, markDelta(rule.Body, inStratum, j))
-				if err != nil {
-					return nil, err
-				}
-				eval.delta = append(eval.delta, plannedBody{rule: rule, plan: plan})
-			}
-			for _, name := range lowerOrder {
-				marked := map[query.Symbol]bool{name: true}
-				for j := 0; j < lowerCount[name]; j++ {
-					plan, err := e.planBody(rs, rule, markDelta(rule.Body, marked, j))
-					if err != nil {
-						return nil, err
-					}
-					eval.lower = append(eval.lower, plannedBody{rule: rule, plan: plan, lower: name})
-				}
-			}
-		}
 	}
-	return eval, nil
-}
-
-// planBody plans a rule body as a query finding the rule's head, under the
-// rule set the body's invocations resolve against. The planner reads from
-// each invoked predicate's name whether a seed restricts its relation: a
-// magic or adorned predicate, or the delta of one, leads the body's patterns,
-// and any other invocation joins them at collapse.
-func (e *Executor) planBody(rs *query.RuleSet, rule *query.Rule, body []query.Clause) (*planner.RealizedPlan, error) {
-	find := make([]query.FindElement, len(rule.Head))
-	for i, head := range rule.Head {
-		find[i] = query.FindVariable{Symbol: head}
-	}
-	q := &query.Query{
-		Find:  find,
-		In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}},
-		Where: body,
-	}
-	plan, err := e.planner.PlanQuery(q, query.Bindings{Rules: rs}, e.options.Handler)
+	bodies, err := planner.PlanStratum(e.planner, rs, stratum, e.options.Handler)
 	if err != nil {
-		return nil, fmt.Errorf("planning rule %s: %w", rule.Name, err)
+		return nil, err
 	}
-	return plan, nil
-}
-
-// markDelta copies clauses with the target-th invocation of a predicate in
-// marked, in clause order at the top level, inside or-join branches and
-// inside subquery bodies at any depth, replaced by a copy invoking the
-// predicate's delta symbol. The or-join forms and the subqueries on the path
-// are copied, a subquery over its inner query derived over the walked
-// clauses, and every other clause is shared: a same-stratum invocation
-// stands nowhere else, since the bodies walked are the inferred ones the
-// rule set holds, whose every form carries a header.
-func markDelta(clauses []query.Clause, marked map[query.Symbol]bool, target int) []query.Clause {
-	counter := 0
-	return markDeltaWalk(clauses, marked, target, &counter)
-}
-
-func markDeltaWalk(clauses []query.Clause, marked map[query.Symbol]bool, target int, counter *int) []query.Clause {
-	out := make([]query.Clause, len(clauses))
-	for i, clause := range clauses {
-		switch c := clause.(type) {
-		case *query.RuleInvocation:
-			out[i] = c
-			if marked[c.Name] {
-				if *counter == target {
-					out[i] = &query.RuleInvocation{Name: query.DeltaSymbol(c.Name), Args: c.Args}
-				}
-				*counter++
-			}
-		case *query.OrJoinClause:
-			out[i] = c
-			if branches, found := markDeltaBranches(c.Branches, marked, target, counter); found {
-				out[i] = &query.OrJoinClause{RequiredVars: c.RequiredVars, OutputVars: c.OutputVars, Branches: branches}
-			}
-		case *query.SubqueryPattern:
-			out[i] = c
-			before := *counter
-			walked := markDeltaWalk(c.Query.Where, marked, target, counter)
-			if before <= target && target < *counter {
-				out[i] = &query.SubqueryPattern{Query: c.Query.WithWhere(walked), Inputs: c.Inputs, Binding: c.Binding}
-			}
-		default:
-			out[i] = clause
-		}
-	}
-	return out
-}
-
-// markDeltaBranches walks a form's branches and reports whether the target
-// occurrence fell inside them, which is when the walked copy replaces the
-// form; otherwise the form is shared.
-func markDeltaBranches(branches [][]query.Clause, marked map[query.Symbol]bool, target int, counter *int) ([][]query.Clause, bool) {
-	before := *counter
-	walked := make([][]query.Clause, len(branches))
-	for b, branch := range branches {
-		walked[b] = markDeltaWalk(branch, marked, target, counter)
-	}
-	return walked, before <= target && target < *counter
+	eval.bodies = bodies
+	return eval, nil
 }
 
 // run executes bodies under a scope holding held, the relations by predicate
@@ -781,25 +557,27 @@ func markDeltaBranches(branches [][]query.Clause, marked map[query.Symbol]bool, 
 // predicate, renamed under the predicate's canonical symbols through the
 // substitution of the rule's head for them, for the sets to absorb. A body
 // is a query scope of its own, with no bound inputs: the invoking query's
-// environment does not reach it.
-func (s *stratumEvaluation) run(ctx *Context, held map[query.Symbol]Relation, bodies []plannedBody) (map[query.Symbol][]Relation, error) {
-	scope := ctx.WithEnvironment(nil).WithRules(s.rs).WithDerived(held)
+// environment does not reach it. Its predicates without required positions
+// are held by the fixpoint, so a scope inside it is planned under
+// query.HeldByFixpoint, as the walk at PlanQuery planned it.
+func (s *stratumEvaluation) run(ctx *Context, held map[query.Symbol]Relation, bodies []planner.PlannedBody) (map[query.Symbol][]Relation, error) {
+	scope := ctx.WithEnvironment(nil).WithRules(s.rs).WithDerived(held).WithHeld(query.HeldByFixpoint)
 	results := map[query.Symbol][]Relation{}
 	for _, body := range bodies {
-		rel, err := s.executor.executeRealizedPlan(scope, body.plan, nil)
+		rel, err := s.executor.executeRealizedPlan(scope, body.Plan, nil)
 		if err != nil {
-			return nil, fmt.Errorf("rule %s: %w", body.rule.Name, err)
+			return nil, fmt.Errorf("rule %s: %w", body.Rule.Name, err)
 		}
-		if canonical := s.symbols[body.rule.Name]; !symbolsMatch(body.rule.Head, canonical) {
-			subst, err := query.SubstitutionOf(body.rule.Head, canonical)
+		if canonical := s.symbols[body.Rule.Name]; !symbolsMatch(body.Rule.Head, canonical) {
+			subst, err := query.SubstitutionOf(body.Rule.Head, canonical)
 			if err != nil {
-				return nil, fmt.Errorf("rule %s: %w", body.rule.Name, err)
+				return nil, fmt.Errorf("rule %s: %w", body.Rule.Name, err)
 			}
 			if rel, err = rel.Rename(subst); err != nil {
-				return nil, fmt.Errorf("rule %s: %w", body.rule.Name, err)
+				return nil, fmt.Errorf("rule %s: %w", body.Rule.Name, err)
 			}
 		}
-		results[body.rule.Name] = append(results[body.rule.Name], rel)
+		results[body.Rule.Name] = append(results[body.Rule.Name], rel)
 	}
 	return results, nil
 }
@@ -902,11 +680,11 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 		}
 	}
 	held := view()
-	bodies := s.eval.plain
+	bodies := s.eval.bodies.Plain
 	if ev.windows > 1 {
 		bodies = nil
-		for _, body := range s.eval.lower {
-			if len(lower[body.lower]) > 0 {
+		for _, body := range s.eval.bodies.Lower {
+			if len(lower[body.Lower]) > 0 {
 				bodies = append(bodies, body)
 			}
 		}
@@ -944,7 +722,7 @@ func (ev *ruleEvaluation) runStratum(ctx *Context, s *stratumState, seed Relatio
 		for _, p := range stratum.Predicates {
 			held[query.DeltaSymbol(p)] = newMaterializedRelationFromSet(s.eval.symbols[p], delta[p], e.options, deduplicatedProperties(s.eval.symbols[p]))
 		}
-		results, err := s.eval.run(ctx, held, s.eval.delta)
+		results, err := s.eval.run(ctx, held, s.eval.bodies.Delta)
 		if err != nil {
 			return nil, err
 		}

@@ -198,7 +198,7 @@ func TestKeywordReachingAnAttributePositionThroughASubqueryInputIsData(t *testin
 
 			rel, err := d.Query(`[:find ?e ?v :where [?e :t/tag ?a] (or-default [(q [:find ?v :in $ ?e ?attr :where [?e ?attr ?v]] $ ?e ?a) [[?v] ...]] [(ground 0) ?v])]`)
 			require.NoError(t, err, "a keyword the data binds into an attribute position is evaluated, never checked against the vocabulary")
-			require.ElementsMatch(t, []string{"declared 5", "undeclared 0"}, renderedRows(t, rel, names))
+			require.ElementsMatch(t, []string{"declared 5", "undeclared 0"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -444,11 +444,18 @@ func TestQueryRunsAKeywordReachingThroughABinding(t *testing.T) {
 	}
 }
 
-func TestTypedAccessorsRefuseUnknownAttribute(t *testing.T) {
-	accessors := []struct {
-		name string
-		get  func(d *Database, e datalog.Identity, a datalog.Keyword) error
-	}{
+// typedAccessor is one exported read of Database naming an attribute in Go,
+// called on d for e and a with its value dropped and its error returned.
+type typedAccessor struct {
+	name string
+	get  func(d *Database, e datalog.Identity, a datalog.Keyword) error
+}
+
+// typedAccessors is every exported read of Database that names an attribute
+// in Go: the six value readers, the two vector readers and the entity
+// resolver.
+func typedAccessors() []typedAccessor {
+	return []typedAccessor{
 		{"GetString", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
 			_, _, err := d.GetString(e, a)
 			return err
@@ -473,13 +480,72 @@ func TestTypedAccessorsRefuseUnknownAttribute(t *testing.T) {
 			_, err := d.GetStrings(e, a)
 			return err
 		}},
+		{"GetVectorNth", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
+			_, err := d.GetVectorNth(e, a, 0)
+			return err
+		}},
+		{"GetVectorLength", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
+			_, err := d.GetVectorLength(e, a)
+			return err
+		}},
+		{"ResolveEntityAttributes", func(d *Database, e datalog.Identity, a datalog.Keyword) error {
+			_, err := d.ResolveEntityAttributes(e, []datalog.Keyword{a})
+			return err
+		}},
 	}
+}
+
+func TestTypedAccessorsRefuseUnknownAttribute(t *testing.T) {
 	for _, mode := range optimizerModes {
-		for _, accessor := range accessors {
+		for _, accessor := range typedAccessors() {
 			t.Run(mode.name+"/"+accessor.name, func(t *testing.T) {
 				d, entity := refusingDB(t, mode)
 				attr := kw(":t/strnig")
 				requireUnknown(t, accessor.get(d, entity, attr), attr)
+			})
+		}
+	}
+}
+
+// ResolveEntityAttributes asked several undeclared attributes reports each,
+// joined in order of appearance, as a query naming several is reported.
+func TestResolveEntityAttributesReportsEveryUnknownAttribute(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d, entity := refusingDB(t, mode)
+			_, err := d.ResolveEntityAttributes(entity, []datalog.Keyword{kw(":t/string"), kw(":t/strnig"), kw(":t/lnog")})
+
+			var joined interface{ Unwrap() []error }
+			require.ErrorAs(t, err, &joined, "two unknown attributes are reported together, got %v", err)
+			unknowns := joined.Unwrap()
+			require.Len(t, unknowns, 2)
+			requireUnknown(t, unknowns[0], kw(":t/strnig"))
+			requireUnknown(t, unknowns[1], kw(":t/lnog"))
+		})
+	}
+}
+
+// A declared attribute no datom carries is not refused: every accessor
+// answers it on a refusing database with no error.
+func TestTypedAccessorsAnswerADeclaredAttributeWithNoDatoms(t *testing.T) {
+	for _, mode := range optimizerModes {
+		for _, accessor := range typedAccessors() {
+			t.Run(mode.name+"/"+accessor.name, func(t *testing.T) {
+				d, entity := refusingDB(t, mode)
+				require.NoError(t, accessor.get(d, entity, kw(":t/double")), "a declared attribute with no datoms answers")
+			})
+		}
+	}
+}
+
+// A database opened without the option refuses nothing: every accessor
+// answers an undeclared attribute with no error.
+func TestTypedAccessorsWithoutRefusalOptionAreNotChecked(t *testing.T) {
+	for _, mode := range optimizerModes {
+		for _, accessor := range typedAccessors() {
+			t.Run(mode.name+"/"+accessor.name, func(t *testing.T) {
+				d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
+				require.NoError(t, accessor.get(d, datalog.NewIdentity("holder"), kw(":t/strnig")), "a database opened without the option refuses nothing")
 			})
 		}
 	}

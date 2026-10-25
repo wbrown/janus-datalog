@@ -15,11 +15,10 @@ import (
 // whole join grouped by its variables, a streaming result reads its own input
 // tuples, and a bound invocation over a relation input rewrites once.
 
-// countEntities are three entities carrying :t/c 0, 1 and 1.
-var countEntities = map[string][]fact{
-	"p": {{":t/c", int64(0)}},
-	"q": {{":t/c", int64(1)}},
-	"s": {{":t/c", int64(1)}},
+// countFacts: p, q and s carry :t/c 0, 1 and 1.
+func countFacts() []fact {
+	p, q, s := named("p"), named("q"), named("s")
+	return []fact{{p, ":t/c", int64(0)}, {q, ":t/c", int64(1)}, {s, ":t/c", int64(1)}}
 }
 
 // A relation input with an aggregate alone in the find answers the aggregate
@@ -29,11 +28,11 @@ func TestRelationInput_APureAggregateIsOverTheWholeJoin(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, countEntities)
+			names := commitFacts(t, d, countFacts())
 			rel, err := d.Query(`[:find (count ?e) :in $ [[?c] ...] :where [?e :t/c ?c]]`,
 				[]interface{}{[]interface{}{int64(1)}, []interface{}{int64(0)}})
 			require.NoError(t, err)
-			require.Equal(t, []string{"3"}, renderedRows(t, rel, names))
+			require.Equal(t, []string{"3"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -45,11 +44,11 @@ func TestRelationInput_GroupKeysNamingTheInputAnswerPerTuple(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, countEntities)
+			names := commitFacts(t, d, countFacts())
 			rel, err := d.Query(`[:find ?c (count ?e) :in $ [[?c] ...] :where [?e :t/c ?c]]`,
 				[]interface{}{[]interface{}{int64(1)}, []interface{}{int64(0)}})
 			require.NoError(t, err)
-			require.Equal(t, []string{"0 1", "1 2"}, renderedRows(t, rel, names))
+			require.Equal(t, []string{"0 1", "1 2"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -76,22 +75,22 @@ func TestInputForms_OneRuleForCollectionTupleAndRelation(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, countEntities)
+			names := commitFacts(t, d, countFacts())
 			for _, form := range twoValues {
 				rel, err := d.Query("[:find ?e :in $ "+form.spec+" :where [?e :t/c ?c]]", form.value)
 				require.NoError(t, err, form.name)
-				require.Equal(t, []string{"p", "q", "s"}, renderedRows(t, rel, names), "%s over two values", form.name)
+				require.Equal(t, []string{"p", "q", "s"}, renderedTuples(t, rel, names), "%s over two values", form.name)
 				rel, err = d.Query("[:find (count ?e) :in $ "+form.spec+" :where [?e :t/c ?c]]", form.value)
 				require.NoError(t, err, form.name)
-				require.Equal(t, []string{"3"}, renderedRows(t, rel, names), "%s over two values, counted", form.name)
+				require.Equal(t, []string{"3"}, renderedTuples(t, rel, names), "%s over two values, counted", form.name)
 			}
 			for _, form := range oneValue {
 				rel, err := d.Query("[:find ?e :in $ "+form.spec+" :where [?e :t/c ?c]]", form.value)
 				require.NoError(t, err, form.name)
-				require.Equal(t, []string{"q", "s"}, renderedRows(t, rel, names), "%s over one value", form.name)
+				require.Equal(t, []string{"q", "s"}, renderedTuples(t, rel, names), "%s over one value", form.name)
 				rel, err = d.Query("[:find (count ?e) :in $ "+form.spec+" :where [?e :t/c ?c]]", form.value)
 				require.NoError(t, err, form.name)
-				require.Equal(t, []string{"2"}, renderedRows(t, rel, names), "%s over one value, counted", form.name)
+				require.Equal(t, []string{"2"}, renderedTuples(t, rel, names), "%s over one value, counted", form.name)
 			}
 		})
 	}
@@ -103,11 +102,8 @@ func TestInputForms_OneRuleForCollectionTupleAndRelation(t *testing.T) {
 // the find does not carry, answers every one of fifty input tuples on every
 // one of ten reads.
 func TestRelationInput_AStreamingResultReadsItsOwnTuples(t *testing.T) {
-	entities := map[string][]fact{
-		"p": {{":t/a", int64(1)}},
-		"q": {{":t/a", int64(2)}},
-		"s": {{":t/a", int64(3)}},
-	}
+	p, q, s := named("p"), named("q"), named("s")
+	facts := []fact{{p, ":t/a", int64(1)}, {q, ":t/a", int64(2)}, {s, ":t/a", int64(3)}}
 	var input []interface{}
 	var want []string
 	for i := int64(1); i <= 50; i++ {
@@ -118,22 +114,25 @@ func TestRelationInput_AStreamingResultReadsItsOwnTuples(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			for read := 0; read < 10; read++ {
 				rel, err := d.Query(`[:find ?j ?f :in $ [[?j ?f] ...] :where [?e :t/a ?v] :order-by [[?e :asc]]]`, input)
 				require.NoError(t, err)
-				require.Equal(t, want, renderedRows(t, rel, names), "read %d", read)
+				require.Equal(t, want, renderedTuples(t, rel, names), "read %d", read)
 			}
 		})
 	}
 }
 
-// scalarInputEntities are three entities at :t/c 0, 1 and 1, the first two
-// carrying a :t/k.
-var scalarInputEntities = map[string][]fact{
-	"p": {{":t/c", int64(0)}, {":t/k", int64(7)}},
-	"q": {{":t/c", int64(1)}, {":t/k", int64(8)}},
-	"s": {{":t/c", int64(1)}},
+// scalarInputFacts: p, q and s carry :t/c 0, 1 and 1, the first two beside
+// a :t/k.
+func scalarInputFacts() []fact {
+	p, q, s := named("p"), named("q"), named("s")
+	return []fact{
+		{p, ":t/c", int64(0)}, {p, ":t/k", int64(7)},
+		{q, ":t/c", int64(1)}, {q, ":t/k", int64(8)},
+		{s, ":t/c", int64(1)},
+	}
 }
 
 // A scalar input is a relation of one tuple the query joins, as the same
@@ -144,10 +143,10 @@ func TestScalarInput_ReadByNoClauseIsTheProductsValueBesideTheCount(t *testing.T
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, scalarInputEntities)
+			names := commitFacts(t, d, scalarInputFacts())
 			rel, err := d.Query(`[:find ?w (count ?e) :in $ ?w :where [?e :t/c _]]`, int64(5))
 			require.NoError(t, err)
-			require.Equal(t, []string{"5 3"}, renderedRows(t, rel, names))
+			require.Equal(t, []string{"5 3"}, renderedTuples(t, rel, names))
 		})
 	}
 }
@@ -159,13 +158,13 @@ func TestScalarInput_ABranchReadsItAsTheGroundSpellingDoes(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, scalarInputEntities)
+			names := commitFacts(t, d, scalarInputFacts())
 			ground, err := d.Query(`[:find ?c ?k (count ?e) :where [(ground 1) ?c] [?e :t/c ?c] (or-join [?k] (and [?z :t/c ?c] [?z :t/k ?k]))]`)
 			require.NoError(t, err)
-			want := renderedRows(t, ground, names)
+			want := renderedTuples(t, ground, names)
 			rel, err := d.Query(`[:find ?c ?k (count ?e) :in $ ?c :where [?e :t/c ?c] (or-join [?k] (and [?z :t/c ?c] [?z :t/k ?k]))]`, int64(1))
 			require.NoError(t, err)
-			require.Equal(t, want, renderedRows(t, rel, names), "the input spelling answers as the ground spelling does")
+			require.Equal(t, want, renderedTuples(t, rel, names), "the input spelling answers as the ground spelling does")
 		})
 	}
 }
@@ -205,14 +204,14 @@ func TestInputReadByNoClause_IsAFactorOfTheCount(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, countEntities)
+			names := commitFacts(t, d, countFacts())
 			ground, err := d.Query(`[:find (count ?e) :where [(ground [1 2 3]) [?w ...]] [?e :t/c _]]`)
 			require.NoError(t, err)
-			require.Equal(t, []string{"9"}, renderedRows(t, ground, names), "the ground spelling counts the product")
+			require.Equal(t, []string{"9"}, renderedTuples(t, ground, names), "the ground spelling counts the product")
 			for _, form := range spellings {
 				rel, err := d.Query("[:find (count ?e) :in $ "+form.spec+" :where [?e :t/c _]]", form.value)
 				require.NoError(t, err, form.name)
-				require.Equal(t, []string{"9"}, renderedRows(t, rel, names), "a %s input no clause reads is a factor of the count", form.name)
+				require.Equal(t, []string{"9"}, renderedTuples(t, rel, names), "a %s input no clause reads is a factor of the count", form.name)
 			}
 		})
 	}
@@ -225,15 +224,15 @@ func TestDisjointGroup_IsAFactorOfTheCount(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, scalarInputEntities)
+			names := commitFacts(t, d, scalarInputFacts())
 			rel, err := d.Query(`[:find (count ?e) :where [?e :t/c _] [?z :t/k _]]`)
 			require.NoError(t, err)
-			require.Equal(t, []string{"6"}, renderedRows(t, rel, names), "the group the find does not read multiplies the count")
+			require.Equal(t, []string{"6"}, renderedTuples(t, rel, names), "the group the find does not read multiplies the count")
 			nothing, err := d.Query(`[:find (count ?e) :where [?e :t/none _]]`)
 			require.NoError(t, err)
 			empty, err := d.Query(`[:find (count ?e) :where [?e :t/c _] [?z :t/none _]]`)
 			require.NoError(t, err)
-			require.Equal(t, renderedRows(t, nothing, names), renderedRows(t, empty, names), "an empty factor counts as a find over nothing")
+			require.Equal(t, renderedTuples(t, nothing, names), renderedTuples(t, empty, names), "an empty factor counts as a find over nothing")
 		})
 	}
 }
@@ -242,10 +241,11 @@ func TestDisjointGroup_IsAFactorOfTheCount(t *testing.T) {
 // a sort on it orders the join: the values of the entities the input's first
 // symbol keys, in the order of the tags its second symbol pairs them with.
 func TestOrderBy_ARelationInputSymbolNoClauseBindsOrdersTheJoin(t *testing.T) {
-	entities := map[string][]fact{
-		"p": {{":t/key", int64(1)}, {":t/val", "first"}},
-		"q": {{":t/key", int64(2)}, {":t/val", "second"}},
-		"s": {{":t/key", int64(3)}, {":t/val", "third"}},
+	p, q, s := named("p"), named("q"), named("s")
+	facts := []fact{
+		{p, ":t/key", int64(1)}, {p, ":t/val", "first"},
+		{q, ":t/key", int64(2)}, {q, ":t/val", "second"},
+		{s, ":t/key", int64(3)}, {s, ":t/val", "third"},
 	}
 	input := []interface{}{
 		[]interface{}{int64(1), int64(30)},
@@ -255,7 +255,7 @@ func TestOrderBy_ARelationInputSymbolNoClauseBindsOrdersTheJoin(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			namedEntities(t, d, entities)
+			commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?v :in $ [[?k ?tag] ...] :where [?e :t/key ?k] [?e :t/val ?v] :order-by [[?tag :asc]]]`, input)
 			require.NoError(t, err)
 			var values []interface{}
@@ -274,15 +274,12 @@ func TestOrderBy_ARelationInputSymbolNoClauseBindsOrdersTheJoin(t *testing.T) {
 // occurrence: sorted by the member ascending and then the value descending,
 // the values come descending.
 func TestOrderBy_ACollectionInputSymbolNoClauseReadsOrdersTheProduct(t *testing.T) {
-	entities := map[string][]fact{
-		"p": {{":t/c", int64(1)}},
-		"q": {{":t/c", int64(2)}},
-		"s": {{":t/c", int64(3)}},
-	}
+	p, q, s := named("p"), named("q"), named("s")
+	facts := []fact{{p, ":t/c", int64(1)}, {q, ":t/c", int64(2)}, {s, ":t/c", int64(3)}}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			namedEntities(t, d, entities)
+			commitFacts(t, d, facts)
 			rel, err := d.Query(`[:find ?c :in $ [?w ...] :where [?e :t/c ?c] :order-by [[?w :asc] [?c :desc]]]`, []interface{}{int64(7), int64(8)})
 			require.NoError(t, err)
 			var values []interface{}

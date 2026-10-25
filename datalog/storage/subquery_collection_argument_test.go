@@ -14,15 +14,18 @@ import (
 // nothing and the clause answers no tuple, and a member named twice is one
 // member.
 
-// holders are the entities whose :t/r a collection subquery counts under,
+// holderFacts: the entities whose :t/r a collection subquery counts under,
 // one at 1, two at 2 and one at 3, beside two entities carrying :t/k.
-var holders = map[string][]fact{
-	"a":  {{":t/r", int64(1)}},
-	"b":  {{":t/r", int64(2)}},
-	"c":  {{":t/r", int64(2)}},
-	"d":  {{":t/r", int64(3)}},
-	"z1": {{":t/k", ":x"}},
-	"z2": {{":t/k", ":y"}},
+func holderFacts() []fact {
+	a, b, c, d, z1, z2 := named("a"), named("b"), named("c"), named("d"), named("z1"), named("z2")
+	return []fact{
+		{a, ":t/r", int64(1)},
+		{b, ":t/r", int64(2)},
+		{c, ":t/r", int64(2)},
+		{d, ":t/r", int64(3)},
+		{z1, ":t/k", ":x"},
+		{z2, ":t/k", ":y"},
+	}
 }
 
 // countOverCollection is the query passing a ground vector into a counting
@@ -37,28 +40,28 @@ func TestSubquery_ACollectionArgumentAggregatesOverItsMembers(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, holders)
+			names := commitFacts(t, d, holderFacts())
 			rel, err := d.Query(fmt.Sprintf(countOverCollection, "[1 2 3]"))
 			require.NoError(t, err)
-			require.Equal(t, []string{":x 4", ":y 4"}, renderedRows(t, rel, names))
+			require.Equal(t, []string{":x 4", ":y 4"}, renderedTuples(t, rel, names))
 		})
 	}
 }
 
 // An empty collection argument binds nothing, so the subquery clause answers
-// no tuple and the query answers no row, without a panic.
+// no tuple and the query answers none, without a panic.
 func TestSubquery_AnEmptyCollectionArgumentAnswersNothing(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, holders)
-			var rows []string
+			names := commitFacts(t, d, holderFacts())
+			var tuples []string
 			require.NotPanics(t, func() {
 				rel, err := d.Query(fmt.Sprintf(countOverCollection, "[]"))
 				require.NoError(t, err)
-				rows = renderedRows(t, rel, names)
+				tuples = renderedTuples(t, rel, names)
 			})
-			require.Empty(t, rows)
+			require.Empty(t, tuples)
 		})
 	}
 }
@@ -70,14 +73,14 @@ func TestSubquery_ACollectionArgumentNamingAMemberTwiceCountsItOnce(t *testing.T
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, holders)
-			var rows []string
+			names := commitFacts(t, d, holderFacts())
+			var tuples []string
 			require.NotPanics(t, func() {
 				rel, err := d.Query(fmt.Sprintf(countOverCollection, "[1 1 2]"))
 				require.NoError(t, err)
-				rows = renderedRows(t, rel, names)
+				tuples = renderedTuples(t, rel, names)
 			})
-			require.Equal(t, []string{":x 3", ":y 3"}, rows)
+			require.Equal(t, []string{":x 3", ":y 3"}, tuples)
 		})
 	}
 }

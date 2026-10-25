@@ -168,19 +168,20 @@ type nonMonotoneSite struct {
 // subquery of its own whose :in is in and whose call passes inputs, over the
 // clauses the walk has passed at this level, since the level's variables are
 // its own and never unify with the enclosing scope's. For a branch, in and
-// inputs carry the sources, the rule set and the header symbols the
-// enclosing scope binds, and header holds the whole header, each symbol of
-// which stands for the enclosing scope's symbol of the same name. For a
-// subquery, in and inputs are the call's own, names is the call's
-// substitution, under which a bound :in symbol stands for the argument's
-// variable, and constants holds the constant the call passes at an :in
-// symbol, which a magic rule grounds as it grounds a constant argument of
-// the invocation itself.
+// inputs carry the sources, the rule set and the given symbols the enclosing
+// scope binds, and given holds the symbols the branch is given
+// (GivenSymbols), each of which stands for the enclosing scope's symbol of
+// the same name; a header symbol the branch is not given, a fallback's
+// output, is the branch's own. For a subquery, in and inputs are the call's
+// own, names is the call's substitution, under which a bound :in symbol
+// stands for the argument's variable, and constants holds the constant the
+// call passes at an :in symbol, which a magic rule grounds as it grounds a
+// constant argument of the invocation itself.
 type scopeLevel struct {
 	in        []query.InputSpec
 	inputs    []query.PatternElement
 	clauses   []query.Clause
-	header    []query.Symbol
+	given     []query.Symbol
 	names     query.Substitution
 	constants map[query.Symbol]query.PatternElement
 }
@@ -202,20 +203,20 @@ type passing struct {
 	nonMonotone bool
 }
 
-// within is what passes into a header form's branches: the header's
-// variables the enclosing scope binds, over the same clauses, since inside
-// the form only the header's variables are the enclosing scope's, with the
-// branch entered as a scope a magic rule reads through a subquery over those
-// variables.
-func (p passing) within(header []query.Symbol) passing {
+// within is what passes into a header form's branches: of the symbols the
+// branches are given (GivenSymbols), those the enclosing scope binds, over
+// the same clauses, since inside the form only the given symbols are the
+// enclosing scope's, with the branch entered as a scope a magic rule reads
+// through a subquery over those variables.
+func (p passing) within(given []query.Symbol) passing {
 	inside := p
-	inside.bound = make(map[query.Symbol]bool, len(header))
+	inside.bound = make(map[query.Symbol]bool, len(given))
 	level := scopeLevel{
 		in:     []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}, query.RulesInput{}},
 		inputs: []query.PatternElement{query.Constant{Value: datalog.SymDollar}, query.Constant{Value: datalog.NewSymbol("%")}},
-		header: header,
+		given:  given,
 	}
-	for _, sym := range header {
+	for _, sym := range given {
 		if p.bound[sym] {
 			inside.bound[sym] = true
 			level.in = append(level.in, query.ScalarInput{Symbol: sym})
@@ -252,10 +253,11 @@ func (w *magicRewriter) includeOriginal(name query.Symbol) {
 }
 
 // planned is a scope's clauses in the planner's order: the scope planned
-// through the planner under the set being rewritten, read as the rewrite
+// through the planner under the set being rewritten, with every invocation
+// held, since the rewrite decides each site itself, read as the rewrite
 // reads a plan.
 func (w *magicRewriter) planned(required []query.Symbol, find []query.FindElement, clauses []query.Clause) ([]query.Clause, error) {
-	plan, err := w.planner.PlanScope(Scope{Required: required, Find: find, Clauses: clauses}, query.Bindings{Rules: w.rs}, w.handler)
+	plan, err := w.planner.PlanScope(Scope{Required: required, Find: find, Clauses: clauses}, query.Bindings{Rules: w.rs, Held: query.HeldEvery}, w.handler)
 	if err != nil {
 		return nil, err
 	}
@@ -523,14 +525,17 @@ func (w *magicRewriter) plannedBranches(required, outputs []query.Symbol, branch
 // branch are the planner's, and each branch is walked as a scope, the
 // branch's clauses passing into the invocations after them. A form on the
 // path to an adorned invocation is copied; every other clause is shared.
-// Inside a form only the header's variables are the enclosing scope's, so
-// what passes into its branches is filtered to the header. An or-join's
-// branches walk under the passing and its sealed twin as the body does,
-// sealed where the body already is; a non-monotone form's branches walk
-// under the sealed passing alone, which holds nothing of the rule's stratum,
-// so the walk inside starts unsealed. Every form the walk meets carries a
-// header, since the bodies and inner queries it walks are inferred
-// (NewRuleSet, InferHeaders).
+// What passes into a form's branches is what the executor gives them
+// (GivenSymbols): a not-join's body and a fallback's branches are given the
+// required run alone, since a fallback's outputs are joined after its
+// decision and never bound into a branch, and a union's branches are given
+// the required run with the outputs. An or-join's branches walk under the
+// passing and its sealed twin as the body does, sealed where the body
+// already is; a non-monotone form's branches walk under the sealed passing
+// alone, which holds nothing of the rule's stratum, so the walk inside
+// starts unsealed. Every form the walk meets carries a header, since the
+// bodies and inner queries it walks are inferred (NewRuleSet,
+// InferHeaders).
 func (w *magicRewriter) rewriteClause(rule query.Symbol, clause query.Clause, before, negated passing, sealed bool) (query.Clause, []*query.Rule, error) {
 	under := negated
 	under.nonMonotone = true
@@ -553,8 +558,8 @@ func (w *magicRewriter) rewriteClause(rule query.Symbol, clause query.Clause, be
 		if err != nil {
 			return nil, nil, err
 		}
-		header := append(append([]query.Symbol(nil), c.RequiredVars...), c.OutputVars...)
-		branches, rules, changed, err := w.rewriteBranches(rule, planned, before.within(header), negated.within(header), sealed)
+		given := GivenSymbols(c.RequiredVars, c.OutputVars, false)
+		branches, rules, changed, err := w.rewriteBranches(rule, planned, before.within(given), negated.within(given), sealed)
 		if err != nil || !changed {
 			return c, nil, err
 		}
@@ -564,8 +569,7 @@ func (w *magicRewriter) rewriteClause(rule query.Symbol, clause query.Clause, be
 		if err != nil {
 			return nil, nil, err
 		}
-		header := append(append([]query.Symbol(nil), c.RequiredVars...), c.OutputVars...)
-		inside := under.within(header)
+		inside := under.within(GivenSymbols(c.RequiredVars, c.OutputVars, true))
 		branches, rules, changed, err := w.rewriteBranches(rule, planned, inside, inside, false)
 		if err != nil || !changed {
 			return c, nil, err
@@ -785,14 +789,15 @@ func (w *magicRewriter) excludedSite(in passing, inv *query.RuleInvocation, boun
 // scope's out to the body. A read finds the bound variables the scope's
 // clauses provide, the inner read among them. A bound variable the scope's
 // inputs alone bind has no attribute in the read's result, so it passes
-// through under the name standing for it outside: a header symbol under
-// the enclosing scope's symbol of its name, a bound :in symbol under its
-// argument's variable, and one standing for a constant the call passes as
-// that constant, grounded at the body. A scope whose clauses provide none
-// of the bound variables contributes no read, since a clause left out
-// widens the magic set and loses no tuple. A scope's local stands for a
-// fresh variable named for the magic predicate and the position, which the
-// reads outside carry up unchanged.
+// through under the name standing for it outside: a symbol the branch is
+// given under the enclosing scope's symbol of its name, a bound :in symbol
+// under its argument's variable, and one standing for a constant the call
+// passes as that constant, grounded at the body. A scope whose clauses
+// provide none of the bound variables contributes no read, since a clause
+// left out widens the magic set and loses no tuple. A scope's local, a
+// fallback's output the branch provides among them, stands for a fresh
+// variable named for the magic predicate and the position, which the reads
+// outside carry up unchanged.
 func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvocation, in passing) (query.Clause, []*query.Rule, error) {
 	args := append([]query.PatternElement(nil), inv.Args...)
 	bound := make([]bool, len(args))
@@ -855,7 +860,7 @@ func (w *magicRewriter) adornInvocation(rule query.Symbol, inv *query.RuleInvoca
 				continue
 			}
 			outside, named := level.names.Of(names[i])
-			if !named && query.ContainsSymbol(level.header, names[i]) {
+			if !named && query.ContainsSymbol(level.given, names[i]) {
 				outside, named = names[i], true
 			}
 			if !named {

@@ -497,8 +497,13 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 
 // GetVectorNth returns the nth element of a vector attribute.
 // Uses the cache for O(1) access when the cache is fresh.
-// Returns nil if index is out of bounds or attribute is not a vector.
+// Returns nil if index is out of bounds or attribute is not a vector. A
+// database that refuses unknown attributes refuses an attribute its schema
+// does not declare before any read, as every typed accessor does.
 func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) (any, error) {
+	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
+		return nil, err
+	}
 	eBytes := Entity(e.Hash())
 
 	var aBytes Attribute
@@ -544,8 +549,13 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 
 // GetVectorLength returns the length of a vector attribute.
 // Uses the cache for O(1) access when the cache is fresh.
-// Returns 0 if the attribute is not a vector or doesn't exist.
+// Returns 0 if the attribute is not a vector or doesn't exist. A database
+// that refuses unknown attributes refuses an attribute its schema does not
+// declare before any read, as every typed accessor does.
 func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64, error) {
+	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
+		return 0, err
+	}
 	eBytes := Entity(e.Hash())
 
 	var aBytes Attribute
@@ -1223,9 +1233,8 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 
 	// Accumulate every event: AnalyzeResult.Events is what this method returns,
 	// so here the accumulation is the product rather than a way to look one event
-	// up. Parallel subquery workers share this handler, so it holds a lock — a
-	// handler that accumulates owns its own synchronization, since the engine does
-	// not serialize handlers.
+	// up. A handler that accumulates owns its own synchronization, since the
+	// engine serializes no handler, so it holds a lock.
 	//
 	// Declared before the options because the executor and its matcher are
 	// constructed with the handler registered on them.
@@ -3068,7 +3077,13 @@ func (d *Database) pullMatcher(pattern *query.PullPattern) (executor.PatternMatc
 // - If many missing: full EAVT scan then resolve
 //
 // Returns a map of keyword -> resolved value. Missing attributes are not included.
+// A database that refuses unknown attributes refuses every attribute asked
+// that its schema does not declare, joined in order, before any read, as
+// every typed accessor does.
 func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []datalog.Keyword) (map[datalog.Keyword]interface{}, error) {
+	if err := d.UnknownAttributes(datalog.SymDollar, attrs); err != nil {
+		return nil, err
+	}
 	if len(attrs) == 0 {
 		return make(map[datalog.Keyword]interface{}), nil
 	}

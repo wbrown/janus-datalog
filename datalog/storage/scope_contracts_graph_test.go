@@ -23,7 +23,7 @@ import (
 // prefetch, each answered as a reference over the graph's own facts answers
 // it, on every backend and mode, at window caps from one tuple to the
 // executor's default. Each entity is named e<i> and carries :k :x, a :p ref
-// on some, a :q ref on some, and :r on some. A check whose row count the
+// on some, a :q ref on some, and :r on some. A check whose tuple count the
 // record of the graph states asserts that count beside the reference.
 
 // scopeGraph is a recorded graph: per entity index, the index of its :p
@@ -84,23 +84,27 @@ func loadScopeGraph(t testing.TB, path string) scopeGraph {
 	return g
 }
 
-// entities is the graph as namedEntities commits it.
-func (g scopeGraph) entities() map[string][]fact {
-	entities := map[string][]fact{}
-	for i := range g.p {
-		facts := []fact{{":k", kw(":x")}}
+// facts is the graph as commitFacts commits it, each entity's facts in index
+// order: its :k, then its :p and :q refs and its :r where it carries them.
+func (g scopeGraph) facts() []fact {
+	entities := make([]namedEntity, len(g.p))
+	for i := range entities {
+		entities[i] = named(scopeName(i))
+	}
+	var facts []fact
+	for i, e := range entities {
+		facts = append(facts, fact{e, ":k", kw(":x")})
 		if g.p[i] >= 0 {
-			facts = append(facts, fact{":p", ref(scopeName(g.p[i]))})
+			facts = append(facts, fact{e, ":p", entities[g.p[i]]})
 		}
 		if g.q[i] >= 0 {
-			facts = append(facts, fact{":q", ref(scopeName(g.q[i]))})
+			facts = append(facts, fact{e, ":q", entities[g.q[i]]})
 		}
 		if g.r[i] >= 0 {
-			facts = append(facts, fact{":r", g.r[i]})
+			facts = append(facts, fact{e, ":r", g.r[i]})
 		}
-		entities[scopeName(i)] = facts
 	}
-	return entities
+	return facts
 }
 
 // those lists the entities keep holds of, in index order.
@@ -123,10 +127,10 @@ func (g scopeGraph) reach(i int) map[int]bool {
 	return reached
 }
 
-// scopeRow renders a reference row as renderedRows renders a result's: an
-// int is an entity's index, rendered as its name, and any other value is
+// scopeTuple renders a reference tuple as renderedTuples renders a result's:
+// an int is an entity's index, rendered as its name, and any other value is
 // printed.
-func scopeRow(parts ...interface{}) string {
+func scopeTuple(parts ...interface{}) string {
 	rendered := make([]string, len(parts))
 	for i, part := range parts {
 		if index, ok := part.(int); ok {
@@ -155,7 +159,7 @@ func scopeGraphSchema(t testing.TB) *schema.Schema {
 }
 
 // scopeCheck is one query over the graph, whether it takes the reach rules,
-// its inputs after them, the rows the reference gives, the row count the
+// its inputs after them, the tuples the reference gives, the tuple count the
 // record states or -1 where it states none, and the count of
 // RulesStratumBegin events its execution emits or -1 where the check reads
 // none.
@@ -165,7 +169,7 @@ type scopeCheck struct {
 	rules  bool
 	inputs []interface{}
 	want   []string
-	rows   int
+	tuples int
 	strata int
 }
 
@@ -175,11 +179,11 @@ type scopeCheck struct {
 var recordedGraphCaps = []int{0, 1, 32}
 
 // runScopeChecks runs every check on each backend and mode at each cap,
-// asserting the reference's rows, the recorded count where the record
+// asserting the reference's tuples, the recorded count where the record
 // states one, and the stratum count where a check reads it.
 func runScopeChecks(t *testing.T, g scopeGraph, caps []int, checks []scopeCheck) {
 	t.Helper()
-	entities := g.entities()
+	facts := g.facts()
 	rules := mustRuleSet(t, scopeReach)
 	for _, mode := range optimizerModes {
 		for _, windowCap := range caps {
@@ -192,7 +196,7 @@ func runScopeChecks(t *testing.T, g scopeGraph, caps []int, checks []scopeCheck)
 						strata.Add(1)
 					}
 				}})
-				names := namedEntities(t, d, entities)
+				names := commitFacts(t, d, facts)
 				for _, c := range checks {
 					t.Run(c.name, func(t *testing.T) {
 						var inputs []interface{}
@@ -203,11 +207,11 @@ func runScopeChecks(t *testing.T, g scopeGraph, caps []int, checks []scopeCheck)
 						strata.Store(0)
 						rel, err := d.Query(c.text, inputs...)
 						require.NoError(t, err)
-						got := renderedRows(t, rel, names)
-						t.Logf("%d rows", len(got))
+						got := renderedTuples(t, rel, names)
+						t.Logf("%d tuples", len(got))
 						require.ElementsMatch(t, c.want, got)
-						if c.rows >= 0 {
-							require.Len(t, got, c.rows, "the record's count")
+						if c.tuples >= 0 {
+							require.Len(t, got, c.tuples, "the record's count")
 						}
 						if c.strata >= 0 {
 							require.Equal(t, int32(c.strata), strata.Load(), "one evaluation per invocation, continued across the windows")
@@ -246,7 +250,7 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 	var selfLoops []string
 	for e := range g.p {
 		if g.p[e] == e {
-			selfLoops = append(selfLoops, scopeRow(e))
+			selfLoops = append(selfLoops, scopeTuple(e))
 		}
 	}
 
@@ -255,7 +259,7 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 		for _, b := range threes {
 			for _, c := range onesNoP {
 				if g.p[b] == c || g.p[a] == b || g.p[b] == a {
-					fold = append(fold, scopeRow(a, b, c))
+					fold = append(fold, scopeTuple(a, b, c))
 				}
 			}
 		}
@@ -264,7 +268,7 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 	var selfTargets []string
 	for _, x := range twos {
 		if y := g.q[x]; y >= 0 && g.p[y] == y {
-			selfTargets = append(selfTargets, scopeRow(x, y))
+			selfTargets = append(selfTargets, scopeTuple(x, y))
 		}
 	}
 
@@ -273,7 +277,7 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 		reached := g.reach(x)
 		union := map[int]bool{}
 		for y := range reached {
-			closure = append(closure, scopeRow(x, y))
+			closure = append(closure, scopeTuple(x, y))
 			union[y] = true
 		}
 		for y := range g.p {
@@ -282,29 +286,29 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 			}
 		}
 		for y := range union {
-			closureOrQ = append(closureOrQ, scopeRow(x, y))
+			closureOrQ = append(closureOrQ, scopeTuple(x, y))
 		}
 		if len(reached) > 0 {
-			fans = append(fans, scopeRow(x, int64(len(reached))))
+			fans = append(fans, scopeTuple(x, int64(len(reached))))
 		}
 		if reached[x] {
-			cyclic = append(cyclic, scopeRow(x))
+			cyclic = append(cyclic, scopeTuple(x))
 		}
-		zeroDefault = append(zeroDefault, scopeRow(x, int64(len(reached))))
+		zeroDefault = append(zeroDefault, scopeTuple(x, int64(len(reached))))
 	}
 
 	var carried, reachesThree, product []string
 	for _, a := range ones {
 		reached := g.reach(a)
 		for _, w := range threes {
-			product = append(product, scopeRow(a, w))
+			product = append(product, scopeTuple(a, w))
 			if reached[w] || (g.p[a] >= 0 && g.q[g.p[a]] == w) {
-				carried = append(carried, scopeRow(a, w))
+				carried = append(carried, scopeTuple(a, w))
 			}
 		}
 		for _, w := range threesNoP {
 			if reached[w] {
-				reachesThree = append(reachesThree, scopeRow(a, w))
+				reachesThree = append(reachesThree, scopeTuple(a, w))
 			}
 		}
 	}
@@ -322,15 +326,15 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 	bothID, noQID := datalog.NewIdentity(scopeName(both)), datalog.NewIdentity(scopeName(noQ))
 	var allOnes, onesButTarget, onesFlagged []string
 	for _, e := range g.those(func(i int) bool { return g.r[i] == 1 }) {
-		allOnes = append(allOnes, scopeRow(e))
+		allOnes = append(allOnes, scopeTuple(e))
 		if g.p[both] != e {
-			onesButTarget = append(onesButTarget, scopeRow(e))
+			onesButTarget = append(onesButTarget, scopeTuple(e))
 		}
 		flag := int64(0)
 		if g.p[both] == e {
 			flag = 1
 		}
-		onesFlagged = append(onesFlagged, scopeRow(e, flag))
+		onesFlagged = append(onesFlagged, scopeTuple(e, flag))
 	}
 	noQValue := g.p[noQ]
 	if noQValue < 0 {
@@ -358,7 +362,7 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 	}
 	var hubCounts []string
 	for e, n := range perTarget {
-		hubCounts = append(hubCounts, scopeRow(e, n))
+		hubCounts = append(hubCounts, scopeTuple(e, n))
 	}
 	require.NotEmpty(t, hubCounts, "some entity referring to the hub carries a :q")
 
@@ -371,7 +375,7 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 		for h := range g.p {
 			for _, n := range m.ns {
 				if g.r[h] == n {
-					held = append(held, scopeRow(m.t, h))
+					held = append(held, scopeTuple(m.t, h))
 					break
 				}
 			}
@@ -380,13 +384,13 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 
 	var countBeside []string
 	for _, a := range ones {
-		countBeside = append(countBeside, scopeRow(a, int64(len(g.those(func(i int) bool { return g.r[i] == 3 })))))
+		countBeside = append(countBeside, scopeTuple(a, int64(len(g.those(func(i int) bool { return g.r[i] == 3 })))))
 	}
 
 	var nestedNot, nestedUnion, nestedFallback, nestedCount []string
 	for _, x := range g.those(func(i int) bool { return g.r[i] == 1 }) {
 		if (g.p[x] >= 0 && g.q[g.p[x]] < 0) || g.q[x] >= 0 {
-			nestedNot = append(nestedNot, scopeRow(x))
+			nestedNot = append(nestedNot, scopeTuple(x))
 		}
 		values := map[int64]bool{}
 		if g.p[x] >= 0 {
@@ -396,17 +400,17 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 			values[g.r[g.q[x]]] = true
 		}
 		if len(values) == 0 {
-			nestedUnion = append(nestedUnion, scopeRow(x, int64(-1)))
+			nestedUnion = append(nestedUnion, scopeTuple(x, int64(-1)))
 		}
 		for v := range values {
-			nestedUnion = append(nestedUnion, scopeRow(x, v))
+			nestedUnion = append(nestedUnion, scopeTuple(x, v))
 		}
 		v := g.p[x]
 		if v < 0 {
 			v = x
 		}
 		if g.q[v] < 0 {
-			nestedFallback = append(nestedFallback, scopeRow(x))
+			nestedFallback = append(nestedFallback, scopeTuple(x))
 		}
 		var n int64
 		for z := range g.p {
@@ -415,7 +419,7 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 			}
 		}
 		if n > 0 {
-			nestedCount = append(nestedCount, scopeRow(x, n))
+			nestedCount = append(nestedCount, scopeTuple(x, n))
 		}
 	}
 
@@ -431,7 +435,7 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 	var pointing []string
 	for _, e := range ones {
 		if g.p[e] == target {
-			pointing = append(pointing, scopeRow(e))
+			pointing = append(pointing, scopeTuple(e))
 		}
 	}
 
@@ -446,8 +450,8 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 		{"a not-join header the environment alone binds, deciding against", `[:find ?e :in $ ?x :where [?e :r 1] (not-join [?x] [?x :q _])]`, false, []interface{}{bothID}, nil, -1, -1},
 		{"a not-join header the environment alone binds, deciding for", `[:find ?e :in $ ?x :where [?e :r 1] (not-join [?x] [?x :q _])]`, false, []interface{}{noQID}, allOnes, -1, -1},
 		{"a not-join header of an input and a data variable", `[:find ?e :in $ ?x :where [?e :r 1] (not-join [?x ?e] [?x :p ?e])]`, false, []interface{}{bothID}, onesButTarget, -1, -1},
-		{"a fallback whose required run the environment alone binds", `[:find ?v :in $ ?x :where (or-default-join [[?x] ?v] [?x :p ?v] [(identity ?x) ?v])]`, false, []interface{}{bothID}, []string{scopeRow(g.p[both])}, -1, -1},
-		{"a fallback whose required run the environment alone binds, defaulting", `[:find ?v :in $ ?x :where (or-default-join [[?x] ?v] [?x :p ?v] [(identity ?x) ?v])]`, false, []interface{}{noQID}, []string{scopeRow(noQValue)}, -1, -1},
+		{"a fallback whose required run the environment alone binds", `[:find ?v :in $ ?x :where (or-default-join [[?x] ?v] [?x :p ?v] [(identity ?x) ?v])]`, false, []interface{}{bothID}, []string{scopeTuple(g.p[both])}, -1, -1},
+		{"a fallback whose required run the environment alone binds, defaulting", `[:find ?v :in $ ?x :where (or-default-join [[?x] ?v] [?x :p ?v] [(identity ?x) ?v])]`, false, []interface{}{noQID}, []string{scopeTuple(noQValue)}, -1, -1},
 		{"a fallback whose required run holds an input and a data variable", `[:find ?e ?v :in $ ?x :where [?e :r 1] (or-default-join [[?x ?e] ?v] (and [?x :p ?e] [(ground 1) ?v]) [(ground 0) ?v])]`, false, []interface{}{bothID}, onesFlagged, -1, -1},
 		{"a counting subquery over an input and a data variable", `[:find ?e ?n :in $ ?x :where [?e :k :x] [(q [:find (count ?z) :in $ ?x ?e :where [?z :p ?x] [?z :q ?e]] $ ?x ?e) [[?n]]]]`, false, []interface{}{hubID}, hubCounts, -1, -1},
 		{"a subquery binding naming its own argument", `[:find ?e :where [?e :k :x] [(q [:find ?y :in $ ?x :where [?x :p ?y]] $ ?e) [[?e]]]]`, false, nil, selfLoops, 67, -1},
@@ -461,7 +465,7 @@ func TestScopeForms_OverTheRecordedGraphAnswerTheRecordAndTheReference(t *testin
 		{"an invocation with a repeated argument over a streaming group", `[:find ?a :in $ % :where [?a :r 1] (not-join [?a] [?a :q ?a]) (reach ?a ?a)]`, true, nil, cyclic, 16, -1},
 		{"an invocation over two streaming groups", `[:find ?a ?b :in $ % :where [?a :r 1] (not-join [?a] [?a :q ?a]) [?b :r 3] (not-join [?b] [?b :p _]) (reach ?a ?b)]`, true, nil, reachesThree, -1, -1},
 		{"a bound pattern with an input-bound value over a streaming group", `[:find ?e :in $ ?w :where [?e :r 1] (not-join [?e] [?e :q ?e]) [?e :p ?w]]`, false, []interface{}{targetID}, pointing, -1, -1},
-		{"a bound pattern with an input-bound value, counted", `[:find (count ?e) :in $ ?w :where [?e :r 1] (not-join [?e] [?e :q ?e]) [?e :p ?w]]`, false, []interface{}{targetID}, []string{scopeRow(int64(len(pointing)))}, -1, -1},
+		{"a bound pattern with an input-bound value, counted", `[:find (count ?e) :in $ ?w :where [?e :r 1] (not-join [?e] [?e :q ?e]) [?e :p ?w]]`, false, []interface{}{targetID}, []string{scopeTuple(int64(len(pointing)))}, -1, -1},
 		{"a bound pattern with an input-bound value under a predicate", `[:find ?e :in $ ?w :where [?e :r 1] (not-join [?e] [?e :q ?e]) [?e :p ?t] [(= ?t ?w)]]`, false, []interface{}{targetID}, pointing, -1, -1},
 		{"the zero-default count idiom with a rule inside its subquery", `[:find ?g ?n :in $ % :where [?g :r 1] (or-default [(q [:find (count ?x) :in $ % ?g :where (reach ?g ?x)] $ % ?g) [[?n]]] [(ground 0) ?n])]`, true, nil, zeroDefault, -1, 2},
 	}
@@ -480,10 +484,10 @@ func TestScopeForms_OverThreeThousandEntitiesAnswerTheReference(t *testing.T) {
 	for _, x := range subject {
 		if y := g.p[x]; y >= 0 {
 			if g.q[y] >= 0 {
-				fallback = append(fallback, scopeRow(x, y, g.q[y]))
-				through = append(through, scopeRow(x, g.q[y]))
+				fallback = append(fallback, scopeTuple(x, y, g.q[y]))
+				through = append(through, scopeTuple(x, g.q[y]))
 			} else {
-				fallback = append(fallback, scopeRow(x, y, ":none"))
+				fallback = append(fallback, scopeTuple(x, y, ":none"))
 			}
 		}
 		var n int64
@@ -493,7 +497,7 @@ func TestScopeForms_OverThreeThousandEntitiesAnswerTheReference(t *testing.T) {
 			}
 		}
 		if n > 0 {
-			counted = append(counted, scopeRow(x, n))
+			counted = append(counted, scopeTuple(x, n))
 		}
 	}
 	checks := []scopeCheck{
@@ -516,7 +520,7 @@ func TestScopeForms_AHeaderSymbolNothingBindsOverAStreamingSubjectIsRefused(t *t
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			namedEntities(t, d, g.entities())
+			commitFacts(t, d, g.facts())
 			for _, text := range texts {
 				_, err := executor.CollectTuples(d.Query(text))
 				require.Error(t, err, text)
@@ -529,8 +533,8 @@ func TestScopeForms_AHeaderSymbolNothingBindsOverAStreamingSubjectIsRefused(t *t
 
 // The fallback's prefetch answers as the scan path answers, whatever the
 // cache holds, over the two-hundred-entity graph under a schema declaring the
-// refs cardinality one: with the option on the trigger fires, and the rows
-// equal the option's off rows and the reference, through a fallback over
+// refs cardinality one: with the option on the trigger fires, and the tuples
+// equal the option's off tuples and the reference, through a fallback over
 // every entity, a union whose required value the subject carries, a union
 // whose required value never agrees, and a fallback whose output the subject
 // carries.
@@ -539,13 +543,13 @@ func TestFallbackPrefetch_AnswersAsTheScanPathAndFires(t *testing.T) {
 	var every, required, carried []string
 	for e := range g.p {
 		if g.p[e] >= 0 {
-			every = append(every, scopeRow(e, g.p[e]))
+			every = append(every, scopeTuple(e, g.p[e]))
 		} else {
-			every = append(every, scopeRow(e, ":none"))
+			every = append(every, scopeTuple(e, ":none"))
 		}
-		required = append(required, scopeRow(e, g.r[e]))
+		required = append(required, scopeTuple(e, g.r[e]))
 		if g.q[e] >= 0 && g.q[e] == g.p[e] {
-			carried = append(carried, scopeRow(e, g.q[e]))
+			carried = append(carried, scopeTuple(e, g.q[e]))
 		}
 	}
 	checks := []scopeCheck{
@@ -565,15 +569,15 @@ func TestFallbackPrefetch_AnswersAsTheScanPathAndFires(t *testing.T) {
 						triggers.Add(1)
 					}
 				}})
-				names := namedEntities(t, d, g.entities())
+				names := commitFacts(t, d, g.facts())
 				for _, c := range checks {
 					t.Run(c.name, func(t *testing.T) {
 						rel, err := d.Query(c.text)
 						require.NoError(t, err)
-						got := renderedRows(t, rel, names)
+						got := renderedTuples(t, rel, names)
 						require.ElementsMatch(t, c.want, got)
-						if c.rows >= 0 {
-							require.Len(t, got, c.rows, "the record's count")
+						if c.tuples >= 0 {
+							require.Len(t, got, c.tuples, "the record's count")
 						}
 					})
 				}

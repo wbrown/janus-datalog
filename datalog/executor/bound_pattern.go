@@ -56,12 +56,13 @@ func (e *DefaultQueryExecutor) executeBoundPattern(ctx *Context, pattern *query.
 	properties := orProperties(subject.Properties(), outputs, nil, resultSyms, atMostOne)
 
 	f := framing{
-		form:     "pattern",
-		subject:  subject,
-		required: required,
-		find:     find,
-		given:    required,
-		key:      keySymbols(required, outerSyms),
+		form:      "pattern",
+		subject:   subject,
+		required:  required,
+		find:      find,
+		given:     required,
+		standsFor: required,
+		key:       keySymbols(required, outerSyms),
 	}
 	plans, err := frameBranches(e, ctx, [][]query.Clause{{pattern}}, f)
 	if err != nil {

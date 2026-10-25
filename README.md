@@ -802,11 +802,10 @@ this number; the storage layer is designed for both.
 - **1.9× faster** with CRDT storage (vs pre-CRDT baseline)
 - **4.06× faster** iterator composition with 89% memory reduction
 - **2.22× faster** streaming execution with 52% memory reduction
-- **2.06× faster** parallel subquery execution (8 workers)
 - **555× faster** attribute high-water-mark seek (ATEV index, 10K datoms/attr)
 - **44 µs** for simple queries (e.g. attribute lookup, 1–3 patterns)
 - **21–27 ms** for complex 7-pattern queries with predicate pushdown (OHLC shape, persistent storage)
-- **2–4 s** for OHLC monthly-aggregation queries with 4 parallel subqueries
+- **2–4 s** for OHLC monthly-aggregation queries with 4 subqueries
 
 ### Architectural Wins
 
@@ -817,7 +816,6 @@ this number; the storage layer is designed for both.
 | Streaming execution | 2.22× | Avoid intermediate result materialization |
 | Predicate pushdown | 1.58–2.78× | Filter at storage layer (scales with dataset size) |
 | Time-range scanning | 4× | Multi-range queries for OHLC data |
-| Parallel subqueries | 2.06× | Worker pool for concurrent execution |
 | ATEV attribute high-water seek | 2.2× – 555× | O(1) newest-Tx-under-A seek; replaces an O(datoms-for-A) scan |
 | Conditional aggregate rewriting | 7.7× | Correlated aggregate subqueries — folded into the algebra optimizer |
 | Identity & Keyword interning | 6.26× | Pointer-equality joins; lock-free intern caches |
@@ -860,7 +858,7 @@ Janus isn't a research project – it's built from production experience.
 
 - **Domain:** Stock option analysis
 - **Stakes:** Real money, real decisions
-- **Workload:** Time-series OHLC queries with 4 parallel subqueries
+- **Workload:** Time-series OHLC queries with 4 subqueries
 - **Requirements:** Real-time analysis, no query failures
 
 **Use case that drove development:**

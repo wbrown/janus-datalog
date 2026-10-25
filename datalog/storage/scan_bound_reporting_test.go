@@ -122,8 +122,8 @@ func drainRelation(t *testing.T, rel executor.Relation) int {
 //
 // The hash join seeks a binding's keys one by one at or below
 // executor.SmallBindingBoundary and scans the extent above it, so the per-key
-// row binds bindingDrivenEntities and the hash-join row binds one entity more
-// than the boundary.
+// case binds bindingDrivenEntities and the hash-join case binds one entity
+// more than the boundary.
 //
 // The algebra axis is pinned off — the planner is not on this path — while the
 // backend is not: these strategies are matcher-level, and the matcher is what

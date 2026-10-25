@@ -336,6 +336,14 @@ func (m *PatternMatcher) matchUnboundScan(
 		}
 	}
 
+	// A datom's value is a scalar. A vector at the value position names a
+	// declared vector attribute's whole collection, which the vector arms
+	// below compare; under any other constant attribute it equals no datom,
+	// and the pattern answers the empty relation.
+	if a != nil && card != schema.CardinalityVector && datalog.IsVector(v) {
+		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
+	}
+
 	// CACHE OPTIMIZATION: When E and A are bound, use the cache for O(1)
 	// access instead of storage scans. Concrete AsOf matchers use
 	// transaction-scoped cache keys; History matchers bypass cache.
@@ -617,6 +625,7 @@ func (m *PatternMatcher) matchWithVValidation(
 	if err != nil {
 		return nil, err
 	}
+	sortedTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), sortedTuples)
 
 	report := DiscardIntake
 	if m.handler != nil {

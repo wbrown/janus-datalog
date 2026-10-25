@@ -14,17 +14,35 @@ import (
 // Framing is how a form frames its branches: the header's required run and
 // its find beyond it, the outputs as variables for a branch form and the
 // inner :find for a subquery; what a branch is given, the required run, and
-// under the union the carried outputs after it; the given symbols a relation
-// group binds before the form, the rest being the environment's alone; and
-// whether a branch holding no invocation is first planned over the required
-// run alone, the union's check that the language's scope admits the branch
-// before its seek binds the carried outputs into it.
+// under the union the carried outputs after it; per given symbol, the symbol
+// of the enclosing scope it stands for, by which a relation group is read
+// for it, a subquery's inner :in symbol standing for the variable its call
+// passes at that place, nil for a constant argument, and a branch form's
+// symbol standing for itself; the given symbols a relation group binds
+// before the form, the rest being the environment's alone; and whether a
+// branch holding no invocation is first planned over the required run alone,
+// the union's check that the language's scope admits the branch before its
+// seek binds the carried outputs into it.
 type Framing struct {
 	Required         []query.Symbol
 	Find             []query.FindElement
 	Given            []query.Symbol
+	StandsFor        []query.Symbol
 	Carried          []query.Symbol
 	PlanOverRequired bool
+}
+
+// CarriedBy is the given symbols a relation group binds before the form:
+// those standing for a symbol among bound, in the given order. A given
+// symbol standing for nothing is the environment's, whatever bound holds.
+func (f Framing) CarriedBy(bound []query.Symbol) []query.Symbol {
+	var carried []query.Symbol
+	for i, sym := range f.Given {
+		if standsFor := f.StandsFor[i]; standsFor != nil && query.ContainsSymbol(bound, standsFor) {
+			carried = append(carried, sym)
+		}
+	}
+	return carried
 }
 
 // BranchFrame is one branch's scope under its form's framing: the scope the

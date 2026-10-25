@@ -7,11 +7,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// formEntities: g carries :t/k :p, :t/q to h and :t/r 2; h carries :t/k :p
-// and :t/n 1.
-var formEntities = map[string][]fact{
-	"g": {{":t/k", datalog.NewKeyword(":p")}, {":t/q", ref("h")}, {":t/r", int64(2)}},
-	"h": {{":t/k", datalog.NewKeyword(":p")}, {":t/n", int64(1)}},
+// formFacts: g carries :t/k :p, :t/q to h and :t/r 2; h carries :t/k :p and
+// :t/n 1.
+func formFacts() []fact {
+	g, h := named("g"), named("h")
+	return []fact{
+		{g, ":t/k", datalog.NewKeyword(":p")}, {g, ":t/q", h}, {g, ":t/r", int64(2)},
+		{h, ":t/k", datalog.NewKeyword(":p")}, {h, ":t/n", int64(1)},
+	}
 }
 
 // Every scope of a query is planned at PlanQuery, and the executor's framing
@@ -30,14 +33,14 @@ func TestQuery_PlansEveryScopeAtPlanQuery(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, formEntities)
+			names := commitFacts(t, d, formFacts())
 			d.ClearPlanCache()
 			_, err := d.Explain(text)
 			require.NoError(t, err)
 			_, plannedMisses, plannedSize := d.PlanCache().Stats()
 			rel, err := d.Query(text)
 			require.NoError(t, err)
-			require.Equal(t, []string{"g g 2 2", "g h 2 2"}, renderedRows(t, rel, names))
+			require.Equal(t, []string{"g g 2 2", "g h 2 2"}, renderedTuples(t, rel, names))
 			_, misses, size := d.PlanCache().Stats()
 			require.Equal(t, plannedMisses, misses, "executing a planned query plans nothing the planner did not")
 			require.Equal(t, plannedSize, size, "executing a planned query adds no plan to the cache")

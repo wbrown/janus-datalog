@@ -15,7 +15,6 @@
 - **Schema support: type validation, cardinality, uniqueness (<1% write overhead)**
 - **True streaming execution (2.22× speedup, 52% memory reduction, up to 91.5% on large datasets)**
 - **Iterator composition with lazy evaluation (4.06× speedup)**
-- **Parallel subquery execution (2.06× speedup with 8 workers)**
 - **Predicate pushdown (1.58-2.78× speedup, scales with dataset size)**
 - **Lock-free intern caches (6.26× BadgerDB speedup)**
 - Query plan caching (3× speedup, active)

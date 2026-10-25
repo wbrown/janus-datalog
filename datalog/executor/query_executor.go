@@ -1306,6 +1306,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx *Context, subq *query.Subquer
 		required:    frame.Given,
 		find:        frame.Find,
 		given:       frame.Given,
+		standsFor:   frame.StandsFor,
 		key:         key,
 		environment: environment,
 		subst:       frame.Subst,

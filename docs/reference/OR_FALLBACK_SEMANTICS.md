@@ -139,8 +139,8 @@ or-default is non-monotone — which variables the fallback decision is grouped 
 |--------|---------|-------------|
 | `(or ...)` / `(or-join ...)` | `Union` | Branch evaluation, correlated or not |
 | `(or-default ...)` / `(or-default-join ...)` | `LateralUnion` | Correlated form, run over windows of its subject |
-| `(or-default ...)` over a **correlated** subquery + ground | `LateralJoin` carrying `DefaultValues` | |
-| `(or-default ...)` over an **uncorrelated** subquery + ground | `Join{Kind: LeftOuterJoin}` carrying `DefaultValues` | Non-matching outer tuples take the defaults |
+| `(or-default ...)` over a **correlated** subquery + ground | `LateralJoin` carrying `Defaults` | |
+| `(or-default ...)` over an **uncorrelated** subquery + ground | `Join{Kind: LeftOuterJoin}` carrying `Defaults` | Non-matching outer tuples take the defaults |
 
 A union whose branches contain correlated predicates (NOT, `missing?`) still
 compiles to `Union`. What differs is the branch context: branches compile against

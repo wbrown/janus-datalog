@@ -43,8 +43,8 @@ import (
 // =============================================================================
 
 // vboundCapture tallies annotation events by name. The mutex is load-bearing:
-// the engine emits from parallel workers and does not wrap installed handlers,
-// so serializing is the handler's own responsibility.
+// the engine serializes no handler and wraps none installed, so serializing
+// is the handler's own responsibility.
 type vboundCapture struct {
 	mu     sync.Mutex
 	counts map[string]int

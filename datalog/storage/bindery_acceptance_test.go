@@ -331,8 +331,7 @@ func TestBindery_FinishableQuiresAnswerTheReference(t *testing.T) {
 var binderyEventSizes = []int{64, 1200}
 
 // strataBegun counts the stratum-begin events a query emits, per stratum by
-// its first predicate, from the parallel workers the engine does not
-// serialize.
+// its first predicate, through a handler the engine does not serialize.
 type strataBegun struct {
 	mu     sync.Mutex
 	begins map[query.Symbol]int

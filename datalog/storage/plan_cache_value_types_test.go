@@ -13,10 +13,10 @@ import (
 // the first and the integer constant answers the second, whichever runs
 // first, with the plan cache on as with it off.
 
-// numberedEntities carry :t/a as a float on f and as an integer on i.
-var numberedEntities = map[string][]fact{
-	"f": {{":t/a", 5.0}},
-	"i": {{":t/a", int64(5)}},
+// numberedFacts: f carries :t/a as a float and i carries it as an integer.
+func numberedFacts() []fact {
+	f, i := named("f"), named("i")
+	return []fact{{f, ":t/a", 5.0}, {i, ":t/a", int64(5)}}
 }
 
 func TestPlanCache_DistinguishesAFloatFromAnInteger(t *testing.T) {
@@ -31,15 +31,15 @@ func TestPlanCache_DistinguishesAFloatFromAnInteger(t *testing.T) {
 				if !cached {
 					d.SetPlanCache(nil)
 				}
-				names := namedEntities(t, d, numberedEntities)
+				names := commitFacts(t, d, numberedFacts())
 
 				rel, err := d.Query(`[:find ?e :where [?e :t/a 5.0]]`)
 				require.NoError(t, err)
-				require.Equal(t, []string{"f"}, renderedRows(t, rel, names), "the float constant answers the float-valued entity")
+				require.Equal(t, []string{"f"}, renderedTuples(t, rel, names), "the float constant answers the float-valued entity")
 
 				rel, err = d.Query(`[:find ?e :where [?e :t/a 5]]`)
 				require.NoError(t, err)
-				require.Equal(t, []string{"i"}, renderedRows(t, rel, names), "the integer constant answers the integer-valued entity, run after the float's query")
+				require.Equal(t, []string{"i"}, renderedTuples(t, rel, names), "the integer constant answers the integer-valued entity, run after the float's query")
 			})
 		}
 	}

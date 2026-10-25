@@ -248,10 +248,11 @@ func (p *ClauseBasedPlanner) planWithBindings(q *query.Query, bindings query.Bin
 		analyzeClausesForExplain(&realizedPhases[i], cp.Clauses, availableSet, bindings.Rules, p.stats)
 	}
 
-	// Every form's scopes are planned here, framed as the executor frames
-	// them, so a branch no order runs is refused at PlanQuery and the
-	// executor's framing reads the plans the planner made.
-	if err := p.planFormScopes(realizedPhases, bindings.Rules, handler); err != nil {
+	// Every form's scopes and every invocation's bodies are planned here, as
+	// the executor frames and evaluates them, so a scope or a body no order
+	// runs is refused at PlanQuery and the executor reads the plans the
+	// planner made.
+	if err := p.planFormScopes(realizedPhases, bindings, handler); err != nil {
 		return nil, err
 	}
 

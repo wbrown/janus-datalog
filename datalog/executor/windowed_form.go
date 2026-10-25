@@ -20,29 +20,40 @@ import (
 // the composition reads: the form's name, which the module events report
 // under; the subject; the header's required run and its find beyond it, the
 // outputs as variables for a branch form and the inner :find for a subquery;
-// what a branch is given, in the header's order; the index's key, the header
-// symbols the subject carries that a built branch is probed by, in the
-// subject's order; the frames' environment relation, the values the frames
-// read for the given symbols the subject lacks; the substitution of a
-// subquery's call, what each symbol of the frames and of the answer stands
-// for in the enclosing scope, read once from the call's text, the inner :in
-// symbols against the arguments and the inner :find elements against the
-// binding, under which a frame symbol is found in the subject by the symbol
-// standing for it and the answer is presented under the enclosing names, a
-// branch form's symbols standing for themselves; and whether a branch
-// holding no invocation is first planned over the required run alone, the
-// union's check that the language's scope admits the branch before its seek
-// binds the carried outputs into it.
+// what a branch is given, in the header's order; per given symbol, the
+// symbol of the enclosing scope it stands for, by which the subject is read
+// for it, a subquery's inner :in symbol standing for the variable its call
+// passes at that place, nil for a constant argument, whose value the frames'
+// environment relation carries, and a branch form's symbol standing for
+// itself; the index's key, the header symbols the subject carries that a
+// built branch is probed by, in the subject's order; the frames' environment
+// relation, the values the frames read for the given symbols the subject
+// lacks; the substitution of a subquery's call, what each symbol of the
+// answer stands for in the enclosing scope, read once from the call's text,
+// the inner :in symbols against the arguments and the inner :find elements
+// against the binding, under which the answer is presented under the
+// enclosing names; and whether a branch holding no invocation is first
+// planned over the required run alone, the union's check that the language's
+// scope admits the branch before its seek binds the carried outputs into it.
 type framing struct {
 	form             string
 	subject          Relation
 	required         []query.Symbol
 	find             []query.FindElement
 	given            []query.Symbol
+	standsFor        []query.Symbol
 	key              []query.Symbol
 	environment      Relation
 	subst            query.Substitution
 	planOverRequired bool
+}
+
+// standing is the symbol of the enclosing scope a given symbol stands for,
+// by which the subject is read for it, and nil for a symbol standing for
+// nothing, a constant argument's. A symbol outside the given list is the
+// framing's own defect.
+func (f framing) standing(sym query.Symbol) query.Symbol {
+	return f.standsFor[query.SymbolIndex(f.given, sym)]
 }
 
 // frameBranches frames each branch as a scope under the header through the
@@ -52,18 +63,9 @@ type framing struct {
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.1). A plan's refusal
 // is the form's, naming the branch counted from one.
 func frameBranches(executor *DefaultQueryExecutor, ctx *Context, branches [][]query.Clause, f framing) ([]branchRun, error) {
-	outerSyms := f.subject.Symbols()
-	var carried []query.Symbol
-	for _, sym := range f.given {
-		standsFor := sym
-		if to, ok := f.subst.Of(sym); ok {
-			standsFor = to
-		}
-		if query.ContainsSymbol(outerSyms, standsFor) {
-			carried = append(carried, sym)
-		}
-	}
-	frames := planner.Framing{Required: f.required, Find: f.find, Given: f.given, Carried: carried, PlanOverRequired: f.planOverRequired}.Branches(branches, ctx.Rules())
+	framed := planner.Framing{Required: f.required, Find: f.find, Given: f.given, StandsFor: f.standsFor, PlanOverRequired: f.planOverRequired}
+	framed.Carried = framed.CarriedBy(f.subject.Symbols())
+	frames := framed.Branches(branches, ctx.Rules())
 	plans := make([]branchRun, len(frames))
 	for i, frame := range frames {
 		if frame.Check != nil {
@@ -169,9 +171,9 @@ func newWindowedIterator(executor *DefaultQueryExecutor, ctx *Context, f framing
 	outerSyms := f.subject.Symbols()
 	var keyPos []int
 	for _, sym := range f.required {
-		standsFor := sym
-		if to, ok := f.subst.Of(sym); ok {
-			standsFor = to
+		standsFor := f.standing(sym)
+		if standsFor == nil {
+			continue
 		}
 		pos := query.SymbolIndex(outerSyms, standsFor)
 		if pos < 0 {

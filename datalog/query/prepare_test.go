@@ -8,13 +8,13 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// Prepare composes the four static steps, each a function of the text and
-// the rule set: ValidateInputShapes on :in, ValidateStaticClauseShapes on
-// :where, InferHeaders, and the check that a rule set was given when the
-// query invokes a predicate and that every invocation names a predicate it
-// defines at its arity. A query a step refuses gets that step's own error
-// from Prepare, and a query every step accepts comes back with every nested
-// form a header form.
+// Prepare composes the five static steps, each a function of the text and
+// the rule set: ValidateQuery, the check that no variable lies in a namespace
+// the engine mints into, InferHeaders, UnifyPatterns, and the check that a
+// rule set was given when the query invokes a predicate and that every
+// invocation names a predicate it defines at its arity. A query a step
+// refuses gets that step's own error from Prepare, and a query every step
+// accepts comes back with every nested form a header form.
 func TestPrepare_ComposesTheStaticSteps(t *testing.T) {
 	t.Run("two % inputs get the input-shape refusal", func(t *testing.T) {
 		q := findIn([]string{"?a", "?b"}, []InputSpec{RulesInput{}, RulesInput{}}, invoke("follows", "?a", "?b"))
@@ -122,6 +122,86 @@ func TestPrepare_ComposesTheStaticSteps(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A variable in a namespace the engine mints into is refused by Prepare
+// wherever it stands, naming the variable, the namespace and the repair,
+// before the inference and the unification write the engine's own,
+// ?unify/<name>.<position> and ?scope/input.<position>, into the prepared
+// text, which the parser reads back. A variable outside those namespaces is
+// accepted.
+func TestPrepare_RefusesAVariableInAnEngineNamespace(t *testing.T) {
+	dollar := Constant{Value: datalog.SymDollar}
+	v := sym("?unify/x.2")
+	identity := func(from, to Symbol) *Expression {
+		return &Expression{Function: IdentityFunction{Arg: VariableTerm{Symbol: from}}, Binding: to}
+	}
+	inner := func(find Symbol, where ...Clause) *Query {
+		return &Query{Find: []FindElement{FindVariable{Symbol: find}}, In: []InputSpec{DatabaseInput{Name: datalog.SymDollar}, ScalarInput{Symbol: sym("?x")}}, Where: where}
+	}
+	call := func(q *Query, argument, binding Symbol) *SubqueryPattern {
+		return &SubqueryPattern{Query: q, Inputs: []PatternElement{dollar, Variable{Name: argument}}, Binding: RelationBinding{Variables: []Symbol{binding}}}
+	}
+	sorted := func(q *Query, by Symbol) *Query {
+		q.OrderBy = []OrderByClause{{Variable: by}}
+		return q
+	}
+	cases := []struct {
+		name  string
+		q     *Query
+		rules *RuleSet
+	}{
+		{"in :find", findIn([]string{"?unify/x.2"}, nil, scopePattern("?e", "p", "?w")), nil},
+		{"in :in", findIn([]string{"?w"}, []InputSpec{ScalarInput{Symbol: v}}, scopePattern("?e", "p", "?w")), nil},
+		{"in :order-by, bound by a scalar input", sorted(findIn([]string{"?w"}, []InputSpec{ScalarInput{Symbol: v}}, scopePattern("?e", "p", "?w")), v), nil},
+		{"in a pattern", findIn([]string{"?e"}, nil, scopePattern("?e", "p", "?unify/x.2")), nil},
+		{"as an expression's input", findIn([]string{"?w"}, nil, scopePattern("?e", "p", "?w"), identity(v, sym("?k"))), nil},
+		{"as an expression's binding", findIn([]string{"?w"}, nil, scopePattern("?e", "p", "?w"), identity(sym("?w"), v)), nil},
+		{"in a predicate", findIn([]string{"?w"}, nil, scopePattern("?e", "p", "?w"), &Comparison{Op: datalog.SymLT, Left: VariableTerm{Symbol: v}, Right: ConstantTerm{Value: int64(10)}}), nil},
+		{"as an invocation's argument", findIn([]string{"?b"}, []InputSpec{RulesInput{}}, invoke("follows", "?unify/x.2", "?b")), mustRuleSet(t, followsRules())},
+		{"in a not-join's header", findIn([]string{"?e"}, nil, scopePattern("?e", "p", "_"), &NotJoinClause{RequiredVars: []Symbol{v}, Clauses: []Clause{scopePattern("?unify/x.2", "q", "_")}}), nil},
+		{"in an or's branch", findIn([]string{"?e"}, nil, scopePattern("?e", "p", "_"), &OrClause{Branches: [][]Clause{{scopePattern("?e", "q", "?unify/x.2")}, {scopePattern("?e", "r", "?unify/x.2")}}}), nil},
+		{"in an or-join's branch", findIn([]string{"?e"}, nil, scopePattern("?e", "p", "_"), &OrJoinClause{OutputVars: []Symbol{sym("?e")}, Branches: [][]Clause{{scopePattern("?e", "q", "?unify/x.2")}, {scopePattern("?e", "r", "?unify/x.2")}}}), nil},
+		{"as a subquery's argument", findIn([]string{"?n"}, nil, scopePattern("?e", "p", "?w"), call(inner(sym("?y"), scopePattern("?x", "q", "?y")), v, sym("?n"))), nil},
+		{"as a subquery's binding", findIn([]string{"?e"}, nil, scopePattern("?e", "p", "?w"), call(inner(sym("?y"), scopePattern("?x", "q", "?y")), sym("?w"), v)), nil},
+		{"in an inner query's find", findIn([]string{"?n"}, nil, scopePattern("?e", "p", "?w"), call(inner(v, scopePattern("?x", "q", "?unify/x.2")), sym("?w"), sym("?n"))), nil},
+		{"in an inner query two levels down", findIn([]string{"?n"}, nil, scopePattern("?e", "p", "?w"),
+			call(inner(sym("?y"), call(inner(sym("?z"), scopePattern("?x", "q", "?unify/x.2"), identity(v, sym("?z"))), sym("?x"), sym("?y"))), sym("?w"), sym("?n"))), nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Prepare(c.q, c.rules)
+			var refused *EngineNamespaceError
+			if !errors.As(err, &refused) {
+				t.Fatalf("want an EngineNamespaceError naming %s, got %v", v, err)
+			}
+			if refused.Variable != v {
+				t.Errorf("the refusal names %s, want %s", refused.Variable, v)
+			}
+			if refused.Rule != nil {
+				t.Errorf("a query's own refusal names no rule, got %s", refused.Rule)
+			}
+			if !strings.Contains(err.Error(), "unify") || !strings.Contains(err.Error(), "rename") {
+				t.Errorf("the refusal names the namespace and the repair: %v", err)
+			}
+		})
+	}
+	for _, name := range []string{"?scope/input.1", "?magic.bf/x.0", "?adorned.bf/x", "?delta/x", "?unify.mine/x.1"} {
+		t.Run(name+" in a pattern", func(t *testing.T) {
+			_, err := Prepare(findIn([]string{"?e"}, nil, scopePattern("?e", "p", name)), nil)
+			var refused *EngineNamespaceError
+			if !errors.As(err, &refused) || refused.Variable != sym(name) {
+				t.Fatalf("want an EngineNamespaceError naming %s, got %v", name, err)
+			}
+		})
+	}
+	for _, name := range []string{"?unify", "?unify-me", "?scoped/x", "?x.unify/y", "?mine/unify"} {
+		t.Run(name+" is accepted", func(t *testing.T) {
+			if _, err := Prepare(findIn([]string{"?e"}, nil, scopePattern("?e", "p", name)), nil); err != nil {
+				t.Fatalf("%s lies in no namespace the engine mints into: %v", name, err)
+			}
+		})
+	}
 }
 
 // BenchmarkPrepare measures preparation, which runs once per execution: a

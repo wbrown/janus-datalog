@@ -7,15 +7,12 @@ import "testing"
 // datoms whose entity and value agree, under both optimizer paths. a refers
 // to itself and c to itself; b refers to c.
 func TestPattern_AVariableNamedTwiceSelectsAgreeingDatoms(t *testing.T) {
-	entities := map[string][]fact{
-		"a": {{":t/ref", ref("a")}},
-		"b": {{":t/ref", ref("c")}},
-		"c": {{":t/ref", ref("c")}},
-	}
+	a, b, c := named("a"), named("b"), named("c")
+	facts := []fact{{a, ":t/ref", a}, {b, ":t/ref", c}, {c, ":t/ref", c}}
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
-			names := namedEntities(t, d, entities)
+			names := commitFacts(t, d, facts)
 			everyOrder(t, d, names, "?x", []string{`[?x :t/ref ?x]`}, []string{"a", "c"})
 			everyOrder(t, d, names, "?x", []string{`[?x :t/ref ?x]`, `[?x :t/ref _]`}, []string{"a", "c"})
 			everyOrder(t, d, names, "?x ?y", []string{`[?y :t/ref ?x]`, `[?x :t/ref ?x]`}, []string{"a a", "c b", "c c"})

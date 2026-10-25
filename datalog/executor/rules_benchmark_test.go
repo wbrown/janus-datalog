@@ -101,12 +101,12 @@ func benchmarkNaiveClosure(b *testing.B, matcher PatternMatcher, rs *query.RuleS
 	ctx := NewContext().WithRules(rs)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		eval, err := exec.prepareStratum(ctx, rs, rs.Strata()[0])
+		eval, err := exec.prepareStratum(rs, rs.Strata()[0])
 		if err != nil {
 			b.Fatal(err)
 		}
 		full := newDerivedSet(eval.symbols[follows])
-		seed, err := eval.run(ctx, nil, eval.plain)
+		seed, err := eval.run(ctx, nil, eval.bodies.Plain)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -118,7 +118,7 @@ func benchmarkNaiveClosure(b *testing.B, matcher PatternMatcher, rs *query.RuleS
 		for grew := true; grew; {
 			whole := full.relation(exec.options)
 			view := map[query.Symbol]Relation{follows: whole, query.DeltaSymbol(follows): whole}
-			got, err := eval.run(ctx, view, eval.delta)
+			got, err := eval.run(ctx, view, eval.bodies.Delta)
 			if err != nil {
 				b.Fatal(err)
 			}

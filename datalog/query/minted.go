@@ -14,8 +14,14 @@ import (
 // the required run a nested scope runs over. The kind leads the namespace,
 // the predicate's own namespace follows it, and the name is the predicate's,
 // so the derivation reads off the symbol and the text of a body that invokes
-// it is Datalog the parser reads. NewRuleSet refuses a rule set that declares
-// a predicate in one of these namespaces.
+// it is Datalog the parser reads. It mints variables the same way: a
+// pattern's later occurrence of a variable (unify), the holder of a
+// collection input's whole value (scope), and a seed predicate's head
+// positions (magic). NewRuleSet refuses a rule set that declares a predicate
+// in one of these namespaces or names a variable in one, and Prepare refuses
+// a query naming a variable in one, each before the inference writes the
+// engine's own; the parser and the builder accept the spelling, since the
+// prepared text carries the engine's variables and parses back.
 const (
 	adornedNamespace = "adorned"
 	magicNamespace   = "magic"
@@ -122,12 +128,93 @@ func SeedRestricted(name Symbol) bool {
 	return kind == adornedNamespace || kind == magicNamespace || kind == scopeNamespace
 }
 
-// engineNamespace reports whether a predicate name lies in a namespace the
-// engine mints into: its namespace up to the first dot is one of the kinds.
+// engineNamespace reports whether a name lies in a namespace the engine mints
+// into: its namespace up to the first dot, a variable's leading ? stripped,
+// is one of the kinds, adorned, magic, delta and scope for the predicates,
+// unify, scope and magic for the variables.
 func engineNamespace(name Symbol) bool {
-	ns := name.Namespace()
+	ns := strings.TrimPrefix(name.Namespace(), "?")
 	if i := strings.Index(ns, "."); i >= 0 {
 		ns = ns[:i]
 	}
-	return ns == adornedNamespace || ns == magicNamespace || ns == deltaNamespace || ns == scopeNamespace
+	return ns == adornedNamespace || ns == magicNamespace || ns == deltaNamespace || ns == scopeNamespace || ns == unifyNamespace
+}
+
+// engineVariable is the first variable of q in a namespace the engine mints
+// into, at any position: the :find, the :in, the :order-by and the :where at
+// any depth, a subquery's inner query among them; nil when there is none.
+func engineVariable(q *Query, rules *RuleSet) Symbol {
+	for _, element := range q.Find {
+		switch f := element.(type) {
+		case FindVariable:
+			if engineNamespace(f.Symbol) {
+				return f.Symbol
+			}
+		case FindAggregate:
+			if engineNamespace(f.Arg) {
+				return f.Arg
+			}
+			if f.Predicate != nil && engineNamespace(f.Predicate) {
+				return f.Predicate
+			}
+		case FindPull:
+			if engineNamespace(f.Variable) {
+				return f.Variable
+			}
+		}
+	}
+	for _, sym := range InputSymbols(q.In) {
+		if sym != nil && engineNamespace(sym) {
+			return sym
+		}
+	}
+	for _, clause := range q.OrderBy {
+		if engineNamespace(clause.Variable) {
+			return clause.Variable
+		}
+	}
+	return engineVariableIn(q.Where, rules)
+}
+
+// engineVariableIn is the first variable of clauses in a namespace the engine
+// mints into, at any depth: a leaf's provided and correlated variables, a
+// header form's header, and a subquery's binding, arguments and inner query.
+// A headerless form contributes its branches' alone, which the walk descends
+// into.
+func engineVariableIn(clauses []Clause, rules *RuleSet) Symbol {
+	var found Symbol
+	WalkClauses(clauses, func(clause Clause) bool {
+		if found != nil {
+			return false
+		}
+		var symbols []Symbol
+		var inner *Query
+		switch c := clause.(type) {
+		case *OrClause, *NotClause, *OrDefaultClause:
+		case *NotJoinClause:
+			symbols = c.RequiredVars
+		case *OrJoinClause:
+			symbols = append(append([]Symbol(nil), c.RequiredVars...), c.OutputVars...)
+		case *OrDefaultJoinClause:
+			symbols = append(append([]Symbol(nil), c.RequiredVars...), c.OutputVars...)
+		case *SubqueryPattern:
+			scope := ScopeOf(c, rules)
+			symbols = append(append([]Symbol(nil), scope.Provides...), scope.Correlates...)
+			inner = c.Query
+		default:
+			scope := ScopeOf(clause, rules)
+			symbols = append(append([]Symbol(nil), scope.Provides...), scope.Correlates...)
+		}
+		for _, sym := range symbols {
+			if engineNamespace(sym) {
+				found = sym
+				return false
+			}
+		}
+		if inner != nil {
+			found = engineVariable(inner, rules)
+		}
+		return found == nil
+	})
+	return found
 }

@@ -246,9 +246,10 @@ func TestSchemaFacts_ForkReadsItsParentsSchemaUnderTheInstallLock(t *testing.T) 
 
 // A stored declaration of an engine word never runs: a dump carrying a
 // declaration of :db.attribute/declaration as cardinality many, written by
-// the engine's own writer, imports into a fresh database that runs the ref as
-// cardinality one, and every later declaration of an ordinary attribute
-// takes effect.
+// the engine's own writer, imports into a database opened with no schema and
+// into one opened with a given schema, each running the ref as cardinality
+// one, after the import and after a SetSchema on the one with a schema, and
+// every later declaration of an ordinary attribute takes effect.
 func TestSchemaFacts_AStoredDeclarationOfAnEngineWordDoesNotRun(t *testing.T) {
 	ref := kw(":db.attribute/declaration")
 	x := kw(":t/x")
@@ -268,17 +269,32 @@ func TestSchemaFacts_AStoredDeclarationOfAnEngineWordDoesNotRun(t *testing.T) {
 	var dump bytes.Buffer
 	require.NoError(t, writer.Export(&dump))
 
-	d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory"})
-	require.NoError(t, err)
-	require.NoError(t, d.Import(bytes.NewReader(dump.Bytes())))
-	require.Same(t, schema.CardinalityOne, d.Schema().GetAttribute(ref).Cardinality, "the engine's word resolves by the engine's declaration, whatever the store holds")
-	for _, many := range []bool{true, false, true, false} {
-		require.NoError(t, d.SetSchema(cardinalitySchema(t, many)))
-		want := schema.CardinalityOne
-		if many {
-			want = schema.CardinalityMany
-		}
-		require.Same(t, want, d.Schema().GetAttribute(x).Cardinality, "a declaration of an ordinary attribute takes effect")
+	for _, arm := range []struct {
+		name  string
+		given *schema.Schema
+	}{{"no schema", nil}, {"a given schema", validSchema(t)}} {
+		t.Run(arm.name, func(t *testing.T) {
+			opts := DatabaseOptions{BackendName: "memory"}
+			if arm.given != nil {
+				opts.Schema = arm.given
+			}
+			d, err := NewDatabaseWithOptions(opts)
+			require.NoError(t, err)
+			require.NoError(t, d.Import(bytes.NewReader(dump.Bytes())))
+			require.Same(t, schema.CardinalityOne, d.Schema().GetAttribute(ref).Cardinality, "the engine's word resolves by the engine's declaration, whatever the store holds")
+			if arm.given != nil {
+				require.NoError(t, d.SetSchema(arm.given))
+				require.Same(t, schema.CardinalityOne, d.Schema().GetAttribute(ref).Cardinality, "the engine's word resolves by the engine's declaration after a SetSchema")
+			}
+			for _, many := range []bool{true, false, true, false} {
+				require.NoError(t, d.SetSchema(cardinalitySchema(t, many)))
+				want := schema.CardinalityOne
+				if many {
+					want = schema.CardinalityMany
+				}
+				require.Same(t, want, d.Schema().GetAttribute(x).Cardinality, "a declaration of an ordinary attribute takes effect")
+			}
+		})
 	}
 }
 

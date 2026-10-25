@@ -10,11 +10,12 @@ import (
 )
 
 // planScope plans the scope under the rule set the enclosing query runs
-// with, through the executor's planner. The plan is served from the plan
-// cache under the scope's query text, so a scope is planned once however
-// many runs read it.
+// with and the invocations the context holds, through the executor's
+// planner. The plan is served from the plan cache under the scope's query
+// text and those bindings, the ones the planner's walk at PlanQuery planned
+// it under, so a scope is planned once however many runs read it.
 func (e *DefaultQueryExecutor) planScope(ctx *Context, s planner.Scope) (*planner.RealizedPlan, error) {
-	return e.executor.planner.PlanScope(s, query.Bindings{Rules: ctx.Rules()}, e.options.Handler)
+	return e.executor.planner.PlanScope(s, query.Bindings{Rules: ctx.Rules(), Held: ctx.Held()}, e.options.Handler)
 }
 
 // runPlan runs a scope's plan once over run, the relation of its required
@@ -308,6 +309,7 @@ func (e *DefaultQueryExecutor) executeNotJoinClause(ctx *Context, clause *query.
 		subject:     subject,
 		required:    clause.RequiredVars,
 		given:       clause.RequiredVars,
+		standsFor:   clause.RequiredVars,
 		key:         keySymbols(clause.RequiredVars, subject.Symbols()),
 		environment: environment,
 	}
