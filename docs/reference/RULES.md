@@ -382,14 +382,12 @@ Four more shapes are refused as plain errors naming the rule:
 - **Recursive aggregation**: an aggregate over a recursive predicate inside
   its own stratum (shortest paths, counts over closures). A body aggregates
   over a completed stratum through a subquery, as a query does.
-- **A source on an invocation**: Datomic's rule expression may carry a
-  source prefix, `[$src (reach ?a ?b)]` or `($src reach ?a ?b)`, under which
-  the rules evaluate over that source, as a database function's first
-  argument names the source it reads, `(get-else $src ?e :a "d")`. An
-  invocation here holds its name and its arguments and no source, and
-  `get-else`, `get-some` and `missing?` read `$`. Under the extension the
-  roster names an attribute on whichever source the function or the rule
-  body reads.
+- **A source on an invocation**: an invocation holds its name and its
+  arguments and no source, and `get-else`, `get-some` and `missing?` read
+  `$`. Datomic's source prefix on a rule expression and source argument on a
+  database function are refused;
+  `BUG_SOURCE_ON_A_DATABASE_FUNCTION_OR_INVOCATION_REFUSED.md` records the
+  gap.
 
 ## Measurement
 
