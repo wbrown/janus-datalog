@@ -53,7 +53,7 @@ func (it *nonReusingIterator) Next() bool {
 			// Check if datom matches pattern with current binding
 			if it.matchesWithBinding(datom, it.bindingTuples[it.currentIdx]) {
 				// Apply transaction and constraint validation
-				if validateDatomWithConstraints(datom, it.matcher.txID, it.constraints) {
+				if validateDatomWithConstraints(datom, it.matcher, it.constraints) {
 					it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
 					it.currentTuple = it.workspace
 					if it.report != nil {
@@ -104,10 +104,10 @@ func (it *nonReusingIterator) Next() bool {
 	}
 
 	// Wrap with CRDT resolution unless in history mode
-	if it.matcher.isHistoryMode() {
+	if it.matcher.mode == historyMode {
 		it.currentScan = rawIter
 	} else {
-		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher, it.report)
+		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.asOf, it.matcher, it.report)
 	}
 
 	// Try to find first match

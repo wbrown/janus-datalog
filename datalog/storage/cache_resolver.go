@@ -31,7 +31,7 @@ func (m *PatternMatcher) GetCardinality(attr datalog.Keyword) datalog.Keyword {
 // whose answer differs rebuilds instead of being served the other rule's
 // value.
 func (m *PatternMatcher) ResolvesUnique(a Attribute) bool {
-	if m.schema == nil || m.isHistoryMode() {
+	if m.schema == nil || m.mode == historyMode {
 		return false
 	}
 	return m.schema.GetAttribute(datalog.InternKeywordFromBytes(a)).HasUniqueConstraint()

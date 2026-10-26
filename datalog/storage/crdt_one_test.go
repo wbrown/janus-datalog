@@ -216,9 +216,8 @@ func TestCardinalityOneAsOf(t *testing.T) {
 				}
 			}
 
-			// Query as-of a point before any writes should return no results. The
-			// zero ElementID means history mode in the three-mode convention, so the
-			// pre-first-write point is a nonzero ElementID below every write's Tx.
+			// Query as-of a point before any writes should return no results: an
+			// ElementID below every write's Tx.
 			beforeAll := datalog.ElementID{Lamport: 0, ReplicaID: 1}
 			if names := collectNames(t, matcher.AsOf(beforeAll)); len(names) != 0 {
 				t.Errorf("AsOf(before all writes): expected 0 results, got %d", len(names))

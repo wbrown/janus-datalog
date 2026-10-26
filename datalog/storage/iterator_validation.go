@@ -20,18 +20,15 @@ import (
 //
 // See iterator_refactoring_bench_test.go for benchmark details.
 
-// validateDatomWithConstraints checks if a datom passes transaction and constraint validation.
-//
-// Returns true if the datom:
-//  1. Passes transaction time filtering (txID check)
-//  2. Satisfies all storage constraints
+// validateDatomWithConstraints reports whether a datom is read: it lies at or
+// before m's as-of target (shouldFilterTx) and satisfies every storage
+// constraint.
 func validateDatomWithConstraints(
 	datom *datalog.Datom,
-	txID *datalog.ElementID,
+	m *PatternMatcher,
 	constraints []executor.StorageConstraint,
 ) bool {
-	// Check transaction validity (skip datoms from after the as-of target)
-	if txID != nil && *txID != (datalog.ElementID{}) && txID.Less(datom.Tx) {
+	if m.shouldFilterTx(datom.Tx) {
 		return false
 	}
 

@@ -258,3 +258,54 @@ func TestOpenDumpWithSchemaSupersedesDumpFacts(t *testing.T) {
 		}
 	}
 }
+
+// exportDump exports d in the format named and returns the bytes. Both
+// formats go through a real file, as writeDump's do.
+func exportDump(t *testing.T, d *db.DB, ext string) []byte {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "export"+ext)
+	file, err := os.Create(path)
+	require.NoError(t, err)
+	if ext == ".jdzl" {
+		require.NoError(t, d.ExportBinary(file))
+	} else {
+		require.NoError(t, d.Export(file))
+	}
+	require.NoError(t, file.Close())
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return raw
+}
+
+// A dump carries its writer's declarations, so a database opened from it with
+// the writer's own schema declares nothing: the store holds the dump's one
+// declaration of each attribute, and an export of it is the dump it loaded,
+// byte for byte.
+func TestOpenDumpWithTheWritersSchemaDeclaresNothing(t *testing.T) {
+	for _, ext := range []string{".jdzl", ".edn"} {
+		for _, mode := range optimizerModes {
+			t.Run(ext+"/"+mode.name, func(t *testing.T) {
+				path := writeDeclaredDump(t, ext)
+				d, err := db.Open(path,
+					db.WithSchema(declaredDumpSchema(t, "the subject's tags")),
+					db.WithBackend(mode.backend.Name), db.WithPlannerOptions(mode.plannerOptions()))
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = d.Close() })
+
+				rel, err := d.History().Query(`[:find ?tx :where [?d :db/ident :dump/tags ?tx]]`)
+				require.NoError(t, err)
+				iter := rel.Iterator()
+				defer iter.Close()
+				declarations := 0
+				for iter.Next() {
+					declarations++
+				}
+				require.Equal(t, 1, declarations, "the store holds the dump's declaration of :dump/tags and no other")
+
+				dump, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.Equal(t, dump, exportDump(t, d, ext), "a load-and-export round trip is byte-stable")
+			})
+		}
+	}
+}

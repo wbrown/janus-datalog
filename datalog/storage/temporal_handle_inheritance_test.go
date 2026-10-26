@@ -98,9 +98,10 @@ var temporalFieldContract = map[string]temporalFieldClass{
 	// handles share the parent's builder population.
 	"builderCache": fieldInherited,
 
-	// temporalTxID is the handle's defining value: AsOf pins the snapshot,
-	// History pins the zero ElementID sentinel.
-	"temporalTxID": fieldPerHandle,
+	// mode and asOf are the handle's defining values: AsOf reads as of its
+	// target, History reads every datom as written.
+	"mode": fieldPerHandle,
+	"asOf": fieldPerHandle,
 	// cache is deliberately divergent: AsOf owns a private snapshot-scoped
 	// EA cache (immutable view, fills lazily, freed with the handle);
 	// History shares the parent's cache. Asserted behaviorally below.
@@ -168,8 +169,8 @@ func testTemporalHandleFieldClassification(t *testing.T, backend Backend) {
 		if handle.builderCache != db.builderCache {
 			t.Errorf("%s: builderCache not inherited", handleName)
 		}
-		if handle.temporalTxID == nil {
-			t.Errorf("%s: temporalTxID not set — the handle's defining field", handleName)
+		if handle.mode == latestMode {
+			t.Errorf("%s: mode is the current view — the handle's defining field is not set", handleName)
 		}
 		if handle.activeTx != nil {
 			t.Errorf("%s: activeTx must be zero on a read-only temporal handle", handleName)

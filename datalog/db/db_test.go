@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -413,6 +414,199 @@ func TestHistory(t *testing.T) {
 			assert.Contains(t, names, "Alice")
 			assert.Contains(t, names, "Alicia")
 		})
+	}
+}
+
+// queryTuples runs q on h with inputs and returns every tuple it answers,
+// each copied out of the iterator's reused workspace.
+func queryTuples(t *testing.T, h *db.DB, q string, inputs ...interface{}) [][]interface{} {
+	t.Helper()
+	rel, err := h.Query(q, inputs...)
+	require.NoError(t, err)
+	iter := rel.Iterator()
+	defer iter.Close()
+	var tuples [][]interface{}
+	for iter.Next() {
+		tuples = append(tuples, append([]interface{}(nil), iter.Tuple()...))
+	}
+	require.NoError(t, iter.Error())
+	return tuples
+}
+
+// boundValueForm is one spelling of a pattern whose value is bound: written
+// into the pattern as a constant, or bound from an input.
+type boundValueForm struct {
+	name   string
+	query  string
+	inputs []interface{}
+}
+
+// History reads every datom written, including two that differ only in the
+// replica that wrote them: the same value written on two replicas at the same
+// Lamport is two datoms, and a History query over the attribute reads both,
+// with the value written in the pattern and with it bound from an input.
+func TestHistoryReadsDatomsDifferingOnlyByReplica(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			e := datalog.NewIdentity("replicated:subject")
+			attr := datalog.NewKeyword(":replicated/name")
+
+			writer, err := db.OpenMemory(db.WithReplicaID(1))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = writer.Close() })
+			tx := writer.NewTransaction()
+			require.NoError(t, tx.Set(e, attr, "same"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+			var dump bytes.Buffer
+			require.NoError(t, writer.Export(&dump))
+
+			d := tempDB(t, mode.backend, db.WithReplicaID(2), db.WithPlannerOptions(mode.plannerOptions()))
+			tx = d.NewTransaction()
+			require.NoError(t, tx.Set(e, attr, "same"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+			require.NoError(t, d.Import(&dump))
+
+			forms := []boundValueForm{
+				{"value in the pattern", `[:find ?tx :where [?e :replicated/name "same" ?tx]]`, nil},
+				{"value from an input", `[:find ?tx :in $ ?name :where [?e :replicated/name ?name ?tx]]`, []interface{}{"same"}},
+			}
+			for _, form := range forms {
+				t.Run(form.name, func(t *testing.T) {
+					var txs []datalog.ElementID
+					for _, tuple := range queryTuples(t, d.History(), form.query, form.inputs...) {
+						id, ok := datalog.DerefElementID(tuple[0])
+						require.True(t, ok, "?tx binds an ElementID, got %T", tuple[0])
+						txs = append(txs, id)
+					}
+					require.Len(t, txs, 2, "History reads the datom each replica wrote")
+					require.Equal(t, txs[0].Lamport, txs[1].Lamport, "the two writes share a Lamport")
+					require.ElementsMatch(t, []uint64{1, 2}, []uint64{txs[0].ReplicaID, txs[1].ReplicaID})
+				})
+			}
+		})
+	}
+}
+
+// History reads a superseded value when the pattern binds it: after "Alice"
+// then "Alicia" on one entity, a History query for the entities whose name is
+// "Alice" reads the entity, as the same query with the value unbound does,
+// with the value written in the pattern and with it bound from an input.
+func TestHistoryReadsASupersededValueBoundInThePattern(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
+			alice := datalog.NewIdentity("alice")
+			name := datalog.NewKeyword(":person/name")
+			for _, value := range []string{"Alice", "Alicia"} {
+				tx := d.NewTransaction()
+				require.NoError(t, tx.Add(alice, name, value))
+				_, err := tx.Commit()
+				require.NoError(t, err)
+			}
+
+			var unbound []string
+			require.NoError(t, d.History().QueryInto(&unbound, `[:find ?name :where [?e :person/name ?name]]`))
+			require.ElementsMatch(t, []string{"Alice", "Alicia"}, unbound)
+
+			forms := []boundValueForm{
+				{"value in the pattern", `[:find ?e :where [?e :person/name "Alice"]]`, nil},
+				{"value from an input", `[:find ?e :in $ ?name :where [?e :person/name ?name]]`, []interface{}{"Alice"}},
+			}
+			for _, form := range forms {
+				t.Run(form.name, func(t *testing.T) {
+					bound := queryTuples(t, d.History(), form.query, form.inputs...)
+					require.Equal(t, [][]interface{}{{alice}}, bound, "the superseded value bound in the pattern reads the entity under History")
+				})
+			}
+		})
+	}
+}
+
+var shelfBooks = datalog.NewKeyword(":shelf/books")
+
+// vectorSchema declares :shelf/books as a vector of strings.
+func vectorSchema(t *testing.T) *schema.Schema {
+	t.Helper()
+	s, err := schema.NewBuilder().
+		Attribute(":shelf/books").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+	return s
+}
+
+// History reads a vector attribute as the element datoms its writer wrote,
+// whatever binds the entity: the pattern with the entity written as a
+// constant, with it unbound and with it bound from an input read the same
+// datoms. A vector literal at the value position names a resolved
+// collection, which the current view answers, and under History it reads
+// with the entity unbound or from an input what it reads with the entity
+// written as a constant.
+func TestHistoryReadsAVectorAttributeAsItsElementDatoms(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			d := tempDB(t, mode.backend, db.WithSchema(vectorSchema(t)), db.WithPlannerOptions(mode.plannerOptions()))
+			shelf := datalog.NewIdentity("shelf:folio")
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Set(shelf, shelfBooks, []string{"folio", "quarto", "octavo"}))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			require.Len(t, queryTuples(t, d, `[:find ?tx :where [?e :shelf/books ["folio" "quarto" "octavo"] ?tx]]`), 1,
+				"the current view resolves the vector the literal names")
+
+			elements := queryTuples(t, d.History(), `[:find ?v ?tx :where [#id "shelf:folio" :shelf/books ?v ?tx]]`)
+			require.Len(t, elements, 3, "History reads one datom per element written")
+			require.ElementsMatch(t, elements,
+				queryTuples(t, d.History(), `[:find ?v ?tx :where [?e :shelf/books ?v ?tx]]`),
+				"the entity unbound reads the element datoms")
+			require.ElementsMatch(t, elements,
+				queryTuples(t, d.History(), `[:find ?v ?tx :in $ ?e :where [?e :shelf/books ?v ?tx]]`, shelf),
+				"the entity bound from an input reads the element datoms")
+
+			literal := queryTuples(t, d.History(), `[:find ?tx :where [#id "shelf:folio" :shelf/books ["folio" "quarto" "octavo"] ?tx]]`)
+			require.ElementsMatch(t, literal,
+				queryTuples(t, d.History(), `[:find ?tx :where [?e :shelf/books ["folio" "quarto" "octavo"] ?tx]]`),
+				"the entity unbound reads for a vector literal what the constant entity reads")
+			require.ElementsMatch(t, literal,
+				queryTuples(t, d.History(), `[:find ?tx :in $ ?e :where [?e :shelf/books ["folio" "quarto" "octavo"] ?tx]]`, shelf),
+				"the entity bound from an input reads for a vector literal what the constant entity reads")
+		})
+	}
+}
+
+// A vector literal at the value position names a resolved collection, which a
+// scalar attribute never carries, so it equals no datom of one: with the
+// entity written as a constant, with it unbound and with it bound from an
+// input, the pattern reads nothing, with the EA cache and without it.
+func TestAVectorLiteralEqualsNoDatomOfAScalarAttribute(t *testing.T) {
+	for _, mode := range optimizerModes {
+		for _, cache := range []struct {
+			name string
+			opts []db.Option
+		}{
+			{"cache", nil},
+			{"no cache", []db.Option{db.WithoutCache()}},
+		} {
+			t.Run(mode.name+"/"+cache.name, func(t *testing.T) {
+				d := tempDB(t, mode.backend, append([]db.Option{db.WithPlannerOptions(mode.plannerOptions())}, cache.opts...)...)
+				alice := datalog.NewIdentity("alice")
+				tx := d.NewTransaction()
+				require.NoError(t, tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice"))
+				_, err := tx.Commit()
+				require.NoError(t, err)
+
+				require.Len(t, queryTuples(t, d, `[:find ?tx :where [?e :person/name "Alice" ?tx]]`), 1,
+					"the scalar value reads the datom")
+				require.Empty(t, queryTuples(t, d, `[:find ?tx :where [#id "alice" :person/name ["Alice"] ?tx]]`),
+					"the entity written as a constant")
+				require.Empty(t, queryTuples(t, d, `[:find ?tx :where [?e :person/name ["Alice"] ?tx]]`),
+					"the entity unbound")
+				require.Empty(t, queryTuples(t, d, `[:find ?tx :in $ ?e :where [?e :person/name ["Alice"] ?tx]]`, alice),
+					"the entity bound from an input")
+			})
+		}
 	}
 }
 

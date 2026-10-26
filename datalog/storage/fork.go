@@ -63,7 +63,7 @@ type forker interface {
 // is refused with ErrRollbackInProgress. An AsOf or History handle is read-only
 // and cannot fork, and neither can a store with no way to start a branch.
 func (d *Database) Fork(name string) (branch *Database, err error) {
-	if d.temporalTxID != nil {
+	if d.mode != latestMode {
 		return nil, fmt.Errorf("Fork: cannot fork a read-only temporal handle (AsOf/History)")
 	}
 	if name == "" {

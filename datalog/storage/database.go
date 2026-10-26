@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"math/rand/v2"
 	"os"
@@ -90,7 +91,13 @@ type Database struct {
 	replicaID      uint64                  // CRDT: This database's replica identifier
 	cache          *Cache                  // CRDT: Unified cache for resolved CRDT views
 	builderCache   *tupleBuilderCache      // Shared tuple-builder population for every matcher this database mints
-	temporalTxID   *datalog.ElementID      // nil = current; set = temporal mode (AsOf/History)
+	// mode is which view of the store this handle reads, and asOf is the
+	// target of an as-of view, zero in the other two modes. A handle in
+	// either temporal mode is read-only: it opens no transaction, declares no
+	// schema, takes no snapshot, forks no branch and rewinds nothing, and
+	// Close leaves the store to the parent.
+	mode temporalMode
+	asOf datalog.ElementID
 
 	// removePath, when non-empty, is scratch space this database owns: Close
 	// removes it once the store has released its files.
@@ -185,6 +192,12 @@ type DatabaseOptions struct {
 	// scratch space to hold data that came from somewhere else — a dump loaded
 	// into a persistent backend — rather than a location the data lives at.
 	RemovePathOnClose bool
+	// Dump, when set, is an exported dump the constructor loads into the store
+	// it opened before it declares Schema, so the declarations the dump
+	// carries are read back and never declared a second time, and a
+	// load-and-export round trip under the writer's schema is byte-stable.
+	// The format is read from the dump's own bytes (replayDump).
+	Dump io.ReadSeeker
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -354,6 +367,15 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	// The engine's schema is in force from construction, before any install.
 	d.installed.Store(&installedSchema{effective: engineSchema})
 
+	// A dump's datoms, its writer's declarations among them, go into the store
+	// before the install.
+	if opts.Dump != nil {
+		if err := d.replayDump(opts.Dump); err != nil {
+			closeOwnedStore()
+			return nil, fmt.Errorf("loading dump: %w", err)
+		}
+	}
+
 	// The store's definitions are read, a given schema declared into them, and
 	// the schema the database runs with composed from what the store states.
 	if err := d.installSchema(true); err != nil {
@@ -379,7 +401,7 @@ func (d *Database) Schema() schema.SchemaProvider {
 // Schema changes take effect for new transactions. A read-only temporal
 // handle has no store of its own to assert into and is refused.
 func (d *Database) SetSchema(s schema.SchemaProvider) error {
-	if d.temporalTxID != nil {
+	if d.mode != latestMode {
 		return fmt.Errorf("SetSchema: cannot declare a schema on a read-only temporal handle (AsOf/History)")
 	}
 	if s == nil && d.refuseUnknown {
@@ -600,7 +622,7 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 // views share the parent's store and have no write-side state; use the
 // parent handle for writes.
 func (d *Database) NewTransaction() *Transaction {
-	if d.temporalTxID != nil {
+	if d.mode != latestMode {
 		panic("NewTransaction called on a read-only temporal database handle (AsOf/History); use the parent handle for writes")
 	}
 	d.mu.Lock()
@@ -693,7 +715,7 @@ var _ executor.AttributeVocabulary = (*Database)(nil)
 // It supports reads (Query, NewExecutor, NewExecutorWithOptions, Matcher, Pull)
 // but not writes: NewTransaction will panic. Close is a no-op — the parent
 // owns the store lifetime.
-func (d *Database) AsOf(txID datalog.ElementID) *Database {
+func (d *Database) AsOf(target datalog.ElementID) *Database {
 	// Field dispositions (inherit / zero / per-handle) are the ruled contract
 	// pinned by TestTemporalHandleFieldClassification — a new Database field
 	// must be classified there before it can ship.
@@ -709,7 +731,8 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 		builderCache:   d.builderCache,
 		clock:          d.clock,
 		replicaID:      d.replicaID,
-		temporalTxID:   &txID,
+		mode:           asOfMode,
+		asOf:           target,
 	}
 	handle.installed.Store(d.installed.Load())
 	return handle
@@ -725,7 +748,6 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 func (d *Database) History() *Database {
 	// Field dispositions are the ruled contract pinned by
 	// TestTemporalHandleFieldClassification (see AsOf above).
-	empty := datalog.ElementID{}
 	handle := &Database{
 		store:          d.store,
 		encoder:        d.encoder,
@@ -738,7 +760,7 @@ func (d *Database) History() *Database {
 		builderCache:   d.builderCache,
 		clock:          d.clock,
 		replicaID:      d.replicaID,
-		temporalTxID:   &empty,
+		mode:           historyMode,
 	}
 	handle.installed.Store(d.installed.Load())
 	return handle
@@ -807,9 +829,8 @@ func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.
 	if d.cache != nil {
 		matcher.SetCache(d.cache)
 	}
-	if d.temporalTxID != nil {
-		return matcher.AsOf(*d.temporalTxID)
-	}
+	matcher.mode = d.mode
+	matcher.asOf = d.asOf
 	return matcher
 }
 
@@ -824,7 +845,7 @@ func (d *Database) Store() Store {
 // the store lifetime. Closing a temporal handle must not close the shared
 // underlying store.
 func (d *Database) Close() error {
-	if d.temporalTxID != nil {
+	if d.mode != latestMode {
 		return nil // Read-only view; parent owns the store.
 	}
 
@@ -3106,7 +3127,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 	// requirement. When DisableCache is set, query the matcher directly for
 	// each attribute. The matcher applies CRDT resolution via
 	// CRDTResolvingIterator when no cache is set.
-	if d.cache == nil || matcher.isHistoryMode() {
+	if d.cache == nil || matcher.mode == historyMode {
 		for _, kw := range attrs {
 			card := schema.CardinalityOne
 			if s != nil {
@@ -3195,7 +3216,7 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 	// streaming relation, tuple builders). History mode falls through to
 	// Match for raw datom reads — except cache-off vector reads, which
 	// return the RGA-resolved vector.
-	if !matcher.isHistoryMode() || (card == schema.CardinalityVector && d.cache == nil) {
+	if matcher.mode != historyMode || (card == schema.CardinalityVector && d.cache == nil) {
 		value, found, err := matcher.LookupAttribute(entity, attr)
 		if err != nil || !found {
 			return nil, err
@@ -3352,7 +3373,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	// reads keep the discovery-then-resolve path. Discovery reads only the
 	// attribute span of each key — values stay undecoded and Tier-3 blobs
 	// are never dereferenced.
-	if matcher.isHistoryMode() {
+	if matcher.mode == historyMode {
 		encoder := d.encoder
 
 		bound = ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}}

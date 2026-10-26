@@ -119,14 +119,25 @@ func ValueNodeCompressed(v interface{}) edn.Node {
 	return ValueNode(v)
 }
 
-// Import reads datoms from EDN format and loads them into the database.
-// Each line should contain a single EDN vector: [#identity "L85" :attribute value tx-id]
-//
-// The transaction IDs from the file are preserved, allowing exact restoration
-// of the database state. Empty lines and lines starting with ; are ignored.
-//
-// Import asserts the datoms in batches of 1000.
+// Import loads an EDN dump into the database (replayEDN) and then composes
+// the schema the database runs with from the definitions the dump carried,
+// under a given schema if one was declared, whose facts take ElementIDs past
+// the restored clock and so supersede the imported ones for the idents it
+// names.
 func (d *Database) Import(r io.Reader) error {
+	if err := d.replayEDN(r); err != nil {
+		return err
+	}
+	return d.installSchema(true)
+}
+
+// replayEDN asserts the datoms of an EDN dump into the store, one EDN vector
+// per line, [#identity "L85" :attribute value tx-id], in batches of 1000,
+// with the ElementIDs the dump carries, and advances the Lamport clock past
+// the highest of them so later writes order after the imported data. Empty
+// lines and lines starting with ; are ignored. It declares nothing: the
+// caller composes the schema once the datoms are in.
+func (d *Database) replayEDN(r io.Reader) error {
 	scanner := bufio.NewScanner(r)
 	// Increase buffer size for long lines
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -181,12 +192,7 @@ func (d *Database) Import(r io.Reader) error {
 	if !maxElementID.IsZero() {
 		d.clock.Restore(maxElementID)
 	}
-
-	// The dump carried its writer's definitions. The schema the database runs
-	// with is composed from them, under a given schema if one was declared,
-	// whose facts take ElementIDs past the restored clock and so supersede the
-	// imported ones for the idents it names.
-	return d.installSchema(true)
+	return nil
 }
 
 // FormatCRDTOpEDN formats a CRDTOp as an EDN keyword string.

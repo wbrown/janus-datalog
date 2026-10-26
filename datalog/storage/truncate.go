@@ -23,7 +23,7 @@ import (
 // window (BeginInFlight → delete → InvalidateRewind) keeps them from caching a soon-to-be-
 // stale value while the rewind is visible mid-flight.
 func (d *Database) TruncateTo(name string) error {
-	if d.temporalTxID != nil {
+	if d.mode != latestMode {
 		return fmt.Errorf("TruncateTo: cannot rewind a read-only temporal handle (AsOf/History)")
 	}
 

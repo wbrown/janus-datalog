@@ -96,16 +96,11 @@ func Open(source interface{}, opts ...Option) (*DB, error) {
 		if err := setDumpDestination(&dbOpts); err != nil {
 			return nil, fmt.Errorf("db.Open: %w", err)
 		}
+		dbOpts.Dump = dump
 	}
 	d, err := storage.NewDatabaseWithOptions(dbOpts)
 	if err != nil {
 		return nil, fmt.Errorf("db.Open: %w", err)
-	}
-	if dump != nil {
-		if err := d.ImportDump(dump); err != nil {
-			_ = d.Close()
-			return nil, fmt.Errorf("db.Open: %w", err)
-		}
 	}
 	return d, nil
 }

@@ -251,24 +251,15 @@ The commit path:
 
 ### 5.1 Empty database basis
 
-Janus currently uses `&ElementID{}` as the History mode sentinel. An empty latest-state basis therefore cannot be represented by calling `AsOf(ElementID{})`.
-
-The subscription design needs an explicit basis type:
+History is a mode of its own on a handle, never a basis, and `AsOf(ElementID{})` reads the view as of the zero ElementID, which no write precedes: the empty latest snapshot. A basis is one ElementID:
 
 ```go
 type SnapshotBasis struct {
-    Tx    datalog.ElementID
-    Empty bool
+    Tx datalog.ElementID
 }
 ```
 
-or another representation that distinguishes:
-
-- Empty latest snapshot.
-- Raw History mode.
-- A real committed transaction basis.
-
-Do not overload the zero `ElementID` sentinel.
+The zero `Tx` is the empty latest snapshot, and a committed transaction's `Tx` is a real basis.
 
 ### 5.2 Ordering
 
@@ -801,14 +792,13 @@ Each is a choice the goals leave open, with the alternatives named:
 6. **Ordering:** set membership only, or positional/reorder events.
 7. **Pull:** a pre-render entity tuple diff, or a presentation deep diff.
 8. **Error policy:** terminal, or retry for classified transient errors.
-9. **Empty database basis:** the explicit `SnapshotBasis` representation, or another that keeps the three states apart.
-10. **Dependency source:** the parsed query, the algebra tree, the RealizedPlan, or a normalized combination.
-11. **Registered functions:** declared dependencies, wildcard, or rejection.
-12. **Relation inputs:** the maximum retained size and the copying policy.
-13. **Per-database limits:** subscription count, queue memory, worker count.
-14. **History:** unsupported, or a separate filtered transaction stream.
-15. **Multi-source:** an immutable-only restriction, or a `ChangeSource` capability from the start.
-16. **Durability:** ephemeral only, or a resumable cursor.
+9. **Dependency source:** the parsed query, the algebra tree, the RealizedPlan, or a normalized combination.
+10. **Registered functions:** declared dependencies, wildcard, or rejection.
+11. **Relation inputs:** the maximum retained size and the copying policy.
+12. **Per-database limits:** subscription count, queue memory, worker count.
+13. **History:** unsupported, or a separate filtered transaction stream.
+14. **Multi-source:** an immutable-only restriction, or a `ChangeSource` capability from the start.
+15. **Durability:** ephemeral only, or a resumable cursor.
 
 ---
 

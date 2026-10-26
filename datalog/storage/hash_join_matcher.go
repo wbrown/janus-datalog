@@ -189,10 +189,10 @@ func (m *PatternMatcher) matchWithHashJoin(
 
 	// PHASE 3.5: Wrap with CRDT resolution unless in history mode
 	var resolvedIter Iterator
-	if m.isHistoryMode() {
+	if m.mode == historyMode {
 		resolvedIter = storageIter
 	} else {
-		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m, report)
+		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.asOf, m, report)
 	}
 
 	// PHASE 4: Create streaming hash join iterator
@@ -469,6 +469,11 @@ func compileBindingMatchPlan(
 		case query.Constant:
 			plan.slots[i].constant = value.Value
 			plan.slots[i].hasConstant = true
+		case query.VectorConstant:
+			// A vector literal names a collection, which no datom's value is,
+			// so the comparison at this slot matches no datom.
+			plan.slots[i].constant = value.Values
+			plan.slots[i].hasConstant = true
 		case query.Variable:
 			if index, found := symbolIndex[value.Name]; found {
 				plan.slots[i].bindingIndex = index
@@ -529,9 +534,12 @@ func (m *PatternMatcher) matchesWithBindingTuple(
 		}
 	}
 
-	// V
+	// V. A vector literal names a collection, which no datom's value is, so
+	// it is compared and matches no datom.
 	if c, ok := pattern.GetV().(query.Constant); ok {
 		v = c.Value
+	} else if c, ok := pattern.GetV().(query.VectorConstant); ok {
+		v = c.Values
 	} else if sym, ok := pattern.GetV().(query.Variable); ok {
 		if idx, found := symIndex[sym.Name]; found && idx < len(bindingTuple) {
 			v = bindingTuple[idx]
@@ -622,10 +630,10 @@ func (m *PatternMatcher) matchWithMergeJoin(
 
 	// PHASE 3.5: Wrap with CRDT resolution unless in history mode
 	var resolvedIterMerge Iterator
-	if m.isHistoryMode() {
+	if m.mode == historyMode {
 		resolvedIterMerge = storageIter
 	} else {
-		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m, report)
+		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.asOf, m, report)
 	}
 
 	// PHASE 4: Create streaming merge join iterator

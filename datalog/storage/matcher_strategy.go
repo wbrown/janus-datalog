@@ -48,8 +48,10 @@ type ReuseStrategy struct {
 // cardinality many, whose adds and removes all carry the value. Any other
 // attribute, an undeclared one and a matcher with no schema included,
 // resolves as cardinality one: with V the one bound position its candidates
-// are post-validated against the EATV winner, and with several positions
-// bound V is no seek dimension (docs/proposals/BOUND_VALUE_SEEK_PROOF.md T6).
+// are post-validated against the EATV winner outside history mode, where
+// nothing resolves and every datom is read as written, and with several
+// positions bound V is no seek dimension
+// (docs/proposals/BOUND_VALUE_SEEK_PROOF.md T6).
 func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relation) (ReuseStrategy, executor.Relation) {
 	if bindingRel == nil {
 		return ReuseStrategy{Type: NoReuse}, bindingRel
@@ -135,7 +137,9 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 			// V-bound queries use the candidate + validate pattern for an
 			// attribute resolving as cardinality one: the V-primary index
 			// finds the candidates and an EATV point lookup validates each
-			// (docs/reference/INDEX_SELECTION_PROOF.md Theorem 5).
+			// (docs/reference/INDEX_SELECTION_PROOF.md Theorem 5). Under
+			// History every datom is read as written, so there is no winner
+			// to validate against and the candidates are the answer.
 			if aConst, ok := pattern.GetA().(query.Constant); ok {
 				// A is constant: use AVET for (A, V) prefix scan
 				indexType = AVET
@@ -144,7 +148,7 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 					Type:            SinglePositionReuse,
 					Position:        position,
 					Index:           indexType,
-					NeedsValidation: card == schema.CardinalityOne,
+					NeedsValidation: card == schema.CardinalityOne && m.mode != historyMode,
 					ValidationIndex: EATV,         // Point lookup on (E, A)
 					BoundA:          aConst.Value, // For validation lookups
 				}, bindingRel
@@ -157,7 +161,7 @@ func (m *PatternMatcher) analyzeReuseStrategy(pattern *query.DataPattern, bindin
 					Type:            SinglePositionReuse,
 					Position:        position,
 					Index:           indexType,
-					NeedsValidation: true,
+					NeedsValidation: m.mode != historyMode,
 					ValidationIndex: EATV,
 				}, bindingRel
 			}

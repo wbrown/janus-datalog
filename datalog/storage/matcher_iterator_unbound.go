@@ -51,7 +51,7 @@ func (it *unboundIterator) Next() bool {
 		// Check if datom matches pattern
 		if it.matcher.matchesDatom(datom, it.e, it.a, it.v, it.tx) {
 			// Apply transaction and constraint validation
-			if validateDatomWithConstraints(datom, it.matcher.txID, it.constraints) {
+			if validateDatomWithConstraints(datom, it.matcher, it.constraints) {
 				it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
 				it.currentTuple = it.workspace
 				if it.report != nil {

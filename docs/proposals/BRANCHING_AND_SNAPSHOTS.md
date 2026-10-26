@@ -66,7 +66,7 @@ Visibility is enforced in a single predicate, mirrored in two places:
 if it.txID != (ElementID{}) && it.txID.Less(datom.Tx) { continue }   // skip "future" datoms
 
 // matcher.go: shouldFilterTx — same comparison on the candidate path
-return m.txID != nil && *m.txID != (ElementID{}) && m.txID.Less(datomTx)
+return m.mode == asOfMode && m.asOf.Less(datomTx)
 ```
 
 Everything else (the eight indices ordered by total `(Lamport, ReplicaID)` order, "first entry wins" LWW, add-wins, RGA, unique `(A,V)`-LWW) runs over whatever survives that predicate. The substrate is already a branching substrate, pinned to one linear timeline only because the threshold is a scalar.

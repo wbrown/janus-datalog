@@ -88,8 +88,10 @@ func (m *PatternMatcher) MatchWithConstraints(
 	// Project the binding relation to only include symbols used in the pattern
 	bindingRel = bindingRel.ProjectFromPattern(pattern)
 
-	// Check for vector cardinality - requires special handling with bound E from bindings
-	// This intercepts BEFORE normal join paths since vectors need RGA resolution
+	// A declared vector attribute's value is the collection its element datoms
+	// resolve to (RGA), so a pattern on one is intercepted before the join
+	// paths, which match single datoms. Under History the element datoms are
+	// the answer, read as written, and the joins below read them.
 	var aResolved interface{}
 	aResolved = m.extractValue(pattern.GetA())
 	if aResolved == nil {
@@ -99,7 +101,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 			}
 		}
 	}
-	if aResolved != nil {
+	if aResolved != nil && m.mode != historyMode {
 		if m.schema != nil {
 			if kw, ok := aResolved.(datalog.Keyword); ok {
 				if attr := m.schema.GetAttribute(kw); attr != nil {
@@ -138,12 +140,12 @@ func (m *PatternMatcher) MatchWithConstraints(
 				annotations.KeyPattern: pattern,
 				"a_resolved":           aResolved,
 				"cache_nil":            m.cache == nil,
-				"txID_nil":             m.txID == nil,
+				"mode":                 m.mode,
 				"has_bindings":         bindings != nil && len(bindings) > 0,
 			},
 		})
 	}
-	if m.cache != nil && !m.isHistoryMode() {
+	if m.cache != nil && m.mode != historyMode {
 		if aResolved != nil {
 			// Phase 1: A has a single known value (from constant or single-tuple binding)
 			if aKw, ok := aResolved.(datalog.Keyword); ok {
@@ -274,7 +276,7 @@ func (m *PatternMatcher) restoreScanSetSemantics(rel executor.Relation, pattern 
 	if _, ok := rel.(*executor.MaterializedRelation); ok {
 		return rel
 	}
-	if scanProjectionPreservesSet(pattern, m.schema, m.isHistoryMode()) {
+	if scanProjectionPreservesSet(pattern, m.schema, m.mode == historyMode) {
 		return rel
 	}
 	return executor.NewStreamingRelationWithOptions(
@@ -349,18 +351,21 @@ func (m *PatternMatcher) matchUnboundScan(
 		}
 	}
 
-	// A datom's value is a scalar. A vector at the value position names a
-	// declared vector attribute's whole collection, which the vector arms
-	// below compare; under any other constant attribute it equals no datom,
+	// A datom's value is a scalar: a declared vector attribute is stored as one
+	// datom per element, and the collection is what resolution reconstructs
+	// from them (resolveVector). A vector at the value position names that
+	// collection, which the vector arms below compare in the current and as-of
+	// views; under any other constant attribute, and under History, where
+	// every datom is read as written and nothing resolves, it equals no datom,
 	// and the pattern answers the empty relation.
-	if a != nil && card != schema.CardinalityVector && datalog.IsVector(v) {
+	if a != nil && datalog.IsVector(v) && (card != schema.CardinalityVector || m.mode == historyMode) {
 		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
 	}
 
 	// CACHE OPTIMIZATION: When E and A are bound, use the cache for O(1)
 	// access instead of storage scans. Concrete AsOf matchers use
 	// transaction-scoped cache keys; History matchers bypass cache.
-	if m.cache != nil && !m.isHistoryMode() && e != nil && a != nil {
+	if m.cache != nil && m.mode != historyMode && e != nil && a != nil {
 		if eIdent, ok := e.(datalog.Identity); ok {
 			if aKw, ok := a.(datalog.Keyword); ok {
 				cacheResult, handled, err := m.matchFromCache(pattern, symbols, eIdent, aKw, v, card, valueType)
@@ -400,11 +405,14 @@ func (m *PatternMatcher) matchUnboundScan(
 				useVectorResolution = true
 			}
 		}
-	} else if e == nil && a != nil && v != nil && card == schema.CardinalityOne {
-		// E is unbound, A is bound, V is constant, cardinality-one
-		// V-bound scan (AVET) only sees datoms with this V, but the LWW winner
-		// may have a different V. Use candidate + validate pattern.
-		// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 2 & 5.
+	} else if e == nil && a != nil && v != nil && card == schema.CardinalityOne && m.mode != historyMode {
+		// E is unbound, A is bound, V is constant, cardinality-one, in the
+		// current or an as-of view. A V-bound scan (AVET) only sees datoms with
+		// this V, but the LWW winner may have a different V, so each candidate
+		// is validated against the winner. See
+		// docs/reference/INDEX_SELECTION_PROOF.md Theorem 2 & 5. Under History
+		// nothing resolves and there is no winner: the raw AVET scan below
+		// reads every datom carrying V, which is the answer.
 		dummySym := datalog.NewSymbol("__v_bound_dummy__")
 		bindingRel := executor.NewMaterializedRelation(
 			[]query.Symbol{dummySym},
@@ -418,10 +426,12 @@ func (m *PatternMatcher) matchUnboundScan(
 			BoundA:          a,
 		}
 		return m.matchWithVValidation(pattern, bindingRel, symbols, strategy, nil)
-	} else if e == nil && a != nil && card == schema.CardinalityVector {
-		// E unbound, A bound, cardinality-vector
-		// Scan all entities with this attribute, resolve each vector, compare against V.
-		// Pass v (nil for unbound, []interface{} for bound literal).
+	} else if e == nil && a != nil && card == schema.CardinalityVector && m.mode != historyMode {
+		// E unbound, A bound, cardinality-vector, in the current or an as-of
+		// view: scan all entities with this attribute, resolve each vector from
+		// its element datoms and compare it against V, nil for unbound or the
+		// bound literal. Under History nothing resolves: the raw scan below
+		// reads each element datom as written.
 		return m.matchVectorScanAllEntities(pattern, symbols, a, v, valueType)
 	} else if e == nil && a != nil && card == schema.CardinalityMany {
 		// E is unbound, A is bound, cardinality-many
@@ -435,8 +445,9 @@ func (m *PatternMatcher) matchUnboundScan(
 		}
 	}
 
-	// In history mode, disable all CRDT resolution flags — return raw datoms
-	if m.isHistoryMode() {
+	// Under History nothing resolves: every flag is cleared, and the raw scan
+	// below reads each datom as written.
+	if m.mode == historyMode {
 		returnOnlyFirst = false
 		useAddWinsResolution = false
 		useMembershipCheck = false
@@ -472,21 +483,21 @@ func (m *PatternMatcher) matchUnboundScan(
 
 	// Choose index and create scan bound
 	bound := m.chooseIndex(e, a, v, tx)
-	properties := unboundScanProperties(pattern, bound.Index, card, m.isHistoryMode())
-	if orderedProperties, ok := historyTAEVProperties(q, pattern, m.isHistoryMode()); ok {
+	properties := unboundScanProperties(pattern, bound.Index, card, m.mode == historyMode)
+	if orderedProperties, ok := historyTAEVProperties(q, pattern, m.mode == historyMode); ok {
 		bound = ScanBound{Index: TAEV}
 		properties = orderedProperties
-	} else if orderedProperties, ok := historyAETVProperties(q, pattern, m.isHistoryMode()); ok {
+	} else if orderedProperties, ok := historyAETVProperties(q, pattern, m.mode == historyMode); ok {
 		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
 			bound = ScanBound{Index: AETV, Prefix: []datalog.Value{keyword}}
 			properties = orderedProperties
 		}
-	} else if orderedProperties, ok := historyEATVProperties(q, pattern, m.isHistoryMode()); ok {
+	} else if orderedProperties, ok := historyEATVProperties(q, pattern, m.mode == historyMode); ok {
 		if identity, identityOK := e.(datalog.Identity); identityOK {
 			bound = ScanBound{Index: EATV, Prefix: []datalog.Value{identity}}
 			properties = orderedProperties
 		}
-	} else if orderedProperties, ok := historyATEVProperties(q, pattern, m.isHistoryMode()); ok {
+	} else if orderedProperties, ok := historyATEVProperties(q, pattern, m.mode == historyMode); ok {
 		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
 			bound = ScanBound{Index: ATEV, Prefix: []datalog.Value{keyword}}
 			properties = orderedProperties
@@ -527,10 +538,10 @@ func (m *PatternMatcher) matchUnboundScan(
 		return nil, fmt.Errorf("scan failed: %w", err)
 	}
 
-	if m.isHistoryMode() {
+	if m.mode == historyMode {
 		regularIter.storageIter = rawStorageIter
 	} else {
-		regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID(), m, report)
+		regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.asOf, m, report)
 	}
 
 	// Return streaming relation with lazy materialization
@@ -928,15 +939,15 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	//
 	// Equivalence preconditions (all required):
 	//   - cache != nil: cache exists (not DisableCache).
-	//   - txID == nil: latest mode. The scan below reads the absolute-latest
-	//     entry with NO shouldFilterTx, so it equals ResolveLWW only when no
-	//     as-of/history filter applies. Concrete-AsOf and history keep the scan
-	//     path untouched.
+	//   - latest mode. The scan below reads the absolute-latest entry with NO
+	//     shouldFilterTx, so it equals ResolveLWW only when no as-of/history
+	//     filter applies. Concrete-AsOf and history keep the scan path
+	//     untouched.
 	//   - non-unique: ResolveLWW walks for unique attributes (CRDT-unique
 	//     fallback), which differs from this scan's naive first-entry. Unique
 	//     attributes already short-circuit before validation via
 	//     tryEmitUniqueWinner; this guard makes the precondition self-evident.
-	if it.matcher.cache != nil && it.matcher.txID == nil && !it.attrIsUnique(a) {
+	if it.matcher.cache != nil && it.matcher.mode == latestMode && !it.attrIsUnique(a) {
 		var eEnt Entity
 		var aAttr Attribute
 		copy(eEnt[:], eBytes[:])
@@ -1138,12 +1149,12 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	// - RGA for CardinalityVector
 	// - Add-wins for CardinalityUnknown (same as CardinalityMany)
 	//
-	// Pass the matcher's as-of target (crdtTxID) so candidate resolution
-	// respects the snapshot. In latest and history mode this is the zero
-	// ElementID (no filter); in concrete as-of mode it skips post-snapshot
-	// entries, so a value tombstoned or overwritten after T does not drop or
-	// alter a candidate that existed as of T.
-	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher, it.report)
+	// Pass the matcher's as-of target so candidate resolution respects the
+	// snapshot. In latest mode it is the zero ElementID (no filter); in as-of
+	// mode it skips post-snapshot entries, so a value tombstoned or
+	// overwritten after T does not drop or alter a candidate that existed as
+	// of T. Under History this arm is not taken.
+	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.asOf, it.matcher, it.report)
 
 	if it.matcher.handler != nil {
 		// The same run the event above announced, restated rather than left to
