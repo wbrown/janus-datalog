@@ -116,7 +116,7 @@ func BenchmarkPatternMatcherGetCardinality(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	m := NewPatternMatcher(NewMemoryStore(&BinaryKeyEncoder{}))
+	m := NewPatternMatcher(NewBadgerEmulatorStore(&BinaryKeyEncoder{}))
 	m.SetSchema(s)
 	attr := datalog.NewKeyword(":bench/attr")
 	if card := m.GetCardinality(attr); card != schema.CardinalityMany {
@@ -140,7 +140,7 @@ func TestPatternMatcherGetCardinalityAllocatesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := NewPatternMatcher(NewMemoryStore(&BinaryKeyEncoder{}))
+	m := NewPatternMatcher(NewBadgerEmulatorStore(&BinaryKeyEncoder{}))
 	m.SetSchema(s)
 	attr := datalog.NewKeyword(":bench/attr")
 	allocs := testing.AllocsPerRun(100, func() {

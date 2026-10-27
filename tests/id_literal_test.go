@@ -12,7 +12,7 @@ import (
 // query text constructs the same Identity as NewIdentity("seed"), so a
 // pattern using it matches the entity written under that seed.
 func TestIDLiteralMatchesEntity(t *testing.T) {
-	eachBackendAndMode(t, func(t *testing.T, db *storage.Database) {
+	eachMode(t, func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("user:alice")
 		bob := datalog.NewIdentity("user:bob")
 		nameAttr := datalog.NewKeyword(":user/name")

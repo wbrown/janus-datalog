@@ -155,7 +155,15 @@ type Pattern interface {
 	String() string
 }
 
-// DataPattern represents a data pattern [e a v] or [e a v t].
+// PatternPositions is how many positions a data pattern has: entity,
+// attribute, value and transaction. A pattern holds one to that many
+// elements, which DataPattern.Validate checks and a scan fingerprint sizes
+// its elements by.
+const PatternPositions = 4
+
+// DataPattern represents a data pattern of one to four elements, entity,
+// attribute, value and transaction in that order, a position the text omits
+// being unbound: [e], [e a], [e a v] or [e a v t].
 // For multi-source queries, Source identifies which data source to query
 // (e.g., Symbol("$users")). Empty Source means the default source ($).
 type DataPattern struct {
@@ -311,20 +319,22 @@ func (p DataPattern) GetE() PatternElement {
 	return nil
 }
 
-// GetA returns the attribute element if it exists
+// GetA returns the attribute element; a position the pattern omits is
+// unbound, so it reads as a blank.
 func (p DataPattern) GetA() PatternElement {
 	if len(p.Elements) > 1 {
 		return p.Elements[1]
 	}
-	return nil
+	return Blank{}
 }
 
-// GetV returns the value element if it exists
+// GetV returns the value element; a position the pattern omits is unbound,
+// so it reads as a blank.
 func (p DataPattern) GetV() PatternElement {
 	if len(p.Elements) > 2 {
 		return p.Elements[2]
 	}
-	return nil
+	return Blank{}
 }
 
 // GetT returns the transaction/time element if it exists

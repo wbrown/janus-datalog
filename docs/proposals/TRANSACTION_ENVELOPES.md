@@ -203,7 +203,7 @@ Per-operation `TxMember` / `TxMemberByOperation` keys are written only when a he
 
 Transaction order is the header prefix ordered by TransactionID. Instant order is `(Instant, TransactionID)`. E-bound virtual-datom lookups are point seeks.
 
-### Typed B-tree / MemoryStore
+### Typed B-tree / MemoryTreeStore
 
 The typed-tree backend does not reproduce binary Badger keys. It stores one typed `TransactionRecord` object in a tree keyed by TransactionID:
 
@@ -593,7 +593,7 @@ Each part establishes or changes something on its own. No part exists only to st
 
 ### The typed memory backend comes first
 
-The typed B-tree / MemoryStore section stores typed `TransactionRecord` trees: `recordsByID`, `recordsByInstant`, `recordsByEntity` and `recordsByRange`. A memory backend that mirrors Badger's binary keys would build the transaction log twice, as binary key families first and as typed record trees after the memory rework. So the typed backend comes before the envelope flag day, and the flag day builds the record trees once, in their final representation. `MemoryTreeStore` is that backend, and `MemoryStore` remains the Badger emulator ([MEMORY_DATOM_INDEXES.md](MEMORY_DATOM_INDEXES.md)). `storage.PatternMatcher` and `StoreReader`'s typed scan bounds exist, so the visibility predicate threads through that type once.
+The typed B-tree / MemoryTreeStore section stores typed `TransactionRecord` trees: `recordsByID`, `recordsByInstant`, `recordsByEntity` and `recordsByRange`. A memory backend that mirrors Badger's binary keys would build the transaction log twice, as binary key families first and as typed record trees after the memory rework. So the typed backend comes before the envelope flag day, and the flag day builds the record trees once, in their final representation. `MemoryTreeStore` is that backend, and `BadgerEmulatorStore` remains the Badger emulator ([MEMORY_DATOM_INDEXES.md](MEMORY_DATOM_INDEXES.md)). `storage.PatternMatcher` and `StoreReader`'s typed scan bounds exist, so the visibility predicate threads through that type once.
 
 ### Versioning
 

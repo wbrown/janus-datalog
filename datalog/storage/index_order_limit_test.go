@@ -18,7 +18,7 @@ func TestIndexOrderedLimitStopsSatisfiedScan(t *testing.T) {
 		limit       = 10
 	)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var scanned atomic.Int64
 			handler := func(event annotations.Event) {

@@ -17,16 +17,16 @@ type Pattern struct {
 	elements []query.PatternElement
 }
 
-// Pat creates a data pattern of any arity.
+// Pat creates a data pattern of one to four elements, entity, attribute,
+// value and transaction in that order; a position the pattern omits is
+// unbound:
+//   - Pat(e)                 - [e], every entity carrying a datom
+//   - Pat(e, a)              - [e a], every entity carrying the attribute
+//   - Pat(e, a, v)           - [e a v]
+//   - Pat(e, a, v, tx)       - [e a v tx], with the transaction
 //
-// Common database patterns:
-//   - Pat(e, a, v)           - standard [e a v] pattern
-//   - Pat(e, a, v, tx)       - transaction-aware [e a v tx] pattern
-//   - Pat(e, a, v, tx, op)   - history [e a v tx op] pattern
-//
-// Patterns can also match input relations of any arity:
-//   - Pat(name, age)         - matches [[?name ?age] ...] input
-//   - Pat(a, b, c, d, e, f)  - matches 6-tuple input relation
+// Build refuses a pattern of no element or of more than four, as
+// ParseQuery refuses its rendering.
 //
 // Arguments can be:
 //   - *Var: a query variable
@@ -37,11 +37,10 @@ type Pattern struct {
 //
 // Example:
 //
-//	qb.Pat(e, PersonName, name)              // [e a v] database pattern
+//	qb.Pat(e, PersonName, name)              // [e a v]
 //	qb.Pat(e, PersonCity, qb.V("NYC"))       // with constant
+//	qb.Pat(e, PersonName)                    // [e a], the value unbound
 //	qb.Pat(e, PersonName, name, tx)          // [e a v tx]
-//	qb.Pat(e, PersonName, name, tx, op)      // [e a v tx op] for history
-//	qb.Pat(name, age)                        // 2-tuple input relation
 func Pat(args ...interface{}) *Pattern {
 	if len(args) == 0 {
 		panic("Pat requires at least one argument")

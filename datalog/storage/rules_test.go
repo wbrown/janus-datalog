@@ -756,7 +756,7 @@ func TestRules_AnalyzeEvaluatesUnderOneSnapshot(t *testing.T) {
 		t.Run(fmt.Sprintf("algebra_%v", algebra), func(t *testing.T) {
 			opts := DefaultPlannerOptions()
 			opts.EnableAlgebraOptimizer = algebra
-			store := &scanSignalStore{Store: NewMemoryStore(&BinaryKeyEncoder{})}
+			store := &scanSignalStore{Store: NewBadgerEmulatorStore(&BinaryKeyEncoder{})}
 			d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, PlannerOptions: &opts})
 			require.NoError(t, err)
 			defer d.Close()

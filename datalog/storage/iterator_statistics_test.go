@@ -20,7 +20,7 @@ import (
 // holds N datoms and resolution emits one. Reporting only the second number
 // makes a scan over deep history indistinguishable from a scan over none.
 func TestScanReportsIntakeAndResolution(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":person/name").Type(schema.TypeString).One().Add().
@@ -90,7 +90,7 @@ func TestScanReportsIntakeAndResolution(t *testing.T) {
 // every emitter and read by the formatter, and neither half fails visibly when
 // the other is missing: the line renders "[0µs]" and trails "in <nil>".
 func TestScanStatisticsCarryTheirDuration(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var events []annotations.Event
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{

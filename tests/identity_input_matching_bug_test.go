@@ -26,7 +26,7 @@ func generateUUID() string {
 //
 // See: IDENTITY_INPUT_MATCHING_BUG.md
 func TestIdentityInputMatchingBug(t *testing.T) {
-	eachBackendAndMode(t, func(t *testing.T, db *storage.Database) {
+	eachMode(t, func(t *testing.T, db *storage.Database) {
 		// Define attributes
 		refAttr := datalog.NewKeyword(":test/ref")
 		codeAttr := datalog.NewKeyword(":test/code")
@@ -123,7 +123,7 @@ func TestIdentityInputMatchingBug(t *testing.T) {
 // TestIdentityInputMatchingWithMultipleConstraints tests Identity matching with
 // additional constraints (similar to real-world entity queries).
 func TestIdentityInputMatchingWithMultipleConstraints(t *testing.T) {
-	eachBackendAndMode(t, func(t *testing.T, db *storage.Database) {
+	eachMode(t, func(t *testing.T, db *storage.Database) {
 		// Define attributes (simulating a real entity schema)
 		mapAttr := datalog.NewKeyword(":entity/map")
 		codeAttr := datalog.NewKeyword(":entity/code")

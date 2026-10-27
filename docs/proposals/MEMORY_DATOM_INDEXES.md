@@ -2,12 +2,12 @@
 
 ## What exists
 
-`MemoryTreeStore` is the typed representation this document describes. It runs the backend contract beside `MemoryStore` and Badger. [`MEMORY_BACKENDS_2026-07-31.md`](../perf/MEMORY_BACKENDS_2026-07-31.md) measures the pair.
+`MemoryTreeStore` is the typed representation this document describes. It runs the backend contract beside `BadgerEmulatorStore` and Badger. [`MEMORY_BACKENDS_2026-07-31.md`](../perf/MEMORY_BACKENDS_2026-07-31.md) measures the pair.
 
 There are two memory backends, not one swapped for the other:
 
 - `MemoryTreeStore` is the js/wasm default (`defaultBackendName` in `datalog/storage/backends_wasm.go`).
-- `MemoryStore` remains the Badger emulator.
+- `BadgerEmulatorStore` is the Badger emulator.
 - `PERFORMANCE_STATUS.md` carries the cross-backend measurements the default moved on.
 - [PERSISTENT_DATOM_TREES.md](PERSISTENT_DATOM_TREES.md) asks the successor question: the same structure, persisted, as the durable backend.
 
@@ -17,7 +17,7 @@ Badger binary keys are the wrong live in-memory representation. Memory follows D
 
 ## Why binary keys are wrong in RAM
 
-[`MemoryStore`](../../datalog/storage/memory_store.go) stores **the same binary keys Badger writes to disk**, then adds a sorted `[]string` so prefix seek is not O(N). Every assert, retract and scan pays `BinaryKeyEncoder` / `DatomFromKey` in a process that has no disk and no Badger.
+[`BadgerEmulatorStore`](../../datalog/storage/memory_store.go) stores **the same binary keys Badger writes to disk**, then adds a sorted `[]string` so prefix seek is not O(N). Every assert, retract and scan pays `BinaryKeyEncoder` / `DatomFromKey` in a process that has no disk and no Badger.
 
 Encoding exists to make **byte order on disk** match index order. In RAM the values are already typed — compare them directly.
 
@@ -25,7 +25,7 @@ Collapsing the map and its parallel key list into one ordered string-keyed map i
 
 ### The Badger emulator
 
-`MemoryStore` (`storage/memory_store.go`) holds `entries`, a `map[string][]byte` keyed by encoded index key, and `keys`, a `*btree.BTreeG[string]` of those keys for ordered seeks. A commit journals prior values so a failed apply can restore them. Blob handling mirrors Badger's: a blob entry, then eight index keys in one transaction. `MaxElementID` scans the TAEV prefix.
+`BadgerEmulatorStore` (`storage/memory_store.go`) holds `entries`, a `map[string][]byte` keyed by encoded index key, and `keys`, a `*btree.BTreeG[string]` of those keys for ordered seeks. A commit journals prior values so a failed apply can restore them. Blob handling mirrors Badger's: a blob entry, then eight index keys in one transaction. `MaxElementID` scans the TAEV prefix.
 
 That map holds three populations, not one: the eight index projections of each datom, metadata, and blob entries. Only the first becomes trees. The other two need their own home, and the string prefix hides them inside the structure the trees replace.
 
@@ -75,7 +75,7 @@ For each of the eight index orders, a **persistent sorted tree of `datalog.Datom
 - **Scan:** seek the low bound, iterate while below the high bound — no `EncodeKey`, no `DatomFromKey`.
 - **Blobs and large values:** keep values as Go values in the datom, or in a side content-addressed map keyed by hash **as a value store**, not as fake index keys. Tier 3 is a Badger packing concern.
 
-What MemoryStore stops doing: the `map[string][]byte` of Badger keys, the sorted parallel `keys []string`, and every hot-path round trip through `BinaryKeyEncoder`.
+What `BadgerEmulatorStore` does that the trees do not: the `map[string][]byte` of Badger keys, the sorted parallel `keys []string`, and every hot-path round trip through `BinaryKeyEncoder`.
 
 ### All eight orders, from one component-order table
 
@@ -106,7 +106,7 @@ It cannot assert wholesale agreement, because one disagreement is structural rat
 
 Trees are persistent — structurally shared and immutable. Commit is a root-pointer swap, a read session is a retained root, and a database version _is_ a root.
 
-This is forced rather than preferred. `Store.NewReadSession` guarantees that every read through a session observes one state regardless of writes committed after it opened. Under mutable-plus-locks that admits exactly three implementations: hold a read lock for the session's lifetime, which blocks writers for arbitrary query durations and contradicts the concurrency `Database` allows; copy at session open, which is O(N) per query; or fail to honor a guarantee the interface documents. `MemoryStore` already reaches for a copy-on-write clone of the key B-tree for this reason (`read_session_memory.go`).
+This is forced rather than preferred. `Store.NewReadSession` guarantees that every read through a session observes one state regardless of writes committed after it opened. Under mutable-plus-locks that admits exactly three implementations: hold a read lock for the session's lifetime, which blocks writers for arbitrary query durations and contradicts the concurrency `Database` allows; copy at session open, which is O(N) per query; or fail to honor a guarantee the interface documents. `BadgerEmulatorStore` already reaches for a copy-on-write clone of the key B-tree for this reason (`read_session_memory.go`).
 
 **One version value holds all eight roots, behind one `atomic.Pointer`.** Eight independent pointer swaps are not one transition: a session opening mid-commit would observe some orders updated and others not, and since index ordering is the resolution, a torn cross-index state resolves the same datom set two different ways.
 
@@ -148,7 +148,7 @@ Names that coexist:
 
 - `executor.PatternMatcher` — the interface
 - `storage.PatternMatcher` — the Store- and tree-backed concrete matcher
-- `executor.NewMemoryPatternMatcher` — an unrelated slice-plus-hash-index construct for multi-source tests; not `MemoryStore`
+- `executor.NewMemoryPatternMatcher` — an unrelated slice-plus-hash-index construct for multi-source tests; not `BadgerEmulatorStore`
 
 ### Boundaries
 
@@ -263,7 +263,7 @@ Two things rule out the obvious translation:
 
 ### The wasm linear-memory ceiling
 
-The ceiling is architectural rather than a Go policy choice. wasm32 addresses linear memory with 32-bit offsets, 65536 pages of 64 KiB, and the runtime mirrors that as `heapAddrBits = 32` and `maxAlloc = 1<<32` without adding a cap of its own. Exhaustion is `memory.grow` returning −1, `sbrk` returning nil, and an unrecoverable `throw`. Hydrating the 2.7M-datom production dump into `MemoryStore` retains more than that address space holds (`PERFORMANCE_STATUS.md`, the cross-backend import table).
+The ceiling is architectural rather than a Go policy choice. wasm32 addresses linear memory with 32-bit offsets, 65536 pages of 64 KiB, and the runtime mirrors that as `heapAddrBits = 32` and `maxAlloc = 1<<32` without adding a cap of its own. Exhaustion is `memory.grow` returning −1, `sbrk` returning nil, and an unrecoverable `throw`. Hydrating the 2.7M-datom production dump into `BadgerEmulatorStore` retains more than that address space holds (`PERFORMANCE_STATUS.md`, the cross-backend import table).
 
 The property that shapes the design is that **linear memory only grows**. `sysFreeOS` cannot shrink a shared segment, so an instance is charged its high-water mark for its lifetime. Peak, not retained, is the binding measure. Every transient allocation on the import path is permanent for the session. That makes bulk load a peak-memory decision, not only a wall-time one: sort-then-build avoids repeated array doubling whose abandoned intermediates are charged forever.
 
@@ -367,6 +367,6 @@ Each part establishes one thing:
 
 ## Unmeasured and undecided
 
-- **Retained size.** The 62 MB / 2.7M-datom import measures 4,380 MB retained for `MemoryStore` and 608 MB for the trees, 590 MB with datom slabs (`PERFORMANCE_STATUS.md`, the cross-backend import table and the slab entry). `BenchmarkMemoryAssertBulk` bounds the emulator's allocation from above: 5,005 B/datom allocated at N=1000 and 18.7 allocations per datom ([`docs/perf/memory_assert_bulk_2026-07-31.txt`](../perf/memory_assert_bulk_2026-07-31.txt)). `B/op` there counts the undo journal, map rehashing and node splits alongside the store. The allocation count is the part the sizing model does not predict at all, since the model counts bytes only. On a heap whose high-water mark never returns, allocations per datom bear on the hydration peak as directly as resting size does. Any sizing claim states its N, its host, and the dump commit.
+- **Retained size.** The 62 MB / 2.7M-datom import measures 4,380 MB retained for `BadgerEmulatorStore` and 608 MB for the trees, 590 MB with datom slabs (`PERFORMANCE_STATUS.md`, the cross-backend import table and the slab entry). `BenchmarkMemoryAssertBulk` bounds the emulator's allocation from above: 5,005 B/datom allocated at N=1000 and 18.7 allocations per datom ([`docs/perf/memory_assert_bulk_2026-07-31.txt`](../perf/memory_assert_bulk_2026-07-31.txt)). `B/op` there counts the undo journal, map rehashing and node splits alongside the store. The allocation count is the part the sizing model does not predict at all, since the model counts bytes only. On a heap whose high-water mark never returns, allocations per datom bear on the hydration peak as directly as resting size does. Any sizing claim states its N, its host, and the dump commit.
 - **Value interning.** Which value types participate is undecided. So is whether the table is weak (`weak.Pointer` plus `runtime.AddCleanup`, so lifetime follows use) or strong and store-scoped. That trade wants measuring rather than asserting. It couples to the handle ladder below. Step 3 needs interning that hands out dense stable indices. A weak table clears entries when values die, and an arena holds its contents strongly, so the two do not compose. Getting both requires generation-tagged handles: pack index and generation into 32 bits and distinct values cap at 16M, or keep 32 bits of index and the handle stops being self-validating. Deciding interning decides that too.
 - **The 32-bit arena/handle representation** is a separate design, not a variation on typed trees. It leaves Go pointer semantics and GC tracking behind. Slab allocation of datoms is the pointer-preserving middle rather than the same decision. It is a three-step ladder. (1) **Slabs**: three million heap objects become a few hundred, killing the per-object half of mark cost while keeping pointer semantics. This step exists, under _Datom allocation_. (2) **Handles in tree slots**: the eight leaf words per datom stop being pointers, which requires an arena with stable dense indices. The datom itself is still scanned, four traced words each. (3) **A pointer-free `Datom`**: if E, A and V are handles too, the arena allocation is **noscan**, and the collector skips the datom population entirely rather than scanning it faster. Step 3 holds both the real number and the real cost. `V` is `interface{}` above storage, so a handle-valued V makes the datom in the tree and the datom handed to the executor different types, with a materialization at the read boundary. That is tractable if the value arena stores the already-boxed interned object, but it is an interface to design, and it is where memory representation stops being local to `storage`. Neither remaining step gates the trees. Nothing in the component-order table, the comparators, the differential tests or the scan semantics references allocation, and the projected sizing column has no slab term. A slab hands out `*datalog.Datom`, which is what the tree holds, so slabs changed the allocator and nothing else. Handles change the node struct itself, which is the asymmetry that makes them a separate design.

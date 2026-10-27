@@ -86,7 +86,7 @@ func TestJoinStrategySelection(t *testing.T) {
 		},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			matcher := NewPatternMatcher(db.Store())
@@ -183,7 +183,7 @@ func TestMergeJoinCorrectness(t *testing.T) {
 		},
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -278,7 +278,7 @@ func TestMergeJoinCorrectness(t *testing.T) {
 
 // TestMergeJoinVsHashJoin verifies merge join and hash join produce identical results
 func TestMergeJoinVsHashJoin(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -388,7 +388,7 @@ func TestMergeJoinPerformance(t *testing.T) {
 		t.Skip("skipping performance test in short mode")
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -554,7 +554,7 @@ func TestMergeJoinKeyComparison(t *testing.T) {
 // verification while a later one passes, and distinct datoms sharing a key
 // can each match a different tuple of the group.
 func TestMergeJoinDuplicateKeyBindings(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			testMergeJoinDuplicateKeyBindings(t, mode)
 		})
@@ -671,7 +671,7 @@ func testMergeJoinDuplicateKeyBindings(t *testing.T, mode optimizerMode) {
 // not an empty one, and the merge join must surface it exactly as the hash
 // join does.
 func TestMergeJoinPropagatesDeferredScanError(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			testMergeJoinPropagatesDeferredScanError(t, mode)
 		})

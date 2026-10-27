@@ -77,34 +77,59 @@ func createBackendModeDB(t testing.TB, backend storage.Backend, mode optimizerMo
 	return db
 }
 
-// eachBackendAndMode runs body over the storage axis crossed with the optimizer
-// axis. Backends come from storage.AvailableBackends, so a backend the build
-// has is a backend this package's integration tests execute against.
-func eachBackendAndMode(t *testing.T, body func(t *testing.T, db *storage.Database)) {
+// engineBackend is the backend the engine axis runs on: the tree store, which
+// every build has. A test of the engine runs there alone, since the backend
+// supplies a scan bound's datoms in index order and nothing else.
+func engineBackend(t *testing.T) storage.Backend {
 	t.Helper()
-	eachBackendAndModeOpts(t, storage.DatabaseOptions{}, body)
+	backend, err := storage.BackendNamed("memory-trees")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return backend
 }
 
-// eachBackendAndModeWith hands the mode to the body as well as the database,
+// eachMode runs body on the engine axis: the tree store crossed with the
+// optimizer axis.
+func eachMode(t *testing.T, body func(t *testing.T, db *storage.Database)) {
+	t.Helper()
+	eachModeOpts(t, storage.DatabaseOptions{}, body)
+}
+
+// eachModeWith hands the mode to the body as well as the database,
 // for a test that builds its own executor or matcher options instead of taking
 // the database's — the mode has to reach those too, or the leg runs under a
 // name whose optimizer path it never used.
-func eachBackendAndModeWith(t *testing.T, body func(t *testing.T, db *storage.Database, mode optimizerMode)) {
+func eachModeWith(t *testing.T, body func(t *testing.T, db *storage.Database, mode optimizerMode)) {
 	t.Helper()
-	for _, backend := range storage.AvailableBackends() {
-		t.Run(backend.Name, func(t *testing.T) {
-			for _, mode := range optimizerModes {
-				t.Run(mode.name, func(t *testing.T) {
-					body(t, createBackendModeDB(t, backend, mode, storage.DatabaseOptions{}), mode)
-				})
-			}
-		})
-	}
+	backend := engineBackend(t)
+	t.Run(backend.Name, func(t *testing.T) {
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				body(t, createBackendModeDB(t, backend, mode, storage.DatabaseOptions{}), mode)
+			})
+		}
+	})
 }
 
-// eachBackendAndModeOpts is eachBackendAndMode for a test that needs a schema,
-// the cache disabled, or anything else on the database.
-func eachBackendAndModeOpts(t *testing.T, opts storage.DatabaseOptions, body func(t *testing.T, db *storage.Database)) {
+// eachModeOpts is eachMode for a test that needs a schema, the cache
+// disabled, or anything else on the database.
+func eachModeOpts(t *testing.T, opts storage.DatabaseOptions, body func(t *testing.T, db *storage.Database)) {
+	t.Helper()
+	backend := engineBackend(t)
+	t.Run(backend.Name, func(t *testing.T) {
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				body(t, createBackendModeDB(t, backend, mode, opts))
+			})
+		}
+	})
+}
+
+// eachStoreBackendAndModeOpts runs body on the store axis: every backend the
+// build has, crossed with the optimizer axis, for a test whose subject is
+// what the store holds, such as the compressed value tiers.
+func eachStoreBackendAndModeOpts(t *testing.T, opts storage.DatabaseOptions, body func(t *testing.T, db *storage.Database)) {
 	t.Helper()
 	for _, backend := range storage.AvailableBackends() {
 		t.Run(backend.Name, func(t *testing.T) {

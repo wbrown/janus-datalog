@@ -213,7 +213,7 @@ func writeDeclaredDump(t *testing.T, ext string) string {
 // no schema of its own resolves a set as the set its writer declared.
 func TestOpenDumpResolvesDeclaredSets(t *testing.T) {
 	for _, ext := range []string{".jdzl", ".edn"} {
-		for _, mode := range optimizerModes {
+		for _, mode := range backendModes {
 			t.Run(ext+"/"+mode.name, func(t *testing.T) {
 				d, err := db.Open(writeDeclaredDump(t, ext),
 					db.WithBackend(mode.backend.Name), db.WithPlannerOptions(mode.plannerOptions()))
@@ -237,7 +237,7 @@ func TestOpenDumpResolvesDeclaredSets(t *testing.T) {
 // names, so the doc the given schema states is the one the store carries.
 func TestOpenDumpWithSchemaSupersedesDumpFacts(t *testing.T) {
 	for _, ext := range []string{".jdzl", ".edn"} {
-		for _, mode := range optimizerModes {
+		for _, mode := range backendModes {
 			t.Run(ext+"/"+mode.name, func(t *testing.T) {
 				d, err := db.Open(writeDeclaredDump(t, ext),
 					db.WithSchema(declaredDumpSchema(t, "given")),
@@ -283,7 +283,7 @@ func exportDump(t *testing.T, d *db.DB, ext string) []byte {
 // byte for byte.
 func TestOpenDumpWithTheWritersSchemaDeclaresNothing(t *testing.T) {
 	for _, ext := range []string{".jdzl", ".edn"} {
-		for _, mode := range optimizerModes {
+		for _, mode := range backendModes {
 			t.Run(ext+"/"+mode.name, func(t *testing.T) {
 				path := writeDeclaredDump(t, ext)
 				d, err := db.Open(path,

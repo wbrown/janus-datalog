@@ -24,6 +24,22 @@ func (p *PullPattern) String() string {
 	return "[" + strings.Join(parts, " ") + "]"
 }
 
+// Validate refuses an attribute the pattern names, through its map specs,
+// that is wider than storage holds, which no write could have stored.
+// ValidateQuery runs it for a find pull and the database for a direct pull,
+// so a pattern is refused once where it enters, never per entity.
+func (p *PullPattern) Validate() error {
+	if p == nil {
+		return nil
+	}
+	for _, attr := range PullPatternAttributes(p) {
+		if err := datalog.ValidateAttributeWidth(attr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // PullAttrSpec is the interface for all pull attribute specification types
 type PullAttrSpec interface {
 	isPullAttrSpec()

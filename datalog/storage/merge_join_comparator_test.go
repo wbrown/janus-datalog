@@ -24,7 +24,7 @@ import (
 // never compare equal to a probe — including a string that is exactly an
 // entity's L85 text, which the old Sprintf fallback compared equal.
 func TestMergeJoinMixedEntityBindingsMatchOnlyIdentities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -90,7 +90,7 @@ func TestMergeJoinMixedEntityBindingsMatchOnlyIdentities(t *testing.T) {
 // layout, each datom checked against the whole binding tuple, and a binding
 // lacking the entity's symbol is the match's error naming it.
 func TestMergeJoinFindsTheEntityKeyBySymbolWhateverTheBindingsLayout(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			alice, bob := datalog.NewIdentity("user:alice"), datalog.NewIdentity("user:bob")
@@ -145,7 +145,7 @@ func TestMergeJoinFindsTheEntityKeyBySymbolWhateverTheBindingsLayout(t *testing.
 // A binding lacking the hash join's key symbol is the match's error naming
 // it, never an empty result.
 func TestHashJoinErrorsOnABindingLackingTheKeySymbol(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			nameAttr := datalog.NewKeyword(":user/name")
@@ -175,7 +175,7 @@ func TestHashJoinErrorsOnABindingLackingTheKeySymbol(t *testing.T) {
 // provable restriction: high-selectivity large binding sets take merge join
 // for the entity position and the order-free hash join everywhere else.
 func TestChooseJoinStrategySelectsMergeJoinOnlyForEntityPosition(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

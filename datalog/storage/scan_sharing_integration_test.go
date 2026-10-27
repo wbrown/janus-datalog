@@ -60,7 +60,7 @@ func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
 			db.ClearPlanCache()
 			baselineOpts := mode.plannerOptions()
 			baselineOpts.EnableScanSharing = false
-			baselineRel, err := db.queryUnderPlannerOptions(baselineOpts, q)
+			_, baselineRel, err := db.queryUnderPlannerOptions(baselineOpts, q)
 			require.NoError(t, err)
 			baseline, err := executor.CollectTuples(baselineRel, nil)
 			require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
 					sharingEvents = append(sharingEvents, e)
 				}
 			}
-			sharingRel, err := db.queryUnderPlannerOptions(sharingOpts, q)
+			_, sharingRel, err := db.queryUnderPlannerOptions(sharingOpts, q)
 			require.NoError(t, err)
 			sharing, err := executor.CollectTuples(sharingRel, nil)
 			require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestScanSharing_CorrectnessDifferential(t *testing.T) {
 			db.ClearPlanCache()
 			offOpts := mode.plannerOptions()
 			offOpts.EnableScanSharing = false
-			offRel, err := db.queryUnderPlannerOptions(offOpts, q)
+			_, offRel, err := db.queryUnderPlannerOptions(offOpts, q)
 			require.NoError(t, err)
 			offResults, err := executor.CollectTuples(offRel, nil)
 			require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestScanSharing_CorrectnessDifferential(t *testing.T) {
 			db.ClearPlanCache()
 			onOpts := mode.plannerOptions()
 			onOpts.EnableScanSharing = true
-			onRel, err := db.queryUnderPlannerOptions(onOpts, q)
+			_, onRel, err := db.queryUnderPlannerOptions(onOpts, q)
 			require.NoError(t, err)
 			onResults, err := executor.CollectTuples(onRel, nil)
 			require.NoError(t, err)
@@ -163,7 +163,7 @@ func TestScanSharing_DisabledByDefault(t *testing.T) {
 					sharingEvents++
 				}
 			}
-			rel, err := db.queryUnderPlannerOptions(opts, q)
+			_, rel, err := db.queryUnderPlannerOptions(opts, q)
 			require.NoError(t, err)
 			results, err := executor.CollectTuples(rel, nil)
 			require.NoError(t, err)

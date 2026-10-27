@@ -498,7 +498,7 @@ type Store interface {
 
 A scan names a **`ScanBound`**: an index, plus the leading components of that index's component order bound to datalog values. The k-th element binds the k-th component, so `ScanBound{Index: AVET, Prefix: []datalog.Value{attr, value}}` is "every datom with this attribute and this value." It is typed, not a byte range — a backend that keys on bytes projects the bound at its own boundary, and one that compares typed components directly never encodes at all.
 
-Raw datom storage with 8 indices. Two implementations: `BadgerStore` (BadgerDB, on-disk) and `MemoryStore` (in-process, persisting the same binary keys and all eight indices). Backend selection is by build tag — `openDefaultStore` returns a `BadgerStore` on native targets and a `MemoryStore` under `js && wasm`, where `MemoryStore` is the only backend.
+Raw datom storage with 8 indices. Three implementations: `BadgerStore` (BadgerDB, on-disk), `MemoryTreeStore` (in-process, eight sorted trees of typed datoms), and `BadgerEmulatorStore` (in-process, holding the same binary keys Badger writes, so the backend contract runs against Badger's key layout without a disk). A database opens the backend `DatabaseOptions.BackendName` names out of `AvailableBackends`, and the build's `DefaultBackend` when none is named: `BadgerStore` natively, `MemoryTreeStore` under `js && wasm`, where Badger does not compile.
 
 `storage.PatternMatcher` bridges the store to the executor by implementing `executor.PatternMatcher` — it chooses the optimal index based on which pattern components are bound, scans the store, and wraps results as `StreamingRelation`.
 

@@ -40,7 +40,7 @@ func TestOpenClose(t *testing.T) {
 }
 
 func TestOpenMemory(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d, err := db.OpenMemory(db.WithReplicaID(42), db.WithPlannerOptions(mode.plannerOptions()))
 			require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestOpenMemory(t *testing.T) {
 // A store the caller opened is one of Open's sources, and the database it backs
 // keeps using that very store rather than a copy or a reopen.
 func TestOpenTakesAStore(t *testing.T) {
-	store := storage.NewMemoryStore(&storage.BinaryKeyEncoder{})
+	store := storage.NewBadgerEmulatorStore(&storage.BinaryKeyEncoder{})
 	database, err := db.Open(store, db.WithReplicaID(43))
 	require.NoError(t, err)
 	defer database.Close()
@@ -76,7 +76,7 @@ func TestOpenTakesAStore(t *testing.T) {
 }
 
 func TestQueryRoundTrip(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -101,7 +101,7 @@ func TestQueryRoundTrip(t *testing.T) {
 }
 
 func TestQueryWithInputs(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -130,7 +130,7 @@ func TestQueryWithInputs(t *testing.T) {
 }
 
 func TestQueryInto(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -152,7 +152,7 @@ func TestQueryInto(t *testing.T) {
 }
 
 func TestQueryOneInto(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -180,7 +180,7 @@ func TestQueryOneInto(t *testing.T) {
 }
 
 func TestGetString(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -207,7 +207,7 @@ func TestGetString(t *testing.T) {
 }
 
 func TestGetInt(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -234,7 +234,7 @@ func TestGetInt(t *testing.T) {
 }
 
 func TestGetFloat(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -261,7 +261,7 @@ func TestGetFloat(t *testing.T) {
 }
 
 func TestGetBool(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -288,7 +288,7 @@ func TestGetBool(t *testing.T) {
 }
 
 func TestGetRef(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -316,7 +316,7 @@ func TestGetRef(t *testing.T) {
 }
 
 func TestGetStrings(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":person/tag").Type(schema.TypeString).Many().Add().
@@ -348,7 +348,7 @@ func TestGetStrings(t *testing.T) {
 }
 
 func TestAsOf(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -382,7 +382,7 @@ func TestAsOf(t *testing.T) {
 }
 
 func TestHistory(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -446,7 +446,7 @@ type boundValueForm struct {
 // Lamport is two datoms, and a History query over the attribute reads both,
 // with the value written in the pattern and with it bound from an input.
 func TestHistoryReadsDatomsDifferingOnlyByReplica(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			e := datalog.NewIdentity("replicated:subject")
 			attr := datalog.NewKeyword(":replicated/name")
@@ -494,7 +494,7 @@ func TestHistoryReadsDatomsDifferingOnlyByReplica(t *testing.T) {
 // "Alice" reads the entity, as the same query with the value unbound does,
 // with the value written in the pattern and with it bound from an input.
 func TestHistoryReadsASupersededValueBoundInThePattern(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 			alice := datalog.NewIdentity("alice")
@@ -544,7 +544,7 @@ func vectorSchema(t *testing.T) *schema.Schema {
 // with the entity unbound or from an input what it reads with the entity
 // written as a constant.
 func TestHistoryReadsAVectorAttributeAsItsElementDatoms(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithSchema(vectorSchema(t)), db.WithPlannerOptions(mode.plannerOptions()))
 			shelf := datalog.NewIdentity("shelf:folio")
@@ -581,7 +581,7 @@ func TestHistoryReadsAVectorAttributeAsItsElementDatoms(t *testing.T) {
 // entity written as a constant, with it unbound and with it bound from an
 // input, the pattern reads nothing, with the EA cache and without it.
 func TestAVectorLiteralEqualsNoDatomOfAScalarAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		for _, cache := range []struct {
 			name string
 			opts []db.Option
@@ -622,7 +622,7 @@ func TestMustParseQuery(t *testing.T) {
 }
 
 func TestMustParseQueryWithQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -647,7 +647,7 @@ func TestMustParseQueryWithQuery(t *testing.T) {
 }
 
 func TestAssert(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -666,7 +666,7 @@ func TestAssert(t *testing.T) {
 }
 
 func TestPullInto(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -694,7 +694,7 @@ func TestPullInto(t *testing.T) {
 }
 
 func TestTransactionRollback(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 
@@ -716,7 +716,7 @@ func TestTransactionRollback(t *testing.T) {
 }
 
 func TestSaveStruct(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := tempDB(t, mode.backend, db.WithPlannerOptions(mode.plannerOptions()))
 

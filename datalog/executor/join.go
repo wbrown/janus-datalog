@@ -573,18 +573,23 @@ func HashJoinWithOptions(
 
 // SemiJoin returns tuples from left that have matches in right
 func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
-	// Build indices
-	leftIndices := make([]int, len(joinSyms))
-	rightIndices := make([]int, len(joinSyms))
-	for i, sym := range joinSyms {
-		leftIndices[i] = SymbolIndex(left, sym)
-		rightIndices[i] = SymbolIndex(right, sym)
-	}
-
 	// Extract options from left relation
 	opts := left.Options()
 	if !opts.populated() {
 		opts = right.Options()
+	}
+
+	// A join symbol a side lacks is the query's error, carried by the result
+	// and surfaced when it is driven.
+	leftIndices, err := query.SymbolIndexTable(left.Symbols(), joinSyms)
+	var rightIndices []int
+	if err == nil {
+		rightIndices, err = query.SymbolIndexTable(right.Symbols(), joinSyms)
+	}
+	if err != nil {
+		res := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
+		res.err = fmt.Errorf("semi join: %w", err)
+		return res
 	}
 
 	// Build set of keys from right relation using efficient TupleKeyMap.
@@ -634,18 +639,23 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 
 // AntiJoin returns tuples from left that have no matches in right
 func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
-	// Build indices
-	leftIndices := make([]int, len(joinSyms))
-	rightIndices := make([]int, len(joinSyms))
-	for i, sym := range joinSyms {
-		leftIndices[i] = SymbolIndex(left, sym)
-		rightIndices[i] = SymbolIndex(right, sym)
-	}
-
 	// Extract options from left relation
 	opts := left.Options()
 	if !opts.populated() {
 		opts = right.Options()
+	}
+
+	// A join symbol a side lacks is the query's error, carried by the result
+	// and surfaced when it is driven.
+	leftIndices, err := query.SymbolIndexTable(left.Symbols(), joinSyms)
+	var rightIndices []int
+	if err == nil {
+		rightIndices, err = query.SymbolIndexTable(right.Symbols(), joinSyms)
+	}
+	if err != nil {
+		res := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
+		res.err = fmt.Errorf("anti join: %w", err)
+		return res
 	}
 
 	// Build set of keys from right relation using efficient TupleKeyMap.

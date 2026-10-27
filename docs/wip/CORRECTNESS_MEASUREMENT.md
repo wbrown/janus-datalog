@@ -36,13 +36,13 @@ Asserting the transformation, not the result: decorrelated execution counts, der
 
 ### Tier 4 — reference evaluator (missing; the real oracle)
 
-A third implementation that is a direct transcription of the language semantics: nested-loop pattern scans over MemoryStore, materialize everything, hash nothing, natural join for shared symbols, anti-join for NOT, union for or, short-circuit branch evaluation for or-default, fold groups for aggregates, per-combination execution for subqueries. No planner, no phases, no streaming, no caches. Slow and correct-by-inspection: each clause form maps to its textbook operator, in one place, readable in a sitting.
+A third implementation that is a direct transcription of the language semantics: nested-loop pattern scans over BadgerEmulatorStore, materialize everything, hash nothing, natural join for shared symbols, anti-join for NOT, union for or, short-circuit branch evaluation for or-default, fold groups for aggregates, per-combination execution for subqueries. No planner, no phases, no streaming, no caches. Slow and correct-by-inspection: each clause form maps to its textbook operator, in one place, readable in a sitting.
 
 The measurable statement becomes **baseline ≡ algebra ≡ reference**: a surviving shared bug now requires all three implementations to agree on the same mistake, and the third is simple enough to audit by reading. This is the methodology of SQLite's logic tests and the NoREC/TLP line of query-engine fuzzing.
 
 Constraints:
 
-- The reference imports core types, the parser, and MemoryStore — never `planner`, `algebra`, or `executor`. (Consequence: the parser is shared by all paths, so parse-level semantics remain tier-1/tier-5 territory; the reference measures evaluation, not parsing.)
+- The reference imports core types, the parser, and BadgerEmulatorStore — never `planner`, `algebra`, or `executor`. (Consequence: the parser is shared by all paths, so parse-level semantics remain tier-1/tier-5 territory; the reference measures evaluation, not parsing.)
 - Closed clause taxonomy with a loud default: a clause form the reference does not implement is a loud error, never a skip — a new language feature is not done until the reference evaluates it or explicitly refuses it.
 - Bootstrap: the reference passes the existing tier-1 corpus before it referees anything.
 
@@ -78,7 +78,7 @@ Every stage lands as ordinary `go test` inside the existing gate; the wasm leg i
 
 - The reference evaluator is a permanent maintenance obligation: every language addition implements its reference semantics or is loudly refused there. This is a feature — it forces each new construct to state its semantics executably — but it is real ongoing cost.
 - Generated-test time must be budgeted (seeded case counts per run); the full grammar is never "done," only sampled deeper over time.
-- Tier 4 cannot referee the parser (shared), result presentation (Pull rendering is boundary formatting), or storage encodings (MemoryStore is shared with the system under test at the bottom). Those remain tier-1/tier-5 territory, stated here so the blind spots are chosen rather than discovered.
+- Tier 4 cannot referee the parser (shared), result presentation (Pull rendering is boundary formatting), or storage encodings (BadgerEmulatorStore is shared with the system under test at the bottom). Those remain tier-1/tier-5 territory, stated here so the blind spots are chosen rather than discovered.
 - Performance is out of scope by definition: these tiers measure the correctness-equivalence class within which benchmarks are then meaningful (`PERFORMANCE_STATUS.md` owns the rest).
 
 ## Interaction with existing regimes

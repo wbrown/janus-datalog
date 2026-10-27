@@ -31,7 +31,7 @@ import (
 // refactor, the metadata write joins the same atomic storage txn as
 // the rest of the commit, so failure rolls back the entire transaction.
 func TestCommitWritesTxInstantOnSuccess(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

@@ -240,9 +240,10 @@ func TestSchemaFacts_AHistoryReadLeavesTheUniqueRuleInForce(t *testing.T) {
 
 // An ident longer than storage holds never reaches a store: the schema parser
 // accepts an ident at the limit and refuses one past it, an import line
-// naming an attribute at the limit stores its datom under that name, and an
+// naming an attribute at the limit stores its datom under that name, an
 // import line naming an attribute past it is refused and stores nothing
-// under the ident's storable prefix.
+// under the ident's storable prefix, and a read naming the refused ident is
+// refused by the width rule, never aliased to the prefix.
 func TestImport_AnAttributeLongerThanStorableIsRefused(t *testing.T) {
 	ident32 := ":t/" + strings.Repeat("x", 29)
 	ident33 := ident32 + "y"
@@ -261,16 +262,17 @@ func TestImport_AnAttributeLongerThanStorableIsRefused(t *testing.T) {
 		return tuples
 	}
 
-	within, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory"})
+	within, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "badger-emulator"})
 	require.NoError(t, err)
 	defer within.Close()
 	require.NoError(t, within.Import(strings.NewReader(line("e1", ident32, "at the limit"))))
 	require.Equal(t, [][]interface{}{{"at the limit"}}, tuplesOf(t, within, ident32), "a datom on an attribute at the limit is stored under its name")
 
-	past, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory"})
+	past, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "badger-emulator"})
 	require.NoError(t, err)
 	defer past.Close()
 	require.Error(t, past.Import(strings.NewReader(line("e1", ident33+"zzz", "long")+line("e2", ident33, "short"))), "an import line naming an attribute past the limit is refused")
 	require.Empty(t, tuplesOf(t, past, ident32), "nothing is stored under the storable prefix")
-	require.Empty(t, tuplesOf(t, past, ident33), "nothing is stored under the refused name")
+	_, err = executor.CollectTuples(past.Query(fmt.Sprintf("[:find ?v :where [?e %s ?v]]", ident33)))
+	require.ErrorContains(t, err, "exceeds the 32-byte storage limit", "a read naming the refused ident is refused")
 }

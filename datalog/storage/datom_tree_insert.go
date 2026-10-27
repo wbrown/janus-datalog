@@ -100,9 +100,9 @@ func (b *treeBuilder) insert(d *datalog.Datom) bool {
 
 // remove deletes d and reports whether it was there.
 //
-// Nodes are allowed to fall below half full: retraction is a CRDT Remove datom
-// rather than a deletion, so this path serves truncate and rebuild, not user
-// writes. Skipping rebalancing removes the most intricate part of a B-tree, and
+// Nodes are allowed to fall below half full: a user's remove is a CRDT Remove
+// datom rather than a deletion, so this path serves truncate and rebuild, not
+// user writes. Skipping rebalancing removes the most intricate part of a B-tree, and
 // a store that deletes enough to care can rebuild its trees from what remains.
 // Empty nodes are still dropped, and a root left with one child collapses, so
 // repeated deletion cannot leave a spine of useless levels behind.

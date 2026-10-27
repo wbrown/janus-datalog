@@ -2,15 +2,16 @@
 
 ## Summary
 
-This proposal refactors the CRDT storage layer from fixed cardinality types (`One`, `Many`, `Vector`) to composable primitives (`Ordering`, `Unique`, `Conflict`). This enables a rich set of CRDT types through composition rather than hardcoding, while maintaining backward compatibility through convenience methods.
+This proposal refactors the CRDT storage layer's collection cardinalities (`Many`, `Vector`) into composable primitives (`Ordering`, `Unique`, `Conflict`). This enables a rich set of CRDT types through composition rather than hardcoding, while maintaining backward compatibility through convenience methods. A cardinality-one attribute holds one value and is not a composition.
 
-**Key insight:** Current cardinalities are just specific combinations:
+**Key insight:** The collection cardinalities are specific combinations:
 
-- `One` = `Ordering:None + Conflict:LWW`
 - `Many` = `Ordering:None + Unique:true + Conflict:AddWins`
 - `Vector` = `Ordering:RGA + Unique:false + Conflict:AddWins`
 
-By exposing the primitives, users can compose types that don't exist in Datomic or any single CRDT library.
+`One` is not a combination. It holds one value, so ordering and uniqueness, which are properties of a collection's members, do not apply to it. Only the conflict rule does: under `LWW` it is the register, under `MV` the MV-register.
+
+By exposing the primitives, users can compose collection types that don't exist in Datomic or any single CRDT library.
 
 ---
 
@@ -85,7 +86,7 @@ case CardinalityVector: // RGA logic
 type Ordering int
 
 const (
-    OrderingNone       Ordering = iota  // Unordered (sets, registers)
+    OrderingNone       Ordering = iota  // Unordered (sets, bags)
     OrderingRGA                         // Chained positions (current Vector)
     OrderingLSeq                        // Independent positions (new)
     OrderingTimestamped                 // Sort by ElementID
@@ -105,7 +106,12 @@ type AttributeDefinition struct {
     Ident     Keyword
     ValueType ValueType
 
-    // CRDT composition (replaces Cardinality)
+    // CardinalityOne holds one value and composes nothing but Conflict. A
+    // collection cardinality is described by the composition below.
+    Cardinality Keyword
+
+    // CRDT composition of a collection (replaces CardinalityMany and
+    // CardinalityVector)
     Ordering  Ordering
     Unique    bool      // Set semantics (no duplicates)
     Conflict  Conflict
@@ -116,17 +122,17 @@ type AttributeDefinition struct {
 }
 ```
 
-Storage layer dispatches on composition:
+Storage layer dispatches on cardinality one, then on composition:
 
 ```go
 func (m *Matcher) dispatchWrite(schema AttributeDefinition, op WriteOp) {
     switch {
-    case schema.Ordering == OrderingNone && !schema.Unique:
-        // Register (One)
+    case schema.Cardinality == CardinalityOne:
+        // Register, MV-Register
         m.writeRegister(op, schema.Conflict)
-    case schema.Ordering == OrderingNone && schema.Unique:
-        // Set (Many)
-        m.writeSet(op, schema.Conflict)
+    case schema.Ordering == OrderingNone:
+        // Set (Many) under Unique, bag otherwise
+        m.writeSet(op, schema.Unique, schema.Conflict)
     case schema.Ordering == OrderingRGA:
         // RGA List/Set
         m.writeRGA(op, schema.Unique, schema.Conflict)
@@ -148,7 +154,7 @@ func (m *Matcher) dispatchWrite(schema AttributeDefinition, op WriteOp) {
 
 | Value | Storage | Key Layout | Use |
 | --- | --- | --- | --- |
-| `None` | No position | `[E][A][V][Tx↓][Op]` | Registers, sets |
+| `None` | No position | `[E][A][V][Tx↓][Op]` | Sets, bags |
 | `RGA` | AfterRef chain | `[E][A][V][Tx↓][Op][AfterRef]` | Ordered lists (current) |
 | `LSeq` | Position identifier | `[E][A][Pos][Tx↓][Op][V]` | Ordered with move |
 | `Timestamped` | ElementID order | `[E][A][Tx↓][Op][V]` | Event logs |
@@ -181,12 +187,12 @@ For ordered types with `Unique:true`:
 
 ## Composition Matrix
 
+A cardinality-one attribute composes nothing but its conflict rule: under `LWW` it is the register, `.One()`, and under `MV` the MV-register, `.MVRegister()`. The combinations below describe collections.
+
 ### Valid Combinations
 
 | Ordering    | Unique | Conflict   | Name             | Convenience     |
 | ----------- | ------ | ---------- | ---------------- | --------------- |
-| None        | N/A    | LWW        | Register         | `.One()`        |
-| None        | N/A    | MV         | MV-Register      | `.MVRegister()` |
 | None        | true   | AddWins    | AW-Set           | `.Many()`       |
 | None        | true   | RemoveWins | RW-Set           | `.RWSet()`      |
 | None        | true   | LWW        | LWW-Set          | `.LWWSet()`     |
@@ -195,7 +201,7 @@ For ordered types with `Unique:true`:
 | RGA         | false  | AddWins    | RGA-List         | `.Vector()`     |
 | RGA         | true   | AddWins    | RGA-OrderedSet   | `.OrderedSet()` |
 | LSeq        | false  | AddWins    | LSeq-List        | `.List()`       |
-| LSeq        | true   | AddWins    | LSeq-OrderedSet  | -               |
+| LSeq        | true   | AddWins    | LSeq-OrderedSet  | `.LSeqOrderedSet()` |
 | Timestamped | false  | AddWins    | Event Log        | `.EventLog()`   |
 | Timestamped | true   | AddWins    | Deduplicated Log | `.UniqueLog()`  |
 
@@ -251,8 +257,7 @@ schema.Attribute(":special/set").
 
 ```go
 func (b *AttrBuilder) One() *AttrBuilder {
-    b.ordering = OrderingNone
-    b.unique = false
+    b.cardinality = CardinalityOne
     b.conflict = ConflictLWW
     return b
 }
@@ -286,8 +291,7 @@ func (b *AttrBuilder) EventLog() *AttrBuilder {
 }
 
 func (b *AttrBuilder) MVRegister() *AttrBuilder {
-    b.ordering = OrderingNone
-    b.unique = false
+    b.cardinality = CardinalityOne
     b.conflict = ConflictMV
     return b
 }
@@ -470,7 +474,7 @@ result := db.Query(`[:find ?content :where [?e :doc/content ?content]]`)
 
 ## Compatibility
 
-- The `CardinalityOne`, `CardinalityMany` and `CardinalityVector` constants stay, each mapping to its composition: `{Ordering:None, Unique:false, Conflict:LWW}`, `{Ordering:None, Unique:true, Conflict:AddWins}`, `{Ordering:RGA, Unique:false, Conflict:AddWins}`.
+- `CardinalityOne` stays as the register, composing nothing but `Conflict`. `CardinalityMany` and `CardinalityVector` stay, each mapping to its composition: `{Ordering:None, Unique:true, Conflict:AddWins}`, `{Ordering:RGA, Unique:false, Conflict:AddWins}`.
 - The storage format of the existing types does not change, so a database written under the cardinalities reads the same under the compositions.
 - A new composition is declared on a new attribute. An existing attribute keeps its composition.
 - `GetOrdering()`, `GetConflict()`, `IsRegister()`, `IsSet()` and `IsOrdered()` keep serving code written against the cardinalities.

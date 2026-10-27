@@ -18,7 +18,7 @@ import (
 // compares the hashes directly and states the same fact without relying on
 // the interning invariant.
 func TestIdentityComparisonBestPractices(t *testing.T) {
-	eachBackendAndMode(t, func(t *testing.T, db *storage.Database) {
+	eachMode(t, func(t *testing.T, db *storage.Database) {
 		refAttr := datalog.NewKeyword(":test/ref")
 		codeAttr := datalog.NewKeyword(":test/code")
 

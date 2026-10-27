@@ -50,7 +50,7 @@ The CRDT-based storage model (see [CRDT.md](../reference/CRDT.md)) provides the 
 
 **Append-only writes:**
 
-- No retractions, only appends with new ElementID
+- No in-place deletion: a removal is an appended tombstone with its own ElementID
 - Cardinality-one: highest ElementID wins
 - Cardinality-many: add-wins semantics with tombstones
 - Cardinality-vector: RGA merge
@@ -70,7 +70,7 @@ The CRDT-based storage model (see [CRDT.md](../reference/CRDT.md)) provides the 
 Sharding is based on the cryptographic identity of the datom itself, not the entity:
 
 ```
-DatomIdentity = Hash(E, A, I, V)
+DatomIdentity = Hash(E, A, ElementID, V)
 Shard = DatomIdentity % NumShards
 ```
 
@@ -123,7 +123,7 @@ func (n *Node) Write(datoms []Datom) error {
     }
 
     // Group by shard
-    bySherd := make(map[int][]Datom)
+    byShard := make(map[int][]Datom)
     for _, d := range datoms {
         shard := hash(d.E, d.A, d.ElementID, d.V) % n.numShards
         byShard[shard] = append(byShard[shard], d)

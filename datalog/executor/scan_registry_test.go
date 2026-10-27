@@ -12,12 +12,23 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+// unboundScanOf is the fingerprint of the unbound scan [?e <attr> ?v] with no
+// order-by and no limit.
+func unboundScanOf(attr string) ScanFingerprint {
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: datalog.NewSymbol("?e")},
+		query.Constant{Value: datalog.NewKeyword(attr)},
+		query.Variable{Name: datalog.NewSymbol("?v")},
+	}}
+	return FingerprintScan(query.PatternQuery(pattern), pattern)
+}
+
 // TestScanRegistry_MissReturnsNil verifies that Get() on an empty or
 // unmatched registry returns nil.
 func TestScanRegistry_MissReturnsNil(t *testing.T) {
 	reg := NewScanRegistry()
 
-	shared := reg.Get("nonexistent")
+	shared := reg.Get(unboundScanOf(":registry/absent"))
 	assert.Nil(t, shared)
 }
 
@@ -31,14 +42,14 @@ func TestScanRegistry_PutThenGet(t *testing.T) {
 	properties := RelationProperties{Keys: [][]query.Symbol{{syms[0]}}}
 	options := ExecutorOptions{EnableTrueStreaming: true}
 
-	reg.Put("fp1", &SharedScan{
+	reg.Put(unboundScanOf(":registry/first"), &SharedScan{
 		Seq:        seq,
 		Symbols:    syms,
 		Options:    options,
 		Properties: properties,
 	})
 
-	shared := reg.Get("fp1")
+	shared := reg.Get(unboundScanOf(":registry/first"))
 	require.NotNil(t, shared)
 	assert.Equal(t, seq, shared.Seq)
 	assert.Equal(t, syms, shared.Symbols)
@@ -56,15 +67,15 @@ func TestScanRegistry_DifferentKeysIndependent(t *testing.T) {
 	syms1 := []query.Symbol{datalog.NewSymbol("?a")}
 	syms2 := []query.Symbol{datalog.NewSymbol("?b")}
 
-	reg.Put("fp1", &SharedScan{Seq: seq1, Symbols: syms1})
-	reg.Put("fp2", &SharedScan{Seq: seq2, Symbols: syms2})
+	reg.Put(unboundScanOf(":registry/first"), &SharedScan{Seq: seq1, Symbols: syms1})
+	reg.Put(unboundScanOf(":registry/second"), &SharedScan{Seq: seq2, Symbols: syms2})
 
-	s1 := reg.Get("fp1")
-	s2 := reg.Get("fp2")
+	s1 := reg.Get(unboundScanOf(":registry/first"))
+	s2 := reg.Get(unboundScanOf(":registry/second"))
 	require.NotNil(t, s1)
 	require.NotNil(t, s2)
-	assert.Same(t, seq1, s1.Seq, "fp1 should return seq1")
-	assert.Same(t, seq2, s2.Seq, "fp2 should return seq2")
+	assert.Same(t, seq1, s1.Seq, "the first scan should return seq1")
+	assert.Same(t, seq2, s2.Seq, "the second scan should return seq2")
 	assert.NotSame(t, s1.Seq, s2.Seq, "different keys should return different objects")
 }
 
@@ -80,7 +91,7 @@ func TestScanRegistry_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			seq := &LazySeq{}
 			syms := []query.Symbol{datalog.NewSymbol("?x")}
-			fp := "fp_shared"
+			fp := unboundScanOf(":registry/shared")
 
 			// All goroutines try to Put the same key and Get it
 			reg.Put(fp, &SharedScan{Seq: seq, Symbols: syms})
@@ -91,7 +102,7 @@ func TestScanRegistry_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	// Verify final state is consistent
-	shared := reg.Get("fp_shared")
+	shared := reg.Get(unboundScanOf(":registry/shared"))
 	require.NotNil(t, shared)
 }
 
@@ -105,9 +116,9 @@ func TestScanRegistry_SymbolsPreserved(t *testing.T) {
 		datalog.NewSymbol("?value"),
 		datalog.NewSymbol("?tx"),
 	}
-	reg.Put("fp_symbols", &SharedScan{Seq: &LazySeq{}, Symbols: syms})
+	reg.Put(unboundScanOf(":registry/symbols"), &SharedScan{Seq: &LazySeq{}, Symbols: syms})
 
-	shared := reg.Get("fp_symbols")
+	shared := reg.Get(unboundScanOf(":registry/symbols"))
 	require.NotNil(t, shared)
 	require.Len(t, shared.Symbols, 3)
 	assert.Equal(t, datalog.NewSymbol("?entity"), shared.Symbols[0])
@@ -126,7 +137,7 @@ func TestScanRegistryGetOrCreateConcurrent(t *testing.T) {
 		wait.Add(1)
 		go func(index int) {
 			defer wait.Done()
-			results[index], _, errors[index] = registry.GetOrCreate("same", func() (*SharedScan, error) {
+			results[index], _, errors[index] = registry.GetOrCreate(unboundScanOf(":registry/same"), func() (*SharedScan, error) {
 				creates.Add(1)
 				return &SharedScan{Seq: &LazySeq{}}, nil
 			})
@@ -149,7 +160,7 @@ func TestScanRegistryCloseReleasesPartialScans(t *testing.T) {
 		closeErr:  closeErr,
 	}
 	registry := NewScanRegistry()
-	registry.Put("partial", &SharedScan{
+	registry.Put(unboundScanOf(":registry/partial"), &SharedScan{
 		Seq:     NewTupleSeq(source.Iterator(), false),
 		Symbols: testSymbols(),
 	})

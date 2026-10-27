@@ -315,7 +315,7 @@ func TestLookupByUnique_CandidateMovedOn(t *testing.T) {
 	}
 }
 
-// TestLookupByUnique_TombstonedClaimant: alice claimed V, then retracted.
+// TestLookupByUnique_TombstonedClaimant: alice claimed V, then removed it.
 // She is no longer a claimant.
 func TestLookupByUnique_TombstonedClaimant(t *testing.T) {
 	for _, mode := range optimizerModes {

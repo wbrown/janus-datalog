@@ -500,18 +500,21 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 // match selects its bindings under at its entry (MatchWithConstraints):
 // whether the tuple's value for the pattern's entity-position variable is an
 // Identity, its value for the attribute-position variable is a Keyword, and,
-// under a constant attribute, its value for the value-position variable is a
-// scalar. A tuple failing it names no entity, no attribute and no datom's
-// value, the typed non-match of the equality join, so it contributes zero
-// tuples and no seek is constructed for it. A datom's value is a scalar of
-// the domain. The vector, the domain's one composite, names a declared vector
-// attribute's whole collection, which the vector arm of MatchWithConstraints
-// compares before the selection runs in the current and as-of views, and
-// which under History, where every datom is read as written, names no datom
-// at all, so past the selection a vector at the value position of a pattern
-// on a constant attribute equals no datom. Under a variable attribute the
-// fact is per tuple, and the value position is left alone. Returns nil when
-// no checked position is bound by these symbols — no check is needed.
+// under a constant attribute, its value for the value-position variable is
+// not a vector. A tuple failing it names no entity, no attribute and no
+// datom's value, the typed non-match of the equality join, so it contributes
+// zero tuples and no seek is constructed for it. The entity and attribute
+// positions are each inhabited by one type, so those arms decide from the
+// value alone. A vector at the value position names a declared vector
+// attribute's whole collection, so whether it matches depends on the
+// attribute. Under a constant attribute the attribute is known, and it is
+// not a vector attribute, since a pattern on one is intercepted before this
+// selection by the vector arm of MatchWithConstraints, so the vector equals
+// no datom. Under a variable attribute the tuple passes and the attribute
+// decides downstream: the join routes compare the vector against each
+// resolved collection, and the V-validation route answers it through
+// matchVectorUnderOpenAttribute. Returns nil when no checked position is
+// bound by these symbols — no check is needed.
 func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbol) func(executor.Tuple) bool {
 	eIdx, aIdx, vIdx := -1, -1, -1
 	if v, ok := pattern.GetE().(query.Variable); ok {

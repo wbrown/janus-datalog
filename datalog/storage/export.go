@@ -509,7 +509,12 @@ func ParseValueNode(node *edn.Node) (interface{}, error) {
 		return strconv.ParseInt(node.Value, 10, 64)
 
 	case edn.NodeFloat:
-		return strconv.ParseFloat(node.Value, 64)
+		// A float as the domain admits it: a signed zero a dump carries is 0.0.
+		val, err := strconv.ParseFloat(node.Value, 64)
+		if err != nil {
+			return nil, err
+		}
+		return datalog.NormalizeValue(val), nil
 
 	case edn.NodeBool:
 		return node.Value == "true", nil

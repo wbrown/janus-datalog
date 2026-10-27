@@ -43,14 +43,14 @@ type CRDTResolvingIterator struct {
 	// declared Unique in the schema):
 	//   - uniqueMode: true if current group is a unique CardinalityOne
 	//     attribute and uniqueMatcher is non-nil.
-	//   - uniqueRetracted: value → highest Remove Tx seen within the current
+	//   - uniqueRemovedAt: value → highest Remove Tx seen within the current
 	//     (E, A) group. Used to skip Set entries that have been cancelled by
-	//     a later Remove. Nothing is deleted; the name collides with physical
-	//     deletion, see BUG_RETRACT_NAMES_TWO_OPPOSITE_OPERATIONS.
+	//     a later Remove. Nothing is deleted: the datom a Remove cancels stays
+	//     in the store and in History.
 	//   - uniqueEmitted: whether we have already emitted a value for the
 	//     current group (emit at most one).
 	uniqueMode      bool
-	uniqueRetracted *executor.TupleKeyMap
+	uniqueRemovedAt *executor.TupleKeyMap
 	uniqueEmitted   bool
 
 	// report accounts for the AVET supersession scans the unique walk opens,
@@ -231,7 +231,7 @@ func (it *CRDTResolvingIterator) Next() bool {
 			}
 			if isNewGroup {
 				if datom.Op == datalog.OpCRDTRemove {
-					// Value was retracted — attribute doesn't exist. Skip group.
+					// Value was removed — attribute doesn't exist. Skip group.
 					continue
 				}
 				// First entry for this (E, A) — emit (LWW winner)
@@ -293,7 +293,7 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 	switch it.card {
 	case schema.CardinalityOne:
 		if it.uniqueMode {
-			it.uniqueRetracted = executor.NewTupleKeyMap()
+			it.uniqueRemovedAt = executor.NewTupleKeyMap()
 			it.uniqueEmitted = false
 		}
 	case schema.CardinalityMany:
@@ -545,7 +545,7 @@ func (it *CRDTResolvingIterator) Error() error {
 // entry in the current (E, A) group via the shared walkApplyEntry
 // primitive. Returns (true, nil) when the entry should be emitted
 // (it.currentDatom is set), (false, nil) to skip or record a
-// retraction, or (false, err) on supersession-check failure.
+// Remove, or (false, err) on supersession-check failure.
 //
 // Because the source iterator returns entries in Tx-descending order,
 // the first entry that walkApplyEntry returns Emit for is the walk's
@@ -556,7 +556,7 @@ func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool,
 	copy(aBytes[:], datom.A.String())
 	eBytes := Entity(datom.E.Hash())
 
-	state := &uniqueWalkState{retracted: it.uniqueRetracted}
+	state := &uniqueWalkState{removedAt: it.uniqueRemovedAt}
 	// Accrues whether or not the check fails: a failed supersession check
 	// still read the index to fail.
 	decision, err := it.uniqueMatcher.walkApplyEntry(state, datom, eBytes, aBytes, it.report)
@@ -567,7 +567,7 @@ func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool,
 		it.currentDatom = datom
 		return true, nil
 	}
-	// walkEntrySkip or walkEntryRetract — no emission. The retraction
-	// bookkeeping already updated it.uniqueRetracted via the shared map.
+	// walkEntrySkip or walkEntryRemoved — no emission. The removal
+	// bookkeeping already updated it.uniqueRemovedAt via the shared map.
 	return false, nil
 }

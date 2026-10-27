@@ -10,7 +10,7 @@ import (
 )
 
 func expectedBackendNames() []string {
-	return []string{"memory", "memory-trees", "badger"}
+	return []string{"badger-emulator", "memory-trees", "badger"}
 }
 
 // appendNativeReopenCases builds the Badger store explicitly rather than setting

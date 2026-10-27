@@ -4,8 +4,8 @@
 //
 //   For entity E's current value of unique attribute A, walk E's EATV
 //   history in descending Tx order. For each entry (V_i, T_i, op):
-//     - If op is Remove(V_i): record V_i as retracted at T_i, advance.
-//     - If op is Set(V_i) and V_i has been retracted at higher Tx: advance.
+//     - If op is Remove(V_i): record V_i as removed at T_i, advance.
+//     - If op is Set(V_i) and V_i has been removed at higher Tx: advance.
 //     - If op is Set(V_i) and no OTHER entity has an assertion of V_i
 //       with Tx > T_i: emit V_i.
 //     - Otherwise: advance.
@@ -201,12 +201,12 @@ func TestEntityView_AllSuperseded_NoValue(t *testing.T) {
 }
 
 // ================================================================
-// Entity-view: retraction interacts with walk
+// Entity-view: a Remove interacts with walk
 // ================================================================
 
-// TestEntityView_RetractCancelsSet: alice asserted V then retracted it.
-// The walk must not "fall back" to the retracted value.
-func TestEntityView_RetractCancelsSet(t *testing.T) {
+// TestEntityView_RemoveCancelsSet: alice asserted V then removed it.
+// The walk must not "fall back" to the removed value.
+func TestEntityView_RemoveCancelsSet(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)
@@ -225,15 +225,15 @@ func TestEntityView_RetractCancelsSet(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, "", queryEntityEmail(t, db, alice),
-				"retracted value must not be resurrected by fallback")
+				"removed value must not be resurrected by fallback")
 		})
 	}
 }
 
-// TestEntityView_RetractThenReassert: alice set V, retracted V, set V
+// TestEntityView_RemoveThenReassert: alice set V, removed V, set V
 // again. Her walk sees Set(V) as the highest-Tx entry, not superseded.
 // Emit V.
-func TestEntityView_RetractThenReassert(t *testing.T) {
+func TestEntityView_RemoveThenReassert(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := setupUniqueTestDB(t, mode, nil)

@@ -41,6 +41,21 @@ roster names an attribute on whichever source the function or the rule body
 reads, where today a rule body's constants are collected on the default
 source alone.
 
+## What the fix costs
+
+Each form is refused where it is written, naming what the parser expected,
+so no run, import or test produced a wrong outcome from it, and a fallback
+over a named source is already written as an `or-default` over a data
+pattern on that source. The fix touches the parser for both forms; the
+routing of `get-else`, `get-some` and `missing?`, which `SourceRouter`
+delegates to `$` alone through `EntityLookupMatcher`; `query.RuleInvocation`,
+which carries no source, and the evaluation of its rules over one; and the
+vocabulary roster, which collects a rule body's attributes on `$`. That is
+the parser, the query package, the executor's routing, the rule evaluation
+and the roster, for two spellings the language expresses another way. It is
+taken up when a use needs the spelling, which is the failure the cost
+answers.
+
 ## Tests
 
 `(get-else $src ?e :a "d")` over two sources answers from `$src` and not

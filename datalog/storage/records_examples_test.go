@@ -112,7 +112,7 @@ func TestEnumerate_AnswersAlikeWithThePatternWrittenAfterIt(t *testing.T) {
 	require.NoError(t, err)
 	want := [][]interface{}{{int64(0), "stealth"}, {int64(1), "archery"}}
 	for _, mode := range optimizerModes {
-		if mode.backend.Name == "memory" {
+		if mode.backend.Name == "badger-emulator" {
 			continue
 		}
 		t.Run(mode.name, func(t *testing.T) {
@@ -144,7 +144,7 @@ func TestEnumerate_AnswersAlikeWithThePatternWrittenAfterIt(t *testing.T) {
 func TestExpressionBindingForms_AnswerAsTheRecordsState(t *testing.T) {
 	s1, s2 := datalog.NewIdentity("s1"), datalog.NewIdentity("s2")
 	for _, mode := range optimizerModes {
-		if mode.backend.Name == "memory" {
+		if mode.backend.Name == "badger-emulator" {
 			continue
 		}
 		t.Run(mode.name, func(t *testing.T) {

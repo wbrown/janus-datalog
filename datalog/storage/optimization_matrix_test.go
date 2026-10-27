@@ -176,7 +176,7 @@ func testOptimizationMatrix(t *testing.T, mode optimizerMode) {
 			opts.EnableEntityPrefetch = cfg.prefetch
 
 			start := time.Now()
-			rel, err := db.queryUnderPlannerOptions(opts, queryStr)
+			_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 			require.NoError(t, err, "config %s failed", cfg.name)
 			results, err := executor.CollectTuples(rel, nil)
 			require.NoError(t, err)
@@ -197,7 +197,7 @@ func testOptimizationMatrix(t *testing.T, mode optimizerMode) {
 // mode explicitly. Cross-mode result equivalence for the same query body
 // is covered by TestOptimizationMatrix.
 func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(true) {
+	for _, mode := range pinned(optimizerModes, true) {
 		t.Run(mode.name, func(t *testing.T) {
 			testComplexQueryRetainsScenarioKeyThroughFallbacks(t, mode)
 		})
@@ -346,7 +346,7 @@ func BenchmarkComplexQueryCheckpointPrefetch(b *testing.B) {
 // explicitly. Cross-mode result equivalence for the same query body is
 // covered by TestOptimizationMatrix.
 func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(true) {
+	for _, mode := range pinned(optimizerModes, true) {
 		t.Run(mode.name, func(t *testing.T) {
 			testComplexQuerySubqueryExecutionCounts(t, mode)
 		})

@@ -97,19 +97,13 @@ qb.Pat(e, PersonAge, age)  // joins on e
 
 ## Patterns
 
-`Pat` creates data patterns of any arity. Patterns can match against:
-- The database (EAVT storage)
-- Input relations of any arity
+`Pat` creates a data pattern of one to four elements, entity, attribute, value and transaction in that order. A position the pattern omits is unbound, so `qb.Pat(e, a)` matches every entity carrying the attribute. `Build` refuses a pattern of no element or of more than four, as the parser refuses its rendering.
 
 ```go
-// Database patterns
+qb.Pat(e)                    // [e] - every entity carrying a datom
+qb.Pat(e, a)                 // [e a] - the value unbound
 qb.Pat(e, a, v)              // [e a v] - standard pattern
 qb.Pat(e, a, v, tx)          // [e a v tx] - with transaction
-qb.Pat(e, a, v, tx, op)      // [e a v tx op] - history pattern
-
-// Input relation patterns (any arity)
-qb.Pat(name, age)            // 2-tuple
-qb.Pat(a, b, c, d, e, f)     // 6-tuple
 
 // Wildcards
 qb.Pat(e, qb.Blank(), name)  // ignore attribute
@@ -938,9 +932,10 @@ func main() {
 
 | Function | EDN Equivalent | Description |
 |----------|----------------|-------------|
+| `qb.Pat(e)` | `[?e]` | Every entity carrying a datom |
+| `qb.Pat(e, a)` | `[?e ?a]` | The value unbound |
 | `qb.Pat(e, a, v)` | `[?e ?a ?v]` | 3-element pattern |
 | `qb.Pat(e, a, v, tx)` | `[?e ?a ?v ?tx]` | With transaction |
-| `qb.Pat(e, a, v, tx, op)` | `[?e ?a ?v ?tx ?op]` | History pattern |
 | `qb.PatFrom(src, e, a, v)` | `[$src ?e ?a ?v]` | Source-qualified pattern |
 | `qb.Blank()` | `_` | Wildcard |
 

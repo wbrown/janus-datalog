@@ -114,7 +114,7 @@ Both produce identical results. The query builder version catches errors at comp
 
 See [docs/reference/QUERY_BUILDER.md](../../docs/reference/QUERY_BUILDER.md) for complete API documentation including:
 
-- Patterns (any arity)
+- Patterns (one to four elements)
 - Predicates and comparisons
 - Aggregations
 - Expressions (arithmetic, string, time)

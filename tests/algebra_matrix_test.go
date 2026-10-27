@@ -11,7 +11,7 @@ import (
 // TestAlgebraMatrix_ComparisonBindingOr runs the comparison binding + or
 // subquery query with and without the algebra optimizer.
 func TestAlgebraMatrix_ComparisonBindingOr(t *testing.T) {
-	eachBackendAndMode(t, testAlgebraMatrixComparisonBindingOr)
+	eachMode(t, testAlgebraMatrixComparisonBindingOr)
 }
 
 func testAlgebraMatrixComparisonBindingOr(t *testing.T, db *storage.Database) {

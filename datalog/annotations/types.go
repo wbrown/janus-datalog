@@ -21,9 +21,10 @@ const (
 	// whether the inference rewrote a form under "rewritten", and preparation's
 	// time as its latency (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md
 	// §4.9); a query preparation refuses completes with its error and emits no
-	// QueryPrepared. A query the database refuses before the executor's entry,
-	// once it is resolved, is reported invoked and completed the same way,
-	// with no QueryPrepared and no QueryPlanCreated. Every query completes
+	// QueryPrepared. A query the database refuses before the executor's entry
+	// is reported invoked and completed the same way, with no QueryPrepared
+	// and no QueryPlanCreated; one the database cannot resolve is reported
+	// invoked with the value it was given. Every query completes
 	// once: a query that fails in execution completes with its error before
 	// its caller gets a result, and a query that runs completes where it
 	// ends, when its result is exhausted or closed, with the tuples drained by

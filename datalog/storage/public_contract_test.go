@@ -13,5 +13,5 @@ var (
 	_ executor.PatternMatcher        = (*storage.PatternMatcher)(nil)
 	_ executor.PredicateAwareMatcher = (*storage.PatternMatcher)(nil)
 	_ executor.EntityLookupMatcher   = (*storage.PatternMatcher)(nil)
-	_ storage.Store                  = (*storage.MemoryStore)(nil)
+	_ storage.Store                  = (*storage.BadgerEmulatorStore)(nil)
 )

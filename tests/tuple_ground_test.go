@@ -15,7 +15,7 @@ import (
 // TestTupleGroundBasic tests the basic tuple ground syntax:
 // [(ground [1 2 3]) [?a ?b ?c]]
 func TestTupleGroundBasic(t *testing.T) {
-	eachBackendAndMode(t, testTupleGroundBasic)
+	eachMode(t, testTupleGroundBasic)
 }
 
 func testTupleGroundBasic(t *testing.T, db *storage.Database) {
@@ -72,7 +72,7 @@ func testTupleGroundBasic(t *testing.T, db *storage.Database) {
 //
 //	[(ground [0 0]) [?count ?total]])
 func TestTupleGroundOrFallback(t *testing.T) {
-	eachBackendAndModeWith(t, testTupleGroundOrFallback)
+	eachModeWith(t, testTupleGroundOrFallback)
 }
 
 func testTupleGroundOrFallback(t *testing.T, db *storage.Database, mode optimizerMode) {
@@ -225,7 +225,7 @@ func testTupleGroundOrFallback(t *testing.T, db *storage.Database, mode optimize
 // TestTupleGroundBackwardCompatibility verifies the scalar ground syntax
 // remains supported
 func TestTupleGroundBackwardCompatibility(t *testing.T) {
-	eachBackendAndMode(t, testTupleGroundBackwardCompatibility)
+	eachMode(t, testTupleGroundBackwardCompatibility)
 }
 
 func testTupleGroundBackwardCompatibility(t *testing.T, db *storage.Database) {
@@ -276,7 +276,7 @@ func testTupleGroundBackwardCompatibility(t *testing.T, db *storage.Database) {
 
 // TestTupleGroundQB tests tuple ground via the query builder API
 func TestTupleGroundQB(t *testing.T) {
-	eachBackendAndMode(t, testTupleGroundQB)
+	eachMode(t, testTupleGroundQB)
 }
 
 func testTupleGroundQB(t *testing.T, db *storage.Database) {
@@ -343,7 +343,7 @@ func testTupleGroundQB(t *testing.T, db *storage.Database) {
 // Note: OR clause fallback behavior with pure pattern matching (without subqueries) has
 // different semantics than with subqueries. This tests the pattern-only case.
 func TestTupleGroundQBInOr(t *testing.T) {
-	eachBackendAndMode(t, testTupleGroundQBInOr)
+	eachMode(t, testTupleGroundQBInOr)
 }
 
 func testTupleGroundQBInOr(t *testing.T, db *storage.Database) {

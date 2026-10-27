@@ -11,14 +11,14 @@ import (
 
 // Memory-specific construction smoke; public semantics live in the backend matrix.
 func TestMemoryStoreConstructs(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	require.NotNil(t, store.Encoder())
 	require.NoError(t, store.Close())
 	require.NoError(t, store.Close())
 }
 
 func TestMemoryStoreTxRetractThenAssertPreservesDatom(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
 	entity := datalog.NewIdentity("memory:retract-assert")
@@ -57,7 +57,7 @@ func TestMemoryStoreTxRetractThenAssertPreservesDatom(t *testing.T) {
 }
 
 func TestMemoryStoreRetractRemovesMatchingDatom(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
 	entity := datalog.NewIdentity("memory:retract-only")
@@ -73,7 +73,7 @@ func TestMemoryStoreRetractRemovesMatchingDatom(t *testing.T) {
 }
 
 func TestMemoryStoreMaintainsSortedKeys(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
 	attr := datalog.NewKeyword(":memory/keys")
@@ -110,7 +110,7 @@ func TestMemoryStoreMaintainsSortedKeys(t *testing.T) {
 }
 
 func TestMemoryStoreScanOrdersManyKeys(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
 	attr := datalog.NewKeyword(":memory/order")
@@ -143,7 +143,7 @@ func TestMemoryStoreScanOrdersManyKeys(t *testing.T) {
 }
 
 func TestMemoryStoreBatchedAssertScales(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
 	attr := datalog.NewKeyword(":memory/bulk")
@@ -166,7 +166,7 @@ func TestMemoryStoreBatchedAssertScales(t *testing.T) {
 }
 
 func TestInjectedStoreNotClosedOnConstructorError(t *testing.T) {
-	inner := NewMemoryStore(nil)
+	inner := NewBadgerEmulatorStore(nil)
 	t.Cleanup(func() { _ = inner.Close() })
 	_, err := NewDatabaseWithOptions(DatabaseOptions{
 		Store: failMetadataStore{Store: inner},
@@ -187,7 +187,7 @@ func TestInjectedStoreNotClosedOnConstructorError(t *testing.T) {
 // contradiction, and the store's own encoder is still never mutated.
 func TestInjectedStoreRejectsCompressionThreshold(t *testing.T) {
 	encoder := &BinaryKeyEncoder{CompressionThreshold: 0}
-	store := NewMemoryStore(encoder)
+	store := NewBadgerEmulatorStore(encoder)
 	t.Cleanup(func() { _ = store.Close() })
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Store:                store,
@@ -208,7 +208,7 @@ func (s failMetadataStore) GetMetadataUint64(key string) (uint64, bool, error) {
 }
 
 func TestResolveAllAttributesManySkipsSuccessorDecodeErrors(t *testing.T) {
-	store := NewMemoryStore(nil)
+	store := NewBadgerEmulatorStore(nil)
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Store:        store,
 		DisableCache: true,
@@ -244,7 +244,7 @@ func TestResolveAllAttributesManySkipsSuccessorDecodeErrors(t *testing.T) {
 }
 
 // immediateEATVSuccessorKey returns the first EATV key after entity's range.
-func immediateEATVSuccessorKey(t *testing.T, store *MemoryStore, entity datalog.Identity) string {
+func immediateEATVSuccessorKey(t *testing.T, store *BadgerEmulatorStore, entity datalog.Identity) string {
 	t.Helper()
 	store.mu.RLock()
 	defer store.mu.RUnlock()
@@ -271,7 +271,7 @@ func immediateEATVSuccessorKey(t *testing.T, store *MemoryStore, entity datalog.
 
 // corruptEATVKey truncates one EATV key in lockstep with the ordered index so
 // Datom() decode fails if the pull_batch pre-decode entity bound is skipped.
-func corruptEATVKey(t *testing.T, store *MemoryStore, encoded string) {
+func corruptEATVKey(t *testing.T, store *BadgerEmulatorStore, encoded string) {
 	t.Helper()
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -287,7 +287,7 @@ func corruptEATVKey(t *testing.T, store *MemoryStore, encoded string) {
 
 // requireImmediateEATVSuccessorTruncated proves the next EATV key after entity
 // is the truncated successor — otherwise ResolveAllAttributesMany never hits it.
-func requireImmediateEATVSuccessorTruncated(t *testing.T, store *MemoryStore, entity datalog.Identity) {
+func requireImmediateEATVSuccessorTruncated(t *testing.T, store *BadgerEmulatorStore, entity datalog.Identity) {
 	t.Helper()
 	store.mu.RLock()
 	defer store.mu.RUnlock()

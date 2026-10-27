@@ -129,7 +129,7 @@ func drainRelation(t *testing.T, rel executor.Relation) int {
 // backend is not: these strategies are matcher-level, and the matcher is what
 // each store implements differently.
 func TestBindingDrivenStrategiesReportTheirFunnel(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(false) {
+	for _, mode := range pinned(backendModes, false) {
 		t.Run(mode.name, func(t *testing.T) {
 			testBindingDrivenStrategiesReportTheirFunnel(t, mode)
 		})
@@ -241,7 +241,7 @@ func testBindingDrivenStrategiesReportTheirFunnel(t *testing.T, mode optimizerMo
 // from the datom alone and the matcher's single exit restores set semantics.
 // Pinning tuple counts here would pin that difference rather than the unit.
 func TestBindingSizeCountsTuplesNotDistinctKeys(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(false) {
+	for _, mode := range pinned(backendModes, false) {
 		t.Run(mode.name, func(t *testing.T) {
 			testBindingSizeCountsTuplesNotDistinctKeys(t, mode)
 		})
@@ -344,7 +344,7 @@ func lastScanComplete(events []annotations.Event, strategy annotations.ScanStrat
 // which shares the fixture; what is left here is the count of events and the
 // scan count only this strategy and the per-key seek carry.
 func TestPerBindingScanReportsOneCountedEvent(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(false) {
+	for _, mode := range pinned(backendModes, false) {
 		t.Run(mode.name, func(t *testing.T) {
 			testPerBindingScanReportsOneCountedEvent(t, mode)
 		})
@@ -495,7 +495,7 @@ func TestBoundAnnotationKeyHasOneType(t *testing.T) {
 // scan events' own typing is covered in both modes by the tests above. The
 // backend still varies — the index key is written by every store's scan path.
 func TestIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(false) {
+	for _, mode := range pinned(backendModes, false) {
 		t.Run(mode.name, func(t *testing.T) {
 			testIndexAnnotationKeyCarriesOnlyAnIndexType(t, mode)
 		})
@@ -549,7 +549,7 @@ func testIndexAnnotationKeyCarriesOnlyAnIndexType(t *testing.T, mode optimizerMo
 // the cache on, matchWithBindingsFromCache answers a binding-driven pattern
 // before analyzeReuseStrategy is consulted and the arm never runs.
 func TestCardinalityAnnotationKeyCarriesOnlyAKeyword(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(false) {
+	for _, mode := range pinned(backendModes, false) {
 		t.Run(mode.name, func(t *testing.T) {
 			testCardinalityAnnotationKeyCarriesOnlyAKeyword(t, mode)
 		})

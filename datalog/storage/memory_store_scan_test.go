@@ -9,11 +9,11 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// storeOfDatoms is a memory store holding n datoms, one entity and one
+// storeOfDatoms is a Badger emulator holding n datoms, one entity and one
 // Lamport each, under one attribute.
-func storeOfDatoms(t *testing.T, n int) *MemoryStore {
+func storeOfDatoms(t *testing.T, n int) *BadgerEmulatorStore {
 	t.Helper()
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 	attr := datalog.NewKeyword(":memory/run")
 	datoms := make([]datalog.Datom, 0, n)
@@ -38,7 +38,7 @@ func TestMemoryStoreScanPaysForWhatItReads(t *testing.T) {
 	t.Run("one key read costs one chunk whatever the store holds", func(t *testing.T) {
 		few := storeOfDatoms(t, 8*memoryScanChunkKeys)
 		many := storeOfDatoms(t, 80*memoryScanChunkKeys)
-		allocsOver := func(store *MemoryStore) float64 {
+		allocsOver := func(store *BadgerEmulatorStore) float64 {
 			return testing.AllocsPerRun(20, func() {
 				if _, err := store.MaxElementID(); err != nil {
 					t.Fatal(err)

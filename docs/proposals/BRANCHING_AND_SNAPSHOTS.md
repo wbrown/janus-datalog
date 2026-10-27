@@ -1097,7 +1097,7 @@ Steps 2–6 run without `db.mu` held, so a rollback never blocks the brief `db.m
 
 `Fork(name)` takes the name of a snapshot the database holds and returns a writable handle holding the database's state as of that snapshot, the state `AsOfSnapshot(name)` reads, writing as its own write stream (§4.1) and resolving by the parent's schema. Its store is the parent's published copy-on-write version as of the snapshot's point (§9.6). Forking records the fork in the parent as a `:db.branch/*` entity (§11.4) carrying the snapshot's name, the point it captured, and the point the branch holds the parent's state as of. While a snapshot of that name holds the captured point, `TruncateTo`'s descendant check (§10.7) refuses to rewind below the branch's point. `Fork` opens the transaction that records the fork before it looks up the snapshot, so a `TruncateTo` that starts holding writers while it runs waits for the record, and a fork begun after a `TruncateTo` starts holding writers is refused. It takes no snapshot of its own. The branch contract is the test set §12.1 states, run by every backend.
 
-`Database.Fork` errors on a store that cannot fork a branch. `BadgerStore` and `MemoryStore` cannot until the arena prefix lands (§12.4).
+`Database.Fork` errors on a store that cannot fork a branch. `BadgerStore` and `BadgerEmulatorStore` cannot until the arena prefix lands (§12.4).
 
 ### 12.4 The arena prefix on Badger and `memory`, and the stages after it
 

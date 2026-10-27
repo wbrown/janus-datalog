@@ -31,7 +31,7 @@ import (
 // no arm on whose behalf they read. A fourth such function reds this test, which
 // is the point: the category is narrow and named, not open.
 var acquisitionsOutsideTheOpeners = map[string]string{
-	"DatomsAfter":          "MemoryStore answering its own interface method",
+	"DatomsAfter":          "BadgerEmulatorStore answering its own interface method",
 	"maxElementIDByScan":   "shared derivation behind MaxElementID",
 	"maxTxForEntityByScan": "shared derivation behind MaxTxForEntity",
 }

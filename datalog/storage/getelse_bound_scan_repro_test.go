@@ -280,7 +280,7 @@ func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 // TestGetElseMultiEntityStoredOrDefault, and cross-mode tuple equivalence in
 // TestGetElseScanNarrowing_SemanticPreservation.
 func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(true) {
+	for _, mode := range pinned(optimizerModes, true) {
 		t.Run(mode.name, func(t *testing.T) {
 			testGetElseMultiEntityScanNarrowed(t, mode)
 		})

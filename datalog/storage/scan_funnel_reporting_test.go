@@ -80,7 +80,7 @@ func funnelFixture(t *testing.T, db *Database) datalog.Identity {
 // The cache is disabled for the E-and-A-bound arms because matchFromCache
 // intercepts them otherwise; that arm has its own case below.
 func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// How E is supplied decides which family of paths runs, and both
 			// families are in scope. A literal E — #id hashes the seed at parse
@@ -281,7 +281,7 @@ func TestEveryDispatchArmAnnouncesItsRunAndReportsItsFunnel(t *testing.T) {
 // each and intake is what separates them: LWW stops at the winner, add-wins and
 // RGA read the whole (E, A) group.
 func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, tc := range []struct {
 				card datalog.Keyword
@@ -389,7 +389,7 @@ func TestCacheResolvedPatternReportsItsCostAndAnnouncesNoRun(t *testing.T) {
 // no entry and contributes no tuple, but establishing that costs a read, and an
 // arm reporting only its matches prices that read at nothing.
 func TestBindingDrivenCacheArmReportsWhatItServed(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			testBindingDrivenCacheArmReportsWhatItServed(t, mode)
 		})
@@ -509,7 +509,7 @@ func testBindingDrivenCacheArmReportsWhatItServed(t *testing.T, mode optimizerMo
 // peeks before it resolves, so it walks two and reports the count instead —
 // naming an index there would name whichever arm reached it last.
 func TestPatternLessReadsReportUnderEntityAndAttribute(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			testPatternLessReadsReportUnderEntityAndAttribute(t, mode)
 		})
@@ -626,7 +626,7 @@ func testPatternLessReadsReportUnderEntityAndAttribute(t *testing.T, mode optimi
 // separates them in a trace is the run: prefetch opens one per entity and names
 // none, batch pull shares a single EATV traversal and names it.
 func TestBulkReadsReportUnderNoSingleSubject(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			testBulkReadsReportUnderNoSingleSubject(t, mode)
 		})
@@ -714,7 +714,7 @@ func testBulkReadsReportUnderNoSingleSubject(t *testing.T, mode optimizerMode) {
 // which is what the source reads. No other cardinality can satisfy it: intake
 // above the source is the walk's, and only this branch opens those scans.
 func TestUniqueAttributeWalkReportsItsOwnScans(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			testUniqueAttributeWalkReportsItsOwnScans(t, mode)
 		})
@@ -788,12 +788,12 @@ func testUniqueAttributeWalkReportsItsOwnScans(t *testing.T, mode optimizerMode)
 // TestMemoryBackendReportsIntakeNatively closes the gap that left
 // memoryIterator.Scanned() asserted only under GOOS=js: the one test that read
 // the intake key opened with a temp directory, which is Badger natively, so the
-// memory store's counter could have returned a constant zero and the native
+// emulator's counter could have returned a constant zero and the native
 // gate would not have noticed. Injecting the store exercises it here.
 func TestMemoryBackendReportsIntakeNatively(t *testing.T) {
 	var events []annotations.Event
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Store:             NewMemoryStore(nil),
+		Store:             NewBadgerEmulatorStore(nil),
 		Schema:            funnelSchema(t),
 		AnnotationHandler: func(ev annotations.Event) { events = append(events, ev) },
 	})
@@ -819,7 +819,7 @@ func TestMemoryBackendReportsIntakeNatively(t *testing.T) {
 	scan := lastScanComplete(events, annotations.ScanDirect)
 	require.NotNil(t, scan)
 	require.Equal(t, 3, scan.Data[annotations.KeyDatomsScanned],
-		"three writes are three datoms under this attribute, and the memory store read them all")
+		"three writes are three datoms under this attribute, and the emulator read them all")
 	require.Equal(t, 1, scan.Data[annotations.KeyDatomsResolved])
 }
 

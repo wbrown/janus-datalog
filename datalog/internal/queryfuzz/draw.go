@@ -73,8 +73,9 @@ func (d *Draw) term() string {
 }
 
 // pattern draws a data pattern: a source one time in eight, an entity
-// variable or the blank, an attribute, a value term or the blank, and the
-// transaction position one time in ten.
+// variable or the blank, then one time in ten nothing more or the attribute
+// alone, the omitted positions being unbound, and otherwise an attribute, a
+// value term or the blank, and the transaction position one time in ten.
 func (d *Draw) pattern() string {
 	src := ""
 	if d.r.Intn(8) == 0 {
@@ -82,6 +83,12 @@ func (d *Draw) pattern() string {
 	}
 	a := d.pick([]string{":a", ":b", ":c"})
 	e := d.pick([]string{"?e", "?f", "_"})
+	if d.r.Intn(10) == 0 {
+		if d.r.Intn(2) == 0 {
+			return "[" + src + e + "]"
+		}
+		return "[" + src + e + " " + a + "]"
+	}
 	v := d.term()
 	if d.r.Intn(6) == 0 {
 		v = "_"

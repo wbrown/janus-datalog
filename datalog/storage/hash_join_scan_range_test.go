@@ -50,7 +50,7 @@ func TestHashJoinScanRangeBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

@@ -354,12 +354,19 @@ func (m *PatternMatcher) matchUnboundScan(
 	// A datom's value is a scalar: a declared vector attribute is stored as one
 	// datom per element, and the collection is what resolution reconstructs
 	// from them (resolveVector). A vector at the value position names that
-	// collection, which the vector arms below compare in the current and as-of
-	// views; under any other constant attribute, and under History, where
+	// collection, which the vector arms below compare under a constant vector
+	// attribute, and matchVectorUnderOpenAttribute compares under every
+	// declared vector attribute when the attribute is open, in the current and
+	// as-of views; under any other constant attribute, and under History, where
 	// every datom is read as written and nothing resolves, it equals no datom,
 	// and the pattern answers the empty relation.
-	if a != nil && datalog.IsVector(v) && (card != schema.CardinalityVector || m.mode == historyMode) {
-		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
+	if datalog.IsVector(v) {
+		if m.mode == historyMode || (a != nil && card != schema.CardinalityVector) {
+			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
+		}
+		if a == nil {
+			return m.matchVectorUnderOpenAttribute(pattern, symbols, v)
+		}
 	}
 
 	// CACHE OPTIMIZATION: When E and A are bound, use the cache for O(1)
@@ -728,6 +735,12 @@ type validatingVBoundIterator struct {
 	// Current V value being searched
 	currentBoundV any
 
+	// vectorAnswers is the current binding's answer when its value is a
+	// vector, drained before the next binding: every entity whose collection
+	// under some declared vector attribute equals it
+	// (matchVectorUnderOpenAttribute). Nil between such bindings.
+	vectorAnswers executor.Iterator
+
 	// report accounts for this arm. Its run is nil: this path opens a candidate
 	// scan per binding, and those are peers with no one of them describing the
 	// whole. Everything it drives acquires through the same report — the
@@ -742,6 +755,27 @@ type validatingVBoundIterator struct {
 
 func (it *validatingVBoundIterator) Next() bool {
 	for {
+		// A vector-valued binding answers from the vector arms, never from a
+		// candidate scan.
+		if it.vectorAnswers != nil {
+			if it.vectorAnswers.Next() {
+				it.currentTuple = it.vectorAnswers.Tuple()
+				if it.report != nil {
+					it.report.matched++
+				}
+				return true
+			}
+			if err := it.vectorAnswers.Error(); err != nil {
+				it.err = err
+				return false
+			}
+			if err := it.vectorAnswers.Close(); err != nil {
+				it.err = err
+				return false
+			}
+			it.vectorAnswers = nil
+		}
+
 		// Try to get next CRDT-resolved result from current scan
 		if it.crdtIter != nil {
 			for it.crdtIter.Next() {
@@ -834,6 +868,23 @@ func (it *validatingVBoundIterator) Next() bool {
 		it.currentBoundV = it.patternExtractor.ExtractV(tuple)
 		if it.currentBoundV == nil {
 			continue // V not bound in this tuple
+		}
+
+		// A vector names a declared vector attribute's whole collection, which
+		// no candidate datom carries: the index holds a collection's elements,
+		// each its own datom. The attribute is open on this route, since a
+		// vector under a constant attribute is selected out at the match's
+		// entry (typedPositionBindingCheck), so the binding's answer is every
+		// entity whose collection under some declared vector attribute equals
+		// it, drained before the next binding.
+		if datalog.IsVector(it.currentBoundV) {
+			answers, err := it.matcher.matchVectorUnderOpenAttribute(it.pattern, it.symbols, it.currentBoundV)
+			if err != nil {
+				it.err = err
+				return false
+			}
+			it.vectorAnswers = answers.Iterator()
+			continue
 		}
 
 		// Unique-attribute short-circuit: resolve the (A, V)-LWW winner
@@ -1191,6 +1242,12 @@ func (it *validatingVBoundIterator) Close() error {
 	if it.rawIter != nil {
 		it.rawIter.Close()
 		it.rawIter = nil
+	}
+	if it.vectorAnswers != nil {
+		if err := it.vectorAnswers.Close(); err != nil && it.err == nil {
+			it.err = err
+		}
+		it.vectorAnswers = nil
 	}
 
 	// Not gated on having opened a candidate scan: the unique short-circuit
@@ -2348,6 +2405,46 @@ func (it *vectorScanAllEntitiesIterator) Close() error {
 }
 
 func (it *vectorScanAllEntitiesIterator) Error() error { return it.err }
+
+// matchVectorUnderOpenAttribute answers a pattern whose value position holds
+// a vector and whose attribute position is open. A vector names a declared
+// vector attribute's whole collection, so the answer is every entity whose
+// collection under some declared vector attribute equals it, each attribute
+// resolved and compared as matchVectorScanAllEntities compares it under a
+// known one. The schema names the vector attributes, and a matcher with no
+// schema declares none and answers nothing. The caller answers History
+// itself, where nothing resolves and a vector equals no datom as written.
+func (m *PatternMatcher) matchVectorUnderOpenAttribute(
+	pattern *query.DataPattern,
+	symbols []query.Symbol,
+	v interface{},
+) (executor.Relation, error) {
+	var tuples []executor.Tuple
+	if m.schema != nil {
+		for _, def := range m.schema.Attributes() {
+			if def.Cardinality != schema.CardinalityVector {
+				continue
+			}
+			rel, err := m.matchVectorScanAllEntities(pattern, symbols, def.Ident, v, def.ValueType)
+			if err != nil {
+				return nil, err
+			}
+			copies := rel.RequiresCopy()
+			if err := executor.ForEach(rel, func(tuple executor.Tuple) error {
+				if copies {
+					held := make(executor.Tuple, len(tuple))
+					copy(held, tuple)
+					tuple = held
+				}
+				tuples = append(tuples, tuple)
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return executor.NewMaterializedRelationWithOptions(symbols, tuples, m.options), nil
+}
 
 // matchCardinalityManyScanAllEntities handles [?e :attr ?v] where E is unbound
 // Scans all entities with the attribute and resolves each set using add-wins

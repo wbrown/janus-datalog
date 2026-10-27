@@ -25,7 +25,7 @@ func (s *closeCountingSession) Close() error {
 // renamed result is exhausted
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §7).
 func TestSessionBoundRelationRenameKeepsTheSessionBoundToTheRenamedResult(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	defer store.Close()
 	opened, err := store.NewReadSession()
 	require.NoError(t, err)
@@ -49,7 +49,7 @@ func TestSessionBoundRelationRenameKeepsTheSessionBoundToTheRenamedResult(t *tes
 }
 
 func TestSessionBoundRelationRenameErrorsOnASymbolTheInnerLacks(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	defer store.Close()
 	opened, err := store.NewReadSession()
 	require.NoError(t, err)

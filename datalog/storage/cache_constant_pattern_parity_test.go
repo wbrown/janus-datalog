@@ -72,7 +72,7 @@ const constantPatternSeed = "cache-parity:subject"
 // crossed with the CRDT states that reach it.
 //
 // The states matter as much as the branches: an entry holds a resolved value,
-// and what distinguishes "never written" from "written and retracted" lives in
+// and what distinguishes "never written" from "written and removed" lives in
 // the datoms, not in the resolution. Those are the pairs the cache cannot tell
 // apart unless it is told to carry the difference, so each cardinality supplies
 // both members of its pair — never-set against tombstoned, never-set against

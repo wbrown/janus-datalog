@@ -27,35 +27,34 @@ var queryGetAttr = func() *query.Query {
 // once: refused or failed before the result exists, or, for a query that
 // runs, when the result's iterator is exhausted or closed.
 func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executor.Relation, error) {
-	return d.queryUnderPlannerOptions(d.effectivePlannerOptions(), queryInput, inputs...)
+	_, rel, err := d.queryUnderPlannerOptions(d.effectivePlannerOptions(), queryInput, inputs...)
+	return rel, err
 }
 
 // queryUnderPlannerOptions is Query's body with the planner options supplied
 // rather than read from the database. Query passes the database's own; tests
 // that vary the optimizer profile per query pass theirs. One query path either
 // way — read session, source routing, input conversion, session-bound result.
+// It returns the query it resolved beside the result, for a caller that reads
+// the query's find.
 func (d *Database) queryUnderPlannerOptions(
 	planOpts planner.PlannerOptions,
 	queryInput interface{},
 	inputs ...interface{},
-) (executor.Relation, error) {
+) (*query.Query, executor.Relation, error) {
 	// Separate QueryOptions from regular inputs
 	opts, regularInputs := extractQueryOptions(inputs)
 
-	q, err := d.resolveQuery(queryInput)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve query: %w", err)
-	}
-
 	// A handler sees every query the database is asked, invoked once and
-	// completed once. A query refused here, after it is resolved and before
-	// the executor's entry, is reported as the executor reports a query it
-	// refuses: invoked, with the query as received, then completed with the
-	// refusal. A query that reaches ExecuteWithRelations is reported invoked
-	// there, and completed there when it is refused or fails in execution. A
-	// query that runs completes where it ends: its session-bound result
-	// reports the completion, with the tuples drained, when its iterator is
-	// exhausted or closed.
+	// completed once. A query refused here, before the executor's entry, is
+	// reported as the executor reports a query it refuses: invoked, with the
+	// query as received, then completed with the refusal. A query that does
+	// not resolve is reported with the value it was given, text as text. A
+	// query that reaches ExecuteWithRelations is reported invoked there, and
+	// completed there when it is refused or fails in execution. A query that
+	// runs completes where it ends: its session-bound result reports the
+	// completion, with the tuples drained, when its iterator is exhausted or
+	// closed.
 	handler := planOpts.Handler
 	var queryStart time.Time
 	var completion *queryCompletion
@@ -63,12 +62,12 @@ func (d *Database) queryUnderPlannerOptions(
 		queryStart = time.Now()
 		completion = &queryCompletion{handler: handler, start: queryStart}
 	}
-	refused := func(err error) (executor.Relation, error) {
+	refused := func(received interface{}, err error) (*query.Query, executor.Relation, error) {
 		if handler != nil {
 			handler(annotations.Event{
 				Name:  annotations.QueryInvoked,
 				Start: queryStart,
-				Data:  map[string]interface{}{annotations.KeyQuery: q.String()},
+				Data:  map[string]interface{}{annotations.KeyQuery: received},
 			})
 			handler(annotations.TimedEvent(annotations.QueryComplete, queryStart,
 				map[string]interface{}{
@@ -78,7 +77,12 @@ func (d *Database) queryUnderPlannerOptions(
 					annotations.KeyError:          err.Error(),
 				}))
 		}
-		return nil, err
+		return nil, nil, err
+	}
+
+	q, err := d.resolveQuery(queryInput)
+	if err != nil {
+		return refused(queryInput, fmt.Errorf("failed to resolve query: %w", err))
 	}
 
 	// One read session per query: every storage read — eager during
@@ -86,7 +90,7 @@ func (d *Database) queryUnderPlannerOptions(
 	// The session closes when the result is exhausted or closed.
 	matcher, session, err := d.sessionMatcher(planOpts)
 	if err != nil {
-		return refused(err)
+		return refused(q.String(), err)
 	}
 
 	// Build source map — database is always $
@@ -95,7 +99,7 @@ func (d *Database) queryUnderPlannerOptions(
 	// Validate declared sources exist
 	if err := validateQuerySources(q, sources); err != nil {
 		_ = session.Close()
-		return refused(err)
+		return refused(q.String(), err)
 	}
 
 	// Create SourceRouter with full source map
@@ -104,7 +108,7 @@ func (d *Database) queryUnderPlannerOptions(
 	inputRelations, rules, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		_ = session.Close()
-		return refused(err)
+		return refused(q.String(), err)
 	}
 
 	// Execute with the SourceRouter as the PatternMatcher. The executor has
@@ -115,10 +119,10 @@ func (d *Database) queryUnderPlannerOptions(
 	result, err := exec.ExecuteWithRelations(executor.NewContext().WithRules(rules).WithCancellation(opts.ctx), q, inputRelations)
 	if err != nil {
 		_ = session.Close()
-		return nil, fmt.Errorf("query execution failed: %w", err)
+		return nil, nil, fmt.Errorf("query execution failed: %w", err)
 	}
 
-	return newSessionBoundRelation(result, session, completion), nil
+	return q, newSessionBoundRelation(result, session, completion), nil
 }
 
 // sessionMatcher mints the default-source matcher with a fresh read session

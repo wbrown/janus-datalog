@@ -12,7 +12,7 @@ import (
 // entry in Indices. TestStoreVersionCoversEveryIndex holds the two together.
 const indexCount = 8
 
-// storeVersion is one state of the memory store: every index tree, published
+// storeVersion is one state of MemoryTreeStore: every index tree, published
 // together as a single value.
 //
 // They are one value rather than eight pointers because eight independent swaps

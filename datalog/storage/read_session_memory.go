@@ -7,14 +7,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// memoryReadSession is a consistent read view over MemoryStore: the key
+// memoryReadSession is a consistent read view over BadgerEmulatorStore: the key
 // B-tree is cloned copy-on-write at open (O(1)), so writes committed after
 // the session opened never surface through it. Datoms are wholly encoded in
 // their keys and blobs are content-addressed, so sharing the entries map is
 // sound for append-only operation; a hard DeleteDatoms mid-session surfaces
 // as a blob-read miss — the same exposure today's per-scan key copy has.
 type memoryReadSession struct {
-	store *MemoryStore
+	store *BadgerEmulatorStore
 	keys  *btree.BTreeG[string]
 
 	mu     sync.Mutex
@@ -24,11 +24,11 @@ type memoryReadSession struct {
 // NewReadSession opens a consistent read view at the store's current state.
 // Clone mutates the source tree's copy-on-write context, so it runs under
 // the store's write lock, exclusive with committers and other sessions.
-func (s *MemoryStore) NewReadSession() (ReadSession, error) {
+func (s *BadgerEmulatorStore) NewReadSession() (ReadSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil, errMemoryStoreClosed
+		return nil, errBadgerEmulatorStoreClosed
 	}
 	return &memoryReadSession{store: s, keys: s.keys.Clone()}, nil
 }

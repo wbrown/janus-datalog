@@ -41,12 +41,13 @@
 //
 // # Patterns
 //
-// Pat creates patterns of any arity:
+// Pat creates a data pattern of one to four elements, a position it omits
+// being unbound; Build refuses no element and more than four:
 //
-//	qb.Pat(e, a, v)           // [e a v] database pattern
-//	qb.Pat(e, a, v, tx)       // [e a v tx] with transaction
-//	qb.Pat(e, a, v, tx, op)   // [e a v tx op] history
-//	qb.Pat(name, age)         // 2-tuple input relation
+//	qb.Pat(e)                 // [e]
+//	qb.Pat(e, a)              // [e a]
+//	qb.Pat(e, a, v)           // [e a v]
+//	qb.Pat(e, a, v, tx)       // [e a v tx] with the transaction
 //
 // # Input Parameters
 //

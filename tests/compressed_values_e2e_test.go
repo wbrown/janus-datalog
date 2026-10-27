@@ -44,7 +44,7 @@ func longText(prefix string, size int) string {
 // TestE2E_CompressedQuery_FindByEntity runs a full Datalog query that reads
 // compressed values through the entire pipeline: parser → planner → executor → storage.
 func TestE2E_CompressedQuery_FindByEntity(t *testing.T) {
-	eachBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
+	eachStoreBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
 		entity := datalog.NewIdentity("alice")
 		tx := db.NewTransaction()
 		tx.Add(entity, datalog.NewKeyword(":person/name"), "Alice")
@@ -67,7 +67,7 @@ func TestE2E_CompressedQuery_FindByEntity(t *testing.T) {
 // TestE2E_CompressedQuery_FindByValue runs an AVET-path query with a compressed
 // value as the search term.
 func TestE2E_CompressedQuery_FindByValue(t *testing.T) {
-	eachBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
+	eachStoreBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
 		bio := longText("unique biography content", 600)
 		entity := datalog.NewIdentity("bob")
 		tx := db.NewTransaction()
@@ -88,7 +88,7 @@ func TestE2E_CompressedQuery_FindByValue(t *testing.T) {
 
 // TestE2E_CompressedQuery_Join runs a join query where one side has compressed values.
 func TestE2E_CompressedQuery_Join(t *testing.T) {
-	eachBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
+	eachStoreBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("alice")
 		bob := datalog.NewIdentity("bob")
 
@@ -131,7 +131,7 @@ func TestE2E_CompressedQuery_CRDT_LWW(t *testing.T) {
 		Cardinality: schema.CardinalityOne,
 	})
 
-	eachBackendAndModeOpts(t, compressedOptions(s), func(t *testing.T, db *storage.Database) {
+	eachStoreBackendAndModeOpts(t, compressedOptions(s), func(t *testing.T, db *storage.Database) {
 		entity := datalog.NewIdentity("doc1")
 
 		// Write version 1
@@ -160,7 +160,7 @@ func TestE2E_CompressedQuery_CRDT_LWW(t *testing.T) {
 // TestE2E_CompressedQuery_StrStartsWith verifies str/starts-with? predicate
 // works on compressed values (evaluates at Relation layer after decompression).
 func TestE2E_CompressedQuery_StrStartsWith(t *testing.T) {
-	eachBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
+	eachStoreBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
 		tx := db.NewTransaction()
 		for i := 0; i < 5; i++ {
 			e := datalog.NewIdentity(strings.Repeat("a", i+1))
@@ -253,7 +253,7 @@ func TestE2E_CompressedExportImportQuery(t *testing.T) {
 // TestE2E_Tier3_FullQuery writes a Tier 3 blob value and queries it through
 // the full db.Query() pipeline — parser, planner, executor, storage, blob store.
 func TestE2E_Tier3_FullQuery(t *testing.T) {
-	eachBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
+	eachStoreBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
 		bigValue := makeTier3Text(100000)
 
 		// Verify this actually reaches Tier 3
@@ -302,7 +302,7 @@ func TestE2E_Tier3_FullQuery(t *testing.T) {
 // TestE2E_CompressedQuery_JoinOnValue joins on a compressed value — the variable
 // ?content appears in two patterns and the executor must match on the decompressed value.
 func TestE2E_CompressedQuery_JoinOnValue(t *testing.T) {
-	eachBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
+	eachStoreBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
 		sharedContent := longText("shared content for join test", 600)
 		differentContent := longText("different content not shared", 600)
 
@@ -332,7 +332,7 @@ func TestE2E_CompressedQuery_JoinOnValue(t *testing.T) {
 
 // TestE2E_Tier3_JoinOnValue joins on a Tier 3 blob value through db.Query().
 func TestE2E_Tier3_JoinOnValue(t *testing.T) {
-	eachBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
+	eachStoreBackendAndModeOpts(t, compressedOptions(nil), func(t *testing.T, db *storage.Database) {
 		bigValue := makeTier3Text(100000)
 		vType, _, _ := datalog.EncodeValue(bigValue, 256)
 		if vType != datalog.TypeHashedString {

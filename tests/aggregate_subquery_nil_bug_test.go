@@ -27,7 +27,7 @@ func collectTuples(r executor.Relation) []executor.Tuple {
 // The reproduction needs storage-backed resolution rather than an in-memory
 // relation, so it runs against every backend the build has.
 func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
-	eachBackendAndMode(t, testMultipleAggregateSubqueriesNilBug)
+	eachMode(t, testMultipleAggregateSubqueriesNilBug)
 }
 
 func testMultipleAggregateSubqueriesNilBug(t *testing.T, db *storage.Database) {

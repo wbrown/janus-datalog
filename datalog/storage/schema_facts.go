@@ -118,7 +118,8 @@ func wildcardAttributes(declared *schema.Schema) map[datalog.Keyword]struct{} {
 func readSchemaFacts(d *Database) (*schema.Schema, error) {
 	planOpts := d.effectivePlannerOptions()
 	planOpts.Handler = nil
-	tuples, err := executor.CollectTuples(d.queryUnderPlannerOptions(planOpts, definitionsQuery))
+	_, definitionsRel, err := d.queryUnderPlannerOptions(planOpts, definitionsQuery)
+	tuples, err := executor.CollectTuples(definitionsRel, err)
 	if err != nil {
 		return nil, fmt.Errorf("reading schema facts: %w", err)
 	}

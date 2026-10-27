@@ -4,12 +4,19 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+// fingerprintOf is the fingerprint of pattern as a query of that one pattern
+// alone: no order-by, no limit.
+func fingerprintOf(pattern *query.DataPattern) ScanFingerprint {
+	return FingerprintScan(query.PatternQuery(pattern), pattern)
+}
+
 // TestScanFingerprint_SamePatternDifferentVars verifies that two patterns
-// with the same constants but different variable names produce identical
+// with the same constants but different variable names produce equal
 // fingerprints. This is the core invariant for scan sharing.
 func TestScanFingerprint_SamePatternDifferentVars(t *testing.T) {
 	p1 := &query.DataPattern{
@@ -27,16 +34,16 @@ func TestScanFingerprint_SamePatternDifferentVars(t *testing.T) {
 		},
 	}
 
-	assert.Equal(t, ScanFingerprint(p1), ScanFingerprint(p2),
-		"[?t :task/root ?s] and [?x :task/root ?y] should have same fingerprint")
+	assert.True(t, fingerprintOf(p1).Equal(fingerprintOf(p2)),
+		"[?t :task/root ?s] and [?x :task/root ?y] should have equal fingerprints")
 }
 
 // TestScanFingerprint_VectorElementTypes pins that a vector literal is
-// fingerprinted from its elements' type tags and bytes, not from its rendered
+// fingerprinted from its elements' types and values, not from its rendered
 // form. FormatValueEDN prints int64(1) and float64(1) both as "1" — FormatFloat
-// drops a zero fraction — while ValuesEqual holds the two distinct, so the
-// rendered form gave [1] and [1.0] one fingerprint. This string is
-// ScanSharingMatcher's GetOrCreate key, so that collision served one pattern the
+// drops a zero fraction — while ValuesEqual holds the two distinct, so a
+// rendered form gives [1] and [1.0] one fingerprint. The fingerprint is
+// ScanSharingMatcher's registry key, so that collision serves one pattern the
 // other pattern's tuples.
 func TestScanFingerprint_VectorElementTypes(t *testing.T) {
 	vectorPattern := func(values ...interface{}) *query.DataPattern {
@@ -58,25 +65,20 @@ func TestScanFingerprint_VectorElementTypes(t *testing.T) {
 		}
 	}
 
-	assert.NotEqual(t,
-		ScanFingerprint(vectorPattern(int64(1))),
-		ScanFingerprint(vectorPattern(float64(1))),
+	assert.False(t,
+		fingerprintOf(vectorPattern(int64(1))).Equal(fingerprintOf(vectorPattern(float64(1)))),
 		"[1] and [1.0] are distinct values and must not share a scan")
-	assert.NotEqual(t,
-		ScanFingerprint(vectorPattern(int64(1), int64(2))),
-		ScanFingerprint(vectorPattern(int64(1))),
+	assert.False(t,
+		fingerprintOf(vectorPattern(int64(1), int64(2))).Equal(fingerprintOf(vectorPattern(int64(1)))),
 		"vectors of different length must not share a scan")
-	assert.NotEqual(t,
-		ScanFingerprint(vectorPattern(int64(12))),
-		ScanFingerprint(vectorPattern(int64(1), int64(2))),
+	assert.False(t,
+		fingerprintOf(vectorPattern(int64(12))).Equal(fingerprintOf(vectorPattern(int64(1), int64(2)))),
 		"[12] and [1 2] must not share a scan")
-	assert.NotEqual(t,
-		ScanFingerprint(vectorPattern(int64(1))),
-		ScanFingerprint(scalarPattern(int64(1))),
+	assert.False(t,
+		fingerprintOf(vectorPattern(int64(1))).Equal(fingerprintOf(scalarPattern(int64(1)))),
 		"a one-element vector and the bare element must not share a scan")
-	assert.Equal(t,
-		ScanFingerprint(vectorPattern(int64(1), "a")),
-		ScanFingerprint(vectorPattern(int64(1), "a")),
+	assert.True(t,
+		fingerprintOf(vectorPattern(int64(1), "a")).Equal(fingerprintOf(vectorPattern(int64(1), "a"))),
 		"identical vector literals must share a scan")
 }
 
@@ -98,7 +100,7 @@ func TestScanFingerprint_DifferentAttribute(t *testing.T) {
 		},
 	}
 
-	assert.NotEqual(t, ScanFingerprint(p1), ScanFingerprint(p2),
+	assert.False(t, fingerprintOf(p1).Equal(fingerprintOf(p2)),
 		":task/root and :task/status should have different fingerprints")
 }
 
@@ -120,7 +122,7 @@ func TestScanFingerprint_BoundValue(t *testing.T) {
 		},
 	}
 
-	assert.NotEqual(t, ScanFingerprint(pBound), ScanFingerprint(pUnbound),
+	assert.False(t, fingerprintOf(pBound).Equal(fingerprintOf(pUnbound)),
 		"bound V (:status/complete) and unbound V (?s) should differ")
 }
 
@@ -142,7 +144,7 @@ func TestScanFingerprint_ConstantEntity(t *testing.T) {
 		},
 	}
 
-	assert.NotEqual(t, ScanFingerprint(pBound), ScanFingerprint(pUnbound),
+	assert.False(t, fingerprintOf(pBound).Equal(fingerprintOf(pUnbound)),
 		"bound E (entity:1) and unbound E (?e) should differ")
 }
 
@@ -166,12 +168,12 @@ func TestScanFingerprint_DifferentSources(t *testing.T) {
 		},
 	}
 
-	assert.NotEqual(t, ScanFingerprint(p1), ScanFingerprint(p2),
+	assert.False(t, fingerprintOf(p1).Equal(fingerprintOf(p2)),
 		"$src1 and $src2 should have different fingerprints")
 }
 
 // TestScanFingerprint_Deterministic verifies that the same pattern produces
-// the same fingerprint on repeated calls.
+// an equal fingerprint on repeated calls.
 func TestScanFingerprint_Deterministic(t *testing.T) {
 	p := &query.DataPattern{
 		Elements: []query.PatternElement{
@@ -181,9 +183,7 @@ func TestScanFingerprint_Deterministic(t *testing.T) {
 		},
 	}
 
-	fp1 := ScanFingerprint(p)
-	fp2 := ScanFingerprint(p)
-	assert.Equal(t, fp1, fp2, "same pattern should always produce same fingerprint")
+	assert.True(t, fingerprintOf(p).Equal(fingerprintOf(p)), "same pattern should always produce an equal fingerprint")
 }
 
 func TestScanQueryFingerprintIncludesPhysicalRequirements(t *testing.T) {
@@ -203,8 +203,8 @@ func TestScanQueryFingerprintIncludesPhysicalRequirements(t *testing.T) {
 	limitedOne := &query.Query{Where: []query.Clause{pattern}, Limit: &limitOne}
 	limitedTwo := &query.Query{Where: []query.Clause{pattern}, Limit: &limitTwo}
 
-	assert.NotEqual(t, ScanQueryFingerprint(base, pattern), ScanQueryFingerprint(ordered, pattern))
-	assert.NotEqual(t, ScanQueryFingerprint(limitedOne, pattern), ScanQueryFingerprint(limitedTwo, pattern))
+	assert.False(t, FingerprintScan(base, pattern).Equal(FingerprintScan(ordered, pattern)))
+	assert.False(t, FingerprintScan(limitedOne, pattern).Equal(FingerprintScan(limitedTwo, pattern)))
 }
 
 func TestScanQueryFingerprintCanonicalizesRenamedOrderVariables(t *testing.T) {
@@ -229,10 +229,7 @@ func TestScanQueryFingerprintCanonicalizesRenamedOrderVariables(t *testing.T) {
 		OrderBy: []query.OrderByClause{{Variable: rightEntity, Descending: true}},
 	}
 
-	assert.Equal(t,
-		ScanQueryFingerprint(leftQuery, left),
-		ScanQueryFingerprint(rightQuery, right),
-	)
+	assert.True(t, FingerprintScan(leftQuery, left).Equal(FingerprintScan(rightQuery, right)))
 }
 
 func TestScanFingerprintTypedConstantsAndSentinelsDoNotCollide(t *testing.T) {
@@ -298,7 +295,43 @@ func TestScanFingerprintTypedConstantsAndSentinelsDoNotCollide(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			assert.NotEqual(t, ScanFingerprint(testCase.left), ScanFingerprint(testCase.right))
+			assert.False(t, fingerprintOf(testCase.left).Equal(fingerprintOf(testCase.right)))
 		})
+	}
+}
+
+// fingerprintSink keeps a fingerprint built for a measurement from being
+// discarded before it is built.
+var fingerprintSink ScanFingerprint
+
+// A fingerprint keys the registry on every unbound match, whether or not a
+// handler reads its rendering, so the fingerprint of the scan every query
+// pays, a constant attribute between two variables with no order-by and no
+// limit, is built without allocating.
+func TestFingerprintScanAllocatesNothingForAnUnboundPattern(t *testing.T) {
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: datalog.NewSymbol("?e")},
+		query.Constant{Value: datalog.NewKeyword(":item/value")},
+		query.Variable{Name: datalog.NewSymbol("?v")},
+	}}
+	q := &query.Query{Where: []query.Clause{pattern}}
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		fingerprintSink = FingerprintScan(q, pattern)
+	}))
+}
+
+// BenchmarkFingerprintScan measures what one fingerprint costs for the
+// unbound scan every query pays: a constant attribute between two variables,
+// no order-by and no limit.
+func BenchmarkFingerprintScan(b *testing.B) {
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: datalog.NewSymbol("?e")},
+		query.Constant{Value: datalog.NewKeyword(":item/value")},
+		query.Variable{Name: datalog.NewSymbol("?v")},
+	}}
+	q := &query.Query{Where: []query.Clause{pattern}}
+	b.ReportAllocs()
+	for b.Loop() {
+		fingerprintSink = FingerprintScan(q, pattern)
 	}
 }

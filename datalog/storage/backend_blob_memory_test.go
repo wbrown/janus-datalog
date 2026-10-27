@@ -12,7 +12,7 @@ func blobKeys(t *testing.T, store Store) (keys [][]byte, hasBlobTier bool) {
 		return keys, true
 	}
 	switch typed := store.(type) {
-	case *MemoryStore:
+	case *BadgerEmulatorStore:
 		typed.mu.RLock()
 		defer typed.mu.RUnlock()
 		for key := range typed.entries {
@@ -41,7 +41,7 @@ func deleteStoreBlobs(t *testing.T, store Store) (deleted int, hasBlobTier bool)
 	if deleteNativeKeys(t, store, keys) {
 		return len(keys), true
 	}
-	memoryStore := store.(*MemoryStore)
+	memoryStore := store.(*BadgerEmulatorStore)
 	memoryStore.mu.Lock()
 	defer memoryStore.mu.Unlock()
 	var undo []memoryEntryUndo

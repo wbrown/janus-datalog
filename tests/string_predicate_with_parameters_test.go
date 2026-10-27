@@ -14,7 +14,7 @@ import (
 // TestStringPredicateWithParameter verifies that string predicates can use input parameters
 // Reproduces bug: BUG_STRING_PREDICATES_CANT_USE_PARAMETERS.md
 func TestStringPredicateWithParameter(t *testing.T) {
-	eachBackendAndMode(t, testStringPredicateWithParameter)
+	eachMode(t, testStringPredicateWithParameter)
 }
 
 func testStringPredicateWithParameter(t *testing.T, db *storage.Database) {

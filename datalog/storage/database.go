@@ -167,7 +167,7 @@ type DatabaseOptions struct {
 	BackendName string
 	// Path is the directory holding a persistent backend's data. The build
 	// default is the one case where a path can go unhonored: under js/wasm
-	// DefaultBackend is the memory store, and portable code that opens by path
+	// DefaultBackend is MemoryTreeStore, and portable code that opens by path
 	// gets an in-process database rather than an error, because the caller asked
 	// for a location and the build chose what answers.
 	Path string
@@ -259,8 +259,8 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		}
 		// A caller who named an in-process backend and gave a path wrote two
 		// answers to one question. A caller who named none asked for the build's
-		// default and gets whatever this build has — under js/wasm that is the
-		// memory store, and rejecting the path there would break portable code
+		// default and gets whatever this build has — under js/wasm that is
+		// MemoryTreeStore, and rejecting the path there would break portable code
 		// over a choice the caller never made.
 		if named && !backend.Persistent && opts.Path != "" {
 			return nil, fmt.Errorf("backend %q holds its data in process: Path %q would be discarded and the data lost at Close", backend.Name, opts.Path)
@@ -518,10 +518,14 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 
 // GetVectorNth returns the nth element of a vector attribute.
 // Uses the cache for O(1) access when the cache is fresh.
-// Returns nil if index is out of bounds or attribute is not a vector. A
+// Returns nil if index is out of bounds or attribute is not a vector. An
+// attribute wider than storage holds is refused before any read, and a
 // database that refuses unknown attributes refuses an attribute its schema
-// does not declare before any read, as every typed accessor does.
+// does not declare, as every typed accessor does.
 func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) (any, error) {
+	if err := datalog.ValidateAttributeWidth(a); err != nil {
+		return nil, err
+	}
 	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
 		return nil, err
 	}
@@ -570,10 +574,14 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 
 // GetVectorLength returns the length of a vector attribute.
 // Uses the cache for O(1) access when the cache is fresh.
-// Returns 0 if the attribute is not a vector or doesn't exist. A database
-// that refuses unknown attributes refuses an attribute its schema does not
-// declare before any read, as every typed accessor does.
+// Returns 0 if the attribute is not a vector or doesn't exist. An attribute
+// wider than storage holds is refused before any read, and a database that
+// refuses unknown attributes refuses an attribute its schema does not
+// declare, as every typed accessor does.
 func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64, error) {
+	if err := datalog.ValidateAttributeWidth(a); err != nil {
+		return 0, err
+	}
 	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
 		return 0, err
 	}
@@ -1280,7 +1288,7 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 
 	// Execute on Query's own path, so every storage read of the evaluation, a
 	// rule fixpoint's iterations included, observes one read session.
-	result, err := d.queryUnderPlannerOptions(opts, q, inputs...)
+	_, result, err := d.queryUnderPlannerOptions(opts, q, inputs...)
 	if err != nil {
 		return nil, err
 	}
@@ -1364,14 +1372,9 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		elemType = elemType.Elem()
 	}
 
-	// Resolve the query (string or *query.Query)
-	q, err := d.resolveQuery(queryInput)
-	if err != nil {
-		return fmt.Errorf("failed to resolve query: %w", err)
-	}
-
-	// Execute query as streaming relation
-	rel, err := d.Query(q, inputs...)
+	// Execute query as streaming relation, taking the query the entry
+	// resolved for the find symbols below.
+	q, rel, err := d.queryUnderPlannerOptions(d.effectivePlannerOptions(), queryInput, inputs...)
 	if err != nil {
 		return err
 	}
@@ -1457,14 +1460,9 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 	elemVal := destVal.Elem()
 	elemType := elemVal.Type()
 
-	// Resolve the query (string or *query.Query)
-	q, err := d.resolveQuery(queryInput)
-	if err != nil {
-		return false, fmt.Errorf("failed to resolve query: %w", err)
-	}
-
-	// Execute query as streaming relation
-	rel, err := d.Query(q, inputs...)
+	// Execute query as streaming relation, taking the query the entry
+	// resolved for the find symbols below.
+	q, rel, err := d.queryUnderPlannerOptions(d.effectivePlannerOptions(), queryInput, inputs...)
 	if err != nil {
 		return false, err
 	}
@@ -2731,8 +2729,10 @@ func (d *Database) Stats() (map[string]interface{}, error) {
 
 // convertInputValue admits one user input value for one symbol: it refuses a
 // value outside the domain, applies the entity- and attribute-position typing
-// rules, then normalizes the value into the domain (integer widths → int64).
-// Every input form converts its values through here.
+// rules, refuses a keyword bound into an attribute position that is wider
+// than storage holds, then normalizes the value into the domain (integer
+// widths → int64). Every input form converts its values through here, once
+// per value, so the width is never read on a match.
 func convertInputValue(entityBound, attrBound map[query.Symbol]bool, sym query.Symbol, value interface{}) (interface{}, error) {
 	if err := datalog.ValidateValue(value); err != nil {
 		return nil, fmt.Errorf("input %s: %w", sym, err)
@@ -2745,6 +2745,11 @@ func convertInputValue(entityBound, attrBound map[query.Symbol]bool, sym query.S
 	if attrBound[sym] {
 		if err := query.ValidateAttributeBinding(value); err != nil {
 			return nil, fmt.Errorf("input %s: %w", sym, err)
+		}
+		if attr, ok := value.(datalog.Keyword); ok {
+			if err := datalog.ValidateAttributeWidth(attr); err != nil {
+				return nil, fmt.Errorf("input %s: %w", sym, err)
+			}
 		}
 	}
 	return datalog.NormalizeValue(value), nil
@@ -3048,9 +3053,13 @@ func (d *Database) PullMany(entityIDs []datalog.Identity, patternStr string) ([]
 }
 
 // pullMatcher mints the default-source matcher for a pull and refuses, before
-// anything executes, the attributes the pattern names that the schema does
-// not declare: the check a query gets at execution entry.
+// anything executes, an attribute the pattern names that is wider than
+// storage holds, and the attributes it names that the schema does not
+// declare: the checks a query gets at validation and at execution entry.
 func (d *Database) pullMatcher(pattern *query.PullPattern) (executor.PatternMatcher, error) {
+	if err := pattern.Validate(); err != nil {
+		return nil, err
+	}
 	// matcherWithExecOptions constructs *PatternMatcher in both its arms
 	// (fresh, or the AsOf copy for temporal handles).
 	matcher := d.Matcher().(*PatternMatcher)
@@ -3072,10 +3081,16 @@ func (d *Database) pullMatcher(pattern *query.PullPattern) (executor.PatternMatc
 // - If many missing: full EAVT scan then resolve
 //
 // Returns a map of keyword -> resolved value. Missing attributes are not included.
-// A database that refuses unknown attributes refuses every attribute asked
-// that its schema does not declare, joined in order, before any read, as
+// An attribute asked that is wider than storage holds is refused before any
+// read, and a database that refuses unknown attributes refuses every
+// attribute asked that its schema does not declare, joined in order, as
 // every typed accessor does.
 func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []datalog.Keyword) (map[datalog.Keyword]interface{}, error) {
+	for _, attr := range attrs {
+		if err := datalog.ValidateAttributeWidth(attr); err != nil {
+			return nil, err
+		}
+	}
 	if err := d.UnknownAttributes(datalog.SymDollar, attrs); err != nil {
 		return nil, err
 	}

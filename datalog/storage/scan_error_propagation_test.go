@@ -193,7 +193,7 @@ func TestResolveVectorAttributeSurfacesScanErrors(t *testing.T) {
 // emit a value that is actually superseded, silently corrupting unique
 // resolution.
 func TestResolveMaxOtherTxForValueSurfacesScanErrors(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
 	injected := fmt.Errorf("simulated AVET scan failure")
@@ -221,7 +221,7 @@ func TestResolveMaxOtherTxForValueSurfacesScanErrors(t *testing.T) {
 // error contract: a failed or partially-decodable AVET scan must surface as
 // an error, never read as "no entity owns this value".
 func TestResolveAVLWWSurfacesScanErrors(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
 	injected := fmt.Errorf("simulated AVET scan failure")
@@ -249,7 +249,7 @@ func TestResolveAVLWWSurfacesScanErrors(t *testing.T) {
 // query — prefetch being an optimization does not make store failures
 // ignorable.
 func TestPrefetchEntitiesSurfacesScanErrors(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
 	injected := fmt.Errorf("simulated EATV scan failure")
@@ -276,7 +276,7 @@ func TestPrefetchEntitiesSurfacesScanErrors(t *testing.T) {
 // an error, never collapse to "candidate doesn't match" — that silently
 // drops valid results.
 func TestValidateCandidateSurfacesScanErrors(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
 	injected := fmt.Errorf("simulated EATV scan failure")

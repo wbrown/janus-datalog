@@ -138,9 +138,6 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 			if err != nil {
 				return nil, fmt.Errorf(":limit must be a valid integer: %w", err)
 			}
-			if n < 0 {
-				return nil, fmt.Errorf(":limit must be non-negative, got %d", n)
-			}
 			limit := int(n)
 			q.Limit = &limit
 			i++
@@ -246,26 +243,10 @@ func parseFindElement(node *edn.Node) (query.FindElement, error) {
 			return nil, fmt.Errorf("aggregate argument must be a variable, got %s", argSym)
 		}
 
-		// Resolve the function name to its interned symbol here, once; all
-		// downstream dispatch is pointer equality against the pre-interned set.
-		var fnSym query.Symbol
-		switch fn {
-		case "sum":
-			fnSym = datalog.SymSum
-		case "avg":
-			fnSym = datalog.SymAvg
-		case "count":
-			fnSym = datalog.SymCount
-		case "min":
-			fnSym = datalog.SymMin
-		case "max":
-			fnSym = datalog.SymMax
-		default:
-			return nil, fmt.Errorf("unknown aggregate function: %s", fn)
-		}
-
+		// The name interns to the engine's symbol for it, the one dispatch
+		// compares by pointer; whether the engine has it is ValidateQuery's.
 		return query.FindAggregate{
-			Function: fnSym,
+			Function: datalog.NewSymbol(fn),
 			Arg:      argSym,
 		}, nil
 
@@ -355,13 +336,10 @@ func parsePattern(node *edn.Node) (query.Clause, error) {
 		}
 	}
 
-	// Data pattern elements (after source marker):
-	// 3 elements: [e a v]
-	// 4 elements: [e a v tx]
+	// Data pattern elements (after source marker): one to four, entity,
+	// attribute, value and transaction in that order, a position the text
+	// omits being unbound. Any other count is ValidateQuery's refusal.
 	elemCount := len(node.Nodes) - sourceOffset
-	if elemCount < 3 || elemCount > 4 {
-		return nil, fmt.Errorf("data pattern must have 3 or 4 elements, got %d", elemCount)
-	}
 
 	pattern := &query.DataPattern{
 		Source:   source,
@@ -724,12 +702,12 @@ func parsePatternElement(node *edn.Node) (query.PatternElement, error) {
 		return query.Constant{Value: val}, nil
 
 	case edn.NodeFloat:
-		// Float values
+		// A float literal, as the domain admits it: a signed zero is 0.0.
 		val, err := strconv.ParseFloat(node.Value, 64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid float: %w", err)
 		}
-		return query.Constant{Value: val}, nil
+		return query.Constant{Value: datalog.NormalizeValue(val)}, nil
 
 	case edn.NodeBool:
 		// Boolean values
@@ -752,7 +730,7 @@ func parsePatternElement(node *edn.Node) (query.PatternElement, error) {
 				if err != nil {
 					return nil, fmt.Errorf("invalid float in vector: %w", err)
 				}
-				values[i] = val
+				values[i] = datalog.NormalizeValue(val)
 			case edn.NodeString:
 				values[i] = elem.Value
 			case edn.NodeBool:
@@ -948,17 +926,13 @@ func parseNotClause(node *edn.Node) (*query.NotClause, error) {
 		clauses = append(clauses, clause)
 	}
 
-	if len(clauses) == 0 {
-		return nil, fmt.Errorf("not clause must have at least one inner clause")
-	}
-
 	return &query.NotClause{Clauses: clauses}, nil
 }
 
 // parseNotJoinClause parses (not-join [?x ?y] [clause1] [clause2] ...)
 func parseNotJoinClause(node *edn.Node) (*query.NotJoinClause, error) {
-	if len(node.Nodes) < 3 {
-		return nil, fmt.Errorf("not-join clause must have a header and at least one clause")
+	if len(node.Nodes) < 2 {
+		return nil, fmt.Errorf("not-join clause must have a header vector")
 	}
 
 	if node.Nodes[1].Type != edn.NodeVector {
@@ -972,7 +946,8 @@ func parseNotJoinClause(node *edn.Node) (*query.NotJoinClause, error) {
 		return nil, fmt.Errorf("error parsing not-join header: %w", err)
 	}
 
-	// Parse remaining elements as clauses
+	// Parse remaining elements as clauses; a body with none is
+	// ValidateQuery's refusal.
 	var clauses []query.Clause
 	for i := 2; i < len(node.Nodes); i++ {
 		clause, err := parseWhereElement(&node.Nodes[i])
@@ -980,10 +955,6 @@ func parseNotJoinClause(node *edn.Node) (*query.NotJoinClause, error) {
 			return nil, fmt.Errorf("error parsing not-join clause element %d: %w", len(clauses)+1, err)
 		}
 		clauses = append(clauses, clause)
-	}
-
-	if len(clauses) == 0 {
-		return nil, fmt.Errorf("not-join clause must have at least one inner clause")
 	}
 
 	return &query.NotJoinClause{RequiredVars: required, Clauses: clauses}, nil
@@ -1001,10 +972,6 @@ func parseOrClause(node *edn.Node) (*query.OrClause, error) {
 		branches = append(branches, branch)
 	}
 
-	if len(branches) == 0 {
-		return nil, fmt.Errorf("or clause must have at least one branch")
-	}
-
 	return &query.OrClause{Branches: branches}, nil
 }
 
@@ -1018,8 +985,8 @@ func parseOrClause(node *edn.Node) (*query.OrClause, error) {
 // outputs every branch binds. A flat header declares outputs only. A union
 // of one branch is that branch over the header.
 func parseOrJoinClause(node *edn.Node) (*query.OrJoinClause, error) {
-	if len(node.Nodes) < 3 {
-		return nil, fmt.Errorf("or-join clause must have a header vector and at least one branch")
+	if len(node.Nodes) < 2 {
+		return nil, fmt.Errorf("or-join clause must have a header vector")
 	}
 
 	requiredVars, joinVars, err := parseInterfaceHeader(&node.Nodes[1], "or-join")
@@ -1089,10 +1056,6 @@ func parseOrDefaultClause(node *edn.Node) (*query.OrDefaultClause, error) {
 		branches = append(branches, branch)
 	}
 
-	if len(branches) < 2 {
-		return nil, fmt.Errorf("or-default clause must have at least two branches")
-	}
-
 	return &query.OrDefaultClause{Branches: branches}, nil
 }
 
@@ -1107,8 +1070,8 @@ func parseOrDefaultClause(node *edn.Node) (*query.OrDefaultClause, error) {
 // global. or-default is non-monotone, so the correlation keys are syntax,
 // never inferred.
 func parseOrDefaultJoinClause(node *edn.Node) (*query.OrDefaultJoinClause, error) {
-	if len(node.Nodes) < 4 {
-		return nil, fmt.Errorf("or-default-join clause must have a header vector and at least two branches")
+	if len(node.Nodes) < 2 {
+		return nil, fmt.Errorf("or-default-join clause must have a header vector")
 	}
 
 	requiredVars, outputVars, err := parseInterfaceHeader(&node.Nodes[1], "or-default-join")
@@ -1181,9 +1144,6 @@ func parseBranch(node *edn.Node) ([]query.Clause, error) {
 					return nil, fmt.Errorf("error parsing and clause %d: %w", i, err)
 				}
 				clauses = append(clauses, clause)
-			}
-			if len(clauses) == 0 {
-				return nil, fmt.Errorf("and branch must have at least one clause")
 			}
 			return clauses, nil
 		}

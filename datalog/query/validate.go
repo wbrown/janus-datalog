@@ -1,14 +1,24 @@
 package query
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/wbrown/janus-datalog/datalog"
+)
+
+// aggregateFunctions is every aggregate the engine has, the symbols a
+// FindAggregate's Function carries.
+var aggregateFunctions = []Symbol{datalog.SymCount, datalog.SymSum, datalog.SymAvg, datalog.SymMin, datalog.SymMax}
 
 // ValidateQuery runs every static check a query's text admits, the checks
-// that depend on the text alone: a non-empty :find and :where, the scalar
-// find's one element and its :limit of at most one, ValidateInputShapes on
-// :in, ValidateStaticClauseShapes on :where, ValidateRulesInput on both,
-// every constant a value of the domain, and the :order-by rule. It reaches
-// every inner query through SubqueryPattern.Validate. ParseQuery, qb.Build
-// and Prepare each run it and run no check of their own, so one text is
+// that depend on the text alone: a non-empty :find and :where, every
+// aggregate one the engine has, every attribute a find pull names one
+// storage holds, a non-negative :limit, the scalar find's one element and
+// its :limit of at most one, ValidateInputShapes on :in,
+// ValidateStaticClauseShapes on :where, ValidateRulesInput on both, every
+// constant a value of the domain, and the :order-by rule. It reaches every
+// inner query through SubqueryPattern.Validate. ParseQuery, qb.Build and
+// Prepare each run it and run no check of their own, so one text is
 // accepted or refused alike at every boundary with one message
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md goal 5 and §6).
 func ValidateQuery(q *Query) error {
@@ -17,6 +27,21 @@ func ValidateQuery(q *Query) error {
 	}
 	if len(q.Where) == 0 {
 		return fmt.Errorf("query must have at least one where pattern")
+	}
+	for _, elem := range q.Find {
+		switch f := elem.(type) {
+		case FindAggregate:
+			if !ContainsSymbol(aggregateFunctions, f.Function) {
+				return fmt.Errorf("unknown aggregate function: %s", f.Function)
+			}
+		case FindPull:
+			if err := f.Pattern.Validate(); err != nil {
+				return err
+			}
+		}
+	}
+	if q.Limit != nil && *q.Limit < 0 {
+		return fmt.Errorf(":limit must be non-negative, got %d", *q.Limit)
 	}
 	if q.ScalarReturn && len(q.Find) != 1 {
 		return fmt.Errorf("scalar find spec (.) requires exactly one find element, got %d", len(q.Find))

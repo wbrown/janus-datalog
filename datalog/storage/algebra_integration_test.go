@@ -71,14 +71,16 @@ func setupAlgebraTestDB(t testing.TB, mode optimizerMode) *Database {
 func queryWithAlgebra(db *Database, queryStr string) (executor.Relation, error) {
 	opts := db.effectivePlannerOptions()
 	opts.EnableAlgebraOptimizer = true
-	return db.queryUnderPlannerOptions(opts, queryStr)
+	_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
+	return rel, err
 }
 
 // queryWithoutAlgebra runs a query with the algebra optimizer disabled.
 func queryWithoutAlgebra(db *Database, queryStr string) (executor.Relation, error) {
 	opts := db.effectivePlannerOptions()
 	opts.EnableAlgebraOptimizer = false
-	return db.queryUnderPlannerOptions(opts, queryStr)
+	_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
+	return rel, err
 }
 
 // TestAlgebraIntegration_SimplePatterns tests that simple data patterns

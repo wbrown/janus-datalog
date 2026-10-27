@@ -305,7 +305,7 @@ func TestAETVPrefixRangeAttributeEntity(t *testing.T) {
 
 // TestAETVStorageScan verifies AETV can be written to and scanned from storage.
 func TestAETVStorageScan(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -339,7 +339,7 @@ func TestAETVStorageScan(t *testing.T) {
 
 // TestAETVStorageScanTxDescendingOrder verifies scan returns Tx in descending order.
 func TestAETVStorageScanTxDescendingOrder(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -391,7 +391,7 @@ func TestAETVStorageScanTxDescendingOrder(t *testing.T) {
 
 // TestAETVCRDTResolutionSingleEntity verifies LWW resolution for single entity.
 func TestAETVCRDTResolutionSingleEntity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create database with cache disabled to test AETV path
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
@@ -431,7 +431,7 @@ func TestAETVCRDTResolutionSingleEntity(t *testing.T) {
 
 // TestAETVCRDTResolutionMultipleEntities verifies LWW resolution for batch lookup.
 func TestAETVCRDTResolutionMultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create database with cache disabled
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
@@ -492,7 +492,7 @@ func TestAETVCRDTResolutionMultipleEntities(t *testing.T) {
 
 // TestAETVCRDTResolutionUnboundEntity verifies resolution for attribute enumeration.
 func TestAETVCRDTResolutionUnboundEntity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create database with cache disabled
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
@@ -542,7 +542,7 @@ func TestAETVCRDTResolutionUnboundEntity(t *testing.T) {
 
 // TestIndexSelectionAETVForInputBoundE verifies AETV is selected for E-from-input pattern.
 func TestIndexSelectionAETVForInputBoundE(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -599,7 +599,7 @@ func TestIndexSelectionAETVForInputBoundE(t *testing.T) {
 // Query: [:find ?e ?a ?v :in $ [?e ...] [?a ...] :where [?e ?a ?v]]
 // This requires the executor to handle the cross-product of inputs correctly.
 func TestAETVCrossProductInputs(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{DisableCache: true})
 

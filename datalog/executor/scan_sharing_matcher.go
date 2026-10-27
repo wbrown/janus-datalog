@@ -43,7 +43,7 @@ func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation
 		return m.inner.Match(q, bindings)
 	}
 
-	fp := ScanQueryFingerprint(q, pattern)
+	fp := FingerprintScan(q, pattern)
 	shared, hit, err := m.registry.GetOrCreate(fp, func() (*SharedScan, error) {
 		rel, err := m.inner.Match(q, bindings)
 		if err != nil {
@@ -69,7 +69,7 @@ func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation
 		m.handler(annotations.Event{
 			Name: eventName,
 			Data: map[string]interface{}{
-				"fingerprint": fp,
+				"fingerprint": fp.String(),
 				"symbols":     symStrings(remapped),
 			},
 		})
