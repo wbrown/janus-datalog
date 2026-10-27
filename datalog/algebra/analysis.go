@@ -132,6 +132,8 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			copy.GroupBy = cloneSymbols(data.GroupBy)
 			copy.Functions = append([]query.FindAggregate(nil), data.Functions...)
 			copy.Bindings = cloneSymbols(data.Bindings)
+			copy.In = append([]query.InputSpec(nil), data.In...)
+			copy.Inputs = append([]query.PatternElement(nil), data.Inputs...)
 			output, err := aggregateOutputSchema(data)
 			if err != nil {
 				return nil, fmt.Errorf("refresh Aggregate: %w", err)

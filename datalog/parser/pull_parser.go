@@ -176,32 +176,24 @@ func parsePullExpr(node *edn.Node) (query.PullAttrSpec, error) {
 	}
 }
 
-// parseDefaultValue parses a default value for (default ...) expressions
+// parseDefaultValue reads a default as a pattern constant is read, so every
+// value the value grammar admits is a default, and nil is the one default
+// that is no value.
 func parseDefaultValue(node *edn.Node) (interface{}, error) {
-	switch node.Type {
-	case edn.NodeString:
-		return node.Value, nil
-	case edn.NodeInt:
-		val, err := strconv.ParseInt(node.Value, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid integer: %w", err)
-		}
-		return val, nil
-	case edn.NodeFloat:
-		val, err := strconv.ParseFloat(node.Value, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid float: %w", err)
-		}
-		return val, nil
-	case edn.NodeBool:
-		return node.Value == "true", nil
-	case edn.NodeKeyword:
-		return datalog.NewKeyword(node.Value), nil
-	case edn.NodeNil:
+	if node.Type == edn.NodeNil {
 		return nil, nil
-	default:
-		return nil, fmt.Errorf("unsupported default value type: %v", node.Type)
 	}
+	element, err := parsePatternElement(node)
+	if err != nil {
+		return nil, err
+	}
+	switch e := element.(type) {
+	case query.Constant:
+		return e.Value, nil
+	case query.VectorConstant:
+		return e.Values, nil
+	}
+	return nil, fmt.Errorf("default must be a value, got %s", element)
 }
 
 // ParsePullPattern parses a standalone pull pattern string

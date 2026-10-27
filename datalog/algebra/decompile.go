@@ -428,9 +428,9 @@ func groundDefaults(defaults []Default) []query.Clause {
 	}
 }
 
-// decompileAggregate emits a decorrelated SubqueryPattern.
-// This is the output of the decorrelation transform — a subquery that
-// runs once with GROUP BY, producing all groups in one pass.
+// decompileAggregate emits a decorrelated SubqueryPattern: a subquery that
+// runs once, grouped by its keys, declaring the inner :in and passed the
+// call's arguments the node carries.
 func decompileAggregate(n *Node) ([]query.Clause, error) {
 	agg := n.Data.(*Aggregate)
 
@@ -454,10 +454,9 @@ func decompileAggregate(n *Node) ([]query.Clause, error) {
 		findElems = append(findElems, fn)
 	}
 
-	in, inputs := subqueryInputs(innerClauses)
 	innerQuery := &query.Query{
 		Find:  findElems,
-		In:    in,
+		In:    agg.In,
 		Where: innerClauses,
 	}
 
@@ -467,7 +466,7 @@ func decompileAggregate(n *Node) ([]query.Clause, error) {
 	// group key.
 	sp := &query.SubqueryPattern{
 		Query:   innerQuery,
-		Inputs:  inputs,
+		Inputs:  agg.Inputs,
 		Binding: query.RelationBinding{Variables: agg.Bindings},
 	}
 

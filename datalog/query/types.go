@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -13,15 +14,23 @@ import (
 // FormatValueEDN renders a value in the text the parser reads back as the
 // same value, the one renderer of values in a query's text: a float's
 // mantissa always carries a point, so a whole-valued float parses back as a
-// float and never as an integer; a string is quoted at any depth; and every
-// value VectorElements reads as a vector, a typed slice included, renders
-// element by element through this function.
+// float and never as an integer, and an infinity and NaN are EDN's symbolic
+// values; a string is quoted at any depth; a transaction value is #eid over
+// its Lamport and its replica; and every value VectorElements reads as a
+// vector, a typed slice included, renders element by element through this
+// function.
 func FormatValueEDN(v interface{}) string {
 	switch val := v.(type) {
 	case datalog.Keyword:
 		return val.String()
+	case datalog.Symbol:
+		return val.String()
 	case datalog.Identity:
 		return `#identity "` + val.String() + `"`
+	case datalog.ElementID:
+		return "#eid [" + strconv.FormatUint(val.Lamport, 10) + " " + strconv.FormatUint(val.ReplicaID, 10) + "]"
+	case *datalog.ElementID:
+		return FormatValueEDN(*val)
 	case string:
 		var sb strings.Builder
 		sb.WriteRune('"')
@@ -48,6 +57,14 @@ func FormatValueEDN(v interface{}) string {
 	case int:
 		return strconv.Itoa(val)
 	case float64:
+		switch {
+		case math.IsInf(val, 1):
+			return "##Inf"
+		case math.IsInf(val, -1):
+			return "##-Inf"
+		case math.IsNaN(val):
+			return "##NaN"
+		}
 		text := strconv.FormatFloat(val, 'g', -1, 64)
 		if !strings.Contains(text, ".") {
 			if exponent := strings.IndexAny(text, "eE"); exponent >= 0 {

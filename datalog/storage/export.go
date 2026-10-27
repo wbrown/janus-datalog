@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -300,7 +301,7 @@ func ValueNode(v interface{}) edn.Node {
 
 	case float64:
 		s := strconv.FormatFloat(val, 'g', -1, 64)
-		if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
+		if !math.IsInf(val, 0) && !math.IsNaN(val) && !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
 			s += ".0"
 		}
 		return edn.Node{Type: edn.NodeFloat, Value: s}

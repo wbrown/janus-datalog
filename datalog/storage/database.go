@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"math/rand/v2"
 	"os"
 	"reflect"
@@ -2730,13 +2729,13 @@ func (d *Database) Stats() (map[string]interface{}, error) {
 	return stats, nil
 }
 
-// convertInputValue admits one user input value for one symbol: it applies
-// the entity- and attribute-position typing rules, then normalizes the value
-// into the domain (integer widths → int64). Every input form converts its
-// values through here.
+// convertInputValue admits one user input value for one symbol: it refuses a
+// value outside the domain, applies the entity- and attribute-position typing
+// rules, then normalizes the value into the domain (integer widths → int64).
+// Every input form converts its values through here.
 func convertInputValue(entityBound, attrBound map[query.Symbol]bool, sym query.Symbol, value interface{}) (interface{}, error) {
-	if containsNaN(value) {
-		return nil, fmt.Errorf("input %s is NaN, which is not a datalog value", sym)
+	if err := datalog.ValidateValue(value); err != nil {
+		return nil, fmt.Errorf("input %s: %w", sym, err)
 	}
 	if entityBound[sym] {
 		if err := query.ValidateEntityBinding(value); err != nil {
@@ -2776,36 +2775,11 @@ func reflectValues(slice reflect.Value) []interface{} {
 	return values
 }
 
-// containsNaN reports whether v is NaN or a slice containing one. NaN is not
-// a datalog value — it is not self-equal under IEEE comparison, so no
-// container law (set membership, LWW resolution, join equality) can hold for
-// it — and every boundary where a float enters relational flow rejects it.
-// ±Inf is a value: self-equal and totally ordered.
-func containsNaN(v interface{}) bool {
-	switch val := v.(type) {
-	case float64:
-		return math.IsNaN(val)
-	case []interface{}:
-		for _, elem := range val {
-			if containsNaN(elem) {
-				return true
-			}
-		}
-	case []float64:
-		for _, elem := range val {
-			if math.IsNaN(elem) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // validateValueStorable rejects values outside the storable domain at the
 // transaction write boundary.
 func validateValueStorable(a datalog.Keyword, v interface{}) error {
-	if containsNaN(v) {
-		return fmt.Errorf("NaN is not a datalog value and cannot be stored for attribute %s", a.String())
+	if err := datalog.ValidateValue(v); err != nil {
+		return fmt.Errorf("attribute %s: %w", a, err)
 	}
 	return nil
 }

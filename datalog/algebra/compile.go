@@ -198,12 +198,13 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node, scope query.Bindi
 		rules = scope.Rules
 	}
 
-	// Determine correlation variables: inputs that are variable symbols
-	// (excluding source symbols like $ which are always available)
+	// The correlation variables are the outer variables the call passes, in
+	// call order, each once: an outer variable passed at two positions is one
+	// correlation variable. A source symbol is not one.
 	var correlationVars []query.Symbol
 	for _, input := range sp.Inputs {
 		if v, ok := input.(query.Variable); ok {
-			if !v.Name.IsSource() {
+			if !v.Name.IsSource() && !query.ContainsSymbol(correlationVars, v.Name) {
 				correlationVars = append(correlationVars, v.Name)
 			}
 		}

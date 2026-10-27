@@ -798,16 +798,32 @@ func parseTaggedLiteral(node *edn.Node) (query.PatternElement, error) {
 
 // TaggedLiteralValue converts an EDN tagged literal into its datalog value.
 // This is the query dialect's one vocabulary — #identity, #id, #inst,
-// #bytes — shared by query-text parsing and CLI input conversion so the two
-// entry points cannot drift. (The export/import dump format keeps its own
-// dialect in the storage package: it carries #lzj and deliberately omits the
-// #id sugar, since the formatter only emits canonical #identity.)
+// #bytes, #eid — shared by query-text parsing and CLI input conversion so
+// the two entry points cannot drift. (The export/import dump format keeps its
+// own dialect in the storage package: it carries #lzj and deliberately omits
+// the #id sugar, since the formatter only emits canonical #identity.)
 func TaggedLiteralValue(node *edn.Node) (interface{}, error) {
 	if node.Tagged == nil {
 		return nil, fmt.Errorf("tagged literal missing value")
 	}
 	val := node.Tagged
 	switch node.Tag {
+	case "eid":
+		// #eid [lamport replica] is a transaction value, the form the dump
+		// dialect writes one in.
+		if val.Type != edn.NodeVector || len(val.Nodes) != 2 || val.Nodes[0].Type != edn.NodeInt || val.Nodes[1].Type != edn.NodeInt {
+			return nil, fmt.Errorf("#eid requires a vector of two integers, the Lamport and the replica")
+		}
+		lamport, err := strconv.ParseUint(val.Nodes[0].Value, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Lamport in #eid: %w", err)
+		}
+		replica, err := strconv.ParseUint(val.Nodes[1].Value, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid replica in #eid: %w", err)
+		}
+		return datalog.ElementID{Lamport: lamport, ReplicaID: replica}, nil
+
 	case "identity":
 		if val.Type != edn.NodeString {
 			return nil, fmt.Errorf("#identity requires string value")

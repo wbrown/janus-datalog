@@ -2,8 +2,11 @@ package datalog
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The value domain is closed: scalars, []byte, time.Time, Identity, Keyword,
@@ -106,4 +109,28 @@ func TestValuesEqualVectors(t *testing.T) {
 	if ValuesEqual(a, c) {
 		t.Error("vectors with different element order must not be ValuesEqual")
 	}
+}
+
+// An unsigned integer within int64's range is the integer of that
+// magnitude, as the smaller signed widths are, since the engine's equality
+// already holds uint64(5) equal to int64(5); one above the range is not an
+// integer the domain holds and passes through unchanged for the boundary to
+// refuse.
+func TestNormalizeValueTakesAnUnsignedIntegerWithinRangeAsInt64(t *testing.T) {
+	for _, v := range []interface{}{uint(5), uint8(5), uint16(5), uint32(5), uint64(5)} {
+		require.Equal(t, int64(5), NormalizeValue(v), "%T", v)
+	}
+	require.Equal(t, int64(math.MaxInt64), NormalizeValue(uint64(math.MaxInt64)))
+	above := uint64(math.MaxInt64) + 1
+	require.Equal(t, above, NormalizeValue(above))
+}
+
+// A keyword with a space or with no name after the colon is refused where
+// the keyword is made.
+func TestAKeywordWithASpaceOrNoNameIsRefusedWhereItIsMade(t *testing.T) {
+	require.Panics(t, func() { NewKeyword(":a b") })
+	require.Panics(t, func() { NewKeyword(":") })
+	require.Panics(t, func() { NewKeyword("") })
+	require.Panics(t, func() { InternKeyword(":x\ty") })
+	require.NotPanics(t, func() { NewKeyword(":a.b/c-d") })
 }

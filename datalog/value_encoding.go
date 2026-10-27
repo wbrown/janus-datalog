@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"reflect"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/codec"
@@ -49,14 +50,16 @@ type BlobData struct {
 const maxKeyValueSize = 60000
 
 // NormalizeValue returns a value as the domain admits it: int, int8, int16 and
-// int32 become int64, the engine's canonical integer representation, and a
-// float's signed zero becomes 0.0, since the engine's equality holds the two
-// zeros equal and a value's encoding agrees with its equality. Storage decode,
-// the EDN parser, and comparison all standardize on int64, so normalizing
-// user-supplied values where they enter the engine (writes, query inputs,
-// query-builder constants) keeps a Go int from diverging from stored int64
-// data. Every other value passes through untouched, adding no allocation for
-// the common case.
+// int32 become int64, the engine's canonical integer representation, as does
+// an unsigned integer within int64's range, since the engine's equality holds
+// uint64(5) equal to int64(5); and a float's signed zero becomes 0.0, since
+// the equality holds the two zeros equal and a value's encoding agrees with
+// its equality. Storage decode, the EDN parser, and comparison all
+// standardize on int64, so normalizing user-supplied values where they enter
+// the engine (writes, query inputs, query-builder constants) keeps a Go int
+// from diverging from stored int64 data. Every other value, an unsigned
+// integer above int64's range among them, passes through untouched, for
+// ValidateValue to refuse, adding no allocation for the common case.
 func NormalizeValue(v Value) Value {
 	switch n := v.(type) {
 	case int:
@@ -67,12 +70,70 @@ func NormalizeValue(v Value) Value {
 		return int64(n)
 	case int32:
 		return int64(n)
+	case uint:
+		if uint64(n) <= math.MaxInt64 {
+			return int64(n)
+		}
+	case uint8:
+		return int64(n)
+	case uint16:
+		return int64(n)
+	case uint32:
+		return int64(n)
+	case uint64:
+		if n <= math.MaxInt64 {
+			return int64(n)
+		}
 	case float64:
 		if n == 0 {
 			return float64(0)
 		}
 	}
 	return v
+}
+
+// ValidateValue reports whether v, normalized, is a value of the domain: a
+// string, an int64, a float64 other than NaN, a bool, a time.Time, a []byte,
+// an Identity, a Keyword, a Symbol, an ElementID by value or by non-nil
+// pointer, or a vector of values. The error names the type of a value outside
+// it, or the value itself for NaN, an unsigned integer above int64's range and
+// a nil pointer, since those types are in the domain and naming them would
+// state something false. Every boundary a value enters the engine by, a
+// write, a query input and a query's constants, refuses through it.
+func ValidateValue(v Value) error {
+	switch val := NormalizeValue(v).(type) {
+	case nil:
+		return fmt.Errorf("nil is not a datalog value")
+	case string, int64, bool, time.Time, []byte, Keyword, Symbol, ElementID:
+		return nil
+	case float64:
+		if math.IsNaN(val) {
+			return fmt.Errorf("NaN is not a datalog value")
+		}
+		return nil
+	case Identity:
+		if val == nil {
+			return fmt.Errorf("a nil Identity is not a datalog value")
+		}
+		return nil
+	case *ElementID:
+		if val == nil {
+			return fmt.Errorf("a nil *ElementID is not a datalog value")
+		}
+		return nil
+	case uint, uint64:
+		return fmt.Errorf("unsigned integer %d is above int64's range and is not a datalog value", val)
+	}
+	if IsVector(v) {
+		rv := reflect.ValueOf(v)
+		for i := 0; i < rv.Len(); i++ {
+			if err := ValidateValue(rv.Index(i).Interface()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("%T is not a datalog value type", v)
 }
 
 // Type returns the type of a value

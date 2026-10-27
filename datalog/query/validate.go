@@ -5,11 +5,11 @@ import "fmt"
 // ValidateQuery runs every static check a query's text admits, the checks
 // that depend on the text alone: a non-empty :find and :where, the scalar
 // find's one element and its :limit of at most one, ValidateInputShapes on
-// :in, ValidateStaticClauseShapes on :where, ValidateRulesInput on both, and
-// the :order-by rule. It reaches every inner query through
-// SubqueryPattern.Validate. ParseQuery, qb.Build and Prepare each run it and
-// run no check of their own, so one text is accepted or refused alike at
-// every boundary with one message
+// :in, ValidateStaticClauseShapes on :where, ValidateRulesInput on both,
+// every constant a value of the domain, and the :order-by rule. It reaches
+// every inner query through SubqueryPattern.Validate. ParseQuery, qb.Build
+// and Prepare each run it and run no check of their own, so one text is
+// accepted or refused alike at every boundary with one message
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md goal 5 and §6).
 func ValidateQuery(q *Query) error {
 	if len(q.Find) == 0 {
@@ -31,6 +31,9 @@ func ValidateQuery(q *Query) error {
 		return err
 	}
 	if err := ValidateRulesInput(q.In, q.Where); err != nil {
+		return err
+	}
+	if err := validateConstants(q); err != nil {
 		return err
 	}
 	return validateOrderBy(q)

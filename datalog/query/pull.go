@@ -85,8 +85,13 @@ type PullDefaultExpr struct {
 
 func (p *PullDefaultExpr) isPullAttrSpec() {}
 
+// String renders the default through FormatValueEDN, the form the parser
+// reads a value by, and a nil default as nil.
 func (p *PullDefaultExpr) String() string {
-	return fmt.Sprintf("(default %s %v)", p.Attr.String(), p.Default)
+	if p.Default == nil {
+		return fmt.Sprintf("(default %s nil)", p.Attr.String())
+	}
+	return fmt.Sprintf("(default %s %s)", p.Attr.String(), FormatValueEDN(p.Default))
 }
 
 // FindPull represents a pull expression in the find clause

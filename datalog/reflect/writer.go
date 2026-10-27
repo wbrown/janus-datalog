@@ -589,16 +589,12 @@ func (sw *StructWriter) extractSingleValue(val reflect.Value) (interface{}, erro
 			if nestedInfo.IDField == nil {
 				return nil, fmt.Errorf("nested struct %s has no ID field", val.Type().Name())
 			}
-			idVal := val.Field(nestedInfo.IDField.Index)
-			if idVal.Kind() == reflect.Ptr {
-				if idVal.IsNil() {
-					return nil, fmt.Errorf("nested struct %s has nil ID", val.Type().Name())
-				}
-				idVal = idVal.Elem()
-			}
-			id, ok := idVal.Interface().(datalog.Identity)
+			id, ok := val.Field(nestedInfo.IDField.Index).Interface().(datalog.Identity)
 			if !ok {
 				return nil, fmt.Errorf("nested struct %s ID field is not Identity", val.Type().Name())
+			}
+			if id == nil {
+				return nil, fmt.Errorf("nested struct %s has nil ID", val.Type().Name())
 			}
 			return id, nil
 		}

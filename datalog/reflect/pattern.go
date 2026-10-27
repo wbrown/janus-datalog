@@ -4,12 +4,15 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // GeneratePullPattern creates a pull pattern string from a struct type
 // The pattern includes all fields from the struct, with nested patterns
-// for reference fields.
+// for reference fields. A nested pattern for a struct with an id field
+// names :db/id, so the nested map carries the entity's id for the reader;
+// the top level's id is the entity the caller pulls.
 //
 // Example:
 //
@@ -21,7 +24,7 @@ import (
 //	}
 //
 //	pattern := GeneratePullPattern(Person{}, nil)
-//	// Returns: "[:person/name :person/age {:person/friends [:person/name :person/age]}]"
+//	// Returns: "[:person/name :person/age {:person/friends [:db/id :person/name :person/age]}]"
 //
 // Note: To prevent infinite recursion with self-referential structs,
 // nested patterns only include one level of the same type.
@@ -74,6 +77,9 @@ func generatePullPatternRecursive(t reflect.Type, s schema.SchemaProvider, visit
 	}
 
 	var specs []string
+	if depth > 0 && info.IDField != nil {
+		specs = append(specs, query.DBID.String())
+	}
 
 	for _, field := range info.Fields {
 		// Check if this is a reference field with nested struct

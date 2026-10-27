@@ -32,11 +32,11 @@ func NewDraw(seed int64) *Draw {
 
 func (d *Draw) pick(xs []string) string { return xs[d.r.Intn(len(xs))] }
 
-// constant draws one constant: an integer, a float of integral or of
-// fractional magnitude, a string with an escape, a keyword, a boolean, an
-// instant, bytes or a vector.
+// constant draws one constant: an integer, a float of integral, of
+// fractional or of infinite magnitude, a string with an escape, a keyword, a
+// boolean, an instant, bytes, a transaction value or a vector.
 func (d *Draw) constant() string {
-	switch d.r.Intn(11) {
+	switch d.r.Intn(13) {
 	case 0:
 		return strconv.Itoa(d.r.Intn(5))
 	case 1:
@@ -55,6 +55,10 @@ func (d *Draw) constant() string {
 		return `#bytes "abcdefgh"`
 	case 8:
 		return `[1 2]`
+	case 9:
+		return d.pick([]string{"##Inf", "##-Inf"})
+	case 10:
+		return `#eid [3 1]`
 	default:
 		return strconv.Itoa(d.r.Intn(100))
 	}

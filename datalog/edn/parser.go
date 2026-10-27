@@ -107,12 +107,19 @@ func (p *Parser) readAtom() (*Node, error) {
 	token := p.lexer.NextToken()
 	value := token.Value
 
-	// Handle special atoms
+	// Handle special atoms, EDN's symbolic floats among them, each read as
+	// the float strconv.ParseFloat reads its value as.
 	switch value {
 	case "nil":
 		return &Node{Type: NodeNil, Line: token.Line, Col: token.Col}, nil
 	case "true", "false":
 		return &Node{Type: NodeBool, Value: value, Line: token.Line, Col: token.Col}, nil
+	case "##Inf":
+		return &Node{Type: NodeFloat, Value: "+Inf", Line: token.Line, Col: token.Col}, nil
+	case "##-Inf":
+		return &Node{Type: NodeFloat, Value: "-Inf", Line: token.Line, Col: token.Col}, nil
+	case "##NaN":
+		return &Node{Type: NodeFloat, Value: "NaN", Line: token.Line, Col: token.Col}, nil
 	}
 
 	// Handle discard (#_)

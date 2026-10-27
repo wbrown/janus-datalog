@@ -61,6 +61,10 @@ func TestQueryStringRoundTripsEveryValueType(t *testing.T) {
 		{"a byte vector as an invocation argument", `[:find ?x :in $ % :where [?x :t/n _] (r ?x #bytes "` + blob + `")]`},
 		{"a byte vector under a not", `[:find ?x :where [?x :t/n _] (not [?x :t/v #bytes "` + blob + `"])]`},
 		{"an empty byte vector", `[:find ?x :where [?x :t/v #bytes ""]]`},
+		{"an infinite float", `[:find ?e :where [?e :t/a ##Inf] [?e :t/b ##-Inf]]`},
+		{"an infinite float in a predicate", `[:find ?e :where [?e :t/a ?v] [(< ?v ##Inf)]]`},
+		{"a transaction value at the transaction position", `[:find ?e :where [?e :t/a ?v #eid [2 1]]]`},
+		{"a transaction value in a ground", `[:find ?x :where [?e :t/a _] [(ground #eid [5 1]) ?x]]`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,6 +79,46 @@ func TestQueryStringRoundTripsEveryValueType(t *testing.T) {
 			}
 			if !reflect.DeepEqual(again.Where, q.Where) {
 				t.Errorf("the rendering parses to %v, want the query it rendered, %v\n%s", again.Where, q.Where, rendered)
+			}
+			if second := again.String(); second != rendered {
+				t.Errorf("the text changed on a second render:\n%s\n--\n%s", rendered, second)
+			}
+		})
+	}
+}
+
+// A pull default renders in the form the parser reads a value by, so a query
+// pulling with a default parses back as the same query whatever the default
+// holds: a string, one with a space or of digits, nil, a whole-valued float,
+// an integer, a keyword, a boolean, and the tagged literals a pattern
+// constant takes.
+func TestQueryStringRoundTripsPullDefaults(t *testing.T) {
+	cases := []struct{ name, text string }{
+		{"a string", `[:find (pull ?e [(default :t/b "unknown")]) :where [?e :t/a _]]`},
+		{"a string with a space", `[:find (pull ?e [(default :t/b "a b")]) :where [?e :t/a _]]`},
+		{"a string of digits", `[:find (pull ?e [(default :t/b "1")]) :where [?e :t/a _]]`},
+		{"nil", `[:find (pull ?e [(default :t/b nil)]) :where [?e :t/a _]]`},
+		{"a whole-valued float", `[:find (pull ?e [(default :t/b 1.0)]) :where [?e :t/a _]]`},
+		{"an integer", `[:find (pull ?e [(default :t/b 1)]) :where [?e :t/a _]]`},
+		{"a keyword", `[:find (pull ?e [(default :t/b :k/w)]) :where [?e :t/a _]]`},
+		{"a boolean", `[:find (pull ?e [(default :t/b true)]) :where [?e :t/a _]]`},
+		{"an instant", `[:find (pull ?e [(default :t/b #inst "2024-06-15T10:30:00Z")]) :where [?e :t/a _]]`},
+		{"a transaction value", `[:find (pull ?e [(default :t/b #eid [5 1])]) :where [?e :t/a _]]`},
+		{"an identity", `[:find (pull ?e [(default :t/b #identity "` + datalogIdentityText("e1") + `")]) :where [?e :t/a _]]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := ParseQuery(tc.text)
+			if err != nil {
+				t.Fatalf("ParseQuery(%q): %v", tc.text, err)
+			}
+			rendered := q.String()
+			again, err := ParseQuery(rendered)
+			if err != nil {
+				t.Fatalf("the rendering does not parse: %v\n%s", err, rendered)
+			}
+			if !reflect.DeepEqual(again.Find, q.Find) {
+				t.Errorf("the rendering parses to %v, want the query it rendered, %v\n%s", again.Find, q.Find, rendered)
 			}
 			if second := again.String(); second != rendered {
 				t.Errorf("the text changed on a second render:\n%s\n--\n%s", rendered, second)

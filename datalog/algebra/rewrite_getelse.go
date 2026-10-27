@@ -108,6 +108,15 @@ func getElseScanRewriteTransform(node *parse.Node, sink *RewriteSink, children .
 		return rebuildWithChildren(node, children)
 	}
 
+	// A get-else onto a variable the child relation already provides is a
+	// unification the Map evaluates per tuple; the rewrite's scan would
+	// output that variable beside the entity, and its default would stand
+	// in for a value the child already holds.
+	if query.ContainsSymbol(childNode.Symbols(), bindingSym) {
+		decline("binding variable is already provided by the child relation")
+		return rebuildWithChildren(node, children)
+	}
+
 	// A scope's required run is the scope's input, as :in is a query's, so
 	// an entity it alone provides is an input parameter too. The default
 	// branch the rewrite's own join decompiles to runs as a scope over the

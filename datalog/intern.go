@@ -1,8 +1,10 @@
 package datalog
 
 import (
+	"fmt"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 // keywordInternCache provides keyword interning to avoid repeated allocations
@@ -19,11 +21,17 @@ var keywordIntern = &keywordInternCache{}
 
 // InternKeyword returns an interned keyword instance.
 // Keyed by the full string, so two distinct keywords never share a pointer
-// even if their first 32 bytes match.
+// even if their first 32 bytes match. A keyword is text every reader reads
+// back as the same keyword, so one holding a space or nothing after the
+// colon is refused here, where the keyword is made.
 func InternKeyword(s string) Keyword {
 	// Fast path: load existing (lock-free)
 	if val, ok := keywordIntern.cache.Load(s); ok {
 		return val.(Keyword)
+	}
+
+	if len(s) <= 1 || strings.ContainsFunc(s, unicode.IsSpace) {
+		panic(fmt.Sprintf("keyword %q: a keyword has a name after the colon and holds no space", s))
 	}
 
 	// Slow path: create and store

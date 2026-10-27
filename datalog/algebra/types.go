@@ -270,12 +270,18 @@ func (l *LateralJoin) String() string {
 }
 
 // Aggregate groups and aggregates. γ_{keys}(aggs)(R)
-// Created by decorrelation transform, or from :find aggregates.
+// Created by the decorrelation transform from an aggregating subquery call.
 type Aggregate struct {
 	GroupBy   []query.Symbol        // Grouping variables
 	Functions []query.FindAggregate // Aggregate functions (count, sum, etc.)
 	Bindings  []query.Symbol        // Positional output bindings for group keys + aggregate results
 	Output    []query.Symbol        // Derived schema; must equal Bindings
+	// In is the decorrelated inner query's :in, the sources and the rule set
+	// the written inner declared, under which its clauses read; Inputs is
+	// what the rebuilt call passes at those places, the written call's source
+	// and rule-set arguments.
+	In     []query.InputSpec
+	Inputs []query.PatternElement
 }
 
 func (a *Aggregate) OutputSymbols() []query.Symbol { return a.Output }

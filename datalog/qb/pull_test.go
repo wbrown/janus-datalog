@@ -308,7 +308,7 @@ func TestPull_PatternString(t *testing.T) {
 		{
 			name:     "with default",
 			pull:     Pull(e, Default(PersonStatus, "active")),
-			expected: "(pull ?e [(default :person/status active)])",
+			expected: "(pull ?e [(default :person/status \"active\")])",
 		},
 		{
 			name:     "nested ref",

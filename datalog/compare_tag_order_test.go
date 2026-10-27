@@ -54,6 +54,7 @@ func TestCompareValuesTagOrderMatchesReference(t *testing.T) {
 // TestCompareValuesTagOrderRejectsOutsideDomain: values Type refuses stay loud
 // here too — the tag order is defined only on what a key can hold.
 func TestCompareValuesTagOrderRejectsOutsideDomain(t *testing.T) {
-	require.Panics(t, func() { CompareValuesTagOrder(uint64(1), int64(1)) })
+	require.Panics(t, func() { CompareValuesTagOrder(uint64(1)<<63, int64(1)) })
+	require.Panics(t, func() { CompareValuesTagOrder(float32(1), int64(1)) })
 	require.Panics(t, func() { CompareValuesTagOrder([]interface{}{int64(1)}, int64(1)) })
 }

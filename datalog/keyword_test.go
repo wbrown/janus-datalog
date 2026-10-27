@@ -167,9 +167,6 @@ func TestNewKeyword_AutoPrefix(t *testing.T) {
 		// Missing colon - auto-prefix
 		{"foo/bar", ":foo/bar"},
 		{"foo", ":foo"},
-
-		// Empty string - still gets colon prefix
-		{"", ":"},
 	}
 
 	for _, tt := range tests {

@@ -130,10 +130,14 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 		}
 	}
 
-	innerParams := mapCorrelationToInnerParams(lj.InnerQuery, lj.CorrelationVars)
-	if len(innerParams) == 0 {
-		decline("cannot map correlation to inner params")
-		return node
+	correlations, declineReason := correlationParameters(lj.InnerQuery, lj.Inputs)
+	if declineReason != "" {
+		decline(declineReason)
+		return rebuildWithChildren(node, children)
+	}
+	innerParams := make([]query.Symbol, len(correlations))
+	for i, c := range correlations {
+		innerParams[i] = c.param
 	}
 
 	// Classify every correlation parameter before transforming: the rewrite
@@ -160,7 +164,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 
 	// Decorrelate: remove correlation params from :in, add the classified
 	// group-by symbols to :find, consume translated correlation equalities.
-	decorrelated := decorrelateQuery(lj.InnerQuery, plans)
+	decorrelated := decorrelateQuery(lj.InnerQuery, plans, correlations)
 	if decorrelated == nil {
 		return node
 	}
@@ -200,6 +204,8 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 				Functions: aggFns,
 				Bindings:  cloneSymbols(output),
 				Output:    cloneSymbols(output),
+				In:        decorrelated.In,
+				Inputs:    callSourceArguments(lj.Inputs),
 			},
 			Children: []*Node{innerNode},
 		}
@@ -245,22 +251,11 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 			Where: optimizedWhere,
 		}
 
-		// The rewrapped call site passes only the original source markers
-		// (Constant $ or Variable $name forms): the correlation variables
-		// moved into :find, and classification guarantees no constant
-		// arguments reach this path.
-		var sourceInputs []query.PatternElement
-		for _, in := range lj.Inputs {
-			if v, isVar := in.(query.Variable); !isVar || v.Name.IsSource() {
-				sourceInputs = append(sourceInputs, in)
-			}
-		}
-
 		innerResultNode = &Node{
 			Op: RuleLateralJoin,
 			Data: &LateralJoin{
 				CorrelationVars: nil,
-				Inputs:          sourceInputs,
+				Inputs:          callSourceArguments(lj.Inputs),
 				InnerQuery:      optimizedDecorrelated,
 				Binding:         query.RelationBinding{Variables: output},
 				Output:          output,
@@ -291,6 +286,19 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 	}
 
 	return wrapAsParseNode(joinNode)
+}
+
+// callSourceArguments is what a decorrelated call passes: the written call's
+// source and rule-set arguments, in call order, with the correlation
+// variables left out, since they moved into the inner :find.
+func callSourceArguments(inputs []query.PatternElement) []query.PatternElement {
+	var sourceInputs []query.PatternElement
+	for _, in := range inputs {
+		if v, isVar := in.(query.Variable); !isVar || v.Name.IsSource() {
+			sourceInputs = append(sourceInputs, in)
+		}
+	}
+	return sourceInputs
 }
 
 // rebuildWithChildren returns a parse node with the same rule and data as the
@@ -384,26 +392,12 @@ type paramPlan struct {
 //     the predicate is the join condition; group by the inner side and
 //     drop the predicate.
 //   - anything else (inequalities, expression operands, compound-clause
-//     use, multiple equalities, extra non-correlation inputs): the rewrite
-//     has no semantics-preserving grouped form, so the subquery declines
-//     decorrelation and keeps per-combination execution — a lost
-//     optimization, never a wrong answer.
+//     use, multiple equalities): the rewrite has no semantics-preserving
+//     grouped form, so the subquery declines decorrelation and keeps
+//     per-combination execution — a lost optimization, never a wrong answer.
 //
 // See docs/bugs/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
 func classifyCorrelationParams(q *query.Query, innerParams []query.Symbol) ([]paramPlan, string) {
-	// Extra scalar inputs beyond the correlation parameters (e.g. call-site
-	// constants) have no outer symbol to join on, and the rewrite discards
-	// their bindings; their presence declines the rewrite.
-	scalarInputs := 0
-	for _, in := range q.In {
-		if _, ok := in.(query.ScalarInput); ok {
-			scalarInputs++
-		}
-	}
-	if scalarInputs > len(innerParams) {
-		return nil, "inner query has scalar inputs beyond the correlation parameters"
-	}
-
 	// The inner-provided symbols — the only candidates for equality-
 	// translated group-by symbols. Provides only: a symbol merely consumed
 	// elsewhere (including the parameter itself, which every correlation
@@ -496,52 +490,70 @@ func equalityInnerSide(eq *query.Comparison, param query.Symbol, provided []quer
 }
 
 // decorrelateQuery rewrites a correlated query into a decorrelated one
-// according to the classified plans. Each correlation parameter is removed
-// from :in and its group-by symbol prepended to :find:
+// according to the classified plans, one per correlation in order. The
+// binding entries leave :in, since every one is a correlation, and the
+// sources and the rule set stay. One group-by symbol per outer variable is
+// prepended to :find, the first plan's where the call passes one outer
+// variable at several positions, and each later plan's group symbol is
+// equated with it by a predicate appended to :where, so the grouped result
+// carries the outer variable once and keeps the tuples the per-combination
+// run kept:
 //
 //	data-bound:     [:find (count ?t) :in $ ?s :where [?t :task/root ?s] ...]
 //	             →  [:find ?s (count ?t) :in $ :where [?t :task/root ?s] ...]
 //	equality-bound: [:find (max ?h) :in $ ?d :where ... [(day ?t) ?pd] [(= ?pd ?d)] ...]
 //	             →  [:find ?pd (max ?h) :in $ :where ... [(day ?t) ?pd] ...]
+//	one outer variable at two positions, passed $ ?a ?a:
+//	                [:find (sum ?v) :in $ ?n ?m :where [?x :p/n ?n] [?x :p/m ?m] ...]
+//	             →  [:find ?n (sum ?v) :in $ :where [?x :p/n ?n] [?x :p/m ?m] ... [(= ?n ?m)]]
 //
 // For the equality-bound form the correlation predicate is consumed — it
 // becomes the join condition (group by the inner side, join the outer on
 // it, positionally renamed to the outer name by the binding).
-func decorrelateQuery(q *query.Query, plans []paramPlan) *query.Query {
-	paramSet := make(map[query.Symbol]bool, len(plans))
+func decorrelateQuery(q *query.Query, plans []paramPlan, correlations []correlation) *query.Query {
 	dropSet := make(map[query.Clause]bool)
 	for _, p := range plans {
-		paramSet[p.param] = true
 		if p.dropClause != nil {
 			dropSet[p.dropClause] = true
 		}
 	}
 
-	// Build new :in — remove correlation parameters, keep $ and other inputs
 	var newIn []query.InputSpec
 	for _, in := range q.In {
-		if si, ok := in.(query.ScalarInput); ok && paramSet[si.Symbol] {
-			continue // Remove correlation parameter from :in
+		switch in.(type) {
+		case query.DatabaseInput, query.RulesInput:
+			newIn = append(newIn, in)
 		}
-		newIn = append(newIn, in)
 	}
 
-	// Build new :find — prepend the group-by symbols in parameter order
+	keyFor := make(map[query.Symbol]query.Symbol, len(plans))
 	newFind := make([]query.FindElement, 0, len(plans)+len(q.Find))
-	for _, p := range plans {
+	var equalities []query.Clause
+	for i, p := range plans {
+		outer := correlations[i].outer
+		if key, seen := keyFor[outer]; seen {
+			equalities = append(equalities, &query.Comparison{
+				Op:    datalog.SymEQ,
+				Left:  query.VariableTerm{Symbol: key},
+				Right: query.VariableTerm{Symbol: p.groupSym},
+			})
+			continue
+		}
+		keyFor[outer] = p.groupSym
 		newFind = append(newFind, query.FindVariable{Symbol: p.groupSym})
 	}
 	newFind = append(newFind, q.Find...)
 
-	// Build new :where — consumed correlation equalities become the outer
-	// join; everything else is unchanged and still references inner names.
-	newWhere := make([]query.Clause, 0, len(q.Where))
+	// Consumed correlation equalities become the outer join; everything else
+	// is unchanged and still references inner names.
+	newWhere := make([]query.Clause, 0, len(q.Where)+len(equalities))
 	for _, c := range q.Where {
 		if dropSet[c] {
 			continue
 		}
 		newWhere = append(newWhere, c)
 	}
+	newWhere = append(newWhere, equalities...)
 
 	return &query.Query{
 		Find:  newFind,
@@ -550,27 +562,51 @@ func decorrelateQuery(q *query.Query, plans []paramPlan) *query.Query {
 	}
 }
 
-// mapCorrelationToInnerParams finds the inner parameter names that correspond
-// to the outer correlation variables. The mapping is positional:
-//
-//	SubqueryPattern.Inputs: [$ ?e]  maps to  Query.In: [$ ?s]
-//
-// So outer ?e corresponds to inner ?s.
-func mapCorrelationToInnerParams(innerQuery *query.Query, outerVars []query.Symbol) []query.Symbol {
-	// Match outer correlation vars to inner parameter names by position.
-	// Both appear as ScalarInput entries in :in (after $), in the same order.
-	// Only return as many inner params as there are outer vars — additional
-	// scalar inputs (e.g., constant thresholds) are NOT correlation params.
-	var innerParams []query.Symbol
-	for _, in := range innerQuery.In {
-		if si, ok := in.(query.ScalarInput); ok {
-			innerParams = append(innerParams, si.Symbol)
-			if len(innerParams) == len(outerVars) {
-				break
+// correlation is one inner :in symbol the call binds and the outer variable
+// the call passes at its position.
+type correlation struct {
+	param query.Symbol
+	outer query.Symbol
+}
+
+// correlationParameters pairs each inner :in symbol the call binds with the
+// outer variable the call passes at its position, in call order, each inner
+// symbol once: a scalar entry's symbol, and each symbol of a tuple or a
+// relation entry, is bound by the value at its own position
+// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.5). It declines, with the
+// reason, the shapes with no grouped form: a collection entry, whose symbol
+// ranges over the elements of the value at its position and so is no key
+// the grouped result can join the outer on; a constant at a binding
+// position, which has no outer symbol to join on; and an inner symbol bound
+// at two positions by different outer variables.
+func correlationParameters(inner *query.Query, inputs []query.PatternElement) ([]correlation, string) {
+	var params []correlation
+	for position, at := range query.InputPositions(inner.In) {
+		if at.Symbol == nil {
+			continue
+		}
+		if _, isCollection := at.Spec.(query.CollectionInput); isCollection {
+			return nil, fmt.Sprintf("collection entry %s has no grouped form", at.Spec)
+		}
+		arg, isVar := inputs[position].(query.Variable)
+		if !isVar || arg.Name.IsSource() {
+			return nil, fmt.Sprintf("argument %v at the position of %s has no outer symbol to join on", inputs[position], at.Symbol)
+		}
+		bound := false
+		for _, p := range params {
+			if p.param != at.Symbol {
+				continue
+			}
+			bound = true
+			if p.outer != arg.Name {
+				return nil, fmt.Sprintf("inner symbol %s is bound by %s and by %s", at.Symbol, p.outer, arg.Name)
 			}
 		}
+		if !bound {
+			params = append(params, correlation{param: at.Symbol, outer: arg.Name})
+		}
 	}
-	return innerParams
+	return params, ""
 }
 
 // recoverChild extracts an algebra Node from a transform result.
