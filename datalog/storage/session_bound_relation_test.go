@@ -34,7 +34,7 @@ func TestSessionBoundRelationRenameKeepsTheSessionBoundToTheRenamedResult(t *tes
 	x := datalog.NewSymbol("?x")
 	a := datalog.NewSymbol("?a")
 	inner := executor.NewMaterializedRelation([]query.Symbol{x}, []executor.Tuple{{int64(1)}, {int64(2)}})
-	bound := newSessionBoundRelation(inner, session)
+	bound := newSessionBoundRelation(inner, session, nil)
 	subst, err := query.SubstitutionOf([]query.Symbol{x}, []query.Symbol{a})
 	require.NoError(t, err)
 
@@ -58,7 +58,7 @@ func TestSessionBoundRelationRenameErrorsOnASymbolTheInnerLacks(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	w := datalog.NewSymbol("?w")
 	a := datalog.NewSymbol("?a")
-	bound := newSessionBoundRelation(executor.NewMaterializedRelation([]query.Symbol{w}, []executor.Tuple{{int64(1)}}), opened)
+	bound := newSessionBoundRelation(executor.NewMaterializedRelation([]query.Symbol{w}, []executor.Tuple{{int64(1)}}), opened, nil)
 	subst, err := query.SubstitutionOf([]query.Symbol{x}, []query.Symbol{a})
 	require.NoError(t, err)
 

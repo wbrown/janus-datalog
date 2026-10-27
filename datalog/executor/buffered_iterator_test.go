@@ -213,6 +213,8 @@ func (it *countingMockIterator) Tuple() Tuple {
 	return nil
 }
 
+func (it *countingMockIterator) RequiresCopy() bool { return false }
+
 func (it *countingMockIterator) Close() error {
 	return nil
 }

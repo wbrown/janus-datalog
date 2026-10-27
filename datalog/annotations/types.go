@@ -23,7 +23,11 @@ const (
 	// §4.9); a query preparation refuses completes with its error and emits no
 	// QueryPrepared. A query the database refuses before the executor's entry,
 	// once it is resolved, is reported invoked and completed the same way,
-	// with no QueryPrepared and no QueryPlanCreated.
+	// with no QueryPrepared and no QueryPlanCreated. Every query completes
+	// once: a query that fails in execution completes with its error before
+	// its caller gets a result, and a query that runs completes where it
+	// ends, when its result is exhausted or closed, with the tuples drained by
+	// then, and with the error when the drain ended in one.
 	QueryInvoked                      = "query/invoked"
 	QueryPrepared                     = "query/prepared"
 	QueryPlanCreated                  = "query/plan.created"
@@ -280,9 +284,11 @@ const (
 
 	// The query lifecycle's payloads. KeyQuery is the query's rendering, as
 	// received on QueryInvoked and as prepared on QueryPrepared.
-	// KeyRelationsCount and KeyTuplesCount are QueryComplete's counts, and a
-	// refused query reports none of either. KeyError is the text of the error
-	// an event reports: QueryComplete's refusal, and the algebra bridge's
+	// KeyRelationsCount and KeyTuplesCount are QueryComplete's counts: a query
+	// that runs reports its one result relation and the tuples drained from it
+	// by the time it ended, and a refused query reports none of either.
+	// KeyError is the text of the error an event reports: QueryComplete's
+	// refusal, execution failure or drain fault, and the algebra bridge's
 	// compile, optimize and decompile failures. A refusal on any query entry
 	// path, the executor's and the database's, is reported through these keys.
 	KeyQuery          = "query"

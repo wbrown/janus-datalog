@@ -46,7 +46,6 @@ func (s *memoryReadSession) scan(bound ScanBound) (Iterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	index := bound.Index
 
 	s.mu.Lock()
 	keysTree := s.keys
@@ -55,19 +54,7 @@ func (s *memoryReadSession) scan(bound ScanBound) (Iterator, error) {
 	if closed || keysTree == nil {
 		return nil, errReadSessionClosed
 	}
-	// The cloned tree is never written, so the iterator takes its chunks from
-	// it with no store lock, as its consumer pulls.
-	return &memoryIterator{
-		index:      index,
-		position:   -1,
-		membership: run.Membership,
-		tree:       keysTree,
-		rangeStart: run.Start,
-		rangeEnd:   string(run.End),
-		resume:     string(run.Start),
-		encoder:    s.store.encoder,
-		blobs:      memoryBlobReader{store: s.store},
-	}, nil
+	return chunkedMemoryIterator(bound.Index, run, keysTree, s.store.encoder, memoryBlobReader{store: s.store}), nil
 }
 
 func (s *memoryReadSession) MaxElementID() (datalog.ElementID, error) {

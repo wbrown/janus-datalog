@@ -749,6 +749,10 @@ func (it *hashJoinIterator) Tuple() executor.Tuple {
 	return it.current
 }
 
+// RequiresCopy is true: Tuple hands back the one workspace Next builds
+// every tuple into, which the next pull overwrites.
+func (it *hashJoinIterator) RequiresCopy() bool { return true }
+
 func (it *hashJoinIterator) Close() error {
 	var err error
 	if it.iter != nil {
@@ -894,6 +898,10 @@ func (it *mergeJoinIterator) Next() bool {
 func (it *mergeJoinIterator) Tuple() executor.Tuple {
 	return it.current
 }
+
+// RequiresCopy is true: Tuple hands back the one workspace Next builds
+// every tuple into, which the next pull overwrites.
+func (it *mergeJoinIterator) RequiresCopy() bool { return true }
 
 func (it *mergeJoinIterator) Close() error {
 	var err error

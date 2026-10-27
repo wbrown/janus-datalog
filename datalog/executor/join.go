@@ -134,6 +134,10 @@ func (it *hashJoinIterator) Tuple() Tuple {
 	return it.currentJoined
 }
 
+// RequiresCopy is false: every joined tuple is a fresh slice
+// combineTuplesIndexed builds, which nothing writes after.
+func (it *hashJoinIterator) RequiresCopy() bool { return false }
+
 func (it *hashJoinIterator) Close() error {
 	if !it.closed {
 		it.closed = true

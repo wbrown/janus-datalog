@@ -175,6 +175,8 @@ func (m *lazySeqTestIterator) Tuple() Tuple {
 	return m.tuples[m.pos-1]
 }
 
+func (m *lazySeqTestIterator) RequiresCopy() bool { return false }
+
 func (m *lazySeqTestIterator) Close() error {
 	m.closeMu.Lock()
 	defer m.closeMu.Unlock()

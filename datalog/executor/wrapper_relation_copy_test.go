@@ -36,6 +36,10 @@ func (it *workspaceReusingIterator) Tuple() Tuple {
 	return it.workspace
 }
 
+// RequiresCopy is true: Tuple hands back the one workspace the next pull
+// overwrites.
+func (it *workspaceReusingIterator) RequiresCopy() bool { return true }
+
 func (it *workspaceReusingIterator) Close() error {
 	return nil
 }

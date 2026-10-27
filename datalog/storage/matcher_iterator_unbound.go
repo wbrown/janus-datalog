@@ -77,6 +77,10 @@ func (it *unboundIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
 
+// RequiresCopy is true: Tuple hands back the one workspace Next builds
+// every tuple into, which the next pull overwrites.
+func (it *unboundIterator) RequiresCopy() bool { return true }
+
 func (it *unboundIterator) Error() error { return it.err }
 
 func (it *unboundIterator) Close() error {

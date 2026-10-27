@@ -258,6 +258,8 @@ func (it *sliceTupleIterator) Tuple() Tuple {
 	return it.tuples[it.pos-1]
 }
 
+func (it *sliceTupleIterator) RequiresCopy() bool { return false }
+
 func (it *sliceTupleIterator) Close() error {
 	return nil
 }
@@ -373,6 +375,8 @@ func (it *countingSliceIterator) Next() bool {
 func (it *countingSliceIterator) Tuple() Tuple {
 	return it.tuples[it.pos-1]
 }
+
+func (it *countingSliceIterator) RequiresCopy() bool { return false }
 
 func (it *countingSliceIterator) Close() error { return nil }
 func (it *countingSliceIterator) Error() error { return it.err }

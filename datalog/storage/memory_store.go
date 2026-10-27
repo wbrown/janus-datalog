@@ -210,65 +210,27 @@ func (s *MemoryStore) scan(bound ScanBound) (Iterator, error) {
 		return nil, err
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
+	// Clone mutates the source tree's copy-on-write context, so it runs under
+	// the write lock.
+	s.mu.Lock()
+	closed := s.closed
+	var keys *btree.BTreeG[string]
+	if !closed {
+		keys = s.keys.Clone()
+	}
+	s.mu.Unlock()
+	if closed {
 		return nil, errMemoryStoreClosed
 	}
-	index := bound.Index
-	startKey := string(run.Start)
-	endKey := string(run.End)
-	keys := make([][]byte, 0)
-	s.keys.AscendRange(startKey, endKey, func(encoded string) bool {
-		key := []byte(encoded)
-		if len(key) == 21 && key[0] == blobKeyPrefix {
-			return true
-		}
-		keys = append(keys, append([]byte(nil), key...))
-		return true
-	})
-	return &memoryIterator{
-		index:      index,
-		keys:       keys,
-		position:   -1,
-		membership: run.Membership,
-		end:        run.End,
-		encoder:    s.encoder,
-		blobs:      memoryBlobReader{store: s},
-	}, nil
+	return chunkedMemoryIterator(bound.Index, run, keys, s.encoder, memoryBlobReader{store: s}), nil
 }
 
 func (s *MemoryStore) MaxElementID() (datalog.ElementID, error) {
-	iter, err := s.ScanKeysOnly(ScanBound{Index: TAEV})
-	if err != nil {
-		return datalog.ElementID{}, err
-	}
-	defer iter.Close()
-	if !iter.Next() {
-		return datalog.ElementID{}, iter.Error()
-	}
-	return iter.ElementID(), nil
+	return maxElementIDByScan(s)
 }
 
 func (s *MemoryStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {
-	iter, err := s.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{e}})
-	if err != nil {
-		return datalog.ElementID{}, false, err
-	}
-	defer iter.Close()
-	var maxID datalog.ElementID
-	found := false
-	for iter.Next() {
-		tx := iter.ElementID()
-		if !found || maxID.Less(tx) {
-			maxID = tx
-			found = true
-		}
-	}
-	if err := iter.Error(); err != nil {
-		return datalog.ElementID{}, false, err
-	}
-	return maxID, found, nil
+	return maxTxForEntityByScan(s, e)
 }
 
 func (s *MemoryStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error) {
@@ -618,8 +580,8 @@ const memoryScanChunkKeys = 256
 
 type memoryIterator struct {
 	index IndexType
-	// keys is the chunk the cursor walks: every key of the scan's range, or,
-	// when tree is set, the keys of the range from chunkStart up to chunkEnd.
+	// keys is the chunk in hand: the keys of the range from chunkStart up to
+	// chunkEnd, taken from tree.
 	keys     [][]byte
 	position int
 	// scanned counts keys taken from the range, including the ones the
@@ -634,11 +596,12 @@ type memoryIterator struct {
 	// end is the current run's exclusive upper bound, inside the scan's own
 	// range, which keys never leaves. A seek to a narrower run stops here.
 	end []byte
-	// tree, when set, is the cloned key tree the cursor takes its chunks from.
-	// rangeStart and rangeEnd are the scan's own range. The chunk in hand
-	// covers [chunkStart, chunkEnd), a nil chunkEnd meaning the range's end and
-	// a nil chunkStart that no chunk is in hand; the next one starts at resume,
-	// unless exhausted says the range holds no key past the chunk in hand.
+	// tree is the cloned key tree the cursor takes its chunks from, which no
+	// writer touches. rangeStart and rangeEnd are the scan's own range. The
+	// chunk in hand covers [chunkStart, chunkEnd), a nil chunkEnd meaning the
+	// range's end and a nil chunkStart that no chunk is in hand; the next one
+	// starts at resume, unless exhausted says the range holds no key past the
+	// chunk in hand.
 	tree         *btree.BTreeG[string]
 	rangeStart   []byte
 	rangeEnd     string
@@ -652,6 +615,23 @@ type memoryIterator struct {
 	hasDatom     bool
 	err          error
 	closed       bool
+}
+
+// chunkedMemoryIterator walks run's range of index's keys on keys, a chunk
+// at a time as its consumer pulls, decoding datoms through encoder and
+// blobs.
+func chunkedMemoryIterator(index IndexType, run EncodedRun, keys *btree.BTreeG[string], encoder *BinaryKeyEncoder, blobs BlobReader) *memoryIterator {
+	return &memoryIterator{
+		index:      index,
+		position:   -1,
+		membership: run.Membership,
+		tree:       keys,
+		rangeStart: run.Start,
+		rangeEnd:   string(run.End),
+		resume:     string(run.Start),
+		encoder:    encoder,
+		blobs:      blobs,
+	}
 }
 
 // positioned reports whether the cursor is on a key this scan may expose: a key
@@ -668,11 +648,10 @@ func (i *memoryIterator) positioned() bool {
 }
 
 // refill replaces the chunk in hand with the next chunk of the range, starting
-// at resume, and puts the cursor on its first key. It reports false when there
-// is no tree to take a chunk from, and when the range holds no key past the
-// chunk in hand.
+// at resume, and puts the cursor on its first key. It reports false when the
+// range holds no key past the chunk in hand.
 func (i *memoryIterator) refill() bool {
-	if i.tree == nil || i.exhausted {
+	if i.exhausted {
 		return false
 	}
 	i.keys = i.keys[:0]
@@ -792,7 +771,7 @@ func (i *memoryIterator) Seek(bound ScanBound) {
 	i.membership = run.Membership
 	i.end = run.End
 	i.hasDatom = false
-	if i.tree != nil && !i.chunkHolds(run.Start) {
+	if !i.chunkHolds(run.Start) {
 		// The run starts outside the chunk in hand, so the next refill takes
 		// its chunk from the tree at the run's start, inside the scan's range.
 		i.keys = i.keys[:0]

@@ -62,6 +62,9 @@ func (it *ProjectIterator) Tuple() Tuple {
 	return it.current
 }
 
+// RequiresCopy is false: Next builds a fresh slice per projected tuple.
+func (it *ProjectIterator) RequiresCopy() bool { return false }
+
 // Close releases any resources
 func (it *ProjectIterator) Close() error {
 	if it.source != nil {
@@ -121,6 +124,9 @@ func (it *PredicateFilterIterator) Next() bool {
 func (it *PredicateFilterIterator) Tuple() Tuple {
 	return it.current
 }
+
+// RequiresCopy is the source's: Tuple hands back the source's own tuple.
+func (it *PredicateFilterIterator) RequiresCopy() bool { return it.source.RequiresCopy() }
 
 // Close releases any resources
 func (it *PredicateFilterIterator) Close() error {
@@ -253,6 +259,12 @@ func (it *FunctionEvaluatorIterator) Tuple() Tuple {
 	return it.current
 }
 
+// RequiresCopy is the source's when the iterator unifies, false when it
+// extends.
+func (it *FunctionEvaluatorIterator) RequiresCopy() bool {
+	return it.existingIdx >= 0 && it.source.RequiresCopy()
+}
+
 // Close releases any resources
 func (it *FunctionEvaluatorIterator) Close() error {
 	return it.source.Close()
@@ -305,6 +317,12 @@ func (it *DedupIterator) Next() bool {
 // Tuple returns the current tuple
 func (it *DedupIterator) Tuple() Tuple {
 	return it.current
+}
+
+// RequiresCopy is false when the iterator copies each admitted tuple, and
+// the source's otherwise.
+func (it *DedupIterator) RequiresCopy() bool {
+	return !it.copyTuples && it.source.RequiresCopy()
 }
 
 // Close releases any resources

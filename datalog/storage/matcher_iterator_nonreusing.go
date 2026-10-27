@@ -118,6 +118,10 @@ func (it *nonReusingIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
 
+// RequiresCopy is true: Tuple hands back the one workspace Next builds
+// every tuple into, which the next pull overwrites.
+func (it *nonReusingIterator) RequiresCopy() bool { return true }
+
 func (it *nonReusingIterator) Close() error {
 	var err error
 	if it.currentScan != nil {

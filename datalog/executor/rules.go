@@ -170,6 +170,8 @@ func (it *invocationIterator) Next() bool {
 
 func (it *invocationIterator) Tuple() Tuple { return it.current }
 
+func (it *invocationIterator) RequiresCopy() bool { return it.asIs && it.inner.RequiresCopy() }
+
 func (it *invocationIterator) Close() error { return it.inner.Close() }
 
 func (it *invocationIterator) Error() error { return it.inner.Error() }

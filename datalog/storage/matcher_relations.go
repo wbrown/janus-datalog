@@ -1179,6 +1179,10 @@ func (it *validatingVBoundIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
 
+// RequiresCopy is false: BuildTupleInterned builds a fresh tuple per
+// emitted candidate and per unique winner.
+func (it *validatingVBoundIterator) RequiresCopy() bool { return false }
+
 func (it *validatingVBoundIterator) Close() error {
 	if it.crdtIter != nil {
 		it.crdtIter.Close()
@@ -2163,6 +2167,9 @@ func (it *cardinalityManyScanAllEntitiesIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
 
+// RequiresCopy is false: Next makes a fresh tuple per set member.
+func (it *cardinalityManyScanAllEntitiesIterator) RequiresCopy() bool { return false }
+
 func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
 	if it.storageIter == nil {
 		return nil
@@ -2325,6 +2332,9 @@ func (it *vectorScanAllEntitiesIterator) Next() bool {
 func (it *vectorScanAllEntitiesIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
+
+// RequiresCopy is false: Next makes a fresh tuple per matching entity.
+func (it *vectorScanAllEntitiesIterator) RequiresCopy() bool { return false }
 
 func (it *vectorScanAllEntitiesIterator) Close() error {
 	if it.storageIter == nil {
@@ -2552,6 +2562,9 @@ func (it *cardinalityManyAVETValueIterator) buildTuple() {
 func (it *cardinalityManyAVETValueIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
+
+// RequiresCopy is false: buildTuple makes a fresh tuple per member entity.
+func (it *cardinalityManyAVETValueIterator) RequiresCopy() bool { return false }
 
 func (it *cardinalityManyAVETValueIterator) Close() error {
 	if it.storageIter == nil {

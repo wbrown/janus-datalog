@@ -80,6 +80,10 @@ func (it *BufferedIterator) Tuple() Tuple {
 	return nil
 }
 
+// RequiresCopy is false: Tuple hands back the copy the buffer keeps, which
+// no pull writes.
+func (it *BufferedIterator) RequiresCopy() bool { return false }
+
 // Reset allows re-iteration from the beginning
 func (it *BufferedIterator) Reset() {
 	it.mu.Lock()
@@ -178,6 +182,10 @@ func (it *bufferedSliceIterator) Tuple() Tuple {
 	}
 	return nil
 }
+
+// RequiresCopy is false: Tuple hands back the buffer's own copy, which no
+// pull writes.
+func (it *bufferedSliceIterator) RequiresCopy() bool { return false }
 
 func (it *bufferedSliceIterator) Close() error {
 	return nil

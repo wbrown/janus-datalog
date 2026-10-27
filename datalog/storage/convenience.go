@@ -23,7 +23,9 @@ var queryGetAttr = func() *query.Query {
 
 // Query executes a Datalog query and returns a streaming Relation.
 // The caller should iterate via rel.Iterator() and must call iter.Close()
-// when done.
+// when done. A registered handler sees the query invoked once and completed
+// once: refused or failed before the result exists, or, for a query that
+// runs, when the result's iterator is exhausted or closed.
 func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executor.Relation, error) {
 	return d.queryUnderPlannerOptions(d.effectivePlannerOptions(), queryInput, inputs...)
 }
@@ -45,15 +47,21 @@ func (d *Database) queryUnderPlannerOptions(
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// A handler sees every query the database is asked. A query refused here,
-	// after it is resolved and before the executor's entry, is reported as the
-	// executor reports a query it refuses: invoked, with the query as received,
-	// then completed with the refusal. A query that reaches ExecuteWithRelations
-	// is reported there.
+	// A handler sees every query the database is asked, invoked once and
+	// completed once. A query refused here, after it is resolved and before
+	// the executor's entry, is reported as the executor reports a query it
+	// refuses: invoked, with the query as received, then completed with the
+	// refusal. A query that reaches ExecuteWithRelations is reported invoked
+	// there, and completed there when it is refused or fails in execution. A
+	// query that runs completes where it ends: its session-bound result
+	// reports the completion, with the tuples drained, when its iterator is
+	// exhausted or closed.
 	handler := planOpts.Handler
 	var queryStart time.Time
+	var completion *queryCompletion
 	if handler != nil {
 		queryStart = time.Now()
+		completion = &queryCompletion{handler: handler, start: queryStart}
 	}
 	refused := func(err error) (executor.Relation, error) {
 		if handler != nil {
@@ -110,7 +118,7 @@ func (d *Database) queryUnderPlannerOptions(
 		return nil, fmt.Errorf("query execution failed: %w", err)
 	}
 
-	return newSessionBoundRelation(result, session), nil
+	return newSessionBoundRelation(result, session, completion), nil
 }
 
 // sessionMatcher mints the default-source matcher with a fresh read session

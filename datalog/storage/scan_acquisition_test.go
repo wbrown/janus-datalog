@@ -28,11 +28,9 @@ import (
 // derivations behind them, which answer by scanning the store they are part of.
 // These sit below the layer a report lives at — routing them through an opener
 // would be a store calling a module-level function to call itself, and there is
-// no arm on whose behalf they read. A sixth such function reds this test, which
+// no arm on whose behalf they read. A fourth such function reds this test, which
 // is the point: the category is narrow and named, not open.
 var acquisitionsOutsideTheOpeners = map[string]string{
-	"MaxElementID":         "MemoryStore answering its own interface method",
-	"MaxTxForEntity":       "MemoryStore answering its own interface method",
 	"DatomsAfter":          "MemoryStore answering its own interface method",
 	"maxElementIDByScan":   "shared derivation behind MaxElementID",
 	"maxTxForEntityByScan": "shared derivation behind MaxTxForEntity",

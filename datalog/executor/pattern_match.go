@@ -187,6 +187,9 @@ func (it *datomIterator) Tuple() Tuple {
 	return it.current
 }
 
+// RequiresCopy is false: DatomToTuple builds a fresh tuple per datom.
+func (it *datomIterator) RequiresCopy() bool { return false }
+
 func (it *datomIterator) Close() error {
 	return nil
 }
