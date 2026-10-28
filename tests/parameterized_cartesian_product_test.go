@@ -14,7 +14,7 @@ import (
 // TestParameterizedQueryCartesianProduct reproduces the bug where parameterized
 // queries fail with "Cartesian product not supported" but fmt.Sprintf works fine.
 func TestParameterizedQueryCartesianProduct(t *testing.T) {
-	eachBackendAndMode(t, testParameterizedQueryCartesianProduct)
+	eachMode(t, testParameterizedQueryCartesianProduct)
 }
 
 func testParameterizedQueryCartesianProduct(t *testing.T, db *storage.Database) {

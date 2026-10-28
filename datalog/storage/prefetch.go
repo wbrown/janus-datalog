@@ -24,7 +24,7 @@ import (
 // prefetch being an optimization does not make store failures ignorable.
 // Groups cached before the failure hold valid data.
 func (m *PatternMatcher) PrefetchEntities(entities []datalog.Identity) error {
-	if m.cache == nil || len(entities) == 0 || m.isHistoryMode() {
+	if m.cache == nil || len(entities) == 0 || m.mode == historyMode {
 		return nil
 	}
 

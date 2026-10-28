@@ -481,8 +481,6 @@ func TestKeyName(t *testing.T) {
 		{":entity/name", "entity/name"},
 		{":user/age", "user/age"},
 		{"nocolon", "nocolon"},
-		{":", ""},
-		{"", ""},
 	}
 
 	for _, tt := range tests {

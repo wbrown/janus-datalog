@@ -31,7 +31,7 @@ func TestAbortedScanReportsThatItDidNotFinish(t *testing.T) {
 	require.NoError(t, err)
 
 	injected := fmt.Errorf("simulated AEVT scan failure")
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		for name, failing := range scanFailureShapes(injected) {
 			t.Run(mode.name+"/"+name, func(t *testing.T) {
 				// The matcher below is the thing under test and is built with the
@@ -87,7 +87,7 @@ func TestAbortedScanReportsThatItDidNotFinish(t *testing.T) {
 // TestCompletedScanSaysSo is the other half: without it, an arm could hardcode
 // the aborted answer and the test above would still pass.
 func TestCompletedScanSaysSo(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			testCompletedScanSaysSo(t, mode)
 		})

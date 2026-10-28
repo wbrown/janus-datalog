@@ -21,21 +21,48 @@ import (
 // a test pinning one mode sets EnableAlgebraOptimizer explicitly instead of
 // looping the axis.
 //
+// The optimizer paths cross with a backend, and a test's subject decides
+// which. A test of the engine, which is planning, execution, resolution, the
+// cache and the language, runs on optimizerModes: the tree store alone,
+// since the backend supplies a scan bound's datoms in index order and nothing
+// else, and TestStoreBackendContract pins that at the seam for every backend.
+// A test of the store, what it persists or how it reads, runs on
+// backendModes: every backend the build has.
+// TestBadgerAnswersWhatTheTreeStoreAnswersAndAgainAfterReopen runs the
+// engine's query shapes on Badger once.
+//
 // Plan of record: docs/wip/OPTIMIZER_MODE_MATRIX.md
 // =============================================================================
 
 // optimizerMode is one leg of the matrix: a storage backend crossed with an
-// optimizer path. Backends come from AvailableBackends, so a backend this build
-// has is one every executing test on this axis runs against.
+// optimizer path.
 type optimizerMode struct {
 	name    string
 	algebra bool
 	backend Backend
 }
 
-var optimizerModes = buildOptimizerModes()
+// optimizerModes is the engine axis: the tree store crossed with the two
+// optimizer paths.
+var optimizerModes = buildOptimizerModes(engineBackends())
 
-func buildOptimizerModes() []optimizerMode {
+// backendModes is the store axis: every backend this build has crossed with
+// the two optimizer paths, for a test of persistence and reopen, dumps,
+// snapshots, truncation, forks, read sessions, scan intake, index order, the
+// key layout or the blob tier.
+var backendModes = buildOptimizerModes(AvailableBackends())
+
+// engineBackends is the backend the engine axis runs on: the tree store,
+// which every build has.
+func engineBackends() []Backend {
+	backend, err := BackendNamed("memory-trees")
+	if err != nil {
+		panic(err)
+	}
+	return []Backend{backend}
+}
+
+func buildOptimizerModes(backends []Backend) []optimizerMode {
 	algebraLegs := []struct {
 		name string
 		on   bool
@@ -43,7 +70,6 @@ func buildOptimizerModes() []optimizerMode {
 		{"algebra_on", true},
 		{"algebra_off", false},
 	}
-	backends := AvailableBackends()
 	modes := make([]optimizerMode, 0, len(backends)*len(algebraLegs))
 	for _, backend := range backends {
 		for _, algebra := range algebraLegs {
@@ -57,20 +83,20 @@ func buildOptimizerModes() []optimizerMode {
 	return modes
 }
 
-// pinnedOptimizerModes is the axis with one optimizer path fixed — still one
-// leg per backend, because pinning a plan shape does not pin a store.
-func pinnedOptimizerModes(algebra bool) []optimizerMode {
-	var modes []optimizerMode
-	for _, mode := range optimizerModes {
+// pinned is an axis with one optimizer path fixed — still one leg per
+// backend, because pinning a plan shape does not pin a store.
+func pinned(modes []optimizerMode, algebra bool) []optimizerMode {
+	var legs []optimizerMode
+	for _, mode := range modes {
 		if mode.algebra == algebra {
-			modes = append(modes, mode)
+			legs = append(legs, mode)
 		}
 	}
-	return modes
+	return legs
 }
 
 // byteKeyBackends is the axis for a test whose subject is the binary key
-// encoding rather than the engine. Badger and MemoryStore both hold encoded
+// encoding rather than the engine. Badger and BadgerEmulatorStore both hold encoded
 // index keys and decode them into an iterator-owned workspace; MemoryTreeStore
 // hands out the datom it already holds, so a property of that workspace — the
 // key layout, or anything downstream of it such as the out-of-line value tier
@@ -81,9 +107,9 @@ func pinnedOptimizerModes(algebra bool) []optimizerMode {
 func byteKeyBackends(t *testing.T) []optimizerMode {
 	t.Helper()
 	var modes []optimizerMode
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		switch mode.backend.Name {
-		case "badger", "memory":
+		case "badger", "badger-emulator":
 			modes = append(modes, mode)
 		case "memory-trees":
 		default:

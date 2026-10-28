@@ -71,6 +71,7 @@ func newQueryExecutor(matcher PatternMatcher, resolver EntityResolver, options E
 		entityResolver: resolver,
 		planner:        planner.CreatePlanner(nil, plannerOptions),
 		options:        options,
+		unit:           NewUnitRelation(options),
 	}
 	return executor.queryExecutor(nil)
 }
@@ -323,7 +324,7 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 			}
 			unread = append(unread, group)
 		}
-		verdict, verdictErr := existenceVerdict(unread, e.options)
+		verdict, verdictErr := existenceVerdict(unread, e.executor.unit)
 		if verdictErr != nil {
 			return nil, verdictErr
 		}
@@ -436,13 +437,13 @@ func (e *DefaultQueryExecutor) Execute(ctx *Context, q *query.Query, inputs []Re
 	}
 }
 
-// existenceVerdict is the verdict over groups a find does not read: the
-// unit relation, one tuple over no symbol, when each group has a tuple,
-// nothing when one has none, and a group's scan failure as its error. The
-// find boundary takes it over the groups the find does not consume, and a
-// phase whose fragment finds nothing takes it over every group, the schema
+// existenceVerdict is the verdict over groups a find does not read: unit,
+// the executor's relation of one tuple over no symbol, when each group has a
+// tuple, nothing when one has none, and a group's scan failure as its error.
+// The find boundary takes it over the groups the find does not consume, and
+// a phase whose fragment finds nothing takes it over every group, the schema
 // a phase providing nothing declares.
-func existenceVerdict(groups []Relation, options ExecutorOptions) ([]Relation, error) {
+func existenceVerdict(groups []Relation, unit *MaterializedRelation) ([]Relation, error) {
 	for _, group := range groups {
 		has, err := hasTuple(group)
 		if err != nil {
@@ -452,7 +453,7 @@ func existenceVerdict(groups []Relation, options ExecutorOptions) ([]Relation, e
 			return []Relation{}, nil
 		}
 	}
-	return []Relation{NewUnitRelation(options)}, nil
+	return []Relation{unit}, nil
 }
 
 // renderConstantFindSymbols extends one relation group with find-consumed
@@ -1125,7 +1126,7 @@ func (e *DefaultQueryExecutor) executePredicate(ctx *Context, pred query.Predica
 		}
 		subject := env
 		if subject == nil {
-			subject = NewUnitRelation(e.options)
+			subject = e.executor.unit
 		}
 		verdict, err := filterWithPredicateAndLookup(subject, pred, lookup, nil)
 		if err != nil {
@@ -1453,7 +1454,7 @@ func applyFindPulls(
 // (docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md §4.2).
 func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, groups Relations) (Relation, []int) {
 	if len(groups) == 0 || len(neededSymbols) == 0 {
-		return NewUnitRelation(e.options), nil
+		return e.executor.unit, nil
 	}
 
 	var consumed []int
@@ -1463,7 +1464,7 @@ func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, g
 		}
 	}
 	if len(consumed) == 0 {
-		return NewUnitRelation(e.options), nil
+		return e.executor.unit, nil
 	}
 	if len(consumed) == 1 {
 		return groups[consumed[0]], consumed

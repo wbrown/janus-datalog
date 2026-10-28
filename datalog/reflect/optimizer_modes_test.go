@@ -30,8 +30,9 @@ import (
 // =============================================================================
 
 // optimizerMode is one leg of the matrix: a storage backend crossed with an
-// optimizer path. Backends come from storage.AvailableBackends, so a backend
-// this build has is one every executing test in this package runs against.
+// optimizer path. Every test in this package is a test of the engine, so the
+// backend is the tree store alone, which every build has: the backend
+// supplies a scan bound's datoms in index order and nothing else.
 type optimizerMode struct {
 	name    string
 	algebra bool
@@ -48,7 +49,11 @@ func buildOptimizerModes() []optimizerMode {
 		{"algebra_on", true},
 		{"algebra_off", false},
 	}
-	backends := storage.AvailableBackends()
+	trees, err := storage.BackendNamed("memory-trees")
+	if err != nil {
+		panic(err)
+	}
+	backends := []storage.Backend{trees}
 	modes := make([]optimizerMode, 0, len(backends)*len(algebraLegs))
 	for _, backend := range backends {
 		for _, algebra := range algebraLegs {

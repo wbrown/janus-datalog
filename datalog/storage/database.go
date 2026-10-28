@@ -3,7 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
-	"math"
+	"io"
 	"math/rand/v2"
 	"os"
 	"reflect"
@@ -90,7 +90,13 @@ type Database struct {
 	replicaID      uint64                  // CRDT: This database's replica identifier
 	cache          *Cache                  // CRDT: Unified cache for resolved CRDT views
 	builderCache   *tupleBuilderCache      // Shared tuple-builder population for every matcher this database mints
-	temporalTxID   *datalog.ElementID      // nil = current; set = temporal mode (AsOf/History)
+	// mode is which view of the store this handle reads, and asOf is the
+	// target of an as-of view, zero in the other two modes. A handle in
+	// either temporal mode is read-only: it opens no transaction, declares no
+	// schema, takes no snapshot, forks no branch and rewinds nothing, and
+	// Close leaves the store to the parent.
+	mode temporalMode
+	asOf datalog.ElementID
 
 	// removePath, when non-empty, is scratch space this database owns: Close
 	// removes it once the store has released its files.
@@ -161,7 +167,7 @@ type DatabaseOptions struct {
 	BackendName string
 	// Path is the directory holding a persistent backend's data. The build
 	// default is the one case where a path can go unhonored: under js/wasm
-	// DefaultBackend is the memory store, and portable code that opens by path
+	// DefaultBackend is MemoryTreeStore, and portable code that opens by path
 	// gets an in-process database rather than an error, because the caller asked
 	// for a location and the build chose what answers.
 	Path string
@@ -184,7 +190,15 @@ type DatabaseOptions struct {
 	// directory once the store has released its files. For a caller that made
 	// scratch space to hold data that came from somewhere else — a dump loaded
 	// into a persistent backend — rather than a location the data lives at.
+	// On a constructor error no database holds the path, and the caller that
+	// made the directory removes it, as db.Open does at its error return.
 	RemovePathOnClose bool
+	// Dump, when set, is an exported dump the constructor loads into the store
+	// it opened before it declares Schema, so the declarations the dump
+	// carries are read back and never declared a second time, and a
+	// load-and-export round trip under the writer's schema is byte-stable.
+	// The format is read from the dump's own bytes (replayDump).
+	Dump io.ReadSeeker
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -247,8 +261,8 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		}
 		// A caller who named an in-process backend and gave a path wrote two
 		// answers to one question. A caller who named none asked for the build's
-		// default and gets whatever this build has — under js/wasm that is the
-		// memory store, and rejecting the path there would break portable code
+		// default and gets whatever this build has — under js/wasm that is
+		// MemoryTreeStore, and rejecting the path there would break portable code
 		// over a choice the caller never made.
 		if named && !backend.Persistent && opts.Path != "" {
 			return nil, fmt.Errorf("backend %q holds its data in process: Path %q would be discarded and the data lost at Close", backend.Name, opts.Path)
@@ -354,6 +368,15 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	// The engine's schema is in force from construction, before any install.
 	d.installed.Store(&installedSchema{effective: engineSchema})
 
+	// A dump's datoms, its writer's declarations among them, go into the store
+	// before the install.
+	if opts.Dump != nil {
+		if err := d.replayDump(opts.Dump); err != nil {
+			closeOwnedStore()
+			return nil, fmt.Errorf("loading dump: %w", err)
+		}
+	}
+
 	// The store's definitions are read, a given schema declared into them, and
 	// the schema the database runs with composed from what the store states.
 	if err := d.installSchema(true); err != nil {
@@ -379,7 +402,7 @@ func (d *Database) Schema() schema.SchemaProvider {
 // Schema changes take effect for new transactions. A read-only temporal
 // handle has no store of its own to assert into and is refused.
 func (d *Database) SetSchema(s schema.SchemaProvider) error {
-	if d.temporalTxID != nil {
+	if d.mode != latestMode {
 		return fmt.Errorf("SetSchema: cannot declare a schema on a read-only temporal handle (AsOf/History)")
 	}
 	if s == nil && d.refuseUnknown {
@@ -497,10 +520,14 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 
 // GetVectorNth returns the nth element of a vector attribute.
 // Uses the cache for O(1) access when the cache is fresh.
-// Returns nil if index is out of bounds or attribute is not a vector. A
+// Returns nil if index is out of bounds or attribute is not a vector. An
+// attribute wider than storage holds is refused before any read, and a
 // database that refuses unknown attributes refuses an attribute its schema
-// does not declare before any read, as every typed accessor does.
+// does not declare, as every typed accessor does.
 func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) (any, error) {
+	if err := datalog.ValidateAttributeWidth(a); err != nil {
+		return nil, err
+	}
 	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
 		return nil, err
 	}
@@ -549,10 +576,14 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 
 // GetVectorLength returns the length of a vector attribute.
 // Uses the cache for O(1) access when the cache is fresh.
-// Returns 0 if the attribute is not a vector or doesn't exist. A database
-// that refuses unknown attributes refuses an attribute its schema does not
-// declare before any read, as every typed accessor does.
+// Returns 0 if the attribute is not a vector or doesn't exist. An attribute
+// wider than storage holds is refused before any read, and a database that
+// refuses unknown attributes refuses an attribute its schema does not
+// declare, as every typed accessor does.
 func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64, error) {
+	if err := datalog.ValidateAttributeWidth(a); err != nil {
+		return 0, err
+	}
 	if err := d.UnknownAttributes(datalog.SymDollar, []datalog.Keyword{a}); err != nil {
 		return 0, err
 	}
@@ -600,7 +631,7 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 // views share the parent's store and have no write-side state; use the
 // parent handle for writes.
 func (d *Database) NewTransaction() *Transaction {
-	if d.temporalTxID != nil {
+	if d.mode != latestMode {
 		panic("NewTransaction called on a read-only temporal database handle (AsOf/History); use the parent handle for writes")
 	}
 	d.mu.Lock()
@@ -693,7 +724,7 @@ var _ executor.AttributeVocabulary = (*Database)(nil)
 // It supports reads (Query, NewExecutor, NewExecutorWithOptions, Matcher, Pull)
 // but not writes: NewTransaction will panic. Close is a no-op — the parent
 // owns the store lifetime.
-func (d *Database) AsOf(txID datalog.ElementID) *Database {
+func (d *Database) AsOf(target datalog.ElementID) *Database {
 	// Field dispositions (inherit / zero / per-handle) are the ruled contract
 	// pinned by TestTemporalHandleFieldClassification — a new Database field
 	// must be classified there before it can ship.
@@ -709,7 +740,8 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 		builderCache:   d.builderCache,
 		clock:          d.clock,
 		replicaID:      d.replicaID,
-		temporalTxID:   &txID,
+		mode:           asOfMode,
+		asOf:           target,
 	}
 	handle.installed.Store(d.installed.Load())
 	return handle
@@ -725,7 +757,6 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 func (d *Database) History() *Database {
 	// Field dispositions are the ruled contract pinned by
 	// TestTemporalHandleFieldClassification (see AsOf above).
-	empty := datalog.ElementID{}
 	handle := &Database{
 		store:          d.store,
 		encoder:        d.encoder,
@@ -738,7 +769,7 @@ func (d *Database) History() *Database {
 		builderCache:   d.builderCache,
 		clock:          d.clock,
 		replicaID:      d.replicaID,
-		temporalTxID:   &empty,
+		mode:           historyMode,
 	}
 	handle.installed.Store(d.installed.Load())
 	return handle
@@ -807,9 +838,8 @@ func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.
 	if d.cache != nil {
 		matcher.SetCache(d.cache)
 	}
-	if d.temporalTxID != nil {
-		return matcher.AsOf(*d.temporalTxID)
-	}
+	matcher.mode = d.mode
+	matcher.asOf = d.asOf
 	return matcher
 }
 
@@ -824,7 +854,7 @@ func (d *Database) Store() Store {
 // the store lifetime. Closing a temporal handle must not close the shared
 // underlying store.
 func (d *Database) Close() error {
-	if d.temporalTxID != nil {
+	if d.mode != latestMode {
 		return nil // Read-only view; parent owns the store.
 	}
 
@@ -1260,7 +1290,7 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 
 	// Execute on Query's own path, so every storage read of the evaluation, a
 	// rule fixpoint's iterations included, observes one read session.
-	result, err := d.queryUnderPlannerOptions(opts, q, inputs...)
+	_, result, err := d.queryUnderPlannerOptions(opts, q, inputs...)
 	if err != nil {
 		return nil, err
 	}
@@ -1326,7 +1356,7 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 //
 //	var stats []DeptStats
 //	err := db.QueryInto(&stats, `[:find ?dept (sum ?salary) :where [?e :employee/dept ?dept] [?e :employee/salary ?salary]]`)
-func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ...interface{}) error {
+func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ...interface{}) (err error) {
 	// Validate dest is *[]T
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr {
@@ -1344,17 +1374,19 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		elemType = elemType.Elem()
 	}
 
-	// Resolve the query (string or *query.Query)
-	q, err := d.resolveQuery(queryInput)
-	if err != nil {
-		return fmt.Errorf("failed to resolve query: %w", err)
-	}
-
-	// Execute query as streaming relation
-	rel, err := d.Query(q, inputs...)
+	// Execute query as streaming relation, taking the query the entry
+	// resolved for the find symbols below. The result ends on every return,
+	// a refused destination's included.
+	q, rel, err := d.queryUnderPlannerOptions(d.effectivePlannerOptions(), queryInput, inputs...)
 	if err != nil {
 		return err
 	}
+	iter := rel.Iterator()
+	defer func() {
+		if cerr := iter.Close(); err == nil {
+			err = cerr
+		}
+	}()
 	// Check if element type is a struct or scalar
 	// time.Time and Keyword are structs but treated as scalars
 	// Identity is a pointer type alias and goes through scalar path automatically
@@ -1367,17 +1399,16 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		}
 
 		newSlice := reflect.MakeSlice(sliceVal.Type(), 0, 0)
-		// ForEach surfaces iterator errors (decode/blob/CRDT failures deferred
-		// to Error()) instead of letting them look like a complete result.
-		if ferr := executor.ForEach(rel, func(t executor.Tuple) error {
+		// The iterator's deferred errors (decode/blob/CRDT failures) surface.
+		for iter.Next() {
 			elem := reflect.New(elemType).Elem()
-			if err := mapper.MapTuple(t, elem); err != nil {
+			if err := mapper.MapTuple(iter.Tuple(), elem); err != nil {
 				return err
 			}
 			newSlice = reflect.Append(newSlice, elem)
-			return nil
-		}); ferr != nil {
-			return ferr
+		}
+		if err := iter.Error(); err != nil {
+			return err
 		}
 		sliceVal.Set(newSlice)
 		return nil
@@ -1389,9 +1420,10 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 	}
 
 	newSlice := reflect.MakeSlice(sliceVal.Type(), 0, 0)
-	if ferr := executor.ForEach(rel, func(tuple executor.Tuple) error {
+	for iter.Next() {
+		tuple := iter.Tuple()
 		if len(tuple) == 0 {
-			return nil
+			continue
 		}
 		elemVal := reflect.New(elemType).Elem()
 		if err := setScalarValue(elemVal, tuple[0]); err != nil {
@@ -1404,9 +1436,9 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		} else {
 			newSlice = reflect.Append(newSlice, elemVal)
 		}
-		return nil
-	}); ferr != nil {
-		return ferr
+	}
+	if err := iter.Error(); err != nil {
+		return err
 	}
 	sliceVal.Set(newSlice)
 	return nil
@@ -1437,14 +1469,9 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 	elemVal := destVal.Elem()
 	elemType := elemVal.Type()
 
-	// Resolve the query (string or *query.Query)
-	q, err := d.resolveQuery(queryInput)
-	if err != nil {
-		return false, fmt.Errorf("failed to resolve query: %w", err)
-	}
-
-	// Execute query as streaming relation
-	rel, err := d.Query(q, inputs...)
+	// Execute query as streaming relation, taking the query the entry
+	// resolved for the find symbols below.
+	q, rel, err := d.queryUnderPlannerOptions(d.effectivePlannerOptions(), queryInput, inputs...)
 	if err != nil {
 		return false, err
 	}
@@ -2074,9 +2101,6 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 	// Normalize integer width to canonical int64 at the API boundary.
 	v = datalog.NormalizeValue(v)
-	if err := validateValueStorable(a, v); err != nil {
-		return err
-	}
 
 	// Check cardinality first - determines validation strategy
 	card := schema.CardinalityOne
@@ -2088,6 +2112,9 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 	switch card {
 	case schema.CardinalityOne:
+		if err := validateValueStorable(a, v); err != nil {
+			return err
+		}
 		// Schema validation for single value
 		if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
 			return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
@@ -2118,8 +2145,11 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 		}
 
-		// Schema validation for each element in the slice
+		// Each element is one datom's value.
 		for _, val := range newSlice {
+			if err := validateValueStorable(a, val); err != nil {
+				return err
+			}
 			if err := schema.ValidateDatom(t.db.Schema(), a, val); err != nil {
 				return fmt.Errorf("schema validation failed for %s element: %w", a.String(), err)
 			}
@@ -2240,8 +2270,11 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 		}
 
-		// Schema validation for each element in the slice
+		// Each element is one datom's value.
 		for _, val := range newSlice {
+			if err := validateValueStorable(a, val); err != nil {
+				return err
+			}
 			if err := schema.ValidateDatom(t.db.Schema(), a, val); err != nil {
 				return fmt.Errorf("schema validation failed for %s element: %w", a.String(), err)
 			}
@@ -2445,7 +2478,11 @@ func (t *Transaction) AddMap(attrs map[string]interface{}) (datalog.Identity, er
 	// Convert string keys to keywords and add
 	kwAttrs := make(map[datalog.Keyword]interface{})
 	for k, v := range attrs {
-		kwAttrs[datalog.NewKeyword(k)] = v
+		kw, err := datalog.ParseKeyword(k)
+		if err != nil {
+			return nil, err
+		}
+		kwAttrs[kw] = v
 	}
 
 	if err := t.AddEntity(e, kwAttrs); err != nil {
@@ -2709,13 +2746,15 @@ func (d *Database) Stats() (map[string]interface{}, error) {
 	return stats, nil
 }
 
-// convertInputValue admits one user input value for one symbol: it applies
-// the entity- and attribute-position typing rules, then normalizes the value
-// into the domain (integer widths → int64). Every input form converts its
-// values through here.
+// convertInputValue admits one user input value for one symbol: it refuses a
+// value outside the domain, applies the entity- and attribute-position typing
+// rules, refuses a keyword bound into an attribute position that is wider
+// than storage holds, then normalizes the value into the domain (integer
+// widths → int64). Every input form converts its values through here, once
+// per value, so the width is never read on a match.
 func convertInputValue(entityBound, attrBound map[query.Symbol]bool, sym query.Symbol, value interface{}) (interface{}, error) {
-	if containsNaN(value) {
-		return nil, fmt.Errorf("input %s is NaN, which is not a datalog value", sym)
+	if err := datalog.ValidateValue(value); err != nil {
+		return nil, fmt.Errorf("input %s: %w", sym, err)
 	}
 	if entityBound[sym] {
 		if err := query.ValidateEntityBinding(value); err != nil {
@@ -2725,6 +2764,11 @@ func convertInputValue(entityBound, attrBound map[query.Symbol]bool, sym query.S
 	if attrBound[sym] {
 		if err := query.ValidateAttributeBinding(value); err != nil {
 			return nil, fmt.Errorf("input %s: %w", sym, err)
+		}
+		if attr, ok := value.(datalog.Keyword); ok {
+			if err := datalog.ValidateAttributeWidth(attr); err != nil {
+				return nil, fmt.Errorf("input %s: %w", sym, err)
+			}
 		}
 	}
 	return datalog.NormalizeValue(value), nil
@@ -2755,36 +2799,15 @@ func reflectValues(slice reflect.Value) []interface{} {
 	return values
 }
 
-// containsNaN reports whether v is NaN or a slice containing one. NaN is not
-// a datalog value — it is not self-equal under IEEE comparison, so no
-// container law (set membership, LWW resolution, join equality) can hold for
-// it — and every boundary where a float enters relational flow rejects it.
-// ±Inf is a value: self-equal and totally ordered.
-func containsNaN(v interface{}) bool {
-	switch val := v.(type) {
-	case float64:
-		return math.IsNaN(val)
-	case []interface{}:
-		for _, elem := range val {
-			if containsNaN(elem) {
-				return true
-			}
-		}
-	case []float64:
-		for _, elem := range val {
-			if math.IsNaN(elem) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// validateValueStorable rejects values outside the storable domain at the
-// transaction write boundary.
+// validateValueStorable rejects, at the transaction write boundary, a value
+// that is not one datom's: a value outside the domain, or a vector, which a
+// vector attribute holds as its elements, one datom each. It is asked of each
+// datom's value a write appends: the value given to Add, Remove and Retract,
+// and to Set under cardinality one; each element of the slice given to Set
+// under cardinality many or vector.
 func validateValueStorable(a datalog.Keyword, v interface{}) error {
-	if containsNaN(v) {
-		return fmt.Errorf("NaN is not a datalog value and cannot be stored for attribute %s", a.String())
+	if err := datalog.ValidateDatomValue(v); err != nil {
+		return fmt.Errorf("attribute %s: %w", a, err)
 	}
 	return nil
 }
@@ -3053,9 +3076,13 @@ func (d *Database) PullMany(entityIDs []datalog.Identity, patternStr string) ([]
 }
 
 // pullMatcher mints the default-source matcher for a pull and refuses, before
-// anything executes, the attributes the pattern names that the schema does
-// not declare: the check a query gets at execution entry.
+// anything executes, an attribute the pattern names that is wider than
+// storage holds, and the attributes it names that the schema does not
+// declare: the checks a query gets at validation and at execution entry.
 func (d *Database) pullMatcher(pattern *query.PullPattern) (executor.PatternMatcher, error) {
+	if err := pattern.Validate(); err != nil {
+		return nil, err
+	}
 	// matcherWithExecOptions constructs *PatternMatcher in both its arms
 	// (fresh, or the AsOf copy for temporal handles).
 	matcher := d.Matcher().(*PatternMatcher)
@@ -3077,10 +3104,16 @@ func (d *Database) pullMatcher(pattern *query.PullPattern) (executor.PatternMatc
 // - If many missing: full EAVT scan then resolve
 //
 // Returns a map of keyword -> resolved value. Missing attributes are not included.
-// A database that refuses unknown attributes refuses every attribute asked
-// that its schema does not declare, joined in order, before any read, as
+// An attribute asked that is wider than storage holds is refused before any
+// read, and a database that refuses unknown attributes refuses every
+// attribute asked that its schema does not declare, joined in order, as
 // every typed accessor does.
 func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []datalog.Keyword) (map[datalog.Keyword]interface{}, error) {
+	for _, attr := range attrs {
+		if err := datalog.ValidateAttributeWidth(attr); err != nil {
+			return nil, err
+		}
+	}
 	if err := d.UnknownAttributes(datalog.SymDollar, attrs); err != nil {
 		return nil, err
 	}
@@ -3106,7 +3139,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 	// requirement. When DisableCache is set, query the matcher directly for
 	// each attribute. The matcher applies CRDT resolution via
 	// CRDTResolvingIterator when no cache is set.
-	if d.cache == nil || matcher.isHistoryMode() {
+	if d.cache == nil || matcher.mode == historyMode {
 		for _, kw := range attrs {
 			card := schema.CardinalityOne
 			if s != nil {
@@ -3195,7 +3228,7 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 	// streaming relation, tuple builders). History mode falls through to
 	// Match for raw datom reads — except cache-off vector reads, which
 	// return the RGA-resolved vector.
-	if !matcher.isHistoryMode() || (card == schema.CardinalityVector && d.cache == nil) {
+	if matcher.mode != historyMode || (card == schema.CardinalityVector && d.cache == nil) {
 		value, found, err := matcher.LookupAttribute(entity, attr)
 		if err != nil || !found {
 			return nil, err
@@ -3352,7 +3385,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	// reads keep the discovery-then-resolve path. Discovery reads only the
 	// attribute span of each key — values stay undecoded and Tier-3 blobs
 	// are never dereferenced.
-	if matcher.isHistoryMode() {
+	if matcher.mode == historyMode {
 		encoder := d.encoder
 
 		bound = ScanBound{Index: EAVT, Prefix: []datalog.Value{entity}}

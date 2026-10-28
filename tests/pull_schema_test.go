@@ -20,7 +20,7 @@ func TestPullResolvedCardinalityMany(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	eachBackendAndModeOpts(t, storage.DatabaseOptions{Schema: s}, func(t *testing.T, db *storage.Database) {
+	eachModeOpts(t, storage.DatabaseOptions{Schema: s}, func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("alice")
 		name := datalog.NewKeyword(":person/name")
 		tags := datalog.NewKeyword(":person/tags")
@@ -80,7 +80,7 @@ func TestPullResolvedCardinalityManyRefs(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	eachBackendAndModeOpts(t, storage.DatabaseOptions{Schema: s}, func(t *testing.T, db *storage.Database) {
+	eachModeOpts(t, storage.DatabaseOptions{Schema: s}, func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("alice")
 		bob := datalog.NewIdentity("bob")
 		carol := datalog.NewIdentity("carol")
@@ -151,7 +151,7 @@ func TestPullResolvedLimit(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	eachBackendAndModeOpts(t, storage.DatabaseOptions{Schema: s}, func(t *testing.T, db *storage.Database) {
+	eachModeOpts(t, storage.DatabaseOptions{Schema: s}, func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("alice")
 		tags := datalog.NewKeyword(":person/tags")
 
@@ -198,7 +198,7 @@ func TestPullResolvedDefault(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	eachBackendAndModeOpts(t, storage.DatabaseOptions{Schema: s}, func(t *testing.T, db *storage.Database) {
+	eachModeOpts(t, storage.DatabaseOptions{Schema: s}, func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("alice")
 		name := datalog.NewKeyword(":person/name")
 		status := datalog.NewKeyword(":person/status")
@@ -237,7 +237,7 @@ func TestPullResolvedDefault(t *testing.T) {
 }
 
 func TestPullResolvedWithoutSchema(t *testing.T) {
-	eachBackendAndMode(t, func(t *testing.T, db *storage.Database) {
+	eachMode(t, func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("alice")
 		name := datalog.NewKeyword(":person/name")
 		tags := datalog.NewKeyword(":person/tags")

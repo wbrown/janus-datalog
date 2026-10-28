@@ -42,7 +42,7 @@ func loreSchema(t *testing.T) storage.DatabaseOptions {
 // The CRDT implementation ensures queries always return the latest value.
 func TestCardinalityOneBehavior(t *testing.T) {
 	t.Run("tx.Add uses LWW semantics for cardinality-one", func(t *testing.T) {
-		eachBackendAndModeOpts(t, loreSchema(t), func(t *testing.T, db *storage.Database) {
+		eachModeOpts(t, loreSchema(t), func(t *testing.T, db *storage.Database) {
 			// Step 1: Create entity with empty Lore via SaveStruct
 			entity := &EntityWithLore{
 				Name: "Test Entity",
@@ -87,7 +87,7 @@ func TestCardinalityOneBehavior(t *testing.T) {
 	})
 
 	t.Run("SaveStruct properly handles cardinality-one upserts", func(t *testing.T) {
-		eachBackendAndModeOpts(t, loreSchema(t), func(t *testing.T, db *storage.Database) {
+		eachModeOpts(t, loreSchema(t), func(t *testing.T, db *storage.Database) {
 			// Step 1: Create entity with empty Lore
 			entity := &EntityWithLore{
 				Name: "Test Entity",
@@ -122,7 +122,7 @@ func TestCardinalityOneBehavior(t *testing.T) {
 	})
 
 	t.Run("Correct update pattern: load, modify, SaveStruct", func(t *testing.T) {
-		eachBackendAndModeOpts(t, loreSchema(t), func(t *testing.T, db *storage.Database) {
+		eachModeOpts(t, loreSchema(t), func(t *testing.T, db *storage.Database) {
 			// Create entity
 			entity := &EntityWithLore{
 				Name: "Test Entity",
@@ -166,7 +166,7 @@ func TestCardinalityOneBehavior(t *testing.T) {
 // TestEmptyStringsAreSaved documents that SaveStruct saves empty strings
 // (there is no omitempty equivalent for datalog struct tags).
 func TestEmptyStringsAreSaved(t *testing.T) {
-	eachBackendAndModeOpts(t, loreSchema(t), func(t *testing.T, db *storage.Database) {
+	eachModeOpts(t, loreSchema(t), func(t *testing.T, db *storage.Database) {
 		// Create entity with empty Lore
 		entity := &EntityWithLore{
 			Name: "Test Entity",

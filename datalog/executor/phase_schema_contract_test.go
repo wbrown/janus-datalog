@@ -30,32 +30,48 @@ func TestExecuteRealizedRejectsInvalidPhysicalPhaseMetadata(t *testing.T) {
 }
 
 // existenceVerdict is the verdict over groups a find does not read: the unit
-// relation when each group has a tuple, nothing when one has none, the unit
-// relation over no group, and a group's scan failure as its error. The find
-// boundary of Execute takes it over the groups the find does not consume,
-// and a phase whose fragment finds nothing takes it over every group.
+// relation it is given when each group has a tuple, nothing when one has
+// none, the unit relation over no group, and a group's scan failure as its
+// error. The find boundary of Execute takes it over the groups the find does
+// not consume, and a phase whose fragment finds nothing takes it over every
+// group, each with the executor's one unit relation.
 func TestExistenceVerdictOverGroups(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	full := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}})
 	empty := NewMaterializedRelation([]query.Symbol{x}, nil)
+	unit := NewUnitRelation(ExecutorOptions{})
 
-	groups, err := existenceVerdict([]Relation{full, full}, ExecutorOptions{})
+	groups, err := existenceVerdict([]Relation{full, full}, unit)
 	require.NoError(t, err)
 	require.Len(t, groups, 1, "every group has a tuple")
+	require.Same(t, unit, groups[0], "a verdict that holds is the unit relation given")
 	require.Empty(t, groups[0].Symbols(), "the unit relation carries no symbol")
 	require.Equal(t, 1, groups[0].Size(), "the unit relation carries one tuple")
 
-	groups, err = existenceVerdict([]Relation{full, empty}, ExecutorOptions{})
+	groups, err = existenceVerdict([]Relation{full, empty}, unit)
 	require.NoError(t, err)
 	require.Empty(t, groups, "a group with no tuple empties the result")
 
-	groups, err = existenceVerdict(nil, ExecutorOptions{})
+	groups, err = existenceVerdict(nil, unit)
 	require.NoError(t, err)
 	require.Len(t, groups, 1, "no group is a verdict that holds")
+	require.Same(t, unit, groups[0])
 
 	failing := NewStreamingRelation([]query.Symbol{x}, failingRelation{Relation: full, failAfter: 0}.Iterator())
-	_, err = existenceVerdict([]Relation{failing}, ExecutorOptions{})
+	_, err = existenceVerdict([]Relation{failing}, unit)
 	require.ErrorIs(t, err, errInjectedIterator, "a group's scan failure is the verdict's error")
+}
+
+// An executor holds one unit relation, one empty tuple over no symbol, and
+// every clause executor it builds reads that one: a verdict, a branch run
+// over no required run, and a form over no subject answer with it rather
+// than with a relation of their own.
+func TestExecutor_HoldsOneUnitRelation(t *testing.T) {
+	executor := NewExecutor(NewMemoryPatternMatcher(nil), nil)
+	require.NotNil(t, executor.unit)
+	require.Empty(t, executor.unit.Symbols())
+	require.Equal(t, 1, executor.unit.Size())
+	require.Same(t, executor.unit, executor.queryExecutor(nil).executor.unit, "every clause executor reads the same one")
 }
 
 // executePhase runs a phase's fragment over the groups entering it and

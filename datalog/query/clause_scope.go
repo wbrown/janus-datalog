@@ -137,19 +137,23 @@ func branchInterface(branch []Clause, rules *RuleSet) (provided, correlates []Sy
 }
 
 // Validate reads the declared interface at a text boundary: at least one
-// variable in the header, at least one branch, required and output sets
-// disjoint, and the header against the branches through
-// branchesUnderHeader with no rule set, under which an invocation provides
-// every variable argument, so the boundary refuses a subset of what Prepare
-// refuses under the rule set, with the same message. The parser, the qb
-// builder, and the executor call this at their boundaries; ScopeOf reads
-// the declaration without re-checking.
+// variable in the header, at least one branch, each branch holding a clause
+// with its clauses' shapes holding, required and output sets disjoint, and
+// the header against the branches through branchesUnderHeader with no rule
+// set, under which an invocation provides every variable argument, so the
+// boundary refuses a subset of what Prepare refuses under the rule set,
+// with the same message. The parser, the qb builder, and the executor call
+// this at their boundaries; ScopeOf reads the declaration without
+// re-checking.
 func (o *OrJoinClause) Validate() error {
 	if len(o.RequiredVars)+len(o.OutputVars) == 0 {
 		return fmt.Errorf("or-join must declare at least one variable in its header")
 	}
 	if len(o.Branches) == 0 {
 		return fmt.Errorf("or-join must have at least one branch")
+	}
+	if err := validateBranches("or-join", o.Branches); err != nil {
+		return err
 	}
 	for _, req := range o.RequiredVars {
 		if ContainsSymbol(o.OutputVars, req) {
@@ -161,7 +165,8 @@ func (o *OrJoinClause) Validate() error {
 }
 
 // Validate reads the declared interface at a text boundary: at least one
-// variable in the header, at least two branches, required and output sets
+// variable in the header, at least two branches, each branch holding a
+// clause with its clauses' shapes holding, required and output sets
 // disjoint, and the header against the branches through
 // branchesUnderHeader with no rule set, under which an invocation provides
 // every variable argument, so the boundary refuses a subset of what Prepare
@@ -174,6 +179,9 @@ func (o *OrDefaultJoinClause) Validate() error {
 	}
 	if len(o.Branches) < 2 {
 		return fmt.Errorf("or-default-join must have at least two branches")
+	}
+	if err := validateBranches("or-default-join", o.Branches); err != nil {
+		return err
 	}
 	for _, req := range o.RequiredVars {
 		if ContainsSymbol(o.OutputVars, req) {
@@ -254,7 +262,10 @@ func (n *NotJoinClause) Validate() error {
 		// for constructed ASTs.
 		return fmt.Errorf("not-join header cannot be empty")
 	}
-	if err := ValidateStaticClauseShapes(n.Clauses); err != nil {
+	if len(n.Clauses) == 0 {
+		return fmt.Errorf("not-join clause must have at least one inner clause")
+	}
+	if err := validateClauseElements("not-join", n.Clauses); err != nil {
 		return err
 	}
 	_, _, err := branchesUnderHeader(n, n.RequiredVars, nil, [][]Clause{n.Clauses}, nil)
@@ -265,38 +276,122 @@ func (n *NotJoinClause) Validate() error {
 // clause-shape rule — the checks that depend on the query text alone. It is
 // the one walk the user boundaries (parser, qb builder, executor entry)
 // share, so hand-built ASTs get the same rejections, with the same
-// messages, as parsed text. Compound clauses descend; subquery inner
-// queries are covered by SubqueryPattern.Validate's own recursion.
+// messages, as parsed text. A compound clause's Validate descends into its
+// own branches or clauses, naming each by its position, so the walk does
+// not descend into them again; subquery inner queries are covered by
+// SubqueryPattern.Validate's own recursion.
 func ValidateStaticClauseShapes(clauses []Clause) error {
 	var validateErr error
 	WalkClauses(clauses, func(c Clause) bool {
 		if validateErr != nil {
 			return false
 		}
+		descend := true
 		switch v := c.(type) {
+		case *DataPattern:
+			validateErr = v.Validate()
 		case *SubqueryPattern:
 			validateErr = v.Validate()
+		case *NotClause:
+			validateErr, descend = v.Validate(), false
 		case *NotJoinClause:
-			validateErr = v.Validate()
+			validateErr, descend = v.Validate(), false
+		case *OrClause:
+			validateErr, descend = v.Validate(), false
 		case *OrJoinClause:
-			validateErr = v.Validate()
+			validateErr, descend = v.Validate(), false
+		case *OrDefaultClause:
+			validateErr, descend = v.Validate(), false
 		case *OrDefaultJoinClause:
-			validateErr = v.Validate()
+			validateErr, descend = v.Validate(), false
 		case *FunctionPredicate:
 			validateErr = v.Validate()
 		case *Expression:
 			validateErr = v.Validate()
+		case *DatabaseFunctionPredicate:
+			validateErr = v.Validate()
 		}
-		return validateErr == nil
+		return validateErr == nil && descend
 	})
 	return validateErr
 }
 
-// Validate decides a ground's shape against its binding from the constant
-// the text holds, so every boundary refuses the same shapes naming the
-// repair over the author's own symbols: a ground under the tuple form is a
-// vector of the binding's length, one under the collection form is a vector,
-// and one under the relation form is a vector of inner vectors, each of the
+// Validate reads a data pattern's count, one to four elements, entity,
+// attribute, value and transaction in that order, a position the text omits
+// being unbound, and refuses a constant attribute keyword wider than storage
+// holds, which no write could have stored.
+func (p *DataPattern) Validate() error {
+	if n := len(p.Elements); n < 1 || n > PatternPositions {
+		return fmt.Errorf("data pattern must have 1 to %d elements, got %d", PatternPositions, n)
+	}
+	if constant, ok := p.GetA().(Constant); ok {
+		if attr, ok := constant.Value.(datalog.Keyword); ok {
+			return datalog.ValidateAttributeWidth(attr)
+		}
+	}
+	return nil
+}
+
+// Validate reads a not's shape: at least one clause, each clause's shape
+// holding.
+func (n *NotClause) Validate() error {
+	if len(n.Clauses) == 0 {
+		return fmt.Errorf("not clause must have at least one inner clause")
+	}
+	return validateClauseElements("not", n.Clauses)
+}
+
+// Validate reads an or's shape: at least one branch, each holding a clause
+// with its clauses' shapes holding.
+func (o *OrClause) Validate() error {
+	if len(o.Branches) == 0 {
+		return fmt.Errorf("or clause must have at least one branch")
+	}
+	return validateBranches("or", o.Branches)
+}
+
+// Validate reads an or-default's shape: at least two branches, each holding
+// a clause with its clauses' shapes holding.
+func (o *OrDefaultClause) Validate() error {
+	if len(o.Branches) < 2 {
+		return fmt.Errorf("or-default clause must have at least two branches")
+	}
+	return validateBranches("or-default", o.Branches)
+}
+
+// validateBranches reads every branch of the form named form: it holds a
+// clause, and its clauses' shapes hold. A refusal names the form and the
+// branch by its position counted from one.
+func validateBranches(form string, branches [][]Clause) error {
+	for i, branch := range branches {
+		if len(branch) == 0 {
+			return fmt.Errorf("%s branch %d must have at least one clause", form, i+1)
+		}
+		if err := ValidateStaticClauseShapes(branch); err != nil {
+			return fmt.Errorf("%s branch %d: %w", form, i+1, err)
+		}
+	}
+	return nil
+}
+
+// validateClauseElements reads every clause of the not or not-join named
+// form: its shape holds. A refusal names the form and the clause by its
+// position counted from one.
+func validateClauseElements(form string, clauses []Clause) error {
+	for i, clause := range clauses {
+		if err := ValidateStaticClauseShapes([]Clause{clause}); err != nil {
+			return fmt.Errorf("%s clause element %d: %w", form, i+1, err)
+		}
+	}
+	return nil
+}
+
+// Validate refuses a database function's attribute wider than storage holds,
+// and decides a ground's shape against its binding from the constant the
+// text holds, so every boundary refuses the same shapes naming the repair
+// over the author's own symbols: a ground under the tuple form is a vector
+// of the binding's length, one under the collection form is a vector, and
+// one under the relation form is a vector of inner vectors, each of the
 // binding's arity. One value under the tuple or relation form is bound by
 // the scalar form over the first symbol. A vector of values under the
 // relation form is bound by the collection form when the binding names one
@@ -312,6 +407,10 @@ func (e *Expression) Validate() error {
 		value, grounded = f.Value, true
 	case *GroundFunction:
 		value, grounded = f.Value, true
+	case DatabaseFunction:
+		if err := validateDatabaseFunctionAttributes(f); err != nil {
+			return err
+		}
 	}
 	switch b := e.Binding.(type) {
 	case TupleBinding:
@@ -364,6 +463,34 @@ func (e *Expression) Validate() error {
 		}
 	}
 	return nil
+}
+
+// Validate refuses a database function's attribute wider than storage
+// holds, which no write could have stored.
+func (p *DatabaseFunctionPredicate) Validate() error {
+	return validateDatabaseFunctionAttributes(p.Function)
+}
+
+// validateDatabaseFunctionAttributes refuses an attribute a database
+// function reads that is wider than storage holds. The implementers are
+// enumerated completely, as the roster enumerates them, so a new one panics
+// here.
+func validateDatabaseFunctionAttributes(f DatabaseFunction) error {
+	switch f := f.(type) {
+	case *GetElseFunction:
+		return datalog.ValidateAttributeWidth(f.Attr)
+	case *GetSomeFunction:
+		for _, attr := range f.Attrs {
+			if err := datalog.ValidateAttributeWidth(attr); err != nil {
+				return err
+			}
+		}
+		return nil
+	case *MissingFunction:
+		return datalog.ValidateAttributeWidth(f.Attr)
+	default:
+		panic(fmt.Sprintf("BUG: unknown database function type %T in validateDatabaseFunctionAttributes", f))
+	}
 }
 
 // InputPosition is one call position of an :in clause: the entry at it and

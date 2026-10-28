@@ -194,7 +194,7 @@ func TestScanBoundContainsItsDatomKey(t *testing.T) {
 // projection of the bound, which a handler cannot interpret and a typed backend
 // never produces.
 func TestIndexSelectionEventReportsBound(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var events []annotations.Event
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{

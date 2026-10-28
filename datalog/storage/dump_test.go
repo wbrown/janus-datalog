@@ -17,7 +17,7 @@ var (
 
 func memoryDatabaseWithOneDatom(t *testing.T) *Database {
 	t.Helper()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory"})
+	db, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "badger-emulator"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -38,7 +38,7 @@ func requireDumpDatom(t *testing.T, db *Database) {
 
 func emptyMemoryDatabase(t *testing.T) *Database {
 	t.Helper()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory"})
+	db, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "badger-emulator"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	return db

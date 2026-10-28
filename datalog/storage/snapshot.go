@@ -58,7 +58,7 @@ func snapshotEntity(name string) datalog.Identity {
 // store.MaxElementID() as the snapshot point and writes the marker in a single
 // transaction. Returns ErrSnapshotExists if the name is already in use.
 func (d *Database) Snapshot(name string) (SnapshotInfo, error) {
-	if d.temporalTxID != nil {
+	if d.mode != latestMode {
 		return SnapshotInfo{}, fmt.Errorf("Snapshot: cannot snapshot a read-only temporal handle (AsOf/History)")
 	}
 	if name == "" {
@@ -115,9 +115,9 @@ func (d *Database) Snapshot(name string) (SnapshotInfo, error) {
 //
 // It reads at the marker's own high-water (snapshotMarkerMax), which is domain-equivalent
 // to the captured point At — the marker datoms it adds are reserved-namespace and filtered
-// from domain queries — and, unlike At, is always non-zero. That matters for an
-// empty-database snapshot (At == zero ElementID): AsOf of the zero ElementID would collide
-// with the matcher's History sentinel and show everything instead of nothing.
+// from domain queries. An as-of handle carries its target beside its mode, so a handle at
+// the zero ElementID, an empty-database snapshot's At, reads nothing: every datom lies
+// after the target (shouldFilterTx).
 func (d *Database) AsOfSnapshot(name string) (*Database, error) {
 	info, err := d.lookupSnapshot(name)
 	if err != nil {
@@ -171,7 +171,7 @@ func (d *Database) Snapshots() ([]SnapshotInfo, error) {
 // DeleteSnapshot removes the named snapshot from the registry by retracting its marker.
 // The rewindable timeline is untouched; only the registry entry goes away.
 func (d *Database) DeleteSnapshot(name string) error {
-	if d.temporalTxID != nil {
+	if d.mode != latestMode {
 		return fmt.Errorf("DeleteSnapshot: cannot modify a read-only temporal handle (AsOf/History)")
 	}
 	info, err := d.lookupSnapshot(name)

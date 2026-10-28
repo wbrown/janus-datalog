@@ -23,6 +23,11 @@ type Context struct {
 	scanRegistry *ScanRegistry
 	env          Relation
 
+	// run is the required run of the scope whose plan runs under this
+	// context, which the scope's query reads under query.ScopeRequired
+	// through Derived; nil outside a scope's run.
+	run Relation
+
 	// rules is the rule set the query's invocations resolve against, nil when
 	// the query passed none.
 	rules *query.RuleSet
@@ -61,6 +66,7 @@ func forkContext(ctx *Context) *Context {
 	}
 	return &Context{
 		env:          ctx.env,
+		run:          ctx.run,
 		rules:        ctx.rules,
 		derived:      ctx.derived,
 		continued:    ctx.continued,
@@ -127,9 +133,23 @@ func (c *Context) WithDerived(derived map[query.Symbol]Relation) *Context {
 	return next
 }
 
+// WithRequiredRun derives the context a scope's plan runs under: it holds
+// run as the scope's required run, under query.ScopeRequired, beside every
+// relation this context holds, and carries no environment, since a query
+// input reaches a scope only through the header.
+func (c *Context) WithRequiredRun(run Relation) *Context {
+	next := c.WithEnvironment(nil)
+	next.run = run
+	return next
+}
+
 // Derived returns the relation held under a predicate symbol and whether the
-// scope holds one.
+// scope holds one: the scope's required run under query.ScopeRequired, and
+// the fixpoint's relation under a predicate's symbol or its delta symbol.
 func (c *Context) Derived(name query.Symbol) (Relation, bool) {
+	if name == query.ScopeRequired && c.run != nil {
+		return c.run, true
+	}
 	rel, ok := c.derived[name]
 	return rel, ok
 }
@@ -165,13 +185,14 @@ func (c *Context) Environment() Relation {
 }
 
 // WithEnvironment derives a context for a query scope with the given
-// environment, sharing the scan registry. Query-scope boundaries (top-level plan
-// binding, subquery entry) derive here so an inner scope never captures an outer
-// scope's environment.
+// environment, sharing the scan registry and the scope's required run.
+// Query-scope boundaries (top-level plan binding, subquery entry) derive here
+// so an inner scope never captures an outer scope's environment.
 func (c *Context) WithEnvironment(env Relation) *Context {
 	return &Context{
 		scanRegistry: c.ScanRegistry(),
 		env:          env,
+		run:          c.run,
 		rules:        c.rules,
 		derived:      c.derived,
 		continued:    c.continued,

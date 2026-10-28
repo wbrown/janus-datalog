@@ -865,13 +865,13 @@ asOfResult, _ := asOf.Query(
     `[:find ?name :where [?e :person/name ?name]]`)
 ```
 
-**Three database modes** (controlled via `*datalog.ElementID` pointer on `PatternMatcher.txID`):
+**Three database modes**, carried as `mode` and `asOf` on `Database` and on the `PatternMatcher` it mints:
 
-| Mode | API | `txID` value | CRDT resolution | Tx filtering |
-|------|-----|-------------|-----------------|--------------|
-| Latest | `d.Query(q)` | `nil` | Yes | No |
-| As-of | `d.AsOf(elemID).Query(q)` | `&ElementID{L,R}` | Yes | Yes |
-| History | `d.History().Query(q)` | `&ElementID{}` | No | No |
+| Mode | API | `mode` | `asOf` | CRDT resolution | Tx filtering |
+|------|-----|--------|--------|-----------------|--------------|
+| Latest | `d.Query(q)` | `latestMode` | zero | Yes | No |
+| As-of | `d.AsOf(elemID).Query(q)` | `asOfMode` | `elemID` | Yes | Yes |
+| History | `d.History().Query(q)` | `historyMode` | zero | No | No |
 
 The cache stores current value only. History and as-of queries bypass the cache and scan storage directly.
 

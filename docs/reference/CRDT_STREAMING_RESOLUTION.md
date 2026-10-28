@@ -195,20 +195,23 @@ cardinality-vector attribute stores *elements*, which route to `accumulateRGA`.
 
 ## Call Site Conditions
 
-The wrapping condition should be consistent across all call sites:
+Every call site wraps the source scan unless the matcher reads the history
+view, where a datom is read as written and nothing resolves:
 
 ```go
-// Only wrap when E is unbound (scanning multiple entities)
-if m.schema != nil && e == nil {
-    iter = NewCRDTResolvingIterator(rawIter, m.schema, m.txID, matcher, report)
+if m.mode == historyMode {
+    iter = rawIter
+} else {
+    iter = NewCRDTResolvingIterator(rawIter, m.schema, m, report)
 }
 ```
 
-The constructor takes five arguments, not three. `matcher` enables the unique
-walk — a unique CardinalityOne group resolves by walking the entity rather than
-by first-entry-wins, and passing nil disables that and falls back. `report` is the
-scan accounting the walk's AVET supersession reads accrue into, since those are
-index reads this iterator causes that the source knows nothing about.
+The constructor takes four arguments. `matcher` carries the view the scan
+reads, so a datom after an as-of target is skipped (`shouldFilterTx`), and it
+resolves a unique CardinalityOne group by walking the entity rather than by
+first-entry-wins. `report` is the scan accounting the walk's AVET supersession
+reads accrue into, since those are index reads this iterator causes that the
+source knows nothing about.
 
 ## Summary
 

@@ -17,35 +17,35 @@ const (
 	// walk, return this entry's V and Tx as the emitted value. For the
 	// streaming walk, set currentDatom and yield to the caller.
 	walkEntryEmit
-	// walkEntryRetract: this entry is a Remove that was just recorded
-	// in the retracted state. Behaves like Skip for control flow, but
-	// distinguished so callers can tell "Set skipped due to retract"
+	// walkEntryRemoved: this entry is a Remove that was just recorded
+	// in the removedAt state. Behaves like Skip for control flow, but
+	// distinguished so callers can tell "Set skipped due to a Remove"
 	// from "Remove recorded."
-	walkEntryRetract
+	walkEntryRemoved
 )
 
 // uniqueWalkState is the per-(E, A) state tracked across entries of
-// the walk: retracted values (by encoded-V key) with their highest
+// the walk: removed values, keyed by value, with their highest
 // Remove Tx. Both the batch primitive (walkUniqueEntityValue) and the
 // streaming path (CRDTResolvingIterator.processUniqueEntry) build this
 // state and feed it to walkApplyEntry.
 type uniqueWalkState struct {
-	// retracted maps a value to the highest Tx at which a CRDT Remove
-	// tombstone was seen for it. Nothing is deleted — the name predates the
-	// distinction and collides with physical deletion; see
-	// BUG_RETRACT_NAMES_TWO_OPPOSITE_OPERATIONS.
+	// removedAt maps a value to the highest Tx at which a CRDT Remove
+	// tombstone was seen for it. Nothing is deleted: the datom a Remove
+	// cancels stays in the store and in History, and physical deletion is
+	// Store.Retract.
 	//
 	// It is keyed by the value itself. Values are not all usable as Go map
 	// keys — []byte and vectors are not comparable — so this uses the engine's
 	// value-keyed map, which hashes content and settles collisions with
 	// datalog.ValuesEqual. Rendering the value to bytes for a key would mean
 	// reaching for a storage encoding to answer a value-domain question.
-	retracted *executor.TupleKeyMap
+	removedAt *executor.TupleKeyMap
 }
 
 // newUniqueWalkState constructs an empty walk state.
 func newUniqueWalkState() *uniqueWalkState {
-	return &uniqueWalkState{retracted: executor.NewTupleKeyMap()}
+	return &uniqueWalkState{removedAt: executor.NewTupleKeyMap()}
 }
 
 // walkApplyEntry applies the CRDT-unique walk rule to one entry. The
@@ -54,8 +54,8 @@ func newUniqueWalkState() *uniqueWalkState {
 // on the returned decision.
 //
 // Rules:
-//   - Remove(V, T): record retracted[V] = max(retracted[V], T), return Retract.
-//   - Set(V, T): return Skip if retracted[V] > T (cancelled by later Remove).
+//   - Remove(V, T): record removedAt[V] = max(removedAt[V], T), return Removed.
+//   - Set(V, T): return Skip if removedAt[V] > T (cancelled by later Remove).
 //   - Set(V, T): return Skip if any OTHER entity asserted V with Tx > T
 //     (superseded). Otherwise return Emit.
 //
@@ -68,16 +68,16 @@ func newUniqueWalkState() *uniqueWalkState {
 // before it read no index.
 func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Datom, eBytes Entity, aBytes Attribute, report *scanReport) (walkEntryDecision, error) {
 	if datom.Op == datalog.OpCRDTRemove {
-		existing, ok := state.retracted.GetValue(datom.V)
+		existing, ok := state.removedAt.GetValue(datom.V)
 		if !ok || existing.(datalog.ElementID).Less(datom.Tx) {
-			state.retracted.PutValue(datom.V, datom.Tx)
+			state.removedAt.PutValue(datom.V, datom.Tx)
 		}
-		return walkEntryRetract, nil
+		return walkEntryRemoved, nil
 	}
 
-	// Set (or default OpNone). Check if this V has been retracted at a
+	// Set (or default OpNone). Check if this V has been removed at a
 	// higher Tx by a later entry in this entity's own history.
-	if rTx, ok := state.retracted.GetValue(datom.V); ok && datom.Tx.Less(rTx.(datalog.ElementID)) {
+	if rTx, ok := state.removedAt.GetValue(datom.V); ok && datom.Tx.Less(rTx.(datalog.ElementID)) {
 		return walkEntrySkip, nil
 	}
 
@@ -98,22 +98,22 @@ func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.D
 // walkUniqueEntityValue resolves E's current value for unique attribute
 // a using the walk-based (A, V)-LWW rule (see walkApplyEntry). The
 // walk iterates E's EATV history in descending Tx order and emits the
-// first entry that passes retraction and supersession checks.
+// first entry that passes removal and supersession checks.
 //
 // Returns found=true with the value and the Tx of the emitted Set, suitable
 // for cache-freshness tracking, or found=false when E has no current value.
 //
 // present is reported separately and is not the same question: it is whether
 // the walk saw any datom for (E, a) within its temporal bound. A value can be
-// absent while the attribute exists — every assertion retracted, or every one
+// absent while the attribute exists — every assertion removed, or every one
 // superseded by another entity's claim on the same unique value — and that is
 // an attribute holding nothing, not an attribute that was never written. A
 // caller that collapses the two loses the entity's resolved answer and falls
 // back to a path that never applied the unique rule.
 //
-// Honors the matcher's temporal mode: entries with Tx > m.txID in as-of
-// mode are skipped. The supersession check against other entities is
-// likewise restricted via m.shouldFilterTx in resolveMaxOtherTxForValue.
+// Honors the matcher's temporal mode: an entry after the as-of target is
+// skipped (m.shouldFilterTx). The supersession check against other entities
+// is likewise restricted via m.shouldFilterTx in resolveMaxOtherTxForValue.
 // Both this walk's own EATV scan and every supersession scan walkApplyEntry
 // opens underneath it acquire through report. Those AVET reads are real index
 // reads on the resolution path — one per Set entry the walk considers — and an
@@ -156,7 +156,7 @@ func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute, 
 		if decision == walkEntryEmit {
 			return datom.V, datom.Tx, true, true, nil
 		}
-		// walkEntrySkip or walkEntryRetract — continue to next entry.
+		// walkEntrySkip or walkEntryRemoved — continue to next entry.
 	}
 	// Surface any deferred error from the scan.
 	if err := iter.Error(); err != nil {
@@ -169,8 +169,8 @@ func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute, 
 // Tx asserted by any entity other than exceptE. Returns zero ElementID if
 // no other entity has asserted this value.
 //
-// Honors the matcher's temporal mode — entries with Tx > m.txID in as-of
-// mode are excluded.
+// Honors the matcher's temporal mode — an entry after the as-of target is
+// excluded (m.shouldFilterTx).
 func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exceptE Entity, report *scanReport) (maxTx datalog.ElementID, resolveErr error) {
 	iter, err := OpenKeyScan(m.reader, report, ScanBound{
 		Index:  AVET,
@@ -203,17 +203,17 @@ func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exce
 		// if alice's last op on V was Remove, she isn't currently claiming V.
 		// However, she might still have an active Set(V) at a lower Tx. We
 		// track the max Tx of any AVET entry for V, regardless of op; the
-		// walking entity's own retraction bookkeeping handles self-retracts.
+		// walking entity's own removal bookkeeping handles its own Removes.
 		// For *other* entities, the CRDTResolvingIterator / walk semantics
 		// are applied at their respective entity-view computations, and a
 		// Remove entry for (E', V) simply means E' isn't emitting V. But a
-		// high-Tx Set(V) by E' that has since been retracted by E' herself
+		// high-Tx Set(V) by E' that has since been removed by E' herself
 		// is still "an assertion of V" in the AVET sense — the question is
 		// whether it competes with our entity's assertion at T_i.
 		//
 		// The simple rule "any assertion of V at Tx > T_i supersedes" is
 		// the one the design doc specifies. Implement it as-is; subtleties
-		// with retract-vs-competing-claim are covered by the other
+		// with remove-vs-competing-claim are covered by the other
 		// entity's own walk resolving to something other than V, which
 		// means V-view for V will correctly return nil when this entity's
 		// walk also skips V.
@@ -305,7 +305,7 @@ func (m *PatternMatcher) resolveAVLWW(a Attribute, v any, report *scanReport) (d
 	// the same filter on the same matcher. It cannot miss it.
 	//
 	// found is the question this step asks, and it is a different one: the
-	// claimant may have superseded or retracted v since asserting it.
+	// claimant may have superseded or removed v since asserting it.
 	walkV, walkTx, found, _, err := m.walkUniqueEntityValue(Entity(bestE.Hash()), a, report)
 	if err != nil {
 		return nil, datalog.ElementID{}, err

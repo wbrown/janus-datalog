@@ -96,7 +96,7 @@ func TestOpFieldPreservesRawValueType(t *testing.T) {
 
 // TestAddMethodUsesOpField verifies Transaction.Add() sets Op correctly
 func TestAddMethodUsesOpField(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -165,7 +165,7 @@ func TestAddMethodUsesOpField(t *testing.T) {
 
 // TestRemoveMethodUsesOpField verifies Transaction.Remove() sets Op correctly
 func TestRemoveMethodUsesOpField(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -238,7 +238,7 @@ func TestRemoveMethodUsesOpField(t *testing.T) {
 // cardinality-many value tagged as generic bytes instead of its own type
 // would fail this lookup.
 func TestAVETLookupWithOpField(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -306,7 +306,7 @@ func TestAVETLookupWithOpField(t *testing.T) {
 
 // TestBadgerIteratorDecodesOp verifies BadgerIterator.Datom() sets Op from key
 func TestBadgerIteratorDecodesOp(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -370,7 +370,7 @@ func TestBadgerIteratorDecodesOp(t *testing.T) {
 
 // TestSetMethodGeneratesCorrectOps verifies Set() for cardinality-many
 func TestSetMethodGeneratesCorrectOps(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

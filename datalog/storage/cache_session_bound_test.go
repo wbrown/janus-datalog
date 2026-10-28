@@ -13,7 +13,7 @@ import (
 // path (GetOrResolve behind LookupAttribute) must agree with the session's
 // storage path (ResolveLWW) on the same matcher.
 func TestSessionBoundedCacheRead(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

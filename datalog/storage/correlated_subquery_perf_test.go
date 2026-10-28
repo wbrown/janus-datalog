@@ -368,7 +368,7 @@ func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, backend Backend) {
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
+		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -409,7 +409,7 @@ func testCorrelatedSubqueryAlgebraOptimizer(t *testing.T, backend Backend) {
 
 		db.ClearPlanCache()
 		start := time.Now()
-		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
+		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		if err != nil {
 			t.Fatalf("query error: %v", err)
 		}
@@ -534,7 +534,7 @@ func testCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T, mode optim
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
+		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -570,7 +570,7 @@ func testCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T, mode optim
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
+		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -735,7 +735,7 @@ func testCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T, mod
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
+		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err)
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)
@@ -761,7 +761,7 @@ func testCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T, mod
 		db.ClearPlanCache()
 
 		start := time.Now()
-		rel, err := db.queryUnderPlannerOptions(opts, queryStr)
+		_, rel, err := db.queryUnderPlannerOptions(opts, queryStr)
 		require.NoError(t, err, "algebra optimizer must not crash on production-structure query")
 		results, err := executor.CollectTuples(rel, nil)
 		elapsed := time.Since(start)

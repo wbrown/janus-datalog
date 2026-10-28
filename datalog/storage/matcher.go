@@ -23,10 +23,13 @@ type PatternMatcher struct {
 	// sessionBounded marks that reader is a ReadSession, so cache reads must
 	// bound themselves to its snapshot high-water mark (cacheBound). The
 	// bound computes lazily once — the session's maximum is snapshot-constant.
-	sessionBounded    bool
-	boundOnce         sync.Once
-	readBound         datalog.ElementID
-	txID              *datalog.ElementID       // nil=latest CRDT-resolved, &ElementID{}=raw history, &ElementID{L,R}=as-of
+	sessionBounded bool
+	boundOnce      sync.Once
+	readBound      datalog.ElementID
+	// mode is which view of the store this matcher reads, and asOf is the
+	// target of an as-of view, zero in the other two modes.
+	mode              temporalMode
+	asOf              datalog.ElementID
 	builderCache      *tupleBuilderCache       // Structurally-keyed tuple builders, shared with temporal-handle copies
 	builderCacheOnce  sync.Once                // Ensures builderCache is initialized exactly once
 	handler           annotations.Handler      // Set from HandlerProvider for detailed storage events
@@ -40,6 +43,34 @@ type PatternMatcher struct {
 	cache         *Cache // CRDT resolution cache for O(1) access to resolved views
 }
 
+// temporalMode is which view of the store a handle reads: the current view,
+// every datom as written, or the resolved view as of a target ElementID.
+type temporalMode uint8
+
+const (
+	// latestMode reads the current view: each attribute resolved over all of
+	// its datoms.
+	latestMode temporalMode = iota
+	// historyMode reads every datom as written, with no resolution.
+	historyMode
+	// asOfMode reads the view resolved over the datoms at or before a target
+	// ElementID.
+	asOfMode
+)
+
+func (mode temporalMode) String() string {
+	switch mode {
+	case latestMode:
+		return "latest"
+	case historyMode:
+		return "history"
+	case asOfMode:
+		return "as-of"
+	default:
+		panic(fmt.Sprintf("BUG: temporalMode %d is not a mode", uint8(mode)))
+	}
+}
+
 // encodeValueForSearch encodes a value for use in index lookups. It is
 // EncodeValueBytes without the Tier 3 blob: a search never writes one, and a
 // second encoding of the same run is how a bound and the keys it addresses
@@ -49,26 +80,10 @@ func encodeValueForSearch(v interface{}, encoder *BinaryKeyEncoder) []byte {
 	return vBytes
 }
 
-// isHistoryMode returns true when raw (non-CRDT-resolved) datoms are requested.
-func (m *PatternMatcher) isHistoryMode() bool {
-	return m.txID != nil && *m.txID == (datalog.ElementID{})
-}
-
-// shouldFilterTx returns true if a datom should be skipped because it's
-// from after the as-of target. Returns false in latest mode (nil) and
-// history mode (&ElementID{}).
+// shouldFilterTx reports whether a datom lies after the as-of target and so
+// is not read. In latest mode and in history mode no datom is filtered.
 func (m *PatternMatcher) shouldFilterTx(datomTx datalog.ElementID) bool {
-	return m.txID != nil && *m.txID != (datalog.ElementID{}) && m.txID.Less(datomTx)
-}
-
-// crdtTxID returns the ElementID to pass to CRDTResolvingIterator.
-// In latest mode returns ElementID{} (no filter). In as-of mode returns the target.
-// Must NOT be called in history mode (caller should check isHistoryMode first).
-func (m *PatternMatcher) crdtTxID() datalog.ElementID {
-	if m.txID != nil {
-		return *m.txID
-	}
-	return datalog.ElementID{}
+	return m.mode == asOfMode && m.asOf.Less(datomTx)
 }
 
 // cacheKey returns the cache key for (e, a) and whether this matcher mode may
@@ -77,7 +92,7 @@ func (m *PatternMatcher) crdtTxID() datalog.ElementID {
 // in separate Cache instances (the Database's global latest cache vs. the AsOf
 // handle's private cache), so the key never crosses snapshots.
 func (m *PatternMatcher) cacheKey(e Entity, a Attribute) (CacheKey, bool) {
-	if m.isHistoryMode() {
+	if m.mode == historyMode {
 		return CacheKey{}, false
 	}
 	return CacheKey{E: e, A: a}, true
@@ -138,21 +153,34 @@ func (m *PatternMatcher) cacheBound() *datalog.ElementID {
 	return &m.readBound
 }
 
-// AsOf creates a matcher that sees the database as of a specific transaction.
-// Passing a zero ElementID enters history mode (raw datoms, no CRDT resolution).
-func (m *PatternMatcher) AsOf(txID datalog.ElementID) *PatternMatcher {
-	// Ensure cache is initialized before sharing it
+// AsOf is a copy of this matcher reading the view as of target: each
+// attribute resolved over the datoms at or before it.
+func (m *PatternMatcher) AsOf(target datalog.ElementID) *PatternMatcher {
+	return m.withMode(asOfMode, target)
+}
+
+// History is a copy of this matcher reading every datom as written, with no
+// resolution: every version is visible, superseded and withdrawn ones
+// included.
+func (m *PatternMatcher) History() *PatternMatcher {
+	return m.withMode(historyMode, datalog.ElementID{})
+}
+
+// withMode is a copy of this matcher reading the given view. The copy shares
+// the store, the read session, the schema, the cache and the tuple-builder
+// population, which is initialized here before it is shared.
+func (m *PatternMatcher) withMode(mode temporalMode, asOf datalog.ElementID) *PatternMatcher {
 	m.builderCacheOnce.Do(func() {
 		if m.builderCache == nil {
 			m.builderCache = newTupleBuilderCache()
 		}
 	})
-
 	return &PatternMatcher{
 		store:          m.store,
 		reader:         m.reader,
 		sessionBounded: m.sessionBounded,
-		txID:           &txID,
+		mode:           mode,
+		asOf:           asOf,
 		builderCache:   m.builderCache,
 		handler:        m.handler,
 		options:        m.options,
@@ -160,12 +188,6 @@ func (m *PatternMatcher) AsOf(txID datalog.ElementID) *PatternMatcher {
 		refuseUnknown:  m.refuseUnknown,
 		cache:          m.cache,
 	}
-}
-
-// History creates a matcher that returns raw datoms without CRDT resolution.
-// All historical versions are visible, including retracted values.
-func (m *PatternMatcher) History() *PatternMatcher {
-	return m.AsOf(datalog.ElementID{})
 }
 
 // SetSchema sets the schema for cardinality-aware index selection.
@@ -478,17 +500,22 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 // match selects its bindings under at its entry (MatchWithConstraints):
 // whether the tuple's value for the pattern's entity-position variable is an
 // Identity, its value for the attribute-position variable is a Keyword, and,
-// under a constant attribute, its value for the value-position variable is a
-// scalar. A tuple failing it names no entity, no attribute and no datom's
-// value, the typed non-match of the equality join, so it contributes zero
-// tuples and no seek is constructed for it. A datom's value is a scalar of
-// the domain. The vector, the domain's one composite, names a declared vector
-// attribute's whole collection, which the vector arm of MatchWithConstraints
-// compares before the selection runs, so past the selection a vector at the
-// value position of a pattern on a constant attribute equals no datom. Under
-// a variable attribute the fact is per tuple, and the value position is left
-// alone. Returns nil when no checked position is bound by these symbols — no
-// check is needed.
+// under a constant attribute, its value for the value-position variable is
+// not a vector. A tuple failing it names no entity, no attribute and no
+// datom's value, the typed non-match of the equality join, so it contributes
+// zero tuples and no seek is constructed for it. The entity and attribute
+// positions are each inhabited by one type, so those arms decide from the
+// value alone. A vector at the value position names a declared vector
+// attribute's whole collection, so whether it matches depends on the
+// attribute. Under a constant attribute the vector equals no datom this
+// selection's routes read: outside History a pattern on a vector attribute
+// is intercepted before the selection by the vector arm of
+// MatchWithConstraints, and under History a datom is read as written, an
+// element and never a collection. Under a variable attribute the tuple
+// passes and the attribute decides downstream: the join routes compare the
+// vector against each resolved collection, and the V-validation route
+// answers it through matchVectorUnderOpenAttribute. Returns nil when no
+// checked position is bound by these symbols — no check is needed.
 func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbol) func(executor.Tuple) bool {
 	eIdx, aIdx, vIdx := -1, -1, -1
 	if v, ok := pattern.GetE().(query.Variable); ok {
@@ -615,14 +642,13 @@ func (m *PatternMatcher) valuesEqual(v1, v2 interface{}) bool {
 // For cardinality-many, returns one of the current set members.
 // CanFuseAttributeFetch reports whether a same-entity fetch of attr can be
 // fused into a per-tuple LookupAttribute binding. True only when the
-// attribute is declared CardinalityOne in the schema AND the matcher is not in
-// history mode — the two conditions under which LookupAttribute returns the
-// single value a matched pattern would. Returns false for schemaless,
-// CardinalityMany/Vector, or history-mode matchers (raw multi-version reads).
-// The matcher is one source and answers for itself under any name, so the
-// source is not read.
+// attribute is declared CardinalityOne in the schema AND the matcher reads
+// the current view — the two conditions under which LookupAttribute returns
+// the single value a matched pattern would. Returns false for schemaless,
+// CardinalityMany/Vector, or temporal matchers. The matcher is one source and
+// answers for itself under any name, so the source is not read.
 func (m *PatternMatcher) CanFuseAttributeFetch(_ query.Symbol, attr datalog.Keyword) bool {
-	if m.schema == nil || m.txID != nil {
+	if m.schema == nil || m.mode != latestMode {
 		return false
 	}
 	def := m.schema.GetAttribute(attr)
@@ -699,7 +725,7 @@ func (m *PatternMatcher) LookupAttribute(
 
 	// Try cache first for O(1) access. Concrete AsOf matchers use
 	// transaction-scoped cache keys; History matchers bypass cache entirely.
-	if m.cache != nil && !m.isHistoryMode() {
+	if m.cache != nil && m.mode != historyMode {
 		eEntity := Entity(eBytes)
 		var aAttr Attribute
 		copy(aAttr[:], aStorage[:])
@@ -914,7 +940,7 @@ func (m *PatternMatcher) LookupAllAttributes(
 
 	// Try cache first for O(1) access. Concrete AsOf matchers use
 	// transaction-scoped cache keys; History matchers bypass cache entirely.
-	if m.cache != nil && !m.isHistoryMode() {
+	if m.cache != nil && m.mode != historyMode {
 		eEntity := Entity(eBytes)
 		var aAttr Attribute
 		copy(aAttr[:], aStorage[:])

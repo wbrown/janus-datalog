@@ -18,5 +18,5 @@ var (
 
 	_ func(*executor.SourceRouter, *query.Query, executor.Relations) (executor.Relation, error)  = (*executor.SourceRouter).Match
 	_ func(*executor.SourceRouter, datalog.Identity, datalog.Keyword) (interface{}, bool, error) = (*executor.SourceRouter).LookupAttribute
-	_ func(*executor.ScanRegistry, string, *executor.SharedScan)                                 = (*executor.ScanRegistry).Put
+	_ func(*executor.ScanRegistry, executor.ScanFingerprint, *executor.SharedScan)               = (*executor.ScanRegistry).Put
 )

@@ -334,7 +334,7 @@ func TestDatabaseBackendsPublicSemantics(t *testing.T) {
 		afterTruncate [][]interface{}
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			results := make(map[string]backendResult)

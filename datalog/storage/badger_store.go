@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
@@ -46,6 +47,11 @@ func NewBadgerStore(path string, encoder *BinaryKeyEncoder) (*BadgerStore, error
 
 	db, err := badger.Open(opts)
 	if err != nil {
+		// A held directory lock is reported by message alone; both the
+		// sentinel and Badger's own text stay reachable.
+		if strings.Contains(err.Error(), "Cannot acquire directory lock") {
+			return nil, fmt.Errorf("failed to open badger: %w: %w", ErrStoreLocked, err)
+		}
 		return nil, fmt.Errorf("failed to open badger: %w", err)
 	}
 

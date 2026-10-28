@@ -18,7 +18,7 @@ import (
 // correlated grouped-aggregate query: every field populated, and the rewrite
 // records carrying the decorrelation decision as a value.
 func TestExplainAlgebraDecorrelation(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(true) {
+	for _, mode := range pinned(optimizerModes, true) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -90,7 +90,7 @@ func TestExplainAlgebraNotJoinEnvironmentHeader(t *testing.T) {
 
 	for name, queryText := range shapes {
 		t.Run(name, func(t *testing.T) {
-			for _, mode := range pinnedOptimizerModes(true) {
+			for _, mode := range pinned(optimizerModes, true) {
 				t.Run(mode.name, func(t *testing.T) {
 					db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -117,7 +117,7 @@ func TestExplainAlgebraNotJoinEnvironmentHeader(t *testing.T) {
 // TestExplainAlgebraGetElse pins the provenance of the get-else rewrite
 // through the public surface.
 func TestExplainAlgebraGetElse(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(true) {
+	for _, mode := range pinned(optimizerModes, true) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -141,7 +141,7 @@ func TestExplainAlgebraGetElse(t *testing.T) {
 // TestExplainAlgebraDeclineReasons pins that declined rewrites surface the
 // failed precondition as a value.
 func TestExplainAlgebraDeclineReasons(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(true) {
+	for _, mode := range pinned(optimizerModes, true) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -167,7 +167,7 @@ func TestExplainAlgebraDeclineReasons(t *testing.T) {
 // a query is a fact about the query, so the compiled tree is still returned;
 // no passes run, and the plan is exactly what this database would use.
 func TestExplainAlgebraOptimizerDisabled(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(false) {
+	for _, mode := range pinned(optimizerModes, false) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -189,7 +189,7 @@ func TestExplainAlgebraOptimizerDisabled(t *testing.T) {
 // TestExplainAlgebraValidatesInputs mirrors Explain's input validation: a
 // query whose :in demands inputs errors without them.
 func TestExplainAlgebraValidatesInputs(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(true) {
+	for _, mode := range pinned(optimizerModes, true) {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

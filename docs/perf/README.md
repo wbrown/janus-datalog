@@ -21,6 +21,12 @@ Durable benchmark and profile artifacts captured pre-refactor, kept so
   52.4% of value bytes duplicated, two attributes accounting for two thirds of
   all datoms, and what the concentration means for a typed representation. The
   raw report is deliberately absent; it enumerates an application's schema.
+- [Where the rules test's allocations go](RULES_EVALUATION_ALLOCATIONS_2026-10-28.md) —
+  the native allocation profile of the random rule-set test on `memory-trees`:
+  42 GB over 700 M objects at 60 bytes each, fixed per-operation overhead of
+  rule evaluation rather than tuple data. The add-wins resolution's slow path
+  on `memory-trees`, the per-relation and per-run fixed costs, the hash join's
+  output path, and why the allocation volume decides the js/wasm leg's GC stall.
 
 ## How to read this directory
 
@@ -93,7 +99,7 @@ Shape: `|V|`=8 (int64), one attribute, no vectors or blobs. Machine: Apple M5,
 go1.26.3.
 
 `BenchmarkMemoryAssertBulk` now runs per backend, so its sub-benchmarks are
-`memory/Size1000` where this file records `Size1000`. benchstat pairs by name
+`badger-emulator/Size1000` where this file records `Size1000`. benchstat pairs by name
 and will report the old rows as dropped; compare against the `memory` arm in
 [`MEMORY_BACKENDS_2026-07-31.md`](MEMORY_BACKENDS_2026-07-31.md) by hand.
 

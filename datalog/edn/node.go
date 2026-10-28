@@ -42,7 +42,19 @@ func (n Node) String() string {
 	switch n.Type {
 	case NodeNil:
 		return "nil"
-	case NodeBool, NodeInt, NodeFloat, NodeChar, NodeSymbol, NodeKeyword:
+	case NodeFloat:
+		// An infinity and NaN are read from their symbolic spelling and
+		// render back in it.
+		switch n.Value {
+		case "+Inf":
+			return "##Inf"
+		case "-Inf":
+			return "##-Inf"
+		case "NaN":
+			return "##NaN"
+		}
+		return n.Value
+	case NodeBool, NodeInt, NodeChar, NodeSymbol, NodeKeyword:
 		return n.Value
 	case NodeString:
 		return ednQuoteString(n.Value)

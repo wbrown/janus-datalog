@@ -88,8 +88,10 @@ func (m *PatternMatcher) MatchWithConstraints(
 	// Project the binding relation to only include symbols used in the pattern
 	bindingRel = bindingRel.ProjectFromPattern(pattern)
 
-	// Check for vector cardinality - requires special handling with bound E from bindings
-	// This intercepts BEFORE normal join paths since vectors need RGA resolution
+	// A declared vector attribute's value is the collection its element datoms
+	// resolve to (RGA), so a pattern on one is intercepted before the join
+	// paths, which match single datoms. Under History the element datoms are
+	// the answer, read as written, and the joins below read them.
 	var aResolved interface{}
 	aResolved = m.extractValue(pattern.GetA())
 	if aResolved == nil {
@@ -99,7 +101,7 @@ func (m *PatternMatcher) MatchWithConstraints(
 			}
 		}
 	}
-	if aResolved != nil {
+	if aResolved != nil && m.mode != historyMode {
 		if m.schema != nil {
 			if kw, ok := aResolved.(datalog.Keyword); ok {
 				if attr := m.schema.GetAttribute(kw); attr != nil {
@@ -138,12 +140,12 @@ func (m *PatternMatcher) MatchWithConstraints(
 				annotations.KeyPattern: pattern,
 				"a_resolved":           aResolved,
 				"cache_nil":            m.cache == nil,
-				"txID_nil":             m.txID == nil,
+				"mode":                 m.mode,
 				"has_bindings":         bindings != nil && len(bindings) > 0,
 			},
 		})
 	}
-	if m.cache != nil && !m.isHistoryMode() {
+	if m.cache != nil && m.mode != historyMode {
 		if aResolved != nil {
 			// Phase 1: A has a single known value (from constant or single-tuple binding)
 			if aKw, ok := aResolved.(datalog.Keyword); ok {
@@ -274,7 +276,7 @@ func (m *PatternMatcher) restoreScanSetSemantics(rel executor.Relation, pattern 
 	if _, ok := rel.(*executor.MaterializedRelation); ok {
 		return rel
 	}
-	if scanProjectionPreservesSet(pattern, m.schema, m.isHistoryMode()) {
+	if scanProjectionPreservesSet(pattern, m.schema, m.mode == historyMode) {
 		return rel
 	}
 	return executor.NewStreamingRelationWithOptions(
@@ -349,18 +351,28 @@ func (m *PatternMatcher) matchUnboundScan(
 		}
 	}
 
-	// A datom's value is a scalar. A vector at the value position names a
-	// declared vector attribute's whole collection, which the vector arms
-	// below compare; under any other constant attribute it equals no datom,
+	// A datom's value is a scalar: a declared vector attribute is stored as one
+	// datom per element, and the collection is what resolution reconstructs
+	// from them (resolveVector). A vector at the value position names that
+	// collection, which the vector arms below compare under a constant vector
+	// attribute, and matchVectorUnderOpenAttribute compares under every
+	// declared vector attribute when the attribute is open, in the current and
+	// as-of views; under any other constant attribute, and under History, where
+	// every datom is read as written and nothing resolves, it equals no datom,
 	// and the pattern answers the empty relation.
-	if a != nil && card != schema.CardinalityVector && datalog.IsVector(v) {
-		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
+	if datalog.IsVector(v) {
+		if m.mode == historyMode || (a != nil && card != schema.CardinalityVector) {
+			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
+		}
+		if a == nil {
+			return m.matchVectorUnderOpenAttribute(pattern, symbols, v)
+		}
 	}
 
 	// CACHE OPTIMIZATION: When E and A are bound, use the cache for O(1)
 	// access instead of storage scans. Concrete AsOf matchers use
 	// transaction-scoped cache keys; History matchers bypass cache.
-	if m.cache != nil && !m.isHistoryMode() && e != nil && a != nil {
+	if m.cache != nil && m.mode != historyMode && e != nil && a != nil {
 		if eIdent, ok := e.(datalog.Identity); ok {
 			if aKw, ok := a.(datalog.Keyword); ok {
 				cacheResult, handled, err := m.matchFromCache(pattern, symbols, eIdent, aKw, v, card, valueType)
@@ -400,11 +412,14 @@ func (m *PatternMatcher) matchUnboundScan(
 				useVectorResolution = true
 			}
 		}
-	} else if e == nil && a != nil && v != nil && card == schema.CardinalityOne {
-		// E is unbound, A is bound, V is constant, cardinality-one
-		// V-bound scan (AVET) only sees datoms with this V, but the LWW winner
-		// may have a different V. Use candidate + validate pattern.
-		// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 2 & 5.
+	} else if e == nil && a != nil && v != nil && card == schema.CardinalityOne && m.mode != historyMode {
+		// E is unbound, A is bound, V is constant, cardinality-one, in the
+		// current or an as-of view. A V-bound scan (AVET) only sees datoms with
+		// this V, but the LWW winner may have a different V, so each candidate
+		// is validated against the winner. See
+		// docs/reference/INDEX_SELECTION_PROOF.md Theorem 2 & 5. Under History
+		// nothing resolves and there is no winner: the raw AVET scan below
+		// reads every datom carrying V, which is the answer.
 		dummySym := datalog.NewSymbol("__v_bound_dummy__")
 		bindingRel := executor.NewMaterializedRelation(
 			[]query.Symbol{dummySym},
@@ -418,10 +433,12 @@ func (m *PatternMatcher) matchUnboundScan(
 			BoundA:          a,
 		}
 		return m.matchWithVValidation(pattern, bindingRel, symbols, strategy, nil)
-	} else if e == nil && a != nil && card == schema.CardinalityVector {
-		// E unbound, A bound, cardinality-vector
-		// Scan all entities with this attribute, resolve each vector, compare against V.
-		// Pass v (nil for unbound, []interface{} for bound literal).
+	} else if e == nil && a != nil && card == schema.CardinalityVector && m.mode != historyMode {
+		// E unbound, A bound, cardinality-vector, in the current or an as-of
+		// view: scan all entities with this attribute, resolve each vector from
+		// its element datoms and compare it against V, nil for unbound or the
+		// bound literal. Under History nothing resolves: the raw scan below
+		// reads each element datom as written.
 		return m.matchVectorScanAllEntities(pattern, symbols, a, v, valueType)
 	} else if e == nil && a != nil && card == schema.CardinalityMany {
 		// E is unbound, A is bound, cardinality-many
@@ -435,8 +452,9 @@ func (m *PatternMatcher) matchUnboundScan(
 		}
 	}
 
-	// In history mode, disable all CRDT resolution flags — return raw datoms
-	if m.isHistoryMode() {
+	// Under History nothing resolves: every flag is cleared, and the raw scan
+	// below reads each datom as written.
+	if m.mode == historyMode {
 		returnOnlyFirst = false
 		useAddWinsResolution = false
 		useMembershipCheck = false
@@ -472,21 +490,21 @@ func (m *PatternMatcher) matchUnboundScan(
 
 	// Choose index and create scan bound
 	bound := m.chooseIndex(e, a, v, tx)
-	properties := unboundScanProperties(pattern, bound.Index, card, m.isHistoryMode())
-	if orderedProperties, ok := historyTAEVProperties(q, pattern, m.isHistoryMode()); ok {
+	properties := unboundScanProperties(pattern, bound.Index, card, m.mode == historyMode)
+	if orderedProperties, ok := historyTAEVProperties(q, pattern, m.mode == historyMode); ok {
 		bound = ScanBound{Index: TAEV}
 		properties = orderedProperties
-	} else if orderedProperties, ok := historyAETVProperties(q, pattern, m.isHistoryMode()); ok {
+	} else if orderedProperties, ok := historyAETVProperties(q, pattern, m.mode == historyMode); ok {
 		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
 			bound = ScanBound{Index: AETV, Prefix: []datalog.Value{keyword}}
 			properties = orderedProperties
 		}
-	} else if orderedProperties, ok := historyEATVProperties(q, pattern, m.isHistoryMode()); ok {
+	} else if orderedProperties, ok := historyEATVProperties(q, pattern, m.mode == historyMode); ok {
 		if identity, identityOK := e.(datalog.Identity); identityOK {
 			bound = ScanBound{Index: EATV, Prefix: []datalog.Value{identity}}
 			properties = orderedProperties
 		}
-	} else if orderedProperties, ok := historyATEVProperties(q, pattern, m.isHistoryMode()); ok {
+	} else if orderedProperties, ok := historyATEVProperties(q, pattern, m.mode == historyMode); ok {
 		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
 			bound = ScanBound{Index: ATEV, Prefix: []datalog.Value{keyword}}
 			properties = orderedProperties
@@ -527,10 +545,10 @@ func (m *PatternMatcher) matchUnboundScan(
 		return nil, fmt.Errorf("scan failed: %w", err)
 	}
 
-	if m.isHistoryMode() {
+	if m.mode == historyMode {
 		regularIter.storageIter = rawStorageIter
 	} else {
-		regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID(), m, report)
+		regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m, report)
 	}
 
 	// Return streaming relation with lazy materialization
@@ -717,6 +735,12 @@ type validatingVBoundIterator struct {
 	// Current V value being searched
 	currentBoundV any
 
+	// vectorAnswers is the current binding's answer when its value is a
+	// vector, drained before the next binding: every entity whose collection
+	// under some declared vector attribute equals it
+	// (matchVectorUnderOpenAttribute). Nil between such bindings.
+	vectorAnswers executor.Iterator
+
 	// report accounts for this arm. Its run is nil: this path opens a candidate
 	// scan per binding, and those are peers with no one of them describing the
 	// whole. Everything it drives acquires through the same report — the
@@ -731,6 +755,27 @@ type validatingVBoundIterator struct {
 
 func (it *validatingVBoundIterator) Next() bool {
 	for {
+		// A vector-valued binding answers from the vector arms, never from a
+		// candidate scan.
+		if it.vectorAnswers != nil {
+			if it.vectorAnswers.Next() {
+				it.currentTuple = it.vectorAnswers.Tuple()
+				if it.report != nil {
+					it.report.matched++
+				}
+				return true
+			}
+			if err := it.vectorAnswers.Error(); err != nil {
+				it.err = err
+				return false
+			}
+			if err := it.vectorAnswers.Close(); err != nil {
+				it.err = err
+				return false
+			}
+			it.vectorAnswers = nil
+		}
+
 		// Try to get next CRDT-resolved result from current scan
 		if it.crdtIter != nil {
 			for it.crdtIter.Next() {
@@ -772,6 +817,14 @@ func (it *validatingVBoundIterator) Next() bool {
 				// CardinalityOne and CardinalityUnknown both resolve as LWW, and
 				// both need post-validation: the winner within the V-filtered
 				// run may not be the real winner, which may carry a different V.
+				// The candidate run is keyed by the value, under the attribute
+				// when one is bound, and carries every entity's datoms with
+				// that value; the pattern's entity, when it names one, answers
+				// alone.
+				if named, ok := it.pattern.GetE().(query.Constant); ok && !datom.E.Equal(named.Value.(datalog.Identity)) {
+					continue
+				}
+
 				card := it.getCardinalityEnum(datom.A)
 				// Schemaless attributes are treated as cardinality-one (LWW)
 				// everywhere else in the engine (planner routing, cache OneValue),
@@ -823,6 +876,24 @@ func (it *validatingVBoundIterator) Next() bool {
 		it.currentBoundV = it.patternExtractor.ExtractV(tuple)
 		if it.currentBoundV == nil {
 			continue // V not bound in this tuple
+		}
+
+		// A vector names a declared vector attribute's whole collection, which
+		// no candidate datom carries: the index holds a collection's elements,
+		// each its own datom. The attribute is open on this route, since a
+		// vector under a constant attribute is selected out at the match's
+		// entry (typedPositionBindingCheck), so the binding's answer is each
+		// declared vector attribute under which the pattern's entity, or
+		// every entity when it names none, carries a collection equal to it,
+		// drained before the next binding.
+		if datalog.IsVector(it.currentBoundV) {
+			answers, err := it.matcher.matchVectorUnderOpenAttribute(it.pattern, it.symbols, it.currentBoundV)
+			if err != nil {
+				it.err = err
+				return false
+			}
+			it.vectorAnswers = answers.Iterator()
+			continue
 		}
 
 		// Unique-attribute short-circuit: resolve the (A, V)-LWW winner
@@ -898,6 +969,9 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 	if owner == nil {
 		return false, nil // No claimant; caller treats this as skip-binding.
 	}
+	if named, ok := it.pattern.GetE().(query.Constant); ok && !owner.Equal(named.Value.(datalog.Identity)) {
+		return false, nil // The claimant is another entity than the pattern names.
+	}
 
 	// Build a synthetic winner datom for tuple construction.
 	winner := &datalog.Datom{
@@ -928,15 +1002,15 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	//
 	// Equivalence preconditions (all required):
 	//   - cache != nil: cache exists (not DisableCache).
-	//   - txID == nil: latest mode. The scan below reads the absolute-latest
-	//     entry with NO shouldFilterTx, so it equals ResolveLWW only when no
-	//     as-of/history filter applies. Concrete-AsOf and history keep the scan
-	//     path untouched.
+	//   - latest mode. The scan below reads the absolute-latest entry with NO
+	//     shouldFilterTx, so it equals ResolveLWW only when no as-of/history
+	//     filter applies. Concrete-AsOf and history keep the scan path
+	//     untouched.
 	//   - non-unique: ResolveLWW walks for unique attributes (CRDT-unique
 	//     fallback), which differs from this scan's naive first-entry. Unique
 	//     attributes already short-circuit before validation via
 	//     tryEmitUniqueWinner; this guard makes the precondition self-evident.
-	if it.matcher.cache != nil && it.matcher.txID == nil && !it.attrIsUnique(a) {
+	if it.matcher.cache != nil && it.matcher.mode == latestMode && !it.attrIsUnique(a) {
 		var eEnt Entity
 		var aAttr Attribute
 		copy(eEnt[:], eBytes[:])
@@ -1138,12 +1212,11 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	// - RGA for CardinalityVector
 	// - Add-wins for CardinalityUnknown (same as CardinalityMany)
 	//
-	// Pass the matcher's as-of target (crdtTxID) so candidate resolution
-	// respects the snapshot. In latest and history mode this is the zero
-	// ElementID (no filter); in concrete as-of mode it skips post-snapshot
-	// entries, so a value tombstoned or overwritten after T does not drop or
-	// alter a candidate that existed as of T.
-	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher, it.report)
+	// The matcher carries the view, so candidate resolution reads the
+	// snapshot: in as-of mode an entry after the target is skipped, and a
+	// value withdrawn or superseded after T does not drop or alter a
+	// candidate that existed as of T. Under History this arm is not taken.
+	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher, it.report)
 
 	if it.matcher.handler != nil {
 		// The same run the event above announced, restated rather than left to
@@ -1168,6 +1241,10 @@ func (it *validatingVBoundIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
 
+// RequiresCopy is false: BuildTupleInterned builds a fresh tuple per
+// emitted candidate and per unique winner.
+func (it *validatingVBoundIterator) RequiresCopy() bool { return false }
+
 func (it *validatingVBoundIterator) Close() error {
 	if it.crdtIter != nil {
 		it.crdtIter.Close()
@@ -1176,6 +1253,12 @@ func (it *validatingVBoundIterator) Close() error {
 	if it.rawIter != nil {
 		it.rawIter.Close()
 		it.rawIter = nil
+	}
+	if it.vectorAnswers != nil {
+		if err := it.vectorAnswers.Close(); err != nil && it.err == nil {
+			it.err = err
+		}
+		it.vectorAnswers = nil
 	}
 
 	// Not gated on having opened a candidate scan: the unique short-circuit
@@ -1427,6 +1510,14 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		return nil, false, nil // E variable not in bindings
 	}
 
+	// A keyword wider than storage holds names no stored attribute: its
+	// encoding into the key keeps its first 32 bytes, the key of whatever
+	// attribute shares them, so it is never encoded and contributes no tuple.
+	// With A fixed for the call the whole match answers nothing.
+	if aSymIdx < 0 && datalog.ValidateAttributeWidth(a) != nil {
+		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
+	}
+
 	// Pre-compute fixed-A values when A is constant across all tuples
 	var fixedCard datalog.Keyword
 	var fixedValueType datalog.Keyword
@@ -1530,6 +1621,9 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 				continue
 			}
 			aKw := tuple[aSymIdx].(datalog.Keyword)
+			if datalog.ValidateAttributeWidth(aKw) != nil {
+				continue
+			}
 			tupleCard = schema.CardinalityOne
 			if m.schema != nil {
 				if def := m.schema.GetAttribute(aKw); def != nil {
@@ -1819,9 +1913,9 @@ func (m *PatternMatcher) matchVectorWithBindings(
 
 	if eSymIdx == -1 {
 		// The binding binds the value and not the entity. A vector's value
-		// names the whole collection, so no run is narrowed by it: every
-		// entity's vector is resolved and the bound values are compared at
-		// the collapse.
+		// names the whole collection, so no run is narrowed by it: the
+		// pattern's entity, or every entity when it names none, has its
+		// vector resolved and the bound values are compared at the collapse.
 		return m.matchVectorScanAllEntities(pattern, symbols, attr, v, valueType)
 	}
 
@@ -2109,26 +2203,46 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 			}
 			it.seenEntities[eBytes] = true
 
-			// Resolve the set for this entity using add-wins semantics. Intake
-			// accrues into the report at scan time, so it survives the error
-			// return below; only what the result carries has to wait for one.
-			result, err := it.matcher.resolveAddWinsSet(eBytes[:], it.aBytes[:], it.report)
-			if err != nil {
-				it.err = err
-				return false
+			// The entity's current set under add-wins: through the cache when
+			// the matcher has one and its view is served by it (cacheKey), as
+			// the route for a bound entity reads it, and from storage otherwise.
+			// A hit reads no index; a build and a storage resolution accrue
+			// their intake into the report at scan time, so it survives the
+			// error return below.
+			var members map[any]any
+			var version datalog.ElementID
+			key, cached := it.matcher.cacheKey(Entity(eBytes), Attribute(it.aBytes))
+			if cached && it.matcher.cache != nil {
+				entry, err := it.matcher.cache.GetOrResolve(key, schema.CardinalityMany, it.matcher, it.matcher.cacheBound(), it.matcher.handler, it.report)
+				if err != nil {
+					it.err = err
+					return false
+				}
+				if entry != nil {
+					members = entry.ManySet()
+					version = entry.Version()
+				}
+			} else {
+				result, err := it.matcher.resolveAddWinsSet(eBytes[:], it.aBytes[:], it.report)
+				if err != nil {
+					it.err = err
+					return false
+				}
+				members = result.Members
+				version = result.MaxElementID
 			}
 			if it.report != nil {
-				it.report.resolved += len(result.Members)
+				it.report.resolved += len(members)
 			}
 
 			// If set has members, set up iteration
-			if len(result.Members) > 0 {
+			if len(members) > 0 {
 				it.currentEntity = datom.E
-				it.currentSetMembers = make([]interface{}, 0, len(result.Members))
-				for _, member := range result.Members {
+				it.currentSetMembers = make([]interface{}, 0, len(members))
+				for _, member := range members {
 					it.currentSetMembers = append(it.currentSetMembers, member)
 				}
-				it.currentMaxElementID = result.MaxElementID
+				it.currentMaxElementID = version
 				it.currentMemberIdx = 0
 				break // Go back to top of outer loop to yield first member
 			}
@@ -2152,6 +2266,9 @@ func (it *cardinalityManyScanAllEntitiesIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
 
+// RequiresCopy is false: Next makes a fresh tuple per set member.
+func (it *cardinalityManyScanAllEntitiesIterator) RequiresCopy() bool { return false }
+
 func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
 	if it.storageIter == nil {
 		return nil
@@ -2165,10 +2282,12 @@ func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
 
 func (it *cardinalityManyScanAllEntitiesIterator) Error() error { return it.err }
 
-// matchVectorScanAllEntities handles [?e :attr <vector-literal>] where E is unbound.
-// Scans all entities with the attribute and resolves each vector using RGA.
-// If v is non-nil, only entities whose resolved vector equals v are returned.
-// If v is nil, all entities with non-empty vectors are returned.
+// matchVectorScanAllEntities answers a pattern on a declared vector attribute
+// by resolving each entity's collection from its element datoms (RGA): the
+// entity the pattern names when its entity element is a constant, every
+// entity carrying the attribute when it is a variable or a blank. With v
+// bound, an entity answers when its resolved collection equals v; with v nil,
+// every entity with a non-empty collection answers.
 func (m *PatternMatcher) matchVectorScanAllEntities(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
@@ -2180,8 +2299,13 @@ func (m *PatternMatcher) matchVectorScanAllEntities(
 		copy(aBytes[:], kw.String())
 	}
 
-	// Scan AEVT to find all entities with this attribute
-	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{a}}
+	// AEVT orders the attribute's datoms by entity, so the pattern's entity,
+	// when it names one, extends the prefix to that entity's own.
+	prefix := []datalog.Value{a}
+	if entity, ok := pattern.GetE().(query.Constant); ok {
+		prefix = append(prefix, entity.Value)
+	}
+	bound := ScanBound{Index: AEVT, Prefix: prefix}
 	report := DiscardIntake
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, bound)
@@ -2315,6 +2439,9 @@ func (it *vectorScanAllEntitiesIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
 
+// RequiresCopy is false: Next makes a fresh tuple per matching entity.
+func (it *vectorScanAllEntitiesIterator) RequiresCopy() bool { return false }
+
 func (it *vectorScanAllEntitiesIterator) Close() error {
 	if it.storageIter == nil {
 		return nil
@@ -2327,6 +2454,47 @@ func (it *vectorScanAllEntitiesIterator) Close() error {
 }
 
 func (it *vectorScanAllEntitiesIterator) Error() error { return it.err }
+
+// matchVectorUnderOpenAttribute answers a pattern whose value position holds
+// a vector and whose attribute position is open. A vector names a declared
+// vector attribute's whole collection, so the answer is each declared vector
+// attribute under which the pattern's entity, or every entity when the
+// pattern names none, carries a collection equal to it, each attribute
+// resolved and compared as matchVectorScanAllEntities compares it under a
+// known one. The schema names the vector attributes, and a matcher with no
+// schema declares none and answers nothing. The caller answers History
+// itself, where nothing resolves and a vector equals no datom as written.
+func (m *PatternMatcher) matchVectorUnderOpenAttribute(
+	pattern *query.DataPattern,
+	symbols []query.Symbol,
+	v interface{},
+) (executor.Relation, error) {
+	var tuples []executor.Tuple
+	if m.schema != nil {
+		for _, def := range m.schema.Attributes() {
+			if def.Cardinality != schema.CardinalityVector {
+				continue
+			}
+			rel, err := m.matchVectorScanAllEntities(pattern, symbols, def.Ident, v, def.ValueType)
+			if err != nil {
+				return nil, err
+			}
+			copies := rel.RequiresCopy()
+			if err := executor.ForEach(rel, func(tuple executor.Tuple) error {
+				if copies {
+					held := make(executor.Tuple, len(tuple))
+					copy(held, tuple)
+					tuple = held
+				}
+				tuples = append(tuples, tuple)
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return executor.NewMaterializedRelationWithOptions(symbols, tuples, m.options), nil
+}
 
 // matchCardinalityManyScanAllEntities handles [?e :attr ?v] where E is unbound
 // Scans all entities with the attribute and resolves each set using add-wins
@@ -2541,6 +2709,9 @@ func (it *cardinalityManyAVETValueIterator) buildTuple() {
 func (it *cardinalityManyAVETValueIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
+
+// RequiresCopy is false: buildTuple makes a fresh tuple per member entity.
+func (it *cardinalityManyAVETValueIterator) RequiresCopy() bool { return false }
 
 func (it *cardinalityManyAVETValueIterator) Close() error {
 	if it.storageIter == nil {

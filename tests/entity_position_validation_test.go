@@ -17,7 +17,7 @@ import (
 // ordinary typed non-match, like a string constant against an int64 value.
 
 func TestStringConstantInEntityPositionIsError(t *testing.T) {
-	eachBackendAndMode(t, func(t *testing.T, db *storage.Database) {
+	eachMode(t, func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("user:alice")
 		tx := db.NewTransaction()
 		tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
@@ -52,7 +52,7 @@ func TestStringInputBoundToEntityPositionIsError(t *testing.T) {
 	} {
 		t.Run(cacheMode.name, func(t *testing.T) {
 			options := storage.DatabaseOptions{DisableCache: cacheMode.disableCache}
-			eachBackendAndModeOpts(t, options, func(t *testing.T, db *storage.Database) {
+			eachModeOpts(t, options, func(t *testing.T, db *storage.Database) {
 				alice := datalog.NewIdentity("user:alice")
 				tx := db.NewTransaction()
 				tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
@@ -86,7 +86,7 @@ func TestStringInputBoundToEntityPositionVectorAttributeIsError(t *testing.T) {
 		Cardinality: schema.CardinalityVector,
 	})
 
-	eachBackendAndModeOpts(t, storage.DatabaseOptions{Schema: s}, func(t *testing.T, db *storage.Database) {
+	eachModeOpts(t, storage.DatabaseOptions{Schema: s}, func(t *testing.T, db *storage.Database) {
 		widget := datalog.NewIdentity("product:widget")
 		tx := db.NewTransaction()
 		tx.Add(widget, datalog.NewKeyword(":product/tags"), "electronics")
@@ -113,7 +113,7 @@ func TestStringInputBoundToEntityPositionVectorAttributeIsError(t *testing.T) {
 // interior data flow is a typed non-match.
 
 func TestStringConstantInAttributePositionIsError(t *testing.T) {
-	eachBackendAndMode(t, func(t *testing.T, db *storage.Database) {
+	eachMode(t, func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("user:alice")
 		tx := db.NewTransaction()
 		tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
@@ -134,7 +134,7 @@ func TestStringConstantInAttributePositionIsError(t *testing.T) {
 }
 
 func TestStringInputBoundToAttributePositionIsError(t *testing.T) {
-	eachBackendAndMode(t, func(t *testing.T, db *storage.Database) {
+	eachMode(t, func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("user:alice")
 		nameAttr := datalog.NewKeyword(":user/name")
 		tx := db.NewTransaction()
@@ -173,7 +173,7 @@ func TestStringInputBoundToAttributePositionIsError(t *testing.T) {
 // data holding both keywords and strings keeps keyword-partnered tuples and
 // drops the rest; no error.
 func TestVAJoinOverMixedDataMatchesOnlyKeywords(t *testing.T) {
-	eachBackendAndMode(t, func(t *testing.T, db *storage.Database) {
+	eachMode(t, func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("user:alice")
 		meta1 := datalog.NewIdentity("meta:1")
 		meta2 := datalog.NewIdentity("meta:2")
@@ -203,7 +203,7 @@ func TestVAJoinOverMixedDataMatchesOnlyKeywords(t *testing.T) {
 }
 
 func TestStringConstantInValuePositionIsTypedNonMatch(t *testing.T) {
-	eachBackendAndMode(t, func(t *testing.T, db *storage.Database) {
+	eachMode(t, func(t *testing.T, db *storage.Database) {
 		alice := datalog.NewIdentity("user:alice")
 		group := datalog.NewIdentity("group:admins")
 		tx := db.NewTransaction()

@@ -75,9 +75,8 @@ func (it *hashJoinIterator) Next() bool {
 			// output tuple unique. Otherwise restore set semantics explicitly.
 			if it.seen == nil || !it.seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
 				// combineTuplesIndexed returns a fresh slice on every call and
-				// nothing mutates it, so no defensive copy is needed here. Any
-				// downstream consumer that retains tuples copies at its own
-				// boundary (this join's StreamingRelation has RequiresCopy()==true).
+				// nothing mutates it, so no copy is needed here and this iterator
+				// answers RequiresCopy false: a consumer may retain the tuple.
 				it.currentJoined = joined // Store for Tuple() to return
 				if it.metrics != nil {
 					it.metrics.resultCount++
@@ -133,6 +132,10 @@ func (it *hashJoinIterator) Next() bool {
 func (it *hashJoinIterator) Tuple() Tuple {
 	return it.currentJoined
 }
+
+// RequiresCopy is false: every joined tuple is a fresh slice
+// combineTuplesIndexed builds, which nothing writes after.
+func (it *hashJoinIterator) RequiresCopy() bool { return false }
 
 func (it *hashJoinIterator) Close() error {
 	if !it.closed {
@@ -481,18 +484,19 @@ func HashJoinWithOptions(
 	}
 
 	// Materialized mode
+	// The build tuples are in hand and size the seen map and the results, the
+	// probe side when its size is known and smaller; both grow past either
+	// under fanout.
+	expectedResults := buildCount
+	if probeSize := probeRel.Size(); probeSize >= 0 && probeSize < expectedResults {
+		expectedResults = probeSize
+	}
 	// Use efficient TupleKeyMap for deduplication
 	var seen *TupleKeyMap
 	if len(resultProperties.Keys) == 0 {
-		// The build tuples are in hand and size the map, the probe side when
-		// its size is known and smaller; the map grows past either.
-		expectedResults := buildCount
-		if probeSize := probeRel.Size(); probeSize >= 0 && probeSize < expectedResults {
-			expectedResults = probeSize
-		}
 		seen = NewTupleKeyMapWithCapacity(expectedResults)
 	}
-	var results []Tuple
+	results := make([]Tuple, 0, expectedResults)
 
 	// CRITICAL: Check if probe relation was already consumed
 	// This should never happen - it indicates a bug in the executor
@@ -569,18 +573,23 @@ func HashJoinWithOptions(
 
 // SemiJoin returns tuples from left that have matches in right
 func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
-	// Build indices
-	leftIndices := make([]int, len(joinSyms))
-	rightIndices := make([]int, len(joinSyms))
-	for i, sym := range joinSyms {
-		leftIndices[i] = SymbolIndex(left, sym)
-		rightIndices[i] = SymbolIndex(right, sym)
-	}
-
 	// Extract options from left relation
 	opts := left.Options()
 	if !opts.populated() {
 		opts = right.Options()
+	}
+
+	// A join symbol a side lacks is the query's error, carried by the result
+	// and surfaced when it is driven.
+	leftIndices, err := query.SymbolIndexTable(left.Symbols(), joinSyms)
+	var rightIndices []int
+	if err == nil {
+		rightIndices, err = query.SymbolIndexTable(right.Symbols(), joinSyms)
+	}
+	if err != nil {
+		res := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
+		res.err = fmt.Errorf("semi join: %w", err)
+		return res
 	}
 
 	// Build set of keys from right relation using efficient TupleKeyMap.
@@ -630,18 +639,23 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 
 // AntiJoin returns tuples from left that have no matches in right
 func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
-	// Build indices
-	leftIndices := make([]int, len(joinSyms))
-	rightIndices := make([]int, len(joinSyms))
-	for i, sym := range joinSyms {
-		leftIndices[i] = SymbolIndex(left, sym)
-		rightIndices[i] = SymbolIndex(right, sym)
-	}
-
 	// Extract options from left relation
 	opts := left.Options()
 	if !opts.populated() {
 		opts = right.Options()
+	}
+
+	// A join symbol a side lacks is the query's error, carried by the result
+	// and surfaced when it is driven.
+	leftIndices, err := query.SymbolIndexTable(left.Symbols(), joinSyms)
+	var rightIndices []int
+	if err == nil {
+		rightIndices, err = query.SymbolIndexTable(right.Symbols(), joinSyms)
+	}
+	if err != nil {
+		res := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
+		res.err = fmt.Errorf("anti join: %w", err)
+		return res
 	}
 
 	// Build set of keys from right relation using efficient TupleKeyMap.

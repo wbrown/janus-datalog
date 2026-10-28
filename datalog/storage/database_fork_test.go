@@ -11,16 +11,16 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
-// forkingModes splits the optimizer-mode axis by whether the backend can fork a
+// forkingModes splits the store axis by whether the backend can fork a
 // branch. The switch has no silent default: a new backend fails here until
 // someone says which side of that line it falls on.
 func forkingModes(t *testing.T) (forking, refusing []optimizerMode) {
 	t.Helper()
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		switch mode.backend.Name {
 		case "memory-trees":
 			forking = append(forking, mode)
-		case "memory", "badger":
+		case "badger-emulator", "badger":
 			refusing = append(refusing, mode)
 		default:
 			t.Fatalf("forkingModes: backend %q is unclassified — can it fork a branch?",

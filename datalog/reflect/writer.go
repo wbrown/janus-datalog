@@ -156,7 +156,10 @@ func (sw *StructWriter) Write(tx TransactionAdder, entity datalog.Identity, v in
 		}
 
 		// Get the keyword for this attribute
-		kw := datalog.NewKeyword(field.FullAttr)
+		kw, err := datalog.ParseKeyword(field.FullAttr)
+		if err != nil {
+			return fmt.Errorf("field %s: %w", field.FieldName, err)
+		}
 
 		// Handle different field types
 		if err := sw.writeField(tx, entity, kw, field, fieldVal); err != nil {
@@ -224,7 +227,10 @@ func (sw *StructWriter) Update(tx TransactionUpdater, lookup EntityLookup, entit
 		}
 
 		// Get the keyword for this attribute
-		kw := datalog.NewKeyword(field.FullAttr)
+		kw, err := datalog.ParseKeyword(field.FullAttr)
+		if err != nil {
+			return fmt.Errorf("field %s: %w", field.FieldName, err)
+		}
 
 		// Handle different field types
 		if err := sw.updateField(tx, lookup, entity, kw, field, fieldVal, mode); err != nil {
@@ -589,16 +595,12 @@ func (sw *StructWriter) extractSingleValue(val reflect.Value) (interface{}, erro
 			if nestedInfo.IDField == nil {
 				return nil, fmt.Errorf("nested struct %s has no ID field", val.Type().Name())
 			}
-			idVal := val.Field(nestedInfo.IDField.Index)
-			if idVal.Kind() == reflect.Ptr {
-				if idVal.IsNil() {
-					return nil, fmt.Errorf("nested struct %s has nil ID", val.Type().Name())
-				}
-				idVal = idVal.Elem()
-			}
-			id, ok := idVal.Interface().(datalog.Identity)
+			id, ok := val.Field(nestedInfo.IDField.Index).Interface().(datalog.Identity)
 			if !ok {
 				return nil, fmt.Errorf("nested struct %s ID field is not Identity", val.Type().Name())
+			}
+			if id == nil {
+				return nil, fmt.Errorf("nested struct %s has nil ID", val.Type().Name())
 			}
 			return id, nil
 		}

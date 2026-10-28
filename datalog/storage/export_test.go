@@ -486,7 +486,7 @@ func TestParseDatomEDN_Errors(t *testing.T) {
 // =============================================================================
 
 func TestExport_EmptyDatabase(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -500,7 +500,7 @@ func TestExport_EmptyDatabase(t *testing.T) {
 }
 
 func TestExport_SingleDatom(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -533,7 +533,7 @@ func TestExport_SingleDatom(t *testing.T) {
 }
 
 func TestExport_MultipleDatoms(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -566,7 +566,7 @@ func TestExport_MultipleDatoms(t *testing.T) {
 }
 
 func TestImport_EmptyFile(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -593,7 +593,7 @@ func TestImport_WithComments(t *testing.T) {
 [#identity "` + l85 + `" :test/name "Alice" 1]
 `
 
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -637,7 +637,7 @@ func TestImport_BatchBoundary(t *testing.T) {
 		sb.WriteString("\n")
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -659,7 +659,7 @@ func TestImport_LargeFile(t *testing.T) {
 		sb.WriteString("\n")
 	}
 
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -672,7 +672,7 @@ func TestImport_LargeFile(t *testing.T) {
 func TestImport_Errors(t *testing.T) {
 	validID := datalog.NewIdentity("test").L85()
 
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			t.Run("malformed EDN", func(t *testing.T) {
 				db := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -706,7 +706,7 @@ not valid EDN
 }
 
 func TestDatabaseRoundTrip(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -751,7 +751,7 @@ func TestDatabaseRoundTrip(t *testing.T) {
 }
 
 func TestDatabaseRoundTrip_Deterministic(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -786,7 +786,7 @@ func TestDatabaseRoundTrip_Deterministic(t *testing.T) {
 }
 
 func TestExportImport_PreservesTxIDs(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -1139,7 +1139,7 @@ func TestParseDatomEDN_BackwardCompat(t *testing.T) {
 // =============================================================================
 
 func TestDatabaseRoundTrip_CRDTOps(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create DB with cardinality-many schema
 			s, err := schema.NewBuilder().
@@ -1204,7 +1204,7 @@ func TestDatabaseRoundTrip_CRDTOps(t *testing.T) {
 func TestDatabaseRoundTrip_CRDTSemantics(t *testing.T) {
 	// Semantic verification: after export/import, CRDT resolution still works correctly.
 	// Tombstoned values must stay dead; live values must remain visible.
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
@@ -1263,7 +1263,7 @@ func TestDatabaseRoundTrip_CRDTSemantics(t *testing.T) {
 }
 
 func TestDatabaseRoundTrip_RGA(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Round-trip RGA (cardinality-vector) with insert and tombstone ops
 			s, err := schema.NewBuilder().
@@ -1342,7 +1342,7 @@ func parseEDNValue(s string) (*edn.Node, error) {
 // Lamport values than imported data. Without this, Remove on a cardinality-many
 // attribute silently loses to add-wins because its Lamport is lower.
 func TestImport_ClockAdvancedAfterImport(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

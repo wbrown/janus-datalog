@@ -48,7 +48,7 @@ func newCachedBranch(branchSyms, outerSyms, keySyms []query.Symbol) *cachedBranc
 // framing carries a substitution, and reads it whole: the branch's tuples,
 // with the presented answer's symbols.
 func buildBranchTuples(executor *DefaultQueryExecutor, ctx *Context, f framing, branch branchRun, run *MaterializedRelation) ([]Tuple, []query.Symbol, error) {
-	var input Relation = NewUnitRelation(executor.options)
+	var input Relation = executor.executor.unit
 	if run != nil {
 		input = run
 	}

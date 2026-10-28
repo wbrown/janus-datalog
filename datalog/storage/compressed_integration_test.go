@@ -39,7 +39,7 @@ func longString(prefix string, size int) string {
 // ---- Write and Read Back ----
 
 func TestCompressedIntegration_WriteReadString(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := newCompressedDB(t, mode)
 
@@ -76,7 +76,7 @@ func TestCompressedIntegration_WriteReadString(t *testing.T) {
 }
 
 func TestCompressedIntegration_WriteReadBytes(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := newCompressedDB(t, mode)
 
@@ -110,7 +110,7 @@ func TestCompressedIntegration_WriteReadBytes(t *testing.T) {
 }
 
 func TestCompressedIntegration_ShortStringUncompressed(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := newCompressedDB(t, mode)
 
@@ -145,7 +145,7 @@ func TestCompressedIntegration_ShortStringUncompressed(t *testing.T) {
 // ---- Value Equality via AVET ----
 
 func TestCompressedIntegration_AVET_ExactMatch(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := newCompressedDB(t, mode)
 
@@ -182,7 +182,7 @@ func TestCompressedIntegration_AVET_ExactMatch(t *testing.T) {
 }
 
 func TestCompressedIntegration_AVET_NoFalsePositive(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := newCompressedDB(t, mode)
 
@@ -218,7 +218,7 @@ func TestCompressedIntegration_AVET_NoFalsePositive(t *testing.T) {
 // ---- CRDT Resolution ----
 
 func TestCompressedIntegration_CRDT_CardinalityOne_LWW(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -269,7 +269,7 @@ func TestCompressedIntegration_CRDT_CardinalityOne_LWW(t *testing.T) {
 }
 
 func TestCompressedIntegration_CRDT_CardinalityMany(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -329,7 +329,7 @@ func TestCompressedIntegration_CRDT_CardinalityMany(t *testing.T) {
 }
 
 func TestCompressedIntegration_CRDT_CardinalityMany_Remove(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			s := schema.NewSchema()
 			s.Add(&schema.AttributeDefinition{
@@ -388,7 +388,7 @@ func TestCompressedIntegration_CRDT_CardinalityMany_Remove(t *testing.T) {
 // ---- Mixed Compressed and Uncompressed ----
 
 func TestCompressedIntegration_MixedValues(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := newCompressedDB(t, mode)
 
@@ -440,7 +440,7 @@ func TestCompressedIntegration_MixedValues(t *testing.T) {
 // ---- Multiple Entities with Same Compressed Value ----
 
 func TestCompressedIntegration_MultipleEntities(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := newCompressedDB(t, mode)
 
@@ -484,7 +484,7 @@ func TestCompressedIntegration_MultipleEntities(t *testing.T) {
 func TestCompressedIntegration_ValueEquality_CrossBoundary(t *testing.T) {
 	// Two databases on the same backend, one compressing and one not: the same
 	// value written to both must read back identically.
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{CompressionThreshold: 256})
 			db2 := createOptimizerModeDB(t, mode, DatabaseOptions{})
@@ -534,7 +534,7 @@ func TestCompressedIntegration_ValueEquality_CrossBoundary(t *testing.T) {
 // ---- Scan All Values for an Entity ----
 
 func TestCompressedIntegration_ScanEntity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := newCompressedDB(t, mode)
 
@@ -590,7 +590,7 @@ func TestCompressedIntegration_Determinism(t *testing.T) {
 	// Write the same value twice to two different DBs — matcher should find it in both
 	value := longString("determinism", 500)
 
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			for i := 0; i < 2; i++ {
 				db := newCompressedDB(t, mode)

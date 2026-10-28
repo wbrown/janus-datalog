@@ -82,7 +82,7 @@ The computation happens _inside_ the query. Results are already correlated. The 
  :where [$rules ?r :rule/key ?target]
         [$rules ?r :rule/subject-expr ?expr]
         [$db ?e :entity/type :region]
-        [(resolve-subject-expr ?expr ?e) ?subject]]
+        [(resolve-subject-expr $db ?expr ?e) ?subject]]
 ```
 
 **Data Transformation:**
@@ -106,7 +106,7 @@ The computation happens _inside_ the query. Results are already correlated. The 
 **Predicates** - Return `bool`, filter tuples (no output binding):
 
 ```go
-datalog.RegisterPredicate("valid-target?", func(entity Identity) bool {
+db.RegisterPredicate("valid-target?", func(entity Identity) bool {
     return isValidTarget(entity)
 })
 ```
@@ -120,7 +120,7 @@ datalog.RegisterPredicate("valid-target?", func(entity Identity) bool {
 **Functions** - Return value(s), bind to output variable(s):
 
 ```go
-datalog.RegisterFunction("compute-damage", func(base float64, resist float64) float64 {
+db.RegisterFunction("compute-damage", func(base float64, resist float64) float64 {
     return math.Max(0, base * (1 - resist))
 })
 ```
@@ -136,7 +136,7 @@ datalog.RegisterFunction("compute-damage", func(base float64, resist float64) fl
 **Multi-return Functions** - Bind multiple output variables:
 
 ```go
-datalog.RegisterFunction("parse-coord", func(code string) (int64, int64) {
+db.RegisterFunction("parse-coord", func(code string) (int64, int64) {
     x, y := parseGridCode(code)
     return x, y
 })
@@ -152,26 +152,26 @@ datalog.RegisterFunction("parse-coord", func(code string) (int64, int64) {
 
 ```go
 // Simple predicate (reflection infers signature)
-datalog.RegisterPredicate("valid?", func(e Identity) bool {
+db.RegisterPredicate("valid?", func(e Identity) bool {
     return validate(e)
 })
 
 // Simple function (reflection infers signature)
-datalog.RegisterFunction("compute", func(a, b float64) float64 {
+db.RegisterFunction("compute", func(a, b float64) float64 {
     return a * b
 })
 
-// With explicit options
-datalog.RegisterFunction("resolve-subject",
-    func(expr Keyword, base Identity) Identity {
-        return resolveSubjectExpr(expr, base)
+// With explicit options; the source it reads arrives as an argument
+db.RegisterFunction("resolve-subject",
+    func(source Source, expr Keyword, base Identity) Identity {
+        return resolveSubjectExpr(source, expr, base)
     },
     datalog.WithName("resolve-subject-expr"),  // Override name
     datalog.WithDescription("Resolves a subject expression against a base entity"),
 )
 
 // Namespaced (prevents collisions)
-datalog.RegisterFunction("myapp/compute", computeFn)
+db.RegisterFunction("myapp/compute", computeFn)
 ```
 
 ### Type Mapping
@@ -188,20 +188,23 @@ Registered functions use the same type coercion as `QueryInto`:
 | `datalog.Identity`      | Entity ID     | For entity references      |
 | `datalog.Keyword`       | Keyword       | For attribute names, enums |
 | `[]byte`                | Bytes         | Direct                     |
+| `Source`                | A source      | A source variable argument |
 
 **Entity returns are joinable:**
 
 ```clojure
-[(resolve-subject ?expr ?base) ?subject]  ;; ?subject is Identity
-[?subject :entity/name ?name]              ;; Can join on it
+[(resolve-subject $db ?expr ?base ?prop) ?subject]  ;; ?subject is Identity
+[?subject :entity/name ?name]                        ;; Can join on it
 ```
 
 ### Reflection-Based Registration
 
-Following the `QueryInto` pattern, registration uses reflection:
+Following the `QueryInto` pattern, registration uses reflection. A function
+set is the one registration path; a database holds one, and a query-scoped
+set is passed as an input:
 
 ```go
-func RegisterFunction(name string, fn any, opts ...Option) error {
+func (s *FunctionSet) Register(name string, fn any, opts ...Option) error {
     fnType := reflect.TypeOf(fn)
 
     // Validate: must be a function
@@ -229,39 +232,52 @@ func RegisterFunction(name string, fn any, opts ...Option) error {
     // 3. Coerces Go return → Datalog values
     wrapper := buildWrapper(fn, argTypes, returnTypes)
 
-    // Register in function registry
-    registry.Register(name, wrapper)
+    // Register in this set
+    s.functions[name] = wrapper
+    return nil
+}
+
+func (d *Database) RegisterFunction(name string, fn any, opts ...Option) error {
+    return d.functions.Register(name, fn, opts...)
 }
 ```
 
 ### Execution Semantics
 
-**Pure functions only.** Registered functions:
+**Pure in their arguments.** A registered function is a function clause as
+Datomic defines one:
 
-- Receive values, return values
-- Cannot access data sources
-- Cannot perform side effects
-- Are deterministic (same inputs → same outputs)
+- Receives values, returns values
+- Reads data only through a source passed to it as an argument, as `$` is
+  passed in `[(datomic.api/entity $ ?e) ?ent]`; a source variable of the
+  query, `$` or a named `$source`, is a legal argument
+- Performs no side effects
+- Is deterministic in its arguments, since the engine may call it any number
+  of times in any order
 
-This keeps the relational model intact. If you need data from a source, get it via patterns:
+Data a pattern can bind arrives as a value; a function is handed a source
+when it must read what no pattern of the query binds:
 
 ```clojure
-;; RIGHT: Data via patterns, transform via function
+;; Data via patterns, transform via function
 [:find ?result
  :in $db
  :where [$db ?e :entity/value ?val]
         [$db ?e :entity/factor ?factor]
         [(compute ?val ?factor) ?result]]
 
-;; WRONG: Function tries to query (not supported)
-[(query-and-compute ?e) ?result]  ;; Function can't access $db
+;; A function reads a source it is handed
+[(resolve-subject $db ?expr ?base ?prop) ?subject]
+
+;; WRONG: a function that reads a source it was not handed
+[(query-and-compute ?e) ?result]  ;; reads $db without being passed it
 ```
 
 **Error handling:**
 
 ```go
 // Functions can return error as last return value
-datalog.RegisterFunction("safe-divide", func(a, b float64) (float64, error) {
+db.RegisterFunction("safe-divide", func(a, b float64) (float64, error) {
     if b == 0 {
         return 0, errors.New("division by zero")
     }
@@ -271,11 +287,15 @@ datalog.RegisterFunction("safe-divide", func(a, b float64) (float64, error) {
 
 Behavior options:
 
-- **Filter mode** (default): Error → tuple filtered out (like predicate returning false)
-- **Fail mode**: Error → query fails
+- **Fail mode** (default): an error from the function is the query's error.
+  The iterator-error contract (`TODO.md`, "Iterator-Error Propagation
+  Contract") has every error reach the result, and a dropped tuple would be
+  that error turned into a smaller clean answer.
+- **Filter mode** (opt-in): an error drops the tuple, as a predicate
+  returning false does.
 
 ```go
-datalog.RegisterFunction("must-parse", parseFn, datalog.OnErrorFail())
+db.RegisterFunction("try-parse", parseFn, datalog.OnErrorFilter())
 ```
 
 ### Query Syntax
@@ -304,11 +324,13 @@ Functions use the existing expression syntax `[(fn args...) outputs...]`:
 
 ### Registry and Scoping
 
-```go
-// Global registry (default)
-datalog.RegisterFunction("compute", computeFn)
+A function lives on the database, or on a set passed with the query. There
+is no package-level registry: the engine's settings live on the database or
+the executor (`docs/proposals/SCOPE_EXECUTION_AND_CONTRACTS.md` §4.2), and a
+function is one.
 
-// Database-scoped registry
+```go
+// Database-scoped: every query on db sees it
 db.RegisterFunction("compute", computeFn)
 
 // Query-scoped (passed as input)
@@ -327,12 +349,12 @@ db.ExecuteQueryWithInputs(
 
 ```go
 // Register game functions
-datalog.RegisterFunction("compute-damage", func(base, resist, armor float64) float64 {
+db.RegisterFunction("compute-damage", func(base, resist, armor float64) float64 {
     mitigated := base * (1 - resist)
     return math.Max(0, mitigated - armor)
 })
 
-datalog.RegisterPredicate("is-alive?", func(hp float64) bool {
+db.RegisterPredicate("is-alive?", func(hp float64) bool {
     return hp > 0
 })
 ```
@@ -352,18 +374,21 @@ datalog.RegisterPredicate("is-alive?", func(hp float64) bool {
 
 ### Example 2: Subject Expression Resolution
 
+The world entity and the property are read through the source the function
+is handed:
+
 ```go
-datalog.RegisterFunction("resolve-subject",
-    func(expr Keyword, base Identity, prop Keyword) Identity {
+db.RegisterFunction("resolve-subject",
+    func(source Source, expr Keyword, base Identity, prop Keyword) Identity {
         switch expr {
         case Keyword(":$self"):
             return base
         case Keyword(":$world"):
-            return getWorldEntity(base)
+            return getWorldEntity(source, base)
         default:
             if strings.HasPrefix(string(expr), ":$.") {
                 // Property lookup
-                return getProperty(base, prop)
+                return getProperty(source, base, prop)
             }
             return base
         }
@@ -379,13 +404,13 @@ datalog.RegisterFunction("resolve-subject",
         [$dep :dep/subject-expr ?expr]
         [$dep :dep/property ?prop]
         [$db ?base :entity/type :region]
-        [(resolve-subject ?expr ?base ?prop) ?subject]]
+        [(resolve-subject $db ?expr ?base ?prop) ?subject]]
 ```
 
 ### Example 3: Coordinate Parsing
 
 ```go
-datalog.RegisterFunction("parse-grid", func(code string) (int64, int64, error) {
+db.RegisterFunction("parse-grid", func(code string) (int64, int64, error) {
     // "A5" → (0, 4)
     if len(code) < 2 {
         return 0, 0, fmt.Errorf("invalid grid code: %s", code)
@@ -416,7 +441,7 @@ type NPCState struct {
     InCombat  bool
 }
 
-datalog.RegisterFunction("select-action", func(state NPCState, targetHP float64) Keyword {
+db.RegisterFunction("select-action", func(state NPCState, targetHP float64) Keyword {
     if state.Health < 20 {
         return Keyword(":action/flee")
     }
@@ -450,7 +475,7 @@ datalog.RegisterFunction("select-action", func(state NPCState, targetHP float64)
 
 ```go
 // Memoization for pure functions (optional)
-datalog.RegisterFunction("expensive-compute", computeFn,
+db.RegisterFunction("expensive-compute", computeFn,
     datalog.WithMemoization(1000),  // Cache up to 1000 results
 )
 ```
@@ -461,7 +486,7 @@ Common patterns could be optimized:
 
 ```go
 // Registered as function
-datalog.RegisterFunction("add", func(a, b int64) int64 { return a + b })
+db.RegisterFunction("add", func(a, b int64) int64 { return a + b })
 
 // Could be optimized to use built-in + operator
 // if detected as equivalent
@@ -517,9 +542,17 @@ Query finds affected entities, functions compute new values, upsert applies chan
 3. **Upsert**: Apply computed state changes
 4. **Recursive rules**: Pathfinding, propagation
 
+## The choices
+
+- **The Go value a source argument carries.** One alternative hands the
+  function the `executor.PatternMatcher` the engine routes the source to.
+  Another hands it a read view built for functions, carrying entity and
+  attribute lookup and nothing else. The examples write the type as `Source`.
+
 ## References
 
 1. Datomic Transaction Functions - https://docs.datomic.com/pro/transactions/transaction-functions.html
-2. SPARQL Extension Functions - https://www.w3.org/TR/sparql11-query/#extensionFunctions
-3. PostgreSQL CREATE FUNCTION - https://www.postgresql.org/docs/current/sql-createfunction.html
-4. janus-datalog QueryInto - `docs/reference/QUERY_INTO.md`
+2. Datomic query functions - https://docs.datomic.com/query/query-data-reference.html
+3. SPARQL Extension Functions - https://www.w3.org/TR/sparql11-query/#extensionFunctions
+4. PostgreSQL CREATE FUNCTION - https://www.postgresql.org/docs/current/sql-createfunction.html
+5. janus-datalog QueryInto - `docs/reference/QUERY_INTO.md`

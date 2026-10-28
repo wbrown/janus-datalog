@@ -31,7 +31,7 @@ func makeTier3Data(size int) []byte {
 // ---- Export Tests ----
 
 func TestExport_DefaultUncompressed(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := newCompressedDB(t, mode)
 
@@ -57,7 +57,7 @@ func TestExport_DefaultUncompressed(t *testing.T) {
 }
 
 func TestExport_Compressed(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := newCompressedDB(t, mode)
 
@@ -83,7 +83,7 @@ func TestExport_Compressed(t *testing.T) {
 }
 
 func TestExport_CompressedSmallValue(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := newCompressedDB(t, mode)
 
@@ -110,7 +110,7 @@ func TestExport_CompressedSmallValue(t *testing.T) {
 // ---- Import Tests ----
 
 func TestImport_LZJLiteral(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Create a database, write a value, export compressed, import into new DB
 			db1 := newCompressedDB(t, mode)
@@ -158,7 +158,7 @@ func TestImport_LZJLiteral(t *testing.T) {
 }
 
 func TestImport_MixedFile(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Export a DB with both small and large values using compressed export
 			db1 := newCompressedDB(t, mode)
@@ -209,7 +209,7 @@ func TestImport_MixedFile(t *testing.T) {
 }
 
 func TestImport_RoundTrip(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Write to DB1, export compressed, import to DB2, export default from DB2
 			// Verify DB2's default export has no #lzj tags but same values
@@ -243,7 +243,7 @@ func TestImport_RoundTrip(t *testing.T) {
 }
 
 func TestImport_AVET_AfterImport(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Write compressed value to DB1, export with #lzj, import to DB2,
 			// verify AVET lookup on the imported value works
@@ -290,7 +290,7 @@ func TestImport_AVET_AfterImport(t *testing.T) {
 }
 
 func TestImport_Tier3_InlineExport(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Write a Tier 3 value (blob in storage), export (inline in EDN),
 			// import to new DB, verify it reads back correctly
@@ -343,7 +343,7 @@ func TestImport_Tier3_InlineExport(t *testing.T) {
 }
 
 func TestImport_ValueEquality_AcrossBoundary(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Write same value to DB1 (compressed) and DB2 (via #lzj import).
 			// Query both — values should be equal.
@@ -397,7 +397,7 @@ func TestImport_ValueEquality_AcrossBoundary(t *testing.T) {
 }
 
 func TestImport_MalformedLZJ(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

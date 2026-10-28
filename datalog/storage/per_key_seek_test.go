@@ -151,7 +151,7 @@ func (f *seekFixture) tagTuples(keys int) [][]interface{} {
 // planner is not on this path, and the backend is what each store implements
 // differently.
 func TestPerKeySeekAtOrBelowTheBoundary(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(false) {
+	for _, mode := range pinned(backendModes, false) {
 		t.Run(mode.name, func(t *testing.T) {
 			testPerKeySeekAtOrBelowTheBoundary(t, mode)
 		})
@@ -254,7 +254,7 @@ func testPerKeySeekAtOrBelowTheBoundary(t *testing.T, mode optimizerMode) {
 // binding-driven paths.
 func TestQueryBindingIsSoughtPerKeyAtOrBelowTheBoundary(t *testing.T) {
 	const boundary = executor.SmallBindingBoundary
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var events []annotations.Event
 			opts := mode.plannerOptions()

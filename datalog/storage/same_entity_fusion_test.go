@@ -502,9 +502,9 @@ func TestFusionLookupFailureIsNotAttributeAbsence(t *testing.T) {
 
 					_, err = db.Query(queryText, entity)
 					require.Error(t, err)
-					// Backends phrase it differently (Badger: "DB Closed"; memory
-					// store: "memory store closed") — the contract is a closed-store
-					// error, not absence or a panic.
+					// Backends phrase it differently (Badger: "DB Closed"; the
+					// emulator: "badger emulator store closed") — the contract is a
+					// closed-store error, not absence or a panic.
 					require.Contains(t, strings.ToLower(err.Error()), "closed")
 				})
 			}

@@ -68,7 +68,7 @@ func (a ArithmeticFunction) Eval(bindings map[Symbol]interface{}) (interface{}, 
 			}
 		case datalog.SymSubtract:
 			if len(values) == 1 {
-				return -result, nil
+				result = -result
 			}
 			for _, value := range values[1:] {
 				result -= toFloat64(value)
@@ -82,7 +82,7 @@ func (a ArithmeticFunction) Eval(bindings map[Symbol]interface{}) (interface{}, 
 				if result == 0 {
 					return nil, fmt.Errorf("division by zero")
 				}
-				return 1 / result, nil
+				result = 1 / result
 			}
 			for _, value := range values[1:] {
 				divisor := toFloat64(value)
@@ -94,7 +94,9 @@ func (a ArithmeticFunction) Eval(bindings map[Symbol]interface{}) (interface{}, 
 		default:
 			return nil, fmt.Errorf("unknown arithmetic operator: %v", a.Op)
 		}
-		return result, nil
+		// A float result is a value of the domain: a negation, a product with a
+		// negative factor or a division by a negative over zero is 0.0.
+		return datalog.NormalizeValue(result), nil
 	}
 
 	result := toInt64(values[0])

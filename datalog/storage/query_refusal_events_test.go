@@ -5,27 +5,22 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
-	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
-// A handler sees every query the database's Query path is asked, once each:
-// the invocation with the query as received and, when the query is refused,
-// a completion carrying the refusal, whether the refusal is raised before the
-// executor's entry or at it. A refusal before the executor's entry reports no
-// preparation and no plan, since neither ran.
-func TestQuery_ARefusalBeforeTheExecutorsEntryReachesTheHandler(t *testing.T) {
-	facts := []fact{{named("e1"), ":t/n", int64(1)}}
-	refusals := []struct {
-		name, text, refusal string
-		inputs              []interface{}
-	}{
-		{"fewer inputs than the :in consumes", `[:find ?e :in $ ?v :where [?e :t/n ?v]]`, "not enough inputs", nil},
-		{"more inputs than the :in consumes", `[:find ?e :where [?e :t/n 1]]`, "too many inputs", []interface{}{int64(1)}},
-		{"a value of the wrong shape for a collection input", `[:find ?e :in $ [?v ...] :where [?e :t/n ?v]]`, "expected slice or array for collection input", []interface{}{int64(1)}},
-		{"a declared source the call does not pass", `[:find ?e :in $ $other :where [$other ?e :t/n _]]`, "declared in :in clause but not provided", nil},
-	}
+// A handler sees every query the database is asked invoked once and
+// completed once, whatever refuses it. A query that does not resolve, text
+// that does not parse or a value that is neither text nor a query, is
+// reported invoked with a rendering of the value as received, text as it was
+// given, and completed with the error, through Query, QueryInto, QueryOneInto
+// and an AsOf handle's Query. A query the realized plan's validation refuses
+// is reported invoked and completed with the error the same way, through
+// Query, QueryInto and a History handle's Query. On every route the
+// invocation carries a string under KeyQuery, the key's contract.
+func TestQuery_ARefusalReachesTheHandlerAsACompletedQuery(t *testing.T) {
+	unparsable := `[:find ?e :where [?e :t/n`
+	unrealizable := `[:find ?x :where [?e :t/n 1]]`
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -35,12 +30,10 @@ func TestQuery_ARefusalBeforeTheExecutorsEntryReachesTheHandler(t *testing.T) {
 				events = append(events, e)
 				mu.Unlock()
 			}})
-			commitFacts(t, d, facts)
-			reset := func() {
-				mu.Lock()
-				events = nil
-				mu.Unlock()
-			}
+			tx := d.NewTransaction()
+			require.NoError(t, tx.Add(datalog.NewIdentity("e1"), datalog.NewKeyword(":t/n"), int64(1)))
+			asOf, err := tx.Commit()
+			require.NoError(t, err)
 			eventsNamed := func(name string) []annotations.Event {
 				mu.Lock()
 				defer mu.Unlock()
@@ -52,42 +45,53 @@ func TestQuery_ARefusalBeforeTheExecutorsEntryReachesTheHandler(t *testing.T) {
 				}
 				return found
 			}
-			requireReported := func(t *testing.T, text string, err error) {
-				rendered, perr := parser.ParseQuery(text)
-				require.NoError(t, perr)
-				invoked := eventsNamed(annotations.QueryInvoked)
-				require.Len(t, invoked, 1, "the query is reported invoked once")
-				require.Equal(t, rendered.String(), invoked[0].Data[annotations.KeyQuery], "the invocation carries the query as received")
-				completed := eventsNamed(annotations.QueryComplete)
-				require.Len(t, completed, 1, "the query is reported completed once")
-				require.Equal(t, false, completed[0].Data[annotations.KeySuccess], "the completion reports the refusal")
-				require.Equal(t, err.Error(), completed[0].Data[annotations.KeyError], "the completion carries the refusal")
-				require.Empty(t, eventsNamed(annotations.QueryPrepared), "no preparation is reported, since none ran")
-				require.Empty(t, eventsNamed(annotations.QueryPlanCreated), "no plan is reported, since none was made")
+
+			var many []datalog.Identity
+			var one datalog.Identity
+			routes := []struct {
+				name    string
+				invoke  func() error
+				carries interface{}
+				names   string
+			}{
+				{"Query given text that does not parse",
+					func() error { _, err := d.Query(unparsable); return err }, unparsable, "failed to resolve query"},
+				{"Query given a value that is neither text nor a query",
+					func() error { _, err := d.Query(42); return err }, "42", "failed to resolve query"},
+				{"Query given nil",
+					func() error { _, err := d.Query(nil); return err }, "<nil>", "failed to resolve query"},
+				{"QueryInto given text that does not parse",
+					func() error { return d.QueryInto(&many, unparsable) }, unparsable, "failed to resolve query"},
+				{"QueryOneInto given text that does not parse",
+					func() error { _, err := d.QueryOneInto(&one, unparsable); return err }, unparsable, "failed to resolve query"},
+				{"an AsOf handle's Query given text that does not parse",
+					func() error { _, err := d.AsOf(asOf).Query(unparsable); return err }, unparsable, "failed to resolve query"},
+				{"Query given a query the realized plan refuses",
+					func() error { _, err := d.Query(unrealizable); return err }, nil, "?x"},
+				{"QueryInto given a query the realized plan refuses",
+					func() error { return d.QueryInto(&many, unrealizable) }, nil, "?x"},
+				{"a History handle's Query given a query the realized plan refuses",
+					func() error { _, err := d.History().Query(unrealizable); return err }, nil, "?x"},
 			}
-			for _, c := range refusals {
-				t.Run(c.name, func(t *testing.T) {
-					reset()
-					_, err := d.Query(c.text, c.inputs...)
-					require.ErrorContains(t, err, c.refusal)
-					requireReported(t, c.text, err)
+			for _, r := range routes {
+				t.Run(r.name, func(t *testing.T) {
+					mu.Lock()
+					events = nil
+					mu.Unlock()
+					err := r.invoke()
+					require.ErrorContains(t, err, r.names)
+					invoked := eventsNamed(annotations.QueryInvoked)
+					require.Len(t, invoked, 1, "the query is reported invoked once")
+					require.IsType(t, "", invoked[0].Data[annotations.KeyQuery], "the invocation carries a rendering under KeyQuery")
+					if r.carries != nil {
+						require.Equal(t, r.carries, invoked[0].Data[annotations.KeyQuery], "the invocation carries the query as received, rendered")
+					}
+					completed := eventsNamed(annotations.QueryComplete)
+					require.Len(t, completed, 1, "the query is reported completed once")
+					require.Equal(t, false, completed[0].Data[annotations.KeySuccess], "the completion reports the refusal")
+					require.Contains(t, err.Error(), completed[0].Data[annotations.KeyError], "the completion carries the refusal")
 				})
 			}
-			t.Run("the first refusal through QueryInto", func(t *testing.T) {
-				reset()
-				var dest []int64
-				err := d.QueryInto(&dest, refusals[0].text)
-				require.ErrorContains(t, err, refusals[0].refusal)
-				requireReported(t, refusals[0].text, err)
-			})
-			t.Run("a query that runs is reported invoked once", func(t *testing.T) {
-				reset()
-				text := `[:find ?e :where [?e :t/n 1]]`
-				tuples, err := executor.CollectTuples(d.Query(text))
-				require.NoError(t, err)
-				require.Len(t, tuples, 1)
-				require.Len(t, eventsNamed(annotations.QueryInvoked), 1, "the query is reported invoked once")
-			})
 		})
 	}
 }

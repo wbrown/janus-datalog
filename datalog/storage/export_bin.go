@@ -190,6 +190,22 @@ func (d *Database) ExportBinary(w io.WriteSeeker, opts ...BinaryExportOptions) e
 // subset of the file in the store. Retrying into the same database is not a
 // safe recovery; use a fresh database (or discard the target) after failure.
 func (d *Database) ImportBinary(r io.ReadSeeker, opts ...BinaryImportOptions) error {
+	if err := d.replayBinary(r, opts...); err != nil {
+		return err
+	}
+	// The dump carried its writer's definitions. The schema the database runs
+	// with is composed from them, under a given schema if one was declared,
+	// whose facts take ElementIDs past the restored clock and so supersede the
+	// imported ones for the idents it names.
+	return d.installSchema(true)
+}
+
+// replayBinary asserts the chunks of a JDZL dump into the store, with the
+// ElementIDs the dump carries, finishes the store's batch, runs the finalize
+// hook, and advances the Lamport clock past the dump's highest ElementID so
+// later writes order after the imported data. It declares nothing: the
+// caller composes the schema once the datoms are in.
+func (d *Database) replayBinary(r io.ReadSeeker, opts ...BinaryImportOptions) error {
 	workers := 1
 	var finalize func() error
 	if len(opts) > 0 {
@@ -285,11 +301,7 @@ func (d *Database) ImportBinary(r io.ReadSeeker, opts ...BinaryImportOptions) er
 	if !maxElementID.IsZero() {
 		d.clock.Restore(maxElementID)
 	}
-	// The dump carried its writer's definitions. The schema the database runs
-	// with is composed from them, under a given schema if one was declared,
-	// whose facts take ElementIDs past the restored clock and so supersede the
-	// imported ones for the idents it names.
-	return d.installSchema(true)
+	return nil
 }
 
 func writeBinaryHeader(w io.Writer, softBudget int, indexOffset uint64) error {

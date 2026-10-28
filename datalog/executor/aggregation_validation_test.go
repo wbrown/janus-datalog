@@ -4,9 +4,47 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
+
+// A find over a symbol the relation lacks is an error at the aggregation
+// boundary, naming the symbol, whether the symbol stands alone, beside a
+// symbol the relation carries, or beside an aggregate, through
+// ExecuteAggregations and the relation's method alike. A find over symbols
+// the relation carries projects onto them.
+func TestAggregate_AFindSymbolTheRelationLacksIsAnError(t *testing.T) {
+	group := datalog.NewSymbol("?group")
+	value := datalog.NewSymbol("?value")
+	absent := datalog.NewSymbol("?absent")
+	rel := NewMaterializedRelation(
+		[]query.Symbol{group, value},
+		[]Tuple{{"a", int64(1)}, {"b", int64(3)}},
+	)
+	entries := []struct {
+		name      string
+		aggregate func(find []query.FindElement) Relation
+	}{
+		{"ExecuteAggregations", func(find []query.FindElement) Relation { return ExecuteAggregations(rel, find) }},
+		{"Relation.Aggregate", func(find []query.FindElement) Relation { return rel.Aggregate(find) }},
+	}
+	for _, e := range entries {
+		t.Run(e.name, func(t *testing.T) {
+			tuples, err := CollectTuples(e.aggregate([]query.FindElement{query.FindVariable{Symbol: group}}), nil)
+			require.NoError(t, err)
+			require.ElementsMatch(t, [][]interface{}{{"a"}, {"b"}}, tuples)
+			for _, find := range [][]query.FindElement{
+				{query.FindVariable{Symbol: absent}},
+				{query.FindVariable{Symbol: group}, query.FindVariable{Symbol: absent}},
+				{query.FindVariable{Symbol: absent}, query.FindAggregate{Function: datalog.SymSum, Arg: value}},
+			} {
+				_, err := CollectTuples(e.aggregate(find), nil)
+				require.ErrorContains(t, err, absent.String(), "a find over a symbol the relation lacks is an error naming the symbol")
+			}
+		})
+	}
+}
 
 // Aggregate argument and predicate symbols must be present in the source
 // relation, exactly as group-by symbols already must be. Before this

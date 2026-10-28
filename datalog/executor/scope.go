@@ -20,20 +20,15 @@ func (e *DefaultQueryExecutor) planScope(ctx *Context, s planner.Scope) (*planne
 
 // runPlan runs a scope's plan once over run, the relation of its required
 // run, and returns the scope's result over its header. The plan runs under
-// a context that holds run under scope/required beside every relation the
-// enclosing context holds, so an invocation inside the scope of a predicate
-// the fixpoint is deriving reads the stratum's relations. The context
-// carries no environment: a query input reaches a scope only through the
-// header. The run reports no phase: the form's own events report a branch's
-// execution, and a phase event per window would be a handler call per window
-// beside the window's own event.
+// a context that holds run as the scope's required run beside every relation
+// the enclosing context holds, so an invocation inside the scope of a
+// predicate the fixpoint is deriving reads the stratum's relations. The
+// context carries no environment: a query input reaches a scope only through
+// the header. The run reports no phase: the form's own events report a
+// branch's execution, and a phase event per window would be a handler call
+// per window beside the window's own event.
 func (e *DefaultQueryExecutor) runPlan(ctx *Context, plan *planner.RealizedPlan, run Relation) (Relation, error) {
-	held := make(map[query.Symbol]Relation, len(ctx.derived)+1)
-	for name, rel := range ctx.derived {
-		held[name] = rel
-	}
-	held[query.ScopeRequired] = run
-	return e.executor.runPhases(ctx.WithEnvironment(nil).WithDerived(held), plan, nil, nil)
+	return e.executor.runPhases(ctx.WithRequiredRun(run), plan, nil, nil)
 }
 
 // runScope plans the scope and runs it once over run.
@@ -52,9 +47,9 @@ func (e *DefaultQueryExecutor) runScope(ctx *Context, s planner.Scope, run Relat
 // bind is the projection's error.
 func (e *DefaultQueryExecutor) requiredRun(ctx *Context, required []query.Symbol) (*MaterializedRelation, error) {
 	if len(required) == 0 {
-		return NewUnitRelation(e.options), nil
+		return e.executor.unit, nil
 	}
-	var outer Relation = NewUnitRelation(e.options)
+	var outer Relation = e.executor.unit
 	if env := ctx.Environment(); env != nil {
 		var fromEnvironment []query.Symbol
 		for _, sym := range required {

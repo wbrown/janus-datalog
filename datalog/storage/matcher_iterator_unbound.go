@@ -51,7 +51,7 @@ func (it *unboundIterator) Next() bool {
 		// Check if datom matches pattern
 		if it.matcher.matchesDatom(datom, it.e, it.a, it.v, it.tx) {
 			// Apply transaction and constraint validation
-			if validateDatomWithConstraints(datom, it.matcher.txID, it.constraints) {
+			if validateDatomWithConstraints(datom, it.matcher, it.constraints) {
 				it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
 				it.currentTuple = it.workspace
 				if it.report != nil {
@@ -76,6 +76,10 @@ func (it *unboundIterator) Next() bool {
 func (it *unboundIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
+
+// RequiresCopy is true: Tuple hands back the one workspace Next builds
+// every tuple into, which the next pull overwrites.
+func (it *unboundIterator) RequiresCopy() bool { return true }
 
 func (it *unboundIterator) Error() error { return it.err }
 

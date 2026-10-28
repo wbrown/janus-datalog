@@ -175,7 +175,7 @@ func historyAttributeOrderedLimitQuery(entity datalog.Identity, limit int) strin
 
 func TestHistoryOrderedLimitUsesATEV(t *testing.T) {
 	const limit = 10
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
 			db := openHistoryOrderDatabase(t, mode, capture)
@@ -208,7 +208,7 @@ func TestHistoryOrderedLimitUsesATEV(t *testing.T) {
 }
 
 func TestLatestOrderedLimitDeclinesATEV(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
 			db := openHistoryOrderDatabase(t, mode, capture)
@@ -229,7 +229,7 @@ func TestLatestOrderedLimitDeclinesATEV(t *testing.T) {
 
 func TestHistoryTransactionOrderedLimitUsesTAEV(t *testing.T) {
 	const limit = 10
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
 			db := openHistoryOrderDatabase(t, mode, capture)
@@ -267,7 +267,7 @@ func TestHistoryTransactionOrderedLimitUsesTAEV(t *testing.T) {
 }
 
 func TestLatestTransactionOrderedLimitDeclinesTAEV(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
 			db := openHistoryOrderDatabase(t, mode, capture)
@@ -288,7 +288,7 @@ func TestLatestTransactionOrderedLimitDeclinesTAEV(t *testing.T) {
 
 func TestHistoryEntityOrderedLimitUsesAETV(t *testing.T) {
 	const limit = 10
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
 			db := openHistoryOrderDatabase(t, mode, capture)
@@ -322,7 +322,7 @@ func TestHistoryEntityOrderedLimitUsesAETV(t *testing.T) {
 
 func TestLatestEntityOrderedLimitDoesNotUseHistoryAETVProperty(t *testing.T) {
 	const limit = 10
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
 			db := openHistoryOrderDatabase(t, mode, capture)
@@ -344,7 +344,7 @@ func TestLatestEntityOrderedLimitDoesNotUseHistoryAETVProperty(t *testing.T) {
 
 func TestHistoryAttributeOrderedLimitUsesEATV(t *testing.T) {
 	const limit = 10
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
 			db, entity := openHistoryEntityOrderDatabase(t, mode, capture)
@@ -378,7 +378,7 @@ func TestHistoryAttributeOrderedLimitUsesEATV(t *testing.T) {
 
 func TestLatestAttributeOrderedLimitDoesNotUseHistoryEATVProperty(t *testing.T) {
 	const limit = 10
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			capture := &historyOrderScanCapture{}
 			db, entity := openHistoryEntityOrderDatabase(t, mode, capture)
@@ -399,7 +399,7 @@ func TestLatestAttributeOrderedLimitDoesNotUseHistoryEATVProperty(t *testing.T) 
 }
 
 func TestHistoryOrderedLimitDifferentialRandomized(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			runHistoryOrderedLimitDifferentialRandomized(t, mode)
 		})
@@ -525,7 +525,7 @@ func runHistoryOrderedLimitDifferentialRandomized(t *testing.T, mode optimizerMo
 }
 
 func TestHistoryOrderedLimitUsesFullElementIDAcrossReplicas(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			runHistoryOrderedLimitUsesFullElementIDAcrossReplicas(t, mode)
 		})
@@ -677,7 +677,7 @@ func requireHistoryTuplesEqual(
 }
 
 func TestAsOfOrderedLimitDifferentialAroundTombstone(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			runAsOfOrderedLimitDifferentialAroundTombstone(t, mode)
 		})

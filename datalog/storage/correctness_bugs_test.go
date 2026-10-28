@@ -90,7 +90,7 @@ func TestLookupAttribute_StorageFallback_Tombstone(t *testing.T) {
 			v, ok := requireAttributeLookup(t, matcher, alice, name)
 
 			assert.False(t, ok, "tombstoned attribute must not report as present")
-			assert.Nil(t, v, "tombstoned attribute must not return its retracted V")
+			assert.Nil(t, v, "tombstoned attribute must not return its removed V")
 		})
 	}
 }

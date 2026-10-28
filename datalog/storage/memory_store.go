@@ -13,15 +13,18 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-var errMemoryStoreClosed = errors.New("memory store closed")
+var errBadgerEmulatorStoreClosed = errors.New("badger emulator store closed")
 
 // memoryKeyTreeDegree is the B-tree branching factor for the key index.
 // Degree 32 is a common in-memory default (nodes hold up to 63 items).
 const memoryKeyTreeDegree = 32
 
-// MemoryStore is an ordered, transactional, in-memory implementation of Store.
-// It persists the same binary keys as BadgerStore, including all eight indices,
-// metadata, and content-addressed blobs.
+// BadgerEmulatorStore is the Badger emulator: an ordered, transactional
+// implementation of Store that holds, in memory, the same binary keys
+// BadgerStore writes to disk, including all eight indices, metadata, and
+// content-addressed blobs. It exists so the backend contract runs against
+// Badger's key layout in a process that has no disk. The in-process backend
+// the engine opens by default is MemoryTreeStore, which holds typed datoms.
 //
 // Commits apply Assert/Retract in call order against the live map under the
 // write lock, journaling prior values so a failed apply can restore them.
@@ -33,7 +36,7 @@ const memoryKeyTreeDegree = 32
 // scanning the whole map (Badger's Seek/ValidForPrefix analogue). Insert and
 // delete are O(log N) per key, so Import/batched Assert stay O(M log N) in the
 // key index.
-type MemoryStore struct {
+type BadgerEmulatorStore struct {
 	mu      sync.RWMutex
 	encoder *BinaryKeyEncoder
 	entries map[string][]byte
@@ -41,28 +44,28 @@ type MemoryStore struct {
 	closed  bool
 }
 
-var _ Store = (*MemoryStore)(nil)
+var _ Store = (*BadgerEmulatorStore)(nil)
 
 func newMemoryKeyTree() *btree.BTreeG[string] {
 	return btree.NewOrderedG[string](memoryKeyTreeDegree)
 }
 
-func NewMemoryStore(encoder *BinaryKeyEncoder) *MemoryStore {
+func NewBadgerEmulatorStore(encoder *BinaryKeyEncoder) *BadgerEmulatorStore {
 	if encoder == nil {
 		encoder = &BinaryKeyEncoder{}
 	}
-	return &MemoryStore{
+	return &BadgerEmulatorStore{
 		encoder: encoder,
 		entries: make(map[string][]byte),
 		keys:    newMemoryKeyTree(),
 	}
 }
 
-func (s *MemoryStore) Encoder() *BinaryKeyEncoder {
+func (s *BadgerEmulatorStore) Encoder() *BinaryKeyEncoder {
 	return s.encoder
 }
 
-func (s *MemoryStore) Assert(datoms []datalog.Datom) error {
+func (s *BadgerEmulatorStore) Assert(datoms []datalog.Datom) error {
 	tx, err := s.BeginTx()
 	if err != nil {
 		return err
@@ -77,7 +80,7 @@ func (s *MemoryStore) Assert(datoms []datalog.Datom) error {
 // AssertEach gathers what produce yields and asserts it. Gathering is the whole
 // of it here: entries are a map keyed by encoded key, so there is no incremental
 // structure to build into and a per-datom path would save nothing.
-func (s *MemoryStore) AssertEach(produce func(add func(*datalog.Datom) error) error) error {
+func (s *BadgerEmulatorStore) AssertEach(produce func(add func(*datalog.Datom) error) error) error {
 	var datoms []datalog.Datom
 	if err := produce(func(d *datalog.Datom) error {
 		datoms = append(datoms, *d)
@@ -90,9 +93,9 @@ func (s *MemoryStore) AssertEach(produce func(add func(*datalog.Datom) error) er
 
 // FinishBatch has nothing to complete: AssertEach writes its datoms before
 // returning.
-func (s *MemoryStore) FinishBatch() error { return nil }
+func (s *BadgerEmulatorStore) FinishBatch() error { return nil }
 
-func (s *MemoryStore) Retract(datoms []datalog.Datom) error {
+func (s *BadgerEmulatorStore) Retract(datoms []datalog.Datom) error {
 	tx, err := s.BeginTx()
 	if err != nil {
 		return err
@@ -106,11 +109,11 @@ func (s *MemoryStore) Retract(datoms []datalog.Datom) error {
 
 // DeleteDatoms removes each datom's keys from every index, and then any blob
 // those datoms were the last to refer to.
-func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
+func (s *BadgerEmulatorStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, errMemoryStoreClosed
+		return 0, errBadgerEmulatorStoreClosed
 	}
 	for i := range datoms {
 		sd := ToStorageDatom(datoms[i])
@@ -133,7 +136,7 @@ func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 // asking this call's datoms what they orphaned, so a blob stranded by an earlier
 // interrupted removal is reclaimed too — see BadgerStore.sweepUnreferencedBlobs
 // for the full account. The caller holds the write lock.
-func (s *MemoryStore) sweepUnreferencedBlobs() {
+func (s *BadgerEmulatorStore) sweepUnreferencedBlobs() {
 	var hashes [][20]byte
 	for key := range s.entries {
 		raw := []byte(key)
@@ -157,7 +160,7 @@ func (s *MemoryStore) sweepUnreferencedBlobs() {
 // unreferencedBlobs returns the candidates no datom still refers to, counted
 // against the index as it stands — so a caller that has already applied its
 // deletes gets survivors. The caller holds the lock.
-func (s *MemoryStore) unreferencedBlobs(candidates map[[20]byte]struct{}) [][20]byte {
+func (s *BadgerEmulatorStore) unreferencedBlobs(candidates map[[20]byte]struct{}) [][20]byte {
 	var garbage [][20]byte
 	for hash := range candidates {
 		if !blobIsReferenced(s.encoder, hash, s.hasKeyWithPrefix) {
@@ -172,7 +175,7 @@ func (s *MemoryStore) unreferencedBlobs(candidates map[[20]byte]struct{}) [][20]
 // mutating, so it counts survivors rather than the population before the delete.
 // Held under the same write lock as those deletes, so nothing can add a
 // reference between the count and the removal.
-func (s *MemoryStore) reclaimBlobs(candidates map[[20]byte]struct{}) {
+func (s *BadgerEmulatorStore) reclaimBlobs(candidates map[[20]byte]struct{}) {
 	for _, hash := range s.unreferencedBlobs(candidates) {
 		key := blobKey(hash)
 		delete(s.entries, string(key[:]))
@@ -182,7 +185,7 @@ func (s *MemoryStore) reclaimBlobs(candidates map[[20]byte]struct{}) {
 
 // hasKeyWithPrefix reports whether any stored key begins with prefix, seeking
 // the key index rather than walking the map. The caller holds the lock.
-func (s *MemoryStore) hasKeyWithPrefix(prefix []byte) bool {
+func (s *BadgerEmulatorStore) hasKeyWithPrefix(prefix []byte) bool {
 	pivot := string(prefix)
 	found := false
 	s.keys.AscendGreaterOrEqual(pivot, func(key string) bool {
@@ -192,86 +195,48 @@ func (s *MemoryStore) hasKeyWithPrefix(prefix []byte) bool {
 	return found
 }
 
-func (s *MemoryStore) Scan(bound ScanBound) (Iterator, error) {
+func (s *BadgerEmulatorStore) Scan(bound ScanBound) (Iterator, error) {
 	return s.scan(bound)
 }
 
-func (s *MemoryStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
+func (s *BadgerEmulatorStore) ScanKeysOnly(bound ScanBound) (Iterator, error) {
 	return s.scan(bound)
 }
 
-// scan projects the bound through the binary encoder because MemoryStore keys
+// scan projects the bound through the binary encoder because the emulator keys
 // on the same bytes Badger does. That is this backend's choice, not the seam's:
 // a store comparing typed components directly would satisfy the same interface
 // without encoding anything.
-func (s *MemoryStore) scan(bound ScanBound) (Iterator, error) {
+func (s *BadgerEmulatorStore) scan(bound ScanBound) (Iterator, error) {
 	run, err := s.encoder.EncodeScanBound(bound)
 	if err != nil {
 		return nil, err
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
-		return nil, errMemoryStoreClosed
+	// Clone mutates the source tree's copy-on-write context, so it runs under
+	// the write lock.
+	s.mu.Lock()
+	closed := s.closed
+	var keys *btree.BTreeG[string]
+	if !closed {
+		keys = s.keys.Clone()
 	}
-	index := bound.Index
-	startKey := string(run.Start)
-	endKey := string(run.End)
-	keys := make([][]byte, 0)
-	s.keys.AscendRange(startKey, endKey, func(encoded string) bool {
-		key := []byte(encoded)
-		if len(key) == 21 && key[0] == blobKeyPrefix {
-			return true
-		}
-		keys = append(keys, append([]byte(nil), key...))
-		return true
-	})
-	return &memoryIterator{
-		index:      index,
-		keys:       keys,
-		position:   -1,
-		membership: run.Membership,
-		end:        run.End,
-		encoder:    s.encoder,
-		blobs:      memoryBlobReader{store: s},
-	}, nil
+	s.mu.Unlock()
+	if closed {
+		return nil, errBadgerEmulatorStoreClosed
+	}
+	return chunkedMemoryIterator(bound.Index, run, keys, s.encoder, memoryBlobReader{store: s}), nil
 }
 
-func (s *MemoryStore) MaxElementID() (datalog.ElementID, error) {
-	iter, err := s.ScanKeysOnly(ScanBound{Index: TAEV})
-	if err != nil {
-		return datalog.ElementID{}, err
-	}
-	defer iter.Close()
-	if !iter.Next() {
-		return datalog.ElementID{}, iter.Error()
-	}
-	return iter.ElementID(), nil
+func (s *BadgerEmulatorStore) MaxElementID() (datalog.ElementID, error) {
+	return maxElementIDByScan(s)
 }
 
-func (s *MemoryStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {
-	iter, err := s.ScanKeysOnly(ScanBound{Index: EAVT, Prefix: []datalog.Value{e}})
-	if err != nil {
-		return datalog.ElementID{}, false, err
-	}
-	defer iter.Close()
-	var maxID datalog.ElementID
-	found := false
-	for iter.Next() {
-		tx := iter.ElementID()
-		if !found || maxID.Less(tx) {
-			maxID = tx
-			found = true
-		}
-	}
-	if err := iter.Error(); err != nil {
-		return datalog.ElementID{}, false, err
-	}
-	return maxID, found, nil
+func (s *BadgerEmulatorStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {
+	return maxTxForEntityByScan(s, e)
 }
 
-func (s *MemoryStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error) {
+func (s *BadgerEmulatorStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error) {
 	iter, err := s.ScanKeysOnly(ScanBound{Index: TAEV})
 	if err != nil {
 		return nil, err
@@ -294,11 +259,11 @@ func (s *MemoryStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error
 	return datoms, nil
 }
 
-func (s *MemoryStore) GetMetadataUint64(key string) (uint64, bool, error) {
+func (s *BadgerEmulatorStore) GetMetadataUint64(key string) (uint64, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return 0, false, errMemoryStoreClosed
+		return 0, false, errBadgerEmulatorStoreClosed
 	}
 	value, ok := s.entries[metadataPrefix+key]
 	if !ok {
@@ -310,11 +275,11 @@ func (s *MemoryStore) GetMetadataUint64(key string) (uint64, bool, error) {
 	return binary.BigEndian.Uint64(value), true, nil
 }
 
-func (s *MemoryStore) SetMetadataUint64(key string, value uint64) error {
+func (s *BadgerEmulatorStore) SetMetadataUint64(key string, value uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return errMemoryStoreClosed
+		return errBadgerEmulatorStoreClosed
 	}
 	encoded := make([]byte, 8)
 	binary.BigEndian.PutUint64(encoded, value)
@@ -326,16 +291,16 @@ func (s *MemoryStore) SetMetadataUint64(key string, value uint64) error {
 	return nil
 }
 
-func (s *MemoryStore) BeginTx() (StoreTx, error) {
+func (s *BadgerEmulatorStore) BeginTx() (StoreTx, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return nil, errMemoryStoreClosed
+		return nil, errBadgerEmulatorStoreClosed
 	}
 	return &memoryStoreTx{store: s}, nil
 }
 
-func (s *MemoryStore) Close() error {
+func (s *BadgerEmulatorStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
@@ -361,7 +326,7 @@ type memoryEntryUndo struct {
 }
 
 type memoryStoreTx struct {
-	store *MemoryStore
+	store *BadgerEmulatorStore
 	ops   []memoryTxOp
 	done  bool
 }
@@ -402,7 +367,7 @@ func (tx *memoryStoreTx) Commit() error {
 	tx.store.mu.Lock()
 	defer tx.store.mu.Unlock()
 	if tx.store.closed {
-		return errMemoryStoreClosed
+		return errBadgerEmulatorStoreClosed
 	}
 	var undo []memoryEntryUndo
 	// The journal exists only for restoreMemoryEntries below, which only a
@@ -466,7 +431,7 @@ func opsContainRetract(ops []memoryTxOp) bool {
 
 // A nil undo means the caller has established that this transaction cannot
 // fail, so there is nothing to restore to.
-func putMemoryEntry(store *MemoryStore, undo *[]memoryEntryUndo, key string, value []byte) {
+func putMemoryEntry(store *BadgerEmulatorStore, undo *[]memoryEntryUndo, key string, value []byte) {
 	old, had := store.entries[key]
 	if undo != nil {
 		*undo = append(*undo, memoryEntryUndo{
@@ -485,7 +450,7 @@ func putMemoryEntry(store *MemoryStore, undo *[]memoryEntryUndo, key string, val
 	store.entries[key] = append([]byte(nil), value...)
 }
 
-func deleteMemoryEntry(store *MemoryStore, undo *[]memoryEntryUndo, key string) {
+func deleteMemoryEntry(store *BadgerEmulatorStore, undo *[]memoryEntryUndo, key string) {
 	old, had := store.entries[key]
 	if !had {
 		return
@@ -499,7 +464,7 @@ func deleteMemoryEntry(store *MemoryStore, undo *[]memoryEntryUndo, key string) 
 	store.keys.Delete(key)
 }
 
-func restoreMemoryEntries(store *MemoryStore, undo []memoryEntryUndo) {
+func restoreMemoryEntries(store *BadgerEmulatorStore, undo []memoryEntryUndo) {
 	for i := len(undo) - 1; i >= 0; i-- {
 		entry := undo[i]
 		if entry.had {
@@ -528,7 +493,7 @@ func memoryKeysWithPrefix(keys *btree.BTreeG[string], prefix []byte) []string {
 	return matches
 }
 
-func assertMemoryDatom(store *MemoryStore, datom *datalog.Datom, undo *[]memoryEntryUndo) {
+func assertMemoryDatom(store *BadgerEmulatorStore, datom *datalog.Datom, undo *[]memoryEntryUndo) {
 	valueBytes, blob := store.encoder.EncodeValueBytes(datom.V)
 	if blob != nil {
 		var key [21]byte
@@ -547,7 +512,7 @@ func assertMemoryDatom(store *MemoryStore, datom *datalog.Datom, undo *[]memoryE
 // any Tx, recording in candidates the blob hash of each value that lived out of
 // line so the commit can ask afterwards whether anything still refers to it.
 func retractMemoryDatom(
-	store *MemoryStore,
+	store *BadgerEmulatorStore,
 	blobs BlobReader,
 	datom *datalog.Datom,
 	undo *[]memoryEntryUndo,
@@ -580,7 +545,7 @@ func retractMemoryDatom(
 }
 
 type memoryBlobReader struct {
-	store *MemoryStore
+	store *BadgerEmulatorStore
 }
 
 type memoryEntriesBlobReader struct {
@@ -591,7 +556,7 @@ func (r memoryBlobReader) ReadBlob(hash [20]byte, read func([]byte) error) error
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
 	if r.store.closed {
-		return errMemoryStoreClosed
+		return errBadgerEmulatorStoreClosed
 	}
 	return readMemoryBlob(r.store.entries, hash, read)
 }
@@ -618,8 +583,8 @@ const memoryScanChunkKeys = 256
 
 type memoryIterator struct {
 	index IndexType
-	// keys is the chunk the cursor walks: every key of the scan's range, or,
-	// when tree is set, the keys of the range from chunkStart up to chunkEnd.
+	// keys is the chunk in hand: the keys of the range from chunkStart up to
+	// chunkEnd, taken from tree.
 	keys     [][]byte
 	position int
 	// scanned counts keys taken from the range, including the ones the
@@ -634,11 +599,12 @@ type memoryIterator struct {
 	// end is the current run's exclusive upper bound, inside the scan's own
 	// range, which keys never leaves. A seek to a narrower run stops here.
 	end []byte
-	// tree, when set, is the cloned key tree the cursor takes its chunks from.
-	// rangeStart and rangeEnd are the scan's own range. The chunk in hand
-	// covers [chunkStart, chunkEnd), a nil chunkEnd meaning the range's end and
-	// a nil chunkStart that no chunk is in hand; the next one starts at resume,
-	// unless exhausted says the range holds no key past the chunk in hand.
+	// tree is the cloned key tree the cursor takes its chunks from, which no
+	// writer touches. rangeStart and rangeEnd are the scan's own range. The
+	// chunk in hand covers [chunkStart, chunkEnd), a nil chunkEnd meaning the
+	// range's end and a nil chunkStart that no chunk is in hand; the next one
+	// starts at resume, unless exhausted says the range holds no key past the
+	// chunk in hand.
 	tree         *btree.BTreeG[string]
 	rangeStart   []byte
 	rangeEnd     string
@@ -652,6 +618,23 @@ type memoryIterator struct {
 	hasDatom     bool
 	err          error
 	closed       bool
+}
+
+// chunkedMemoryIterator walks run's range of index's keys on keys, a chunk
+// at a time as its consumer pulls, decoding datoms through encoder and
+// blobs.
+func chunkedMemoryIterator(index IndexType, run EncodedRun, keys *btree.BTreeG[string], encoder *BinaryKeyEncoder, blobs BlobReader) *memoryIterator {
+	return &memoryIterator{
+		index:      index,
+		position:   -1,
+		membership: run.Membership,
+		tree:       keys,
+		rangeStart: run.Start,
+		rangeEnd:   string(run.End),
+		resume:     string(run.Start),
+		encoder:    encoder,
+		blobs:      blobs,
+	}
 }
 
 // positioned reports whether the cursor is on a key this scan may expose: a key
@@ -668,11 +651,10 @@ func (i *memoryIterator) positioned() bool {
 }
 
 // refill replaces the chunk in hand with the next chunk of the range, starting
-// at resume, and puts the cursor on its first key. It reports false when there
-// is no tree to take a chunk from, and when the range holds no key past the
-// chunk in hand.
+// at resume, and puts the cursor on its first key. It reports false when the
+// range holds no key past the chunk in hand.
 func (i *memoryIterator) refill() bool {
-	if i.tree == nil || i.exhausted {
+	if i.exhausted {
 		return false
 	}
 	i.keys = i.keys[:0]
@@ -792,7 +774,7 @@ func (i *memoryIterator) Seek(bound ScanBound) {
 	i.membership = run.Membership
 	i.end = run.End
 	i.hasDatom = false
-	if i.tree != nil && !i.chunkHolds(run.Start) {
+	if !i.chunkHolds(run.Start) {
 		// The run starts outside the chunk in hand, so the next refill takes
 		// its chunk from the tree at the run's start, inside the scan's range.
 		i.keys = i.keys[:0]

@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -13,15 +14,23 @@ import (
 // FormatValueEDN renders a value in the text the parser reads back as the
 // same value, the one renderer of values in a query's text: a float's
 // mantissa always carries a point, so a whole-valued float parses back as a
-// float and never as an integer; a string is quoted at any depth; and every
-// value VectorElements reads as a vector, a typed slice included, renders
-// element by element through this function.
+// float and never as an integer, and an infinity and NaN are EDN's symbolic
+// values; a string is quoted at any depth; a transaction value is #eid over
+// its Lamport and its replica; and every value VectorElements reads as a
+// vector, a typed slice included, renders element by element through this
+// function.
 func FormatValueEDN(v interface{}) string {
 	switch val := v.(type) {
 	case datalog.Keyword:
 		return val.String()
+	case datalog.Symbol:
+		return val.String()
 	case datalog.Identity:
 		return `#identity "` + val.String() + `"`
+	case datalog.ElementID:
+		return "#eid [" + strconv.FormatUint(val.Lamport, 10) + " " + strconv.FormatUint(val.ReplicaID, 10) + "]"
+	case *datalog.ElementID:
+		return FormatValueEDN(*val)
 	case string:
 		var sb strings.Builder
 		sb.WriteRune('"')
@@ -48,6 +57,14 @@ func FormatValueEDN(v interface{}) string {
 	case int:
 		return strconv.Itoa(val)
 	case float64:
+		switch {
+		case math.IsInf(val, 1):
+			return "##Inf"
+		case math.IsInf(val, -1):
+			return "##-Inf"
+		case math.IsNaN(val):
+			return "##NaN"
+		}
 		text := strconv.FormatFloat(val, 'g', -1, 64)
 		if !strings.Contains(text, ".") {
 			if exponent := strings.IndexAny(text, "eE"); exponent >= 0 {
@@ -138,7 +155,15 @@ type Pattern interface {
 	String() string
 }
 
-// DataPattern represents a data pattern [e a v] or [e a v t].
+// PatternPositions is how many positions a data pattern has: entity,
+// attribute, value and transaction. A pattern holds one to that many
+// elements, which DataPattern.Validate checks and a scan fingerprint sizes
+// its elements by.
+const PatternPositions = 4
+
+// DataPattern represents a data pattern of one to four elements, entity,
+// attribute, value and transaction in that order, a position the text omits
+// being unbound: [e], [e a], [e a v] or [e a v t].
 // For multi-source queries, Source identifies which data source to query
 // (e.g., Symbol("$users")). Empty Source means the default source ($).
 type DataPattern struct {
@@ -294,20 +319,22 @@ func (p DataPattern) GetE() PatternElement {
 	return nil
 }
 
-// GetA returns the attribute element if it exists
+// GetA returns the attribute element; a position the pattern omits is
+// unbound, so it reads as a blank.
 func (p DataPattern) GetA() PatternElement {
 	if len(p.Elements) > 1 {
 		return p.Elements[1]
 	}
-	return nil
+	return Blank{}
 }
 
-// GetV returns the value element if it exists
+// GetV returns the value element; a position the pattern omits is unbound,
+// so it reads as a blank.
 func (p DataPattern) GetV() PatternElement {
 	if len(p.Elements) > 2 {
 		return p.Elements[2]
 	}
-	return nil
+	return Blank{}
 }
 
 // GetT returns the transaction/time element if it exists

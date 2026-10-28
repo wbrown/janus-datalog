@@ -16,6 +16,11 @@ type Executor struct {
 	entityResolver EntityResolver
 	planner        planner.QueryPlanner
 	options        ExecutorOptions
+	// unit is the relation of one empty tuple over no symbol, the identity
+	// for joins: the verdict that holds, the run of a branch over no required
+	// run, the subject of a form over no group. A relation is immutable, so
+	// every clause executor this executor builds reads this one.
+	unit *MaterializedRelation
 }
 
 // defaultPlannerOptions is the planner profile NewExecutor constructs with —
@@ -59,6 +64,7 @@ func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opt
 		entityResolver: resolver,
 		planner:        queryPlanner,
 		options:        execOpts,
+		unit:           NewUnitRelation(execOpts),
 	}
 }
 
@@ -150,11 +156,6 @@ func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, plan 
 // other count is refused before planning, naming the count given and the
 // count the :in binds. A query whose :in binds nothing takes an empty slice.
 func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelations []Relation) (Relation, error) {
-	// A query whose context is already done is refused before any work.
-	if err := ctx.cancelled(); err != nil {
-		return nil, err
-	}
-
 	// Apply decorator pattern: wrap matcher with annotations if one is registered
 	matcher := e.matcher
 
@@ -177,6 +178,7 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 		entityResolver: e.entityResolver,
 		planner:        e.planner,
 		options:        e.options,
+		unit:           e.unit,
 	}
 
 	// q.String() renders the whole query, so the guard is here rather than
@@ -191,8 +193,9 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 		})
 	}
 
-	// A query refused after it was invoked completes with its error.
-	refused := func(err error) (Relation, error) {
+	// A query that fails after it was invoked, refused at this entry or failed
+	// in execution, completes with its error.
+	failed := func(err error) (Relation, error) {
 		if handler != nil {
 			handler(annotations.TimedEvent(annotations.QueryComplete, queryStart,
 				map[string]interface{}{
@@ -203,6 +206,11 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 				}))
 		}
 		return nil, err
+	}
+
+	// A query whose context is already done is refused before any work.
+	if err := ctx.cancelled(); err != nil {
+		return failed(err)
 	}
 
 	// The query is prepared once, before planning: its shapes checked, every
@@ -218,7 +226,7 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 	}
 	prepared, err := query.Prepare(q, ctx.rules)
 	if err != nil {
-		return refused(err)
+		return failed(err)
 	}
 	if handler != nil {
 		handler(annotations.TimedEvent(annotations.QueryPrepared, prepareStart,
@@ -235,7 +243,7 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 	// input's variables free.
 	bindingInputs := query.BindingInputs(q.In)
 	if len(inputRelations) != len(bindingInputs) {
-		return refused(fmt.Errorf("%d input relations were given, and the query's :in binds %d", len(inputRelations), len(bindingInputs)))
+		return failed(fmt.Errorf("%d input relations were given, and the query's :in binds %d", len(inputRelations), len(bindingInputs)))
 	}
 
 	// Build initial bindings from the input relations: a relation input binds
@@ -271,7 +279,7 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 	// cross-route algebra-bridge events.
 	realizedPlan, err := executor.planner.PlanQuery(prepared, query.Bindings{Symbols: initialBindings, Rules: ctx.rules}, handler)
 	if err != nil {
-		return refused(fmt.Errorf("query planning failed: %w", err))
+		return failed(fmt.Errorf("query planning failed: %w", err))
 	}
 	// realizedPlan.String() renders the whole plan, so the guard is here.
 	if handler != nil {
@@ -287,10 +295,14 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 	// schema, so the decision is its own.
 	if vocabulary, ok := e.matcher.(AttributeVocabulary); ok {
 		if err := refuseUnknownAttributes(vocabulary, ctx, realizedPlan); err != nil {
-			return refused(err)
+			return failed(err)
 		}
 	}
-	return executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
+	result, err := executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
+	if err != nil {
+		return failed(err)
+	}
+	return result, nil
 }
 
 // ExecuteRealized executes a RealizedPlan (Stage B: Query-based execution)
@@ -640,7 +652,7 @@ func (e *DefaultQueryExecutor) executePhase(ctx *Context, phaseNumber int, phase
 		return nil, fmt.Errorf("phase %d failed: %w", phaseNumber, err)
 	}
 	if len(phase.Query.Find) == 0 {
-		result, err = existenceVerdict(result, e.options)
+		result, err = existenceVerdict(result, e.executor.unit)
 		if err != nil {
 			return nil, fmt.Errorf("phase %d failed: %w", phaseNumber, err)
 		}

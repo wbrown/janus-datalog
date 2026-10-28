@@ -6,7 +6,7 @@ import "testing"
 
 // Badger needs a filesystem, so a wasm build has no persistent backend.
 func expectedBackendNames() []string {
-	return []string{"memory", "memory-trees"}
+	return []string{"badger-emulator", "memory-trees"}
 }
 
 func appendNativeReopenCases(cases []reopenBackendCase) []reopenBackendCase {

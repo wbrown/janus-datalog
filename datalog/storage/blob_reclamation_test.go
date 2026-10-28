@@ -177,7 +177,7 @@ func orphanBlobByRemovingIndexKeys(t *testing.T, store Store, datom datalog.Dato
 	if deleteNativeKeys(t, store, keys) {
 		return
 	}
-	memoryStore, ok := store.(*MemoryStore)
+	memoryStore, ok := store.(*BadgerEmulatorStore)
 	require.True(t, ok, "unsupported store %T", store)
 	memoryStore.mu.Lock()
 	defer memoryStore.mu.Unlock()

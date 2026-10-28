@@ -101,12 +101,12 @@ func TestStoreSourceRejectsASecondAnswer(t *testing.T) {
 		opt     db.Option
 		errText string
 	}{
-		{"backend", db.WithBackend("memory"), "BackendName"},
+		{"backend", db.WithBackend("badger-emulator"), "BackendName"},
 		{"compression threshold", db.WithCompressionThreshold(4096), "CompressionThreshold"},
 		{"compression disabled", db.WithoutCompression(), "CompressionThreshold"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store := storage.NewMemoryStore(&storage.BinaryKeyEncoder{})
+			store := storage.NewBadgerEmulatorStore(&storage.BinaryKeyEncoder{})
 			t.Cleanup(func() { _ = store.Close() })
 			d, err := db.Open(store, tc.opt)
 			require.Error(t, err)

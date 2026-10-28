@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"reflect"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/codec"
@@ -49,30 +50,215 @@ type BlobData struct {
 const maxKeyValueSize = 60000
 
 // NormalizeValue returns a value as the domain admits it: int, int8, int16 and
-// int32 become int64, the engine's canonical integer representation, and a
-// float's signed zero becomes 0.0, since the engine's equality holds the two
-// zeros equal and a value's encoding agrees with its equality. Storage decode,
-// the EDN parser, and comparison all standardize on int64, so normalizing
-// user-supplied values where they enter the engine (writes, query inputs,
-// query-builder constants) keeps a Go int from diverging from stored int64
-// data. Every other value passes through untouched, adding no allocation for
-// the common case.
+// int32 become int64, the engine's canonical integer representation, as does
+// an unsigned integer within int64's range, since the engine's equality holds
+// uint64(5) equal to int64(5); a float's signed zero becomes 0.0, since the
+// equality holds the two zeros equal and a value's encoding agrees with its
+// equality; and a vector's elements are normalized as scalars are, a
+// []interface{} elementwise at any depth and a []float64's signed zeros.
+// Storage decode, the EDN parser, and comparison all standardize on int64, so
+// normalizing user-supplied values where they enter the engine (writes, query
+// inputs, query-builder constants) keeps a Go int from diverging from stored
+// int64 data. Every other value, an unsigned integer above int64's range
+// among them, passes through untouched, for ValidateValue to refuse, and a
+// vector whose elements are already of the domain is returned as given, so
+// the common case allocates nothing; a vector with an element to normalize
+// is returned as a copy, the given slice untouched.
 func NormalizeValue(v Value) Value {
+	normalized, _ := normalize(v)
+	return normalized
+}
+
+// normalize is NormalizeValue reporting whether it returned a value other than
+// the one given, which the vector arms read to copy a vector only when one of
+// its elements changes.
+func normalize(v Value) (Value, bool) {
 	switch n := v.(type) {
 	case int:
-		return int64(n)
+		return int64(n), true
 	case int8:
-		return int64(n)
+		return int64(n), true
 	case int16:
-		return int64(n)
+		return int64(n), true
 	case int32:
-		return int64(n)
+		return int64(n), true
+	case uint:
+		if uint64(n) <= math.MaxInt64 {
+			return int64(n), true
+		}
+	case uint8:
+		return int64(n), true
+	case uint16:
+		return int64(n), true
+	case uint32:
+		return int64(n), true
+	case uint64:
+		if n <= math.MaxInt64 {
+			return int64(n), true
+		}
 	case float64:
-		if n == 0 {
-			return float64(0)
+		if n == 0 && math.Signbit(n) {
+			return float64(0), true
+		}
+	case []float64:
+		for i, f := range n {
+			if f == 0 && math.Signbit(f) {
+				out := make([]float64, len(n))
+				copy(out, n)
+				for j := i; j < len(out); j++ {
+					if out[j] == 0 {
+						out[j] = 0
+					}
+				}
+				return out, true
+			}
+		}
+	case []interface{}:
+		var out []interface{}
+		for i, e := range n {
+			normalized, changed := normalize(e)
+			if changed && out == nil {
+				out = make([]interface{}, len(n))
+				copy(out, n[:i])
+			}
+			if out != nil {
+				out[i] = normalized
+			}
+		}
+		if out != nil {
+			return out, true
+		}
+	case nil, string, bool, int64, time.Time, []byte, Identity, Keyword, Symbol, ElementID, *ElementID:
+		// The domain's scalars, named so that none reaches the reflect arm.
+	default:
+		// Every other slice the domain admits (IsVector): a named type over
+		// []float64 or []interface{}, or a vector of vectors.
+		if rv := reflect.ValueOf(v); rv.Kind() == reflect.Slice {
+			return normalizeVector(v, rv)
 		}
 	}
-	return v
+	return v, false
+}
+
+// floatVectorType and interfaceVectorType are the slice types normalize's
+// static arms name; a named type over either converts to it and back.
+var (
+	floatVectorType     = reflect.TypeOf([]float64(nil))
+	interfaceVectorType = reflect.TypeOf([]interface{}(nil))
+)
+
+// normalizeVector is normalize for a slice of a type the static arms do not
+// name. A slice convertible to []float64 or to []interface{}, a named type
+// over either, normalizes through that arm and answers its own type when an
+// element changed. A float slice the arm cannot be converted to is as given:
+// its elements are no scalar of the domain, and ValidateValue refuses the
+// first. An interface slice the arm cannot be converted to, a []Value among
+// them, and a slice of slices normalize element by element
+// (normalizeElements). A slice of any other element kind is as given.
+func normalizeVector(v Value, rv reflect.Value) (Value, bool) {
+	t := rv.Type()
+	switch t.Elem().Kind() {
+	case reflect.Float64, reflect.Interface:
+		underlying := floatVectorType
+		if t.Elem().Kind() == reflect.Interface {
+			underlying = interfaceVectorType
+		}
+		if t.ConvertibleTo(underlying) {
+			normalized, changed := normalize(rv.Convert(underlying).Interface())
+			if !changed {
+				return v, false
+			}
+			return reflect.ValueOf(normalized).Convert(t).Interface(), true
+		}
+		if underlying == floatVectorType {
+			return v, false
+		}
+		return normalizeElements(v, rv)
+	case reflect.Slice:
+		return normalizeElements(v, rv)
+	}
+	return v, false
+}
+
+// normalizeElements is normalize over a slice's elements, each unboxed for
+// normalize: an interface slice the static arm cannot be converted to and a
+// slice of slices. The slice is copied whole at the first changed element,
+// and only a changed element is set over the copy, since the zero
+// reflect.Value of a nil element cannot be set. A slice with no changed
+// element is as given.
+func normalizeElements(v Value, rv reflect.Value) (Value, bool) {
+	var out reflect.Value
+	for i := 0; i < rv.Len(); i++ {
+		normalized, changed := normalize(rv.Index(i).Interface())
+		if !changed {
+			continue
+		}
+		if !out.IsValid() {
+			out = reflect.MakeSlice(rv.Type(), rv.Len(), rv.Len())
+			reflect.Copy(out, rv)
+		}
+		out.Index(i).Set(reflect.ValueOf(normalized))
+	}
+	if out.IsValid() {
+		return out.Interface(), true
+	}
+	return v, false
+}
+
+// ValidateDatomValue reports whether v, normalized, is a value one datom
+// carries: a string, an int64, a float64 other than NaN, a bool, a time.Time,
+// a []byte, an Identity, a Keyword, a Symbol, or an ElementID by value or by
+// non-nil pointer. A vector is not one: a vector attribute holds its elements
+// one datom each, written one Add per element or whole through Set. The error
+// names the type of a value outside the domain, or the value itself for NaN,
+// an unsigned integer above int64's range and a nil pointer, since those
+// types are in the domain and naming them would state something false; for a
+// vector it states the rule. Every write refuses through it.
+func ValidateDatomValue(v Value) error {
+	switch val := NormalizeValue(v).(type) {
+	case nil:
+		return fmt.Errorf("nil is not a datalog value")
+	case string, int64, bool, time.Time, []byte, Keyword, Symbol, ElementID:
+		return nil
+	case float64:
+		if math.IsNaN(val) {
+			return fmt.Errorf("NaN is not a datalog value")
+		}
+		return nil
+	case Identity:
+		if val == nil {
+			return fmt.Errorf("a nil Identity is not a datalog value")
+		}
+		return nil
+	case *ElementID:
+		if val == nil {
+			return fmt.Errorf("a nil *ElementID is not a datalog value")
+		}
+		return nil
+	case uint, uint64:
+		return fmt.Errorf("unsigned integer %d is above int64's range and is not a datalog value", val)
+	}
+	if IsVector(v) {
+		return fmt.Errorf("a vector (%T) is not a datom's value: a vector attribute holds its elements one datom each, written one Add per element or whole through Set", v)
+	}
+	return fmt.Errorf("%T is not a datalog value type", v)
+}
+
+// ValidateValue reports whether v, normalized, is a value of the domain: a
+// value one datom carries (ValidateDatomValue) or a vector of values, at any
+// depth. A query input and a query's constants refuse through it; a write
+// refuses through ValidateDatomValue, since a datom carries one value.
+func ValidateValue(v Value) error {
+	if IsVector(v) {
+		rv := reflect.ValueOf(v)
+		for i := 0; i < rv.Len(); i++ {
+			if err := ValidateValue(rv.Index(i).Interface()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return ValidateDatomValue(v)
 }
 
 // Type returns the type of a value

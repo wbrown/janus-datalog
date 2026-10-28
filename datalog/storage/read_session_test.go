@@ -44,7 +44,7 @@ func countSessionEntity(t *testing.T, r StoreReader, e datalog.Identity) int {
 // the read-session path.
 //
 // TestStoreBackendVBoundRunExcludesValueExtensions pins the same rule, but it
-// calls the store's own Scan/ScanKeysOnly and so reaches MemoryStore.scan and
+// calls the store's own Scan/ScanKeysOnly and so reaches BadgerEmulatorStore.scan and
 // BadgerStore's iterator constructor. The sessions carry their own copy of the
 // membership assignment; deleting the one in read_session_memory.go leaves the
 // store-path test green and only the wasm leg red. This closes that gap on both
@@ -224,7 +224,7 @@ func TestReadSessionConcurrentScans(t *testing.T) {
 // a write landing between two storage scans of one query must not produce a
 // torn result — a tuple pairing values from two different database states.
 func TestQuerySnapshotConsistency(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			e1 := datalog.NewIdentity("torn:e1")
 			attrA := datalog.NewKeyword(":snap/a")

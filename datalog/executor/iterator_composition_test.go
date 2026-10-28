@@ -35,6 +35,8 @@ func (it *mockIterator) Tuple() Tuple {
 	return nil
 }
 
+func (it *mockIterator) RequiresCopy() bool { return false }
+
 func (it *mockIterator) Close() error {
 	return nil
 }

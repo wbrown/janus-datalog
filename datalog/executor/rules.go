@@ -93,7 +93,7 @@ func (e *DefaultQueryExecutor) executeRuleInvocation(ctx *Context, inv *query.Ru
 		if !held {
 			return NewMaterializedRelationWithOptions([]query.Symbol{}, nil, e.options), nil
 		}
-		return NewUnitRelation(e.options), nil
+		return e.executor.unit, nil
 	}
 
 	renames := len(keep) == len(inv.Args)
@@ -169,6 +169,8 @@ func (it *invocationIterator) Next() bool {
 }
 
 func (it *invocationIterator) Tuple() Tuple { return it.current }
+
+func (it *invocationIterator) RequiresCopy() bool { return it.asIs && it.inner.RequiresCopy() }
 
 func (it *invocationIterator) Close() error { return it.inner.Close() }
 

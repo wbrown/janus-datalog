@@ -26,7 +26,7 @@ func cacheKeyFor(e datalog.Identity, a datalog.Keyword) CacheKey {
 // were left stranded at the pre-rollback high-water, the rebuilt lower-version entry would
 // never compare fresh again.
 func TestTruncateToInvalidatesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -71,7 +71,7 @@ func TestTruncateToInvalidatesCache(t *testing.T) {
 // deterministic by holding the in-flight transaction open, which parks the rollback in its
 // drain.
 func TestTruncateToDropsWritesStartedDuringRollback(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 
@@ -118,7 +118,7 @@ func TestTruncateToDropsWritesStartedDuringRollback(t *testing.T) {
 // a duplicate (Lamport, ReplicaID). Run under -race to also catch unsynchronized access to
 // the drain state.
 func TestTruncateToConcurrentWritersNoCollision(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 

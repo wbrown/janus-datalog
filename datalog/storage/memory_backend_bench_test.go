@@ -21,7 +21,7 @@ import (
 func openMemoryBenchDB(b *testing.B) *Database {
 	b.Helper()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Store:        NewMemoryStore(nil),
+		Store:        NewBadgerEmulatorStore(nil),
 		DisableCache: true,
 	})
 	if err != nil {
@@ -91,7 +91,7 @@ func BenchmarkMemoryKeyOnlyScanning(b *testing.B) {
 
 func BenchmarkMemoryResolveAllAttributesMany(b *testing.B) {
 	// Batch-only: cache-disabled per-entity walks are pathological on
-	// MemoryStore (minutes/op at 3899) and drown the native/wasm comparison.
+	// BadgerEmulatorStore (minutes/op at 3899) and drown the native/wasm comparison.
 	for _, entityCount := range []int{230, 3899} {
 		b.Run(fmt.Sprintf("entities=%d/batch", entityCount), func(b *testing.B) {
 			db, entities := setupMemoryBatchWildcardDB(b, entityCount, 5)

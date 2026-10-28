@@ -112,14 +112,14 @@ func TestSchemaFacts_AProvidersDefinitionIsValidatedBeforeItIsAsserted(t *testin
 // heldStore holds the rewind's delete until the test releases it, so a call
 // can be made while the rewind is in progress.
 type heldStore struct {
-	*MemoryStore
+	*BadgerEmulatorStore
 	held, release chan struct{}
 }
 
 func (s *heldStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	close(s.held)
 	<-s.release
-	return s.MemoryStore.DeleteDatoms(datoms)
+	return s.BadgerEmulatorStore.DeleteDatoms(datoms)
 }
 
 // A SetSchema refused while a rewind is in progress records nothing: the
@@ -128,7 +128,7 @@ func (s *heldStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 // refused one.
 func TestSchemaFacts_ARefusedSetSchemaRecordsNothing(t *testing.T) {
 	x := kw(":t/x")
-	store := &heldStore{MemoryStore: NewMemoryStore(&BinaryKeyEncoder{}), held: make(chan struct{}), release: make(chan struct{})}
+	store := &heldStore{BadgerEmulatorStore: NewBadgerEmulatorStore(&BinaryKeyEncoder{}), held: make(chan struct{}), release: make(chan struct{})}
 	d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, Schema: cardinalitySchema(t, false)})
 	require.NoError(t, err)
 	_, err = d.Snapshot("s")
@@ -254,7 +254,7 @@ func TestSchemaFacts_AStoredDeclarationOfAnEngineWordDoesNotRun(t *testing.T) {
 	ref := kw(":db.attribute/declaration")
 	x := kw(":t/x")
 	many := &schema.AttributeDefinition{Ident: ref, Cardinality: schema.CardinalityMany}
-	writer, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory", Schema: validSchema(t)})
+	writer, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "badger-emulator", Schema: validSchema(t)})
 	require.NoError(t, err)
 	tx := writer.NewTransaction()
 	tx.engine = true
@@ -274,7 +274,7 @@ func TestSchemaFacts_AStoredDeclarationOfAnEngineWordDoesNotRun(t *testing.T) {
 		given *schema.Schema
 	}{{"no schema", nil}, {"a given schema", validSchema(t)}} {
 		t.Run(arm.name, func(t *testing.T) {
-			opts := DatabaseOptions{BackendName: "memory"}
+			opts := DatabaseOptions{BackendName: "badger-emulator"}
 			if arm.given != nil {
 				opts.Schema = arm.given
 			}
@@ -353,10 +353,10 @@ func TestSchemaFacts_RedeclaringAnEngineWordIsRefusedAtOpenAndAtSetSchema(t *tes
 			redeclaring, err := schema.NewBuilder().Attribute(":t/x").Type(schema.TypeString).Many().Add().
 				Attribute(word).Many().Add().Build()
 			require.NoError(t, err)
-			_, err = NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory", Schema: redeclaring})
+			_, err = NewDatabaseWithOptions(DatabaseOptions{BackendName: "badger-emulator", Schema: redeclaring})
 			require.Error(t, err, "a schema declaring an engine word is refused at open")
 
-			d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory", Schema: cardinalitySchema(t, false)})
+			d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "badger-emulator", Schema: cardinalitySchema(t, false)})
 			require.NoError(t, err)
 			require.Error(t, d.SetSchema(redeclaring), "a schema declaring an engine word is refused at SetSchema")
 			require.Same(t, schema.CardinalityOne, d.Schema().GetAttribute(x).Cardinality, "the refused call leaves the given schema as it was")
@@ -387,7 +387,7 @@ func TestSchemaFacts_AnIdentLongerThanStorableNeverReachesTheStore(t *testing.T)
 // schema reads the same, the engine's words declared in its running schema.
 func TestSchemaFacts_StoredDefinitionsReadBackThroughPatterns(t *testing.T) {
 	x := kw(":t/x")
-	for _, backend := range []string{"memory", "memory-trees"} {
+	for _, backend := range []string{"badger-emulator", "memory-trees"} {
 		for _, given := range []bool{true, false} {
 			name := backend + "/set"
 			if given {
@@ -483,7 +483,7 @@ func TestSchemaFacts_ABranchRunsWithItsParentsDeclarations(t *testing.T) {
 // each in its own transaction, into a database on s with the cache as asked.
 func emailWrites(t *testing.T, s *schema.Schema, disableCache bool) *Database {
 	t.Helper()
-	d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory", Schema: s, DisableCache: disableCache})
+	d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "badger-emulator", Schema: s, DisableCache: disableCache})
 	require.NoError(t, err)
 	email := kw(":t/email")
 	for _, w := range []struct{ e, v string }{{"A", "a1"}, {"A", "shared"}, {"B", "shared"}} {
@@ -564,7 +564,7 @@ func TestSchemaFacts_ConcurrentSetSchemaCallsAgreeWithTheStore(t *testing.T) {
 	x := kw(":t/x")
 	schemas := []*schema.Schema{cardinalitySchema(t, true), cardinalitySchema(t, false)}
 	for trial := 0; trial < 500; trial++ {
-		d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "memory"})
+		d, err := NewDatabaseWithOptions(DatabaseOptions{BackendName: "badger-emulator"})
 		require.NoError(t, err)
 		var wg sync.WaitGroup
 		start := make(chan struct{})

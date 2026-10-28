@@ -19,11 +19,11 @@ func TestMemoryReadSession_ScanAllocatesAsPulled(t *testing.T) {
 }
 
 // memorySessionFirstKeyAllocs returns the allocations a session's TAEV scan
-// makes when it is opened, pulled once and closed, on a memory store holding n
-// datoms.
+// makes when it is opened, pulled once and closed, on a Badger emulator holding
+// n datoms.
 func memorySessionFirstKeyAllocs(t *testing.T, n int) float64 {
 	t.Helper()
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	defer store.Close()
 	attr := datalog.NewKeyword(":pulled/value")
 	datoms := make([]datalog.Datom, 0, n)

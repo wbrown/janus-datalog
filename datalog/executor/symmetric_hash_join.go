@@ -283,6 +283,10 @@ func (it *symmetricHashJoinIterator) Tuple() Tuple {
 	return nil
 }
 
+// RequiresCopy is false: every joined tuple is a fresh slice combineTuples
+// builds, which nothing writes after.
+func (it *symmetricHashJoinIterator) RequiresCopy() bool { return false }
+
 // Close releases resources
 func (it *symmetricHashJoinIterator) Close() error {
 	var err1, err2 error

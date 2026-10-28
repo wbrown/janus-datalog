@@ -85,6 +85,7 @@ func (it *deferredErrorTupleIter) Next() bool {
 	return false
 }
 func (it *deferredErrorTupleIter) Tuple() executor.Tuple { return it.inner.Tuple() }
+func (it *deferredErrorTupleIter) RequiresCopy() bool    { return it.inner.RequiresCopy() }
 func (it *deferredErrorTupleIter) Close() error          { return it.inner.Close() }
 func (it *deferredErrorTupleIter) Error() error {
 	if it.drained {

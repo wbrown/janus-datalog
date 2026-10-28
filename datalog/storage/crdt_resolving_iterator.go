@@ -16,15 +16,13 @@ import (
 type CRDTResolvingIterator struct {
 	source Iterator
 	schema schema.SchemaProvider
-	txID   datalog.ElementID // For as-of queries: only consider datoms with Tx.Lamport <= txID
 
-	// uniqueMatcher enables unique-attribute walk-based resolution. When
-	// set, CardinalityOne groups for unique attributes walk the entity's
-	// (E, A) history and emit the first non-superseded assertion (rather
-	// than simply emitting the EATV first-entry). Nil is permitted and
-	// disables unique-walk resolution (CardinalityOne falls back to the
-	// non-unique first-entry semantic).
-	uniqueMatcher *PatternMatcher
+	// matcher carries the view this scan reads: a datom after an as-of
+	// target is skipped (shouldFilterTx). It also resolves a unique
+	// CardinalityOne group by walking the entity's (E, A) history and
+	// emitting the first non-superseded assertion in place of the EATV
+	// first entry.
+	matcher *PatternMatcher
 
 	// Current (E, A) group tracking
 	currentE datalog.Identity
@@ -41,16 +39,16 @@ type CRDTResolvingIterator struct {
 
 	// CardinalityOne unique-walk state (reset per-group when attribute is
 	// declared Unique in the schema):
-	//   - uniqueMode: true if current group is a unique CardinalityOne
-	//     attribute and uniqueMatcher is non-nil.
-	//   - uniqueRetracted: value → highest Remove Tx seen within the current
+	//   - uniqueMode: true if the current group is a unique CardinalityOne
+	//     attribute.
+	//   - uniqueRemovedAt: value → highest Remove Tx seen within the current
 	//     (E, A) group. Used to skip Set entries that have been cancelled by
-	//     a later Remove. Nothing is deleted; the name collides with physical
-	//     deletion, see BUG_RETRACT_NAMES_TWO_OPPOSITE_OPERATIONS.
+	//     a later Remove. Nothing is deleted: the datom a Remove cancels stays
+	//     in the store and in History.
 	//   - uniqueEmitted: whether we have already emitted a value for the
 	//     current group (emit at most one).
 	uniqueMode      bool
-	uniqueRetracted *executor.TupleKeyMap
+	uniqueRemovedAt *executor.TupleKeyMap
 	uniqueEmitted   bool
 
 	// report accounts for the AVET supersession scans the unique walk opens,
@@ -100,23 +98,21 @@ type rgaElement struct {
 
 // NewCRDTResolvingIterator creates a new CRDT-resolving iterator wrapper.
 //
-// When matcher is non-nil, CardinalityOne groups whose attribute is
-// declared Unique in the schema apply the walk-based (A, V)-LWW
-// resolution: the first non-superseded Set entry in each group is
-// emitted, with supersession determined by an AVET sub-scan for
-// max-other-Tx per candidate V. When matcher is nil, all CardinalityOne
-// groups use first-entry semantics (the Unique field is ignored).
+// matcher carries the view the scan reads, so a datom after an as-of target
+// is skipped, and resolves a CardinalityOne group whose attribute the schema
+// declares Unique by the walk-based (A, V)-LWW rule: the first non-superseded
+// Set entry in the group is emitted, with supersession decided by an AVET
+// sub-scan for max-other-Tx per candidate V.
 //
 // report is the arm's, and is where the unique walk's own scans accrue. It is
 // nil when nothing is listening, and nil is also correct for a caller whose
 // scan no report accounts for.
-func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, txID datalog.ElementID, matcher *PatternMatcher, report *scanReport) *CRDTResolvingIterator {
+func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, matcher *PatternMatcher, report *scanReport) *CRDTResolvingIterator {
 	return &CRDTResolvingIterator{
-		source:        source,
-		schema:        schema,
-		txID:          txID,
-		uniqueMatcher: matcher,
-		report:        report,
+		source:  source,
+		schema:  schema,
+		matcher: matcher,
+		report:  report,
 	}
 }
 
@@ -175,8 +171,8 @@ func (it *CRDTResolvingIterator) Next() bool {
 				return false
 			}
 
-			// Apply as-of filtering
-			if it.txID != (datalog.ElementID{}) && it.txID.Less(datom.Tx) {
+			// A datom after the view's as-of target is not read.
+			if it.matcher.shouldFilterTx(datom.Tx) {
 				continue
 			}
 
@@ -231,7 +227,7 @@ func (it *CRDTResolvingIterator) Next() bool {
 			}
 			if isNewGroup {
 				if datom.Op == datalog.OpCRDTRemove {
-					// Value was retracted — attribute doesn't exist. Skip group.
+					// Value was removed — attribute doesn't exist. Skip group.
 					continue
 				}
 				// First entry for this (E, A) — emit (LWW winner)
@@ -283,7 +279,7 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 			// Unique CardinalityOne attributes use the walk-based
 			// resolution. Other cardinalities ignore Unique (uniqueness
 			// applies only to single-valued attributes).
-			if attr.Cardinality == schema.CardinalityOne && attr.HasUniqueConstraint() && it.uniqueMatcher != nil {
+			if attr.Cardinality == schema.CardinalityOne && attr.HasUniqueConstraint() {
 				it.uniqueMode = true
 			}
 		}
@@ -293,7 +289,7 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 	switch it.card {
 	case schema.CardinalityOne:
 		if it.uniqueMode {
-			it.uniqueRetracted = executor.NewTupleKeyMap()
+			it.uniqueRemovedAt = executor.NewTupleKeyMap()
 			it.uniqueEmitted = false
 		}
 	case schema.CardinalityMany:
@@ -545,7 +541,7 @@ func (it *CRDTResolvingIterator) Error() error {
 // entry in the current (E, A) group via the shared walkApplyEntry
 // primitive. Returns (true, nil) when the entry should be emitted
 // (it.currentDatom is set), (false, nil) to skip or record a
-// retraction, or (false, err) on supersession-check failure.
+// Remove, or (false, err) on supersession-check failure.
 //
 // Because the source iterator returns entries in Tx-descending order,
 // the first entry that walkApplyEntry returns Emit for is the walk's
@@ -556,10 +552,10 @@ func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool,
 	copy(aBytes[:], datom.A.String())
 	eBytes := Entity(datom.E.Hash())
 
-	state := &uniqueWalkState{retracted: it.uniqueRetracted}
+	state := &uniqueWalkState{removedAt: it.uniqueRemovedAt}
 	// Accrues whether or not the check fails: a failed supersession check
 	// still read the index to fail.
-	decision, err := it.uniqueMatcher.walkApplyEntry(state, datom, eBytes, aBytes, it.report)
+	decision, err := it.matcher.walkApplyEntry(state, datom, eBytes, aBytes, it.report)
 	if err != nil {
 		return false, err
 	}
@@ -567,7 +563,7 @@ func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool,
 		it.currentDatom = datom
 		return true, nil
 	}
-	// walkEntrySkip or walkEntryRetract — no emission. The retraction
-	// bookkeeping already updated it.uniqueRetracted via the shared map.
+	// walkEntrySkip or walkEntryRemoved — no emission. The removal
+	// bookkeeping already updated it.uniqueRemovedAt via the shared map.
 	return false, nil
 }

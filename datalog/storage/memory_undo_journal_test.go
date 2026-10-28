@@ -18,7 +18,7 @@ import (
 // journal at that moment holds only the asserts, which is precisely the half
 // that assert-only transactions skip.
 func TestCommitRestoresAssertsWhenARetractFails(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
 	doomed := datalog.Datom{
@@ -61,7 +61,7 @@ func TestCommitRestoresAssertsWhenARetractFails(t *testing.T) {
 // An assert-only transaction has no error path after it starts writing, so it
 // commits whole and needs no journal to fall back on.
 func TestAssertOnlyCommitWritesEveryIndex(t *testing.T) {
-	store := NewMemoryStore(&BinaryKeyEncoder{})
+	store := NewBadgerEmulatorStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })
 
 	datom := datalog.Datom{
@@ -75,7 +75,7 @@ func TestAssertOnlyCommitWritesEveryIndex(t *testing.T) {
 }
 
 // indexKeysFor reports which of the eight index keys for datom the store holds.
-func indexKeysFor(store *MemoryStore, datom datalog.Datom) []IndexType {
+func indexKeysFor(store *BadgerEmulatorStore, datom datalog.Datom) []IndexType {
 	storageDatom := ToStorageDatom(datom)
 	valueBytes, _ := store.encoder.EncodeValueBytes(storageDatom.V)
 

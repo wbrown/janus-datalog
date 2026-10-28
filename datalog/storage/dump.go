@@ -15,13 +15,25 @@ func IsDumpPath(path string) bool {
 	return strings.HasSuffix(path, ".edn") || strings.HasSuffix(path, ".jdzl")
 }
 
-// ImportDump loads an exported dump, taking the format from the dump's own
-// bytes: a JDZL export opens with a 4-byte magic and anything else is EDN.
+// ImportDump loads an exported dump (replayDump) and then composes the schema
+// the database runs with from the definitions the dump carried, under a
+// given schema if one was declared.
+func (d *Database) ImportDump(r io.ReadSeeker) error {
+	if err := d.replayDump(r); err != nil {
+		return err
+	}
+	return d.installSchema(true)
+}
+
+// replayDump asserts an exported dump's datoms into the store, taking the
+// format from the dump's own bytes: a JDZL export opens with a 4-byte magic
+// and anything else is EDN. It declares nothing: the caller composes the
+// schema once the datoms are in.
 //
 // r must be seekable because JDZL reads a trailer index and then seeks per
 // chunk. os.File, the fs.File an embed.FS hands out, and bytes.Reader all
 // qualify — which is what lets a database ship inside a binary.
-func (d *Database) ImportDump(r io.ReadSeeker) error {
+func (d *Database) replayDump(r io.ReadSeeker) error {
 	var magic [len(binaryExportMagic)]byte
 	switch _, err := io.ReadFull(r, magic[:]); {
 	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
@@ -34,7 +46,7 @@ func (d *Database) ImportDump(r io.ReadSeeker) error {
 		return fmt.Errorf("rewinding dump: %w", err)
 	}
 	if string(magic[:]) == binaryExportMagic {
-		return d.ImportBinary(r)
+		return d.replayBinary(r)
 	}
-	return d.Import(r)
+	return d.replayEDN(r)
 }

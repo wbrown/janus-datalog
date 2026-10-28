@@ -60,7 +60,7 @@ correctly, bracketing its delete with `BeginInFlight` before and
 
 ## What was verified
 
-Reproduced against `MemoryStore` (see below):
+Reproduced against `BadgerEmulatorStore` (see below):
 
 - Storage's LWW winner for the (E, A) after import is the imported value.
   Read directly from EATV, whose Tx-descending order makes the first entry for
@@ -153,7 +153,7 @@ func TestImportBinaryInvalidatesCache(t *testing.T) {
 	// Source database carrying the newer value. Its Lamport clock is advanced
 	// first so the imported datom outranks the target's on Lamport alone,
 	// independent of ReplicaID tie-breaking.
-	src, err := NewDatabaseWithOptions(DatabaseOptions{Store: NewMemoryStore(nil)})
+	src, err := NewDatabaseWithOptions(DatabaseOptions{Store: NewBadgerEmulatorStore(nil)})
 	require.NoError(t, err)
 	defer src.Close()
 
@@ -176,7 +176,7 @@ func TestImportBinaryInvalidatesCache(t *testing.T) {
 	require.NoError(t, dumpFile.Close())
 
 	// Target database, cache enabled.
-	dst, err := NewDatabaseWithOptions(DatabaseOptions{Store: NewMemoryStore(nil)})
+	dst, err := NewDatabaseWithOptions(DatabaseOptions{Store: NewBadgerEmulatorStore(nil)})
 	require.NoError(t, err)
 	defer dst.Close()
 

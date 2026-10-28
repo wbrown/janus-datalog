@@ -56,6 +56,8 @@ func (it *failingIterator) Next() bool {
 
 func (it *failingIterator) Tuple() Tuple { return it.inner.Tuple() }
 
+func (it *failingIterator) RequiresCopy() bool { return it.inner.RequiresCopy() }
+
 func (it *failingIterator) Close() error {
 	_ = it.inner.Close()
 	return it.closeErr

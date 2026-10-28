@@ -458,6 +458,10 @@ func (it *reusingWorkspaceIterator) Tuple() Tuple { return it.workspace }
 func (it *reusingWorkspaceIterator) Close() error { return nil }
 func (it *reusingWorkspaceIterator) Error() error { return nil }
 
+// RequiresCopy is true: Tuple hands back the one workspace the next pull
+// overwrites.
+func (it *reusingWorkspaceIterator) RequiresCopy() bool { return true }
+
 // TestRelationInput_AStreamingInputReusingItsWorkspaceAnswersAsAMaterializedOne:
 // a streaming input relation whose iterator reuses a single workspace slice
 // across Next() calls (the production-default storage-iterator pattern, used by

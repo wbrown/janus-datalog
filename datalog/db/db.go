@@ -37,12 +37,17 @@ type DB = storage.Database
 // are available directly.
 type Transaction = storage.Transaction
 
+// ErrStoreLocked is returned by Open when a persistent backend's directory is
+// held by another process.
+var ErrStoreLocked = storage.ErrStoreLocked
+
 // Open creates or opens a database from source, which is one of:
 //
 //   - string — a filesystem path. A directory goes to the backend, the build's
-//     default unless WithBackend names one: Badger natively, the memory store
-//     under js/wasm, where there is no filesystem to hold it. A path ending in
-//     .edn or .jdzl is an exported dump, opened and loaded.
+//     default unless WithBackend names one: Badger natively, the tree store
+//     (storage.MemoryTreeStore) under js/wasm, where there is no filesystem to
+//     hold it. A path ending in .edn or .jdzl is an exported dump, opened and
+//     loaded.
 //   - io.ReadSeeker — an open dump. *os.File, the fs.File an embed.FS hands
 //     out, and bytes.Reader all qualify, which is what lets a database ship
 //     inside a binary. JDZL needs the seek to read its trailer index.
@@ -50,9 +55,10 @@ type Transaction = storage.Transaction
 //   - storage.Store — a store the caller opened and continues to own. Open's
 //     error paths do not Close it; on success Database.Close does.
 //
-// A dump loads into the backend WithBackend names, defaulting to the memory
+// A dump loads into the backend WithBackend names, defaulting to the tree
 // store. A persistent backend has nowhere of its own to put one, so Open makes
-// a temporary directory that the database removes when it closes.
+// a temporary directory that the database removes when it closes, and that
+// Open removes itself when it answers no database.
 func Open(source interface{}, opts ...Option) (*DB, error) {
 	var cfg config
 	for _, opt := range opts {
@@ -96,16 +102,17 @@ func Open(source interface{}, opts ...Option) (*DB, error) {
 		if err := setDumpDestination(&dbOpts); err != nil {
 			return nil, fmt.Errorf("db.Open: %w", err)
 		}
+		dbOpts.Dump = dump
 	}
 	d, err := storage.NewDatabaseWithOptions(dbOpts)
 	if err != nil {
-		return nil, fmt.Errorf("db.Open: %w", err)
-	}
-	if dump != nil {
-		if err := d.ImportDump(dump); err != nil {
-			_ = d.Close()
-			return nil, fmt.Errorf("db.Open: %w", err)
+		// No database holds the scratch directory, so it goes with the error.
+		if dbOpts.RemovePathOnClose {
+			if removeErr := os.RemoveAll(dbOpts.Path); removeErr != nil {
+				return nil, fmt.Errorf("db.Open: %w; scratch directory %s not removed: %w", err, dbOpts.Path, removeErr)
+			}
 		}
+		return nil, fmt.Errorf("db.Open: %w", err)
 	}
 	return d, nil
 }

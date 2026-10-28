@@ -62,7 +62,7 @@ func (s *seekBuffer) Seek(offset int64, whence int) (int64, error) {
 }
 
 func TestBinaryExportImport_RoundTrip(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db1.NewTransaction()
@@ -92,7 +92,7 @@ func TestBinaryExportImport_RoundTrip(t *testing.T) {
 }
 
 func TestBinaryExportImport_PreservesCRDTOps(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			sch, err := schema.NewBuilder().
 				Attribute(":item/tags").Type(schema.TypeString).Many().Add().
@@ -127,7 +127,7 @@ func TestBinaryExportImport_PreservesCRDTOps(t *testing.T) {
 }
 
 func TestBinaryExport_EntityAlignedSoftClose(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()
@@ -160,7 +160,7 @@ func TestBinaryExport_EntityAlignedSoftClose(t *testing.T) {
 }
 
 func TestBinaryExport_IndexSeekable(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()
@@ -202,7 +202,7 @@ func TestBinaryExport_IndexSeekable(t *testing.T) {
 }
 
 func TestBinaryImport_ParallelWorkers(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db1.NewTransaction()
@@ -229,7 +229,7 @@ func TestBinaryImport_ParallelWorkers(t *testing.T) {
 }
 
 func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			sch, err := schema.NewBuilder().
 				Attribute(":doc/items").Type(schema.TypeString).Vector().Add().
@@ -339,7 +339,7 @@ func TestBinaryChunkCursor_TruncatedValueHeaderAfterAfterRef(t *testing.T) {
 }
 
 func TestBinaryImport_RejectsBadMagic(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()
@@ -360,7 +360,7 @@ func TestBinaryImport_RejectsBadMagic(t *testing.T) {
 }
 
 func TestBinaryImport_RejectsUnsupportedVersion(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db.NewTransaction()
@@ -381,7 +381,7 @@ func TestBinaryImport_RejectsUnsupportedVersion(t *testing.T) {
 }
 
 func TestBinaryImport_RejectsCorruptChunk(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db1 := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			tx := db1.NewTransaction()
@@ -416,7 +416,7 @@ func TestBinaryImport_RejectsCorruptChunk(t *testing.T) {
 }
 
 func TestBinaryImport_RejectsOversizedIndexCount(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			// Minimal header + trailer claiming an absurd entry count for a tiny file.
 			var buf seekBuffer

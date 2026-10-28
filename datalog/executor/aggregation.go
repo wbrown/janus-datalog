@@ -35,12 +35,15 @@ func ExecuteAggregations(rel Relation, findElements []query.FindElement) Relatio
 		}
 	}
 
-	// If no aggregates, just project the variables
+	// With no aggregate the find is a projection onto its variables. A find
+	// over a symbol the relation lacks is the query's error, carried by the
+	// result and surfaced when it is driven.
 	if len(aggregates) == 0 {
 		result, err := rel.Project(groupByVars)
 		if err != nil {
-			// Return empty relation on error
-			return NewMaterializedRelationWithOptions(groupByVars, []Tuple{}, opts)
+			failed := NewMaterializedRelationWithOptions(groupByVars, nil, opts)
+			failed.err = err
+			return failed
 		}
 		return result
 	}

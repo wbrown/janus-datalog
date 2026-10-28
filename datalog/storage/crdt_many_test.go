@@ -1970,7 +1970,7 @@ func TestAVETAddWinsResolution(t *testing.T) {
 }
 
 // TestHistoryModeCardinalityMany verifies that db.History() returns raw
-// datoms including retract operations, bypassing add-wins CRDT resolution.
+// datoms including Remove operations, bypassing add-wins CRDT resolution.
 func TestHistoryModeCardinalityMany(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

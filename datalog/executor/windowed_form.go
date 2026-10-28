@@ -334,6 +334,11 @@ func (it *windowedIterator) Tuple() Tuple {
 	return it.currentTuple
 }
 
+// RequiresCopy is false: Tuple hands back a window tuple the reader keeps,
+// a tuple the branch's index keeps, or a projection built for the match,
+// none of which a pull writes.
+func (it *windowedIterator) RequiresCopy() bool { return false }
+
 // Close closes the subject's iterator and completes an owned continuation.
 func (it *windowedIterator) Close() error {
 	var closeErr error

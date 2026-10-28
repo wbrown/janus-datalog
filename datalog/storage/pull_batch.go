@@ -48,7 +48,7 @@ func (d *Database) ResolveAllAttributesMany(
 	}
 
 	matcher := d.Matcher().(*PatternMatcher)
-	if matcher.isHistoryMode() {
+	if matcher.mode == historyMode {
 		for i, entity := range entities {
 			result, err := d.ResolveAllAttributes(entity)
 			if err != nil {

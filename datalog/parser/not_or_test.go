@@ -273,7 +273,7 @@ func TestNotOrParseErrors(t *testing.T) {
 		{
 			name:  "not-join without inner clauses",
 			input: `[:find ?e :where [?e :foo ?v] (not-join [?e])]`,
-			error: "not-join clause must have a header and at least one clause",
+			error: "not-join clause must have at least one inner clause",
 		},
 		{
 			name:  "or without branches",
@@ -288,7 +288,7 @@ func TestNotOrParseErrors(t *testing.T) {
 		{
 			name:  "or-join without enough elements",
 			input: `[:find ?e :where [?e :foo ?v] (or-join [?e])]`,
-			error: "or-join clause must have a header vector and at least one branch",
+			error: "or-join must have at least one branch",
 		},
 	}
 
@@ -512,27 +512,35 @@ func TestParseQueryRefusesABranchOutsideItsHeaderAsPrepareDoes(t *testing.T) {
 	}
 }
 
-// A parse error inside a form names the branch, or the clause of a not or a
+// A refusal inside a form names the branch, or the clause of a not or a
 // not-join, by its position counted from one
-// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.4).
-func TestParseErrorNamesTheBranchCountedFromOne(t *testing.T) {
+// (docs/proposals/NESTED_SCOPES_AS_QUERIES.md §2.4): the parser's wrapper
+// when the branch's text does not parse, and the validator's when a clause
+// the branch parses to is refused.
+func TestARefusalInsideAFormNamesTheBranchCountedFromOne(t *testing.T) {
 	cases := []struct {
 		name  string
 		input string
 		want  string
 	}{
-		{"or", `[:find ?e :where (or (not) [?e :t/a _])]`, "error parsing or branch 1:"},
-		{"or-join", `[:find ?e :where (or-join [?e] (not) [?e :t/a _])]`, "error parsing or-join branch 1:"},
-		{"or-default", `[:find ?e :where (or-default (not) [?e :t/a _])]`, "error parsing or-default branch 1:"},
-		{"or-default-join", `[:find ?e :where (or-default-join [?e] (not) [?e :t/a _])]`, "error parsing or-default-join branch 1:"},
-		{"not", `[:find ?e :where [?e :t/a _] (not (not))]`, "error parsing not clause element 1:"},
-		{"not-join", `[:find ?e :where [?e :t/a _] (not-join [?e] (not))]`, "error parsing not-join clause element 1:"},
+		{"or, a branch of an empty not", `[:find ?e :where (or (not) [?e :t/a _])]`, "or branch 1: not clause must have at least one inner clause"},
+		{"or, a branch that is a number", `[:find ?e :where (or 42 [?e :t/a _])]`, "error parsing or branch 1:"},
+		{"or-join, a branch of an empty not", `[:find ?e :where (or-join [?e] (not) [?e :t/a _])]`, "or-join branch 1: not clause must have at least one inner clause"},
+		{"or-join, a branch that is a number", `[:find ?e :where (or-join [?e] 42 [?e :t/a _])]`, "error parsing or-join branch 1:"},
+		{"or-default, a branch of an empty not", `[:find ?e :where (or-default (not) [?e :t/a _])]`, "or-default branch 1: not clause must have at least one inner clause"},
+		{"or-default, a branch that is a number", `[:find ?e :where (or-default 42 [?e :t/a _])]`, "error parsing or-default branch 1:"},
+		{"or-default-join, a branch of an empty not", `[:find ?e :where (or-default-join [?e] (not) [?e :t/a _])]`, "or-default-join branch 1: not clause must have at least one inner clause"},
+		{"or-default-join, a branch that is a number", `[:find ?e :where (or-default-join [?e] 42 [?e :t/a _])]`, "error parsing or-default-join branch 1:"},
+		{"not, a clause of an empty not", `[:find ?e :where [?e :t/a _] (not (not))]`, "not clause element 1: not clause must have at least one inner clause"},
+		{"not, a clause that is a number", `[:find ?e :where [?e :t/a _] (not 42)]`, "error parsing not clause element 1:"},
+		{"not-join, a clause of an empty not", `[:find ?e :where [?e :t/a _] (not-join [?e] (not))]`, "not-join clause element 1: not clause must have at least one inner clause"},
+		{"not-join, a clause that is a number", `[:find ?e :where [?e :t/a _] (not-join [?e] 42)]`, "error parsing not-join clause element 1:"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := ParseQuery(c.input)
 			if err == nil {
-				t.Fatalf("ParseQuery accepts the query; its first branch holds an empty not")
+				t.Fatalf("ParseQuery accepts the query; its first branch is refused")
 			}
 			if !strings.Contains(err.Error(), c.want) {
 				t.Errorf("the refusal %q does not carry %q", err, c.want)
@@ -555,7 +563,7 @@ func TestParseOrDefaultErrors(t *testing.T) {
 		{
 			name:  "or-default-join without enough elements",
 			input: `[:find ?e :where (or-default-join [?e])]`,
-			error: "or-default-join clause must have a header vector and at least two branches",
+			error: "or-default-join must have at least two branches",
 		},
 	}
 

@@ -69,6 +69,8 @@ func (it *DatomIterator) Tuple() Tuple {
 	return it.current
 }
 
+func (it *DatomIterator) RequiresCopy() bool { return false }
+
 func (it *DatomIterator) Close() error {
 	return nil
 }

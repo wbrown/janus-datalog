@@ -43,7 +43,7 @@ func createWorkspaceTestDB(t *testing.T, mode optimizerMode) *Database {
 
 // Test 1: Raw storage iterator - verify tuples are produced correctly
 func TestWorkspaceRegression_RawIterator(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createWorkspaceTestDB(t, mode)
 
@@ -115,7 +115,7 @@ func TestWorkspaceRegression_RawIterator(t *testing.T) {
 
 // Test 2: Verify workspace reuse - immediate reads are correct, stored refs share memory
 func TestWorkspaceRegression_WorkspaceReuse(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createWorkspaceTestDB(t, mode)
 
@@ -200,7 +200,7 @@ func TestWorkspaceRegression_WorkspaceReuse(t *testing.T) {
 
 // Test 3: Verify predicate filtering works correctly
 func TestWorkspaceRegression_PredicateFilter(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createWorkspaceTestDB(t, mode)
 
@@ -241,7 +241,7 @@ func TestWorkspaceRegression_PredicateFilter(t *testing.T) {
 
 // Test 4: Projection to single symbol
 func TestWorkspaceRegression_Projection(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createWorkspaceTestDB(t, mode)
 
@@ -284,7 +284,7 @@ func TestWorkspaceRegression_Projection(t *testing.T) {
 
 // Test 5: Filter + projection
 func TestWorkspaceRegression_FilterThenProject(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createWorkspaceTestDB(t, mode)
 
@@ -332,7 +332,7 @@ func TestWorkspaceRegression_FilterThenProject(t *testing.T) {
 
 // Test 6: Verify StreamingRelation caching copies tuples
 func TestWorkspaceRegression_StreamingRelationCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createWorkspaceTestDB(t, mode)
 
@@ -394,7 +394,7 @@ func TestWorkspaceRegression_StreamingRelationCache(t *testing.T) {
 
 // Test 7: BufferedIterator correctly copies from workspace-reusing iterator
 func TestWorkspaceRegression_BufferedIterator(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			db := createWorkspaceTestDB(t, mode)
 

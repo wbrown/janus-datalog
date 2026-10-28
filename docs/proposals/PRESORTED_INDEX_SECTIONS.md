@@ -12,7 +12,7 @@
 
 ## Motivation: typed trees fix resting size, not hydration
 
-Hydrating the 2.7M-datom production dump into `MemoryStore` retains more than the 4 GiB wasm linear-memory ceiling holds, 4,380 MB on the 62 MB import (`PERFORMANCE_STATUS.md`, the cross-backend import table). `MemoryTreeStore` is the js/wasm default, and it retains 608 MB on the same import, 590 MB with datom slabs. The reduction is representational. The dominant term removed is `8 × (20+32+16) = 544` bytes per datom of entity, attribute and transaction re-serialized into eight separate byte keys. Under typed trees the entity and attribute are interned pointers shared across the store, and the transaction lives once in the record. The eight map slots and the parallel B-tree of key strings go with it.
+Hydrating the 2.7M-datom production dump into `BadgerEmulatorStore` retains more than the 4 GiB wasm linear-memory ceiling holds, 4,380 MB on the 62 MB import (`PERFORMANCE_STATUS.md`, the cross-backend import table). `MemoryTreeStore` is the js/wasm default, and it retains 608 MB on the same import, 590 MB with datom slabs. The reduction is representational. The dominant term removed is `8 × (20+32+16) = 544` bytes per datom of entity, attribute and transaction re-serialized into eight separate byte keys. Under typed trees the entity and attribute are interned pointers shared across the store, and the transaction lives once in the record. The eight map slots and the parallel B-tree of key strings go with it.
 
 The bar there is a threshold rather than a ratio. `MEMORY_DATOM_INDEXES.md` §_Representation arithmetic_ states it as a permitted datom count. What matters here is that resting size clearing the bar is **necessary and not sufficient**, because hydration has a peak of its own.
 

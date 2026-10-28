@@ -140,7 +140,7 @@ func reopenLegs(t *testing.T, run func(t *testing.T, open func(DatabaseOptions) 
 }
 
 func TestSchemaFacts_AssertedAtOpenReadBackByQuery(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			s := schemaFactsFixture(t)
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s})
@@ -174,7 +174,7 @@ func TestSchemaFacts_ReopenWithUnchangedSchemaWritesNothing(t *testing.T) {
 }
 
 func TestSchemaFacts_ReassertedDefinitionConvergesToOneEntity(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			first, err := schema.NewBuilder().
 				Attribute(":t/documented").Type(schema.TypeString).Doc("first").Add().
@@ -204,7 +204,7 @@ func TestSchemaFacts_ReassertedDefinitionConvergesToOneEntity(t *testing.T) {
 }
 
 func TestSchemaFacts_DefinitionConvergesAcrossReplicas(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			s := schemaFactsFixture(t)
 			a := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: s, ReplicaID: 1})
@@ -233,7 +233,7 @@ func TestSchemaFacts_DefinitionConvergesAcrossReplicas(t *testing.T) {
 // Two replicas' declarations of one attribute merge to a definition one of
 // them made.
 func TestSchemaFacts_ReplicaDeclarationsMergeToADeclaredDefinition(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			n := kw(":t/n")
 			base, err := schema.NewBuilder().Attribute(":t/n").Type(schema.TypeLong).Add().Build()
@@ -272,7 +272,7 @@ func TestSchemaFacts_ReplicaDeclarationsMergeToADeclaredDefinition(t *testing.T)
 }
 
 func TestSchemaFacts_WithdrawnDocResolvesAbsent(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			documented, err := schema.NewBuilder().
 				Attribute(":t/documented").Type(schema.TypeString).Doc("documented").Add().
@@ -311,7 +311,7 @@ func TestSchemaFacts_WithdrawnDocResolvesAbsent(t *testing.T) {
 }
 
 func TestSchemaFacts_WithdrawnWordResolvesAbsent(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			constrained, err := schema.NewBuilder().
 				Attribute(":t/unique").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
@@ -454,7 +454,7 @@ func TestSchemaFacts_IdentOnAnotherEntityIsNotADefinition(t *testing.T) {
 }
 
 func TestSchemaFacts_MalformedFactRefusesOpen(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			path := ""
 			if mode.backend.Persistent {
@@ -482,7 +482,7 @@ func TestSchemaFacts_MalformedFactRefusesOpen(t *testing.T) {
 }
 
 func TestSchemaFacts_SetSchemaRefusedOnTemporalHandle(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			s := schemaFactsFixture(t)
@@ -604,7 +604,7 @@ func TestSchemaFacts_ForkWithUnchangedSchemaWritesNothing(t *testing.T) {
 }
 
 func TestSchemaFacts_TruncateToRewindsDeclarations(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			before, err := schema.NewBuilder().
 				Attribute(":t/early").Type(schema.TypeString).Add().
@@ -638,7 +638,7 @@ func TestSchemaFacts_TruncateToRewindsDeclarations(t *testing.T) {
 
 // A pull after SetSchema reads under the installed schema.
 func TestSchemaFacts_ChangedCardinalityHoldsAgainstAMatcherMintedBefore(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			asSet, err := schema.NewBuilder().
 				Attribute(":t/tags").Type(schema.TypeString).Many().Add().
@@ -698,7 +698,7 @@ func TestSchemaFacts_ChangedCardinalityHoldsAgainstAPullInFlight(t *testing.T) {
 
 			opts := DefaultPlannerOptions()
 			opts.EnableAlgebraOptimizer = algebra.on
-			store := &scanSignalStore{Store: NewMemoryStore(&BinaryKeyEncoder{})}
+			store := &scanSignalStore{Store: NewBadgerEmulatorStore(&BinaryKeyEncoder{})}
 			d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, Schema: asSet, PlannerOptions: &opts})
 			require.NoError(t, err)
 			defer d.Close()
@@ -753,7 +753,7 @@ func TestSchemaFacts_OverlappingSetSchemaCallsAgree(t *testing.T) {
 		t.Run(algebra.name, func(t *testing.T) {
 			opts := DefaultPlannerOptions()
 			opts.EnableAlgebraOptimizer = algebra.on
-			store := &scanSignalStore{Store: NewMemoryStore(&BinaryKeyEncoder{})}
+			store := &scanSignalStore{Store: NewBadgerEmulatorStore(&BinaryKeyEncoder{})}
 			d, err := NewDatabaseWithOptions(DatabaseOptions{Store: store, Schema: base, PlannerOptions: &opts})
 			require.NoError(t, err)
 			defer d.Close()
@@ -802,7 +802,7 @@ func TestSchemaFacts_OverlappingSetSchemaCallsAgree(t *testing.T) {
 }
 
 func TestSchemaFacts_ChangedCardinalityInvalidatesCache(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			asSet, err := schema.NewBuilder().
 				Attribute(":t/tags").Type(schema.TypeString).Many().Add().
@@ -867,7 +867,7 @@ var engineWords = []struct {
 // declaring nothing runs with them, each of cardinality one with its type,
 // and with no definition of a user's attribute.
 func TestSchemaFacts_EngineWordsAreDeclaredInEveryRunningSchema(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{})
 			running := d.Schema()
@@ -887,7 +887,7 @@ func TestSchemaFacts_EngineWordsAreDeclaredInEveryRunningSchema(t *testing.T) {
 // declaration in force alone once another supersedes it: the ref resolves by
 // its declaration, never by the ops it carries.
 func TestSchemaFacts_SupersededDeclarationDoesNotResolve(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			first, err := schema.NewBuilder().
 				Attribute(":t/documented").Type(schema.TypeString).Doc("first").Add().
@@ -914,7 +914,7 @@ func TestSchemaFacts_SupersededDeclarationDoesNotResolve(t *testing.T) {
 // writes pass: a schema's facts at open, a snapshot's marker, its deletion,
 // and a branch's record.
 func TestSchemaFacts_EngineWordsAreTheEnginesToWrite(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d := createOptimizerModeDB(t, mode, DatabaseOptions{Schema: schemaFactsFixture(t)})
 			require.NotEmpty(t, declaredByQuery(t, d), "the open declares the schema's facts")
@@ -955,7 +955,7 @@ func TestSchemaFacts_RedeclaringAnEngineWordIsRefused(t *testing.T) {
 		Attribute(":db/ident").Type(schema.TypeKeyword).Many().Add().
 		Build()
 	require.NoError(t, err)
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			_, err := NewDatabaseWithOptions(backendOptions(t, mode.backend, DatabaseOptions{Schema: redeclaring, PlannerOptions: &popts}))
@@ -1041,7 +1041,7 @@ func TestSchemaFacts_ChangedUniquenessHoldsAgainstAMatcherMintedBefore(t *testin
 		Attribute(":t/u").Type(schema.TypeString).Add().
 		Build()
 	require.NoError(t, err)
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d, first := uniqueTakeover(t, mode)
 			held := d.Matcher()
@@ -1064,7 +1064,7 @@ func TestSchemaFacts_ChangedUniquenessHoldsAgainstAMatcherMintedBefore(t *testin
 // it, so a reader under the unique rule resolves for itself: a superseded
 // claimant prefetched reads as superseded.
 func TestPrefetchedEntryIsNotServedUnderTheUniqueRule(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			d, first := uniqueTakeover(t, mode)
 			require.NoError(t, d.Matcher().(*PatternMatcher).PrefetchEntities([]datalog.Identity{first}))

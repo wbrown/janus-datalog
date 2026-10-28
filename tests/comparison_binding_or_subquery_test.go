@@ -22,7 +22,7 @@ import (
 //	            [(ground 0) ?taskCount])
 //	[(> ?taskCount 0) ?complete]
 func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
-	eachBackendAndModeWith(t, testComparisonBindingWithOrSubqueryE2E)
+	eachModeWith(t, testComparisonBindingWithOrSubqueryE2E)
 }
 
 func testComparisonBindingWithOrSubqueryE2E(t *testing.T, db *storage.Database, mode optimizerMode) {

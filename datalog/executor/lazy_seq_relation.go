@@ -247,6 +247,10 @@ func (it *lazySeqIterator) Tuple() Tuple {
 	return it.current
 }
 
+// RequiresCopy is false: Tuple hands back the tuple a realized cell keeps
+// for every cursor, which no pull writes.
+func (it *lazySeqIterator) RequiresCopy() bool { return false }
+
 func (it *lazySeqIterator) Close() error {
 	it.done = true
 	if it.cur != nil {
@@ -274,6 +278,7 @@ func (it *selectionIterator) Next() bool {
 	return false
 }
 
-func (it *selectionIterator) Tuple() Tuple { return it.current }
-func (it *selectionIterator) Close() error { return it.source.Close() }
-func (it *selectionIterator) Error() error { return it.source.Error() }
+func (it *selectionIterator) Tuple() Tuple        { return it.current }
+func (it *selectionIterator) Close() error        { return it.source.Close() }
+func (it *selectionIterator) Error() error        { return it.source.Error() }
+func (it *selectionIterator) RequiresCopy() bool { return it.source.RequiresCopy() }

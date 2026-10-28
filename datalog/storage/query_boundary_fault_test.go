@@ -125,19 +125,21 @@ func queryBoundaryFaultCases(t *testing.T) []queryBoundaryFaultCase {
 		name:  "injected",
 		modes: optimizerModes,
 		openFailing: func(t *testing.T, mode optimizerMode) (*Database, datalog.Identity, datalog.Keyword) {
-			return openInjectedFaultDatabase(t, mode, 0)
+			return openInjectedFaultDatabase(t, mode, 0, DatabaseOptions{})
 		},
 		openValidThenFailing: func(t *testing.T, mode optimizerMode) *Database {
-			db, _, _ := openInjectedFaultDatabase(t, mode, 1)
+			db, _, _ := openInjectedFaultDatabase(t, mode, 1, DatabaseOptions{})
 			return db
 		},
 		errText: "injected scan fault",
 	}})
 }
 
-// openInjectedFaultDatabase writes two datoms through an unarmed fault store,
-// then arms it so every scan under test fails after failAfter datoms.
-func openInjectedFaultDatabase(t *testing.T, mode optimizerMode, failAfter int) (*Database, datalog.Identity, datalog.Keyword) {
+// openInjectedFaultDatabase opens a database on the given options over an
+// unarmed fault store with the cache off and the mode's planner options,
+// writes two datoms through it, then arms the store so every scan under test
+// fails after failAfter datoms.
+func openInjectedFaultDatabase(t *testing.T, mode optimizerMode, failAfter int, opts DatabaseOptions) (*Database, datalog.Identity, datalog.Keyword) {
 	t.Helper()
 
 	base, err := mode.backend.Open(t.TempDir(), &BinaryKeyEncoder{})
@@ -145,11 +147,10 @@ func openInjectedFaultDatabase(t *testing.T, mode optimizerMode, failAfter int) 
 	store := &scanFaultStore{Store: base, failAfter: failAfter}
 
 	popts := mode.plannerOptions()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Store:          store,
-		DisableCache:   true,
-		PlannerOptions: &popts,
-	})
+	opts.Store = store
+	opts.DisableCache = true
+	opts.PlannerOptions = &popts
+	db, err := NewDatabaseWithOptions(opts)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = db.Close()

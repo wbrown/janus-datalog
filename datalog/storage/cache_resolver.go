@@ -31,7 +31,7 @@ func (m *PatternMatcher) GetCardinality(attr datalog.Keyword) datalog.Keyword {
 // whose answer differs rebuilds instead of being served the other rule's
 // value.
 func (m *PatternMatcher) ResolvesUnique(a Attribute) bool {
-	if m.schema == nil || m.isHistoryMode() {
+	if m.schema == nil || m.mode == historyMode {
 		return false
 	}
 	return m.schema.GetAttribute(datalog.InternKeywordFromBytes(a)).HasUniqueConstraint()
@@ -57,7 +57,7 @@ func (m *PatternMatcher) ResolveLWW(e Entity, a Attribute, report *scanReport) (
 		}
 		if !found {
 			// No value survived the unique rule, which is not the same as no
-			// datoms: an entity whose every assertion was retracted or
+			// datoms: an entity whose every assertion was removed or
 			// superseded still has the attribute, holding nothing. Reporting
 			// that as absence would leave no cache entry, and a caller finding
 			// none falls through to the plain EATV first-entry scan — which

@@ -20,25 +20,46 @@ import (
 // a test pinning one mode sets EnableAlgebraOptimizer explicitly instead of
 // looping the axis.
 //
+// The optimizer paths cross with a backend, and a test's subject decides
+// which. A test of the engine runs on optimizerModes: the tree store alone,
+// since the backend supplies a scan bound's datoms in index order and nothing
+// else. A test of the open API, which backend a path, a dump or an injected
+// store lands on, runs on backendModes: every backend the build has.
+//
 // This package cannot import datalog/storage's test files, so it carries its
-// own copy of the six-line axis — the Go-testing reality for cross-package
-// test code. Mirrors datalog/storage/optimizer_modes_test.go.
+// own copy of the axis — the Go-testing reality for cross-package test code.
+// Mirrors datalog/storage/optimizer_modes_test.go.
 //
 // Plan of record: docs/wip/OPTIMIZER_MODE_MATRIX.md
 // =============================================================================
 
 // optimizerMode is one leg of the matrix: a storage backend crossed with an
-// optimizer path. Backends come from storage.AvailableBackends, so a backend
-// this build has is one every executing test in this package runs against.
+// optimizer path.
 type optimizerMode struct {
 	name    string
 	algebra bool
 	backend storage.Backend
 }
 
-var optimizerModes = buildOptimizerModes()
+// optimizerModes is the engine axis: the tree store crossed with the two
+// optimizer paths.
+var optimizerModes = buildOptimizerModes(engineBackends())
 
-func buildOptimizerModes() []optimizerMode {
+// backendModes is the store axis: every backend this build has crossed with
+// the two optimizer paths.
+var backendModes = buildOptimizerModes(storage.AvailableBackends())
+
+// engineBackends is the backend the engine axis runs on: the tree store,
+// which every build has.
+func engineBackends() []storage.Backend {
+	backend, err := storage.BackendNamed("memory-trees")
+	if err != nil {
+		panic(err)
+	}
+	return []storage.Backend{backend}
+}
+
+func buildOptimizerModes(backends []storage.Backend) []optimizerMode {
 	algebraLegs := []struct {
 		name string
 		on   bool
@@ -46,7 +67,6 @@ func buildOptimizerModes() []optimizerMode {
 		{"algebra_on", true},
 		{"algebra_off", false},
 	}
-	backends := storage.AvailableBackends()
 	modes := make([]optimizerMode, 0, len(backends)*len(algebraLegs))
 	for _, backend := range backends {
 		for _, algebra := range algebraLegs {

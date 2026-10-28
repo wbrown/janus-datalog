@@ -1,9 +1,17 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrStoreLocked reports that a persistent backend's directory is held by
+// another process. Badger reports the state by message and flattens the
+// EWOULDBLOCK beneath it, so the message is matched where the backend is
+// opened, in the one package that pins the Badger version. Declared here,
+// outside any build tag, so the name exists on every target.
+var ErrStoreLocked = errors.New("store directory is locked by another process")
 
 // Backend is a store this build can open. Which ones exist is a property of the
 // build: Badger needs a filesystem and does not compile under js/wasm, so a
@@ -28,9 +36,9 @@ func AvailableBackends() []Backend {
 		{
 			// The Badger emulator: the same binary index keys a disk store
 			// holds, in a process that has no disk.
-			Name: "memory",
+			Name: "badger-emulator",
 			Open: func(_ string, encoder *BinaryKeyEncoder) (Store, error) {
-				return NewMemoryStore(encoder), nil
+				return NewBadgerEmulatorStore(encoder), nil
 			},
 		},
 		{

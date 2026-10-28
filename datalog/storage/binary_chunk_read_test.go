@@ -10,7 +10,7 @@ import (
 // TestBinaryChunkPayloadsDecodeConcurrently pins that concurrent readers each
 // get their own chunk back at its recorded length, with its datoms walkable.
 func TestBinaryChunkPayloadsDecodeConcurrently(t *testing.T) {
-	backend, err := BackendNamed("memory")
+	backend, err := BackendNamed("badger-emulator")
 	require.NoError(t, err)
 	dump, chunks := importFixtureDump(t, contractCaseFor(backend))
 	require.Greater(t, chunks, 1, "one chunk cannot contend")

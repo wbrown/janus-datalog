@@ -264,7 +264,7 @@ func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
 // not on its path: the axis is pinned to one algebra leg. The backend is not
 // pinned — the matcher is exactly what differs across stores.
 func TestVBoundCardinalityOneBytes_DirectMatcher(t *testing.T) {
-	for _, mode := range pinnedOptimizerModes(false) {
+	for _, mode := range pinned(optimizerModes, false) {
 		t.Run(mode.name, func(t *testing.T) {
 			testVBoundCardinalityOneBytesDirectMatcher(t, mode)
 		})

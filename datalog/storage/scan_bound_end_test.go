@@ -54,7 +54,7 @@ func TestScanBoundEndIsTheExclusiveSuccessor(t *testing.T) {
 // the same defect, on the default path with no options set: a query for one
 // value must not return entities carrying a different value.
 func TestScanBoundOnNegativeLongDoesNotMatchItsNeighbour(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":person/count").Type(schema.TypeLong).Many().Add().
@@ -96,7 +96,7 @@ func TestScanBoundOnNegativeLongDoesNotMatchItsNeighbour(t *testing.T) {
 // key length — and ScanBound's contract names that narrowing as the backend's
 // obligation rather than claiming the range already meets it.
 func TestScanBoundOnStringDoesNotMatchItsExtension(t *testing.T) {
-	for _, mode := range optimizerModes {
+	for _, mode := range backendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			s, err := schema.NewBuilder().
 				Attribute(":person/tag").Type(schema.TypeString).Many().Add().

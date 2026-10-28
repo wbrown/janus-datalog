@@ -221,6 +221,33 @@ func TestGetElseScanRewrite_RequiredRunEntitySkipped(t *testing.T) {
 	}
 }
 
+// A get-else whose binding variable the child relation already provides is
+// a unification the Map evaluates per tuple, so it stays a Map: the rewrite's
+// scan would output the binding beside the entity, and its default would
+// stand in for a value the child already holds. That holds when the binding
+// is the entity variable itself and when another pattern binds it.
+func TestGetElseScanRewrite_BoundBindingSkipped(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"the binding is the entity variable", `[:find ?f :where [?f :u/link ?w] [(get-else $ ?f :u/link :none) ?f]]`},
+		{"another pattern binds the binding", `[:find ?f :where [?f :u/m ?x] [(get-else $ ?f :u/n :none) ?x]]`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q, err := parser.ParseQuery(c.text)
+			require.NoError(t, err)
+			root, err := Compile(q, nil)
+			require.NoError(t, err)
+			require.Equal(t, 1, countNodes(root, RuleMap))
+			optimized, err := NewOptimizer(GetElseScanRewritePass(nil)).Optimize(root)
+			require.NoError(t, err)
+			assert.Equal(t, 1, countNodes(optimized, RuleMap))
+		})
+	}
+}
+
 // TestCompileMissingPredicateInOr verifies that missing? inside an OR
 // clause compiles successfully to an AntiJoin (not an error).
 func TestCompileMissingPredicateInOr(t *testing.T) {

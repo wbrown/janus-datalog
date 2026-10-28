@@ -77,6 +77,9 @@ func (it *boundDatomIterator) Tuple() Tuple {
 	return it.current
 }
 
+// RequiresCopy is false: DatomToTuple builds a fresh tuple per datom.
+func (it *boundDatomIterator) RequiresCopy() bool { return false }
+
 func (it *boundDatomIterator) Close() error {
 	return nil
 }
@@ -319,10 +322,6 @@ func (s useLinearScan) String() string { return "linear-scan" }
 // 4. V bound → O(K) where K = datoms with this value
 // 5. Nothing bound → O(N) linear scan
 func (m *IndexedMemoryMatcher) chooseStrategy(pattern *query.DataPattern) matchStrategy {
-	if pattern == nil || len(pattern.Elements) < 3 {
-		return useLinearScan{}
-	}
-
 	e := extractPatternValue(pattern.GetE())
 	a := extractPatternValue(pattern.GetA())
 	v := extractPatternValue(pattern.GetV())

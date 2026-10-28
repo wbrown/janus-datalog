@@ -679,6 +679,8 @@ func (it *sliceTupleIterator) Tuple() executor.Tuple {
 	return it.tuples[it.idx]
 }
 
+func (it *sliceTupleIterator) RequiresCopy() bool { return false }
+
 func (it *sliceTupleIterator) Close() error {
 	return nil
 }

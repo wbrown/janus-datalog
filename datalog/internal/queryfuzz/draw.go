@@ -32,11 +32,11 @@ func NewDraw(seed int64) *Draw {
 
 func (d *Draw) pick(xs []string) string { return xs[d.r.Intn(len(xs))] }
 
-// constant draws one constant: an integer, a float of integral or of
-// fractional magnitude, a string with an escape, a keyword, a boolean, an
-// instant, bytes or a vector.
+// constant draws one constant: an integer, a float of integral, of
+// fractional or of infinite magnitude, a string with an escape, a keyword, a
+// boolean, an instant, bytes, a transaction value or a vector.
 func (d *Draw) constant() string {
-	switch d.r.Intn(11) {
+	switch d.r.Intn(13) {
 	case 0:
 		return strconv.Itoa(d.r.Intn(5))
 	case 1:
@@ -55,6 +55,10 @@ func (d *Draw) constant() string {
 		return `#bytes "abcdefgh"`
 	case 8:
 		return `[1 2]`
+	case 9:
+		return d.pick([]string{"##Inf", "##-Inf"})
+	case 10:
+		return `#eid [3 1]`
 	default:
 		return strconv.Itoa(d.r.Intn(100))
 	}
@@ -69,8 +73,9 @@ func (d *Draw) term() string {
 }
 
 // pattern draws a data pattern: a source one time in eight, an entity
-// variable or the blank, an attribute, a value term or the blank, and the
-// transaction position one time in ten.
+// variable or the blank, then one time in ten nothing more or the attribute
+// alone, the omitted positions being unbound, and otherwise an attribute, a
+// value term or the blank, and the transaction position one time in ten.
 func (d *Draw) pattern() string {
 	src := ""
 	if d.r.Intn(8) == 0 {
@@ -78,6 +83,12 @@ func (d *Draw) pattern() string {
 	}
 	a := d.pick([]string{":a", ":b", ":c"})
 	e := d.pick([]string{"?e", "?f", "_"})
+	if d.r.Intn(10) == 0 {
+		if d.r.Intn(2) == 0 {
+			return "[" + src + e + "]"
+		}
+		return "[" + src + e + " " + a + "]"
+	}
 	v := d.term()
 	if d.r.Intn(6) == 0 {
 		v = "_"

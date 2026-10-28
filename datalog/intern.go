@@ -1,8 +1,10 @@
 package datalog
 
 import (
+	"fmt"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 // keywordInternCache provides keyword interning to avoid repeated allocations
@@ -17,13 +19,42 @@ type keywordInternCache struct {
 // Global keyword intern instance
 var keywordIntern = &keywordInternCache{}
 
+// KeywordTextError is the refusal of text that is no keyword's, carrying the
+// text refused.
+type KeywordTextError struct {
+	Text string
+}
+
+func (e *KeywordTextError) Error() string {
+	return fmt.Sprintf("keyword %q: a keyword has a name after the colon and holds no space", e.Text)
+}
+
+// ValidateKeywordText is the one statement of what text is a keyword's: it
+// has a name after the colon and holds no space, so every reader reads it
+// back as the same keyword. InternKeyword panics on the text it refuses,
+// where the keyword is made; an entry that takes keyword text from a caller
+// asks it first and answers the error. The refusal is a value of
+// KeywordTextError so that the body stays within the compiler's inlining
+// budget and the call on InternKeyword's miss path adds no frame.
+func ValidateKeywordText(s string) error {
+	if len(s) <= 1 || strings.ContainsFunc(s, unicode.IsSpace) {
+		return &KeywordTextError{Text: s}
+	}
+	return nil
+}
+
 // InternKeyword returns an interned keyword instance.
 // Keyed by the full string, so two distinct keywords never share a pointer
-// even if their first 32 bytes match.
+// even if their first 32 bytes match. Text that is no keyword's is refused
+// here, where the keyword is made (ValidateKeywordText).
 func InternKeyword(s string) Keyword {
 	// Fast path: load existing (lock-free)
 	if val, ok := keywordIntern.cache.Load(s); ok {
 		return val.(Keyword)
+	}
+
+	if err := ValidateKeywordText(s); err != nil {
+		panic(err)
 	}
 
 	// Slow path: create and store

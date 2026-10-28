@@ -418,12 +418,12 @@ func TestCacheMatrix_VOnlyBound_Supersede(t *testing.T) {
 	}
 }
 
-// TestVOnlyBound_CardinalityMany_Retracted tests that V-bound queries with
-// CardinalityMany attributes correctly handle retracted values using add-wins.
+// TestVOnlyBound_CardinalityMany_Removed tests that V-bound queries with
+// CardinalityMany attributes correctly handle removed values using add-wins.
 //
-// Scenario: Add tag "go" then retract it. Query for V="go" should return nothing.
+// Scenario: Add tag "go" then remove it. Query for V="go" should return nothing.
 // This tests per-datom cardinality resolution for V-only bound (A is variable).
-func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
+func TestVOnlyBound_CardinalityMany_Removed(t *testing.T) {
 	for _, mode := range cacheTestModes {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, omode := range optimizerModes {
@@ -504,14 +504,14 @@ func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
 					t.Logf("=== Found %d datoms in VAET ===", count)
 
 					// Query: find all (E, A) where V = "go"
-					// Since "go" was retracted, should return nothing
+					// Since "go" was removed, should return nothing
 					results, err := executor.CollectTuples(db.Query(
 						`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
 						"go"))
 					require.NoError(t, err)
 
-					// Should return 0 results - "go" was retracted
-					assert.Len(t, results, 0, "[%s] V-bound query on retracted card-many value should return nothing", mode.name)
+					// Should return 0 results - "go" was removed
+					assert.Len(t, results, 0, "[%s] V-bound query on removed card-many value should return nothing", mode.name)
 
 					t.Logf("[%s] Results: %v", mode.name, results)
 				})
@@ -526,7 +526,7 @@ func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
 //
 // Scenario:
 // - :person/name (CardinalityOne): emp-1 had "Alice" then changed to "Bob"
-// - :person/tags (CardinalityMany): emp-1 has tag "Alice" (not retracted)
+// - :person/tags (CardinalityMany): emp-1 has tag "Alice" (not removed)
 // Query for V="Alice" should return only (:person/tags, emp-1), NOT (:person/name, emp-1)
 func TestVOnlyBound_MixedCardinality(t *testing.T) {
 	for _, mode := range cacheTestModes {
@@ -612,14 +612,14 @@ func TestVOnlyBound_Schemaless(t *testing.T) {
 					tx.Commit()
 
 					// Query: find all (E, A) where V = "test"
-					// Schemaless uses add-wins, so retracted value should not appear
+					// Schemaless uses add-wins, so removed value should not appear
 					results, err := executor.CollectTuples(db.Query(
 						`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
 						"test"))
 					require.NoError(t, err)
 
-					// Should return 0 results - value was retracted
-					assert.Len(t, results, 0, "[%s] V-bound query on retracted schemaless value should return nothing", mode.name)
+					// Should return 0 results - value was removed
+					assert.Len(t, results, 0, "[%s] V-bound query on removed schemaless value should return nothing", mode.name)
 
 					t.Logf("[%s] Results: %v", mode.name, results)
 				})

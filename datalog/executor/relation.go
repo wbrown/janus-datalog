@@ -188,10 +188,9 @@ type Relation interface {
 	// Used by join operations to extract configuration
 	Options() ExecutorOptions
 
-	// RequiresCopy returns true if tuples from Iterator() must be copied
-	// before storing, because the iterator reuses internal workspace memory.
-	// MaterializedRelation returns false (tuples are independent).
-	// StreamingRelation returns true (iterator may reuse workspace).
+	// RequiresCopy is the answer of the iterator Iterator hands out
+	// (Iterator.RequiresCopy): whether a tuple kept past the next pull must
+	// be copied.
 	RequiresCopy() bool
 
 	// Note: Relations are IMMUTABLE and DEDUPLICATED at creation
@@ -222,6 +221,12 @@ type Iterator interface {
 	// Callers must check Error() after Next() returns false to
 	// distinguish normal exhaustion from execution failure.
 	Error() error
+
+	// RequiresCopy reports whether the slice Tuple hands back is one the
+	// next Next overwrites, so a reader that keeps a tuple past the next
+	// pull copies it; false when every tuple is the caller's to keep. An
+	// iterator over another answers from the one whose slice it hands back.
+	RequiresCopy() bool
 }
 
 // CountingIterator wraps an iterator and tracks tuple count without buffering
@@ -253,6 +258,8 @@ func (i *CountingIterator) Next() bool {
 func (i *CountingIterator) Tuple() Tuple {
 	return i.inner.Tuple()
 }
+
+func (i *CountingIterator) RequiresCopy() bool { return i.inner.RequiresCopy() }
 
 func (i *CountingIterator) Close() error {
 	return i.inner.Close()
@@ -357,6 +364,10 @@ func (ci *CachingIterator) Tuple() Tuple {
 	return Tuple{}
 }
 
+// RequiresCopy is false: Tuple hands back the copy the cache keeps, which no
+// later pull writes.
+func (ci *CachingIterator) RequiresCopy() bool { return false }
+
 func (ci *CachingIterator) Close() error {
 	if !ci.done {
 		ci.done = true
@@ -454,7 +465,9 @@ func NewMaterializedRelationWithProperties(
 }
 
 // newMaterializedRelationFromSet constructs a Relation from tuples already
-// proven duplicate-free by the producing relational operator.
+// proven duplicate-free by the producing relational operator, holding the
+// properties the operator derived as given: a relation's properties are
+// immutable, and every derivation builds its own values.
 func newMaterializedRelationFromSet(
 	symbols []query.Symbol,
 	tuples []Tuple,
@@ -465,7 +478,7 @@ func newMaterializedRelationFromSet(
 		symbols:    symbols,
 		tuples:     tuples,
 		options:    opts,
-		properties: properties.clone(),
+		properties: properties,
 	}
 }
 
@@ -959,6 +972,10 @@ func (it *sliceIterator) Tuple() Tuple {
 	return nil
 }
 
+// RequiresCopy is false: Tuple hands back the slice's own tuple, which no
+// pull writes.
+func (it *sliceIterator) RequiresCopy() bool { return false }
+
 func (it *sliceIterator) Close() error {
 	return nil
 }
@@ -1192,10 +1209,16 @@ func (r *StreamingRelation) Options() ExecutorOptions {
 	return r.options
 }
 
-// RequiresCopy returns true because StreamingRelation wraps iterators
-// that may reuse workspace memory for tuples across Next() calls.
+// RequiresCopy is the answer of the iterator Iterator hands out: false once
+// the relation caches, the wrapped iterator's otherwise.
 func (r *StreamingRelation) RequiresCopy() bool {
-	return true
+	r.mu.Lock()
+	cached := r.shouldCache || r.cacheReady
+	r.mu.Unlock()
+	if cached {
+		return false
+	}
+	return r.iterator.RequiresCopy()
 }
 
 // Get returns a specific tuple by index
@@ -1840,6 +1863,9 @@ func (pi *ProductIterator) Tuple() Tuple {
 	}
 	return result
 }
+
+// RequiresCopy is false: Tuple builds a fresh slice on every call.
+func (pi *ProductIterator) RequiresCopy() bool { return false }
 
 func (pi *ProductIterator) Close() error {
 	for _, it := range pi.iterators {

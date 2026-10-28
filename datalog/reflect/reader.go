@@ -8,6 +8,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -87,6 +88,14 @@ func (sr *StructReader) readIntoStruct(result map[string]interface{}, structVal 
 	info, err := GetStructInfo(structVal.Type())
 	if err != nil {
 		return err
+	}
+
+	// A map carries the entity's id under db/id when the pattern named it,
+	// and a struct with an id field takes it, at every depth.
+	if info.IDField != nil {
+		if id, ok := result[query.DBIDKey].(datalog.Identity); ok {
+			structVal.Field(info.IDField.Index).Set(reflect.ValueOf(id))
+		}
 	}
 
 	for _, field := range info.Fields {

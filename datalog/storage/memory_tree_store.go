@@ -12,8 +12,9 @@ var errMemoryTreeStoreClosed = errors.New("memory tree store is closed")
 // MemoryTreeStore is the typed in-memory backend: eight sorted trees of
 // datalog.Datom, one per index order, published together as a version.
 //
-// It is the other half of a pair. MemoryStore emulates Badger — it holds the
-// same binary index keys a disk store would, so a process with no disk pays
+// It is the other half of a pair, and the in-process backend the engine opens
+// by default. BadgerEmulatorStore emulates Badger — it holds the same binary
+// index keys a disk store would, so a process with no disk pays
 // BinaryKeyEncoder on every assert and scan. This one compares typed values
 // directly and encodes only at the JDZL and EDN boundaries. Both satisfy Store,
 // so the backend contract runs against both and any divergence is a test
