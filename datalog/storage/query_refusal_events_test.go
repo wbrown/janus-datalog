@@ -12,11 +12,12 @@ import (
 // A handler sees every query the database is asked invoked once and
 // completed once, whatever refuses it. A query that does not resolve, text
 // that does not parse or a value that is neither text nor a query, is
-// reported invoked with the value as received and completed with the error,
-// through Query, QueryInto, QueryOneInto and an AsOf handle's Query. A query
-// the realized plan's validation refuses is reported invoked and completed
-// with the error the same way, through Query, QueryInto and a History
-// handle's Query.
+// reported invoked with a rendering of the value as received, text as it was
+// given, and completed with the error, through Query, QueryInto, QueryOneInto
+// and an AsOf handle's Query. A query the realized plan's validation refuses
+// is reported invoked and completed with the error the same way, through
+// Query, QueryInto and a History handle's Query. On every route the
+// invocation carries a string under KeyQuery, the key's contract.
 func TestQuery_ARefusalReachesTheHandlerAsACompletedQuery(t *testing.T) {
 	unparsable := `[:find ?e :where [?e :t/n`
 	unrealizable := `[:find ?x :where [?e :t/n 1]]`
@@ -56,7 +57,9 @@ func TestQuery_ARefusalReachesTheHandlerAsACompletedQuery(t *testing.T) {
 				{"Query given text that does not parse",
 					func() error { _, err := d.Query(unparsable); return err }, unparsable, "failed to resolve query"},
 				{"Query given a value that is neither text nor a query",
-					func() error { _, err := d.Query(42); return err }, 42, "failed to resolve query"},
+					func() error { _, err := d.Query(42); return err }, "42", "failed to resolve query"},
+				{"Query given nil",
+					func() error { _, err := d.Query(nil); return err }, "<nil>", "failed to resolve query"},
 				{"QueryInto given text that does not parse",
 					func() error { return d.QueryInto(&many, unparsable) }, unparsable, "failed to resolve query"},
 				{"QueryOneInto given text that does not parse",
@@ -79,8 +82,9 @@ func TestQuery_ARefusalReachesTheHandlerAsACompletedQuery(t *testing.T) {
 					require.ErrorContains(t, err, r.names)
 					invoked := eventsNamed(annotations.QueryInvoked)
 					require.Len(t, invoked, 1, "the query is reported invoked once")
+					require.IsType(t, "", invoked[0].Data[annotations.KeyQuery], "the invocation carries a rendering under KeyQuery")
 					if r.carries != nil {
-						require.Equal(t, r.carries, invoked[0].Data[annotations.KeyQuery], "the invocation carries the query as received")
+						require.Equal(t, r.carries, invoked[0].Data[annotations.KeyQuery], "the invocation carries the query as received, rendered")
 					}
 					completed := eventsNamed(annotations.QueryComplete)
 					require.Len(t, completed, 1, "the query is reported completed once")

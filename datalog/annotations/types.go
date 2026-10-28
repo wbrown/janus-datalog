@@ -24,7 +24,8 @@ const (
 	// QueryPrepared. A query the database refuses before the executor's entry
 	// is reported invoked and completed the same way, with no QueryPrepared
 	// and no QueryPlanCreated; one the database cannot resolve is reported
-	// invoked with the value it was given. Every query completes
+	// invoked with a rendering of the value it was given, text as it was
+	// given. Every query completes
 	// once: a query that fails in execution completes with its error before
 	// its caller gets a result, and a query that runs completes where it
 	// ends, when its result is exhausted or closed, with the tuples drained by

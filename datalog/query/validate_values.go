@@ -7,44 +7,16 @@ import (
 )
 
 // validateConstants refuses a constant outside the value domain at every
-// position a query holds one: a pattern element, a predicate term, a
-// function's argument or ground value, a get-else default, a subquery
-// argument and a pull default, at the top level and inside every form. An
-// inner query's constants are its own ValidateQuery's, which
-// SubqueryPattern.Validate runs. The walk enumerates the clause, function
-// and element kinds as the hash does and panics on a kind it does not know,
-// so a kind added without a decision here fails loudly.
+// position a query's :where holds one: a pattern element, a predicate term,
+// a function's argument or ground value, a get-else default and a subquery
+// argument, at the top level and inside every form. An inner query's
+// constants are its own ValidateQuery's, which SubqueryPattern.Validate
+// runs, and a find pull's defaults are PullPattern.Validate's. The walk
+// enumerates the clause, function and element kinds as the hash does and
+// panics on a kind it does not know, so a kind added without a decision
+// here fails loudly.
 func validateConstants(q *Query) error {
-	for _, elem := range q.Find {
-		if pull, ok := elem.(FindPull); ok {
-			if err := validatePullConstants(pull.Pattern); err != nil {
-				return err
-			}
-		}
-	}
 	return validateClauseConstants(q.Where)
-}
-
-func validatePullConstants(pattern *PullPattern) error {
-	if pattern == nil {
-		return nil
-	}
-	for _, spec := range pattern.Specs {
-		switch s := spec.(type) {
-		case *PullMapSpec:
-			if err := validatePullConstants(s.Pattern); err != nil {
-				return err
-			}
-		case *PullDefaultExpr:
-			if s.Default == nil {
-				continue
-			}
-			if err := datalog.ValidateValue(s.Default); err != nil {
-				return fmt.Errorf("pull default of %s: %w", s.Attr, err)
-			}
-		}
-	}
-	return nil
 }
 
 func validateBranchConstants(branches [][]Clause) error {

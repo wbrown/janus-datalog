@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/edn"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -347,11 +348,10 @@ func extractKeyword(arg query.PatternElement) (datalog.Keyword, error) {
 		case datalog.Keyword:
 			return v, nil
 		case string:
-			// Allow string that looks like a keyword
-			if len(v) > 0 && v[0] == ':' {
-				return datalog.NewKeyword(v), nil
+			if err := edn.ValidateKeyword(v); err != nil {
+				return nil, fmt.Errorf("string %q is not a keyword: %w", v, err)
 			}
-			return nil, fmt.Errorf("string %q is not a keyword (must start with :)", v)
+			return datalog.NewKeyword(v), nil
 		default:
 			return nil, fmt.Errorf("expected keyword, got %T", v)
 		}

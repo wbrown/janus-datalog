@@ -186,13 +186,14 @@ func ClauseForm(name Symbol) bool { return ContainsSymbol(clauseForms, name) }
 // namespace the engine mints into, for a clause form, or as a variable; no
 // variable of a head or a body lies in a namespace the engine mints into,
 // checked before the inference and the unification write the engine's own
-// into the body; a head names at least one variable; the heads of one
-// predicate agree on arity and are distinct variables; every rule is safe;
-// every invocation names a defined predicate at its arity; no predicates
-// depend on each other through negation; and a predicate invoked by a rule of
-// its own stratum is invoked at the top level of the body, in an or branch,
-// in an or-join branch, or in a subquery whose inner query does not
-// aggregate.
+// into the body; every constant a body holds is a value of the domain, the
+// check a query's :where gets from ValidateQuery, run before the body is
+// hashed; a head names at least one variable; the heads of one predicate
+// agree on arity and are distinct variables; every rule is safe; every
+// invocation names a defined predicate at its arity; no predicates depend on
+// each other through negation; and a predicate invoked by a rule of its own
+// stratum is invoked at the top level of the body, in an or branch, in an
+// or-join branch, or in a subquery whose inner query does not aggregate.
 func NewRuleSet(rules []*Rule) (*RuleSet, error) {
 	for _, rule := range rules {
 		switch {
@@ -212,6 +213,9 @@ func NewRuleSet(rules []*Rule) (*RuleSet, error) {
 		}
 		if v := engineVariableIn(rule.Body, nil); v != nil {
 			return nil, &EngineNamespaceError{Variable: v, Rule: rule.Name}
+		}
+		if err := validateClauseConstants(rule.Body); err != nil {
+			return nil, fmt.Errorf("rule %s: %w", rule.Name, err)
 		}
 	}
 	return NewSeededRuleSet(rules, nil)

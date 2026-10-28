@@ -817,6 +817,14 @@ func (it *validatingVBoundIterator) Next() bool {
 				// CardinalityOne and CardinalityUnknown both resolve as LWW, and
 				// both need post-validation: the winner within the V-filtered
 				// run may not be the real winner, which may carry a different V.
+				// The candidate run is keyed by the value, under the attribute
+				// when one is bound, and carries every entity's datoms with
+				// that value; the pattern's entity, when it names one, answers
+				// alone.
+				if named, ok := it.pattern.GetE().(query.Constant); ok && !datom.E.Equal(named.Value.(datalog.Identity)) {
+					continue
+				}
+
 				card := it.getCardinalityEnum(datom.A)
 				// Schemaless attributes are treated as cardinality-one (LWW)
 				// everywhere else in the engine (planner routing, cache OneValue),
@@ -874,9 +882,10 @@ func (it *validatingVBoundIterator) Next() bool {
 		// no candidate datom carries: the index holds a collection's elements,
 		// each its own datom. The attribute is open on this route, since a
 		// vector under a constant attribute is selected out at the match's
-		// entry (typedPositionBindingCheck), so the binding's answer is every
-		// entity whose collection under some declared vector attribute equals
-		// it, drained before the next binding.
+		// entry (typedPositionBindingCheck), so the binding's answer is each
+		// declared vector attribute under which the pattern's entity, or
+		// every entity when it names none, carries a collection equal to it,
+		// drained before the next binding.
 		if datalog.IsVector(it.currentBoundV) {
 			answers, err := it.matcher.matchVectorUnderOpenAttribute(it.pattern, it.symbols, it.currentBoundV)
 			if err != nil {
@@ -959,6 +968,9 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 	}
 	if owner == nil {
 		return false, nil // No claimant; caller treats this as skip-binding.
+	}
+	if named, ok := it.pattern.GetE().(query.Constant); ok && !owner.Equal(named.Value.(datalog.Identity)) {
+		return false, nil // The claimant is another entity than the pattern names.
 	}
 
 	// Build a synthetic winner datom for tuple construction.
@@ -1499,6 +1511,14 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 		return nil, false, nil // E variable not in bindings
 	}
 
+	// A keyword wider than storage holds names no stored attribute: its
+	// encoding into the key keeps its first 32 bytes, the key of whatever
+	// attribute shares them, so it is never encoded and contributes no tuple.
+	// With A fixed for the call the whole match answers nothing.
+	if aSymIdx < 0 && datalog.ValidateAttributeWidth(a) != nil {
+		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true, nil
+	}
+
 	// Pre-compute fixed-A values when A is constant across all tuples
 	var fixedCard datalog.Keyword
 	var fixedValueType datalog.Keyword
@@ -1602,6 +1622,9 @@ func (m *PatternMatcher) matchWithBindingsFromCache(
 				continue
 			}
 			aKw := tuple[aSymIdx].(datalog.Keyword)
+			if datalog.ValidateAttributeWidth(aKw) != nil {
+				continue
+			}
 			tupleCard = schema.CardinalityOne
 			if m.schema != nil {
 				if def := m.schema.GetAttribute(aKw); def != nil {
@@ -1891,9 +1914,9 @@ func (m *PatternMatcher) matchVectorWithBindings(
 
 	if eSymIdx == -1 {
 		// The binding binds the value and not the entity. A vector's value
-		// names the whole collection, so no run is narrowed by it: every
-		// entity's vector is resolved and the bound values are compared at
-		// the collapse.
+		// names the whole collection, so no run is narrowed by it: the
+		// pattern's entity, or every entity when it names none, has its
+		// vector resolved and the bound values are compared at the collapse.
 		return m.matchVectorScanAllEntities(pattern, symbols, attr, v, valueType)
 	}
 
@@ -2240,10 +2263,12 @@ func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
 
 func (it *cardinalityManyScanAllEntitiesIterator) Error() error { return it.err }
 
-// matchVectorScanAllEntities handles [?e :attr <vector-literal>] where E is unbound.
-// Scans all entities with the attribute and resolves each vector using RGA.
-// If v is non-nil, only entities whose resolved vector equals v are returned.
-// If v is nil, all entities with non-empty vectors are returned.
+// matchVectorScanAllEntities answers a pattern on a declared vector attribute
+// by resolving each entity's collection from its element datoms (RGA): the
+// entity the pattern names when its entity element is a constant, every
+// entity carrying the attribute when it is a variable or a blank. With v
+// bound, an entity answers when its resolved collection equals v; with v nil,
+// every entity with a non-empty collection answers.
 func (m *PatternMatcher) matchVectorScanAllEntities(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
@@ -2255,8 +2280,13 @@ func (m *PatternMatcher) matchVectorScanAllEntities(
 		copy(aBytes[:], kw.String())
 	}
 
-	// Scan AEVT to find all entities with this attribute
-	bound := ScanBound{Index: AEVT, Prefix: []datalog.Value{a}}
+	// AEVT orders the attribute's datoms by entity, so the pattern's entity,
+	// when it names one, extends the prefix to that entity's own.
+	prefix := []datalog.Value{a}
+	if entity, ok := pattern.GetE().(query.Constant); ok {
+		prefix = append(prefix, entity.Value)
+	}
+	bound := ScanBound{Index: AEVT, Prefix: prefix}
 	report := DiscardIntake
 	if m.handler != nil {
 		m.emitIndexSelection(pattern, bound)
@@ -2408,8 +2438,9 @@ func (it *vectorScanAllEntitiesIterator) Error() error { return it.err }
 
 // matchVectorUnderOpenAttribute answers a pattern whose value position holds
 // a vector and whose attribute position is open. A vector names a declared
-// vector attribute's whole collection, so the answer is every entity whose
-// collection under some declared vector attribute equals it, each attribute
+// vector attribute's whole collection, so the answer is each declared vector
+// attribute under which the pattern's entity, or every entity when the
+// pattern names none, carries a collection equal to it, each attribute
 // resolved and compared as matchVectorScanAllEntities compares it under a
 // known one. The schema names the vector attributes, and a matcher with no
 // schema declares none and answers nothing. The caller answers History

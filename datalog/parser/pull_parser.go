@@ -146,9 +146,6 @@ func parsePullExpr(node *edn.Node) (query.PullAttrSpec, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid limit value: %w", err)
 		}
-		if limit < 0 {
-			return nil, fmt.Errorf("limit must be non-negative, got %d", limit)
-		}
 		return &query.PullLimitExpr{
 			Attr:  datalog.NewKeyword(node.Nodes[1].Value),
 			Limit: limit,

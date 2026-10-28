@@ -76,6 +76,6 @@ count; and over a drain that ends in an injected read fault, one completion
 with `KeySuccess` false, the fault under `KeyError`, and the tuples drained
 before it.
 
-`TestQuery_ARefusalBeforeTheExecutorsEntryReachesTheHandler`
+`TestQuery_ARefusalReachesTheHandlerAsACompletedQuery`
 (`datalog/storage/query_refusal_events_test.go`) pins the refusal
 completions the fix leaves as they were.

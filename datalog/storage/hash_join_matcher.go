@@ -470,8 +470,9 @@ func compileBindingMatchPlan(
 			plan.slots[i].constant = value.Value
 			plan.slots[i].hasConstant = true
 		case query.VectorConstant:
-			// A vector literal names a collection, which no datom's value is,
-			// so the comparison at this slot matches no datom.
+			// A vector literal is compared by value with what the datom carries:
+			// a vector attribute's resolved collection in the current and as-of
+			// views, and nothing under History, where a datom is read as written.
 			plan.slots[i].constant = value.Values
 			plan.slots[i].hasConstant = true
 		case query.Variable:
@@ -534,8 +535,9 @@ func (m *PatternMatcher) matchesWithBindingTuple(
 		}
 	}
 
-	// V. A vector literal names a collection, which no datom's value is, so
-	// it is compared and matches no datom.
+	// V. A vector literal is compared by value with what the datom carries: a
+	// vector attribute's resolved collection in the current and as-of views,
+	// and nothing under History, where a datom is read as written.
 	if c, ok := pattern.GetV().(query.Constant); ok {
 		v = c.Value
 	} else if c, ok := pattern.GetV().(query.VectorConstant); ok {

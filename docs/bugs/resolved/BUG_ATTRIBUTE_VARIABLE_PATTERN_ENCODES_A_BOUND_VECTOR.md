@@ -45,21 +45,22 @@ some declared vector attribute equals it.
 
 The entry selection of the binding-driven match, `typedPositionBindingCheck`
 (`datalog/storage/matcher.go`), drops a vector at the value position under a
-constant attribute, where the attribute is known and is not a vector
-attribute, since a pattern on one is intercepted before the selection by the
-vector arm of `MatchWithConstraints`. Under a variable attribute the tuple
-passes, and the attribute decides downstream.
+constant attribute, where the vector equals no datom the selection's routes
+read: outside History a pattern on a vector attribute is intercepted before
+the selection by the vector arm of `MatchWithConstraints`, and under History
+a datom is read as written, an element and never a collection. Under a
+variable attribute the tuple passes, and the attribute decides downstream.
 
 `matchVectorUnderOpenAttribute` (`datalog/storage/matcher_relations.go`)
 answers a vector under an open attribute: for every attribute the schema
 declares a vector, `matchVectorScanAllEntities` resolves each entity's
-collection and compares it with the vector, and the answers form one
-relation. A matcher with no schema declares no vector attribute and answers
-nothing. `validatingVBoundIterator` asks it for a vector-valued binding in
-place of a candidate scan and drains the answers before the next binding,
-and `matchUnboundScan` asks it for a written vector under an open attribute.
-Under History nothing resolves and a vector equals no datom as written, so
-both answer the empty relation there.
+collection, the pattern's entity alone when it writes one, and compares it
+with the vector, and the answers form one relation. A matcher with no schema
+declares no vector attribute and answers nothing. `validatingVBoundIterator`
+asks it for a vector-valued binding in place of a candidate scan and drains
+the answers before the next binding, and `matchUnboundScan` asks it for a
+written vector under an open attribute. Under History nothing resolves and a
+vector equals no datom as written, so both answer the empty relation there.
 
 The hash and merge joins compare a vector bound beside an entity or an
 attribute against the collection resolution produced, through
@@ -70,10 +71,12 @@ vector it was written from as one value.
 
 `TestABoundPatternAnswersWhatTheUnboundPatternAnswersUnderTheBinding`
 (`datalog/storage/vector_binding_test.go`), in both optimizer modes, in the
-current view and under History, over x and y carrying a long at `:r` and t
-carrying the vector `[1 2]` at `:tags`, declared a vector of longs. Each
-case's expected answer is the unbound pattern's answer filtered in Go at the
-bound positions and projected:
+current view and under History, over x and y carrying a long at `:r` and a
+unique string at `:code` and t carrying the vector `[1 2]` at `:tags`,
+declared a vector of longs. Each case's expected answer is the unbound
+pattern's answer filtered in Go at the bound positions and projected; a case
+binds its positions from inputs, or writes some into the pattern as
+literals:
 
 - the vector bound with the attribute open;
 - the vector bound under `:r`, and under `:tags`;
@@ -82,5 +85,10 @@ bound positions and projected:
 - a relation binding the vector beside a scalar at `:r`;
 - a relation binding the vector under `:r` and under `:tags`;
 - a stored scalar bound;
-- the vector written into the pattern with the attribute open, under `:r`,
-  and under `:tags`.
+- the vector written with the attribute open, under `:r`, and under `:tags`;
+- x, and t, written beside the vector bound, and beside the vector written;
+- x, and t, written under the written `:tags` with the vector bound;
+- x, and y, written beside a scalar bound, with the attribute open and under
+  the written `:r`;
+- x written under the written unique `:code` with y's code bound, and with
+  its own.

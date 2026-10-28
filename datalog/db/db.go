@@ -57,7 +57,8 @@ var ErrStoreLocked = storage.ErrStoreLocked
 //
 // A dump loads into the backend WithBackend names, defaulting to the tree
 // store. A persistent backend has nowhere of its own to put one, so Open makes
-// a temporary directory that the database removes when it closes.
+// a temporary directory that the database removes when it closes, and that
+// Open removes itself when it answers no database.
 func Open(source interface{}, opts ...Option) (*DB, error) {
 	var cfg config
 	for _, opt := range opts {
@@ -105,6 +106,12 @@ func Open(source interface{}, opts ...Option) (*DB, error) {
 	}
 	d, err := storage.NewDatabaseWithOptions(dbOpts)
 	if err != nil {
+		// No database holds the scratch directory, so it goes with the error.
+		if dbOpts.RemovePathOnClose {
+			if removeErr := os.RemoveAll(dbOpts.Path); removeErr != nil {
+				return nil, fmt.Errorf("db.Open: %w; scratch directory %s not removed: %w", err, dbOpts.Path, removeErr)
+			}
+		}
 		return nil, fmt.Errorf("db.Open: %w", err)
 	}
 	return d, nil

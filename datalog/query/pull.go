@@ -24,17 +24,51 @@ func (p *PullPattern) String() string {
 	return "[" + strings.Join(parts, " ") + "]"
 }
 
-// Validate refuses an attribute the pattern names, through its map specs,
-// that is wider than storage holds, which no write could have stored.
-// ValidateQuery runs it for a find pull and the database for a direct pull,
-// so a pattern is refused once where it enters, never per entity.
+// Validate refuses a pattern no read can answer as written, at every depth
+// through its map specs: an attribute wider than storage holds, which no
+// write could have stored, a limit below zero, and a default outside the
+// value domain. ValidateQuery runs it for a find pull and the database for a
+// direct pull, so a pattern is refused once where it enters, never per
+// entity, and the refusal names the spec's attribute. The spec taxonomy is
+// closed and enumerated completely here, so a new spec kind panics instead of
+// escaping the check.
 func (p *PullPattern) Validate() error {
 	if p == nil {
 		return nil
 	}
-	for _, attr := range PullPatternAttributes(p) {
-		if err := datalog.ValidateAttributeWidth(attr); err != nil {
-			return err
+	for _, spec := range p.Specs {
+		switch s := spec.(type) {
+		case *PullAttribute:
+			if err := datalog.ValidateAttributeWidth(s.Attr); err != nil {
+				return err
+			}
+		case *PullWildcard:
+		case *PullMapSpec:
+			if err := datalog.ValidateAttributeWidth(s.Attr); err != nil {
+				return err
+			}
+			if err := s.Pattern.Validate(); err != nil {
+				return err
+			}
+		case *PullLimitExpr:
+			if err := datalog.ValidateAttributeWidth(s.Attr); err != nil {
+				return err
+			}
+			if s.Limit < 0 {
+				return fmt.Errorf("pull limit of %s must be non-negative, got %d", s.Attr, s.Limit)
+			}
+		case *PullDefaultExpr:
+			if err := datalog.ValidateAttributeWidth(s.Attr); err != nil {
+				return err
+			}
+			if s.Default == nil {
+				continue
+			}
+			if err := datalog.ValidateValue(s.Default); err != nil {
+				return fmt.Errorf("pull default of %s: %w", s.Attr, err)
+			}
+		default:
+			panic(fmt.Sprintf("pull pattern: %T is not a spec kind", spec))
 		}
 	}
 	return nil

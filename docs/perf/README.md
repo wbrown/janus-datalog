@@ -93,7 +93,7 @@ Shape: `|V|`=8 (int64), one attribute, no vectors or blobs. Machine: Apple M5,
 go1.26.3.
 
 `BenchmarkMemoryAssertBulk` now runs per backend, so its sub-benchmarks are
-`memory/Size1000` where this file records `Size1000`. benchstat pairs by name
+`badger-emulator/Size1000` where this file records `Size1000`. benchstat pairs by name
 and will report the old rows as dropped; compare against the `memory` arm in
 [`MEMORY_BACKENDS_2026-07-31.md`](MEMORY_BACKENDS_2026-07-31.md) by hand.
 

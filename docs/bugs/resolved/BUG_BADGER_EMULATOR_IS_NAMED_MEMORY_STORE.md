@@ -52,13 +52,20 @@ comment in `database.go` said the same of the wasm default, and
   `DatabaseOptions.Path`'s doc, the constructor's comment and
   `storeVersion`'s doc name it the same way.
 - A search of the tree's Go files and documents for `MemoryStore` and
-  `NewMemoryStore` finds them in no Go file and in no live design document:
-  they remain in the dated records under `docs/perf`, `docs/reviews` and
-  `docs/archive`, in `CLAUDE.md`'s quotation of a stale `go doc` report,
-  and in this record, whose title states the former names and whose
-  quotations above repeat the former docs. A search for the roster string
-  `"memory"` and the phrase "the memory store" finds them in no Go file and
-  in no document other than one dated review under `docs/reviews` and this
+  `NewMemoryStore` finds them in no Go file and in no live design document.
+  They remain in:
+  - the dated records under `docs/perf`, `docs/reviews` and `docs/archive`,
+    and the sentences of `docs/perf`'s index that summarize those records;
+  - the resolved records under `docs/bugs/resolved` written before the
+    rename, which describe the emulator under the names it carried then;
+  - `CLAUDE.md`'s quotation of a stale `go doc` report;
+  - this record, whose title states the former names and whose quotations
+    above repeat the former docs.
+- A search for the roster string `memory` finds it in no Go file and in no
+  document other than the dated measurement under `docs/perf` whose arms
+  carry it, the index's pointer to that arm, and this record.
+- A search for the phrase "the memory store" finds it in no Go file and in
+  no document other than one dated review under `docs/reviews` and this
   record's title and quotations.
 
 ## Tests

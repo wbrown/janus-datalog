@@ -48,35 +48,23 @@ func bindPatternFromTuple(pattern *query.DataPattern, tuple Tuple, rel Relation)
 	return &query.DataPattern{Elements: elements}
 }
 
-// matchesDatomWithPattern checks if a datom matches a pattern
+// matchesDatomWithPattern checks if a datom matches a pattern: each position
+// the pattern has, a position it omits reading as a blank.
 func matchesDatomWithPattern(datom datalog.Datom, pattern *query.DataPattern) bool {
-	// A DataPattern should have 3 or 4 elements: [e a v] or [e a v tx]
-	if len(pattern.Elements) < 3 || len(pattern.Elements) > 4 {
+	if !matchesElement(datom.E, pattern.GetE()) {
 		return false
 	}
-
-	// Check entity
-	if !matchesElement(datom.E, pattern.Elements[0]) {
+	if !matchesElement(datom.A, pattern.GetA()) {
 		return false
 	}
-
-	// Check attribute
-	if !matchesElement(datom.A, pattern.Elements[1]) {
+	if !matchesElement(datom.V, pattern.GetV()) {
 		return false
 	}
-
-	// Check value
-	if !matchesElement(datom.V, pattern.Elements[2]) {
-		return false
-	}
-
-	// Check transaction (if specified)
-	if len(pattern.Elements) == 4 {
-		if !matchesElement(datom.Tx, pattern.Elements[3]) {
+	if len(pattern.Elements) > 3 {
+		if !matchesElement(datom.Tx, pattern.GetT()) {
 			return false
 		}
 	}
-
 	return true
 }
 

@@ -51,7 +51,7 @@ This priority (diverge and roll back now, merge later) is what makes the tree-pa
 
 ### Decisions
 
-- **Scope: full branching.** The branch axis is the tree-path prefix (C) in Badger and `memory`, and copy-on-write versions in the memory-tree store (§9.6), composed with `AsOf` for the time axis (§9.4). The frontier (A) is reserved for merge-back, and content-addressed arenas (B) for the distributed future.
+- **Scope: full branching.** The branch axis is the tree-path prefix (C) in Badger and `badger-emulator`, and copy-on-write versions in the memory-tree store (§9.6), composed with `AsOf` for the time axis (§9.4). The frontier (A) is reserved for merge-back, and content-addressed arenas (B) for the distributed future.
 - **Merge semantics: pure CRDT auto-resolve.** Highest Lamport for cardinality-one, add-wins for many, RGA for vector, `(A,V)`-LWW for unique. There is no conflict prompt, and MV-Register is a future opt-in. Merge-back itself is deferred per the use case.
 - **§9.6 states the remaining encoding decisions:** key encoding, label scheme, fork semantics, rollback default, hard-truncate policy, `History()`, metadata storage, clock model, and memory-tree branches.
 
@@ -83,7 +83,7 @@ So this feature promotes the ephemeral overlay to a named, persistent, mergeable
 
 ## 3. Conceptual model and git mapping
 
-A branch is not a copy of data. In Badger and `memory`, all branches write into the same append-only keyspace and the same eight indices. In the memory-tree store, a branch shares its parent's copy-on-write version and copies only the nodes it writes beneath (§9.6). A branch is a small pair:
+A branch is not a copy of data. In Badger and `badger-emulator`, all branches write into the same append-only keyspace and the same eight indices. In the memory-tree store, a branch shares its parent's copy-on-write version and copies only the nodes it writes beneath (§9.6). A branch is a small pair:
 
 ```
 branch := (frontier, writeIdentity)
@@ -173,7 +173,7 @@ d.Reset("main", "before-import")       // repoint main's frontier (non-destructi
 d.Revert(txID)                         // append compensating datoms
 ```
 
-`d.Fork(...)` returns a handle that is read/write like a `*Database` but carries its own frontier and write-identity. This mirrors the existing read-only `AsOf`/`History` handles (`database.go`), which clone the struct with a different `temporalTxID`; a branch handle is the read-write generalization. These names illustrate the frontier (A) model. The C surface, `Fork`, `Snapshot`, `AsOfSnapshot` and `TruncateTo`, is specified in §11.2 and §12.
+`d.Fork(...)` returns a handle that is read/write like a `*Database` but carries its own frontier and write-identity. This mirrors the existing read-only `AsOf`/`History` handles (`database.go`), which clone the struct under their own view, a mode and an as-of target; a branch handle is the read-write generalization. These names illustrate the frontier (A) model. The C surface, `Fork`, `Snapshot`, `AsOfSnapshot` and `TruncateTo`, is specified in §11.2 and §12.
 
 ---
 
@@ -426,7 +426,7 @@ C makes §8 simpler. The ancestor nodes a session forked from are immutable from
 
 The trade-offs and full reasoning live in the cited sections.
 
-- **Branch-identity encoding (§9.1–§9.4): the tree-path prefix (C)** is the branch axis of the single-keyspace stores, Badger and its emulator `memory`, composed with `AsOf` for the time axis. The frontier (A) is reserved for merge-back, and content-addressed arenas (B) for the distributed future.
+- **Branch-identity encoding (§9.1–§9.4): the tree-path prefix (C)** is the branch axis of the single-keyspace stores, Badger and its emulator `badger-emulator`, composed with `AsOf` for the time axis. The frontier (A) is reserved for merge-back, and content-addressed arenas (B) for the distributed future.
 - **Memory-tree branches: copy-on-write versions, no prefix.** A branch starts from its parent's published version and deletes from its own trees everything that version holds past the point of the snapshot it forked from, the rewind `TruncateTo` performs. Its trees then hold the state `AsOfSnapshot` reads and nothing the parent writes after the fork, and siblings are separate roots. Every backend meets one branch contract, run as the same tests. Backends differ only in how they store a branch.
 - **Key encoding (§11.1, §11.5): a flat 32-byte tree-path prefix** on every key, 69 to 101 bytes. The R5 group-id split (§9.7) is the escape hatch if the in-key depth budget becomes a problem.
 - **Label scheme (§9.7): fixed two-tier**, a 48-bit session field and 8-bit rollback levels, with ordinal recycling and transient speculation kept in overlays. ORDPATH is the alternative if trees prove lopsided.
@@ -688,7 +688,7 @@ This is the concrete form of the §4 / §7.5 note "thread the filter into the AV
 
 ### 10.11 `History()` across the chain
 
-`d.History()` returns raw datoms with no CRDT resolution (`isHistoryMode`, §8.1). Across a session's ancestor chain this raised a question: should history show only the session's own arena (its local edit log) or the merged lineage (the session plus every ancestor it inherited)? And if merged, do the fork-ceilings apply: "the raw history this session could ever have seen" (ceilings on) versus "every raw datom physically in the lineage's arenas" (ceilings off, which would expose ancestors' post-fork divergence)? The merge machinery (§10.2) composes with history mode (feed it the merged stream and skip the resolver), so the choice is a semantic one. History across the chain is the merged lineage with fork-ceilings applied: the raw datoms the session could ever have seen, its own writes plus ancestors up to their fork points, unresolved. Own-arena-only loses inherited history. Ceilings-off exposes timelines the session never saw. The world's full raw history remains available by calling `History()` on the world-head handle.
+`d.History()` returns raw datoms with no CRDT resolution (history mode, §8.1). Across a session's ancestor chain this raised a question: should history show only the session's own arena (its local edit log) or the merged lineage (the session plus every ancestor it inherited)? And if merged, do the fork-ceilings apply: "the raw history this session could ever have seen" (ceilings on) versus "every raw datom physically in the lineage's arenas" (ceilings off, which would expose ancestors' post-fork divergence)? The merge machinery (§10.2) composes with history mode (feed it the merged stream and skip the resolver), so the choice is a semantic one. History across the chain is the merged lineage with fork-ceilings applied: the raw datoms the session could ever have seen, its own writes plus ancestors up to their fork points, unresolved. Own-arena-only loses inherited history. Ceilings-off exposes timelines the session never saw. The world's full raw history remains available by calling `History()` on the world-head handle.
 
 ---
 
@@ -723,7 +723,7 @@ var rootArena ArenaPath // all-zero = the world root
 
 ### 11.2 Session handle + `Fork`
 
-A branch handle is the read-write generalization of `AsOf` (which clones the `Database` struct sharing `store`/`clock`, sets `temporalTxID`, and panics on write). The session handle instead carries an arena and its ancestor chain, and does permit writes:
+A branch handle is the read-write generalization of `AsOf` (which clones the `Database` struct sharing `store`/`clock`, sets its mode and as-of target, and panics on write). The session handle instead carries an arena and its ancestor chain, and does permit writes:
 
 ```go
 // arenaRef is one rung of the fork-ceiling staircase (§10.3): an arena and the Tx
@@ -929,7 +929,7 @@ Integration is then one substitution in the matcher: where it does `store.Scan(.
 
 ### 11.4 Architectural commitments
 
-1. **Key format +32 bytes** in all eight indices of Badger and `memory`, the stores built on `BinaryKeyEncoder`, plus the root-arena format change (§11.1). This is the largest commitment. The flat prefix is chosen over the R5 split (§11.5). The memory-tree store keeps typed datoms in its trees and has no key to widen (§9.6).
+1. **Key format +32 bytes** in all eight indices of Badger and `badger-emulator`, the stores built on `BinaryKeyEncoder`, plus the root-arena format change (§11.1). This is the largest commitment. The flat prefix is chosen over the R5 split (§11.5). The memory-tree store keeps typed datoms in its trees and has no key to widen (§9.6).
 2. **One `Iterator`-interface addition:** `Key() []byte`. The merge needs raw-key ordering, and `BadgerIterator` already holds the key.
 3. **Branch metadata as datoms: one `:db.branch/*` entity per fork**, carrying the snapshot's name, the point that snapshot captured, the point the branch holds its parent's state as of, the branch's write identity, and under C its path and parent (§9.6). It is listed and resolved by query, not a side keyspace. A record counts while a snapshot of its name holds the captured point it records, so deleting the snapshot, or a later take of its name that captures another point, releases the branch.
 4. **The session handle is a writable `Database` clone**, unlike `AsOf` and `History`, which panic on write. `Fork` on an `AsOf` or `History` handle returns an error, as `Snapshot` and `TruncateTo` do: a temporal view is read-only, and a fork is a new writable timeline.
@@ -943,7 +943,7 @@ Integration is then one substitution in the matcher: where it does `store.Scan(.
 
 ## 12. The parts built and remaining
 
-The parts reuse prior machinery. The encoding is §9.4's: the tree-path axis C for Badger and `memory`, copy-on-write versions for the memory-tree store (§9.6), and frontier A and arena B deferred. The snapshot slice, the truncate slice and the memory-tree branch handles are built: `Database` carries `Snapshot`, `AsOfSnapshot`, `Snapshots`, `DeleteSnapshot`, `TruncateTo` and `Fork`, and `MemoryTreeStore` carries `Fork`. The arena prefix on Badger and `memory`, and the stages after it, remain.
+The parts reuse prior machinery. The encoding is §9.4's: the tree-path axis C for Badger and `badger-emulator`, copy-on-write versions for the memory-tree store (§9.6), and frontier A and arena B deferred. The snapshot slice, the truncate slice and the memory-tree branch handles are built: `Database` carries `Snapshot`, `AsOfSnapshot`, `Snapshots`, `DeleteSnapshot`, `TruncateTo` and `Fork`, and `MemoryTreeStore` carries `Fork`. The arena prefix on Badger and `badger-emulator`, and the stages after it, remain.
 
 ### 12.1 The contracts the tests pin
 
@@ -991,9 +991,9 @@ The linear slice is snapshots and rollback with zero storage-core change: no are
 func (d *Database) Snapshot(name string) (SnapshotInfo, error)
 
 // AsOfSnapshot returns a READ-ONLY handle viewing the DB as of the named snapshot.
-// Reads at the marker's own high-water (always non-zero, so it dodges the zero-ElementID
-// History sentinel; domain-equivalent to the captured point); AsOf handles already reject
-// writes (NewTransaction panics on a temporal handle), so the read-only guarantee is free.
+// Reads at the marker's own high-water (domain-equivalent to the captured point); AsOf
+// handles already reject writes (NewTransaction panics on a temporal handle), so the
+// read-only guarantee is free.
 func (d *Database) AsOfSnapshot(name string) (*Database, error)
 
 // Snapshots lists every snapshot — a query over :db.snapshot/* — in causal order.
@@ -1031,7 +1031,7 @@ type SnapshotInfo struct {
 func (d *Database) TruncateTo(name string) error
 ```
 
-- **Mechanics (semantics (i), timeline-coupled).** Resolve the target's captured point `at` and its marker entity by query. The marker was written _just after_ it captured `at`, so its own datoms occupy the Tx range immediately above `at`. Let `markerMax` be the marker entity's highest Tx. The deletion floor is `markerMax`, not `at`. Deleting `Tx > markerMax` keeps the target marker itself, prunes every snapshot taken later, each of which indexed a now-erased future, so removing them is what prevents dangling refs, and erases all post-snapshot game writes. There are none in `(at, markerMax]`, because the marker is written contiguously, right after the capture. Concretely: scan TAEV, the Tx-leading index, for `Tx > markerMax`, a bounded range from the index start to `encode(markerMax)`, and physically delete each affected datom's key from all eight indices in one `BadgerTx`. Then `clock.Restore(markerMax)`, so the next write resumes at `markerMax.Lamport+1` with no collision against the surviving marker, and invalidate the cache. `AsOfSnapshot` reads at `markerMax` too, not at the stored `at`. The two are domain-equivalent, since the marker datoms it includes are reserved-namespace and filtered from domain queries, and `markerMax`, unlike `at`, is always non-zero, so an empty-database snapshot whose `at` is the zero ElementID does not collide with the matcher's History sentinel and read back as the whole database.
+- **Mechanics (semantics (i), timeline-coupled).** Resolve the target's captured point `at` and its marker entity by query. The marker was written _just after_ it captured `at`, so its own datoms occupy the Tx range immediately above `at`. Let `markerMax` be the marker entity's highest Tx. The deletion floor is `markerMax`, not `at`. Deleting `Tx > markerMax` keeps the target marker itself, prunes every snapshot taken later, each of which indexed a now-erased future, so removing them is what prevents dangling refs, and erases all post-snapshot game writes. There are none in `(at, markerMax]`, because the marker is written contiguously, right after the capture. Concretely: scan TAEV, the Tx-leading index, for `Tx > markerMax`, a bounded range from the index start to `encode(markerMax)`, and physically delete each affected datom's key from all eight indices in one `BadgerTx`. Then `clock.Restore(markerMax)`, so the next write resumes at `markerMax.Lamport+1` with no collision against the surviving marker, and invalidate the cache. `AsOfSnapshot` reads at `markerMax` too, not at the stored `at`. The two are domain-equivalent, since the marker datoms it includes are reserved-namespace and filtered from domain queries.
 - **The new primitive: physical delete-by-Tx.** The store otherwise has only `Retract`, which appends a tombstone at a higher Tx, forward, the opposite of a rewind. True truncation is a scan plus eight key deletes per affected datom.
 - **Destructive, by design.** The rolled-back datoms are gone, and `History()` will not show them either. The target snapshot and every snapshot taken at or before it survive, since their markers sit at or below `markerMax`. Snapshots taken _after_ it are pruned along with the timeline they indexed. The §10.7 descendant guard applies once branches exist (§12.3).
 
@@ -1099,10 +1099,10 @@ Steps 2–6 run without `db.mu` held, so a rollback never blocks the brief `db.m
 
 `Database.Fork` errors on a store that cannot fork a branch. `BadgerStore` and `BadgerEmulatorStore` cannot until the arena prefix lands (§12.4).
 
-### 12.4 The arena prefix on Badger and `memory`, and the stages after it
+### 12.4 The arena prefix on Badger and `badger-emulator`, and the stages after it
 
-- **The arena prefix as the branch axis of Badger and `memory`.** Add the leading raw 32-byte tree-path prefix to keys, since binary byte order is sort-preserving. Scope reads to an ancestor-chain range set. Reuse Lamport-Tx `AsOf` as the time axis. The world root is the empty prefix. With one root and no forks, behavior is identical to today, and a regression test pins that equivalence.
-- **Branch handles on Badger and `memory`.** `Fork` allocates a child sub-prefix in O(1). Reads merge the ancestor-chain ranges by Tx-descending and run the existing CRDT resolution over the merged stream (§10). Writes go to the handle's own range. The branch contract tests of §12.1 run unchanged against both stores. Immutable-ancestor caching (§9.5): a shared permanent cache for ancestors and a thin per-session cache for divergence.
+- **The arena prefix as the branch axis of Badger and `badger-emulator`.** Add the leading raw 32-byte tree-path prefix to keys, since binary byte order is sort-preserving. Scope reads to an ancestor-chain range set. Reuse Lamport-Tx `AsOf` as the time axis. The world root is the empty prefix. With one root and no forks, behavior is identical to today, and a regression test pins that equivalence.
+- **Branch handles on Badger and `badger-emulator`.** `Fork` allocates a child sub-prefix in O(1). Reads merge the ancestor-chain ranges by Tx-descending and run the existing CRDT resolution over the merged stream (§10). Writes go to the handle's own range. The branch contract tests of §12.1 run unchanged against both stores. Immutable-ancestor caching (§9.5): a shared permanent cache for ancestors and a thin per-session cache for divergence.
 - **Rollback and session lifecycle.** Soft rollback is the `AsOf(T)` read-point within the session prefix, the non-destructive default. Branch-on-rollback forks a child from `(session, T)`. Hard-truncate range-deletes `Tx > T` within the prefix. Ending or discarding a session is one subtree range delete. Depth-reclaim compaction, materialize-to-fresh-root, keeps the 256-bit budget healthy.
 - **Merge-back and distribution.** Merge by materialize-into-fresh-subtree, or a frontier edge (axis A, the §6 machinery) for O(1) merges. Content-addressed sealing (axis B) for verifiable, Merkle-diffable snapshots and replication (`DISTRIBUTED_JANUS.md`). Uniqueness rides read-time `(A,V)`-LWW unchanged (§7) throughout.
 

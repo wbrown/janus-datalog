@@ -75,9 +75,8 @@ func (it *hashJoinIterator) Next() bool {
 			// output tuple unique. Otherwise restore set semantics explicitly.
 			if it.seen == nil || !it.seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
 				// combineTuplesIndexed returns a fresh slice on every call and
-				// nothing mutates it, so no defensive copy is needed here. Any
-				// downstream consumer that retains tuples copies at its own
-				// boundary (this join's StreamingRelation has RequiresCopy()==true).
+				// nothing mutates it, so no copy is needed here and this iterator
+				// answers RequiresCopy false: a consumer may retain the tuple.
 				it.currentJoined = joined // Store for Tuple() to return
 				if it.metrics != nil {
 					it.metrics.resultCount++

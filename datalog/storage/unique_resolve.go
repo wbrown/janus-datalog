@@ -111,9 +111,9 @@ func (m *PatternMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.D
 // caller that collapses the two loses the entity's resolved answer and falls
 // back to a path that never applied the unique rule.
 //
-// Honors the matcher's temporal mode: entries with Tx > m.txID in as-of
-// mode are skipped. The supersession check against other entities is
-// likewise restricted via m.shouldFilterTx in resolveMaxOtherTxForValue.
+// Honors the matcher's temporal mode: an entry after the as-of target is
+// skipped (m.shouldFilterTx). The supersession check against other entities
+// is likewise restricted via m.shouldFilterTx in resolveMaxOtherTxForValue.
 // Both this walk's own EATV scan and every supersession scan walkApplyEntry
 // opens underneath it acquire through report. Those AVET reads are real index
 // reads on the resolution path — one per Set entry the walk considers — and an
@@ -169,8 +169,8 @@ func (m *PatternMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute, 
 // Tx asserted by any entity other than exceptE. Returns zero ElementID if
 // no other entity has asserted this value.
 //
-// Honors the matcher's temporal mode — entries with Tx > m.txID in as-of
-// mode are excluded.
+// Honors the matcher's temporal mode — an entry after the as-of target is
+// excluded (m.shouldFilterTx).
 func (m *PatternMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exceptE Entity, report *scanReport) (maxTx datalog.ElementID, resolveErr error) {
 	iter, err := OpenKeyScan(m.reader, report, ScanBound{
 		Index:  AVET,

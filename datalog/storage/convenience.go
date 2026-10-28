@@ -48,13 +48,13 @@ func (d *Database) queryUnderPlannerOptions(
 	// A handler sees every query the database is asked, invoked once and
 	// completed once. A query refused here, before the executor's entry, is
 	// reported as the executor reports a query it refuses: invoked, with the
-	// query as received, then completed with the refusal. A query that does
-	// not resolve is reported with the value it was given, text as text. A
-	// query that reaches ExecuteWithRelations is reported invoked there, and
-	// completed there when it is refused or fails in execution. A query that
-	// runs completes where it ends: its session-bound result reports the
-	// completion, with the tuples drained, when its iterator is exhausted or
-	// closed.
+	// query's rendering as received, then completed with the refusal. A query
+	// that does not resolve is reported with a rendering of the value it was
+	// given, text as it was given. A query that reaches ExecuteWithRelations
+	// is reported invoked there, and completed there when it is refused or
+	// fails in execution. A query that runs completes where it ends: its
+	// session-bound result reports the completion, with the tuples drained,
+	// when its iterator is exhausted or closed.
 	handler := planOpts.Handler
 	var queryStart time.Time
 	var completion *queryCompletion
@@ -62,12 +62,12 @@ func (d *Database) queryUnderPlannerOptions(
 		queryStart = time.Now()
 		completion = &queryCompletion{handler: handler, start: queryStart}
 	}
-	refused := func(received interface{}, err error) (*query.Query, executor.Relation, error) {
+	refused := func(rendered string, err error) (*query.Query, executor.Relation, error) {
 		if handler != nil {
 			handler(annotations.Event{
 				Name:  annotations.QueryInvoked,
 				Start: queryStart,
-				Data:  map[string]interface{}{annotations.KeyQuery: received},
+				Data:  map[string]interface{}{annotations.KeyQuery: rendered},
 			})
 			handler(annotations.TimedEvent(annotations.QueryComplete, queryStart,
 				map[string]interface{}{
@@ -82,7 +82,11 @@ func (d *Database) queryUnderPlannerOptions(
 
 	q, err := d.resolveQuery(queryInput)
 	if err != nil {
-		return refused(queryInput, fmt.Errorf("failed to resolve query: %w", err))
+		text, isText := queryInput.(string)
+		if !isText {
+			text = fmt.Sprint(queryInput)
+		}
+		return refused(text, fmt.Errorf("failed to resolve query: %w", err))
 	}
 
 	// One read session per query: every storage read — eager during

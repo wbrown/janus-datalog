@@ -175,7 +175,7 @@ func (p *Parser) readAtom() (*Node, error) {
 
 	// Handle keywords
 	if strings.HasPrefix(value, ":") {
-		if err := validateKeyword(value); err != nil {
+		if err := ValidateKeyword(value); err != nil {
 			return nil, fmt.Errorf("%v at %d:%d", err, token.Line, token.Col)
 		}
 		return &Node{Type: NodeKeyword, Value: value, Line: token.Line, Col: token.Col}, nil
@@ -374,7 +374,11 @@ func validateSymbol(s string) error {
 	return nil
 }
 
-func validateKeyword(s string) error {
+// ValidateKeyword is the grammar's statement of what text is a keyword: a
+// colon and a non-empty symbol after it. The reader applies it to every
+// keyword token, and a boundary that reads keyword text from elsewhere, a
+// string in query text, asks it before making the keyword.
+func ValidateKeyword(s string) error {
 	if !strings.HasPrefix(s, ":") {
 		return fmt.Errorf("keyword must start with colon: %s", s)
 	}

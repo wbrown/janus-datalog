@@ -205,7 +205,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 				Bindings:  cloneSymbols(output),
 				Output:    cloneSymbols(output),
 				In:        decorrelated.In,
-				Inputs:    callSourceArguments(lj.Inputs),
+				Inputs:    callSourceArguments(lj.Inputs, decorrelated.In),
 			},
 			Children: []*Node{innerNode},
 		}
@@ -255,7 +255,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 			Op: RuleLateralJoin,
 			Data: &LateralJoin{
 				CorrelationVars: nil,
-				Inputs:          callSourceArguments(lj.Inputs),
+				Inputs:          callSourceArguments(lj.Inputs, decorrelated.In),
 				InnerQuery:      optimizedDecorrelated,
 				Binding:         query.RelationBinding{Variables: output},
 				Output:          output,
@@ -290,12 +290,17 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, sink *R
 
 // callSourceArguments is what a decorrelated call passes: the written call's
 // source and rule-set arguments, in call order, with the correlation
-// variables left out, since they moved into the inner :find.
-func callSourceArguments(inputs []query.PatternElement) []query.PatternElement {
+// variables left out, since they moved into the inner :find. A decorrelated
+// :in left with no entry defaults to $ (query.InputPositions), the one
+// position of such a call, and the call passes $ there.
+func callSourceArguments(inputs []query.PatternElement, in []query.InputSpec) []query.PatternElement {
+	if len(in) == 0 {
+		return []query.PatternElement{query.Constant{Value: datalog.SymDollar}}
+	}
 	var sourceInputs []query.PatternElement
-	for _, in := range inputs {
-		if v, isVar := in.(query.Variable); !isVar || v.Name.IsSource() {
-			sourceInputs = append(sourceInputs, in)
+	for _, input := range inputs {
+		if v, isVar := input.(query.Variable); !isVar || v.Name.IsSource() {
+			sourceInputs = append(sourceInputs, input)
 		}
 	}
 	return sourceInputs

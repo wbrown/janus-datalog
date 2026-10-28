@@ -41,11 +41,12 @@ entry with no completion.
 
 The database's entry builds its report before it resolves the query, so a
 query it cannot resolve is reported as a refusal after resolution is: it
-emits `QueryInvoked` carrying the value as received, text as text, and a
-completion carrying the error. The entry's body returns the query it
-resolved beside the result, and `QueryInto` and `QueryOneInto` take it from
-there for their find symbols, so every route into the entry resolves once
-and reports there.
+emits `QueryInvoked` carrying a rendering of the value as received under
+`KeyQuery`, the key's contract, text as it was given and any other value
+through `fmt.Sprint`, and a completion carrying the error. The entry's body
+returns the query it resolved beside the result, and `QueryInto` and
+`QueryOneInto` take it from there for their find symbols, so every route
+into the entry resolves once and reports there.
 
 The executor's entry completes every query that fails after it was
 invoked, the realized plan's validation among them, through the closure the
@@ -59,10 +60,18 @@ doc states the unresolved case and no longer says "once it is resolved".
 `TestQuery_ARefusalReachesTheHandlerAsACompletedQuery`
 (`datalog/storage/query_refusal_events_test.go`), over every backend and
 optimizer mode: `Query` given text that does not parse, `Query` given an
-integer, `QueryInto` and `QueryOneInto` given text that does not parse, and
-an `AsOf` handle's `Query` given text that does not parse, each report one
-`QueryInvoked` carrying the value as received and one `QueryComplete`
-reporting the refusal, with the error the call returned; `Query`,
-`QueryInto` and a `History` handle's `Query` given a query the realized
-plan's validation refuses each report one invocation and one completion
-carrying the refusal.
+integer, `Query` given nil, `QueryInto` and `QueryOneInto` given text that
+does not parse, and an `AsOf` handle's `Query` given text that does not
+parse, each report one `QueryInvoked` carrying the rendering of the value as
+received and one `QueryComplete` reporting the refusal, with the error the
+call returned; `Query`, `QueryInto` and a `History` handle's `Query` given a
+query the realized plan's validation refuses each report one invocation and
+one completion carrying the refusal. On every route the invocation carries
+a string under `KeyQuery`.
+
+`TestQuery_AValueThatIsNotAQueryIsRefusedUnderTheShippedFormatter`
+(`datalog/storage/query_entry_report_test.go`): with the annotations
+package's `OutputFormatter` as the handler, `Query`, `QueryInto`,
+`QueryOneInto`, an `AsOf` handle and a `History` handle given an integer, a
+nil or an unbuilt query builder each return the resolve error, and the
+formatter renders the invocation.

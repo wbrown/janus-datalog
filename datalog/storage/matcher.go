@@ -507,14 +507,15 @@ func (m *PatternMatcher) chooseIndex(e, a, v, tx interface{}) ScanBound {
 // positions are each inhabited by one type, so those arms decide from the
 // value alone. A vector at the value position names a declared vector
 // attribute's whole collection, so whether it matches depends on the
-// attribute. Under a constant attribute the attribute is known, and it is
-// not a vector attribute, since a pattern on one is intercepted before this
-// selection by the vector arm of MatchWithConstraints, so the vector equals
-// no datom. Under a variable attribute the tuple passes and the attribute
-// decides downstream: the join routes compare the vector against each
-// resolved collection, and the V-validation route answers it through
-// matchVectorUnderOpenAttribute. Returns nil when no checked position is
-// bound by these symbols — no check is needed.
+// attribute. Under a constant attribute the vector equals no datom this
+// selection's routes read: outside History a pattern on a vector attribute
+// is intercepted before the selection by the vector arm of
+// MatchWithConstraints, and under History a datom is read as written, an
+// element and never a collection. Under a variable attribute the tuple
+// passes and the attribute decides downstream: the join routes compare the
+// vector against each resolved collection, and the V-validation route
+// answers it through matchVectorUnderOpenAttribute. Returns nil when no
+// checked position is bound by these symbols — no check is needed.
 func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbol) func(executor.Tuple) bool {
 	eIdx, aIdx, vIdx := -1, -1, -1
 	if v, ok := pattern.GetE().(query.Variable); ok {

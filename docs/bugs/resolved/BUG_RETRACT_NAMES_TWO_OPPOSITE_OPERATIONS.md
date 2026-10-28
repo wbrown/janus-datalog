@@ -9,7 +9,7 @@ one that produced `BUG_CACHE_CARDINALIY_ONE_TOMBSTONE`.
 ## The two meanings
 
 **Physical deletion.** `Store.Retract` removes datoms from storage.
-`MemoryStore.Retract` runs `retractMemoryDatom`, which finds the matching
+`BadgerEmulatorStore.Retract` runs `retractMemoryDatom`, which finds the matching
 EAVT keys and calls `deleteMemoryEntry` for every one of the eight indices.
 Nothing is left behind; the history is gone. This is a maintenance
 primitive: `TRANSACTION_ENVELOPES.md` plans to remove the public
@@ -66,6 +66,6 @@ and `TestVOnlyBound_CardinalityMany_Removed`
 (`datalog/storage/crdt_cache_matrix_test.go`).
 
 The identifiers in the physical-deletion sense keep their name:
-`Store.Retract`, `MemoryStore.Retract`, `memoryStoreTx.Retract`,
+`Store.Retract`, `BadgerEmulatorStore.Retract`, `memoryStoreTx.Retract`,
 `retractMemoryDatom`, `Transaction.Retract`, and the two test comments that
 contrast a `Remove` with "Retract which deletes" keep the contrast.

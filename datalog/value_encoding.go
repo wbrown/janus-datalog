@@ -52,44 +52,84 @@ const maxKeyValueSize = 60000
 // NormalizeValue returns a value as the domain admits it: int, int8, int16 and
 // int32 become int64, the engine's canonical integer representation, as does
 // an unsigned integer within int64's range, since the engine's equality holds
-// uint64(5) equal to int64(5); and a float's signed zero becomes 0.0, since
-// the equality holds the two zeros equal and a value's encoding agrees with
-// its equality. Storage decode, the EDN parser, and comparison all
-// standardize on int64, so normalizing user-supplied values where they enter
-// the engine (writes, query inputs, query-builder constants) keeps a Go int
-// from diverging from stored int64 data. Every other value, an unsigned
-// integer above int64's range among them, passes through untouched, for
-// ValidateValue to refuse, adding no allocation for the common case.
+// uint64(5) equal to int64(5); a float's signed zero becomes 0.0, since the
+// equality holds the two zeros equal and a value's encoding agrees with its
+// equality; and a vector's elements are normalized as scalars are, a
+// []interface{} elementwise at any depth and a []float64's signed zeros.
+// Storage decode, the EDN parser, and comparison all standardize on int64, so
+// normalizing user-supplied values where they enter the engine (writes, query
+// inputs, query-builder constants) keeps a Go int from diverging from stored
+// int64 data. Every other value, an unsigned integer above int64's range
+// among them, passes through untouched, for ValidateValue to refuse, and a
+// vector whose elements are already of the domain is returned as given, so
+// the common case allocates nothing; a vector with an element to normalize
+// is returned as a copy, the given slice untouched.
 func NormalizeValue(v Value) Value {
+	normalized, _ := normalize(v)
+	return normalized
+}
+
+// normalize is NormalizeValue reporting whether it returned a value other than
+// the one given, which the vector arms read to copy a vector only when one of
+// its elements changes.
+func normalize(v Value) (Value, bool) {
 	switch n := v.(type) {
 	case int:
-		return int64(n)
+		return int64(n), true
 	case int8:
-		return int64(n)
+		return int64(n), true
 	case int16:
-		return int64(n)
+		return int64(n), true
 	case int32:
-		return int64(n)
+		return int64(n), true
 	case uint:
 		if uint64(n) <= math.MaxInt64 {
-			return int64(n)
+			return int64(n), true
 		}
 	case uint8:
-		return int64(n)
+		return int64(n), true
 	case uint16:
-		return int64(n)
+		return int64(n), true
 	case uint32:
-		return int64(n)
+		return int64(n), true
 	case uint64:
 		if n <= math.MaxInt64 {
-			return int64(n)
+			return int64(n), true
 		}
 	case float64:
-		if n == 0 {
-			return float64(0)
+		if n == 0 && math.Signbit(n) {
+			return float64(0), true
+		}
+	case []float64:
+		for i, f := range n {
+			if f == 0 && math.Signbit(f) {
+				out := make([]float64, len(n))
+				copy(out, n)
+				for j := i; j < len(out); j++ {
+					if out[j] == 0 {
+						out[j] = 0
+					}
+				}
+				return out, true
+			}
+		}
+	case []interface{}:
+		var out []interface{}
+		for i, e := range n {
+			normalized, changed := normalize(e)
+			if changed && out == nil {
+				out = make([]interface{}, len(n))
+				copy(out, n[:i])
+			}
+			if out != nil {
+				out[i] = normalized
+			}
+		}
+		if out != nil {
+			return out, true
 		}
 	}
-	return v
+	return v, false
 }
 
 // ValidateValue reports whether v, normalized, is a value of the domain: a

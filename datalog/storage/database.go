@@ -190,6 +190,8 @@ type DatabaseOptions struct {
 	// directory once the store has released its files. For a caller that made
 	// scratch space to hold data that came from somewhere else — a dump loaded
 	// into a persistent backend — rather than a location the data lives at.
+	// On a constructor error no database holds the path, and the caller that
+	// made the directory removes it, as db.Open does at its error return.
 	RemovePathOnClose bool
 	// Dump, when set, is an exported dump the constructor loads into the store
 	// it opened before it declares Schema, so the declarations the dump
@@ -1354,7 +1356,7 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 //
 //	var stats []DeptStats
 //	err := db.QueryInto(&stats, `[:find ?dept (sum ?salary) :where [?e :employee/dept ?dept] [?e :employee/salary ?salary]]`)
-func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ...interface{}) error {
+func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ...interface{}) (err error) {
 	// Validate dest is *[]T
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr {
@@ -1373,11 +1375,18 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 	}
 
 	// Execute query as streaming relation, taking the query the entry
-	// resolved for the find symbols below.
+	// resolved for the find symbols below. The result ends on every return,
+	// a refused destination's included.
 	q, rel, err := d.queryUnderPlannerOptions(d.effectivePlannerOptions(), queryInput, inputs...)
 	if err != nil {
 		return err
 	}
+	iter := rel.Iterator()
+	defer func() {
+		if cerr := iter.Close(); err == nil {
+			err = cerr
+		}
+	}()
 	// Check if element type is a struct or scalar
 	// time.Time and Keyword are structs but treated as scalars
 	// Identity is a pointer type alias and goes through scalar path automatically
@@ -1390,17 +1399,16 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		}
 
 		newSlice := reflect.MakeSlice(sliceVal.Type(), 0, 0)
-		// ForEach surfaces iterator errors (decode/blob/CRDT failures deferred
-		// to Error()) instead of letting them look like a complete result.
-		if ferr := executor.ForEach(rel, func(t executor.Tuple) error {
+		// The iterator's deferred errors (decode/blob/CRDT failures) surface.
+		for iter.Next() {
 			elem := reflect.New(elemType).Elem()
-			if err := mapper.MapTuple(t, elem); err != nil {
+			if err := mapper.MapTuple(iter.Tuple(), elem); err != nil {
 				return err
 			}
 			newSlice = reflect.Append(newSlice, elem)
-			return nil
-		}); ferr != nil {
-			return ferr
+		}
+		if err := iter.Error(); err != nil {
+			return err
 		}
 		sliceVal.Set(newSlice)
 		return nil
@@ -1412,9 +1420,10 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 	}
 
 	newSlice := reflect.MakeSlice(sliceVal.Type(), 0, 0)
-	if ferr := executor.ForEach(rel, func(tuple executor.Tuple) error {
+	for iter.Next() {
+		tuple := iter.Tuple()
 		if len(tuple) == 0 {
-			return nil
+			continue
 		}
 		elemVal := reflect.New(elemType).Elem()
 		if err := setScalarValue(elemVal, tuple[0]); err != nil {
@@ -1427,9 +1436,9 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		} else {
 			newSlice = reflect.Append(newSlice, elemVal)
 		}
-		return nil
-	}); ferr != nil {
-		return ferr
+	}
+	if err := iter.Error(); err != nil {
+		return err
 	}
 	sliceVal.Set(newSlice)
 	return nil

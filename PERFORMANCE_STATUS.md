@@ -926,9 +926,10 @@ a worker-count gate.
    `len(tuples)` → `numWorkers`.
 
 2. **Iterator-workspace-reuse race fixed.** When
-   `iterationRelation.RequiresCopy()` is true (the default for
-   `StreamingRelation`, used by storage-backed sources that reuse tuple
-   workspace), the producer copies before sending. Without this, workers
+   `iterationRelation.RequiresCopy()` is true (a `StreamingRelation`'s
+   `RequiresCopy()` reports whether its iterator reuses its tuple workspace,
+   as a storage-backed scan's does), the producer copies before sending,
+   since the next `Next()` would overwrite the tuple it sent. Without this, workers
    raced producer workspace overwrites; `go test -race` confirms the race
    directly on the unfixed code. The bug was invisible to tests that only
    use `MaterializedRelation` inputs (`RequiresCopy() == false`).

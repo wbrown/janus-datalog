@@ -150,11 +150,6 @@ func refuseUnknownAttributes(vocabulary AttributeVocabulary, ctx *Context, plan 
 // other count is refused before planning, naming the count given and the
 // count the :in binds. A query whose :in binds nothing takes an empty slice.
 func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelations []Relation) (Relation, error) {
-	// A query whose context is already done is refused before any work.
-	if err := ctx.cancelled(); err != nil {
-		return nil, err
-	}
-
 	// Apply decorator pattern: wrap matcher with annotations if one is registered
 	matcher := e.matcher
 
@@ -204,6 +199,11 @@ func (e *Executor) ExecuteWithRelations(ctx *Context, q *query.Query, inputRelat
 				}))
 		}
 		return nil, err
+	}
+
+	// A query whose context is already done is refused before any work.
+	if err := ctx.cancelled(); err != nil {
+		return failed(err)
 	}
 
 	// The query is prepared once, before planning: its shapes checked, every
