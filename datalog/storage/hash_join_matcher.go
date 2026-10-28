@@ -192,7 +192,7 @@ func (m *PatternMatcher) matchWithHashJoin(
 	if m.mode == historyMode {
 		resolvedIter = storageIter
 	} else {
-		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.asOf, m, report)
+		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m, report)
 	}
 
 	// PHASE 4: Create streaming hash join iterator
@@ -635,7 +635,7 @@ func (m *PatternMatcher) matchWithMergeJoin(
 	if m.mode == historyMode {
 		resolvedIterMerge = storageIter
 	} else {
-		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.asOf, m, report)
+		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m, report)
 	}
 
 	// PHASE 4: Create streaming merge join iterator

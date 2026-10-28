@@ -107,7 +107,7 @@ func (it *nonReusingIterator) Next() bool {
 	if it.matcher.mode == historyMode {
 		it.currentScan = rawIter
 	} else {
-		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.asOf, it.matcher, it.report)
+		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher, it.report)
 	}
 
 	// Try to find first match

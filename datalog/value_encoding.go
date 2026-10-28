@@ -128,6 +128,61 @@ func normalize(v Value) (Value, bool) {
 		if out != nil {
 			return out, true
 		}
+	case nil, string, bool, int64, time.Time, []byte, Identity, Keyword, Symbol, ElementID, *ElementID:
+		// The domain's scalars, named so that none reaches the reflect arm.
+	default:
+		// Every other slice the domain admits (IsVector): a named type over
+		// []float64 or []interface{}, or a vector of vectors.
+		if rv := reflect.ValueOf(v); rv.Kind() == reflect.Slice {
+			return normalizeVector(v, rv)
+		}
+	}
+	return v, false
+}
+
+// floatVectorType and interfaceVectorType are the slice types normalize's
+// static arms name; a named type over either converts to it and back.
+var (
+	floatVectorType     = reflect.TypeOf([]float64(nil))
+	interfaceVectorType = reflect.TypeOf([]interface{}(nil))
+)
+
+// normalizeVector is normalize for a slice of a type the static arms do not
+// name. A slice convertible to []float64 or to []interface{}, a named type
+// over either, normalizes through that arm and answers its own type when an
+// element changed. A slice of slices normalizes each element, copying from
+// the first changed one. A slice of any other element kind is as given.
+func normalizeVector(v Value, rv reflect.Value) (Value, bool) {
+	t := rv.Type()
+	switch t.Elem().Kind() {
+	case reflect.Float64, reflect.Interface:
+		underlying := floatVectorType
+		if t.Elem().Kind() == reflect.Interface {
+			underlying = interfaceVectorType
+		}
+		if !t.ConvertibleTo(underlying) {
+			return v, false
+		}
+		normalized, changed := normalize(rv.Convert(underlying).Interface())
+		if !changed {
+			return v, false
+		}
+		return reflect.ValueOf(normalized).Convert(t).Interface(), true
+	case reflect.Slice:
+		var out reflect.Value
+		for i := 0; i < rv.Len(); i++ {
+			normalized, changed := normalize(rv.Index(i).Interface())
+			if changed && !out.IsValid() {
+				out = reflect.MakeSlice(t, rv.Len(), rv.Len())
+				reflect.Copy(out, rv.Slice(0, i))
+			}
+			if out.IsValid() {
+				out.Index(i).Set(reflect.ValueOf(normalized))
+			}
+		}
+		if out.IsValid() {
+			return out.Interface(), true
+		}
 	}
 	return v, false
 }

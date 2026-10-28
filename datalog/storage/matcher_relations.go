@@ -548,7 +548,7 @@ func (m *PatternMatcher) matchUnboundScan(
 	if m.mode == historyMode {
 		regularIter.storageIter = rawStorageIter
 	} else {
-		regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.asOf, m, report)
+		regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m, report)
 	}
 
 	// Return streaming relation with lazy materialization
@@ -1212,12 +1212,11 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	// - RGA for CardinalityVector
 	// - Add-wins for CardinalityUnknown (same as CardinalityMany)
 	//
-	// Pass the matcher's as-of target so candidate resolution respects the
-	// snapshot. In latest mode it is the zero ElementID (no filter); in as-of
-	// mode it skips post-snapshot entries, so a value tombstoned or
-	// overwritten after T does not drop or alter a candidate that existed as
-	// of T. Under History this arm is not taken.
-	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.asOf, it.matcher, it.report)
+	// The matcher carries the view, so candidate resolution reads the
+	// snapshot: in as-of mode an entry after the target is skipped, and a
+	// value withdrawn or superseded after T does not drop or alter a
+	// candidate that existed as of T. Under History this arm is not taken.
+	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher, it.report)
 
 	if it.matcher.handler != nil {
 		// The same run the event above announced, restated rather than left to

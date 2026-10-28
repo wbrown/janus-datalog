@@ -27,12 +27,18 @@ func NewBuilder() *Builder {
 	}
 }
 
-// Attribute starts defining a new attribute
+// Attribute starts defining a new attribute. An ident that is no keyword's
+// text is recorded as an error for Build to return, and the definition
+// carries no Ident, which Add reads as a refused attribute.
 func (b *Builder) Attribute(ident string) *AttributeBuilder {
+	kw, err := datalog.ParseKeyword(ident)
+	if err != nil {
+		b.errors = append(b.errors, err)
+	}
 	return &AttributeBuilder{
 		parent: b,
 		def: &AttributeDefinition{
-			Ident:       datalog.NewKeyword(ident),
+			Ident:       kw,
 			Cardinality: CardinalityOne, // Default
 		},
 	}
@@ -148,9 +154,8 @@ func (ab *AttributeBuilder) Doc(doc string) *AttributeBuilder {
 // Add finalizes this attribute and adds it to the schema
 // Returns the builder for chaining more attributes
 func (ab *AttributeBuilder) Add() *Builder {
-	// Validate attribute definition
-	if ab.def.Ident.String() == "" {
-		ab.parent.errors = append(ab.parent.errors, fmt.Errorf("attribute ident is required"))
+	// A nil Ident is an attribute Attribute refused; Add appends nothing for it.
+	if ab.def.Ident == nil {
 		return ab.parent
 	}
 

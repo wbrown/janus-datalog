@@ -115,8 +115,9 @@ func TestCRDTResolvingIterator_SourceDatomErrorPropagates(t *testing.T) {
 		failErr:   sentinel,
 	}
 
-	// schema=nil and matcher=nil → plain first-entry semantics, not unique walk
-	it := NewCRDTResolvingIterator(source, nil, datalog.ElementID{}, nil, DiscardIntake)
+	// schema=nil and a matcher reading the latest view → plain first-entry
+	// semantics, not unique walk
+	it := NewCRDTResolvingIterator(source, nil, &PatternMatcher{}, DiscardIntake)
 
 	// Consume until exhausted.
 	for it.Next() {
@@ -128,10 +129,9 @@ func TestCRDTResolvingIterator_SourceDatomErrorPropagates(t *testing.T) {
 }
 
 // TestCRDTResolvingIterator_UniqueWalkErrorIsDeferred verifies that an
-// error from processUniqueEntry (triggered by a failing uniqueMatcher
-// scan during the supersession check) is recorded in it.err and
-// surfaced via Error(), rather than being silently dropped when Next()
-// returns false.
+// error from processUniqueEntry (triggered by a failing matcher scan
+// during the supersession check) is recorded in it.err and surfaced via
+// Error(), rather than being silently dropped when Next() returns false.
 //
 // We exercise this path directly rather than trying to inject a
 // storage-level failure into a real database, because real BadgerDB
@@ -146,7 +146,7 @@ func TestCRDTResolvingIterator_UniqueWalkErrorIsDeferred(t *testing.T) {
 	// Seed a CRDTResolvingIterator directly and simulate the failure
 	// path: Next() records the error and returns false.
 	source := &failingIterator{} // empty source; source.Next() is false
-	it := NewCRDTResolvingIterator(source, nil, datalog.ElementID{}, nil, DiscardIntake)
+	it := NewCRDTResolvingIterator(source, nil, &PatternMatcher{}, DiscardIntake)
 	it.err = sentinel // simulate as if processUniqueEntry recorded it
 
 	// Exhaust (source is empty so Next() returns false immediately).

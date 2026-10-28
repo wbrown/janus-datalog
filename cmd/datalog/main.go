@@ -265,15 +265,11 @@ func addInteractiveData(db *storage.Database, scanner *bufio.Scanner) {
 			break
 		}
 
-		parts := strings.Fields(line)
-		if len(parts) != 3 {
-			fmt.Println("Expected: <entity> <attribute> <value>")
+		e, a, v, err := parseAddLine(line)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
 			continue
 		}
-
-		e := datalog.NewIdentity(parts[0])
-		a := datalog.NewKeyword(parts[1])
-		v := parseValue(parts[2])
 
 		if err := tx.Add(e, a, v); err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -296,28 +292,46 @@ func addInteractiveData(db *storage.Database, scanner *bufio.Scanner) {
 	}
 }
 
-func parseValue(s string) interface{} {
-	// Try to parse as number
-	if n, err := fmt.Sscanf(s, "%d", new(int64)); err == nil && n == 1 {
-		var val int64
-		fmt.Sscanf(s, "%d", &val)
-		return val
+// parseAddLine reads an add line as the three EDN forms -in values are read:
+// the entity as a symbol taken as a seed or as an identity literal (#id,
+// #identity), the attribute as a keyword, and the value as any EDN value.
+func parseAddLine(line string) (datalog.Identity, datalog.Keyword, interface{}, error) {
+	lexer := edn.NewLexer(line)
+	if err := lexer.Lex(); err != nil {
+		return nil, nil, nil, err
 	}
-
-	// Try to parse as float
-	if n, err := fmt.Sscanf(s, "%f", new(float64)); err == nil && n == 1 {
-		var val float64
-		fmt.Sscanf(s, "%f", &val)
-		return val
+	forms, err := edn.NewParser(lexer).ParseAll()
+	if err != nil {
+		return nil, nil, nil, err
 	}
-
-	// Remove quotes if present
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		return s[1 : len(s)-1]
+	if len(forms) != 3 {
+		return nil, nil, nil, fmt.Errorf("expected <entity> <attribute> <value>, got %d forms", len(forms))
 	}
-
-	// Default to string
-	return s
+	var e datalog.Identity
+	switch forms[0].Type {
+	case edn.NodeSymbol:
+		e = datalog.NewIdentity(forms[0].Value)
+	case edn.NodeTagged:
+		v, err := parser.TaggedLiteralValue(&forms[0])
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		id, ok := v.(datalog.Identity)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("entity must be a symbol or an identity literal (#id, #identity), got %T", v)
+		}
+		e = id
+	default:
+		return nil, nil, nil, fmt.Errorf("entity must be a symbol or an identity literal (#id, #identity), got %v", forms[0].Type)
+	}
+	if forms[1].Type != edn.NodeKeyword {
+		return nil, nil, nil, fmt.Errorf("attribute must be a keyword, got %v", forms[1].Type)
+	}
+	v, err := ednNodeToGo(&forms[2])
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return e, datalog.NewKeyword(forms[1].Value), v, nil
 }
 
 // openDatabaseOrEDN opens dbPath as a database directory, or — when the path

@@ -8,11 +8,54 @@ import (
 )
 
 // A vector's elements enter the domain as scalars do: a float's signed zero
-// is 0.0 and an integer is int64, at any depth, in a []interface{} and in a
-// []float64 alike. A vector whose elements are already of the domain is the
-// same slice, not a copy.
+// is 0.0 and an integer is int64, at any depth, in every slice the domain
+// admits: a []interface{}, a []float64, a named type over either, and a
+// vector of vectors, each answering its own type. A vector whose elements are
+// already of the domain is the same slice, not a copy.
 func TestNormalizeValueTakesAVectorsElementsAsScalars(t *testing.T) {
+	type embedding []float64
+	type row []interface{}
 	negativeZero := math.Copysign(0, -1)
+
+	t.Run("a named float vector holding a signed zero keeps its type", func(t *testing.T) {
+		held := embedding{negativeZero, 1.5}
+		normalized, ok := NormalizeValue(held).(embedding)
+		require.True(t, ok, "a named float vector normalizes to its own type, got %T", NormalizeValue(held))
+		require.Len(t, normalized, 2)
+		require.False(t, math.Signbit(normalized[0]), "the signed zero is 0.0")
+		require.Equal(t, 1.5, normalized[1])
+		require.True(t, math.Signbit(held[0]), "the given slice is untouched")
+	})
+
+	t.Run("a vector of vectors copies from the first changed inner vector", func(t *testing.T) {
+		first := []float64{1.5}
+		second := []float64{negativeZero, 2.5}
+		normalized, ok := NormalizeValue([][]float64{first, second}).([][]float64)
+		require.True(t, ok, "a vector of vectors normalizes to its own type, got %T", NormalizeValue([][]float64{first, second}))
+		require.Len(t, normalized, 2)
+		require.Same(t, &first[0], &normalized[0][0], "an inner vector with no signed zero is the same slice")
+		require.False(t, math.Signbit(normalized[1][0]), "the nested signed zero is 0.0")
+		require.Equal(t, 2.5, normalized[1][1])
+		require.True(t, math.Signbit(second[0]), "the given inner slice is untouched")
+	})
+
+	t.Run("a named interface vector holding a signed zero keeps its type", func(t *testing.T) {
+		held := row{negativeZero, "s"}
+		normalized, ok := NormalizeValue(held).(row)
+		require.True(t, ok, "a named interface vector normalizes to its own type, got %T", NormalizeValue(held))
+		require.Len(t, normalized, 2)
+		require.False(t, math.Signbit(normalized[0].(float64)), "the signed zero is 0.0")
+		require.Equal(t, "s", normalized[1])
+	})
+
+	t.Run("a vector of another element kind, or a named vector of domain values, is the same slice", func(t *testing.T) {
+		named := embedding{0, 1.5}
+		require.Same(t, &named[0], &NormalizeValue(named).(embedding)[0])
+		strings := []string{"a", "b"}
+		require.Same(t, &strings[0], &NormalizeValue(strings).([]string)[0])
+		ints := []int64{1, 2}
+		require.Same(t, &ints[0], &NormalizeValue(ints).([]int64)[0])
+	})
 
 	t.Run("a []float64 holding a signed zero", func(t *testing.T) {
 		for _, held := range [][]float64{{negativeZero, 1.5}, {1.5, negativeZero}} {

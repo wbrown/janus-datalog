@@ -78,6 +78,24 @@ func NewKeyword(s string) Keyword {
 	return InternKeyword(s)
 }
 
+// ParseKeyword is NewKeyword answering an error in place of the panic, for
+// keyword text a caller supplies to an entry that answers errors: a map key,
+// a struct tag, a schema ident. A keyword already made needs no validation,
+// so the cache is read before ValidateKeywordText refuses text that is no
+// keyword's.
+func ParseKeyword(s string) (Keyword, error) {
+	if len(s) == 0 || s[0] != ':' {
+		s = ":" + s
+	}
+	if val, ok := keywordIntern.cache.Load(s); ok {
+		return val.(Keyword), nil
+	}
+	if err := ValidateKeywordText(s); err != nil {
+		return nil, err
+	}
+	return InternKeyword(s), nil
+}
+
 // String returns the keyword string
 func (k Keyword) String() string {
 	if k == nil {

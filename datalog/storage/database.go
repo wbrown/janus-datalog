@@ -2472,7 +2472,11 @@ func (t *Transaction) AddMap(attrs map[string]interface{}) (datalog.Identity, er
 	// Convert string keys to keywords and add
 	kwAttrs := make(map[datalog.Keyword]interface{})
 	for k, v := range attrs {
-		kwAttrs[datalog.NewKeyword(k)] = v
+		kw, err := datalog.ParseKeyword(k)
+		if err != nil {
+			return nil, err
+		}
+		kwAttrs[kw] = v
 	}
 
 	if err := t.AddEntity(e, kwAttrs); err != nil {

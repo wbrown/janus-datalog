@@ -59,14 +59,14 @@ This priority (diverge and roll back now, merge later) is what makes the tree-pa
 
 ## 2. The core realization
 
-Visibility is enforced in a single predicate, mirrored in two places:
+Visibility is enforced in a single predicate, the matcher's `shouldFilterTx`, read on the candidate path and per datom during streaming resolution:
 
 ```go
-// crdt_resolving_iterator.go (per-datom, during streaming resolution)
-if it.txID != (ElementID{}) && it.txID.Less(datom.Tx) { continue }   // skip "future" datoms
-
-// matcher.go: shouldFilterTx — same comparison on the candidate path
+// matcher.go: shouldFilterTx
 return m.mode == asOfMode && m.asOf.Less(datomTx)
+
+// crdt_resolving_iterator.go (per-datom, during streaming resolution)
+if it.matcher.shouldFilterTx(datom.Tx) { continue }   // skip "future" datoms
 ```
 
 Everything else (the eight indices ordered by total `(Lamport, ReplicaID)` order, "first entry wins" LWW, add-wins, RGA, unique `(A,V)`-LWW) runs over whatever survives that predicate. The substrate is already a branching substrate, pinned to one linear timeline only because the threshold is a scalar.
@@ -576,7 +576,7 @@ for i, arena := range chain {
                     WithTxCeiling(ceiling(arena, chain))   // structural fork ceiling; ∞ for the leaf
 }
 merged := NewAncestorMergeIterator(subs)   // k-way merge on key-SUFFIX (bytes after the 32-byte path)
-return NewCRDTResolvingIterator(merged, schema, T, uniqueMatcher)   // UNCHANGED; T is the "when"
+return NewCRDTResolvingIterator(merged, schema, matcher, report)   // UNCHANGED; the matcher's view is the "when"
 ```
 
 `AncestorMergeIterator` implements the `Iterator` interface (`Next` / `Datom` / `Seek` / `Close` / `Error`), so the resolver wraps it transparently. `Seek(key)` fans out to seek every sub-iterator (each prepends its own path prefix to `key`); `Error()` returns the first sub-iterator error; `Close()` closes all subs. This is one focused new type; the resolver and the index-selection logic are untouched. We extend the source, not the resolver.
@@ -604,7 +604,7 @@ In other words, fork is AsOf inheritance: the whole ancestor chain is a sequence
 There are now two independent time bounds on a read, and they compose without any new logic:
 
 - **Structural fork-ceilings `F_i`**: applied by each ancestor sub-iterator (the leaf has no structural ceiling, ∞). These encode the tree's shape, where a session diverged from each ancestor. They are fixed by the fork events and never change.
-- **The query AsOf `T`**: applied by the `CRDTResolvingIterator`'s existing, unchanged per-datom filter, `if it.txID.Less(datom.Tx) { continue }` in `crdt_resolving_iterator.go`. This is the when of the read: "show me this session as of time T" (T = ∞, encoded as `ElementID{}`, for "latest").
+- **The query AsOf `T`**: applied per datom by the `CRDTResolvingIterator`, which reads it through its matcher's `shouldFilterTx`. This is the when of the read: "show me this session as of time T" (in latest mode no datom is filtered, T = ∞).
 
 A datom survives iff it passes both the upstream per-arena `F_i` and the downstream global `T`. Two `≤` bounds AND-ed together is a `min`, so the effective visibility of a datom is:
 
@@ -615,7 +615,7 @@ leaf Q       :  visible(d)  ⟺  d.Tx ≤ T                 (F = ∞)
 
 Nothing had to be added to make them compose: `F_i` lives in the sub-iterator, `T` lives in the resolver, and the conjunction is automatic. The branch axis ("where", via arena selection + fork ceilings) and the time axis ("when", via the existing AsOf filter) are orthogonal filters stacked on one stream. The three cases:
 
-- **Latest read of `Q`** (`T = ∞`): the resolver's filter is a no-op (`txID == ElementID{}`); each ancestor is bounded by its structural `F_i`; the leaf is unbounded. `Q` sees the newest state of its own lineage.
+- **Latest read of `Q`** (`T = ∞`): the resolver's filter is a no-op (the matcher reads the latest view); each ancestor is bounded by its structural `F_i`; the leaf is unbounded. `Q` sees the newest state of its own lineage.
 - **Soft rollback / `AsOf(T)`**: set the query AsOf to `T`. Ancestors become `min(F_i, T)`, the leaf becomes `T`. If `T` is after every fork point, the ancestors are unaffected (their `F_i ≤ T`) and only the leaf is trimmed: you are rewinding within the session's own writes. If `T` is before a fork point, that ancestor is further trimmed to `T` and the session's own (later) writes vanish entirely. Both cases are correct and need no special-casing; `min` handles them.
 - **Rollback to a `T` before `Q` even existed**: the leaf has no datoms `≤ T`, so `Q` contributes nothing; ancestors are capped at `min(F_i, T) = T`; the read shows the lineage's state at `T`, which is entirely ancestor state. Correct.
 
